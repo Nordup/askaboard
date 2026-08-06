@@ -289,6 +289,60 @@ final class MathTutorTests: XCTestCase {
     }
 
     @MainActor
+    func testBoardCanvasViewDoesNotReportAnEmptyLayout() {
+        let canvas = BoardCanvasView(frame: .zero)
+        var receivedSizes: [CGSize] = []
+        canvas.onViewportChange = { receivedSizes.append($0) }
+
+        canvas.setNeedsLayout()
+        canvas.layoutIfNeeded()
+
+        XCTAssertTrue(receivedSizes.isEmpty, "A zero-size layout must never report a viewport")
+    }
+
+    @MainActor
+    func testBoardCanvasViewReportsTheFirstNonEmptySize() {
+        let canvas = BoardCanvasView(frame: .zero)
+        var receivedSizes: [CGSize] = []
+        canvas.onViewportChange = { receivedSizes.append($0) }
+
+        canvas.frame = CGRect(x: 0, y: 0, width: 1_024, height: 768)
+        canvas.setNeedsLayout()
+        canvas.layoutIfNeeded()
+
+        XCTAssertEqual(receivedSizes, [CGSize(width: 1_024, height: 768)])
+    }
+
+    @MainActor
+    func testBoardCanvasViewDoesNotReReportAnUnchangedSize() {
+        let canvas = BoardCanvasView(frame: CGRect(x: 0, y: 0, width: 1_024, height: 768))
+        var receivedSizes: [CGSize] = []
+        canvas.onViewportChange = { receivedSizes.append($0) }
+
+        canvas.setNeedsLayout()
+        canvas.layoutIfNeeded()
+        canvas.setNeedsLayout()
+        canvas.layoutIfNeeded()
+
+        XCTAssertEqual(receivedSizes.count, 1, "An unchanged size must not be reported a second time")
+    }
+
+    @MainActor
+    func testBoardCanvasViewReportsAGenuineSizeChange() {
+        let canvas = BoardCanvasView(frame: CGRect(x: 0, y: 0, width: 1_024, height: 768))
+        var receivedSizes: [CGSize] = []
+        canvas.onViewportChange = { receivedSizes.append($0) }
+
+        canvas.setNeedsLayout()
+        canvas.layoutIfNeeded()
+        canvas.frame = CGRect(x: 0, y: 0, width: 800, height: 600)
+        canvas.setNeedsLayout()
+        canvas.layoutIfNeeded()
+
+        XCTAssertEqual(receivedSizes, [CGSize(width: 1_024, height: 768), CGSize(width: 800, height: 600)])
+    }
+
+    @MainActor
     func testEvaluationPersistsLearnerAndTutorTurnsAndDismissKeepsHistory() async throws {
         let store = TutorStore(service: DemoTutorService())
         store.resetSession()

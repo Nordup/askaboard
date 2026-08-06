@@ -226,6 +226,30 @@ final class CanvasCapture: ObservableObject {
     }
 }
 
+/// A `PKCanvasView` that reports its laid-out size.
+///
+/// Board setup depends on the viewport, but SwiftUI only re-invokes
+/// `updateUIView` when one of the representable's own arguments changes — not
+/// when Auto Layout finally gives the canvas a real size. Depending on that
+/// meant a cold launch configured the board against a zero viewport and never
+/// corrected it. UIKit's layout pass is the signal that actually tracks
+/// geometry.
+final class BoardCanvasView: PKCanvasView {
+    /// Called on each layout pass whose size differs from the last reported
+    /// one, skipping empty sizes. The first call is the board's real start.
+    var onViewportChange: ((CGSize) -> Void)?
+
+    private var reportedViewport: CGSize?
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let size = bounds.size
+        guard size.width > 0, size.height > 0, size != reportedViewport else { return }
+        reportedViewport = size
+        onViewportChange?(size)
+    }
+}
+
 struct PencilCanvasView: UIViewRepresentable {
     @ObservedObject var capture: CanvasCapture
     let initialDrawingData: Data?
@@ -257,7 +281,7 @@ struct PencilCanvasView: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeUIView(context: Context) -> PKCanvasView {
-        let canvas = PKCanvasView(frame: .zero)
+        let canvas = BoardCanvasView(frame: .zero)
         PencilCanvasConfiguration.configure(canvas, viewport: .zero)
         if let initialDrawingData, let drawing = try? PKDrawing(data: initialDrawingData) {
             canvas.drawing = drawing
@@ -272,6 +296,27 @@ struct PencilCanvasView: UIViewRepresentable {
         context.coordinator.canvas = canvas
         capture.canvasView = canvas
         context.coordinator.updateActivation(isActive)
+
+        // UIKit's own layout pass — not SwiftUI's update cycle — is what
+        // reliably knows the canvas's real size. The canvas owns this
+        // closure, so `canvas` itself is captured weakly to avoid a retain
+        // cycle; `coordinator` and `boardCapture` don't hold the canvas
+        // strongly (both hold it `weak`), so they're safe to capture normally.
+        let coordinator = context.coordinator
+        let boardCapture = capture
+        canvas.onViewportChange = { [weak canvas] size in
+            guard let canvas else { return }
+            let isFirstReport = !coordinator.didConfigure
+            PencilCanvasConfiguration.configure(canvas, viewport: size, preserveViewport: !isFirstReport)
+            coordinator.didConfigure = true
+            // `configure` can only center the board origin — it never sees
+            // the drawing. Restored ink wins over that default, but only on
+            // the first real layout: later viewport changes (rotation, split
+            // view) must not yank a panned-away student back to their strokes.
+            if isFirstReport {
+                boardCapture.centerOnContent(animated: false)
+            }
+        }
 
         let undoTap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.twoFingerUndo))
         undoTap.numberOfTouchesRequired = 2
@@ -290,24 +335,10 @@ struct PencilCanvasView: UIViewRepresentable {
     func updateUIView(_ canvas: PKCanvasView, context: Context) {
         context.coordinator.parent = self
         capture.canvasView = canvas
-        // Activation must be handled before the viewport early return. Showing
-        // or hiding full chat does not change the canvas bounds, but it does
-        // change which view should own first responder and the tool picker.
+        // Showing or hiding full chat doesn't change the canvas bounds, but
+        // it does change which view should own first responder and the tool
+        // picker. Viewport-driven setup lives in `BoardCanvasView.onViewportChange`.
         context.coordinator.updateActivation(isActive)
-        let viewport = canvas.bounds.size
-        guard viewport != .zero, context.coordinator.lastViewportSize != viewport else { return }
-        PencilCanvasConfiguration.configure(canvas, viewport: viewport, preserveViewport: context.coordinator.didConfigure)
-        context.coordinator.lastViewportSize = viewport
-        context.coordinator.didConfigure = true
-
-        // `configure` can only center the board origin — it never sees the
-        // drawing. Restored ink wins over that default, but only on the first
-        // real layout: later viewport changes take the preserveViewport path
-        // above and must not yank a panned-away student back to their strokes.
-        if !context.coordinator.didCenterOnContent {
-            capture.centerOnContent(animated: false)
-            context.coordinator.didCenterOnContent = true
-        }
     }
 
     static func dismantleUIView(_ uiView: PKCanvasView, coordinator: Coordinator) {
@@ -318,9 +349,11 @@ struct PencilCanvasView: UIViewRepresentable {
         var parent: PencilCanvasView
         weak var canvas: PKCanvasView?
         var toolPicker: PKToolPicker?
-        var lastViewportSize: CGSize = .zero
+        /// Whether `BoardCanvasView.onViewportChange` has fired at least
+        /// once. Doubles as the "first report vs. later" routing signal: the
+        /// first report configures fresh and centers on ink; every later one
+        /// (rotation, split view) preserves the viewport instead.
         var didConfigure = false
-        var didCenterOnContent = false
 
         init(_ parent: PencilCanvasView) { self.parent = parent }
 
