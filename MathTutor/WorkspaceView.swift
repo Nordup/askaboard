@@ -291,7 +291,13 @@ struct WorkspaceView: View {
                     .frame(width: 42, height: 42)
             }
             .buttonStyle(.bordered)
+            // Distinct from the floating panel's control, which opens the same
+            // overlay. Without an explicit identifier this button inherits the
+            // SF Symbol name ("chevron.left"), and sharing the panel's label
+            // left two indistinguishable "Open full tutor chat" buttons in the
+            // accessibility tree.
             .accessibilityLabel("Open full tutor chat")
+            .accessibilityIdentifier("open-full-chat")
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(store.session.exercise?.title ?? "Workspace")
@@ -607,7 +613,7 @@ struct FloatingTutorPanel: View {
                             .frame(width: 30, height: 30)
                     }
                     .buttonStyle(.bordered)
-                    .accessibilityLabel("Open full tutor chat")
+                    .accessibilityLabel("Expand tutor chat to full screen")
                     .accessibilityIdentifier("expand-full-chat")
                     Button { expanded = false } label: {
                         Image(systemName: "minus")

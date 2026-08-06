@@ -49,6 +49,12 @@ final class TutorStore: ObservableObject {
         // This is intentionally compiled only into DEBUG; production launches keep
         // their existing Keychain-backed live behavior unchanged.
         if isUITestReset { keychain.removeAPIKey() }
+        // Local dev loop: seed the Keychain from the launch environment so a
+        // simulator run never has to retype the key in Settings. Skipped for UI
+        // test resets by the same rule above.
+        if !isUITestReset, let injectedKey = DebugAPIKeyInjection.injectedKey() {
+            keychain.saveAPIKey(injectedKey)
+        }
         let shouldSeedE2E = ProcessInfo.processInfo.arguments.contains(E2ESeedFixture.launchArgument)
         #else
         let shouldSeedE2E = false

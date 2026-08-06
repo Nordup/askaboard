@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		0A8732B32E7EF789D6555BF2 /* WorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29C7168A45435B75035E202A /* WorkspaceView.swift */; };
+		102E8BB283305F54D5CF22CB /* DebugAPIKeyInjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4249CB09575FAAE3E3B8704E /* DebugAPIKeyInjection.swift */; };
 		1B18319249DE26B1097504F3 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A31E164E6C9DB16ECD19F192 /* ContentView.swift */; };
 		27C8DE6FCDC857243898A7C0 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 378054E4C8C76AA0950BB3FB /* Models.swift */; };
 		4AA3F4C0BFEA2AB82805CE1B /* MathTutorUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26956CCCFC6FFCD8051E2C53 /* MathTutorUITests.swift */; };
@@ -42,6 +43,7 @@
 		26956CCCFC6FFCD8051E2C53 /* MathTutorUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MathTutorUITests.swift; sourceTree = "<group>"; };
 		29C7168A45435B75035E202A /* WorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceView.swift; sourceTree = "<group>"; };
 		378054E4C8C76AA0950BB3FB /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		4249CB09575FAAE3E3B8704E /* DebugAPIKeyInjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugAPIKeyInjection.swift; sourceTree = "<group>"; };
 		73BF2A95E33679CE90826E51 /* StructuredChatText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StructuredChatText.swift; sourceTree = "<group>"; };
 		7A75D7C233693DE7B2FFF3DF /* TutorStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TutorStore.swift; sourceTree = "<group>"; };
 		7AA4A3761F05C374DAC86A5F /* MathTutorApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MathTutorApp.swift; sourceTree = "<group>"; };
@@ -90,6 +92,7 @@
 			children = (
 				9596BBFD5547D838D0221EEF /* CanvasView.swift */,
 				A31E164E6C9DB16ECD19F192 /* ContentView.swift */,
+				4249CB09575FAAE3E3B8704E /* DebugAPIKeyInjection.swift */,
 				7AA4A3761F05C374DAC86A5F /* MathTutorApp.swift */,
 				378054E4C8C76AA0950BB3FB /* Models.swift */,
 				73BF2A95E33679CE90826E51 /* StructuredChatText.swift */,
@@ -245,6 +248,7 @@
 			files = (
 				63A749A5D139C9433B89B6AD /* CanvasView.swift in Sources */,
 				1B18319249DE26B1097504F3 /* ContentView.swift in Sources */,
+				102E8BB283305F54D5CF22CB /* DebugAPIKeyInjection.swift in Sources */,
 				519ACBA7099CC58EE84B98F1 /* MathTutorApp.swift in Sources */,
 				27C8DE6FCDC857243898A7C0 /* Models.swift in Sources */,
 				EB6613C71368B8A48AD674D4 /* StructuredChatText.swift in Sources */,

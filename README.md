@@ -25,6 +25,22 @@ Open `MathTutor.xcodeproj` in Xcode to run on a paired iPad, including devices o
 
 Without a key, the app shows a clear setup card and does not silently route requests to an offline fallback. To try live tutoring, open Settings, choose Sol/Terra/Luna, choose a reasoning effort, and enter an OpenAI Platform API key. Reasoning effort supports none, low, medium, high, xhigh, and max; new and reset sessions default to high and the selected value is persisted with the session. A ChatGPT subscription, session cookie, or personal “token” is not reusable for API calls; Platform API usage is a separate service with separate billing. The key is saved in the iOS Keychain and is never put in source, the Xcode project, or UserDefaults. This direct client-side key path is prototype-only; a production app needs a backend/proxy with authentication, rate limiting, and spend controls so the key never reaches the client. A deterministic demo tutor is available only through explicit test/debug injection.
 
+### Local dev loop (skip retyping the key)
+
+DEBUG builds can take the key from the launch environment instead of the Settings field, so a simulator run comes up live without typing anything. Put the key in a gitignored `.env.local` at the repo root:
+
+```sh
+echo 'MATHTUTOR_OPENAI_API_KEY=sk-...' > .env.local
+scripts/run-sim.sh
+```
+
+The script builds, installs, and launches on `iPad Pro 13-inch (M5)` (override with `MATHTUTOR_SIM_DEVICE`, skip the build with `SKIP_BUILD=1`), passing the key through `SIMCTL_CHILD_MATHTUTOR_OPENAI_API_KEY`. `DebugAPIKeyInjection` reads `MATHTUTOR_OPENAI_API_KEY`, or a path in `MATHTUTOR_OPENAI_API_KEY_FILE`, and `TutorStore` seeds it into the Keychain once so later launches stay live without the environment set. The key still never lives in source, the Xcode project, or UserDefaults; only in `.env.local` and the Keychain. The whole path is compiled out of release builds, and it is deliberately skipped for `--ui-test-reset` launches so UI tests never inherit a developer credential. To clear an injected key, relaunch with that argument:
+
+```sh
+xcrun simctl terminate booted com.nordup.MathTutor
+xcrun simctl launch booted com.nordup.MathTutor --ui-test-reset
+```
+
 The live path uses the Responses API with `gpt-5.6-luna` as the default for new/reset sessions and forwards the selected reasoning effort on every request. It sends a white-backed, size-bounded PNG snapshot as base64 `input_image` with `detail: original`, alongside the current context and general tutor policy. Every response uses the same strict schema: `reply` is Markdown text and `plan`/`exercise` are required nullable fields that are either both complete or both `null`, so ordinary chat preserves the current workspace while explicit exercise requests can replace it. The response parser walks output message/content items instead of assuming a top-level text field and drops malformed or mismatched planning pairs defensively. Invalid credentials and network failures remain visible and retryable; the app never presents offline fallback as a successful live response.
 
 Assistant replies render through the pinned `MarkdownUI` 2.4.0 Swift package (`Markdown`) with selectable GitHub-Flavored Markdown headings, lists, quotes, tables, code, links, and visible single-newline breaks. Math is requested and displayed as readable Unicode/plain text because the renderer does not render LaTeX math delimiters. Learner messages stay literal text so their punctuation, whitespace, and line breaks are preserved exactly.

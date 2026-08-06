@@ -8,5 +8,8 @@ build/
 # Swift Package Manager
 .build/
 
+# Local development secrets (read by scripts/run-sim.sh)
+.env.local
+
 # macOS
 .DS_Store
