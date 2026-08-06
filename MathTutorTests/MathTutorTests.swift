@@ -1014,6 +1014,30 @@ final class MathTutorTests: XCTestCase {
         XCTAssertFalse(policy.contains("radical"))
     }
 
+    /// A learner asking "how is this so far" got handed the answer. The policy's old wording
+    /// told the tutor to "identify the smallest useful correction", which a model reasonably
+    /// reads as *state* the correction — i.e. take the very step the learner was about to take.
+    ///
+    /// The separation this asserts is the one that matters pedagogically: showing work and
+    /// requesting an answer are different asks, and only the second earns one.
+    func testCheckingWorkDoesNotEarnTheAnswer() {
+        let policy = TutorPromptPolicy.system.lowercased()
+
+        XCTAssertTrue(policy.contains("checking work is not the same as being asked for the answer"))
+        XCTAssertTrue(policy.contains("how is this so far"))
+        XCTAssertTrue(policy.contains("name the first place that needs attention"))
+        XCTAssertTrue(policy.contains("do not write the corrected line"))
+        XCTAssertTrue(policy.contains("do not state the final answer"))
+
+        // The escape hatch has to survive too, or the tutor becomes the withholding kind the
+        // first paragraph exists to rule out.
+        XCTAssertTrue(policy.contains("ask for one in plain words"))
+        XCTAssertTrue(policy.contains("tried the same step twice"))
+
+        // The instruction it replaced must be gone, not merely outvoted by later text.
+        XCTAssertFalse(policy.contains("identify the smallest useful correction"))
+    }
+
     func testDemoFlowStaysGenericAndTreatsDontKnowAsSignal() async throws {
         let service = DemoTutorService()
         let initial = TutorRequest(messages: [TutorMessage(role: .learner, text: "I want to learn algebra")], goal: "I want to learn algebra", exercise: nil, plan: nil, imageData: nil, imageRegionDescription: nil, signal: nil, model: .sol)
