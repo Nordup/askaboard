@@ -54,18 +54,19 @@ Debug launches can seed a legible vector PencilKit attempt for the radical-equat
 - `TutorStore`: `@MainActor` MVVM state, persistence, onboarding/workspace transitions, evaluation state, and retry/error handling.
 - `TutorService`: injectable protocol with deterministic `DemoTutorService`, Keychain-backed `TutorServiceRouter`, and `OpenAITutorService`.
 - `Models`: Codable session, plan, exercise, message, model choice, and tutor prompt policy.
-- `PencilCanvasView`: PencilKit canvas, native `PKToolPicker`, pen/marker/eraser helpers, undo/redo, two-finger undo, and three-finger redo.
+- `PencilCanvasView`: PencilKit canvas on a 50,000pt board centered at (25,000, 25,000) so writing and panning work in every direction from where a session starts, native `PKToolPicker`, pen/marker/eraser helpers, undo/redo, two-finger undo, three-finger redo, and a Center control that returns to the current ink.
 - SwiftUI views: onboarding chat, plan card, workspace, selection/evaluation UI, floating chat, and settings.
 
 ## Prototype limitations
 
-This pass intentionally has no backend, accounts, cloud sync, automatic continuous change detection, handwriting OCR, or teacher analytics. Evaluation is explicit (full canvas or a dragged rectangle) and sends the rendered PencilKit image only when requested. Local session persistence is best effort in Application Support; resetting a session removes the local drawing and messages.
+This pass intentionally has no backend, accounts, cloud sync, automatic continuous change detection, handwriting OCR, or teacher analytics. Evaluation is explicit (the whole board or a dragged rectangle) and sends the rendered PencilKit image only when requested; board evaluation renders the bounding box of every stroke, so scrolling away from a long solution does not truncate what the tutor sees. Local session persistence is best effort in Application Support; resetting a session removes the local drawing and messages.
 
 ## Manual QA checklist
 
 - Launch without a key: setup-required badge/card appears and live request controls stay hidden until a key is saved.
 - Send a goal and continue the chat; when the tutor returns a coherent plan and exercise, tap **Start working on the board**.
 - Write with Apple Pencil or simulator touch. Try native tool picker, pen/marker/eraser, undo/redo, two-finger tap undo, and three-finger tap redo.
+- Pan the board up, down, left, and right from the start position, write in a far corner, then tap **Center** and confirm it returns to your ink. Reopen the session and confirm it opens on that ink rather than on blank board.
 - Toggle **Select region**, drag a rectangle, and evaluate it; also evaluate the full board. Confirm loading state and tutor feedback in the floating panel.
 - Collapse, drag, and expand the panel in different corners. Try **I don’t know** and confirm the tutor treats it as a teaching signal.
 - Add a key in Settings, relaunch, and confirm the live badge, session, and selected model persist while the key remains in Keychain. Remove it and confirm setup guidance returns.

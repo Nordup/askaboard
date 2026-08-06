@@ -68,6 +68,10 @@ final class MathTutorUITests: XCTestCase {
         app.launchArguments = ["--ui-test-reset", "--ui-test-demo-service", "--e2e-seed-radical-attempt"]
         app.launch()
         XCTAssertTrue(app.staticTexts["Apple Pencil workspace"].waitForExistence(timeout: 8))
+        XCTAssertTrue(
+            app.buttons["center-on-work"].exists,
+            "An endless board must offer a way back to the student's ink"
+        )
 
         // The full-screen chat is an overlay over the same workspace view. Going
         // there and back must preserve the board/session route rather than

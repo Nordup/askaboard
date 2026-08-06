@@ -406,6 +406,22 @@ struct WorkspaceView: View {
     private func actionBar(compact: Bool) -> some View {
         HStack(spacing: compact ? 6 : 8) {
             Button {
+                capture.centerOnContent(animated: true)
+            } label: {
+                if compact {
+                    Image(systemName: "scope")
+                        .frame(width: 40, height: 40)
+                } else {
+                    Label("Center", systemImage: "scope")
+                }
+            }
+            .font(.subheadline.weight(.semibold))
+            .buttonStyle(.bordered)
+            .tint(.primary)
+            .accessibilityIdentifier("center-on-work")
+            .accessibilityLabel("Center on my work")
+
+            Button {
                 selectionMode.toggle()
                 if !selectionMode { selectionRect = nil }
             } label: {
