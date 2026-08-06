@@ -148,6 +148,31 @@ final class CanvasCapture: ObservableObject {
     func redo() { canvasView?.undoManager?.redo() }
     func clear() { canvasView?.drawing = PKDrawing() }
 
+    /// Scrolls the board to the student's ink, or back to the session origin
+    /// when the board is empty. This is also how sessions saved before the
+    /// board became infinite stay usable: their strokes sit near the board's
+    /// top-left corner, and scrolling to them beats rewriting stored drawings.
+    func centerOnContent(animated: Bool) {
+        guard let canvasView else { return }
+        let viewport = canvasView.bounds.size
+        guard viewport.width > 0, viewport.height > 0 else { return }
+
+        let inkBounds = canvasView.drawing.bounds
+        let target = inkBounds.isNull || inkBounds.isEmpty
+            ? CGRect(origin: PencilCanvasConfiguration.boardOrigin, size: .zero)
+            : inkBounds
+
+        canvasView.setContentOffset(
+            CanvasScroller.offset(
+                centering: target,
+                viewport: viewport,
+                zoomScale: canvasView.zoomScale,
+                scaledContentSize: canvasView.contentSize
+            ),
+            animated: animated
+        )
+    }
+
     func snapshotData(region: CGRect? = nil) -> Data? {
         guard let canvasView else { return nil }
         let viewport = CGRect(origin: .zero, size: canvasView.bounds.size)
@@ -274,6 +299,15 @@ struct PencilCanvasView: UIViewRepresentable {
         PencilCanvasConfiguration.configure(canvas, viewport: viewport, preserveViewport: context.coordinator.didConfigure)
         context.coordinator.lastViewportSize = viewport
         context.coordinator.didConfigure = true
+
+        // `configure` can only center the board origin — it never sees the
+        // drawing. Restored ink wins over that default, but only on the first
+        // real layout: later viewport changes take the preserveViewport path
+        // above and must not yank a panned-away student back to their strokes.
+        if !context.coordinator.didCenterOnContent {
+            capture.centerOnContent(animated: false)
+            context.coordinator.didCenterOnContent = true
+        }
     }
 
     static func dismantleUIView(_ uiView: PKCanvasView, coordinator: Coordinator) {
@@ -286,6 +320,7 @@ struct PencilCanvasView: UIViewRepresentable {
         var toolPicker: PKToolPicker?
         var lastViewportSize: CGSize = .zero
         var didConfigure = false
+        var didCenterOnContent = false
 
         init(_ parent: PencilCanvasView) { self.parent = parent }
 

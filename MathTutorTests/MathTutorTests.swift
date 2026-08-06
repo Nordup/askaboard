@@ -240,6 +240,55 @@ final class MathTutorTests: XCTestCase {
     }
 
     @MainActor
+    func testCenterOnContentBringsDistantInkIntoTheViewport() {
+        let canvas = configuredCanvas()
+        canvas.drawing = makeDrawing(color: .black, origin: CGPoint(x: 30_000, y: 41_000))
+        let capture = CanvasCapture()
+        capture.canvasView = canvas
+
+        let viewportRect = CGRect(origin: .zero, size: canvas.bounds.size)
+        let before = CanvasViewportMapper.drawingRect(
+            for: viewportRect,
+            canvasBounds: canvas.bounds,
+            zoomScale: canvas.zoomScale
+        )
+        XCTAssertFalse(before.intersects(canvas.drawing.bounds), "Ink 30,000pt away must start off screen")
+
+        capture.centerOnContent(animated: false)
+
+        let after = CanvasViewportMapper.drawingRect(
+            for: viewportRect,
+            canvasBounds: canvas.bounds,
+            zoomScale: canvas.zoomScale
+        )
+        XCTAssertTrue(
+            after.contains(CGPoint(x: canvas.drawing.bounds.midX, y: canvas.drawing.bounds.midY)),
+            "Centering must scroll the board to wherever the student's ink lives"
+        )
+    }
+
+    @MainActor
+    func testCenterOnContentReturnsToTheBoardOriginWhenEmpty() {
+        let canvas = configuredCanvas()
+        let capture = CanvasCapture()
+        capture.canvasView = canvas
+        canvas.contentOffset = CGPoint(x: 40_000, y: 40_000)
+
+        capture.centerOnContent(animated: false)
+
+        XCTAssertEqual(
+            canvas.contentOffset.x,
+            PencilCanvasConfiguration.boardOrigin.x - canvas.bounds.width / 2,
+            accuracy: 0.5
+        )
+        XCTAssertEqual(
+            canvas.contentOffset.y,
+            PencilCanvasConfiguration.boardOrigin.y - canvas.bounds.height / 2,
+            accuracy: 0.5
+        )
+    }
+
+    @MainActor
     func testEvaluationPersistsLearnerAndTutorTurnsAndDismissKeepsHistory() async throws {
         let store = TutorStore(service: DemoTutorService())
         store.resetSession()
