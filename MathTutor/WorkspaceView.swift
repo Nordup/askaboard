@@ -577,9 +577,14 @@ struct WorkspaceView: View {
             // Ink spread over more board than one legible image can hold is
             // cropped to the student's work. Telling the tutor it is looking at
             // the whole board would invite confident feedback on a portion of it.
+            //
+            // Both labels are spliced into a first-person learner turn ("Please
+            // evaluate my work on …") and a third-person policy line ("The
+            // learner asked you to evaluate …"), so they have to read correctly
+            // in both and cannot carry their own "my".
             regionDescription: snapshot.coversAllInk
                 ? "the whole board"
-                : "the main part of my work on the board"
+                : "the main working area of the board (some ink further out is not shown)"
         )
         panelExpanded = true
     }

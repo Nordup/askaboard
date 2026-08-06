@@ -335,6 +335,16 @@ final class MathTutorTests: XCTestCase {
         // keeps 50pt handwriting ~25px tall instead of a few pixels.
         XCTAssertEqual(image.size.width, PencilCanvasConfiguration.maximumEvaluationSpan / 2, accuracy: 1)
         XCTAssertEqual(image.size.height, PencilCanvasConfiguration.maximumEvaluationSpan / 2, accuracy: 1)
+
+        // These two clusters sit 40,000pt apart, so their centroid lands in the
+        // empty gap between them. Bounding the region is not enough on its own:
+        // without a fallback the crop contains no strokes at all and the tutor
+        // grades blank paper while being told it is the student's working area.
+        XCTAssertGreaterThan(
+            try pixelStats(for: snapshot.data).darkPixelCount,
+            40,
+            "A bounded evaluation region must still contain ink, never blank paper"
+        )
     }
 
     @MainActor

@@ -246,12 +246,23 @@ final class CanvasCapture: ObservableObject {
                 x: centers.reduce(0) { $0 + $1.x } / CGFloat(centers.count),
                 y: centers.reduce(0) { $0 + $1.y } / CGFloat(centers.count)
             )
-        return CGRect(
-            x: centroid.x - span / 2,
-            y: centroid.y - span / 2,
-            width: span,
-            height: span
-        )
+        let region = square(around: centroid, span: span)
+        // Two comparable clusters far apart put the centroid in the empty gap
+        // between them, and a region containing no strokes renders as blank
+        // paper the tutor would grade in good faith. Fall back to the stroke
+        // nearest that midpoint so the image always carries ink.
+        if drawing.strokes.contains(where: { $0.renderBounds.intersects(region) }) {
+            return region
+        }
+        guard let nearest = centers.min(by: { first, second in
+            hypot(first.x - centroid.x, first.y - centroid.y)
+                < hypot(second.x - centroid.x, second.y - centroid.y)
+        }) else { return region }
+        return square(around: nearest, span: span)
+    }
+
+    private static func square(around center: CGPoint, span: CGFloat) -> CGRect {
+        CGRect(x: center.x - span / 2, y: center.y - span / 2, width: span, height: span)
     }
 
     private func renderPNG(drawingRect requested: CGRect) -> Data? {
