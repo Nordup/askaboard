@@ -533,10 +533,10 @@ struct WorkspaceView: View {
     }
 
     private func evaluateFullCanvas() {
-        guard let data = capture.snapshotData() else { return }
+        guard let data = capture.snapshotAllInkData() else { return }
         selectionMode = false
         selectionRect = nil
-        store.evaluate(imageData: data, regionDescription: "the full canvas")
+        store.evaluate(imageData: data, regionDescription: "the whole board")
         panelExpanded = true
     }
 

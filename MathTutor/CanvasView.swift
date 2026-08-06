@@ -185,7 +185,21 @@ final class CanvasCapture: ObservableObject {
             canvasBounds: canvasView.bounds,
             zoomScale: canvasView.zoomScale
         )
-        guard requested.width > 0, requested.height > 0 else { return nil }
+        return renderPNG(drawingRect: requested)
+    }
+
+    /// Every stroke on the board, regardless of where the student has scrolled.
+    /// A viewport-bounded capture would silently truncate a long solution that
+    /// has been panned off screen, which an infinite board makes easy to do.
+    func snapshotAllInkData() -> Data? {
+        guard let canvasView else { return nil }
+        let inkBounds = canvasView.drawing.bounds
+        guard !inkBounds.isNull, inkBounds.width > 0, inkBounds.height > 0 else { return nil }
+        return renderPNG(drawingRect: inkBounds.insetBy(dx: -24, dy: -24))
+    }
+
+    private func renderPNG(drawingRect requested: CGRect) -> Data? {
+        guard let canvasView, requested.width > 0, requested.height > 0 else { return nil }
 
         // Keep handwriting crisp without sending an unnecessarily huge original-detail
         // image. A white background also avoids ambiguous transparent-PNG rendering.

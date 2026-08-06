@@ -240,6 +240,37 @@ final class MathTutorTests: XCTestCase {
     }
 
     @MainActor
+    func testBoardEvaluationCapturesInkOutsideTheVisibleViewport() throws {
+        let canvas = configuredCanvas()
+        canvas.drawing = makeDrawing(color: .black, origin: CGPoint(x: 10_000, y: 12_000))
+        let capture = CanvasCapture()
+        capture.canvasView = canvas
+
+        // The viewport snapshot renders blank paper: the ink is 10,000pt away.
+        let visible = try XCTUnwrap(capture.snapshotData())
+        XCTAssertEqual(
+            try pixelStats(for: visible).darkPixelCount,
+            0,
+            "The viewport snapshot cannot see ink that is 10,000pt off screen"
+        )
+
+        let allInk = try XCTUnwrap(
+            capture.snapshotAllInkData(),
+            "Board evaluation must capture ink wherever it lives on the board"
+        )
+        XCTAssertGreaterThan(try pixelStats(for: allInk).darkPixelCount, 40)
+    }
+
+    @MainActor
+    func testBoardEvaluationSnapshotIsNilOnAnEmptyBoard() {
+        let canvas = configuredCanvas()
+        let capture = CanvasCapture()
+        capture.canvasView = canvas
+
+        XCTAssertNil(capture.snapshotAllInkData(), "An empty board must not send an evaluation image")
+    }
+
+    @MainActor
     func testCenterOnContentBringsDistantInkIntoTheViewport() {
         let canvas = configuredCanvas()
         canvas.drawing = makeDrawing(color: .black, origin: CGPoint(x: 30_000, y: 41_000))
