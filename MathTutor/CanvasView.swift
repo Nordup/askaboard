@@ -23,6 +23,16 @@ enum PencilCanvasConfiguration {
     /// here is what makes panning up and left possible at all.
     static let boardOrigin = CGPoint(x: boardExtent / 2, y: boardExtent / 2)
 
+    /// The widest span of board a single evaluation image may cover.
+    ///
+    /// `CanvasCapture.renderPNG` caps the longest rendered side at 2,000px, so
+    /// the render scale is `2000 / span`. At 4,000pt that is 0.5, which keeps
+    /// 50pt handwriting ~25px tall — still legible. An unbounded span would not:
+    /// the evaluated region is the union of every stroke on a 50,000pt board, so
+    /// one stray mark far from the work is enough to shrink a whole solution to
+    /// a few pixels and get confident feedback on a smudge.
+    static let maximumEvaluationSpan: CGFloat = 4_000
+
     static func contentSize(for viewport: CGSize) -> CGSize {
         CGSize(
             width: max(boardExtent, viewport.width),
@@ -188,14 +198,60 @@ final class CanvasCapture: ObservableObject {
         return renderPNG(drawingRect: requested)
     }
 
+    /// Whether a drawing carries ink that board evaluation can render. This is
+    /// exactly `snapshotAllInkData()`'s own precondition, so a control gated on
+    /// it is available precisely when evaluation would produce an image.
+    static func hasEvaluableInk(in drawing: PKDrawing?) -> Bool {
+        guard let drawing else { return false }
+        let bounds = drawing.bounds
+        return !bounds.isNull && bounds.width > 0 && bounds.height > 0
+    }
+
+    /// Whether the attached board currently has anything to evaluate.
+    var hasInk: Bool { Self.hasEvaluableInk(in: canvasView?.drawing) }
+
     /// Every stroke on the board, regardless of where the student has scrolled.
     /// A viewport-bounded capture would silently truncate a long solution that
     /// has been panned off screen, which an infinite board makes easy to do.
-    func snapshotAllInkData() -> Data? {
-        guard let canvasView else { return nil }
-        let inkBounds = canvasView.drawing.bounds
-        guard !inkBounds.isNull, inkBounds.width > 0, inkBounds.height > 0 else { return nil }
-        return renderPNG(drawingRect: inkBounds.insetBy(dx: -24, dy: -24))
+    ///
+    /// `coversAllInk` is `false` exactly when the ink spans more board than one
+    /// legible image can hold and the region was cropped to the student's work.
+    /// Callers must say so rather than describing the result as the whole board.
+    func snapshotAllInkData() -> (data: Data, coversAllInk: Bool)? {
+        guard let canvasView, Self.hasEvaluableInk(in: canvasView.drawing) else { return nil }
+        let padded = canvasView.drawing.bounds.insetBy(dx: -24, dy: -24)
+        let span = PencilCanvasConfiguration.maximumEvaluationSpan
+        let coversAllInk = padded.width <= span && padded.height <= span
+        let region = coversAllInk
+            ? padded
+            : Self.workCenteredRegion(of: canvasView.drawing, span: span)
+        guard let data = renderPNG(drawingRect: region) else { return nil }
+        return (data, coversAllInk)
+    }
+
+    /// A `span`-square region centered on the centroid of the strokes' own
+    /// bounding-box centers.
+    ///
+    /// The centroid, deliberately, and not the center of `drawing.bounds`: with
+    /// a hundred strokes of real work and one stray dot far away, the average of
+    /// the stroke centers still sits on the work, while the bounding box's
+    /// center is dragged halfway to the dot and can miss both.
+    private static func workCenteredRegion(of drawing: PKDrawing, span: CGFloat) -> CGRect {
+        let centers = drawing.strokes.map { stroke in
+            CGPoint(x: stroke.renderBounds.midX, y: stroke.renderBounds.midY)
+        }
+        let centroid = centers.isEmpty
+            ? CGPoint(x: drawing.bounds.midX, y: drawing.bounds.midY)
+            : CGPoint(
+                x: centers.reduce(0) { $0 + $1.x } / CGFloat(centers.count),
+                y: centers.reduce(0) { $0 + $1.y } / CGFloat(centers.count)
+            )
+        return CGRect(
+            x: centroid.x - span / 2,
+            y: centroid.y - span / 2,
+            width: span,
+            height: span
+        )
     }
 
     private func renderPNG(drawingRect requested: CGRect) -> Data? {
@@ -294,12 +350,34 @@ struct PencilCanvasView: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
-    func makeUIView(context: Context) -> PKCanvasView {
+    func makeUIView(context: Context) -> BoardCanvasView {
         let canvas = BoardCanvasView(frame: .zero)
         PencilCanvasConfiguration.configure(canvas, viewport: .zero)
+        // The first viewport report centers the board on the restored ink
+        // through `capture`, so the capture must already know the canvas by
+        // the time that closure can fire.
+        context.coordinator.canvas = canvas
+        capture.canvasView = canvas
         if let initialDrawingData, let drawing = try? PKDrawing(data: initialDrawingData) {
             canvas.drawing = drawing
         }
+
+        // UIKit's own layout pass — not SwiftUI's update cycle — is what
+        // reliably knows the canvas's real size. The canvas owns this closure,
+        // so `canvas` itself is captured weakly to avoid a retain cycle;
+        // `coordinator` doesn't hold the canvas strongly (it holds it `weak`),
+        // so it is safe to capture normally.
+        //
+        // This assignment must stay below the drawing restore: if a layout pass
+        // fired in between, the first report would center an empty board and
+        // latch the first-report flag, so a session's saved ink would be left
+        // off screen again. Do not tidy it upward.
+        let coordinator = context.coordinator
+        canvas.onViewportChange = { [weak canvas] size in
+            guard let canvas else { return }
+            coordinator.handleViewportChange(canvas: canvas, size: size)
+        }
+
         // Install the delegate after restoring persisted ink so the initial load
         // does not publish a drawing change while SwiftUI is still updating views.
         canvas.delegate = context.coordinator
@@ -307,30 +385,7 @@ struct PencilCanvasView: UIViewRepresentable {
         let toolPicker = PKToolPicker()
         toolPicker.addObserver(canvas)
         context.coordinator.toolPicker = toolPicker
-        context.coordinator.canvas = canvas
-        capture.canvasView = canvas
         context.coordinator.updateActivation(isActive)
-
-        // UIKit's own layout pass — not SwiftUI's update cycle — is what
-        // reliably knows the canvas's real size. The canvas owns this
-        // closure, so `canvas` itself is captured weakly to avoid a retain
-        // cycle; `coordinator` and `boardCapture` don't hold the canvas
-        // strongly (both hold it `weak`), so they're safe to capture normally.
-        let coordinator = context.coordinator
-        let boardCapture = capture
-        canvas.onViewportChange = { [weak canvas] size in
-            guard let canvas else { return }
-            let isFirstReport = !coordinator.didConfigure
-            PencilCanvasConfiguration.configure(canvas, viewport: size, preserveViewport: !isFirstReport)
-            coordinator.didConfigure = true
-            // `configure` can only center the board origin — it never sees
-            // the drawing. Restored ink wins over that default, but only on
-            // the first real layout: later viewport changes (rotation, split
-            // view) must not yank a panned-away student back to their strokes.
-            if isFirstReport {
-                boardCapture.centerOnContent(animated: false)
-            }
-        }
 
         let undoTap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.twoFingerUndo))
         undoTap.numberOfTouchesRequired = 2
@@ -346,7 +401,7 @@ struct PencilCanvasView: UIViewRepresentable {
         return canvas
     }
 
-    func updateUIView(_ canvas: PKCanvasView, context: Context) {
+    func updateUIView(_ canvas: BoardCanvasView, context: Context) {
         context.coordinator.parent = self
         capture.canvasView = canvas
         // Showing or hiding full chat doesn't change the canvas bounds, but
@@ -355,13 +410,13 @@ struct PencilCanvasView: UIViewRepresentable {
         context.coordinator.updateActivation(isActive)
     }
 
-    static func dismantleUIView(_ uiView: PKCanvasView, coordinator: Coordinator) {
+    static func dismantleUIView(_ uiView: BoardCanvasView, coordinator: Coordinator) {
         coordinator.teardown(canvas: uiView)
     }
 
     final class Coordinator: NSObject, PKCanvasViewDelegate, UIGestureRecognizerDelegate {
         var parent: PencilCanvasView
-        weak var canvas: PKCanvasView?
+        weak var canvas: BoardCanvasView?
         var toolPicker: PKToolPicker?
         /// Whether `BoardCanvasView.onViewportChange` has fired at least
         /// once. Doubles as the "first report vs. later" routing signal: the
@@ -370,6 +425,23 @@ struct PencilCanvasView: UIViewRepresentable {
         var didConfigure = false
 
         init(_ parent: PencilCanvasView) { self.parent = parent }
+
+        /// Routes a `BoardCanvasView` layout report to board setup. The first
+        /// report configures the board fresh and opens it on the session's
+        /// existing ink; every later one (rotation, split view) preserves the
+        /// viewport instead.
+        func handleViewportChange(canvas: BoardCanvasView, size: CGSize) {
+            let isFirstReport = !didConfigure
+            PencilCanvasConfiguration.configure(canvas, viewport: size, preserveViewport: !isFirstReport)
+            didConfigure = true
+            // `configure` can only center the board origin — it never sees the
+            // drawing. Restored ink wins over that default, but only on the
+            // first real layout: later viewport changes must not yank a
+            // panned-away student back to their strokes.
+            if isFirstReport {
+                parent.capture.centerOnContent(animated: false)
+            }
+        }
 
         /// Synchronizes UIKit's first-responder/tool-picker state with the
         /// SwiftUI whiteboard visibility contract. We apply the active path on

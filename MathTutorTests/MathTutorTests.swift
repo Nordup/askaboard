@@ -151,6 +151,30 @@ final class MathTutorTests: XCTestCase {
     }
 
     @MainActor
+    func testPreserveViewportReconfigureKeepsThePlaceAtNonDefaultZoom() {
+        let canvas = PKCanvasView(frame: CGRect(x: 0, y: 0, width: 1_024, height: 768))
+        PencilCanvasConfiguration.configure(canvas, viewport: canvas.bounds.size)
+        canvas.setZoomScale(2, animated: false)
+        let panned = CGPoint(x: 60_000, y: 61_000)
+        canvas.contentOffset = panned
+
+        // A rotation or split-view resize reconfigures with the viewport
+        // preserved. The student must stay exactly where they were working,
+        // and the whole board must stay reachable at that zoom.
+        PencilCanvasConfiguration.configure(canvas, viewport: canvas.bounds.size, preserveViewport: true)
+
+        XCTAssertEqual(canvas.zoomScale, 2, accuracy: 0.001)
+        XCTAssertEqual(canvas.contentOffset.x, panned.x, accuracy: 0.5)
+        XCTAssertEqual(canvas.contentOffset.y, panned.y, accuracy: 0.5)
+        XCTAssertEqual(
+            canvas.contentSize.width,
+            PencilCanvasConfiguration.boardExtent * 2,
+            accuracy: 1,
+            "A preserved-viewport reconfigure must not shrink the reachable board at non-default zoom"
+        )
+    }
+
+    @MainActor
     func testCanvasCaptureProducesBlackInkAndEmbedsExactPNGInRequest() throws {
         let canvas = configuredCanvas()
         canvas.drawing = makeDrawing(color: .black)
@@ -189,6 +213,9 @@ final class MathTutorTests: XCTestCase {
         canvas.contentOffset = CGPoint(x: 180, y: 220)
         XCTAssertEqual(canvas.bounds.minX, 180, accuracy: 0.001)
         XCTAssertEqual(canvas.bounds.minY, 220, accuracy: 0.001)
+        // MEASUREMENT (Fix 1): does UIScrollView re-derive contentSize from the
+        // zoom view when zoomScale changes?
+        XCTAssertEqual(canvas.contentSize.width, 100_000, accuracy: 1)
 
         let fullData = try XCTUnwrap(capture.snapshotData())
         let selectedViewport = CGRect(x: 0, y: 240, width: 500, height: 300)
@@ -258,7 +285,8 @@ final class MathTutorTests: XCTestCase {
             capture.snapshotAllInkData(),
             "Board evaluation must capture ink wherever it lives on the board"
         )
-        XCTAssertGreaterThan(try pixelStats(for: allInk).darkPixelCount, 40)
+        XCTAssertGreaterThan(try pixelStats(for: allInk.data).darkPixelCount, 40)
+        XCTAssertTrue(allInk.coversAllInk, "Ink this compact fits in one legible image")
     }
 
     @MainActor
@@ -268,6 +296,88 @@ final class MathTutorTests: XCTestCase {
         capture.canvasView = canvas
 
         XCTAssertNil(capture.snapshotAllInkData(), "An empty board must not send an evaluation image")
+    }
+
+    @MainActor
+    func testBoardEvaluationCoversAllInkForOrdinaryWorkNearTheOrigin() throws {
+        let canvas = configuredCanvas()
+        canvas.drawing = makeDrawing(color: .black, origin: PencilCanvasConfiguration.boardOrigin)
+        let capture = CanvasCapture()
+        capture.canvasView = canvas
+
+        let snapshot = try XCTUnwrap(capture.snapshotAllInkData())
+        XCTAssertTrue(snapshot.coversAllInk, "A page of ordinary work is evaluated whole")
+        XCTAssertGreaterThan(
+            try pixelStats(for: snapshot.data).darkPixelCount,
+            40,
+            "The evaluated image must still contain the student's ink"
+        )
+    }
+
+    @MainActor
+    func testBoardEvaluationBoundsAnEnormousSpanAndReportsPartialCoverage() throws {
+        let canvas = configuredCanvas()
+        canvas.drawing = PKDrawing(strokes:
+            makeDrawing(color: .black, origin: CGPoint(x: 5_000, y: 25_000)).strokes
+                + makeDrawing(color: .black, origin: CGPoint(x: 45_000, y: 25_000)).strokes
+        )
+        let capture = CanvasCapture()
+        capture.canvasView = canvas
+
+        let snapshot = try XCTUnwrap(capture.snapshotAllInkData())
+        XCTAssertFalse(
+            snapshot.coversAllInk,
+            "Ink spanning 40,000pt cannot be rendered legibly in one image, so evaluation must not claim it was"
+        )
+
+        let image = try XCTUnwrap(UIImage(data: snapshot.data))
+        // 4,000pt of board at the renderer's 2,000px cap is a 0.5 scale, which
+        // keeps 50pt handwriting ~25px tall instead of a few pixels.
+        XCTAssertEqual(image.size.width, PencilCanvasConfiguration.maximumEvaluationSpan / 2, accuracy: 1)
+        XCTAssertEqual(image.size.height, PencilCanvasConfiguration.maximumEvaluationSpan / 2, accuracy: 1)
+    }
+
+    @MainActor
+    func testBoardEvaluationKeepsTheWorkWhenOneStrayMarkIsFarAway() throws {
+        let center = PencilCanvasConfiguration.boardOrigin
+        let clusterStrokes = makeClusterStrokes(center: center, span: 3_800, strokeCount: 100)
+        let clusterBounds = PKDrawing(strokes: clusterStrokes).bounds
+
+        let canvas = configuredCanvas()
+        let capture = CanvasCapture()
+        capture.canvasView = canvas
+
+        canvas.drawing = PKDrawing(strokes: clusterStrokes)
+        let clusterOnly = try XCTUnwrap(capture.snapshotAllInkData())
+        XCTAssertTrue(clusterOnly.coversAllInk)
+        let clusterDarkPixels = try pixelStats(for: clusterOnly.data).darkPixelCount
+        XCTAssertGreaterThan(clusterDarkPixels, 1_000)
+
+        let strayMark = makeDrawing(color: .black, origin: CGPoint(x: center.x + 30_000, y: center.y))
+        canvas.drawing = PKDrawing(strokes: clusterStrokes + strayMark.strokes)
+        let withStrayMark = try XCTUnwrap(capture.snapshotAllInkData())
+        XCTAssertFalse(withStrayMark.coversAllInk)
+
+        // Centering the crop on the average stroke center keeps it on the work:
+        // one stray mark moves a hundred-stroke average by a fraction of the
+        // crop, so nearly all of the cluster survives at the same render scale.
+        let darkPixels = try pixelStats(for: withStrayMark.data).darkPixelCount
+        XCTAssertGreaterThan(Double(darkPixels), Double(clusterDarkPixels) * 0.75)
+        XCTAssertLessThan(Double(darkPixels), Double(clusterDarkPixels) * 1.15)
+
+        // The bounding box's center, by contrast, is dragged halfway to the
+        // stray mark and lands on blank board — missing the work entirely.
+        let span = PencilCanvasConfiguration.maximumEvaluationSpan
+        let boundsCentered = CGRect(
+            x: canvas.drawing.bounds.midX - span / 2,
+            y: canvas.drawing.bounds.midY - span / 2,
+            width: span,
+            height: span
+        )
+        XCTAssertFalse(
+            boundsCentered.intersects(clusterBounds),
+            "This fixture is only meaningful if a bounding-box-centered crop would have missed the work"
+        )
     }
 
     @MainActor
@@ -317,6 +427,63 @@ final class MathTutorTests: XCTestCase {
             PencilCanvasConfiguration.boardOrigin.y - canvas.bounds.height / 2,
             accuracy: 0.5
         )
+    }
+
+    @MainActor
+    func testCanvasCaptureReportsWhetherTheBoardHasEvaluableInk() {
+        let capture = CanvasCapture()
+        XCTAssertFalse(capture.hasInk, "With no canvas attached there is nothing to evaluate")
+
+        let canvas = configuredCanvas()
+        capture.canvasView = canvas
+        XCTAssertFalse(capture.hasInk, "An empty board has no ink to evaluate")
+        XCTAssertNil(capture.snapshotAllInkData())
+
+        canvas.drawing = makeDrawing(color: .black)
+        XCTAssertTrue(capture.hasInk)
+        XCTAssertNotNil(capture.snapshotAllInkData())
+
+        canvas.drawing = PKDrawing()
+        XCTAssertFalse(capture.hasInk, "Clearing the board must make the evaluate control unavailable again")
+        XCTAssertNil(capture.snapshotAllInkData())
+    }
+
+    @MainActor
+    func testViewportChangeCentersOnInkOnceAndThenPreservesTheStudentsPan() {
+        let capture = CanvasCapture()
+        let parent = PencilCanvasView(
+            capture: capture,
+            initialDrawingData: nil,
+            onDrawingChange: { _ in },
+            onUndo: { },
+            onRedo: { }
+        )
+        let coordinator = PencilCanvasView.Coordinator(parent)
+        let canvas = BoardCanvasView(frame: CGRect(x: 0, y: 0, width: 1_024, height: 768))
+        canvas.drawing = makeDrawing(color: .black, origin: CGPoint(x: 30_000, y: 41_000))
+        capture.canvasView = canvas
+        coordinator.canvas = canvas
+
+        coordinator.handleViewportChange(canvas: canvas, size: canvas.bounds.size)
+
+        let visible = CanvasViewportMapper.drawingRect(
+            for: CGRect(origin: .zero, size: canvas.bounds.size),
+            canvasBounds: canvas.bounds,
+            zoomScale: canvas.zoomScale
+        )
+        XCTAssertTrue(
+            visible.contains(CGPoint(x: canvas.drawing.bounds.midX, y: canvas.drawing.bounds.midY)),
+            "The first viewport report must open the board on the session's existing ink"
+        )
+
+        // The student pans away to blank board; a later report (rotation, split
+        // view) must leave them there rather than yanking them back to the ink.
+        let panned = CGPoint(x: 1_200, y: 2_400)
+        canvas.contentOffset = panned
+        coordinator.handleViewportChange(canvas: canvas, size: canvas.bounds.size)
+
+        XCTAssertEqual(canvas.contentOffset.x, panned.x, accuracy: 0.5)
+        XCTAssertEqual(canvas.contentOffset.y, panned.y, accuracy: 0.5)
     }
 
     @MainActor
@@ -1016,6 +1183,23 @@ final class MathTutorTests: XCTestCase {
         let path = PKStrokePath(controlPoints: controlPoints, creationDate: Date(timeIntervalSinceReferenceDate: 0))
         let stroke = PKStroke(ink: ink, path: path, transform: .identity, mask: nil, randomSeed: 13)
         return PKDrawing(strokes: [stroke])
+    }
+
+    /// A grid of small marks filling a `span`-square around `center`, as
+    /// `strokeCount` separate strokes — a stand-in for a page of real work.
+    private func makeClusterStrokes(center: CGPoint, span: CGFloat, strokeCount: Int) -> [PKStroke] {
+        let columns: Int = max(1, Int(Double(strokeCount).squareRoot().rounded(.up)))
+        let step: CGFloat = span / CGFloat(max(1, columns - 1))
+        let left: CGFloat = center.x - span / 2
+        let top: CGFloat = center.y - span / 2
+        var strokes: [PKStroke] = []
+        for index in 0..<strokeCount {
+            let column: CGFloat = CGFloat(index % columns)
+            let row: CGFloat = CGFloat(index / columns)
+            let origin = CGPoint(x: left + column * step, y: top + row * step)
+            strokes.append(contentsOf: makeDrawing(color: .black, origin: origin).strokes)
+        }
+        return strokes
     }
 
     private struct PixelStats {

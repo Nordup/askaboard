@@ -59,7 +59,7 @@ Debug launches can seed a legible vector PencilKit attempt for the radical-equat
 
 ## Prototype limitations
 
-This pass intentionally has no backend, accounts, cloud sync, automatic continuous change detection, handwriting OCR, or teacher analytics. Evaluation is explicit (the whole board or a dragged rectangle) and sends the rendered PencilKit image only when requested; board evaluation renders the bounding box of every stroke, so scrolling away from a long solution does not truncate what the tutor sees. Local session persistence is best effort in Application Support; resetting a session removes the local drawing and messages.
+This pass intentionally has no backend, accounts, cloud sync, automatic continuous change detection, handwriting OCR, or teacher analytics. Evaluation is explicit (the whole board or a dragged rectangle) and sends the rendered PencilKit image only when requested; board evaluation renders the bounding box of every stroke, so scrolling away from a long solution does not truncate what the tutor sees. When ink is scattered over more than 4,000 pt of board — further than one legible image can cover — evaluation crops to the student's work and tells the tutor it is looking at a portion rather than the whole board. *Evaluate board* is disabled while the board is empty. Local session persistence is best effort in Application Support; resetting a session removes the local drawing and messages.
 
 ## Manual QA checklist
 

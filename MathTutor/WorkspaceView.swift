@@ -151,6 +151,12 @@ struct WorkspaceView: View {
     @State private var showingClearConfirmation = false
     @State private var showingSettings = false
     @State private var showPlan = false
+    /// Whether the board has ink to evaluate. Tracked in view state rather than
+    /// read from `capture` during `body`, because the canvas is a UIKit view
+    /// whose drawing changes cannot publish from inside a SwiftUI update. Every
+    /// path that can change the board's ink updates this: the initial restore,
+    /// each drawing change (including undo/redo), and clearing the board.
+    @State private var boardHasInk = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -160,7 +166,10 @@ struct WorkspaceView: View {
                     capture: capture,
                     initialDrawingData: store.session.drawingData,
                     isActive: !showingFullChat,
-                    onDrawingChange: store.updateDrawing,
+                    onDrawingChange: { drawing in
+                        store.updateDrawing(drawing)
+                        boardHasInk = CanvasCapture.hasEvaluableInk(in: drawing)
+                    },
                     onUndo: capture.undo,
                     onRedo: capture.redo
                 )
@@ -197,6 +206,7 @@ struct WorkspaceView: View {
                         evaluationText: store.evaluationText,
                         errorMessage: store.errorMessage,
                         isLoading: store.isLoading || store.isEvaluating,
+                        canEvaluateBoard: boardHasInk,
                         onSend: { value in store.send(value) },
                         onDontKnow: store.sayIDontKnow,
                         onEvaluate: evaluateFullCanvas,
@@ -244,6 +254,12 @@ struct WorkspaceView: View {
                         .zIndex(10)
                 }
             }
+            // `task` rather than `onAppear`: its body is scheduled on the next
+            // main-actor hop, so it runs after the representable has been made
+            // and the session's saved ink restored. That is what makes a resumed
+            // session's Evaluate board control available immediately, instead of
+            // staying disabled until the student's next stroke.
+            .task { boardHasInk = capture.hasInk }
             .sheet(isPresented: $showingSettings) { SettingsView() }
             .sheet(isPresented: $showPlan) {
                 if let plan = store.session.plan { SessionPlanSheet(plan: plan) }
@@ -253,6 +269,7 @@ struct WorkspaceView: View {
                     capture.clear()
                     store.clearDrawing()
                     selectionRect = nil
+                    boardHasInk = false
                 }
                 Button("Cancel", role: .cancel) { }
             } message: {
@@ -462,6 +479,9 @@ struct WorkspaceView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+                // An empty board produces no evaluation image, so the request
+                // would silently do nothing. Disabled, the control tells the truth.
+                .disabled(!boardHasInk)
                 .accessibilityIdentifier("evaluate-board")
             }
 
@@ -549,10 +569,18 @@ struct WorkspaceView: View {
     }
 
     private func evaluateFullCanvas() {
-        guard let data = capture.snapshotAllInkData() else { return }
+        guard let snapshot = capture.snapshotAllInkData() else { return }
         selectionMode = false
         selectionRect = nil
-        store.evaluate(imageData: data, regionDescription: "the whole board")
+        store.evaluate(
+            imageData: snapshot.data,
+            // Ink spread over more board than one legible image can hold is
+            // cropped to the student's work. Telling the tutor it is looking at
+            // the whole board would invite confident feedback on a portion of it.
+            regionDescription: snapshot.coversAllInk
+                ? "the whole board"
+                : "the main part of my work on the board"
+        )
         panelExpanded = true
     }
 
@@ -571,6 +599,9 @@ struct FloatingTutorPanel: View {
     let evaluationText: String?
     let errorMessage: String?
     let isLoading: Bool
+    /// Mirrors the board's Evaluate control: this panel's shortcut runs the
+    /// same board evaluation, so it is unavailable on an empty board too.
+    let canEvaluateBoard: Bool
     let onSend: (String) -> Void
     let onDontKnow: () -> Void
     let onEvaluate: () -> Void
@@ -743,6 +774,7 @@ struct FloatingTutorPanel: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    .disabled(!canEvaluateBoard)
                 }
                 .padding(.horizontal, 11)
                 .padding(.bottom, 11)
