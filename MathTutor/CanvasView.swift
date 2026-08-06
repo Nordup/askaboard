@@ -3,21 +3,40 @@ import SwiftUI
 import UIKit
 
 enum PencilCanvasConfiguration {
-    static let minimumZoomScale: CGFloat = 0.75
+    static let minimumZoomScale: CGFloat = 0.25
     static let maximumZoomScale: CGFloat = 3
     static let defaultZoomScale: CGFloat = 1
-    static let minimumContentSize = CGSize(width: 2_400, height: 1_600)
-    static let contentInset = UIEdgeInsets(top: 96, left: 64, bottom: 224, right: 64)
+
+    /// The board is one very large fixed square rather than a page: ~18 screens
+    /// of pan in every direction from the origin on a 12.9" iPad at 1x zoom.
+    ///
+    /// Growing the content on demand would be literally unbounded, but
+    /// extending up or left means translating every existing stroke — and
+    /// assigning `canvas.drawing` does not register with PencilKit's undo
+    /// manager, so each shift would desynchronize undo. A fixed extent avoids
+    /// that entirely. The magnitude is also deliberate: ink coordinates lose
+    /// visible precision as 32-bit floats only in the millions, so 50,000
+    /// leaves the far corners ~40x clear.
+    static let boardExtent: CGFloat = 50_000
+
+    /// Where a session starts, in drawing coordinates. Centering the viewport
+    /// here is what makes panning up and left possible at all.
+    static let boardOrigin = CGPoint(x: boardExtent / 2, y: boardExtent / 2)
 
     static func contentSize(for viewport: CGSize) -> CGSize {
         CGSize(
-            width: max(minimumContentSize.width, viewport.width),
-            height: max(minimumContentSize.height, viewport.height)
+            width: max(boardExtent, viewport.width),
+            height: max(boardExtent, viewport.height)
         )
     }
 
-    static func initialContentOffset() -> CGPoint {
-        CGPoint(x: -contentInset.left, y: -contentInset.top)
+    static func initialContentOffset(viewport: CGSize) -> CGPoint {
+        CanvasScroller.offset(
+            centering: CGRect(origin: boardOrigin, size: .zero),
+            viewport: viewport,
+            zoomScale: defaultZoomScale,
+            scaledContentSize: contentSize(for: viewport)
+        )
     }
 
     @MainActor
@@ -37,7 +56,12 @@ enum PencilCanvasConfiguration {
         canvas.minimumZoomScale = minimumZoomScale
         canvas.maximumZoomScale = maximumZoomScale
         canvas.contentSize = contentSize(for: viewport)
-        canvas.contentInset = contentInset
+        // The board has no reachable edges, so edge padding would only distort
+        // the offset math it was meant to soften.
+        canvas.contentInset = .zero
+        // A scroll indicator whose thumb is 2% of the track reports nothing.
+        canvas.showsHorizontalScrollIndicator = false
+        canvas.showsVerticalScrollIndicator = false
         canvas.alwaysBounceVertical = true
         canvas.alwaysBounceHorizontal = true
 
@@ -58,8 +82,41 @@ enum PencilCanvasConfiguration {
             canvas.contentOffset = previousContentOffset
         } else {
             canvas.setZoomScale(defaultZoomScale, animated: false)
-            canvas.contentOffset = initialContentOffset()
+            canvas.contentOffset = initialContentOffset(viewport: viewport)
         }
+    }
+}
+
+enum CanvasScroller {
+    /// The scroll offset that centers `target` in the viewport, clamped to the
+    /// board's scrollable range.
+    ///
+    /// `target` is in unscaled PencilKit drawing coordinates, while
+    /// `viewport`, `scaledContentSize`, and the returned offset are in the
+    /// scroll view's scaled space — the same convention `CanvasViewportMapper`
+    /// inverts. Pass `canvas.contentSize` for `scaledContentSize`; UIScrollView
+    /// already folds `zoomScale` into it.
+    static func offset(
+        centering target: CGRect,
+        viewport: CGSize,
+        zoomScale: CGFloat,
+        scaledContentSize: CGSize
+    ) -> CGPoint {
+        let scale = max(zoomScale, .leastNonzeroMagnitude)
+        let proposed = CGPoint(
+            x: target.midX * scale - viewport.width / 2,
+            y: target.midY * scale - viewport.height / 2
+        )
+        // A viewport wider than the board (possible only at minimum zoom on a
+        // hypothetical huge display) has no scroll range, hence the max(0,).
+        let maximum = CGPoint(
+            x: max(0, scaledContentSize.width - viewport.width),
+            y: max(0, scaledContentSize.height - viewport.height)
+        )
+        return CGPoint(
+            x: min(max(proposed.x, 0), maximum.x),
+            y: min(max(proposed.y, 0), maximum.y)
+        )
     }
 }
 

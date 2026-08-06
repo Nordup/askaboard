@@ -35,13 +35,105 @@ final class MathTutorTests: XCTestCase {
         XCTAssertEqual(drawingRect.height, 60, accuracy: 0.001)
     }
 
-    func testPencilCanvasConfigurationHasStableContentAndZoomBounds() {
-        let contentSize = PencilCanvasConfiguration.contentSize(for: CGSize(width: 1_024, height: 768))
+    func testPencilCanvasConfigurationCentersAnInfiniteBoard() {
+        let viewport = CGSize(width: 1_024, height: 768)
+        let contentSize = PencilCanvasConfiguration.contentSize(for: viewport)
 
-        XCTAssertEqual(contentSize, PencilCanvasConfiguration.minimumContentSize)
-        XCTAssertEqual(PencilCanvasConfiguration.initialContentOffset(), CGPoint(x: -64, y: -96))
+        XCTAssertEqual(contentSize.width, PencilCanvasConfiguration.boardExtent)
+        XCTAssertEqual(contentSize.height, PencilCanvasConfiguration.boardExtent)
+        XCTAssertEqual(PencilCanvasConfiguration.boardOrigin, CGPoint(x: 25_000, y: 25_000))
+
+        // The session starts in the middle of the board, not at a corner, which
+        // is what makes panning up and left possible at all.
+        let offset = PencilCanvasConfiguration.initialContentOffset(viewport: viewport)
+        XCTAssertEqual(offset.x, 25_000 - 512, accuracy: 0.001)
+        XCTAssertEqual(offset.y, 25_000 - 384, accuracy: 0.001)
+
+        XCTAssertEqual(PencilCanvasConfiguration.minimumZoomScale, 0.25, accuracy: 0.0001)
         XCTAssertLessThan(PencilCanvasConfiguration.minimumZoomScale, PencilCanvasConfiguration.defaultZoomScale)
         XCTAssertLessThan(PencilCanvasConfiguration.defaultZoomScale, PencilCanvasConfiguration.maximumZoomScale)
+    }
+
+    func testCanvasScrollerCentersInkAndClampsAtBoardEdges() {
+        let viewport = CGSize(width: 1_000, height: 800)
+        let board = CGSize(width: 50_000, height: 50_000)
+
+        let centered = CanvasScroller.offset(
+            centering: CGRect(x: 24_800, y: 24_900, width: 400, height: 200),
+            viewport: viewport,
+            zoomScale: 1,
+            scaledContentSize: board
+        )
+        XCTAssertEqual(centered.x, 24_500, accuracy: 0.001)
+        XCTAssertEqual(centered.y, 24_600, accuracy: 0.001)
+
+        // Ink near a corner cannot be centered; the offset clamps to the
+        // scrollable range instead of scrolling past the board.
+        let clampedLow = CanvasScroller.offset(
+            centering: CGRect(x: 10, y: 10, width: 20, height: 20),
+            viewport: viewport,
+            zoomScale: 1,
+            scaledContentSize: board
+        )
+        XCTAssertEqual(clampedLow.x, 0, accuracy: 0.001)
+        XCTAssertEqual(clampedLow.y, 0, accuracy: 0.001)
+
+        let clampedHigh = CanvasScroller.offset(
+            centering: CGRect(x: 49_980, y: 49_980, width: 10, height: 10),
+            viewport: viewport,
+            zoomScale: 1,
+            scaledContentSize: board
+        )
+        XCTAssertEqual(clampedHigh.x, 49_000, accuracy: 0.001)
+        XCTAssertEqual(clampedHigh.y, 49_200, accuracy: 0.001)
+
+        // The target is unscaled drawing space, the result is scaled scroll
+        // space, so the same ink sits twice as far out at 2x zoom.
+        let zoomed = CanvasScroller.offset(
+            centering: CGRect(x: 24_800, y: 24_900, width: 400, height: 200),
+            viewport: viewport,
+            zoomScale: 2,
+            scaledContentSize: CGSize(width: 100_000, height: 100_000)
+        )
+        XCTAssertEqual(zoomed.x, 49_500, accuracy: 0.001)
+        XCTAssertEqual(zoomed.y, 49_600, accuracy: 0.001)
+    }
+
+    func testDrawingDataRoundTripsCoordinatesNearBoardOrigin() throws {
+        let origin = PencilCanvasConfiguration.boardOrigin
+        let locations = [
+            CGPoint(x: origin.x, y: origin.y),
+            CGPoint(x: origin.x + 37.5, y: origin.y - 12.25),
+            CGPoint(x: origin.x + 120.125, y: origin.y + 240.75)
+        ]
+        let controlPoints = locations.enumerated().map { index, point in
+            PKStrokePoint(
+                location: point,
+                timeOffset: Double(index) * 0.02,
+                size: CGSize(width: 8, height: 8),
+                opacity: 1,
+                force: 1,
+                azimuth: 0,
+                altitude: .pi / 2
+            )
+        }
+        let path = PKStrokePath(controlPoints: controlPoints, creationDate: Date(timeIntervalSinceReferenceDate: 0))
+        let drawing = PKDrawing(strokes: [
+            PKStroke(ink: PKInk(.pen, color: .black), path: path, transform: .identity, mask: nil, randomSeed: 13)
+        ])
+
+        let restored = try PKDrawing(data: drawing.dataRepresentation())
+        let restoredPath = try XCTUnwrap(restored.strokes.first?.path)
+        XCTAssertEqual(restoredPath.count, locations.count)
+
+        // Serialized ink keeps sub-pixel accuracy this far from zero: a 32-bit
+        // float quantizes to ~0.002pt at 25,000, far below the 0.5pt physical
+        // pixel. This fails loudly if the board extent ever grows enough for
+        // that error to become visible.
+        for (index, expected) in locations.enumerated() {
+            XCTAssertEqual(restoredPath[index].location.x, expected.x, accuracy: 0.01)
+            XCTAssertEqual(restoredPath[index].location.y, expected.y, accuracy: 0.01)
+        }
     }
 
     @MainActor
@@ -760,17 +852,21 @@ final class MathTutorTests: XCTestCase {
     private func configuredCanvas() -> PKCanvasView {
         let canvas = PKCanvasView(frame: CGRect(x: 0, y: 0, width: 1_024, height: 768))
         PencilCanvasConfiguration.configure(canvas, viewport: canvas.bounds.size)
+        // These tests assert on rasterization, not on where a session starts, so
+        // they view the board's top-left corner and place ink there. Tests that
+        // care about the centered start position set their own offset.
+        canvas.contentOffset = .zero
         return canvas
     }
 
-    private func makeDrawing(color: UIColor) -> PKDrawing {
+    private func makeDrawing(color: UIColor, origin: CGPoint = CGPoint(x: 120, y: 250)) -> PKDrawing {
         let ink = PKInk(.pen, color: color)
         let points = [
-            CGPoint(x: 120, y: 250),
-            CGPoint(x: 160, y: 250),
-            CGPoint(x: 160, y: 300),
-            CGPoint(x: 120, y: 300),
-            CGPoint(x: 120, y: 250)
+            CGPoint(x: origin.x, y: origin.y),
+            CGPoint(x: origin.x + 40, y: origin.y),
+            CGPoint(x: origin.x + 40, y: origin.y + 50),
+            CGPoint(x: origin.x, y: origin.y + 50),
+            CGPoint(x: origin.x, y: origin.y)
         ]
         let controlPoints = points.enumerated().map { index, point in
             PKStrokePoint(
