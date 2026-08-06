@@ -25,14 +25,49 @@ targets:
     dependencies:
       - package: markdownUI
         product: MarkdownUI
+    info:
+      path: MathTutor/Info.plist
+      properties:
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UIApplicationSupportsIndirectInputEvents: true
+        UILaunchScreen: {}
+        UIRequiredDeviceCapabilities: [arm64]
+        # The design is one fixed 1376x1032 landscape layout — "no breakpoints and
+        # no responsive reflow". Portrait would need a second design, not a reflow
+        # of this one, so the app is landscape-only.
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        # The composer's mic. The string names what is captured, what is done with it, and
+        # where it goes, because the speaker is a child thinking out loud: a vague purpose
+        # string is a review risk and, more to the point, the only explanation a parent
+        # reading the permission alert ever gets.
+        #
+        # It says the recording leaves the iPad, because it does — dictation is OpenAI's
+        # transcription endpoint. It says OpenAI does not train on it, because that is their
+        # stated API policy and it is the thing a parent most wants to know. And it says the
+        # recording can be held for up to 30 days for abuse monitoring, because that is the
+        # default for API data. Zero Data Retention exists but is an application-gated option
+        # for qualifying business accounts, so this must not be written as though it applied.
+        # There is no NSSpeechRecognitionUsageDescription any more: Apple's recogniser is gone,
+        # and a permission the app requests but never uses is one a parent is asked for
+        # nothing.
+        NSMicrophoneUsageDescription: >-
+          Math Tutor records your voice only while you have tapped the microphone in the
+          tutor's message box. When you tap it again the recording is sent to OpenAI, which
+          turns it into text you can read and edit before sending. OpenAI does not use it to
+          train its models, but can keep it for up to 30 days to check for misuse before
+          deleting it. Math Tutor keeps no copy of the recording.
+        # Source Sans 3 is the design's only typeface and iOS does not ship it.
+        # Bundled at exactly the three weights the product uses: 400, 500, 600.
+        UIAppFonts:
+          - SourceSans3-Regular.otf
+          - SourceSans3-Medium.otf
+          - SourceSans3-Semibold.otf
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.nordup.MathTutor
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
-        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
-        INFOPLIST_KEY_UILaunchScreen_Generation: YES
-        INFOPLIST_KEY_UIRequiredDeviceCapabilities: arm64
         TARGETED_DEVICE_FAMILY: "2"
     scheme:
       testTargets:

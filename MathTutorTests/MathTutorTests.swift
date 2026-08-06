@@ -266,6 +266,87 @@ final class MathTutorTests: XCTestCase {
         )
     }
 
+    /// Normalizing ink for the flattened white background must not turn the
+    /// highlighter into a redaction pen. A `.marker` stroke forced to opaque
+    /// black paints over exactly the working the student swiped it across, and
+    /// the tutor is then asked to grade a black bar.
+    @MainActor
+    func testHighlighterBandDoesNotPaintOverTheWorkItMarks() throws {
+        let canvas = configuredCanvas()
+        let capture = CanvasCapture()
+        capture.canvasView = canvas
+
+        let working = makeDrawing(color: .black)
+        let band = try makeHighlighterStrokes(over: working.bounds)
+        let bandDrawing = PKDrawing(strokes: band)
+        let highlightedDrawing = PKDrawing(strokes: working.strokes + band)
+        XCTAssertEqual(
+            highlightedDrawing.bounds,
+            bandDrawing.bounds,
+            "This fixture is only meaningful if the band buries the working entirely"
+        )
+
+        // One bounding box between the two, so both snapshots crop and rasterize
+        // identically and their pixel counts are directly comparable.
+        canvas.drawing = bandDrawing
+        let bandOnly = try XCTUnwrap(capture.snapshotAllInkData())
+        canvas.drawing = highlightedDrawing
+        let highlighted = try XCTUnwrap(capture.snapshotAllInkData())
+
+        let bandInk = try inkPixelCount(for: bandOnly.data)
+        let highlightedInk = try inkPixelCount(for: highlighted.data)
+
+        // A highlighter is translucent by definition, so on blank paper it must
+        // leave no pixel as dark as handwriting. This is what fails when the
+        // stroke is normalized to opaque black: the whole band goes to ink.
+        XCTAssertEqual(bandInk, 0, "A highlighter must not rasterize as a band of solid ink")
+
+        // It still has to be visible as a band, or the emphasis is lost.
+        XCTAssertGreaterThan(
+            try pixelStats(for: bandOnly.data).nonWhitePixelCount,
+            5_000,
+            "A highlighter must still read as a band on the flattened white paper"
+        )
+
+        // And the working underneath still has to read as handwriting. Only the
+        // band-carries-no-ink assertion above makes this one mean anything: it
+        // is what rules out these dark pixels being the band itself.
+        XCTAssertGreaterThan(
+            highlightedInk,
+            1_000,
+            "The working under a highlighter must survive into the evaluation image"
+        )
+    }
+
+    /// Every swatch is normalized the same way. A highlighter's hue is dropped
+    /// for the evaluation image the way a pen's is, so a pale swatch still reads
+    /// as a band on white paper — but none of the five may bring opacity back
+    /// and cover the working.
+    @MainActor
+    func testHighlighterStaysVisibleAndTranslucentInEveryPenColour() throws {
+        let canvas = configuredCanvas()
+        let capture = CanvasCapture()
+        capture.canvasView = canvas
+
+        let working = makeDrawing(color: .black)
+        for color in PenColor.allCases {
+            let band = try makeHighlighterStrokes(over: working.bounds, color: color)
+            canvas.drawing = PKDrawing(strokes: band)
+            let bandOnly = try XCTUnwrap(capture.snapshotAllInkData())
+
+            XCTAssertEqual(
+                try inkPixelCount(for: bandOnly.data),
+                0,
+                "A \(color.hex) highlighter rasterized as solid ink and would hide the working"
+            )
+            XCTAssertGreaterThan(
+                try pixelStats(for: bandOnly.data).nonWhitePixelCount,
+                5_000,
+                "A \(color.hex) highlighter must still read as a band"
+            )
+        }
+    }
+
     @MainActor
     func testBoardEvaluationCapturesInkOutsideTheVisibleViewport() throws {
         let canvas = configuredCanvas()
@@ -1023,123 +1104,9 @@ final class MathTutorTests: XCTestCase {
         XCTAssertTrue(store.errorMessage?.contains("Add an OpenAI API key") == true)
     }
 
-    func testTutorPanelLayoutClampsResizeToMinimumAndAvailableBounds() {
-        let available = CGSize(width: 1_024, height: 768)
-        let minimum = TutorPanelLayout.minimumExpandedSize
-        let maximum = CGSize(width: available.width - 38, height: available.height - 16 - 210)
-
-        let tooSmall = TutorPanelLayout.resized(
-            from: TutorPanelLayout.defaultExpandedSize,
-            translation: CGSize(width: -1_000, height: -1_000),
-            corner: .bottomTrailing,
-            in: available,
-            bottomInset: 210,
-            topInset: 16
-        )
-        XCTAssertEqual(tooSmall.width, minimum.width)
-        XCTAssertEqual(tooSmall.height, minimum.height)
-
-        let tooLarge = TutorPanelLayout.resized(
-            from: TutorPanelLayout.defaultExpandedSize,
-            translation: CGSize(width: 1_000, height: 1_000),
-            corner: .bottomTrailing,
-            in: available,
-            bottomInset: 210,
-            topInset: 16
-        )
-        XCTAssertEqual(tooLarge.width, maximum.width)
-        XCTAssertEqual(tooLarge.height, maximum.height)
-    }
-
-    func testTutorPanelLayoutClampsOffsetToVisibleRegion() {
-        let available = CGSize(width: 1_024, height: 768)
-        let panelSize = TutorPanelLayout.defaultExpandedSize
-        let visible = TutorPanelLayout.visibleRect(in: available, bottomInset: 210)
-        let anchor = TutorPanelLayout.anchor(in: available, bottomInset: 210)
-
-        let topLeftOffset = TutorPanelLayout.clampedOffset(
-            CGSize(width: -9_999, height: -9_999),
-            panelSize: panelSize,
-            visibleRect: visible,
-            anchor: anchor
-        )
-        let topLeftOrigin = CGPoint(
-            x: anchor.x - panelSize.width + topLeftOffset.width,
-            y: anchor.y - panelSize.height + topLeftOffset.height
-        )
-        XCTAssertEqual(topLeftOrigin.x, visible.minX)
-        XCTAssertEqual(topLeftOrigin.y, visible.minY)
-
-        let bottomRightOffset = TutorPanelLayout.clampedOffset(
-            CGSize(width: 9_999, height: 9_999),
-            panelSize: panelSize,
-            visibleRect: visible,
-            anchor: anchor
-        )
-        let bottomRightOrigin = CGPoint(
-            x: anchor.x - panelSize.width + bottomRightOffset.width,
-            y: anchor.y - panelSize.height + bottomRightOffset.height
-        )
-        XCTAssertEqual(bottomRightOrigin.x + panelSize.width, visible.maxX)
-        XCTAssertEqual(bottomRightOrigin.y + panelSize.height, visible.maxY)
-    }
-
-    func testTutorPanelResizeKeepsOppositeCornerFixedAndDraggedCornerTracksTranslation() {
-        let available = CGSize(width: 1_024, height: 768)
-        let startSize = TutorPanelLayout.defaultExpandedSize
-        let startOffset = CGSize(width: -80, height: -80)
-        let translation = CGSize(width: 20, height: 15)
-        let bottomInset: CGFloat = 210
-        let topInset: CGFloat = 16
-        let anchor = TutorPanelLayout.anchor(in: available, bottomInset: bottomInset)
-
-        func point(
-            for corner: TutorPanelResizeCorner,
-            size: CGSize,
-            offset: CGSize
-        ) -> CGPoint {
-            let origin = CGPoint(
-                x: anchor.x - size.width + offset.width,
-                y: anchor.y - size.height + offset.height
-            )
-            switch corner {
-            case .topLeading: return origin
-            case .topTrailing: return CGPoint(x: origin.x + size.width, y: origin.y)
-            case .bottomLeading: return CGPoint(x: origin.x, y: origin.y + size.height)
-            case .bottomTrailing: return CGPoint(x: origin.x + size.width, y: origin.y + size.height)
-            }
-        }
-
-        func opposite(of corner: TutorPanelResizeCorner) -> TutorPanelResizeCorner {
-            switch corner {
-            case .topLeading: return .bottomTrailing
-            case .topTrailing: return .bottomLeading
-            case .bottomLeading: return .topTrailing
-            case .bottomTrailing: return .topLeading
-            }
-        }
-
-        for corner in TutorPanelResizeCorner.allCases {
-            let result = TutorPanelLayout.resizedLayout(
-                from: startSize,
-                startOffset: startOffset,
-                translation: translation,
-                corner: corner,
-                in: available,
-                bottomInset: bottomInset,
-                topInset: topInset
-            )
-            let startPoint = point(for: corner, size: startSize, offset: startOffset)
-            let endPoint = point(for: corner, size: result.size, offset: result.offset)
-            XCTAssertEqual(endPoint.x, startPoint.x + translation.width, accuracy: 0.001, "(corner) handle should track horizontal drag")
-            XCTAssertEqual(endPoint.y, startPoint.y + translation.height, accuracy: 0.001, "(corner) handle should track vertical drag")
-
-            let oppositeStart = point(for: opposite(of: corner), size: startSize, offset: startOffset)
-            let oppositeEnd = point(for: opposite(of: corner), size: result.size, offset: result.offset)
-            XCTAssertEqual(oppositeEnd.x, oppositeStart.x, accuracy: 0.001, "(corner) resize should preserve opposite corner horizontally")
-            XCTAssertEqual(oppositeEnd.y, oppositeStart.y, accuracy: 0.001, "(corner) resize should preserve opposite corner vertically")
-        }
-    }
+    // The three `TutorPanelLayout` geometry tests that stood here were deleted with the
+    // floating, draggable, resizable tutor panel they covered. The design replaces it with a
+    // fixed 337pt panel whose position is a constant, so there is no geometry left to assert.
 
     private static let samplePlan = SessionPlan(
         title: "Algebra confidence",
@@ -1195,6 +1162,50 @@ final class MathTutorTests: XCTestCase {
         return PKDrawing(strokes: [stroke])
     }
 
+    /// A highlighter band swiped across `target`, inked exactly as the rail's
+    /// one-tap highlighter inks it.
+    ///
+    /// Enough overlapping passes to bury `target` completely, which is the worst
+    /// case for an evaluation image: if the band rasterizes opaque, there is
+    /// nothing of the working left for the tutor to read.
+    private func makeHighlighterStrokes(
+        over target: CGRect,
+        color: PenColor = .black,
+        thickness: StrokeThickness = .bold
+    ) throws -> [PKStroke] {
+        let tool = try XCTUnwrap(
+            BoardInk.tool(for: .highlighter, color: color, thickness: thickness) as? PKInkingTool
+        )
+        let width = tool.width
+        let passes = Int((target.height / (width / 2)).rounded(.up)) + 1
+        return (0..<passes).map { pass in
+            let y = target.minY + CGFloat(pass) * width / 2
+            let controlPoints = [target.minX - width, target.midX, target.maxX + width]
+                .enumerated()
+                .map { index, x in
+                    PKStrokePoint(
+                        location: CGPoint(x: x, y: y),
+                        timeOffset: Double(index) * 0.02,
+                        size: CGSize(width: width, height: width),
+                        opacity: 1,
+                        force: 1,
+                        azimuth: 0,
+                        altitude: .pi / 2
+                    )
+                }
+            return PKStroke(
+                ink: tool.ink,
+                path: PKStrokePath(
+                    controlPoints: controlPoints,
+                    creationDate: Date(timeIntervalSinceReferenceDate: 0)
+                ),
+                transform: .identity,
+                mask: nil,
+                randomSeed: UInt32(101 + pass)
+            )
+        }
+    }
+
     /// A grid of small marks filling a `span`-square around `center`, as
     /// `strokeCount` separate strokes — a stand-in for a page of real work.
     private func makeClusterStrokes(center: CGPoint, span: CGFloat, strokeCount: Int) -> [PKStroke] {
@@ -1218,6 +1229,20 @@ final class MathTutorTests: XCTestCase {
     }
 
     private func pixelStats(for data: Data) throws -> PixelStats {
+        let values = try luminances(for: data)
+        return PixelStats(
+            darkPixelCount: values.filter { $0 < 220 }.count,
+            nonWhitePixelCount: values.filter { $0 < 250 }.count
+        )
+    }
+
+    /// Pixels dark enough to be handwriting rather than paper or a highlighter
+    /// band, on the same 0–255 average-channel scale `pixelStats(for:)` uses.
+    private func inkPixelCount(for data: Data) throws -> Int {
+        try luminances(for: data).filter { $0 < 60 }.count
+    }
+
+    private func luminances(for data: Data) throws -> [Int] {
         let image = try XCTUnwrap(UIImage(data: data)?.cgImage)
         let width = image.width
         let height = image.height
@@ -1235,17 +1260,12 @@ final class MathTutorTests: XCTestCase {
         ))
         context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
 
-        var darkPixelCount = 0
-        var nonWhitePixelCount = 0
-        for index in stride(from: 0, to: pixels.count, by: 4) {
+        return stride(from: 0, to: pixels.count, by: 4).map { index in
             let red = Int(pixels[index])
             let green = Int(pixels[index + 1])
             let blue = Int(pixels[index + 2])
-            let luminance = (red + green + blue) / 3
-            if luminance < 220 { darkPixelCount += 1 }
-            if luminance < 250 { nonWhitePixelCount += 1 }
+            return (red + green + blue) / 3
         }
-        return PixelStats(darkPixelCount: darkPixelCount, nonWhitePixelCount: nonWhitePixelCount)
     }
 
     private actor SequencedStructuredTutorService: TutorService {

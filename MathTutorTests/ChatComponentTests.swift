@@ -1,0 +1,1103 @@
+import CoreGraphics
+import SwiftUI
+import XCTest
+@testable import MathTutor
+
+/// The conversation surface's geometry, asserted against the boards.
+///
+/// Everything here runs on a value type rather than on a rendered view, which is the point:
+/// a number that can only be checked by measuring a `View` is a number that lives inside a
+/// view body, and a number inside a view body is one nobody can diff against the design.
+///
+/// Since the surface became size-driven there are two kinds of assertion here, and keeping
+/// them apart is the whole design. The boards' published numbers are asserted at the width
+/// each board was drawn at — 301 and 740 — because that is what makes them a diff against the
+/// design rather than against the code. Everything else is asserted at every column a real
+/// iPad produces, and is either about a value the column must *not* move (`ChatScale`'s
+/// discrete treatment) or about one it must (the row, the grid, the measures).
+final class ChatComponentTests: XCTestCase {
+    // MARK: - Greeting blocks
+
+    func testPanelGreetingIsFiveHundredAndTwentyTwoAndEveryStepAddsUp() {
+        let greeting = GreetingMetrics.panel
+
+        XCTAssertEqual(greeting.width, 301)
+        // "Title | 301 × 34 | 26 / 34 · 600"
+        XCTAssertEqual(greeting.titleTopMargin, 0)
+        XCTAssertEqual(greeting.titleHeight, 34)
+        XCTAssertEqual(greeting.titleStyle, .title)
+        // "Subtitle | 277 wide, 17 / 24, margin-top: 10" — two wrapped lines.
+        XCTAssertEqual(greeting.subtitleTopMargin, 10)
+        XCTAssertEqual(greeting.subtitleWidth, 277)
+        XCTAssertEqual(greeting.subtitleHeight, 48)
+        XCTAssertEqual(greeting.subtitleStyle, .bodyCentred)
+        // "Suggestions | margin-top: 32, height 278"
+        XCTAssertEqual(greeting.suggestionsTopMargin, DS.Space.s8)
+        XCTAssertEqual(greeting.suggestionsHeight, 278)
+        // "padding-bottom: 120 — lifts the block off the composer"
+        XCTAssertEqual(greeting.bottomPadding, 120)
+
+        // 34 + 10 + 48 + 32 + 278 + 120
+        XCTAssertEqual(greeting.totalHeight, 522)
+        XCTAssertNil(greeting.orbSize, "The panel's orb is a sibling above the block, not a child of it.")
+    }
+
+    func testFullScreenGreetingIsTwoHundredAndSixtyEightAndEveryStepAddsUp() {
+        let greeting = GreetingMetrics.fullScreen
+
+        XCTAssertEqual(greeting.width, 740)
+        XCTAssertEqual(greeting.orbSize, CGSize(width: 150, height: 142))
+        XCTAssertEqual(greeting.titleTopMargin, 34)
+        XCTAssertEqual(greeting.titleHeight, 48)
+        XCTAssertEqual(greeting.titleStyle, .display)
+        XCTAssertEqual(greeting.subtitleTopMargin, 14)
+        XCTAssertEqual(greeting.subtitleHeight, 30)
+        XCTAssertEqual(greeting.subtitleStyle, .lead)
+        XCTAssertNil(greeting.suggestionsTopMargin, "Screen 07 places the chip grid as its own region.")
+        XCTAssertEqual(greeting.bottomPadding, 0)
+
+        // 142 + 34 + 48 + 14 + 30
+        XCTAssertEqual(greeting.totalHeight, 268)
+    }
+
+    func testTheGreetingScalesTheHeadlineHarderThanTheBody() {
+        // "roughly 1.5× on display, 1.2× on body — that widening ratio is the type rule to
+        // carry into any other two-width component." A single multiplier cannot do both.
+        let panel = GreetingMetrics.panel
+        let full = GreetingMetrics.fullScreen
+
+        XCTAssertEqual(full.titleStyle.size / panel.titleStyle.size, 40 / 26, accuracy: 0.001)
+        XCTAssertEqual(full.subtitleStyle.size / panel.subtitleStyle.size, 21 / 17, accuracy: 0.001)
+    }
+
+    // MARK: - The attachment stack
+
+    func testComposerCardFollowsTheDerivedLaw() {
+        let stack = AttachmentStackMetrics.composer(.panel)
+
+        XCTAssertEqual(stack.width, 301)
+        XCTAssertEqual(stack.bodyHeight, 58)
+        // A capsule's effective radius is half its height: 58 ÷ 2.
+        XCTAssertEqual(stack.bodyTopRadius, 29)
+        // cardHeight = visibleBand + radiusOfShapeOnTop → 38 + 29.
+        XCTAssertEqual(stack.derivedCardHeight, 67)
+        XCTAssertEqual(stack.cardHeight, 67)
+        XCTAssertTrue(stack.followsDerivedLaw)
+
+        XCTAssertEqual(stack.visibleBand, 38)
+        XCTAssertEqual(stack.overlap, 29)
+        XCTAssertEqual(stack.totalHeight, 96)
+        // "At 301 wide with a 29 radius, that straight run is 301 − 2 × 29 = 243pt."
+        XCTAssertEqual(stack.straightTopRun, 243)
+        // 301 − 20 − 16, "fills the card's visible band exactly".
+        XCTAssertEqual(stack.labelRowWidth, 265)
+    }
+
+    func testSentSelectionKeepsTheMeasuredSixtySevenAndBreaksTheLaw() {
+        let stack = AttachmentStackMetrics.sentMessage
+
+        XCTAssertEqual(stack.width, 224)
+        XCTAssertEqual(stack.bodyHeight, 58)
+        XCTAssertEqual(stack.bodyTopRadius, DS.Radius.bubble)
+        XCTAssertEqual(stack.visibleBand, 38)
+        XCTAssertEqual(stack.cardHeight, 67)
+        XCTAssertEqual(stack.overlap, 29)
+        XCTAssertEqual(stack.totalHeight, 96)
+        XCTAssertEqual(stack.labelRowWidth, 188)
+
+        // The law gives 38 + 18 = 56; the file has 67, inherited from the composer copy.
+        // Visually safe — 67 > 56 covers the bubble's corner curves — but 11pt is hidden
+        // for nothing. Both numbers stay reachable so whichever the designer settles on is
+        // a one-line change.
+        XCTAssertEqual(stack.derivedCardHeight, 56)
+        XCTAssertFalse(stack.followsDerivedLaw)
+        XCTAssertEqual(stack.cardHeight - stack.derivedCardHeight, 11)
+    }
+
+    func testEveryCardExtendsPastTheCurvesOfTheShapeOnTop() {
+        // The failure the Wrong diagram draws: a card that stops at the visible band leaves
+        // the corner curves uncovered and the background bites into them.
+        for stack in [AttachmentStackMetrics.composer(.panel), .composer(.fullScreen), .sentMessage] {
+            XCTAssertGreaterThanOrEqual(stack.cardHeight, stack.derivedCardHeight)
+            XCTAssertLessThan(stack.straightTopRun, stack.width)
+        }
+    }
+
+    func testFullScreenCardIsTheBoardsOwnExtrapolation() {
+        // Board 03 §11.12: no full-screen card exists, and "the capsule radius (80 ÷ 2 = 40,
+        // implying a 40pt overlap and 40pt top radii by the derived law) are all unverified
+        // extrapolations". The law, applied — not a new number.
+        let stack = AttachmentStackMetrics.composer(.fullScreen)
+
+        XCTAssertEqual(stack.width, 740)
+        XCTAssertEqual(stack.bodyHeight, 80)
+        XCTAssertEqual(stack.bodyTopRadius, 40)
+        XCTAssertEqual(stack.cardHeight, 78)
+        XCTAssertTrue(stack.followsDerivedLaw)
+        XCTAssertEqual(stack.totalHeight, 118)
+    }
+
+    // MARK: - Thread rhythm
+
+    /// Screen 08's thread, child by child: `msg/tutor`, `msg/student`, … and `btn/orb` last.
+    private static let threadChildHeights: [CGFloat] = [50, 49, 50, 49, 50, 74, 75, 96, 50, 46]
+    private static let threadAuthors: [MessageRole?] = [
+        .tutor, .learner, .tutor, .learner, .tutor, .learner, .tutor, .learner, .tutor, nil,
+    ]
+
+    func testTheGapIsTwentyTwoBetweenEveryPairRegardlessOfAuthor() {
+        let thread = ThreadMetrics.panel
+        let offsets = thread.offsets(childHeights: Self.threadChildHeights, in: 810)
+
+        XCTAssertEqual(thread.gap, 22)
+        XCTAssertEqual(thread.gap, DS.Space.messageGap)
+
+        for index in 0 ..< offsets.count - 1 {
+            let gap = offsets[index + 1] - (offsets[index] + Self.threadChildHeights[index])
+            XCTAssertEqual(
+                gap,
+                22,
+                "\(String(describing: Self.threadAuthors[index])) → "
+                    + "\(String(describing: Self.threadAuthors[index + 1])) should be 22 like every other pair."
+            )
+        }
+
+        // Not one same-author run is tighter, and the orb participates in the rhythm.
+        XCTAssertEqual(Set(Self.threadAuthors.compactMap { $0 }).count, 2)
+        XCTAssertNil(Self.threadAuthors.last!, "btn/orb is a normal flow child at the end of the list.")
+    }
+
+    func testTheThreadIsBottomAnchoredAndSlackLandsOnTop() {
+        let thread = ThreadMetrics.panel
+
+        // Items sum 589 + nine 22pt gaps 198 = 787; + 18 padding = 805.
+        XCTAssertEqual(Self.threadChildHeights.reduce(0, +), 589)
+        XCTAssertEqual(thread.bottomPadding, 18)
+        XCTAssertEqual(thread.contentHeight(childHeights: Self.threadChildHeights), 805)
+
+        // Bottom-anchored inside 810, so the first child starts at 5 and every offset below
+        // is the one board 03 measured on the live thread.
+        XCTAssertEqual(
+            thread.offsets(childHeights: Self.threadChildHeights, in: 810),
+            [5, 77, 148, 220, 291, 363, 459, 556, 674, 746]
+        )
+    }
+
+    func testAThreadTallerThanItsColumnStartsAtTheTop() {
+        // Slack clamps at 0 rather than going negative, which would pull the first message
+        // up off the top of the thread instead of letting it scroll.
+        let offsets = ThreadMetrics.panel.offsets(childHeights: Self.threadChildHeights, in: 400)
+        XCTAssertEqual(offsets.first, 0)
+    }
+
+    func testTheFullScreenThreadTakesBoardThirteensNewSpec() {
+        // "the panel-scale message spec has been carried up to the 740 column for the first
+        // time" — 17/25 → 21/30, a 520 cap and 16/24 padding. Radius and gap do not scale.
+        let messages = MessageMetrics.fullScreen
+        let thread = ThreadMetrics.fullScreen
+
+        XCTAssertEqual(messages.rowWidth, 740)
+        XCTAssertEqual(messages.textStyle, .lead)
+        XCTAssertEqual(messages.textStyle.size, 21)
+        XCTAssertEqual(messages.textStyle.leading, 30)
+        XCTAssertEqual(messages.bubbleMaxWidth, 520)
+        XCTAssertEqual(messages.bubblePaddingBlock, 16)
+        XCTAssertEqual(messages.bubblePaddingInline, 24)
+        // Measured on the board: two wrapped lines → 16 + 30 × 2 + 16 = 92.
+        XCTAssertEqual(messages.bubbleHeight(lines: 2), 92)
+
+        XCTAssertEqual(messages.bubbleRadius, MessageMetrics.panel.bubbleRadius)
+        XCTAssertEqual(thread.gap, ThreadMetrics.panel.gap)
+        // `Thread · wide` carries no padding; the panel's 18 is there to clear its inset.
+        XCTAssertEqual(thread.bottomPadding, 0)
+        // "Same component, different white" — #FFFFFF here, #FCFCFC in the panel.
+        XCTAssertEqual(thread.surface, DS.Color.surface)
+        XCTAssertNotEqual(thread.surface, ThreadMetrics.panel.surface)
+    }
+
+    // MARK: - Failure & recovery
+
+    func testTheNetworkErrorStackIsOneFiftyOne() {
+        let error = ChatErrorMetrics.panel
+
+        // "A failure is a tutor message, not a system alert: same 17/25 text."
+        XCTAssertEqual(error.messageStyle, .body)
+        XCTAssertEqual(error.chipTopMargin, 16)
+        XCTAssertEqual(error.reassuranceTopMargin, 12)
+        XCTAssertEqual(error.reassuranceStyle.size, 15)
+        XCTAssertEqual(error.reassuranceStyle.leading, 18)
+
+        // The recovery chip is the suggestion chip reused unchanged — every box-model value.
+        XCTAssertEqual(error.chip, SuggestionChipMetrics.panel)
+
+        // 25 + 16 + 62 + 12 + 36, the specimen the board measures.
+        XCTAssertEqual(error.height(messageLines: 1, reassuranceLines: 2), 151)
+    }
+
+    /// Board 14's stack was measured in the panel and drawn nowhere else, and it was still
+    /// 301 wide inside a 740 thread — a failure told in a column the thread does not have.
+    ///
+    /// *"A failure is a tutor message, not a system alert: same 17/25 text, same left edge"* —
+    /// **same as the messages around it** is the specification, so the copy takes the thread's
+    /// own text style at that scale and the stack takes the thread's own row.
+    func testTheFailureIsToldInTheThreadsOwnColumn() {
+        XCTAssertEqual(ChatErrorMetrics.for(.panel, width: DS.Container.panelContent), .panel)
+
+        for column in Column.all {
+            for scale in ChatScale.allCases {
+                let width = column.width(scale)
+                let error = ChatErrorMetrics.for(scale, width: width)
+                let context = "\(scale.rawValue) at \(column.name) · \(width)"
+
+                XCTAssertEqual(error.width, width, context)
+                XCTAssertEqual(error.messageStyle, MessageMetrics.for(scale, width: width).textStyle, context)
+                XCTAssertEqual(error.chip, SuggestionChipMetrics.for(scale, width: width), context)
+                XCTAssertLessThanOrEqual(error.chip.width, width, context)
+                // The two margins and the reassurance line are stated once by the board and
+                // have no second value anywhere, so they do not step with the scale.
+                XCTAssertEqual(error.chipTopMargin, ChatErrorMetrics.panel.chipTopMargin, context)
+                XCTAssertEqual(error.reassuranceTopMargin, ChatErrorMetrics.panel.reassuranceTopMargin, context)
+                XCTAssertEqual(error.reassuranceStyle, ChatErrorMetrics.panel.reassuranceStyle, context)
+            }
+        }
+
+        // 17/25 in the panel and 21/30 in the reading column, which is board 13's step and not
+        // a new one invented here.
+        XCTAssertEqual(ChatErrorMetrics.for(.fullScreen, width: DS.Container.column).messageStyle, .lead)
+    }
+
+    func testTheRecoveryCopyAndGlyphAreTheBoards() {
+        XCTAssertEqual(ChatErrorState.networkMessage, "I couldn't reach the tutor service just now.")
+        XCTAssertEqual(ChatErrorState.networkAction, "Try again")
+        XCTAssertEqual(
+            ChatErrorState.networkReassurance,
+            "Nothing was lost — what you wrote is still in the composer."
+        )
+        XCTAssertEqual(ChatErrorState.network(onRetry: {}).actionIcon, .uiRetry)
+        // "recovery chips take var(--color-icon), not var(--color-brand), because a repair
+        // is not a suggestion."
+        XCTAssertEqual(Icon.uiRetry.glyph.colorToken, "--color-icon")
+    }
+
+    func testTheThinkingIndicatorFitsOneBodyLineBox() {
+        // "The 25 pt height is the whole idea: the indicator occupies exactly one
+        // --leading-body line box, so replacing it with the first line of the reply causes
+        // zero layout shift."
+        XCTAssertEqual(ThinkingIndicator.dotSize, 6)
+        XCTAssertEqual(ThinkingIndicator.dimmedOpacity, 0.35)
+        XCTAssertEqual(ThinkingIndicator.cycle, 1.2)
+        XCTAssertEqual(ThinkingIndicator.stagger, 0.16)
+        // Width 6 × 3 + 8 × 2 = 34, on a 25pt row.
+        XCTAssertEqual(3 * ThinkingIndicator.dotSize + 2 * DS.Space.s2, 34)
+        XCTAssertEqual(DS.Leading.body, 25)
+    }
+
+    func testTheStreamingCaretIsAStepNotAFade() {
+        // "2 × 22 · radius-full · var(--color-ink)", where 22 = --leading-control
+        // "optically centred in the 25 line box".
+        XCTAssertEqual(StreamingCaret.width, 2)
+        XCTAssertEqual(DS.Leading.control, 22)
+        XCTAssertEqual(StreamingCaret.cycle, 1.06)
+
+        // On for half the cycle, off for the other half — a square wave, not a ramp.
+        let start = Date(timeIntervalSinceReferenceDate: 0)
+        XCTAssertTrue(StreamingCaret.isVisible(at: start))
+        XCTAssertFalse(StreamingCaret.isVisible(at: start.addingTimeInterval(0.6)))
+        XCTAssertTrue(StreamingCaret.isVisible(at: start.addingTimeInterval(1.1)))
+    }
+
+    // MARK: - Bubbles
+
+    func testBubbleHeightIsTwelvePlusTwentyFivePerLinePlusTwelve() {
+        let messages = MessageMetrics.panel
+
+        XCTAssertEqual(messages.bubbleHeight(lines: 1), 49)
+        XCTAssertEqual(messages.bubbleHeight(lines: 2), 74)
+        XCTAssertEqual(messages.bubbleMaxWidth, 224)
+        XCTAssertEqual(messages.bubbleRadius, DS.Radius.bubble)
+        // "Note the 22 line-height, not the 25 used by every other message."
+        XCTAssertEqual(messages.textStyle.leading, 25)
+        XCTAssertEqual(messages.selectionTextStyle.leading, 22)
+        XCTAssertEqual(messages.selectionTextStyle.size, messages.textStyle.size)
+    }
+
+    // MARK: - Composer
+
+    func testPanelComposerMeasuresThreeHundredAndOneByFiftyEight() {
+        let composer = ComposerMetrics.panel
+
+        XCTAssertEqual(composer.width, 301)
+        XCTAssertEqual(composer.height, 58)
+        XCTAssertEqual(composer.paddingLeading, 20)
+        XCTAssertEqual(composer.paddingTrailing, 8)
+        XCTAssertEqual(composer.gap, 12)
+        XCTAssertEqual(composer.marqueeSize, 24)
+        XCTAssertEqual(composer.voiceButtonSize, 38)
+        XCTAssertEqual(composer.sendButtonSize, 42)
+        XCTAssertEqual(composer.sendGlyphSize, 22)
+        XCTAssertEqual(composer.placeholder, "Ask anything...")
+        XCTAssertEqual(composer.placeholderStyle, .bodyControl)
+        XCTAssertFalse(composer.sendIsRaised, "The 42pt send button carries no shadow.")
+
+        // 301 − 20 − 24 − 12 − 12 − 38 − 12 − 42 − 8 = 133, the width screen 05 measures
+        // for the placeholder. The row closing exactly is what proves the paddings and the
+        // gap are right.
+        XCTAssertEqual(composer.placeholderWidth(includingMarquee: true), 133)
+        // With a selection attached the composer grows the card: 38 visible + 58 pill.
+        XCTAssertEqual(composer.attachedHeight, 96)
+    }
+
+    func testFullScreenComposerMeasuresSevenHundredAndFortyByEighty() {
+        let composer = ComposerMetrics.fullScreen
+
+        XCTAssertEqual(composer.width, 740)
+        XCTAssertEqual(composer.height, 80)
+        XCTAssertEqual(composer.paddingLeading, DS.Space.s8)
+        XCTAssertEqual(composer.paddingTrailing, DS.Space.s3)
+        XCTAssertEqual(composer.gap, 18)
+        XCTAssertEqual(composer.voiceButtonSize, 52)
+        XCTAssertEqual(composer.voiceGlyphSize, 26)
+        XCTAssertEqual(composer.sendButtonSize, 56)
+        XCTAssertEqual(composer.sendGlyphSize, 26)
+        XCTAssertEqual(composer.placeholder, "Ask me anything...")
+        XCTAssertTrue(composer.sendIsRaised, "The 56pt send button is the one that carries a shadow.")
+
+        // 740 − 32 − 552 − 18 − 52 − 18 − 56 − 12 = 0, against screen 07's measured 552.
+        XCTAssertEqual(composer.placeholderWidth(includingMarquee: false), 552)
+    }
+
+    /// The bug the composer had: `--container-column` is 740 and the reading column is not.
+    ///
+    /// `ScreenLayout.columnWidth` is `min(740, region − 2 × edge)`, so a portrait iPad gives
+    /// 644 — and a 740pt pill in a 644pt column hangs 96 points off the end of it. The width is
+    /// the column's; every other number is the scale's and does not move.
+    func testTheComposerIsTheColumnItIsLaidOutInAndTheRowStillCloses() {
+        for column in Column.all {
+            for scale in ChatScale.allCases {
+                let width = column.width(scale)
+                let composer = ComposerMetrics.for(scale, width: width)
+                let context = "\(scale.rawValue) at \(column.name) · \(width)"
+
+                XCTAssertEqual(composer.width, width, context)
+                // The card behind an attached selection is edge-to-edge with the pill, so it
+                // narrows with it — a 740 card behind a 644 pill is the notch rule broken.
+                XCTAssertEqual(composer.attachment.width, width, context)
+
+                // The row closes on whatever the column is: the text lane is the only child
+                // with give in it, which is what `flex-grow: 1` says about it on board 07.
+                let marquee = scale == .panel
+                let children = (marquee ? composer.marqueeSize : 0)
+                    + composer.voiceButtonSize + composer.sendButtonSize
+                let gaps = composer.gap * CGFloat(marquee ? 3 : 2)
+                XCTAssertEqual(
+                    composer.placeholderWidth(includingMarquee: marquee)
+                        + composer.paddingLeading + composer.paddingTrailing + children + gaps,
+                    width,
+                    accuracy: 0.001,
+                    context
+                )
+            }
+        }
+
+        // The design's own two are unchanged, which is what keeps every published number above
+        // measuring the board rather than measuring this function.
+        XCTAssertEqual(ComposerMetrics.for(.panel, width: DS.Container.panelContent), .panel)
+        XCTAssertEqual(ComposerMetrics.for(.fullScreen, width: DS.Container.column), .fullScreen)
+        // 740 − 32 − 12 − 52 − 18 − 56 − 18 = 552 at the design's column; 456 at a 644 one.
+        XCTAssertEqual(
+            ComposerMetrics.for(.fullScreen, width: 644).placeholderWidth(includingMarquee: false),
+            456
+        )
+    }
+
+    func testBothScalesOfferVoiceAndTheMarqueeAtTheSizesTheDesignDraws() {
+        // The two asymmetries board 03 calls unresolved: "do not copy the current asymmetry
+        // into code as if it were intentional." Both controls exist at both scales, and
+        // neither size is invented — 38/52 for voice come off screens 05 and 07, and the
+        // marquee keeps its one documented render size.
+        XCTAssertEqual(ComposerMetrics.panel.voiceGlyphSize, 20)
+        XCTAssertEqual(ComposerMetrics.fullScreen.voiceGlyphSize, 26)
+        XCTAssertEqual(Icon.composerVoice.glyph.productRenderSizes, [20, 26])
+
+        XCTAssertEqual(ComposerMetrics.panel.marqueeSize, Icon.uiSelectionMarker.renderSize)
+        XCTAssertEqual(ComposerMetrics.fullScreen.marqueeSize, Icon.uiSelectionMarker.renderSize)
+        XCTAssertEqual(Icon.uiSelectionMarker.glyph.productRenderSizes, [24])
+    }
+
+    // MARK: - Suggestion chips
+
+    func testPanelChipsAreThreeHundredAndOneBySixtyTwoInATwoHundredAndSeventyEightColumn() {
+        let chip = SuggestionChipMetrics.panel
+
+        XCTAssertEqual(chip.width, 301)
+        XCTAssertEqual(chip.height, 62)
+        XCTAssertEqual(chip.radius, DS.Radius.lg)
+        XCTAssertEqual(chip.paddingLeading, 18)
+        XCTAssertEqual(chip.gap, 14)
+        XCTAssertEqual(chip.iconSize, 22)
+        // "label --text-body 17 / --leading-control 22 · 500" — measured on two boards.
+        XCTAssertEqual(chip.labelStyle.size, 17)
+        XCTAssertEqual(chip.labelStyle.leading, 22)
+        XCTAssertEqual(chip.labelStyle.weight, .medium)
+        XCTAssertEqual(chip.listGap, 10)
+        XCTAssertEqual(chip.columns, 1)
+        XCTAssertEqual(chip.rows, 4)
+        // 4 × 62 + 3 × 10
+        XCTAssertEqual(chip.containerHeight, 278)
+    }
+
+    func testFullScreenChipsAreThreeHundredAndSixtyBySeventyFourInATwoByTwo() {
+        let chip = SuggestionChipMetrics.fullScreen
+
+        XCTAssertEqual(chip.width, 360)
+        XCTAssertEqual(chip.height, 74)
+        XCTAssertEqual(chip.paddingLeading, 22)
+        XCTAssertEqual(chip.gap, 16)
+        XCTAssertEqual(chip.iconSize, 24)
+        XCTAssertEqual(chip.listGap, 20)
+        XCTAssertEqual(chip.columns, 2)
+        XCTAssertEqual(chip.rows, 2)
+        // 2 × 74 + 20, and 360 × 2 + 20 = 740 exactly.
+        XCTAssertEqual(chip.containerHeight, 168)
+        XCTAssertEqual(2 * chip.width + chip.listGap, chip.containerWidth)
+
+        // "the same as panel, deliberately not scaled"
+        XCTAssertEqual(chip.radius, SuggestionChipMetrics.panel.radius)
+    }
+
+    func testTheFourChipsCarryTheDesignsCopyAndGlyphs() {
+        XCTAssertEqual(
+            Suggestion.allCases.map(\.label),
+            [
+                "Explain this concept",
+                "Give me an example",
+                "Create an exercise",
+                "I don't understand this",
+            ]
+        )
+        XCTAssertEqual(
+            Suggestion.allCases.map(\.icon),
+            [.chipExplain, .chipExample, .chipExercise, .chipConfused]
+        )
+    }
+
+    // MARK: - Scroll fade
+
+    func testTheScrollFadeIsAnAlphaRampOfTheSurfaceItSitsOn() {
+        let fade = ScrollFadeMetrics.standard
+
+        XCTAssertEqual(fade.height, 72)
+        XCTAssertEqual(fade.stops.map(\.opacity), [1, 1, 0.72, 0])
+        XCTAssertEqual(fade.stops.map(\.location), [0, 0.34, 0.62, 1])
+        // Opaque at the top, gone at the bottom, and monotonic in between — a ramp, not a
+        // gradient to `.clear`, which would grey-shift through the middle.
+        XCTAssertEqual(fade.stops.map(\.opacity), fade.stops.map(\.opacity).sorted(by: >))
+    }
+
+    // MARK: - The scale itself
+
+    func testTheTwoScalesAreOneDesignAtTwoSizesAndNotOneMultiplier() {
+        XCTAssertEqual(ChatScale.panel.contentWidth, DS.Container.panelContent)
+        XCTAssertEqual(ChatScale.fullScreen.contentWidth, DS.Container.column)
+
+        // No single factor produces the design's steps, which is why the scale is a lookup:
+        // chip height 1.19×, chip icon 1.09×, title 1.54×, body 1.24×, chip radius 1.00×.
+        let ratios: [CGFloat] = [
+            SuggestionChipMetrics.fullScreen.height / SuggestionChipMetrics.panel.height,
+            SuggestionChipMetrics.fullScreen.iconSize / SuggestionChipMetrics.panel.iconSize,
+            GreetingMetrics.fullScreen.titleStyle.size / GreetingMetrics.panel.titleStyle.size,
+            SuggestionChipMetrics.fullScreen.radius / SuggestionChipMetrics.panel.radius,
+        ]
+        XCTAssertEqual(Set(ratios.map { ($0 * 100).rounded() }).count, ratios.count)
+    }
+
+    // MARK: - The columns the real devices produce
+
+    func testTheReadingColumnIsTheDesignsSevenFortyInLandscapeAndNarrowerInPortrait() {
+        // Every iPad in landscape clears 740 + 2 × 28 + the 68pt peek, so the column the
+        // design drew survives intact on all of them — which is why nothing above this line
+        // had to change. Portrait is where `min(740, region − 2 × edge)` starts biting, and
+        // it is the case this whole file exists to cover.
+        XCTAssertEqual(
+            Column.landscape.map(\.fullScreen),
+            [740, 740, 740, 740, 740],
+            "13-inch, 11-inch, Air, 10.2-inch and 9.7-inch in landscape"
+        )
+        XCTAssertEqual(
+            Column.portrait.map(\.fullScreen),
+            [740, 710, 696, 686, 644],
+            "the same five in portrait: only the 13-inch still fits the full column"
+        )
+        // The panel is `--container-panel` at every size — board 02 calls it "the only
+        // fixed-width surface in the product" — so its column never moves off 301.
+        for column in Column.all {
+            XCTAssertEqual(column.panel, DS.Container.panelContent, column.name)
+        }
+    }
+
+    /// The one property that must hold no matter what: `ChatScale` picks the treatment and
+    /// the column picks nothing but sizes and positions.
+    func testTheDiscreteDesignTreatmentNeverMovesWithTheColumn() {
+        for scale in ChatScale.allCases {
+            let reference = Reference(scale)
+            for column in Column.all {
+                let width = column.width(scale)
+                let here = Reference(scale, width: width)
+                XCTAssertEqual(here, reference, "\(scale.rawValue) at \(column.name) · \(width)")
+            }
+        }
+        // And the two treatments are still different from each other, or the assertion above
+        // would pass on a surface that had collapsed into one variant.
+        XCTAssertNotEqual(Reference(.panel), Reference(.fullScreen))
+    }
+
+    /// Every value the treatment fixes: type, chip box model, icon sizes, paddings, radii,
+    /// rhythm. Collected in one place so a new width-sensitive property has to be added here
+    /// deliberately rather than slipping through.
+    private struct Reference: Equatable {
+        let messageText: DS.TextStyle
+        let messagePaddingBlock: CGFloat
+        let messagePaddingInline: CGFloat
+        let messageRadius: CGFloat
+        let paragraphGap: CGFloat
+        let selectionText: DS.TextStyle
+
+        let threadGap: CGFloat
+        let threadBottomPadding: CGFloat
+        let fade: ScrollFadeMetrics
+
+        let chipHeight: CGFloat
+        let chipRadius: CGFloat
+        let chipPaddingLeading: CGFloat
+        let chipGap: CGFloat
+        let chipIcon: CGFloat
+        let chipLabel: DS.TextStyle
+        let chipListGap: CGFloat
+
+        let titleStyle: DS.TextStyle
+        let titleHeight: CGFloat
+        let titleTopMargin: CGFloat
+        let subtitleStyle: DS.TextStyle
+        let subtitleHeight: CGFloat
+        let subtitleTopMargin: CGFloat
+        let orbSize: CGSize?
+        let greetingBottomPadding: CGFloat
+
+        let composerHeight: CGFloat
+        let composerPaddingLeading: CGFloat
+        let composerPaddingTrailing: CGFloat
+        let composerGap: CGFloat
+        let composerMarquee: CGFloat
+        let composerVoice: CGFloat
+        let composerSend: CGFloat
+        let composerPlaceholder: String
+        let composerPlaceholderStyle: DS.TextStyle
+        let composerSendIsRaised: Bool
+        let composerAttachedHeight: CGFloat
+
+        let errorChipTopMargin: CGFloat
+        let errorMessageStyle: DS.TextStyle
+        let errorReassuranceStyle: DS.TextStyle
+
+        init(_ scale: ChatScale, width: CGFloat? = nil) {
+            let message = MessageMetrics.for(scale, width: width ?? scale.contentWidth)
+            let thread = ThreadMetrics.for(scale, width: width ?? scale.contentWidth)
+            let chip = SuggestionChipMetrics.for(scale, width: width ?? scale.contentWidth)
+            let greeting = GreetingMetrics.for(scale, width: width ?? scale.contentWidth)
+
+            messageText = message.textStyle
+            messagePaddingBlock = message.bubblePaddingBlock
+            messagePaddingInline = message.bubblePaddingInline
+            messageRadius = message.bubbleRadius
+            paragraphGap = message.paragraphGap
+            selectionText = message.selectionTextStyle
+
+            threadGap = thread.gap
+            threadBottomPadding = thread.bottomPadding
+            fade = thread.fade
+
+            chipHeight = chip.height
+            chipRadius = chip.radius
+            chipPaddingLeading = chip.paddingLeading
+            chipGap = chip.gap
+            chipIcon = chip.iconSize
+            chipLabel = chip.labelStyle
+            chipListGap = chip.listGap
+
+            titleStyle = greeting.titleStyle
+            titleHeight = greeting.titleHeight
+            titleTopMargin = greeting.titleTopMargin
+            subtitleStyle = greeting.subtitleStyle
+            subtitleHeight = greeting.subtitleHeight
+            subtitleTopMargin = greeting.subtitleTopMargin
+            orbSize = greeting.orbSize
+            greetingBottomPadding = greeting.bottomPadding
+
+            let composer = ComposerMetrics.for(scale, width: width ?? scale.contentWidth)
+            composerHeight = composer.height
+            composerPaddingLeading = composer.paddingLeading
+            composerPaddingTrailing = composer.paddingTrailing
+            composerGap = composer.gap
+            composerMarquee = composer.marqueeSize
+            composerVoice = composer.voiceButtonSize
+            composerSend = composer.sendButtonSize
+            composerPlaceholder = composer.placeholder
+            composerPlaceholderStyle = composer.placeholderStyle
+            composerSendIsRaised = composer.sendIsRaised
+            // The card's visible band is the label row's height and the pill's is the scale's,
+            // so the stack's total is a treatment number even though its width is not.
+            composerAttachedHeight = composer.attachedHeight
+
+            let error = ChatErrorMetrics.for(scale, width: width ?? scale.contentWidth)
+            errorChipTopMargin = error.chipTopMargin
+            errorMessageStyle = error.messageStyle
+            errorReassuranceStyle = error.reassuranceStyle
+        }
+    }
+
+    // MARK: - The suggestion grid at a narrower column
+
+    func testTheGridIsTwoUpOnlyInTheRowTheDesignDrewItIn() {
+        // 360 is not an independent number: it is half of 740 once the 20pt gap comes out,
+        // which is the arithmetic the board writes as "360 × 2 + 20 = 740 exactly".
+        XCTAssertEqual(SuggestionChipMetrics.fullScreenChipWidth, 360)
+        XCTAssertEqual(2 * SuggestionChipMetrics.fullScreenChipWidth + DS.Space.s5, DS.Container.column)
+
+        XCTAssertEqual(SuggestionChipMetrics.columns(.fullScreen, in: 740), 2)
+        XCTAssertEqual(SuggestionChipMetrics.columns(.fullScreen, in: 739), 1, "The pair no longer fits")
+        // `flex-shrink: 0` on the chip is the design saying "wrap, do not squeeze", so the
+        // 360s do not give — the row does.
+        XCTAssertEqual(SuggestionChipMetrics.for(.fullScreen, width: 739).width, 739)
+        XCTAssertEqual(SuggestionChipMetrics.for(.fullScreen, width: 740).width, 360)
+    }
+
+    func testTheGridWrapsToOneUpOnEveryColumnNarrowerThanTheDesigns() {
+        for column in Column.all {
+            let width = column.fullScreen
+            let chip = SuggestionChipMetrics.for(.fullScreen, width: width)
+            let expected = width >= DS.Container.column ? 2 : 1
+
+            XCTAssertEqual(chip.columns, expected, "\(column.name) · \(width)")
+            XCTAssertEqual(chip.rows, expected == 2 ? 2 : 4, column.name)
+            // 2 × 74 + 20 where the design's row survives; 4 × 74 + 3 × 20 where it wraps.
+            XCTAssertEqual(chip.containerHeight, expected == 2 ? 168 : 356, column.name)
+            // A wrapped chip fills the reading column rather than sitting at 360 with the
+            // rest of the row empty: "the chip's width is set by its column".
+            XCTAssertEqual(chip.width, expected == 2 ? 360 : width, column.name)
+            // Whatever it wrapped to, a wrapped chip is never narrower than the one the
+            // design measured — which is the point of wrapping instead of shrinking.
+            XCTAssertGreaterThanOrEqual(chip.width, SuggestionChipMetrics.fullScreenChipWidth, column.name)
+        }
+    }
+
+    func testThePanelStackIsOneUpAtEveryWidthItCouldEverHave() {
+        for width in Column.all.map(\.panel) + [200, 100, 36] {
+            let chip = SuggestionChipMetrics.for(.panel, width: width)
+            XCTAssertEqual(chip.columns, 1, "panel at \(width)")
+            XCTAssertEqual(chip.rows, Suggestion.allCases.count, "panel at \(width)")
+            XCTAssertEqual(chip.width, width, "The chip is its column, at any column")
+        }
+    }
+
+    func testEveryChipRowFillsItsColumnExactlyAndNothingOverlaps() {
+        for column in Column.all {
+            for scale in ChatScale.allCases {
+                let width = column.width(scale)
+                let chip = SuggestionChipMetrics.for(scale, width: width)
+                let row = CGFloat(chip.columns) * chip.width + CGFloat(chip.columns - 1) * chip.listGap
+
+                XCTAssertEqual(row, chip.containerWidth, accuracy: 0.001, "\(scale.rawValue) at \(column.name)")
+                XCTAssertEqual(chip.containerWidth, width, "\(scale.rawValue) at \(column.name)")
+                XCTAssertGreaterThan(chip.width, 0, "\(scale.rawValue) at \(column.name)")
+                XCTAssertLessThanOrEqual(chip.width, width, "\(scale.rawValue) at \(column.name)")
+                // Every chip still has room for its own contents: icon, gap and the leading
+                // padding come off before a single glyph of label is drawn.
+                XCTAssertGreaterThan(
+                    chip.width - chip.paddingLeading - chip.iconSize - chip.gap,
+                    0,
+                    "\(scale.rawValue) at \(column.name): no room left for the label"
+                )
+            }
+        }
+    }
+
+    // MARK: - The bubble's measure at a narrower column
+
+    func testTheBubbleMeasureShrinksWithTheColumnAndKeepsItsGutter() {
+        // The design's two caps, restated as the run of row they leave clear: 301 − 224 and
+        // 740 − 520. That gutter is what the cap is for, so it is what holds.
+        XCTAssertEqual(MessageMetrics.panel.bubbleGutter, 77)
+        XCTAssertEqual(MessageMetrics.fullScreen.bubbleGutter, 220)
+
+        for column in Column.all {
+            for scale in ChatScale.allCases {
+                let width = column.width(scale)
+                let message = MessageMetrics.for(scale, width: width)
+                let drawn = MessageMetrics.for(scale)
+
+                XCTAssertEqual(message.rowWidth, width, "\(scale.rawValue) at \(column.name)")
+                XCTAssertGreaterThan(message.bubbleMaxWidth, 0, "\(scale.rawValue) at \(column.name)")
+                // A measure only ever shrinks.
+                XCTAssertLessThanOrEqual(
+                    message.bubbleMaxWidth,
+                    drawn.bubbleMaxWidth,
+                    "\(scale.rawValue) at \(column.name): never wider than the design's cap"
+                )
+                // And the row it is pinned into always has room left beside it, or the
+                // asymmetry the whole thread is built on stops reading.
+                XCTAssertGreaterThanOrEqual(
+                    message.bubbleGutter,
+                    drawn.bubbleGutter,
+                    "\(scale.rawValue) at \(column.name): the gutter is what is held"
+                )
+            }
+        }
+
+        // The narrowest reading column any iPad produces: 644 − 220.
+        XCTAssertEqual(MessageMetrics.for(.fullScreen, width: 644).bubbleMaxWidth, 424)
+        XCTAssertEqual(MessageMetrics.for(.fullScreen, width: 740).bubbleMaxWidth, 520)
+        // Padding is a treatment, not a measure, so a 424 bubble still wraps at 16 / 24.
+        XCTAssertEqual(MessageMetrics.for(.fullScreen, width: 644).bubbleHeight(lines: 2), 92)
+    }
+
+    func testTheSelectionStackNeverOutgrowsTheRowItIsPinnedInto() {
+        for column in Column.all {
+            for scale in ChatScale.allCases {
+                let width = column.width(scale)
+                let stack = MessageMetrics.for(scale, width: width).selection
+
+                // Board 13 leaves this stack undrawn in the reading column, so it keeps the
+                // panel's 224 at both scales — every column the app has is wider than that.
+                XCTAssertEqual(stack.width, 224, "\(scale.rawValue) at \(column.name)")
+                XCTAssertEqual(stack.totalHeight, 96, "\(scale.rawValue) at \(column.name)")
+                XCTAssertLessThanOrEqual(stack.width, width, "\(scale.rawValue) at \(column.name)")
+                XCTAssertGreaterThan(stack.labelRowWidth, 0, "\(scale.rawValue) at \(column.name)")
+            }
+        }
+        // The clamp only fires on a row that could never have drawn the design anyway, and
+        // when it does it produces a stack, not a negative frame.
+        let squeezed = AttachmentStackMetrics.sentMessage(in: 120)
+        XCTAssertEqual(squeezed.width, 120)
+        XCTAssertEqual(squeezed.labelRowWidth, 84)
+        XCTAssertEqual(AttachmentStackMetrics.sentMessage(in: 20).labelRowWidth, 0)
+    }
+
+    // MARK: - The greeting at a narrower column
+
+    func testGreetingBlocksKeepTheirTotalsAndStayInternallyConsistentAtEveryColumn() {
+        for column in Column.all {
+            for scale in ChatScale.allCases {
+                let width = column.width(scale)
+                let greeting = GreetingMetrics.for(scale, width: width)
+
+                XCTAssertEqual(greeting.width, width, "\(scale.rawValue) at \(column.name)")
+                // The measure never exceeds the column it is centred in.
+                XCTAssertGreaterThan(greeting.subtitleWidth, 0, "\(scale.rawValue) at \(column.name)")
+                XCTAssertLessThanOrEqual(greeting.subtitleWidth, width, "\(scale.rawValue) at \(column.name)")
+                if let orb = greeting.orbSize {
+                    XCTAssertLessThanOrEqual(orb.width, width, "\(scale.rawValue) at \(column.name)")
+                }
+
+                // Every step is a type leading or a margin, and none of those is a function
+                // of the column — so the block that measures 522 and 268 at the design's
+                // widths measures the same at every other.
+                let sum = (greeting.orbSize?.height ?? 0)
+                    + greeting.titleTopMargin + greeting.titleHeight
+                    + greeting.subtitleTopMargin + greeting.subtitleHeight
+                    + (greeting.suggestionsTopMargin ?? 0) + (greeting.suggestionsHeight ?? 0)
+                    + greeting.bottomPadding
+                XCTAssertEqual(greeting.totalHeight, sum, "\(scale.rawValue) at \(column.name)")
+                XCTAssertEqual(
+                    greeting.totalHeight,
+                    scale == .panel ? 522 : 268,
+                    "\(scale.rawValue) at \(column.name)"
+                )
+            }
+        }
+    }
+
+    func testThePanelSubtitleCapIsAMeasureAndNotAnInset() {
+        // 277 forces the 2-line wrap in a 301 column. A column narrower than 277 forces it
+        // without help, so the cap has nothing left to do but stay inside its column.
+        XCTAssertEqual(GreetingMetrics.for(.panel, width: 301).subtitleWidth, 277)
+        XCTAssertEqual(GreetingMetrics.for(.panel, width: 400).subtitleWidth, 277, "A measure does not grow")
+        XCTAssertEqual(GreetingMetrics.for(.panel, width: 260).subtitleWidth, 260)
+        // Full-screen the subtitle is unconstrained, which at this scale means the column.
+        for column in Column.all {
+            let width = column.fullScreen
+            XCTAssertEqual(GreetingMetrics.for(.fullScreen, width: width).subtitleWidth, width, column.name)
+        }
+    }
+
+    // MARK: - The thread at a narrower column
+
+    func testTheThreadKeepsItsBottomAnchorAndTwentyTwoRhythmAtEveryColumn() {
+        for column in Column.all {
+            for scale in ChatScale.allCases {
+                let width = column.width(scale)
+                let thread = ThreadMetrics.for(scale, width: width)
+
+                XCTAssertEqual(thread.width, width, "\(scale.rawValue) at \(column.name)")
+                XCTAssertEqual(thread.gap, DS.Space.messageGap, "\(scale.rawValue) at \(column.name)")
+
+                let offsets = thread.offsets(childHeights: Self.threadChildHeights, in: 810)
+                XCTAssertEqual(offsets.count, Self.threadChildHeights.count, column.name)
+                XCTAssertGreaterThanOrEqual(offsets.first ?? -1, 0, "\(scale.rawValue) at \(column.name)")
+                for index in 0 ..< offsets.count - 1 {
+                    XCTAssertEqual(
+                        offsets[index + 1] - (offsets[index] + Self.threadChildHeights[index]),
+                        22,
+                        "\(scale.rawValue) at \(column.name): pair \(index)"
+                    )
+                }
+                // Bottom-anchored: the last child's bottom clears the padding and nothing
+                // else, at every width.
+                let last = (offsets.last ?? 0) + (Self.threadChildHeights.last ?? 0)
+                XCTAssertEqual(last + thread.bottomPadding, 810, accuracy: 0.001, column.name)
+
+                // A thread taller than its column starts at the top and scrolls rather than
+                // being pulled up off its own first message.
+                XCTAssertEqual(
+                    thread.offsets(childHeights: Self.threadChildHeights, in: 100).first,
+                    0,
+                    "\(scale.rawValue) at \(column.name)"
+                )
+            }
+        }
+    }
+
+    // MARK: - Screen 07's column, as a flow
+
+    /// The reference case, to the point. Screen 07's own rhythm:
+    ///
+    /// ```
+    /// 150 greeting top · 418 bottom · 174 gap · 592 grid top · 760 bottom · 164 gap · 924
+    /// composer top · 1004 composer bottom
+    /// ```
+    ///
+    /// Every one of those is now a result rather than a constant, and this is the test that
+    /// says the results are still the board's.
+    func testTheReadingColumnReproducesScreenSevenOnTheBoardsOwnScreen() {
+        let column = TutorColumnMetrics(layout: .reference)
+
+        XCTAssertEqual(column.x, 352)
+        XCTAssertEqual(column.width, 740)
+        XCTAssertEqual(column.top, 68)
+        XCTAssertEqual(column.greetingHeight, 268)
+        XCTAssertEqual(column.suggestionsHeight, 168)
+        XCTAssertEqual(column.greetingTop, 150)
+        XCTAssertEqual(column.suggestionsTop, 592)
+        XCTAssertEqual(column.suggestionsTop + column.suggestionsHeight, 760)
+        XCTAssertEqual(column.composerTop(isAttached: false), 924)
+        XCTAssertEqual(column.bottom, 1004)
+
+        // The 82 is what the band has left after the block, and the sum is the check that the
+        // two kept gaps are the right two: 82 + 268 + 174 + 168 + 164 = 856 = 1004 − 68.
+        XCTAssertEqual(column.startSlack, 82)
+        XCTAssertEqual(
+            column.startSlack + column.startContentHeight + TutorColumnMetrics.suggestionsToComposer,
+            column.bottom - column.top - ComposerMetrics.fullScreen.height
+        )
+
+        // Board 13's thread lanes on the same screen: controls 68 → 100, thread 100 → 900.
+        XCTAssertEqual(column.threadTop, 100)
+        XCTAssertEqual(column.threadHeight, 800)
+    }
+
+    /// The reason the constants had to go: the grid wraps to one chip a row below 740 and
+    /// doubles in height, so a grid pinned at 592 ran 188 points into the composer.
+    func testTheReadingColumnStaysCorrectWhenTheGridWraps() {
+        for device in Column.all {
+            let column = TutorColumnMetrics(layout: device.layout)
+            let composerTop = column.composerTop(isAttached: false)
+            let context = "\(device.name) · column \(column.width)"
+
+            // Nothing above the composer, and nothing above the band.
+            XCTAssertGreaterThanOrEqual(column.greetingTop, column.top, context)
+            XCTAssertGreaterThanOrEqual(
+                column.suggestionsTop,
+                column.greetingTop + column.greetingHeight,
+                context
+            )
+            XCTAssertLessThanOrEqual(column.suggestionsTop, composerTop, context)
+
+            // The two designed gaps are the block's own and never give: the greeting is 174
+            // above its chips wherever the block ends up.
+            XCTAssertEqual(
+                column.suggestionsTop - (column.greetingTop + column.greetingHeight),
+                TutorColumnMetrics.greetingToSuggestions,
+                accuracy: 0.001,
+                context
+            )
+            // Where the band has room, the chips sit exactly 164 above the composer and the
+            // slack is all above the greeting — which is what reproduces the reference.
+            if column.startSlack > 0 {
+                XCTAssertEqual(
+                    composerTop - (column.suggestionsTop + column.suggestionsHeight),
+                    TutorColumnMetrics.suggestionsToComposer,
+                    accuracy: 0.001,
+                    context
+                )
+            } else {
+                // And where it does not, the block starts at the top of the band and scrolls
+                // rather than being pulled up off its own greeting.
+                XCTAssertEqual(column.greetingTop, column.top, context)
+            }
+
+            XCTAssertGreaterThan(column.threadHeight, 0, context)
+            XCTAssertEqual(column.threadTop, column.top + TutorPanelMetrics.controlsHeight, context)
+        }
+
+        // The wrapped case, spelled out. A 9.7-inch iPad in portrait gives a 644pt column, so
+        // the grid doubles to 356 and the block is 798 tall in a 704pt band: 188 points more
+        // than the design's 610 in a band that is 152 shorter. The old constants would have
+        // drawn the grid from 592 straight through the composer at 916; here the block takes
+        // the whole band, the greeting starts at the top of it and the column scrolls, which
+        // is what `TutorFullScreen` wraps it in a scroll view for.
+        let portrait = TutorColumnMetrics(
+            layout: ScreenLayout(
+                size: CGSize(width: 768, height: 1024),
+                safeArea: EdgeInsets(top: 20, leading: 0, bottom: 0, trailing: 0)
+            )
+        )
+        XCTAssertEqual(portrait.width, 644)
+        XCTAssertEqual(portrait.suggestionsHeight, 356)
+        XCTAssertEqual(portrait.startContentHeight, 798)
+        XCTAssertEqual(portrait.startRegionHeight, 704)
+        XCTAssertEqual(portrait.startSlack, 0)
+        XCTAssertEqual(portrait.greetingTop, portrait.top)
+        XCTAssertTrue(portrait.startScrolls, "this is the column that has to scroll")
+        // And the design's own screen is not: a scroll view there would clip the hero halo and
+        // the chips' shadows, which is the diff the reference screenshots are for.
+        XCTAssertFalse(TutorColumnMetrics(layout: .reference).startScrolls)
+        // Even scrolled, every chip is above the composer rather than under it.
+        XCTAssertLessThan(
+            portrait.suggestionsTop + portrait.suggestionsHeight,
+            portrait.composerTop(isAttached: false)
+        )
+    }
+
+    /// The card an attached selection grows behind the pill must not push the column above it.
+    ///
+    /// Board 07 draws no card in the wide composer at all; the app shows one because a
+    /// selection made on the board has to be visible before it is sent. It grows into its own
+    /// 38pt band, and the greeting jumping 38 points the moment a selection is attached would
+    /// be the composer redrawing the screen behind it.
+    func testAnAttachedSelectionGrowsTheComposerWithoutMovingTheColumn() {
+        let column = TutorColumnMetrics(layout: .reference)
+
+        XCTAssertEqual(
+            column.composerTop(isAttached: true),
+            column.composerTop(isAttached: false) - AttachmentStackMetrics.composer(.fullScreen).visibleBand
+        )
+        // Both lanes above are measured off the resting composer, so neither moves.
+        XCTAssertEqual(column.greetingTop, 150)
+        XCTAssertEqual(column.suggestionsTop, 592)
+        XCTAssertEqual(column.threadHeight, 800)
+    }
+
+    // MARK: - Degenerate widths
+
+    /// Nothing here is a size the app can reach — they are the sizes a bug reaches. The
+    /// requirement is only that a component hands `.frame` a number it can draw.
+    func testNoComponentProducesANegativeFrameAtAnImpossibleWidth() {
+        for width in [CGFloat(0), 1, 36, -400] {
+            for scale in ChatScale.allCases {
+                let context = "\(scale.rawValue) at \(width)"
+                let message = MessageMetrics.for(scale, width: width)
+                XCTAssertGreaterThanOrEqual(message.rowWidth, 0, context)
+                XCTAssertGreaterThanOrEqual(message.bubbleMaxWidth, 0, context)
+                XCTAssertGreaterThanOrEqual(message.selection.width, 0, context)
+                XCTAssertGreaterThanOrEqual(message.selection.labelRowWidth, 0, context)
+
+                let thread = ThreadMetrics.for(scale, width: width)
+                XCTAssertGreaterThanOrEqual(thread.width, 0, context)
+                XCTAssertGreaterThanOrEqual(thread.contentHeight(childHeights: []), 0, context)
+
+                let chip = SuggestionChipMetrics.for(scale, width: width)
+                XCTAssertGreaterThanOrEqual(chip.width, 0, context)
+                XCTAssertGreaterThanOrEqual(chip.containerWidth, 0, context)
+                XCTAssertGreaterThanOrEqual(chip.columns, 1, context)
+                XCTAssertGreaterThan(chip.containerHeight, 0, context)
+
+                let greeting = GreetingMetrics.for(scale, width: width)
+                XCTAssertGreaterThanOrEqual(greeting.width, 0, context)
+                XCTAssertGreaterThanOrEqual(greeting.subtitleWidth, 0, context)
+                XCTAssertGreaterThan(greeting.totalHeight, 0, context)
+
+                let card = AttachmentStackMetrics.composer(scale, width: width)
+                XCTAssertGreaterThanOrEqual(card.width, 0, context)
+                XCTAssertGreaterThanOrEqual(card.labelRowWidth, 0, context)
+            }
+        }
+    }
+
+    // MARK: - The columns these components are checked at
+
+    /// One column the conversation surface has to work in.
+    ///
+    /// Taken from `ScreenLayout` rather than re-derived here, for the reason the shell tests
+    /// give: a component checked against a second, private copy of the lane arithmetic is
+    /// only ever proved to agree with the test.
+    private struct Column {
+        let name: String
+        let layout: ScreenLayout
+
+        /// Screen 07's reading column — `min(740, region − 2 × edge)`, so 740 wherever there
+        /// is room for it.
+        var fullScreen: CGFloat { layout.columnWidth }
+
+        /// Screens 05 and 08 — derived from the panel the way board 02 insists, rather than
+        /// read off the 301 token.
+        var panel: CGFloat { TutorPanelMetrics.contentWidth(for: layout.panelWidth) }
+
+        func width(_ scale: ChatScale) -> CGFloat {
+            switch scale {
+            case .panel: panel
+            case .fullScreen: fullScreen
+            }
+        }
+
+        static func device(
+            _ name: String,
+            long: CGFloat,
+            short: CGFloat,
+            safeTop: CGFloat,
+            safeBottom: CGFloat
+        ) -> (landscape: Column, portrait: Column) {
+            func column(_ suffix: String, _ size: CGSize) -> Column {
+                Column(
+                    name: "\(name) \(suffix)",
+                    layout: ScreenLayout(
+                        size: size,
+                        safeArea: EdgeInsets(top: safeTop, leading: 0, bottom: safeBottom, trailing: 0)
+                    )
+                )
+            }
+            return (
+                column("landscape", CGSize(width: long, height: short)),
+                column("portrait", CGSize(width: short, height: long))
+            )
+        }
+
+        /// The five iPads the app ships to, widest to narrowest. Both orientations, because
+        /// landscape is where the design's column survives untouched and portrait is where it
+        /// does not — a suite that only checked landscape would pass on a surface that had
+        /// never learned to narrow at all.
+        static let devices: [(landscape: Column, portrait: Column)] = [
+            Column.device("iPad Pro 13-inch", long: 1376, short: 1032, safeTop: 24, safeBottom: 20),
+            Column.device("iPad Pro 11-inch", long: 1194, short: 834, safeTop: 24, safeBottom: 20),
+            Column.device("iPad Air 11-inch", long: 1180, short: 820, safeTop: 24, safeBottom: 20),
+            Column.device("iPad 10.2-inch", long: 1080, short: 810, safeTop: 20, safeBottom: 0),
+            Column.device("iPad 9.7-inch", long: 1024, short: 768, safeTop: 20, safeBottom: 0),
+        ]
+
+        static let landscape: [Column] = devices.map(\.landscape)
+        static let portrait: [Column] = devices.map(\.portrait)
+
+        /// The board's own screen, with the 40pt status region it was drawn against.
+        static let reference = Column(name: "reference (design board)", layout: .reference)
+
+        static let all: [Column] = [reference] + landscape + portrait
+    }
+}

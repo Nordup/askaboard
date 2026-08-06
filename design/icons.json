@@ -1,0 +1,836 @@
+{
+  "source": {
+    "file": "AI Whiteboard Tutor — Design System, Components & Page",
+    "fileId": "01KZAH9BZ4FRZXKG2309B7SSRG",
+    "artboards": [
+      "04 — Icons (1IF-0) — the original sixteen",
+      "13 — Session plan · full screen (3TM-0) and 14 — Components · Tutor states (3WL-0) — the four added later",
+      "11 — First run · no API key (3NQ-0) — control/settings as a panel control"
+    ],
+    "readVia": "get_jsx, format inline-styles — never a screenshot",
+    "prose": [
+      "docs/design-system/04-icons.md",
+      "docs/design-system/06-states-and-settings.md"
+    ],
+    "generatedBy": "scripts/generate-icons.swift",
+    "generates": "MathTutor/DesignSystem/Generated/IconPaths.swift"
+  },
+  "coverage": {
+    "productGlyphs": 20,
+    "excluded": [
+      {
+        "name": "os/wifi",
+        "reason": "Board section 06 heads these 'OS CHROME — DO NOT SHIP'. They are stand-ins for the iPadOS status bar; iPadOS supplies the real ones at runtime."
+      },
+      {
+        "name": "os/battery",
+        "reason": "Same. Also runs stroke 1.7 on a non-square 27×14 viewBox, which the board says no product glyph should copy."
+      }
+    ]
+  },
+  "normalisation": {
+    "targetEffectiveStrokeWidth": 2.0,
+    "rule": "The board's own un-applied recommendation: 'draw every product glyph on a 24 viewBox and render it at 24, so the scale is always 1.0 and the stroke is always exactly 2.0, one number with nothing to re-derive.' Paper rejected it because rescaling a 28 viewBox there means redrawing every coordinate. In code the path is scaled at render time, so the port adopts it: effectiveStrokeWidth is a point value applied after the viewBox is scaled into the render size, and it holds at any size.",
+    "exceptions": [
+      {
+        "name": "tool/lasso",
+        "effectiveStrokeWidth": 2.7,
+        "reason": "The dash is 0.1 on a 4.3 gap, so 98% of the circumference is empty and the perceived weight comes from dot diameter, not line weight. Dropping to 2.0 shrinks every dot by 26% against an unchanged gap and the ring visibly dissolves."
+      },
+      {
+        "name": "board/hinge",
+        "effectiveStrokeWidth": 1.9,
+        "reason": "The rule would push its attribute to 2.4, a 26% jump. The heavier frame closes in on the six r=1 interior dots and the mark reads as a blob at true size. It is also the one glyph that never appears beside another, so matching the rail's weight buys nothing."
+      }
+    ]
+  },
+  "dashTextures": {
+    "dash/dotted": {
+      "array": [0.1, 4.3],
+      "dashOffset": null,
+      "lineCap": "round",
+      "units": "viewBox",
+      "usedBy": ["tool/lasso"],
+      "note": "The round cap is load-bearing: it is what turns a 0.1 dash into a visible dot roughly one stroke-width across."
+    },
+    "dash/marching": {
+      "array": [4.6, 3.9],
+      "dashOffset": null,
+      "lineCap": "butt",
+      "units": "viewBox",
+      "usedBy": ["ui/selection-marker"],
+      "note": "Butt cap, not declared in the markup — it is the SVG default. It is what makes the segments read as clean marching ants."
+    }
+  },
+  "icons": [
+    {
+      "name": "tool/pen",
+      "swiftCase": "toolPen",
+      "viewBox": { "width": 28, "height": 28 },
+      "productRenderSizes": [28],
+      "renderSize": 28,
+      "effectiveStrokeWidth": null,
+      "colorToken": "--color-brand",
+      "dashTexture": null,
+      "notes": "Fill-only — the one glyph in the set with no stroke at all. Shown selected, which is its resting appearance in the live rail. The width=27 attribute is stale: the product overrides it to 28 inline, so the port authors a plain 28. Violet means 'tool is active', not 'current ink', which is why it binds --color-brand and not --color-pen-violet.",
+      "elements": [
+        {
+          "type": "path",
+          "d": "M22.4 2.6a3 3 0 0 1 4.24 0l.76.76a3 3 0 0 1 0 4.24l-2.1 2.1-5-5 2.1-2.1Z",
+          "fill": "var(--color-brand)",
+          "stroke": "none",
+          "strokeWidth": null,
+          "lineCap": null,
+          "lineJoin": null,
+          "dashArray": null
+        },
+        {
+          "type": "path",
+          "d": "M18.58 5.42l5 5L11.9 22.1l-5-5L18.58 5.42Z",
+          "fill": "var(--color-brand)",
+          "stroke": "none",
+          "strokeWidth": null,
+          "lineCap": null,
+          "lineJoin": null,
+          "dashArray": null
+        },
+        {
+          "type": "path",
+          "d": "M5.86 18.14l5 5-6.53 1.72a.72.72 0 0 1-.88-.88l1.71-6.54Z",
+          "fill": "var(--color-brand)",
+          "stroke": "none",
+          "strokeWidth": null,
+          "lineCap": null,
+          "lineJoin": null,
+          "dashArray": null
+        }
+      ]
+    },
+    {
+      "name": "tool/highlighter",
+      "swiftCase": "toolHighlighter",
+      "viewBox": { "width": 28, "height": 28 },
+      "productRenderSizes": [28],
+      "renderSize": 28,
+      "effectiveStrokeWidth": 2.0,
+      "colorToken": "--color-icon",
+      "dashTexture": null,
+      "notes": "Two filled body shapes plus one stroked baseline. Attribute 2.2 renders 2.20; the product overrides it to 2.",
+      "elements": [
+        {
+          "type": "path",
+          "d": "M18.1 3.9a2.7 2.7 0 0 1 3.82 0l2.18 2.18a2.7 2.7 0 0 1 0 3.82l-9.1 9.1-6-6 9.1-9.1Z",
+          "fill": "var(--color-icon)",
+          "stroke": "none",
+          "strokeWidth": null,
+          "lineCap": null,
+          "lineJoin": null,
+          "dashArray": null
+        },
+        {
+          "type": "path",
+          "d": "M8.5 13.6 14.5 19.6 12.3 21.8H6a1.1 1.1 0 0 1-1.1-1.1v-4.4L8.5 13.6Z",
+          "fill": "var(--color-icon)",
+          "stroke": "none",
+          "strokeWidth": null,
+          "lineCap": null,
+          "lineJoin": null,
+          "dashArray": null
+        },
+        {
+          "type": "path",
+          "d": "M4.6 25.4h18.8",
+          "fill": "none",
+          "stroke": "var(--color-icon)",
+          "strokeWidth": 2.2,
+          "lineCap": "round",
+          "lineJoin": null,
+          "dashArray": null
+        }
+      ]
+    },
+    {
+      "name": "tool/eraser",
+      "swiftCase": "toolEraser",
+      "viewBox": { "width": 28, "height": 28 },
+      "productRenderSizes": [28],
+      "renderSize": 28,
+      "effectiveStrokeWidth": 2.0,
+      "colorToken": "--color-icon",
+      "dashTexture": null,
+      "notes": "One of only two glyphs that needed no override — attribute 2 on a 1:1 scale already renders 2.00.",
+      "elements": [
+        {
+          "type": "path",
+          "d": "M12.6 4.1a2.1 2.1 0 0 1 2.97 0l8.33 8.33a2.1 2.1 0 0 1 0 2.97l-5.36 5.36a2.1 2.1 0 0 1-2.97 0L7.24 12.43a2.1 2.1 0 0 1 0-2.97L12.6 4.1Z",
+          "fill": "none",
+          "stroke": "var(--color-icon)",
+          "strokeWidth": 2.0,
+          "lineCap": null,
+          "lineJoin": null,
+          "dashArray": null
+        },
+        {
+          "type": "path",
+          "d": "M5.4 21.9h18.4",
+          "fill": "none",
+          "stroke": "var(--color-icon)",
+          "strokeWidth": 2.0,
+          "lineCap": "round",
+          "lineJoin": null,
+          "dashArray": null
+        }
+      ]
+    },
+    {
+      "name": "tool/lasso",
+      "swiftCase": "toolLasso",
+      "viewBox": { "width": 28, "height": 28 },
+      "productRenderSizes": [28],
+      "renderSize": 28,
+      "effectiveStrokeWidth": 2.7,
+      "colorToken": "--color-icon",
+      "dashTexture": "dash/dotted",
+      "notes": "Exception 1 of the board's three. Keeps 2.7 — for a dotted mark the perceived weight is dot diameter, not line weight.",
+      "elements": [
+        {
+          "type": "circle",
+          "cx": 14.0,
+          "cy": 14.0,
+          "r": 9.7,
+          "fill": "none",
+          "stroke": "var(--color-icon)",
+          "strokeWidth": 2.7,
+          "lineCap": "round",
+          "lineJoin": null,
+          "dashArray": [0.1, 4.3]
+        }
+      ]
+    },
+    {
+      "name": "tool/center",
+      "swiftCase": "toolCenter",
+      "viewBox": { "width": 24, "height": 24 },
+      "productRenderSizes": [26],
+      "renderSize": 26,
+      "effectiveStrokeWidth": 2.0,
+      "colorToken": "--color-icon",
+      "dashTexture": null,
+      "notes": "The centre-on-work control at the foot of the tool rail. Renders 26 on a 24 viewBox, so the specimen's attribute 2 renders 2.17; the product overrides it to 1.85.",
+      "elements": [
+        {
+          "type": "circle",
+          "cx": 12.0,
+          "cy": 12.0,
+          "r": 7.0,
+          "fill": "none",
+          "stroke": "var(--color-icon)",
+          "strokeWidth": 2.0,
+          "lineCap": null,
+          "lineJoin": null,
+          "dashArray": null
+        },
+        {
+          "type": "path",
+          "d": "M12 1.8v3M12 19.2v3M1.8 12h3M19.2 12h3",
+          "fill": "none",
+          "stroke": "var(--color-icon)",
+          "strokeWidth": 2.0,
+          "lineCap": "round",
+          "lineJoin": null,
+          "dashArray": null
+        },
+        {
+          "type": "circle",
+          "cx": 12.0,
+          "cy": 12.0,
+          "r": 1.9,
+          "fill": "var(--color-icon)",
+          "stroke": "none",
+          "strokeWidth": null,
+          "lineCap": null,
+          "lineJoin": null,
+          "dashArray": null
+        }
+      ]
+    },
+    {
+      "name": "control/dock",
+      "swiftCase": "controlDock",
+      "viewBox": { "width": 28, "height": 28 },
+      "productRenderSizes": [28],
+      "renderSize": 28,
+      "effectiveStrokeWidth": 2.0,
+      "colorToken": "--color-icon",
+      "dashTexture": null,
+      "notes": "control/dock and control/full are the same 21×17 rect at radius 5; dock adds the divider at x=16.8. The board: 'draw them as one shape with a conditional second path — the rect must not shift by even a subpixel when the state toggles.'",
+      "elements": [
+        {
+          "type": "rect",
+          "x": 3.5,
+          "y": 5.5,
+          "width": 21.0,
+          "height": 17.0,
+          "rx": 5.0,
+          "fill": "none",
+          "stroke": "var(--color-icon)",
+          "strokeWidth": 2.1,
+          "lineCap": null,
+          "lineJoin": null,
+          "dashArray": null
+        },
+        {
+          "type": "path",
+          "d": "M16.8 5.5V22.5",
+          "fill": "none",
+          "stroke": "var(--color-icon)",
+          "strokeWidth": 2.1,
+          "lineCap": null,
+          "lineJoin": null,
+          "dashArray": null
+        }
+      ]
+    },
+    {
+      "name": "control/full",
+      "swiftCase": "controlFull",
+      "viewBox": { "width": 28, "height": 28 },
+      "productRenderSizes": [28],
+      "renderSize": 28,
+      "effectiveStrokeWidth": 2.0,
+      "colorToken": "--color-icon",
+      "dashTexture": null,
+      "notes": "Byte-identical to control/dock minus the divider.",
+      "elements": [
+        {
+          "type": "rect",
+          "x": 3.5,
+          "y": 5.5,
+          "width": 21.0,
+          "height": 17.0,
+          "rx": 5.0,
+          "fill": "none",
+          "stroke": "var(--color-icon)",
+          "strokeWidth": 2.1,
+          "lineCap": null,
+          "lineJoin": null,
+          "dashArray": null
+        }
+      ]
+    },
+    {
+      "name": "control/settings",
+      "swiftCase": "controlSettings",
+      "viewBox": { "width": 28, "height": 28 },
+      "productRenderSizes": [22, 28],
+      "renderSize": 28,
+      "effectiveStrokeWidth": 2.0,
+      "colorToken": "--color-icon",
+      "dashTexture": null,
+      "notes": "Two horizontal rules, each split around a knob — a sliders mark. The third panel control on boards 10/11/12/13 at 28 (attribute 2, renders 2.00), and the auth-error recovery glyph on board 14 at 22 (attribute 2.18, renders 1.71 — see designAnomaly). Both rules leave 4pt of air either side of their knob, which is r3 + 1.",
+      "designAnomaly": {
+        "instance": "state/error — auth, the Open Settings recovery chip on board 14",
+        "renderSize": 22,
+        "designStrokeWidth": 2.18,
+        "effectiveStrokeWidth": 1.71,
+        "note": "2.18 × 22/28 = 1.71 against the set's 2.0 target — the one off-target instance the board does not defend. Its spec row is also the only glyph row on board 14 missing the '→ 2.00' its three siblings carry, which reads like 2.18 was copied from the 24-viewBox glyphs without re-deriving; 2.545 is what renders 2.0 there. Recorded, not corrected."
+      },
+      "elements": [
+        {
+          "type": "path",
+          "d": "M4.4 10H13M21 10h2.6",
+          "fill": "none",
+          "stroke": "var(--color-icon)",
+          "strokeWidth": 2.0,
+          "lineCap": "round",
+          "lineJoin": null,
+          "dashArray": null
+        },
+        {
+          "type": "circle",
+          "cx": 17.0,
+          "cy": 10.0,
+          "r": 3.0,
+          "fill": "none",
+          "stroke": "var(--color-icon)",
+          "strokeWidth": 2.0,
+          "lineCap": null,
+          "lineJoin": null,
+          "dashArray": null
+        },
+        {
+          "type": "path",
+          "d": "M4.4 18H7M15 18h8.6",
+          "fill": "none",
+          "stroke": "var(--color-icon)",
+          "strokeWidth": 2.0,
+          "lineCap": "round",
+          "lineJoin": null,
+          "dashArray": null
+        },
+        {
+          "type": "circle",
+          "cx": 11.0,
+          "cy": 18.0,
+          "r": 3.0,
+          "fill": "none",
+          "stroke": "var(--color-icon)",
+          "strokeWidth": 2.0,
+          "lineCap": null,
+          "lineJoin": null,
+          "dashArray": null
+        }
+      ]
+    },
+    {
+      "name": "ui/selection-marker",
+      "swiftCase": "uiSelectionMarker",
+      "viewBox": { "width": 24, "height": 24 },
+      "productRenderSizes": [24],
+      "renderSize": 24,
+      "effectiveStrokeWidth": 2.0,
+      "colorToken": "--color-brand | --color-icon",
+      "dashTexture": "dash/marching",
+      "notes": "One asset, two colour states: --color-brand when a board selection is live in the composer, --color-icon when it is the collapsed dock's idle select control. The markup attribute says #6051DC in BOTH cases and an inline style decides — this is the set's one genuine markup-vs-render colour disagreement, and the board's instruction is to port it as a single view with the colour injected, never by copy-paste.",
+      "elements": [
+        {
+          "type": "rect",
+          "x": 2.6,
+          "y": 2.6,
+          "width": 18.8,
+          "height": 18.8,
+          "rx": 4.0,
+          "fill": "none",
+          "stroke": "#6051DC",
+          "strokeWidth": 2.0,
+          "lineCap": null,
+          "lineJoin": null,
+          "dashArray": [4.6, 3.9]
+        }
+      ]
+    },
+    {
+      "name": "ui/check",
+      "swiftCase": "uiCheck",
+      "viewBox": { "width": 24, "height": 24 },
+      "productRenderSizes": [22, 24],
+      "renderSize": 24,
+      "effectiveStrokeWidth": 2.0,
+      "colorToken": "--color-icon",
+      "dashTexture": null,
+      "notes": "Correct-finding mark in the evaluation lane, and the bullet for plan/outcome. Authored on board 04's recommended 24 grid: 24 render with a flat 2 in the full-screen plan, 22 render with 2.18 in the panel — both render 2.00. The markup binds --color-icon; the evaluation state overrides it inline with --color-correct, exactly as ui/selection-marker's two states do. That tint is the call site's to pass — the semantic pair is stroke-only and must never become a fill, so it is not baked in here.",
+      "elements": [
+        {
+          "type": "path",
+          "d": "M4.8 12.6 9.8 17.6 19.2 6.9",
+          "fill": "none",
+          "stroke": "var(--color-icon)",
+          "strokeWidth": 2.18,
+          "lineCap": "round",
+          "lineJoin": "round",
+          "dashArray": null
+        }
+      ]
+    },
+    {
+      "name": "ui/cross",
+      "swiftCase": "uiCross",
+      "viewBox": { "width": 24, "height": 24 },
+      "productRenderSizes": [22],
+      "renderSize": 22,
+      "effectiveStrokeWidth": 2.0,
+      "colorToken": "--color-icon",
+      "dashTexture": null,
+      "notes": "Incorrect-finding mark, and the shape is the entire signal — it is drawn in the same colour as ui/check, and the evaluation state tints it --color-incorrect at the call site. One path with two M subpaths, not two elements. Symmetric about (12,12) on an 11.2pt half-diagonal. Round cap, and deliberately no linejoin: the two strokes never meet, so there is no join to round.",
+      "elements": [
+        {
+          "type": "path",
+          "d": "M6.4 6.4 17.6 17.6M17.6 6.4 6.4 17.6",
+          "fill": "none",
+          "stroke": "var(--color-icon)",
+          "strokeWidth": 2.18,
+          "lineCap": "round",
+          "lineJoin": null,
+          "dashArray": null
+        }
+      ]
+    },
+    {
+      "name": "ui/retry",
+      "swiftCase": "uiRetry",
+      "viewBox": { "width": 24, "height": 24 },
+      "productRenderSizes": [22],
+      "renderSize": 22,
+      "effectiveStrokeWidth": 2.0,
+      "colorToken": "--color-icon",
+      "dashTexture": null,
+      "notes": "Network-error recovery glyph — an open circular arrow with an arrowhead at the top right. Recovery chips take --color-icon rather than --color-brand because a repair is not a suggestion. The ring is a large-arc segment around an implied centre of (12,12) at r 8.4, left open where the arrowhead lands.",
+      "elements": [
+        {
+          "type": "path",
+          "d": "M20.4 12a8.4 8.4 0 1 1-2.46-5.94",
+          "fill": "none",
+          "stroke": "var(--color-icon)",
+          "strokeWidth": 2.18,
+          "lineCap": "round",
+          "lineJoin": null,
+          "dashArray": null
+        },
+        {
+          "type": "path",
+          "d": "M20.6 3.4v4.9h-4.9",
+          "fill": "none",
+          "stroke": "var(--color-icon)",
+          "strokeWidth": 2.18,
+          "lineCap": "round",
+          "lineJoin": "round",
+          "dashArray": null
+        }
+      ]
+    },
+    {
+      "name": "composer/voice",
+      "swiftCase": "composerVoice",
+      "viewBox": { "width": 24, "height": 24 },
+      "productRenderSizes": [20, 26],
+      "renderSize": 26,
+      "effectiveStrokeWidth": 2.0,
+      "colorToken": "--color-icon",
+      "dashTexture": null,
+      "notes": "Rendered 20 in the docked panel and 26 on the full-screen composer, and it is the one glyph whose two instances carry genuinely different attributes (2.4 docked, 1.9 full) rather than one attribute plus an override. Both resolve to 2.00 effective, which is exactly the drift the normalised port removes.",
+      "elements": [
+        {
+          "type": "path",
+          "d": "M12 3.4a2.8 2.8 0 0 1 2.8 2.8v6a2.8 2.8 0 0 1-5.6 0v-6A2.8 2.8 0 0 1 12 3.4Z",
+          "fill": "none",
+          "stroke": "var(--color-icon)",
+          "strokeWidth": 1.9,
+          "lineCap": null,
+          "lineJoin": "round",
+          "dashArray": null
+        },
+        {
+          "type": "path",
+          "d": "M5.6 11.4v.9a6.4 6.4 0 0 0 12.8 0v-.9",
+          "fill": "none",
+          "stroke": "var(--color-icon)",
+          "strokeWidth": 1.9,
+          "lineCap": "round",
+          "lineJoin": null,
+          "dashArray": null
+        },
+        {
+          "type": "path",
+          "d": "M12 18.7v2.6",
+          "fill": "none",
+          "stroke": "var(--color-icon)",
+          "strokeWidth": 1.9,
+          "lineCap": "round",
+          "lineJoin": null,
+          "dashArray": null
+        }
+      ]
+    },
+    {
+      "name": "composer/send",
+      "swiftCase": "composerSend",
+      "viewBox": { "width": 24, "height": 24 },
+      "productRenderSizes": [22, 26],
+      "renderSize": 26,
+      "effectiveStrokeWidth": 2.0,
+      "colorToken": "#FFFFFF → --color-surface",
+      "dashTexture": null,
+      "notes": "The only glyph in the set that does not bind a colour token: a literal #FFFFFF, because it always rides the filled --color-brand send button. The port substitutes --color-surface, which is that same white as a token. It is also the board's own proof that per-size attributes do not converge: 'send would need 2.18 at 22pt and 1.85 at 26pt.'",
+      "elements": [
+        {
+          "type": "path",
+          "d": "M12 19.4V5.4",
+          "fill": "none",
+          "stroke": "#FFFFFF",
+          "strokeWidth": 2.5,
+          "lineCap": "round",
+          "lineJoin": null,
+          "dashArray": null
+        },
+        {
+          "type": "path",
+          "d": "M5.8 11.6 12 5.4l6.2 6.2",
+          "fill": "none",
+          "stroke": "#FFFFFF",
+          "strokeWidth": 2.5,
+          "lineCap": "round",
+          "lineJoin": "round",
+          "dashArray": null
+        }
+      ]
+    },
+    {
+      "name": "composer/dismiss",
+      "swiftCase": "composerDismiss",
+      "viewBox": { "width": 14, "height": 14 },
+      "productRenderSizes": [14],
+      "renderSize": 14,
+      "effectiveStrokeWidth": 2.0,
+      "colorToken": "--color-brand",
+      "dashTexture": null,
+      "notes": "The smallest glyph in the set and the only one on a 14 viewBox. The width=13 attribute is stale — the product overrides it to 14, which is the board's 'one free re-fit' (scale exactly 1.0, so the stroke is a plain 2.0 rather than the tabled 2.15). The port follows the product, not the table.",
+      "elements": [
+        {
+          "type": "path",
+          "d": "M3.4 3.4l7.2 7.2M10.6 3.4l-7.2 7.2",
+          "fill": "none",
+          "stroke": "#6051DC",
+          "strokeWidth": 1.9,
+          "lineCap": "round",
+          "lineJoin": null,
+          "dashArray": null
+        }
+      ]
+    },
+    {
+      "name": "chip/explain",
+      "swiftCase": "chipExplain",
+      "viewBox": { "width": 24, "height": 24 },
+      "productRenderSizes": [22, 24],
+      "renderSize": 24,
+      "effectiveStrokeWidth": 2.0,
+      "colorToken": "--color-brand",
+      "dashTexture": null,
+      "notes": "Suggestion chip — 'Explain this concept'. A lightbulb.",
+      "elements": [
+        {
+          "type": "path",
+          "d": "M12 3.2a6.4 6.4 0 0 0-3.8 11.55c.6.44.95 1.1.95 1.8v.25h5.7v-.25c0-.7.35-1.36.95-1.8A6.4 6.4 0 0 0 12 3.2Z",
+          "fill": "none",
+          "stroke": "#6051DC",
+          "strokeWidth": 1.9,
+          "lineCap": null,
+          "lineJoin": "round",
+          "dashArray": null
+        },
+        {
+          "type": "path",
+          "d": "M9.5 19.6h5M10.4 21.8h3.2",
+          "fill": "none",
+          "stroke": "#6051DC",
+          "strokeWidth": 1.9,
+          "lineCap": "round",
+          "lineJoin": null,
+          "dashArray": null
+        }
+      ]
+    },
+    {
+      "name": "chip/example",
+      "swiftCase": "chipExample",
+      "viewBox": { "width": 24, "height": 24 },
+      "productRenderSizes": [22, 24],
+      "renderSize": 24,
+      "effectiveStrokeWidth": 2.0,
+      "colorToken": "--color-brand",
+      "dashTexture": null,
+      "notes": "Suggestion chip — 'Give me an example'. Two four-point sparkles. Both paths open with an implicit lineto (an M followed by a second coordinate pair).",
+      "elements": [
+        {
+          "type": "path",
+          "d": "M10.2 3.4 12 8.2l4.8 1.8-4.8 1.8-1.8 4.8-1.8-4.8L3.6 10l4.8-1.8 1.8-4.8Z",
+          "fill": "none",
+          "stroke": "#6051DC",
+          "strokeWidth": 1.9,
+          "lineCap": null,
+          "lineJoin": "round",
+          "dashArray": null
+        },
+        {
+          "type": "path",
+          "d": "M17.6 14.2l.95 2.55 2.55.95-2.55.95-.95 2.55-.95-2.55-2.55-.95 2.55-.95.95-2.55Z",
+          "fill": "none",
+          "stroke": "#6051DC",
+          "strokeWidth": 1.9,
+          "lineCap": null,
+          "lineJoin": "round",
+          "dashArray": null
+        }
+      ]
+    },
+    {
+      "name": "chip/exercise",
+      "swiftCase": "chipExercise",
+      "viewBox": { "width": 24, "height": 24 },
+      "productRenderSizes": [22, 24],
+      "renderSize": 24,
+      "effectiveStrokeWidth": 2.0,
+      "colorToken": "--color-brand",
+      "dashTexture": null,
+      "notes": "Suggestion chip — 'Create an exercise'. A pencil over an open square.",
+      "elements": [
+        {
+          "type": "path",
+          "d": "M11.2 4.8H6.4A2.4 2.4 0 0 0 4 7.2v10.4a2.4 2.4 0 0 0 2.4 2.4h10.4a2.4 2.4 0 0 0 2.4-2.4v-4.6",
+          "fill": "none",
+          "stroke": "#6051DC",
+          "strokeWidth": 1.9,
+          "lineCap": "round",
+          "lineJoin": null,
+          "dashArray": null
+        },
+        {
+          "type": "path",
+          "d": "M17.5 3.9a2.15 2.15 0 0 1 3.04 3.04L13.1 14.4l-4.05.95 1-4.05 7.45-7.4Z",
+          "fill": "none",
+          "stroke": "#6051DC",
+          "strokeWidth": 1.9,
+          "lineCap": null,
+          "lineJoin": "round",
+          "dashArray": null
+        }
+      ]
+    },
+    {
+      "name": "chip/confused",
+      "swiftCase": "chipConfused",
+      "viewBox": { "width": 24, "height": 24 },
+      "productRenderSizes": [22, 24],
+      "renderSize": 24,
+      "effectiveStrokeWidth": 2.0,
+      "colorToken": "--color-brand",
+      "dashTexture": null,
+      "notes": "Suggestion chip — 'I don't understand this'. The group's one internal exception: the question-mark dot is a filled circle rather than stroked, because 'a rounded 1.9 cap would have read as a dash at this size'. The hook is the set's only large-arc segment.",
+      "elements": [
+        {
+          "type": "circle",
+          "cx": 12.0,
+          "cy": 12.0,
+          "r": 8.6,
+          "fill": "none",
+          "stroke": "#6051DC",
+          "strokeWidth": 1.9,
+          "lineCap": null,
+          "lineJoin": null,
+          "dashArray": null
+        },
+        {
+          "type": "path",
+          "d": "M9.5 9.5a2.5 2.5 0 1 1 3.3 2.36c-.72.25-1.2.92-1.2 1.68v.36",
+          "fill": "none",
+          "stroke": "#6051DC",
+          "strokeWidth": 1.9,
+          "lineCap": "round",
+          "lineJoin": null,
+          "dashArray": null
+        },
+        {
+          "type": "circle",
+          "cx": 11.6,
+          "cy": 17.1,
+          "r": 1.15,
+          "fill": "#6051DC",
+          "stroke": "none",
+          "strokeWidth": null,
+          "lineCap": null,
+          "lineJoin": null,
+          "dashArray": null
+        }
+      ]
+    },
+    {
+      "name": "board/hinge",
+      "swiftCase": "boardHinge",
+      "viewBox": { "width": 26, "height": 24 },
+      "productRenderSizes": [22],
+      "renderSize": 22,
+      "effectiveStrokeWidth": 1.9,
+      "colorToken": "--color-ink",
+      "dashTexture": null,
+      "notes": "Exception 2 of the board's three, and the only non-square product glyph. Its six interior dots are filled at r=1 rather than stroked, which is why it holds up when the board peek shrinks it. renderSize is the width — the height follows the 26×24 aspect, because the board's rule is that a non-square mark centred in a square slot is correct and a stretched one is not.",
+      "elements": [
+        {
+          "type": "rect",
+          "x": 2.1,
+          "y": 2.6,
+          "width": 21.8,
+          "height": 18.8,
+          "rx": 3.6,
+          "fill": "none",
+          "stroke": "var(--color-ink)",
+          "strokeWidth": 1.9,
+          "lineCap": null,
+          "lineJoin": null,
+          "dashArray": null
+        },
+        {
+          "type": "circle",
+          "cx": 8.0,
+          "cy": 9.0,
+          "r": 1.0,
+          "fill": "var(--color-ink)",
+          "stroke": "none",
+          "strokeWidth": null,
+          "lineCap": null,
+          "lineJoin": null,
+          "dashArray": null
+        },
+        {
+          "type": "circle",
+          "cx": 13.0,
+          "cy": 9.0,
+          "r": 1.0,
+          "fill": "var(--color-ink)",
+          "stroke": "none",
+          "strokeWidth": null,
+          "lineCap": null,
+          "lineJoin": null,
+          "dashArray": null
+        },
+        {
+          "type": "circle",
+          "cx": 18.0,
+          "cy": 9.0,
+          "r": 1.0,
+          "fill": "var(--color-ink)",
+          "stroke": "none",
+          "strokeWidth": null,
+          "lineCap": null,
+          "lineJoin": null,
+          "dashArray": null
+        },
+        {
+          "type": "circle",
+          "cx": 8.0,
+          "cy": 15.0,
+          "r": 1.0,
+          "fill": "var(--color-ink)",
+          "stroke": "none",
+          "strokeWidth": null,
+          "lineCap": null,
+          "lineJoin": null,
+          "dashArray": null
+        },
+        {
+          "type": "circle",
+          "cx": 13.0,
+          "cy": 15.0,
+          "r": 1.0,
+          "fill": "var(--color-ink)",
+          "stroke": "none",
+          "strokeWidth": null,
+          "lineCap": null,
+          "lineJoin": null,
+          "dashArray": null
+        },
+        {
+          "type": "circle",
+          "cx": 18.0,
+          "cy": 15.0,
+          "r": 1.0,
+          "fill": "var(--color-ink)",
+          "stroke": "none",
+          "strokeWidth": null,
+          "lineCap": null,
+          "lineJoin": null,
+          "dashArray": null
+        }
+      ]
+    }
+  ]
+}
