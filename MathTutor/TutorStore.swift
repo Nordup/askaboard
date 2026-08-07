@@ -24,6 +24,9 @@ final class TutorStore: ObservableObject {
     let tutorService: any TutorService
     let persistence: SessionPersistence
     let keychain: KeychainStore
+    /// Where the base URL half of `BackendConfiguration` lives. The token half is the
+    /// Keychain's; this is never used to store the token itself.
+    let defaults: UserDefaults
     private let logger = Logger(subsystem: "com.nordup.MathTutor", category: "TutorStore")
     /// The in-flight turn's task, kept only so tests can await exactly the
     /// turn a `send`/`evaluate`/etc. call just started rather than polling.
@@ -32,7 +35,8 @@ final class TutorStore: ObservableObject {
     init(
         service: any TutorService = TutorServiceRouter(),
         persistence: SessionPersistence = SessionPersistence(),
-        keychain: KeychainStore = KeychainStore()
+        keychain: KeychainStore = KeychainStore(),
+        defaults: UserDefaults = .standard
     ) {
         #if DEBUG
         // The offline tutor is available only when a test/debug launch opts into it
@@ -51,17 +55,26 @@ final class TutorStore: ObservableObject {
         #endif
         self.persistence = persistence
         self.keychain = keychain
+        self.defaults = defaults
+        // Runs on every launch, release included: a real OpenAI key left over from
+        // before this migration must not sit in the Keychain forever just because
+        // the app stopped sending it anywhere.
+        keychain.migrateAwayFromAPIKey()
         let isUITestReset = ProcessInfo.processInfo.arguments.contains("--ui-test-reset")
         #if DEBUG
         // UI tests must never inherit a developer credential from the simulator.
         // This is intentionally compiled only into DEBUG; production launches keep
         // their existing Keychain-backed live behavior unchanged.
-        if isUITestReset { keychain.removeAPIKey() }
-        // Local dev loop: seed the Keychain from the launch environment so a
-        // simulator run never has to retype the key in Settings. Skipped for UI
-        // test resets by the same rule above.
-        if !isUITestReset, let injectedKey = DebugAPIKeyInjection.injectedKey() {
-            keychain.saveAPIKey(injectedKey)
+        if isUITestReset {
+            keychain.removeBackendToken()
+            defaults.removeObject(forKey: BackendConfiguration.baseURLDefaultsKey)
+        }
+        // Local dev loop: seed the Keychain and UserDefaults from the launch
+        // environment so a simulator run never has to retype either field in
+        // Settings. Skipped for UI test resets by the same rule above.
+        if !isUITestReset, let injected = DebugBackendInjection.injectedConfiguration() {
+            keychain.saveBackendToken(injected.token)
+            defaults.set(injected.baseURL.absoluteString, forKey: BackendConfiguration.baseURLDefaultsKey)
         }
         let shouldSeedE2E = ProcessInfo.processInfo.arguments.contains(E2ESeedFixture.launchArgument)
         #else
@@ -75,7 +88,7 @@ final class TutorStore: ObservableObject {
             restored.messages = [TutorMessage(role: .tutor, text: "Hi, I’m your math tutor. What would you like to understand today? You can type a goal in your own words—fractions, algebra, a homework question, anything.")]
         }
         self.session = restored
-        self.usesLiveTutor = keychain.readAPIKey()?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        self.usesLiveTutor = BackendConfiguration.load(defaults: defaults, keychain: keychain) != nil
         let usingDemoService = resolvedService is DemoTutorService
         self.isWorkspace = restored.plan != nil && restored.exercise != nil && (self.usesLiveTutor || usingDemoService)
         if shouldSeedE2E { persistence.save(restored) }
@@ -287,21 +300,46 @@ final class TutorStore: ObservableObject {
     }
 
     @discardableResult
-    func saveAPIKey(_ key: String) -> Bool {
-        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        let saved = trimmed.isEmpty ? keychain.removeAPIKey() : keychain.saveAPIKey(trimmed)
-        if saved { usesLiveTutor = !trimmed.isEmpty }
+    func saveBackendToken(_ token: String) -> Bool {
+        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        let saved = trimmed.isEmpty ? keychain.removeBackendToken() : keychain.saveBackendToken(trimmed)
+        if saved { refreshLiveTutorAvailability() }
         return saved
     }
 
     @discardableResult
-    func removeAPIKey() -> Bool {
-        let removed = keychain.removeAPIKey()
+    func removeBackendToken() -> Bool {
+        let removed = keychain.removeBackendToken()
         if removed {
-            usesLiveTutor = false
+            refreshLiveTutorAvailability()
             if !demoMode { isWorkspace = false }
         }
         return removed
+    }
+
+    /// Saves the backend's base URL to `UserDefaults`. Declines an empty or
+    /// unparseable address rather than clearing the one already stored —
+    /// the same rule `saveBackendToken` follows for an empty token, and the
+    /// reason `KeyField`'s own save action declines an empty draft: an empty
+    /// save is not a designed way to clear a field that has its own
+    /// destructive control.
+    @discardableResult
+    func saveBaseURL(_ urlString: String) -> Bool {
+        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let url = URL(string: trimmed), url.scheme != nil, url.host != nil else {
+            return false
+        }
+        defaults.set(url.absoluteString, forKey: BackendConfiguration.baseURLDefaultsKey)
+        refreshLiveTutorAvailability()
+        return true
+    }
+
+    /// Both halves — base URL and token — are required before live tutoring is
+    /// available; see `BackendConfiguration.init?`. Called after any change to
+    /// either half so `usesLiveTutor` never drifts from what a real request
+    /// would actually see.
+    private func refreshLiveTutorAvailability() {
+        usesLiveTutor = BackendConfiguration.load(defaults: defaults, keychain: keychain) != nil
     }
 
     func retryLastRequest() {

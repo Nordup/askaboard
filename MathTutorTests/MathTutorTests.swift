@@ -841,7 +841,7 @@ final class MathTutorTests: XCTestCase {
     @MainActor
     func testStoreGuardsRequestsWhenAPIKeyIsMissing() {
         let keychain = KeychainStore()
-        keychain.removeAPIKey()
+        keychain.removeBackendToken()
         let router = TutorServiceRouter()
         let store = TutorStore(service: router, keychain: keychain)
         store.resetSession()

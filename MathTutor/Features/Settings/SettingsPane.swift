@@ -72,5 +72,12 @@ enum SettingsCopy {
     static let removeKey = "Remove API key"
     static let resetSession = "Reset this session"
 
+    /// **Not considered copy.** Client-migration Task 6 added the base-URL field with no
+    /// board to draw it and no owner-written label to give it, and the task's own brief
+    /// forbids inventing one. This is the plainest factual placeholder that will do until
+    /// the design owner replaces it — see the migration's string report — used both as the
+    /// field's placeholder and its accessibility label.
+    static let baseURLPlaceholder = "Server address"
+
     static let close = "Close settings"
 }

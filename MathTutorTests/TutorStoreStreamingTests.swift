@@ -59,14 +59,25 @@ extension SessionPersistence {
 }
 
 extension KeychainStore {
-    /// A real Keychain-backed store pre-seeded with a key, for tests that
-    /// need `usesLiveTutor` true without exercising key management itself.
-    /// Every `KeychainStore` shares the same system entry (there is no
-    /// per-instance scoping), matching the pattern the rest of the suite
+    /// A real Keychain-backed store pre-seeded with a token, for tests that
+    /// need `usesLiveTutor` true without exercising credential management
+    /// itself. Every `KeychainStore` shares the same system entry (there is
+    /// no per-instance scoping), matching the pattern the rest of the suite
     /// already relies on for keychain-backed tests.
+    ///
+    /// `usesLiveTutor` now requires a base URL alongside the token — see
+    /// `BackendConfiguration.init?` — so this also seeds `UserDefaults
+    /// .standard`'s base-URL key, the same shared-global-state trade the
+    /// Keychain half already makes, for the same reason: every caller of
+    /// `.stub` wants the same "live tutoring is available" condition, not
+    /// its own isolated one.
     static var stub: KeychainStore {
         let store = KeychainStore()
-        store.saveAPIKey("tutor-store-streaming-tests-key")
+        store.saveBackendToken("tutor-store-streaming-tests-key")
+        UserDefaults.standard.set(
+            "https://backend.example.com",
+            forKey: BackendConfiguration.baseURLDefaultsKey
+        )
         return store
     }
 }

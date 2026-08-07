@@ -33,15 +33,8 @@ struct BackendConfiguration: Sendable, Equatable {
 
     /// Reads the base URL from `UserDefaults` and the token from the
     /// Keychain, returning `nil` whenever either half is missing or invalid.
-    ///
-    /// The token accessor is `KeychainStore.readAPIKey()` for now: it is the
-    /// same generic-password slot the client-side OpenAI prototype used, and
-    /// this task does not rename it — a later task in the migration plan
-    /// (client-migration Task 6) renames it to `readBackendToken()` against
-    /// a dedicated Keychain account and migrates away from the old one. This
-    /// call site is the only thing that follow-up needs to update.
     static func load(defaults: UserDefaults = .standard, keychain: KeychainStore = KeychainStore()) -> BackendConfiguration? {
         let baseURL = defaults.string(forKey: baseURLDefaultsKey).flatMap(URL.init(string:))
-        return BackendConfiguration(baseURL: baseURL, token: keychain.readAPIKey() ?? "")
+        return BackendConfiguration(baseURL: baseURL, token: keychain.readBackendToken() ?? "")
     }
 }

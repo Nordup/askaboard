@@ -79,9 +79,9 @@ enum APIKeyMask {
 
 /// The API-key row: a secure field, and a text action that commits it.
 ///
-/// The key is handed straight to `TutorStore.saveAPIKey`, which is the Keychain and nothing
-/// else. It is never written to `UserDefaults`, never logged, and `draft` is cleared by the
-/// caller the moment the save succeeds.
+/// The key is handed straight to `TutorStore.saveBackendToken`, which is the Keychain and
+/// nothing else. It is never written to `UserDefaults`, never logged, and `draft` is cleared
+/// by the caller the moment the save succeeds.
 ///
 /// Board 10 draws only the filled resting state — *"no focused / empty / error state for
 /// this field is drawn anywhere in the file"* — so there is no placeholder, no focus ring
@@ -157,5 +157,80 @@ struct KeyField: View {
         .buttonStyle(.plain)
         .accessibilityLabel("Save API key")
         .accessibilityIdentifier("save-api-key")
+    }
+}
+
+/// The backend base-URL row: a plain field and the same commit action `KeyField` uses.
+///
+/// New with client-migration Task 6, and unlike `KeyField` there is no board that drew it —
+/// board 10 predates the backend entirely. Rather than invent a second visual language for
+/// one more field, this borrows `KeyField`'s box, paddings and action exactly, and drops the
+/// two things that were about a *secret* specifically: `SecureField` and the monospaced mask.
+/// A server address is not a secret — there is nothing here to hide from a shoulder surfer,
+/// and nothing gained by making it harder to proofread.
+///
+/// That is also why this field is prefilled with the stored value directly rather than
+/// following `KeyField`'s mask-then-drop pattern: that pattern exists so a secret is never
+/// held in view state longer than it has to be, and a base URL carries no such reason to be
+/// write-only.
+struct BaseURLField: View {
+    /// What is being typed, prefilled from the stored value on appear by the caller.
+    @Binding var draft: String
+    /// The pane's measure.
+    let width: CGFloat
+    let onSave: () -> Void
+
+    var body: some View {
+        HStack(spacing: KeyFieldMetrics.gap) {
+            field
+            action
+        }
+        .padding(.leading, KeyFieldMetrics.paddingLeading)
+        .padding(.trailing, KeyFieldMetrics.paddingTrailing)
+        .frame(width: width, height: KeyFieldMetrics.height)
+        .background(
+            KeyFieldMetrics.fill,
+            in: RoundedRectangle(cornerRadius: KeyFieldMetrics.radius, style: .circular)
+        )
+        .elevation(KeyFieldMetrics.elevation)
+    }
+
+    /// 15 / 22 · 400 · ink, sans — `KeyFieldMetrics.textStyle` minus the mono axis, which is
+    /// there only to make a bullet-mask run legible and has nothing to do with a plain URL.
+    private var textStyle: TextStyle {
+        TextStyle(size: DS.Size.label, leading: DS.Leading.control, weight: .regular)
+    }
+
+    private var field: some View {
+        TextField(SettingsCopy.baseURLPlaceholder, text: $draft)
+            .textFieldStyle(.plain)
+            .keyboardType(.URL)
+            .textContentType(.URL)
+            .autocorrectionDisabled()
+            .textInputAutocapitalization(.never)
+            .submitLabel(.done)
+            .onSubmit(onSave)
+            .textStyle(textStyle)
+            .foregroundStyle(DS.Color.ink)
+            .tint(DS.Color.brand)
+            .accessibilityLabel(SettingsCopy.baseURLPlaceholder)
+            .accessibilityIdentifier("base-url-field")
+    }
+
+    /// `Replace`, the same action `KeyField`'s trailing control uses — reused rather than
+    /// given a word of its own, since this task's only sanctioned new string is the field's
+    /// placeholder. No `accessibilityLabel` override either, for the same reason: the
+    /// visible `Replace` text is already what VoiceOver would need to say, and writing a
+    /// second, more specific label would be exactly the kind of copy this task may not add.
+    private var action: some View {
+        Button(action: onSave) {
+            Text(verbatim: SettingsCopy.replaceKey)
+                .textStyle(KeyFieldMetrics.actionStyle)
+                .foregroundStyle(KeyFieldMetrics.actionColor)
+                .lineLimit(1)
+                .fixedSize()
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("save-base-url")
     }
 }

@@ -27,16 +27,19 @@ Open `MathTutor.xcodeproj` in Xcode to run on a paired iPad, including devices o
 
 Without a key, the app shows a clear setup card and does not silently route requests to an offline fallback. To try live tutoring, open Settings, choose Sol/Terra/Luna, choose a reasoning effort, and enter an OpenAI Platform API key. Reasoning effort supports none, low, medium, high, xhigh, and max; new and reset sessions default to high and the selected value is persisted with the session. A ChatGPT subscription, session cookie, or personal “token” is not reusable for API calls; Platform API usage is a separate service with separate billing. The key is saved in the iOS Keychain and is never put in source, the Xcode project, or UserDefaults. **It is not confined to the device**: every tutor request sends it to OpenAI in an `Authorization` header, which is the whole point of holding it. Say that plainly wherever the key is discussed — an earlier draft of the in-app copy read "the key stays in this device's Keychain", which a reader can fairly hear as "it never leaves", and that is not true of any client-side API key. This direct client-side key path is prototype-only; a production app needs a backend/proxy with authentication, rate limiting, and spend controls so the key never reaches the client. A deterministic demo tutor is available only through explicit test/debug injection.
 
-### Local dev loop (skip retyping the key)
+### Local dev loop (skip retyping the address and token)
 
-DEBUG builds can take the key from the launch environment instead of the Settings field, so a simulator run comes up live without typing anything. Put the key in a gitignored `.env.local` at the repo root:
+DEBUG builds can take the backend base URL and device token from the launch environment instead of the Settings fields, so a simulator run comes up live without typing anything. Put both in a gitignored `.env.local` at the repo root:
 
 ```sh
-echo 'MATHTUTOR_OPENAI_API_KEY=sk-...' > .env.local
+cat <<'EOF' > .env.local
+MATHTUTOR_BACKEND_URL=http://localhost:8080
+MATHTUTOR_BACKEND_TOKEN=...
+EOF
 scripts/run-sim.sh
 ```
 
-The script builds, installs, and launches on `iPad Pro 13-inch (M5)` (override with `MATHTUTOR_SIM_DEVICE`, skip the build with `SKIP_BUILD=1`), passing the key through `SIMCTL_CHILD_MATHTUTOR_OPENAI_API_KEY`. `DebugAPIKeyInjection` reads `MATHTUTOR_OPENAI_API_KEY`, or a path in `MATHTUTOR_OPENAI_API_KEY_FILE`, and `TutorStore` seeds it into the Keychain once so later launches stay live without the environment set. The key still never lives in source, the Xcode project, or UserDefaults; only in `.env.local` and the Keychain. The whole path is compiled out of release builds, and it is deliberately skipped for `--ui-test-reset` launches so UI tests never inherit a developer credential. To clear an injected key, relaunch with that argument:
+The script builds, installs, and launches on `iPad Pro 13-inch (M5)` (override with `MATHTUTOR_SIM_DEVICE`, skip the build with `SKIP_BUILD=1`), passing both through `SIMCTL_CHILD_MATHTUTOR_BACKEND_URL` and `SIMCTL_CHILD_MATHTUTOR_BACKEND_TOKEN`. `DebugBackendInjection` reads `MATHTUTOR_BACKEND_URL` and `MATHTUTOR_BACKEND_TOKEN` (or a path in `MATHTUTOR_BACKEND_TOKEN_FILE`), and `TutorStore` seeds the base URL into `UserDefaults` and the token into the Keychain once so later launches stay live without the environment set. Neither value lives in source or the Xcode project; only in `.env.local`, `UserDefaults`, and the Keychain. The whole path is compiled out of release builds, and it is deliberately skipped for `--ui-test-reset` launches so UI tests never inherit a developer credential. To clear an injected configuration, relaunch with that argument:
 
 ```sh
 xcrun simctl terminate booted com.nordup.MathTutor
@@ -66,7 +69,7 @@ Five layers, each depending only on the ones above it. `DesignSystem` knowing no
 | Layer | Contents |
 | --- | --- |
 | `Domain/` | `Models`, `BoardTool`/`PenColor`/`StrokeThickness`, the tutor prompt policy. No UIKit, no SwiftUI. |
-| `Services/` | `TutorService` protocol with `DemoTutorService`, Keychain-backed `TutorServiceRouter`, `OpenAITutorService`, `SessionPersistence`, `KeychainStore`. `DictationService` protocol with `OpenAIDictationService` (`AVAudioEngine` records and meters, OpenAI's `gpt-transcribe` transcribes), the value-only `OpenAITranscription` layer — vocabulary, request, SSE reader, retry policy, silence guard, WAV — and `ScriptedDictationService`, the fake the tests drive. |
+| `Services/` | `TutorService` protocol with `DemoTutorService`, `TutorServiceRouter` (reads `BackendConfiguration` from `UserDefaults` and the Keychain, routes to `BackendTutorService`), `SessionPersistence`, `KeychainStore`, `BackendConfiguration`. `DictationService` protocol with `DictationServiceRouter`, `BackendDictationService` (`AVAudioEngine` records and meters; the configured backend transcribes), and `ScriptedDictationService`, the fake the tests drive. |
 | `DesignSystem/` | Generated tokens, the elevation scale, typography, `ScreenLayout`, the icon set, and every component. Depends on nothing. |
 | `Features/` | `Board` (the PencilKit engine), `Tutor` (panel, full screen, and `DictationController` behind the composer's mic), `Settings`, `Plan`. |
 | `App/` | `MathTutorApp`, `RootView`, `UIState`, DEBUG launch options. |
@@ -88,7 +91,7 @@ Both have drift tests that re-run the generator in-process and fail if the check
 
 ## Prototype limitations
 
-This pass intentionally has no backend, accounts, cloud sync, automatic continuous change detection, handwriting OCR, or teacher analytics. Evaluation is explicit (the whole board or a dragged rectangle) and sends the rendered PencilKit image only when requested; board evaluation renders the bounding box of every stroke, so scrolling away from a long solution does not truncate what the tutor sees. When ink is scattered over more than 4,000 pt of board — further than one legible image can cover — evaluation crops to the student's work and tells the tutor it is looking at a portion rather than the whole board. *Evaluate board* is disabled while the board is empty. Local session persistence is best effort in Application Support; resetting a session removes the local drawing and messages.
+This pass intentionally has no accounts, cloud sync, automatic continuous change detection, handwriting OCR, or teacher analytics. Evaluation is explicit (the whole board or a dragged rectangle) and sends the rendered PencilKit image only when requested; board evaluation renders the bounding box of every stroke, so scrolling away from a long solution does not truncate what the tutor sees. When ink is scattered over more than 4,000 pt of board — further than one legible image can cover — evaluation crops to the student's work and tells the tutor it is looking at a portion rather than the whole board. *Evaluate board* is disabled while the board is empty. Local session persistence is best effort in Application Support; resetting a session removes the local drawing and messages.
 
 ## Backend service
 

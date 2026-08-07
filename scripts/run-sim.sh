@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Build, install, and launch MathTutor on a simulator with the development API key
-# injected from a gitignored .env.local, so the key never has to be retyped in
-# Settings. The app side is DEBUG-only; see MathTutor/DebugAPIKeyInjection.swift.
+# Build, install, and launch MathTutor on a simulator with the development backend base
+# URL and device token injected from a gitignored .env.local, so neither has to be
+# retyped in Settings. The app side is DEBUG-only; see
+# MathTutor/DebugBackendInjection.swift.
 #
 # Usage:
 #   scripts/run-sim.sh              build, install, launch
@@ -16,24 +17,27 @@ ENV_FILE="${ROOT}/.env.local"
 DERIVED="${ROOT}/build/DerivedData"
 DEVICE="${MATHTUTOR_SIM_DEVICE:-iPad Pro 13-inch (M5)}"
 
-KEY="${MATHTUTOR_OPENAI_API_KEY:-}"
-if [[ -z "$KEY" && -f "$ENV_FILE" ]]; then
+BACKEND_URL="${MATHTUTOR_BACKEND_URL:-}"
+BACKEND_TOKEN="${MATHTUTOR_BACKEND_TOKEN:-}"
+if [[ ( -z "$BACKEND_URL" || -z "$BACKEND_TOKEN" ) && -f "$ENV_FILE" ]]; then
   set -a
   # shellcheck source=/dev/null
   source "$ENV_FILE"
   set +a
-  KEY="${MATHTUTOR_OPENAI_API_KEY:-}"
+  BACKEND_URL="${MATHTUTOR_BACKEND_URL:-}"
+  BACKEND_TOKEN="${MATHTUTOR_BACKEND_TOKEN:-}"
 fi
 
-if [[ -z "$KEY" ]]; then
+if [[ -z "$BACKEND_URL" || -z "$BACKEND_TOKEN" ]]; then
   cat >&2 <<EOF
-No API key found.
+No backend configuration found.
 
 Create ${ENV_FILE} containing:
 
-  MATHTUTOR_OPENAI_API_KEY=sk-...
+  MATHTUTOR_BACKEND_URL=http://localhost:8080
+  MATHTUTOR_BACKEND_TOKEN=...
 
-That file is gitignored. Alternatively export MATHTUTOR_OPENAI_API_KEY yourself.
+That file is gitignored. Alternatively export both variables yourself.
 EOF
   exit 1
 fi
@@ -72,8 +76,9 @@ fi
 echo "==> Installing"
 xcrun simctl install "$UDID" "$APP"
 
-echo "==> Launching with injected key"
-SIMCTL_CHILD_MATHTUTOR_OPENAI_API_KEY="$KEY" \
+echo "==> Launching with injected backend configuration"
+SIMCTL_CHILD_MATHTUTOR_BACKEND_URL="$BACKEND_URL" \
+  SIMCTL_CHILD_MATHTUTOR_BACKEND_TOKEN="$BACKEND_TOKEN" \
   xcrun simctl launch "$UDID" "$BUNDLE_ID" >/dev/null
 
-echo "==> Running. The key is seeded into the simulator Keychain and persists across relaunches."
+echo "==> Running. The base URL and token are seeded into the simulator's UserDefaults/Keychain and persist across relaunches."
