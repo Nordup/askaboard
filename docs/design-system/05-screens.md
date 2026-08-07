@@ -105,7 +105,7 @@ repeated here because it is hand-tuned and off-grid.
 
 | Property | Value |
 |---|---|
-| Position | `x = 28`, `y = 68` |
+| Position | `x = 28`, `y = 28` |
 | Size | `72 × 627.5` (height is `fit-content`) |
 | Radius | `--radius-2xl` (20) |
 | Background | `--color-surface-panel` |
@@ -161,19 +161,19 @@ the 4 pt scale.
 
 | Property | Value |
 |---|---|
-| Position | `x = 124`, `y = 68` |
-| Size | `863 × 936` (screens 05, 08) / `1224 × 936` (screen 06) |
+| Position | `x = 124`, `y = 28` |
+| Size | `863 × 976` (screens 05, 08) / `1224 × 976` (screen 06) |
 | Radius | `--radius-3xl` (28) |
 | Background | `--color-surface-canvas` |
 | Shadow | `shadow/canvas` |
 | Overflow | `clip` |
 
-Children (absolute, within the canvas):
+Canvas layers (absolute, within the canvas):
 
-| Child | Position | Size | Notes |
+| Layer | Position | Size | Notes |
 |---|---|---|---|
 | `Dot grid` | `0, 0` | fills the canvas | background-image, exported SVG asset, `background-size: round(100%, 0.5px)`, `background-position: 50%`, no-repeat |
-| `Handwritten ink` | `157, 147` (05, 08) / `338, 147` (06) | `548 × 641` | background-image, exported SVG asset (the same asset in all three screens) |
+| `Handwritten ink` | `157, 147` (05, 08) / `338, 147` (06) | `548 × 641` | sample board content only—not typography, chrome, or a visual-style direction; background-image, exported SVG asset (the same asset in all three screens) |
 
 The ink block is horizontally centred in the canvas in screen 06
 (`(1224 − 548) / 2 = 338`); in 05/08 it sits at `157` (canvas centre would be
@@ -196,7 +196,7 @@ screen 07, which draws the grid as vector geometry: dots are `r = 1.4`
 
 - 05 / 08: `28 + 72 + 24 + 863 + 24 + 337 + 28 = 1376` ✔
 - 06: `28 + 72 + 24 + 1224 + 28 = 1376` ✔
-- Vertically: content band is `y = 68 … 1004` (936 tall) on every screen,
+- Vertically: content band is `y = 28 … 1004` (976 tall) on every screen,
   leaving a 28 pt bottom margin.
 
 ---
@@ -216,9 +216,9 @@ has already been made and is attached to the composer, waiting to be sent.
 |---|---|---|---|---|---|---|
 | Screen | — | 0 | 0 | 1376 | 1032 | `--color-surface-screen` |
 | Status bar | absolute overlay | 0 | 16 | 1376 | 24 | none |
-| Whiteboard canvas | absolute | 124 | 68 | 863 | 936 | `--color-surface-canvas` |
-| Tool rail | absolute | 28 | 68 | 72 | **627.5** | `--color-surface-panel` |
-| Tutor chat panel | absolute | 1011 | 68 | 337 | 936 | `--color-surface-panel` |
+| Whiteboard canvas | absolute | 124 | 28 | 863 | 976 | `--color-surface-canvas` |
+| Tool rail | absolute | 28 | 28 | 72 | **627.5** | `--color-surface-panel` |
+| Tutor chat panel | absolute | 1011 | 28 | 337 | 976 | `--color-surface-panel` |
 
 Every top-level region is a fixed-position overlay on the frame; none is in
 document flow. Internal content of the rail and the panel is in flow
@@ -232,7 +232,7 @@ z-order is not load-bearing here.
 
 | Property | Value |
 |---|---|
-| Size | `337 × 936` |
+| Size | `337 × 976` |
 | Radius | `--radius-3xl` (28) |
 | Background | `--color-surface-panel` |
 | Shadow | `shadow/panel` |
@@ -248,7 +248,7 @@ Stack (y within the panel):
 | 3 | `Start state` | 300 | `301 × 522` | `margin-top: var(--spacing-10)` = 40 |
 | 4 | `Composer` | 822 | `301 × 96` | — |
 
-Content bottom = `822 + 96 = 918`; the panel is 936 tall, so **18 pt of slack
+Content bottom = `822 + 96 = 918`; the panel is 976 tall, so **18 pt of slack
 remains at the bottom**. Implement the composer as bottom-anchored with an
 18 pt bottom inset — that reproduces the design exactly and is more robust
 than reproducing the flex slack.
@@ -355,8 +355,8 @@ content width. Same board content, same tools, same tool state.
 |---|---|---|---|---|---|---|
 | Screen | — | 0 | 0 | 1376 | 1032 | `--color-surface-screen` |
 | Status bar | absolute overlay | 0 | 16 | 1376 | 24 | none |
-| Tool rail | absolute | 28 | 68 | 72 | **627.5** | `--color-surface-panel` |
-| Whiteboard canvas | absolute | 124 | 68 | **1224** | 936 | `--color-surface-canvas` |
+| Tool rail | absolute | 28 | 28 | 72 | **627.5** | `--color-surface-panel` |
+| Whiteboard canvas | absolute | 124 | 28 | **1224** | 976 | `--color-surface-canvas` |
 | `Tutor dock · collapsed` | absolute overlay | **1192** | **916** | **132** | **64** | none (children carry their own fills) |
 
 **Z-order** (back → front): Status bar → Tool rail → Whiteboard canvas →
@@ -411,10 +411,11 @@ The tool rail is not present at all.
 |---|---|---|---|---|---|---|
 | Screen | — | 0 | 0 | 1376 | 1032 | **`--color-surface`** (#FFFFFF) |
 | Status bar | absolute overlay | 0 | 16 | 1376 | 24 | none |
+| `Panel controls` | absolute | **352** | 68 | **996** | 32 | none — settings-only variant, added 2026-08-07 |
 | `Greeting block` | absolute | **352** | 150 | **740** | **268** | none |
 | `Suggestion grid` | absolute | **352** | 592 | **740** | 168 | none |
 | `Composer · wide` | absolute | **352** | 924 | **740** | 80 | `--color-surface` |
-| `Board peek` | absolute overlay | 0 | 68 | 68 | 936 | see below |
+| `Board peek` | absolute overlay | 0 | 28 | 68 | 976 | see below |
 
 **Verified:** the content column is `740` wide at `x = 352`. ✔
 `740` is `--container-column`.
@@ -423,6 +424,24 @@ The column is **not** centred on the screen — it is centred in the area to the
 right of the board peek: `(1376 − 68 − 740) / 2 = 284`, so
 `left = 68 + 284 = 352`, `right = 284`. Implement it as: reserve the 68 pt
 peek, centre a 740 pt column in the remainder.
+
+### Panel controls — settings-only variant
+
+**996 × 32 at (352, 28)**, `display: flex`, `align-items: center`,
+`justify-content: flex-end`. One child: **`btn/settings`** 32 × 32, glyph
+`control/settings` 28 × 28 (the cog), `stroke-width 2`.
+
+Added 2026-08-07. This board used to draw **no** chrome at all — the peek was
+its only affordance — which left Settings unreachable from the greeting. It is
+now byte-identical to board 13's row, so the two full-screen states carry the
+same gear in the same lane.
+
+The row is 996 wide rather than 740 so that `flex-end` lands the gear on
+**x 1316**, `--space-edge` in from the screen's right — the same lane the docked
+panel's right edge sits on, not the reading column's. Nothing in the column
+moves for it: the column ends at 1092, so the gear is 224 pt clear.
+`btn/dock` and `btn/full-screen` are absent here for the same reason they are
+absent on board 13.
 
 Vertical rhythm of the column:
 
@@ -438,8 +457,9 @@ Vertical rhythm of the column:
 ```
 
 **Z-order** (back → front): Status bar → Greeting block → Suggestion grid →
-Composer → **Board peek**. The board peek is painted last, on top of
-everything, and is the only overlapping region.
+Composer → **Board peek** → Panel controls. The board peek is painted over the
+column and is the only overlapping region; the controls row sits in the top-right
+corner where nothing else reaches.
 
 ### Greeting block (`740 × 268` — verified)
 
@@ -497,21 +517,21 @@ background `--color-surface`, `shadow/card`,
 There is **no** selection glyph and **no** attached-context strip in the
 full-screen composer.
 
-### Board peek (`68 × 936` at `0, 68`)
+### Board peek (`68 × 976` at `0, 28`)
 
 Three stacked children (back → front):
 
 | Child | Position | Size | Notes |
 |---|---|---|---|
-| `Edge shadow` | `3, 2` | `68 × 936` | the same silhouette path, `opacity: 0.11`, `filter: blur(5px)` |
-| `Board edge` (SVG) | `0, 0` | `68 × 936` | shape fill `--color-surface-canvas`; dot-grid path fill `#F1F1F1` |
+| `Edge shadow` | `3, 2` | `68 × 976` | the same silhouette path, `opacity: 0.11`, `filter: blur(5px)` |
+| `Board edge` (SVG) | `0, 0` | `68 × 976` | shape fill `--color-surface-canvas`; dot-grid path fill `#F1F1F1` |
 | `Board hinge icon` | `23, 22` | `22 × 20` | see below |
 
-`Board edge` silhouette path (viewBox `0 0 68 936`), exactly:
+`Board edge` silhouette path (viewBox `0 0 68 976`), exactly:
 
 ```
 M0,0 H50 A18,18 0 0 1 68,18 V46 A18,18 0 0 1 50,64 H46
-A18,18 0 0 0 28,82 V918 A18,18 0 0 1 10,936 H0 Z
+A18,18 0 0 0 28,82 V958 A18,18 0 0 1 10,976 H0 Z
 ```
 
 i.e. a 68-wide **tab** occupying `y = 0 … 64` (holding the hinge icon), which
@@ -559,9 +579,9 @@ the bottom of the thread).
 |---|---|---|---|---|---|---|
 | Screen | — | 0 | 0 | 1376 | 1032 | `--color-surface-screen` |
 | Status bar | absolute overlay | 0 | 16 | 1376 | 24 | none |
-| Whiteboard canvas | absolute | 124 | 68 | 863 | 936 | `--color-surface-canvas` |
-| Tool rail | absolute | 28 | 68 | 72 | **627.5** | `--color-surface-panel` |
-| Tutor chat panel | absolute | 1011 | 68 | 337 | 936 | `--color-surface-panel` |
+| Whiteboard canvas | absolute | 124 | 28 | 863 | 976 | `--color-surface-canvas` |
+| Tool rail | absolute | 28 | 28 | 72 | **627.5** | `--color-surface-panel` |
+| Tutor chat panel | absolute | 1011 | 28 | 337 | 976 | `--color-surface-panel` |
 
 Identical to screen 05 at this level, including the canvas ink asset and
 position (`157, 147`, `548 × 641`).
@@ -571,7 +591,7 @@ Tutor chat panel.
 
 ### Tutor chat panel — internals
 
-Panel container is identical to screen 05 (`337 × 936`, `--radius-3xl`,
+Panel container is identical to screen 05 (`337 × 976`, `--radius-3xl`,
 `--color-surface-panel`, `shadow/panel`, `flex column`, `align-items: center`,
 `padding-top: 18`, content width `301`).
 
@@ -748,11 +768,14 @@ conversation state is simply not visible.
   width changes** (863 ↔ 1224) and the ink re-centres. One view, animatable
   width. The dot grid and ink are the same assets.
 - **Tutor panel chrome** — screens 05 and 08 share the container *exactly*
-  (337 × 936, radius 28, `--color-surface-panel`, `shadow/panel`,
+  (337 × 976, radius 28, `--color-surface-panel`, `shadow/panel`,
   `padding-top: 18`, 301 pt content column) and share `Panel controls`
   verbatim. Only the middle region and composer height differ.
 - **Suggestion chip copy + icons** — the same four items and the same four
   glyphs appear on 05 and 07. One data source, two size variants.
+- **`btn/settings`** — the same 32 × 32 gear in the same lane on 07 and 13, and
+  at the trailing edge of the panel's controls row on 05 / 08 / 11 / 12. One
+  button; only what surrounds it changes.
 - **Greeting copy** — identical strings on 05 and 07.
 - **Orb** — one component at four sizes:
   `150 × 142` hero (07, *with smile*), `96 × 90` panel (05),
@@ -866,7 +889,7 @@ silently.
     height 24, with hard-coded `9:41 AM` / `Tue May 21` / `100%`. On device,
     iPadOS owns the status bar and the safe-area inset differs. Decide whether
     to hide the system bar and draw this one, or drop it and shift the
-    `y = 68` content band to a safe-area-relative origin.
+    `y = 28` content band to a safe-area-relative origin.
 16. **Dark mode.** Only a light palette exists. Several fills are near-white
     and differ by 2–4 % (`#FFFFFF` / `#FCFCFC` / `#FAFAFA` / `#F8F8F8`); the
     dark-mode mapping of that hierarchy is undefined, as are the orb's oklab

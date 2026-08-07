@@ -18,7 +18,6 @@ struct ShellGallery: View {
     var body: some View {
         ScrollView([.horizontal, .vertical]) {
             VStack(alignment: .leading, spacing: 56) {
-                statusBarSection
                 toolRailSection
                 railPartsSection
                 panelSection
@@ -33,17 +32,6 @@ struct ShellGallery: View {
     }
 
     // MARK: - Sections
-
-    /// Not shipped — kept here because the reference PNGs were exported with it. The caption
-    /// says so, so nobody reads the specimen as a component the product draws.
-    private var statusBarSection: some View {
-        Specimen(
-            "Status bar · fixture only",
-            size: "1376 × 24 at y 16 · iPadOS draws the real one on device"
-        ) {
-            StatusBar(width: DS.Container.screen)
-        }
-    }
 
     private var toolRailSection: some View {
         Section("Tool rail") {

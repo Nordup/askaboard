@@ -22,10 +22,55 @@ from app.store.models import Message, Session, Turn
 from app.store.recorder import Recorder
 from app.tutor.context import assemble_context
 from app.tutor.events import DoneEvent, ErrorEvent, StatusEvent
-from app.tutor.loop import run_turn
+from app.tutor.loop import TurnResult, run_turn
 from app.tutor.retry import classify
 
 router = APIRouter(prefix="/v1", dependencies=[Depends(require_device_token)])
+
+
+def _describe_error(error: Exception) -> str:
+    """A diagnosable message: exception type, its own text, and — when
+    present — the underlying cause.
+
+    str(APIConnectionError(...)) alone is just the generic "Connection
+    error."; the actual reason (e.g. the httpx failure that triggered it)
+    lives on __cause__, which openai sets via `raise ... from err`. Without
+    it, the one piece of information someone debugging a failed turn
+    actually needs is the piece that gets thrown away.
+    """
+    message = f"{type(error).__name__}: {error}"
+    cause = error.__cause__
+    if cause is not None:
+        message += f" (caused by {type(cause).__name__}: {cause})"
+    return message
+
+
+async def _fail_turn_and_report(
+    recorder: Recorder,
+    *,
+    turn_id: uuid.UUID,
+    message: str,
+    retryable: bool,
+    result: TurnResult | None,
+    request_body: dict,
+    image_blob_key: str | None,
+) -> ErrorEvent:
+    """Persist the failure, but never let persisting it fail silently.
+
+    fail_turn does real work now — a blob write plus an insert — while
+    running inside an except handler, where a second exception is uncaught
+    and would leave the turn "running" forever with no ErrorEvent ever
+    reaching the client. A learner seeing a clear (if unrecorded) error beats
+    a stream that just stops.
+    """
+    try:
+        await recorder.fail_turn(
+            turn_id=turn_id, message=message, retryable=retryable,
+            result=result, request_body=request_body, image_blob_key=image_blob_key,
+        )
+    except Exception:
+        pass
+    return ErrorEvent(message=message, retryable=retryable)
 
 
 @dataclass(frozen=True)
@@ -127,21 +172,26 @@ async def create_turn(
         started = time.monotonic()
         ttft_ms: int | None = None
         image_ref = None
-
-        if image is not None:
-            # The service knows an image is attached before the model does, so this
-            # status is deterministic rather than translated from a provider event.
-            # detail is left unset: image_region already reaches the model through
-            # the assembled prompt, and the wire contract for this status is bare.
-            yield format_sse(StatusEvent(phase="looking", detail=None))
-            image_ref = await recorder.record_attachment(
-                turn_id=body.turn_id, kind="board_png", data=image,
-                content_type="image/png",
-            )
-
         client = AsyncOpenAI(api_key=settings.openai_api_key)
-        result = None
+        result: TurnResult | None = None
+
+        # The image upload and the model call are both guarded by the same
+        # try/except: nothing between accepting the request and finishing it
+        # may be able to strand a turn at status="running" forever. A failed
+        # blob write is exactly as much a failed turn as a failed model call.
         try:
+            if image is not None:
+                # The service knows an image is attached before the model does, so
+                # this status is deterministic rather than translated from a
+                # provider event. detail is left unset: image_region already
+                # reaches the model through the assembled prompt, and the wire
+                # contract for this status is bare.
+                yield format_sse(StatusEvent(phase="looking", detail=None))
+                image_ref = await recorder.record_attachment(
+                    turn_id=body.turn_id, kind="board_png", data=image,
+                    content_type="image/png",
+                )
+
             async for event, running in run_turn(
                 client=client, model=body.model, effort=body.reasoning_effort,
                 bundle=bundle,
@@ -151,45 +201,36 @@ async def create_turn(
                     ttft_ms = int((time.monotonic() - started) * 1000)
                 yield format_sse(event)
         except APIStatusError as error:
-            # openai's own _make_status_error() already unwraps the response
-            # body's "error" key onto .body (see openai._client._make_status_error),
-            # so .body here is {"code": ..., "message": ...} — not the raw
-            # {"error": {...}} shape classify()/_error_code() expect. Rewrap
-            # it rather than touching retry.py, which is shared and already
-            # covered by its own tests against the raw response shape.
-            decision = classify(error.status_code, {"error": error.body})
-            await recorder.fail_turn(
-                turn_id=body.turn_id, message=str(error), retryable=decision.retry,
-                result=result, request_body=request_body,
+            decision = classify(error.status_code, error.body)
+            event = await _fail_turn_and_report(
+                recorder, turn_id=body.turn_id, message=_describe_error(error),
+                retryable=decision.retry, result=result, request_body=request_body,
                 image_blob_key=image_ref.key if image_ref else None,
             )
-            yield format_sse(ErrorEvent(message=str(error), retryable=decision.retry))
+            yield format_sse(event)
             return
         except APIConnectionError as error:
             # Covers APITimeoutError too — it subclasses APIConnectionError.
             # Both are transient network failures, not a verdict from the
             # provider, so they are retryable by definition.
-            await recorder.fail_turn(
-                turn_id=body.turn_id, message=str(error), retryable=True,
-                result=result, request_body=request_body,
+            event = await _fail_turn_and_report(
+                recorder, turn_id=body.turn_id, message=_describe_error(error),
+                retryable=True, result=result, request_body=request_body,
                 image_blob_key=image_ref.key if image_ref else None,
             )
-            yield format_sse(ErrorEvent(message=str(error), retryable=True))
+            yield format_sse(event)
             return
         except Exception as error:
             # A mid-stream failure is never silently retried by us, and an
             # unanticipated exception is treated as a bug in our own code
             # rather than a transient provider hiccup: telling a learner to
             # retry into a bug is worse than telling them plainly it failed.
-            # The type name is included so the persisted row is diagnosable
-            # even when the message alone doesn't say enough.
-            message = f"{type(error).__name__}: {error}"
-            await recorder.fail_turn(
-                turn_id=body.turn_id, message=message, retryable=False,
-                result=result, request_body=request_body,
+            event = await _fail_turn_and_report(
+                recorder, turn_id=body.turn_id, message=_describe_error(error),
+                retryable=False, result=result, request_body=request_body,
                 image_blob_key=image_ref.key if image_ref else None,
             )
-            yield format_sse(ErrorEvent(message=message, retryable=False))
+            yield format_sse(event)
             return
 
         if result is not None:

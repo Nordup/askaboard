@@ -1,20 +1,34 @@
 import SwiftUI
 
-/// The three surfaces boards 10–13 add to the system, and the one rule that tells them
-/// apart: **all three are the same shape, and only the fill says what will happen.**
+/// The surfaces boards 10–13 add to the system, and the one rule that used to tell them
+/// apart: **all of them are the same shape, and only the fill says what will happen.**
 ///
 /// - raised white + elevation 03 → safe and tappable (`select/option · default`)
 /// - `--color-brand-tint` → the chosen one (`select/option · selected`)
 /// - `--color-surface-bubble` with **no shadow** → destructive (`btn/destructive`)
 ///
-/// That last one is the system's answer to a destructive action. Everything safe is lifted
-/// off the surface; the things that destroy are the only things that sit *in* it. Board 10
-/// spends no colour on it at all — *"the component is named `btn/destructive`, but it
-/// carries no red, no colour, and no visual danger signal at all… the entire destructive
-/// signal is carried by the section heading ('Irreversible') and the caption."*
+/// **Two of those three are gone.** `select/option` — the 236 × 90 card that carried the
+/// first two lines — was retired with the old board 10 and deleted rather than left standing
+/// unused; the settings window shows one chosen value per row and puts the rest behind a
+/// menu. Its selection rule did not die with it: `SettingsNavItemMetrics` is the same
+/// `--radius-lg` and the same `--color-brand-tint`, which is also what the rail's selected
+/// tool slot draws, so that citation now has one live example instead of two.
 ///
-/// `DS.Color.incorrect` is **not** available here and its own token description says so:
-/// *"NOT for destructive, warning or validation UI."*
+/// **The redesign broke the third line too, and that is a loss worth naming.** The old
+/// rule was elegant: everything safe is lifted off the surface, and the things that destroy
+/// are the only things that sit *in* it, so a flat grey pill meant "this one is different"
+/// without spending a colour. The redesigned window puts `Remove API key` and `Reset this
+/// session` on the same white-and-elevation-03 footing as the key field beside them, because
+/// at 44pt beside a 56pt field the flat grey pill read as the *loudest* object in the pane
+/// rather than the most careful one — it was the only filled shape in a window of white
+/// surfaces. So the shape signal is gone and nothing replaced it.
+///
+/// What still carries the warning is the pane's lede, which is the same job the old
+/// "Irreversible" heading and caption did: *"the entire destructive signal is carried by the
+/// section heading and the caption."* That sentence now has to do all of the work rather than
+/// most of it. Board 10 still spends no colour here, and `DS.Color.incorrect` is still **not**
+/// available — its own token description says *"NOT for destructive, warning or validation
+/// UI."* If the signal needs strengthening, that is a design decision, not a code one.
 
 // MARK: - btn/primary
 
@@ -127,27 +141,39 @@ struct PrimaryButton: View {
 
 // MARK: - btn/destructive
 
-/// Bubble grey, flat, and irreversible.
+/// A control that hugs its label, and the thing behind it does not come back.
 ///
-/// The absence of a shadow is the whole signal. Board 10 draws no pressed state, no disabled
-/// state and — deliberately — **no confirmation dialog**: *"'cannot be undone' is asserted,
-/// but no dialog exists"*, and this system has no modal pattern to put one in. The warning
-/// lives in the section heading and caption above the row.
+/// Board 10 draws no pressed state, no disabled state and — deliberately — **no confirmation
+/// dialog**: *"'cannot be undone' is asserted, but no dialog exists"*. That was once also an
+/// observation about the system's limits, because there was no modal pattern to put a dialog
+/// in. There is one now, and it is the window this button is drawn inside; whether an
+/// irreversible action should get a second one on top of it is a question the design has not
+/// been asked yet.
+///
+/// The redesign matched it to `field/key`, which is the control it stands directly under —
+/// see the note at the top of this file for what that cost.
 enum DestructiveButtonMetrics {
-    /// A third control height, matching neither `btn/primary`'s 58 nor a chip's 62.
-    static let height: CGFloat = 56
-    /// Component-internal, and written as a literal exactly as the design writes it. It
-    /// happens to equal `--space-edge`, but binding it to that token would move a button's
-    /// padding the day the screen's edge inset moves — Foundations rule 11.
-    static let paddingInline: CGFloat = 28
-    static let fill = DS.Color.surfaceBubble
-    /// **No elevation.** This is the only control in the product that has none.
-    static let elevation: Elevation? = nil
-    static let labelStyle = TextStyle(size: DS.Size.body, leading: DS.Leading.control, weight: .medium)
-    /// `--spacing-4` between the two buttons on board 10's Actions row.
-    static let rowGap = DS.Space.s4
+    /// Was 56 — the same height as the composer-sized key field it sat beside. It came down
+    /// with the field, and stops one step short of it: 44 against 56 is what makes the pane
+    /// read as a field with an action under it rather than two controls of equal weight.
+    static let height: CGFloat = 44
+    /// Component-internal, per Foundations rule 11. It was 28, which happened to equal
+    /// `--space-edge`; at 44 tall that inset made the button read as a pill.
+    static let paddingInline: CGFloat = 20
+    /// `--radius-lg`, the product's control radius — chips and the selected tool slot. The
+    /// capsule went with the height: `--radius-full` on a 44pt box is a pill, and a pill in
+    /// a window of 14pt corners is the only round thing in it.
+    static let radius = DS.Radius.lg
+    static let fill = DS.Color.surface
+    /// Elevation 03, like every other safe control. The `nil` that used to be here was the
+    /// destructive signal.
+    static let elevation: Elevation? = .control
+    /// 15 / 18 · 600, down from 17 / 22 · 500. It is a label on a small control now, so it
+    /// takes the label style — the same one the nav items and `Replace` take.
+    static let labelStyle: DS.TextStyle = .label
 
-    /// `"Remove API key"` 114 + 28 × 2 = 170 · `"Reset this session"` 127 + 28 × 2 = 183.
+    /// `"Remove API key"` at 20 × 2 of inset. Kept as a function because the label is the
+    /// only thing that decides this button's width.
     static func width(labelWidth: CGFloat) -> CGFloat { labelWidth + 2 * paddingInline }
 }
 
@@ -161,113 +187,17 @@ struct DestructiveButton: View {
                 .textStyle(DestructiveButtonMetrics.labelStyle)
                 .foregroundStyle(DS.Color.ink)
                 .lineLimit(1)
+                .fixedSize()
                 .padding(.horizontal, DestructiveButtonMetrics.paddingInline)
                 .frame(height: DestructiveButtonMetrics.height)
-                .background(DestructiveButtonMetrics.fill, in: Capsule())
+                .background(
+                    DestructiveButtonMetrics.fill,
+                    in: RoundedRectangle(
+                        cornerRadius: DestructiveButtonMetrics.radius, style: .circular
+                    )
+                )
+                .elevation(.control)
         }
         .buttonStyle(.plain)
-    }
-}
-
-// MARK: - select/option
-
-/// The board's one genuinely new surface, and its two states.
-///
-/// *"Exactly two — `default` and `selected`. The only difference is the fill. No border, no
-/// ring, no checkmark, no weight change, no shadow change."* Which makes the selection
-/// invisible to VoiceOver unless the trait is set, so `SelectOption` sets it.
-enum SelectOptionMetrics {
-    /// **236 is derived**: `(740 − 16 × 2) ÷ 3`, the only width that fits three across the
-    /// column at a `--spacing-4` gap. 90 is free — it is what the child stack needs.
-    static let size = CGSize(width: 236, height: 90)
-    static let paddingBlock: CGFloat = 20
-    /// Off the 4px scale, and no token — component-internal, per Foundations rule 11.
-    static let paddingInline: CGFloat = 22
-    /// `--radius-lg`, the same 14 the suggestion chips and the selected tool slot take.
-    static let radius = DS.Radius.lg
-    /// Elevation 03 in **both** states.
-    static let elevation: Elevation = .control
-    /// 20 / 24 · 500 — identical in both states.
-    static let titleStyle: DS.TextStyle = .chipFullScreen
-    /// 17 / 22 · 400 · secondary — identical in both states.
-    static let captionStyle: DS.TextStyle = .bodyControl
-    static let captionTopMargin = DS.Space.s1
-    /// Between options, on both axes. Board 10's 2 × 3 effort grid is a wrapped 740 row.
-    static let gap = DS.Space.s4
-    static let columns = 3
-
-    /// `(740 − 16 × 2) ÷ 3 = 236`.
-    static func width(inColumn column: CGFloat, across count: Int = columns) -> CGFloat {
-        (column - gap * CGFloat(count - 1)) / CGFloat(count)
-    }
-
-    /// `20 + 24 + 4 + 22 + 20 = 90`.
-    static var stackedHeight: CGFloat {
-        2 * paddingBlock + titleStyle.leading + captionTopMargin + captionStyle.leading
-    }
-
-    /// `236 − 22 × 2 = 192`.
-    static var contentWidth: CGFloat { contentWidth(for: size.width) }
-
-    /// The same subtraction in an option of any width. The two paddings are the design's and
-    /// hold; the label's measure is what gives, which is the only direction a measure moves.
-    static func contentWidth(for width: CGFloat) -> CGFloat { max(0, width - 2 * paddingInline) }
-
-    /// `90 × 2 + 16 = 196` — the effort grid.
-    static func gridHeight(rows: Int) -> CGFloat {
-        CGFloat(rows) * size.height + CGFloat(rows - 1) * gap
-    }
-
-    /// The one thing that changes between the two states.
-    static func fill(isSelected: Bool) -> Color {
-        isSelected ? DS.Color.brandTint : DS.Color.surface
-    }
-}
-
-struct SelectOption: View {
-    let title: String
-    let caption: String
-    let isSelected: Bool
-    /// The option's own width — `width(inColumn:)` of whatever column the section is in.
-    /// `nil` takes the 236 the design drew, which is that function at 740.
-    var width: CGFloat?
-    let action: () -> Void
-
-    private var optionWidth: CGFloat { width ?? SelectOptionMetrics.size.width }
-
-    var body: some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 0) {
-                Text(verbatim: title)
-                    .textStyle(SelectOptionMetrics.titleStyle)
-                    .foregroundStyle(DS.Color.ink)
-                    .lineLimit(1)
-
-                Text(verbatim: caption)
-                    .textStyle(SelectOptionMetrics.captionStyle)
-                    .foregroundStyle(DS.Color.inkSecondary)
-                    .lineLimit(1)
-                    .padding(.top, SelectOptionMetrics.captionTopMargin)
-            }
-            .frame(width: SelectOptionMetrics.contentWidth(for: optionWidth), alignment: .leading)
-            .padding(.vertical, SelectOptionMetrics.paddingBlock)
-            .padding(.horizontal, SelectOptionMetrics.paddingInline)
-            .frame(
-                width: optionWidth,
-                height: SelectOptionMetrics.size.height,
-                alignment: .leading
-            )
-            .background(
-                SelectOptionMetrics.fill(isSelected: isSelected),
-                // `.circular`, not `.continuous`: the design's radii are CSS corners.
-                in: RoundedRectangle(cornerRadius: SelectOptionMetrics.radius, style: .circular)
-            )
-            .elevation(SelectOptionMetrics.elevation)
-        }
-        .buttonStyle(.plain)
-        // The fill is the only visual difference between the two states, so without this
-        // the selected option is indistinguishable from the other five to a screen reader.
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 }

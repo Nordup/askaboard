@@ -1,13 +1,14 @@
 import SwiftUI
 
 enum BoardPeekMetrics {
-    /// **68 — no token.** Board 02 states the peek's size as "68 × 936 — no token", and only
-    /// the 936 was a screen number: the 68 is the silhouette's own tab width, drawn into the
+    /// **68 — no token.** Board 02 states the peek's size as "68 × 976 — no token", and only
+    /// the 976 was a screen number: the 68 is the silhouette's own tab width, drawn into the
     /// path's arcs, and it does not vary with the window.
     static let width: CGFloat = 68
     /// The height the design drew, kept as the shape's reference so a specimen and the
-    /// pixel diff still have the authored silhouette to compare against.
-    static let referenceHeight: CGFloat = 936
+    /// pixel diff still have the authored silhouette to compare against. It is the safe band
+    /// with nothing reserved at the top — `1032 − 28 − 28`.
+    static let referenceHeight: CGFloat = 976
     /// `Board hinge icon`, absolute within the peek.
     static let hingeOrigin = CGPoint(x: 23, y: 22)
 
@@ -50,7 +51,7 @@ enum BoardPeekMetrics {
 /// 18pt fillets is the only part with any give in it, and it absorbs the whole difference.
 struct BoardPeekShape: Shape {
     /// The bottom fillet's radius, and so the gap between the strip's end and the box's
-    /// bottom: the design's own `V918 … 10,936` is this relationship at 936.
+    /// bottom: the design's own `V958 … 10,976` is this relationship at 976.
     static let bottomFillet: CGFloat = 18
     /// Below this the strip has no length left and the bottom fillet would start inside the
     /// hinge notch. It is a floor, not a size — no real band comes near it.
@@ -58,7 +59,7 @@ struct BoardPeekShape: Shape {
 
     /// The design's verbatim `d`, with the two band numbers substituted. At
     /// `BoardPeekMetrics.referenceHeight` this reproduces the authored string character for
-    /// character: `V918 A18,18 0 0 1 10,936`.
+    /// character: `V958 A18,18 0 0 1 10,976`.
     static func pathData(height: CGFloat) -> String {
         let bottom = max(height, minimumHeight)
         return "M0,0 H50 A18,18 0 0 1 68,18 V46 A18,18 0 0 1 50,64 H46 "

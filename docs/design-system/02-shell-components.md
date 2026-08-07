@@ -280,13 +280,13 @@ Documentation labels on the specimen (`SELECTED` / `DEFAULT`) are board chrome, 
 
 **Purpose:** the fixed-width right-hand tutor surface. Layer path: `05 — Board + Tutor (no chrome) / Tutor chat`.
 
-> **Designer rationale (verbatim):** "The panel is the only fixed-width surface in the product, and everything inside it is laid out against one derived number: panel width minus twice the panel inset equals the content width. Hard-coding 301 anywhere is a bug waiting for the first panel-width change. The specimen below is 1:1 in width with the height truncated — the live panel is 936 tall."
+> **Designer rationale (verbatim):** "The panel is the only fixed-width surface in the product, and everything inside it is laid out against one derived number: panel width minus twice the panel inset equals the content width. Hard-coding 301 anywhere is a bug waiting for the first panel-width change. The specimen below is 1:1 in width with the height truncated — the live panel is 976 tall."
 
 | Property | Value |
 |---|---|
-| Size | `var(--container-panel)` **337 × 936** |
+| Size | `var(--container-panel)` **337 × 976** |
 | Padding | `padding-top: var(--space-panel-inset)` = **18px** — **top only**; sides come from the content width, not from padding |
-| Bottom inset | **18px emergent, not declared** · board states "children sum to 918 in a 936 box" (see caveat below) |
+| Bottom inset | **18px emergent, not declared** · board states "children sum to 958 in a 976 box" (see caveat below) |
 | Content width | `var(--container-panel-content)` = **301px** |
 | **Rule (do not violate)** | `panel 337 − 2 × inset 18 = content 301` · **derive it, never hard-code** |
 | Radius | `var(--radius-3xl)` = **28px**, uniform |
@@ -296,7 +296,7 @@ Documentation labels on the specimen (`SELECTED` / `DEFAULT`) are board chrome, 
 | Layout | `flex-direction: column; align-items: center; flex-shrink: 0` |
 | Position | `absolute left 1011, top 68` · `1376 − 1011 − 337 = 28` edge inset (= `--space-edge`) |
 
-⚠️ **Arithmetic caveat:** `18 (padding-top) + 918 (children) = 936` leaves **0** at the bottom, which cannot produce the stated "18px emergent" bottom inset. The specimen itself demonstrates the intended relationship correctly: a 460-tall panel with `padding-top: 18` and a 424-tall content block leaves exactly 18 at the bottom (`18 + 424 + 18 = 460`). By that rule the live children should sum to **900**, not 918. Flagged in Open questions — implement the *rule* (`content height = panel height − 2 × 18`), not the literal 918.
+⚠️ **Arithmetic caveat:** `18 (padding-top) + 958 (children) = 976` leaves **0** at the bottom, which cannot produce the stated "18px emergent" bottom inset. The specimen itself demonstrates the intended relationship correctly: a 460-tall panel with `padding-top: 18` and a 424-tall content block leaves exactly 18 at the bottom (`18 + 424 + 18 = 460`). By that rule the live children should sum to **940**, not 958. Flagged in Open questions — implement the *rule* (`content height = panel height − 2 × 18`), not the literal 958.
 
 **Specimen construction** (documentation only, do not ship): outer 337 × **460** panel with the real radius/fill/shadow, containing a 301 × 424 `--color-brand-tint-soft` (`#F1F0FB`) block, radius 14, `gap: 8`, centred, labelled `301` (mono 13/16 weight 500, `--color-brand`) over `CONTENT WIDTH` (sans 12/16 weight 600, tracking 0.06em, `--color-ink-tertiary`).
 
@@ -351,10 +351,10 @@ Glyphs (identical rect; the dock variant adds one divider stroke):
 | Group size | **132 × 64** — `btn/select` 52 + gap 16 + `btn/orb` 64. **The orb sets the row height.** |
 | Group layout | `display: flex; align-items: center` |
 | Group gap | `var(--spacing-4)` = **16px** |
-| Position | `var(--space-gap)` **24 inside the board's bottom-right** · absolute `1192, 916` vs board `124, 68, 1224 × 936` |
+| Position | `var(--space-gap)` **24 inside the board's bottom-right** · absolute `1192, 916` vs board `124, 28, 1224 × 976` |
 | Group padding / radius / fill | none |
 
-Verified anchoring arithmetic: board right = `124 + 1224 = 1348`; `1348 − 1192 = 156 = 132 + 24` ✅. Board bottom = `68 + 936 = 1004`; `1004 − 916 = 88 = 64 + 24` ✅. Screen-edge reading = `28 (--space-edge) + 24 = 52` ✅.
+Verified anchoring arithmetic: board right = `124 + 1224 = 1348`; `1348 − 1192 = 156 = 132 + 24` ✅. Board bottom = `28 + 976 = 1004`; `1004 − 916 = 88 = 64 + 24` ✅. Screen-edge reading = `28 (--space-edge) + 24 = 52` ✅.
 
 ### `btn/select` (52 × 52)
 
@@ -389,12 +389,12 @@ Fill **none**; it is the orb component, not an icon. See §11 (`dock 64` size). 
 
 **Purpose:** the drawing surface. Layer paths: `05 / Whiteboard canvas` and `06 / Whiteboard canvas`.
 
-> **Designer rationale (verbatim):** "The board keeps a constant 936pt height and a constant top-left origin in every state; only its width changes when the tutor docks or collapses. That is what lets the ink layer stay put instead of reflowing — the board is resized from the right edge, never re-laid-out."
+> **Designer rationale (verbatim):** "The board keeps a constant 976pt height and a constant top-left origin in every state; only its width changes when the tutor docks or collapses. That is what lets the ink layer stay put instead of reflowing — the board is resized from the right edge, never re-laid-out."
 
 | Property | Value |
 |---|---|
-| Size — docked | **863 × 936** |
-| Size — collapsed | **1224 × 936** |
+| Size — docked | **863 × 976** |
+| Size — collapsed | **1224 × 976** |
 | Position | `absolute 124, 68` **in both states — origin never moves** |
 | Radius | `var(--radius-3xl)` = **28px**, uniform |
 | Background | `var(--color-surface-canvas)` = `#FAFAFA` |
@@ -407,7 +407,7 @@ Verified geometry: `x = 124 = --space-edge 28 + --container-rail 72 + --space-ga
 Docked right edge `124 + 863 = 987`; panel starts at `1011` → `24` gap (`--space-gap`) ✅.
 Collapsed right edge `124 + 1224 = 1348`; `1376 − 1348 = 28` (`--space-edge`) ✅.
 
-**Children:** a `Dot grid` layer (§9) and a `Handwritten ink` layer (548 × 641 in the specimen — sample content, not chrome; no spec rows exist for it).
+**Canvas layers:** a `Dot grid` layer (§9) and a `Handwritten ink` layer (548 × 641 in the specimen). The ink is sample board content only—not typography, chrome, or a visual-style direction; no spec rows exist for it.
 
 ---
 
@@ -421,7 +421,7 @@ Collapsed right edge `124 + 1224 = 1348`; `1376 − 1348 = 28` (`--space-edge`) 
 | Pitch | **`23.9 × 24.5`** — no token — **NOT square, and not 24** |
 | Dot | `<circle cx="1.4" cy="1.4" r="1.4">` · **2.8px diameter** |
 | Fill | **`#F1F1F1`** — no token — *close to but not* `var(--color-divider)` `#EFEFEF` |
-| Size | `absolute 0,0` · fills the board: **863 × 936 docked, 1224 × 936 collapsed** |
+| Size | `absolute 0,0` · fills the board: **863 × 976 docked, 1224 × 976 collapsed** |
 | Computed `background-size` | **`round(100%, 0.5px) round(100%, 0.5px)`** |
 | Computed `background-position` | `50%` · `background-repeat: no-repeat` |
 
@@ -441,10 +441,10 @@ Collapsed right edge `124 + 1224 = 1348`; `1376 − 1348 = 28` (`--space-edge`) 
 
 | Property | Value |
 |---|---|
-| Size | **68 × 936** — no token |
+| Size | **68 × 976** — no token |
 | Position | `absolute left 0, top 68` — **flush to the screen's left edge, intentionally** (no 28pt edge inset here) |
 | Parts (z-order) | `Edge shadow` → `Board edge` (`Edge shape` + `Dot grid`) → `Board hinge icon` |
-| Edge shape | `viewBox 0 0 68 936` · fill `var(--color-surface-canvas)` (`#FAFAFA`) · **all arcs r = 18** · the 0-sweep arc at `46,64 → 28,82` is the concave fillet |
+| Edge shape | `viewBox 0 0 68 976` · fill `var(--color-surface-canvas)` (`#FAFAFA`) · **all arcs r = 18** · the 0-sweep arc at `46,64 → 28,82` is the concave fillet |
 | Elevation | **faked** — duplicate path, fill `#141432`, `absolute left 3 top 2`, `filter: blur(5px)`, `opacity: 0.11` |
 | Grid | **51 × 934** · **explicit circles, not a pattern** · columns at `x 0 / 23.9 / 47.8`, rows step **24.5**, `r 1.4`, `#F1F1F1` |
 | Icon | `Board hinge icon` **22 × 20** · `absolute left 23, top 22` · rect + 6 circles |
@@ -453,7 +453,7 @@ Collapsed right edge `124 + 1224 = 1348`; `1376 − 1348 = 28` (`--space-edge`) 
 **Exact `Edge shape` path `d`:**
 
 ```
-M0,0 H50 A18,18 0 0 1 68,18 V46 A18,18 0 0 1 50,64 H46 A18,18 0 0 0 28,82 V918 A18,18 0 0 1 10,936 H0 Z
+M0,0 H50 A18,18 0 0 1 68,18 V46 A18,18 0 0 1 50,64 H46 A18,18 0 0 0 28,82 V958 A18,18 0 0 1 10,976 H0 Z
 ```
 
 **Implementation consequence for Swift:** a `CAShapeLayer`/`Path` with a real `shadow` will not match this file. To match, replicate the fake: draw the same path filled `#141432`, offset `(3, 2)`, blur radius 5, alpha 0.11, beneath the real path.
@@ -550,11 +550,11 @@ The long decimals (`57.99999999999999`, `28.000000000000004`) are the literal co
 | Edge inset | `28` (`--space-edge`) |
 | Rail width | `72` (`--container-rail`), height `627.5` |
 | Board origin | `124, 68` in every state (`28 + 72 + 24`) |
-| Board size | `863 × 936` docked · `1224 × 936` collapsed |
+| Board size | `863 × 976` docked · `1224 × 976` collapsed |
 | Board↔panel gap | `24` (`--space-gap`) |
-| Panel | `337 × 936` at `1011, 68` |
+| Panel | `337 × 976` at `1011, 28` |
 | Collapsed dock | `132 × 64` at `1192, 916` (24 inside board's bottom-right) |
-| Board peek | `68 × 936` at `0, 68` (flush left, no edge inset) |
+| Board peek | `68 × 976` at `0, 28` (flush left, no edge inset) |
 
 ---
 
@@ -581,7 +581,7 @@ The long decimals (`57.99999999999999`, `28.000000000000004`) are the literal co
 
 1. **No scroll fade exists on this artboard.** The panel's scroll-fade gradient is not present here — a `linear-gradient` search across the whole artboard returns only the five orb bodies, and no text node mentions "fade". The tutor panel specimen is a truncated placeholder with no header, message list, composer or fade. Those must live on another board (likely the conversation/messages artboard). **The requested exact scroll-fade gradient value cannot be sourced from `02 — Components · Shell`.**
 2. **No "Live drift" row exists as such.** The board carries exactly two regression-style notes: the tool rail's `Known regression` row (marked **RESOLVED**, transcribed in §1) and the collapsed dock's `Elevation` row (`drifts from 03 Control (0D / 08)`, **not** marked resolved, transcribed in §7). If a separate "Live drift" table is expected, it is on a different artboard.
-3. **Panel bottom-inset arithmetic does not close.** "18px emergent · children sum to 918 in a 936 box" implies 0 bottom inset (`18 + 918 = 936`). The specimen's own proportions (`18 + 424 + 18 = 460`) imply children should sum to **900**. Confirm with the designer; implement the stated *rule* rather than the literal 918.
+3. **Panel bottom-inset arithmetic does not close.** "18px emergent · children sum to 958 in a 976 box" implies 0 bottom inset (`18 + 958 = 976`). The specimen's own proportions (`18 + 424 + 18 = 460`) imply children should sum to **940**. Confirm with the designer; implement the stated *rule* rather than the literal 958.
 4. **Thickness margins: prose says 28 / 20, build says 29 / 19.5.** The built values are load-bearing for the 627.5 total. Confirm the prose is just approximate.
 5. **Elevation level "03 Control" is never defined on this board** — only referenced as `(0D / 08)` in the drift note. Its full spec (offsets, blur, second layer) presumably lives on the foundations board.
 6. **Interactive states are largely undocumented.** Only the tool slot has two states (default / selected). Nothing on this board specifies pressed, hover, disabled, or focus for any control; there is no selected/active state for pen swatches, panel controls, `btn/select`, or the centre-on-work button.

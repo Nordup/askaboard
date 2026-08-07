@@ -23,6 +23,7 @@ enum Icon: String, CaseIterable, Sendable {
     case uiSelectionMarker = "ui/selection-marker"
     case uiCheck = "ui/check"
     case uiCross = "ui/cross"
+    case uiChevronDown = "ui/chevron-down"
     case uiRetry = "ui/retry"
     case composerVoice = "composer/voice"
     case composerSend = "composer/send"

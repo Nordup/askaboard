@@ -45,16 +45,23 @@ class Recorder:
         self._sessionmaker = sessionmaker
         self._blobs = blob_store
 
-    async def _add_llm_call(
+    async def _build_llm_call(
         self,
-        session: AsyncSession,
         *,
         turn_id: uuid.UUID,
         result: Any,
         request_body: dict,
         image_blob_key: str | None = None,
-    ) -> dict:
-        """Write the LLMCall row shared by finish_turn and fail_turn.
+    ) -> tuple[LLMCall, dict]:
+        """Build (but do not persist) the LLMCall row shared by finish_turn
+        and fail_turn, plus its usage dict.
+
+        Deliberately takes no session: the blob write and JSON serialization
+        it does are external I/O, not database work, and must finish before
+        any pooled connection is checked out — holding one open across a
+        blob-store round trip is exactly the leaked-connection failure mode
+        this class's own docstring warns about. The caller opens a session
+        only after this returns, to add the row and commit.
 
         Whatever text and raw events the model produced before a turn ends —
         whether it ended cleanly or mid-stream — go through this one path, so
@@ -68,14 +75,14 @@ class Recorder:
             redact_images(request_body, image_blob_key) if image_blob_key else request_body
         )
 
-        session.add(LLMCall(
+        call = LLMCall(
             turn_id=turn_id, seq=0, model=request_body.get("model", ""),
             request=stored_body,
             response={"id": result.response_id, "text": result.text},
             raw_events_blob=events_ref.key, usage=usage or None,
             finished_at=datetime.now(timezone.utc),
-        ))
-        return usage
+        )
+        return call, usage
 
     async def finish_turn(
         self,
@@ -87,11 +94,13 @@ class Recorder:
         latency_ms: int | None,
         image_blob_key: str | None = None,
     ) -> None:
+        call, usage = await self._build_llm_call(
+            turn_id=turn_id, result=result, request_body=request_body,
+            image_blob_key=image_blob_key,
+        )
+
         async with self._sessionmaker() as session:
-            usage = await self._add_llm_call(
-                session, turn_id=turn_id, result=result, request_body=request_body,
-                image_blob_key=image_blob_key,
-            )
+            session.add(call)
 
             turn = await session.get(Turn, turn_id)
             if turn is None:
@@ -127,12 +136,16 @@ class Recorder:
         learner already saw on screen, and it is what makes a bad turn
         diagnosable afterwards instead of just a blank error.
         """
+        call = None
+        if result is not None:
+            call, _ = await self._build_llm_call(
+                turn_id=turn_id, result=result,
+                request_body=request_body or {}, image_blob_key=image_blob_key,
+            )
+
         async with self._sessionmaker() as session:
-            if result is not None:
-                await self._add_llm_call(
-                    session, turn_id=turn_id, result=result,
-                    request_body=request_body or {}, image_blob_key=image_blob_key,
-                )
+            if call is not None:
+                session.add(call)
 
             turn = await session.get(Turn, turn_id)
             if turn is None:

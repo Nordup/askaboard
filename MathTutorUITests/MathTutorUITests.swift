@@ -50,7 +50,7 @@ final class MathTutorUITests: XCTestCase {
 
     func testCollapsedRendersScreen06() {
         // `--ui-fixture` because this test measures the *reference* screen: `assertBoard`'s
-        // 936 and 68 are the design's band, and only a fixture run is laid out from
+        // 976 and 28 are the design's band, and only a fixture run is laid out from
         // `ScreenLayout.reference` rather than from the window's real insets. The same screen
         // measured on the device is `testEveryLaneFitsTheRealWindowItIsMeasuredIn`.
         let app = launch(["--ui-state", "collapsed", "--ui-fixture", "--ui-freeze"])
@@ -79,31 +79,32 @@ final class MathTutorUITests: XCTestCase {
         // two constants — so these are what says the derivation still lands on the drawing.
         assertFrame(
             app.buttons["Explain this concept"],
-            CGRect(x: 352, y: 592, width: 360, height: 74),
-            "`Suggestion grid` at 352, 592, in a 2-up of 360 × 74"
+            CGRect(x: 352, y: 604, width: 360, height: 74),
+            "`Suggestion grid` at 352, 604, in a 2-up of 360 × 74"
         )
         assertFrame(
             app.buttons["Give me an example"],
-            CGRect(x: 732, y: 592, width: 360, height: 74),
+            CGRect(x: 732, y: 604, width: 360, height: 74),
             "the second chip is 360 + 20 along"
         )
         assertFrame(
             app.buttons["Create an exercise"],
-            CGRect(x: 352, y: 686, width: 360, height: 74),
+            CGRect(x: 352, y: 698, width: 360, height: 74),
             "the second row is 74 + 20 down"
         )
         // The wide composer: a 740pt pill at x 352 whose bottom is the content band's 1004.
-        // `740 − 12 − 56 = 672` puts the send disc at 1024, and `(80 − 56) ÷ 2 = 12` at 936.
+        // At the stepped-down 68pt pill, `740 − 8 − 52 = 680` puts the send disc at 1032 and
+        // `(68 − 52) ÷ 2 = 8` at 944 — the disc keeps an even 8pt inset on all three sides.
         assertFrame(
             app.buttons["Send message"],
-            CGRect(x: 1024, y: 936, width: 56, height: 56),
+            CGRect(x: 1032, y: 944, width: 52, height: 52),
             "`Composer · wide` is 740 wide at 352, not 740 wide somewhere else"
         )
         // The peek is the full band, flush left — *"the one panel that touches a screen edge."*
         assertFrame(
             app.buttons["Back to the board"],
-            CGRect(x: 0, y: 68, width: 68, height: 936),
-            "`Board peek` at 0, 68"
+            CGRect(x: 0, y: 28, width: 68, height: 976),
+            "`Board peek` at 0, 28"
         )
     }
 
@@ -119,8 +120,8 @@ final class MathTutorUITests: XCTestCase {
         assertBoard(app, isWide: false)
         assertFrame(
             app.otherElements["tutor-panel"],
-            CGRect(x: 1011, y: 68, width: 337, height: 936),
-            "`Tutor panel` at 1011, 68 — 337 × 936"
+            CGRect(x: 1011, y: 28, width: 337, height: 976),
+            "`Tutor panel` at 1011, 28 — 337 × 976"
         )
 
         let board = app.otherElements["whiteboard"].frame
@@ -392,12 +393,31 @@ final class MathTutorUITests: XCTestCase {
         assertMeasuredBoard(app, isWide: false)
     }
 
+    /// Asserted on the window rather than on a heading, and that is a change worth naming:
+    /// **the redesigned settings window nowhere says "Settings".** The old screen opened with
+    /// a 40pt display title; the window opens on the Tutor pane, whose heading is "Tutor", so
+    /// the only confirmation you landed in settings is the sidebar's three items. Waiting on
+    /// the identifier is the honest assertion — waiting on a word the product no longer shows
+    /// would be testing a string this suite invented.
     func testSettingsIsReachableFromThePanel() {
         let app = launch(["--ui-state", "docked-start", "--ui-freeze"])
 
-        tap(app.buttons["Tutor settings"], untilExists: app.staticTexts["Settings"],
-            "The panel controls' settings button must open the settings screen")
+        tap(app.buttons["Tutor settings"], untilExists: app.descendants(matching: .any)["settings-window"],
+            "The panel controls' settings button must open the settings window")
     }
+
+    /// The gear is the full-screen column's only chrome, and it did not used to be there.
+    ///
+    /// Board 07 drew no controls at all, so Settings was unreachable from the greeting — the
+    /// student had to go back to the board first. Both full-screen states now carry the same
+    /// gear in the same corner, and this is the state that had none.
+    func testSettingsIsReachableFromTheFullScreenGreeting() {
+        let app = launch(["--ui-state", "fullscreen-start", "--ui-freeze"])
+
+        tap(app.buttons["Tutor settings"], untilExists: app.descendants(matching: .any)["settings-window"],
+            "The full-screen column's gear must open the settings window")
+    }
+
 
     // MARK: - Live device
 
@@ -555,8 +575,8 @@ final class MathTutorUITests: XCTestCase {
     ) {
         guard let board = boardFrame(app, message, file: file, line: line) else { return }
         XCTAssertEqual(board.width, isWide ? 1224 : 863, accuracy: 1, message, file: file, line: line)
-        XCTAssertEqual(board.height, 936, accuracy: 1, "The board's height never changes", file: file, line: line)
-        XCTAssertEqual(board.minY, 68, accuracy: 1, "The content band starts at 68", file: file, line: line)
+        XCTAssertEqual(board.height, 976, accuracy: 1, "The board's height never changes", file: file, line: line)
+        XCTAssertEqual(board.minY, 28, accuracy: 1, "The content band starts at 28", file: file, line: line)
     }
 
     /// The board on the **real** screen, where the band is whatever the device reserves.

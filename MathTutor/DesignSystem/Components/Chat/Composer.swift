@@ -23,9 +23,18 @@ enum ComposerSelection: Equatable, Sendable {
 /// Every measured value of the composer, at both scales.
 ///
 /// The child sizes close the row exactly at both scales, which is the check that the
-/// padding and gap are right: `301 − 20 − 24 − 12 − 133 − 12 − 38 − 12 − 42 − 8 = 0` and
-/// `740 − 32 − 552 − 18 − 52 − 18 − 56 − 12 = 0`. `placeholderWidth(_:)` is that
+/// padding and gap are right: `301 − 18 − 24 − 10 − 151 − 10 − 34 − 10 − 38 − 6 = 0` and
+/// `740 − 28 − 574 − 16 − 46 − 16 − 52 − 8 = 0`. `placeholderWidth(_:)` is that
 /// arithmetic, and the tests run it against the widths screens 05 and 07 measure.
+///
+/// **The pill came down a step.** 58 → 50 in the panel and 80 → 68 full-screen, because at the
+/// old heights the input was the heaviest thing on a surface whose subject is the
+/// conversation. Everything in the row came down with it in proportion — paddings, gap, and
+/// both button boxes — with one exception: the **glyph sizes did not move**. `composer/send`
+/// renders at 22 and 26, `composer/voice` at 20 and 26, and those are the sizes
+/// `design/icons.json` publishes for them. Scaling the boxes is a layout change; inventing a
+/// 19 or a 23 would add render sizes to a documented icon set to save two points of padding.
+/// The send arrow now sits in 8pt of circle instead of 10.
 struct ComposerMetrics: Equatable, Sendable {
     let scale: ChatScale
     /// The column the pill fills — *"every child of the panel is this wide"* in the panel, and
@@ -53,7 +62,7 @@ struct ComposerMetrics: Equatable, Sendable {
     let cancelGlyphSize: CGFloat
     /// `ui/level`, in the text lane while capturing.
     let meter: LevelMeterMetrics
-    /// The 56pt send button carries a shadow the 42pt one does not — see
+    /// The full-screen send button carries a shadow the panel's does not — see
     /// `ComposerSendButton`.
     let sendIsRaised: Bool
 
@@ -63,11 +72,11 @@ struct ComposerMetrics: Equatable, Sendable {
     var attachment: AttachmentStackMetrics { .composer(scale, width: width) }
 
     /// The composer's height once a selection is attached: the card's visible band plus
-    /// the pill. 96 in the panel.
+    /// the pill. 88 in the panel, once the pill came down to 50.
     var attachedHeight: CGFloat { attachment.totalHeight }
 
     /// Apple's stated default touch target: larger than the 24pt slot the cancel glyph sits in
-    /// and larger than the panel's 38pt mic. A touch target, not a visual value — it draws
+    /// and larger than the panel's 34pt mic. A touch target, not a visual value — it draws
     /// nothing, and every drawn box stays exactly where the design put it.
     static let minimumTapTarget: CGFloat = 44
 
@@ -87,20 +96,20 @@ struct ComposerMetrics: Equatable, Sendable {
 }
 
 extension ComposerMetrics {
-    /// Screens 05 and 08. The voice button is 38 and its glyph 20 — measured on screen 05's
-    /// input row, which is also where board 03's "voice exists only at full-screen" claim
-    /// comes apart: the live panel composer has one.
+    /// Screens 05 and 08, at the stepped-down pill. The voice button is 34 and its glyph
+    /// stays 20 — screen 05's input row is also where board 03's "voice exists only at
+    /// full-screen" claim comes apart: the live panel composer has one.
     static let panel = Self(
         scale: .panel,
         width: DS.Container.panelContent,
-        height: 58,
-        paddingLeading: 20,
-        paddingTrailing: DS.Space.s2,
-        gap: DS.Space.s3,
+        height: 50,
+        paddingLeading: 18,
+        paddingTrailing: 6,
+        gap: 10,
         marqueeSize: Icon.uiSelectionMarker.renderSize,
-        voiceButtonSize: 38,
+        voiceButtonSize: 34,
         voiceGlyphSize: 20,
-        sendButtonSize: 42,
+        sendButtonSize: 38,
         sendGlyphSize: 22,
         placeholderStyle: .bodyControl,
         placeholder: "Ask anything...",
@@ -115,18 +124,18 @@ extension ComposerMetrics {
     static let fullScreen = Self(
         scale: .fullScreen,
         width: DS.Container.column,
-        height: 80,
-        paddingLeading: DS.Space.s8,
-        paddingTrailing: DS.Space.s3,
-        gap: 18,
+        height: 68,
+        paddingLeading: DS.Space.s7,
+        paddingTrailing: DS.Space.s2,
+        gap: DS.Space.s4,
         marqueeSize: Icon.uiSelectionMarker.renderSize,
-        voiceButtonSize: 52,
+        voiceButtonSize: 46,
         voiceGlyphSize: Icon.composerVoice.renderSize,
-        sendButtonSize: 56,
+        sendButtonSize: 52,
         sendGlyphSize: Icon.composerSend.renderSize,
         // `--text-lead` is the design's own pairing for this slot: "Lead paragraph and
         // composer placeholder at FULL-SCREEN scale". The node measures a 26pt line box
-        // rather than the token's 30; the text is one line optically centred in an 80pt
+        // rather than the token's 30; the text is one line optically centred in the
         // pill, so the two are indistinguishable and the token is the traceable one.
         placeholderStyle: .lead,
         placeholder: "Ask me anything...",
@@ -145,7 +154,7 @@ extension ComposerMetrics {
     /// The same composer, in a column of `width`.
     ///
     /// **Only the width moves, and that is the whole point.** Board 05: *"the type scale …
-    /// composer height (58/96 vs 80) and the composer's contents all change. Treat the
+    /// composer height (50/88 vs 68) and the composer's contents all change. Treat the
     /// greeting/chips/composer as two variants, not one responsive view."* So the pill's
     /// height, its paddings, its gap, its two button sizes and its placeholder are the
     /// scale's discrete treatment and hold still at every column; the row the children close
@@ -161,6 +170,81 @@ extension ComposerMetrics {
         var metrics = Self.for(scale)
         metrics.width = max(0, width)
         return metrics
+    }
+}
+
+// MARK: - The composer's slot
+
+/// The composer and the band of surface behind it, measured once.
+///
+/// **These were two things and they drifted.** The fade lived in whichever branch of a surface
+/// happened to draw the thread, so the full-screen greeting rendered a composer with nothing
+/// behind it — a floating pill over content that scrolls the moment the chip grid wraps. The
+/// band was also computed twice, and one of the two used the thread's clearance, which
+/// includes the 24pt gap above the pill, so the veil started inside the newest message.
+///
+/// One type fixes both: `band` is the single expression of *composer top to surface floor*,
+/// the fade is derived from it rather than passed alongside it, and `ComposerSlot` is the only
+/// way to place a composer — so a new surface cannot forget the fade or size it independently.
+struct ComposerSlotMetrics: Equatable, Sendable {
+    /// The **full** width of the surface the fade spans — the panel's 337, not its 301 column.
+    /// Board 03 puts the fade outside the thread precisely so it can run corner to corner.
+    let surfaceWidth: CGFloat
+    /// The resting pill, never the attached one: a card grows the composer upward, and a band
+    /// that followed it would redraw the conversation the moment a selection was attached.
+    let composerHeight: CGFloat
+    /// What sits under the pill inside the surface — the panel's 18pt inset, and nothing
+    /// full-screen, where the pill's bottom *is* the content band's floor.
+    let underhang: CGFloat
+
+    /// Composer top to surface floor. The fade's whole extent, and the clearance the thread
+    /// keeps at the bottom of its own frame.
+    var band: CGFloat { composerHeight + underhang }
+
+    var fade: ScrollFadeMetrics { .bottom(coveringComposer: band) }
+
+    /// Boards 05, 08, 11 and 12. The height is the composer's whether or not there is a
+    /// composer: board 11 puts `btn/primary` in the same slot, at the same height by
+    /// derivation, so the band it needs behind it is identical.
+    static func panel(surfaceWidth: CGFloat) -> Self {
+        Self(
+            surfaceWidth: surfaceWidth,
+            composerHeight: ComposerMetrics.panel.height,
+            underhang: TutorPanelMetrics.inset
+        )
+    }
+
+    /// Boards 07 and 13, in the column the reading lane actually got.
+    static func fullScreen(columnWidth: CGFloat) -> Self {
+        Self(
+            surfaceWidth: max(0, columnWidth),
+            composerHeight: ComposerMetrics.for(.fullScreen, width: columnWidth).height,
+            underhang: 0
+        )
+    }
+}
+
+/// The composer's slot as paint: the fade, then whatever occupies the slot, bottom-anchored.
+///
+/// Bottom-anchored rather than offset to a computed top, which is what makes the attached
+/// composer free: the card grows upward out of the slot and the pill does not move, so no
+/// caller has to know whether a selection is attached.
+struct ComposerSlot<Content: View>: View {
+    let metrics: ComposerSlotMetrics
+    /// The fade has to be the surface it sits on. The panel's `--color-surface-panel`, and
+    /// `--color-surface` in the reading column — *"a fade of the panel's grey would bleed a
+    /// visibly different white over the messages."*
+    var surfaceColor: Color = DS.Color.surfacePanel
+    /// The occupant. Empty on board 11, where the fill supplies its own `btn/primary` — the
+    /// band is still the slot's, so the fade is still right.
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            ScrollFade(width: metrics.surfaceWidth, metrics: metrics.fade, color: surfaceColor)
+            content().padding(.bottom, metrics.underhang)
+        }
+        .frame(width: metrics.surfaceWidth, height: metrics.band, alignment: .bottom)
     }
 }
 
@@ -198,7 +282,7 @@ struct ComposerDictation {
 // MARK: - The composer
 
 /// The one control that floats free of the panel edge, which is why it is a capsule:
-/// *"the pill height changes (58 in the panel, 80 full-screen) but the radius formula
+/// *"the pill height changes (50 in the panel, 68 full-screen) but the radius formula
 /// never does, so a port must use a capsule shape, not a fixed corner value."*
 struct Composer: View {
     let scale: ChatScale

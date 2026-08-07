@@ -84,13 +84,13 @@ struct LaunchOptions: Sendable {
     }
 
     /// Screen 08's thread, verbatim, or `nil` when the session's own messages should show.
+    ///
+    /// Nine messages, not ten: the board's tenth child is `btn/orb`, which the thread now
+    /// draws at its tail in every state rather than only mid-turn, so the fixture has nothing
+    /// left to say about it.
     var fixtureThread: [ChatThreadItem]? {
         usesFixtureCopy ? Self.screen08Thread : nil
     }
-
-    /// Screen 08's tenth thread child is the orb, so the fixture is mid-turn: without it the
-    /// thread ends 22 + 46 short of the board.
-    var showsThinkingOrb: Bool { usesFixtureCopy }
 
     private static func value(after flag: String, in arguments: [String]) -> String? {
         guard let index = arguments.firstIndex(of: flag), arguments.indices.contains(index + 1) else {

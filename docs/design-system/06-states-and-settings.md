@@ -30,7 +30,7 @@ Where a board uses a component already specified in 02 / 03 / 05, this document 
 4. [Board 13 — Session plan · full screen](#board-13--session-plan--full-screen)
 5. [Board 14 — Components · Tutor states](#board-14--components--tutor-states)
 6. [New components introduced](#new-components-introduced)
-7. [Four new icons](#four-new-icons)
+7. [Five new icons](#five-new-icons)
 8. [Values that are not tokens](#values-that-are-not-tokens)
 9. [Open questions](#open-questions)
 
@@ -38,204 +38,224 @@ Where a board uses a component already specified in 02 / 03 / 05, this document 
 
 # Board 10 — Settings
 
+> **Rewritten.** This section used to describe a full-screen page and opened by insisting the
+> board *"is **not a modal and not a sheet**"*. It is a modal now. What survives that reversal
+> is the reason behind it: a sheet was rejected because *"a sheet is a card with an edge"* and
+> the product separates by elevation, never by stroke. **The window has no edge either** — it
+> is `--color-surface` on `--radius-3xl`, lifted by a new elevation level and nothing else. The
+> old region map, `select/option`, and the `Irreversible` section are gone; the paragraphs
+> below replace them. Ported in `MathTutor/Features/Settings/`.
+
 ## Purpose / app state
 
-The settings surface. It is **not a modal and not a sheet** — it is the full-screen tutor layout (board 07's shell) with its reading content replaced. The board peek stays pinned to the left as the way back, and the panel-controls row is reduced to a single `btn/dock` — the only exit.
+The settings surface, drawn **over** the board rather than in place of it. Screen 05 stays
+behind, blurred and whitened, so the student can see the work they are leaving. Reached from
+`btn/settings` — in the panel controls on boards 11 / 12, and alone in the screen's top-right
+corner on boards 07 and 13 — and from the auth-error recovery chip on board 14 ("Open
+Settings" → *"the API key pane, field focused"*).
 
-Reached from `btn/settings` in the panel controls on boards 11 / 12 / 13, and from the **auth-error recovery chip** on board 14 ("Open Settings" → *"board 10 — Settings, OpenAI API key section, field focused"*).
+Dismissed by the close control in the sidebar, or by tapping the backdrop. There is no
+drag-to-dismiss: the window is not a sheet and has no grabber to suggest one.
 
-## Screen frame
-
-| Property | Value |
-| --- | --- |
-| Size | 1376 × 1032 |
-| Background | **`#FFFFFF`** — literal, *not* `var(--color-surface-screen)`. Same exception board 07 takes. |
-| Layout | `overflow: clip`, absolute children |
-
-## Region map (absolute, inside the 1376 × 1032 frame)
-
-| Region | x | y | w | h | Notes |
-| --- | --- | --- | --- | --- | --- |
-| Status bar | 0 | 16 | 1376 | 24 | **Reused from 05** verbatim (`9:41 AM` / `Tue May 21` / wifi / `100%` / battery). Left group at x 30, right group at x 1251, gap 12 / `--spacing-2`. |
-| Board peek | 0 | 68 | 68 | 936 | **Reused from 07 / `02 §10`** verbatim, including the faked blurred-duplicate edge shadow (`left 3, top 2`, `blur(5px)`, `opacity 0.11`, fill `#141432`) and `board/hinge` at local (23, 22), 22 × 20. Dot-grid path fill `#F1F1F1`. |
-| Panel controls | 352 | 68 | 740 | 32 | **Reduced variant** — see below. |
-| Title `Settings` | 352 | 124 | 740 | 48 | `--text-display` 40 / `--leading-display` 48 · 600 · `--tracking-tight` · `--color-ink` |
-| Section — Tutor model | 352 | 220 | 740 | 124 | |
-| Section — Reasoning effort | 352 | 392 | 740 | 230 | |
-| Section — OpenAI API key | 352 | 670 | 740 | 136 | |
-| Section — Irreversible | 352 | 850 | 740 | 112 | Content bottom = **962**. The safe band ends at 1004, so there is **42 pt of unused slack** — this screen is top-aligned, not stretched. |
-
-Column: **x 352 → 1092, width 740** = `var(--container-column)`, i.e. board 07's centring rule `68 + (1376 − 68 − 740) ÷ 2 = 352`. No board 07 element other than the peek and status bar survives.
-
-**Vertical rhythm between blocks:** controls → title **24** · title → §1 **48** · §1 → §2 **48** · §2 → §3 **48** · §3 → §4 **44**. The last gap is 44, not 48 — see [Open questions](#open-questions).
-
-## Panel controls — reduced variant (new configuration, not a new component)
+## Backdrop
 
 | Property | Value |
 | --- | --- |
-| Frame | 740 × 32 at (352, 68), `display: flex`, `align-items: center`, **`justify-content: flex-start`**, `gap: 14px` |
-| Children | **`btn/dock` only** — 32 × 32, no fill, no radius, no shadow. Glyph 28 × 28, viewBox `0 0 28 28`, `stroke var(--color-icon)`, markup `stroke-width 2.1` with inline override **`2`** (→ 2.00 rendered). |
-| Absent | `btn/full-screen`, `btn/settings` |
+| Content | Screen 05, unmodified — rail, board, tutor panel |
+| Blur | `filter: blur(2px)` — **CSS blur is the full width of the Gaussian; a SwiftUI port halves it to `1`**, the same conversion `box-shadow` needs |
+| Scrim | `#FFFFFF66` — white at 0.4 over the blur, full bleed |
 
-`btn/dock` is **reused unchanged from `02 §6`**; only the row's membership changes. The `gap: 14` survives even though there is one child.
+**White, not ink**, and this is the one value here most likely to be "corrected" back. A dark
+scrim was drawn first and turned the board and panel into a single grey field; whitening keeps
+the rail's pen colours and the ink legible as *your work, still there*, which is the entire
+argument for not covering the screen.
 
-## Section — Tutor model (740 × 124 at 352, 220)
+## The window
 
-```
-Section (flex column, width 740)
-├─ Heading  "Tutor model"           740 × 18
-└─ Options  740 × 90                margin-top 16 (--spacing-4)
-   flex row, gap 16 (--spacing-4)
-   ├─ select/option · default   236 × 90   "Sol"   / "Focused route"
-   ├─ select/option · default   236 × 90   "Terra" / "Balanced route"
-   └─ select/option · selected  236 × 90   "Luna"  / "Default route"
-```
+| Property | Value |
+| --- | --- |
+| Size | **760 × 520** — both free values, sized to content |
+| Position | **(308, 256)** = `(1376 − 760) ÷ 2` and `28 + (976 − 520) ÷ 2`. Centred in the safe width and in the content band; a port derives these rather than transcribing them |
+| Radius | `var(--radius-3xl)` 28 — the two big surfaces' radius, and at 760 × 520 this is larger than either |
+| Fill | `var(--color-surface)` `#FFFFFF` |
+| Elevation | **04 · Modal** — `#14143216 0 16 40 + #1414320E 0 4 12`. New level; see `01-foundations.md §5.1a` |
+| Layout | `display: flex`, `overflow: clip` |
 
-Arithmetic: `18 + 16 + 90 = 124`. Row width `236 × 3 + 16 × 2 = 740` exactly.
+`overflow: clip` is load-bearing rather than defensive: the sidebar paints a square block, so
+without it the sidebar's corners sit outside the window's radius.
 
-**Heading type (used by all four sections):** `--text-label` 15 / `--leading-label` 18 · **600** · `--color-ink`.
+## Sidebar (216 × full height)
 
-## Section — Reasoning effort (740 × 230 at 352, 392)
+| Property | Value |
+| --- | --- |
+| Width | **216**, `flex-shrink: 0` |
+| Fill | `var(--color-surface-panel)` `#FCFCFC` |
+| Border | `border-right: 1px solid var(--color-divider)` — **inside** the 216, `border-box`. The one stroke in the window, and the sanctioned one: `--color-divider` is *"hairline rules inside a surface"* |
+| Padding | `20` block, `16` inline |
+| Gap | `24` (`--space-gap`) between the close control and the nav |
 
-```
-Section (flex column, width 740)
-├─ Heading  "Reasoning effort"      740 × 18
-└─ Options  740 × 196               margin-top 16
-   flex row, flex-wrap: wrap, gap 16 (both axes)
-   row 1: None / Low / Medium
-   row 2: High (selected) / X-High / Max
-```
+Children, in order:
 
-Arithmetic: `18 + 16 + 196 = 230`; grid `90 × 2 + 16 = 196`. **The 2 × 3 grid is produced by wrapping a 740 row, not by a grid definition** — the same technique board 07's suggestion grid uses.
+- **`btn/close`** — 36 × 36, no fill, no radius, the same nothing `btn/dock` is drawn with.
+  Glyph `ui/cross` at 22. **A port must give it a 44pt tap target**; a bare glyph hands the
+  button an 11.2-of-24 hit area.
+- **Nav** — `flex-column`, `gap: 2` (off-scale and deliberate: the items are 44pt targets and
+  a token gap would open a dead lane between them).
 
-| Option | Title | Caption |
+### `nav/item` — NEW component
+
+| Property | Value |
+| --- | --- |
+| Size | 184 × 44 (`216 − 16 × 2`), fills the column |
+| Padding | `padding-inline: 12` |
+| Radius | `var(--radius-lg)` 14 |
+| Fill · selected | `var(--color-brand-tint)` `#E6E3F9` |
+| Fill · default | none |
+| Label · selected | `--text-label` 15 / 18 · **600** · `var(--color-ink)` |
+| Label · default | 15 / 18 · **500** · `var(--color-ink-secondary)` |
+
+The fill and radius are the rail's selected tool slot, applied to a different kind of slot —
+not a fourth spend of the brand colour. Unlike the retired `select/option`, **the label changes
+with the state too**: a nav item is read one at a time down a column, and three identically
+styled labels with a rectangle behind one of them does not read as a selection.
+
+**A port must make the whole 184 × 44 hit-testable.** A `.clear` fill is not tappable, so the
+default items otherwise collapse to the width of their text.
+
+Three items, and they are the four old sections re-cut: **Tutor** (the two pickers), **API
+key** (the field and its removal), **Session** (the reset). `Irreversible` does not survive as
+a group — removing a key belongs to owning a key, resetting belongs to owning a session — and
+its shared caption is restated in each pane's own lede, in that pane's terms.
+
+## Pane (544 × full height)
+
+`544 = 760 − 216`; padding 32 on all sides, so the **measure is 480** and nothing inside
+carries a width of its own.
+
+### Header — pinned, not hugged
+
+| Child | Value |
+| --- | --- |
+| Title | `--text-title` 26 / 34 · 600 · `--tracking-tight` · `--color-ink` |
+| Gap | 10 |
+| Lede | `--text-label` 15 / **`--leading-control` 22** · 400 · `--color-ink-secondary` |
+| Padding-bottom | 28 |
+
+`34 + 10 + 22 × 2 + 28 = **116**`, **fixed**. Every lede is written to two lines at the 480
+measure, but the API-key one is short — left to hug, the rule under the header would jump 22pt
+between panes and the window would read as three different windows.
+
+15 in the *control* line box, not the label's 18: this is the only paragraph in the window that
+wraps, and 18 sets two lines of 15pt copy tighter than the face draws them.
+
+### `row/setting` — NEW component
+
+| Property | Value |
+| --- | --- |
+| Size | 480 × **120**, rule above each row |
+| Rule | `1px var(--color-divider)` on the **top** edge, so the first row's rule doubles as the header's |
+| Label | `--text-body` 17 / 22 · **600** · `--color-ink` |
+| Caption | `--text-label` 15 / 18 · 400 · `--color-ink-secondary`, `margin-top: 4` |
+| Value | `--text-body` 17 / 22 · **500** · `--color-ink` |
+| Chevron | `ui/chevron-down` at 16, in a **fixed 20pt slot**, `flex-shrink: 0` |
+
+The label is the question and the value the answer, which is why the value sits a weight below
+it. The chevron's slot is fixed and not a gap: values are different widths, and a gap would put
+each row's mark in a different column.
+
+`22 + 4 + 18 = 44` of content in a 120 box — the rest is air, split by the centring.
+
+**The design does not draw the open state.** Board 10 shows `Luna ▾` and stops, so the picker
+itself is the platform's; inventing a bespoke popover would introduce the container type the
+original board 10 rejected sheets for. The trade is real and worth stating: the six effort
+captions ("Fastest replies", "Deep reasoning", …) are no longer on the screen.
+
+### `field/key` — no longer a re-skin of `Composer · wide`
+
+It was one, and this document used to say so. Every cue it inherited — 740 × 80, `--radius-full`,
+`btn/send`'s 56pt violet disc — belongs to something you type into and then send.
+
+| | was | now |
 | --- | --- | --- |
-| 1 | `None` | `Fastest replies` |
-| 2 | `Low` | `Light reasoning` |
-| 3 | `Medium` | `Balanced depth` |
-| 4 **(selected)** | `High` | `Deep reasoning` |
-| 5 | `X-High` | `Extra-deep reasoning` |
-| 6 | `Max` | `Maximum depth` |
+| Box | 740 × 80 | **480 × 56** (the pane's measure) |
+| Radius | `--radius-full` | `var(--radius-lg)` 14 |
+| Padding | 32 / 12 | **18 leading, 16 trailing**, gap 16 |
+| Value | `--text-lead` 21, `--font-sans` | **15 / 22 · 400 · `--font-mono`** · `--color-ink` |
+| Action | `btn/send`, 56pt violet disc | **`Replace`** — `--text-label` 15 / 18 · 600 · `var(--color-brand)` |
+| Fill / elevation | `#FFFFFF`, 03 · Control | unchanged |
 
-## `select/option` — NEW component
+`--color-ink` and not tertiary: this is a filled field, not a placeholder. The literal is
+unchanged — `sk-proj-` + **24 × U+2022 BULLET** + `7Q4F`, a fixed bullet run so the mask leaks
+neither the key's characters nor its length.
 
-The only genuinely new *surface* on this board.
+The mono is the one genuinely new thing and it **overturns a stated rule**: `--font-mono` was
+documentation-only. A 24-bullet mask is the case that rule did not consider. IBM Plex Mono is
+not bundled, so a port renders the system monospaced face — never the proportional fallback,
+which loses the only property the mono was chosen for.
 
-| Property | Value |
-| --- | --- |
-| Size | **236 × 90**, `flex-shrink: 0` — both fixed, **NO TOKEN** |
-| Padding | `padding-block: 20`, `padding-inline: 22` — **no token for either** |
-| Layout | `display: flex`, `flex-direction: column` |
-| Radius | `var(--radius-lg)` **14** — same as suggestion chips |
-| Fill · default | `var(--color-surface)` `#FFFFFF` |
-| Fill · selected | **`var(--color-brand-tint)` `#E6E3F9`** |
-| Border | none |
-| Shadow | **elevation 03 Control** — `#1414320D 0px 2px 6px, #14143208 0px 1px 2px` — **identical in both states** |
-| Title | `--text-body-lg` 20 / `--leading-snug` 24 · **500** (`--font-weight-medium`) · `var(--color-ink)` — **identical in both states** |
-| Caption | `--text-body` 17 / `--leading-control` 22 · 400 · `var(--color-ink-secondary)`, `margin-top: var(--spacing-1)` 4 — **identical in both states** |
+`Replace` inherits the brand budget the send disc already held, so the three sanctioned uses
+are unchanged; the spend just moved from a 56pt disc to seven characters.
 
-**Child arithmetic:** `20 + 24 + 4 + 22 + 20 = 90` ✔ · content width `236 − 22 × 2 = 192` ✔
+### `btn/destructive` — matched to the field above it
 
-**States:** exactly two — `default` and `selected`. **The only difference is the fill.** No border, no ring, no checkmark, no weight change, no shadow change. This is consistent with the rail's selected tool slot (`--color-brand-tint` on a 14pt radius) and is the third and fourth sanctioned uses of brand colour in the chrome. No hover / pressed / disabled state is drawn.
-
-## Section — OpenAI API key (740 × 136 at 352, 670)
-
-```
-Section (flex column, width 740)
-├─ Heading  "OpenAI API key"                                   740 × 18
-├─ Caption  "Kept in this device's Keychain. It is sent to
-│            OpenAI and nowhere else."                          740 × 18   margin-top 4
-└─ field/key  740 × 80                                                     margin-top 16
-```
-
-Arithmetic: `18 + 4 + 18 + 16 + 80 = 136` ✔
-
-**Caption type (shared by §3 and §4):** `--text-label` 15 / `--leading-label` 18 · **400** · `var(--color-ink-secondary)`.
-
-### `field/key` — a re-skin of `Composer · wide`, not a new component
-
-Box model is **identical to `Composer · wide` (`03 §1.3`)**: 740 × 80, `padding-left: var(--spacing-8)` 32, `padding-right: var(--spacing-3)` 12, `gap: 18`, `border-radius: var(--radius-full)`, fill `var(--color-surface)`, elevation **03 Control**, `display: flex; align-items: center`.
-
-| Child | Size | Detail |
+| | was | now |
 | --- | --- | --- |
-| Key text | `flex-grow: 1`, measured 622 × 30 at local (32, 25) | **`--text-lead` 21 / `--leading-lead` 30 · 400 · `var(--color-ink)`** — note **`--color-ink`, not `--color-ink-tertiary`**: this is a filled field, not a placeholder |
-| `btn/send` 56 | 56 × 56 | **Reused from `03 §7.2`** — `var(--color-brand)` fill, `--radius-full`, shadow `#1414320F 0px 2px 6px, #1414320A 0px 1px 2px`, glyph 26 × 26 on viewBox `0 0 24 24`, markup `stroke-width 2.5` with inline override **`1.85`** (→ 2.00 rendered), stroke `#FFFFFF` |
+| Height | 56 | **44** |
+| Padding-inline | 28 | **20** |
+| Radius | `--radius-full` | `var(--radius-lg)` 14 |
+| Fill | `--color-surface-bubble`, **no shadow** | **`--color-surface`, elevation 03** |
+| Label | 17 / 22 · 500 | 15 / 18 · 600 · `--color-ink` |
 
-**Literal value, verbatim:** `sk-proj-••••••••••••••••••••••••7Q4F` — `sk-proj-` + **24 × U+2022 BULLET** + `7Q4F`. Only the last four characters are revealed.
+**This is a loss and should be recorded as one.** The old rule was that everything safe is
+lifted off the surface and the things that destroy are the only things that sit *in* it — a
+flat grey pill meant "this one is different" without spending a colour. Beside a 56pt white
+field, that pill was the loudest object in the pane rather than the most careful one, so it was
+matched to the field and the shape signal is gone with nothing in its place.
 
-No focused / empty / error state for this field is drawn anywhere in the file.
+The warning now rests entirely on the pane's lede, which is what the `Irreversible` heading and
+caption used to do — *"the entire destructive signal is carried by the section heading and the
+caption"* — but with no help. The button still spends **no colour**; `--color-incorrect` says
+*"NOT for destructive, warning or validation UI."* Strengthening the signal is a design
+decision, not a code one.
 
-## Section — Irreversible (740 × 112 at 352, 850)
-
-```
-Section (flex column, width 740)
-├─ Heading  "Irreversible"                                      740 × 18
-├─ Caption  "Both take effect immediately and cannot be undone.
-│            Neither one touches your board or its ink."         740 × 18   margin-top 4
-└─ Actions  740 × 56                                                        margin-top 16
-   flex row, align-items center, gap 16 (--spacing-4)
-   ├─ btn/destructive  170 × 56   "Remove API key"
-   └─ btn/destructive  183 × 56   "Reset this session"
-```
-
-Arithmetic: `18 + 4 + 18 + 16 + 56 = 112` ✔
-
-## `btn/destructive` — NEW component
-
-| Property | Value |
-| --- | --- |
-| Size | **height 56** fixed, **width hugs content**, `flex-shrink: 0` |
-| Padding | `padding-inline: 28` — **no token** (28 happens to equal `--spacing-7` / `--space-edge`, but it is written as a literal here) |
-| Layout | `display: flex`, `align-items: center` |
-| Radius | `var(--radius-full)` |
-| Fill | **`var(--color-surface-bubble)` `#F2F2F6`** |
-| Border | none |
-| Shadow | **none** — deliberately flat; it does not read as a floating control |
-| Label | `--text-body` 17 / `--leading-control` 22 · **500** · `var(--color-ink)` |
-
-**Width arithmetic:** `"Remove API key"` label 114 + 28 × 2 = **170** ✔ · `"Reset this session"` label 127 + 28 × 2 = **183** ✔
-
-**States:** only the resting state is drawn. No pressed, no disabled, no confirmation dialog.
-
-**Naming note.** The component is named `btn/destructive`, but it carries **no red, no colour, and no visual danger signal at all** — it is a bubble-grey pill. The entire destructive signal is carried by the section heading ("Irreversible") and the caption. This is the same "no semantic colour" constraint board 14 raises for correctness; see [Open questions](#open-questions).
+There is still **no confirmation dialog**: *"'cannot be undone' is asserted, but no dialog
+exists."* That used to also be a statement about the system's limits, because there was no
+modal pattern to put one in. There is one now — this window — and whether an irreversible
+action deserves a second one on top of it is a question the design has not been asked.
 
 ## All literal copy on board 10
 
 ```
-9:41 AM
-Tue May 21
-100%
-Settings
+Tutor
+API key
+Session
+Tutor
+How the tutor thinks and speaks. Changes apply to your next message; the conversation so far is left alone.
 Tutor model
-Sol
-Focused route
-Terra
-Balanced route
+Which route answers you
 Luna
-Default route
 Reasoning effort
-None
-Fastest replies
-Low
-Light reasoning
-Medium
-Balanced depth
+How long it thinks before replying
 High
-Deep reasoning
-X-High
-Extra-deep reasoning
-Max
-Maximum depth
-OpenAI API key
+API key
 Kept in this device's Keychain. It is sent to OpenAI and nowhere else.
 sk-proj-••••••••••••••••••••••••7Q4F
-Irreversible
-Both take effect immediately and cannot be undone. Neither one touches your board or its ink.
+Replace
 Remove API key
+Session
+Resetting clears the conversation and the goal it was working towards. It does not touch your board or its ink.
 Reset this session
 ```
 
+The model and effort names (Sol / Terra / Luna, None → Max) and their captions still exist in
+`SettingsOption`; they now appear in the picker rather than on the board.
+
 There is **no designer prose written on board 10** — it is a pure screen board, like 05–08.
+
+## Board 10b — Settings · panes
+
+A companion artboard holding the **API key** and **Session** panes at the same 760 × 520, so
+the field and both destructive buttons stay specified. Not a screen; it has no backdrop.
 
 ---
 
@@ -259,9 +279,9 @@ Board 14 explicitly distinguishes this from the auth error: *"board 11 no-key st
 | Region | x | y | w | h | Reuse |
 | --- | --- | --- | --- | --- | --- |
 | Status bar | 0 | 16 | 1376 | 24 | **Reused from 05** verbatim |
-| Whiteboard canvas | 124 | 68 | 863 | 936 | **Reused from 05** — `--radius-3xl` 28, `overflow: clip`, fill `--color-surface-canvas`, elevation **01 Canvas** `#14143209 0px 2px 6px`. Contains only the dot grid — **no ink**. |
-| Tool rail | 28 | 68 | 72 | **628** | **Reused from screen 08's rail**, not screen 05's — see note below |
-| Tutor chat panel | 1011 | 68 | 337 | 936 | **Reused from 05 / `02 §5`** — `--radius-3xl` 28, fill `--color-surface-panel`, elevation **02 Panel**, `padding-top: 18`, `flex column`, `align-items: center` |
+| Whiteboard canvas | 124 | 28 | 863 | 976 | **Reused from 05** — `--radius-3xl` 28, `overflow: clip`, fill `--color-surface-canvas`, elevation **01 Canvas** `#14143209 0px 2px 6px`. Contains only the dot grid — **no ink**. |
+| Tool rail | 28 | 28 | 72 | **628** | **Reused from screen 08's rail**, not screen 05's — see note below |
+| Tutor chat panel | 1011 | 28 | 337 | 976 | **Reused from 05 / `02 §5`** — `--radius-3xl` 28, fill `--color-surface-panel`, elevation **02 Panel**, `padding-top: 18`, `flex column`, `align-items: center` |
 
 Horizontal lanes are the canonical docked lanes: `0–28 edge · 28–100 rail · 100–124 gap · 124–987 board · 987–1011 gap · 1011–1348 panel · 1348–1376 edge`.
 
@@ -290,7 +310,7 @@ This matches the **screen-08 rail (627.5)** documented in `05-screens.md`, not t
 | 3 | `No-key state` | 18, 428 | 301 × 156 | 1029, 496 |
 | 4 | `btn/primary` | 18, **860** (absolute) | 301 × 58 | 1029, 928 |
 
-Flow arithmetic: `18 (padding-top) + 32 + 248 (orb margin-top) + 90 + 40 (--spacing-10) + 156 = 584`. The button is then **absolutely positioned** at local y 860, so `860 + 58 + 18 = 936` ✔ — i.e. the primary button is bottom-anchored with the standard 18 pt panel inset, exactly where the composer sits on screens 05 / 08.
+Flow arithmetic: `18 (padding-top) + 32 + 248 (orb margin-top) + 90 + 40 (--spacing-10) + 156 = 584`. The button is then **absolutely positioned** at local y 900, so `900 + 58 + 18 = 976` ✔ — i.e. the primary button is bottom-anchored with the standard 18 pt panel inset, exactly where the composer sits on screens 05 / 08.
 
 The orb's x of **120.5** is `(337 − 96) ÷ 2` — a consequence of centre alignment, not a designed half-pixel. In SwiftUI, centre it; do not hard-code 120.5.
 
@@ -302,7 +322,7 @@ The orb's x of **120.5** is `(337 − 96) ÷ 2` — a consequence of centre alig
 | Left group `Layout controls` | 78 × 32, `display: flex`, `align-items: center`, `gap: 14` → `btn/dock` (32) + 14 + `btn/full-screen` (32) = 78 |
 | Right | **`btn/settings`** 32 × 32 |
 
-`btn/dock` and `btn/full-screen` are **reused unchanged from `02 §6`** (28 × 28 glyph on viewBox `0 0 28 28`, `stroke var(--color-icon)`, markup 2.1 → inline override 2). **`btn/settings` is new**: same 32 × 32 bare button, same 28 × 28 icon slot, new glyph `control/settings` (see [Four new icons](#four-new-icons)), `stroke-width 2` → 2.00 rendered.
+`btn/dock` and `btn/full-screen` are **reused unchanged from `02 §6`** (28 × 28 glyph on viewBox `0 0 28 28`, `stroke var(--color-icon)`, markup 2.1 → inline override 2). **`btn/settings` is new**: same 32 × 32 bare button, same 28 × 28 icon slot, new glyph `control/settings` (see [Five new icons](#five-new-icons)), `stroke-width 2` → 2.00 rendered.
 
 **The row's layout changes from `justify-content: flex-start` (boards 05 / 08) to `space-between`.** This is a real change to a documented component, not just an addition.
 
@@ -381,10 +401,10 @@ The plan is **not a card, not a modal, and not a panel takeover** — it is a fl
 | Region | x | y | w | h | Reuse |
 | --- | --- | --- | --- | --- | --- |
 | Status bar | 0 | 16 | 1376 | 24 | **Reused from 05** |
-| Whiteboard canvas | 124 | 68 | 863 | 936 | **Reused from 05** — elevation 01, `--color-surface-canvas`, radius 28, `overflow: clip` |
+| Whiteboard canvas | 124 | 28 | 863 | 976 | **Reused from 05** — elevation 01, `--color-surface-canvas`, radius 28, `overflow: clip` |
 | ↳ Handwritten ink | 281 | 215 | 548 | 641 | canvas-local (157, 147) — **the same ink asset and position as screens 05 / 08** |
-| Tool rail | 28 | 68 | 72 | 628 | **Identical to board 11** (see that section) |
-| Tutor chat panel | 1011 | 68 | 337 | 936 | **Reused from 05** |
+| Tool rail | 28 | 28 | 72 | 628 | **Identical to board 11** (see that section) |
+| Tutor chat panel | 1011 | 28 | 337 | 976 | **Reused from 05** |
 
 ## Tutor panel internals
 
@@ -394,7 +414,7 @@ The plan is **not a card, not a modal, and not a panel takeover** — it is a fl
 | 2 | `Thread` | 18, 50 | 301 × **786** | 1029, 118 |
 | 3 | `Composer` | 18, 860 | 301 × 58 | 1029, 928 |
 
-`18 + 32 + 786 + 24 + 58 + 18 = 936` — note the **24 pt gap between the thread's bottom (local 836) and the composer (local 860)**. Screen 08's thread is 810 and abuts the composer directly. See [Open questions](#open-questions).
+`18 + 32 + 826 + 24 + 58 + 18 = 976` — note the **24 pt gap between the thread's bottom (local 876) and the composer (local 900)**. Screen 08's thread is 850 and abuts the composer directly. See [Open questions](#open-questions).
 
 `Panel controls` is the **expanded variant with `btn/settings`**, identical to board 11.
 
@@ -542,8 +562,8 @@ The same plan state as board 12, at full-screen scale. **This is the first board
 | Region | x | y | w | h | Reuse |
 | --- | --- | --- | --- | --- | --- |
 | Status bar | 0 | 16 | 1376 | 24 | **Reused from 05** |
-| Board peek | 0 | 68 | 68 | 936 | **Reused from 07 / `02 §10`** verbatim, faked shadow and all |
-| Panel controls | 352 | 68 | 740 | 32 | expanded variant, `justify-content: space-between` |
+| Board peek | 0 | 28 | 68 | 976 | **Reused from 07 / `02 §10`** verbatim, faked shadow and all |
+| Panel controls | 352 | 28 | **996** | 32 | **settings-only variant**, `justify-content: flex-end` — see below |
 | Thread · wide | 352 | **100** | 740 | **800** | new width, see below |
 | Composer · wide | 352 | 924 | 740 | 80 | **Reused from `03 §1.3` / board 07** unchanged |
 
@@ -553,14 +573,15 @@ Column x 352 → 1092, width 740, centred past the peek exactly as board 07: `68
 
 There is **no tool rail and no whiteboard canvas** on this board — only the peek, as on board 07.
 
-### Panel controls — expanded variant at full-screen width
+### Panel controls — settings-only variant (changed 2026-08-07)
 
-740 × 32 at (352, 68), `display: flex`, `align-items: center`, **`justify-content: space-between`**.
+**996 × 32 at (352, 28)**, `display: flex`, `align-items: center`, **`justify-content: flex-end`**. One child: **`btn/settings`** 32 × 32, glyph `control/settings` 28 × 28, `stroke-width 2`.
 
-- Left: `Layout controls` 78 × 32 — `btn/dock` + `gap: 14` + `btn/full-screen`, both 32 × 32 with 28 × 28 glyphs.
-- Right: **`btn/settings`** 32 × 32, glyph `control/settings` 28 × 28, `stroke-width 2`.
+`Layout controls` — `btn/dock` + `btn/full-screen` — **is gone from this board.** Neither had work to do here: the board peek on the left edge is already the way back to the board, and `btn/full-screen` was a control for the state you are already in. Boards 11 and 12 keep both, because the docked panel has no peek and no other route to either state.
 
-Same components as boards 11 / 12; only the container width changes.
+**The row is 996 wide, not 740, and that is the whole point of the change.** It runs from the reading column's left edge to `1348` — the screen's own `--space-edge` lane, the same line the docked panel's right edge lands on — so `flex-end` puts the gear at **x 1316** in the screen's top-right corner rather than at x 1060, 224 pt short of it in the middle of the white.
+
+The 32 pt band survives the row losing two of its three children: it is what holds the thread's top at `y = 100`, and without it the thread would scroll its oldest message under the gear.
 
 ### `Composer · wide` — reused verbatim
 
@@ -921,12 +942,12 @@ Copy: message `OpenAI turned that down — the key looks wrong, or it has expire
 | Key | Value |
 | --- | --- |
 | Difference | `identical structure — only the copy and the glyph change` |
-| Glyph | `control/settings · vb 28 · rendered 22 · stroke 2.18 · var(--color-icon)` |
+| Glyph | `control/settings · vb 28 · rendered 22 · stroke 2.55 → 2.00 · var(--color-icon)` |
 | Destination | `board 10 — Settings, OpenAI API key section, field focused` |
 | Copy rule | `name who refused, never "an error occurred" — the tutor is not a system` |
 | Distinct from | `board 11 no-key state — that is onboarding, this is a broken key` |
 
-**Note the glyph row does not claim → 2.00.** `2.18 × 22 ÷ 28 = 1.71` rendered — below the 2.0 target. See [Open questions](#open-questions).
+**This row used to read `stroke 2.18` and to be the one glyph row on this board missing the `→ 2.00` its three siblings carry** — `2.18 × 22 ÷ 28 = 1.71`, below the target. Corrected on 2026-08-07 when the glyph was redrawn as a cog; `2.545` is what renders 2.0 at that size.
 
 ---
 
@@ -1051,8 +1072,10 @@ Type: `--font-sans` 15 / **23** · 400 · `var(--color-ink-secondary)`.
 | Component | Where used | Size(s) | Reusable by design? |
 | --- | --- | --- | --- |
 | **`btn/primary`** | 11 (no-key CTA, absolute at panel-local 18/860) · 12 (`plan/panel` tail) · 13 (`plan/full-screen` tail) | **301 × 58** panel (fill width, no padding) · **hug × 64** full-screen (`padding-inline: 32`, measured 220) | **Yes** — two named scales, brand fill + elevation 03 + `--radius-full` at both. Label 17 / 22 · 600 panel, 20 / 24 · 600 full-screen, `#FFFFFF`. |
-| **`btn/destructive`** | 10 (Irreversible section only) | **hug × 56**, `padding-inline: 28` | **Yes**, but only one context exists. `--color-surface-bubble` fill, `--radius-full`, **no shadow**, label 17 / 22 · 500 · `--color-ink`. Carries **no danger colour**. |
-| **`select/option`** | 10 (Tutor model ×3, Reasoning effort ×6) | **236 × 90** fixed, `padding-block 20 / padding-inline 22` | **Yes** — two states (`default` / `selected`) differing only in fill (`--color-surface` → `--color-brand-tint`). Radius 14, elevation 03 in both states. |
+| **`btn/destructive`** | 10 (API key pane · Session pane) | **hug × 44**, `padding-inline: 20` | **Yes**, and it now has two contexts. `--color-surface` fill, `var(--radius-lg)` 14, **elevation 03**, label 15 / 18 · 600 · `--color-ink`. Still carries **no danger colour** — but the flat-and-unlifted shape that used to *be* the danger signal is gone; see the board 10 section. |
+| ~~**`select/option`**~~ | — | — | **Retired with the old board 10** and deleted from the port rather than left unused. Its selection rule survives in `nav/item`: same `--radius-lg` 14, same `--color-brand-tint`. |
+| **`nav/item`** | 10 (sidebar ×3) | **184 × 44**, `padding-inline: 12` | **Yes.** Radius 14; selected = `--color-brand-tint` + label 15 / 18 · 600 · `--color-ink`; default = no fill + 15 / 18 · 500 · `--color-ink-secondary`. Unlike `select/option`, the label changes with the state. |
+| **`row/setting`** | 10 (Tutor pane ×2) | **measure × 120**, rule on the top edge | **Yes.** Label 17 / 22 · 600 over caption 15 / 18 · 400; trailing value 17 / 22 · 500 plus `ui/chevron-down` 16 in a **fixed 20pt slot**. The slot is what keeps the marks in one lane. |
 | **Numbered lane** (`plan/step` · `plan/outcome` · evaluation finding) | 12 · 13 · 14 | Panel: **22 slot + 14 gap + 265 text = 301**, slot height 25 · Full screen: **24 slot + 16 gap + 700 text = 740**, slot height 24 | **Yes — explicitly.** Board 14: *"identical to plan/outcome, so the two align."* One primitive, leading slot parameterised (digit `Text` or 22/24 px glyph). |
 | **`state/thinking`** | 14 | Height **25** (one body line box), width auto; dots **6 × 6**, gap 8; optional status line 15 / 18 · 600 with 4 pt gap | **Yes** — one component, two variants (bare / with status line). |
 | **`state/streaming`** | 14 | Caret **2 × 22**, gap **2** after the last glyph; the text itself is `msg/tutor` unchanged | **Yes** — caret is a decoration on `msg/tutor`, not a wrapper. |
@@ -1061,14 +1084,14 @@ Type: `--font-sans` 15 / **23** · 400 · `var(--color-ink-secondary)`.
 | `state/error · network` / `· auth` | 14 | Specimen **301 × 151** / **301 × 176** | **One component, two configurations** — board 14: *"identical structure — only the copy and the glyph change."* |
 | `state/evaluation` | 14 | Specimen **301 × 316** | Composite of reused parts + the numbered lane. |
 | `field/key` | 10 | **740 × 80** | Not new — a re-skin of `Composer · wide`. |
-| Panel controls · **with `btn/settings`** | 11 · 12 · 13 (and reduced to `btn/dock` only on 10) | 301 × 32 panel · 740 × 32 full screen | Existing component, **new third button and new `justify-content: space-between`**. |
+| Panel controls · **with `btn/settings`** | 11 · 12 (reduced to `btn/dock` only on 10, to `btn/settings` only on 13) | 301 × 32 panel · 996 × 32 on 13 | Existing component, **new third button and new `justify-content: space-between`**. Its membership is now the variable: three buttons docked, one on 10, one on 13. |
 | `btn/voice` **38** in the panel composer | 12 (and already on screen 08) | 38 × 38, glyph 20 × 20 | Not new to the file, but new relative to `03-chat-components.md §7.4`, which says voice is full-screen-only. |
 
 ---
 
-# Four new icons
+# Five new icons
 
-All four are read directly off the live nodes. Attributes are given exactly as authored; where a product node carries an **inline `strokeWidth` override**, both the markup value and the override are listed, and **the override is what renders**.
+All five are read directly off the live nodes. Attributes are given exactly as authored; where a product node carries an **inline `strokeWidth` override**, both the markup value and the override are listed, and **the override is what renders**.
 
 Effective rendered weight = `strokeWidth × (renderSize ÷ viewBoxSize)`; the set's target is **2.0**.
 
@@ -1181,45 +1204,43 @@ No circles, rects, or lines. Note path 1 is an arc (`a` command, large-arc-flag 
 
 ## `control/settings`
 
-Two horizontal rules, each with a draggable knob — a "sliders" mark. Used as the third panel control on boards 11 / 12 / 13, and as the auth-error recovery glyph on board 14.
+A six-tooth cog around an open centre. Used as the third panel control on boards 11 / 12, as the lone screen-corner control on boards 07 and 13, and as the auth-error recovery glyph on board 14.
 
-| Property | Panel control (11 · 12 · 13) | Auth-error chip (14) |
+**Redrawn 2026-08-07.** It used to be a "sliders" mark — two horizontal rules, each split around a knob. The redraw also settled the open question below it: the chip instance now carries `2.545`, which is what renders 2.0 at 22 on a 28 viewBox, so **every product glyph in the file is on target and no glyph carries an anomaly.**
+
+| Property | Panel control (11 · 12) · screen corner (07 · 13) | Auth-error chip (14) |
 | --- | --- | --- |
 | viewBox | `0 0 28 28` | `0 0 28 28` |
 | Render size | **28 × 28** | **22 × 22** |
-| `stroke-width` | **2** | **2.18** |
-| Effective weight | `2 × 28/28 =` **2.00** ✔ | `2.18 × 22/28 =` **1.71** ⚠ (see Open questions) |
+| `stroke-width` | **2** | **2.545** |
+| Effective weight | `2 × 28/28 =` **2.00** | `2.545 × 22/28 =` **2.00** |
 | `stroke` | `var(--color-icon)` → `#55565A` | `var(--color-icon)` → `#55565A` |
-| `fill` | `none` on every element | `none` on every element |
+| `fill` | `none` on both elements | `none` on both elements |
 
-**Elements — 2 paths + 2 circles, complete (panel-control instance shown; the chip instance is byte-identical apart from `width`/`height` and `stroke-width`):**
+**Elements — 1 path + 1 circle, complete (panel-control instance shown; the chip instance is byte-identical apart from `width`/`height` and `stroke-width`):**
 
 ```svg
 <svg width="28" height="28" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg">
-  <path d="M4.4 10H13M21 10h2.6"
-        fill="none" stroke="var(--color-icon)" stroke-width="2" stroke-linecap="round" />
-  <circle cx="17" cy="10" r="3"
-          fill="none" stroke="var(--color-icon)" stroke-width="2" />
-  <path d="M4.4 18H7M15 18h8.6"
-        fill="none" stroke="var(--color-icon)" stroke-width="2" stroke-linecap="round" />
-  <circle cx="11" cy="18" r="3"
+  <path d="M10.89 7.34L11.17 4.13L16.83 4.13L17.11 7.34L18.22 7.98L21.13 6.61L23.96 11.52L21.32 13.36L21.32 14.64L23.96 16.48L21.13 21.39L18.22 20.02L17.11 20.66L16.83 23.87L11.17 23.87L10.89 20.66L9.78 20.02L6.87 21.39L4.04 16.48L6.68 14.64L6.68 13.36L4.04 11.52L6.87 6.61L9.78 7.98Z"
+        fill="none" stroke="var(--color-icon)" stroke-width="2" stroke-linejoin="round" />
+  <circle cx="14" cy="14" r="3.27"
           fill="none" stroke="var(--color-icon)" stroke-width="2" />
 </svg>
 ```
 
-Verbatim `d` values:
+**The geometry, and why it is only a handful of numbers.** The cog is a single closed polygon of 24 points — six teeth × 4 corners — swept around centre `(14, 14)`:
 
-1. `M4.4 10H13M21 10h2.6` — upper rule, split around the knob. `stroke-linecap="round"`, no linejoin.
-2. `M4.4 18H7M15 18h8.6` — lower rule, split around the knob. `stroke-linecap="round"`, no linejoin.
+| | Value | Why |
+| --- | --- | --- |
+| Teeth | **6** | Eight blur into a bumpy circle at the 22 the recovery chip draws. |
+| Tip radius | **10.27** | Puts the ink at 82% of the box, matching `control/dock` beside it in the panel row. |
+| Root radius | **7.35** | Leaves the teeth 2.9 units proud, which still reads against a 2.0 stroke. |
+| Tooth half-angle | **16°** at the tip, **25°** at the root | The taper is what makes it read as a cog rather than a lobed circle. |
+| Centre circle | **r 3.27** | Keeps a visible hole at 22. |
 
-Circles, verbatim and complete:
+**`stroke-linejoin="round"` is load-bearing** — the tooth corners are rounded by the stroke, not by the geometry, so the path stays 24 plain points. A miter join spikes every tip.
 
-| # | `cx` | `cy` | `r` | `fill` | `stroke` | `stroke-width` |
-| --- | --- | --- | --- | --- | --- | --- |
-| 1 | `17` | `10` | `3` | `none` | `var(--color-icon)` | `2` (panel) / `2.18` (chip) |
-| 2 | `11` | `18` | `3` | `none` | `var(--color-icon)` | `2` (panel) / `2.18` (chip) |
-
-**No rects, no lines, no dash arrays, no `stroke-linejoin` anywhere in this glyph.** Both rules leave a 4 pt clear gap either side of their knob (`13 → 21` around cx 17; `7 → 15` around cx 11), which is `r 3 + 1` of air.
+**No rects, no lines, no dash arrays, no `stroke-linecap` anywhere in this glyph.**
 
 ---
 
@@ -1230,13 +1251,41 @@ Circles, verbatim and complete:
 | `ui/check` | `0 0 24 24` | 22 · 24 | 2.18 · 2 | **2.00** · **2.00** | 1 path | `var(--color-icon)` |
 | `ui/cross` | `0 0 24 24` | 22 | 2.18 | **2.00** | 1 path (2 subpaths) | `var(--color-icon)` |
 | `ui/retry` | `0 0 24 24` | 22 | 2.18 | **2.00** | 2 paths | `var(--color-icon)` |
-| `control/settings` | `0 0 28 28` | 28 · 22 | 2 · 2.18 | **2.00** · **1.71** | 2 paths + 2 circles | `var(--color-icon)` |
+| `control/settings` | `0 0 28 28` | 28 · 22 | 2 · 2.545 | **2.00** · **2.00** | 1 path + 1 circle | `var(--color-icon)` |
 
 All four are **stroke-only, no fills, and all four bind `var(--color-icon)`** — none of them ever uses `var(--color-brand)`. This is the point board 14 is making: the new glyph set is deliberately colourless.
 
-Per `04-icons.md`'s standing recommendation, a SwiftUI port should re-author `control/settings` onto a 24 grid (× 24/28 on every coordinate) and render every product glyph at 24 with a flat `stroke-width: 2` — which also removes the 1.71 anomaly.
+`control/settings` stays on the 28 grid its `control/` siblings use rather than taking `04-icons.md`'s standing recommendation to re-author everything onto 24. The recommendation existed to stop one attribute rendering two weights at two sizes; the cog's redraw settled that directly, and the port normalises weight in points anyway, so the grid is now an authoring choice and consistency with `control/dock` and `control/full` wins.
 
 ---
+
+---
+
+## `ui/chevron-down`
+
+The disclosure mark on `row/setting`, and the twenty-first glyph in the set. **The only one
+authored on a 16 grid** rather than board 04's recommended 24: it is the smallest mark in the
+product, and a 24 viewBox rendered at 16 would need a 3.0 design stroke to land on 2.0
+effective — further from the set's own weights than simply drawing it at its render size.
+
+| Property | Value |
+| --- | --- |
+| viewBox | `0 0 16 16` |
+| Render size | 16 |
+| Scale | **exactly 1.0**, so markup weight and rendered weight are both `2` |
+| `d` | `M4 6.5 8 10.5 12 6.5` |
+| Stroke | `var(--color-icon)`, `stroke-width 2`, `linecap round`, `linejoin round` |
+| Bounds | **8 × 4**, symmetric about x = 8 |
+
+**It has no specimen on board 04**, because it is drawn inside the row on board 10. That is not
+an anomaly — `ui/check`, `ui/cross` and `ui/retry` were read off boards 13 / 14 and
+`control/settings` off board 11. Board 04 is *"the original sixteen"*, not the set;
+`design/icons.json` names the source board for every glyph.
+
+The 8 × 4 bounds mean it covers only a quarter of its viewBox vertically, which trips the
+port's "every glyph fills its frame" check. That check now carries a documented per-glyph floor
+for it: a disclosure caret is an intrinsically flat mark, and redrawing it to fill two fifths
+vertically would make it a wedge.
 
 # Values that are not tokens
 
@@ -1246,7 +1295,7 @@ The designer flagged six deliberately un-tokenised, component-internal values. *
 | --- | --- | --- | --- | --- |
 | 1 | **Thinking dot 6 × 6** | `state/thinking` | ✔ Three `6 × 6` frames, `border-radius: var(--radius-full)`, fill `var(--color-icon)`, `gap: var(--spacing-2)` 8 | Spec row, verbatim: **`6 × 6 · radius-full · NO TOKEN — component-internal`**. Supporting row: `Fill: var(--color-icon) #55565A — a mark, not content`. The dot is smaller than any spacing step and exists only inside this indicator. |
 | 2 | **Streaming caret 2 × 22, gap 2** | `state/streaming` | ✔ `2 × 22` frame, `--radius-full`, fill `var(--color-ink)`; parent row `gap: 2px`, `height: 25px` | Two spec rows, verbatim: **`2 × 22 · radius-full · var(--color-ink) · NO TOKEN — component-internal`** and **`2 after the last glyph — NO TOKEN, optical`**. The height *is* derived: **`22 = var(--leading-control), optically centred in the 25 line box`** — i.e. only the 2 pt width and the 2 pt gap are free values. |
-| 3 | **`select/option` 236 × 90** | Board 10 | ✔ `width: 236px`, `height: 90px`, `flex-shrink: 0`, `padding-block: 20`, `padding-inline: 22` | No prose exists on board 10, so the justification is arithmetic and must be read off the layout: **236 is derived — `(740 − 16 × 2) ÷ 3 = 236`**, the only width that fits three options across the 740 column at a `--spacing-4` gap. **90 is free** and is what the 20 / 24 / 4 / 22 / 20 stack needs. The padding pair (20 / 22) is off-scale on the inline axis and has no token. |
+| 3 | ~~**`select/option` 236 × 90**~~ *(retired — kept for the derivation)* | Board 10 | ✔ `width: 236px`, `height: 90px`, `flex-shrink: 0`, `padding-block: 20`, `padding-inline: 22` | No prose exists on board 10, so the justification is arithmetic and must be read off the layout: **236 is derived — `(740 − 16 × 2) ÷ 3 = 236`**, the only width that fits three options across the 740 column at a `--spacing-4` gap. **90 is free** and is what the 20 / 24 / 4 / 22 / 20 stack needs. The padding pair (20 / 22) is off-scale on the inline axis and has no token. |
 | 4 | **`btn/destructive` height 56** | Board 10 | ✔ `height: 56px`, `padding-inline: 28`, no shadow | No prose. 56 is **not** a spacing step and does not match the 58 of `btn/primary` or the 62 of a chip — it is a third control height. `padding-inline: 28` equals `--space-edge`'s value but is written as a raw literal, so it is not a token reference. |
 | 5 | **`btn/primary` 58 / 64** | Boards 11 · 12 · 13 | ✔ Panel `301 × 58`; full-screen `hug × 64`, `padding-inline: var(--spacing-8)` 32 | No prose, but **58 is derived**: it is exactly the panel composer's height (`03 §1.1`), so the button occupies the composer's slot when the composer is not there (board 11) or sits on the same rhythm when it is (board 12). **64 is free** — it is *not* the full-screen composer's 80, so the CTA is deliberately lighter than the input at that scale. |
 | 6 | **Full-screen message spec — tutor 21 / 30, student bubble max-width 520, padding 16 / 24** | Board 13 `Thread · wide` | ✔ `msg/tutor` `--text-lead` 21 / `--leading-lead` 30; bubble `max-width: 520px`, `padding-block: 16px`, `padding-inline: 24px`; text 21 / 30 | Board 14 Unresolved, verbatim: **"the panel-scale message spec has been carried up to the 740 column for the first time (msg/tutor 21 / 30, msg/student bubble max-width 520, padding 16 / 24); board 03 only ever specced the 301 column, so the full-screen thread was undefined until now."** 21 / 30 are existing tokens (`--text-lead` / `--leading-lead`); **520, 16 and 24 are the free values** — 520 ≈ 70 % of 740, the same ratio the panel's 224 has to 301 (74 %). |
@@ -1255,7 +1304,8 @@ The designer flagged six deliberately un-tokenised, component-internal values. *
 
 | Value | Where | Note |
 | --- | --- | --- |
-| `select/option` `padding-block: 20` / `padding-inline: 22` | 10 | 22 is off the 4 px scale. |
+| `field/key` `padding-left: 18` / `padding-right: 16` | 10 | 18 equals `--space-panel-inset` by coincidence; binding it would move the field when that token moves. |
+| `row/setting` height **120** · `nav/item` gap **2** · pane title→lede gap **10** | 10 | All three free and component-internal. The 2 is deliberate: the items are 44pt targets and a token gap would open a dead lane. |
 | `field/key` text colour `--color-ink` at 21 / 30 | 10 | The one place `--text-lead` is used for a *filled* value rather than a placeholder. |
 | Numbered-lane slot `22 × 25` (panel) and gap `14` | 12 · 14 | 14 already exists un-tokenised as the panel-controls gap and the chip icon→label gap. |
 | Numbered-lane slot `24 × 24` and gap `16` (full screen) | 13 | 16 = `--spacing-4`, used by name. |
@@ -1283,9 +1333,16 @@ The designer flagged six deliberately un-tokenised, component-internal values. *
 
 **Extension the boards do not address:** `btn/destructive` on board 10 has the same problem in a more dangerous place. "Remove API key" and "Reset this session" are irreversible and are rendered as neutral `#F2F2F6` pills. If a semantic role is added under Option B, decide at the same time whether it also applies there.
 
-## 2. `control/settings` renders at 1.71, below the 2.0 target
+## 2. ~~`control/settings` renders at 1.71, below the 2.0 target~~ RESOLVED
 
-The auth-error recovery chip renders `control/settings` at **22 on a 28 viewBox with `stroke-width: 2.18`** → **1.71 effective**, against the set's 2.0 target. Note the board's own spec row for that glyph reads `control/settings · vb 28 · rendered 22 · stroke 2.18 · var(--color-icon)` — it **omits the `→ 2.00`** that the `ui/retry`, `ui/check` and `ui/cross` rows all carry, which suggests the value was copied from the 24-viewBox glyphs without re-deriving. To render 2.0 at 22 on a 28 viewBox the attribute must be **2.545**. Adopting `04-icons.md`'s standing recommendation (re-author onto a 24 grid, render at 24, flat `stroke-width: 2`) removes the problem entirely.
+The auth-error recovery chip used to render `control/settings` at **22 on a 28 viewBox with
+`stroke-width: 2.18`** → **1.71 effective**, and its spec row was the one glyph row on board 14
+missing the `→ 2.00` its three siblings carry — which read like the value had been copied from the
+24-viewBox glyphs without re-deriving.
+
+**Settled 2026-08-07.** The glyph was redrawn as a six-tooth cog and the chip instance now carries
+**2.545**, which is exactly what renders 2.0 at 22 on a 28 viewBox. Every product glyph in the file
+is now on target, and no glyph carries a recorded anomaly.
 
 ## 3. Board 12's thread is 786, not 810 — and gains a 24 pt gap
 
@@ -1354,7 +1411,8 @@ The board-10 sentence is accurate; the board-11 sentence is not — the key nece
 
 Nothing in the file specifies:
 
-- pressed / disabled / loading for `btn/primary`, `btn/destructive` or `select/option`;
+- pressed / disabled / loading for `btn/primary`, `btn/destructive` or `nav/item`;
+- **the open state of `row/setting`'s picker** — board 10 draws `Luna ▾` and stops, so the port uses the platform menu;
 - a confirmation step for either destructive action ("cannot be undone" is asserted, but no dialog exists — and `01 §7` bars borders and this system has no modal pattern at all);
 - focused / empty / invalid states for `field/key`;
 - what board 11's screen looks like *after* `Add your API key` is tapped (no key-entry surface exists — board 10's `field/key` is shown already filled);

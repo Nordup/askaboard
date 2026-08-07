@@ -260,8 +260,8 @@ final class ShellComponentTests: XCTestCase {
             XCTAssertEqual(band.layout.panelContentWidth, TutorPanelMetrics.contentWidth, band.name)
             XCTAssertGreaterThan(band.layout.contentHeight, 0, band.name)
         }
-        // At the size the board was drawn at, the panel's height is still the board's 936.
-        XCTAssertEqual(Band.reference.layout.contentHeight, 936)
+        // At the size the board was drawn at, the panel's height is still the board's 976.
+        XCTAssertEqual(Band.reference.layout.contentHeight, 976)
     }
 
     // MARK: - Collapsed dock
@@ -338,12 +338,12 @@ final class ShellComponentTests: XCTestCase {
     /// the size the design was drawn at.
     func testTheDesignsOwnBoardSizesFallOutOfTheRuleAtTheReferenceSize() {
         let layout = Band.reference.layout
-        XCTAssertEqual(layout.contentHeight, 936, "1032 − 68 − 28")
+        XCTAssertEqual(layout.contentHeight, 976, "1032 − 28 − 28")
         XCTAssertEqual(layout.boardWidthDocked, 863)
         XCTAssertEqual(layout.boardWidthCollapsed, 1224)
         XCTAssertEqual(layout.boardX, 124, "28 + 72 + 24")
         XCTAssertEqual(layout.panelX, 1011, "1376 − 28 − 337")
-        XCTAssertEqual(layout.contentTop, 68, "the status band ends at 40, so content starts at 40 + 28")
+        XCTAssertEqual(layout.contentTop, 28, "nothing is reserved, so content starts at 0 + 28")
     }
 
     func testTheLanesNeverOverlapOrGoNegativeAtAnyRealDeviceSize() {
@@ -422,7 +422,7 @@ final class ShellComponentTests: XCTestCase {
 
     func testBoardPeekIsFlushLeftAndSpansTheContentBand() {
         XCTAssertEqual(BoardPeekMetrics.width, 68, "The tab width is the silhouette's, not the screen's")
-        XCTAssertEqual(BoardPeekMetrics.referenceHeight, 936)
+        XCTAssertEqual(BoardPeekMetrics.referenceHeight, 976)
         for band in Band.all {
             let layout = band.layout
             XCTAssertEqual(layout.peekX, 0, "\(band.name): board 01 rule 14 — flush left with no 28 inset")
@@ -448,7 +448,7 @@ final class ShellComponentTests: XCTestCase {
         XCTAssertEqual(
             BoardPeekShape.pathData,
             "M0,0 H50 A18,18 0 0 1 68,18 V46 A18,18 0 0 1 50,64 H46 "
-                + "A18,18 0 0 0 28,82 V918 A18,18 0 0 1 10,936 H0 Z"
+                + "A18,18 0 0 0 28,82 V958 A18,18 0 0 1 10,976 H0 Z"
         )
 
         let path = BoardPeekShape().path(
@@ -456,7 +456,7 @@ final class ShellComponentTests: XCTestCase {
         )
         XCTAssertFalse(path.isEmpty)
         XCTAssertEqual(path.boundingRect.width, 68, accuracy: 0.5)
-        XCTAssertEqual(path.boundingRect.height, 936, accuracy: 0.5)
+        XCTAssertEqual(path.boundingRect.height, 976, accuracy: 0.5)
         // The notch is the whole point: below the tab the strip is 28 wide, so a point at
         // x 60 low down has to be outside the silhouette.
         XCTAssertTrue(path.contains(CGPoint(x: 34, y: 30)), "Inside the 68-wide tab")
@@ -568,71 +568,6 @@ final class ShellComponentTests: XCTestCase {
         XCTAssertEqual(hero.eyeGap, 22, "53 − 20 − 11, from the absolute eye positions")
     }
 
-    // MARK: - Status bar
-
-    #if DEBUG
-    func testStatusBarGeometryMatchesTheBandTheScreenWasMeasuredFrom() {
-        XCTAssertEqual(StatusBarMetrics.top, 16)
-        XCTAssertEqual(StatusBarMetrics.height, 24)
-        // Board 01: 'the status band ends at y 40, so content starts at 40 + 28 = 68.'
-        XCTAssertEqual(StatusBarMetrics.bandBottom, 40)
-        XCTAssertEqual(StatusBarMetrics.bandBottom + DS.Space.edge, 68)
-        // The right group's right edge lands 24 from the screen edge — at the design's width,
-        // and at any other, which is what stopped 1251 being a constant.
-        XCTAssertEqual(StatusBarMetrics.rightGroupX(for: DS.Container.screen), 1251)
-        for width in Band.all.map(\.layout.screenWidth) {
-            XCTAssertEqual(
-                width - (StatusBarMetrics.rightGroupX(for: width) + StatusBarMetrics.rightGroupWidth),
-                24,
-                "status band at \(width)"
-            )
-        }
-    }
-
-    /// No iPad reports the 40pt top inset the design assumed — landscape gives 24 with a
-    /// camera housing and 20 with a home button — so the app-drawn band could not stay, and
-    /// the fixture that reproduces it has to be told the design's number rather than the
-    /// device's.
-    ///
-    /// **There is no floor, and this is the test that says so.** `contentTop` is one rule at
-    /// both ends of the screen — `--space-edge` measured from the nearest **obstruction**, not
-    /// from the glass — so it is the inset the device actually reserves plus 28, and nothing
-    /// else. `40 + 28 = 68` on the design's own screen, `24 + 28 = 52` where there is a camera
-    /// housing, `20 + 28 = 48` where there is a home button. A `max(_, 40)` would have bought
-    /// back 16 points of air that exists only on the board, on every real screen, forever.
-    ///
-    /// Which is why a `--ui-fixture` run cannot measure its window: with the floor gone, a
-    /// real device disagrees with the reference screen at *both* ends, so the fixture is built
-    /// from `ScreenLayout.reference` explicitly. The bottom always disagreed — a home
-    /// indicator costs 20 the reference screen never spent — and the floor was masking the top
-    /// half of that.
-    func testTheFixtureBandIsTheTopInsetTheReferenceScreenshotsWereDrawnWith() {
-        XCTAssertEqual(ScreenLayout.reference.safeAreaTop, StatusBarMetrics.bandBottom)
-        XCTAssertEqual(Band.reference.layout.contentTop, 68)
-        XCTAssertEqual(Band.reference.layout.contentHeight, 936)
-
-        // `Band.devices` widest to narrowest: three camera-housing iPads at 24, then the
-        // home-button one at 20.
-        let contentTops: [CGFloat] = [52, 52, 52, 48]
-        XCTAssertEqual(Band.devices.count, contentTops.count)
-        for (band, contentTop) in zip(Band.devices, contentTops) {
-            XCTAssertLessThan(band.layout.safeAreaTop, StatusBarMetrics.bandBottom, band.name)
-            XCTAssertEqual(
-                band.layout.contentTop,
-                contentTop,
-                "\(band.name): the inset the device reserves, plus --space-edge, and nothing else"
-            )
-            // The fixture band bottom-aligns inside the reserved region, and every real one is
-            // shorter than the 24pt band — so on a device it starts at the top of the screen.
-            XCTAssertEqual(band.layout.statusBarY, 0, band.name)
-            XCTAssertNotEqual(band.layout.statusBarY, StatusBarMetrics.top, band.name)
-        }
-        // Neither end of a real screen lines up with the reference one, which is the whole
-        // reason the fixture injects `ScreenLayout.reference` instead of measuring.
-        XCTAssertNotEqual(Band.devices[0].layout.contentTop, ScreenLayout.reference.contentTop)
-        XCTAssertNotEqual(Band.devices[0].layout.contentBottom, ScreenLayout.reference.contentBottom)
-    }
-    #endif
 
     // MARK: - The root measurement
 
@@ -721,7 +656,7 @@ final class ShellComponentTests: XCTestCase {
         defer { host.tearDown() }
 
         XCTAssertEqual(recorder.latest, ScreenLayout.reference)
-        XCTAssertEqual(recorder.latest?.contentTop, 68, "the PNG's content top, not the device's 52")
+        XCTAssertEqual(recorder.latest?.contentTop, 28, "the PNG's content top, which the device now shares")
         XCTAssertEqual(recorder.latest?.contentBottom, 1004, "and its content bottom, with no indicator to pay for")
 
         // Every window the fixture might be launched in gets the same screen — which is the

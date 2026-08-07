@@ -34,16 +34,8 @@ extension SettingsOption where Value == ReasoningEffort {
     }
 }
 
-extension SettingsOption {
-    /// *"The 2 × 3 grid is produced by wrapping a 740 row, not by a grid definition."*
-    ///
-    /// Laid out explicitly rather than wrapped, for the same reason `SuggestionList` does:
-    /// a re-flow is a behaviour a fixed single-device layout never asks for, and it would
-    /// make the section's measured height depend on the copy.
-    static func rows(_ options: [Self], across columns: Int) -> [[Self]] {
-        guard columns > 0 else { return [options] }
-        return stride(from: 0, to: options.count, by: columns).map { start in
-            Array(options[start ..< min(start + columns, options.count)])
-        }
-    }
-}
+// `rows(_:across:)` used to live here, splitting the six efforts into the board's 2 × 3 grid
+// — *"produced by wrapping a 740 row, not by a grid definition."* The redesign put the options
+// behind a menu on `row/setting`, so there is no grid left to lay out and the function went
+// with it. `models(selected:)` and `efforts(selected:)` survive unchanged: what the picker row
+// needs is exactly what the cards needed — the options, in order, with one marked.

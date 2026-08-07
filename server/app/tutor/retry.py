@@ -23,13 +23,22 @@ class RetryDecision:
 def _error_code(body: dict | None) -> str | None:
     """Extract the provider's error code from a body of any shape.
 
+    Accepts both the raw response shape, `{"error": {"code": ...}}`, and the
+    already-unwrapped shape, `{"code": ...}`. openai's own exception handling
+    unwraps the response body's "error" key onto APIStatusError.body before
+    classify() ever sees it (see openai._client._make_status_error), so a
+    caller passing that attribute straight through hands us the unwrapped
+    form. Handling both here — rather than requiring a caller to rewrap —
+    means this file has no dependency on that SDK internal continuing to
+    unwrap exactly as it does today.
+
     Provider error bodies are not guaranteed well-formed, and an exception
     escaping here would turn a recoverable hiccup into a crashed turn. Every
     shape resolves to None rather than raising.
     """
     if not isinstance(body, dict):
         return None
-    error = body.get("error")
+    error = body.get("error", body)
     if not isinstance(error, dict):
         return None
     code = error.get("code")

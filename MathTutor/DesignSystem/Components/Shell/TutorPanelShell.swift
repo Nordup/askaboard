@@ -71,18 +71,48 @@ struct TutorPanelShell<Content: View>: View {
     }
 
     var body: some View {
+        TutorPanelSurface(size: size) {
+            content
+                .frame(width: TutorPanelMetrics.contentWidth(for: size.width))
+                .padding(.top, TutorPanelMetrics.inset)
+                .frame(
+                    width: size.width,
+                    height: size.height,
+                    alignment: .top
+                )
+        }
+    }
+}
+
+/// The panel as a *surface*: its size, its fill, its radius, its shadow — and nothing about
+/// what is laid out on it.
+///
+/// `TutorPanelShell` is this plus the 18pt inset and the derived content column, which is what
+/// every caller with a simple vertical stack of children wants. The live panel is the one that
+/// cannot use it: its thread runs the panel's full height and passes *behind* the controls
+/// row, and its two fades span corner to corner rather than the 301 column, so it places its
+/// own bands against the surface directly.
+///
+/// The clip is the design's `overflow: clip`, and it is load-bearing now in a way it was not
+/// when the thread stopped below the controls: a thread anchored at panel-local y 0 has its
+/// oldest message hard against the surface's rounded corners.
+struct TutorPanelSurface<Content: View>: View {
+    private let size: CGSize
+    private let content: Content
+
+    init(size: CGSize, @ViewBuilder content: () -> Content) {
+        self.size = CGSize(width: max(0, size.width), height: max(0, size.height))
+        self.content = content()
+    }
+
+    var body: some View {
         content
-            .frame(width: TutorPanelMetrics.contentWidth(for: size.width))
-            .padding(.top, TutorPanelMetrics.inset)
-            .frame(
-                width: size.width,
-                height: size.height,
-                alignment: .top
-            )
+            .frame(width: size.width, height: size.height, alignment: .top)
             .background(
                 RoundedRectangle(cornerRadius: TutorPanelMetrics.cornerRadius)
                     .fill(DS.Color.surfacePanel)
             )
+            .clipShape(RoundedRectangle(cornerRadius: TutorPanelMetrics.cornerRadius))
             .elevation(.panel)
     }
 }

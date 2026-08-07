@@ -36,13 +36,16 @@ struct RootView: View {
 
     /// The shipping root, and the only thing on device.
     ///
-    /// **No `.statusBarHidden(true)`.** Board 05 open question 15 asked which branch the
-    /// product takes — hide the system band and draw the design's own, or drop the drawn one
-    /// and anchor the screen to the safe area — and boards 05 through 08 answer it: every one
-    /// of them draws a band with a time, a date and a battery, so the product intends a status
-    /// bar to be there. iPadOS is the only thing that can supply a real one, and hiding it
-    /// would also zero the top inset, which now puts `contentTop` at `0 + 28 = 28` instead of
-    /// `24 + 28 = 52` — the whole interface 24 points high, with no clock.
+    /// **`.statusBarHidden(true)`, and that is board 05 open question 15 answered.** The
+    /// question was which branch the product takes — hide the system band, or keep it and
+    /// anchor the screen to the safe area. It was once answered the second way because boards
+    /// 05 through 08 each drew a band with a time, a date and a battery. They no longer do:
+    /// the boards were redrawn with no status bar and every panel at `y = 28`, an inset from
+    /// the glass on all four sides. Only the first branch produces that, because `contentTop`
+    /// is `safeAreaTop + 28` and nothing but hiding the bar makes `safeAreaTop` zero.
+    ///
+    /// So the interface gains the 24 points iPadOS was reserving, and loses the clock. That is
+    /// the trade the boards make; it is not a side effect of this line.
     ///
     /// The measurement is a `GeometryReader`, not a captured value: it re-evaluates on every
     /// layout pass, so a Split View drag or a rotation republishes the lanes rather than
@@ -51,7 +54,9 @@ struct RootView: View {
     /// own `PKCanvasView` was bitten by exactly the opposite habit of trusting geometry read
     /// too early.
     private var measuredScreen: some View {
-        screen.modifier(MeasuredScreen())
+        screen
+            .modifier(MeasuredScreen())
+            .statusBarHidden(true)
     }
 
     /// The app, minus any decision about where it is being drawn.
@@ -104,29 +109,23 @@ struct MeasuredScreen: ViewModifier {
 #if DEBUG
 /// Everything a `--ui-fixture` run does differently, in one place.
 ///
-/// That run exists to be diffed against `design/reference/screen-0*.png`, and those were
-/// exported from a 1376 × 1032 board whose status region is 40 points tall. **No iPad reports
-/// 40** — landscape gives 24 where there is a camera housing and 20 where there is a home
-/// button — so measuring the window would lay the fixture out at `24 + 28 = 52` on the very
-/// device the boards were drawn for, and every element below the band would sit 16 points
-/// above where the PNG has it. The screen is therefore built from `ScreenLayout.reference`,
-/// which is constructed from the design's own three numbers, rather than from the window.
+/// That run exists to be diffed against `design/reference/screen-0*.png`, which are exported
+/// from the 1376 × 1032 boards. Those boards reserve nothing at the top, and neither does the
+/// shipping app, so `ScreenLayout.reference` and a real 13" iPad now agree — this modifier no
+/// longer has to substitute a different set of numbers to make the diff line up.
 ///
-/// This was always required and the removed 40pt floor was masking half of it: the floor made
-/// the *top* come out at 68 on any device by accident, but nothing ever rescued the bottom,
-/// where a home indicator costs 20 points the reference screen never spent.
+/// What it still does is refuse to *measure*. A simulator running at some other size, or in
+/// Split View, would otherwise lay the fixture out at that size and the diff would compare two
+/// different screens. Pinning the environment to `.reference` is the whole job.
 ///
-/// The band that belongs with those numbers is the app-drawn one, so this turns it on and
-/// turns the system's off — exactly one status bar, and it is the one in the reference
-/// screenshots. Both halves live inside `#if DEBUG`, which is what makes it impossible for a
-/// release build to draw a fake band or hide the real one.
+/// It draws no status bar. There was once an app-drawn band here, kept because the reference
+/// PNGs had been exported with one; the boards dropped it, so the fixture did too. Hiding the
+/// system bar is no longer this modifier's business either — the shipping root does it, and
+/// doing it in both places would hide which one the device actually obeys.
 struct FixtureScreen: ViewModifier {
     func body(content: Content) -> some View {
         content
-            // The band is placed at an absolute y from the physical top, which is only the
-            // same thing as the layout top once the safe area is out of the way.
             .ignoresSafeArea()
-            .fixtureStatusBar(isEnabled: true, width: ScreenLayout.reference.screenWidth)
             .environment(\.screenLayout, .reference)
             .statusBarHidden(true)
     }

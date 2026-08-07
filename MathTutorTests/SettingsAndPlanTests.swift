@@ -12,171 +12,223 @@ import XCTest
 /// arithmetic is what catches a wrong inset; a snapshot of the result would only tell you
 /// that something moved.
 final class SettingsAndPlanTests: XCTestCase {
-    // MARK: - Board 10 · region map
+    // MARK: - Board 10 · the settings window
 
-    func testSettingsColumnIsTheFullScreenReadingColumn() {
-        // Board 10 reuses board 07's centring rule: 68 + (1376 − 68 − 740) ÷ 2.
-        let settings = SettingsScreenMetrics.reference
-        XCTAssertEqual(settings.columnX, 352)
-        XCTAssertEqual(settings.columnWidth, 740)
+    /// The design's two free numbers, and the two centrings that place them.
+    ///
+    /// 308 and 256 are not typed in as constants anywhere in the app — they are
+    /// `(1376 − 760) ÷ 2` and `28 + (976 − 520) ÷ 2`, run on the screen the app is actually
+    /// on. Asserting them here is what proves the arithmetic reproduces the board rather than
+    /// that someone transcribed two offsets.
+    func testTheWindowIsTheDesignsSizeCentredOnTheReferenceScreen() {
+        let window = SettingsWindowMetrics.reference
+        XCTAssertEqual(window.size, CGSize(width: 760, height: 520))
+        XCTAssertEqual(window.origin, CGPoint(x: 308, y: 256))
+        XCTAssertEqual(window.size, SettingsWindowMetrics.designSize, "nothing clamps at 1376 × 1032")
+
+        XCTAssertEqual(window.origin.x, (ScreenLayout.screenWidth - window.size.width) / 2)
         XCTAssertEqual(
-            settings.columnX,
-            ScreenLayout.peekWidth + (ScreenLayout.screenWidth - ScreenLayout.peekWidth - 740) / 2
+            window.origin.y,
+            ScreenLayout.contentTop + (ScreenLayout.contentHeight - window.size.height) / 2
         )
+    }
 
-        // And it is board 07's column rather than a second copy of it, at every screen —
-        // which is the whole claim "board 07's shell with its reading content replaced" makes.
+    /// A window that will not fit shrinks before it moves, and never leaves the content band.
+    ///
+    /// This is the case board 10 never had an opinion about: the design's screen has room and
+    /// the smallest supported iPad does not. The old screen answered it by scrolling a
+    /// top-aligned column; a window has no column to scroll, so it gives up size instead —
+    /// which is the same answer the tool rail gives when its fixed chain outgrows the band.
+    func testTheWindowClampsToTheBandRatherThanOverflowingIt() {
         for device in Self.devices {
-            let here = SettingsScreenMetrics(layout: device.layout)
-            XCTAssertEqual(here.columnX, device.layout.columnX, device.name)
-            XCTAssertEqual(here.columnWidth, device.layout.columnWidth, device.name)
-            XCTAssertEqual(here.contentTop, device.layout.contentTop, device.name)
-            XCTAssertEqual(here.contentHeight, device.layout.contentHeight, device.name)
+            let layout = device.layout
+            let window = SettingsWindowMetrics(layout: layout)
+
+            XCTAssertLessThanOrEqual(window.size.width, SettingsWindowMetrics.designSize.width, device.name)
+            XCTAssertLessThanOrEqual(window.size.height, SettingsWindowMetrics.designSize.height, device.name)
+            XCTAssertGreaterThanOrEqual(window.origin.y, layout.contentTop, device.name)
+            XCTAssertLessThanOrEqual(
+                window.origin.y + window.size.height, layout.contentBottom, device.name
+            )
+            XCTAssertGreaterThanOrEqual(window.origin.x, layout.safeAreaLeading, device.name)
+            XCTAssertLessThanOrEqual(
+                window.origin.x + window.size.width,
+                layout.size.width - layout.safeAreaTrailing,
+                device.name
+            )
         }
     }
 
-    func testSettingsGroundIsWhiteNotTheScreenGrey() {
-        // "#FFFFFF — literal, *not* var(--color-surface-screen). Same exception board 07 takes."
-        XCTAssertEqual(SettingsScreenMetrics.ground, DS.Color.surface)
-        XCTAssertNotEqual(SettingsScreenMetrics.ground, DS.Color.surfaceScreen)
-    }
-
-    func testSettingsBlocksLandWhereTheBoardMeasuresThem() {
-        let settings = SettingsScreenMetrics.reference
-        XCTAssertEqual(settings.titleY, 124)
-        XCTAssertEqual(settings.modelSectionY, 220)
-        XCTAssertEqual(settings.effortSectionY, 392)
-        XCTAssertEqual(settings.keySectionY, 670)
-        XCTAssertEqual(settings.irreversibleSectionY, 850)
-    }
-
-    /// The chain is the board's; only where it starts is the device's.
-    ///
-    /// Board 10's five numbers are `contentTop` plus a fixed run of gaps and block heights, so
-    /// on a screen whose band starts 16 points higher every one of them moves 16 points and the
-    /// distances between them do not move at all. That is the difference between a layout that
-    /// was ported and one that was transcribed.
-    func testSettingsBlocksTravelWithTheBandAndKeepTheirRhythm() {
-        let reference = SettingsScreenMetrics.reference
-        for device in Self.devices {
-            let here = SettingsScreenMetrics(layout: device.layout)
-            let shift = device.layout.contentTop - reference.contentTop
-            XCTAssertEqual(here.titleY, reference.titleY + shift, device.name)
-            XCTAssertEqual(here.modelSectionY, reference.modelSectionY + shift, device.name)
-            XCTAssertEqual(here.effortSectionY, reference.effortSectionY + shift, device.name)
-            XCTAssertEqual(here.keySectionY, reference.keySectionY + shift, device.name)
-            XCTAssertEqual(here.irreversibleSectionY, reference.irreversibleSectionY + shift, device.name)
-            // 962 − 68 = 894, everywhere: the column's own height is a property of the chain.
-            XCTAssertEqual(here.columnHeight, reference.columnHeight, device.name)
-        }
-    }
-
-    /// Where the 42pt slack runs out, which is a state board 10 never had to have an opinion
-    /// about — the design's screen has room and the smallest supported iPad does not.
-    ///
-    /// The screen stays top-aligned and the band scrolls, so nothing moves where it fits and
-    /// nothing is unreachable where it does not. What must never happen is the last section
-    /// being drawn below the band with no way to get to it, which is what a negative slack in a
-    /// non-scrolling column means.
-    func testTheShortestSupportedBandIsTheOneThatHasToScroll() {
-        let short = SettingsScreenMetrics(
+    /// A 768pt-tall iPad is 456 short of the 894pt chain the old screen carried, and had to
+    /// scroll. The window is 520 and simply fits, which is the redesign's one unambiguous win
+    /// on small screens.
+    func testTheShortestSupportedBandHoldsTheWholeWindow() {
+        let short = SettingsWindowMetrics(
             layout: ScreenLayout(
                 size: CGSize(width: 1024, height: 768),
                 safeArea: EdgeInsets(top: 20, leading: 0, bottom: 0, trailing: 0)
             )
         )
-        XCTAssertEqual(short.columnHeight, SettingsScreenMetrics.reference.columnHeight)
-        XCTAssertLessThan(short.unusedSlack, 0, "a 768pt iPad cannot hold the 894pt chain")
-        XCTAssertGreaterThan(short.columnHeight, short.contentHeight)
+        XCTAssertEqual(short.size, SettingsWindowMetrics.designSize, "no clamping at 1024 × 768")
     }
 
-    func testSettingsSectionHeightsAreTheirOwnArithmetic() {
-        XCTAssertEqual(SettingsScreenMetrics.modelSectionHeight, 124, "18 + 16 + 90")
-        XCTAssertEqual(SettingsScreenMetrics.effortSectionHeight, 230, "18 + 16 + 196")
-        XCTAssertEqual(SettingsScreenMetrics.keySectionHeight, 136, "18 + 4 + 18 + 16 + 80")
-        XCTAssertEqual(SettingsScreenMetrics.irreversibleSectionHeight, 112, "18 + 4 + 18 + 16 + 56")
+    func testThePaneMeasureIsWhatIsLeftAfterTheSidebar() {
+        let window = SettingsWindowMetrics.reference
+        XCTAssertEqual(window.paneWidth, 544, "760 − 216")
+        XCTAssertEqual(window.paneContentWidth, 480, "544 − 32 × 2")
+        XCTAssertEqual(window.navItemWidth, 184, "216 − 16 × 2")
     }
 
-    func testSettingsIsTopAlignedAndNotStretched() {
-        XCTAssertEqual(SettingsScreenMetrics.reference.contentBottom, 962)
-        XCTAssertEqual(SettingsScreenMetrics.reference.unusedSlack, 42)
-        XCTAssertEqual(ScreenLayout.contentBottom, 1004)
-    }
-
-    func testTheLastSectionGapIsFortyFourAsMeasuredNotFortyEight() {
-        // `06 §Open questions 8`: the first three gaps are 48 and the last is 44, which
-        // "reads as an off-by-4 rather than a decision" — recorded as measured, not
-        // corrected. If the designer settles on 48, this test is the thing that fails.
-        XCTAssertEqual(SettingsScreenMetrics.sectionGap, 48)
-        XCTAssertEqual(SettingsScreenMetrics.lastSectionGap, 44)
-        XCTAssertNotEqual(SettingsScreenMetrics.lastSectionGap, SettingsScreenMetrics.sectionGap)
-    }
-
-    func testSettingsControlsRowIsThePanelsOwnGeometry() {
-        XCTAssertEqual(SettingsScreenMetrics.controlsHeight, TutorPanelMetrics.controlsHeight)
-        XCTAssertEqual(SettingsScreenMetrics.controlButton, TutorPanelMetrics.controlButton)
-        XCTAssertEqual(SettingsScreenMetrics.controlTapTarget, 44, "32pt drawn, 44pt tappable")
-    }
-
-    // MARK: - select/option
-
-    func testSelectOptionWidthIsDerivedFromTheColumn() {
-        XCTAssertEqual(SelectOptionMetrics.width(inColumn: DS.Container.column), 236)
-        XCTAssertEqual(SelectOptionMetrics.width(inColumn: DS.Container.column), SelectOptionMetrics.size.width)
-        // "Row width 236 × 3 + 16 × 2 = 740 exactly."
+    /// The rule under the pane header must not move when you change tabs.
+    ///
+    /// Every pane's lede is written to two lines at the 480pt measure, and the header is
+    /// pinned to the height that implies. If someone shortens a lede to one line, the header
+    /// still measures 116 and this test still passes — which is the point. What it catches is
+    /// someone deciding the header should hug.
+    func testThePaneHeaderIsPinnedSoTheRuleDoesNotJump() {
+        XCTAssertEqual(SettingsWindowMetrics.headerHeight, 116, "34 + 10 + 22 × 2 + 28")
+        XCTAssertEqual(SettingsWindowMetrics.paneLedeLines, 2)
+        XCTAssertEqual(SettingsWindowMetrics.paneTitleStyle, .title)
+        XCTAssertEqual(SettingsWindowMetrics.paneLedeStyle.size, DS.Size.label)
         XCTAssertEqual(
-            SelectOptionMetrics.size.width * 3 + SelectOptionMetrics.gap * 2,
-            DS.Container.column
+            SettingsWindowMetrics.paneLedeStyle.leading,
+            DS.Leading.control,
+            "the label size in the control line box — 18 would set two wrapped lines too tight"
         )
     }
 
-    func testSelectOptionHeightIsWhatItsChildStackNeeds() {
-        // 20 + 24 + 4 + 22 + 20 = 90
-        XCTAssertEqual(SelectOptionMetrics.stackedHeight, 90)
-        XCTAssertEqual(SelectOptionMetrics.stackedHeight, SelectOptionMetrics.size.height)
-        // 236 − 22 × 2 = 192
-        XCTAssertEqual(SelectOptionMetrics.contentWidth, 192)
-        // 90 × 2 + 16 = 196
-        XCTAssertEqual(SelectOptionMetrics.gridHeight(rows: 2), 196)
+    /// *"Radius is chosen by how big the surface is, not by taste."*
+    func testTheWindowTakesTheBigSurfaceRadiusAndTheNewElevation() {
+        XCTAssertEqual(SettingsWindowMetrics.radius, DS.Radius.xxxl)
+        XCTAssertEqual(SettingsWindowMetrics.fill, DS.Color.surface)
+        XCTAssertEqual(SettingsWindowMetrics.elevation, .modal)
+        // The level the scale did not previously go to, and the reason it had to: 02 · Panel
+        // over a whitened backdrop leaves the window with no edge.
+        XCTAssertGreaterThan(Elevation.modalLift.alpha, Elevation.panelLift.alpha)
+        XCTAssertEqual(Elevation.modal.layers.count, 2, "lift then contact, like 02 and 03")
+        // The contact layer is 02 · Panel's outer alpha exactly, which is what keeps this
+        // level to *one* genuinely new number after the shadow was pulled back from its first,
+        // much heavier draft.
+        XCTAssertEqual(Elevation.modalContact.alpha, Elevation.panelLift.alpha, accuracy: 0.0002)
+        XCTAssertLessThan(Elevation.modalLift.alpha, 0.1, "pulled back from the 0.141 first draft")
+        XCTAssertEqual(Elevation.modalLift.blur, 40)
+        XCTAssertEqual(Elevation.modalLift.y, 16)
     }
 
-    func testSelectOptionStatesDifferOnlyInFill() {
-        XCTAssertEqual(SelectOptionMetrics.fill(isSelected: false), DS.Color.surface)
-        XCTAssertEqual(SelectOptionMetrics.fill(isSelected: true), DS.Color.brandTint)
-        // "No border, no ring, no checkmark, no weight change, no shadow change." The type
-        // and elevation are single constants precisely so there is no per-state variant to
-        // drift; these assert the values the shared constants hold.
-        XCTAssertEqual(SelectOptionMetrics.elevation, .control)
-        XCTAssertEqual(SelectOptionMetrics.radius, DS.Radius.lg)
-        XCTAssertEqual(SelectOptionMetrics.titleStyle.size, 20)
-        XCTAssertEqual(SelectOptionMetrics.titleStyle.weight, .medium)
-        XCTAssertEqual(SelectOptionMetrics.captionStyle.size, 17)
-        XCTAssertEqual(SelectOptionMetrics.captionStyle.leading, 22)
+    /// The sidebar's rule is the one stroke in the window, and it is the sanctioned one.
+    func testTheOnlyStrokeInTheWindowIsTheDividerToken() {
+        XCTAssertEqual(SettingsWindowMetrics.rule, DS.Color.divider)
+        XCTAssertEqual(SettingsWindowMetrics.ruleWidth, 1)
+        XCTAssertEqual(SettingRowMetrics.rule, DS.Color.divider)
+    }
+
+    // MARK: - nav/item
+
+    /// The selection is the tool slot's rule applied to a different kind of slot: the same
+    /// `--radius-lg` and the same `--color-brand-tint`, and no fourth spend of brand colour.
+    func testNavItemSelectionReusesTheSelectedToolSlotsVocabulary() {
+        XCTAssertEqual(SettingsNavItemMetrics.radius, DS.Radius.lg)
+        // The rail's selected tool slot draws `RoundedRectangle(DS.Radius.lg).fill(brandTint)`
+        // — see `ToolRailParts`. `select/option` used to be the other citation for this rule;
+        // it was retired with the old board 10, so the rail is the only one left.
+        XCTAssertEqual(SettingsNavItemMetrics.fill(isSelected: true), DS.Color.brandTint)
+        XCTAssertEqual(SettingsNavItemMetrics.fill(isSelected: false), .clear)
+    }
+
+    /// Where it parts company with `select/option`, which is identical in both states.
+    func testNavItemLabelChangesWithTheStateUnlikeAnOptionCard() {
+        XCTAssertEqual(SettingsNavItemMetrics.labelStyle(isSelected: true).weight, .semibold)
+        XCTAssertEqual(SettingsNavItemMetrics.labelStyle(isSelected: false).weight, .medium)
+        XCTAssertEqual(SettingsNavItemMetrics.labelColor(isSelected: true), DS.Color.ink)
+        XCTAssertEqual(SettingsNavItemMetrics.labelColor(isSelected: false), DS.Color.inkSecondary)
+    }
+
+    func testEveryPaneHasANavLabelAHeadingAndALede() {
+        XCTAssertEqual(SettingsPane.allCases, [.tutor, .apiKey, .session])
+        for pane in SettingsPane.allCases {
+            XCTAssertFalse(pane.navLabel.isEmpty, pane.rawValue)
+            XCTAssertEqual(pane.title, pane.navLabel, "the heading confirms the nav item, it does not rename it")
+            XCTAssertFalse(pane.lede.isEmpty, pane.rawValue)
+        }
+    }
+
+    // MARK: - row/setting
+
+    func testTheChevronSlotIsFixedSoTheMarksShareALane() {
+        // The failure this prevents: two rows whose values are different widths putting their
+        // chevrons in different columns.
+        XCTAssertEqual(SettingRowMetrics.chevronSlot, 20)
+        XCTAssertEqual(SettingRowMetrics.chevronGlyph, 16)
+        XCTAssertGreaterThan(SettingRowMetrics.chevronSlot, SettingRowMetrics.chevronGlyph)
+    }
+
+    func testTheRowIsTallerThanItsLabelStackByDesign() {
+        XCTAssertEqual(SettingRowMetrics.labelStackHeight, 44, "22 + 4 + 18")
+        XCTAssertEqual(SettingRowMetrics.height, 120)
+        XCTAssertGreaterThan(SettingRowMetrics.height, SettingRowMetrics.labelStackHeight)
+    }
+
+    /// The label is the question and the value is the answer, so the value sits a weight below.
+    func testTheRowsValueIsLighterThanItsLabel() {
+        XCTAssertEqual(SettingRowMetrics.labelStyle.weight, .semibold)
+        XCTAssertEqual(SettingRowMetrics.valueStyle.weight, .medium)
+        XCTAssertEqual(SettingRowMetrics.labelStyle.size, DS.Size.body)
+        XCTAssertEqual(SettingRowMetrics.valueStyle.size, DS.Size.body)
+    }
+
+    // MARK: - The backdrop
+
+    /// **White, not ink** — the redesign's premise, and the easiest thing here to "fix" back
+    /// into a conventional dark scrim.
+    func testTheBackdropWhitensTheBoardRatherThanDimmingIt() {
+        XCTAssertEqual(SettingsBackdropMetrics.scrim, DS.Color.surface.opacity(0.4))
+        XCTAssertNotEqual(SettingsBackdropMetrics.scrim, DS.Color.ink.opacity(0.4))
+    }
+
+    /// The same halving `Elevation.Layer.shadowRadius` does, for the same reason: CSS states
+    /// the full width of the Gaussian and SwiftUI takes half of it.
+    func testTheBackdropBlurIsHalvedOutOfCSS() {
+        XCTAssertEqual(SettingsBackdropMetrics.designBlur, 2)
+        XCTAssertEqual(SettingsBackdropMetrics.blurRadius, 1)
+        XCTAssertEqual(SettingsBackdropMetrics.blurRadius, SettingsBackdropMetrics.designBlur / 2)
     }
 
     // MARK: - btn/destructive
 
-    func testDestructiveButtonWidthsMatchTheBoardsLabels() {
-        XCTAssertEqual(DestructiveButtonMetrics.height, 56)
-        XCTAssertEqual(DestructiveButtonMetrics.paddingInline, 28)
-        XCTAssertEqual(DestructiveButtonMetrics.width(labelWidth: 114), 170, "Remove API key")
-        XCTAssertEqual(DestructiveButtonMetrics.width(labelWidth: 127), 183, "Reset this session")
+    func testDestructiveButtonHugsItsLabelAndSitsBelowTheKeyField() {
+        XCTAssertEqual(DestructiveButtonMetrics.height, 44)
+        XCTAssertEqual(DestructiveButtonMetrics.paddingInline, 20)
+        XCTAssertEqual(DestructiveButtonMetrics.width(labelWidth: 114), 154, "Remove API key")
+        // One step below the field it stands under, which is what stops the pane reading as
+        // two controls of equal weight.
+        XCTAssertLessThan(DestructiveButtonMetrics.height, KeyFieldMetrics.height)
     }
 
-    func testDestructiveButtonIsRecessedAndCarriesNoDangerColour() {
-        // The whole destructive signal: bubble grey, and the only control in the product
-        // with no elevation. Everything safe is lifted; this sits *in* the surface.
-        XCTAssertEqual(DestructiveButtonMetrics.fill, DS.Color.surfaceBubble)
-        XCTAssertNil(DestructiveButtonMetrics.elevation)
+    /// **This test asserts a loss, and says so.**
+    ///
+    /// The old rule was that a destructive control is the only thing in the product with no
+    /// elevation — everything safe is lifted, and the things that destroy sit *in* the
+    /// surface. The redesign gives it the same white-and-elevation-03 footing as the key
+    /// field, so that signal is gone and the pane's lede carries the warning alone.
+    ///
+    /// What has *not* changed is that the button still spends no colour. If the design ever
+    /// decides the shape signal needs replacing, replacing it with red is the thing this test
+    /// exists to make someone argue for out loud.
+    func testDestructiveButtonStillCarriesNoDangerColour() {
+        XCTAssertEqual(DestructiveButtonMetrics.fill, DS.Color.surface)
+        XCTAssertEqual(DestructiveButtonMetrics.elevation, .control)
         // "NOT for destructive, warning or validation UI" — `--color-incorrect`'s own words.
         XCTAssertNotEqual(DestructiveButtonMetrics.fill, DS.Color.incorrect)
         XCTAssertNotEqual(DestructiveButtonMetrics.fill, DS.Color.penRed)
+        XCTAssertEqual(DestructiveButtonMetrics.radius, DS.Radius.lg, "not a capsule any more")
     }
 
     // MARK: - btn/primary
 
     func testPrimaryButtonPanelHeightIsTheComposersSlot() {
-        XCTAssertEqual(PrimaryButtonMetrics.panel.height, 58)
+        // Derived, not free: it is whatever the panel composer is, so the two occupants of the
+        // panel's bottom slot stay interchangeable. It came down 58 → 50 with the pill.
+        XCTAssertEqual(PrimaryButtonMetrics.panel.height, 50)
         XCTAssertEqual(PrimaryButtonMetrics.panel.height, ComposerMetrics.panel.height)
         XCTAssertEqual(PrimaryButtonMetrics.panel.height, PanelActionSlotMetrics.height)
         XCTAssertTrue(PrimaryButtonMetrics.panel.fillsColumn)
@@ -222,18 +274,44 @@ final class SettingsAndPlanTests: XCTestCase {
 
     // MARK: - field/key
 
-    func testKeyFieldIsTheWideComposersBoxModel() {
-        XCTAssertEqual(KeyFieldMetrics.width, 740)
-        XCTAssertEqual(KeyFieldMetrics.height, 80)
-        XCTAssertEqual(KeyFieldMetrics.paddingLeading, DS.Space.s8)
-        XCTAssertEqual(KeyFieldMetrics.paddingTrailing, DS.Space.s3)
-        XCTAssertEqual(KeyFieldMetrics.gap, 18)
-        XCTAssertEqual(KeyFieldMetrics.saveButton, 56)
-        // 740 − 32 − 12 − 56 − 18 = 622, the design's measured text box.
-        XCTAssertEqual(KeyFieldMetrics.textWidth, 622)
-        // A filled value, not a placeholder — `--text-lead` at `--color-ink`.
-        XCTAssertEqual(KeyFieldMetrics.textStyle.size, 21)
-        XCTAssertEqual(KeyFieldMetrics.textStyle.leading, 30)
+    /// **`field/key` stopped being a re-skin of `Composer · wide`, and that is the point.**
+    ///
+    /// This test used to assert the opposite: every number read off `ComposerMetrics
+    /// .fullScreen`, so the field followed the composer's pill wherever it went. The redesign
+    /// cuts that tie deliberately — a control that holds a value you already stored should not
+    /// inherit the geometry of a thing you type into and send. So the relationship assertions
+    /// became *in*equalities, and they are the ones that fail if someone reconnects them.
+    func testKeyFieldIsNoLongerTheWideComposer() {
+        XCTAssertEqual(KeyFieldMetrics.height, 56)
+        XCTAssertEqual(KeyFieldMetrics.radius, DS.Radius.lg)
+        XCTAssertEqual(KeyFieldMetrics.paddingLeading, 18)
+        XCTAssertEqual(KeyFieldMetrics.paddingTrailing, 16)
+        XCTAssertEqual(KeyFieldMetrics.gap, DS.Space.s4)
+        XCTAssertEqual(KeyFieldMetrics.elevation, .control)
+
+        XCTAssertNotEqual(KeyFieldMetrics.height, ComposerMetrics.fullScreen.height)
+        XCTAssertNotEqual(KeyFieldMetrics.textStyle.size, ComposerMetrics.fullScreen.placeholderStyle.size)
+    }
+
+    /// The one place in the product a family other than Source Sans 3 renders, and the rule it
+    /// overturned: Typography used to say `--font-mono` *"must never reach a screen"*.
+    func testTheStoredKeyIsSetMonospaced() {
+        XCTAssertEqual(KeyFieldMetrics.textStyle.family, .mono)
+        XCTAssertEqual(KeyFieldMetrics.textStyle.size, DS.Size.label)
+        XCTAssertEqual(KeyFieldMetrics.textStyle.leading, DS.Leading.control)
+        // A filled value, not a placeholder, so it stays at regular weight and full ink.
+        XCTAssertEqual(KeyFieldMetrics.textStyle.weight, .regular)
+        // Every other style on the scale is untouched by the new axis.
+        XCTAssertTrue(TextStyle.scale.allSatisfy { $0.family == .sans })
+    }
+
+    /// `Replace` spends the brand colour that `btn/send`'s violet disc used to, so the
+    /// three-place budget Foundations sets is unchanged — the spend just got much smaller.
+    func testTheKeyFieldsActionInheritsTheSendDiscsBrandBudget() {
+        XCTAssertEqual(KeyFieldMetrics.actionColor, DS.Color.brand)
+        XCTAssertEqual(KeyFieldMetrics.actionStyle, .label)
+        // 480 − 18 − 16 − 16 − 62 = 368 for the value.
+        XCTAssertEqual(KeyFieldMetrics.textWidth(inColumn: 480, actionWidth: 62), 368)
     }
 
     func testAPIKeyMaskRevealsOnlyThePrefixAndTheLastFour() {
@@ -280,18 +358,6 @@ final class SettingsAndPlanTests: XCTestCase {
         XCTAssertEqual(options.filter(\.isSelected).map(\.value), [.high])
     }
 
-    func testEffortGridIsTwoRowsOfThree() {
-        let rows = SettingsOption.rows(
-            SettingsOption.efforts(selected: .high),
-            across: SelectOptionMetrics.columns
-        )
-        XCTAssertEqual(rows.count, 2)
-        XCTAssertEqual(rows[0].map(\.title), ["None", "Low", "Medium"])
-        XCTAssertEqual(rows[1].map(\.title), ["High", "X-High", "Max"])
-        // Row 2's first cell is the selected one on the board.
-        XCTAssertTrue(rows[1][0].isSelected)
-    }
-
     func testExactlyOneOptionIsSelectedAtEveryValue() {
         for model in ModelChoice.allCases {
             XCTAssertEqual(SettingsOption.models(selected: model).filter(\.isSelected).count, 1)
@@ -312,14 +378,9 @@ final class SettingsAndPlanTests: XCTestCase {
         let options = SettingsOption.models(selected: store.session.selectedModel)
         XCTAssertEqual(store.session.selectedModel, .sol)
         XCTAssertEqual(options.filter(\.isSelected).map(\.value), [.sol])
-        XCTAssertEqual(
-            SelectOptionMetrics.fill(isSelected: options[0].isSelected),
-            DS.Color.brandTint
-        )
-        XCTAssertEqual(
-            SelectOptionMetrics.fill(isSelected: options[2].isSelected),
-            DS.Color.surface
-        )
+        // What the row shows on its trailing edge is the selected option's title, which is
+        // the redesign's whole replacement for nine cards with one tinted fill.
+        XCTAssertEqual(options.first(where: \.isSelected)?.title, ModelChoice.sol.displayName)
     }
 
     @MainActor
@@ -361,7 +422,7 @@ final class SettingsAndPlanTests: XCTestCase {
         XCTAssertEqual(PanelActionSlotMetrics.height, ComposerMetrics.panel.height)
         XCTAssertEqual(PanelActionSlotMetrics.bottomInset, DS.Space.panelInset)
 
-        // The panel's height is the screen's content band — 936 on the board's own screen,
+        // The panel's height is the screen's content band — 976 on the board's own screen,
         // 692 on the shortest iPad the app runs on. Neither is the panel's own number, which
         // is why the slot is anchored to the bottom rather than measured down from the top.
         let reference = ScreenLayout.reference.contentHeight
@@ -369,13 +430,13 @@ final class SettingsAndPlanTests: XCTestCase {
             size: CGSize(width: 1024, height: 768),
             safeArea: EdgeInsets(top: 20, leading: 0, bottom: 0, trailing: 0)
         ).contentHeight
-        XCTAssertEqual(reference, 936)
+        XCTAssertEqual(reference, 976)
         XCTAssertEqual(shortest, 692)
 
         XCTAssertEqual(
             PanelActionSlotMetrics.top(inPanelOfHeight: reference),
-            860,
-            "where boards 05 / 08 / 11 / 12 all put it"
+            908,
+            "where boards 05 / 08 / 11 / 12 all put it — `976 − 18 − 50`"
         )
         // The slot sits on the panel's floor with the 18pt inset under it whatever height the
         // panel is given — the property an absolute 860 could not have, and the reason the
@@ -400,20 +461,25 @@ final class SettingsAndPlanTests: XCTestCase {
         XCTAssertFalse(NoAPIKeyCopy.body.contains("never leaves"))
         XCTAssertTrue(NoAPIKeyCopy.body.contains("Keychain"))
         XCTAssertTrue(NoAPIKeyCopy.body.contains("OpenAI"))
+        // The accurate sentence moved from a section caption to the API-key pane's lede when
+        // settings became a window; it is still the one that ships.
         XCTAssertEqual(
-            SettingsCopy.keyCaption,
+            SettingsPane.apiKey.lede,
             "Kept in this device's Keychain. It is sent to OpenAI and nowhere else."
         )
     }
 
     // MARK: - Boards 12 / 13 · the plan
 
-    func testPanelPlanIsSixHundredAndFiveOnTheBoardsWrap() {
-        // Board 12: rows 1 and 3 of Steps wrap, rows 1 and 2 of Outcomes wrap.
+    func testPanelPlanIsFiveHundredAndNinetySevenOnTheBoardsWrap() {
+        // Board 12: rows 1 and 3 of Steps wrap, rows 1 and 2 of Outcomes wrap. 597 rather than
+        // the board's 605 because the plan's tail is `btn/primary`, which is the panel
+        // composer's height by derivation and came down 8 with it.
         XCTAssertEqual(
             SessionPlanMetrics.panel.height(stepLines: [2, 1, 2, 1], outcomeLines: [2, 2, 1]),
-            605
+            597
         )
+        XCTAssertEqual(SessionPlanMetrics.panel.action.height, ComposerMetrics.panel.height)
     }
 
     func testFullScreenPlanIsSixHundredAndEightWithEveryRowOnOneLine() {

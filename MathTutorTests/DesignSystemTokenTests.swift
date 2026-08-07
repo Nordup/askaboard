@@ -336,18 +336,17 @@ final class DesignSystemTokenTests: XCTestCase {
 
     // MARK: - Layout arithmetic
 
-    func testVerticalLanesDeriveFromTheStatusBarNotTheScreen() {
-        XCTAssertEqual(ScreenLayout.statusBarBottom, ScreenLayout.statusBarY + ScreenLayout.statusBarHeight)
-        XCTAssertEqual(ScreenLayout.statusBarBottom, 40)
+    func testVerticalLanesDeriveFromWhatIsReservedNotTheScreen() {
+        XCTAssertEqual(ScreenLayout.statusBarBottom, 0, "the app hides the system bar")
 
         XCTAssertEqual(ScreenLayout.contentTop, ScreenLayout.statusBarBottom + DS.Space.edge)
-        XCTAssertEqual(ScreenLayout.contentTop, 68)
+        XCTAssertEqual(ScreenLayout.contentTop, 28)
 
         XCTAssertEqual(ScreenLayout.contentBottom, ScreenLayout.screenHeight - DS.Space.edge)
         XCTAssertEqual(ScreenLayout.contentBottom, 1004)
 
         XCTAssertEqual(ScreenLayout.contentHeight, ScreenLayout.screenHeight - ScreenLayout.contentTop - DS.Space.edge)
-        XCTAssertEqual(ScreenLayout.contentHeight, 936)
+        XCTAssertEqual(ScreenLayout.contentHeight, 976)
         XCTAssertEqual(ScreenLayout.contentTop + ScreenLayout.contentHeight, ScreenLayout.contentBottom)
     }
 
@@ -432,7 +431,6 @@ final class DesignSystemTokenTests: XCTestCase {
             (.bodyCentred, 24 - 17 * 1.326), // 1.458
             (.chipPanel, 24 - 17 * 1.326), // 1.458
             (.lead, 30 - 21 * 1.326), // 2.154
-            (.statusBar, 20 - 15 * 1.326), // 0.11
         ]
         for (style, spacing) in expected {
             XCTAssertEqual(style.lineSpacing, spacing, accuracy: 0.01)

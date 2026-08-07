@@ -1,32 +1,57 @@
 import SwiftUI
 
-/// `field/key` — a re-skin of `Composer · wide`, not a new component.
+/// `field/key` — no longer a re-skin of `Composer · wide`.
 ///
-/// Board 10: *"Box model is identical to `Composer · wide`"*, so every number here is read
-/// off `ComposerMetrics.fullScreen` rather than restated. The two differences are the text
-/// colour — `--color-ink`, because this is a filled field and not a placeholder — and what
-/// the trailing disc does.
+/// It was one, and the old comment here said so: *"Box model is identical to `Composer ·
+/// wide`"*, 740 × 80, `--radius-full`, with `btn/send`'s 56pt violet disc on the trailing
+/// edge. Every one of those cues belongs to a thing you type into and then send. This field
+/// mostly holds a value you already stored, and the disc was the loudest object in a window
+/// whose job is to show you that value — so the redesign takes the field down to a control
+/// rather than a composer, and swaps the disc for a text action.
+///
+/// | | was | now |
+/// | --- | --- | --- |
+/// | box | 740 × 80 | pane measure × 56 |
+/// | radius | `--radius-full` | `--radius-lg` 14 |
+/// | value | `--text-lead` 21, sans | 15 / 22, **mono** |
+/// | action | `btn/send`, 56pt violet disc | `Replace`, brand text |
+///
+/// The mono is the one genuinely new thing and it is the one thing this file has to justify:
+/// Typography's rule was that `--font-mono` *"must never reach a screen"*. A masked key is
+/// the case that rule did not consider — the mask is 24 identical bullets, and a proportional
+/// face sets them at a pitch that makes the run's length hard to read at a glance. See
+/// `DS.FontFamily`, and note that the face that actually renders is the system's monospaced
+/// one, because IBM Plex Mono is not in the bundle.
 enum KeyFieldMetrics {
-    static let width = ComposerMetrics.fullScreen.width
-    static let height = ComposerMetrics.fullScreen.height
-    static let paddingLeading = ComposerMetrics.fullScreen.paddingLeading
-    static let paddingTrailing = ComposerMetrics.fullScreen.paddingTrailing
-    static let gap = ComposerMetrics.fullScreen.gap
-    static let saveButton = ComposerMetrics.fullScreen.sendButtonSize
-    static let saveGlyph = ComposerMetrics.fullScreen.sendGlyphSize
-    /// `--text-lead` 21 / 30 at `--color-ink` — the one place the lead style carries a
-    /// *filled* value rather than a placeholder.
-    static let textStyle: DS.TextStyle = .lead
+    /// Fills the pane's measure, so it carries no width of its own — the same rule every
+    /// other control in the window follows.
+    static let height: CGFloat = 56
+    static let radius = DS.Radius.lg
+    static let fill = DS.Color.surface
     static let elevation: Elevation = .control
 
-    /// `740 − 32 − 12 − 56 − 18 = 622`, the design's measured text box.
-    static var textWidth: CGFloat { textWidth(inColumn: width) }
+    /// Both component-internal literals rather than tokens, per Foundations rule 11. 18
+    /// happens to equal `--space-panel-inset` and 16 `--spacing-4`; binding either would move
+    /// this field the day an unrelated token moved.
+    static let paddingLeading: CGFloat = 18
+    static let paddingTrailing: CGFloat = 16
+    /// Value → action. A minimum: the action is pinned to the trailing edge.
+    static let gap = DS.Space.s4
 
-    /// The same subtraction in a column of any width — the pill is the section's width, and
-    /// the text box is what is left once the disc, the gap and the two paddings come off.
-    /// The composer this is a re-skin of narrows the same way, for the same reason.
-    static func textWidth(inColumn column: CGFloat) -> CGFloat {
-        max(0, column - paddingLeading - paddingTrailing - saveButton - gap)
+    /// 15 / 22 · 400 · ink, monospaced. `--color-ink` and not `--color-ink-tertiary`,
+    /// because this is a filled field and not a placeholder.
+    static let textStyle = TextStyle(
+        size: DS.Size.label, leading: DS.Leading.control, weight: .regular, family: .mono
+    )
+    /// 15 / 18 · 600 · brand. Foundations allows brand colour in three places and this is
+    /// not one of them — but it replaces `btn/send`, which *is* one of them, so the budget
+    /// is unchanged and the spend moved from a 56pt disc to seven characters of text.
+    static let actionStyle: DS.TextStyle = .label
+    static let actionColor = DS.Color.brand
+
+    /// What is left for the value once the action, the gap and the two paddings come off.
+    static func textWidth(inColumn column: CGFloat, actionWidth: CGFloat) -> CGFloat {
+        max(0, column - paddingLeading - paddingTrailing - gap - actionWidth)
     }
 }
 
@@ -52,7 +77,7 @@ enum APIKeyMask {
     }
 }
 
-/// The API-key row: a secure field in a composer pill, and a send disc that saves it.
+/// The API-key row: a secure field, and a text action that commits it.
 ///
 /// The key is handed straight to `TutorStore.saveAPIKey`, which is the Keychain and nothing
 /// else. It is never written to `UserDefaults`, never logged, and `draft` is cleared by the
@@ -60,7 +85,7 @@ enum APIKeyMask {
 ///
 /// Board 10 draws only the filled resting state — *"no focused / empty / error state for
 /// this field is drawn anywhere in the file"* — so there is no placeholder, no focus ring
-/// (rule 1: the product has no borders) and no validation copy. The section heading directly
+/// (rule 1: the product has no borders) and no validation copy. The pane heading directly
 /// above names the field; `accessibilityLabel` says the same thing to VoiceOver, which
 /// otherwise gets an unlabelled secure field.
 struct KeyField: View {
@@ -68,21 +93,22 @@ struct KeyField: View {
     @Binding var draft: String
     /// The mask for the key already in the Keychain, or `nil` when there is none.
     let storedMask: String?
-    /// The column the pill fills. `nil` takes the 740 the board drew it at.
-    var width: CGFloat?
+    /// The pane's measure.
+    let width: CGFloat
     let onSave: () -> Void
-
-    private var column: CGFloat { width ?? KeyFieldMetrics.width }
 
     var body: some View {
         HStack(spacing: KeyFieldMetrics.gap) {
             field
-            saveButton
+            action
         }
         .padding(.leading, KeyFieldMetrics.paddingLeading)
         .padding(.trailing, KeyFieldMetrics.paddingTrailing)
-        .frame(width: column, height: KeyFieldMetrics.height)
-        .background(DS.Color.surface, in: Capsule())
+        .frame(width: width, height: KeyFieldMetrics.height)
+        .background(
+            KeyFieldMetrics.fill,
+            in: RoundedRectangle(cornerRadius: KeyFieldMetrics.radius, style: .circular)
+        )
         .elevation(KeyFieldMetrics.elevation)
     }
 
@@ -115,16 +141,18 @@ struct KeyField: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// `btn/send` 56, reused from `03 §7.2`. Drawn here rather than through
-    /// `ComposerSendButton` for one reason: that component's accessibility label is "Send
-    /// message", and this disc saves a credential. Every metric still comes from the
-    /// composer's own.
-    private var saveButton: some View {
+    /// `Replace`, where `btn/send` used to be.
+    ///
+    /// The label does not change with the field's state, and that is deliberate: a control
+    /// that read `Save` on an empty field and `Replace` on a filled one would be a fourth
+    /// state of a component the design draws exactly one state of.
+    private var action: some View {
         Button(action: onSave) {
-            IconView(.composerSend, size: KeyFieldMetrics.saveGlyph)
-                .frame(width: KeyFieldMetrics.saveButton, height: KeyFieldMetrics.saveButton)
-                .background(DS.Color.brand, in: Circle())
-                .elevation(.control)
+            Text(verbatim: SettingsCopy.replaceKey)
+                .textStyle(KeyFieldMetrics.actionStyle)
+                .foregroundStyle(KeyFieldMetrics.actionColor)
+                .lineLimit(1)
+                .fixedSize()
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Save API key")

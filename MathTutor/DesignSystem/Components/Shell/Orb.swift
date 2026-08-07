@@ -42,6 +42,17 @@ struct OrbMetrics: Equatable, Sendable {
     /// The smile's top-left within the body, or `nil` where the design draws no mouth.
     let smileOrigin: CGPoint?
 
+    /// How far the halo spills past the layout box on each side — board 03, on the thread
+    /// orb: the halo *"overflows the 46pt box on all sides"*.
+    ///
+    /// The design places it symmetrically at every size (24 for the thread orb, 73 for the
+    /// hero), so one number covers both sides. Whoever puts an orb against the edge of a
+    /// clipping container needs it: the halo is the mark's visible bounds and the frame is
+    /// only its layout slot, and a container that clips to the slot cuts the glow in half.
+    var haloOverhang: CGFloat {
+        max(-haloOrigin.x, haloOrigin.x + halo.width - frame.width)
+    }
+
     /// The halo is placed by its edges in the design and by its centre in SwiftUI, so the
     /// conversion lives here rather than in the view. It comes out non-zero only for hero
     /// and panel, whose halos sit 7 and 4 points above the frame's centre.

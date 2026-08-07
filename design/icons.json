@@ -5,7 +5,8 @@
     "artboards": [
       "04 — Icons (1IF-0) — the original sixteen",
       "13 — Session plan · full screen (3TM-0) and 14 — Components · Tutor states (3WL-0) — the four added later",
-      "11 — First run · no API key (3NQ-0) — control/settings as a panel control"
+      "11 — First run · no API key (3NQ-0) — control/settings as a panel control",
+      "10 — Settings (3KT-0) — ui/chevron-down, drawn inside row/setting rather than as a specimen"
     ],
     "readVia": "get_jsx, format inline-styles — never a screenshot",
     "prose": [
@@ -16,7 +17,7 @@
     "generates": "MathTutor/DesignSystem/Generated/IconPaths.swift"
   },
   "coverage": {
-    "productGlyphs": 20,
+    "productGlyphs": 21,
     "excluded": [
       {
         "name": "os/wifi",
@@ -46,19 +47,29 @@
   },
   "dashTextures": {
     "dash/dotted": {
-      "array": [0.1, 4.3],
+      "array": [
+        0.1,
+        4.3
+      ],
       "dashOffset": null,
       "lineCap": "round",
       "units": "viewBox",
-      "usedBy": ["tool/lasso"],
+      "usedBy": [
+        "tool/lasso"
+      ],
       "note": "The round cap is load-bearing: it is what turns a 0.1 dash into a visible dot roughly one stroke-width across."
     },
     "dash/marching": {
-      "array": [4.6, 3.9],
+      "array": [
+        4.6,
+        3.9
+      ],
       "dashOffset": null,
       "lineCap": "butt",
       "units": "viewBox",
-      "usedBy": ["ui/selection-marker"],
+      "usedBy": [
+        "ui/selection-marker"
+      ],
       "note": "Butt cap, not declared in the markup — it is the SVG default. It is what makes the segments read as clean marching ants."
     }
   },
@@ -66,8 +77,13 @@
     {
       "name": "tool/pen",
       "swiftCase": "toolPen",
-      "viewBox": { "width": 28, "height": 28 },
-      "productRenderSizes": [28],
+      "viewBox": {
+        "width": 28,
+        "height": 28
+      },
+      "productRenderSizes": [
+        28
+      ],
       "renderSize": 28,
       "effectiveStrokeWidth": null,
       "colorToken": "--color-brand",
@@ -109,8 +125,13 @@
     {
       "name": "tool/highlighter",
       "swiftCase": "toolHighlighter",
-      "viewBox": { "width": 28, "height": 28 },
-      "productRenderSizes": [28],
+      "viewBox": {
+        "width": 28,
+        "height": 28
+      },
+      "productRenderSizes": [
+        28
+      ],
       "renderSize": 28,
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-icon",
@@ -152,8 +173,13 @@
     {
       "name": "tool/eraser",
       "swiftCase": "toolEraser",
-      "viewBox": { "width": 28, "height": 28 },
-      "productRenderSizes": [28],
+      "viewBox": {
+        "width": 28,
+        "height": 28
+      },
+      "productRenderSizes": [
+        28
+      ],
       "renderSize": 28,
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-icon",
@@ -185,8 +211,13 @@
     {
       "name": "tool/lasso",
       "swiftCase": "toolLasso",
-      "viewBox": { "width": 28, "height": 28 },
-      "productRenderSizes": [28],
+      "viewBox": {
+        "width": 28,
+        "height": 28
+      },
+      "productRenderSizes": [
+        28
+      ],
       "renderSize": 28,
       "effectiveStrokeWidth": 2.7,
       "colorToken": "--color-icon",
@@ -203,15 +234,23 @@
           "strokeWidth": 2.7,
           "lineCap": "round",
           "lineJoin": null,
-          "dashArray": [0.1, 4.3]
+          "dashArray": [
+            0.1,
+            4.3
+          ]
         }
       ]
     },
     {
       "name": "tool/center",
       "swiftCase": "toolCenter",
-      "viewBox": { "width": 24, "height": 24 },
-      "productRenderSizes": [26],
+      "viewBox": {
+        "width": 24,
+        "height": 24
+      },
+      "productRenderSizes": [
+        26
+      ],
       "renderSize": 26,
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-icon",
@@ -257,8 +296,13 @@
     {
       "name": "control/dock",
       "swiftCase": "controlDock",
-      "viewBox": { "width": 28, "height": 28 },
-      "productRenderSizes": [28],
+      "viewBox": {
+        "width": 28,
+        "height": 28
+      },
+      "productRenderSizes": [
+        28
+      ],
       "renderSize": 28,
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-icon",
@@ -294,8 +338,13 @@
     {
       "name": "control/full",
       "swiftCase": "controlFull",
-      "viewBox": { "width": 28, "height": 28 },
-      "productRenderSizes": [28],
+      "viewBox": {
+        "width": 28,
+        "height": 28
+      },
+      "productRenderSizes": [
+        28
+      ],
       "renderSize": 28,
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-icon",
@@ -321,58 +370,36 @@
     {
       "name": "control/settings",
       "swiftCase": "controlSettings",
-      "viewBox": { "width": 28, "height": 28 },
-      "productRenderSizes": [22, 28],
+      "viewBox": {
+        "width": 28,
+        "height": 28
+      },
+      "productRenderSizes": [
+        22,
+        28
+      ],
       "renderSize": 28,
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-icon",
       "dashTexture": null,
-      "notes": "Two horizontal rules, each split around a knob — a sliders mark. The third panel control on boards 10/11/12/13 at 28 (attribute 2, renders 2.00), and the auth-error recovery glyph on board 14 at 22 (attribute 2.18, renders 1.71 — see designAnomaly). Both rules leave 4pt of air either side of their knob, which is r3 + 1.",
-      "designAnomaly": {
-        "instance": "state/error — auth, the Open Settings recovery chip on board 14",
-        "renderSize": 22,
-        "designStrokeWidth": 2.18,
-        "effectiveStrokeWidth": 1.71,
-        "note": "2.18 × 22/28 = 1.71 against the set's 2.0 target — the one off-target instance the board does not defend. Its spec row is also the only glyph row on board 14 missing the '→ 2.00' its three siblings carry, which reads like 2.18 was copied from the 24-viewBox glyphs without re-deriving; 2.545 is what renders 2.0 there. Recorded, not corrected."
-      },
+      "notes": "A six-tooth cog around an open centre — redrawn from the sliders mark the boards used to carry. The third panel control on boards 11/12/13 at 28 (attribute 2, renders 2.00), and the auth-error recovery glyph on board 14 at 22 (attribute 2.545, renders 2.00). The cog is one closed polygon whose tooth corners are rounded by stroke-linejoin rather than by geometry, so the tooth count and the tip radius are the only two numbers to hold. Six teeth, not eight: at the 22 the recovery chip draws it, eight blur into a bumpy circle. Tip 10.27 puts its ink at 82% of the box, matching control/dock beside it in the panel row; root 7.35 leaves the teeth 2.9 units proud, which stays legible against a 2.0 stroke; the r3.27 centre keeps a visible hole at 22. The redraw also retired this glyph's stroke anomaly — the old mark ran 2.18 at 22 on a 28 viewBox and rendered 1.71.",
+      "designAnomaly": null,
       "elements": [
         {
           "type": "path",
-          "d": "M4.4 10H13M21 10h2.6",
-          "fill": "none",
-          "stroke": "var(--color-icon)",
-          "strokeWidth": 2.0,
-          "lineCap": "round",
-          "lineJoin": null,
-          "dashArray": null
-        },
-        {
-          "type": "circle",
-          "cx": 17.0,
-          "cy": 10.0,
-          "r": 3.0,
+          "d": "M10.89 7.34L11.17 4.13L16.83 4.13L17.11 7.34L18.22 7.98L21.13 6.61L23.96 11.52L21.32 13.36L21.32 14.64L23.96 16.48L21.13 21.39L18.22 20.02L17.11 20.66L16.83 23.87L11.17 23.87L10.89 20.66L9.78 20.02L6.87 21.39L4.04 16.48L6.68 14.64L6.68 13.36L4.04 11.52L6.87 6.61L9.78 7.98Z",
           "fill": "none",
           "stroke": "var(--color-icon)",
           "strokeWidth": 2.0,
           "lineCap": null,
-          "lineJoin": null,
-          "dashArray": null
-        },
-        {
-          "type": "path",
-          "d": "M4.4 18H7M15 18h8.6",
-          "fill": "none",
-          "stroke": "var(--color-icon)",
-          "strokeWidth": 2.0,
-          "lineCap": "round",
-          "lineJoin": null,
+          "lineJoin": "round",
           "dashArray": null
         },
         {
           "type": "circle",
-          "cx": 11.0,
-          "cy": 18.0,
-          "r": 3.0,
+          "cx": 14.0,
+          "cy": 14.0,
+          "r": 3.27,
           "fill": "none",
           "stroke": "var(--color-icon)",
           "strokeWidth": 2.0,
@@ -385,8 +412,13 @@
     {
       "name": "ui/selection-marker",
       "swiftCase": "uiSelectionMarker",
-      "viewBox": { "width": 24, "height": 24 },
-      "productRenderSizes": [24],
+      "viewBox": {
+        "width": 24,
+        "height": 24
+      },
+      "productRenderSizes": [
+        24
+      ],
       "renderSize": 24,
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-brand | --color-icon",
@@ -405,15 +437,24 @@
           "strokeWidth": 2.0,
           "lineCap": null,
           "lineJoin": null,
-          "dashArray": [4.6, 3.9]
+          "dashArray": [
+            4.6,
+            3.9
+          ]
         }
       ]
     },
     {
       "name": "ui/check",
       "swiftCase": "uiCheck",
-      "viewBox": { "width": 24, "height": 24 },
-      "productRenderSizes": [22, 24],
+      "viewBox": {
+        "width": 24,
+        "height": 24
+      },
+      "productRenderSizes": [
+        22,
+        24
+      ],
       "renderSize": 24,
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-icon",
@@ -435,8 +476,13 @@
     {
       "name": "ui/cross",
       "swiftCase": "uiCross",
-      "viewBox": { "width": 24, "height": 24 },
-      "productRenderSizes": [22],
+      "viewBox": {
+        "width": 24,
+        "height": 24
+      },
+      "productRenderSizes": [
+        22
+      ],
       "renderSize": 22,
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-icon",
@@ -456,10 +502,43 @@
       ]
     },
     {
+      "name": "ui/chevron-down",
+      "swiftCase": "uiChevronDown",
+      "viewBox": {
+        "width": 16,
+        "height": 16
+      },
+      "productRenderSizes": [
+        16
+      ],
+      "renderSize": 16,
+      "effectiveStrokeWidth": 2.0,
+      "colorToken": "--color-icon",
+      "dashTexture": null,
+      "notes": "Disclosure mark in row/setting on the settings window, and the twenty-first glyph. Authored on a 16 grid rather than board 04's recommended 24 because it is the smallest mark in the product: a 24 viewBox rendered at 16 would need a 3.0 design stroke to land on 2.0 effective, which is further from the set's own weights than drawing it at its render size. Scale is exactly 1.0, so design stroke and effective stroke are both 2. Read off board 10, where the mark is drawn inside the row rather than as a specimen on board 04 — the same route ui/check, ui/cross, ui/retry and control/settings took from boards 11, 13 and 14. Board 04 holds the original sixteen and is not the whole set.",
+      "elements": [
+        {
+          "type": "path",
+          "d": "M4 6.5 8 10.5 12 6.5",
+          "fill": "none",
+          "stroke": "var(--color-icon)",
+          "strokeWidth": 2,
+          "lineCap": "round",
+          "lineJoin": "round",
+          "dashArray": null
+        }
+      ]
+    },
+    {
       "name": "ui/retry",
       "swiftCase": "uiRetry",
-      "viewBox": { "width": 24, "height": 24 },
-      "productRenderSizes": [22],
+      "viewBox": {
+        "width": 24,
+        "height": 24
+      },
+      "productRenderSizes": [
+        22
+      ],
       "renderSize": 22,
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-icon",
@@ -491,8 +570,14 @@
     {
       "name": "composer/voice",
       "swiftCase": "composerVoice",
-      "viewBox": { "width": 24, "height": 24 },
-      "productRenderSizes": [20, 26],
+      "viewBox": {
+        "width": 24,
+        "height": 24
+      },
+      "productRenderSizes": [
+        20,
+        26
+      ],
       "renderSize": 26,
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-icon",
@@ -534,8 +619,14 @@
     {
       "name": "composer/send",
       "swiftCase": "composerSend",
-      "viewBox": { "width": 24, "height": 24 },
-      "productRenderSizes": [22, 26],
+      "viewBox": {
+        "width": 24,
+        "height": 24
+      },
+      "productRenderSizes": [
+        22,
+        26
+      ],
       "renderSize": 26,
       "effectiveStrokeWidth": 2.0,
       "colorToken": "#FFFFFF → --color-surface",
@@ -567,8 +658,13 @@
     {
       "name": "composer/dismiss",
       "swiftCase": "composerDismiss",
-      "viewBox": { "width": 14, "height": 14 },
-      "productRenderSizes": [14],
+      "viewBox": {
+        "width": 14,
+        "height": 14
+      },
+      "productRenderSizes": [
+        14
+      ],
       "renderSize": 14,
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-brand",
@@ -590,8 +686,14 @@
     {
       "name": "chip/explain",
       "swiftCase": "chipExplain",
-      "viewBox": { "width": 24, "height": 24 },
-      "productRenderSizes": [22, 24],
+      "viewBox": {
+        "width": 24,
+        "height": 24
+      },
+      "productRenderSizes": [
+        22,
+        24
+      ],
       "renderSize": 24,
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-brand",
@@ -623,8 +725,14 @@
     {
       "name": "chip/example",
       "swiftCase": "chipExample",
-      "viewBox": { "width": 24, "height": 24 },
-      "productRenderSizes": [22, 24],
+      "viewBox": {
+        "width": 24,
+        "height": 24
+      },
+      "productRenderSizes": [
+        22,
+        24
+      ],
       "renderSize": 24,
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-brand",
@@ -656,8 +764,14 @@
     {
       "name": "chip/exercise",
       "swiftCase": "chipExercise",
-      "viewBox": { "width": 24, "height": 24 },
-      "productRenderSizes": [22, 24],
+      "viewBox": {
+        "width": 24,
+        "height": 24
+      },
+      "productRenderSizes": [
+        22,
+        24
+      ],
       "renderSize": 24,
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-brand",
@@ -689,8 +803,14 @@
     {
       "name": "chip/confused",
       "swiftCase": "chipConfused",
-      "viewBox": { "width": 24, "height": 24 },
-      "productRenderSizes": [22, 24],
+      "viewBox": {
+        "width": 24,
+        "height": 24
+      },
+      "productRenderSizes": [
+        22,
+        24
+      ],
       "renderSize": 24,
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-brand",
@@ -736,8 +856,13 @@
     {
       "name": "board/hinge",
       "swiftCase": "boardHinge",
-      "viewBox": { "width": 26, "height": 24 },
-      "productRenderSizes": [22],
+      "viewBox": {
+        "width": 26,
+        "height": 24
+      },
+      "productRenderSizes": [
+        22
+      ],
       "renderSize": 22,
       "effectiveStrokeWidth": 1.9,
       "colorToken": "--color-ink",

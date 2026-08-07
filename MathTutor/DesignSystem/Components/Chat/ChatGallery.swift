@@ -16,18 +16,18 @@ struct ChatGallery: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 44) {
                 section("01 · Composer") {
-                    specimen("Composer · panel, plain", "301 × 58", on: DS.Color.surfacePanel) {
+                    specimen("Composer · panel, plain", "301 × 50", on: DS.Color.surfacePanel) {
                         Composer(scale: .panel, text: $panelText, onSend: {}, onVoice: {})
                     }
-                    specimen("Composer · panel, no board in reach", "301 × 58", on: DS.Color.surfacePanel) {
+                    specimen("Composer · panel, no board in reach", "301 × 50", on: DS.Color.surfacePanel) {
                         Composer(scale: .panel, text: $panelText, selection: .unavailable, onSend: {})
                     }
-                    specimen("Composer · panel, filled", "301 × 58", on: DS.Color.surfacePanel) {
+                    specimen("Composer · panel, filled", "301 × 50", on: DS.Color.surfacePanel) {
                         Composer(scale: .panel, text: $filledText, onSend: {}, onVoice: {})
                     }
                     specimen(
                         "Composer · panel, capturing",
-                        "301 × 58 — ui/level + elapsed in the text lane, ui/cross leading",
+                        "301 × 50 — ui/level + elapsed in the text lane, ui/cross leading",
                         on: DS.Color.surfacePanel
                     ) {
                         Composer(
@@ -42,7 +42,7 @@ struct ChatGallery: View {
                     }
                     specimen(
                         "Composer · panel, transcribing",
-                        "301 × 58 — state/thinking + \"Transcribing…\"",
+                        "301 × 50 — state/thinking + \"Transcribing…\"",
                         on: DS.Color.surfacePanel
                     ) {
                         Composer(
@@ -55,7 +55,7 @@ struct ChatGallery: View {
                     }
                     specimen(
                         "Composer · panel, partial text arriving",
-                        "301 × 58 — the words, trailed by state/streaming",
+                        "301 × 50 — the words, trailed by state/streaming",
                         on: DS.Color.surfacePanel
                     ) {
                         Composer(
@@ -68,7 +68,7 @@ struct ChatGallery: View {
                     }
                     specimen(
                         "Composer · panel, nothing came back",
-                        "301 × 58 — one 15/18 line in the band above the pill",
+                        "301 × 50 — one 15/18 line in the band above the pill",
                         on: DS.Color.surfacePanel
                     ) {
                         Composer(
@@ -81,7 +81,7 @@ struct ChatGallery: View {
                             note: "I didn't catch anything that time."
                         )
                     }
-                    specimen("Composer · panel, with attached selection", "301 × 96", on: DS.Color.surfacePanel) {
+                    specimen("Composer · panel, with attached selection", "301 × 88", on: DS.Color.surfacePanel) {
                         Composer(
                             scale: .panel,
                             text: $panelText,
@@ -91,7 +91,7 @@ struct ChatGallery: View {
                             onDismissSelection: {}
                         )
                     }
-                    specimen("Composer · full-screen wide", "740 × 80", on: DS.Color.surface) {
+                    specimen("Composer · full-screen wide", "740 × 68", on: DS.Color.surface) {
                         Composer(scale: .fullScreen, text: $fullScreenText, onSend: {}, onVoice: {})
                     }
                     specimen(
@@ -169,15 +169,6 @@ struct ChatGallery: View {
                     specimen("Thread", "301 × 810 — gap 22, padding-bottom 18", on: DS.Color.surfacePanel) {
                         MessageThread(items: Fixtures.thread)
                             .frame(height: 810)
-                    }
-                }
-
-                section("05 · Scroll fade") {
-                    // The board's own "Fade demo": three messages behind the fade, so the
-                    // ramp can be checked against the panel colour it has to match.
-                    specimen("Scroll fade", "301 × 72, over the thread", on: DS.Color.surfacePanel) {
-                        MessageThread(items: Array(Fixtures.thread.prefix(3)))
-                            .frame(height: 200)
                     }
                 }
 

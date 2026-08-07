@@ -13,9 +13,23 @@ extension DS {
         case semibold = 600
     }
 
-    /// `--font-sans`, and the product has no other. `--font-doc` (Montserrat) and
-    /// `--font-mono` (IBM Plex Mono) exist in the export for the documentation boards and
-    /// must never reach a screen.
+    /// Which of the export's families a style is set in.
+    ///
+    /// This used to be a comment rather than a type: *"`--font-sans`, and the product has no
+    /// other. `--font-doc` (Montserrat) and `--font-mono` (IBM Plex Mono) exist in the export
+    /// for the documentation boards and must never reach a screen."* The settings redesign
+    /// breaks half of that — `field/key` sets the masked API key in `--font-mono`, on the
+    /// reasoning that a credential is not prose and its bullet run should mask at an even
+    /// pitch. `--font-doc` is still documentation-only and has no case here.
+    enum FontFamily: Sendable {
+        /// `--font-sans` (Source Sans 3). Everything that is not a credential.
+        case sans
+        /// `--font-mono` (IBM Plex Mono in the design; see `DS.Font.uiFont` for what actually
+        /// renders). Exactly one user: the stored API key.
+        case mono
+    }
+
+    /// `--font-sans`, plus the one monospaced exception `FontFamily` documents.
     enum Font {
         /// The name CoreText files all three weights under.
         ///
@@ -61,16 +75,57 @@ extension DS {
         /// The face the design asks for, or the system's at the same size if the bundle
         /// is missing it. Falling back rather than trapping keeps a missing font a visual
         /// bug in one place instead of a crash on launch.
-        static func uiFont(size: CGFloat, weight: FontWeight) -> UIFont {
-            UIFont(name: postScriptName(for: weight), size: size) ?? .systemFont(ofSize: size)
+        ///
+        /// **`.mono` always takes the fallback path, and that is not an accident.** The
+        /// design names IBM Plex Mono; `UIAppFonts` registers three files and all three are
+        /// Source Sans 3, so there is no Plex to resolve. Asking for it by name would
+        /// silently return the *proportional* system face and quietly lose the one property
+        /// the design chose mono for — an even pitch under the bullet mask. The system's
+        /// monospaced face keeps that property and is honest about not being Plex. Bundling
+        /// `IBMPlexMono-Regular.otf` is the fix; until then this is the substitution, and it
+        /// is the only place in the product where a family other than Source Sans 3 renders.
+        static func uiFont(size: CGFloat, weight: FontWeight, family: FontFamily = .sans) -> UIFont {
+            switch family {
+            case .sans:
+                UIFont(name: postScriptName(for: weight), size: size) ?? .systemFont(ofSize: size)
+            case .mono:
+                .monospacedSystemFont(ofSize: size, weight: uiWeight(for: weight))
+            }
+        }
+
+        /// `FontWeight` is a design token; `UIFont.Weight` is what the system face needs.
+        /// Only the monospaced path uses this — the sans path goes through PostScript names
+        /// precisely so the system never synthesises a weight that was not drawn.
+        static func uiWeight(for weight: FontWeight) -> UIFont.Weight {
+            switch weight {
+            case .regular: .regular
+            case .medium: .medium
+            case .semibold: .semibold
+            }
         }
 
         /// `fixedSize`, not `size`: `Font.custom(_:size:)` scales with Dynamic Type, and
         /// board 09 specifies every position on every screen as an absolute constant. Type
         /// that grows would push content out of boxes whose heights are pinned to the
         /// point. Dynamic Type is listed as undesigned, so this is the honest reading.
-        static func font(size: CGFloat, weight: FontWeight) -> SwiftUI.Font {
-            .custom(postScriptName(for: weight), fixedSize: size)
+        ///
+        /// The monospaced branch takes `.system(size:weight:design:)` for the same reason it
+        /// is fixed here — that initialiser does not scale — so both families stay pinned.
+        static func font(size: CGFloat, weight: FontWeight, family: FontFamily = .sans) -> SwiftUI.Font {
+            switch family {
+            case .sans:
+                .custom(postScriptName(for: weight), fixedSize: size)
+            case .mono:
+                .system(size: size, weight: swiftUIWeight(for: weight), design: .monospaced)
+            }
+        }
+
+        static func swiftUIWeight(for weight: FontWeight) -> SwiftUI.Font.Weight {
+            switch weight {
+            case .regular: .regular
+            case .medium: .medium
+            case .semibold: .semibold
+            }
         }
     }
 
@@ -100,18 +155,28 @@ struct TextStyle: Equatable, Sendable {
     let weight: DS.FontWeight
     /// In em, as the design expresses it. See `trackingPoints`.
     let tracking: CGFloat
+    /// Defaulted, because nine of the ten styles on the scale never set it. See
+    /// `DS.FontFamily` for the one that does and why.
+    let family: DS.FontFamily
 
-    init(size: CGFloat, leading: CGFloat, weight: DS.FontWeight, tracking: CGFloat = DS.Tracking.normal) {
+    init(
+        size: CGFloat,
+        leading: CGFloat,
+        weight: DS.FontWeight,
+        tracking: CGFloat = DS.Tracking.normal,
+        family: DS.FontFamily = .sans
+    ) {
         self.size = size
         self.leading = leading
         self.weight = weight
         self.tracking = tracking
+        self.family = family
     }
 }
 
 extension TextStyle {
-    var uiFont: UIFont { DS.Font.uiFont(size: size, weight: weight) }
-    var font: SwiftUI.Font { DS.Font.font(size: size, weight: weight) }
+    var uiFont: UIFont { DS.Font.uiFont(size: size, weight: weight, family: family) }
+    var font: SwiftUI.Font { DS.Font.font(size: size, weight: weight, family: family) }
 
     /// `.tracking()` takes points; the design states em. One em is the font size, so the
     /// conversion is a multiply — −0.01em at 40pt is −0.4pt. Passing the em value straight
@@ -194,12 +259,9 @@ extension TextStyle {
     /// product — nothing goes below this.
     static let label = TextStyle(size: DS.Size.label, leading: DS.Leading.label, weight: .semibold)
 
-    /// Status bar: 15px text in a 20px band.
-    static let statusBar = TextStyle(size: DS.Size.label, leading: DS.Leading.tight, weight: .semibold)
-
     /// Every style the design specifies, for tests and for a specimen screen.
     static let scale: [TextStyle] = [
-        display, title, lead, chipFullScreen, body, bodyCentred, bodyControl, chipPanel, label, statusBar,
+        display, title, lead, chipFullScreen, body, bodyCentred, bodyControl, chipPanel, label,
     ]
 }
 

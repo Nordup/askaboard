@@ -55,7 +55,7 @@ turn as evidence.
 
 The rejected alternative was making the app a thin client over server state.
 It is the right long-term answer for multi-device, but it means building sync,
-conflict resolution and an offline story for a child's Apple Pencil ink in
+conflict resolution and an offline story for a learner's Apple Pencil ink in
 exchange for capability nobody has asked for yet. One user, one device.
 
 ## Design

@@ -437,14 +437,20 @@ final class IconTests: XCTestCase {
     }
 
     /// The board heads its OS section "DO NOT SHIP". Sixteen product glyphs on board
-    /// 04 plus the four the states boards added, and `ui/selection-marker` is one case
-    /// with two colour states rather than two cases — copy-pasting it is exactly how
-    /// the design file ended up with a grey glyph whose markup claimed to be violet.
-    /// `ui/check` and `ui/cross` are the same story with the evaluation pair.
-    func testTheSetIsTheTwentyProductGlyphs() {
-        XCTAssertEqual(Icon.allCases.count, 20)
+    /// 04 plus the four the states boards added, plus `ui/chevron-down` from the settings
+    /// redesign — and `ui/selection-marker` is one case with two colour states rather than
+    /// two cases — copy-pasting it is exactly how the design file ended up with a grey glyph
+    /// whose markup claimed to be violet. `ui/check` and `ui/cross` are the same story with
+    /// the evaluation pair.
+    ///
+    /// `ui/chevron-down` has no specimen on board 04, and neither do four of its predecessors:
+    /// `ui/check`, `ui/cross` and `ui/retry` were read off boards 13 and 14, and
+    /// `control/settings` off board 11. Board 04 is *"the original sixteen"*, not the set.
+    /// `design/icons.json` is the source of truth and names the board each glyph came from.
+    func testTheSetIsTheTwentyOneProductGlyphs() {
+        XCTAssertEqual(Icon.allCases.count, 21)
         XCTAssertTrue(Icon.allCases.allSatisfy { !$0.rawValue.hasPrefix("os/") })
-        XCTAssertEqual(Set(Icon.allCases.map(\.rawValue)).count, 20)
+        XCTAssertEqual(Set(Icon.allCases.map(\.rawValue)).count, 21)
     }
 
     // MARK: - Transcription
@@ -479,20 +485,45 @@ final class IconTests: XCTestCase {
     /// filling it. The floor is 0.4 rather than a half because two of the marks are
     /// genuinely small in their box: `ui/cross` spans 11.2 of 24 by design, and a
     /// checkmark is wider than it is tall.
+    ///
+    /// `ui/chevron-down` is the first mark the floor genuinely does not fit. It is 8 × 4 on a
+    /// 16 box — half the width and a quarter of the height — because a disclosure caret is an
+    /// intrinsically flat mark and a square viewBox is what keeps it centred in the row's
+    /// 20pt slot. Redrawing it to fill two fifths vertically would make it a wedge, not a
+    /// chevron. So its vertical floor is documented per-glyph rather than the shared one
+    /// being lowered for everything — see `documentedFlatness`.
     func testEveryGlyphFillsItsFrame() {
         for icon in Icon.allCases {
             let viewBox = icon.glyph.viewBox
             let bounds = glyphBounds(icon)
+            let verticalFloor = Self.documentedFlatness[icon] ?? 0.4
 
             XCTAssertGreaterThan(
                 bounds.width / viewBox.width, 0.4,
                 "\(icon.rawValue) covers less than two fifths of its viewBox horizontally"
             )
             XCTAssertGreaterThan(
-                bounds.height / viewBox.height, 0.4,
-                "\(icon.rawValue) covers less than two fifths of its viewBox vertically"
+                bounds.height / viewBox.height, verticalFloor,
+                "\(icon.rawValue) is flatter than its documented floor of \(verticalFloor)"
             )
         }
+    }
+
+    /// Glyphs whose vertical extent is a property of the mark rather than a dropped subpath.
+    /// Asserted rather than merely tolerated, exactly as `documentedOverflow` is: the floor is
+    /// just under the real value, so a chevron that *did* lose an arm still fails.
+    static let documentedFlatness: [Icon: CGFloat] = [
+        .uiChevronDown: 0.2
+    ]
+
+    /// The allowance above is a real property of the design, so the shape it allows is pinned
+    /// here — 8 × 4 on a 16 box, symmetric about the centre.
+    func testTheChevronIsAsFlatAsTheDesignDraws() {
+        let bounds = glyphBounds(.uiChevronDown)
+
+        XCTAssertEqual(bounds.width, 8, accuracy: 0.01)
+        XCTAssertEqual(bounds.height, 4, accuracy: 0.01)
+        XCTAssertEqual(bounds.midX, 8, accuracy: 0.01, "centred horizontally in the 16 box")
     }
 
     /// The bounding-box checks cannot see a dropped subpath in a mark whose two halves
@@ -516,10 +547,12 @@ final class IconTests: XCTestCase {
         XCTAssertEqual(points(.uiRetry, 0), 5)
         XCTAssertEqual(points(.uiRetry, 1), 3)
 
-        // Both rules are split around their knob, so both are two subpaths.
-        XCTAssertEqual(Icon.controlSettings.glyph.elements.count, 4)
-        XCTAssertEqual(points(.controlSettings, 0), 4)
-        XCTAssertEqual(points(.controlSettings, 2), 4)
+        // The gear is a cog polygon plus a centre circle. Its teeth are geometry, not a
+        // stroke effect, so a dropped one is a real transcription error the bounding box
+        // cannot see: six teeth × 4 corners = 24, drawn as one move, 23 linetos and a close
+        // that returns to the start without adding a corner of its own.
+        XCTAssertEqual(Icon.controlSettings.glyph.elements.count, 2)
+        XCTAssertEqual(points(.controlSettings, 0), 25)
     }
 
     // MARK: - Stroke normalisation
@@ -547,47 +580,20 @@ final class IconTests: XCTestCase {
         }
     }
 
-    /// A defect in the design, pinned rather than corrected.
+    /// The set carries no design defect any more, and that is worth a test of its own.
     ///
-    /// `control/settings` is drawn at 22 on a 28 viewBox with `stroke-width: 2.18` in
-    /// the auth-error recovery chip, which renders **1.71** against the set's 2.0
-    /// target — and its spec row is the one glyph row on board 14 missing the
-    /// `→ 2.00` its three siblings carry. The port strokes it at the normalised 2.0
-    /// like every other glyph, so this record is the only place the defect survives.
-    /// When the design is fixed upstream this test fails; that is its whole purpose,
-    /// and the right response is to delete it along with the record it pins.
-    func testControlSettingsStillRendersBelowTargetInTheDesign() throws {
-        let anomaly = try XCTUnwrap(
-            Icon.controlSettings.glyph.designAnomaly,
-            "The off-target auth-chip instance must stay recorded until the design changes."
-        )
-
-        XCTAssertEqual(anomaly.renderSize, 22)
-        XCTAssertEqual(anomaly.designStrokeWidth, 2.18)
-        XCTAssertEqual(anomaly.effectiveStrokeWidth, 1.71, accuracy: 0.005)
-        // The arithmetic the design got wrong, spelled out: 2.18 × 22/28 = 1.71,
-        // where 2.545 is what it would take to render 2.0 at that size.
-        XCTAssertEqual(
-            anomaly.designStrokeWidth * anomaly.renderSize / Icon.controlSettings.glyph.viewBox.width,
-            anomaly.effectiveStrokeWidth,
-            accuracy: 0.005
-        )
-        XCTAssertEqual(
-            2 * Icon.controlSettings.glyph.viewBox.width / anomaly.renderSize,
-            2.545,
-            accuracy: 0.005
-        )
-
-        // The port itself does not reproduce the defect — it is recorded, not inherited.
-        XCTAssertEqual(Icon.controlSettings.glyph.strokeWidth, 2, accuracy: 0.0001)
-    }
-
-    /// It is the only one. A second anomaly should be a deliberate addition, not a
-    /// thing that quietly accumulates.
-    func testControlSettingsIsTheOnlyRecordedAnomaly() {
+    /// It used to: `control/settings` was a sliders mark drawn at 22 on a 28 viewBox with
+    /// `stroke-width: 2.18`, rendering **1.71** against the set's 2.0 target, and its spec
+    /// row was the one glyph row on board 14 missing the `→ 2.00` its three siblings carry.
+    /// Redrawing it as a gear settled that in the design file — the chip instance now runs
+    /// 2.545, which is exactly what renders 2.0 there — so the record went with it.
+    ///
+    /// This asserts the empty state rather than deleting the check, because an anomaly is
+    /// something to add deliberately, not something that should quietly accumulate.
+    func testNoGlyphCarriesARecordedAnomaly() {
         let flagged = Icon.allCases.filter { $0.glyph.designAnomaly != nil }
 
-        XCTAssertEqual(flagged, [.controlSettings])
+        XCTAssertEqual(flagged, [], "\(flagged.map(\.rawValue)) — record the reason, or fix the design")
     }
 
     /// The whole point of normalising in points rather than in viewBox units: the
@@ -711,7 +717,7 @@ final class IconTests: XCTestCase {
         let expected: [Icon: CGFloat] = [
             .toolPen: 28, .toolHighlighter: 28, .toolEraser: 28, .toolLasso: 28, .toolCenter: 26,
             .controlDock: 28, .controlFull: 28, .controlSettings: 28,
-            .uiSelectionMarker: 24, .uiCheck: 24, .uiCross: 22, .uiRetry: 22,
+            .uiSelectionMarker: 24, .uiCheck: 24, .uiCross: 22, .uiChevronDown: 16, .uiRetry: 22,
             .composerVoice: 26, .composerSend: 26, .composerDismiss: 14,
             .chipExplain: 24, .chipExample: 24, .chipExercise: 24, .chipConfused: 24,
             .boardHinge: 22

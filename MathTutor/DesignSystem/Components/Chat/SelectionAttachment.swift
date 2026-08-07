@@ -37,7 +37,9 @@ struct AttachmentStackMetrics: Equatable, Sendable {
     /// closer to the edge than the label does.
     let cardPaddingLeading: CGFloat
     let cardPaddingTrailing: CGFloat
-    /// The label row's own inset inside that, from the `Attached context / Frame` node.
+    /// The label row's own inset inside that, from the `Attached context / Frame` node. A
+    /// *padding*, not the label's offset: the row centres its content in whatever is left of
+    /// the band after this comes off, so the label draws at 13, not at 6. See `SelectionCard`.
     let labelRowPaddingTop: CGFloat
     let labelRowPaddingInline: CGFloat
 
@@ -63,12 +65,16 @@ struct AttachmentStackMetrics: Equatable, Sendable {
 }
 
 extension AttachmentStackMetrics {
-    /// The composer's card (screen 05). A 58pt capsule has a 29pt effective radius, so the
-    /// law gives 38 + 29 = 67 — which is what the design draws.
+    /// The composer's card (screen 05), derived from whatever the pill currently is. A capsule's
+    /// effective radius is half its height, and the law is *card = visible band + that radius* —
+    /// 38 + 29 = 67 against the 58pt pill the board was drawn at, 38 + 25 = 63 now the pill is
+    /// 50. The **total** is 88 either way, because the overlap absorbs the difference: what the
+    /// student sees is the 38pt band and the pill, and only the hidden part of the card moved.
     ///
     /// At full-screen scale the design draws no card at all; board 03 lists it as an open
     /// question and states the extrapolation itself: an 80pt pill *"(80 ÷ 2 = 40, implying
-    /// a 40pt overlap and 40pt top radii by the derived law)"*. That is what is built here.
+    /// a 40pt overlap and 40pt top radii by the derived law)"*. That is what is built here,
+    /// against the pill's live height rather than the 80 it was written for.
     /// The visible band stays 38 because it is the label row's height, and the label's type
     /// does not change between scales.
     static func composer(_ scale: ChatScale, width: CGFloat) -> Self {
@@ -170,7 +176,13 @@ struct SelectionCard: View {
 
     var body: some View {
         labelRow
-            .frame(width: metrics.labelRowWidth, height: metrics.visibleBand, alignment: .top)
+            // `align-items: center` sitting on top of the row's own `padding-top`, which is
+            // not the same thing as pinning the content to the top of the band. The 6pt
+            // padding comes off the 38 first and the 18pt label centres in the 32 that are
+            // left: 6 + (32 − 18) ÷ 2 = 13, which is the `y` both instances in the file
+            // report — screen 05's card and screen 08's. Pinned to `.top` the label lands at
+            // 6 instead, hugging the card's top edge with 14pt of tint under it.
+            .frame(width: metrics.labelRowWidth, height: metrics.visibleBand, alignment: .center)
             .padding(.leading, metrics.cardPaddingLeading)
             .padding(.trailing, metrics.cardPaddingTrailing)
             // `align-items: flex-start` — the label pins to the band, not to the middle of

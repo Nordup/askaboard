@@ -21,13 +21,11 @@ final class LayoutTests: XCTestCase {
         XCTAssertEqual(l.screenWidth, 1376, "screenWidth")
         XCTAssertEqual(l.screenHeight, 1032, "screenHeight")
 
-        // Vertical lanes · status band ends at 40, content starts 28 below it.
-        XCTAssertEqual(l.statusBarY, 16, "statusBarY")
-        XCTAssertEqual(l.statusBarHeight, 24, "statusBarHeight")
-        XCTAssertEqual(l.statusBarBottom, 40, "statusBarBottom")
-        XCTAssertEqual(l.contentTop, 68, "contentTop")
+        // Vertical lanes · nothing reserved, so all four edges are the plain 28.
+        XCTAssertEqual(l.statusBarBottom, 0, "statusBarBottom")
+        XCTAssertEqual(l.contentTop, 28, "contentTop")
         XCTAssertEqual(l.contentBottom, 1004, "contentBottom")
-        XCTAssertEqual(l.contentHeight, 936, "contentHeight")
+        XCTAssertEqual(l.contentHeight, 976, "contentHeight")
 
         // Horizontal lanes, docked · 1376 − 28 − 72 − 24 − 337 − 24 − 28 = 863.
         XCTAssertEqual(l.railX, 28, "railX")
@@ -66,8 +64,6 @@ final class LayoutTests: XCTestCase {
 
         XCTAssertEqual(ScreenLayout.screenWidth, l.screenWidth)
         XCTAssertEqual(ScreenLayout.screenHeight, l.screenHeight)
-        XCTAssertEqual(ScreenLayout.statusBarY, l.statusBarY)
-        XCTAssertEqual(ScreenLayout.statusBarHeight, l.statusBarHeight)
         XCTAssertEqual(ScreenLayout.statusBarBottom, l.statusBarBottom)
         XCTAssertEqual(ScreenLayout.contentTop, l.contentTop)
         XCTAssertEqual(ScreenLayout.contentBottom, l.contentBottom)
@@ -311,63 +307,50 @@ final class LayoutTests: XCTestCase {
         )
         XCTAssertEqual(deep.statusBarBottom, 59)
         XCTAssertEqual(deep.contentTop, 59 + DS.Space.edge)
-        XCTAssertEqual(deep.statusBarY, 59 - deep.statusBarHeight, "the band bottom-aligns in the region")
-        XCTAssertEqual(deep.statusBarY + deep.statusBarHeight, deep.statusBarBottom)
     }
 
-    /// **The regression guard for the pixel diff.** `reference` is constructed with the design's
-    /// own 40pt top inset, so removing the floor cannot move it: the diff against
-    /// `design/reference/*.png` still has 40 and 68 to compare against, and it has them because
-    /// the fixture supplies the number rather than because the model rescues it.
-    func testReferenceStillMeasuresFromTheDesignsFortyPointBand() {
+    /// **The regression guard for the pixel diff.** `reference` reserves nothing, which is both
+    /// what the boards draw and what the shipping app produces once it hides the system bar. The
+    /// fixture is therefore the same layout the device makes, not a second set of numbers that
+    /// has to be kept in step with it.
+    func testReferenceReservesNothingJustLikeADeviceWithTheBarHidden() {
         let l = ScreenLayout.reference
 
-        XCTAssertEqual(l.safeAreaTop, 40, "the design's inset, passed in explicitly")
-        XCTAssertEqual(l.statusBarBottom, 40, "1376 × 24 at y = 16 → band bottom y = 40")
-        XCTAssertEqual(l.statusBarY, 16, "the fixture band still sits where the board draws it")
-        XCTAssertEqual(l.contentTop, 68, "40 + 28 — every panel on every screen")
+        XCTAssertEqual(l.safeAreaTop, 0, "the boards reserve nothing above the content")
+        XCTAssertEqual(l.statusBarBottom, 0)
+        XCTAssertEqual(l.contentTop, 28, "0 + 28 — every panel on every screen")
         XCTAssertEqual(l.contentBottom, 1004)
-        XCTAssertEqual(l.contentHeight, 936, "1032 − 68 − 28")
+        XCTAssertEqual(l.contentHeight, 976, "1032 − 28 − 28")
 
-        // And it gets there by the ordinary rule, with nothing floored: the same size handed
-        // the same inset through the ordinary initialiser lands in the same place.
-        let rebuilt = ScreenLayout(
-            size: CGSize(width: 1376, height: 1032),
-            safeArea: EdgeInsets(top: 40, leading: 0, bottom: 0, trailing: 0)
-        )
+        // And it gets there by the ordinary rule: the same size with no insets, through the
+        // ordinary initialiser, is the same layout. The fixture is not a special case.
+        let rebuilt = ScreenLayout(size: CGSize(width: 1376, height: 1032))
         XCTAssertEqual(rebuilt, l)
         XCTAssertEqual(rebuilt.contentTop, l.statusBarBottom + DS.Space.edge)
     }
 
-    /// The point of removing the floor. A 13" iPad's landscape status bar ends at 24, not 40,
-    /// so the design's 68 was costing the board 16 points of height on the very device it was
-    /// drawn for — air the design never asked for, bought back here.
-    func testAThirteenInchIPadReclaimsTheSixteenPointsTheFloorWasSpending() {
+    /// Nothing in the app asks for a band any more, but the rule is the expression rather than
+    /// the zero it normally evaluates with: a window that *does* report a reserved region gets
+    /// `inset + 28`, and this is what showing the bar would cost.
+    func testAReservedBandStillPushesTheContentTopDown() {
         let l = ScreenLayout(
             size: CGSize(width: 1376, height: 1032),
             safeArea: EdgeInsets(top: 24, leading: 0, bottom: 0, trailing: 0)
         )
 
-        XCTAssertEqual(l.statusBarBottom, 24, "where iPadOS's landscape status bar actually ends")
+        XCTAssertEqual(l.statusBarBottom, 24, "where iPadOS's landscape status bar would end")
         XCTAssertEqual(l.contentTop, 52, "24 + 28")
         XCTAssertEqual(l.contentBottom, 1004, "1032 − 28 — the bottom edge did not move")
         XCTAssertEqual(l.contentHeight, 952, "1032 − 52 − 28")
 
-        // Stated as the reclaim, because reclaiming it is the change: the old floor put the
-        // content top at 68 on this device too, and everything below it 16 points lower.
-        let flooredContentTop: CGFloat = 68
-        XCTAssertEqual(flooredContentTop - l.contentTop, 16, "16 points of content band, recovered")
-        XCTAssertEqual(l.contentHeight - ScreenLayout.reference.contentHeight, 16)
+        // Stated as the cost, because hiding the bar is what buys it back: a visible band takes
+        // 24 points out of the safe band the boards draw their content in.
+        XCTAssertEqual(ScreenLayout.reference.contentHeight - l.contentHeight, 24)
 
         // Nothing horizontal moved: this is a vertical change only.
         XCTAssertEqual(l.railX, ScreenLayout.reference.railX)
         XCTAssertEqual(l.boardWidthDocked, ScreenLayout.reference.boardWidthDocked)
         XCTAssertEqual(l.panelX, ScreenLayout.reference.panelX)
-
-        // The fixture band lands flush at the top, which is exactly where iPadOS draws its own
-        // on this device — 24 of reserved region for a 24pt band leaves nothing above it.
-        XCTAssertEqual(l.statusBarY, 0)
-        XCTAssertEqual(l.statusBarY + l.statusBarHeight, l.statusBarBottom)
     }
 
     /// A home-button iPad reserves 20 — the shallowest bar any supported device has, and four
@@ -384,19 +367,15 @@ final class LayoutTests: XCTestCase {
         XCTAssertEqual(l.contentHeight, 692, "768 − 48 − 28")
         XCTAssertEqual(l.fit, .threeLane)
 
-        // 20 − 24 would be −4. The fixture band clamps to the top of the screen instead of
-        // bottom-aligning itself off it, and still does not reach the content.
-        XCTAssertEqual(l.statusBarY, 0, "clamped, not −4")
-        XCTAssertLessThanOrEqual(l.statusBarY + l.statusBarHeight, l.contentTop)
-
         assertNothingIsNegative(l, "home-button iPad")
         assertEverythingLandsInsideTheScreen(l, "home-button iPad")
         assertTheLanesClose(l, "home-button iPad")
     }
 
-    /// With the system bar hidden nothing is reserved, and `--space-edge` falls back to its
-    /// plain definition — an inset from the screen edge — because with no obstruction the
-    /// screen edge is what is nearest. Not a special case: the same expression, with a zero in it.
+    /// **This is the shipping case.** `RootView` hides the system bar, so nothing is reserved
+    /// and `--space-edge` falls back to its plain definition — an inset from the screen edge,
+    /// because with no obstruction the screen edge is what is nearest. Not a special case: the
+    /// same expression, with a zero in it. It is also what the boards draw.
     func testAHiddenStatusBarLeavesContentTopAtThePlainEdgeToken() {
         let l = ScreenLayout(size: CGSize(width: 1376, height: 1032))
 
@@ -410,7 +389,6 @@ final class LayoutTests: XCTestCase {
         // either — so the two ends are symmetric down to the point.
         XCTAssertEqual(l.contentTop, l.screenHeight - l.contentBottom)
 
-        XCTAssertEqual(l.statusBarY, 0, "clamped, not −24")
         assertEverythingLandsInsideTheScreen(l, "status bar hidden")
     }
 
@@ -634,17 +612,6 @@ final class LayoutTests: XCTestCase {
             XCTAssertLessThanOrEqual(region.x + region.width, right, "\(name) · \(region.name) right", file: file, line: line)
         }
 
-        // The fixture band is drawn inside the screen and never reaches the content, whatever
-        // the system reserved — including the sizes where it reserved less than the band's own
-        // 24, which is where the bottom-aligned `statusBarBottom − 24` would have gone negative.
-        XCTAssertGreaterThanOrEqual(l.statusBarY, 0, "\(name) · statusBarY", file: file, line: line)
-        XCTAssertLessThanOrEqual(
-            l.statusBarY + l.statusBarHeight,
-            l.contentTop,
-            "\(name) · fixture band vs. content",
-            file: file,
-            line: line
-        )
         XCTAssertGreaterThanOrEqual(l.contentTop, l.statusBarBottom, "\(name) · contentTop", file: file, line: line)
         XCTAssertLessThanOrEqual(l.contentBottom, l.screenHeight - l.safeAreaBottom, "\(name) · contentBottom", file: file, line: line)
         XCTAssertLessThanOrEqual(

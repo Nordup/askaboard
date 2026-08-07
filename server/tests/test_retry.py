@@ -20,6 +20,27 @@ def test_rate_limit_429_is_retried():
     assert classify(429, {"error": {"code": "rate_limit_exceeded"}}).retry is True
 
 
+@pytest.mark.parametrize("code", [
+    "credit_balance_exhausted",
+    "organization_spend_limit_exceeded",
+    "project_spend_limit_exceeded",
+    "organization_usage_limit_exceeded",
+    "insufficient_quota",
+])
+def test_billing_429s_are_never_retried_when_the_body_is_already_unwrapped(code):
+    # openai's own exception handling already unwraps the response body's
+    # "error" key onto APIStatusError.body before classify() ever sees it, so
+    # a caller passing that attribute through hands us {"code": ...} directly
+    # rather than {"error": {"code": ...}}. Both shapes must classify the same.
+    decision = classify(429, {"code": code, "message": "no credits"})
+    assert decision.retry is False
+    assert "billing" in decision.reason
+
+
+def test_rate_limit_429_is_retried_when_the_body_is_already_unwrapped():
+    assert classify(429, {"code": "rate_limit_exceeded"}).retry is True
+
+
 def test_bare_429_with_no_body_is_retried():
     assert classify(429, None).retry is True
 

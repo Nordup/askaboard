@@ -14,17 +14,22 @@ import SwiftUI
 ///
 /// ```
 /// board width  = 1376 − 28 − 72 − 24 − 337 − 24 − 28 = 863
-/// content top  = 40 + 28 = 68
-/// safe band    = 1032 − 68 − 28 = 936
+/// content top  = 0 + 28 = 28
+/// safe band    = 1032 − 28 − 28 = 976
 /// collapsed    = 863 + 24 + 337 = 1224
 /// column x     = 68 + (1376 − 68 − 740) ÷ 2 = 352
 /// ```
 ///
 /// Only the left-hand operand of each is device-specific. Substituting the real width, the
-/// real height and the real status-bar bottom for 1376, 1032 and 40 is therefore *more*
+/// real height and the real status-bar bottom for 1376, 1032 and 0 is therefore *more*
 /// faithful to the board than the constants were: the constants were the answers, and this
 /// type is the working. `ScreenLayout.reference` feeds the board's own three numbers back in
 /// and reproduces every published value to the point — `LayoutTests` asserts each one.
+///
+/// **The boards reserve nothing at the top.** They once drew a 24pt status band at y 16 and
+/// measured content from `40 + 28 = 68`; the 16 was a drawing's margin that no iPad reports,
+/// and the band itself is gone. The app hides the system bar (`RootView`), so `safeAreaTop`
+/// is 0 and `--space-edge` falls back to its plain definition on all four sides.
 ///
 /// **What is fixed and what flexes.** The rail is 72 because `--container-rail` says *"fixed —
 /// the rail never resizes"*, and the docked panel is 337 because that is what leaves the 301pt
@@ -74,14 +79,12 @@ struct ScreenLayout: Equatable, Sendable {
     /// gets measured behaves exactly as it did before this file changed.
     static let reference = ScreenLayout(
         size: CGSize(width: DS.Container.screen, height: referenceHeight),
-        // `1376 × 24 at y = 16 → band bottom y = 40`. The 40 is the **design's** top inset,
-        // passed in explicitly because no iPad reports it: landscape gives 24 where there is a
-        // camera housing and 20 where there is a home button. Feeding the board its own number
-        // is the whole job of this fixture — it is what holds `statusBarBottom` at 40 and
-        // `contentTop` at 68 so the pixel diff against `design/reference/*.png` keeps working,
-        // and it is the reason `statusBarBottom` itself needs no floor. `LayoutTests` asserts
-        // both numbers off this constructor rather than off the property.
-        safeArea: EdgeInsets(top: 40, leading: 0, bottom: 0, trailing: 0)
+        // Nothing reserved on any edge. The app hides the system status bar, so a real 13"
+        // iPad reports a zero top inset and the reference fixture is the *same* layout the
+        // device produces rather than a second set of numbers that has to be kept in step.
+        // That is what makes the pixel diff against `design/reference/*.png` meaningful: the
+        // boards, the fixture and the device now all put `contentTop` at 28.
+        safeArea: EdgeInsets()
     )
 
     /// `--container-screen` carries the reference width; the export has no height token, so
@@ -97,12 +100,7 @@ struct ScreenLayout: Equatable, Sendable {
     /// is cut out of this, not out of `size.width`.
     var usableWidth: CGFloat { max(0, size.width - safeAreaLeading - safeAreaTrailing) }
 
-    // MARK: - Status band and vertical lanes
-
-    /// The band the app draws itself. Fixed at 24: it is one line of `TextStyle.statusBar`
-    /// (15/20) plus its optical padding, so it is a type measurement, not a layout one.
-    static let statusBarHeight: CGFloat = 24
-    var statusBarHeight: CGFloat { Self.statusBarHeight }
+    // MARK: - Status region and vertical lanes
 
     /// Where the system's status region ends — the y that `--space-edge` is measured down from.
     ///
@@ -114,38 +112,25 @@ struct ScreenLayout: Equatable, Sendable {
     /// a drawing's margin, not hardware — so flooring at 40 silently spent 16 points of every
     /// real screen buying back a gap that does not exist on it.
     ///
-    /// It is therefore the inset, unmodified, and `reference` still answers 40 because it is
-    /// *constructed* with the design's 40 rather than rescued by a `max` after the fact. The
-    /// design's own `16 + 24` band survives only where it is actually drawn — `StatusBarMetrics`,
-    /// DEBUG, which is the `--ui-fixture` run that has to reproduce the reference screenshots.
+    /// It is therefore the inset, unmodified. The app hides the system bar (`RootView`), so on
+    /// device this is 0 and `contentTop` is the edge token itself — which is what the boards
+    /// draw. It stays an expression rather than becoming a constant because the value is still
+    /// whatever the window reports: a Split View, or a device that reserves something at the
+    /// top regardless, gets the inset applied with no special case anywhere.
     var statusBarBottom: CGFloat { safeAreaTop }
-
-    /// Where a 24pt app-drawn band goes, for the DEBUG fixture status bar and nothing else.
-    ///
-    /// The band bottom-aligns inside whatever the system reserved, so its baseline lands where
-    /// iPadOS would have drawn its own: `40 − 24 = 16` on the reference device, and on a real
-    /// 13" iPad `24 − 24 = 0`, which is right — the fixture bar sits flush with the top of the
-    /// screen, exactly where the system's is. Clamped at 0 because a reserved region shorter
-    /// than the band (a home-button iPad's 20, or nothing at all with the bar hidden) would
-    /// otherwise bottom-align the band *off the top of the screen*. It never reaches
-    /// `contentTop`: `max(0, t − 24) + 24 ≤ t + 28` for every `t ≥ 0`.
-    ///
-    /// Release builds draw no band at all, so on device this value is unread — see `StatusBar`.
-    var statusBarY: CGFloat { max(0, statusBarBottom - Self.statusBarHeight) }
 
     /// `--space-edge` measured from the **obstruction, not the glass**. This is the rule the
     /// whole vertical model turns on, and `contentBottom` is the same sentence.
     ///
-    /// Board 01 states the token as 28 "on all four sides", then measures the top from the
-    /// status bar rather than the screen: *"the status band ends at y 40, so content starts at
-    /// 40 + 28 = 68."* That is the designer applying the inset to the nearest obstruction. The
-    /// boards simply never had a home indicator to apply the same rule to.
+    /// Board 01 states the token as 28 *"on all four sides"* and, now that nothing is reserved
+    /// above the content, that is literally what every edge gets: *"content starts at
+    /// 0 + 28 = 28."* The boards used to measure the top from a 40pt status band instead, which
+    /// is the same rule — the inset applied to the nearest obstruction — evaluated back when
+    /// there was an obstruction to apply it to.
     ///
-    /// So: `40 + 28 = 68` on the reference device, `24 + 28 = 52` on a real 13" iPad,
-    /// `20 + 28 = 48` on a home-button iPad, and `0 + 28 = 28` with the status bar hidden —
-    /// the last of which is not a special case but `--space-edge`'s plain definition, an inset
-    /// from the screen edge, because with nothing reserved the screen edge *is* the nearest
-    /// obstruction.
+    /// So: `0 + 28 = 28` on the reference device and on any device with the bar hidden, and
+    /// still `24 + 28 = 52` / `20 + 28 = 48` if something ever does reserve a band. None of
+    /// those is a special case; they are one expression with a different number in it.
     var contentTop: CGFloat { statusBarBottom + DS.Space.edge }
 
     /// `--space-edge` from the bottom obstruction: the home indicator where there is one, the
@@ -161,8 +146,8 @@ struct ScreenLayout: Equatable, Sendable {
     /// measured that way either; the status bar is cleared by 28, not overlapped by 8.
     var contentBottom: CGFloat { size.height - safeAreaBottom - DS.Space.edge }
 
-    /// `1032 − 68 − 28 = 936`. The safe band is the height lane with give in it, so it takes
-    /// whatever the status band and the two edge insets leave.
+    /// `1032 − 28 − 28 = 976`. The safe band is the height lane with give in it, so it takes
+    /// whatever the status region and the two edge insets leave.
     var contentHeight: CGFloat { max(0, contentBottom - contentTop) }
 
     // MARK: - Horizontal lanes, docked layout (screens 05 and 08)
@@ -354,7 +339,6 @@ extension ScreenLayout {
     static var screenWidth: CGFloat { reference.screenWidth }
     static var screenHeight: CGFloat { reference.screenHeight }
 
-    static var statusBarY: CGFloat { reference.statusBarY }
     static var statusBarBottom: CGFloat { reference.statusBarBottom }
 
     static var contentTop: CGFloat { reference.contentTop }

@@ -33,16 +33,6 @@ enum PanelActionSlotMetrics {
     }
 }
 
-struct PanelActionSlot<Content: View>: View {
-    @ViewBuilder var content: () -> Content
-
-    var body: some View {
-        content()
-            .frame(width: PanelActionSlotMetrics.width, height: PanelActionSlotMetrics.height)
-            .padding(.bottom, PanelActionSlotMetrics.bottomInset)
-    }
-}
-
 /// Board 11's `No-key state`, and the flow around it.
 ///
 /// The block itself is bare text on the panel — no fill, no radius, no shadow — at the same
@@ -102,28 +92,24 @@ enum NoAPIKeyCopy {
 /// the panel precisely so a modal never lands on top of a board they could be drawing on.
 ///
 /// Fills the tutor panel's content area, below `Panel controls`. The controls belong to the
-/// panel and stay the caller's, which is why the only callback here is the one the primary
-/// button needs: board 10's `field/key` is the key-entry surface, so *"Add your API key"*
-/// goes there.
+/// panel and stay the caller's.
+///
+/// **The primary button is not here.** It used to be, bottom-anchored behind a `Spacer`, and
+/// that put it in the panel's *fill* — the same layer as the thread, underneath the bottom
+/// fade. The fade then painted an 80% veil straight over the one control on the screen, which
+/// is what board 11 does not draw and what the panel looked like until this moved.
+///
+/// It belongs to `ComposerSlot`, which is the panel's bottom slot and paints above the fade.
+/// `PanelActionSlotMetrics`' own note says why that is the right home rather than a workaround:
+/// *"one slot, every state"* — a composer on boards 05/08/12, `btn/primary` on board 11, the
+/// same band either way. So this view is the block, and the slot's occupant is the panel's.
 struct NoAPIKeyState: View {
-    let onOpenSettings: () -> Void
-
     var body: some View {
         VStack(spacing: 0) {
             Orb(NoAPIKeyMetrics.orb)
                 .padding(.top, NoAPIKeyMetrics.orbTopMargin)
 
             block.padding(.top, NoAPIKeyMetrics.blockTopMargin)
-
-            // The bottom anchor itself: the slot takes the panel's floor and this absorbs
-            // whatever is left above it, which on the reference panel is the board's
-            // panel-local 860 and on a shorter one is simply less slack.
-            Spacer(minLength: 0)
-
-            PanelActionSlot {
-                PrimaryButton(title: NoAPIKeyCopy.action, scale: .panel, action: onOpenSettings)
-                    .accessibilityIdentifier("add-api-key")
-            }
         }
         .frame(width: NoAPIKeyMetrics.width, alignment: .top)
         .frame(maxHeight: .infinity, alignment: .top)
@@ -166,7 +152,7 @@ struct NoAPIKeyState: View {
     ) {
         VStack(spacing: 0) {
             PanelControls(onDock: {}, onFullScreen: {})
-            NoAPIKeyState(onOpenSettings: {})
+            NoAPIKeyState()
         }
     }
     .padding(44)

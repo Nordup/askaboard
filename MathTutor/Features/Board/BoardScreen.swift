@@ -15,15 +15,12 @@ import SwiftUI
 /// drawn in, which on the reference screen is the same arithmetic with the same answers.
 /// There is still no `GeometryReader` here: the measurement happens once, at the root.
 ///
-/// **This screen draws no status band.** It used to draw `StatusBar` unconditionally, which on
-/// a device is a second, wrong band sitting under the real one — iPadOS owns that region now
-/// and `contentTop` is measured from it. The design's own band survives only for the
-/// `--ui-fixture` run that has to reproduce `design/reference/screen-0*.png`, and it is applied
-/// once, at the root, by `FixtureScreen` — `.fixtureStatusBar(isEnabled:width:)` compiled out
-/// of release builds entirely. Drawing it here as well would put two identical bands on the
-/// fixture screenshot, so this file simply stopped having an opinion about it; `SettingsScreen`
-/// is the one surface that takes the decision again, because a `fullScreenCover` covers the
-/// root's overlay.
+/// **This screen draws no status band, and neither does anything else.** It used to draw a
+/// `StatusBar` unconditionally, and an app-drawn band survived for a while after that so the
+/// `--ui-fixture` run could reproduce reference PNGs that had one. The boards were then redrawn
+/// without a bar at all, so the component went with them: the app hides the system bar at the
+/// root and `contentTop` is the plain `--space-edge` from the glass. `SettingsScreen` repeats
+/// the `.statusBarHidden(true)` only because a `fullScreenCover` owns the bar while it is up.
 struct BoardScreen: View {
     @EnvironmentObject private var store: TutorStore
     @EnvironmentObject private var uiState: UIState
@@ -63,7 +60,11 @@ struct BoardScreen: View {
         // that is not the window they were handed — so the screen publishes the layout it drew
         // itself in rather than letting its own children disagree with it.
         .environment(\.screenLayout, layout)
-        .fullScreenCover(isPresented: $isShowingSettings) { SettingsScreen() }
+        // Not a `fullScreenCover` any more, and it cannot be one: the redesigned settings is
+        // a window *over* the board, and a cover would replace the very thing it blurs. The
+        // modifier wraps the whole screen rather than adding a branch to the stack above,
+        // because the blur has to reach the rail and the panel too — see `SettingsPresentation`.
+        .settingsWindow(isPresented: $isShowingSettings)
         // One microphone, so one notice — attached here rather than in each surface, because
         // the panel and the full-screen column are the same composer at two scales.
         .dictationNotice(dictation)

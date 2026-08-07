@@ -22,6 +22,8 @@ struct TutorFullScreen: View {
     let actions: TutorActions
 
     private var column: TutorColumnMetrics { TutorColumnMetrics(layout: layout) }
+    /// The composer and the band behind it, as one thing. See `ComposerSlotMetrics`.
+    private var slot: ComposerSlotMetrics { .fullScreen(columnWidth: column.width) }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -29,10 +31,23 @@ struct TutorFullScreen: View {
             case .start: startColumn
             case .active: threadColumn
             }
-            composer.offset(
-                x: column.x,
-                y: column.composerTop(isAttached: uiState.isSelectionAttached)
-            )
+
+            // Outside the switch, for the same reason the composer is: the slot belongs to the
+            // input field, not to the conversation. The fade used to live inside `threadColumn`
+            // and that was the bug — the greeting state has a composer floating over content
+            // that scrolls whenever the chip grid wraps, and it was the one surface in the
+            // product drawing that composer with nothing behind it.
+            //
+            // Bottom-anchored inside the slot, so nothing here has to know whether a selection
+            // is attached: the card grows upward out of the band and the pill stays on 1004.
+            ComposerSlot(metrics: slot, surfaceColor: DS.Color.surface) { composer }
+                .offset(x: column.x, y: column.bottom - slot.band)
+            // Outside the switch on purpose. Boards 07 and 13 draw the same gear in the same
+            // lane, and the two used to disagree — 13 had a controls row and 07 had no chrome
+            // at all, which left Settings unreachable from the greeting. Hanging it off the
+            // conversation phase is exactly how that comes back.
+            SettingsButton(action: actions.openSettings)
+                .offset(x: column.settingsX, y: column.top)
         }
     }
 
@@ -58,8 +73,15 @@ struct TutorFullScreen: View {
     /// bleeds past the last one — so wrapping a column that fits would cost exactly the pixels
     /// this port is diffed on.
     ///
-    /// There are no `Panel controls` here — board 07 draws none, and the board peek is the
-    /// screen's only affordance. Adding the row would put chrome on a board that has none.
+    /// The block does not move for `btn/settings` at the width the board was drawn at: the
+    /// gear sits at `contentRight − 32`, 224 points clear of the column's right edge, so the
+    /// greeting keeps its 150. It *does* move on a narrow enough window, where `columnWidth`
+    /// stops centring 740 and starts fitting the region until the column reaches the gear —
+    /// every portrait iPad, in practice. `columnTop` is that decision, and the column gives up
+    /// the same 32pt band the thread already reserves rather than a number invented here.
+    ///
+    /// Board 07 draws no other chrome — the board peek is still the way back — so this stays a
+    /// column with a gear in the corner, not a column under a header.
     @ViewBuilder
     private var startColumn: some View {
         if column.startScrolls {
@@ -72,7 +94,7 @@ struct TutorFullScreen: View {
             .frame(width: column.width, height: column.startRegionHeight)
             .scrollBounceBehavior(.basedOnSize)
             .defaultScrollAnchor(.bottom)
-            .offset(x: column.x, y: column.top)
+            .offset(x: column.x, y: column.columnTop)
         } else {
             startBlock.offset(x: column.x, y: column.greetingTop)
         }
@@ -102,19 +124,32 @@ struct TutorFullScreen: View {
     /// 68 → 100, thread 100 → 900, a 24pt gap, composer 924 → 1004. It reaches the same
     /// composer line screen 07 does, so only the region above it changes.
     private var threadColumn: some View {
-        Group {
-            TutorControlsRow(
+        ZStack(alignment: .top) {
+            TutorThreadView(
+                scale: .fullScreen,
                 width: column.width,
-                onDock: uiState.collapseTutor,
-                onFullScreen: uiState.expandTutorToFullScreen,
-                onSettings: actions.openSettings
+                clearing: column.threadClearing,
+                actions: actions
             )
-            .offset(x: column.x, y: column.top)
+            .frame(width: column.width, height: column.threadHeight)
 
-            TutorThreadView(scale: .fullScreen, width: column.width, actions: actions)
-                .frame(width: column.width, height: column.threadHeight)
-                .offset(x: column.x, y: column.threadTop)
+            // The bottom fade is not here — it hangs off the composer in `body`, so the
+            // greeting state gets the identical one. Only the top fade is the thread's, because
+            // only the thread has an oldest message to run up behind the gear.
+
+            // *"full screen — top 740 × 64… #FFFFFF… no radius"*. Same component, different
+            // white: the reading column is `--color-surface`, and a fade of the panel's grey
+            // would bleed a visibly different white over the messages — the one failure board
+            // 03 warns about by name.
+            ScrollFade(
+                width: column.width,
+                metrics: .top(for: .fullScreen),
+                color: DS.Color.surface
+            )
+            .frame(height: column.threadHeight, alignment: .top)
         }
+        .frame(width: column.width, height: column.threadHeight)
+        .offset(x: column.x, y: column.threadTop)
     }
 
     /// Board 07 draws no marquee and no attachment card in the wide composer, so the resting
@@ -173,6 +208,11 @@ struct TutorColumnMetrics: Equatable, Sendable {
     let x: CGFloat
     /// `min(740, region − 2 × edge)`.
     let width: CGFloat
+    /// Where the screen's content stops on the right — `--space-edge` in from the trailing
+    /// safe area, the same lane the docked panel's right edge lands on. Board 13 anchors the
+    /// gear here rather than to the reading column, which on the reference screen is the
+    /// difference between x 1316 and x 1060.
+    let contentRight: CGFloat
     /// The content band's top and bottom, the same two lines every other screen is cut from.
     let top: CGFloat
     let bottom: CGFloat
@@ -188,6 +228,7 @@ struct TutorColumnMetrics: Equatable, Sendable {
     init(layout: ScreenLayout) {
         x = layout.columnX
         width = layout.columnWidth
+        contentRight = layout.contentRight
         top = layout.contentTop
         bottom = layout.contentBottom
         greetingHeight = GreetingMetrics.for(.fullScreen, width: layout.columnWidth).totalHeight
@@ -213,7 +254,7 @@ struct TutorColumnMetrics: Equatable, Sendable {
     /// the column above it does not move. A greeting that jumped 38 points the moment a
     /// selection was attached would be the composer redrawing the screen behind it.
     var startRegionHeight: CGFloat {
-        max(0, composerTop(isAttached: false) - Self.suggestionsToComposer - top)
+        max(0, composerTop(isAttached: false) - Self.suggestionsToComposer - columnTop)
     }
 
     /// Greeting, the board's 174, grid. The one rigid run in the column.
@@ -233,16 +274,54 @@ struct TutorColumnMetrics: Equatable, Sendable {
     var startScrolls: Bool { startContentHeight > startRegionHeight }
 
     /// `68 + 82 = 150` on the reference screen.
-    var greetingTop: CGFloat { top + startSlack }
+    var greetingTop: CGFloat { columnTop + startSlack }
 
     /// `150 + 268 + 174 = 592` on the reference screen.
     var suggestionsTop: CGFloat { greetingTop + greetingHeight + Self.greetingToSuggestions }
 
-    /// Board 13: the thread starts where the controls row ends.
-    var threadTop: CGFloat { top + TutorPanelMetrics.controlsHeight }
+    /// `btn/settings`, pinned to the screen's trailing edge rather than the column's —
+    /// `1348 − 32 = 1316` on the reference screen. Clamped at the column's own left edge so a
+    /// window too narrow to hold both cannot push the gear off the front of the peek.
+    var settingsX: CGFloat { max(x, contentRight - TutorPanelMetrics.controlButton) }
 
-    /// Board 13: `--space-gap` between the thread's bottom and the composer.
-    var threadHeight: CGFloat {
-        max(0, composerTop(isAttached: false) - DS.Space.gap - threadTop)
+    /// Whether the gear overlaps the reading column horizontally.
+    ///
+    /// It does not at any width the boards were drawn for: the column is centred in what the
+    /// peek leaves and stops 224 points short of the screen's edge at the reference. But
+    /// `columnWidth` is `min(740, region − 2 × edge)`, so a narrow enough window stops
+    /// centring a 740 column and starts fitting the region instead — and then the column's own
+    /// right edge reaches the gear. Around 700 points of window is where the two meet.
+    var settingsOverlapsColumn: Bool { settingsX < x + width }
+
+    /// The top of the band the column's content may use.
+    ///
+    /// The content top wherever the gear is clear of the column, so the greeting keeps the
+    /// board's 150 and nothing moves for a control 224 points away from it. Where they do
+    /// overlap the column gives way by one 32pt control band — the same band the thread
+    /// already reserves, rather than a second number invented for this case.
+    var columnTop: CGFloat {
+        settingsOverlapsColumn ? top + TutorPanelMetrics.controlsHeight : top
     }
+
+    /// Board 13: the thread starts at the content top and runs behind the gear.
+    ///
+    /// It used to start one 32pt control band lower, and that band was doing the fade's job by
+    /// hand — *"the band is what keeps the thread from scrolling its oldest message under the
+    /// gear"*. With the fade back there is something to mask the overlap, so the thread gets
+    /// its band back and the design's own answer applies: *"the thread fills the panel from
+    /// top 0 and scrolls behind the controls."*
+    var threadTop: CGFloat { top }
+
+    /// The whole content band. The composer is painted over its foot rather than sitting below
+    /// it — see `threadClearing`, which is what holds the newest message off the pill.
+    var threadHeight: CGFloat { max(0, bottom - threadTop) }
+
+    /// What the thread has to clear at the bottom: the composer, and board 13's
+    /// `--space-gap` above it.
+    ///
+    /// Against the **resting** composer, for the same reason `startRegionHeight` is: a
+    /// selection card grows the composer upward, and a thread that reflowed the moment a
+    /// selection was attached would be the composer redrawing the conversation behind it.
+    var threadClearing: CGFloat { composerHeight + DS.Space.gap }
+
 }

@@ -7,7 +7,9 @@
 //           13 — Session plan · full screen (3TM-0) and 14 — Components · Tutor states (3WL-0)
 //           — the four added later
 //           11 — First run · no API key (3NQ-0) — control/settings as a panel control
-// Glyphs:   20 product glyphs.
+//           10 — Settings (3KT-0) — ui/chevron-down, drawn inside row/setting rather than as a
+//           specimen
+// Glyphs:   21 product glyphs.
 // Prose:    docs/design-system/04-icons.md
 //           docs/design-system/06-states-and-settings.md
 //
@@ -288,10 +290,16 @@ enum IconPaths {
     /// `control/settings` — renders 28 (product draws it at 22, 28) on a 28×28 viewBox, 2.0pt
     /// effective stroke, --color-icon.
     ///
-    /// Two horizontal rules, each split around a knob — a sliders mark. The third panel control
-    /// on boards 10/11/12/13 at 28 (attribute 2, renders 2.00), and the auth-error recovery
-    /// glyph on board 14 at 22 (attribute 2.18, renders 1.71 — see designAnomaly). Both rules
-    /// leave 4pt of air either side of their knob, which is r3 + 1.
+    /// A six-tooth cog around an open centre — redrawn from the sliders mark the boards used to
+    /// carry. The third panel control on boards 11/12/13 at 28 (attribute 2, renders 2.00), and
+    /// the auth-error recovery glyph on board 14 at 22 (attribute 2.545, renders 2.00). The cog
+    /// is one closed polygon whose tooth corners are rounded by stroke-linejoin rather than by
+    /// geometry, so the tooth count and the tip radius are the only two numbers to hold. Six
+    /// teeth, not eight: at the 22 the recovery chip draws it, eight blur into a bumpy circle.
+    /// Tip 10.27 puts its ink at 82% of the box, matching control/dock beside it in the panel
+    /// row; root 7.35 leaves the teeth 2.9 units proud, which stays legible against a 2.0
+    /// stroke; the r3.27 centre keeps a visible hole at 22. The redraw also retired this
+    /// glyph's stroke anomaly — the old mark ran 2.18 at 22 on a 28 viewBox and rendered 1.71.
     static let controlSettings = IconGlyph(
         name: "control/settings",
         viewBox: CGSize(width: 28, height: 28),
@@ -299,43 +307,18 @@ enum IconPaths {
         productRenderSizes: [22, 28],
         strokeWidth: 2,
         colorToken: "--color-icon",
-        designAnomaly: IconAnomaly(
-            instance: "state/error — auth, the Open Settings recovery chip on board 14",
-            renderSize: 22,
-            designStrokeWidth: 2.18,
-            effectiveStrokeWidth: 1.71,
-            note: "2.18 × 22/28 = 1.71 against the set's 2.0 target — the one off-target instance the board does not defend. Its spec row is also the only glyph row on board 14 missing the '→ 2.00' its three siblings carry, which reads like 2.18 was copied from the 24-viewBox glyphs without re-deriving; 2.545 is what renders 2.0 there. Recorded, not corrected."
-        ),
         elements: [
             IconElement(
-                geometry: .path("M4.4 10H13M21 10h2.6"),
-                isFilled: false,
-                isStroked: true,
-                lineCap: .round,
-                lineJoin: .miter,
-                dash: nil,
-                designStrokeWidth: 2
-            ),
-            IconElement(
-                geometry: .circle(centerX: 17, centerY: 10, radius: 3),
+                geometry: .path("M10.89 7.34L11.17 4.13L16.83 4.13L17.11 7.34L18.22 7.98L21.13 6.61L23.96 11.52L21.32 13.36L21.32 14.64L23.96 16.48L21.13 21.39L18.22 20.02L17.11 20.66L16.83 23.87L11.17 23.87L10.89 20.66L9.78 20.02L6.87 21.39L4.04 16.48L6.68 14.64L6.68 13.36L4.04 11.52L6.87 6.61L9.78 7.98Z"),
                 isFilled: false,
                 isStroked: true,
                 lineCap: .butt,
-                lineJoin: .miter,
+                lineJoin: .round,
                 dash: nil,
                 designStrokeWidth: 2
             ),
             IconElement(
-                geometry: .path("M4.4 18H7M15 18h8.6"),
-                isFilled: false,
-                isStroked: true,
-                lineCap: .round,
-                lineJoin: .miter,
-                dash: nil,
-                designStrokeWidth: 2
-            ),
-            IconElement(
-                geometry: .circle(centerX: 11, centerY: 18, radius: 3),
+                geometry: .circle(centerX: 14, centerY: 14, radius: 3.27),
                 isFilled: false,
                 isStroked: true,
                 lineCap: .butt,
@@ -429,6 +412,37 @@ enum IconPaths {
                 lineJoin: .miter,
                 dash: nil,
                 designStrokeWidth: 2.18
+            ),
+        ]
+    )
+
+
+    /// `ui/chevron-down` — renders 16 on a 16×16 viewBox, 2.0pt effective stroke, --color-icon.
+    ///
+    /// Disclosure mark in row/setting on the settings window, and the twenty-first glyph.
+    /// Authored on a 16 grid rather than board 04's recommended 24 because it is the smallest
+    /// mark in the product: a 24 viewBox rendered at 16 would need a 3.0 design stroke to land
+    /// on 2.0 effective, which is further from the set's own weights than drawing it at its
+    /// render size. Scale is exactly 1.0, so design stroke and effective stroke are both 2.
+    /// Read off board 10, where the mark is drawn inside the row rather than as a specimen on
+    /// board 04 — the same route ui/check, ui/cross, ui/retry and control/settings took from
+    /// boards 11, 13 and 14. Board 04 holds the original sixteen and is not the whole set.
+    static let uiChevronDown = IconGlyph(
+        name: "ui/chevron-down",
+        viewBox: CGSize(width: 16, height: 16),
+        renderSize: 16,
+        productRenderSizes: [16],
+        strokeWidth: 2,
+        colorToken: "--color-icon",
+        elements: [
+            IconElement(
+                geometry: .path("M4 6.5 8 10.5 12 6.5"),
+                isFilled: false,
+                isStroked: true,
+                lineCap: .round,
+                lineJoin: .round,
+                dash: nil,
+                designStrokeWidth: 2
             ),
         ]
     )
@@ -833,6 +847,7 @@ enum IconPaths {
         case .uiSelectionMarker: Self.uiSelectionMarker
         case .uiCheck: Self.uiCheck
         case .uiCross: Self.uiCross
+        case .uiChevronDown: Self.uiChevronDown
         case .uiRetry: Self.uiRetry
         case .composerVoice: Self.composerVoice
         case .composerSend: Self.composerSend

@@ -48,47 +48,105 @@ struct TutorPanel: View {
     /// change"*. Every child of the panel is laid out in this column.
     private var contentWidth: CGFloat { TutorPanelMetrics.contentWidth(for: layout.panelWidth) }
 
+    /// The composer and the band behind it, as one thing. See `ComposerSlotMetrics`.
+    private var slot: ComposerSlotMetrics { .panel(surfaceWidth: layout.panelWidth) }
+
+    /// The panel, as the boards lay it out: bands stacked on one surface, in paint order.
+    ///
+    /// It was a `VStack` for as long as the thread stopped below the controls row. It cannot be
+    /// one now — board 03 runs the thread the panel's full height and passes it *behind* both
+    /// the controls and the composer, and the two fades that make that legible span the panel's
+    /// full width rather than its 301 column. Order here is the design's own, bottom of the
+    /// stack first: *"Thread · fade bottom · Composer · fade top · Panel controls"*.
     var body: some View {
-        TutorPanelShell(size: CGSize(width: layout.panelWidth, height: layout.contentHeight)) {
-            VStack(spacing: 0) {
+        let size = CGSize(width: layout.panelWidth, height: layout.contentHeight)
+
+        return TutorPanelSurface(size: size) {
+            ZStack(alignment: .top) {
+                fillBand(in: size)
+
+                // Fade and pill together, bottom-anchored: the slot owns the 18pt inset under
+                // the composer, so screen 08's pill bottom lands on the panel floor less that
+                // inset and screen 05's card grows upward from the same line.
+                //
+                // *"One slot, every state"*: a composer on boards 05, 08 and 12, `btn/primary`
+                // on board 11. The occupant swaps and the slot does not, which is what
+                // `PanelActionSlotMetrics` means by the two being interchangeable — and why the
+                // button is here rather than inside `NoAPIKeyState`. Drawn in the fill it sat
+                // *under* the bottom fade and took an 80% veil across it.
+                ComposerSlot(metrics: slot) {
+                    if store.requiresAPIKey {
+                        PrimaryButton(
+                            title: NoAPIKeyCopy.action,
+                            scale: .panel,
+                            width: contentWidth,
+                            action: actions.openSettings
+                        )
+                        .accessibilityIdentifier("add-api-key")
+                    } else {
+                        composer
+                    }
+                }
+                .frame(maxHeight: .infinity, alignment: .bottom)
+
+                ScrollFade(width: size.width, metrics: .top(for: .panel))
+
                 TutorControlsRow(
                     width: contentWidth,
                     onDock: uiState.collapseTutor,
                     onFullScreen: uiState.expandTutorToFullScreen,
                     onSettings: actions.openSettings
                 )
-
-                fill.frame(maxHeight: .infinity, alignment: .top)
-
-                // Board 11 gives the no-key panel a primary button in the composer's slot
-                // instead of a composer — *"58 is the panel composer's height, so the button
-                // occupies the composer's slot exactly"* — so the composer is absent, not
-                // disabled, and `NoAPIKeyState` brings its own occupant for that slot.
-                if !store.requiresAPIKey {
-                    // The design's 18pt bottom slack, as the rule rather than the literal:
-                    // the composer is bottom-anchored with a panel inset under it. That puts
-                    // screen 08's pill bottom on 918 and, when a selection is attached, grows
-                    // screen 05's card upward from the same line instead of pushing past it.
-                    composer.padding(.bottom, TutorPanelMetrics.inset)
-                }
+                .padding(.top, TutorPanelMetrics.inset)
             }
         }
     }
 
+    /// Where the panel's middle region sits.
+    ///
+    /// The thread starts at the panel's own top edge — behind the controls, which is what the
+    /// top fade is for. Every other fill still starts below them: screen 05's orb hangs 120
+    /// under the controls row and board 11's block under that, and those are chains the design
+    /// measures from the row rather than from the panel's edge. Only the thread scrolls, so
+    /// only the thread has anything to pass behind.
+    @ViewBuilder
+    private func fillBand(in size: CGSize) -> some View {
+        if case .active = uiState.conversation, !store.requiresAPIKey {
+            TutorThreadView(
+                scale: .panel,
+                width: contentWidth,
+                clearing: slot.band,
+                actions: actions
+            )
+            .frame(width: contentWidth, height: size.height)
+        } else {
+            fill
+                .frame(width: contentWidth, height: max(0, size.height - Self.chromeTop), alignment: .top)
+                .padding(.top, Self.chromeTop)
+        }
+    }
+
+    /// `18 + 32` — the panel's inset and its controls row. Where everything that is not the
+    /// thread begins.
+    private static var chromeTop: CGFloat {
+        TutorPanelMetrics.inset + TutorPanelMetrics.controlsHeight
+    }
+
+    /// The panel's fills that are *not* the thread: board 11's no-key block and screen 05's
+    /// start state. Both are fixed chains measured from the controls row, and neither scrolls
+    /// unless the band is too short to hold it.
+    ///
+    /// The thread is not here. It is the one fill that takes the panel's whole height rather
+    /// than the band below the chrome, and the one that must not be wrapped in a second scroll
+    /// view — see `fillBand(in:)`.
     @ViewBuilder
     private var fill: some View {
         if store.requiresAPIKey {
-            // Board 11's fill owns everything below the controls — its own orb, the block,
-            // and the primary button in the panel's bottom slot — so the panel hands it the
-            // whole column and adds nothing.
-            fitted { NoAPIKeyState(onOpenSettings: actions.openSettings) }
+            // Board 11's fill is the orb and the block. Its primary button is *not* here — it
+            // is the slot's occupant, above the fade. See `NoAPIKeyState`.
+            fitted { NoAPIKeyState() }
         } else {
-            switch uiState.conversation {
-            case .start: fitted { startFill }
-            // The thread is already a scroll view and is built to fill whatever band it is
-            // given, so it is the one fill that must not be wrapped in a second one.
-            case .active: TutorThreadView(scale: .panel, width: contentWidth, actions: actions)
-            }
+            fitted { startFill }
         }
     }
 
@@ -152,13 +210,19 @@ struct TutorPanel: View {
     }
 }
 
-/// `Panel controls` in the expanded variant boards 11–13 introduce: the same two layout
+/// `Panel controls` in the expanded variant boards 11 and 12 introduce: the same two layout
 /// buttons, plus `btn/settings` pushed to the far edge.
 ///
 /// Board 11 calls it *"a new configuration, not a new component"* — the row's
 /// `justify-content` changes from `flex-start` to `space-between` — so this composes
-/// `PanelControls` rather than restating it. The width is a parameter because the same row
-/// is 301 wide in the panel and 740 wide on board 13.
+/// `PanelControls` rather than restating it.
+///
+/// **The docked panel only.** Board 13 used to draw the same row at 740 and no longer does:
+/// its two layout buttons are gone — the board peek is already the way back, and
+/// `btn/full-screen` was a control for the state you were already in — and its settings
+/// button moved out of the reading column to the screen's own corner. The panel is the one
+/// place this row still exists; the width stays a parameter because it is the panel's
+/// derived content column, never a stored 301.
 struct TutorControlsRow: View {
     let width: CGFloat
     let onDock: () -> Void
@@ -168,11 +232,21 @@ struct TutorControlsRow: View {
     var body: some View {
         PanelControls(onDock: onDock, onFullScreen: onFullScreen)
             .frame(width: width, height: TutorPanelMetrics.controlsHeight, alignment: .leading)
-            .overlay(alignment: .trailing) { settingsButton }
+            .overlay(alignment: .trailing) { SettingsButton(action: onSettings) }
     }
+}
 
-    private var settingsButton: some View {
-        Button(action: onSettings) {
+/// `btn/settings` — the gear, on its own.
+///
+/// Its own type because the two surfaces that draw it no longer share a container: the panel
+/// puts it at the trailing edge of the controls row, and the full-screen column pins it to
+/// the screen's corner with no row at all. Both draw the same 32pt button and the same
+/// expanded hit area, which is exactly what would drift if each rebuilt it.
+struct SettingsButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
             IconView(.controlSettings)
                 .frame(width: TutorPanelMetrics.controlButton, height: TutorPanelMetrics.controlButton)
                 .expandedTapTarget(TutorPanelMetrics.controlTapTarget, over: TutorPanelMetrics.controlButton)
@@ -196,12 +270,16 @@ struct TutorThreadView: View {
     /// or the reading column, which is 740 only where there is room for it. `nil` takes the
     /// one the design drew, which is what the gallery specimens want.
     var width: CGFloat?
+    /// The band at the bottom of the thread's frame that the composer is painted over. The
+    /// thread runs behind it on both surfaces, so this is the clearance the newest message
+    /// keeps from the pill.
+    var clearing: CGFloat = 0
     let actions: TutorActions
 
     private var column: CGFloat { width ?? scale.contentWidth }
 
     var body: some View {
-        MessageThread(items: items, scale: scale, width: column) { accessory }
+        MessageThread(items: items, scale: scale, width: column, clearing: clearing) { accessory }
     }
 
     private var items: [ChatThreadItem] {
@@ -233,17 +311,20 @@ struct TutorThreadView: View {
             // Told in the thread's own column, because the failure is one of its children:
             // board 14's stack was measured at 301 and is 301 only where the thread is.
             ChatErrorState.network(onRetry: actions.retry, metrics: .for(scale, width: column))
-        } else if isTutorResponding {
-            // Screen 08's tenth thread child. `OrbSize.thread` is the design system's own
-            // name for it: *"Screen 08's thinking indicator at the tail of the thread."*
-            Orb(.thread)
         }
-    }
 
-    private var isTutorResponding: Bool {
-        #if DEBUG
-        if LaunchOptions.current.showsThinkingOrb { return true }
-        #endif
-        return store.isLoading || store.isEvaluating
+        // Screen 08's tenth thread child — **unconditional**, and that is a decision the
+        // boards left open. `05-screens.md` labels it "thinking indicator" and
+        // `03-chat-components.md` contradicts it in the same breath: *"it is documented as a
+        // *button* (`btn/orb`), not a state indicator, with no animation, variant, or spec
+        // table here"*, and board 08 draws it at the tail of a thread whose last message has
+        // already been delivered. Gating it on `isLoading` resolved that the other way and
+        // made the tutor's face blink out of the panel the moment it finished answering.
+        //
+        // So: the orb is presence, not progress. It is the hero in the greeting, the panel
+        // orb above the start state, the dock's button when collapsed, and this 46pt mark at
+        // the tail once there is a conversation — never absent. A working state, if one is
+        // ever designed, is `state/thinking`'s dots (board 14), which is a different mark.
+        Orb(.thread)
     }
 }

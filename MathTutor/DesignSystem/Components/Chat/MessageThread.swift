@@ -30,14 +30,32 @@ struct ThreadMetrics: Equatable, Sendable {
     /// tighter gap for same-author runs."* Verified across all ten children of the live
     /// thread.
     let gap: CGFloat
-    /// *"clears `--space-panel-inset`"*. The only inset the thread has — leading, trailing
-    /// and top are all 0, because the panel applies its own 18 and the fade takes no space.
+    /// What sits under the newest message: *"clears `--space-panel-inset`"*, plus whatever
+    /// band the thread runs behind.
+    ///
+    /// Leading, trailing and top are still 0 — the panel applies its own 18, and the top is
+    /// deliberately 0 because the thread starts at the panel's own edge and passes behind the
+    /// controls. The bottom is the one that grew: the thread now runs the panel's full height,
+    /// so this has to hold the newest message off the composer as well as off the floor, or
+    /// the message the student just sent lands behind the pill.
     let bottomPadding: CGFloat
-    let fade: ScrollFadeMetrics
-    /// What the fade has to ramp. It is the surface *behind* the thread, not a colour of
-    /// the thread's own — the fade bleeding a different white over the messages is the one
-    /// failure the board warns about by name.
-    let surface: Color
+    /// How far the thread's *clip* sits outside its column, on each side.
+    ///
+    /// Zero everywhere the thread is only text: messages are laid out in the column and stop
+    /// at it. `btn/orb` is the exception, and it is the thread's own child — board 03 draws
+    /// its halo at `left: −24` on a 46pt box, *"overflows the 46pt box on all sides"*, with the
+    /// orb flush to the column's left edge. A scroll view that clipped to the 301 column would
+    /// cut that glow off down a hard vertical line, which is the one thing the halo must not
+    /// have.
+    ///
+    /// So the column stays 301 and the clip moves out to meet the halo. It is a bleed, not a
+    /// wider column: no message moves, and nothing but the glow is drawn in it. The surface's
+    /// own clip is still the real boundary — the panel gives up its 18pt inset and no more, and
+    /// the last 6 points of overhang are gradient stops already at zero alpha.
+    let bleed: CGFloat
+
+    /// The box the thread clips to: its column plus the bleed on both sides.
+    var clipWidth: CGFloat { width + 2 * bleed }
 
     /// What the column occupies: every child, every gap between them, and the bottom
     /// padding. On the board's ten children this is 589 + 198 + 18 = 805.
@@ -65,31 +83,35 @@ extension ThreadMetrics {
     ///
     /// The column is the only thing the screen gets to say about the thread. Board 13's
     /// `Thread · wide` is the same `justify-content: flex-end` and the same 22pt gap —
-    /// *"unchanged from panel scale"* — differing in two properties, both of which are
-    /// consequences of *where* the thread is rather than how wide: it carries no bottom
+    /// *"unchanged from panel scale"* — differing in one property, and that one is a
+    /// consequence of *where* the thread is rather than how wide: it carries no bottom
     /// padding, because the 18 exists to clear the panel's own inset and full-screen there is
-    /// no panel; and it fades to a different white.
-    static func `for`(_ scale: ChatScale, width: CGFloat) -> Self {
+    /// no panel.
+    /// `clearing` is the band the thread's band overlaps at the bottom — the composer's, where
+    /// the caller has run the thread behind it. It is added to the inset rather than replacing
+    /// it, so the newest message keeps exactly the gap it had when the thread stopped above the
+    /// composer instead of passing under it. Nobody who is not running the thread full-height
+    /// passes it, which is why it defaults to nothing.
+    /// The bleed is the thread's one child that is not a message: `OrbSize.thread` is the orb
+    /// the design puts at the tail on both surfaces, so both get the same overhang rather than
+    /// a number written down twice.
+    static var bleed: CGFloat { OrbSize.thread.metrics.haloOverhang }
+
+    static func `for`(_ scale: ChatScale, width: CGFloat, clearing band: CGFloat = 0) -> Self {
         switch scale {
         case .panel:
             return Self(
                 width: max(0, width),
                 gap: DS.Space.messageGap,
-                bottomPadding: DS.Space.panelInset,
-                fade: .standard,
-                surface: DS.Color.surfacePanel
+                bottomPadding: DS.Space.panelInset + max(0, band),
+                bleed: bleed
             )
         case .fullScreen:
             return Self(
                 width: max(0, width),
                 gap: DS.Space.messageGap,
-                bottomPadding: 0,
-                fade: .standard,
-                // *"Same component, different white."* The full-screen background is
-                // `--color-surface`, not the panel grey, and a fade of the wrong white
-                // bleeds — which is the failure the board warns about, now with two whites to
-                // keep straight.
-                surface: DS.Color.surface
+                bottomPadding: max(0, band),
+                bleed: bleed
             )
         }
     }
@@ -111,6 +133,10 @@ struct MessageThread<Accessory: View>: View {
     /// at, which is what a preview or a gallery specimen wants; the app passes the panel's
     /// derived content width or `ScreenLayout.columnWidth`.
     var width: CGFloat?
+    /// The band at the bottom of the thread's own frame that something else is painted over —
+    /// the composer, on both surfaces. The thread scrolls its history behind it, so this is
+    /// what keeps the newest message clear of it. See `ThreadMetrics.for(_:width:clearing:)`.
+    var clearing: CGFloat = 0
     /// `btn/orb`, the thread's one non-message child. It belongs to the shell, so the
     /// thread reserves its place rather than drawing it — and the place matters: *"`btn/orb`
     /// is a normal flow child at the end of the message list, so it rides up and down with
@@ -119,7 +145,7 @@ struct MessageThread<Accessory: View>: View {
     @ViewBuilder var accessory: () -> Accessory
 
     private var column: CGFloat { width ?? scale.contentWidth }
-    private var metrics: ThreadMetrics { .for(scale, width: column) }
+    private var metrics: ThreadMetrics { .for(scale, width: column, clearing: clearing) }
 
     var body: some View {
         GeometryReader { proxy in
@@ -136,17 +162,27 @@ struct MessageThread<Accessory: View>: View {
                 // tall as the viewport and sits at the bottom of it, so slack collects
                 // above the first message instead of below the last.
                 .frame(minHeight: proxy.size.height, alignment: .bottom)
+                // Centres the column in the bled box, so the scroll content is exactly as
+                // wide as the scroll view and nothing offers to scroll sideways.
+                .frame(width: metrics.clipWidth)
             }
             .defaultScrollAnchor(.bottom)
+            // A scroll view clips to its bounds and that is the whole reason this is here:
+            // clipping to the column would cut `btn/orb`'s halo down the column's left edge.
+            // See `ThreadMetrics.bleed`.
+            .frame(width: metrics.clipWidth, height: proxy.size.height)
+            // Back to the column for layout. A frame does not clip, so the bleed hangs
+            // symmetrically outside this one and every message keeps the x it had.
+            .frame(width: proxy.size.width, height: proxy.size.height)
         }
         .frame(width: metrics.width)
-        // *"`Scroll fade` is the very last child and absolutely positioned, so it paints
-        // over every message but sits below `Panel controls`, which are a sibling of
-        // `Thread` rather than inside it."* An overlay is exactly that: over this view's
-        // content, under whatever the panel draws around it.
-        .overlay(alignment: .top) {
-            ScrollFade(width: metrics.width, metrics: metrics.fade, color: metrics.surface)
-        }
+        // No fade here, and that is the change: it used to be this view's last child. Board
+        // 03 moves both fades out of the thread — *"absolute — both are children of Tutor
+        // chat, not Thread"* — so that they can span the panel corner to corner instead of the
+        // 301 column, and so that `Panel controls` can paint over the top one. A thread that
+        // masked its own edges could do neither. The surface that owns the thread owns them;
+        // it also owns handing this view a band that runs behind its chrome, which is the
+        // whole reason there is anything to mask.
     }
 }
 

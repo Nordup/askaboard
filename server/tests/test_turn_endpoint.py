@@ -105,7 +105,7 @@ async def test_a_replayed_turn_id_is_rejected_without_calling_the_model(db_app):
 @respx.mock
 async def test_a_dropped_connection_fails_the_turn_visibly(db_app, db_factory):
     respx.post("https://api.openai.com/v1/responses").mock(
-        side_effect=httpx.ConnectError("connection reset")
+        side_effect=httpx.ConnectError("connection reset by peer")
     )
     payload = _payload()
     async with AsyncClient(
@@ -117,9 +117,72 @@ async def test_a_dropped_connection_fails_the_turn_visibly(db_app, db_factory):
     assert events[-1]["type"] == "error"
     assert events[-1]["retryable"] is True
 
+    # str(APIConnectionError(...)) alone is just the generic "Connection
+    # error." — both the event the client sees and the row we persist must
+    # carry the exception type and the underlying httpx failure that
+    # actually explains what went wrong, not just that generic string.
+    assert "APIConnectionError" in events[-1]["message"]
+    assert "connection reset by peer" in events[-1]["message"]
+
     # A turn that dies mid-stream must not stay "running" forever — that
     # would permanently poison the turn_id, since the idempotency check only
     # tests for the row's existence.
+    async with db_factory() as db:
+        turn = await db.get(Turn, uuid.UUID(payload["turn_id"]))
+        assert turn.status == "error"
+        assert "APIConnectionError" in turn.error["message"]
+        assert "connection reset by peer" in turn.error["message"]
+
+
+@respx.mock
+async def test_a_failed_attachment_write_still_fails_the_turn_visibly(
+    db_factory, tmp_path
+):
+    """record_attachment runs before any model call, but a failure there
+    must be exactly as fatal to the turn as a failed model call — nothing
+    between accepting the request and finishing it may strand a turn."""
+    import base64
+
+    from app.api.turn import get_recorder
+    from app.store.blobs import LocalBlobStore
+    from app.store.db import db_session
+    from app.store.recorder import Recorder
+
+    class _BrokenAttachmentRecorder(Recorder):
+        async def record_attachment(self, **kwargs):
+            raise OSError("disk full")
+
+    app = create_app()
+
+    async def _session():
+        async with db_factory() as session:
+            yield session
+
+    app.dependency_overrides[db_session] = _session
+    app.dependency_overrides[get_recorder] = lambda: _BrokenAttachmentRecorder(
+        db_factory, LocalBlobStore(tmp_path)
+    )
+
+    respx.post("https://api.openai.com/v1/responses").mock(
+        return_value=Response(200, headers={"Content-Type": "text/event-stream"},
+                              content=sse_stream(*TEXT_ONLY_TURN))
+    )
+    payload = _payload(
+        image_base64=base64.b64encode(b"pixels").decode(),
+        image_region="the top of the board",
+    )
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            async with client.stream("POST", "/v1/turn", json=payload, headers=AUTH) as r:
+                events = await _collect(r)
+    finally:
+        app.dependency_overrides.clear()
+
+    assert events[-1]["type"] == "error"
+    assert "OSError" in events[-1]["message"]
+
     async with db_factory() as db:
         turn = await db.get(Turn, uuid.UUID(payload["turn_id"]))
         assert turn.status == "error"

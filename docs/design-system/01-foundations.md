@@ -99,7 +99,7 @@ Section eyebrow, verbatim: **"Pen palette · 27px circles, 54px pitch"**
 | --- | --- | --- | --- | --- |
 | `--font-sans` | **Source Sans 3** | 400 · 500 · 600 | **PRODUCT** | The product's only typeface — every text node on every live screen uses it. Humanist, open apertures, single-storey g. |
 | `--font-doc` | Montserrat | 600 · 700 | DOC ONLY | Design-documentation boards only. Geometric, circular bowls, double-storey a. Never ships. |
-| `--font-mono` | IBM Plex Mono | 500 (spec values) | DOC ONLY | Used for spec values, token names and measurements so they are unambiguous to read. Not used in the product. |
+| `--font-mono` | IBM Plex Mono | 500 (spec values) · 400 (product) | **DOC + one product use** | Spec values, token names and measurements on the boards. **No longer doc-only:** `field/key` on board 10 sets the masked API key in it, so the 24-bullet mask reads at an even pitch. That is the one product use, and IBM Plex Mono is not bundled — the port renders the system monospaced face until it is. |
 
 ### 2.2 Product type scale (transcribed from the "Type scale" table)
 
@@ -174,7 +174,7 @@ Section eyebrow, verbatim: **"Pen palette · 27px circles, 54px pitch"**
 
 | Token | Value | Rationale, verbatim |
 | --- | --- | --- |
-| `--space-edge` | **28px** | "Screen-edge inset for panels, on all four sides. Was 18px at the bottom — too tight for a 13" display, and it made the layout read as bottom-heavy. **Note the top edge is measured from the status bar, not the screen: the status band ends at y 40, so content starts at 40 + 28 = 68.**" |
+| `--space-edge` | **28px** | "Screen-edge inset for panels, on all four sides. Was 18px at the bottom — too tight for a 13" display, and it made the layout read as bottom-heavy. **With no status band reserved, the top edge is measured from the screen like every other edge: content starts at 0 + 28 = 28.**" |
 | `--space-gap` | **24px** | "Between adjacent panels. Slightly tighter than the edge inset so panels group against the screen rather than floating apart." |
 | `--space-panel-inset` | **18px** | "Inside a panel: left, right and bottom. Everything in the tutor panel — header, buttons, chip, field — sits in one 301pt column so a single lane runs down each edge. Smaller than the screen inset because a panel is already inset from the screen." |
 | `--space-content` | **56px** | "Content inset for full-screen reading layouts. Wider than the panel inset, because a full-bleed measure needs more air than a panel does." |
@@ -205,11 +205,11 @@ Section eyebrow, verbatim: **"Pen palette · 27px circles, 54px pitch"**
 | `--radius-xs` | 6px | Icon-internal geometry only (glyph corners). Board caption: "icon detail". |
 | `--radius-sm` | 10px | Small inline marks. |
 | `--radius-md` | 12px | **Reserved — no current product use.** (Used on the doc boards for colour swatches.) |
-| `--radius-lg` | 14px | Suggestion chips and the selected-tool slot. |
+| `--radius-lg` | 14px | Suggestion chips and the selected-tool slot. **The product's control radius**, and the settings window's four surfaces take it too: `nav/item`, `field/key`, `btn/destructive`, and the retired `select/option` before them. |
 | `--radius-xl` | 16px | **Reserved — no current product use.** |
 | `--radius-bubble` | 18px | Message bubbles in the thread. Sits between `--radius-xl` and `--radius-2xl` because bubbles are small and need a softer corner than a panel. |
 | `--radius-2xl` | 20px | Tool rail. |
-| `--radius-3xl` | 28px | Whiteboard canvas and tutor panel — the two big surfaces. |
+| `--radius-3xl` | 28px | Whiteboard canvas and tutor panel — the two big surfaces — and, since the redesign, the settings window, which at 760 × 520 is larger than either. |
 | `--radius-full` | 9999px | Pills and circles: composer input, send button, orb, pen swatches. In Paper this renders as `calc(infinity * 1px)`. **In Swift use a capsule shape, not a literal 9999.** |
 
 ---
@@ -231,16 +231,40 @@ Paper has no shadow token type, so this scale lives as prose + specimens on the 
 | | contact edge | `#1414320A` | `#141432` | 0.04 (`0x0A`/255) | 0 | 1 | 3 | 0 | |
 | **03 · Control** | outer lift | `#1414320D` | `#141432` | 0.05 (`0x0D`/255) | 0 | 2 | 6 | 0 | "0 2 6 · 0.05 + 0 1 2 · 0.03 — Buttons, chips, the floating dock." |
 | | contact edge | `#14143208` | `#141432` | 0.03 (`0x08`/255) | 0 | 1 | 2 | 0 | |
+| **04 · Modal** | outer lift | `#14143216` | `#141432` | 0.086 (`0x16`/255) | 0 | 16 | 40 | 0 | **No board caption — see below.** |
+| | contact edge | `#1414320E` | `#141432` | 0.055 (`0x0E`/255) | 0 | 4 | 12 | 0 | |
 
 CSS form, ready to port:
 
 ```
-/* 01 · Canvas  */  box-shadow: #14143209 0px 2px  6px;
-/* 02 · Panel   */  box-shadow: #1414320E 0px 3px 10px, #1414320A 0px 1px 3px;
-/* 03 · Control */  box-shadow: #1414320D 0px 2px  6px, #14143208 0px 1px 2px;
+/* 01 · Canvas  */  box-shadow: #14143209 0px  2px  6px;
+/* 02 · Panel   */  box-shadow: #1414320E 0px  3px 10px, #1414320A 0px 1px  3px;
+/* 03 · Control */  box-shadow: #1414320D 0px  2px  6px, #14143208 0px 1px  2px;
+/* 04 · Modal   */  box-shadow: #14143216 0px 16px 40px, #1414320E 0px 4px 12px;
 ```
 
 **No layer in any level has a spread.** All offsets are y-only (x = 0).
+
+### 5.1a Level 04 is authored, not measured
+
+The other three levels were read off Foundations specimens whose captions state the intent.
+**04 has no specimen and no caption**, because it did not exist when the board was drawn: the
+product had three surfaces and all of them sat on the screen grey. The settings redesign
+(board 10) adds a situation the scale has no answer for — a white window over a backdrop that
+has itself been *whitened*, where the two surfaces are the same colour and the shadow is the
+only thing separating them. At 02 · Panel's 0.055 / 10px, tuned for `#FCFCFC` on `#FAFAFA`,
+the window has no edge at all.
+
+It keeps every structural rule the section states: one hue, two layers in lift-then-contact
+order, x = 0, no spread. What it extends is the numeric range.
+
+It was also **drawn heavier and pulled back**. The first version ran `0.141 / 24 / 64` — 2.6×
+the previous alpha ceiling and 6.4× the previous blur — and read as a drop shadow rather than
+a lift. What ships is `0.086 / 16 / 40`, and the contact layer's `0x0E` is 02 · Panel's outer
+alpha *exactly*, so **one number in this level is genuinely new** rather than four.
+
+Foundations should gain a specimen for it. Until then this table is the only record, and
+`Elevation.swift` carries the same note.
 
 ### 5.2 Which component uses which level
 
@@ -248,7 +272,8 @@ CSS form, ready to port:
 | --- | --- |
 | 01 · Canvas | Whiteboard canvas (all states, docked 863 wide and expanded 1224 wide). Verified on the live diagram nodes. |
 | 02 · Panel | Tool rail; tutor panel (docked, both greeting and in-conversation states). Verified on the live diagram nodes. |
-| 03 · Control | Buttons, suggestion chips, the collapsed floating dock, **and the composer field**. |
+| 03 · Control | Buttons, suggestion chips, the collapsed floating dock, **and the composer field**. Also `field/key` and `btn/destructive` in the settings window. |
+| 04 · Modal | The settings window (board 10), and nothing else. **One user is the point** — if a second surface ever wants this level, that is the moment to ask whether the product has a modal *pattern* rather than a modal. |
 
 ### 5.3 Fields use level 03 — stated rationale
 
@@ -264,10 +289,10 @@ Verified on the live node — the "Edge shadow" child of the board peek is:
 
 ```
 position: (x 3, y 2) relative to the peek
-size: 68 × 936
+size: 68 × 976
 filter: blur(5px)
 opacity: 0.11
-<path d="M0,0 H50 A18,18 0 0 1 68,18 V46 A18,18 0 0 1 50,64 H46 A18,18 0 0 0 28,82 V918 A18,18 0 0 1 10,936 H0 Z" fill="#141432" />
+<path d="M0,0 H50 A18,18 0 0 1 68,18 V46 A18,18 0 0 1 50,64 H46 A18,18 0 0 0 28,82 V958 A18,18 0 0 1 10,976 H0 Z" fill="#141432" />
 ```
 
 ---
@@ -286,9 +311,8 @@ opacity: 0.11
 | --- | --- |
 | Screen size | `1376 × 1032 pt · iPad Pro 13" landscape` |
 | Screen background | `var(--color-surface-screen) #F8F8F8` |
-| Status bar band | `1376 × 24 at y = 16 → band bottom y = 40` |
-| Content top edge | `y = 68 · every panel on every screen` |
-| Safe content band | `y 68 → 1004 · height 1032 − 68 − 28 = 936` |
+| Content top edge | `y = 28 · every panel on every screen` |
+| Safe content band | `y 28 → 1004 · height 1032 − 28 − 28 = 976` |
 | Screen edge inset | `28 · var(--space-edge) · left / right / bottom` |
 | Inter-panel gap | `24 · var(--space-gap)` |
 | Panel inset | `18 · var(--space-panel-inset)` |
@@ -336,9 +360,9 @@ x 1348 … 1376   --space-edge right
 | --- | --- | --- | --- | --- | --- |
 | Screen | 0 | 0 | 1376 | 1032 | bg `--color-surface-screen` `#F8F8F8` |
 | Status bar | 0 | 16 | 1376 | 24 | |
-| Tool rail | 28 | 68 | 72 | **617** (fit-content) | radius 20, bg `--color-surface-panel`, elevation 02, `padding-block: 9px`, `gap: 12px` (`--spacing-3`), flex column, align center |
-| Whiteboard canvas | 124 | 68 | 863 | 936 | radius `--radius-3xl` (28), `overflow: clip`, bg `--color-surface-canvas`, elevation 01 |
-| Tutor chat panel | 1011 | 68 | 337 | 936 | radius `--radius-3xl` (28), bg `--color-surface-panel`, elevation 02, `padding-top: 18px`, flex column, align center |
+| Tool rail | 28 | 28 | 72 | **617** (fit-content) | radius 20, bg `--color-surface-panel`, elevation 02, `padding-block: 9px`, `gap: 12px` (`--spacing-3`), flex column, align center |
+| Whiteboard canvas | 124 | 28 | 863 | 976 | radius `--radius-3xl` (28), `overflow: clip`, bg `--color-surface-canvas`, elevation 01 |
+| Tutor chat panel | 1011 | 28 | 337 | 976 | radius `--radius-3xl` (28), bg `--color-surface-panel`, elevation 02, `padding-top: 18px`, flex column, align center |
 
 **Board width derivation (verbatim):** `1376 − 28 − 72 − 24 − 337 − 24 − 28 = 863`
 
@@ -364,8 +388,8 @@ Rail container: `padding-block: 9px`, `gap: 12px` between the five children.
 | --- | --- | --- | --- | --- | --- |
 | Screen | 0 | 0 | 1376 | 1032 | bg `--color-surface-screen` `#F8F8F8` |
 | Status bar | 0 | 16 | 1376 | 24 | |
-| Tool rail | 28 | 68 | 72 | 617 (fit-content) | identical to screen 05 |
-| Whiteboard canvas | 124 | 68 | **1224** | 936 | radius 28, `overflow: clip`, bg `--color-surface-canvas`, elevation 01 |
+| Tool rail | 28 | 28 | 72 | 617 (fit-content) | identical to screen 05 |
+| Whiteboard canvas | 124 | 28 | **1224** | 976 | radius 28, `overflow: clip`, bg `--color-surface-canvas`, elevation 01 |
 | Tutor dock · collapsed | 1192 | 916 | 132 | 64 | flex row, align center, `gap: 16px` (`--spacing-4`), elevation 03 |
 
 **Board width derivation (verbatim):** `863 + 24 + 337 = 1224 · board absorbs gap + panel`
@@ -382,7 +406,7 @@ Rail container: `padding-block: 9px`, `gap: 12px` between the five children.
 | --- | --- | --- | --- | --- | --- |
 | Screen | 0 | 0 | 1376 | 1032 | bg **`#FFFFFF`** — see note below |
 | Status bar | 0 | 16 | 1376 | 24 | |
-| Board peek | **0** | 68 | 68 | 936 | **flush left, no 28 inset.** Contains: faked edge shadow (§5.4), board-edge SVG path, board-hinge icon at local (23, 22) |
+| Board peek | **0** | 68 | 68 | 976 | **flush left, no 28 inset.** Contains: faked edge shadow (§5.4), board-edge SVG path, board-hinge icon at local (23, 22) |
 | Greeting block (avatar, title, subtitle) | **34** | 150 | 1376 | 264 | flex column, align center — see the centring note below |
 | Suggestion grid (2 × 2 wrap) | 352 | 592 | 740 | 168 | `flex-wrap: wrap`, `gap: 20px` (`--spacing-5`) → two 74pt rows + one 20pt gap |
 | Composer pill | 352 | 924 | 740 | 80 | radius full, bg `#FFFFFF`, elevation 03, `padding-left: 32px` (`--spacing-8`), `padding-right: 12px` (`--spacing-3`), `gap: 18px`, align center. **Bottom edge lands on 1004.** |
@@ -407,14 +431,14 @@ Tick marks on the diagram: x = 0, 68, 352, 1092, 1375. Reading-column edges at x
 | --- | --- | --- | --- | --- | --- | --- |
 | Screen | 0 | 0 | 1376 | 1032 | | bg `--color-surface-screen` `#F8F8F8` |
 | Status bar | 0 | 16 | 1376 | 24 | | |
-| Tool rail | 28 | 68 | 72 | 617 (fit-content) *(spec table)* | | see contradiction in §8 |
-| Whiteboard canvas | 124 | 68 | 863 | 936 | | radius 28, elevation 01, bg `--color-surface-canvas` |
-| Tutor chat panel | 1011 | 68 | 337 | 936 | | radius 28, elevation 02, bg `--color-surface-panel`, `padding-top: 18px` |
+| Tool rail | 28 | 28 | 72 | 617 (fit-content) *(spec table)* | | see contradiction in §8 |
+| Whiteboard canvas | 124 | 28 | 863 | 976 | | radius 28, elevation 01, bg `--color-surface-canvas` |
+| Tutor chat panel | 1011 | 28 | 337 | 976 | | radius 28, elevation 02, bg `--color-surface-panel`, `padding-top: 18px` |
 | ↳ Panel controls | 1029 | 86 | 301 | 32 | (18, 18) | |
 | ↳ Thread | 1029 | 118 | 301 | 810 | (18, 50) | **bottom-aligned, message gap 22** |
 | ↳ Composer | 1029 | 928 | 301 | 58 | (18, 860) | |
 
-**Panel vertical stack (verbatim):** `18 + 32 + 810 + 58 + 18 = 936`
+**Panel vertical stack (verbatim):** `18 + 32 + 850 + 58 + 18 = 976`
 
 **Outer frame vs. screen 05 (verbatim):** `identical — only the panel's contents differ`
 
@@ -437,7 +461,7 @@ Collected from both boards. All verbatim or near-verbatim.
 9. **Prefer semantic spacing names over numeric ones for layout** — `--space-gap` over `--spacing-6`, `--space-edge` over `--spacing-7`.
 10. **Layout stays on multiples of 4** — with exactly one exception, `--space-message-gap` = 22.
 11. **Component internals are allowed off-grid.** "Spacing inside a component — tap-target pitch, icon-to-label, optical padding — is tuned by eye and specced per component in 02–04." (This is why the rail's 27pt swatch gap and 0pt tool-slot gap are correct as-is.)
-12. **The top edge is measured from the status bar, not the screen.** `40 + 28 = 68`.
+12. **No status bar is drawn or reserved; the app hides the system one.** Every edge is the plain token: `0 + 28 = 28`.
 13. **The collapsed dock is the one exception to the edge rule** — 24 from the board's corner, not 28 from the screen's.
 14. **The board peek is flush left with no 28 inset.**
 15. **The full-screen reading column centres past the peek, not on the screen.**
