@@ -163,6 +163,42 @@ async def test_blob_route_rejects_path_traversal(db_app, tmp_path):
 
 
 @requires_db
+async def test_getting_a_blob_with_two_attachments_sharing_the_key(db_app, db, tmp_path):
+    """I5: blobs are content-addressed and deduplicated on disk, but
+    record_attachment inserts a row per call, so a board that did not
+    change between two turns produces two attachment rows sharing one
+    blob_key — the normal case for a deduplicated store, not an edge case.
+    scalar_one_or_none() raises MultipleResultsFound on exactly that; this
+    is the regression test for it.
+    """
+    store = LocalBlobStore(tmp_path)
+    ref = await store.put(b"same board twice", "image/png")
+
+    session = Session(model="gpt-5.6-luna", reasoning_effort="high")
+    db.add(session)
+    await db.flush()
+    db.add_all([
+        Attachment(
+            session_id=session.id, kind="board_png", blob_key=ref.key,
+            sha256=ref.sha256, bytes=ref.bytes, content_type="image/png",
+        ),
+        Attachment(
+            session_id=session.id, kind="board_png", blob_key=ref.key,
+            sha256=ref.sha256, bytes=ref.bytes, content_type="image/png",
+        ),
+    ])
+    await db.commit()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        response = await client.get(f"/v1/blobs/{ref.key}", headers=AUTH)
+
+    assert response.status_code == 200
+    assert response.content == b"same board twice"
+
+
+@requires_db
 async def test_an_unknown_but_well_formed_blob_key_is_a_404(db_app):
     unknown_key = "sha256:" + "0" * 64
     async with AsyncClient(

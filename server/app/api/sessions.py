@@ -228,8 +228,19 @@ async def get_blob(
     # content type is recovered from whichever attachment wrote this key.
     # Blobs with no matching attachment (an LLM call's raw_events_blob, for
     # instance) fall back to a generic type rather than guessing wrong.
+    #
+    # .limit(1) / .first(), not scalar_one_or_none(): blobs are
+    # content-addressed and deduplicated on disk, but record_attachment
+    # inserts a row per call, so a board that did not change between two
+    # turns produces two attachment rows sharing one blob_key — the normal
+    # case for a deduplicated store, not an edge case. scalar_one_or_none()
+    # raises MultipleResultsFound on exactly that, turning the common case
+    # into a 500. Any matching row's content_type is fine; they're all
+    # attachments of the same bytes.
     attachment = (
-        await db.execute(select(Attachment).where(Attachment.blob_key == key))
-    ).scalar_one_or_none()
+        await db.execute(
+            select(Attachment).where(Attachment.blob_key == key).limit(1)
+        )
+    ).scalars().first()
     content_type = attachment.content_type if attachment else "application/octet-stream"
     return Response(content=data, media_type=content_type)
