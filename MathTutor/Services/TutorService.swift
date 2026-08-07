@@ -1,69 +1,28 @@
 import Foundation
 
-/// The migration to a streaming backend is incremental: `stream(_:)` is the
-/// target API, but `respond(to:)` stays on the protocol so every existing
-/// conformer and caller keeps compiling. The default `stream(_:)` below
-/// bridges old conformers onto the new API for free; a conformer overrides
-/// it once it can genuinely stream (see `DemoTutorService`). A later task
-/// switches `TutorStore` onto `stream` and removes `respond(to:)` for good.
+/// `stream(_:)` is the one way a conformer talks to `TutorStore` now. The
+/// migration's bridge — a default `stream(_:)` that adapted an old
+/// `respond(to:)` conformer onto this API for free — is gone, and so is the
+/// direct-OpenAI `respond(to:)` path itself (`OpenAITutorService`, deleted
+/// alongside it): `TutorStore` only ever calls `stream(_:)`, so every real
+/// conformer has to genuinely stream. `respond(to:)` is no longer part of
+/// this contract; `DemoTutorService` below keeps a plain method of that name
+/// only because its own `stream(_:)` is built on top of it, not because
+/// anything outside this file calls it.
 protocol TutorService: Sendable {
-    func respond(to request: TutorRequest) async throws -> TutorReply
     func stream(_ request: TutorRequest) -> AsyncThrowingStream<TutorEvent, Error>
-}
-
-extension TutorService {
-    /// Adapts a single `respond(to:)` reply into the streaming vocabulary:
-    /// an initial "thinking" status, the reply text as one `.textDelta`,
-    /// a `.workspace` event when the reply carries a coherent plan/exercise
-    /// pair, then `.done`. Any error from `respond(to:)` finishes the stream
-    /// with that error rather than yielding a `.failure` event, since the
-    /// caller already handles thrown `TutorServiceError`s from the old path.
-    func stream(_ request: TutorRequest) -> AsyncThrowingStream<TutorEvent, Error> {
-        AsyncThrowingStream { continuation in
-            let task = Task {
-                do {
-                    continuation.yield(.status(.thinking, detail: nil))
-                    let reply = try await respond(to: request)
-                    continuation.yield(.textDelta(reply.text))
-                    let pair = TutorReply.coherentPair(reply.plan, reply.exercise)
-                    if let plan = pair.plan, let exercise = pair.exercise {
-                        continuation.yield(.workspace(plan, exercise))
-                    }
-                    continuation.yield(.done)
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
-            continuation.onTermination = { _ in task.cancel() }
-        }
-    }
 }
 
 struct TutorServiceRouter: TutorService, Sendable {
     let keychain: KeychainStore
-    private let apiKeyReader: @Sendable () -> String?
     private let configurationReader: @Sendable () -> BackendConfiguration?
 
     init(
         keychain: KeychainStore = KeychainStore(),
-        apiKeyReader: (@Sendable () -> String?)? = nil,
         configurationReader: (@Sendable () -> BackendConfiguration?)? = nil
     ) {
         self.keychain = keychain
-        self.apiKeyReader = apiKeyReader ?? { keychain.readAPIKey() }
         self.configurationReader = configurationReader ?? { BackendConfiguration.load(keychain: keychain) }
-    }
-
-    /// Unchanged for now: still the direct-OpenAI path, kept alive only so
-    /// every existing `respond(to:)` caller keeps compiling during the
-    /// migration. A later task (client-migration Task 6) deletes this
-    /// alongside `OpenAITutorService` once every caller is on `stream(_:)`.
-    func respond(to request: TutorRequest) async throws -> TutorReply {
-        guard let key = apiKeyReader(), !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw TutorServiceError.missingAPIKey
-        }
-        return try await OpenAITutorService(apiKey: key).respond(to: request)
     }
 
     /// The real streaming path: a `BackendConfiguration` that is half set
@@ -83,7 +42,14 @@ struct TutorServiceRouter: TutorService, Sendable {
 struct DemoTutorService: TutorService, Sendable {
     func respond(to request: TutorRequest) async throws -> TutorReply {
         try await Task.sleep(for: .milliseconds(360))
-        let pair = TutorReply.coherentPair(request.plan, request.exercise)
+        // A plan and board exercise are one workspace contract: reflecting
+        // only one half back would let stale state pair with a new value, so
+        // an incomplete pair collapses to nothing rather than half-updating.
+        let pair: (plan: SessionPlan?, exercise: Exercise?) = if let plan = request.plan, let exercise = request.exercise {
+            (plan, exercise)
+        } else {
+            (nil, nil)
+        }
 
         if request.signal == .dontKnow {
             return TutorReply(
@@ -126,8 +92,7 @@ struct DemoTutorService: TutorService, Sendable {
         )
     }
 
-    /// Genuinely streams rather than falling back to the protocol's bridge:
-    /// the reply text arrives as several `.textDelta`s so the demo path
+    /// The reply text arrives as several `.textDelta`s so the demo path
     /// exercises the same incremental rendering the live backend will, since
     /// this deterministic path is what the rest of the migration is verified
     /// against. Every branch below is the same branch `respond(to:)` takes,

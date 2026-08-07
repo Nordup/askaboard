@@ -15,11 +15,19 @@ final class TutorStore: ObservableObject {
     @Published private(set) var evaluationMessageID: UUID? = nil
     @Published private(set) var isEvaluating = false
     @Published private(set) var usesLiveTutor = false
+    /// The tutor's current stage within an in-flight turn ("thinking",
+    /// "writing", …), for a status line. `nil` whenever no turn is running —
+    /// set from each `.status` event and cleared the moment a turn ends,
+    /// whether that is a clean `.done`, a `.failure`, or a thrown error.
+    @Published private(set) var phase: TutorPhase?
 
     let tutorService: any TutorService
     let persistence: SessionPersistence
     let keychain: KeychainStore
     private let logger = Logger(subsystem: "com.nordup.MathTutor", category: "TutorStore")
+    /// The in-flight turn's task, kept only so tests can await exactly the
+    /// turn a `send`/`evaluate`/etc. call just started rather than polling.
+    private var activeRequestTask: Task<Void, Never>?
 
     init(
         service: any TutorService = TutorServiceRouter(),
@@ -99,6 +107,24 @@ final class TutorStore: ObservableObject {
     func sendQuickPrompt(_ text: String) {
         send(text)
     }
+
+    #if DEBUG
+    /// Test-only: sends and then awaits the exact turn `send` just started,
+    /// rather than a fixed-length poll — so a test fails on genuine hangs
+    /// instead of racing an arbitrary timeout.
+    func sendAndWait(_ text: String) async {
+        send(text)
+        await activeRequestTask?.value
+    }
+
+    /// Test-only: seeds the workspace directly, bypassing a network turn —
+    /// for tests that need an existing plan/exercise on the session before
+    /// exercising a code path that must leave it untouched.
+    func applyForTesting(plan: SessionPlan, exercise: Exercise) {
+        session.plan = plan
+        session.exercise = exercise
+    }
+    #endif
 
     func startWorking() {
         guard !requiresAPIKey, session.plan != nil, session.exercise != nil else {
@@ -216,9 +242,8 @@ final class TutorStore: ObservableObject {
         )
         session.lastSavedAt = .now
         persist()
-        requestTutor(signal: .evaluate, imageData: imageData, regionDescription: regionDescription) { [weak self] reply in
-            self?.evaluationText = reply.text
-            self?.isEvaluating = false
+        requestTutor(signal: .evaluate, imageData: imageData, regionDescription: regionDescription) { [weak self] text in
+            self?.evaluationText = text
         }
     }
 
@@ -284,19 +309,36 @@ final class TutorStore: ObservableObject {
         requestTutor(signal: nil)
     }
 
+    /// Starts one tutor turn and consumes it as a stream rather than waiting
+    /// for a single reply.
+    ///
+    /// The first `.textDelta` appends an empty tutor `TutorMessage`; every
+    /// delta after that mutates that same message's `text` in place, so the
+    /// bubble grows as the reply is written instead of appearing all at
+    /// once. `.workspace` arrives as a whole, already-paired plan and
+    /// exercise — the streaming protocol makes a mismatched half-pair
+    /// structurally impossible, so unlike the old `TutorReply` path there is
+    /// nothing to defensively guard here. `.failure` surfaces its message and
+    /// leaves the current workspace exactly as it was; whatever partial text
+    /// had already streamed into the tutor message stays visible.
+    ///
+    /// `persist()` runs once, on `.done` — not per delta, or every token
+    /// would thrash the disk with a `session.json` write.
     private func requestTutor(
         signal: LearningSignal?,
         imageData: Data? = nil,
         regionDescription: String? = nil,
-        onReply: ((TutorReply) -> Void)? = nil
+        onDone: ((String) -> Void)? = nil
     ) {
         guard ensureTutorAvailable() else {
             isLoading = false
             isEvaluating = false
+            activeRequestTask = nil
             return
         }
         isLoading = true
         errorMessage = nil
+        phase = nil
         let request = TutorRequest(
             messages: session.messages,
             goal: session.messages.first(where: { $0.role == .learner })?.text,
@@ -305,38 +347,60 @@ final class TutorStore: ObservableObject {
             imageData: imageData,
             imageRegionDescription: regionDescription,
             signal: signal,
+            sessionID: session.id,
             model: session.selectedModel,
             reasoningEffort: session.reasoningEffort
         )
         let service = tutorService
-        Task { [weak self] in
+        activeRequestTask = Task { [weak self] in
+            guard let self else { return }
+            var accumulatedText = ""
+            var tutorMessageIndex: Int?
             do {
-                let reply = try await service.respond(to: request)
-                guard let self else { return }
-                self.apply(reply: reply, signal: signal, onReply: onReply)
+                for try await event in service.stream(request) {
+                    switch event {
+                    case .status(let newPhase, _):
+                        self.phase = newPhase
+                    case .reasoningDelta:
+                        break
+                    case .textDelta(let chunk):
+                        accumulatedText += chunk
+                        if tutorMessageIndex == nil {
+                            self.session.messages.append(TutorMessage(role: .tutor, text: ""))
+                            tutorMessageIndex = self.session.messages.count - 1
+                        }
+                        if let index = tutorMessageIndex {
+                            self.session.messages[index].text = accumulatedText
+                        }
+                    case .workspace(let plan, let exercise):
+                        self.session.plan = plan
+                        self.session.exercise = exercise
+                        self.isWorkspace = true
+                    case .done:
+                        self.phase = nil
+                        self.isLoading = false
+                        self.isEvaluating = false
+                        if signal == .evaluate, let tutorMessageIndex {
+                            self.evaluationMessageID = self.session.messages[tutorMessageIndex].id
+                        }
+                        self.session.lastSavedAt = .now
+                        self.persist()
+                        onDone?(accumulatedText)
+                    case .failure(let message, _):
+                        self.phase = nil
+                        self.isLoading = false
+                        self.isEvaluating = false
+                        self.errorMessage = message
+                    }
+                }
             } catch {
-                guard let self else { return }
+                self.phase = nil
                 self.isLoading = false
                 self.isEvaluating = false
                 self.errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
                 self.logger.error("Tutor request failed: \(error.localizedDescription, privacy: .public)")
             }
         }
-    }
-
-    private func apply(reply: TutorReply, signal: LearningSignal?, onReply: ((TutorReply) -> Void)?) {
-        isLoading = false
-        let pair = TutorReply.coherentPair(reply.plan, reply.exercise)
-        if let plan = pair.plan, let exercise = pair.exercise {
-            session.plan = plan
-            session.exercise = exercise
-        }
-        let tutorMessage = TutorMessage(role: .tutor, text: reply.text)
-        session.messages.append(tutorMessage)
-        if signal == .evaluate { evaluationMessageID = tutorMessage.id }
-        session.lastSavedAt = .now
-        persist()
-        onReply?(reply)
     }
 
     /// Every save goes through here, so every save carries the board's current

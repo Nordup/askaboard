@@ -136,6 +136,19 @@ final class BackendTutorServiceTests: XCTestCase {
         XCTAssertNotNil(UUID(uuidString: json["session_id"] as? String ?? ""))
     }
 
+    /// `session_id` must be the caller's `sessionID`, not a fresh UUID minted
+    /// per call — a fresh id every turn is exactly the bug that kept the
+    /// backend from ever accumulating conversation context (see
+    /// `BackendTutorService.body(for:)`).
+    func testSessionIDIsCarriedFromTheRequestNotGeneratedFresh() async throws {
+        StubURLProtocol.body = "data: {\"type\":\"done\",\"turn_id\":\"\(UUID().uuidString)\"}\n\n"
+        let sessionID = UUID()
+        for try await _ in makeService().stream(.fixture(sessionID: sessionID)) {}
+        let body = try XCTUnwrap(StubURLProtocol.lastBody)
+        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(json["session_id"] as? String, sessionID.uuidString)
+    }
+
     func testRequestBodyCarriesTheExpectedFields() async throws {
         StubURLProtocol.body = "data: {\"type\":\"done\",\"turn_id\":\"\(UUID().uuidString)\"}\n\n"
         let request = TutorRequest.fixture(
@@ -153,6 +166,25 @@ final class BackendTutorServiceTests: XCTestCase {
         XCTAssertEqual(json["signal"] as? String, "dontKnow")
         XCTAssertEqual(json["model"] as? String, "gpt-5.6-terra")
         XCTAssertEqual(json["reasoning_effort"] as? String, "low")
+    }
+
+    /// Coverage this suite lost when `OpenAITutorService` (and its own
+    /// image-embedding tests) was deleted: the backend's own image fields —
+    /// unrelated to the old OpenAI Responses API `input_image` shape — still
+    /// need to carry the board capture and region label intact.
+    func testRequestBodyCarriesImageDataAndRegion() async throws {
+        StubURLProtocol.body = "data: {\"type\":\"done\",\"turn_id\":\"\(UUID().uuidString)\"}\n\n"
+        let imageData = Data([1, 2, 3])
+        let request = TutorRequest.fixture(
+            imageData: imageData,
+            imageRegionDescription: "the selected rectangle",
+            signal: .evaluate
+        )
+        for try await _ in makeService().stream(request) {}
+        let body = try XCTUnwrap(StubURLProtocol.lastBody)
+        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(json["image_base64"] as? String, imageData.base64EncodedString())
+        XCTAssertEqual(json["image_region"] as? String, "the selected rectangle")
     }
 
     func testAnHTTPErrorSurfacesAsAFailure() async throws {

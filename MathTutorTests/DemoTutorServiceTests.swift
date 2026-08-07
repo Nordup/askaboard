@@ -11,6 +11,7 @@ extension TutorRequest {
         imageData: Data? = nil,
         imageRegionDescription: String? = nil,
         signal: LearningSignal? = nil,
+        sessionID: UUID = UUID(),
         model: ModelChoice = .sol,
         reasoningEffort: ReasoningEffort = .defaultValue
     ) -> TutorRequest {
@@ -22,6 +23,7 @@ extension TutorRequest {
             imageData: imageData,
             imageRegionDescription: imageRegionDescription,
             signal: signal,
+            sessionID: sessionID,
             model: model,
             reasoningEffort: reasoningEffort
         )

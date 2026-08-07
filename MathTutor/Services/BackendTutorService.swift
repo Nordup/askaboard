@@ -16,32 +16,6 @@ struct BackendTutorService: TutorService, Sendable {
         self.session = session
     }
 
-    /// Nothing calls this directly — `stream(_:)` below is a genuine
-    /// streaming implementation, not the protocol-extension bridge that
-    /// turns `respond(to:)` into a stream. This exists only because
-    /// `respond(to:)` has no default and every conformer must supply one;
-    /// it collects `stream(_:)`'s events into a single reply rather than
-    /// duplicating the request-building and network logic.
-    func respond(to request: TutorRequest) async throws -> TutorReply {
-        var text = ""
-        var plan: SessionPlan?
-        var exercise: Exercise?
-        for try await event in stream(request) {
-            switch event {
-            case .textDelta(let chunk):
-                text += chunk
-            case .workspace(let sessionPlan, let sessionExercise):
-                plan = sessionPlan
-                exercise = sessionExercise
-            case .failure(let message, _):
-                throw TutorServiceError.network(message)
-            case .status, .reasoningDelta, .done:
-                break
-            }
-        }
-        return TutorReply(text: text, plan: plan, exercise: exercise)
-    }
-
     /// Streams one tutor turn as `POST {baseURL}/v1/turn`.
     ///
     /// A non-2xx status throws `TutorServiceError.network` carrying the
@@ -105,23 +79,18 @@ struct BackendTutorService: TutorService, Sendable {
     ///
     /// `turn_id` is generated fresh per call — it is what makes a turn
     /// idempotent, so a retry after a dropped connection is never charged
-    /// twice; the server 409s a duplicate. `session_id` should identify the
-    /// learner's ongoing conversation so the server can rebuild context for
-    /// this turn from its own stored history (`TurnRequest.session_id` in
-    /// `server/app/api/turn.py`) — but `TutorRequest`/`LearningSession`
-    /// carry no session identifier today, so a fresh UUID is generated here
-    /// too. That is a known gap, not a considered design: every turn looks
-    /// like the start of a brand-new server-side session, so the server's
-    /// own conversation-history assembly never has anything to draw on
-    /// (the client already resends the full local transcript itself, so nothing
-    /// is lost to the user in this pass — but the server-side context this
-    /// was meant to enable does not yet work). Flagged for the client owner;
-    /// resolving it needs a stable session identifier threaded from
-    /// `LearningSession` through `TutorRequest` into this call.
+    /// twice; the server 409s a duplicate. `session_id` is `request.sessionID`
+    /// — the learner's `LearningSession.id` — sent as-is rather than
+    /// generated here, so every turn in the same session lands against the
+    /// same server-side conversation and the server's context assembly
+    /// (`TurnRequest.session_id` in `server/app/api/turn.py`) actually has
+    /// something to draw on. A fresh `LearningSession` (a new session or a
+    /// reset) mints a fresh id, which is what keeps its turns from landing in
+    /// a previous session's transcript.
     static func body(for request: TutorRequest) -> [String: Any] {
         var body: [String: Any] = [
             "turn_id": UUID().uuidString,
-            "session_id": UUID().uuidString,
+            "session_id": request.sessionID.uuidString,
             "text": request.messages.last?.text ?? "",
             "model": request.model.rawValue,
             "reasoning_effort": request.reasoningEffort.rawValue

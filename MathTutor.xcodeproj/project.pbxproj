@@ -43,7 +43,6 @@
 		5BDF38E6FA09E4774CE0D474 /* Orb.swift in Sources */ = {isa = PBXBuildFile; fileRef = 451EF516B682FFDFDE3298AC /* Orb.swift */; };
 		5C5AB0233992E332FE17E4E0 /* SettingsPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90D781B92879DD6D65B71FAB /* SettingsPane.swift */; };
 		5D1E63A5E7895DE958C6A55B /* SuggestionChip.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3819B07BA533544E9FFF5372 /* SuggestionChip.swift */; };
-		638ED935C67C080ABBE71616 /* OpenAITutorService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 421C4DF671ACFA6D05DA1E08 /* OpenAITutorService.swift */; };
 		667FD9DC81E5660F25882C49 /* SettingRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5078C64A063E2312DE7B9A1D /* SettingRow.swift */; };
 		6938C21ECBCEE5D5D0A26299 /* BoardCanvas.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48F8A6727EE102FA0FCE0C77 /* BoardCanvas.swift */; };
 		6AA705D59A52E5C5968CB6AA /* Composer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B707E1CFA3F0C0117CDF5213 /* Composer.swift */; };
@@ -80,6 +79,7 @@
 		BA51B8E621AFAE76A8E925FE /* DictationController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2830CE96CFA1A85F968C195C /* DictationController.swift */; };
 		BD42158CA8779DF9B7BC6A2B /* OpenAITranscription.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD99B7E64FD3EBF42D907FE3 /* OpenAITranscription.swift */; };
 		BD918876901E75AD4723D8A0 /* TutorPromptPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07DCCC70FA22423135C6251A /* TutorPromptPolicy.swift */; };
+		BF03F14EA21C27A4E7686D8B /* TutorStoreStreamingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01208D8AB95D85FECBBFB486 /* TutorStoreStreamingTests.swift */; };
 		C2807F151AAAB8AB732AA4A5 /* SettingsPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 893D3B3086BA9C4D9374718B /* SettingsPresentation.swift */; };
 		C2F1BFE90BA785204C92E595 /* ShellComponentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61070F61E8510619F84F5D97 /* ShellComponentTests.swift */; };
 		C572458EC96D83FFEF72CF89 /* MathTutorApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE113B7E3E62FDCFA7413776 /* MathTutorApp.swift */; };
@@ -124,6 +124,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		01208D8AB95D85FECBBFB486 /* TutorStoreStreamingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TutorStoreStreamingTests.swift; sourceTree = "<group>"; };
 		07822BFCEDA6CAC5E7B67D24 /* BoardInkTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardInkTests.swift; sourceTree = "<group>"; };
 		07DCCC70FA22423135C6251A /* TutorPromptPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TutorPromptPolicy.swift; sourceTree = "<group>"; };
 		0CB33A63FB0B69CC8663EC4C /* MathTutorUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = MathTutorUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -148,7 +149,6 @@
 		3DB98B59876AB7F23B67AB5E /* BoardTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardTool.swift; sourceTree = "<group>"; };
 		3DBEC75E12C26E686FF76BDF /* BoardInkPersistenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardInkPersistenceTests.swift; sourceTree = "<group>"; };
 		40CC8590077CACB91515D03B /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
-		421C4DF671ACFA6D05DA1E08 /* OpenAITutorService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAITutorService.swift; sourceTree = "<group>"; };
 		4249CB09575FAAE3E3B8704E /* DebugAPIKeyInjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugAPIKeyInjection.swift; sourceTree = "<group>"; };
 		4321C972F3139C4C616C7600 /* BackendTutorServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendTutorServiceTests.swift; sourceTree = "<group>"; };
 		437A816AC93664B09A7FEBB9 /* SVGPath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SVGPath.swift; sourceTree = "<group>"; };
@@ -345,6 +345,7 @@
 				61070F61E8510619F84F5D97 /* ShellComponentTests.swift */,
 				FCA9CA61147AAAE5C1519199 /* SVGPathTests.swift */,
 				ECEE59C2882DF49AE64DF05F /* TutorEventTests.swift */,
+				01208D8AB95D85FECBBFB486 /* TutorStoreStreamingTests.swift */,
 				363744A8B651DA004FC6F837 /* UIStateTests.swift */,
 			);
 			path = MathTutorTests;
@@ -359,7 +360,6 @@
 				3C742B8F4CF845931CCEFC3D /* KeychainStore.swift */,
 				E06A066A7300269B751887BF /* OpenAIDictationService.swift */,
 				DD99B7E64FD3EBF42D907FE3 /* OpenAITranscription.swift */,
-				421C4DF671ACFA6D05DA1E08 /* OpenAITutorService.swift */,
 				A6C3A3607F71F2C99C586DB2 /* SessionPersistence.swift */,
 				9D3C08CEF2BB69842ABC9BBF /* TutorService.swift */,
 			);
@@ -655,6 +655,7 @@
 				090540C2A451B7303C90A2C3 /* SettingsAndPlanTests.swift in Sources */,
 				C2F1BFE90BA785204C92E595 /* ShellComponentTests.swift in Sources */,
 				D4CC41F844141FE1C0733F8F /* TutorEventTests.swift in Sources */,
+				BF03F14EA21C27A4E7686D8B /* TutorStoreStreamingTests.swift in Sources */,
 				72CFCF787A756EB78403E0D7 /* UIStateTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -700,7 +701,6 @@
 				795BF1D65FD2B44DC778AB14 /* NoAPIKeyState.swift in Sources */,
 				3AC186F9427DE8B6C63A1FC4 /* OpenAIDictationService.swift in Sources */,
 				BD42158CA8779DF9B7BC6A2B /* OpenAITranscription.swift in Sources */,
-				638ED935C67C080ABBE71616 /* OpenAITutorService.swift in Sources */,
 				5BDF38E6FA09E4774CE0D474 /* Orb.swift in Sources */,
 				EDEB51FDD8E17D13290CD0AF /* OrbHalo.swift in Sources */,
 				1F91F1A7DBDDCD73CCE8C348 /* PlanLane.swift in Sources */,
