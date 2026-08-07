@@ -532,11 +532,15 @@ requires_db = pytest.mark.skipif(
 
 
 @pytest.fixture
-async def db():
+async def db_factory():
     """A clean schema per test, on a dedicated Neon branch.
 
     Dropping and recreating is safe only because this branch holds nothing but
     test data. Never point TEST_DATABASE_URL at the branch the app uses.
+
+    Yields the sessionmaker rather than a session, because components that
+    open their own sessions — the recorder, the endpoints — need the factory,
+    not a borrowed one they would wrongly close.
     """
     if TEST_DATABASE_URL is None:
         pytest.skip("TEST_DATABASE_URL is not set.")
@@ -545,10 +549,15 @@ async def db():
         await conn.execute(sa_text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
-    factory = async_sessionmaker(engine, expire_on_commit=False)
-    async with factory() as session:
-        yield session
+    yield async_sessionmaker(engine, expire_on_commit=False)
     await engine.dispose()
+
+
+@pytest.fixture
+async def db(db_factory):
+    """One session for tests that just want to read and write directly."""
+    async with db_factory() as session:
+        yield session
 ```
 
 Every database test is decorated `@requires_db`, so a machine without
@@ -1934,7 +1943,8 @@ def test_redact_images_leaves_an_imageless_body_untouched():
     assert redact_images(body, "sha256:x") == body
 
 
-async def test_finish_turn_writes_the_turn_and_its_llm_call(db, tmp_path):
+@requires_db
+async def test_finish_turn_writes_the_turn_and_its_llm_call(db, db_factory, tmp_path):
     session = Session(model="gpt-5.6-luna", reasoning_effort="high")
     db.add(session)
     await db.flush()
@@ -1945,7 +1955,9 @@ async def test_finish_turn_writes_the_turn_and_its_llm_call(db, tmp_path):
     ))
     await db.commit()
 
-    recorder = Recorder(lambda: db, LocalBlobStore(tmp_path))
+    # The factory, not the borrowed `db` session — the recorder opens and
+    # closes its own, which is the behaviour under test.
+    recorder = Recorder(db_factory, LocalBlobStore(tmp_path))
     from app.tutor.loop import TurnResult
     result = TurnResult(
         raw_events=[{"type": "response.created"}],
@@ -1964,6 +1976,14 @@ async def test_finish_turn_writes_the_turn_and_its_llm_call(db, tmp_path):
 
     call = (await db.execute(select(LLMCall))).scalar_one()
     assert call.raw_events_blob is not None
+
+
+@requires_db
+async def test_the_recorder_returns_every_connection_it_takes(db_factory, tmp_path):
+    """A leaked session per turn exhausts the pool after a day of tutoring."""
+    recorder = Recorder(db_factory, LocalBlobStore(tmp_path))
+    for _ in range(30):
+        assert await recorder.spend_today() == 0.0
 ```
 
 - [ ] **Step 2: Run and confirm failure**
@@ -2008,8 +2028,18 @@ def redact_images(body: dict, blob_key: str) -> dict:
 
 
 class Recorder:
-    def __init__(self, session_factory: Any, blob_store: BlobStore) -> None:
-        self._session_factory = session_factory
+    """Every method opens its own session and closes it.
+
+    `async with` is not decoration here. These methods run once per turn on a
+    long-lived server; a session opened and merely committed is a pooled
+    connection never returned, and the pool is exhausted after as many turns as
+    it has slots.
+    """
+
+    def __init__(
+        self, sessionmaker: async_sessionmaker[AsyncSession], blob_store: BlobStore
+    ) -> None:
+        self._sessionmaker = sessionmaker
         self._blobs = blob_store
 
     async def finish_turn(
@@ -2025,64 +2055,64 @@ class Recorder:
         raw = "\n".join(json.dumps(e) for e in result.raw_events).encode()
         events_ref = await self._blobs.put(raw, "application/jsonl")
 
-        session = self._session_factory()
         usage = result.usage or {}
         stored_body = (
             redact_images(request_body, image_blob_key) if image_blob_key else request_body
         )
 
-        session.add(LLMCall(
-            turn_id=turn_id, seq=0, model=request_body.get("model", ""),
-            request=stored_body,
-            response={"id": result.response_id, "text": result.text},
-            raw_events_blob=events_ref.key, usage=usage or None,
-            finished_at=datetime.now(timezone.utc),
-        ))
+        async with self._sessionmaker() as session:
+            session.add(LLMCall(
+                turn_id=turn_id, seq=0, model=request_body.get("model", ""),
+                request=stored_body,
+                response={"id": result.response_id, "text": result.text},
+                raw_events_blob=events_ref.key, usage=usage or None,
+                finished_at=datetime.now(timezone.utc),
+            ))
 
-        turn = await session.get(Turn, turn_id)
-        turn.status = "ok"
-        turn.ttft_ms = ttft_ms
-        turn.latency_ms = latency_ms
-        turn.input_tokens = usage.get("input_tokens")
-        turn.output_tokens = usage.get("output_tokens")
-        turn.reasoning_tokens = (usage.get("output_tokens_details") or {}).get(
-            "reasoning_tokens"
-        )
-        turn.finished_at = datetime.now(timezone.utc)
-        await session.commit()
+            turn = await session.get(Turn, turn_id)
+            turn.status = "ok"
+            turn.ttft_ms = ttft_ms
+            turn.latency_ms = latency_ms
+            turn.input_tokens = usage.get("input_tokens")
+            turn.output_tokens = usage.get("output_tokens")
+            turn.reasoning_tokens = (usage.get("output_tokens_details") or {}).get(
+                "reasoning_tokens"
+            )
+            turn.finished_at = datetime.now(timezone.utc)
+            await session.commit()
 
     async def fail_turn(
         self, *, turn_id: uuid.UUID, message: str, retryable: bool
     ) -> None:
-        session = self._session_factory()
-        turn = await session.get(Turn, turn_id)
-        turn.status = "error"
-        turn.error = {"message": message, "retryable": retryable}
-        turn.finished_at = datetime.now(timezone.utc)
-        await session.commit()
+        async with self._sessionmaker() as session:
+            turn = await session.get(Turn, turn_id)
+            turn.status = "error"
+            turn.error = {"message": message, "retryable": retryable}
+            turn.finished_at = datetime.now(timezone.utc)
+            await session.commit()
 
     async def record_attachment(
         self, *, turn_id: uuid.UUID, kind: str, data: bytes, content_type: str
     ):
         ref = await self._blobs.put(data, content_type)
-        session = self._session_factory()
-        session.add(Attachment(
-            turn_id=turn_id, kind=kind, blob_key=ref.key, sha256=ref.sha256,
-            bytes=ref.bytes, content_type=content_type,
-        ))
-        await session.commit()
+        async with self._sessionmaker() as session:
+            session.add(Attachment(
+                turn_id=turn_id, kind=kind, blob_key=ref.key, sha256=ref.sha256,
+                bytes=ref.bytes, content_type=content_type,
+            ))
+            await session.commit()
         return ref
 
     async def spend_today(self) -> float:
-        session = self._session_factory()
         midnight = datetime.now(timezone.utc).replace(
             hour=0, minute=0, second=0, microsecond=0
         )
-        total = await session.scalar(
-            select(func.coalesce(func.sum(Turn.cost_usd), 0.0)).where(
-                Turn.started_at >= midnight
+        async with self._sessionmaker() as session:
+            total = await session.scalar(
+                select(func.coalesce(func.sum(Turn.cost_usd), 0.0)).where(
+                    Turn.started_at >= midnight
+                )
             )
-        )
         return float(total or 0.0)
 ```
 
