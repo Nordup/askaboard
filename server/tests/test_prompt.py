@@ -48,3 +48,35 @@ def test_dont_know_signal_adds_its_section():
         image_region=None, has_image=False, signal="dontKnow",
     )
     assert "I don’t know" in prompt
+
+
+def test_system_prompt_pins_the_curly_quotes_around_how_is_this_so_far():
+    # Paragraph 5 ("Checking work is not the same...") quotes three learner
+    # phrases with curly double quotes (U+201C/U+201D), not straight ones.
+    assert "“how is this so far”" in SYSTEM_PROMPT
+
+
+def test_system_prompt_pins_the_maths_notation():
+    # Paragraph 3's plain-text-math example must survive with the real
+    # superscript-two and radical characters, not ASCII "^2" / "sqrt".
+    assert "x² + y² = z²" in SYSTEM_PROMPT
+    assert "√2" in SYSTEM_PROMPT
+
+
+def test_system_prompt_has_no_ascii_normalised_lookalikes():
+    # No straight apostrophe, straight double quote, or "--" stand-in should
+    # ever creep in — every curly apostrophe/quote and every em-dash in the
+    # prompt is a deliberate typographic choice, not an ASCII fallback.
+    assert SYSTEM_PROMPT.count("'") == 0
+    assert SYSTEM_PROMPT.count('"') == 0
+    assert SYSTEM_PROMPT.count("--") == 0
+
+
+def test_system_prompt_pins_the_em_dash_count():
+    # One em-dash in paragraph 3 ("...ordinary prose — it is streamed...")
+    # and three in paragraph 5: "...they have already done — “how is this
+    # so far”...", "...or a board they have simply sent you — they are
+    # asking...", and "...the same step twice and are still stuck — then
+    # say plainly that you are giving it."
+    assert "—" in SYSTEM_PROMPT
+    assert SYSTEM_PROMPT.count("—") == 4
