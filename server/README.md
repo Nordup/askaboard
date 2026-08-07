@@ -46,10 +46,12 @@ uv run alembic upgrade head
 | `OPENAI_API_KEY` | The one OpenAI key. Never sent to the device. |
 | `DATABASE_URL` | The Postgres (Neon) connection string the app writes to. |
 | `DEVICE_TOKEN` | The bearer token the iPad app presents. Generate with `python -c "import secrets; print(secrets.token_urlsafe(32))"`. |
-| `BLOB_DIR` | Local directory for the blob store (board PNGs, ink, dictation audio, raw event logs). |
-| `DAILY_SPEND_CAP_USD` | Turns are refused with `402` once today's recorded spend reaches this. See [Known limitations](#known-limitations) — today this never trips. |
-| `PERSIST_DICTATION_AUDIO` | Whether dictation recordings are written to the blob store. Retention below applies whenever this is `true`. |
+| `BLOB_DIR` | *Optional*, defaults to `./blobs`. Local directory for the blob store (board PNGs, ink, dictation audio, raw event logs). |
+| `DAILY_SPEND_CAP_USD` | *Optional*, defaults to `5.0`. Turns are refused with `402` once today's recorded spend reaches this. See [Known limitations](#known-limitations) — today this never trips. |
+| `PERSIST_DICTATION_AUDIO` | *Optional*, defaults to **`true`**. Whether dictation recordings are written to the blob store. Leaving this unset does not mean recordings are skipped — it means they're kept, same as if you'd set it to `true` explicitly. Retention below applies whenever this is `true`. |
 | `TEST_DATABASE_URL` | A **separate** database the test suite runs against. See the warning immediately below — do not skip it. |
+
+The three marked *optional* have defaults in [`app/config.py`](app/config.py) and can be left out of `.env` entirely; the rest are required and the service will not start without them.
 
 > **`TEST_DATABASE_URL` must point at a different Neon branch than
 > `DATABASE_URL`.** The database test fixture drops every table on whatever
@@ -120,6 +122,25 @@ object that has one without the other. When the model calls it, the
 translator turns the tool call into a single `workspace` event carrying both
 the plan and the exercise. No caller anywhere has to remember to check that
 they arrived together, because the schema doesn't allow them not to.
+
+## Read-back endpoints
+
+This service is built to record everything about a session — that's the
+whole point of the recorder. These four routes are how any of it actually
+gets read back out. **They're for the project owner and for agents
+debugging a bad tutoring turn, not for the iPad app** — the app never calls
+any of them; it only ever calls `POST /v1/turn` and `POST /v1/dictation`.
+Like every other route in this service, they sit behind the same bearer
+token (`Authorization: Bearer <DEVICE_TOKEN>`) — there's no separate,
+unauthenticated path to a student's handwriting or voice. Defined in
+[`app/api/sessions.py`](app/api/sessions.py).
+
+| Route | Returns |
+| --- | --- |
+| `GET /v1/sessions` | `{"sessions": [...]}` — session summaries (id, model, reasoning effort, current plan/exercise, timestamps), newest-started first. Paginated with `limit` (default 50, max 200) and `offset`. |
+| `GET /v1/sessions/{id}` | One session's summary plus its full `messages` (ordered by `seq`) and `turns` (ordered by start time, summarised — status, timing, token counts, error if any). `404` if the id is unknown. |
+| `GET /v1/turns/{id}` | The full trace of one turn: its summary plus `llm_calls` (each with the *exact* request and response JSON sent to and received from OpenAI, the raw-event blob key, and usage), `tool_calls`, and `attachments` (kind, blob key, sha256, size). This is what makes a bad turn diagnosable after the fact — everything the model was told and everything it did, not a summary of it. `404` if the id is unknown. |
+| `GET /v1/blobs/{key}` | Streams the raw bytes back for a blob key referenced by an attachment or an `llm_call`'s `raw_events_blob` (board PNGs, ink, dictation audio, raw provider event logs) — `Content-Type` recovered from the matching attachment where one exists, `application/octet-stream` otherwise. `404` if the key is unknown. |
 
 ## Retention
 
