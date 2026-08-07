@@ -28,8 +28,10 @@ import SwiftUI
 ///
 /// **The boards reserve nothing at the top.** They once drew a 24pt status band at y 16 and
 /// measured content from `40 + 28 = 68`; the 16 was a drawing's margin that no iPad reports,
-/// and the band itself is gone. The app hides the system bar (`RootView`), so `safeAreaTop`
-/// is 0 and `--space-edge` falls back to its plain definition on all four sides.
+/// and the band itself is gone, so the boards inset 28 from the glass on all four sides.
+/// The app does **not** hide the system bar, so on device `safeAreaTop` is what iPadOS
+/// reserves and `contentTop` is 24 + 28 = 52 — the same expression with a different number in
+/// it. `reference` is the boards' screen; a measured layout is the device's.
 ///
 /// **What is fixed and what flexes.** The rail is 72 because `--container-rail` says *"fixed —
 /// the rail never resizes"*, and the docked panel is 337 because that is what leaves the 301pt
@@ -58,15 +60,37 @@ struct ScreenLayout: Equatable, Sendable {
     let safeAreaTrailing: CGFloat
     let safeAreaBottom: CGFloat
 
+    /// What the student has asked the docked panel to be, clamped by whoever set it.
+    ///
+    /// Board 02 called the panel *"the only fixed-width surface in the product"*, and for as
+    /// long as the product was one device that was a description rather than a constraint.
+    /// It is now an input, which changes nothing about the arithmetic below — `panelX` and
+    /// `boardWidthDocked` were always written as subtractions from this number, so they
+    /// follow for free.
+    ///
+    /// The design's 337 is its **floor**, not its value: see `minimumPanelWidth`. A panel is
+    /// never drawn narrower than it was designed, only wider — or collapsed to the dock.
+    let panelWidth: CGFloat
+
     /// Insets are `EdgeInsets` at the boundary (that is what `GeometryProxy` hands you) and
     /// scalars inside, so the type is trivially `Sendable` and its `Equatable` is four
     /// comparisons rather than a nested struct's.
-    init(size: CGSize, safeArea: EdgeInsets = EdgeInsets()) {
+    ///
+    /// `panelWidth` arrives the same way and for the same reason the size does: it is an
+    /// input the screen knows and the layout does not. It defaults to `--container-panel`,
+    /// so every existing call site — and every preview, gallery specimen and test that never
+    /// passes one — lays out exactly as it did when the panel was a constant.
+    init(
+        size: CGSize,
+        safeArea: EdgeInsets = EdgeInsets(),
+        panelWidth: CGFloat = ScreenLayout.minimumPanelWidth
+    ) {
         self.size = size
         safeAreaTop = safeArea.top
         safeAreaLeading = safeArea.leading
         safeAreaTrailing = safeArea.trailing
         safeAreaBottom = safeArea.bottom
+        self.panelWidth = panelWidth
     }
 
     // MARK: - The reference device
@@ -79,11 +103,10 @@ struct ScreenLayout: Equatable, Sendable {
     /// gets measured behaves exactly as it did before this file changed.
     static let reference = ScreenLayout(
         size: CGSize(width: DS.Container.screen, height: referenceHeight),
-        // Nothing reserved on any edge. The app hides the system status bar, so a real 13"
-        // iPad reports a zero top inset and the reference fixture is the *same* layout the
-        // device produces rather than a second set of numbers that has to be kept in step.
-        // That is what makes the pixel diff against `design/reference/*.png` meaningful: the
-        // boards, the fixture and the device now all put `contentTop` at 28.
+        // Nothing reserved on any edge, because the boards reserve nothing: they were drawn
+        // with no status bar and every panel inset 28 from the glass. This is the fixture that
+        // reproduces `design/reference/*.png`, so it takes the boards' numbers — a device with
+        // its status bar showing reports 24 here and lands `contentTop` at 52 instead.
         safeArea: EdgeInsets()
     )
 
@@ -112,25 +135,26 @@ struct ScreenLayout: Equatable, Sendable {
     /// a drawing's margin, not hardware — so flooring at 40 silently spent 16 points of every
     /// real screen buying back a gap that does not exist on it.
     ///
-    /// It is therefore the inset, unmodified. The app hides the system bar (`RootView`), so on
-    /// device this is 0 and `contentTop` is the edge token itself — which is what the boards
-    /// draw. It stays an expression rather than becoming a constant because the value is still
-    /// whatever the window reports: a Split View, or a device that reserves something at the
-    /// top regardless, gets the inset applied with no special case anywhere.
+    /// It is therefore the inset, unmodified — 24 on a landscape iPad with a camera housing,
+    /// 20 with a home button, and 0 only where nothing is reserved, which is what the boards
+    /// draw and what `reference` supplies. It stays an expression rather than becoming a
+    /// constant because the value is whatever the window reports, so a Split View or a new
+    /// device needs no special case anywhere.
     var statusBarBottom: CGFloat { safeAreaTop }
 
     /// `--space-edge` measured from the **obstruction, not the glass**. This is the rule the
     /// whole vertical model turns on, and `contentBottom` is the same sentence.
     ///
-    /// Board 01 states the token as 28 *"on all four sides"* and, now that nothing is reserved
-    /// above the content, that is literally what every edge gets: *"content starts at
-    /// 0 + 28 = 28."* The boards used to measure the top from a 40pt status band instead, which
-    /// is the same rule — the inset applied to the nearest obstruction — evaluated back when
-    /// there was an obstruction to apply it to.
+    /// Board 01 states the token as 28 *"on all four sides"*, and the boards reserve nothing
+    /// above the content, so on the drawing every edge gets it literally: *"content starts at
+    /// 0 + 28 = 28."* They used to measure the top from a 40pt status band instead, which is
+    /// the same rule — the inset applied to the nearest obstruction — evaluated back when there
+    /// was an obstruction to apply it to.
     ///
-    /// So: `0 + 28 = 28` on the reference device and on any device with the bar hidden, and
-    /// still `24 + 28 = 52` / `20 + 28 = 48` if something ever does reserve a band. None of
-    /// those is a special case; they are one expression with a different number in it.
+    /// So: `24 + 28 = 52` on a landscape iPad with its status bar showing, which is what the
+    /// app ships; `20 + 28 = 48` on a home-button one; and `0 + 28 = 28` where nothing is
+    /// reserved, which is the boards' own screen and `reference`. None of those is a special
+    /// case; they are one expression with a different number in it.
     var contentTop: CGFloat { statusBarBottom + DS.Space.edge }
 
     /// `--space-edge` from the bottom obstruction: the home indicator where there is one, the
@@ -183,12 +207,37 @@ struct ScreenLayout: Equatable, Sendable {
     /// `124 + 863 + 24`, equivalently `1376 − 28 − 337 = 1011`. The second spelling is the one
     /// implemented: the panel is pinned to the right edge and the board is what flexes, so the
     /// panel's position must not depend on the board's width.
-    var panelX: CGFloat { contentRight - Self.panelWidth }
+    var panelX: CGFloat { contentRight - panelWidth }
 
-    /// `--container-panel`. Fixed: 337 is what leaves the 301pt column that `--space-panel-inset`
-    /// is specced against, and *"every child of the panel is this wide."*
-    static let panelWidth: CGFloat = DS.Container.panel
-    var panelWidth: CGFloat { Self.panelWidth }
+    /// `--container-panel`, now read as the smallest width the panel is ever *drawn* at.
+    ///
+    /// 337 is what leaves the 301pt column `--space-panel-inset` is specced against, and
+    /// board 05 is explicit that the panel and full-screen treatments are *"two variants,
+    /// not one responsive view."* There is no third variant, so nothing narrower than the
+    /// one that was drawn ever appears: dragging inward pins here and then collapses.
+    static let minimumPanelWidth: CGFloat = DS.Container.panel
+
+    /// The width the board and the panel share, gap included on the panel's side.
+    ///
+    /// `1348 − 124 − 24 = 1200` on the reference screen. It exists because the panel's
+    /// ceiling is a statement about this lane rather than about the screen.
+    var dockedLaneWidth: CGFloat { max(0, contentRight - boardX - DS.Space.gap) }
+
+    /// Half the shared lane — which is `minimumBoardWidth`'s rule applied live rather than
+    /// as a static floor.
+    ///
+    /// That constant says *"the board must never end up narrower than the panel it sits
+    /// beside — the board is the product and the tutor is the commentary."* Written as a
+    /// live constraint, `panel ≤ board` is `panel ≤ lane ÷ 2`, and the recursion the naive
+    /// reading suggests — the maximum depending on `boardWidthDocked`, which depends on the
+    /// panel — collapses algebraically before it ever needs iterating.
+    ///
+    /// `600` on the reference screen, where a panel at its ceiling is exactly as wide as the
+    /// board. Deliberately **not** floored at `minimumPanelWidth`: on a window too narrow to
+    /// dock at all the two bounds genuinely do cross, and reporting that honestly is what
+    /// lets `ResizeConstraints.isSatisfiable` catch it instead of the layout quietly
+    /// preferring one bound.
+    var maximumPanelWidth: CGFloat { dockedLaneWidth / 2 }
 
     /// `--container-panel-content` = `337 − 2 × 18`.
     static let panelContentWidth: CGFloat = DS.Container.panelContent
@@ -282,10 +331,16 @@ struct ScreenLayout: Equatable, Sendable {
     static let minimumBoardWidth: CGFloat = DS.Container.panel
 
     /// `28 + 72 + 24 + 337 + 24 + 337 + 28 = 850` — edge + rail + gap + board + gap + panel +
-    /// edge, with the board at its floor. Every iPad in landscape clears this; the ones that
-    /// do not are portrait and the narrow half of Split View.
-    static let dockedMinimumWidth: CGFloat =
-        2 * DS.Space.edge + railWidth + 2 * DS.Space.gap + panelWidth + minimumBoardWidth
+    /// edge, with the board at its floor and the panel at whatever the student has asked for.
+    ///
+    /// Instance rather than static since the panel's width became an input: a wider panel
+    /// genuinely does need a wider window to stay docked, and a threshold that ignored the
+    /// panel would let a 600pt panel dock beside a 200pt board. `collapsedMinimumWidth`
+    /// stays static for the mirror-image reason — there is no panel in that state, so a wide
+    /// one must not raise the width at which the board alone stops fitting.
+    var dockedMinimumWidth: CGFloat {
+        2 * DS.Space.edge + Self.railWidth + 2 * DS.Space.gap + panelWidth + Self.minimumBoardWidth
+    }
 
     /// `28 + 72 + 24 + 337 + 28 = 489` — the same sum with the panel and one gap removed,
     /// which is exactly what collapsing does.
@@ -300,7 +355,7 @@ struct ScreenLayout: Equatable, Sendable {
 
     var fit: Fit {
         guard contentHeight >= Self.minimumContentHeight else { return .unsupported }
-        if usableWidth >= Self.dockedMinimumWidth { return .threeLane }
+        if usableWidth >= dockedMinimumWidth { return .threeLane }
         if usableWidth >= Self.collapsedMinimumWidth { return .boardOnly }
         return .unsupported
     }
@@ -350,6 +405,7 @@ extension ScreenLayout {
     static var boardWidthDocked: CGFloat { reference.boardWidthDocked }
     static var boardWidthCollapsed: CGFloat { reference.boardWidthCollapsed }
     static var panelX: CGFloat { reference.panelX }
+    static var panelWidth: CGFloat { reference.panelWidth }
 
     static var peekX: CGFloat { reference.peekX }
     static var columnWidth: CGFloat { reference.columnWidth }

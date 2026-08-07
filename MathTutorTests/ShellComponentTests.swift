@@ -612,11 +612,11 @@ final class ShellComponentTests: XCTestCase {
 
         // A Split View resize: narrower, same height, and exactly at the width below which
         // the docked layout stops fitting — so the model's own verdict has to move with it.
-        host.resize(to: CGSize(width: ScreenLayout.dockedMinimumWidth, height: landscape.height))
+        host.resize(to: CGSize(width: ScreenLayout.reference.dockedMinimumWidth, height: landscape.height))
         XCTAssertEqual(recorder.latest?.fit, .threeLane)
         XCTAssertEqual(recorder.latest?.boardWidthDocked, ScreenLayout.minimumBoardWidth)
 
-        host.resize(to: CGSize(width: ScreenLayout.dockedMinimumWidth - 1, height: landscape.height))
+        host.resize(to: CGSize(width: ScreenLayout.reference.dockedMinimumWidth - 1, height: landscape.height))
         XCTAssertEqual(recorder.latest?.fit, .boardOnly, "one point narrower and the tutor cannot dock")
 
         // The insets, on their own, and as deltas — what the host window itself reserves is

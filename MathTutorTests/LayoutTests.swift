@@ -274,7 +274,7 @@ final class LayoutTests: XCTestCase {
     /// The threshold is the docked lanes with the board at its floor, and nothing else — a
     /// point either side of it flips the answer.
     func testTheDockingThresholdIsExactlyTheLaneSum() {
-        XCTAssertEqual(ScreenLayout.dockedMinimumWidth, 850, "28 + 72 + 24 + 337 + 24 + 337 + 28")
+        XCTAssertEqual(ScreenLayout.reference.dockedMinimumWidth, 850, "28 + 72 + 24 + 337 + 24 + 337 + 28")
         XCTAssertEqual(ScreenLayout.collapsedMinimumWidth, 489, "28 + 72 + 24 + 337 + 28")
         XCTAssertEqual(ScreenLayout.minimumBoardWidth, DS.Container.panel, "the board never reads as the minor lane")
         XCTAssertEqual(ScreenLayout.minimumContentHeight, 88, "24 + 64 — the dock's own anchor")
@@ -309,10 +309,10 @@ final class LayoutTests: XCTestCase {
         XCTAssertEqual(deep.contentTop, 59 + DS.Space.edge)
     }
 
-    /// **The regression guard for the pixel diff.** `reference` reserves nothing, which is both
-    /// what the boards draw and what the shipping app produces once it hides the system bar. The
-    /// fixture is therefore the same layout the device makes, not a second set of numbers that
-    /// has to be kept in step with it.
+    /// **The regression guard for the pixel diff.** `reference` reserves nothing, because the
+    /// boards reserve nothing — they are drawn with no status bar and a 28pt inset from the
+    /// glass. A device with its status bar showing lands 24 lower; that is the rule applied to
+    /// a different inset, not a second set of numbers.
     func testReferenceReservesNothingJustLikeADeviceWithTheBarHidden() {
         let l = ScreenLayout.reference
 
@@ -372,10 +372,11 @@ final class LayoutTests: XCTestCase {
         assertTheLanesClose(l, "home-button iPad")
     }
 
-    /// **This is the shipping case.** `RootView` hides the system bar, so nothing is reserved
-    /// and `--space-edge` falls back to its plain definition — an inset from the screen edge,
+    /// **This is the boards' case, and the `--ui-fixture` run's.** With nothing reserved,
+    /// `--space-edge` falls back to its plain definition — an inset from the screen edge,
     /// because with no obstruction the screen edge is what is nearest. Not a special case: the
-    /// same expression, with a zero in it. It is also what the boards draw.
+    /// same expression, with a zero in it. The shipping app keeps its status bar, so a device
+    /// evaluates the same expression at 24 and puts content at 52.
     func testAHiddenStatusBarLeavesContentTopAtThePlainEdgeToken() {
         let l = ScreenLayout(size: CGSize(width: 1376, height: 1032))
 
@@ -635,6 +636,86 @@ final class LayoutTests: XCTestCase {
             file: file,
             line: line
         )
+    }
+
+    // MARK: - A variable panel width
+
+    /// The panel's width became an input rather than a constant, and the entire point of the
+    /// change is that nothing else moved. Every derivation still lands on the board's number
+    /// when the input is the board's number.
+    func testDefaultPanelWidthReproducesTheBoard() {
+        let l = ScreenLayout.reference
+        XCTAssertEqual(l.panelWidth, 337, "panelWidth")
+        XCTAssertEqual(l.panelX, 1011, "panelX")
+        XCTAssertEqual(l.boardWidthDocked, 863, "boardWidthDocked")
+        XCTAssertEqual(l.dockedMinimumWidth, 850, "dockedMinimumWidth")
+    }
+
+    func testAWiderPanelMovesTheSeamAndNarrowsTheBoardByTheSameAmount() {
+        let l = ScreenLayout(
+            size: CGSize(width: 1376, height: 1032),
+            panelWidth: 437
+        )
+        XCTAssertEqual(l.panelWidth, 437, "panelWidth")
+        XCTAssertEqual(l.panelX, 911, "panelX — 1348 − 437")
+        XCTAssertEqual(l.boardWidthDocked, 763, "boardWidthDocked — 100 less than 863")
+        XCTAssertEqual(
+            l.boardWidthDocked + l.panelWidth + DS.Space.gap,
+            l.contentRight - l.boardX,
+            "the two lanes and their gap still tile the space exactly"
+        )
+    }
+
+    /// `--container-panel` stops being the panel's width and becomes its floor.
+    func testMinimumPanelWidthIsTheDesignsOwnPanelWidth() {
+        XCTAssertEqual(ScreenLayout.minimumPanelWidth, DS.Container.panel)
+        XCTAssertEqual(ScreenLayout.minimumPanelWidth, 337)
+    }
+
+    /// The maximum is `ScreenLayout.minimumBoardWidth`'s rule applied live: the board must
+    /// never end up narrower than the panel beside it, so the panel gets at most half the
+    /// lane the two share.
+    func testMaximumPanelWidthIsHalfTheSharedLane() {
+        let l = ScreenLayout.reference
+        // lane = 1348 − 124 − 24 = 1200.
+        XCTAssertEqual(l.dockedLaneWidth, 1200, "dockedLaneWidth")
+        XCTAssertEqual(l.maximumPanelWidth, 600, "maximumPanelWidth")
+    }
+
+    func testAtItsMaximumThePanelExactlyEqualsTheBoard() {
+        let l = ScreenLayout(
+            size: CGSize(width: 1376, height: 1032),
+            panelWidth: 600
+        )
+        XCTAssertEqual(l.boardWidthDocked, l.panelWidth, "the rule the maximum encodes")
+    }
+
+    /// A wider panel needs a wider window to stay docked. It must not, however, change the
+    /// width at which the *collapsed* layout stops fitting — there is no panel in that state.
+    func testAWiderPanelRaisesTheDockedThresholdButNotTheCollapsedOne() {
+        let wide = ScreenLayout(size: CGSize(width: 1376, height: 1032), panelWidth: 600)
+        XCTAssertEqual(wide.dockedMinimumWidth, 1113, "28×2 + 72 + 24×2 + 600 + 337")
+        XCTAssertEqual(ScreenLayout.collapsedMinimumWidth, 489, "unchanged by the panel")
+    }
+
+    /// The reversibility rule: a window too narrow for a wide panel reports `.boardOnly`,
+    /// and widening it again reports `.threeLane` — the layout is a function of its inputs
+    /// with nothing latched, so nothing can oscillate.
+    func testShrinkingAndRegrowingTheWindowRoundTripsTheFit() {
+        let narrow = ScreenLayout(size: CGSize(width: 1024, height: 768), panelWidth: 600)
+        XCTAssertEqual(narrow.fit, .boardOnly, "1024 is under the 1113 a 600pt panel needs")
+
+        let wide = ScreenLayout(size: CGSize(width: 1376, height: 1032), panelWidth: 600)
+        XCTAssertEqual(wide.fit, .threeLane, "and it comes back")
+    }
+
+    /// On a window too narrow to give the panel its floor without starving the board, the
+    /// bounds cross. `ResizeConstraints.isSatisfiable` is what a caller checks; the layout
+    /// only has to report the numbers honestly rather than clamping them into agreement.
+    func testTheBoundsCrossOnAWindowTooNarrowToDock() {
+        let narrow = ScreenLayout(size: CGSize(width: 800, height: 768))
+        XCTAssertLessThan(narrow.maximumPanelWidth, ScreenLayout.minimumPanelWidth)
+        XCTAssertEqual(narrow.fit, .boardOnly, "which is why nothing draws a docked panel here")
     }
 
     private func assertTheLanesClose(_ l: ScreenLayout, _ name: String, file: StaticString = #filePath, line: UInt = #line) {
