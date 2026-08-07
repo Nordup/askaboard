@@ -80,6 +80,7 @@
 		C6B6A6ABAC06AFE5992895E3 /* ScrollFade.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CC3EDA46BB4DB54996A4F8F /* ScrollFade.swift */; };
 		CB77A0EAB9544BC656A90049 /* ChatStates.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC88EAC7DEACC326E1A76A63 /* ChatStates.swift */; };
 		CBE73D0B893D0BCCA2C5D090 /* TutorStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A75D7C233693DE7B2FFF3DF /* TutorStore.swift */; };
+		D517AAA5757CDE87D2187E3D /* ResizeModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D557CC670C82D9747A86266 /* ResizeModel.swift */; };
 		D620B41620F9A2C4C9C26AD0 /* DictationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E71EAD98E5C0012B1C4D4B2 /* DictationTests.swift */; };
 		D75FA125AEEE58676AF22C14 /* ChatGallery.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB96C449E6F25690ABBF7028 /* ChatGallery.swift */; };
 		D7910C45BF8917582767DCE6 /* BoardTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DB98B59876AB7F23B67AB5E /* BoardTool.swift */; };
@@ -128,6 +129,7 @@
 		2830CE96CFA1A85F968C195C /* DictationController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictationController.swift; sourceTree = "<group>"; };
 		2B2D438E78DB8419936D1B9A /* NoAPIKeyState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoAPIKeyState.swift; sourceTree = "<group>"; };
 		2BBBD05225BE422A782124B7 /* E2ESeedFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = E2ESeedFixture.swift; sourceTree = "<group>"; };
+		2D557CC670C82D9747A86266 /* ResizeModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResizeModel.swift; sourceTree = "<group>"; };
 		2E4FD5CE583DC5D398AA6AFC /* SettingsPanes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPanes.swift; sourceTree = "<group>"; };
 		2EA4C8E6325776E542D8DA7B /* TutorPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TutorPanel.swift; sourceTree = "<group>"; };
 		3060534FE8CEE11D285FC7FF /* SettingsControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsControls.swift; sourceTree = "<group>"; };
@@ -473,6 +475,7 @@
 			isa = PBXGroup;
 			children = (
 				68777CB8E695F332E3520F4A /* ResizeGeometry.swift */,
+				2D557CC670C82D9747A86266 /* ResizeModel.swift */,
 			);
 			path = Resize;
 			sourceTree = "<group>";
@@ -672,6 +675,7 @@
 				EDEB51FDD8E17D13290CD0AF /* OrbHalo.swift in Sources */,
 				1F91F1A7DBDDCD73CCE8C348 /* PlanLane.swift in Sources */,
 				2F542EF31CD1FFD1F974B6CE /* ResizeGeometry.swift in Sources */,
+				D517AAA5757CDE87D2187E3D /* ResizeModel.swift in Sources */,
 				882764C4645E540FA3B4D6F8 /* RootView.swift in Sources */,
 				3055C301F9CB7C0162436FBA /* SVGPath.swift in Sources */,
 				C6B6A6ABAC06AFE5992895E3 /* ScrollFade.swift in Sources */,
