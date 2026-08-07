@@ -592,6 +592,20 @@ async def test_get_returns_the_original_bytes(tmp_path):
     store = LocalBlobStore(tmp_path)
     ref = await store.put(b"board pixels", "image/png")
     assert await store.get(ref.key) == b"board pixels"
+
+
+async def test_concurrent_puts_of_identical_bytes_all_succeed(tmp_path):
+    """The same board arriving twice at once must not lose either write.
+
+    With a digest-derived tmp filename this failed ~43% of the time: the
+    second writer's replace() found its tmp path already consumed.
+    """
+    store = LocalBlobStore(tmp_path)
+    payload = b"identical board" * 100_000
+    for _ in range(20):
+        refs = await asyncio.gather(*(store.put(payload, "image/png") for _ in range(4)))
+        assert len({ref.key for ref in refs}) == 1
+        assert await store.get(refs[0].key) == payload
 ```
 
 - [ ] **Step 2: Run and confirm failure**
@@ -606,6 +620,8 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'app.store.blobs'`
 ```python
 import asyncio
 import hashlib
+import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -643,9 +659,22 @@ class LocalBlobStore:
             path.parent.mkdir(parents=True, exist_ok=True)
             if path.exists():
                 return
-            tmp = path.with_suffix(".tmp")
-            tmp.write_bytes(data)
-            tmp.replace(path)
+            # The tmp name must be unique per write, not derived from the
+            # digest. Two concurrent puts of the SAME bytes — a client retry,
+            # or two identical board snapshots — would otherwise share one tmp
+            # path, and the second replace() raises FileNotFoundError once the
+            # first has consumed it. Measured at a 43% failure rate before the
+            # tmp name was made unique. Same directory keeps replace() an
+            # atomic rename rather than a cross-filesystem copy.
+            fd, tmp_name = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+            tmp = Path(tmp_name)
+            try:
+                with os.fdopen(fd, "wb") as handle:
+                    handle.write(data)
+                tmp.replace(path)
+            except BaseException:
+                tmp.unlink(missing_ok=True)
+                raise
 
         await asyncio.to_thread(_write)
         return BlobRef(key=f"sha256:{digest}", sha256=digest, bytes=len(data))
