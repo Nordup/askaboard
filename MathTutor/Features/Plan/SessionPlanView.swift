@@ -85,8 +85,10 @@ extension SessionPlanMetrics {
             return Self(
                 scale: .fullScreen,
                 width: column,
-                // 17 / 25 · 600, where the panel's kicker is 15 / 18 · 600.
-                kickerStyle: TextStyle(size: DS.Size.body, leading: DS.Leading.body, weight: .semibold),
+                // 17 / 25 · 600, where the panel's kicker is 15 / 18 · 600. Board 13 states
+                // this step here and nowhere else, so it is named rather than spelled out —
+                // see `DS.TextStyle.labelFullScreen`, which the selection card also takes.
+                kickerStyle: .labelFullScreen,
                 titleTopMargin: DS.Space.s2,
                 titleStyle: .display,
                 goalTopMargin: DS.Space.s4,

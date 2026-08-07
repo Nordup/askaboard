@@ -151,7 +151,7 @@ struct ShellGallery: View {
 
     private var dockSection: some View {
         Specimen("Tutor dock · collapsed", size: "132 × 64 · 52 pill + gap 16 + 64 orb") {
-            CollapsedDock(onSelect: {}, onOpenTutor: {})
+            CollapsedDock(isSelectionAttached: false, onSelect: {}, onOpenTutor: {})
         }
     }
 

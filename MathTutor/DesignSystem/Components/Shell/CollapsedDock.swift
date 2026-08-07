@@ -34,6 +34,12 @@ enum CollapsedDockMetrics {
 /// is 2/255 and 2/255 of alpha on a `#141432` shadow over white, which is below what the
 /// display resolves.
 struct CollapsedDock: View {
+    /// Whether the board is currently attached to the composer. This is the state
+    /// `btn/select` draws — see `selectButton`.
+    var isSelectionAttached: Bool = false
+    /// Whether there is anything on the board to attach. **Not a state the design
+    /// draws** — see `selectButton`.
+    var canSelect: Bool = true
     let onSelect: () -> Void
     let onOpenTutor: () -> Void
 
@@ -45,22 +51,50 @@ struct CollapsedDock: View {
         .frame(width: CollapsedDockMetrics.width, height: CollapsedDockMetrics.height)
     }
 
+    /// **The control's two colour states are the design's, and were missing.**
+    ///
+    /// Board 04 on `ui/selection-marker`: *"It is one asset in two colour states:
+    /// `--color-brand` when a selection is live, `--color-icon` when the control is
+    /// idle."* The dock drew only the idle one, so tapping `btn/select` changed
+    /// nothing anywhere on screen — the "Selection attached" card that is its only
+    /// other evidence lives in the composer, which is exactly the thing the
+    /// collapsed state has hidden. A control whose whole result is invisible from
+    /// the state it is reachable in is a control that does not work, and this is
+    /// the state the design had already specified for it.
+    ///
+    /// It follows that the button is a **toggle**: once the glyph can say a
+    /// selection is live, the same tap has to be able to take it back, and the
+    /// design gives the board no other control that could.
+    ///
+    /// **`canSelect` is not from the design**, which draws no disabled state
+    /// (05-screens open question 8). An empty board has nothing to attach, and the
+    /// button used to swallow the tap in silence — the same do-nothing this whole
+    /// note is about. Dimming is the smallest honest answer, but it is a new
+    /// visual state and belongs in Paper before it belongs here.
     private var selectButton: some View {
         Button(action: onSelect) {
             // `ui/selection-marker` is the same glyph the composer uses for an attached
             // board selection; board 05 notes the pairing is deliberate, so the dashed
             // square means "a region of the board" in both places.
-            IconView(.uiSelectionMarker, size: CollapsedDockMetrics.selectIcon)
-                .frame(width: CollapsedDockMetrics.selectButton, height: CollapsedDockMetrics.selectButton)
-                // Board 01 rule 19: `--radius-full` is Paper's `calc(infinity * 1px)`; use a
-                // capsule. On a square that is a circle, and it stays right if the button
-                // ever stops being square.
-                .background(Capsule().fill(DS.Color.surface))
-                .contentShape(Capsule())
+            IconView(
+                .uiSelectionMarker,
+                size: CollapsedDockMetrics.selectIcon,
+                tint: isSelectionAttached ? DS.Color.brand : DS.Color.icon
+            )
+            .frame(width: CollapsedDockMetrics.selectButton, height: CollapsedDockMetrics.selectButton)
+            // Board 01 rule 19: `--radius-full` is Paper's `calc(infinity * 1px)`; use a
+            // capsule. On a square that is a circle, and it stays right if the button
+            // ever stops being square.
+            .background(Capsule().fill(DS.Color.surface))
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .elevation(.control)
+        .opacity(canSelect || isSelectionAttached ? 1 : 0.4)
+        .disabled(!canSelect && !isSelectionAttached)
         .accessibilityLabel("Select an area of the board")
+        .accessibilityValue(isSelectionAttached ? "Attached" : "Not attached")
+        .accessibilityAddTraits(isSelectionAttached ? .isSelected : [])
     }
 
     private var orbButton: some View {
@@ -75,8 +109,12 @@ struct CollapsedDock: View {
 
 #if DEBUG
 #Preview("Collapsed dock") {
-    CollapsedDock(onSelect: {}, onOpenTutor: {})
-        .padding(60)
-        .background(DS.Color.surfaceScreen)
+    VStack(spacing: 40) {
+        CollapsedDock(isSelectionAttached: false, onSelect: {}, onOpenTutor: {})
+        CollapsedDock(isSelectionAttached: true, onSelect: {}, onOpenTutor: {})
+        CollapsedDock(isSelectionAttached: false, canSelect: false, onSelect: {}, onOpenTutor: {})
+    }
+    .padding(60)
+    .background(DS.Color.surfaceScreen)
 }
 #endif

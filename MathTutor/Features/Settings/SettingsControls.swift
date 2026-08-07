@@ -95,7 +95,7 @@ extension PrimaryButtonMetrics {
                 // 64 *is* free — and pointedly not the full-screen composer's 80.
                 height: 64,
                 paddingInline: DS.Space.s8,
-                labelStyle: TextStyle(size: DS.Size.bodyLarge, leading: DS.Leading.snug, weight: .semibold)
+                labelStyle: .labelLarge
             )
         }
     }

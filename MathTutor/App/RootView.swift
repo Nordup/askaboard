@@ -36,16 +36,18 @@ struct RootView: View {
 
     /// The shipping root, and the only thing on device.
     ///
-    /// **`.statusBarHidden(true)`, and that is board 05 open question 15 answered.** The
-    /// question was which branch the product takes — hide the system band, or keep it and
-    /// anchor the screen to the safe area. It was once answered the second way because boards
-    /// 05 through 08 each drew a band with a time, a date and a battery. They no longer do:
-    /// the boards were redrawn with no status bar and every panel at `y = 28`, an inset from
-    /// the glass on all four sides. Only the first branch produces that, because `contentTop`
-    /// is `safeAreaTop + 28` and nothing but hiding the bar makes `safeAreaTop` zero.
+    /// **No `.statusBarHidden(true)`, and the app is not full-screen.** iPadOS keeps its status
+    /// bar, so `safeAreaTop` is whatever the device reserves — 24 in landscape with a camera
+    /// housing — and `contentTop` is `24 + 28 = 52` there.
     ///
-    /// So the interface gains the 24 points iPadOS was reserving, and loses the clock. That is
-    /// the trade the boards make; it is not a side effect of this line.
+    /// The boards were redrawn with no status bar and every panel at `y = 28`, which is the
+    /// same rule with a zero in it rather than a different rule: `--space-edge` from the
+    /// nearest obstruction, and the boards have no obstruction to measure from. Hiding the
+    /// system bar would make the device agree with them to the point, and that is a product
+    /// decision about whether this app takes the screen over — not something a layout port gets
+    /// to make. It has not been taken, so the drawing is 24 points ahead of the device and the
+    /// arithmetic is what they share. `ScreenLayout.reference` is the boards' number; a
+    /// measured screen is the device's.
     ///
     /// The measurement is a `GeometryReader`, not a captured value: it re-evaluates on every
     /// layout pass, so a Split View drag or a rotation republishes the lanes rather than
@@ -54,9 +56,7 @@ struct RootView: View {
     /// own `PKCanvasView` was bitten by exactly the opposite habit of trusting geometry read
     /// too early.
     private var measuredScreen: some View {
-        screen
-            .modifier(MeasuredScreen())
-            .statusBarHidden(true)
+        screen.modifier(MeasuredScreen())
     }
 
     /// The app, minus any decision about where it is being drawn.

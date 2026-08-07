@@ -179,9 +179,7 @@ struct SelectionMessageBubble: View {
     var metrics: MessageMetrics = .panel
 
     var body: some View {
-        AttachmentStack(metrics: metrics.selection) {
-            SelectionCard(metrics: metrics.selection, label: SelectionCard.sentLabel)
-        } content: {
+        SelectionAttachment.sent(metrics: metrics.selection) {
             LearnerLiteralText(text)
                 .textStyle(metrics.selectionTextStyle)
                 .foregroundStyle(DS.Color.ink)

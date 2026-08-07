@@ -353,28 +353,50 @@ final class MathTutorUITests: XCTestCase {
 
     /// Collapse, attach, reopen — the design's only route from the board to the composer.
     ///
-    /// `btn/select` has no visible result of its own (the design draws no marquee on the
-    /// canvas), so the outcome that proves it landed is the composer's attachment once the
-    /// panel is back, and the whole cycle is what gets retried.
+    /// **`btn/select` now has a visible result of its own**, which is what this helper used
+    /// to say it lacked: the dock draws the design's live/idle colour states for
+    /// `ui/selection-marker`, so the control reports its own state and the retry can watch
+    /// *it* rather than a card three views away. That matters for more than tidiness — the
+    /// button is a toggle now, so a retry that re-taps a tap which actually landed would
+    /// detach the board it had just attached. Only a tap that left the button idle is
+    /// repeated.
     private func attachBoardSelection(
         in app: XCUIApplication,
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
-        let attached = app.staticTexts["Selection attached"]
+        let selectButton = app.buttons["Select an area of the board"]
+        if !selectButton.exists {
+            tap(app.buttons["Collapse tutor to the dock"], untilExists: selectButton,
+                "btn/dock must collapse the panel to the dock")
+        }
         for attempt in 1...3 {
-            let selectButton = app.buttons["Select an area of the board"]
-            if !selectButton.exists {
-                tap(app.buttons["Collapse tutor to the dock"], untilExists: selectButton,
-                    "btn/dock must collapse the panel to the dock")
-            }
+            if isAttached(selectButton) { break }
             selectButton.tap()
-            tap(app.buttons["Open the tutor"], untilExists: app.textFields["Ask anything..."],
-                "The dock's orb must bring the panel back")
-            if attached.waitForExistence(timeout: 3) { return }
+            if waitUntilAttached(selectButton, timeout: 3) { break }
             noteDroppedTap(attempt: attempt, of: 3, message: "btn/select did not attach the board")
         }
-        XCTFail("The board selection never reached the composer", file: file, line: line)
+        XCTAssertTrue(isAttached(selectButton),
+                      "btn/select never reported an attached board", file: file, line: line)
+
+        tap(app.buttons["Open the tutor"], untilExists: app.textFields["Ask anything..."],
+            "The dock's orb must bring the panel back")
+        XCTAssertTrue(app.staticTexts["Selection attached"].waitForExistence(timeout: 5),
+                      "The attached board must reach the composer", file: file, line: line)
+    }
+
+    /// `btn/select`'s accessibility value, which is how the attached state leaves the app.
+    private func isAttached(_ selectButton: XCUIElement) -> Bool {
+        selectButton.exists && (selectButton.value as? String) == "Attached"
+    }
+
+    private func waitUntilAttached(_ selectButton: XCUIElement, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if isAttached(selectButton) { return true }
+            _ = XCTWaiter.wait(for: [XCTestExpectation(description: "poll")], timeout: 0.2)
+        }
+        return isAttached(selectButton)
     }
 
     // MARK: - No key

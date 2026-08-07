@@ -42,6 +42,12 @@ struct AttachmentStackMetrics: Equatable, Sendable {
     /// the band after this comes off, so the label draws at 13, not at 6. See `SelectionCard`.
     let labelRowPaddingTop: CGFloat
     let labelRowPaddingInline: CGFloat
+    /// The label on the band. `--text-label` 15 / 18 · 600 in the panel; the wide surface
+    /// steps it, because a 15pt label beside a 21pt placeholder is the panel's card sitting
+    /// on the reading column's pill.
+    let labelStyle: DS.TextStyle
+    /// `composer/dismiss`, which steps with the label rather than staying at the panel's 14.
+    let dismissGlyphSize: CGFloat
 
     /// The law. Equal to `cardHeight` everywhere except the sent message.
     var derivedCardHeight: CGFloat { visibleBand + bodyTopRadius }
@@ -64,7 +70,108 @@ struct AttachmentStackMetrics: Equatable, Sendable {
     var labelRowWidth: CGFloat { max(0, width - cardPaddingLeading - cardPaddingTrailing) }
 }
 
+/// Everything about the card that is the *card's* rather than the shape's, as one per-scale
+/// set — and the reason the two scales stopped looking like the same component.
+///
+/// **The design draws this at panel scale only.** Board 03 lists the wide card as an open
+/// question and gives no numbers for it, so the code drew the panel's — 38pt band, a 15/18
+/// label, 20/16 and 6/3 — behind a 68pt pill carrying a 21/30 placeholder. Every value was
+/// *correct* and the card still read as borrowed, because a card that does not step while
+/// everything around it does is a panel card on a reading column.
+///
+/// The wide column is the panel's numbers stepped by the one ratio the composer itself
+/// steps by — its pill, `68 ÷ 50 = 1.36` — then snapped to the spacing scale. Every one of
+/// them lands on a value the wide surface already uses, which is the check that the ratio is
+/// the right one:
+///
+/// ```
+/// band     38 → 52   band + pill goes 88 → 120, the same 1.36
+/// leading  20 → 28   --spacing-7, the wide pill's own paddingLeading
+/// trailing 16 → 24   --spacing-6, the wide bubble's own paddingInline
+/// row top   6 →  8   --spacing-2
+/// row side  3 →  4   --spacing-1
+/// label  15/18 → 17/25 · 600, the step `SessionPlanMetrics` already makes for its kicker
+/// dismiss  14 → 18   with the other composer glyphs, which step 20 → 26 and 22 → 26
+/// ```
+///
+/// The label lands at 17.5 down the wide band where the panel's lands at 13 — the same
+/// fraction of the band, which is what "proportional" has to mean for a value that is
+/// centred rather than pinned.
+private struct CardStyle {
+    let visibleBand: CGFloat
+    let paddingLeading: CGFloat
+    let paddingTrailing: CGFloat
+    let labelRowTop: CGFloat
+    let labelRowInline: CGFloat
+    let labelStyle: DS.TextStyle
+    let dismissGlyph: CGFloat
+
+    /// Screens 05 and 08, measured.
+    static let panel = Self(
+        visibleBand: 38,
+        paddingLeading: DS.Space.s5,
+        paddingTrailing: DS.Space.s4,
+        labelRowTop: 6,
+        labelRowInline: 3,
+        labelStyle: .label,
+        dismissGlyph: Icon.composerDismiss.renderSize
+    )
+
+    /// The reading column. Extrapolated — see the type's own note for the ratio and for what
+    /// each value lands on.
+    static let fullScreen = Self(
+        visibleBand: 52,
+        paddingLeading: DS.Space.s7,
+        paddingTrailing: DS.Space.s6,
+        labelRowTop: DS.Space.s2,
+        labelRowInline: DS.Space.s1,
+        // 20 / 24 · 600. `labelFullScreen`'s 17 is the step board 13 states for the session
+        // plan's kicker, and a kicker sits *under* its headline — this label sits beside a
+        // 21pt placeholder and has to carry the band, so it takes the settings row's 20
+        // instead. One step, and the band does not move: 24 + 8 still centres in 52.
+        labelStyle: .labelLarge,
+        dismissGlyph: 18
+    )
+
+    static func `for`(_ scale: ChatScale) -> Self {
+        switch scale {
+        case .panel: .panel
+        case .fullScreen: .fullScreen
+        }
+    }
+}
+
 extension AttachmentStackMetrics {
+    /// One card, built from its scale's style and the geometry of whatever shape hides it.
+    ///
+    /// Only three things are ever the *instance's*: the width, the height of the shape in
+    /// front, and that shape's top radius. Everything else comes off `CardStyle`, so the two
+    /// instances cannot drift and neither can the two scales.
+    private static func card(
+        _ scale: ChatScale,
+        width: CGFloat,
+        bodyHeight: CGFloat,
+        bodyTopRadius: CGFloat,
+        cardHeight: CGFloat? = nil
+    ) -> Self {
+        let style = CardStyle.for(scale)
+        return Self(
+            width: max(0, width),
+            visibleBand: style.visibleBand,
+            bodyHeight: bodyHeight,
+            bodyTopRadius: bodyTopRadius,
+            // `nil` takes the board's derived law; the sent message is the one instance that
+            // does not obey it and says so at its call site.
+            cardHeight: cardHeight ?? (style.visibleBand + bodyTopRadius),
+            cardPaddingLeading: style.paddingLeading,
+            cardPaddingTrailing: style.paddingTrailing,
+            labelRowPaddingTop: style.labelRowTop,
+            labelRowPaddingInline: style.labelRowInline,
+            labelStyle: style.labelStyle,
+            dismissGlyphSize: style.dismissGlyph
+        )
+    }
+
     /// The composer's card (screen 05), derived from whatever the pill currently is. A capsule's
     /// effective radius is half its height, and the law is *card = visible band + that radius* —
     /// 38 + 29 = 67 against the 58pt pill the board was drawn at, 38 + 25 = 63 now the pill is
@@ -79,17 +186,11 @@ extension AttachmentStackMetrics {
     /// does not change between scales.
     static func composer(_ scale: ChatScale, width: CGFloat) -> Self {
         let pillHeight: CGFloat = ComposerMetrics.for(scale).height
-        let visibleBand: CGFloat = 38
-        return Self(
-            width: max(0, width),
-            visibleBand: visibleBand,
+        return card(
+            scale,
+            width: width,
             bodyHeight: pillHeight,
-            bodyTopRadius: pillHeight / 2,
-            cardHeight: visibleBand + pillHeight / 2,
-            cardPaddingLeading: 20,
-            cardPaddingTrailing: 16,
-            labelRowPaddingTop: 6,
-            labelRowPaddingInline: 3
+            bodyTopRadius: pillHeight / 2
         )
     }
 
@@ -113,17 +214,19 @@ extension AttachmentStackMetrics {
     /// off the trailing edge it is pinned to, and the 224 is a maximum in the same sense the
     /// bubble's cap is. Every column the app produces is wider than 224, so the clamp only
     /// ever fires on a row that could not have drawn the design anyway.
+    /// **Panel style at both scales**, unlike the composer's card: this stack keeps the
+    /// panel's whole geometry in the reading column — 224 wide, a 58pt bubble, a 17/22 line
+    /// box — because board 13 leaves it undrawn there, so stepping only its card would step
+    /// half a component. When the wide stack is drawn, this takes the scale like the composer
+    /// does and everything follows.
     static func sentMessage(in rowWidth: CGFloat) -> Self {
-        Self(
-            width: max(0, min(224, rowWidth)),
-            visibleBand: 38,
+        card(
+            .panel,
+            width: min(224, rowWidth),
             bodyHeight: 58,
             bodyTopRadius: DS.Radius.bubble,
-            cardHeight: 67,
-            cardPaddingLeading: 20,
-            cardPaddingTrailing: 16,
-            labelRowPaddingTop: 6,
-            labelRowPaddingInline: 3
+            // 67, not the law's 56 — see this method's note.
+            cardHeight: 67
         )
     }
 
@@ -155,6 +258,64 @@ struct AttachmentStack<Card: View, Content: View>: View {
         // `.offset` moves paint, not layout, so the stack would otherwise measure the taller
         // of the two children. The design's height is the band plus the whole front shape.
         .frame(width: metrics.width, height: metrics.totalHeight, alignment: .topLeading)
+    }
+}
+
+// MARK: - The idiom
+
+/// Card, shape, label — the whole thing, as **one** view.
+///
+/// Both of the design's instances come through here: the composer's attached pill (screen 05)
+/// and a sent message carrying a selection (screen 08). They differ in exactly three things —
+/// the metrics, the label, and whether there is a ✕ — and in nothing else, which is what
+/// board 03 means by *"the same idiom at two widths and two radii"*.
+///
+/// Assembling the stack and the card separately at each call site is how two instances of one
+/// idiom drift: it takes only one of them to gain a modifier. The two constructors below are
+/// the only way in, so the label and the dismiss cannot be paired wrongly either — a sent
+/// message with a ✕ on it is not a state that exists.
+struct SelectionAttachment<Content: View>: View {
+    private let metrics: AttachmentStackMetrics
+    private let label: String
+    private let onDismiss: (() -> Void)?
+    private let content: Content
+
+    private init(
+        metrics: AttachmentStackMetrics,
+        label: String,
+        onDismiss: (() -> Void)?,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.metrics = metrics
+        self.label = label
+        self.onDismiss = onDismiss
+        self.content = content()
+    }
+
+    /// Screen 05's composer — the attachment the student can still take back.
+    static func composer(
+        metrics: AttachmentStackMetrics,
+        onDismiss: (() -> Void)?,
+        @ViewBuilder content: () -> Content
+    ) -> Self {
+        Self(metrics: metrics, label: SelectionCard.composerLabel, onDismiss: onDismiss, content: content)
+    }
+
+    /// Screen 08's sent message — shorter copy and no ✕, because a sent message cannot be
+    /// detached.
+    static func sent(
+        metrics: AttachmentStackMetrics,
+        @ViewBuilder content: () -> Content
+    ) -> Self {
+        Self(metrics: metrics, label: SelectionCard.sentLabel, onDismiss: nil, content: content)
+    }
+
+    var body: some View {
+        AttachmentStack(metrics: metrics) {
+            SelectionCard(metrics: metrics, label: label, onDismiss: onDismiss)
+        } content: {
+            content
+        }
     }
 }
 
@@ -202,13 +363,13 @@ struct SelectionCard: View {
     private var labelRow: some View {
         HStack(spacing: 0) {
             Text(verbatim: label)
-                .textStyle(.label)
+                .textStyle(metrics.labelStyle)
                 .foregroundStyle(DS.Color.brand)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             if let onDismiss {
                 Button(action: onDismiss) {
-                    IconView(.composerDismiss, tint: DS.Color.brand)
+                    IconView(.composerDismiss, size: metrics.dismissGlyphSize, tint: DS.Color.brand)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Remove attached selection")

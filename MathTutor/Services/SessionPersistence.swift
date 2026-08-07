@@ -1,7 +1,17 @@
 import Foundation
 
 struct SessionPersistence {
-    private var fileURL: URL {
+    /// Where the session is written. Defaults to the app's real location and is
+    /// injectable only so a test can point a store at a temporary directory —
+    /// which is what makes *when* the store saves an assertable fact rather than
+    /// something a reader has to take on trust. Nothing in the app passes it.
+    let fileURL: URL
+
+    init(fileURL: URL? = nil) {
+        self.fileURL = fileURL ?? Self.defaultFileURL
+    }
+
+    static var defaultFileURL: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         return base.appendingPathComponent("MathTutor/session.json")
     }

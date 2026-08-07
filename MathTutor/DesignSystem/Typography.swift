@@ -259,6 +259,34 @@ extension TextStyle {
     /// product — nothing goes below this.
     static let label = TextStyle(size: DS.Size.label, leading: DS.Leading.label, weight: .semibold)
 
+    /// The same small semibold label on the reading column — 17 / 25 where the panel's is
+    /// 15 / 18.
+    ///
+    /// **Extrapolated, and only once.** Board 13 states this step exactly once, for the
+    /// session plan's kicker: *"17 / 25 · 600, where the panel's kicker is 15 / 18 · 600."*
+    /// Every other small label that has to cross to the wide surface takes the same step by
+    /// referring to this rather than by restating the numbers — which is why it is here and
+    /// not inline in the two places that need it.
+    ///
+    /// Not in `scale`: that list is the styles the design *specifies*, and this is the one
+    /// the design implies.
+    static let labelFullScreen = TextStyle(
+        size: DS.Size.body,
+        leading: DS.Leading.body,
+        weight: .semibold
+    )
+
+    /// `--text-body-lg` 20 / 24 · 600 — one step above `labelFullScreen`, for a label that
+    /// has to hold its own beside 21pt body copy rather than sit quietly under it.
+    ///
+    /// The settings row's full-screen label is drawn at exactly this, so it is a size the
+    /// wide surface already carries rather than a new one.
+    static let labelLarge = TextStyle(
+        size: DS.Size.bodyLarge,
+        leading: DS.Leading.snug,
+        weight: .semibold
+    )
+
     /// Every style the design specifies, for tests and for a specimen screen.
     static let scale: [TextStyle] = [
         display, title, lead, chipFullScreen, body, bodyCentred, bodyControl, chipPanel, label,

@@ -1,3 +1,4 @@
+import Combine
 import PencilKit
 import SwiftUI
 import UIKit
@@ -178,5 +179,90 @@ final class BoardInkTests: XCTestCase {
             ? (red, green, blue, alpha)
             : nil
         return try XCTUnwrap(components, "\(color) is not an RGBA colour", file: file, line: line)
+    }
+}
+
+/// `CanvasCapture.hasInk` — what `btn/select` in the collapsed dock is gated on.
+///
+/// It used to be a computed property reading through a `weak` canvas reference,
+/// which meant SwiftUI had nothing to observe: the dock could not redraw when the
+/// first stroke landed, so the control it gates could not report anything either.
+@MainActor
+final class CanvasCaptureInkStateTests: XCTestCase {
+    func testAnEmptyBoardHasNoInk() {
+        let capture = CanvasCapture()
+        let canvas = PKCanvasView()
+        capture.canvasView = canvas
+
+        capture.refreshHasInk()
+
+        XCTAssertFalse(capture.hasInk, "An empty board has nothing for btn/select to attach")
+    }
+
+    func testInkIsReportedOnceTheBoardIsWrittenOn() {
+        let capture = CanvasCapture()
+        let canvas = PKCanvasView()
+        capture.canvasView = canvas
+        capture.refreshHasInk()
+
+        canvas.drawing = Self.oneStroke
+        capture.refreshHasInk()
+
+        XCTAssertTrue(capture.hasInk)
+    }
+
+    func testClearingTheBoardReportsItself() {
+        let capture = CanvasCapture()
+        let canvas = PKCanvasView()
+        capture.canvasView = canvas
+        canvas.drawing = Self.oneStroke
+        capture.refreshHasInk()
+        XCTAssertTrue(capture.hasInk)
+
+        // Assigning `drawing` bypasses `PKCanvasViewDelegate`, so `clear()` is the
+        // one emptying that has to report itself.
+        capture.clear()
+
+        XCTAssertFalse(capture.hasInk)
+    }
+
+    /// The publish is what the dock observes, and it must not fire per stroke:
+    /// `CanvasCapture` is a `@StateObject` on `BoardScreen`, so a publish there is
+    /// a re-render of the whole screen.
+    func testOnlyAChangeOfTheAnswerPublishes() {
+        let capture = CanvasCapture()
+        let canvas = PKCanvasView()
+        capture.canvasView = canvas
+        canvas.drawing = Self.oneStroke
+
+        var publishes = 0
+        let subscription = capture.objectWillChange.sink { _ in publishes += 1 }
+        defer { subscription.cancel() }
+
+        capture.refreshHasInk()
+        capture.refreshHasInk()
+        capture.refreshHasInk()
+
+        XCTAssertEqual(publishes, 1, "Only the empty → written transition is news")
+    }
+
+    private static var oneStroke: PKDrawing {
+        let points = (0..<8).map { step in
+            PKStrokePoint(
+                location: CGPoint(x: 100, y: 100 + Double(step) * 8),
+                timeOffset: Double(step) * 0.008,
+                size: CGSize(width: 5, height: 5),
+                opacity: 1,
+                force: 1,
+                azimuth: 0,
+                altitude: .pi / 2
+            )
+        }
+        return PKDrawing(strokes: [
+            PKStroke(
+                ink: PKInk(.pen, color: .black),
+                path: PKStrokePath(controlPoints: points, creationDate: Date(timeIntervalSince1970: 0))
+            )
+        ])
     }
 }

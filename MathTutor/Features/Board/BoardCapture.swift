@@ -8,7 +8,12 @@ final class CanvasCapture: ObservableObject {
 
     func undo() { canvasView?.undoManager?.undo() }
     func redo() { canvasView?.undoManager?.redo() }
-    func clear() { canvasView?.drawing = PKDrawing() }
+    func clear() {
+        canvasView?.drawing = PKDrawing()
+        // Assigning `drawing` does not go through `PKCanvasViewDelegate`, so this
+        // is the one emptying of the board that has to report itself.
+        refreshHasInk()
+    }
 
     /// Scrolls the board to the student's ink, or back to the session origin
     /// when the board is empty. This is also how sessions saved before the
@@ -60,7 +65,22 @@ final class CanvasCapture: ObservableObject {
     }
 
     /// Whether the attached board currently has anything to evaluate.
-    var hasInk: Bool { Self.hasEvaluableInk(in: canvasView?.drawing) }
+    ///
+    /// Published rather than computed, because a control that is only meaningful
+    /// on a board with work on it has to be able to *redraw* when the first
+    /// stroke lands — and a computed property reading through a `weak` canvas
+    /// reference gives SwiftUI nothing to observe. `refreshHasInk` writes only on
+    /// a change of the boolean, so an ordinary session publishes this once: the
+    /// board goes from empty to written-on and stays there.
+    @Published private(set) var hasInk = false
+
+    /// Re-reads the board. Called from the canvas's drawing delegate, which is
+    /// the only thing that knows when the answer can have changed.
+    func refreshHasInk() {
+        let current = Self.hasEvaluableInk(in: canvasView?.drawing)
+        guard current != hasInk else { return }
+        hasInk = current
+    }
 
     /// Every stroke on the board, regardless of where the student has scrolled.
     /// A viewport-bounded capture would silently truncate a long solution that

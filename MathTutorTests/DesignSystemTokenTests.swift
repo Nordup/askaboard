@@ -337,7 +337,7 @@ final class DesignSystemTokenTests: XCTestCase {
     // MARK: - Layout arithmetic
 
     func testVerticalLanesDeriveFromWhatIsReservedNotTheScreen() {
-        XCTAssertEqual(ScreenLayout.statusBarBottom, 0, "the app hides the system bar")
+        XCTAssertEqual(ScreenLayout.statusBarBottom, 0, "the boards reserve nothing above the content")
 
         XCTAssertEqual(ScreenLayout.contentTop, ScreenLayout.statusBarBottom + DS.Space.edge)
         XCTAssertEqual(ScreenLayout.contentTop, 28)

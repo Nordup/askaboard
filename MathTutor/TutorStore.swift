@@ -116,10 +116,87 @@ final class TutorStore: ObservableObject {
         persist()
     }
 
+    // MARK: - The board's ink
+
+    /// How long the pen has to rest before the board is written to disk.
+    ///
+    /// Short enough that no realistic way of putting the iPad down loses a
+    /// stroke — the scene going inactive flushes as well, and that is the case
+    /// this delay actually has to survive — and long enough that a pause between
+    /// two lines of working does not turn into a save. Handwriting produces gaps
+    /// of well under 600ms between strokes, so a line of maths is one write.
+    static let boardInkRestBeforeSave: Duration = .milliseconds(600)
+
+    /// The board as the pen last left it, held **outside** `session` on purpose.
+    ///
+    /// `session` is `@Published`, and the board reports a change at the frequency
+    /// of handwriting rather than of user actions. Writing a stroke into it
+    /// re-rendered every view observing this store — the panel, its whole
+    /// MarkdownUI thread, the rail, and the board card itself — while the pen was
+    /// still on the glass, and re-serialized the entire drawing and re-encoded and
+    /// rewrote the whole session JSON on the main thread with it. So the ink is
+    /// the one piece of session state kept out of the published struct, and it is
+    /// folded back in only at the moment something is actually saved.
+    private var pendingBoardInk: PKDrawing?
+    /// The last serialized form of the board — what `persist()` writes, and what
+    /// a remounted canvas restores from. `nil` means nothing has been drawn since
+    /// launch and `session.drawingData` is still the truth.
+    private var boardInkData: Data?
+    private var boardInkSaveTask: Task<Void, Never>?
+
+    /// What a canvas restores from, which is the board **as of the last save**.
+    ///
+    /// Deliberately not "as of the last stroke": this is read from `BoardScreen`'s
+    /// body, and the body runs on anything that publishes — the dictation meter
+    /// alone runs it 20 times a second while the microphone is open. Serializing
+    /// the drawing here to keep it current would put the per-stroke cost back, in
+    /// a place even harder to see. It is only ever *used* by `makeUIView`, and a
+    /// canvas being made has no unsaved strokes yet, so the two facts agree
+    /// exactly where it matters. `session.drawingData` is the fallback for the
+    /// launch case, before anything has been drawn at all.
+    var currentDrawingData: Data? { boardInkData ?? session.drawingData }
+
+    /// The board reporting that its ink changed.
+    ///
+    /// This is the hot path — it can fire many times per second while erasing —
+    /// so it does exactly two cheap things: keep the drawing (a struct, so this is
+    /// a retain, not a copy) and push the save out to the far side of the pen's
+    /// next rest.
     func updateDrawing(_ drawing: PKDrawing) {
-        session.drawingData = drawing.dataRepresentation()
-        session.lastSavedAt = .now
+        pendingBoardInk = drawing
+        boardInkSaveTask?.cancel()
+        boardInkSaveTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.boardInkRestBeforeSave)
+            guard !Task.isCancelled else { return }
+            self?.saveBoardInkNow()
+        }
+    }
+
+    /// Writes the board without waiting out the rest of the pen's rest. The scene
+    /// leaving the foreground is the case this exists for.
+    func saveBoardInkNow() {
+        guard pendingBoardInk != nil else { return }
+        boardInkSaveTask?.cancel()
+        boardInkSaveTask = nil
         persist()
+    }
+
+    /// Brings `boardInkData` up to date with the pen. Serializing here rather than
+    /// in `updateDrawing` is the whole point: `dataRepresentation()` walks every
+    /// stroke on the board, so it runs once per save instead of once per stroke.
+    private func foldPendingBoardInk() {
+        guard let pendingBoardInk else { return }
+        self.pendingBoardInk = nil
+        boardInkData = pendingBoardInk.dataRepresentation()
+    }
+
+    /// Forgets the board, in memory and on the next save. Both halves are needed:
+    /// a cleared board with a pending stroke still queued would save the stroke.
+    private func discardBoardInk() {
+        boardInkSaveTask?.cancel()
+        boardInkSaveTask = nil
+        pendingBoardInk = nil
+        boardInkData = nil
     }
 
     func evaluate(imageData: Data, regionDescription: String?) {
@@ -158,11 +235,13 @@ final class TutorStore: ObservableObject {
     }
 
     func clearDrawing() {
+        discardBoardInk()
         session.drawingData = nil
         persist()
     }
 
     func resetSession() {
+        discardBoardInk()
         session = .empty
         session.messages = [TutorMessage(role: .tutor, text: "Hi, I’m your math tutor. What would you like to understand today? You can type a goal in your own words—fractions, algebra, a homework question, anything.")]
         isWorkspace = false
@@ -260,8 +339,15 @@ final class TutorStore: ObservableObject {
         onReply?(reply)
     }
 
+    /// Every save goes through here, so every save carries the board's current
+    /// ink whether or not its own rest timer has come up yet. That is what lets
+    /// `updateDrawing` stay off `session` without any caller having to know.
     private func persist() {
-        persistence.save(session)
+        foldPendingBoardInk()
+        var snapshot = session
+        if let boardInkData { snapshot.drawingData = boardInkData }
+        snapshot.lastSavedAt = .now
+        persistence.save(snapshot)
     }
 
     @discardableResult

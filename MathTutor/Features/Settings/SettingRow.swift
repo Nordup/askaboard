@@ -141,23 +141,62 @@ struct SettingPickerRow<Value: Hashable & Sendable>: View {
     }
 
     var body: some View {
+        SettingRow(label: label, caption: caption, width: width) {
+            SettingRowValue(value: selected?.title ?? "")
+        }
+        // The row is drawn here and the menu's label is an invisible sheet on top of it.
+        //
+        // **Handing the row itself to `Menu` as its label does not work.** SwiftUI lifts a
+        // menu's label into the presentation while the menu is open — it hides the original in
+        // place and draws a highlight platter in its stead — so the whole 480 × 120 row
+        // disappeared from the pane the moment you tapped it, leaving a grey slab behind the
+        // options. A transparent label lifts a transparent platter, which is invisible, and
+        // the real row never stops being drawn.
+        //
+        // The clear sheet also keeps the entire row tappable rather than just the value, which
+        // is what a 480pt row with a 36pt target on its trailing edge would otherwise be.
+        .overlay { menu }
+        // The row's own text is hidden so VoiceOver gets one element — the menu — rather than
+        // the label, the caption and the value as three unrelated strings plus a button.
+        .accessibilityHidden(true)
+        .accessibilityElement(children: .contain)
+    }
+
+    /// The chosen option, as something the picker can bind to.
+    ///
+    /// Optional because `options` could in principle arrive with nothing marked; the setter
+    /// ignores a `nil` write, so a picker can only ever move the selection, never clear it.
+    private var selection: Binding<Value?> {
+        Binding(
+            get: { selected?.value },
+            set: { if let value = $0 { select(value) } }
+        )
+    }
+
+    private var menu: some View {
         Menu {
-            ForEach(options) { option in
-                Button {
-                    select(option.value)
-                } label: {
+            // **A `Picker`, not a row of `Button`s.** Buttons in a menu carry no selected
+            // state, so the list came up with nothing marked — you could see six efforts and
+            // not which one you were on, which is exactly the thing the row's value exists to
+            // tell you. A picker hands the platform the selection and gets the platform's own
+            // checkmark, in the platform's own position, for free.
+            Picker("", selection: selection) {
+                ForEach(options) { option in
                     Text(verbatim: "\(option.title) — \(option.caption)")
+                        .tag(option.value as Value?)
+                        .accessibilityIdentifier(
+                            "\(identifierPrefix)-\(String(describing: option.value))"
+                        )
                 }
-                .accessibilityIdentifier("\(identifierPrefix)-\(String(describing: option.value))")
             }
+            .pickerStyle(.inline)
+            .labelsHidden()
         } label: {
-            SettingRow(label: label, caption: caption, width: width) {
-                SettingRowValue(value: selected?.title ?? "")
-            }
+            Color.clear.contentShape(Rectangle())
         }
         // Without this the menu label inherits the button tint and every row turns violet.
         .buttonStyle(.plain)
-        .accessibilityElement(children: .combine)
+        .accessibilityHidden(false)
         .accessibilityLabel(label)
         .accessibilityValue(selected?.title ?? "")
         .accessibilityIdentifier(identifierPrefix)

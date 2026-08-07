@@ -37,6 +37,7 @@ struct WhiteboardSurface<Content: View>: View {
     }
 
     var body: some View {
+        let card = RoundedRectangle(cornerRadius: WhiteboardMetrics.cornerRadius)
         ZStack {
             DS.Color.surfaceCanvas
             DotGrid()
@@ -46,8 +47,19 @@ struct WhiteboardSurface<Content: View>: View {
         // `overflow: clip` on the board is what stops ink and grid escaping the 28pt
         // corners, and clipping before the shadow is what keeps the shadow the card's
         // silhouette rather than the ink's.
-        .clipShape(RoundedRectangle(cornerRadius: WhiteboardMetrics.cornerRadius))
-        .elevation(.canvas)
+        .clipShape(card)
+        // The shadow is cast by an opaque copy of the card *behind* the clipped
+        // content, not by the clipped content itself — which is what `.elevation`
+        // applied to the stack above used to mean.
+        //
+        // Visually it is the same shadow: the card is an opaque `surfaceCanvas`
+        // fill edge to edge, so its silhouette and this rectangle's are the same
+        // shape. What changes is what the shadow depends on. Derived from the
+        // stack, it is a function of live pixels, so every frame a pencil moves
+        // asks Core Animation to re-derive the board's shadow from ink that never
+        // reaches the corners. Cast by a rectangle that never changes, it is
+        // rasterized once and left alone while the student writes.
+        .background(card.fill(DS.Color.surfaceCanvas).elevation(.canvas))
     }
 }
 

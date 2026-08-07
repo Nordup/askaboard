@@ -74,7 +74,7 @@ struct PencilCanvasView: UIViewRepresentable {
     func makeUIView(context: Context) -> BoardCanvasView {
         let canvas = BoardCanvasView(frame: .zero)
         PencilCanvasConfiguration.configure(canvas, viewport: .zero)
-        applyTool(to: canvas)
+        applyTool(to: canvas, coordinator: context.coordinator)
         // The first viewport report centers the board on the restored ink
         // through `capture`, so the capture must already know the canvas by
         // the time that closure can fire.
@@ -82,6 +82,12 @@ struct PencilCanvasView: UIViewRepresentable {
         capture.canvasView = canvas
         if let initialDrawingData, let drawing = try? PKDrawing(data: initialDrawingData) {
             canvas.drawing = drawing
+            // A restored board has ink before the delegate exists to say so, and
+            // the controls gated on it are drawn from the same update this is
+            // running inside — hence the hop, rather than publishing into a view
+            // tree that is still being built.
+            let capture = capture
+            Task { @MainActor in capture.refreshHasInk() }
         }
 
         // UIKit's own layout pass — not SwiftUI's update cycle — is what
@@ -106,24 +112,44 @@ struct PencilCanvasView: UIViewRepresentable {
 
         context.coordinator.updateFirstResponder(isActive)
 
-        let undoTap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.twoFingerUndo))
-        undoTap.numberOfTouchesRequired = 2
-        undoTap.numberOfTapsRequired = 1
-        undoTap.delegate = context.coordinator
-        canvas.addGestureRecognizer(undoTap)
-
-        let redoTap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.threeFingerRedo))
-        redoTap.numberOfTouchesRequired = 3
-        redoTap.numberOfTapsRequired = 1
-        redoTap.delegate = context.coordinator
-        canvas.addGestureRecognizer(redoTap)
+        canvas.addGestureRecognizer(
+            multiTouchTap(touches: 2, action: #selector(Coordinator.twoFingerUndo), coordinator: context.coordinator)
+        )
+        canvas.addGestureRecognizer(
+            multiTouchTap(touches: 3, action: #selector(Coordinator.threeFingerRedo), coordinator: context.coordinator)
+        )
         return canvas
+    }
+
+    /// Two- and three-finger tap, built the one way that keeps them off the ink.
+    ///
+    /// Both are **finger** gestures by definition, so restricting them to direct
+    /// touches means a pencil touch is never even offered to them — which matters
+    /// because `delaysTouchesEnded` defaults to `true`: without these two lines,
+    /// every stroke's final touch was held back until both recognizers had failed
+    /// before PencilKit could see it. That is latency on the end of every letter,
+    /// paid for a gesture the pencil can never make. It is also switched off
+    /// outright, because a two-finger tap needs a second finger to *arrive*, and
+    /// nothing about that requires delaying the first finger's lift.
+    private func multiTouchTap(
+        touches: Int,
+        action: Selector,
+        coordinator: Coordinator
+    ) -> UITapGestureRecognizer {
+        let tap = UITapGestureRecognizer(target: coordinator, action: action)
+        tap.numberOfTouchesRequired = touches
+        tap.numberOfTapsRequired = 1
+        tap.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        tap.delaysTouchesBegan = false
+        tap.delaysTouchesEnded = false
+        tap.delegate = coordinator
+        return tap
     }
 
     func updateUIView(_ canvas: BoardCanvasView, context: Context) {
         context.coordinator.parent = self
         capture.canvasView = canvas
-        applyTool(to: canvas)
+        applyTool(to: canvas, coordinator: context.coordinator)
         // Showing or hiding full chat doesn't change the canvas bounds, but it
         // does change which view should own first responder. Viewport-driven
         // setup lives in `BoardCanvasView.onViewportChange`.
@@ -139,13 +165,33 @@ struct PencilCanvasView: UIViewRepresentable {
     /// the tool picker is gone: a board that waited for SwiftUI's first update
     /// would spend that window inking PencilKit's default rather than the pen
     /// the rail is showing as selected.
-    private func applyTool(to canvas: PKCanvasView) {
+    ///
+    /// **Only when the selection actually changed.** `updateUIView` runs on every
+    /// SwiftUI update of the screen — a tutor reply landing, a loading flag
+    /// flipping — and each one used to hand `PKCanvasView` a freshly built tool it
+    /// already had. Writing `canvas.tool` is not free: PencilKit takes it as the
+    /// student picking up a different instrument, which is not something that
+    /// should happen underneath a pen that is mid-word.
+    private func applyTool(to canvas: PKCanvasView, coordinator: Coordinator) {
+        let selection = InkSelection(tool: tool, color: penColor, thickness: thickness)
+        guard coordinator.appliedInk != selection else { return }
+        coordinator.appliedInk = selection
         canvas.tool = BoardInk.tool(for: tool, color: penColor, thickness: thickness)
+    }
+
+    /// The rail selection a canvas is currently armed with. A struct rather than
+    /// a tuple so it can be held as an `Optional` and compared as one value.
+    struct InkSelection: Equatable {
+        let tool: BoardTool
+        let color: PenColor
+        let thickness: StrokeThickness
     }
 
     final class Coordinator: NSObject, PKCanvasViewDelegate, UIGestureRecognizerDelegate {
         var parent: PencilCanvasView
         weak var canvas: BoardCanvasView?
+        /// What `canvas.tool` was last set from — see `applyTool`.
+        var appliedInk: InkSelection?
         /// Whether `BoardCanvasView.onViewportChange` has fired at least
         /// once. Doubles as the "first report vs. later" routing signal: the
         /// first report configures fresh and centers on ink; every later one
@@ -181,8 +227,14 @@ struct PencilCanvasView: UIViewRepresentable {
         /// still what routes hardware ⌘Z to the canvas's own undo manager and
         /// what lets `PKLassoTool` raise the edit menu over a selection — and
         /// resigning it is what hands the keyboard to the full chat's composer.
+        ///
+        /// Each direction is skipped when UIKit is already there. The retry is
+        /// what the guard preserves — an update whose `becomeFirstResponder()`
+        /// failed leaves `isFirstResponder` false, so the next update tries
+        /// again — while a canvas that already holds focus is left alone rather
+        /// than being asked, on every SwiftUI update, for something it has.
         func updateFirstResponder(_ active: Bool) {
-            guard let canvas else { return }
+            guard let canvas, canvas.isFirstResponder != active else { return }
 
             if active {
                 canvas.becomeFirstResponder()
@@ -198,6 +250,7 @@ struct PencilCanvasView: UIViewRepresentable {
 
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
             parent.onDrawingChange(canvasView.drawing)
+            parent.capture.refreshHasInk()
         }
 
         @objc func twoFingerUndo() {

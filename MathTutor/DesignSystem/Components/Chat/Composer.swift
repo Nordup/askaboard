@@ -309,13 +309,10 @@ struct Composer: View {
 
     var body: some View {
         if selection == .attached {
-            AttachmentStack(metrics: metrics.attachment) {
-                SelectionCard(
-                    metrics: metrics.attachment,
-                    label: SelectionCard.composerLabel,
-                    onDismiss: onDismissSelection
-                )
-            } content: {
+            SelectionAttachment.composer(
+                metrics: metrics.attachment,
+                onDismiss: onDismissSelection
+            ) {
                 annotatedPill
             }
         } else {

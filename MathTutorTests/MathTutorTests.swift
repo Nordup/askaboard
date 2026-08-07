@@ -520,21 +520,29 @@ final class MathTutorTests: XCTestCase {
         )
     }
 
+    /// `hasInk` is published state now rather than a computed read-through, so it
+    /// tracks the board by being told — `refreshHasInk()` stands in for the drawing
+    /// delegate that calls it in the app. The point of the change is that a control
+    /// gated on it can redraw; see `CanvasCaptureInkStateTests`.
     @MainActor
     func testCanvasCaptureReportsWhetherTheBoardHasEvaluableInk() {
         let capture = CanvasCapture()
+        capture.refreshHasInk()
         XCTAssertFalse(capture.hasInk, "With no canvas attached there is nothing to evaluate")
 
         let canvas = configuredCanvas()
         capture.canvasView = canvas
+        capture.refreshHasInk()
         XCTAssertFalse(capture.hasInk, "An empty board has no ink to evaluate")
         XCTAssertNil(capture.snapshotAllInkData())
 
         canvas.drawing = makeDrawing(color: .black)
+        capture.refreshHasInk()
         XCTAssertTrue(capture.hasInk)
         XCTAssertNotNil(capture.snapshotAllInkData())
 
         canvas.drawing = PKDrawing()
+        capture.refreshHasInk()
         XCTAssertFalse(capture.hasInk, "Clearing the board must make the evaluate control unavailable again")
         XCTAssertNil(capture.snapshotAllInkData())
     }

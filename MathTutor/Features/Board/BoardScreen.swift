@@ -15,12 +15,14 @@ import SwiftUI
 /// drawn in, which on the reference screen is the same arithmetic with the same answers.
 /// There is still no `GeometryReader` here: the measurement happens once, at the root.
 ///
-/// **This screen draws no status band, and neither does anything else.** It used to draw a
-/// `StatusBar` unconditionally, and an app-drawn band survived for a while after that so the
-/// `--ui-fixture` run could reproduce reference PNGs that had one. The boards were then redrawn
-/// without a bar at all, so the component went with them: the app hides the system bar at the
-/// root and `contentTop` is the plain `--space-edge` from the glass. `SettingsScreen` repeats
-/// the `.statusBarHidden(true)` only because a `fullScreenCover` owns the bar while it is up.
+/// **Nothing in the app draws a status band.** This screen used to draw a `StatusBar`
+/// unconditionally, and an app-drawn band survived for a while after that so the `--ui-fixture`
+/// run could reproduce reference PNGs that had one. The boards were then redrawn without a bar,
+/// so the component went with them — and the PNGs were re-exported to match, which is why the
+/// fixture now *hides* the system bar instead of covering it.
+///
+/// On device iPadOS still draws its own, and the app does not hide it: `contentTop` is
+/// `safeAreaTop + --space-edge`, so 52 where the boards say 28. See `RootView`.
 struct BoardScreen: View {
     @EnvironmentObject private var store: TutorStore
     @EnvironmentObject private var uiState: UIState
@@ -145,7 +147,7 @@ struct BoardScreen: View {
         WhiteboardSurface(width: boardWidth, height: layout.contentHeight) {
             PencilCanvasView(
                 capture: capture,
-                initialDrawingData: store.session.drawingData,
+                initialDrawingData: store.currentDrawingData,
                 tool: uiState.tool,
                 penColor: uiState.penColor,
                 thickness: uiState.thickness,
@@ -209,8 +211,13 @@ struct BoardScreen: View {
     private var floatingRegion: some View {
         switch presentation {
         case .collapsed:
-            CollapsedDock(onSelect: attachBoardSelection, onOpenTutor: openTutorFromDock)
-                .offset(x: layout.collapsedDockX, y: layout.collapsedDockY)
+            CollapsedDock(
+                isSelectionAttached: uiState.isSelectionAttached,
+                canSelect: capture.hasInk,
+                onSelect: toggleBoardSelection,
+                onOpenTutor: openTutorFromDock
+            )
+            .offset(x: layout.collapsedDockX, y: layout.collapsedDockY)
         case .fullScreen:
             BoardPeek(height: layout.contentHeight, onTap: uiState.returnToBoard)
                 .offset(x: layout.peekX, y: layout.contentTop)
@@ -312,11 +319,19 @@ struct BoardScreen: View {
 
     /// `btn/select` in the collapsed dock — the design's one control for attaching a region
     /// of the board to the composer.
-    private func attachBoardSelection() {
-        // An empty board has nothing to attach: this is the same precondition the evaluation
-        // snapshot has, and the design draws no disabled state to show instead (open
-        // question 8) and no marquee on the canvas to draw one with (open question 7).
-        guard capture.hasInk else { return }
-        uiState.attachBoardSelection()
+    ///
+    /// A toggle, because the dock now draws the attached state (`CollapsedDock.selectButton`)
+    /// and there is no other control on the board that could take it back. The attachment
+    /// itself is still the whole board: the design draws no marquee on the canvas (open
+    /// question 7), so *which* region is not something this control can yet be asked.
+    ///
+    /// An empty board has nothing to attach — the same precondition `snapshotAllInkData()`
+    /// has — and the dock reflects that rather than swallowing the tap.
+    private func toggleBoardSelection() {
+        if uiState.isSelectionAttached {
+            uiState.clearBoardSelection()
+        } else if capture.hasInk {
+            uiState.attachBoardSelection()
+        }
     }
 }
