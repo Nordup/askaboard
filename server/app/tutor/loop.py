@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import Any
 
 from openai import AsyncOpenAI
 
@@ -45,19 +44,25 @@ async def run_turn(
         stream=True,
     )
 
-    async for raw in stream:
-        event = raw.model_dump(mode="json", exclude_none=True)
-        result.raw_events.append(event)
+    # `async with` guarantees the upstream HTTP response is closed
+    # deterministically — including when the caller stops iterating early
+    # (a `break` out of `async for ... in run_turn(...)`) — rather than
+    # leaving the connection to whenever the asyncgen finalizer happens to
+    # run. `AsyncStream.__aexit__` calls `response.aclose()`.
+    async with stream:
+        async for raw in stream:
+            event = raw.model_dump(mode="json", exclude_none=True)
+            result.raw_events.append(event)
 
-        kind = event.get("type", "")
-        if kind == "response.output_text.delta":
-            result.text += event.get("delta", "")
-        elif kind == "response.completed":
-            response = event.get("response") or {}
-            result.usage = response.get("usage")
-            result.response_id = response.get("id")
+            kind = event.get("type", "")
+            if kind == "response.output_text.delta":
+                result.text += event.get("delta", "")
+            elif kind == "response.completed":
+                response = event.get("response") or {}
+                result.usage = response.get("usage")
+                result.response_id = response.get("id")
 
-        for client_event in translator.translate(event):
-            if isinstance(client_event, WorkspaceEvent):
-                result.workspace = client_event.model_dump(mode="json")
-            yield client_event, result
+            for client_event in translator.translate(event):
+                if isinstance(client_event, WorkspaceEvent):
+                    result.workspace = client_event.model_dump(mode="json")
+                yield client_event, result
