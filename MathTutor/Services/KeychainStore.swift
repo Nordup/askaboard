@@ -2,8 +2,8 @@ import Foundation
 import Security
 
 /// The device's backend credential: a bearer token, kept in the Keychain and
-/// nowhere else. The base URL it is paired with is not a secret and lives in
-/// `UserDefaults` instead — see `BackendConfiguration`.
+/// nowhere else. The address it is paired with is not a secret and not stored
+/// at all — it is a constant in `BackendConfiguration`.
 struct KeychainStore: Sendable {
     private let service = "com.nordup.MathTutor"
     /// The account this type reads and writes today. Named for what it holds

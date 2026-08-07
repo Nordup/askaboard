@@ -3,12 +3,12 @@
 A FastAPI service that sits between the iPad app and OpenAI. It exists for
 two reasons.
 
-**It holds the single OpenAI key so the iPad app stops shipping one.** The
-prototype client-side path (documented in the root [`README.md`](../README.md))
-puts an API key in the device's Keychain and sends it to OpenAI directly —
-workable for a demo, not for anything that leaves one developer's hands. This
-service holds the only OpenAI key that exists anywhere. The device
-authenticates to *this* service instead, with a bearer token
+**It holds the single OpenAI key so the iPad app ships none.** The prototype
+client-side path put an API key in the device's Keychain and sent it to OpenAI
+directly — workable for a demo, not for anything that leaves one developer's
+hands. That path is deleted: the app has no OpenAI credential and no setup
+surface at all, and this service holds the only OpenAI key that exists
+anywhere. The device authenticates to *this* service instead, with a bearer token
 (`DEVICE_TOKEN`), never with a provider key. The token is compared with
 `secrets.compare_digest` in [`app/auth.py`](app/auth.py) so a timing attack
 can't recover it byte by byte.

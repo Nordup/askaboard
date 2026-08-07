@@ -2,10 +2,10 @@ import Foundation
 import XCTest
 @testable import MathTutor
 
-/// Client-migration Task 6: the Keychain accessors renamed off the OpenAI-key era, the
-/// migration that clears whatever a real key left behind, `usesLiveTutor` widening to
-/// require the base URL `BackendConfiguration` now needs alongside the token, and the
-/// DEBUG-only dev-loop injection that replaced `DebugAPIKeyInjection`.
+/// The device's side of the backend contract, now that the app has no credential surface at
+/// all: the Keychain accessors renamed off the OpenAI-key era, the migration that clears
+/// whatever a real key left behind, the permanent address that replaced the stored one, and
+/// the DEBUG-only dev-loop injection.
 final class SettingsBackendTests: XCTestCase {
     // MARK: - Migration off the legacy account
 
@@ -52,172 +52,135 @@ final class SettingsBackendTests: XCTestCase {
         XCTAssertNil(keychain.readLegacyAPIKeyForTesting())
     }
 
-    // MARK: - Both halves required
+    // MARK: - The address is a constant, not a setting
 
-    /// `BackendConfiguration.init?` itself: a base URL with no token, or a token with no
-    /// base URL, is unusable — treated exactly like no configuration at all.
-    func testLiveTutoringRequiresBothTheURLAndTheToken() {
-        XCTAssertNil(BackendConfiguration(baseURL: nil, token: "t"))
-        XCTAssertNil(BackendConfiguration(baseURL: URL(string: "http://x"), token: ""))
-        XCTAssertNotNil(BackendConfiguration(baseURL: URL(string: "http://x"), token: "t"))
+    /// The whole reason this app has no server field: there is one address, it is in the
+    /// binary, and it is reachable without anything having been configured on the device.
+    func testThePermanentAddressIsAWholeHTTPSURL() {
+        let url = BackendConfiguration.permanentBaseURL
+        XCTAssertEqual(url.scheme, "https", "the device must never be pointed at cleartext")
+        XCTAssertNotNil(url.host)
     }
 
-    /// The same rule, through `TutorStore.usesLiveTutor`: a token with no base URL saved is
-    /// not enough, and saving the base URL is what flips it.
-    @MainActor
-    func testUsesLiveTutorStaysFalseUntilBothHalvesAreSaved() throws {
-        let (defaults, cleanup) = try isolatedDefaults()
-        defer { cleanup() }
-        let keychain = KeychainStore()
-        keychain.removeBackendToken()
-        defer { keychain.removeBackendToken() }
+    /// Nothing about the address is persisted, so nothing about it can be left behind by a
+    /// previous launch or reached by anything that can write `UserDefaults`. This asserts the
+    /// absence directly: the key the migration-era build stored it under is not read by
+    /// anything any more, so a value sitting there must have no effect.
+    func testAStaleStoredAddressCannotOverrideThePermanentOne() throws {
+        let suiteName = "SettingsBackendTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set("https://leftover.example.com", forKey: "mathTutor.backendBaseURL")
 
-        let store = TutorStore(
-            service: DemoTutorService(), persistence: .inMemory, keychain: keychain, defaults: defaults
-        )
-        XCTAssertFalse(store.usesLiveTutor, "neither half is saved yet")
-
-        XCTAssertTrue(store.saveBackendToken("device-token"))
-        XCTAssertFalse(store.usesLiveTutor, "a token alone must not be enough")
-
-        XCTAssertTrue(store.saveBaseURL("https://backend.example.com"))
-        XCTAssertTrue(store.usesLiveTutor, "both halves are now present")
-    }
-
-    /// Removing the token drops `usesLiveTutor` even though the base URL is still saved —
-    /// the destructive control only the token has must not leave the app half-configured
-    /// and still claiming to be live.
-    @MainActor
-    func testRemovingTheTokenDropsUsesLiveTutorEvenWithABaseURLStillSaved() throws {
-        let (defaults, cleanup) = try isolatedDefaults()
-        defer { cleanup() }
         let keychain = KeychainStore()
         keychain.saveBackendToken("device-token")
         defer { keychain.removeBackendToken() }
 
-        let store = TutorStore(
-            service: DemoTutorService(), persistence: .inMemory, keychain: keychain, defaults: defaults
-        )
-        XCTAssertTrue(store.saveBaseURL("https://backend.example.com"))
-        XCTAssertTrue(store.usesLiveTutor)
-
-        XCTAssertTrue(store.removeBackendToken())
-        XCTAssertFalse(store.usesLiveTutor)
+        let configuration = try XCTUnwrap(BackendConfiguration.load(keychain: keychain))
+        XCTAssertNotEqual(configuration.baseURL.host, "leftover.example.com")
     }
 
-    /// `saveBaseURL` declines an empty or unparseable address rather than clearing whatever
-    /// was already saved — an empty save is not a designed way to clear this field, the same
-    /// rule `saveBackendToken` already follows for an empty token.
-    @MainActor
-    func testSaveBaseURLDeclinesEmptyAndUnparseableAddressesWithoutClearingTheStoredOne() throws {
-        let (defaults, cleanup) = try isolatedDefaults()
-        defer { cleanup() }
+    // MARK: - The token is the only half that can be missing
+
+    /// `BackendConfiguration.init?`: an empty token is unusable, and treated exactly like no
+    /// configuration at all rather than as a half-configured state anyone has to check for.
+    func testAnEmptyTokenIsTreatedAsNoConfigurationAtAll() {
+        XCTAssertNil(BackendConfiguration(baseURL: nil, token: "t"))
+        XCTAssertNil(BackendConfiguration(baseURL: URL(string: "http://x"), token: ""))
+        XCTAssertNil(BackendConfiguration(baseURL: URL(string: "http://x"), token: "   "))
+        XCTAssertNotNil(BackendConfiguration(baseURL: URL(string: "http://x"), token: "t"))
+    }
+
+    /// `load` pairs the Keychain's token with the permanent address, and returns nothing at
+    /// all when there is no token to pair.
+    func testLoadPairsTheStoredTokenWithThePermanentAddress() throws {
+        let keychain = KeychainStore()
+        keychain.saveBackendToken("device-token")
+        defer { keychain.removeBackendToken() }
+
+        let configuration = try XCTUnwrap(BackendConfiguration.load(keychain: keychain))
+        XCTAssertEqual(configuration.token, "device-token")
+        #if DEBUG
+        // A dev-loop launch may be pointing this process at a local server; the permanent
+        // address is only the expected answer when nothing is overriding it.
+        if DebugBackendInjection.overriddenBaseURL() == nil {
+            XCTAssertEqual(configuration.baseURL, BackendConfiguration.permanentBaseURL)
+        }
+        #else
+        XCTAssertEqual(configuration.baseURL, BackendConfiguration.permanentBaseURL)
+        #endif
+    }
+
+    func testLoadReturnsNothingWithoutAToken() {
         let keychain = KeychainStore()
         keychain.removeBackendToken()
         defer { keychain.removeBackendToken() }
 
-        let store = TutorStore(
-            service: DemoTutorService(), persistence: .inMemory, keychain: keychain, defaults: defaults
-        )
-        XCTAssertTrue(store.saveBaseURL("https://backend.example.com"))
-
-        XCTAssertFalse(store.saveBaseURL(""))
-        XCTAssertFalse(store.saveBaseURL("   "))
-        XCTAssertFalse(store.saveBaseURL("not a url"))
-        XCTAssertEqual(
-            defaults.string(forKey: BackendConfiguration.baseURLDefaultsKey), "https://backend.example.com",
-            "a declined save must not disturb the address already on file"
-        )
+        XCTAssertNil(BackendConfiguration.load(keychain: keychain))
     }
 
-    // MARK: - `--ui-test-reset` clears both halves
-
-    /// UI tests must never inherit a developer credential from the simulator — the rule
-    /// `DebugBackendInjection`'s own doc comment states, now covering the base URL as well as
-    /// the token.
+    /// `usesLiveTutor` is read once at launch from the Keychain, because there is no longer
+    /// anything in the app that can change it mid-session — the pane that used to save and
+    /// remove a token is gone.
     @MainActor
-    func testUITestResetClearsBothTheTokenAndTheBaseURL() throws {
-        let (defaults, cleanup) = try isolatedDefaults()
-        defer { cleanup() }
+    func testUsesLiveTutorFollowsTheStoredTokenAtLaunch() {
         let keychain = KeychainStore()
-        keychain.saveBackendToken("leftover-token")
+        keychain.saveBackendToken("device-token")
         defer { keychain.removeBackendToken() }
-        defaults.set("https://leftover.example.com", forKey: BackendConfiguration.baseURLDefaultsKey)
 
-        let store = TutorStore(
-            service: DemoTutorService(),
-            persistence: .inMemory,
-            keychain: keychain,
-            defaults: defaults
-        )
-        // `--ui-test-reset` is read from `ProcessInfo.processInfo.arguments`, which a unit
-        // test cannot inject — so this asserts the state the reset is supposed to leave
-        // behind is at least reachable through the public API it uses to get there.
-        XCTAssertTrue(store.removeBackendToken())
-        defaults.removeObject(forKey: BackendConfiguration.baseURLDefaultsKey)
-        XCTAssertFalse(store.usesLiveTutor)
-        XCTAssertNil(keychain.readBackendToken())
-        XCTAssertNil(defaults.string(forKey: BackendConfiguration.baseURLDefaultsKey))
+        let store = TutorStore(service: DemoTutorService(), persistence: .inMemory, keychain: keychain)
+        XCTAssertTrue(store.usesLiveTutor)
     }
 
     #if DEBUG
     // MARK: - The dev-loop injection shim
 
-    func testDebugBackendInjectionRequiresBothTheURLAndTheToken() {
-        XCTAssertNil(DebugBackendInjection.injectedConfiguration(environment: [:]))
-        XCTAssertNil(DebugBackendInjection.injectedConfiguration(environment: [
-            DebugBackendInjection.baseURLEnvironmentKey: "https://backend.example.com",
-        ]))
-        XCTAssertNil(DebugBackendInjection.injectedConfiguration(environment: [
-            DebugBackendInjection.tokenEnvironmentKey: "device-token",
-        ]))
+    /// The two halves are read independently now: a token seeds the Keychain, an address
+    /// overrides the permanent one, and neither requires the other.
+    func testInjectedTokenIsReadWithoutAnAddress() {
+        XCTAssertNil(DebugBackendInjection.injectedToken(environment: [:]))
+        XCTAssertEqual(
+            DebugBackendInjection.injectedToken(environment: [
+                DebugBackendInjection.tokenEnvironmentKey: "device-token",
+            ]),
+            "device-token"
+        )
     }
 
-    func testDebugBackendInjectionReadsBothDirectValues() throws {
-        let injected = try XCTUnwrap(DebugBackendInjection.injectedConfiguration(environment: [
-            DebugBackendInjection.baseURLEnvironmentKey: "https://backend.example.com",
-            DebugBackendInjection.tokenEnvironmentKey: "device-token",
-        ]))
-        XCTAssertEqual(injected.baseURL, URL(string: "https://backend.example.com"))
-        XCTAssertEqual(injected.token, "device-token")
+    func testOverriddenBaseURLIsReadWithoutAToken() {
+        XCTAssertNil(DebugBackendInjection.overriddenBaseURL(environment: [:]))
+        XCTAssertEqual(
+            DebugBackendInjection.overriddenBaseURL(environment: [
+                DebugBackendInjection.baseURLEnvironmentKey: "http://localhost:8080",
+            ]),
+            URL(string: "http://localhost:8080")
+        )
     }
 
-    /// The token half also accepts a file path — the same fallback `DebugAPIKeyInjection`
-    /// offered for a key too long or too sensitive to want in a shell's environment directly.
-    func testDebugBackendInjectionReadsTheTokenFromAFileWhenTheDirectValueIsAbsent() throws {
+    /// The token also accepts a file path — the fallback for a credential too long or too
+    /// sensitive to want in a shell's environment directly.
+    func testInjectedTokenIsReadFromAFileWhenTheDirectValueIsAbsent() throws {
         let fileURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("DebugBackendInjectionTests-\(UUID().uuidString).txt")
         try "device-token-from-file\n".write(to: fileURL, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: fileURL) }
 
-        let injected = try XCTUnwrap(DebugBackendInjection.injectedConfiguration(environment: [
-            DebugBackendInjection.baseURLEnvironmentKey: "https://backend.example.com",
-            DebugBackendInjection.tokenEnvironmentFileKey: fileURL.path,
-        ]))
-        XCTAssertEqual(injected.token, "device-token-from-file", "trailing whitespace must be trimmed")
+        XCTAssertEqual(
+            DebugBackendInjection.injectedToken(environment: [
+                DebugBackendInjection.tokenEnvironmentFileKey: fileURL.path,
+            ]),
+            "device-token-from-file",
+            "trailing whitespace must be trimmed"
+        )
     }
 
-    func testDebugBackendInjectionTreatsWhitespaceOnlyValuesAsAbsent() {
-        XCTAssertNil(DebugBackendInjection.injectedConfiguration(environment: [
-            DebugBackendInjection.baseURLEnvironmentKey: "   ",
-            DebugBackendInjection.tokenEnvironmentKey: "device-token",
-        ]))
-        XCTAssertNil(DebugBackendInjection.injectedConfiguration(environment: [
-            DebugBackendInjection.baseURLEnvironmentKey: "https://backend.example.com",
+    func testInjectionTreatsWhitespaceOnlyValuesAsAbsent() {
+        XCTAssertNil(DebugBackendInjection.injectedToken(environment: [
             DebugBackendInjection.tokenEnvironmentKey: "   ",
+        ]))
+        XCTAssertNil(DebugBackendInjection.overriddenBaseURL(environment: [
+            DebugBackendInjection.baseURLEnvironmentKey: "   ",
         ]))
     }
     #endif
-
-    // MARK: - Helpers
-
-    /// A throwaway `UserDefaults` suite, cleaned up by the returned closure — the pattern
-    /// `MathTutorTests.testAppearancePreferenceDefaultsToLightAndRoundTrips` already uses,
-    /// so a test that saves a base URL never reads another test's (or the app's real) value
-    /// out of `UserDefaults.standard`.
-    private func isolatedDefaults() throws -> (UserDefaults, () -> Void) {
-        let suiteName = "SettingsBackendTests.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        return (defaults, { defaults.removePersistentDomain(forName: suiteName) })
-    }
 }

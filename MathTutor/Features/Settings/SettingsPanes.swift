@@ -2,9 +2,9 @@ import SwiftUI
 
 /// The right-hand side of the window: a pinned header, then whichever pane is showing.
 ///
-/// The header is drawn here rather than inside each pane so the three panes cannot disagree
-/// about it — the whole point of `SettingsWindowMetrics.headerHeight` is that the rule under
-/// it does not move, and three copies of the same `VStack` is exactly how that drifts.
+/// The header is drawn here rather than inside each pane so the panes cannot disagree about
+/// it — the whole point of `SettingsWindowMetrics.headerHeight` is that the rule under it
+/// does not move, and a copy of the same `VStack` per pane is exactly how that drifts.
 struct SettingsPaneContent: View {
     let pane: SettingsPane
     let metrics: SettingsWindowMetrics
@@ -50,7 +50,6 @@ struct SettingsPaneContent: View {
     private func paneBody(for pane: SettingsPane) -> some View {
         switch pane {
         case .tutor: TutorPane(width: metrics.paneContentWidth)
-        case .apiKey: APIKeyPane(width: metrics.paneContentWidth)
         case .session: SessionPane(width: metrics.paneContentWidth)
         }
     }
@@ -83,82 +82,6 @@ struct TutorPane: View {
                 select: store.setReasoningEffort
             )
         }
-    }
-}
-
-// MARK: - API key
-
-/// The stored token, the server it is sent to, the way to swap either, and the way to be rid
-/// of the token.
-///
-/// `Remove API key` lives here rather than in a shared "Irreversible" group because removing
-/// a key is part of owning one — see `SettingsPane`. The warning the old group carried in a
-/// shared caption is in this pane's lede instead, in this pane's terms.
-///
-/// The base-URL field is new with client-migration Task 6 and has no board of its own —
-/// `BaseURLField`'s own doc comment says why it borrows `KeyField`'s box rather than
-/// inventing a second visual language for one more field.
-struct APIKeyPane: View {
-    @EnvironmentObject private var store: TutorStore
-    let width: CGFloat
-
-    /// Transient. The typed token lives here only until it reaches the Keychain.
-    @State private var tokenDraft = ""
-    /// The masked form of the stored token. Only the mask is held; the token itself is read
-    /// once, converted, and dropped.
-    @State private var storedTokenMask: String?
-
-    /// Transient, and — unlike the token — prefilled with the stored value directly. A base
-    /// URL is not a secret, so there is nothing here that needs the mask-then-drop treatment
-    /// `storedTokenMask` exists for.
-    @State private var baseURLDraft = ""
-
-    var body: some View {
-        SettingsPaneBody(width: width) {
-            BaseURLField(draft: $baseURLDraft, width: width, onSave: saveBaseURL)
-
-            KeyField(draft: $tokenDraft, storedMask: storedTokenMask, width: width, onSave: saveToken)
-
-            DestructiveButton(title: SettingsCopy.removeKey, action: removeToken)
-                .accessibilityIdentifier("remove-api-key")
-        }
-        .task {
-            storedTokenMask = currentMask()
-            baseURLDraft = store.defaults.string(forKey: BackendConfiguration.baseURLDefaultsKey) ?? ""
-        }
-    }
-
-    /// Reads the stored token once, converts it to the mask, and lets it go. Nothing else in
-    /// this view ever holds the token, and it is never written anywhere but the Keychain.
-    private func currentMask() -> String? {
-        guard let token = store.keychain.readBackendToken()?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !token.isEmpty else { return nil }
-        return APIKeyMask.masked(token)
-    }
-
-    private func saveToken() {
-        let trimmed = tokenDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        // An empty save is not a designed action and `saveBackendToken("")` would remove the
-        // token — which is what `Remove API key` directly below is for. Decline instead.
-        guard !trimmed.isEmpty else { return }
-        guard store.saveBackendToken(trimmed) else { return }
-        // Derived from the value already in hand rather than by reading the Keychain back.
-        storedTokenMask = APIKeyMask.masked(trimmed)
-        tokenDraft = ""
-    }
-
-    private func removeToken() {
-        guard store.removeBackendToken() else { return }
-        storedTokenMask = nil
-        tokenDraft = ""
-    }
-
-    private func saveBaseURL() {
-        let trimmed = baseURLDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard store.saveBaseURL(trimmed) else { return }
-        // Normalized to what actually got stored, the same way `saveToken` derives its mask
-        // from the value already in hand rather than reading the store back.
-        baseURLDraft = trimmed
     }
 }
 

@@ -25,14 +25,13 @@ struct TutorServiceRouter: TutorService, Sendable {
         self.configurationReader = configurationReader ?? { BackendConfiguration.load(keychain: keychain) }
     }
 
-    /// The real streaming path: a `BackendConfiguration` that is half set
-    /// (a base URL with no token, or vice versa) is treated exactly like no
-    /// configuration at all, so the app never thinks it can reach a live
-    /// tutor when a request would actually 401 or have nowhere to go.
+    /// The real streaming path: a build with no usable token has no
+    /// `BackendConfiguration` at all, so the app never thinks it can reach a
+    /// live tutor when a request would actually 401.
     func stream(_ request: TutorRequest) -> AsyncThrowingStream<TutorEvent, Error> {
         guard let configuration = configurationReader() else {
             return AsyncThrowingStream { continuation in
-                continuation.finish(throwing: TutorServiceError.missingAPIKey)
+                continuation.finish(throwing: TutorServiceError.notConfigured)
             }
         }
         return BackendTutorService(configuration: configuration).stream(request)

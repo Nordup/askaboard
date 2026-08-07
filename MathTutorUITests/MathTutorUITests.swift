@@ -430,20 +430,38 @@ final class MathTutorUITests: XCTestCase {
         return isAttached(selectButton)
     }
 
-    // MARK: - No key
+    // MARK: - No setup state
 
-    func testNoAPIKeyStateFillsThePanelWithoutAKey() {
-        // No demo service: an absent key is the real first-run condition, not an error.
+    /// There is no first-run setup screen any more, and this is the launch that used to get
+    /// one: `--ui-test-reset` clears the device token and there is no demo service, so the app
+    /// genuinely cannot reach a tutor. Board 11 answered that with its own screen — a block,
+    /// a pointer to platform.openai.com, and `btn/primary` in place of the composer. The app
+    /// has no credential a student could supply, so there is nothing to ask for and nothing to
+    /// send them to: the panel is the ordinary start state, and a send fails in the thread.
+    func testThereIsNoFirstRunSetupStateWithoutAToken() {
         let app = launch(["--ui-test-reset"], resetting: false)
 
-        XCTAssertTrue(app.staticTexts["One thing before we start"].exists)
-        XCTAssertTrue(app.buttons["add-api-key"].exists)
-        XCTAssertFalse(app.textFields["Ask anything..."].exists,
-                       "Board 11 removes the composer rather than disabling it")
+        XCTAssertFalse(app.staticTexts["One thing before we start"].exists)
+        XCTAssertFalse(app.buttons["add-api-key"].exists)
+        XCTAssertTrue(app.textFields["Ask anything..."].exists,
+                      "the composer is the panel's only bottom-slot occupant now")
         XCTAssertTrue(app.buttons["Pen"].exists, "The board and rail stay live: nothing is blocked")
-        // No `--ui-fixture` here — an absent key is the real first-run condition — so the band
-        // is the device's and only the width is the design's.
+        // No `--ui-fixture` here, so the band is the device's and only the width is the
+        // design's.
         assertMeasuredBoard(app, isWide: false)
+    }
+
+    /// The settings window has two panes and neither is a credential pane.
+    func testSettingsHasNoCredentialPane() {
+        let app = launch(["--ui-state", "docked-start", "--ui-freeze"])
+
+        tap(app.buttons["Tutor settings"], untilExists: app.descendants(matching: .any)["settings-window"],
+            "The panel controls' settings button must open the settings window")
+
+        XCTAssertFalse(app.buttons["API key"].exists)
+        XCTAssertFalse(app.secureTextFields["api-key-field"].exists)
+        XCTAssertFalse(app.textFields["base-url-field"].exists)
+        XCTAssertFalse(app.buttons["remove-api-key"].exists)
     }
 
     /// Asserted on the window rather than on a heading, and that is a change worth naming:
@@ -475,18 +493,14 @@ final class MathTutorUITests: XCTestCase {
     // MARK: - Live device
 
     /// Runs only when explicitly requested against a device with the real, persisted session
-    /// and API key. It deliberately uses no reset, demo or seed argument, so a missing board
-    /// or key is reported as evidence rather than papered over by test setup.
+    /// and a real device token. It deliberately uses no reset, demo or seed argument, so a
+    /// missing board is reported as evidence rather than papered over by test setup.
     func testLiveBoardEvaluationSeesPersistedAttempt() throws {
         guard ProcessInfo.processInfo.environment["RUN_LIVE_BOARD_E2E"] == "1" else {
             throw XCTSkip("Set RUN_LIVE_BOARD_E2E=1 to run the live-device board test")
         }
 
         let app = launch([], resetting: false)
-        guard !app.buttons["add-api-key"].exists else {
-            XCTFail("Live board E2E needs a persisted API key: the panel is in its first-run state")
-            return
-        }
 
         attachBoardSelection(in: app)
         app.buttons["Send message"].tap()

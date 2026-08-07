@@ -3,7 +3,7 @@
 Code-ready transcription of the five boards added to **"AI Whiteboard Tutor — Design System, Components & Page"** after the original nine:
 
 - **10 — Settings** (1376 × 1032)
-- **11 — First run · no API key** (1376 × 1032)
+- **11 — First run · no API key** (1376 × 1032) — **deleted 2026-08-08**
 - **12 — Session plan · panel** (1376 × 1032)
 - **13 — Session plan · full screen** (1376 × 1032)
 - **14 — Components · Tutor states** (1680 × fit-content → **3359**)
@@ -25,7 +25,7 @@ Where a board uses a component already specified in 02 / 03 / 05, this document 
 ## Table of contents
 
 1. [Board 10 — Settings](#board-10--settings)
-2. [Board 11 — First run · no API key](#board-11--first-run--no-api-key)
+2. [Board 11 — First run · no API key](#board-11--first-run--no-api-key) *(deleted)*
 3. [Board 12 — Session plan · panel](#board-12--session-plan--panel)
 4. [Board 13 — Session plan · full screen](#board-13--session-plan--full-screen)
 5. [Board 14 — Components · Tutor states](#board-14--components--tutor-states)
@@ -52,7 +52,8 @@ The settings surface, drawn **over** the board rather than in place of it. Scree
 behind, blurred and whitened, so the student can see the work they are leaving. Reached from
 `btn/settings` — in the panel controls on boards 11 / 12, and alone in the screen's top-right
 corner on boards 07 and 13 — and from the auth-error recovery chip on board 14 ("Open
-Settings" → *"the API key pane, field focused"*).
+Settings" → *"the API key pane, field focused"*, a destination that no longer exists — see
+board 14).
 
 Dismissed by the close control in the sidebar, or by tapping the backdrop. There is no
 drag-to-dismiss: the window is not a sheet and has no grabber to suggest one.
@@ -170,33 +171,26 @@ itself is the platform's; inventing a bespoke popover would introduce the contai
 original board 10 rejected sheets for. The trade is real and worth stating: the six effort
 captions ("Fastest replies", "Deep reasoning", …) are no longer on the screen.
 
-### `field/key` — no longer a re-skin of `Composer · wide`
+### `field/key` — **deleted 2026-08-08**
 
-It was one, and this document used to say so. Every cue it inherited — 740 × 80, `--radius-full`,
-`btn/send`'s 56pt violet disc — belongs to something you type into and then send.
+Deleted from the board and from the port, along with the whole **API key** pane it was the
+content of. The app holds no OpenAI key — the backend does — and the backend's address is a
+constant in `BackendConfiguration`, not something a student sets. So there is no credential
+for this field to hold and no server for a second field to name: the window is Tutor and
+Session, and nothing in the product asks about a deployment.
 
-| | was | now |
-| --- | --- | --- |
-| Box | 740 × 80 | **480 × 56** (the pane's measure) |
-| Radius | `--radius-full` | `var(--radius-lg)` 14 |
-| Padding | 32 / 12 | **18 leading, 16 trailing**, gap 16 |
-| Value | `--text-lead` 21, `--font-sans` | **15 / 22 · 400 · `--font-mono`** · `--color-ink` |
-| Action | `btn/send`, 56pt violet disc | **`Replace`** — `--text-label` 15 / 18 · 600 · `var(--color-brand)` |
-| Fill / elevation | `#FFFFFF`, 03 · Control | unchanged |
+Two consequences worth recording, because they were the interesting parts of the component:
 
-`--color-ink` and not tertiary: this is a filled field, not a placeholder. The literal is
-unchanged — `sk-proj-` + **24 × U+2022 BULLET** + `7Q4F`, a fixed bullet run so the mask leaks
-neither the key's characters nor its length.
+- **`--font-mono` is documentation-only again.** The masked key was the single case that
+  overturned Typography's rule that the mono face *"must never reach a screen"* — a run of 24
+  identical bullets is unreadable at a proportional pitch. Nothing on a screen sets mono now,
+  so the original rule holds with nothing exempted from it. `01-foundations.md`'s font table
+  is updated to match.
+- **The brand budget went back where it came from.** `Replace` had inherited the allowance
+  `btn/send`'s violet disc held; with the field gone the spend simply disappears rather than
+  moving somewhere else, so the three sanctioned brand uses are unchanged.
 
-The mono is the one genuinely new thing and it **overturns a stated rule**: `--font-mono` was
-documentation-only. A 24-bullet mask is the case that rule did not consider. IBM Plex Mono is
-not bundled, so a port renders the system monospaced face — never the proportional fallback,
-which loses the only property the mono was chosen for.
-
-`Replace` inherits the brand budget the send disc already held, so the three sanctioned uses
-are unchanged; the spend just moved from a 56pt disc to seven characters.
-
-### `btn/destructive` — matched to the field above it
+### `btn/destructive` — one context, not two
 
 | | was | now |
 | --- | --- | --- |
@@ -206,11 +200,15 @@ are unchanged; the spend just moved from a 56pt disc to seven characters.
 | Fill | `--color-surface-bubble`, **no shadow** | **`--color-surface`, elevation 03** |
 | Label | 17 / 22 · 500 | 15 / 18 · 600 · `--color-ink` |
 
+Only `Reset this session` remains; `Remove API key` went with the pane it lived in.
+
 **This is a loss and should be recorded as one.** The old rule was that everything safe is
 lifted off the surface and the things that destroy are the only things that sit *in* it — a
 flat grey pill meant "this one is different" without spending a colour. Beside a 56pt white
 field, that pill was the loudest object in the pane rather than the most careful one, so it was
-matched to the field and the shape signal is gone with nothing in its place.
+matched to the field and the shape signal is gone with nothing in its place. The field it was
+matched to is now deleted, so the button's 44 / 20 / `--radius-lg` geometry is inherited from
+a component that no longer exists — worth revisiting if the Session pane is ever redesigned.
 
 The warning now rests entirely on the pane's lede, which is what the `Irreversible` heading and
 caption used to do — *"the entire destructive signal is carried by the section heading and the
@@ -227,7 +225,6 @@ action deserves a second one on top of it is a question the design has not been 
 
 ```
 Tutor
-API key
 Session
 Tutor
 How the tutor thinks and speaks. Changes apply to your next message; the conversation so far is left alone.
@@ -237,25 +234,26 @@ Luna
 Reasoning effort
 How long it thinks before replying
 High
-API key
-Kept in this device's Keychain. It is sent to OpenAI and nowhere else.
-sk-proj-••••••••••••••••••••••••7Q4F
-Replace
-Remove API key
 Session
 Resetting clears the conversation and the goal it was working towards. It does not touch your board or its ink.
 Reset this session
 ```
+
+Six strings were removed with the API key pane on 2026-08-08: the nav item and heading
+`API key`, the lede *"Kept in this device's Keychain. It is sent to OpenAI and nowhere else."*,
+the masked literal `sk-proj-••••••••••••••••••••••••7Q4F`, `Replace`, and `Remove API key`.
+Nothing replaced them — the pane is gone rather than reworded.
 
 The model and effort names (Sol / Terra / Luna, None → Max) and their captions still exist in
 `SettingsOption`; they now appear in the picker rather than on the board.
 
 There is **no designer prose written on board 10** — it is a pure screen board, like 05–08.
 
-## Board 10b — Settings · panes
+## Board 10b — Settings · Session pane
 
-A companion artboard holding the **API key** and **Session** panes at the same 760 × 520, so
-the field and both destructive buttons stay specified. Not a screen; it has no backdrop.
+A companion artboard holding the **Session** pane at the same 760 × 520, so the destructive
+button stays specified. Not a screen; it has no backdrop. It held the **API key** pane as well
+until that pane was deleted, which is why its name lost the plural.
 
 ---
 
@@ -263,9 +261,21 @@ the field and both destructive buttons stay specified. Not a screen; it has no b
 
 ## Purpose / app state
 
+> **Deleted 2026-08-08 — the board is gone from the Paper file and the state is gone from the
+> app.** The condition it drew no longer exists: the app holds no OpenAI key, the backend does,
+> and the backend's address is a constant rather than a setting. There is no credential a
+> student could supply, so "not set up yet" is not a state the panel can be in — it either
+> reaches its tutor or a turn fails, and a failed turn is board 14's thread failure, not a
+> screen of its own. `NoAPIKeyState.swift` was deleted with it.
+>
+> The section is kept as a record, and two things in it outlived the board: **`btn/primary`**
+> below, which boards 12 and 13 use for the plan's tail, and the **tool rail geometry** measured
+> here, which [Open questions](#open-questions) still refers to. Everything else describes a
+> screen that no longer exists.
+
 Cold start: the app has launched, the board and rail are fully live and drawable, but the tutor cannot think because no OpenAI key is stored. **The tutor panel is the only thing in a special state** — the shell is untouched, so the student can draw immediately and is not blocked by a modal.
 
-Board 14 explicitly distinguishes this from the auth error: *"board 11 no-key state — that is onboarding, this is a broken key."*
+Board 14 explicitly distinguished this from the auth error: *"board 11 no-key state — that is onboarding, this is a broken key."* With onboarding deleted, only the failure remains.
 
 ## Screen frame
 
@@ -330,7 +340,9 @@ The orb's x of **120.5** is `(337 − 96) ÷ 2` — a consequence of centre alig
 
 Exactly the `panel` variant from `02 §11`: frame 96 × 90; halo 190 × 180 at `left −47, top −49` with alphas 75 % / 70 % and third ellipse `27% 26%`; body 54 × 42, `gap: 18`, `padding-top: 5`, `--radius-full`, the standard three-stop oklab body gradient; two 7 × 7 `#FFFFFF` eyes; **no mouth**. Elevation none.
 
-### `No-key state` — NEW block (301 × 156)
+### `No-key state` — block (301 × 156), **deleted 2026-08-08**
+
+Specified below as a record only. Nothing renders it.
 
 `display: flex`, `flex-direction: column`, `align-items: center`, width 301.
 
@@ -346,7 +358,12 @@ The **277** measure (= 301 − 24) is the same narrowed measure the panel greeti
 
 No fill, no radius, no shadow — text sitting directly on the panel, per the "the tutor is the voice of the panel" rule.
 
-## `btn/primary` — NEW component (panel variant)
+## `btn/primary` — NEW component (panel variant) — **survives board 11's deletion**
+
+Introduced here and still in the product: boards 12 and 13 use it for the plan's tail. Its
+panel height came down **58 → 50** with the composer pill (see `03-chat-components.md`), and it
+is still derived from the composer rather than set independently — that derivation is the whole
+point of the number, and it outlived the slot-sharing it was originally justified by.
 
 | Property | Value |
 | --- | --- |
@@ -363,21 +380,25 @@ No fill, no radius, no shadow — text sitting directly on the panel, per the "t
 
 **States:** resting only. No pressed, no disabled, no loading.
 
-## All literal copy on board 11
+## All literal copy on board 11 — **deleted 2026-08-08**
+
+Four strings, none of them replaced:
 
 ```
-9:41 AM
-Tue May 21
-100%
 One thing before we start
 I need an OpenAI API key to think with. It is kept in this device's Keychain and never leaves it.
 Get one at platform.openai.com
 Add your API key
 ```
 
-Note the copy discipline: the key's storage promise is stated **twice**, once here in first person ("kept in this device's Keychain and never leaves it") and once on board 10 in third person ("Kept in this device's Keychain. It is sent to OpenAI and nowhere else."). The two sentences are **not** identical and the board-10 one is strictly more accurate — see [Open questions](#open-questions).
+This is where the copy-correctness defect `Open questions 9` raised finally lands: the key's
+storage promise was stated twice, once here in first person ("kept in this device's Keychain and
+never leaves it") and once on board 10 in third person ("Kept in this device's Keychain. It is
+sent to OpenAI and nowhere else."). The two sentences were **not** identical and the first was
+false. Both are now deleted along with the key itself, so the defect is resolved by removal
+rather than by choosing a wording.
 
-There is **no designer prose written on board 11**.
+There was **no designer prose written on board 11**.
 
 ---
 
@@ -403,7 +424,7 @@ The plan is **not a card, not a modal, and not a panel takeover** — it is a fl
 | Status bar | 0 | 16 | 1376 | 24 | **Reused from 05** |
 | Whiteboard canvas | 124 | 28 | 863 | 976 | **Reused from 05** — elevation 01, `--color-surface-canvas`, radius 28, `overflow: clip` |
 | ↳ Handwritten ink | 281 | 215 | 548 | 641 | canvas-local (157, 147) — **the same ink asset and position as screens 05 / 08** |
-| Tool rail | 28 | 28 | 72 | 628 | **Identical to board 11** (see that section) |
+| Tool rail | 28 | 28 | 72 | 628 | **Identical to board 11** (see that section — the board is deleted, the measurement is kept) |
 | Tutor chat panel | 1011 | 28 | 337 | 976 | **Reused from 05** |
 
 ## Tutor panel internals
@@ -509,7 +530,7 @@ The 25 pt slot height is the point: **the number and the check both sit on the s
 
 Board 14 states this lane is shared a third way: *"Lane: 22 slot + 14 gap + 265 text — identical to plan/outcome, so the two align"* for evaluation findings.
 
-### `btn/primary` — panel variant, reused from board 11
+### `btn/primary` — panel variant, introduced on board 11 (which is deleted; the component is not)
 
 Identical spec (301 × 58, `--radius-full`, `var(--color-brand)`, elevation 03, label 17 / 22 · 600 · `#FFFFFF`), with `margin-top: var(--spacing-6)` 24 instead of absolute positioning. Label: `Start on the board`.
 
@@ -943,9 +964,9 @@ Copy: message `OpenAI turned that down — the key looks wrong, or it has expire
 | --- | --- |
 | Difference | `identical structure — only the copy and the glyph change` |
 | Glyph | `control/settings · vb 28 · rendered 22 · stroke 2.55 → 2.00 · var(--color-icon)` |
-| Destination | `board 10 — Settings, OpenAI API key section, field focused` |
+| Destination | ~~`board 10 — Settings, OpenAI API key section, field focused`~~ — **stale.** There is no key pane to open. What an auth failure should offer instead is undecided; see [Open questions](#open-questions). |
 | Copy rule | `name who refused, never "an error occurred" — the tutor is not a system` |
-| Distinct from | `board 11 no-key state — that is onboarding, this is a broken key` |
+| Distinct from | ~~`board 11 no-key state — that is onboarding, this is a broken key`~~ — onboarding is deleted, so this is the only credential failure left |
 
 **This row used to read `stroke 2.18` and to be the one glyph row on this board missing the `→ 2.00` its three siblings carry** — `2.18 × 22 ÷ 28 = 1.71`, below the target. Corrected on 2026-08-07 when the glyph was redrawn as a cog; `2.545` is what renders 2.0 at that size.
 
@@ -1071,8 +1092,8 @@ Type: `--font-sans` 15 / **23** · 400 · `var(--color-ink-secondary)`.
 
 | Component | Where used | Size(s) | Reusable by design? |
 | --- | --- | --- | --- |
-| **`btn/primary`** | 11 (no-key CTA, absolute at panel-local 18/860) · 12 (`plan/panel` tail) · 13 (`plan/full-screen` tail) | **301 × 58** panel (fill width, no padding) · **hug × 64** full-screen (`padding-inline: 32`, measured 220) | **Yes** — two named scales, brand fill + elevation 03 + `--radius-full` at both. Label 17 / 22 · 600 panel, 20 / 24 · 600 full-screen, `#FFFFFF`. |
-| **`btn/destructive`** | 10 (API key pane · Session pane) | **hug × 44**, `padding-inline: 20` | **Yes**, and it now has two contexts. `--color-surface` fill, `var(--radius-lg)` 14, **elevation 03**, label 15 / 18 · 600 · `--color-ink`. Still carries **no danger colour** — but the flat-and-unlifted shape that used to *be* the danger signal is gone; see the board 10 section. |
+| **`btn/primary`** | ~~11 (no-key CTA)~~ · 12 (`plan/panel` tail) · 13 (`plan/full-screen` tail) | **301 × 58** panel (fill width, no padding) · **hug × 64** full-screen (`padding-inline: 32`, measured 220) | **Yes** — two named scales, brand fill + elevation 03 + `--radius-full` at both. Label 17 / 22 · 600 panel, 20 / 24 · 600 full-screen, `#FFFFFF`. |
+| **`btn/destructive`** | 10 (Session pane only, since the API key pane was deleted) | **hug × 44**, `padding-inline: 20` | **Yes**, and it now has two contexts. `--color-surface` fill, `var(--radius-lg)` 14, **elevation 03**, label 15 / 18 · 600 · `--color-ink`. Still carries **no danger colour** — but the flat-and-unlifted shape that used to *be* the danger signal is gone; see the board 10 section. |
 | ~~**`select/option`**~~ | — | — | **Retired with the old board 10** and deleted from the port rather than left unused. Its selection rule survives in `nav/item`: same `--radius-lg` 14, same `--color-brand-tint`. |
 | **`nav/item`** | 10 (sidebar ×3) | **184 × 44**, `padding-inline: 12` | **Yes.** Radius 14; selected = `--color-brand-tint` + label 15 / 18 · 600 · `--color-ink`; default = no fill + 15 / 18 · 500 · `--color-ink-secondary`. Unlike `select/option`, the label changes with the state. |
 | **`row/setting`** | 10 (Tutor pane ×2) | **measure × 120**, rule on the top edge | **Yes.** Label 17 / 22 · 600 over caption 15 / 18 · 400; trailing value 17 / 22 · 500 plus `ui/chevron-down` 16 in a **fixed 20pt slot**. The slot is what keeps the marks in one lane. |
@@ -1297,7 +1318,7 @@ The designer flagged six deliberately un-tokenised, component-internal values. *
 | 2 | **Streaming caret 2 × 22, gap 2** | `state/streaming` | ✔ `2 × 22` frame, `--radius-full`, fill `var(--color-ink)`; parent row `gap: 2px`, `height: 25px` | Two spec rows, verbatim: **`2 × 22 · radius-full · var(--color-ink) · NO TOKEN — component-internal`** and **`2 after the last glyph — NO TOKEN, optical`**. The height *is* derived: **`22 = var(--leading-control), optically centred in the 25 line box`** — i.e. only the 2 pt width and the 2 pt gap are free values. |
 | 3 | ~~**`select/option` 236 × 90**~~ *(retired — kept for the derivation)* | Board 10 | ✔ `width: 236px`, `height: 90px`, `flex-shrink: 0`, `padding-block: 20`, `padding-inline: 22` | No prose exists on board 10, so the justification is arithmetic and must be read off the layout: **236 is derived — `(740 − 16 × 2) ÷ 3 = 236`**, the only width that fits three options across the 740 column at a `--spacing-4` gap. **90 is free** and is what the 20 / 24 / 4 / 22 / 20 stack needs. The padding pair (20 / 22) is off-scale on the inline axis and has no token. |
 | 4 | **`btn/destructive` height 56** | Board 10 | ✔ `height: 56px`, `padding-inline: 28`, no shadow | No prose. 56 is **not** a spacing step and does not match the 58 of `btn/primary` or the 62 of a chip — it is a third control height. `padding-inline: 28` equals `--space-edge`'s value but is written as a raw literal, so it is not a token reference. |
-| 5 | **`btn/primary` 58 / 64** | Boards 11 · 12 · 13 | ✔ Panel `301 × 58`; full-screen `hug × 64`, `padding-inline: var(--spacing-8)` 32 | No prose, but **58 is derived**: it is exactly the panel composer's height (`03 §1.1`), so the button occupies the composer's slot when the composer is not there (board 11) or sits on the same rhythm when it is (board 12). **64 is free** — it is *not* the full-screen composer's 80, so the CTA is deliberately lighter than the input at that scale. |
+| 5 | **`btn/primary` 58 / 64** | ~~Board 11~~ · 12 · 13 | ✔ Panel `301 × 58`; full-screen `hug × 64`, `padding-inline: var(--spacing-8)` 32 | No prose, but **58 is derived**: it is exactly the panel composer's height (`03 §1.1`). It was justified by the button occupying the composer's slot when the composer was not there (board 11, now deleted); the derivation survives as the plan tail sitting on the composer's rhythm on board 12. The port carries 50, the pill's current height. **64 is free** — it is *not* the full-screen composer's 80, so the CTA is deliberately lighter than the input at that scale. |
 | 6 | **Full-screen message spec — tutor 21 / 30, student bubble max-width 520, padding 16 / 24** | Board 13 `Thread · wide` | ✔ `msg/tutor` `--text-lead` 21 / `--leading-lead` 30; bubble `max-width: 520px`, `padding-block: 16px`, `padding-inline: 24px`; text 21 / 30 | Board 14 Unresolved, verbatim: **"the panel-scale message spec has been carried up to the 740 column for the first time (msg/tutor 21 / 30, msg/student bubble max-width 520, padding 16 / 24); board 03 only ever specced the 301 column, so the full-screen thread was undefined until now."** 21 / 30 are existing tokens (`--text-lead` / `--leading-lead`); **520, 16 and 24 are the free values** — 520 ≈ 70 % of 740, the same ratio the panel's 224 has to 301 (74 %). |
 
 ## Additional un-tokenised values found on these boards (not on the designer's list)
@@ -1331,7 +1352,7 @@ The designer flagged six deliberately un-tokenised, component-internal values. *
 
 **Corroborating evidence that Option A is the current state of the file:** the `state/evaluation` spec row for the incorrect mark ends in the shouted annotation **`— SAME COLOUR`**, and the board header says *"There is no semantic colour anywhere in this system, so correctness is carried by glyph shape, not by red and green."* The design as drawn is Option A; the question is whether that survives contact with users.
 
-**Extension the boards do not address:** `btn/destructive` on board 10 has the same problem in a more dangerous place. "Remove API key" and "Reset this session" are irreversible and are rendered as neutral `#F2F2F6` pills. If a semantic role is added under Option B, decide at the same time whether it also applies there.
+**Extension the boards do not address:** `btn/destructive` on board 10 has the same problem in a more dangerous place. "Reset this session" is irreversible and is rendered as a neutral `#F2F2F6` pill. If a semantic role is added under Option B, decide at the same time whether it also applies there.
 
 ## 2. ~~`control/settings` renders at 1.71, below the 2.0 target~~ RESOLVED
 
@@ -1400,12 +1421,14 @@ tool slots are already 54 × 54 each; the 3.5 between them is separation, not pi
 
 Blocks are separated by 48 / 48 / 48 / **44**. Every other value on the board is a clean multiple of 4 and the first three gaps agree, so the 44 reads as an off-by-4 rather than a decision. Content also stops at y 962 with 42 pt of unused safe band below it, so there is no packing pressure forcing the tighter gap. **Recommend 48 throughout** unless the designer says otherwise.
 
-## 9. The API-key privacy sentence is stated two different ways
+## 9. ~~The API-key privacy sentence is stated two different ways~~ — **resolved 2026-08-08 by deletion**
 
 - Board 11: *"It is kept in this device's Keychain and never leaves it."*
 - Board 10: *"Kept in this device's Keychain. It is sent to OpenAI and nowhere else."*
 
-The board-10 sentence is accurate; the board-11 sentence is not — the key necessarily leaves the device on every request. This is a copy correctness issue, not a design one, but it should be fixed before the first-run screen ships.
+The board-10 sentence was accurate; the board-11 sentence was not — the key necessarily left the device on every request. Both boards' sentences are now deleted along with the key itself: the app holds no OpenAI credential to make a promise about. Neither wording ships.
+
+**Opened in its place:** the microphone purpose string in `project.yml` still names OpenAI as the direct recipient and states that no copy of the recording is kept, which the backend's stated retention position contradicts. It is user-facing permission copy and has not been rewritten.
 
 ## 10. States that are still undrawn
 
@@ -1414,7 +1437,6 @@ Nothing in the file specifies:
 - pressed / disabled / loading for `btn/primary`, `btn/destructive` or `nav/item`;
 - **the open state of `row/setting`'s picker** — board 10 draws `Luna ▾` and stops, so the port uses the platform menu;
 - a confirmation step for either destructive action ("cannot be undone" is asserted, but no dialog exists — and `01 §7` bars borders and this system has no modal pattern at all);
-- focused / empty / invalid states for `field/key`;
-- what board 11's screen looks like *after* `Add your API key` is tapped (no key-entry surface exists — board 10's `field/key` is shown already filled);
+- what an auth failure offers now that there is no key pane to send anyone to — board 14's recovery chip still reads `Open Settings` and points at a destination that was deleted;
 - a full-screen variant of `state/thinking`, `state/streaming`, either error state, or `state/evaluation` — board 14 draws every specimen at the 301 column only, even though board 13 has now defined a 740 thread;
 - how a `plan/*` block behaves once it has scrolled up and a new exchange follows it (it is a flow child of the thread, so presumably it just scrolls, but nothing says whether it stays interactive).

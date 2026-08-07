@@ -235,16 +235,16 @@ final class BackendTutorServiceTests: XCTestCase {
 
     // MARK: - TutorServiceRouter.stream(_:)
 
-    func testRouterStreamThrowsMissingAPIKeyWhenConfigurationIsIncomplete() async throws {
+    func testRouterStreamThrowsNotConfiguredWhenThereIsNoUsableToken() async throws {
         let router = TutorServiceRouter(configurationReader: { nil })
         do {
             for try await _ in router.stream(.fixture()) {}
             XCTFail("Expected a thrown error")
         } catch let error as TutorServiceError {
-            if case .missingAPIKey = error {
+            if case .notConfigured = error {
                 // expected
             } else {
-                XCTFail("Expected .missingAPIKey, got \(error)")
+                XCTFail("Expected .notConfigured, got \(error)")
             }
         }
     }

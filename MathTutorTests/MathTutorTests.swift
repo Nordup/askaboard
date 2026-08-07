@@ -838,19 +838,22 @@ final class MathTutorTests: XCTestCase {
         XCTAssertTrue(store.errorMessage?.contains("has not prepared") == true)
     }
 
+    /// A build with no usable token cannot reach its backend. There is no setup screen to
+    /// send anyone to — the app has no credential surface — so the send is simply refused and
+    /// the turn fails, leaving the learner's message unsent rather than half-recorded.
     @MainActor
-    func testStoreGuardsRequestsWhenAPIKeyIsMissing() {
+    func testStoreGuardsRequestsWhenTheBackendCannotBeReached() {
         let keychain = KeychainStore()
         keychain.removeBackendToken()
         let router = TutorServiceRouter()
         let store = TutorStore(service: router, keychain: keychain)
         store.resetSession()
-        XCTAssertTrue(store.requiresAPIKey)
+        XCTAssertFalse(store.usesLiveTutor)
 
         store.send("Explain fractions")
 
         XCTAssertEqual(store.session.messages.count, 1)
-        XCTAssertTrue(store.errorMessage?.contains("Add your backend address and token") == true)
+        XCTAssertEqual(store.errorMessage, TutorServiceError.notConfigured.errorDescription)
     }
 
     // The three `TutorPanelLayout` geometry tests that stood here were deleted with the

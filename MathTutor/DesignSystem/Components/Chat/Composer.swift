@@ -203,9 +203,7 @@ struct ComposerSlotMetrics: Equatable, Sendable {
 
     var fade: ScrollFadeMetrics { .bottom(coveringComposer: band) }
 
-    /// Boards 05, 08, 11 and 12. The height is the composer's whether or not there is a
-    /// composer: board 11 puts `btn/primary` in the same slot, at the same height by
-    /// derivation, so the band it needs behind it is identical.
+    /// Boards 05, 08 and 12.
     static func panel(surfaceWidth: CGFloat) -> Self {
         Self(
             surfaceWidth: surfaceWidth,
@@ -235,8 +233,7 @@ struct ComposerSlot<Content: View>: View {
     /// `--color-surface` in the reading column — *"a fade of the panel's grey would bleed a
     /// visibly different white over the messages."*
     var surfaceColor: Color = DS.Color.surfacePanel
-    /// The occupant. Empty on board 11, where the fill supplies its own `btn/primary` — the
-    /// band is still the slot's, so the fade is still right.
+    /// The occupant. May be empty — the band is still the slot's, so the fade is still right.
     @ViewBuilder var content: () -> Content
 
     var body: some View {

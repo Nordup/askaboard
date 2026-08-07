@@ -144,7 +144,9 @@ final class SettingsAndPlanTests: XCTestCase {
     }
 
     func testEveryPaneHasANavLabelAHeadingAndALede() {
-        XCTAssertEqual(SettingsPane.allCases, [.tutor, .apiKey, .session])
+        // No credential pane: the app holds no key and its backend address is a constant, so
+        // there is nothing here for a student to configure. See `BackendConfiguration`.
+        XCTAssertEqual(SettingsPane.allCases, [.tutor, .session])
         for pane in SettingsPane.allCases {
             XCTAssertFalse(pane.navLabel.isEmpty, pane.rawValue)
             XCTAssertEqual(pane.title, pane.navLabel, "the heading confirms the nav item, it does not rename it")
@@ -195,13 +197,13 @@ final class SettingsAndPlanTests: XCTestCase {
 
     // MARK: - btn/destructive
 
-    func testDestructiveButtonHugsItsLabelAndSitsBelowTheKeyField() {
+    func testDestructiveButtonHugsItsLabel() {
         XCTAssertEqual(DestructiveButtonMetrics.height, 44)
         XCTAssertEqual(DestructiveButtonMetrics.paddingInline, 20)
-        XCTAssertEqual(DestructiveButtonMetrics.width(labelWidth: 114), 154, "Remove API key")
-        // One step below the field it stands under, which is what stops the pane reading as
-        // two controls of equal weight.
-        XCTAssertLessThan(DestructiveButtonMetrics.height, KeyFieldMetrics.height)
+        XCTAssertEqual(DestructiveButtonMetrics.width(labelWidth: 114), 154)
+        // Shorter than the pane's other controls, which is what stops a pane reading as two
+        // controls of equal weight.
+        XCTAssertLessThan(DestructiveButtonMetrics.height, SettingRowMetrics.height)
     }
 
     /// **This test asserts a loss, and says so.**
@@ -226,11 +228,10 @@ final class SettingsAndPlanTests: XCTestCase {
     // MARK: - btn/primary
 
     func testPrimaryButtonPanelHeightIsTheComposersSlot() {
-        // Derived, not free: it is whatever the panel composer is, so the two occupants of the
-        // panel's bottom slot stay interchangeable. It came down 58 → 50 with the pill.
+        // Derived, not free: it is whatever the panel composer is. It came down 58 → 50 with
+        // the pill.
         XCTAssertEqual(PrimaryButtonMetrics.panel.height, 50)
         XCTAssertEqual(PrimaryButtonMetrics.panel.height, ComposerMetrics.panel.height)
-        XCTAssertEqual(PrimaryButtonMetrics.panel.height, PanelActionSlotMetrics.height)
         XCTAssertTrue(PrimaryButtonMetrics.panel.fillsColumn)
         XCTAssertEqual(PrimaryButtonMetrics.panel.paddingInline, 0, "the label is centred, not inset")
     }
@@ -272,68 +273,14 @@ final class SettingsAndPlanTests: XCTestCase {
         XCTAssertEqual(PrimaryButtonMetrics.fullScreen.labelStyle.weight, .semibold)
     }
 
-    // MARK: - field/key
+    // MARK: - Typography
 
-    /// **`field/key` stopped being a re-skin of `Composer · wide`, and that is the point.**
-    ///
-    /// This test used to assert the opposite: every number read off `ComposerMetrics
-    /// .fullScreen`, so the field followed the composer's pill wherever it went. The redesign
-    /// cuts that tie deliberately — a control that holds a value you already stored should not
-    /// inherit the geometry of a thing you type into and send. So the relationship assertions
-    /// became *in*equalities, and they are the ones that fail if someone reconnects them.
-    func testKeyFieldIsNoLongerTheWideComposer() {
-        XCTAssertEqual(KeyFieldMetrics.height, 56)
-        XCTAssertEqual(KeyFieldMetrics.radius, DS.Radius.lg)
-        XCTAssertEqual(KeyFieldMetrics.paddingLeading, 18)
-        XCTAssertEqual(KeyFieldMetrics.paddingTrailing, 16)
-        XCTAssertEqual(KeyFieldMetrics.gap, DS.Space.s4)
-        XCTAssertEqual(KeyFieldMetrics.elevation, .control)
-
-        XCTAssertNotEqual(KeyFieldMetrics.height, ComposerMetrics.fullScreen.height)
-        XCTAssertNotEqual(KeyFieldMetrics.textStyle.size, ComposerMetrics.fullScreen.placeholderStyle.size)
-    }
-
-    /// The one place in the product a family other than Source Sans 3 renders, and the rule it
-    /// overturned: Typography used to say `--font-mono` *"must never reach a screen"*.
-    func testTheStoredKeyIsSetMonospaced() {
-        XCTAssertEqual(KeyFieldMetrics.textStyle.family, .mono)
-        XCTAssertEqual(KeyFieldMetrics.textStyle.size, DS.Size.label)
-        XCTAssertEqual(KeyFieldMetrics.textStyle.leading, DS.Leading.control)
-        // A filled value, not a placeholder, so it stays at regular weight and full ink.
-        XCTAssertEqual(KeyFieldMetrics.textStyle.weight, .regular)
-        // Every other style on the scale is untouched by the new axis.
+    /// `--font-mono` is doc-only again. `field/key` was its one product use — a masked API key
+    /// set in bullets, where a proportional face made the run's length hard to read — and that
+    /// field is gone with the credential it held, so Typography's original rule that the mono
+    /// face *"must never reach a screen"* holds again with nothing exempted from it.
+    func testNoTextStyleOnTheScaleIsMonospaced() {
         XCTAssertTrue(TextStyle.scale.allSatisfy { $0.family == .sans })
-    }
-
-    /// `Replace` spends the brand colour that `btn/send`'s violet disc used to, so the
-    /// three-place budget Foundations sets is unchanged — the spend just got much smaller.
-    func testTheKeyFieldsActionInheritsTheSendDiscsBrandBudget() {
-        XCTAssertEqual(KeyFieldMetrics.actionColor, DS.Color.brand)
-        XCTAssertEqual(KeyFieldMetrics.actionStyle, .label)
-        // 480 − 18 − 16 − 16 − 62 = 368 for the value.
-        XCTAssertEqual(KeyFieldMetrics.textWidth(inColumn: 480, actionWidth: 62), 368)
-    }
-
-    func testAPIKeyMaskRevealsOnlyThePrefixAndTheLastFour() {
-        let key = "sk-proj-" + String(repeating: "A", count: 32) + "7Q4F"
-        let masked = APIKeyMask.masked(key)
-
-        XCTAssertEqual(masked, "sk-proj-" + String(repeating: "\u{2022}", count: 24) + "7Q4F")
-        XCTAssertFalse(masked.contains("A"), "no character of the key's body survives the mask")
-        XCTAssertEqual(masked.count, 36, "8 + 24 + 4 — the board's literal")
-    }
-
-    func testAPIKeyMaskHidesTheKeysLength() {
-        let short = APIKeyMask.masked("sk-proj-" + String(repeating: "A", count: 4) + "7Q4F")
-        let long = APIKeyMask.masked("sk-proj-" + String(repeating: "A", count: 400) + "7Q4F")
-        XCTAssertEqual(short, long, "a fixed bullet run, so the mask leaks no length either")
-    }
-
-    func testAPIKeyMaskNeverWidensPastTheVendorPrefix() {
-        // A hyphen deep inside a key's body must not be mistaken for the prefix delimiter.
-        let masked = APIKeyMask.masked("sk-proj-AAAAAAAA-SECRET-BODY-7Q4F")
-        XCTAssertTrue(masked.hasPrefix("sk-proj-"))
-        XCTAssertFalse(masked.contains("SECRET"))
     }
 
     // MARK: - The pickers
@@ -402,25 +349,16 @@ final class SettingsAndPlanTests: XCTestCase {
         )
     }
 
-    // MARK: - Board 11 · first run
+    // MARK: - The panel's bottom slot
 
-    func testNoKeyBlockIsOneHundredAndFiftySixOnTheBoardsWrap() {
-        // 34 + 12 + 3 × 24 + 20 + 18 = 156
-        XCTAssertEqual(NoAPIKeyMetrics.blockHeight(bodyLines: 3), 156)
-        XCTAssertEqual(NoAPIKeyMetrics.bodyWidth, 277, "301 − 24, the panel greeting's measure")
-        // "short and centred" leading, not the 17 / 25 of running message text.
-        XCTAssertEqual(NoAPIKeyMetrics.bodyStyle.leading, DS.Leading.snug)
-    }
-
-    func testNoKeyFlowMatchesTheBoardsFiveEightFour() {
-        // 18 + 32 + 248 + 90 + 40 + 156 = 584
-        XCTAssertEqual(NoAPIKeyMetrics.flowBottom(bodyLines: 3), 584)
-        XCTAssertEqual(NoAPIKeyMetrics.orb.metrics.frame, CGSize(width: 96, height: 90))
-    }
-
-    func testTheActionSlotIsTheComposersSlot() {
-        XCTAssertEqual(PanelActionSlotMetrics.height, ComposerMetrics.panel.height)
-        XCTAssertEqual(PanelActionSlotMetrics.bottomInset, DS.Space.panelInset)
+    /// Board 11's `btn/primary` used to share this slot with the composer, and the geometry
+    /// outlived it: the composer is the only occupant now, and it still has to sit on the
+    /// panel's floor at whatever height the panel is given.
+    func testTheComposerSlotSitsOnThePanelsFloor() {
+        let slot = ComposerSlotMetrics.panel(surfaceWidth: TutorPanelMetrics.width)
+        XCTAssertEqual(slot.composerHeight, ComposerMetrics.panel.height)
+        XCTAssertEqual(slot.underhang, DS.Space.panelInset)
+        XCTAssertEqual(slot.band, ComposerMetrics.panel.height + DS.Space.panelInset)
 
         // The panel's height is the screen's content band — 976 on the board's own screen,
         // 692 on the shortest iPad the app runs on. Neither is the panel's own number, which
@@ -434,39 +372,13 @@ final class SettingsAndPlanTests: XCTestCase {
         XCTAssertEqual(shortest, 692)
 
         XCTAssertEqual(
-            PanelActionSlotMetrics.top(inPanelOfHeight: reference),
+            reference - slot.band,
             908,
-            "where boards 05 / 08 / 11 / 12 all put it — `976 − 18 − 50`"
+            "where boards 05 / 08 / 12 all put it — `976 − 18 − 50`"
         )
-        // The slot sits on the panel's floor with the 18pt inset under it whatever height the
-        // panel is given — the property an absolute 860 could not have, and the reason the
-        // button does not float mid-panel on a shorter iPad.
-        for height in [reference, shortest] {
-            XCTAssertEqual(
-                PanelActionSlotMetrics.top(inPanelOfHeight: height)
-                    + PanelActionSlotMetrics.height
-                    + PanelActionSlotMetrics.bottomInset,
-                height,
-                "panel of \(height)"
-            )
-        }
-        // A panel too short to hold the slot at all puts it on its own top edge rather than
-        // above it — a negative offset is a layout error, not a small panel.
-        XCTAssertEqual(PanelActionSlotMetrics.top(inPanelOfHeight: 0), 0)
-    }
-
-    func testFirstRunCopyDoesNotClaimTheKeyNeverLeavesTheDevice() {
-        // `06 §Open questions 9`: board 11's sentence is a false security claim and board
-        // 10's is the accurate one. The accurate wording ships.
-        XCTAssertFalse(NoAPIKeyCopy.body.contains("never leaves"))
-        XCTAssertTrue(NoAPIKeyCopy.body.contains("Keychain"))
-        XCTAssertTrue(NoAPIKeyCopy.body.contains("OpenAI"))
-        // The accurate sentence moved from a section caption to the API-key pane's lede when
-        // settings became a window; it is still the one that ships.
-        XCTAssertEqual(
-            SettingsPane.apiKey.lede,
-            "Kept in this device's Keychain. It is sent to OpenAI and nowhere else."
-        )
+        // Bottom-anchored, so the same band comes off the floor of a shorter panel instead of
+        // leaving the composer floating mid-panel with a gap below it.
+        XCTAssertEqual(shortest - slot.band, 624)
     }
 
     // MARK: - Boards 12 / 13 · the plan

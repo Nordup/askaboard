@@ -99,7 +99,7 @@ Section eyebrow, verbatim: **"Pen palette · 27px circles, 54px pitch"**
 | --- | --- | --- | --- | --- |
 | `--font-sans` | **Source Sans 3** | 400 · 500 · 600 | **PRODUCT** | The product's only typeface — every text node on every live screen uses it. Humanist, open apertures, single-storey g. |
 | `--font-doc` | Montserrat | 600 · 700 | DOC ONLY | Design-documentation boards only. Geometric, circular bowls, double-storey a. Never ships. |
-| `--font-mono` | IBM Plex Mono | 500 (spec values) · 400 (product) | **DOC + one product use** | Spec values, token names and measurements on the boards. **No longer doc-only:** `field/key` on board 10 sets the masked API key in it, so the 24-bullet mask reads at an even pitch. That is the one product use, and IBM Plex Mono is not bundled — the port renders the system monospaced face until it is. |
+| `--font-mono` | IBM Plex Mono | 500 (spec values) | **DOC only** | Spec values, token names and measurements on the boards. It briefly had one product use — `field/key`'s masked API key, where a 24-bullet run needs an even pitch — and that field was deleted on 2026-08-08 with the credential it held. **Doc-only again, with nothing exempted:** no product screen sets this family, and `MathTutorTests` asserts every style on the scale is `--font-sans`. |
 
 ### 2.2 Product type scale (transcribed from the "Type scale" table)
 

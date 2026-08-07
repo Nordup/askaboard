@@ -669,7 +669,7 @@ that property by construction.
 
 ## 2.11 Unavailable — the mic simply isn't drawn
 
-No API key, no network route, no capture device: **there is no mic button.** Not a disabled one —
+No device token, no network route, no capture device: **there is no mic button.** Not a disabled one —
 this system has no disabled controls anywhere, and there is nothing the student could do about it.
 This settles `03-chat-components.md §7.4`'s open question in a way it did not anticipate: the mic
 belongs in **both** composers, and its *absence* now carries meaning.

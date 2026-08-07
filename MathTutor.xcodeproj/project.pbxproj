@@ -50,7 +50,6 @@
 		726CD5E989CE7C3E79F44AAA /* TutorService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D3C08CEF2BB69842ABC9BBF /* TutorService.swift */; };
 		72CFCF787A756EB78403E0D7 /* UIStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 363744A8B651DA004FC6F837 /* UIStateTests.swift */; };
 		787930E8CC449D11F3E55A66 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = A68B280F9DD61D293B8E9505 /* MarkdownUI */; };
-		795BF1D65FD2B44DC778AB14 /* NoAPIKeyState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B2D438E78DB8419936D1B9A /* NoAPIKeyState.swift */; };
 		7D3C2F693CC25B87A39B9600 /* BackendTutorServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4321C972F3139C4C616C7600 /* BackendTutorServiceTests.swift */; };
 		7D96576C2631E4C14D389E1C /* BoardPeek.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1777E72E2503235081D9FDA7 /* BoardPeek.swift */; };
 		8248D79E5256A68437A743ED /* ChatComponentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 784BDCC853A7787B6EE7BFFD /* ChatComponentTests.swift */; };
@@ -100,7 +99,6 @@
 		E7AA3EADB2E34641D55A2A0A /* MathTutorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6A6AC55DDB94015492D4C2A /* MathTutorTests.swift */; };
 		EB6613C71368B8A48AD674D4 /* StructuredChatText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73BF2A95E33679CE90826E51 /* StructuredChatText.swift */; };
 		EDEB51FDD8E17D13290CD0AF /* OrbHalo.swift in Sources */ = {isa = PBXBuildFile; fileRef = E954D06964D3CD29E7E328C4 /* OrbHalo.swift */; };
-		EF770CBA93BEDFD4812BB2BC /* KeyField.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6E511C61F09C41213BF0FB0 /* KeyField.swift */; };
 		EFA499781E9199548F353D2C /* SourceSans3-Regular.otf in Resources */ = {isa = PBXBuildFile; fileRef = 8217EBB13B758B525C439539 /* SourceSans3-Regular.otf */; };
 		F04349D3E6E4B1597D648774 /* BoardInk.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDC29B5C0EE22B4B88E0C16D /* BoardInk.swift */; };
 		FCAB37D9BB091699455CE680 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40CC8590077CACB91515D03B /* Models.swift */; };
@@ -137,7 +135,6 @@
 		268CDEEFE80CA5EDF78FB1EF /* ComposerButtons.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerButtons.swift; sourceTree = "<group>"; };
 		26956CCCFC6FFCD8051E2C53 /* MathTutorUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MathTutorUITests.swift; sourceTree = "<group>"; };
 		2830CE96CFA1A85F968C195C /* DictationController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictationController.swift; sourceTree = "<group>"; };
-		2B2D438E78DB8419936D1B9A /* NoAPIKeyState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoAPIKeyState.swift; sourceTree = "<group>"; };
 		2BBBD05225BE422A782124B7 /* E2ESeedFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = E2ESeedFixture.swift; sourceTree = "<group>"; };
 		2D557CC670C82D9747A86266 /* ResizeModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResizeModel.swift; sourceTree = "<group>"; };
 		2E4FD5CE583DC5D398AA6AFC /* SettingsPanes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPanes.swift; sourceTree = "<group>"; };
@@ -190,7 +187,6 @@
 		9B0E027F5827A16DC5016AA6 /* ResizeHandle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResizeHandle.swift; sourceTree = "<group>"; };
 		9D3C08CEF2BB69842ABC9BBF /* TutorService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TutorService.swift; sourceTree = "<group>"; };
 		A6C3A3607F71F2C99C586DB2 /* SessionPersistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionPersistence.swift; sourceTree = "<group>"; };
-		A6E511C61F09C41213BF0FB0 /* KeyField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyField.swift; sourceTree = "<group>"; };
 		AF203F43C82054D956C00D85 /* ResizeHandleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResizeHandleTests.swift; sourceTree = "<group>"; };
 		B707E1CFA3F0C0117CDF5213 /* Composer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Composer.swift; sourceTree = "<group>"; };
 		B7A7B29659EE4E89E8E0044F /* UIState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIState.swift; sourceTree = "<group>"; };
@@ -310,7 +306,6 @@
 		49B763DEBFB75008D70EAF06 /* Plan */ = {
 			isa = PBXGroup;
 			children = (
-				2B2D438E78DB8419936D1B9A /* NoAPIKeyState.swift */,
 				81C51E33F52C1D6BD5DB1664 /* PlanLane.swift */,
 				3CFED3B175C3922A5241AF7C /* SessionPlanView.swift */,
 			);
@@ -459,7 +454,6 @@
 		CEBF6A779450FF0E8F1BD573 /* Settings */ = {
 			isa = PBXGroup;
 			children = (
-				A6E511C61F09C41213BF0FB0 /* KeyField.swift */,
 				5078C64A063E2312DE7B9A1D /* SettingRow.swift */,
 				3060534FE8CEE11D285FC7FF /* SettingsControls.swift */,
 				77A01E280787A9D796C47A84 /* SettingsOptions.swift */,
@@ -691,7 +685,6 @@
 				1A7DC8AA3FFB0BE378905526 /* GreetingBlock.swift in Sources */,
 				E3926EFC9E73C2829B0E74F7 /* Icon.swift in Sources */,
 				9986C716988CA98C7B16DA42 /* IconPaths.swift in Sources */,
-				EF770CBA93BEDFD4812BB2BC /* KeyField.swift in Sources */,
 				8CFFCA8713A559A17AA2D839 /* KeychainStore.swift in Sources */,
 				25606622B78BBDDA73726986 /* LaunchOptions.swift in Sources */,
 				B869A9B81CB70FA8EE40C4A3 /* Layout.swift in Sources */,
@@ -700,7 +693,6 @@
 				2338FA954F5C72D4950C4A57 /* MessageBubble.swift in Sources */,
 				188FF479B57E626EF148EC12 /* MessageThread.swift in Sources */,
 				FCAB37D9BB091699455CE680 /* Models.swift in Sources */,
-				795BF1D65FD2B44DC778AB14 /* NoAPIKeyState.swift in Sources */,
 				5BDF38E6FA09E4774CE0D474 /* Orb.swift in Sources */,
 				EDEB51FDD8E17D13290CD0AF /* OrbHalo.swift in Sources */,
 				1F91F1A7DBDDCD73CCE8C348 /* PlanLane.swift in Sources */,

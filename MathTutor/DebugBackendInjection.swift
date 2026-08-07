@@ -1,44 +1,47 @@
 import Foundation
 
 #if DEBUG
-/// Development-only backend configuration injection for local simulator/device runs.
+/// Development-only backend injection for local simulator/device runs.
 ///
-/// Reads a backend base URL and device token from the launch environment so a
-/// build-run-test loop never has to retype them into Settings. `TutorStore` seeds
-/// the token into the Keychain and the base URL into `UserDefaults` once at
-/// launch, so later launches without the environment set stay live.
+/// Two separate things, because they are no longer the same kind of thing:
 ///
-/// Neither value is read from source, the Xcode project, or checked-in files: they
-/// arrive from the launching process (see `scripts/run-sim.sh`, which reads a
-/// gitignored `.env.local`). This whole type is compiled out of release builds, and
-/// `TutorStore` deliberately skips it for `--ui-test-reset` launches so UI tests
-/// never inherit a developer credential.
+/// - the **token** is seeded into the Keychain once at launch, so a
+///   build-run-test loop never has to get a credential onto the device by
+///   hand and later launches without the environment set stay live;
+/// - the **base URL** is a pure override of `BackendConfiguration.permanentBaseURL`,
+///   read fresh on every request and never stored. It exists so a developer
+///   can point a build at `http://localhost:8080` without editing the
+///   permanent address, and nothing persists it — unset the variable and the
+///   build is back on the shipped address.
+///
+/// Neither value is read from source, the Xcode project, or checked-in files:
+/// they arrive from the launching process (see `scripts/run-sim.sh`, which
+/// reads a gitignored `.env.local`). This whole type is compiled out of
+/// release builds, and `TutorStore` deliberately skips the token seed for
+/// `--ui-test-reset` launches so UI tests never inherit a developer credential.
 enum DebugBackendInjection {
-    /// The backend's base URL, e.g. `MATHTUTOR_BACKEND_URL=http://localhost:8080`.
+    /// A local backend to use instead of the permanent address, e.g.
+    /// `MATHTUTOR_BACKEND_URL=http://localhost:8080`.
     static let baseURLEnvironmentKey = "MATHTUTOR_BACKEND_URL"
     /// The device bearer token, direct value form.
     static let tokenEnvironmentKey = "MATHTUTOR_BACKEND_TOKEN"
     /// Path to a file whose entire contents are the token. Tilde paths are expanded.
     static let tokenEnvironmentFileKey = "MATHTUTOR_BACKEND_TOKEN_FILE"
 
-    struct Injected {
-        let baseURL: URL
-        let token: String
-    }
-
-    /// The injected configuration, or `nil` unless a valid base URL *and* a
-    /// non-empty token are both present — the same "both halves or neither"
-    /// rule `BackendConfiguration.init?` applies everywhere else.
-    static func injectedConfiguration(
+    /// The address this build should use instead of the permanent one, or
+    /// `nil` to leave `BackendConfiguration.permanentBaseURL` alone.
+    static func overriddenBaseURL(
         environment: [String: String] = ProcessInfo.processInfo.environment
-    ) -> Injected? {
-        guard let urlString = normalized(environment[baseURLEnvironmentKey]),
-              let baseURL = URL(string: urlString) else { return nil }
-        guard let token = injectedToken(environment: environment) else { return nil }
-        return Injected(baseURL: baseURL, token: token)
+    ) -> URL? {
+        guard let urlString = normalized(environment[baseURLEnvironmentKey]) else { return nil }
+        return URL(string: urlString)
     }
 
-    private static func injectedToken(environment: [String: String]) -> String? {
+    /// The token to seed into the Keychain, from either the direct variable or
+    /// the file one, or `nil` when neither is set.
+    static func injectedToken(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> String? {
         if let direct = normalized(environment[tokenEnvironmentKey]) {
             return direct
         }

@@ -64,11 +64,12 @@ struct SettingsWindowMetrics: Equatable, Sendable {
 
     /// `34 + 10 + 22 × 2 + 28 = 116`, and **pinned rather than hugged**.
     ///
-    /// Left to hug, the header is 94 in the API-key pane, whose lede is one line at this
-    /// measure, and 116 in the other two — so the rule beneath it, and everything under the
-    /// rule, would jump 22pt as you moved between panes. A window whose furniture moves when
-    /// you change tabs reads as three windows. So the height is the tallest header's, the
-    /// short lede leaves slack under itself, and the rule is in one place.
+    /// Left to hug, a pane whose lede runs to one line at this measure gets a 94pt header
+    /// while a two-line one gets 116 — so the rule beneath it, and everything under the rule,
+    /// would jump 22pt as you moved between panes. A window whose furniture moves when you
+    /// change tabs reads as several windows. So the height is the two-line header's, a short
+    /// lede leaves slack under itself, and the rule is in one place. Both panes happen to be
+    /// two-liners today; pinning is what keeps that from being load-bearing.
     static var headerHeight: CGFloat {
         paneTitleStyle.leading
             + paneTitleGap
@@ -123,7 +124,7 @@ struct SettingsWindowMetrics: Equatable, Sendable {
 /// The settings window: a sidebar, a rule, and one pane.
 ///
 /// It owns which pane is showing and nothing else. Everything with consequences —
-/// the model, the effort, the key, the session — belongs to `TutorStore`, and the panes
+/// the model, the effort, the session — belongs to `TutorStore`, and the panes
 /// reach it through the environment rather than through this view, so adding a pane does not
 /// widen this file.
 struct SettingsWindow: View {

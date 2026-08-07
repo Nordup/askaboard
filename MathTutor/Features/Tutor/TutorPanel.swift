@@ -26,11 +26,16 @@ private enum PanelStack {
     static let startTopMargin = DS.Space.s10
 }
 
-/// The 337pt tutor panel — screens 05 and 08, and board 11's no-key first run.
+/// The 337pt tutor panel — screens 05 and 08.
 ///
-/// Board 09 is why this is one view with three fills rather than three screens: the panel's
-/// frame, its controls and its composer are identical in every one of them, and only the
-/// middle region changes.
+/// Board 09 is why this is one view with two fills rather than two screens: the panel's
+/// frame, its controls and its composer are identical in both, and only the middle region
+/// changes.
+///
+/// There was a third fill — board 11's no-key first run — and there is no longer any state it
+/// could describe. The app holds no credential a student can supply, so "not set up yet" is
+/// not a thing the panel can be in: it either reaches its backend or it fails a turn, and a
+/// failed turn is board 14's thread failure, not a screen. See `BackendConfiguration`.
 struct TutorPanel: View {
     @EnvironmentObject private var store: TutorStore
     @EnvironmentObject private var uiState: UIState
@@ -68,26 +73,8 @@ struct TutorPanel: View {
                 // Fade and pill together, bottom-anchored: the slot owns the 18pt inset under
                 // the composer, so screen 08's pill bottom lands on the panel floor less that
                 // inset and screen 05's card grows upward from the same line.
-                //
-                // *"One slot, every state"*: a composer on boards 05, 08 and 12, `btn/primary`
-                // on board 11. The occupant swaps and the slot does not, which is what
-                // `PanelActionSlotMetrics` means by the two being interchangeable — and why the
-                // button is here rather than inside `NoAPIKeyState`. Drawn in the fill it sat
-                // *under* the bottom fade and took an 80% veil across it.
-                ComposerSlot(metrics: slot) {
-                    if store.requiresAPIKey {
-                        PrimaryButton(
-                            title: NoAPIKeyCopy.action,
-                            scale: .panel,
-                            width: contentWidth,
-                            action: actions.openSettings
-                        )
-                        .accessibilityIdentifier("add-api-key")
-                    } else {
-                        composer
-                    }
-                }
-                .frame(maxHeight: .infinity, alignment: .bottom)
+                ComposerSlot(metrics: slot) { composer }
+                    .frame(maxHeight: .infinity, alignment: .bottom)
 
                 ScrollFade(width: size.width, metrics: .top(for: .panel))
 
@@ -110,13 +97,12 @@ struct TutorPanel: View {
     /// Where the panel's middle region sits.
     ///
     /// The thread starts at the panel's own top edge — behind the controls, which is what the
-    /// top fade is for. Every other fill still starts below them: screen 05's orb hangs 120
-    /// under the controls row and board 11's block under that, and those are chains the design
-    /// measures from the row rather than from the panel's edge. Only the thread scrolls, so
-    /// only the thread has anything to pass behind.
+    /// top fade is for. The start state still begins below them: screen 05's orb hangs 120
+    /// under the controls row, a chain the design measures from the row rather than from the
+    /// panel's edge. Only the thread scrolls, so only the thread has anything to pass behind.
     @ViewBuilder
     private func fillBand(in size: CGSize) -> some View {
-        if case .active = uiState.conversation, !store.requiresAPIKey {
+        if case .active = uiState.conversation {
             TutorThreadView(
                 scale: .panel,
                 width: contentWidth,
@@ -137,37 +123,28 @@ struct TutorPanel: View {
         TutorPanelMetrics.inset + TutorPanelMetrics.controlsHeight
     }
 
-    /// The panel's fills that are *not* the thread: board 11's no-key block and screen 05's
-    /// start state. Both are fixed chains measured from the controls row, and neither scrolls
-    /// unless the band is too short to hold it.
+    /// The panel's fill that is *not* the thread: screen 05's start state. A fixed chain
+    /// measured from the controls row, which does not scroll unless the band is too short to
+    /// hold it.
     ///
     /// The thread is not here. It is the one fill that takes the panel's whole height rather
     /// than the band below the chrome, and the one that must not be wrapped in a second scroll
     /// view — see `fillBand(in:)`.
-    @ViewBuilder
     private var fill: some View {
-        if store.requiresAPIKey {
-            // Board 11's fill is the orb and the block. Its primary button is *not* here — it
-            // is the slot's occupant, above the fade. See `NoAPIKeyState`.
-            fitted { NoAPIKeyState() }
-        } else {
-            fitted { startFill }
-        }
+        fitted { startFill }
     }
 
     /// The panel's fill, scrolled only where the band cannot hold it.
     ///
-    /// Screen 05's start state is a 772pt chain — `120 + 90 + 40 + 522` — and board 11's is
-    /// 610 with the action slot. Both fit the 810pt column the design's 936pt panel leaves and
-    /// neither fits the 604 a 768pt iPad does, where the composer would be drawn over and the
-    /// primary button off the panel's floor. Scrolling is the answer the rail already
+    /// Screen 05's start state is a 772pt chain — `120 + 90 + 40 + 522`. It fits the 810pt
+    /// column the design's 936pt panel leaves and does not fit the 604 a 768pt iPad does,
+    /// where the composer would be drawn over. Scrolling is the answer the rail already
     /// establishes for a fixed chain in a band that is too short: every designed value stays,
     /// every control stays reachable, and nothing new is drawn.
     ///
-    /// `ViewThatFits` rather than a `ScrollView` around everything, because the difference is
-    /// load-bearing: board 11's button is bottom-anchored with a `Spacer`, and a spacer inside
-    /// a scroll view has no height to give. The unscrolled candidate is the design, unchanged,
-    /// wherever it fits — which is every screen the boards were drawn for.
+    /// `ViewThatFits` rather than a `ScrollView` around everything: the unscrolled candidate
+    /// is the design, unchanged, wherever it fits — which is every screen the boards were
+    /// drawn for.
     private func fitted(@ViewBuilder _ content: () -> some View) -> some View {
         let fill = content()
         return ViewThatFits(in: .vertical) {
@@ -198,8 +175,8 @@ struct TutorPanel: View {
     /// The mic is drawn at 38 here and 52 full-screen, which is board 03's instruction rather
     /// than its drawing: *"do not copy the current asymmetry into code as if it were
     /// intentional."* `Composer` still decides the button's presence by availability, so a
-    /// first run with no API key gets the composer without it rather than a control that does
-    /// nothing.
+    /// launch that cannot reach dictation gets the composer without it rather than a control
+    /// that does nothing.
     private var composer: some View {
         Composer(
             scale: .panel,
@@ -215,12 +192,12 @@ struct TutorPanel: View {
     }
 }
 
-/// `Panel controls` in the expanded variant boards 11 and 12 introduce: the same two layout
+/// `Panel controls` in the expanded variant board 12 introduces: the same two layout
 /// buttons, plus `btn/settings` pushed to the far edge.
 ///
-/// Board 11 calls it *"a new configuration, not a new component"* — the row's
-/// `justify-content` changes from `flex-start` to `space-between` — so this composes
-/// `PanelControls` rather than restating it.
+/// It is *"a new configuration, not a new component"* — the row's `justify-content` changes
+/// from `flex-start` to `space-between` — so this composes `PanelControls` rather than
+/// restating it.
 ///
 /// **The docked panel only.** Board 13 used to draw the same row at 740 and no longer does:
 /// its two layout buttons are gone — the board peek is already the way back, and

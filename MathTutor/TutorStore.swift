@@ -24,9 +24,6 @@ final class TutorStore: ObservableObject {
     let tutorService: any TutorService
     let persistence: SessionPersistence
     let keychain: KeychainStore
-    /// Where the base URL half of `BackendConfiguration` lives. The token half is the
-    /// Keychain's; this is never used to store the token itself.
-    let defaults: UserDefaults
     private let logger = Logger(subsystem: "com.nordup.MathTutor", category: "TutorStore")
     /// The in-flight turn's task, kept only so tests can await exactly the
     /// turn a `send`/`evaluate`/etc. call just started rather than polling.
@@ -35,13 +32,12 @@ final class TutorStore: ObservableObject {
     init(
         service: any TutorService = TutorServiceRouter(),
         persistence: SessionPersistence = SessionPersistence(),
-        keychain: KeychainStore = KeychainStore(),
-        defaults: UserDefaults = .standard
+        keychain: KeychainStore = KeychainStore()
     ) {
         #if DEBUG
         // The offline tutor is available only when a test/debug launch opts into it
-        // explicitly. Production/default launches must surface the missing-key state
-        // instead of silently routing around the live provider.
+        // explicitly. Production/default launches must reach the real backend
+        // instead of silently routing around it.
         let useDebugDemo = ProcessInfo.processInfo.arguments.contains("--demo-tutor")
             || ProcessInfo.processInfo.arguments.contains("--ui-test-demo-service")
             || ProcessInfo.processInfo.arguments.contains(E2ESeedFixture.launchArgument)
@@ -55,7 +51,6 @@ final class TutorStore: ObservableObject {
         #endif
         self.persistence = persistence
         self.keychain = keychain
-        self.defaults = defaults
         // Runs on every launch, release included: a real OpenAI key left over from
         // before this migration must not sit in the Keychain forever just because
         // the app stopped sending it anywhere.
@@ -67,14 +62,13 @@ final class TutorStore: ObservableObject {
         // their existing Keychain-backed live behavior unchanged.
         if isUITestReset {
             keychain.removeBackendToken()
-            defaults.removeObject(forKey: BackendConfiguration.baseURLDefaultsKey)
         }
-        // Local dev loop: seed the Keychain and UserDefaults from the launch
-        // environment so a simulator run never has to retype either field in
-        // Settings. Skipped for UI test resets by the same rule above.
-        if !isUITestReset, let injected = DebugBackendInjection.injectedConfiguration() {
-            keychain.saveBackendToken(injected.token)
-            defaults.set(injected.baseURL.absoluteString, forKey: BackendConfiguration.baseURLDefaultsKey)
+        // Local dev loop: seed the Keychain from the launch environment so a
+        // simulator run arrives with a token already in place. There is nowhere
+        // in the app to type one — see `BackendConfiguration`. Skipped for UI
+        // test resets by the same rule above.
+        if !isUITestReset, let token = DebugBackendInjection.injectedToken() {
+            keychain.saveBackendToken(token)
         }
         let shouldSeedE2E = ProcessInfo.processInfo.arguments.contains(E2ESeedFixture.launchArgument)
         #else
@@ -88,7 +82,7 @@ final class TutorStore: ObservableObject {
             restored.messages = [TutorMessage(role: .tutor, text: "Hi, I’m your math tutor. What would you like to understand today? You can type a goal in your own words—fractions, algebra, a homework question, anything.")]
         }
         self.session = restored
-        self.usesLiveTutor = BackendConfiguration.load(defaults: defaults, keychain: keychain) != nil
+        self.usesLiveTutor = BackendConfiguration.load(keychain: keychain) != nil
         let usingDemoService = resolvedService is DemoTutorService
         self.isWorkspace = restored.plan != nil && restored.exercise != nil && (self.usesLiveTutor || usingDemoService)
         if shouldSeedE2E { persistence.save(restored) }
@@ -98,13 +92,9 @@ final class TutorStore: ObservableObject {
         session.plan != nil || session.messages.contains { $0.role == .learner && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 
-    /// True only for an explicitly injected/debug demo service. A missing API key
-    /// on the production router is setup-required, not an offline demo mode.
+    /// True only for an explicitly injected/debug demo service. An unreachable
+    /// backend on the production router is a failure, not an offline demo mode.
     var demoMode: Bool { tutorService is DemoTutorService }
-
-    var requiresAPIKey: Bool { !demoMode && !usesLiveTutor }
-
-    var needsAPIKey: Bool { requiresAPIKey }
 
     private var canRequestTutor: Bool { demoMode || usesLiveTutor }
 
@@ -140,9 +130,11 @@ final class TutorStore: ObservableObject {
     #endif
 
     func startWorking() {
-        guard !requiresAPIKey, session.plan != nil, session.exercise != nil else {
-            if requiresAPIKey { errorMessage = TutorServiceError.missingAPIKey.errorDescription }
-            else { errorMessage = "The tutor has not prepared a session exercise yet. Ask for a problem or a focused next step first." }
+        // A plan and an exercise only exist because a turn produced them, which
+        // already required a reachable backend — so there is nothing to check
+        // here beyond the pair itself.
+        guard session.plan != nil, session.exercise != nil else {
+            errorMessage = "The tutor has not prepared a session exercise yet. Ask for a problem or a focused next step first."
             return
         }
         isWorkspace = true
@@ -299,49 +291,6 @@ final class TutorStore: ObservableObject {
         persist()
     }
 
-    @discardableResult
-    func saveBackendToken(_ token: String) -> Bool {
-        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
-        let saved = trimmed.isEmpty ? keychain.removeBackendToken() : keychain.saveBackendToken(trimmed)
-        if saved { refreshLiveTutorAvailability() }
-        return saved
-    }
-
-    @discardableResult
-    func removeBackendToken() -> Bool {
-        let removed = keychain.removeBackendToken()
-        if removed {
-            refreshLiveTutorAvailability()
-            if !demoMode { isWorkspace = false }
-        }
-        return removed
-    }
-
-    /// Saves the backend's base URL to `UserDefaults`. Declines an empty or
-    /// unparseable address rather than clearing the one already stored —
-    /// the same rule `saveBackendToken` follows for an empty token, and the
-    /// reason `KeyField`'s own save action declines an empty draft: an empty
-    /// save is not a designed way to clear a field that has its own
-    /// destructive control.
-    @discardableResult
-    func saveBaseURL(_ urlString: String) -> Bool {
-        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let url = URL(string: trimmed), url.scheme != nil, url.host != nil else {
-            return false
-        }
-        defaults.set(url.absoluteString, forKey: BackendConfiguration.baseURLDefaultsKey)
-        refreshLiveTutorAvailability()
-        return true
-    }
-
-    /// Both halves — base URL and token — are required before live tutoring is
-    /// available; see `BackendConfiguration.init?`. Called after any change to
-    /// either half so `usesLiveTutor` never drifts from what a real request
-    /// would actually see.
-    private func refreshLiveTutorAvailability() {
-        usesLiveTutor = BackendConfiguration.load(defaults: defaults, keychain: keychain) != nil
-    }
-
     func retryLastRequest() {
         guard !isLoading, ensureTutorAvailable() else { return }
         requestTutor(signal: nil)
@@ -455,7 +404,7 @@ final class TutorStore: ObservableObject {
     @discardableResult
     private func ensureTutorAvailable() -> Bool {
         guard canRequestTutor else {
-            errorMessage = TutorServiceError.missingAPIKey.errorDescription
+            errorMessage = TutorServiceError.notConfigured.errorDescription
             return false
         }
         return true

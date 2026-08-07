@@ -356,13 +356,17 @@ struct TutorReply: Sendable, Equatable {
 }
 
 enum TutorServiceError: LocalizedError, Sendable {
-    case missingAPIKey
+    /// This build has no usable credential for its backend, so no request can
+    /// be made at all. Not a user-fixable condition and not a screen: the app
+    /// has no setup surface any more, so this surfaces as an ordinary failure
+    /// in the thread like any other unreachable-tutor case.
+    case notConfigured
     case invalidResponse
     case network(String)
 
     var errorDescription: String? {
         switch self {
-        case .missingAPIKey: return "Add your backend address and token in Settings to use live tutoring."
+        case .notConfigured: return "The tutor could not be reached."
         case .invalidResponse: return "The tutor returned an unreadable response."
         case .network(let message): return message
         }

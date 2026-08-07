@@ -65,19 +65,12 @@ extension KeychainStore {
     /// no per-instance scoping), matching the pattern the rest of the suite
     /// already relies on for keychain-backed tests.
     ///
-    /// `usesLiveTutor` now requires a base URL alongside the token — see
-    /// `BackendConfiguration.init?` — so this also seeds `UserDefaults
-    /// .standard`'s base-URL key, the same shared-global-state trade the
-    /// Keychain half already makes, for the same reason: every caller of
-    /// `.stub` wants the same "live tutoring is available" condition, not
-    /// its own isolated one.
+    /// The token is the only half there is to seed: the address is a constant
+    /// in the binary, so a store with a token is a store that can reach a
+    /// tutor. See `BackendConfiguration`.
     static var stub: KeychainStore {
         let store = KeychainStore()
         store.saveBackendToken("tutor-store-streaming-tests-key")
-        UserDefaults.standard.set(
-            "https://backend.example.com",
-            forKey: BackendConfiguration.baseURLDefaultsKey
-        )
         return store
     }
 }
