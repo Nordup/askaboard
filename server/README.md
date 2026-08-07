@@ -125,6 +125,14 @@ translator turns the tool call into a single `workspace` event carrying both
 the plan and the exercise. No caller anywhere has to remember to check that
 they arrived together, because the schema doesn't allow them not to.
 
+**A turn that calls it is two requests, not one.** A function call *ends* a
+Responses API response — the model stops there, having written no prose — so
+[`app/tutor/loop.py`](app/tutor/loop.py) hands the tool result back and asks
+it to continue, up to `MAX_TOOL_ROUNDS`. Both legs stream into the same
+client turn and are recorded as one `Turn`, with usage summed across them. A
+single-request implementation looks like it works right up until the model
+sets the workspace: the board changes and the thread stays empty.
+
 ## Read-back endpoints
 
 This service is built to record everything about a session — that's the

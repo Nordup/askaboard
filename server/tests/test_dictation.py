@@ -6,9 +6,9 @@ import warnings
 import pytest
 import respx
 from httpx import ASGITransport, AsyncClient, Response
-from sqlalchemy import select
+from sqlalchemy import func, select
 
-from app.config import get_settings
+from app.config import DEFAULT_MODEL, DEFAULT_REASONING_EFFORT, get_settings
 from app.store.models import Attachment, Session
 from app.tutor.vocabulary import (
     BOILERPLATE_SILENCE, DICTATION_PROMPT, KEYWORDS, is_silence, sanitize,
@@ -110,9 +110,51 @@ async def test_dictation_requires_the_device_token(db_app):
     assert response.status_code == 401
 
 
-async def test_an_unknown_session_is_rejected_before_any_provider_call(db_app):
-    response = await _post_dictation(db_app, session_id=uuid.uuid4())
-    assert response.status_code == 404
+@respx.mock
+async def test_an_unknown_session_is_created_rather_than_rejected(db_app, db_factory):
+    """The bug this replaces: dictating before typing anything 404'd.
+
+    A session is only created by a turn, so on a fresh install the very first
+    mic tap had nothing to attach its audio to and failed — for a student who
+    would rather talk than type, that is the first thing they do. The endpoint
+    now creates the session the same way /v1/turn does.
+    """
+    respx.post(TRANSCRIBE_URL).mock(
+        return_value=Response(
+            200, headers={"Content-Type": "text/event-stream"},
+            content=_dictation_events("two thirds", done_text="two thirds"),
+        )
+    )
+    session_id = uuid.uuid4()
+
+    status_code, _, events = await _stream_dictation(db_app, session_id=session_id)
+
+    assert status_code == 200
+    assert events[-1] == {"type": "done", "text": "two thirds"}
+    async with db_factory() as db:
+        session = await db.get(Session, session_id)
+        assert session is not None, "the dictation must leave a session behind to attach to"
+        # The form carries neither, so the row takes the client's own defaults
+        # until a turn states what is actually selected.
+        assert session.model == DEFAULT_MODEL
+        assert session.reasoning_effort == DEFAULT_REASONING_EFFORT
+
+
+async def test_a_second_dictation_adopts_the_session_the_first_one_created(db_app, db_factory):
+    """No unique-violation, and no second session: the id is the client's, so
+    both requests name the same row and the loser of the race adopts it."""
+    session_id = uuid.uuid4()
+
+    first = await _post_dictation(db_app, session_id=session_id, audio=b"")
+    second = await _post_dictation(db_app, session_id=session_id, audio=b"")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    async with db_factory() as db:
+        count = (await db.execute(
+            select(func.count()).select_from(Session).where(Session.id == session_id)
+        )).scalar_one()
+        assert count == 1
 
 
 @respx.mock

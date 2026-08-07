@@ -153,6 +153,16 @@ async def create_turn(
         )
         db.add(session)
         await db.flush()
+    else:
+        # Keep the session's own columns current rather than frozen at whatever
+        # request happened to create the row. Two reasons: the device can change
+        # either setting mid-session, and /v1/dictation can create a session
+        # without knowing either, so a dictation-first session would otherwise
+        # carry `DEFAULT_MODEL` for the rest of its life. The per-turn record is
+        # on `Turn` and is unaffected either way — this is the *current*
+        # selection, not a history.
+        session.model = body.model
+        session.reasoning_effort = body.reasoning_effort
 
     image = base64.b64decode(body.image_base64) if body.image_base64 else None
 

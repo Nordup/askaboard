@@ -91,6 +91,43 @@ TOOL_CALL_TURN = (
         "response": {
             "id": "resp_2",
             "usage": {"input_tokens": 60, "output_tokens": 24},
+            # `output` is not optional on a real `response.completed`, and this
+            # fixture used to omit it — which is precisely why no test caught
+            # that a function call ends the response and has to be answered
+            # before the model will write anything. A reasoning item rides
+            # along with it, as it does on every reasoning-model response.
+            "output": [
+                {"type": "reasoning", "id": "rs_2", "summary": []},
+                {
+                    "type": "function_call",
+                    "id": "fc_1",
+                    "call_id": "call_1",
+                    "name": "set_workspace",
+                    "arguments": json.dumps(WORKSPACE_ARGUMENTS),
+                    "status": "completed",
+                },
+            ],
+        },
+    },
+)
+
+
+# What the model writes once the tool call has been answered — the second leg
+# of a turn that sets the workspace, and the only leg the learner reads.
+TOOL_CALL_FOLLOW_UP = (
+    {"type": "response.created", "sequence_number": 0, "response": {"id": "resp_2b"}},
+    {"type": "response.output_text.delta", "sequence_number": 1, "delta": "Here is your plan."},
+    {"type": "response.output_text.done", "sequence_number": 2, "text": "Here is your plan."},
+    {
+        "type": "response.completed",
+        "sequence_number": 3,
+        "response": {
+            "id": "resp_2b",
+            "usage": {"input_tokens": 90, "output_tokens": 12},
+            "output": [
+                {"type": "message", "id": "msg_1", "role": "assistant",
+                 "content": [{"type": "output_text", "text": "Here is your plan."}]},
+            ],
         },
     },
 )

@@ -8,12 +8,14 @@ import respx
 from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy import select
 
-from app.config import get_settings
+from app.config import DEFAULT_MODEL, DEFAULT_REASONING_EFFORT, get_settings
 from app.main import create_app
 from app.store.models import Message, Session, Turn
 from app.tutor.events import StatusEvent
 from app.tutor.loop import TurnResult
-from tests.fixtures.sse import TEXT_ONLY_TURN, TOOL_CALL_TURN, sse_stream
+from tests.fixtures.sse import (
+    TEXT_ONLY_TURN, TOOL_CALL_FOLLOW_UP, TOOL_CALL_TURN, sse_stream,
+)
 
 AUTH = {"Authorization": "Bearer test-token"}
 
@@ -58,6 +60,40 @@ async def test_turn_streams_our_event_vocabulary(db_app):
     assert kinds[0] == "status"
     assert "text_delta" in kinds
     assert kinds[-1] == "done"
+
+
+@respx.mock
+async def test_a_turn_refreshes_the_model_on_a_session_it_did_not_create(db_app, db_factory):
+    """A session created by /v1/dictation carries `DEFAULT_MODEL`, because the
+    dictation form names no model. The first turn has to correct it, or a
+    dictation-first session would report the wrong route for the rest of its
+    life while its `Turn` rows said something else."""
+    respx.post("https://api.openai.com/v1/responses").mock(
+        return_value=Response(200, headers={"Content-Type": "text/event-stream"},
+                              content=sse_stream(*TEXT_ONLY_TURN))
+    )
+    session_id = uuid.uuid4()
+    async with db_factory() as db:
+        db.add(Session(id=session_id, model=DEFAULT_MODEL,
+                       reasoning_effort=DEFAULT_REASONING_EFFORT))
+        await db.commit()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        async with client.stream(
+            "POST", "/v1/turn",
+            json=_payload(session_id=str(session_id), model="gpt-5.6-sol",
+                          reasoning_effort="low"),
+            headers=AUTH,
+        ) as response:
+            assert response.status_code == 200
+            await _collect(response)
+
+    async with db_factory() as db:
+        session = await db.get(Session, session_id)
+        assert session.model == "gpt-5.6-sol"
+        assert session.reasoning_effort == "low"
 
 
 async def test_turn_requires_the_device_token(db_app):
@@ -326,8 +362,8 @@ async def test_a_second_turns_prompt_contains_the_first_turns_reply(db_app):
             await _collect(r)
 
     assert route.call_count == 2
-    second_request_body = json.loads(route.calls[1].request.content)
-    prompt_text = second_request_body["input"][1]["content"][0]["text"]
+    second_turn_body = json.loads(route.calls[1].request.content)
+    prompt_text = second_turn_body["input"][1]["content"][0]["text"]
     assert "learner: first" in prompt_text
     assert "tutor: Nice work." in prompt_text
     assert "learner: second" in prompt_text
@@ -341,10 +377,15 @@ async def test_a_turn_that_sets_the_workspace_persists_plan_and_exercise(
     fires set_workspace, and a later turn's prompt must actually include the
     EXERCISE CONTEXT / SESSION PLAN sections compose_user_prompt only emits
     when those columns are non-null."""
+    # Three provider calls for two turns: the first turn's tool call has to be
+    # answered before the model will write anything, so that turn is two
+    # requests on its own. See `app.tutor.loop.run_turn`.
     route = respx.post("https://api.openai.com/v1/responses").mock(
         side_effect=[
             Response(200, headers={"Content-Type": "text/event-stream"},
                      content=sse_stream(*TOOL_CALL_TURN)),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*TOOL_CALL_FOLLOW_UP)),
             Response(200, headers={"Content-Type": "text/event-stream"},
                      content=sse_stream(*TEXT_ONLY_TURN)),
         ]
@@ -373,9 +414,9 @@ async def test_a_turn_that_sets_the_workspace_persists_plan_and_exercise(
         ) as r:
             await _collect(r)
 
-    assert route.call_count == 2
-    second_request_body = json.loads(route.calls[1].request.content)
-    prompt_text = second_request_body["input"][1]["content"][0]["text"]
+    assert route.call_count == 3
+    second_turn_body = json.loads(route.calls[2].request.content)
+    prompt_text = second_turn_body["input"][1]["content"][0]["text"]
     assert "EXERCISE CONTEXT" in prompt_text
     assert "SESSION PLAN" in prompt_text
 

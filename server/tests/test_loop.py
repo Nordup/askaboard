@@ -7,10 +7,11 @@ from openai._streaming import SSEDecoder
 
 from app.tutor.context import ContextBundle
 from app.tutor.events import ReasoningDeltaEvent, StatusEvent, TextDeltaEvent, WorkspaceEvent
-from app.tutor.loop import run_turn
+from app.tutor.loop import MAX_TOOL_ROUNDS, run_turn
 from tests.fixtures.sse import (
     REASONING_TURN,
     TEXT_ONLY_TURN,
+    TOOL_CALL_FOLLOW_UP,
     TOOL_CALL_TURN,
     WORKSPACE_ARGUMENTS,
     sse_stream,
@@ -100,11 +101,12 @@ async def test_a_tool_call_turn_yields_a_workspace_event():
     producing zero WorkspaceEvents rather than passing by accident.
     """
     respx.post("https://api.openai.com/v1/responses").mock(
-        return_value=Response(
-            200,
-            headers={"Content-Type": "text/event-stream"},
-            content=sse_stream(*TOOL_CALL_TURN),
-        )
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*TOOL_CALL_TURN)),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*TOOL_CALL_FOLLOW_UP)),
+        ]
     )
     client = AsyncOpenAI(api_key="sk-test")
     bundle = ContextBundle(system="s", input=[{"role": "user", "content": "hi"}])
@@ -156,3 +158,91 @@ async def test_a_reasoning_turn_yields_reasoning_deltas():
 
     assert ReasoningDeltaEvent(text="Checking the ") in events
     assert ReasoningDeltaEvent(text="denominators.") in events
+
+
+@respx.mock
+async def test_a_tool_call_is_answered_so_the_model_writes_its_reply():
+    """**The bug the loop exists for.** A function call ends a Responses API
+    response: the model stops, having written no prose. A single-request turn
+    therefore ended with the workspace set and the thread silent — the learner
+    got a new plan on the board and nothing to read.
+
+    So the tool result goes back and the model is asked to continue. This
+    asserts the second request happens, that it carries the call's output, and
+    that the text the learner actually reads comes out of it.
+    """
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*TOOL_CALL_TURN)),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*TOOL_CALL_FOLLOW_UP)),
+        ]
+    )
+    client = AsyncOpenAI(api_key="sk-test")
+    bundle = ContextBundle(system="s", input=[{"role": "user", "content": "hi"}])
+
+    result = None
+    async for _event, running in run_turn(
+        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle
+    ):
+        result = running
+
+    assert route.call_count == 2, "the tool call has to be answered, not left hanging"
+    assert result.text == "Here is your plan.", "the learner reads the second leg"
+    assert result.workspace is not None, "and the first leg still set the workspace"
+
+    second = json.loads(route.calls[1].request.content)
+    kinds = [item.get("type") for item in second["input"]]
+    assert "function_call" in kinds
+    assert "function_call_output" in kinds
+    output = next(i for i in second["input"] if i.get("type") == "function_call_output")
+    assert output["call_id"] == "call_1"
+    # A reasoning item from a store=False response is a bare id the API has not
+    # kept; handing it back names an item that does not exist.
+    assert "reasoning" not in kinds
+
+
+@respx.mock
+async def test_a_model_that_only_ever_calls_the_tool_is_bounded():
+    """Whatever prose arrived by the bound is the answer. Without it, a model
+    that answers every tool result with another tool call bills the learner
+    until something else stops it."""
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        return_value=Response(200, headers={"Content-Type": "text/event-stream"},
+                              content=sse_stream(*TOOL_CALL_TURN))
+    )
+    client = AsyncOpenAI(api_key="sk-test")
+    bundle = ContextBundle(system="s", input=[{"role": "user", "content": "hi"}])
+
+    async for _event, _running in run_turn(
+        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle
+    ):
+        pass
+
+    assert route.call_count == MAX_TOOL_ROUNDS
+
+
+@respx.mock
+async def test_usage_is_summed_across_a_turns_rounds():
+    """One turn, one bill. Keeping only the last round's usage under-reports
+    exactly the turns that called a tool, which are the expensive ones."""
+    respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*TOOL_CALL_TURN)),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*TOOL_CALL_FOLLOW_UP)),
+        ]
+    )
+    client = AsyncOpenAI(api_key="sk-test")
+    bundle = ContextBundle(system="s", input=[{"role": "user", "content": "hi"}])
+
+    result = None
+    async for _event, running in run_turn(
+        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle
+    ):
+        result = running
+
+    assert result.usage["input_tokens"] == 60 + 90
+    assert result.usage["output_tokens"] == 24 + 12

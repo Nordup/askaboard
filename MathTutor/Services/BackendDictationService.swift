@@ -9,7 +9,8 @@ import os
 ///
 /// The wire contract below mirrors that service exactly: see `server/app/api/dictation.py` for
 /// the endpoint, its multipart field names (`audio`, `session_id`) and its required
-/// `session_id` (an unknown one 404s), and `server/app/tutor/events.py` /
+/// `session_id` (an id the server has never seen creates the session rather than failing —
+/// dictating before typing anything is the normal first move), and `server/app/tutor/events.py` /
 /// `DictationTextDeltaEvent`/`DictationDoneEvent` declared alongside the endpoint in
 /// `dictation.py` for the event vocabulary this decodes. Do not change field or event names
 /// here without re-reading those first.
@@ -406,8 +407,8 @@ struct BackendDictationClient: Sendable {
     ///
     /// 401/403 is the device token the app presents (`require_device_token`), refused — the
     /// same answer as having no credential at all, since nothing about this session will work
-    /// until Settings changes. Everything else — a 404 for a session id the server has never
-    /// seen, 429, a 5xx — is this attempt's problem and worth another tap.
+    /// until the build is repointed. Everything else — 429, a 5xx, a malformed request —
+    /// is this attempt's problem and worth another tap.
     static func failure(status: Int) -> DictationError {
         (401 ... 403).contains(status) ? .unavailable : .recognitionFailed
     }
@@ -417,7 +418,8 @@ struct BackendDictationClient: Sendable {
 
 /// Builds the multipart request without touching the network, so a test can inspect the exact
 /// contract `server/app/api/dictation.py` documents: `audio` (the WAV, filename `speech.wav`,
-/// `Content-Type: audio/wav`) and `session_id` (the form field the endpoint 404s without).
+/// `Content-Type: audio/wav`) and `session_id` (the form field the endpoint requires; the
+/// session it names is created on the spot if it does not exist yet).
 enum BackendDictationRequestBuilder {
     static let filename = "speech.wav"
     static let contentType = "audio/wav"

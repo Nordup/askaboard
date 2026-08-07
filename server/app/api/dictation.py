@@ -5,15 +5,16 @@ import uuid
 from typing import Literal
 
 import httpx
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import StreamingResponse
 from openai import APIConnectionError, APIError, APIStatusError, AsyncOpenAI
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.turn import get_recorder
 from app.auth import require_device_token
-from app.config import get_settings
+from app.config import DEFAULT_MODEL, DEFAULT_REASONING_EFFORT, get_settings
 from app.sse import SSE_HEADERS, format_sse
 from app.store.db import db_session
 from app.store.models import Session
@@ -145,12 +146,32 @@ async def create_dictation(
 ):
     settings = get_settings()
 
-    # A dictation has no turn — the recorder needs *something* to attach the
-    # audio to, and a session that does not exist yet cannot receive it.
-    # Every session today is created lazily by /v1/turn, so this is the same
-    # invariant that endpoint already relies on, not a new one.
+    # A dictation has no turn, but the recorder still needs a session to attach
+    # the audio to — so create one, exactly the way /v1/turn does.
+    #
+    # This used to 404 instead, on the stated reasoning that "every session is
+    # created lazily by /v1/turn". That had the dependency backwards: /v1/turn
+    # *creates* the session, it does not require one, so dictation was the only
+    # endpoint that demanded a row someone else had already written. On a fresh
+    # install nobody has, and tapping the mic before typing anything — the first
+    # thing a student who would rather talk than type does — 404'd every time.
+    #
+    # The form carries no model or effort, hence the defaults; the next turn
+    # overwrites both with what the device actually has selected.
     if await db.get(Session, session_id) is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown session.")
+        db.add(Session(
+            id=session_id,
+            model=DEFAULT_MODEL,
+            reasoning_effort=DEFAULT_REASONING_EFFORT,
+        ))
+        try:
+            await db.commit()
+        except IntegrityError:
+            # Two dictations racing on the same brand-new session id: the
+            # db.get() above and this insert are not atomic, so both can pass
+            # it. Whichever loses adopts the row the other just wrote — the
+            # same resolution /v1/turn applies to a duplicate turn_id.
+            await db.rollback()
 
     audio_bytes = await audio.read()
 
