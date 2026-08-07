@@ -293,6 +293,37 @@ final class MathTutorUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Pen"].exists)
     }
 
+    /// Task 7's own addition, beyond what any task in the plan owned: the design spec requires
+    /// the strip to be **absent** when collapsed or full screen, not merely invisible — an
+    /// invisible-but-hittable strip left sitting over the board would be a control eating
+    /// touches nothing on screen explains. `BoardScreen` mounts `ResizeHandle` only inside
+    /// `tutor`'s `.docked` case — see its own doc — so this drives the app through both of the
+    /// other two states with the same real taps a student uses, and checks the accessibility
+    /// element the handle's label identifies is gone in both.
+    ///
+    /// The docked assertion comes first and is not decoration: it is what proves the query can
+    /// see the strip at all, so the two `XCTAssertFalse`s below are not passing because the
+    /// query itself never matches anything — the failure mode a vacuous absence test would
+    /// hide.
+    func testTheResizeStripDoesNotExistWhenCollapsedOrFullScreen() {
+        let app = launch(["--ui-state", "docked-start", "--ui-freeze"])
+        let strip = app.descendants(matching: .any)["Resize the tutor panel"]
+        XCTAssertTrue(strip.exists, "the strip must be reachable while the panel is docked")
+
+        tap(app.buttons["Collapse tutor to the dock"], untilExists: app.buttons["Open the tutor"],
+            "btn/dock must collapse the panel to the dock")
+        XCTAssertFalse(strip.exists, "collapsed to the dock, there is no seam left to resize")
+
+        tap(app.buttons["Open the tutor"], untilExists: app.staticTexts["Hi! I'm your AI Tutor"],
+            "the dock's orb must restore the docked panel")
+        tap(app.buttons["Show tutor full screen"], untilExists: app.textFields["Ask me anything..."],
+            "btn/full-screen must open the 740pt column")
+        XCTAssertFalse(
+            strip.exists,
+            "full screen, there is no board beside the panel for the strip to sit between"
+        )
+    }
+
     // MARK: - Sending
 
     func testSendingAMessageMovesTheTutorFromGreetingToThread() {

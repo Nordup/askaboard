@@ -850,4 +850,39 @@ final class ShellComponentTests: XCTestCase {
             )
         }
     }
+
+    // MARK: - The reference render, unmoved
+
+    /// The fixture run is diffed against `design/reference/*.png`, and this whole change is
+    /// supposed to be invisible in it: the strip paints nothing at rest, occupies gutter
+    /// that already existed, and takes no space in layout. If any published lane moved, the
+    /// diff would fail for a reason nobody would connect to a resize handle.
+    func testTheReferenceScreenIsUnmovedByTheResizeSystem() {
+        let l = ScreenLayout.reference
+        XCTAssertEqual(l.panelWidth, 337, "panelWidth")
+        XCTAssertEqual(l.panelX, 1011, "panelX")
+        XCTAssertEqual(l.boardX, 124, "boardX")
+        XCTAssertEqual(l.boardWidthDocked, 863, "boardWidthDocked")
+        XCTAssertEqual(l.contentTop, 28, "contentTop")
+        XCTAssertEqual(l.contentHeight, 976, "contentHeight")
+    }
+
+    /// The strip's own footprint, asserted against the lanes rather than as literals, so it
+    /// cannot silently start overlapping the canvas if a token moves.
+    func testTheStripLiesEntirelyOutsideTheBoard() {
+        let l = ScreenLayout.reference
+        let stripLeft = l.panelX - DS.Space.gap
+        let boardRight = l.boardX + l.boardWidthDocked
+        XCTAssertGreaterThanOrEqual(stripLeft, boardRight, "not one point of canvas is claimed")
+
+        let stripRight = stripLeft + ResizeHandleMetrics.hitBreadth(
+            gutter: DS.Space.gap,
+            into: DS.Space.panelInset
+        )
+        XCTAssertLessThanOrEqual(
+            stripRight,
+            l.panelX + DS.Space.panelInset,
+            "and it stops at the panel's content column"
+        )
+    }
 }
