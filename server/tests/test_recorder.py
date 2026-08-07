@@ -1,9 +1,10 @@
 import uuid
 
+import pytest
 from sqlalchemy import select
 
 from app.store.blobs import LocalBlobStore
-from app.store.models import LLMCall, Session, Turn
+from app.store.models import Attachment, LLMCall, Session, Turn
 from app.store.recorder import Recorder, redact_images
 from tests.conftest import requires_db
 
@@ -27,6 +28,41 @@ def test_redact_images_replaces_the_data_url_with_a_blob_ref():
 def test_redact_images_leaves_an_imageless_body_untouched():
     body = {"input": [{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}]}
     assert redact_images(body, "sha256:x") == body
+
+
+async def test_record_attachment_requires_a_turn_or_a_session(tmp_path):
+    """An attachment with neither is a row nothing could ever find again.
+
+    Raises before opening a session or touching the blob store — the
+    sessionmaker below is never called, so a value that would fail if
+    invoked is enough to prove this.
+    """
+    def _unreachable_sessionmaker():
+        raise AssertionError("record_attachment must not open a session")
+
+    recorder = Recorder(_unreachable_sessionmaker, LocalBlobStore(tmp_path))
+    with pytest.raises(ValueError):
+        await recorder.record_attachment(kind="audio", data=b"x", content_type="audio/wav")
+
+
+@requires_db
+async def test_record_attachment_can_attach_to_a_session_without_a_turn(db, db_factory, tmp_path):
+    """A dictation has no turn_id yet — this is the schema path it uses."""
+    session = Session(model="gpt-5.6-luna", reasoning_effort="high")
+    db.add(session)
+    await db.commit()
+
+    recorder = Recorder(db_factory, LocalBlobStore(tmp_path))
+    ref = await recorder.record_attachment(
+        session_id=session.id, kind="audio", data=b"RIFF-fake-wav-bytes",
+        content_type="audio/wav",
+    )
+
+    async with db_factory() as fresh:
+        stored = (await fresh.execute(select(Attachment))).scalar_one()
+        assert stored.session_id == session.id
+        assert stored.turn_id is None
+        assert stored.blob_key == ref.key
 
 
 @requires_db

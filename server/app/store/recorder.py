@@ -156,13 +156,36 @@ class Recorder:
             await session.commit()
 
     async def record_attachment(
-        self, *, turn_id: uuid.UUID, kind: str, data: bytes, content_type: str
+        self,
+        *,
+        kind: str,
+        data: bytes,
+        content_type: str,
+        turn_id: uuid.UUID | None = None,
+        session_id: uuid.UUID | None = None,
     ) -> BlobRef:
+        """Persist a blob and its row, attached to a turn, a session, or both.
+
+        `turn_id` and `session_id` are both optional so a dictation — which
+        happens before any turn_id exists, since that is only minted
+        client-side when the student hits Send — can attach its audio to the
+        session instead. But an attachment with neither is a row nothing can
+        ever find again, so at least one is required; this is the one place
+        that invariant is enforced; column nullability alone cannot express
+        "at least one of two columns", so it is not an accident that both
+        stayed nullable at the schema level.
+        """
+        if turn_id is None and session_id is None:
+            raise ValueError(
+                "record_attachment requires turn_id, session_id, or both — "
+                "an attachment cannot be written with nothing to attach it to."
+            )
         ref = await self._blobs.put(data, content_type)
         async with self._sessionmaker() as session:
             session.add(Attachment(
-                turn_id=turn_id, kind=kind, blob_key=ref.key, sha256=ref.sha256,
-                bytes=ref.bytes, content_type=content_type,
+                turn_id=turn_id, session_id=session_id, kind=kind,
+                blob_key=ref.key, sha256=ref.sha256, bytes=ref.bytes,
+                content_type=content_type,
             ))
             await session.commit()
         return ref

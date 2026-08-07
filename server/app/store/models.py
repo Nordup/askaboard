@@ -104,7 +104,17 @@ class Attachment(Base):
     __tablename__ = "attachments"
 
     id: Mapped[uuid.UUID] = _uuid_pk()
-    turn_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("turns.id"), index=True)
+    # Nullable because a dictation has no turn yet — the audio is captured
+    # before the transcript becomes a message, let alone a turn_id, which is
+    # only minted client-side when the student hits Send. Exactly one of
+    # turn_id/session_id is expected to be set; Recorder.record_attachment is
+    # what enforces that at write time (see store/recorder.py).
+    turn_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("turns.id"), nullable=True, index=True
+    )
+    session_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("sessions.id"), nullable=True, index=True
+    )
     kind: Mapped[str] = mapped_column(String(16))  # board_png | ink | audio
     blob_key: Mapped[str] = mapped_column(String(128))
     sha256: Mapped[str] = mapped_column(String(64), index=True)
