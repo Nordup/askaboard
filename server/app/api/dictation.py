@@ -7,7 +7,7 @@ from typing import Literal
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
-from openai import APIConnectionError, APIStatusError, AsyncOpenAI
+from openai import APIConnectionError, APIError, APIStatusError, AsyncOpenAI
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -66,11 +66,18 @@ def _describe_error(error: Exception) -> str:
     child's voice, transcribed, and that text can quote what was heard. Only
     the exception type and, for a status error, the numeric status and
     machine-readable error code (never the human-readable message) are kept.
+
+    `APIError` (not just its `APIStatusError` subclass) is handled too: a
+    mid-stream error frame — an embedded `{"error": ...}` inside an
+    otherwise-200 SSE response — raises the bare base class, which has no
+    `status_code`, but does carry the same machine-readable `.code`.
     """
     if isinstance(error, APIStatusError):
         code = _error_code(error.body)
         detail = f" code={code}" if code else ""
         return f"{type(error).__name__}: status {error.status_code}{detail}"
+    if isinstance(error, APIError) and error.code:
+        return f"{type(error).__name__}: code={error.code}"
     return type(error).__name__
 
 
@@ -176,8 +183,37 @@ async def create_dictation(
         # code cannot see into. _open_stream is the only retry loop that may
         # run.
         client = AsyncOpenAI(api_key=settings.openai_api_key, max_retries=0)
+
+        # One guard around the connection AND the whole consumption loop —
+        # not just the open. openai/_streaming.py's AsyncStream.__stream__
+        # raises APIError directly when an SSE frame carries an embedded
+        # `{"error": ...}`, i.e. after the connection has already opened
+        # successfully; a guard around only _open_stream() lets that
+        # exception fall straight through StreamingResponse uncaught. This
+        # is the same shape /v1/turn's create_turn uses for the same reason:
+        # nothing between accepting the request and finishing it may escape
+        # unhandled. `async with` closes the upstream connection whether the
+        # loop ends by exception, by `break`, or by exhaustion.
+        text = ""
+        saw_done = False
         try:
             transcript_stream = await _open_stream(client, audio_bytes)
+            async with transcript_stream:
+                async for event in transcript_stream:
+                    if event.type == "transcript.text.delta":
+                        if event.delta:
+                            text += event.delta
+                            yield format_sse(DictationTextDeltaEvent(text=event.delta))
+                    elif event.type == "transcript.text.done":
+                        # Authoritative, not merely terminal — but only when
+                        # it actually carries something. An empty `.done`
+                        # text must not overwrite the deltas already shown
+                        # to the student; Swift's own reader has the same
+                        # `!final.isEmpty` guard.
+                        if event.text:
+                            text = event.text
+                        saw_done = True
+                        break
         except APIStatusError as error:
             decision = classify(error.status_code, error.body)
             yield format_sse(ErrorEvent(message=_describe_error(error), retryable=decision.retry))
@@ -189,23 +225,13 @@ async def create_dictation(
             yield format_sse(ErrorEvent(message=_describe_error(error), retryable=True))
             return
         except Exception as error:
+            # Covers the mid-stream APIError above and anything
+            # unanticipated. Never retried: once a delta may already have
+            # reached the client, restarting the transcript would rewrite
+            # words the student is already reading — the same rule that
+            # keeps a truncated stream (below) from being retried.
             yield format_sse(ErrorEvent(message=_describe_error(error), retryable=False))
             return
-
-        text = ""
-        saw_done = False
-        async with transcript_stream:
-            async for event in transcript_stream:
-                if event.type == "transcript.text.delta":
-                    if event.delta:
-                        yield format_sse(DictationTextDeltaEvent(text=event.delta))
-                elif event.type == "transcript.text.done":
-                    # Authoritative, not merely terminal: it carries the
-                    # whole transcript, punctuated and cased, where the sum
-                    # of the deltas need not be.
-                    text = event.text
-                    saw_done = True
-                    break
 
         if not saw_done:
             # A truncated stream is a failure, not a short transcript: half

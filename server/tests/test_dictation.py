@@ -1,5 +1,7 @@
+import gc
 import json
 import uuid
+import warnings
 
 import pytest
 import respx
@@ -55,6 +57,16 @@ def _dictation_events(*deltas: str, done_text: str | None) -> bytes:
     events = [{"type": "transcript.text.delta", "delta": delta} for delta in deltas]
     if done_text is not None:
         events.append({"type": "transcript.text.done", "text": done_text})
+    return sse_stream(*events)
+
+
+def _dictation_events_with_mid_stream_error(*deltas: str, error_message: str) -> bytes:
+    """Some deltas, then an embedded `{"error": ...}` frame instead of
+    `.done` — the shape openai/_streaming.py's AsyncStream.__stream__ raises
+    `APIError` on directly, from inside the `async for` consumption, after
+    the connection has already opened successfully."""
+    events = [{"type": "transcript.text.delta", "delta": delta} for delta in deltas]
+    events.append({"type": "error", "error": {"message": error_message, "code": "server_error"}})
     return sse_stream(*events)
 
 
@@ -184,6 +196,80 @@ async def test_a_truncated_stream_is_a_failure_not_a_short_transcript(db_app, db
     assert "done" not in kinds
     assert kinds[-1] == "error"
     assert events[-1]["retryable"] is False
+
+
+@respx.mock
+async def test_an_empty_done_keeps_the_accumulated_deltas(db_app, db_factory):
+    """`.done` is authoritative only when it carries something. Swift's own
+    reader guards this with `!final.isEmpty`; an empty `.done.text` must not
+    discard text the student already watched stream in."""
+    respx.post(TRANSCRIBE_URL).mock(
+        return_value=Response(
+            200, headers={"Content-Type": "text/event-stream"},
+            content=_dictation_events("solve for ", "x", done_text=""),
+        )
+    )
+    session_id = await _make_session(db_factory)
+
+    _, _, events = await _stream_dictation(db_app, session_id=session_id)
+
+    assert [e["text"] for e in events if e["type"] == "text_delta"] == ["solve for ", "x"]
+    assert events[-1] == {"type": "done", "text": "solve for x"}
+
+
+@respx.mock
+async def test_a_mid_stream_provider_error_yields_a_clean_error_event(db_app, db_factory):
+    """openai/_streaming.py raises `APIError` from inside the consumption
+    loop, not just from opening the connection — this must not crash the
+    response, and the provider's own text (which can quote what the
+    student said) must never reach the client."""
+    secret_sounding_message = "the student's answer was seven point five"
+    respx.post(TRANSCRIBE_URL).mock(
+        return_value=Response(
+            200, headers={"Content-Type": "text/event-stream"},
+            content=_dictation_events_with_mid_stream_error(
+                "partial", error_message=secret_sounding_message,
+            ),
+        )
+    )
+    session_id = await _make_session(db_factory)
+
+    status_code, _, events = await _stream_dictation(db_app, session_id=session_id)
+
+    assert status_code == 200
+    # The delta that arrived before the failure still reached the client...
+    assert events[0] == {"type": "text_delta", "text": "partial"}
+    # ...but the stream ends with a clean error, not a dead connection or an
+    # unhandled exception, and it is never retried (a delta may already have
+    # reached the client).
+    assert events[-1]["type"] == "error"
+    assert events[-1]["retryable"] is False
+    assert "done" not in [e["type"] for e in events]
+    assert secret_sounding_message not in json.dumps(events)
+
+
+@respx.mock
+async def test_a_mid_stream_error_closes_the_upstream_connection_cleanly(db_app, db_factory):
+    """The generator must terminate cleanly on a mid-stream failure, closing
+    the upstream response rather than leaking it — no unclosed-stream
+    warning, and the underlying httpx response is actually closed."""
+    route = respx.post(TRANSCRIBE_URL).mock(
+        return_value=Response(
+            200, headers={"Content-Type": "text/event-stream"},
+            content=_dictation_events_with_mid_stream_error("hi", error_message="overloaded"),
+        )
+    )
+    session_id = await _make_session(db_factory)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _, _, events = await _stream_dictation(db_app, session_id=session_id)
+        gc.collect()
+
+    assert events[-1]["type"] == "error"
+    assert route.calls.last.response.is_closed
+    unclosed = [w for w in caught if "unclosed" in str(w.message).lower()]
+    assert unclosed == []
 
 
 @respx.mock
