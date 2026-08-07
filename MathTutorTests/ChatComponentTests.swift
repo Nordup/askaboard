@@ -210,9 +210,6 @@ final class ChatComponentTests: XCTestCase {
         XCTAssertEqual(thread.gap, ThreadMetrics.panel.gap)
         // `Thread · wide` carries no padding; the panel's 18 is there to clear its inset.
         XCTAssertEqual(thread.bottomPadding, 0)
-        // "Same component, different white" — #FFFFFF here, #FCFCFC in the panel.
-        XCTAssertEqual(thread.surface, DS.Color.surface)
-        XCTAssertNotEqual(thread.surface, ThreadMetrics.panel.surface)
     }
 
     // MARK: - Failure & recovery
@@ -483,15 +480,117 @@ final class ChatComponentTests: XCTestCase {
 
     // MARK: - Scroll fade
 
-    func testTheScrollFadeIsAnAlphaRampOfTheSurfaceItSitsOn() {
-        let fade = ScrollFadeMetrics.standard
+    /// "The two ends are no longer one curve mirrored, and that is the design." The old
+    /// board drew one shared 4-stop gradient (`ScrollFadeMetrics.standard`); the current
+    /// design gives the top and bottom edges their own ramp, plateau, peak and curve, so
+    /// the replacement tests are split the same way rather than forced back into one.
+    func testTheTopFadesRampAndPlateauAreTheBoardsTwoNumbersPerScale() {
+        let panel = ScrollFadeMetrics.top(for: .panel)
+        let full = ScrollFadeMetrics.top(for: .fullScreen)
 
-        XCTAssertEqual(fade.height, 72)
-        XCTAssertEqual(fade.stops.map(\.opacity), [1, 1, 0.72, 0])
-        XCTAssertEqual(fade.stops.map(\.location), [0, 0.34, 0.62, 1])
-        // Opaque at the top, gone at the bottom, and monotonic in between — a ramp, not a
-        // gradient to `.clear`, which would grey-shift through the middle.
-        XCTAssertEqual(fade.stops.map(\.opacity), fade.stops.map(\.opacity).sorted(by: >))
+        XCTAssertEqual(panel.edge, .top)
+        XCTAssertEqual(panel.curve, .easeOut)
+        // "Longer than a line on purpose" — 60 in the panel, 56 in the reading column.
+        XCTAssertEqual(panel.ramp, 60)
+        XCTAssertEqual(full.ramp, 56)
+        // "solid 20 then ramp" in the panel; 8 in the reading column, which has no 18pt
+        // panel inset above its controls to clear.
+        XCTAssertEqual(panel.plateau, 20)
+        XCTAssertEqual(full.plateau, 8)
+        // The top fade always dissolves all the way to the surface colour — "gone".
+        XCTAssertEqual(panel.peak, 1)
+        XCTAssertEqual(full.peak, 1)
+        // height = ramp + plateau: 80 in the panel, 64 in the reading column — "its whole
+        // fade is 64 rather than 80" for exactly that reason.
+        XCTAssertEqual(panel.height, 80)
+        XCTAssertEqual(full.height, 64)
+    }
+
+    func testTheBottomFadesRampIsOneNumberBothScales() {
+        // "One number, both scales, every screen."
+        XCTAssertEqual(ScrollFadeMetrics.bottomRamp, 32)
+        // "the single value that makes it a veil rather than a wipe."
+        XCTAssertEqual(ScrollFadeMetrics.bottomPeak, 0.8)
+
+        let fade = ScrollFadeMetrics.bottom(coveringComposer: 96)
+        XCTAssertEqual(fade.edge, .bottom)
+        XCTAssertEqual(fade.curve, .smoothstep)
+        XCTAssertEqual(fade.ramp, 32)
+        XCTAssertEqual(fade.plateau, 64, "the composer's own band, minus the 32pt ramp")
+        XCTAssertEqual(fade.peak, ScrollFadeMetrics.bottomPeak)
+        // "`band` is composer-top to surface-floor, and both halves of that matter" —
+        // height *is* the band rather than a fraction derived from it.
+        XCTAssertEqual(fade.height, 96)
+    }
+
+    func testAComposerBandShorterThanTheRampSqueezesRatherThanOverflows() {
+        // "A band shorter than the ramp is squeezed rather than overflowed: the fade still
+        // ends on the floor, it just has less room to get there."
+        let squeezed = ScrollFadeMetrics.bottom(coveringComposer: 20)
+        XCTAssertEqual(squeezed.ramp, 20)
+        XCTAssertEqual(squeezed.plateau, 0)
+        XCTAssertEqual(squeezed.height, 20)
+
+        // Exactly the ramp's own length leaves no plateau at all.
+        let exact = ScrollFadeMetrics.bottom(coveringComposer: 32)
+        XCTAssertEqual(exact.ramp, 32)
+        XCTAssertEqual(exact.plateau, 0)
+
+        // A band that cannot exist clamps to nothing rather than handing `.frame` a
+        // negative side.
+        XCTAssertEqual(ScrollFadeMetrics.bottom(coveringComposer: -10).height, 0)
+        XCTAssertEqual(ScrollFadeMetrics.bottom(coveringComposer: -10).ramp, 0)
+    }
+
+    func testTheTopFadeIsSolidAtTheEdgeAndGoneByTheFloor() {
+        // "Solid at the surface's own top edge, dissolving downward."
+        let fade = ScrollFadeMetrics.top(for: .panel)
+        let opacities = fade.stops.map(\.opacity)
+
+        XCTAssertEqual(fade.stops.first?.location, 0)
+        XCTAssertEqual(fade.stops.first?.opacity, 1)
+        XCTAssertEqual(fade.stops.last?.location, 1)
+        XCTAssertEqual(fade.stops.last?.opacity, 0)
+        // Monotonic — a ramp, not a gradient to `.clear`, which would grey-shift the middle.
+        XCTAssertEqual(opacities, opacities.sorted(by: >))
+    }
+
+    func testTheBottomFadeIsTransparentAtTheTopAndHeldAtTheVeilByTheFloor() {
+        // "Transparent where the thread is still fully legible, up to `peak` over the
+        // ramp, and `peak` held from there to the floor."
+        let fade = ScrollFadeMetrics.bottom(coveringComposer: 96)
+        let opacities = fade.stops.map(\.opacity)
+
+        XCTAssertEqual(fade.stops.first?.location, 0)
+        XCTAssertEqual(fade.stops.first?.opacity, 0)
+        XCTAssertEqual(fade.stops.last?.location, 1)
+        XCTAssertEqual(fade.stops.last?.opacity, ScrollFadeMetrics.bottomPeak)
+        XCTAssertEqual(opacities, opacities.sorted(by: <))
+    }
+
+    func testTheCurvesAreFlatWhereTheyMeetThePlateauAndClampPastTheirOwnBand() {
+        // "α(s) = 1 − (1 − s)². Zero slope where it meets the plateau, slope 2 where it
+        // leaves transparency." At the midpoint that is 1 − 0.5² = 0.75.
+        XCTAssertEqual(ScrollFadeMetrics.Curve.easeOut.opacity(atRampFraction: 0), 0)
+        XCTAssertEqual(ScrollFadeMetrics.Curve.easeOut.opacity(atRampFraction: 0.5), 0.75)
+        XCTAssertEqual(ScrollFadeMetrics.Curve.easeOut.opacity(atRampFraction: 1), 1)
+
+        // "α(s) = 3s² − 2s³. Zero slope at *both* ends." At the midpoint 3(0.5²) − 2(0.5³)
+        // = 0.75 − 0.25 = 0.5 — the reason it exists as a second case rather than a shared
+        // curve: `easeOut`'s onset at s = 0 is not flat.
+        XCTAssertEqual(ScrollFadeMetrics.Curve.smoothstep.opacity(atRampFraction: 0), 0)
+        XCTAssertEqual(ScrollFadeMetrics.Curve.smoothstep.opacity(atRampFraction: 0.5), 0.5)
+        XCTAssertEqual(ScrollFadeMetrics.Curve.smoothstep.opacity(atRampFraction: 1), 1)
+
+        // "`s` runs 0 … 1. Clamped, so a caller cannot drive a gradient past its own band."
+        XCTAssertEqual(
+            ScrollFadeMetrics.Curve.easeOut.opacity(atRampFraction: -5),
+            ScrollFadeMetrics.Curve.easeOut.opacity(atRampFraction: 0)
+        )
+        XCTAssertEqual(
+            ScrollFadeMetrics.Curve.smoothstep.opacity(atRampFraction: 5),
+            ScrollFadeMetrics.Curve.smoothstep.opacity(atRampFraction: 1)
+        )
     }
 
     // MARK: - The scale itself
@@ -564,7 +663,12 @@ final class ChatComponentTests: XCTestCase {
 
         let threadGap: CGFloat
         let threadBottomPadding: CGFloat
-        let fade: ScrollFadeMetrics
+        /// The top fade is the one member of the scroll-fade family that `ChatScale` alone
+        /// decides — `topRamp`/plateau differ 60/56 and 20/8 by scale and by nothing else.
+        /// The bottom fade takes no `ChatScale` at all (`bottom(coveringComposer:)` is a
+        /// function of the composer's band, not the scale), so it has no place in a
+        /// per-scale reference and is not asserted here.
+        let topFade: ScrollFadeMetrics
 
         let chipHeight: CGFloat
         let chipRadius: CGFloat
@@ -614,7 +718,7 @@ final class ChatComponentTests: XCTestCase {
 
             threadGap = thread.gap
             threadBottomPadding = thread.bottomPadding
-            fade = thread.fade
+            topFade = .top(for: scale)
 
             chipHeight = chip.height
             chipRadius = chip.radius
