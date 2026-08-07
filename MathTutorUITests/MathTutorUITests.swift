@@ -296,7 +296,7 @@ final class MathTutorUITests: XCTestCase {
     /// Task 7's own addition, beyond what any task in the plan owned: the design spec requires
     /// the strip to be **absent** when collapsed or full screen, not merely invisible — an
     /// invisible-but-hittable strip left sitting over the board would be a control eating
-    /// touches nothing on screen explains. `BoardScreen` mounts `ResizeHandle` only inside
+    /// touches that nothing on screen explains. `BoardScreen` mounts `ResizeHandle` only inside
     /// `tutor`'s `.docked` case — see its own doc — so this drives the app through both of the
     /// other two states with the same real taps a student uses, and checks the accessibility
     /// element the handle's label identifies is gone in both.

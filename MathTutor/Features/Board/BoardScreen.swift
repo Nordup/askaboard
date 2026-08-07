@@ -293,7 +293,7 @@ struct BoardScreen: View {
                 onCollapse: uiState.collapseTutor,
                 onReset: uiState.resetPanelWidth
             )
-            .offset(x: layout.panelX - DS.Space.gap, y: layout.contentTop)
+            .offset(x: layout.resizeStripX, y: layout.contentTop)
         }
     }
 

@@ -857,6 +857,13 @@ final class ShellComponentTests: XCTestCase {
     /// supposed to be invisible in it: the strip paints nothing at rest, occupies gutter
     /// that already existed, and takes no space in layout. If any published lane moved, the
     /// diff would fail for a reason nobody would connect to a resize handle.
+    ///
+    /// Five of these six values are already pinned individually by
+    /// `testTheDesignsOwnBoardSizesFallOutOfTheRuleAtTheReferenceSize` above — only `panelWidth`
+    /// is new here. That overlap is deliberate rather than an oversight: this test exists to
+    /// guard Task 7's own scope, the *whole set* of published lanes together as one
+    /// "nothing moved" fixture, so a future reader should not delete it as a duplicate of the
+    /// test above — the two check different things even where their assertions coincide.
     func testTheReferenceScreenIsUnmovedByTheResizeSystem() {
         let l = ScreenLayout.reference
         XCTAssertEqual(l.panelWidth, 337, "panelWidth")
@@ -867,22 +874,47 @@ final class ShellComponentTests: XCTestCase {
         XCTAssertEqual(l.contentHeight, 976, "contentHeight")
     }
 
-    /// The strip's own footprint, asserted against the lanes rather than as literals, so it
-    /// cannot silently start overlapping the canvas if a token moves.
+    /// The strip's own footprint, read from `ScreenLayout.resizeStripX` — the same property
+    /// `BoardScreen.swift` draws the strip at — rather than a private re-derivation of it.
+    ///
+    /// The first version of this test computed `stripLeft` as `l.panelX - DS.Space.gap` and
+    /// compared it against `boardRight = l.boardX + l.boardWidthDocked` with `>=`. But
+    /// `boardWidthDocked` is *defined* as `max(0, panelX - DS.Space.gap - boardX)`
+    /// (`Layout.swift`), so wherever that clamp does not fire — every value `.reference` takes —
+    /// `boardRight` reduces algebraically to `panelX - DS.Space.gap`: the same expression as
+    /// `stripLeft`, with its terms rearranged. The assertion could not fail; it was one formula
+    /// compared to itself, and it gave no protection against `BoardScreen.swift`'s own placement
+    /// expression drifting from it. Asserting literals against `resizeStripX` instead pins the
+    /// published property itself, and stating the strip/board relationship as equality — not
+    /// `>=` — says what is actually true: the strip begins exactly where the board ends, because
+    /// it lives entirely inside the gutter between them.
     func testTheStripLiesEntirelyOutsideTheBoard() {
         let l = ScreenLayout.reference
-        let stripLeft = l.panelX - DS.Space.gap
-        let boardRight = l.boardX + l.boardWidthDocked
-        XCTAssertGreaterThanOrEqual(stripLeft, boardRight, "not one point of canvas is claimed")
 
-        let stripRight = stripLeft + ResizeHandleMetrics.hitBreadth(
+        XCTAssertEqual(l.resizeStripX, 987, "the strip begins in the gutter, not on the board")
+
+        let stripRight = l.resizeStripX + ResizeHandleMetrics.hitBreadth(
             gutter: DS.Space.gap,
             into: DS.Space.panelInset
+        )
+        XCTAssertEqual(stripRight, 1029, "claiming the gutter plus the panel's own dead margin")
+        XCTAssertEqual(
+            l.panelX + DS.Space.panelInset,
+            1029,
+            "which is exactly the panel's own content column, the panel-side bound"
         )
         XCTAssertLessThanOrEqual(
             stripRight,
             l.panelX + DS.Space.panelInset,
-            "and it stops at the panel's content column"
+            "and it stops there rather than overshooting into the panel's content"
+        )
+
+        // The actual design invariant: the strip's left edge and the board's right edge are the
+        // same number, not merely ordered — not one point of canvas is claimed.
+        XCTAssertEqual(
+            l.resizeStripX,
+            l.boardX + l.boardWidthDocked,
+            "the strip begins exactly where the board ends"
         )
     }
 }

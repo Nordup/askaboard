@@ -216,6 +216,24 @@ struct ScreenLayout: Equatable, Sendable {
     /// negative x that pushes it off the far edge instead.
     var panelX: CGFloat { max(0, contentRight - panelWidth) }
 
+    /// Where the resize strip's left edge sits — the gutter's own left edge, one `--space-gap`
+    /// inside `panelX`.
+    ///
+    /// Published so both the strip's drawing code and its tests read the same number instead of
+    /// each writing `panelX - --space-gap` at its own call site. That duplication is exactly how
+    /// this file's own reference-render test used to go tautological: the test's private copy of
+    /// the expression could never disagree with a re-derivation of itself, so a bug in the real
+    /// call site had nothing to fail against. One property, read by both, closes that gap.
+    ///
+    /// It also states a fact `boardWidthDocked` already implies rather than a new one:
+    /// `boardWidthDocked` is `max(0, panelX - --space-gap - boardX)`, so wherever that clamp does
+    /// not fire — every size this type produces a docked layout for — `boardX + boardWidthDocked`
+    /// reduces algebraically to `panelX - --space-gap`, this property's own definition. The strip
+    /// therefore begins exactly where the board ends, by construction, not by coincidence: it
+    /// lives entirely inside the gutter between them and cannot claim a point of the canvas
+    /// without the two lanes it sits between having already overlapped.
+    var resizeStripX: CGFloat { panelX - DS.Space.gap }
+
     /// `--container-panel`, now read as the smallest width the panel is ever *drawn* at.
     ///
     /// 337 is what leaves the 301pt column `--space-panel-inset` is specced against, and
@@ -416,6 +434,11 @@ struct ScreenLayout: Equatable, Sendable {
             ("board · docked", boardX, boardWidthDocked),
             ("board · collapsed", boardX, boardWidthCollapsed),
             ("panel", panelX, panelWidth),
+            (
+                "resize strip",
+                resizeStripX,
+                ResizeHandleMetrics.hitBreadth(gutter: DS.Space.gap, into: DS.Space.panelInset)
+            ),
             ("peek", peekX, peekWidth),
             ("column", columnX, columnWidth),
             ("dock", collapsedDockX, collapsedDockWidth),
