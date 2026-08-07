@@ -1022,7 +1022,37 @@ def test_dont_know_signal_adds_its_section():
         image_region=None, has_image=False, signal="dontKnow",
     )
     assert "I don’t know" in prompt
+
+
+# The four tests below exist because the rest of this file cannot detect the
+# regression it was written to prevent. Every assertion above passes just as
+# happily against a prompt whose curly quotes have been flattened to ASCII.
+
+
+def test_paragraph_five_keeps_its_curly_double_quotes():
+    assert "“how is this so far”" in SYSTEM_PROMPT
+
+
+def test_maths_notation_survives_verbatim():
+    assert "x² + y² = z²" in SYSTEM_PROMPT
+    assert "√2" in SYSTEM_PROMPT
+
+
+def test_no_ascii_lookalikes_have_crept_in():
+    assert "'" not in SYSTEM_PROMPT
+    assert '"' not in SYSTEM_PROMPT
+    assert "--" not in SYSTEM_PROMPT
+
+
+def test_em_dash_count_is_pinned():
+    # Dropping or adding one is a silent edit to tuned text.
+    assert SYSTEM_PROMPT.count("—") == 4
 ```
+
+These four pin the characters; the seven above pin the meaning. Do not make
+any of them read `TutorPromptPolicy.swift` at runtime — that file is deleted
+by the client-migration plan, and a test coupled to it would fail for the
+wrong reason.
 
 - [ ] **Step 2: Run and confirm failure**
 
