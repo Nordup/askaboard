@@ -8,8 +8,8 @@ _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
-def init_engine() -> None:
-    """Create the process-wide engine and sessionmaker.
+def init_engine() -> AsyncEngine:
+    """Create the process-wide engine and sessionmaker, and return the engine.
 
     Call once, from the FastAPI lifespan's startup phase, so the engine (and
     the asyncpg connections it pools) is bound to the loop that will actually
@@ -19,6 +19,7 @@ def init_engine() -> None:
     global _engine, _session_factory
     _engine = create_async_engine(get_settings().database_url, pool_pre_ping=True)
     _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
+    return _engine
 
 
 async def dispose_engine() -> None:
@@ -30,11 +31,15 @@ async def dispose_engine() -> None:
     _session_factory = None
 
 
-async def db_session() -> AsyncIterator[AsyncSession]:
+def session_factory() -> async_sessionmaker[AsyncSession]:
     if _session_factory is None:
         raise RuntimeError(
             "Database engine is not initialised. Call init_engine() during "
-            "app startup (see app.main's lifespan) before using db_session."
+            "app startup (see app.main's lifespan) before using session_factory."
         )
-    async with _session_factory() as session:
+    return _session_factory
+
+
+async def db_session() -> AsyncIterator[AsyncSession]:
+    async with session_factory()() as session:
         yield session
