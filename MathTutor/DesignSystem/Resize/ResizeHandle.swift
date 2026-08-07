@@ -95,7 +95,11 @@ struct ResizeHandle: View {
     /// to unfreeze it again.
     var onBegin: () -> Void = {}
 
-    /// Fired once when the drag that called `onBegin` concludes. See `onBegin`.
+    /// Fired once when the drag that called `onBegin` concludes — however it concludes. Not
+    /// only a deliberate release: also a cancellation, a system interruption, or `onCollapse`
+    /// below causing this view itself to leave the hierarchy mid-gesture. It is driven off
+    /// `isDragging`'s falling edge rather than `DragGesture.onEnded`, specifically so none of
+    /// those paths can leave it unpaired with `onBegin` — see `isDragging` and `endDrag()`.
     var onEnd: () -> Void = {}
 
     /// Fired on the transition into collapse — once per crossing, not once per frame spent
@@ -137,10 +141,12 @@ struct ResizeHandle: View {
     /// So the comparison lives in the one place that is guaranteed to run its own reads and
     /// writes in the order they are written: `.onChanged`, sequentially, within a single
     /// closure invocation. What still needs `@GestureState`'s guarantee is *this* value's
-    /// immunity to leaking across a cancelled gesture into the next one — and it inherits
-    /// that for free, because it is reset every time `anchor` reads `nil` at the top of
-    /// `.onChanged`, which is exactly the frame `@GestureState` guarantees follows any
-    /// gesture's end, cancelled or not.
+    /// immunity to leaking across a cancelled gesture into the next one — and it gets that not
+    /// by being read at the top of `.onChanged` (an earlier version tried that, and it does not
+    /// work: `.onChanged` is the *outer* node wrapping `.updating`'s `GestureStateGesture`, so
+    /// `anchor` already reads non-`nil` on the very first `.onChanged` of a gesture, and a check
+    /// there for "is this the first frame" is never true) but by being reset on the rising edge
+    /// of `isDragging` in `body` below, which is ordering-independent by construction.
     @State private var wasCollapsed = false
 
     /// What the last resolved frame reported, kept only to drive the capsule and the
@@ -153,6 +159,10 @@ struct ResizeHandle: View {
     /// Whether a finger is currently down on the strip. Derived from `anchor` rather than
     /// tracked as its own flag, so there is exactly one thing that can say "dragging" and it
     /// is the one SwiftUI itself keeps honest across a cancellation.
+    ///
+    /// This is also the single source of truth for the gesture's begin/end lifecycle — see
+    /// the `.onChange(of: isDragging)` in `body` below, and why it replaced watching for
+    /// `.onChanged`'s first frame.
     private var isDragging: Bool { anchor != nil }
 
     var body: some View {
@@ -160,6 +170,40 @@ struct ResizeHandle: View {
             .contentShape(Rectangle())
             .overlay(capsule)
             .gesture(drag)
+            // The begin/end edges of a gesture, read off `isDragging` rather than off
+            // `.onChanged`'s first call or `.onEnded`. Two independent problems forced this:
+            //
+            // `.onChanged` cannot see its own first frame. `.onChanged` wraps `.updating`'s
+            // `GestureStateGesture` (`_ChangedGesture` is the outer node), so by the time
+            // `.onChanged` runs for a gesture's first event, `.updating` above has already
+            // committed `anchor`, and a check for "is `anchor` still `nil`" inside `.onChanged`
+            // is never true. An earlier version of this file tried exactly that and, as a
+            // result, never fired `onBegin()` or the grab haptic at all — the single most
+            // important of the three haptics the type doc promises, since it is the only
+            // confirmation on a touchscreen that the handle was caught.
+            //
+            // `.onEnded` cannot see every way a gesture ends. It only fires on a deliberate
+            // release. A cancellation, a system interruption, or `onCollapse` below causing
+            // this view to leave the hierarchy mid-gesture all skip it, which is what left
+            // `onEnd()` unpaired with `onBegin()` on exactly the paths `@GestureState` was
+            // adopted to survive.
+            //
+            // `isDragging` has neither problem: it is a plain computed property over
+            // `@GestureState`, so reading it carries no ordering assumption, and `@GestureState`
+            // resets — and therefore this fires — on every way a gesture can conclude, not only
+            // a deliberate release. As a side effect this is also what makes `endDrag()`'s
+            // `limit = .none` land in a genuinely separate render from the next gesture's first
+            // `onChanged`, which is what makes the `.rigid` haptic re-fire correctly if a fresh
+            // drag immediately re-pins the same bound a cancelled one left behind.
+            .onChange(of: isDragging) { _, isNowDragging in
+                if isNowDragging {
+                    onBegin()
+                    grabCount += 1
+                    wasCollapsed = false
+                } else {
+                    endDrag()
+                }
+            }
             .onTapGesture(count: 2) { onReset() }
             .accessibilityElement()
             .accessibilityLabel(label)
@@ -253,22 +297,20 @@ struct ResizeHandle: View {
                 if state == nil { state = size }
             }
             .onChanged { value in
-                let isFirstFrame = anchor == nil
-                if isFirstFrame {
-                    grabCount += 1
-                    wasCollapsed = false
-                    onBegin()
-                }
-
-                // `anchor ?? size`: on the first frame this is exactly what `.updating`
-                // above just wrote (or is about to — SwiftUI does not document which of two
-                // sibling modifiers on the same gesture runs first for a given event), so
-                // the fallback converges to the same value either way. Past the first frame,
-                // `.updating`'s idempotence guarantees `anchor` is already set, so the
-                // fallback is never reached again for the rest of this gesture — which
-                // matters, because after frame one `size` has already moved away from the
-                // true anchor, and falling back to it then would be exactly the
-                // anchored-to-accumulated regression `ResizeModel`'s own doc warns about.
+                // `anchor ?? size`: by the time `.onChanged` runs, `.updating` above has
+                // already committed `anchor` for this event — see the comment on `body`'s
+                // `.onChange(of: isDragging)` for why that ordering, unlike the begin/end
+                // edges, *is* safe to depend on here (`.onChanged` is the outer node wrapping
+                // `.updating`'s `GestureStateGesture`, so the write is guaranteed to have
+                // already landed). The `?? size` fallback exists only as defence in depth: if
+                // it were ever reached, `size` at gesture-start *is* the correct anchor, so
+                // the fallback cannot silently produce a wrong answer even if that guarantee
+                // turned out to be wrong. It must never be relied on past the first frame,
+                // though — by then `size` has moved away from the true anchor, and falling
+                // back to it then would be exactly the anchored-to-accumulated regression
+                // `ResizeModel`'s own doc warns about. It never is: `.updating`'s idempotence
+                // (`if state == nil`) guarantees `anchor` stays set for the rest of the
+                // gesture once it is written once.
                 let start = anchor ?? size
                 let translation = edge.axis == .horizontal
                     ? value.translation.width
@@ -310,18 +352,16 @@ struct ResizeHandle: View {
                 }
                 wasCollapsed = resolution.isCollapsed
             }
-            .onEnded { _ in endDrag() }
     }
 
-    /// The one thing that runs when a drag ends via `.onEnded` — the only caller left now
-    /// that the collapse branch above no longer calls this mid-gesture. It does not run on a
-    /// cancellation or a system interruption, and it does not need to: `anchor` is
-    /// `@GestureState` and SwiftUI resets it on its own the moment such a gesture concludes,
-    /// which is also what `isDragging` and therefore the capsule are derived from, so
-    /// nothing stays painted. `limit` and `overshoot` can go momentarily stale in that case,
-    /// but neither is ever read except while `isDragging` is true, and the very first frame
-    /// of the next real drag overwrites both unconditionally before either is used — so a
-    /// stranded value here is inert, not a bug.
+    /// Runs on the falling edge of `isDragging`, from `body`'s `.onChange(of: isDragging)` —
+    /// not from `DragGesture.onEnded`, and deliberately: `onEnded` only covers a deliberate
+    /// release, and this needs to cover every way a gesture can conclude, including a
+    /// cancellation, a system interruption, and `onCollapse` above causing this view to leave
+    /// the hierarchy mid-gesture. `isDragging` is derived from `anchor`, `@GestureState`, which
+    /// SwiftUI resets on all of those paths without this file having to enumerate them, so
+    /// tying this to `isDragging` rather than to `.onEnded` is what makes `onEnd()` — and the
+    /// capsule, which is also driven by `isDragging` — impossible to leave stranded.
     private func endDrag() {
         limit = .none
         withAnimation(.easeOut(duration: ResizeHandleMetrics.disappear)) {
