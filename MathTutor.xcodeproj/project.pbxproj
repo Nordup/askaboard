@@ -26,6 +26,7 @@
 		2DC01E6E2E4264C7D9EFC51C /* Elevation.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5350113098845186BFC0238 /* Elevation.swift */; };
 		2F542EF31CD1FFD1F974B6CE /* ResizeGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68777CB8E695F332E3520F4A /* ResizeGeometry.swift */; };
 		3055C301F9CB7C0162436FBA /* SVGPath.swift in Sources */ = {isa = PBXBuildFile; fileRef = 437A816AC93664B09A7FEBB9 /* SVGPath.swift */; };
+		329E65E8B5B6D98ADA6CC2E6 /* DemoTutorServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEB67774A3E9FFC188FF1D75 /* DemoTutorServiceTests.swift */; };
 		3A01F5C14CC3FFFBC9E449C7 /* WhiteboardSurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AF47E8C131D8376D61F3E65 /* WhiteboardSurface.swift */; };
 		3AC186F9427DE8B6C63A1FC4 /* OpenAIDictationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E06A066A7300269B751887BF /* OpenAIDictationService.swift */; };
 		3BBF7D7BBDB2FA5CE0B097D5 /* ToolRailParts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52D52C388DABD65744236C2D /* ToolRailParts.swift */; };
@@ -59,6 +60,7 @@
 		8AE059865F261B9D671ECFF2 /* SessionPlanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CFED3B175C3922A5241AF7C /* SessionPlanView.swift */; };
 		8B9AC755A10DFAF39CA985CD /* SettingsWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CDCEE851D84DD0BD8B2DB86 /* SettingsWindow.swift */; };
 		8CFFCA8713A559A17AA2D839 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C742B8F4CF845931CCEFC3D /* KeychainStore.swift */; };
+		8EF8D1DBB69B35CD52FE47A8 /* TutorEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4D02DCD5A1B7D6CBA594BAF /* TutorEvent.swift */; };
 		9986C716988CA98C7B16DA42 /* IconPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CBDF79C9C7A38D6240F017F /* IconPaths.swift */; };
 		9EE208CFC286CC9901CDDBB6 /* ComposerButtons.swift in Sources */ = {isa = PBXBuildFile; fileRef = 268CDEEFE80CA5EDF78FB1EF /* ComposerButtons.swift */; };
 		A295938FFD57678AF0A64E2F /* TutorPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EA4C8E6325776E542D8DA7B /* TutorPanel.swift */; };
@@ -82,6 +84,7 @@
 		C6B6A6ABAC06AFE5992895E3 /* ScrollFade.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CC3EDA46BB4DB54996A4F8F /* ScrollFade.swift */; };
 		CB77A0EAB9544BC656A90049 /* ChatStates.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC88EAC7DEACC326E1A76A63 /* ChatStates.swift */; };
 		CBE73D0B893D0BCCA2C5D090 /* TutorStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A75D7C233693DE7B2FFF3DF /* TutorStore.swift */; };
+		D4CC41F844141FE1C0733F8F /* TutorEventTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECEE59C2882DF49AE64DF05F /* TutorEventTests.swift */; };
 		D517AAA5757CDE87D2187E3D /* ResizeModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D557CC670C82D9747A86266 /* ResizeModel.swift */; };
 		D620B41620F9A2C4C9C26AD0 /* DictationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E71EAD98E5C0012B1C4D4B2 /* DictationTests.swift */; };
 		D75FA125AEEE58676AF22C14 /* ChatGallery.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB96C449E6F25690ABBF7028 /* ChatGallery.swift */; };
@@ -187,6 +190,7 @@
 		B7A7B29659EE4E89E8E0044F /* UIState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIState.swift; sourceTree = "<group>"; };
 		BE113B7E3E62FDCFA7413776 /* MathTutorApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MathTutorApp.swift; sourceTree = "<group>"; };
 		BF3DBFC815AEC610615A7F72 /* MathTutorTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = MathTutorTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		C4D02DCD5A1B7D6CBA594BAF /* TutorEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TutorEvent.swift; sourceTree = "<group>"; };
 		C8EAE13468EF5CF55B7DD396 /* MessageBubble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageBubble.swift; sourceTree = "<group>"; };
 		CAB4A0EDD663149C6BE8D7CB /* Layout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Layout.swift; sourceTree = "<group>"; };
 		CB96C449E6F25690ABBF7028 /* ChatGallery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatGallery.swift; sourceTree = "<group>"; };
@@ -201,11 +205,13 @@
 		DC88EAC7DEACC326E1A76A63 /* ChatStates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatStates.swift; sourceTree = "<group>"; };
 		DD99B7E64FD3EBF42D907FE3 /* OpenAITranscription.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAITranscription.swift; sourceTree = "<group>"; };
 		DE2F1C8A199C9377474DF7AA /* ResizeModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResizeModelTests.swift; sourceTree = "<group>"; };
+		DEB67774A3E9FFC188FF1D75 /* DemoTutorServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoTutorServiceTests.swift; sourceTree = "<group>"; };
 		E0042681934772C27C33B7D0 /* MessageThread.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageThread.swift; sourceTree = "<group>"; };
 		E06A066A7300269B751887BF /* OpenAIDictationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIDictationService.swift; sourceTree = "<group>"; };
 		E5350113098845186BFC0238 /* Elevation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Elevation.swift; sourceTree = "<group>"; };
 		E954D06964D3CD29E7E328C4 /* OrbHalo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrbHalo.swift; sourceTree = "<group>"; };
 		EAF8603329EBED4EA8EE8199 /* SettingsAndPlanTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsAndPlanTests.swift; sourceTree = "<group>"; };
+		ECEE59C2882DF49AE64DF05F /* TutorEventTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TutorEventTests.swift; sourceTree = "<group>"; };
 		F25CD95322B357DE7DB2BA6C /* MathTutor.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = MathTutor.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F40FACD7F7FC0F59B684FF39 /* SourceSans3-Medium.otf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "SourceSans3-Medium.otf"; sourceTree = "<group>"; };
 		F5A6F66827D10068E0AA3FD4 /* LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = LICENSE.txt; sourceTree = "<group>"; };
@@ -320,6 +326,7 @@
 				07822BFCEDA6CAC5E7B67D24 /* BoardInkTests.swift */,
 				77A7DD39D721ACCC0D62826F /* BoardToolTests.swift */,
 				784BDCC853A7787B6EE7BFFD /* ChatComponentTests.swift */,
+				DEB67774A3E9FFC188FF1D75 /* DemoTutorServiceTests.swift */,
 				95328C09291FF057FF5EC160 /* DesignSystemTokenTests.swift */,
 				5E71EAD98E5C0012B1C4D4B2 /* DictationTests.swift */,
 				5EC6EB284F209A08B2D0E2A1 /* IconTests.swift */,
@@ -330,6 +337,7 @@
 				EAF8603329EBED4EA8EE8199 /* SettingsAndPlanTests.swift */,
 				61070F61E8510619F84F5D97 /* ShellComponentTests.swift */,
 				FCA9CA61147AAAE5C1519199 /* SVGPathTests.swift */,
+				ECEE59C2882DF49AE64DF05F /* TutorEventTests.swift */,
 				363744A8B651DA004FC6F837 /* UIStateTests.swift */,
 			);
 			path = MathTutorTests;
@@ -433,6 +441,7 @@
 				3DB98B59876AB7F23B67AB5E /* BoardTool.swift */,
 				6B190574F83F26DD21FA3CE7 /* DictationPhase.swift */,
 				40CC8590077CACB91515D03B /* Models.swift */,
+				C4D02DCD5A1B7D6CBA594BAF /* TutorEvent.swift */,
 				07DCCC70FA22423135C6251A /* TutorPromptPolicy.swift */,
 			);
 			path = Domain;
@@ -624,6 +633,7 @@
 				3FEAD4CABE221C77708EAE56 /* BoardInkTests.swift in Sources */,
 				2BF595A2FBB67A2BDC49CD01 /* BoardToolTests.swift in Sources */,
 				8248D79E5256A68437A743ED /* ChatComponentTests.swift in Sources */,
+				329E65E8B5B6D98ADA6CC2E6 /* DemoTutorServiceTests.swift in Sources */,
 				A7141CE867CF341D0955479E /* DesignSystemTokenTests.swift in Sources */,
 				D620B41620F9A2C4C9C26AD0 /* DictationTests.swift in Sources */,
 				B31E3D93CDC97207E80A325F /* IconTests.swift in Sources */,
@@ -634,6 +644,7 @@
 				13E86E94188874ABEB3431DB /* SVGPathTests.swift in Sources */,
 				090540C2A451B7303C90A2C3 /* SettingsAndPlanTests.swift in Sources */,
 				C2F1BFE90BA785204C92E595 /* ShellComponentTests.swift in Sources */,
+				D4CC41F844141FE1C0733F8F /* TutorEventTests.swift in Sources */,
 				72CFCF787A756EB78403E0D7 /* UIStateTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -703,6 +714,7 @@
 				5D1E63A5E7895DE958C6A55B /* SuggestionChip.swift in Sources */,
 				1722042A53F36F287BC8BCD3 /* ToolRail.swift in Sources */,
 				3BBF7D7BBDB2FA5CE0B097D5 /* ToolRailParts.swift in Sources */,
+				8EF8D1DBB69B35CD52FE47A8 /* TutorEvent.swift in Sources */,
 				1C65CD3B606F3F2D285F96C4 /* TutorFullScreen.swift in Sources */,
 				A295938FFD57678AF0A64E2F /* TutorPanel.swift in Sources */,
 				B106DCAFBA605E2FF0CCA1E9 /* TutorPanelShell.swift in Sources */,

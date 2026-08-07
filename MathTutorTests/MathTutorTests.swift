@@ -1133,7 +1133,7 @@ final class MathTutorTests: XCTestCase {
         store.send("Explain fractions")
 
         XCTAssertEqual(store.session.messages.count, 1)
-        XCTAssertTrue(store.errorMessage?.contains("Add an OpenAI API key") == true)
+        XCTAssertTrue(store.errorMessage?.contains("Add your backend address and token") == true)
     }
 
     // The three `TutorPanelLayout` geometry tests that stood here were deleted with the

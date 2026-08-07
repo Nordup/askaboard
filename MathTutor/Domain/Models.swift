@@ -336,7 +336,7 @@ enum TutorServiceError: LocalizedError, Sendable {
 
     var errorDescription: String? {
         switch self {
-        case .missingAPIKey: return "Add an OpenAI API key in Settings to use live tutoring."
+        case .missingAPIKey: return "Add your backend address and token in Settings to use live tutoring."
         case .invalidResponse: return "The tutor returned an unreadable response."
         case .network(let message): return message
         }

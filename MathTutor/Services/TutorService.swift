@@ -1,7 +1,43 @@
 import Foundation
 
+/// The migration to a streaming backend is incremental: `stream(_:)` is the
+/// target API, but `respond(to:)` stays on the protocol so every existing
+/// conformer and caller keeps compiling. The default `stream(_:)` below
+/// bridges old conformers onto the new API for free; a conformer overrides
+/// it once it can genuinely stream (see `DemoTutorService`). A later task
+/// switches `TutorStore` onto `stream` and removes `respond(to:)` for good.
 protocol TutorService: Sendable {
     func respond(to request: TutorRequest) async throws -> TutorReply
+    func stream(_ request: TutorRequest) -> AsyncThrowingStream<TutorEvent, Error>
+}
+
+extension TutorService {
+    /// Adapts a single `respond(to:)` reply into the streaming vocabulary:
+    /// an initial "thinking" status, the reply text as one `.textDelta`,
+    /// a `.workspace` event when the reply carries a coherent plan/exercise
+    /// pair, then `.done`. Any error from `respond(to:)` finishes the stream
+    /// with that error rather than yielding a `.failure` event, since the
+    /// caller already handles thrown `TutorServiceError`s from the old path.
+    func stream(_ request: TutorRequest) -> AsyncThrowingStream<TutorEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    continuation.yield(.status(.thinking, detail: nil))
+                    let reply = try await respond(to: request)
+                    continuation.yield(.textDelta(reply.text))
+                    let pair = TutorReply.coherentPair(reply.plan, reply.exercise)
+                    if let plan = pair.plan, let exercise = pair.exercise {
+                        continuation.yield(.workspace(plan, exercise))
+                    }
+                    continuation.yield(.done)
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
 }
 
 struct TutorServiceRouter: TutorService, Sendable {
@@ -65,5 +101,61 @@ struct DemoTutorService: TutorService, Sendable {
             plan: pair.plan,
             exercise: pair.exercise
         )
+    }
+
+    /// Genuinely streams rather than falling back to the protocol's bridge:
+    /// the reply text arrives as several `.textDelta`s so the demo path
+    /// exercises the same incremental rendering the live backend will, since
+    /// this deterministic path is what the rest of the migration is verified
+    /// against. Every branch below is the same branch `respond(to:)` takes,
+    /// producing byte-for-byte the same reply text.
+    func stream(_ request: TutorRequest) -> AsyncThrowingStream<TutorEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    continuation.yield(.status(.thinking, detail: nil))
+                    let reply = try await respond(to: request)
+
+                    for chunk in Self.sentenceChunks(in: reply.text) {
+                        continuation.yield(.textDelta(chunk))
+                        try await Task.sleep(for: .milliseconds(40))
+                    }
+                    if let plan = reply.plan, let exercise = reply.exercise {
+                        continuation.yield(.workspace(plan, exercise))
+                    }
+                    continuation.yield(.done)
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    /// Splits `text` on sentence-ending punctuation (`.`, `!`, `?`) followed
+    /// by whitespace, keeping that whitespace attached to the preceding
+    /// chunk so concatenating every chunk reconstructs `text` exactly.
+    static func sentenceChunks(in text: String) -> [String] {
+        guard !text.isEmpty else { return [] }
+        var chunks: [String] = []
+        var start = text.startIndex
+        var index = text.startIndex
+        while index < text.endIndex {
+            let character = text[index]
+            index = text.index(after: index)
+            guard character == "." || character == "!" || character == "?" else { continue }
+            var end = index
+            while end < text.endIndex, text[end] == " " {
+                end = text.index(after: end)
+            }
+            chunks.append(String(text[start..<end]))
+            start = end
+            index = end
+        }
+        if start < text.endIndex {
+            chunks.append(String(text[start...]))
+        }
+        return chunks
     }
 }
