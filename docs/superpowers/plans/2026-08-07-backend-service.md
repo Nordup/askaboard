@@ -2259,7 +2259,36 @@ async def test_a_replayed_turn_id_is_rejected_without_calling_the_model(db_app):
     assert route.call_count == 1
 ```
 
-Add a `db_app` fixture to `server/tests/conftest.py` that builds the app with `db_session` and the blob directory overridden to the testcontainer and `tmp_path` respectively, via `app.dependency_overrides`.
+Add this `db_app` fixture to `server/tests/conftest.py`. Overriding **both**
+dependencies is the point: `db_session` alone would leave the recorder writing
+to whatever `DATABASE_URL` names, which is the branch holding real sessions.
+
+```python
+@pytest.fixture
+async def db_app(db_factory, tmp_path):
+    from app.api.turn import get_recorder
+    from app.main import create_app
+    from app.store.blobs import LocalBlobStore
+    from app.store.db import db_session
+    from app.store.recorder import Recorder
+
+    app = create_app()
+
+    async def _session():
+        async with db_factory() as session:
+            yield session
+
+    app.dependency_overrides[db_session] = _session
+    app.dependency_overrides[get_recorder] = lambda: Recorder(
+        db_factory, LocalBlobStore(tmp_path)
+    )
+    yield app
+    app.dependency_overrides.clear()
+```
+
+`ASGITransport` does not run the app's lifespan, so `init_engine()` never fires
+under test — which is exactly why nothing in the request path may reach for the
+module-level engine directly.
 
 - [ ] **Step 2: Run and confirm failure**
 
@@ -2340,14 +2369,29 @@ class TurnRequest(BaseModel):
     reasoning_effort: str
 
 
+def get_recorder() -> Recorder:
+    """A dependency, not a direct construction.
+
+    Tests must be able to point the recorder at the test branch. If the
+    endpoint built it from the module-level session_factory(), an overridden
+    db_session would not reach it and the recorder would write to whatever
+    DATABASE_URL names — which is the branch holding real sessions.
+    """
+    settings = get_settings()
+    return Recorder(session_factory(), LocalBlobStore(settings.blob_dir))
+
+
 @router.post("/turn")
-async def create_turn(body: TurnRequest, db: AsyncSession = Depends(db_session)):
+async def create_turn(
+    body: TurnRequest,
+    db: AsyncSession = Depends(db_session),
+    recorder: Recorder = Depends(get_recorder),
+):
     settings = get_settings()
 
     if await db.get(Turn, body.turn_id) is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, "This turn was already handled.")
 
-    recorder = Recorder(session_factory(), LocalBlobStore(settings.blob_dir))
     if await recorder.spend_today() >= settings.daily_spend_cap_usd:
         raise HTTPException(
             status.HTTP_402_PAYMENT_REQUIRED, "Daily spend cap reached."
