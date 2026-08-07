@@ -10,6 +10,7 @@ what it said.
 
 from __future__ import annotations
 
+import re
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -24,6 +25,11 @@ from app.store.db import db_session
 from app.store.models import Attachment, LLMCall, Message, Session, ToolCall, Turn
 
 router = APIRouter(prefix="/v1", dependencies=[Depends(require_device_token)])
+
+# Blob keys are always `sha256:<64 lowercase hex chars>` — see
+# `store/blobs.py`'s `BlobRef`. Anything else is rejected before it ever
+# reaches `LocalBlobStore.get()`, which builds a filesystem path from it.
+_BLOB_KEY_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 def get_blob_store() -> LocalBlobStore:
@@ -195,18 +201,27 @@ async def get_turn(turn_id: uuid.UUID, db: AsyncSession = Depends(db_session)):
     }
 
 
-@router.get("/blobs/{key:path}")
+@router.get("/blobs/{key}")
 async def get_blob(
     key: str,
     db: AsyncSession = Depends(db_session),
     blob_store: LocalBlobStore = Depends(get_blob_store),
 ):
-    # `:path` (rather than a plain `{key}`) is required because blob keys
-    # are of the form `sha256:<hex>` — a plain path parameter stops matching
-    # at the colon.
+    # A plain `{key}` is correct here: Starlette's default converter matches
+    # `[^/]+`, which already includes the colon in `sha256:<hex>` — only `/`
+    # is excluded. A `:path` converter was tried here before and is wrong:
+    # it widens the match to `.*`, which admits `/` and `..` into `key`, and
+    # nothing downstream validated the key's shape before it reached
+    # `LocalBlobStore.get()`, which builds a filesystem path from it —
+    # `key="../../etc/passwd"` escapes the blob root. The regex check below
+    # is what actually closes that: reject on shape, not by trying to
+    # sanitise the path.
+    if not _BLOB_KEY_RE.fullmatch(key):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown blob.")
+
     try:
         data = await blob_store.get(key)
-    except FileNotFoundError:
+    except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown blob.")
 
     # The blob store itself only knows bytes, not content type, so the

@@ -59,10 +59,14 @@ async def db(db_factory):
 async def db_app(db_factory, tmp_path):
     """A FastAPI app wired to the test schema instead of `DATABASE_URL`.
 
-    Overriding **both** dependencies is the point: `db_session` alone would
-    leave the recorder writing to whatever `DATABASE_URL` names, which is the
-    branch holding real sessions.
+    Overriding all three dependencies is the point: `db_session` alone would
+    leave the recorder writing to, and the blob read-back route reading
+    from, whatever `DATABASE_URL`/`BLOB_DIR` name — the branch and directory
+    holding real sessions. The recorder and the blob route share one
+    `LocalBlobStore(tmp_path)` so a blob a test writes through the recorder
+    is readable back through `GET /v1/blobs/{key}` in the same test.
     """
+    from app.api.sessions import get_blob_store
     from app.api.turn import get_recorder
     from app.main import create_app
     from app.store.blobs import LocalBlobStore
@@ -75,9 +79,9 @@ async def db_app(db_factory, tmp_path):
         async with db_factory() as session:
             yield session
 
+    blob_store = LocalBlobStore(tmp_path)
     app.dependency_overrides[db_session] = _session
-    app.dependency_overrides[get_recorder] = lambda: Recorder(
-        db_factory, LocalBlobStore(tmp_path)
-    )
+    app.dependency_overrides[get_recorder] = lambda: Recorder(db_factory, blob_store)
+    app.dependency_overrides[get_blob_store] = lambda: blob_store
     yield app
     app.dependency_overrides.clear()
