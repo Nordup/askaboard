@@ -94,7 +94,7 @@ struct LevelMeter: View {
 
 /// How long the microphone has been open, beside the meter.
 ///
-/// The cap at `OpenAIDictationService.captureLimit` is not a surprise if it is visible: this is
+/// The cap at `BackendDictationService.captureLimit` is not a surprise if it is visible: this is
 /// the warning, and because reaching it transcribes what was said rather than discarding it,
 /// nothing is lost at the boundary.
 struct ElapsedLabel: View {

@@ -49,6 +49,12 @@ struct TutorFullScreen: View {
             SettingsButton(action: actions.openSettings)
                 .offset(x: column.settingsX, y: column.top)
         }
+        // `DictationController` is constructed with no store in reach (see its own doc
+        // comment on `sessionID`), so this is where the session a recording attaches to is
+        // kept current — on first appearance and on every reset, which mints a fresh
+        // `LearningSession.id`. `TutorPanel` carries the identical modifier for the docked
+        // surface; whichever one is on screen is the one whose `.task` actually runs.
+        .task(id: store.session.id) { dictation.sessionID = store.session.id }
     }
 
     /// Screen 07: greeting at y 150, suggestion grid at y 592, composer bottom on 1004 —

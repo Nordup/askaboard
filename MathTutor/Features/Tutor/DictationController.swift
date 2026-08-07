@@ -98,7 +98,7 @@ enum DictationNote: String, Identifiable, Sendable {
 /// it is in so a student never reads the wait as the app having quit on them.
 ///
 /// **A session ends** when the transcript is complete, on send, and on the tutor changing shape
-/// underneath it. The one thing that ends it on a clock is `OpenAIDictationService.captureLimit`
+/// underneath it. The one thing that ends it on a clock is `BackendDictationService.captureLimit`
 /// — a ceiling on the recording, not the silence timeout this composer still refuses to have,
 /// which would cut off the student who is thinking and is precisely the student this app is for.
 @MainActor
@@ -128,11 +128,21 @@ final class DictationController: ObservableObject {
     /// The student ended this session themselves, so its silence needs no explaining.
     private var isCancelled = false
 
+    /// The `LearningSession` a recording attaches to server-side. `TutorPanel`/`TutorFullScreen`
+    /// keep this current from `TutorStore.session.id` (the store, not this controller, owns
+    /// which session is live) — see their `.task(id:)` — because `DictationController` itself
+    /// is constructed with no store in reach. Read fresh at the start of every session rather
+    /// than threaded through `toggle(text:)`'s signature, so every existing call site (and
+    /// every test built on one) stays as it was. `BackendDictationService` sends this as the
+    /// `session_id` the server 404s without; a service with no server-side session
+    /// (`ScriptedDictationService`) ignores it.
+    var sessionID = UUID()
+
     /// One session's worth of work. Internal so a test can await a scripted session ending
     /// rather than sleeping for a moment and hoping.
     private(set) var session: Task<Void, Never>?
 
-    init(service: any DictationService = OpenAIDictationService()) {
+    init(service: any DictationService = DictationServiceRouter()) {
         self.service = service
     }
 
@@ -226,7 +236,7 @@ final class DictationController: ObservableObject {
         let base = text.wrappedValue
         let transcripts: AsyncThrowingStream<DictationTranscript, any Error>
         do {
-            transcripts = try service.start()
+            transcripts = try service.start(sessionID: sessionID)
         } catch {
             notice = .unavailable
             return
@@ -274,10 +284,11 @@ final class DictationController: ObservableObject {
             return
         }
 
-        // Nothing was said — or nothing that survived the guard. `isEmpty` alone is not enough:
-        // a near-silent recording is exactly where Whisper-family models fabricate a confident
-        // "Thank you.", and that is a sentence a child would read as their own.
-        if DictationSilence.isSilence(heard) {
+        // Nothing was said — or nothing that survived the server's own hallucination guard
+        // (`server/app/tutor/vocabulary.py`, `is_silence`). That guard used to run here, on
+        // the summed deltas; now the server empties the authoritative `done` text itself
+        // before the client ever sees it, so an empty final reading *is* the silence verdict.
+        if heard.isEmpty {
             text.wrappedValue = base
             note = .empty
         }

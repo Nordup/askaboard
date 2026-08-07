@@ -100,6 +100,11 @@ struct TutorPanel: View {
                 .padding(.top, TutorPanelMetrics.inset)
             }
         }
+        // `DictationController` is constructed with no store in reach (see its own doc
+        // comment on `sessionID`), so this is where the session a recording attaches to is
+        // kept current — on first appearance and on every reset, which mints a fresh
+        // `LearningSession.id`.
+        .task(id: store.session.id) { dictation.sessionID = store.session.id }
     }
 
     /// Where the panel's middle region sits.

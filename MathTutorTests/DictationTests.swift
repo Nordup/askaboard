@@ -1,7 +1,6 @@
 import AVFAudio
 import SwiftUI
 import XCTest
-import os
 @testable import MathTutor
 
 /// Dictation, driven through every state a microphone would have to be present to reach.
@@ -268,36 +267,33 @@ final class DictationTests: XCTestCase {
         XCTAssertEqual(resolve(.denied, hasCredential: false), .unavailable)
     }
 
-    /// The first-run state: no key, so no dictation and — the part that matters — no mic in the
-    /// composer rather than one that can only ever raise a notice.
-    func testWithoutAKeyThereIsNoDictationAndNoMicrophoneToTap() {
-        let noKey: @Sendable () -> String? = { nil }
-        // Whitespace counts as absent, the same rule `TutorServiceRouter` applies to the tutor.
-        let blankKey: @Sendable () -> String? = { "   " }
+    /// The first-run state: no backend configuration, so no dictation and — the part that
+    /// matters — no mic in the composer rather than one that can only ever raise a notice.
+    /// `DictationServiceRouter` is the conformer that answers this now, mirroring
+    /// `TutorServiceRouter`'s own configuration gating for the tutor.
+    func testWithoutBackendConfigurationThereIsNoDictationAndNoMicrophoneToTap() {
+        let router = DictationServiceRouter(configurationReader: { nil })
 
-        for reader in [noKey, blankKey] {
-            let service = OpenAIDictationService(apiKeyReader: reader)
+        XCTAssertFalse(router.isSupported)
+        XCTAssertEqual(router.availability, .unavailable)
 
-            XCTAssertFalse(service.isSupported)
-            XCTAssertEqual(service.availability, .unavailable)
-
-            let controller = DictationController(service: service)
-            XCTAssertNil(
-                composer(voice: controller.voiceHandler(text: ComposerField().binding)).onVoice,
-                "A composer with no key gets the design's other composer, not a dead button."
-            )
-        }
+        let controller = DictationController(service: router)
+        XCTAssertNil(
+            composer(voice: controller.voiceHandler(text: ComposerField().binding)).onVoice,
+            "A composer with no backend configuration gets the design's other composer, not a dead button."
+        )
     }
 
-    /// The other side of the same rule: a key is the whole of what makes the mic appear. What
-    /// the permission then says is the microphone's business, and never `.unavailable`.
-    func testAKeyIsWhatPutsTheMicrophoneInTheComposer() {
-        let service = OpenAIDictationService(apiKeyReader: { "sk-test-key" })
+    /// The other side of the same rule: a configuration is the whole of what makes the mic
+    /// appear. What the permission then says is the microphone's business, and never
+    /// `.unavailable`.
+    func testConfigurationIsWhatPutsTheMicrophoneInTheComposer() {
+        let router = DictationServiceRouter(configurationReader: { Self.backendConfiguration })
 
-        XCTAssertTrue(service.isSupported)
-        XCTAssertNotEqual(service.availability, .unavailable)
+        XCTAssertTrue(router.isSupported)
+        XCTAssertNotEqual(router.availability, .unavailable)
         XCTAssertNotNil(
-            composer(voice: DictationController(service: service).voiceHandler(text: ComposerField().binding)).onVoice
+            composer(voice: DictationController(service: router).voiceHandler(text: ComposerField().binding)).onVoice
         )
     }
 
@@ -383,15 +379,25 @@ final class DictationTests: XCTestCase {
 
     // MARK: - The request
 
-    func testTheTranscriptionRequestIsTheOneTheEndpointDocuments() throws {
+    /// The multipart contract `server/app/api/dictation.py` documents: `audio` (the WAV,
+    /// filename `speech.wav`, `Content-Type: audio/wav`) and `session_id` (the form field the
+    /// endpoint 404s without), posted to `{baseURL}/v1/dictation` with the bearer token.
+    /// Verified against the endpoint's own field names, not guessed from the brief — see
+    /// `server/tests/test_dictation.py`'s `_post_dictation`, which builds the identical request
+    /// server-side tests drive: `files={"audio": (...)}, data={"session_id": ...}`.
+    func testTheDictationRequestIsTheOneTheEndpointDocuments() throws {
         let audio = Data("RIFFfake".utf8)
-        let request = try XCTUnwrap(
-            OpenAITranscriptionRequestBuilder.urlRequest(audio: audio, apiKey: "sk-test", boundary: "BOUNDARY")
+        let sessionID = UUID()
+        let request = BackendDictationRequestBuilder.urlRequest(
+            audio: audio,
+            sessionID: sessionID,
+            configuration: Self.backendConfiguration,
+            boundary: "BOUNDARY"
         )
 
-        XCTAssertEqual(request.url?.absoluteString, "https://api.openai.com/v1/audio/transcriptions")
+        XCTAssertEqual(request.url?.absoluteString, "https://backend.example.com/v1/dictation")
         XCTAssertEqual(request.httpMethod, "POST")
-        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer sk-test")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-token")
         XCTAssertEqual(
             request.value(forHTTPHeaderField: "Content-Type"),
             "multipart/form-data; boundary=BOUNDARY"
@@ -399,19 +405,8 @@ final class DictationTests: XCTestCase {
 
         let body = try XCTUnwrap(request.httpBody)
         let text = try XCTUnwrap(String(data: body, encoding: .utf8))
-        XCTAssertTrue(text.contains("name=\"model\"\r\n\r\ngpt-transcribe\r\n"))
-        XCTAssertTrue(text.contains("name=\"stream\"\r\n\r\ntrue\r\n"), "Partial text has to flow while it transcribes.")
-        XCTAssertTrue(text.contains("name=\"prompt\"\r\n\r\n\(DictationVocabulary.sanitised(DictationVocabulary.prompt))\r\n"))
-        // One part per value: a joined list would need a separator, and every plausible
-        // separator is either rejected by the endpoint or appears inside a keyword.
-        XCTAssertTrue(text.contains("name=\"keywords\"\r\n\r\nsine\r\n"))
-        XCTAssertTrue(text.contains("name=\"keywords\"\r\n\r\nsolve for x\r\n"))
-        XCTAssertEqual(
-            text.components(separatedBy: "name=\"keywords\"").count - 1,
-            DictationVocabulary.wireKeywords.count
-        )
-        XCTAssertTrue(text.contains("name=\"languages\"\r\n\r\nen\r\n"))
-        XCTAssertTrue(text.contains("name=\"file\"; filename=\"speech.wav\""))
+        XCTAssertTrue(text.contains("name=\"session_id\"\r\n\r\n\(sessionID.uuidString)\r\n"))
+        XCTAssertTrue(text.contains("name=\"audio\"; filename=\"speech.wav\""))
         XCTAssertTrue(text.contains("Content-Type: audio/wav"))
         XCTAssertTrue(text.contains("RIFFfake"))
         XCTAssertTrue(text.hasSuffix("--BOUNDARY--\r\n"))
@@ -419,63 +414,22 @@ final class DictationTests: XCTestCase {
 
     /// The audio is bytes, not text, and a multipart builder that goes through `String`
     /// anywhere would quietly mangle it.
-    func testTheAudioSurvivesTheMultipartBodyByteForByte() throws {
+    func testTheAudioSurvivesTheMultipartBodyByteForByte() {
         let audio = Data([0x00, 0xFF, 0xFE, 0x80, 0x0A, 0x0D])
-        let body = OpenAITranscriptionRequestBuilder.multipartBody(audio: audio, boundary: "B")
+        let body = BackendDictationRequestBuilder.multipartBody(audio: audio, sessionID: UUID(), boundary: "B")
 
         XCTAssertNotNil(body.range(of: audio))
-    }
-
-    /// The two instruments the endpoint separates: `keywords` for the terms, `prompt` for the
-    /// situation. Putting the term list in `prompt` — as an earlier build did — leaves the
-    /// parameter that `gpt-transcribe` was chosen for unused.
-    func testTheVocabularyIsKeywordsAndThePromptIsOnlyTheSituation() {
-        for term in ["sine", "cosine", "square root", "radical", "denominator", "hypotenuse"] {
-            XCTAssertTrue(
-                DictationVocabulary.keywords.contains(term),
-                "\(term) is one of the words this list exists for."
-            )
-        }
-        XCTAssertFalse(
-            DictationVocabulary.prompt.contains("cosine"),
-            "Terms belong in keywords; the prompt is the situation."
-        )
-        XCTAssertLessThan(
-            DictationVocabulary.prompt.count,
-            300,
-            "Past a certain length the prompt stops biasing spelling and starts writing the transcript."
-        )
-        XCTAssertEqual(DictationVocabulary.languages, ["en"], "Stated, not detected.")
-    }
-
-    /// The endpoint rejects the **entire request** over a `<`, `>`, carriage return or line
-    /// feed in `prompt` or a keyword — it does not drop the parameter, it loses the student's
-    /// recording. So the guard runs before the request is built.
-    func testTheRejectionCharactersNeverReachTheWire() {
-        XCTAssertEqual(DictationVocabulary.sanitised("solve for x\nsquare root"), "solve for x square root")
-        XCTAssertEqual(DictationVocabulary.sanitised("a < b > c"), "a b c")
-        XCTAssertEqual(DictationVocabulary.sanitised("carriage\r\nreturn"), "carriage return")
-
-        for value in DictationVocabulary.wireKeywords + [DictationVocabulary.sanitised(DictationVocabulary.prompt)] {
-            XCTAssertFalse(value.contains("<"), value)
-            XCTAssertFalse(value.contains(">"), value)
-            XCTAssertFalse(value.contains("\n"), value)
-            XCTAssertFalse(value.contains("\r"), value)
-            XCTAssertFalse(value.isEmpty)
-        }
     }
 
     // MARK: - The streamed response
 
     func testDeltasAccumulateIntoARunningTranscriptAndTheDoneEventCompletesIt() async throws {
         let transcript = try await transcripts(from: """
-            data: {"type":"transcript.text.delta","delta":"why does "}
+            data: {"type":"text_delta","text":"why does "}
 
-            data: {"type":"transcript.text.delta","delta":"sine "}
+            data: {"type":"text_delta","text":"sine "}
 
-            data: {"type":"transcript.text.done","text":"Why does sine repeat?"}
-
-            data: [DONE]
+            data: {"type":"done","text":"Why does sine repeat?"}
 
             """)
 
@@ -484,14 +438,31 @@ final class DictationTests: XCTestCase {
         XCTAssertTrue(transcript.allSatisfy { $0.phase == .transcribing })
     }
 
-    /// The connection drops mid-sentence. The composer must not sit waiting for a rest of it
-    /// that is never coming.
+    /// `server/app/api/dictation.py` sends `done` with an *empty* `text` on purpose when
+    /// `is_silence` judges the whole recording boilerplate — `final_text = "" if is_silence(text)
+    /// else text` — overriding whatever partial words the deltas already showed. The client has
+    /// to treat that empty string as authoritative rather than as "nothing to report", which is
+    /// the one behavioural difference from the OpenAI-direct reader this replaced.
+    func testADoneEventWithEmptyTextOverridesWhateverTheDeltasShowed() async throws {
+        let transcript = try await transcripts(from: """
+            data: {"type":"text_delta","text":"Thank"}
+
+            data: {"type":"done","text":""}
+
+            """)
+
+        XCTAssertEqual(transcript.map(\.text), ["Thank", ""])
+        XCTAssertEqual(transcript.last?.isFinal, true)
+    }
+
+    /// The connection drops mid-sentence, with no `done` and no `error`. The composer must not
+    /// sit waiting for a rest of it that is never coming.
     func testATruncatedStreamFailsCleanlyRatherThanHanging() async {
         do {
             _ = try await transcripts(from: """
-                data: {"type":"transcript.text.delta","delta":"why does "}
+                data: {"type":"text_delta","text":"why does "}
 
-                data: {"type":"transcript.text.de
+                data: {"type":"text_del
                 """)
             XCTFail("A stream that never says it is done is a failure, not a completed transcript.")
         } catch {
@@ -499,52 +470,71 @@ final class DictationTests: XCTestCase {
         }
     }
 
-    func testTheReaderSkipsEveryLineThatIsNotATranscriptFrame() {
-        var reader = OpenAITranscriptionReader()
+    /// The server's own `error` event — a persistence failure, a truncated OpenAI stream, or a
+    /// provider failure that survived the server's retries (`server/app/api/dictation.py`'s
+    /// `ErrorEvent`). Never the old HTTP-status path: this is a 200 response that fails
+    /// mid-stream, which the OpenAI-direct architecture never had a client-visible equivalent
+    /// of.
+    func testAnErrorEventEndsTheStreamAsAFailureRatherThanASilentStop() async {
+        do {
+            _ = try await transcripts(from: """
+                data: {"type":"text_delta","text":"why does "}
+
+                data: {"type":"error","message":"AttachmentWriteError: could not save the recording.","retryable":false}
+
+                """)
+            XCTFail("An error event is not a completed transcript.")
+        } catch {
+            XCTAssertEqual(error as? DictationError, .recognitionFailed, "Never the server's own message — it can quote what was heard.")
+        }
+    }
+
+    func testTheReaderSkipsEveryLineThatIsNotADictationFrame() {
+        var reader = BackendDictationReader()
 
         XCTAssertNil(reader.read(""))
         XCTAssertNil(reader.read(": keep-alive"))
-        XCTAssertNil(reader.read("event: transcript.text.delta"))
-        XCTAssertNil(reader.read("data: [DONE]"))
+        XCTAssertNil(reader.read("event: text_delta"))
         XCTAssertNil(reader.read("data: {this is not json"))
-        XCTAssertNil(reader.read(#"data: {"type":"transcript.text.delta"}"#), "A delta with no delta in it.")
-        XCTAssertNil(reader.read(#"data: {"type":"speech.started"}"#))
+        XCTAssertNil(reader.read(#"data: {"type":"text_delta"}"#), "A delta with no text in it.")
+        XCTAssertNil(reader.read(#"data: {"type":"status","phase":"thinking"}"#), "Not a dictation event.")
         XCTAssertEqual(reader.text, "")
         XCTAssertFalse(reader.isComplete)
 
-        XCTAssertEqual(reader.read(#"data: {"type":"transcript.text.done","text":"ok"}"#)?.text, "ok")
+        guard case .transcript(let reading)? = reader.read(#"data: {"type":"done","text":"ok"}"#) else {
+            return XCTFail("Expected a transcript reading.")
+        }
+        XCTAssertEqual(reading.text, "ok")
         XCTAssertTrue(reader.isComplete)
-        XCTAssertNil(reader.read(#"data: {"type":"transcript.text.delta","delta":" more"}"#), "Nothing follows done.")
+        XCTAssertNil(reader.read(#"data: {"type":"text_delta","text":" more"}"#), "Nothing follows done.")
     }
 
     // MARK: - Failure
 
-    /// 401, 429 and 500 all end the same way for the student, and none of them can put the
-    /// provider's words on screen: the body is never read, and `DictationError` has no room to
-    /// carry one.
+    /// 401 and everything else end differently, and neither can put the server's own words on
+    /// screen: the body is never read, and `DictationError` has no room to carry one.
     func testAnHttpFailureBecomesAFixedSentenceThatQuotesNothingTheStudentSaid() async {
-        let providerBody = """
-            {"error":{"message":"Incorrect API key provided: sk-live-9BQ. Audio: 'the answer is twelve'."}}
-            """
-
-        for status in [401, 429, 500] {
-            StubTranscriptionProtocol.response.withLock {
-                $0 = StubTranscriptionProtocol.Reply(status: status, body: Data(providerBody.utf8))
-            }
+        for status in [401, 404, 429, 500] {
+            StubURLProtocol.reset()
+            StubURLProtocol.status = status
+            StubURLProtocol.body = "Incorrect bearer token."
             do {
-                _ = try await collect(OpenAITranscriptionClient(apiKey: "sk-test", session: stubbedSession()))
+                _ = try await collect(BackendDictationClient(configuration: Self.backendConfiguration, session: StubURLProtocol.stubbedSession))
                 XCTFail("HTTP \(status) is not a transcript.")
             } catch {
-                XCTAssertEqual(error as? DictationError, OpenAITranscriptionClient.failure(status: status))
+                XCTAssertEqual(error as? DictationError, BackendDictationClient.failure(status: status))
             }
         }
 
-        // A credential the provider refuses is the same answer as having no key: nothing about
-        // this session works until it changes. The rest is worth another tap.
-        XCTAssertEqual(OpenAITranscriptionClient.failure(status: 401), .unavailable)
-        XCTAssertEqual(OpenAITranscriptionClient.failure(status: 403), .unavailable)
-        XCTAssertEqual(OpenAITranscriptionClient.failure(status: 429), .recognitionFailed)
-        XCTAssertEqual(OpenAITranscriptionClient.failure(status: 500), .recognitionFailed)
+        // A device token the server refuses is the same answer as having no configuration:
+        // nothing about this session works until it changes. The rest is worth another tap —
+        // including a 404 for an unrecognised `session_id`, which is a wiring bug worth
+        // surfacing as "try again", not "no dictation at all".
+        XCTAssertEqual(BackendDictationClient.failure(status: 401), .unavailable)
+        XCTAssertEqual(BackendDictationClient.failure(status: 403), .unavailable)
+        XCTAssertEqual(BackendDictationClient.failure(status: 404), .recognitionFailed)
+        XCTAssertEqual(BackendDictationClient.failure(status: 429), .recognitionFailed)
+        XCTAssertEqual(BackendDictationClient.failure(status: 500), .recognitionFailed)
 
         for message in [
             DictationNotice.permission.message,
@@ -552,8 +542,7 @@ final class DictationTests: XCTestCase {
             DictationNote.empty.text,
             DictationNote.failed.text
         ] {
-            XCTAssertFalse(message.contains("sk-live"))
-            XCTAssertFalse(message.contains("twelve"))
+            XCTAssertFalse(message.contains("bearer"))
         }
     }
 
@@ -569,7 +558,7 @@ final class DictationTests: XCTestCase {
         service.yield(DictationTranscript(text: "", isFinal: false, phase: .transcribing))
         await settle(until: { controller.phase == .transcribing })
 
-        service.failInFlight(OpenAITranscriptionClient.failure(status: 500))
+        service.failInFlight(.recognitionFailed)
         await controller.session?.value
 
         XCTAssertEqual(controller.note, .failed)
@@ -586,14 +575,14 @@ final class DictationTests: XCTestCase {
     func testTheRecordingStopsFarShortOfTheEndpointsFileLimit() {
         let endpointLimit = 25 * 1024 * 1024
 
-        XCTAssertEqual(OpenAIDictationService.captureLimit, 60)
+        XCTAssertEqual(BackendDictationService.captureLimit, 60)
         XCTAssertLessThan(
-            OpenAIDictationService.byteLimit(sampleRate: 16_000) + WAVFile.headerBytes,
+            BackendDictationService.byteLimit(sampleRate: 16_000) + WAVFile.headerBytes,
             endpointLimit / 10,
             "A minute at 16 kHz mono is under a tenth of the ceiling."
         )
         XCTAssertLessThan(
-            OpenAIDictationService.byteLimit(sampleRate: 48_000) + WAVFile.headerBytes,
+            BackendDictationService.byteLimit(sampleRate: 48_000) + WAVFile.headerBytes,
             endpointLimit,
             "And still under it if the route refuses 16 kHz and hands back its own rate."
         )
@@ -623,39 +612,25 @@ final class DictationTests: XCTestCase {
 
     // MARK: - When nothing comes back
 
-    /// `isEmpty` is not a sufficient guard. Whisper-family models fabricate on near-silent
-    /// audio — a child who taps, hesitates and taps again can plausibly be handed a confident
-    /// "Thank you." — so short caption boilerplate is treated as silence and never written into
-    /// the composer as if the student had said it.
-    func testTheDocumentedHallucinationsAreTreatedAsSilence() {
-        for fabrication in ["", "   ", "you", " you", "Thank you.", "thank you", "Thanks for watching!", "Please subscribe", "Subtitles by the Amara.org community", "Bye."] {
-            XCTAssertTrue(DictationSilence.isSilence(fabrication), "\(fabrication) is a documented empty-audio artefact")
-        }
-    }
-
-    /// And the guard must not eat real speech. Anything longer than the boilerplate limit is
-    /// the student's, and the composer-review step is what catches the rest.
-    func testTheSilenceGuardNeverSwallowsSomethingTheStudentSaid() {
-        for said in [
-            "why does sine repeat?",
-            "thank you for explaining, but why is it negative?",
-            "x squared",
-            "no",
-            "1 over x plus 2",
-            "thanks, I get it now"
-        ] {
-            XCTAssertFalse(DictationSilence.isSilence(said), said)
-        }
-    }
-
+    /// The hallucination guard (Whisper-family models fabricating short boilerplate — "Thank
+    /// you.", " you" — on near-silent audio) moved server-side with everything else in
+    /// `DictationVocabulary`/`DictationSilence`: `server/app/tutor/vocabulary.py`'s `is_silence`
+    /// is what decides this now, covered by `server/tests/test_dictation.py`'s own
+    /// `test_boilerplate_transcripts_are_treated_as_silence`. What the client still owns is
+    /// treating an empty final reading as "nothing to show" — see
+    /// `testADoneEventWithEmptyTextOverridesWhateverTheDeltasShowed` above and the test below.
     func testAnEmptyResultIsALineAboveTheComposerRatherThanAnAlert() async {
         let field = ComposerField("I think")
-        let service = ScriptedDictationService(script: [])
+        // The server has already judged this boilerplate and emptied `done`'s text — see
+        // `BackendDictationReader`'s own doc comment on why an empty `done` is authoritative
+        // rather than something to ignore. A real service never hands the controller "Thank
+        // you." as a *final* reading any more; only an empty one.
+        let service = ScriptedDictationService(script: [
+            DictationTranscript(text: "", isFinal: true),
+        ])
         let controller = DictationController(service: service)
 
         controller.toggle(text: field.binding)
-        await settle(until: { controller.isListening })
-        service.yield(DictationTranscript(text: "Thank you.", isFinal: true))
         await controller.session?.value
 
         XCTAssertEqual(controller.note, .empty)
@@ -702,48 +677,6 @@ final class DictationTests: XCTestCase {
         await settle(until: { controller.isListening })
         controller.cancel()
         await controller.session?.value
-    }
-
-    // MARK: - Retrying, and not retrying
-
-    func testTheFailuresWorthAnotherAttemptAreTheOnesAWaitCanFix() {
-        XCTAssertTrue(OpenAITranscriptionClient.isRetryable(status: 429))
-        XCTAssertTrue(OpenAITranscriptionClient.isRetryable(status: 500))
-        XCTAssertTrue(OpenAITranscriptionClient.isRetryable(status: 503))
-        XCTAssertFalse(OpenAITranscriptionClient.isRetryable(status: 401), "A key does not fix itself.")
-        XCTAssertFalse(OpenAITranscriptionClient.isRetryable(status: 400), "A malformed request is a bug.")
-    }
-
-    /// Waiting cannot buy credit. Retrying a spend-limit 429 is pure latency in front of a
-    /// failure that will not change, and it reads to the student as a hang.
-    func testABillingRefusalIsNeverRetried() {
-        let body = Data(#"{"error":{"message":"You have exhausted your credits.","code":"credit_balance_exhausted"}}"#.utf8)
-
-        XCTAssertEqual(OpenAITranscriptionClient.errorCode(fromBody: body), "credit_balance_exhausted")
-        XCTAssertTrue(OpenAITranscriptionClient.terminalBillingCodes.contains("credit_balance_exhausted"))
-        XCTAssertTrue(OpenAITranscriptionClient.terminalBillingCodes.contains("project_spend_limit_exceeded"))
-        XCTAssertNil(OpenAITranscriptionClient.errorCode(fromBody: Data("not json".utf8)))
-    }
-
-    func testRetryAfterIsFollowedWhenItIsPresentAndSaneWhenItIsNot() throws {
-        func response(retryAfter: String?) throws -> HTTPURLResponse {
-            let url = try XCTUnwrap(URL(string: OpenAITranscriptionRequestBuilder.endpoint))
-            return try XCTUnwrap(HTTPURLResponse(
-                url: url,
-                statusCode: 429,
-                httpVersion: "HTTP/1.1",
-                headerFields: retryAfter.map { ["Retry-After": $0] } ?? [:]
-            ))
-        }
-
-        XCTAssertEqual(OpenAITranscriptionClient.retryDelay(from: try response(retryAfter: "2")), 2)
-        XCTAssertNil(OpenAITranscriptionClient.retryDelay(from: try response(retryAfter: nil)))
-        XCTAssertNil(OpenAITranscriptionClient.retryDelay(from: try response(retryAfter: "Wed, 21 Oct 2026 07:28:00 GMT")))
-        XCTAssertEqual(
-            OpenAITranscriptionClient.retryDelay(from: try response(retryAfter: "600")),
-            10,
-            "A provider asking for ten minutes is a failure, not a pause."
-        )
     }
 
     // MARK: - The meter
@@ -819,8 +752,26 @@ final class DictationTests: XCTestCase {
         XCTAssertEqual(ElapsedLabel.text(for: 0), "0:00")
         XCTAssertEqual(ElapsedLabel.text(for: 7.4), "0:07")
         XCTAssertEqual(ElapsedLabel.text(for: 59), "0:59")
-        XCTAssertEqual(ElapsedLabel.text(for: OpenAIDictationService.captureLimit), "1:00")
+        XCTAssertEqual(ElapsedLabel.text(for: BackendDictationService.captureLimit), "1:00")
         XCTAssertEqual(ElapsedLabel.text(for: -3), "0:00")
+    }
+
+    // MARK: - The session id
+
+    /// `server/app/api/dictation.py` 404s an unknown `session_id` — the wiring this test pins,
+    /// so a fresh id minted somewhere rather than the store's real one fails silently instead
+    /// of loudly.
+    func testTheControllerThreadsItsSessionIDIntoTheServicesStart() async {
+        let field = ComposerField()
+        let service = ScriptedDictationService(script: [DictationTranscript(text: "ok", isFinal: true)])
+        let controller = DictationController(service: service)
+        let sessionID = UUID()
+        controller.sessionID = sessionID
+
+        controller.toggle(text: field.binding)
+        await controller.session?.value
+
+        XCTAssertEqual(service.lastSessionID, sessionID)
     }
 
     // MARK: - Fixtures
@@ -846,26 +797,26 @@ final class DictationTests: XCTestCase {
         XCTFail("The dictation session never reached the expected state", file: file, line: line)
     }
 
-    /// A session that answers every request from `StubTranscriptionProtocol` instead of the
-    /// network — the same value-only discipline the tutor's request tests use, extended to the
-    /// one thing that cannot be a pure function: a response that arrives in pieces.
-    private func stubbedSession() -> URLSession {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubTranscriptionProtocol.self]
-        return URLSession(configuration: configuration)
-    }
+    /// A `BackendConfiguration` naming the same fixture host/token every dictation network test
+    /// uses, so a stubbed request's shape can be asserted without rebuilding one per test — the
+    /// same fixture-configuration shape `BackendTutorServiceTests` builds inline.
+    nonisolated static let backendConfiguration = BackendConfiguration(
+        baseURL: URL(string: "https://backend.example.com")!,
+        token: "test-token"
+    )!
 
-    /// Every reading a server-sent-event body produces, in order.
+    /// Every reading a server-sent-event body produces, in order, through the real streaming
+    /// path (`bytes(for:)`, line splitting, a body that stops halfway) with only the socket
+    /// replaced — `StubURLProtocol`, the same seam `BackendTutorServiceTests` drives.
     private func transcripts(from body: String) async throws -> [DictationTranscript] {
-        StubTranscriptionProtocol.response.withLock {
-            $0 = StubTranscriptionProtocol.Reply(status: 200, body: Data(body.utf8))
-        }
-        return try await collect(OpenAITranscriptionClient(apiKey: "sk-test", session: stubbedSession()))
+        StubURLProtocol.reset()
+        StubURLProtocol.body = body
+        return try await collect(BackendDictationClient(configuration: Self.backendConfiguration, session: StubURLProtocol.stubbedSession))
     }
 
-    private func collect(_ client: OpenAITranscriptionClient) async throws -> [DictationTranscript] {
+    private func collect(_ client: BackendDictationClient) async throws -> [DictationTranscript] {
         var readings: [DictationTranscript] = []
-        for try await reading in client.readings(for: WAVFile.data(pcm16: Data([0x00, 0x00]))) {
+        for try await reading in client.readings(for: WAVFile.data(pcm16: Data([0x00, 0x00])), sessionID: UUID()) {
             readings.append(reading)
         }
         return readings
@@ -877,45 +828,6 @@ final class DictationTests: XCTestCase {
             .enumerated()
             .reduce(UInt32(0)) { $0 | UInt32($1.element) << (8 * $1.offset) }
     }
-}
-
-/// The provider, replaced by whatever the test wants it to have said.
-///
-/// A `URLProtocol` rather than a protocol seam over `URLSession`, because what is under test
-/// includes the streaming itself: `bytes(for:)`, the line splitting and a body that stops
-/// halfway are all real here, and only the socket is not.
-private final class StubTranscriptionProtocol: URLProtocol {
-    struct Reply: Sendable {
-        let status: Int
-        let body: Data
-    }
-
-    /// A lock rather than a bare `static var`: the loading system reads this off its own queue,
-    /// and this project does not have `nonisolated(unsafe)` in it anywhere.
-    static let response = OSAllocatedUnfairLock<Reply?>(initialState: nil)
-
-    override class func canInit(with request: URLRequest) -> Bool { true }
-
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-
-    override func startLoading() {
-        let reply = Self.response.withLock { $0 } ?? Reply(status: 200, body: Data())
-        if let url = request.url,
-           let response = HTTPURLResponse(
-               url: url,
-               statusCode: reply.status,
-               httpVersion: "HTTP/1.1",
-               headerFields: ["Content-Type": "text/event-stream"]
-           ) {
-            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        }
-        if !reply.body.isEmpty {
-            client?.urlProtocol(self, didLoad: reply.body)
-        }
-        client?.urlProtocolDidFinishLoading(self)
-    }
-
-    override func stopLoading() {}
 }
 
 /// The composer's text, standing in for the `@State` `BoardScreen` owns.

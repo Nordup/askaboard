@@ -86,7 +86,14 @@ protocol DictationService: AnyObject {
 
     /// Opens the microphone. The stream carries the running transcript and ends when the
     /// transcript is complete, when the session is cancelled, or with a `DictationError`.
-    func start() throws -> AsyncThrowingStream<DictationTranscript, any Error>
+    ///
+    /// `sessionID` is the store's `LearningSession.id`, read once for the whole recording — a
+    /// session does not change mid-capture. `BackendDictationService` sends it as the
+    /// `session_id` form field `server/app/api/dictation.py` requires; the server 404s an
+    /// unknown one, so a caller that mints a fresh id here rather than forwarding the real one
+    /// would fail every upload. Conformers with nothing server-side to attach it to
+    /// (`ScriptedDictationService`) simply ignore it.
+    func start(sessionID: UUID) throws -> AsyncThrowingStream<DictationTranscript, any Error>
 
     /// The student has finished speaking. Closes the microphone and transcribes what was
     /// said — the stream stays open until the words arrive. Idempotent, because both the
@@ -137,6 +144,62 @@ extension DictationAvailability {
     }
 }
 
+// MARK: - The live-configured default
+
+/// `DictationController`'s default service. Mirrors `TutorServiceRouter` for the same reason:
+/// a `BackendConfiguration` can appear or disappear at any moment — the device is pointed at a
+/// server, or its token is cleared, from the app's own Settings mid-lesson — so this re-reads
+/// it on every call rather than deciding once at launch and freezing that answer for the
+/// controller's whole lifetime.
+@MainActor
+final class DictationServiceRouter: DictationService {
+    private let keychain: KeychainStore
+    private let configurationReader: @Sendable () -> BackendConfiguration?
+    /// The service backing the session currently in flight. `nil` between sessions, so every
+    /// `start(sessionID:)` re-resolves configuration instead of reusing a stale instance, and
+    /// `stop()`/`cancel()`/`inputLevel` route to the one actually holding the microphone.
+    private var current: BackendDictationService?
+
+    init(
+        keychain: KeychainStore = KeychainStore(),
+        configurationReader: (@Sendable () -> BackendConfiguration?)? = nil
+    ) {
+        self.keychain = keychain
+        self.configurationReader = configurationReader ?? { BackendConfiguration.load(keychain: keychain) }
+    }
+
+    /// Unlike `OpenAIDictationService.isSupported`, this is never baked into one instance's
+    /// stored state — see the type's own doc comment.
+    var isSupported: Bool { configurationReader() != nil }
+
+    var availability: DictationAvailability {
+        .resolve(microphone: AVAudioApplication.shared.recordPermission, hasCredential: configurationReader() != nil)
+    }
+
+    var inputLevel: Double { current?.inputLevel ?? 0 }
+
+    func requestAuthorization() async -> DictationAvailability {
+        if AVAudioApplication.shared.recordPermission == .undetermined {
+            _ = await AVAudioApplication.requestRecordPermission()
+        }
+        return availability
+    }
+
+    func start(sessionID: UUID) throws -> AsyncThrowingStream<DictationTranscript, any Error> {
+        guard let configuration = configurationReader() else { throw DictationError.unavailable }
+        let service = BackendDictationService(configuration: configuration)
+        current = service
+        return try service.start(sessionID: sessionID)
+    }
+
+    func stop() { current?.stop() }
+
+    func cancel() {
+        current?.cancel()
+        current = nil
+    }
+}
+
 // MARK: - The one without a microphone
 
 /// Dictation with nothing behind it: the states a real session moves through, in whatever
@@ -163,6 +226,9 @@ final class ScriptedDictationService: DictationService {
     private(set) var startCount = 0
     private(set) var stopCount = 0
     private(set) var cancelCount = 0
+    /// The `sessionID` `start(sessionID:)` was last called with, so a test can assert
+    /// `DictationController` threads the store's real session through rather than a fresh id.
+    private(set) var lastSessionID: UUID?
 
     private var continuation: AsyncThrowingStream<DictationTranscript, any Error>.Continuation?
 
@@ -186,8 +252,9 @@ final class ScriptedDictationService: DictationService {
         return availability
     }
 
-    func start() throws -> AsyncThrowingStream<DictationTranscript, any Error> {
+    func start(sessionID: UUID) throws -> AsyncThrowingStream<DictationTranscript, any Error> {
         startCount += 1
+        lastSessionID = sessionID
         if let startError { throw startError }
 
         let (stream, continuation) = AsyncThrowingStream<DictationTranscript, any Error>.makeStream()
