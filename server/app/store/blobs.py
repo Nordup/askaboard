@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -37,9 +38,17 @@ class LocalBlobStore:
             path.parent.mkdir(parents=True, exist_ok=True)
             if path.exists():
                 return
-            tmp = path.with_suffix(".tmp")
-            tmp.write_bytes(data)
-            tmp.replace(path)
+            # Use mkstemp to create a unique tmp file in the same directory,
+            # avoiding race conditions when multiple concurrent puts write
+            # identical bytes and would otherwise use the same tmp name.
+            fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+            try:
+                with open(fd, "wb") as f:
+                    f.write(data)
+                Path(tmp_path).replace(path)
+            except Exception:
+                Path(tmp_path).unlink(missing_ok=True)
+                raise
 
         await asyncio.to_thread(_write)
         return BlobRef(key=f"sha256:{digest}", sha256=digest, bytes=len(data))
