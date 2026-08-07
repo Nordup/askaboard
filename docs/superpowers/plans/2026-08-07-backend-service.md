@@ -1660,7 +1660,13 @@ import json
 
 
 def sse_stream(*events: dict) -> bytes:
-    """Encode events as the wire bytes the Responses API actually sends."""
+    """Encode events as the wire bytes the Responses API actually sends.
+
+    The trailing newline is load-bearing. "\\n".join emits no separator after
+    the final element, so without it `data: [DONE]` never receives the blank
+    line that terminates an SSE record — the SDK's `[DONE]` break becomes dead
+    code and iteration stops only because the bytes happen to run out.
+    """
     lines = []
     for event in events:
         lines.append(f"event: {event['type']}")
@@ -1668,7 +1674,7 @@ def sse_stream(*events: dict) -> bytes:
         lines.append("")
     lines.append("data: [DONE]")
     lines.append("")
-    return "\n".join(lines).encode()
+    return ("\n".join(lines) + "\n").encode()
 
 
 TEXT_ONLY_TURN = (
@@ -1684,7 +1690,44 @@ TEXT_ONLY_TURN = (
         },
     },
 )
+
+_WORKSPACE = {
+    "plan": {
+        "title": "Radical equations", "goal": "Solve and check.",
+        "outcomes": ["Isolate the radical."],
+        "steps": ["Isolate.", "Square.", "Check."], "currentStep": 0,
+    },
+    "exercise": {
+        "title": "Try this", "prompt": "Solve √(x + 5) = x − 1.",
+        "hint": "What must be true about x − 1?",
+        "context": "A learner is solving a radical equation.",
+    },
+}
+
+# The SDK's construct_type accepts ANY `type:` string without raising, so a
+# one-character event-name error is a silent no-op rather than a failure.
+# These two fixtures are the only thing that would catch it.
+TOOL_CALL_TURN = (
+    {"type": "response.created", "response": {"id": "resp_2"}},
+    {"type": "response.output_item.added", "output_index": 0,
+     "item": {"type": "function_call", "name": "set_workspace", "call_id": "call_1"}},
+    {"type": "response.function_call_arguments.delta", "output_index": 0,
+     "delta": json.dumps(_WORKSPACE)[:20]},
+    {"type": "response.function_call_arguments.done", "output_index": 0,
+     "arguments": json.dumps(_WORKSPACE)},
+    {"type": "response.completed", "response": {"id": "resp_2", "usage": {}}},
+)
+
+REASONING_TURN = (
+    {"type": "response.created", "response": {"id": "resp_3"}},
+    {"type": "response.reasoning_summary_text.delta", "delta": "Checking the domain"},
+    {"type": "response.output_text.delta", "delta": "Start by isolating."},
+    {"type": "response.completed", "response": {"id": "resp_3", "usage": {}}},
+)
 ```
+
+Three fixtures, not one. A streaming loop that is only tested on prose has no
+coverage of the two paths where a wrong event name costs a feature silently.
 
 - [ ] **Step 2: Write the failing test**
 
