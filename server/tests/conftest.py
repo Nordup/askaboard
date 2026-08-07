@@ -53,3 +53,31 @@ async def db(db_factory):
     """
     async with db_factory() as session:
         yield session
+
+
+@pytest.fixture
+async def db_app(db_factory, tmp_path):
+    """A FastAPI app wired to the test schema instead of `DATABASE_URL`.
+
+    Overriding **both** dependencies is the point: `db_session` alone would
+    leave the recorder writing to whatever `DATABASE_URL` names, which is the
+    branch holding real sessions.
+    """
+    from app.api.turn import get_recorder
+    from app.main import create_app
+    from app.store.blobs import LocalBlobStore
+    from app.store.db import db_session
+    from app.store.recorder import Recorder
+
+    app = create_app()
+
+    async def _session():
+        async with db_factory() as session:
+            yield session
+
+    app.dependency_overrides[db_session] = _session
+    app.dependency_overrides[get_recorder] = lambda: Recorder(
+        db_factory, LocalBlobStore(tmp_path)
+    )
+    yield app
+    app.dependency_overrides.clear()

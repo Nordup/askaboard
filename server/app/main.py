@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.api.turn import router as turn_router
 from app.store.db import dispose_engine, init_engine
 
 
@@ -21,6 +22,8 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    app.include_router(turn_router)
 
     return app
 
