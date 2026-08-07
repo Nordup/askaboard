@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		04B0397394D95DC1D07E010D /* LevelMeter.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB18B52F534A50CDC47FF228 /* LevelMeter.swift */; };
+		08EF5D10480D0105D90EB2E9 /* ResizeHandleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF203F43C82054D956C00D85 /* ResizeHandleTests.swift */; };
 		090540C2A451B7303C90A2C3 /* SettingsAndPlanTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAF8603329EBED4EA8EE8199 /* SettingsAndPlanTests.swift */; };
 		102E8BB283305F54D5CF22CB /* DebugAPIKeyInjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4249CB09575FAAE3E3B8704E /* DebugAPIKeyInjection.swift */; };
 		13E86E94188874ABEB3431DB /* SVGPathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCA9CA61147AAAE5C1519199 /* SVGPathTests.swift */; };
@@ -16,6 +17,7 @@
 		1A7DC8AA3FFB0BE378905526 /* GreetingBlock.swift in Sources */ = {isa = PBXBuildFile; fileRef = D207D577F59A94A0666E7CB3 /* GreetingBlock.swift */; };
 		1BA05D06F2185E9DEE0B93BC /* CollapsedDock.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE9DB5B1FABF8AE2042CA456 /* CollapsedDock.swift */; };
 		1C65CD3B606F3F2D285F96C4 /* TutorFullScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F72154788FE13A7EB4C9342 /* TutorFullScreen.swift */; };
+		1F0E5F049530F58524E7BE95 /* ResizeHandle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B0E027F5827A16DC5016AA6 /* ResizeHandle.swift */; };
 		1F91F1A7DBDDCD73CCE8C348 /* PlanLane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81C51E33F52C1D6BD5DB1664 /* PlanLane.swift */; };
 		2338FA954F5C72D4950C4A57 /* MessageBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8EAE13468EF5CF55B7DD396 /* MessageBubble.swift */; };
 		25606622B78BBDDA73726986 /* LaunchOptions.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB02097A62CC28EC0B3834B1 /* LaunchOptions.swift */; };
@@ -176,9 +178,11 @@
 		9013A7C0B8561D4DADA9553C /* DictationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictationService.swift; sourceTree = "<group>"; };
 		90D781B92879DD6D65B71FAB /* SettingsPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPane.swift; sourceTree = "<group>"; };
 		95328C09291FF057FF5EC160 /* DesignSystemTokenTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystemTokenTests.swift; sourceTree = "<group>"; };
+		9B0E027F5827A16DC5016AA6 /* ResizeHandle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResizeHandle.swift; sourceTree = "<group>"; };
 		9D3C08CEF2BB69842ABC9BBF /* TutorService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TutorService.swift; sourceTree = "<group>"; };
 		A6C3A3607F71F2C99C586DB2 /* SessionPersistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionPersistence.swift; sourceTree = "<group>"; };
 		A6E511C61F09C41213BF0FB0 /* KeyField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyField.swift; sourceTree = "<group>"; };
+		AF203F43C82054D956C00D85 /* ResizeHandleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResizeHandleTests.swift; sourceTree = "<group>"; };
 		B707E1CFA3F0C0117CDF5213 /* Composer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Composer.swift; sourceTree = "<group>"; };
 		B7A7B29659EE4E89E8E0044F /* UIState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIState.swift; sourceTree = "<group>"; };
 		BE113B7E3E62FDCFA7413776 /* MathTutorApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MathTutorApp.swift; sourceTree = "<group>"; };
@@ -321,6 +325,7 @@
 				5EC6EB284F209A08B2D0E2A1 /* IconTests.swift */,
 				255C26B763A5F36C69C477AD /* LayoutTests.swift */,
 				D6A6AC55DDB94015492D4C2A /* MathTutorTests.swift */,
+				AF203F43C82054D956C00D85 /* ResizeHandleTests.swift */,
 				DE2F1C8A199C9377474DF7AA /* ResizeModelTests.swift */,
 				EAF8603329EBED4EA8EE8199 /* SettingsAndPlanTests.swift */,
 				61070F61E8510619F84F5D97 /* ShellComponentTests.swift */,
@@ -475,6 +480,7 @@
 			isa = PBXGroup;
 			children = (
 				68777CB8E695F332E3520F4A /* ResizeGeometry.swift */,
+				9B0E027F5827A16DC5016AA6 /* ResizeHandle.swift */,
 				2D557CC670C82D9747A86266 /* ResizeModel.swift */,
 			);
 			path = Resize;
@@ -623,6 +629,7 @@
 				B31E3D93CDC97207E80A325F /* IconTests.swift in Sources */,
 				AA43B884F9CF945EA312DEE2 /* LayoutTests.swift in Sources */,
 				E7AA3EADB2E34641D55A2A0A /* MathTutorTests.swift in Sources */,
+				08EF5D10480D0105D90EB2E9 /* ResizeHandleTests.swift in Sources */,
 				86FF5393AB87153348D04F74 /* ResizeModelTests.swift in Sources */,
 				13E86E94188874ABEB3431DB /* SVGPathTests.swift in Sources */,
 				090540C2A451B7303C90A2C3 /* SettingsAndPlanTests.swift in Sources */,
@@ -675,6 +682,7 @@
 				EDEB51FDD8E17D13290CD0AF /* OrbHalo.swift in Sources */,
 				1F91F1A7DBDDCD73CCE8C348 /* PlanLane.swift in Sources */,
 				2F542EF31CD1FFD1F974B6CE /* ResizeGeometry.swift in Sources */,
+				1F0E5F049530F58524E7BE95 /* ResizeHandle.swift in Sources */,
 				D517AAA5757CDE87D2187E3D /* ResizeModel.swift in Sources */,
 				882764C4645E540FA3B4D6F8 /* RootView.swift in Sources */,
 				3055C301F9CB7C0162436FBA /* SVGPath.swift in Sources */,
