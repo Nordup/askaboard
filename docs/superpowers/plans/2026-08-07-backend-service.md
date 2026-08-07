@@ -1261,11 +1261,29 @@ import pytest
 from app.tutor.retry import classify
 
 
-@pytest.mark.parametrize("code", ["credit_balance_exhausted", "insufficient_quota"])
+# Every code in OpenAITranscription.swift's terminalBillingCodes must appear
+# here. One the Swift client knows and this one does not would be retried in
+# production, and no other test would catch it.
+@pytest.mark.parametrize("code", [
+    "credit_balance_exhausted",
+    "organization_spend_limit_exceeded",
+    "project_spend_limit_exceeded",
+    "organization_usage_limit_exceeded",
+    "insufficient_quota",
+])
 def test_billing_429s_are_never_retried(code):
     decision = classify(429, {"error": {"code": code}})
     assert decision.retry is False
     assert "billing" in decision.reason
+
+
+@pytest.mark.parametrize("body", [
+    None, {}, {"error": None}, {"error": {}}, {"error": "a bare string"},
+    {"error": {"code": None}},
+])
+def test_malformed_error_bodies_never_raise(body):
+    # A crash here turns a recoverable provider hiccup into a dead turn.
+    assert classify(429, body).retry is True
 
 
 def test_rate_limit_429_is_retried():
@@ -1302,14 +1320,17 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'app.tutor.retry'`
 ```python
 from dataclasses import dataclass
 
-# Ported from OpenAITranscription.swift, which already draws this line correctly:
-# a spend problem is final, and retrying it only makes the learner wait longer
-# for the same failure.
+# The first four are `terminalBillingCodes` in OpenAITranscription.swift,
+# copied exactly — that set is already correct and already shipping, and a
+# code it knows that this file does not would be retried through several
+# backoff sleeps before failing anyway. `insufficient_quota` is the fifth
+# real code the Swift set predates. Waiting cannot buy credit.
 BILLING_ERROR_CODES = frozenset({
     "credit_balance_exhausted",
+    "organization_spend_limit_exceeded",
+    "project_spend_limit_exceeded",
+    "organization_usage_limit_exceeded",
     "insufficient_quota",
-    "billing_hard_limit_reached",
-    "billing_not_active",
 })
 
 
@@ -1319,9 +1340,26 @@ class RetryDecision:
     reason: str
 
 
+def _error_code(body: dict | None) -> str | None:
+    """Extract the provider's error code from a body of any shape.
+
+    Provider error bodies are not guaranteed well-formed, and an exception
+    escaping here would turn a recoverable hiccup into a crashed turn. Every
+    shape resolves to None rather than raising: None, {}, {"error": None},
+    {"error": {}}, {"error": "a bare string"}.
+    """
+    if not isinstance(body, dict):
+        return None
+    error = body.get("error")
+    if not isinstance(error, dict):
+        return None
+    code = error.get("code")
+    return code if isinstance(code, str) else None
+
+
 def classify(status_code: int, body: dict | None) -> RetryDecision:
     if status_code == 429:
-        code = ((body or {}).get("error") or {}).get("code")
+        code = _error_code(body)
         if code in BILLING_ERROR_CODES:
             return RetryDecision(False, f"billing error {code} is final")
         return RetryDecision(True, "rate limited")
