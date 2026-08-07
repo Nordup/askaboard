@@ -54,9 +54,11 @@ uv run alembic upgrade head
 The three marked *optional* have defaults in [`app/config.py`](app/config.py) and can be left out of `.env` entirely; the rest are required and the service will not start without them.
 
 > **`TEST_DATABASE_URL` must point at a different Neon branch than
-> `DATABASE_URL`.** The database test fixture drops every table on whatever
-> `TEST_DATABASE_URL` names, on every run. If it's ever the same branch as
-> `DATABASE_URL`, running the test suite deletes real session data. Use a
+> `DATABASE_URL`.** Each test run creates its own Postgres schema
+> (`test_<uuid>`) on whatever `TEST_DATABASE_URL` names, and drops that
+> schema — never the rest of the branch — at the end of the run. If it's
+> ever the same branch as `DATABASE_URL`, that schema still lives alongside
+> real data on that branch, which is not where test data belongs. Use a
 > dedicated Neon branch (e.g. a branch literally named `test`) and never
 > point it at the branch the app itself uses.
 
@@ -201,14 +203,24 @@ provides no protection at all. Fixing it needs a per-model pricing table
 (input/output/reasoning token cost by model) so a dollar figure can be
 computed from `usage` and written when a turn finishes or fails.
 
-**Database tests cannot run concurrently.** The test suite's database
-fixture (`server/tests/conftest.py`) drops and recreates every table on
-`TEST_DATABASE_URL` at the start of a run. Two test runs against the same
-Neon branch at the same time have deadlocked against each other in
-practice — this isn't hypothetical, it's been observed. If you're running
-the suite and someone else (or another agent) might be running it against
-the same `TEST_DATABASE_URL` at the same moment, coordinate first, or give
-each run its own branch.
+**The daily spend cap's only real backstop is the model allowlist.**
+`MODEL_ALLOWLIST` in [`app/config.py`](app/config.py) rejects any
+`model` outside `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` with a `422`
+before any provider call — that's a real ceiling today, independent of the
+non-functional spend cap above. It bounds *which* models can be called, not
+*how much* they cost to run, so it doesn't substitute for a real pricing
+table; it just closes the "any model at any price" gap the missing spend
+cap otherwise leaves wide open.
+
+**Database tests can now run concurrently.** Each test *run* (one `pytest`
+process) creates its own Postgres schema (`test_<uuid>`) on
+`TEST_DATABASE_URL`, via `schema_translate_map`, and drops only that schema
+at session teardown — see `server/tests/conftest.py`. Two runs against the
+same Neon branch at the same time no longer share tables to drop out from
+under each other. Individual tests within one run still get a clean slate
+via `TRUNCATE` rather than `DROP`/`CREATE`, which was also the leading
+suspect for a prepared-statement-cache/PgBouncer interaction that produced
+one spurious 404 in an earlier run.
 
 ## Testing
 
