@@ -58,6 +58,9 @@ dev = [
     "pytest-asyncio>=0.24",
     "respx>=0.21",
     "httpx>=0.27",
+    # conftest loads server/.env directly; do not rely on the transitive copy
+    # that arrives via pydantic-settings.
+    "python-dotenv>=1.0",
 ]
 
 [tool.pytest.ini_options]
@@ -429,26 +432,59 @@ class Attachment(Base):
 
 ```python
 from collections.abc import AsyncIterator
-from functools import lru_cache
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import get_settings
 
+# Deliberately NOT lru_cache'd. A memoised engine binds its asyncpg pool to
+# whichever event loop created it, and pytest gives each test function its own
+# loop — so the second test to touch db_session would fail with "attached to a
+# different loop". The engine's lifetime is the app's lifetime, which is what
+# lifespan is for.
+_engine: AsyncEngine | None = None
+_factory: async_sessionmaker[AsyncSession] | None = None
 
-@lru_cache
-def get_engine() -> AsyncEngine:
-    return create_async_engine(get_settings().database_url, pool_pre_ping=True)
+
+def init_engine() -> AsyncEngine:
+    global _engine, _factory
+    _engine = create_async_engine(get_settings().database_url, pool_pre_ping=True)
+    _factory = async_sessionmaker(_engine, expire_on_commit=False)
+    return _engine
 
 
-@lru_cache
+async def dispose_engine() -> None:
+    global _engine, _factory
+    if _engine is not None:
+        await _engine.dispose()
+    _engine = None
+    _factory = None
+
+
 def session_factory() -> async_sessionmaker[AsyncSession]:
-    return async_sessionmaker(get_engine(), expire_on_commit=False)
+    if _factory is None:
+        raise RuntimeError("init_engine() has not run — is the app's lifespan wired up?")
+    return _factory
 
 
 async def db_session() -> AsyncIterator[AsyncSession]:
     async with session_factory()() as session:
         yield session
+```
+
+`create_app()` gains the matching lifespan:
+
+```python
+from contextlib import asynccontextmanager
+
+from app.store.db import dispose_engine, init_engine
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_engine()
+    yield
+    await dispose_engine()
 ```
 
 - [ ] **Step 3: Initialise Alembic and write the initial migration**
@@ -475,10 +511,17 @@ Add to `server/tests/conftest.py`:
 import os
 
 import pytest
+from dotenv import load_dotenv
 from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.store.models import Base
+
+# Without this, TEST_DATABASE_URL is never set from server/.env and every
+# database test SKIPS — a developer with a fully configured machine sees a
+# green run in which the database was never touched. override=False keeps the
+# setdefault values above authoritative for the non-database tests.
+load_dotenv(override=False)
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 
@@ -535,7 +578,68 @@ async def test_session_and_message_round_trip(db):
     assert stored.text == "hello"
     assert stored.session_id == session.id
     assert isinstance(session.id, uuid.UUID)
+
+
+@requires_db
+async def test_turn_keeps_the_client_generated_id(db):
+    """Idempotency depends on the client owning this value, not the database."""
+    session = Session(model="gpt-5.6-luna", reasoning_effort="high")
+    db.add(session)
+    await db.flush()
+    turn_id = uuid.uuid4()
+    db.add(Turn(id=turn_id, session_id=session.id, status="running",
+                model="gpt-5.6-luna", reasoning_effort="high"))
+    await db.commit()
+    assert (await db.execute(select(Turn))).scalar_one().id == turn_id
+
+
+@requires_db
+async def test_a_turn_without_an_id_is_rejected(db):
+    # Pins the deliberate absence of a default. If someone "helpfully" adds
+    # one, a replayed request stops colliding and idempotency silently dies.
+    session = Session(model="gpt-5.6-luna", reasoning_effort="high")
+    db.add(session)
+    await db.flush()
+    db.add(Turn(session_id=session.id, status="running",
+                model="gpt-5.6-luna", reasoning_effort="high"))
+    with pytest.raises(IntegrityError):
+        await db.commit()
+
+
+@requires_db
+async def test_trace_rows_round_trip_with_nested_jsonb(db):
+    session = Session(model="gpt-5.6-luna", reasoning_effort="high")
+    db.add(session)
+    await db.flush()
+    turn_id = uuid.uuid4()
+    db.add(Turn(id=turn_id, session_id=session.id, status="ok",
+                model="gpt-5.6-luna", reasoning_effort="high"))
+    await db.flush()
+
+    request = {"input": [{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}]}
+    call = LLMCall(turn_id=turn_id, seq=0, model="gpt-5.6-luna", request=request)
+    db.add(call)
+    await db.flush()
+    db.add(ToolCall(turn_id=turn_id, llm_call_id=call.id, name="set_workspace",
+                    arguments={"plan": {"steps": ["a", "b"]}}))
+    db.add(Attachment(turn_id=turn_id, kind="board_png", blob_key="sha256:abc",
+                      sha256="abc", bytes=12, content_type="image/png"))
+    await db.commit()
+
+    assert (await db.execute(select(LLMCall))).scalar_one().request == request
+    assert (await db.execute(select(ToolCall))).scalar_one().name == "set_workspace"
+    assert (await db.execute(select(Attachment))).scalar_one().blob_key == "sha256:abc"
+
+
+@requires_db
+async def test_a_message_needs_a_real_session(db):
+    db.add(Message(session_id=uuid.uuid4(), seq=0, role="learner", text="orphan"))
+    with pytest.raises(IntegrityError):
+        await db.commit()
 ```
+
+Imports for the above: `pytest`, `from sqlalchemy.exc import IntegrityError`, and
+`Attachment, LLMCall, Session, Message, ToolCall, Turn` from `app.store.models`.
 
 - [ ] **Step 5: Run and confirm it passes**
 
