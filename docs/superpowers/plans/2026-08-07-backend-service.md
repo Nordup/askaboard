@@ -904,8 +904,13 @@ class EventTranslator:
 
         if kind == "response.output_item.added":
             item = event.get("item") or {}
-            if item.get("type") == "function_call":
-                self._tool_names[event["output_index"]] = item.get("name", "")
+            index = event.get("output_index")
+            # Guard output_index the same way the arguments branch below does.
+            # translate() runs inside the SSE loop for every provider event, and
+            # a KeyError here would kill a live turn the first time the provider
+            # ships an event variant that omits the field.
+            if index is not None and item.get("type") == "function_call":
+                self._tool_names[index] = item.get("name", "")
             return []
 
         if kind == "response.function_call_arguments.done":
