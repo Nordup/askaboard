@@ -73,6 +73,8 @@ class Recorder:
             ))
 
             turn = await session.get(Turn, turn_id)
+            if turn is None:
+                raise ValueError(f"finish_turn: no turn found with id {turn_id}")
             turn.status = "ok"
             turn.ttft_ms = ttft_ms
             turn.latency_ms = latency_ms
@@ -89,6 +91,8 @@ class Recorder:
     ) -> None:
         async with self._sessionmaker() as session:
             turn = await session.get(Turn, turn_id)
+            if turn is None:
+                raise ValueError(f"fail_turn: no turn found with id {turn_id}")
             turn.status = "error"
             turn.error = {"message": message, "retryable": retryable}
             turn.finished_at = datetime.now(timezone.utc)

@@ -35,10 +35,11 @@ async def test_finish_turn_writes_the_turn_and_its_llm_call(db, db_factory, tmp_
     db.add(session)
     await db.flush()
     turn_id = uuid.uuid4()
-    db.add(Turn(
+    turn = Turn(
         id=turn_id, session_id=session.id, status="running",
         model="gpt-5.6-luna", reasoning_effort="high",
-    ))
+    )
+    db.add(turn)
     await db.commit()
 
     # The factory, not the borrowed `db` session — the recorder opens and
@@ -55,13 +56,23 @@ async def test_finish_turn_writes_the_turn_and_its_llm_call(db, db_factory, tmp_
         ttft_ms=420, latency_ms=1800,
     )
 
-    turn = (await db.execute(select(Turn))).scalar_one()
-    assert turn.status == "ok"
-    assert turn.ttft_ms == 420
-    assert turn.input_tokens == 100
+    # Read back through a fresh session, not `db`. `db` still holds a strong
+    # reference to the `turn` object above, so its identity map would hand
+    # back that same (now stale) instance on a plain select() instead of
+    # re-querying the row the recorder just wrote — the assertions would
+    # pass against pre-update values even if finish_turn did nothing. A new
+    # session from db_factory has no identity-map entry for this row, so it
+    # has no choice but to load what is actually in the database, which is
+    # also a more honest test of what finish_turn promises: that another
+    # connection can see the write.
+    async with db_factory() as fresh:
+        stored_turn = (await fresh.execute(select(Turn))).scalar_one()
+        assert stored_turn.status == "ok"
+        assert stored_turn.ttft_ms == 420
+        assert stored_turn.input_tokens == 100
 
-    call = (await db.execute(select(LLMCall))).scalar_one()
-    assert call.raw_events_blob is not None
+        call = (await fresh.execute(select(LLMCall))).scalar_one()
+        assert call.raw_events_blob is not None
 
 
 @requires_db
