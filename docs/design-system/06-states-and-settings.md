@@ -1428,8 +1428,6 @@ Blocks are separated by 48 / 48 / 48 / **44**. Every other value on the board is
 
 The board-10 sentence was accurate; the board-11 sentence was not — the key necessarily left the device on every request. Both boards' sentences are now deleted along with the key itself: the app holds no OpenAI credential to make a promise about. Neither wording ships.
 
-**Opened in its place:** the microphone purpose string in `project.yml` still names OpenAI as the direct recipient and states that no copy of the recording is kept, which the backend's stated retention position contradicts. It is user-facing permission copy and has not been rewritten.
-
 ## 10. States that are still undrawn
 
 Nothing in the file specifies:

@@ -76,19 +76,20 @@ final class ChatComponentTests: XCTestCase {
         let stack = AttachmentStackMetrics.composer(.panel)
 
         XCTAssertEqual(stack.width, 301)
-        XCTAssertEqual(stack.bodyHeight, 58)
-        // A capsule's effective radius is half its height: 58 ÷ 2.
-        XCTAssertEqual(stack.bodyTopRadius, 29)
-        // cardHeight = visibleBand + radiusOfShapeOnTop → 38 + 29.
-        XCTAssertEqual(stack.derivedCardHeight, 67)
-        XCTAssertEqual(stack.cardHeight, 67)
+        XCTAssertEqual(stack.bodyHeight, 50)
+        // A capsule's effective radius is half its height: 50 ÷ 2. Every number below moved
+        // with the pill when it came down 58 → 50; the card's own 38pt band did not.
+        XCTAssertEqual(stack.bodyTopRadius, 25)
+        // cardHeight = visibleBand + radiusOfShapeOnTop → 38 + 25.
+        XCTAssertEqual(stack.derivedCardHeight, 63)
+        XCTAssertEqual(stack.cardHeight, 63)
         XCTAssertTrue(stack.followsDerivedLaw)
 
         XCTAssertEqual(stack.visibleBand, 38)
-        XCTAssertEqual(stack.overlap, 29)
-        XCTAssertEqual(stack.totalHeight, 96)
-        // "At 301 wide with a 29 radius, that straight run is 301 − 2 × 29 = 243pt."
-        XCTAssertEqual(stack.straightTopRun, 243)
+        XCTAssertEqual(stack.overlap, 25)
+        XCTAssertEqual(stack.totalHeight, 88)
+        // At 301 wide with a 25 radius, that straight run is 301 − 2 × 25 = 251pt.
+        XCTAssertEqual(stack.straightTopRun, 251)
         // 301 − 20 − 16, "fills the card's visible band exactly".
         XCTAssertEqual(stack.labelRowWidth, 265)
     }
@@ -130,11 +131,13 @@ final class ChatComponentTests: XCTestCase {
         let stack = AttachmentStackMetrics.composer(.fullScreen)
 
         XCTAssertEqual(stack.width, 740)
-        XCTAssertEqual(stack.bodyHeight, 80)
-        XCTAssertEqual(stack.bodyTopRadius, 40)
-        XCTAssertEqual(stack.cardHeight, 78)
+        XCTAssertEqual(stack.bodyHeight, 68)
+        XCTAssertEqual(stack.bodyTopRadius, 34)
+        // 52 + 34. The wide band is 52, not the panel's 38 — see `CardStyle.fullScreen`.
+        XCTAssertEqual(stack.cardHeight, 86)
         XCTAssertTrue(stack.followsDerivedLaw)
-        XCTAssertEqual(stack.totalHeight, 118)
+        // "band + pill goes 88 → 120, the same 1.36" the pill itself stepped by.
+        XCTAssertEqual(stack.totalHeight, 120)
     }
 
     // MARK: - Thread rhythm
@@ -320,47 +323,51 @@ final class ChatComponentTests: XCTestCase {
 
     // MARK: - Composer
 
-    func testPanelComposerMeasuresThreeHundredAndOneByFiftyEight() {
+    /// **The pill came down a step**, and this test came down with it. Everything in the row
+    /// stepped in proportion — paddings, gap and both button boxes — with the one documented
+    /// exception that the *glyphs* did not: `composer/send` still renders at 22 and
+    /// `composer/voice` at 20, because those are the sizes `design/icons.json` publishes and
+    /// scaling a box is a layout change while inventing a 19 is a new render size.
+    func testPanelComposerMeasuresThreeHundredAndOneByFifty() {
         let composer = ComposerMetrics.panel
 
         XCTAssertEqual(composer.width, 301)
-        XCTAssertEqual(composer.height, 58)
-        XCTAssertEqual(composer.paddingLeading, 20)
-        XCTAssertEqual(composer.paddingTrailing, 8)
-        XCTAssertEqual(composer.gap, 12)
+        XCTAssertEqual(composer.height, 50)
+        XCTAssertEqual(composer.paddingLeading, 18)
+        XCTAssertEqual(composer.paddingTrailing, 6)
+        XCTAssertEqual(composer.gap, 10)
         XCTAssertEqual(composer.marqueeSize, 24)
-        XCTAssertEqual(composer.voiceButtonSize, 38)
-        XCTAssertEqual(composer.sendButtonSize, 42)
-        XCTAssertEqual(composer.sendGlyphSize, 22)
+        XCTAssertEqual(composer.voiceButtonSize, 34)
+        XCTAssertEqual(composer.sendButtonSize, 38)
+        XCTAssertEqual(composer.sendGlyphSize, 22, "the glyph did not step with its box")
         XCTAssertEqual(composer.placeholder, "Ask anything...")
         XCTAssertEqual(composer.placeholderStyle, .bodyControl)
-        XCTAssertFalse(composer.sendIsRaised, "The 42pt send button carries no shadow.")
+        XCTAssertFalse(composer.sendIsRaised, "The panel send button carries no shadow.")
 
-        // 301 − 20 − 24 − 12 − 12 − 38 − 12 − 42 − 8 = 133, the width screen 05 measures
-        // for the placeholder. The row closing exactly is what proves the paddings and the
-        // gap are right.
-        XCTAssertEqual(composer.placeholderWidth(includingMarquee: true), 133)
-        // With a selection attached the composer grows the card: 38 visible + 58 pill.
-        XCTAssertEqual(composer.attachedHeight, 96)
+        // 301 − 18 − 24 − 10 − 151 − 10 − 34 − 10 − 38 − 6 = 0. The row closing exactly is
+        // what proves the paddings and the gap are right.
+        XCTAssertEqual(composer.placeholderWidth(includingMarquee: true), 151)
+        // With a selection attached the composer grows the card: 38 visible + 50 pill.
+        XCTAssertEqual(composer.attachedHeight, 88)
     }
 
-    func testFullScreenComposerMeasuresSevenHundredAndFortyByEighty() {
+    func testFullScreenComposerMeasuresSevenHundredAndFortyBySixtyEight() {
         let composer = ComposerMetrics.fullScreen
 
         XCTAssertEqual(composer.width, 740)
-        XCTAssertEqual(composer.height, 80)
-        XCTAssertEqual(composer.paddingLeading, DS.Space.s8)
-        XCTAssertEqual(composer.paddingTrailing, DS.Space.s3)
-        XCTAssertEqual(composer.gap, 18)
-        XCTAssertEqual(composer.voiceButtonSize, 52)
-        XCTAssertEqual(composer.voiceGlyphSize, 26)
-        XCTAssertEqual(composer.sendButtonSize, 56)
-        XCTAssertEqual(composer.sendGlyphSize, 26)
+        XCTAssertEqual(composer.height, 68)
+        XCTAssertEqual(composer.paddingLeading, DS.Space.s7)
+        XCTAssertEqual(composer.paddingTrailing, DS.Space.s2)
+        XCTAssertEqual(composer.gap, DS.Space.s4)
+        XCTAssertEqual(composer.voiceButtonSize, 46)
+        XCTAssertEqual(composer.voiceGlyphSize, 26, "the glyph did not step with its box")
+        XCTAssertEqual(composer.sendButtonSize, 52)
+        XCTAssertEqual(composer.sendGlyphSize, 26, "the glyph did not step with its box")
         XCTAssertEqual(composer.placeholder, "Ask me anything...")
-        XCTAssertTrue(composer.sendIsRaised, "The 56pt send button is the one that carries a shadow.")
+        XCTAssertTrue(composer.sendIsRaised, "The full-screen send button is the one that carries a shadow.")
 
-        // 740 − 32 − 552 − 18 − 52 − 18 − 56 − 12 = 0, against screen 07's measured 552.
-        XCTAssertEqual(composer.placeholderWidth(includingMarquee: false), 552)
+        // 740 − 28 − 574 − 16 − 46 − 16 − 52 − 8 = 0, the same subtraction at the wide scale.
+        XCTAssertEqual(composer.placeholderWidth(includingMarquee: false), 574)
     }
 
     /// The bug the composer had: `--container-column` is 740 and the reading column is not.
@@ -400,10 +407,10 @@ final class ChatComponentTests: XCTestCase {
         // measuring the board rather than measuring this function.
         XCTAssertEqual(ComposerMetrics.for(.panel, width: DS.Container.panelContent), .panel)
         XCTAssertEqual(ComposerMetrics.for(.fullScreen, width: DS.Container.column), .fullScreen)
-        // 740 − 32 − 12 − 52 − 18 − 56 − 18 = 552 at the design's column; 456 at a 644 one.
+        // 740 − 28 − 8 − 46 − 52 − 2 × 16 = 574 at the design's column; 478 at a 644 one.
         XCTAssertEqual(
             ComposerMetrics.for(.fullScreen, width: 644).placeholderWidth(includingMarquee: false),
-            456
+            478
         )
     }
 
@@ -975,37 +982,42 @@ final class ChatComponentTests: XCTestCase {
     /// The reference case, to the point. Screen 07's own rhythm:
     ///
     /// ```
-    /// 150 greeting top · 418 bottom · 174 gap · 592 grid top · 760 bottom · 164 gap · 924
+    /// 162 greeting top · 430 bottom · 174 gap · 604 grid top · 772 bottom · 164 gap · 936
     /// composer top · 1004 composer bottom
     /// ```
     ///
     /// Every one of those is now a result rather than a constant, and this is the test that
-    /// says the results are still the board's.
+    /// says the results are still the board's. **Two things moved them since the board was
+    /// transcribed**, and both are the app's, not this test's: the status bar is gone, so the
+    /// content band starts at 28 rather than 68, and the pill came down 80 → 68, which hands
+    /// the block twelve more points of slack.
     func testTheReadingColumnReproducesScreenSevenOnTheBoardsOwnScreen() {
         let column = TutorColumnMetrics(layout: .reference)
 
         XCTAssertEqual(column.x, 352)
         XCTAssertEqual(column.width, 740)
-        XCTAssertEqual(column.top, 68)
+        XCTAssertEqual(column.top, 28, "no status bar: the band starts at the screen's own edge inset")
         XCTAssertEqual(column.greetingHeight, 268)
         XCTAssertEqual(column.suggestionsHeight, 168)
-        XCTAssertEqual(column.greetingTop, 150)
-        XCTAssertEqual(column.suggestionsTop, 592)
-        XCTAssertEqual(column.suggestionsTop + column.suggestionsHeight, 760)
-        XCTAssertEqual(column.composerTop(isAttached: false), 924)
+        XCTAssertEqual(column.greetingTop, 162)
+        XCTAssertEqual(column.suggestionsTop, 604)
+        XCTAssertEqual(column.suggestionsTop + column.suggestionsHeight, 772)
+        XCTAssertEqual(column.composerTop(isAttached: false), 936)
         XCTAssertEqual(column.bottom, 1004)
 
-        // The 82 is what the band has left after the block, and the sum is the check that the
-        // two kept gaps are the right two: 82 + 268 + 174 + 168 + 164 = 856 = 1004 − 68.
-        XCTAssertEqual(column.startSlack, 82)
+        // The 134 is what the band has left after the block, and the sum is the check that the
+        // two kept gaps are the right two: 134 + 610 + 164 = 908 = 1004 − 28 − 68.
+        XCTAssertEqual(column.startSlack, 134)
         XCTAssertEqual(
             column.startSlack + column.startContentHeight + TutorColumnMetrics.suggestionsToComposer,
             column.bottom - column.top - ComposerMetrics.fullScreen.height
         )
 
-        // Board 13's thread lanes on the same screen: controls 68 → 100, thread 100 → 900.
-        XCTAssertEqual(column.threadTop, 100)
-        XCTAssertEqual(column.threadHeight, 800)
+        // Board 13's thread lane, after the fade came back: the thread takes the whole content
+        // band and scrolls *behind* the gear rather than starting a 32pt control band below it.
+        // That band was doing the fade's job by hand — see `TutorColumnMetrics.threadTop`.
+        XCTAssertEqual(column.threadTop, column.top)
+        XCTAssertEqual(column.threadHeight, 976)
     }
 
     /// The reason the constants had to go: the grid wraps to one chip a row below 740 and
@@ -1044,20 +1056,24 @@ final class ChatComponentTests: XCTestCase {
                 )
             } else {
                 // And where it does not, the block starts at the top of the band and scrolls
-                // rather than being pulled up off its own greeting.
-                XCTAssertEqual(column.greetingTop, column.top, context)
+                // rather than being pulled up off its own greeting. `columnTop` rather than
+                // `top`: a column narrow enough for the gear to overlap it gives way by one
+                // control band first, and that is the top the block actually starts from.
+                XCTAssertEqual(column.greetingTop, column.columnTop, context)
             }
 
             XCTAssertGreaterThan(column.threadHeight, 0, context)
-            XCTAssertEqual(column.threadTop, column.top + TutorPanelMetrics.controlsHeight, context)
+            XCTAssertEqual(column.threadTop, column.top, context)
         }
 
         // The wrapped case, spelled out. A 9.7-inch iPad in portrait gives a 644pt column, so
-        // the grid doubles to 356 and the block is 798 tall in a 704pt band: 188 points more
-        // than the design's 610 in a band that is 152 shorter. The old constants would have
-        // drawn the grid from 592 straight through the composer at 916; here the block takes
-        // the whole band, the greeting starts at the top of it and the column scrolls, which
-        // is what `TutorFullScreen` wraps it in a scroll view for.
+        // the grid doubles to 356 and the block is 798 tall in a 684pt band: 188 points more
+        // than the design's 610 in a band that is 60 shorter. The old constants would have
+        // drawn the grid straight through the composer; here the block takes the whole band,
+        // the greeting starts at the top of it and the column scrolls, which is what
+        // `TutorFullScreen` wraps it in a scroll view for. The band is 684 rather than 704
+        // because the gear overlaps a column this narrow, so `columnTop` gives way by one
+        // 32pt control band — which the shorter pill only hands 12 of back.
         let portrait = TutorColumnMetrics(
             layout: ScreenLayout(
                 size: CGSize(width: 768, height: 1024),
@@ -1067,9 +1083,9 @@ final class ChatComponentTests: XCTestCase {
         XCTAssertEqual(portrait.width, 644)
         XCTAssertEqual(portrait.suggestionsHeight, 356)
         XCTAssertEqual(portrait.startContentHeight, 798)
-        XCTAssertEqual(portrait.startRegionHeight, 704)
+        XCTAssertEqual(portrait.startRegionHeight, 684)
         XCTAssertEqual(portrait.startSlack, 0)
-        XCTAssertEqual(portrait.greetingTop, portrait.top)
+        XCTAssertEqual(portrait.greetingTop, portrait.columnTop)
         XCTAssertTrue(portrait.startScrolls, "this is the column that has to scroll")
         // And the design's own screen is not: a scroll view there would clip the hero halo and
         // the chips' shadows, which is the diff the reference screenshots are for.
@@ -1085,7 +1101,7 @@ final class ChatComponentTests: XCTestCase {
     ///
     /// Board 07 draws no card in the wide composer at all; the app shows one because a
     /// selection made on the board has to be visible before it is sent. It grows into its own
-    /// 38pt band, and the greeting jumping 38 points the moment a selection is attached would
+    /// 52pt band, and the greeting jumping 52 points the moment a selection is attached would
     /// be the composer redrawing the screen behind it.
     func testAnAttachedSelectionGrowsTheComposerWithoutMovingTheColumn() {
         let column = TutorColumnMetrics(layout: .reference)
@@ -1095,9 +1111,9 @@ final class ChatComponentTests: XCTestCase {
             column.composerTop(isAttached: false) - AttachmentStackMetrics.composer(.fullScreen).visibleBand
         )
         // Both lanes above are measured off the resting composer, so neither moves.
-        XCTAssertEqual(column.greetingTop, 150)
-        XCTAssertEqual(column.suggestionsTop, 592)
-        XCTAssertEqual(column.threadHeight, 800)
+        XCTAssertEqual(column.greetingTop, 162)
+        XCTAssertEqual(column.suggestionsTop, 604)
+        XCTAssertEqual(column.threadHeight, 976)
     }
 
     // MARK: - Degenerate widths

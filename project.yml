@@ -58,7 +58,7 @@ targets:
           tutor's message box. When you tap it again the recording is sent to OpenAI, which
           turns it into text you can read and edit before sending. OpenAI does not use it to
           train its models, but can keep it for up to 30 days to check for misuse before
-          deleting it. Math Tutor keeps no copy of the recording.
+          deleting it.
         # Source Sans 3 is the design's only typeface and iOS does not ship it.
         # Bundled at exactly the three weights the product uses: 400, 500, 600.
         UIAppFonts:
