@@ -18,3 +18,5 @@ build/
 server/.env
 server/blobs/
 server/.venv/
+server/.pytest_cache/
+server/**/__pycache__/
