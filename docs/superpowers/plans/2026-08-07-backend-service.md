@@ -6,7 +6,7 @@
 
 **Architecture:** A thin proxy that is also the recorder. `assemble_context()` and a tool registry are the two seams where memory, retrieval and web search get added later without touching the request path. The strict `reply`/`plan`/`exercise` JSON schema is replaced by streamed prose plus a `set_workspace` function tool.
 
-**Tech Stack:** Python 3.12, FastAPI, uvicorn, `openai` SDK (async), SQLAlchemy 2.0 async + asyncpg, Alembic, pydantic-settings, pytest + pytest-asyncio + respx, testcontainers for Postgres.
+**Tech Stack:** Python 3.12, FastAPI, uvicorn, `openai` SDK (async), SQLAlchemy 2.0 async + asyncpg, Alembic, pydantic-settings, pytest + pytest-asyncio + respx. Database tests run against a dedicated Neon branch — no Docker.
 
 ## Global Constraints
 
@@ -18,7 +18,8 @@
 - Every model call sets `store: false`. Our database is the source of truth; OpenAI is not asked to retain anything.
 - Retention is indefinite. Nothing in this plan deletes or expires a row or a blob.
 - Billing 429s (`credit_balance_exhausted`, `insufficient_quota`, and spend-limit codes) are **never** retried.
-- No network in the test suite except the one opt-in live smoke test behind `MATHTUTOR_LIVE_TESTS=1`.
+- **No provider network calls in the test suite** except the one opt-in live smoke test behind `MATHTUTOR_LIVE_TESTS=1`. Every OpenAI interaction is mocked at the httpx transport with `respx`. Database tests do reach the network — they run against a dedicated Neon branch, which is the deliberate trade for not running Docker on this machine.
+- Database tests require `TEST_DATABASE_URL` and **skip** when it is unset, so the non-database suite stays runnable anywhere.
 
 ---
 
@@ -57,7 +58,6 @@ dev = [
     "pytest-asyncio>=0.24",
     "respx>=0.21",
     "httpx>=0.27",
-    "testcontainers[postgres]>=4.8",
 ]
 
 [tool.pytest.ini_options]
@@ -83,6 +83,10 @@ DEVICE_TOKEN=generate-with-python-secrets-token-urlsafe-32
 BLOB_DIR=./blobs
 DAILY_SPEND_CAP_USD=5.0
 PERSIST_DICTATION_AUDIO=true
+
+# A dedicated Neon branch. Database tests DROP every table on this URL, so it
+# must never be the branch the app itself uses.
+TEST_DATABASE_URL=postgresql+asyncpg://user:pass@host/db
 ```
 
 - [ ] **Step 2: Write the failing test**
@@ -468,24 +472,35 @@ def upgrade() -> None:
 Add to `server/tests/conftest.py`:
 
 ```python
+import os
+
 import pytest
+from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from testcontainers.postgres import PostgresContainer
 
 from app.store.models import Base
 
+TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 
-@pytest.fixture(scope="session")
-def postgres_url() -> str:
-    with PostgresContainer("pgvector/pgvector:pg17", driver="asyncpg") as pg:
-        yield pg.get_connection_url()
+requires_db = pytest.mark.skipif(
+    TEST_DATABASE_URL is None,
+    reason="Set TEST_DATABASE_URL to a Neon test branch to run database tests.",
+)
 
 
 @pytest.fixture
-async def db(postgres_url):
-    engine = create_async_engine(postgres_url)
+async def db():
+    """A clean schema per test, on a dedicated Neon branch.
+
+    Dropping and recreating is safe only because this branch holds nothing but
+    test data. Never point TEST_DATABASE_URL at the branch the app uses.
+    """
+    if TEST_DATABASE_URL is None:
+        pytest.skip("TEST_DATABASE_URL is not set.")
+    engine = create_async_engine(TEST_DATABASE_URL)
     async with engine.begin() as conn:
         await conn.execute(sa_text("CREATE EXTENSION IF NOT EXISTS vector"))
+        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     async with factory() as session:
@@ -493,7 +508,8 @@ async def db(postgres_url):
     await engine.dispose()
 ```
 
-Add `from sqlalchemy import text as sa_text` to the conftest imports.
+Every database test is decorated `@requires_db`, so a machine without
+`TEST_DATABASE_URL` still runs the rest of the suite green rather than erroring.
 
 `server/tests/test_models.py`:
 
@@ -503,8 +519,10 @@ import uuid
 from sqlalchemy import select
 
 from app.store.models import Message, Session
+from tests.conftest import requires_db
 
 
+@requires_db
 async def test_session_and_message_round_trip(db):
     session = Session(model="gpt-5.6-luna", reasoning_effort="high")
     db.add(session)
@@ -522,7 +540,7 @@ async def test_session_and_message_round_trip(db):
 - [ ] **Step 5: Run and confirm it passes**
 
 Run: `cd server && uv run pytest tests/test_models.py -v`
-Expected: PASS. Docker must be running — testcontainers pulls `pgvector/pgvector:pg17` on first use.
+Expected: PASS when `TEST_DATABASE_URL` points at the Neon test branch; SKIPPED when it is unset.
 
 - [ ] **Step 6: Apply the migration to Neon**
 
