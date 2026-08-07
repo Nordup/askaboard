@@ -30,7 +30,11 @@ final class ResizeHandleTests: XCTestCase {
     func testTheStripIsWithinTwoPointsOfTheHIGMinimum() {
         let breadth = ResizeHandleMetrics.hitBreadth(gutter: DS.Space.gap, into: DS.Space.panelInset)
         XCTAssertGreaterThanOrEqual(breadth, 42)
-        XCTAssertLessThanOrEqual(44 - breadth, 2)
+        // `abs`, not a bare `44 - breadth`: the un-absoluted form is algebraically identical
+        // to the `>=` above (`44 - breadth <= 2` ⟺ `breadth >= 42`) and would still pass at
+        // a breadth of 1000 — it asserts the same fact twice rather than bounding the gap
+        // from above.
+        XCTAssertLessThanOrEqual(abs(44 - breadth), 2)
     }
 
     func testTheCapsuleFitsInsideTheGutterItIsDrawnIn() {
@@ -47,5 +51,16 @@ final class ResizeHandleTests: XCTestCase {
             0,
             "otherwise a tap on the strip resizes the panel by half a point"
         )
+    }
+
+    /// Pins the two places `ResizeHandleMetrics` reuses a `DS` token rather than a literal,
+    /// so a future edit that swaps either back to a raw number fails a test instead of
+    /// silently drifting from the token it is supposed to track.
+    func testTheCapsuleRadiusIsTheDesignSystemsExtraSmallRadius() {
+        XCTAssertEqual(ResizeHandleMetrics.capsuleRadius, DS.Radius.xs)
+    }
+
+    func testTheAccessibilityStepIsTheDesignSystemsGap() {
+        XCTAssertEqual(ResizeHandleMetrics.accessibilityStep, DS.Space.gap)
     }
 }
