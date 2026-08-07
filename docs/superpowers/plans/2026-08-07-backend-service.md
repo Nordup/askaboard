@@ -1949,10 +1949,14 @@ async def test_finish_turn_writes_the_turn_and_its_llm_call(db, db_factory, tmp_
     db.add(session)
     await db.flush()
     turn_id = uuid.uuid4()
-    db.add(Turn(
+    # Bound to a local on purpose. Left inline, the identity map's weak
+    # reference lets it be collected, and the read-back below only works by
+    # that accident — which would break the moment someone named it.
+    turn_row = Turn(
         id=turn_id, session_id=session.id, status="running",
         model="gpt-5.6-luna", reasoning_effort="high",
-    ))
+    )
+    db.add(turn_row)
     await db.commit()
 
     # The factory, not the borrowed `db` session — the recorder opens and
@@ -1969,13 +1973,19 @@ async def test_finish_turn_writes_the_turn_and_its_llm_call(db, db_factory, tmp_
         ttft_ms=420, latency_ms=1800,
     )
 
-    turn = (await db.execute(select(Turn))).scalar_one()
-    assert turn.status == "ok"
-    assert turn.ttft_ms == 420
-    assert turn.input_tokens == 100
+    # Read back through a FRESH session, not the one that wrote the row.
+    # `db` still holds the Turn in its identity map; a plain select() there
+    # returns that object without refreshing it, so the assertion would pass
+    # against pre-update values. Reading from another connection is also what
+    # we actually want to prove — the recorder committed through its own.
+    async with db_factory() as reader:
+        turn = (await reader.execute(select(Turn))).scalar_one()
+        assert turn.status == "ok"
+        assert turn.ttft_ms == 420
+        assert turn.input_tokens == 100
 
-    call = (await db.execute(select(LLMCall))).scalar_one()
-    assert call.raw_events_blob is not None
+        call = (await reader.execute(select(LLMCall))).scalar_one()
+        assert call.raw_events_blob is not None
 
 
 @requires_db
