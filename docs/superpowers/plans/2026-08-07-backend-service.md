@@ -927,7 +927,7 @@ def test_system_prompt_directs_the_workspace_through_the_tool():
     assert "set_workspace" in SYSTEM_PROMPT
 
 
-def test_system_prompt_keeps_the_checking-work_rule():
+def test_system_prompt_keeps_the_checking_work_rule():
     assert "Checking work is not the same as being asked for the answer." in SYSTEM_PROMPT
 
 
@@ -966,8 +966,6 @@ def test_dont_know_signal_adds_its_section():
     )
     assert "I don’t know" in prompt
 ```
-
-Rename the third test to `test_system_prompt_keeps_the_checking_work_rule` — Python identifiers cannot contain a hyphen.
 
 - [ ] **Step 2: Run and confirm failure**
 
@@ -1987,6 +1985,7 @@ from __future__ import annotations
 import base64
 import time
 import uuid
+from dataclasses import dataclass
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
@@ -2007,6 +2006,14 @@ from app.tutor.loop import run_turn
 from app.tutor.retry import classify
 
 router = APIRouter(prefix="/v1", dependencies=[Depends(require_device_token)])
+
+
+@dataclass(frozen=True)
+class PendingMessage:
+    """The learner turn that has not been round-tripped through the DB yet."""
+
+    role: str
+    text: str
 
 
 class TurnRequest(BaseModel):
@@ -2051,8 +2058,10 @@ async def create_turn(body: TurnRequest, db: AsyncSession = Depends(db_session))
                 model=body.model, reasoning_effort=body.reasoning_effort))
     await db.commit()
 
+    # assemble_context reads only .role and .text, so the pending learner turn
+    # joins the history as a plain record rather than a premature ORM object.
     messages = list(session.messages) + [
-        type("M", (), {"role": "learner", "text": body.text})()
+        PendingMessage(role="learner", text=body.text)
     ]
     bundle = assemble_context(
         session=session, messages=messages, image_data=image,
