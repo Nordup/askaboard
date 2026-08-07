@@ -255,8 +255,16 @@ git commit -m "Talk to the backend service instead of OpenAI"
 ### Task 4: Consume the stream in `TutorStore`
 
 **Files:**
-- Modify: `MathTutor/TutorStore.swift`
+- Modify: `MathTutor/TutorStore.swift`, `MathTutor/Domain/Models.swift`, `MathTutor/Services/BackendTutorService.swift`
 - Test: `MathTutorTests/TutorStoreStreamingTests.swift`
+
+**A gap this plan missed, found during Task 3.** The server rebuilds conversation context from the messages stored against a `session_id`, but `LearningSession` has no id and `TutorRequest` never carried one — so `BackendTutorService` currently mints a fresh UUID per turn as a stopgap. That means every turn opens a *new* server-side session, the transcript never accumulates, and the tutor replies the backend now persists are written where nothing will ever read them. Turns would appear to work while memory silently never did.
+
+Fix it here:
+- Add `id: UUID` to `LearningSession`, defaulted on creation. Give it the same tolerant-decoding treatment `reasoningEffort` already has, so a `session.json` written before this change still loads and simply gets a fresh id rather than failing to decode.
+- Carry it on `TutorRequest` and have `BackendTutorService` send it instead of generating one.
+- `LearningSession.empty` and any reset path must mint a **new** id — starting a fresh session must start a fresh server-side session, or the old transcript leaks into the new one.
+- Test: two turns on one store send the **same** `session_id`; a reset changes it.
 
 **Interfaces:**
 - `requestTutor(signal:)` becomes a stream consumer. On the first `.textDelta` it appends an empty tutor `TutorMessage` and then mutates its `text` in place per delta, so the bubble grows as the reply is written.
