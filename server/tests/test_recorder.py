@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import select
 
 from app.store.blobs import LocalBlobStore
-from app.store.models import Attachment, LLMCall, Session, Turn
+from app.store.models import Attachment, LLMCall, Message, Session, Turn
 from app.store.recorder import Recorder, redact_images
 from tests.conftest import requires_db
 
@@ -88,7 +88,8 @@ async def test_finish_turn_writes_the_turn_and_its_llm_call(db, db_factory, tmp_
         text="Nice work.",
     )
     await recorder.finish_turn(
-        turn_id=turn_id, result=result, request_body={"model": "gpt-5.6-luna"},
+        turn_id=turn_id, session_id=session.id, next_seq=1,
+        result=result, request_body={"model": "gpt-5.6-luna"},
         ttft_ms=420, latency_ms=1800,
     )
 
@@ -109,6 +110,110 @@ async def test_finish_turn_writes_the_turn_and_its_llm_call(db, db_factory, tmp_
 
         call = (await fresh.execute(select(LLMCall))).scalar_one()
         assert call.raw_events_blob is not None
+
+
+@requires_db
+async def test_finish_turn_writes_the_tutors_reply_as_a_message(db, db_factory, tmp_path):
+    """C1: without this, assemble_context's transcript is learner-only —
+    the model can never see anything it said on an earlier turn."""
+    session = Session(model="gpt-5.6-luna", reasoning_effort="high")
+    db.add(session)
+    await db.flush()
+    turn_id = uuid.uuid4()
+    db.add(Turn(
+        id=turn_id, session_id=session.id, status="running",
+        model="gpt-5.6-luna", reasoning_effort="high",
+    ))
+    await db.commit()
+
+    recorder = Recorder(db_factory, LocalBlobStore(tmp_path))
+    from app.tutor.loop import TurnResult
+    result = TurnResult(raw_events=[], usage={}, text="Nice work.")
+    await recorder.finish_turn(
+        turn_id=turn_id, session_id=session.id, next_seq=1,
+        result=result, request_body={"model": "gpt-5.6-luna"},
+        ttft_ms=1, latency_ms=1,
+    )
+
+    async with db_factory() as fresh:
+        rows = (
+            await fresh.execute(select(Message).order_by(Message.seq))
+        ).scalars().all()
+        assert [(m.seq, m.role, m.text) for m in rows] == [(1, "tutor", "Nice work.")]
+
+
+@requires_db
+async def test_finish_turn_writes_no_message_when_the_turn_produced_no_text(
+    db, db_factory, tmp_path
+):
+    """A pure tool-call turn (set_workspace with no accompanying reply) must
+    not write a blank tutor message."""
+    session = Session(model="gpt-5.6-luna", reasoning_effort="high")
+    db.add(session)
+    await db.flush()
+    turn_id = uuid.uuid4()
+    db.add(Turn(
+        id=turn_id, session_id=session.id, status="running",
+        model="gpt-5.6-luna", reasoning_effort="high",
+    ))
+    await db.commit()
+
+    recorder = Recorder(db_factory, LocalBlobStore(tmp_path))
+    from app.tutor.loop import TurnResult
+    result = TurnResult(raw_events=[], usage={}, text="")
+    await recorder.finish_turn(
+        turn_id=turn_id, session_id=session.id, next_seq=1,
+        result=result, request_body={"model": "gpt-5.6-luna"},
+        ttft_ms=1, latency_ms=1,
+    )
+
+    async with db_factory() as fresh:
+        assert (await fresh.execute(select(Message))).first() is None
+
+
+@requires_db
+async def test_finish_turn_persists_the_workspace_onto_the_session(
+    db, db_factory, tmp_path
+):
+    """C2: sessions.plan / sessions.exercise must land in the same write as
+    the turn's own "ok" status — otherwise compose_user_prompt's EXERCISE
+    CONTEXT and SESSION PLAN sections, and GET /v1/sessions/{id}, stay NULL
+    forever."""
+    session = Session(model="gpt-5.6-luna", reasoning_effort="high")
+    db.add(session)
+    await db.flush()
+    turn_id = uuid.uuid4()
+    db.add(Turn(
+        id=turn_id, session_id=session.id, status="running",
+        model="gpt-5.6-luna", reasoning_effort="high",
+    ))
+    await db.commit()
+
+    workspace = {
+        "type": "workspace",
+        "plan": {
+            "title": "Fractions", "goal": "Add unlike fractions",
+            "outcomes": ["Find a common denominator"], "steps": ["Find the LCD"],
+            "currentStep": 0,
+        },
+        "exercise": {
+            "title": "Add 1/3 and 1/4", "prompt": "What is 1/3 + 1/4?",
+            "hint": "Find a common denominator first.", "context": "Unlike denominators",
+        },
+    }
+    recorder = Recorder(db_factory, LocalBlobStore(tmp_path))
+    from app.tutor.loop import TurnResult
+    result = TurnResult(raw_events=[], usage={}, text="", workspace=workspace)
+    await recorder.finish_turn(
+        turn_id=turn_id, session_id=session.id, next_seq=0,
+        result=result, request_body={"model": "gpt-5.6-luna"},
+        ttft_ms=1, latency_ms=1,
+    )
+
+    async with db_factory() as fresh:
+        stored = (await fresh.execute(select(Session))).scalar_one()
+        assert stored.plan == workspace["plan"]
+        assert stored.exercise == workspace["exercise"]
 
 
 @requires_db

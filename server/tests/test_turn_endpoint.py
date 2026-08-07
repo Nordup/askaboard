@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 import json
 import uuid
 
@@ -9,7 +11,9 @@ from sqlalchemy import select
 from app.config import get_settings
 from app.main import create_app
 from app.store.models import Message, Session, Turn
-from tests.fixtures.sse import TEXT_ONLY_TURN, sse_stream
+from app.tutor.events import StatusEvent
+from app.tutor.loop import TurnResult
+from tests.fixtures.sse import TEXT_ONLY_TURN, TOOL_CALL_TURN, sse_stream
 
 AUTH = {"Authorization": "Bearer test-token"}
 
@@ -278,5 +282,235 @@ async def test_a_second_turn_continues_seq_instead_of_restarting_at_zero(db_app,
             .order_by(Message.seq)
         )).scalars().all()
 
-    assert [m.seq for m in rows] == [0, 1]
-    assert [m.text for m in rows] == ["first", "second"]
+    # Each turn now writes both the learner's message and the tutor's reply
+    # (see Recorder.finish_turn) — the learner's own seq must still continue
+    # forward rather than restarting at 0 on the second turn, interleaved
+    # tutor rows and all. Before the C1 fix this asserted just
+    # ["first", "second"], which is the exact shape that confirms the
+    # tutor's replies are silently absent rather than proving anything about
+    # seq continuation.
+    assert [(m.seq, m.role, m.text) for m in rows] == [
+        (0, "learner", "first"),
+        (1, "tutor", "Nice work."),
+        (2, "learner", "second"),
+        (3, "tutor", "Nice work."),
+    ]
+
+
+@respx.mock
+async def test_a_second_turns_prompt_contains_the_first_turns_reply(db_app):
+    """C1: assemble_context's transcript must include what the tutor said on
+    the previous turn, not just what the learner said — otherwise turn 3 of
+    a session has no record of anything the model replied to. This inspects
+    the captured respx request body (not our own internal state): reading
+    our own persisted rows back would happily pass even if the tutor's
+    reply were never included in the prompt actually sent to the provider.
+    """
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        return_value=Response(200, headers={"Content-Type": "text/event-stream"},
+                              content=sse_stream(*TEXT_ONLY_TURN))
+    )
+    session_id = str(uuid.uuid4())
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        async with client.stream(
+            "POST", "/v1/turn", json=_payload(session_id=session_id, text="first"),
+            headers=AUTH,
+        ) as r:
+            await _collect(r)
+        async with client.stream(
+            "POST", "/v1/turn", json=_payload(session_id=session_id, text="second"),
+            headers=AUTH,
+        ) as r:
+            await _collect(r)
+
+    assert route.call_count == 2
+    second_request_body = json.loads(route.calls[1].request.content)
+    prompt_text = second_request_body["input"][1]["content"][0]["text"]
+    assert "learner: first" in prompt_text
+    assert "tutor: Nice work." in prompt_text
+    assert "learner: second" in prompt_text
+
+
+@respx.mock
+async def test_a_turn_that_sets_the_workspace_persists_plan_and_exercise(
+    db_app, db_factory
+):
+    """C2: sessions.plan / sessions.exercise must be written when a turn
+    fires set_workspace, and a later turn's prompt must actually include the
+    EXERCISE CONTEXT / SESSION PLAN sections compose_user_prompt only emits
+    when those columns are non-null."""
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*TOOL_CALL_TURN)),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*TEXT_ONLY_TURN)),
+        ]
+    )
+    session_id = str(uuid.uuid4())
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        async with client.stream(
+            "POST", "/v1/turn",
+            json=_payload(session_id=session_id, text="give me an exercise"),
+            headers=AUTH,
+        ) as r:
+            await _collect(r)
+
+        async with db_factory() as db:
+            session = await db.get(Session, uuid.UUID(session_id))
+            assert session.plan is not None
+            assert session.exercise is not None
+            assert session.plan["title"] == "Fractions"
+            assert session.exercise["prompt"] == "What is 1/3 + 1/4?"
+
+        async with client.stream(
+            "POST", "/v1/turn", json=_payload(session_id=session_id, text="ok next"),
+            headers=AUTH,
+        ) as r:
+            await _collect(r)
+
+    assert route.call_count == 2
+    second_request_body = json.loads(route.calls[1].request.content)
+    prompt_text = second_request_body["input"][1]["content"][0]["text"]
+    assert "EXERCISE CONTEXT" in prompt_text
+    assert "SESSION PLAN" in prompt_text
+
+
+@respx.mock
+async def test_an_unallowed_model_is_rejected_before_any_provider_call(db_app):
+    """I7: the model is unvalidated device input straight to the provider —
+    MODEL_ALLOWLIST + a 422 is today's only real ceiling, since the spend
+    cap is inert (see the comment at the check in app/api/turn.py). The
+    route is mocked but never expected to be hit — if validation regressed
+    and the code called the provider anyway, respx (not a live request)
+    would be what answered."""
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        return_value=Response(
+            200, headers={"Content-Type": "text/event-stream"},
+            content=sse_stream(*TEXT_ONLY_TURN),
+        )
+    )
+    payload = _payload(model="gpt-5.6-mega-expensive")
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        response = await client.post("/v1/turn", json=payload, headers=AUTH)
+
+    assert response.status_code == 422
+    assert route.call_count == 0
+
+
+async def test_an_exception_in_assemble_context_leaves_the_turn_not_running(
+    db_app, db_factory, monkeypatch
+):
+    """C3: assemble_context used to run entirely outside the guarded
+    generator — an exception there committed the turn as "running" and then
+    500'd with nothing left to catch it, permanently stranding the
+    turn_id."""
+    def _boom(**kwargs):
+        raise ValueError("boom")
+
+    monkeypatch.setattr("app.api.turn.assemble_context", _boom)
+
+    payload = _payload()
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        async with client.stream("POST", "/v1/turn", json=payload, headers=AUTH) as r:
+            events = await _collect(r)
+
+    assert events[-1]["type"] == "error"
+    assert "ValueError" in events[-1]["message"]
+
+    async with db_factory() as db:
+        turn = await db.get(Turn, uuid.UUID(payload["turn_id"]))
+        assert turn.status == "error"
+        assert turn.status != "running"
+
+
+@respx.mock
+async def test_a_finish_turn_failure_leaves_the_turn_not_running(db_factory, tmp_path):
+    """C3: recorder.finish_turn used to sit outside the try/except entirely
+    — a blob write plus a Neon round trip that, on failure, left a
+    truncated stream and a turn stuck at status="running" forever."""
+    from app.api.turn import get_recorder
+    from app.store.blobs import LocalBlobStore
+    from app.store.db import db_session
+    from app.store.recorder import Recorder
+
+    class _BrokenFinishRecorder(Recorder):
+        async def finish_turn(self, **kwargs):
+            raise RuntimeError("neon unreachable")
+
+    app = create_app()
+
+    async def _session():
+        async with db_factory() as session:
+            yield session
+
+    app.dependency_overrides[db_session] = _session
+    app.dependency_overrides[get_recorder] = lambda: _BrokenFinishRecorder(
+        db_factory, LocalBlobStore(tmp_path)
+    )
+
+    respx.post("https://api.openai.com/v1/responses").mock(
+        return_value=Response(200, headers={"Content-Type": "text/event-stream"},
+                              content=sse_stream(*TEXT_ONLY_TURN))
+    )
+    payload = _payload()
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            async with client.stream("POST", "/v1/turn", json=payload, headers=AUTH) as r:
+                events = await _collect(r)
+    finally:
+        app.dependency_overrides.clear()
+
+    assert events[-1]["type"] == "error"
+    assert "RuntimeError" in events[-1]["message"]
+
+    async with db_factory() as db:
+        turn = await db.get(Turn, uuid.UUID(payload["turn_id"]))
+        assert turn.status == "error"
+        assert turn.status != "running"
+
+
+async def test_a_client_disconnect_mid_stream_leaves_the_turn_not_running(
+    db_app, db_factory, monkeypatch
+):
+    """C4: a real disconnect throws asyncio.CancelledError into the
+    generator at its current yield. CancelledError is a BaseException, not
+    an Exception, so `except Exception` alone would miss it and nothing
+    would ever persist. This stands in for a real disconnect by making
+    run_turn itself raise CancelledError partway through a turn — exactly
+    what Starlette's disconnect-cancellation does to this generator,
+    regardless of what triggered it — and checks the one thing the finding
+    actually requires: the turn does not stay "running"."""
+
+    async def _cancelled_run_turn(*, client, model, effort, bundle):
+        result = TurnResult()
+        yield StatusEvent(phase="thinking"), result
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr("app.api.turn.run_turn", _cancelled_run_turn)
+
+    payload = _payload()
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        with contextlib.suppress(BaseException):
+            async with client.stream(
+                "POST", "/v1/turn", json=payload, headers=AUTH
+            ) as r:
+                async for _ in r.aiter_lines():
+                    pass
+
+    async with db_factory() as db:
+        turn = await db.get(Turn, uuid.UUID(payload["turn_id"]))
+        assert turn is not None
+        assert turn.status != "running"

@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.store.blobs import BlobRef, BlobStore
-from app.store.models import Attachment, LLMCall, Turn
+from app.store.models import Attachment, LLMCall, Message, Session, Turn
 
 
 def redact_images(body: dict, blob_key: str) -> dict:
@@ -88,12 +88,32 @@ class Recorder:
         self,
         *,
         turn_id: uuid.UUID,
+        session_id: uuid.UUID,
+        next_seq: int,
         result: Any,
         request_body: dict,
         ttft_ms: int | None,
         latency_ms: int | None,
         image_blob_key: str | None = None,
     ) -> None:
+        """Persist a successful turn — and, in the same transaction, the two
+        things a successful turn produces that must never land apart from
+        the turn record itself:
+
+        - the tutor's own reply, as a `Message(role="tutor")` at `next_seq`,
+          so the next turn's transcript actually contains what the model
+          said (without this, `assemble_context` only ever sees the
+          learner's side of the conversation);
+        - `session.plan` / `session.exercise`, when the turn called
+          `set_workspace`, so `compose_user_prompt`'s EXERCISE CONTEXT and
+          SESSION PLAN sections — and `GET /v1/sessions/{id}` — are ever
+          reachable in production instead of permanently NULL.
+
+        Both are conditional on the turn actually having produced them
+        (`result.text`, `result.workspace`), but never optional writes done
+        separately — they commit alongside `turns.status = "ok"` or not at
+        all.
+        """
         call, usage = await self._build_llm_call(
             turn_id=turn_id, result=result, request_body=request_body,
             image_blob_key=image_blob_key,
@@ -114,7 +134,33 @@ class Recorder:
                 "reasoning_tokens"
             )
             turn.finished_at = datetime.now(timezone.utc)
+
+            if result.text:
+                session.add(Message(
+                    session_id=session_id, seq=next_seq, role="tutor", text=result.text,
+                ))
+
+            if result.workspace:
+                session_row = await session.get(Session, session_id)
+                if session_row is not None:
+                    session_row.plan = result.workspace["plan"]
+                    session_row.exercise = result.workspace["exercise"]
+
             await session.commit()
+
+    async def turn_status(self, turn_id: uuid.UUID) -> str | None:
+        """Read a turn's current status through a brand-new session.
+
+        Used by the request handler's structural `finally` guard to decide
+        whether a turn is still "running" after any exit path — success, a
+        classified exception whose own handler already failed it, or a
+        client disconnect that handler can never catch. A fresh session
+        (rather than a borrowed, possibly-stale one) is what makes this an
+        honest read of what another connection actually committed.
+        """
+        async with self._sessionmaker() as session:
+            turn = await session.get(Turn, turn_id)
+            return turn.status if turn is not None else None
 
     async def fail_turn(
         self,
