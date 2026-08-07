@@ -802,4 +802,51 @@ final class ShellComponentTests: XCTestCase {
 
         static let all: [Band] = [reference] + devices
     }
+
+    // MARK: - The resizable panel
+
+    /// The reconciliation `BoardScreen` performs, asserted as arithmetic rather than through
+    /// the view: a requested width is clamped by the window it lands in, and the request
+    /// itself is never overwritten.
+    private func clampedPanelWidth(requested: CGFloat, in layout: ScreenLayout) -> CGFloat {
+        min(max(requested, ScreenLayout.minimumPanelWidth), layout.maximumPanelWidth)
+    }
+
+    func testARequestedWidthIsHonouredWhereItFits() {
+        let l = ScreenLayout(size: CGSize(width: 1376, height: 1032))
+        XCTAssertEqual(clampedPanelWidth(requested: 480, in: l), 480)
+    }
+
+    func testARequestedWidthIsClampedDownOnASmallerWindow() {
+        // An 1112 × 834 iPad Air: lane = 1112 − 28 − 72 − 24 − 24 − 28 = 936, so max = 468.
+        let l = ScreenLayout(size: CGSize(width: 1112, height: 834))
+        XCTAssertEqual(l.maximumPanelWidth, 468, "maximumPanelWidth")
+        XCTAssertEqual(clampedPanelWidth(requested: 600, in: l), 468, "clamped, not honoured")
+    }
+
+    /// The reversibility contract. The requested width is presentation state that survives
+    /// the window shrinking, so widening the window restores exactly what the student asked
+    /// for rather than whatever the small window allowed.
+    func testShrinkingThenGrowingTheWindowRestoresTheRequestedWidth() {
+        let requested: CGFloat = 600
+        let small = ScreenLayout(size: CGSize(width: 1112, height: 834))
+        XCTAssertEqual(clampedPanelWidth(requested: requested, in: small), 468, "squeezed")
+
+        let large = ScreenLayout(size: CGSize(width: 1376, height: 1032))
+        XCTAssertEqual(clampedPanelWidth(requested: requested, in: large), 600, "and restored")
+    }
+
+    func testTheClampedWidthNeverLeavesTheBoardNarrowerThanThePanel() {
+        for width in [1024, 1112, 1180, 1366, 1376] as [CGFloat] {
+            let l = ScreenLayout(size: CGSize(width: width, height: 1032))
+            guard l.maximumPanelWidth >= ScreenLayout.minimumPanelWidth else { continue }
+            let clamped = clampedPanelWidth(requested: 5000, in: l)
+            let resolved = ScreenLayout(size: CGSize(width: width, height: 1032), panelWidth: clamped)
+            XCTAssertGreaterThanOrEqual(
+                resolved.boardWidthDocked,
+                resolved.panelWidth,
+                "at \(width): the board is the product and the tutor is the commentary"
+            )
+        }
+    }
 }

@@ -92,18 +92,47 @@ struct BoardScreen: View {
             // The insets are kept, not zeroed: a smaller window on an iPad still sits under
             // the same status bar and the same home indicator, and `contentTop` is measured
             // from those rather than from the glass.
-            return ScreenLayout(
-                size: window,
-                safeArea: EdgeInsets(
-                    top: measuredLayout.safeAreaTop,
-                    leading: measuredLayout.safeAreaLeading,
-                    bottom: measuredLayout.safeAreaBottom,
-                    trailing: measuredLayout.safeAreaTrailing
+            return resized(
+                ScreenLayout(
+                    size: window,
+                    safeArea: EdgeInsets(
+                        top: measuredLayout.safeAreaTop,
+                        leading: measuredLayout.safeAreaLeading,
+                        bottom: measuredLayout.safeAreaBottom,
+                        trailing: measuredLayout.safeAreaTrailing
+                    )
                 )
             )
         }
         #endif
-        return measuredLayout
+        return resized(measuredLayout)
+    }
+
+    /// The student's requested panel width, reconciled with the window it has to fit in.
+    ///
+    /// A clamp on read rather than a write back into `UIState`, which is the same move
+    /// `presentation` makes one property down and for the same reason: it is what keeps a
+    /// resize reversible. A window that shrinks squeezes the panel; a window that grows
+    /// again restores exactly what was asked for, because what was asked for was never
+    /// overwritten. Clamping here rather than at the gesture is also what handles the window
+    /// changing while nobody is dragging at all — Split View, Stage Manager, an external
+    /// display — since this evaluates on every layout pass.
+    private func resized(_ layout: ScreenLayout) -> ScreenLayout {
+        guard layout.maximumPanelWidth >= ScreenLayout.minimumPanelWidth else { return layout }
+        let width = min(
+            max(uiState.panelWidth, ScreenLayout.minimumPanelWidth),
+            layout.maximumPanelWidth
+        )
+        return ScreenLayout(
+            size: layout.size,
+            safeArea: EdgeInsets(
+                top: layout.safeAreaTop,
+                leading: layout.safeAreaLeading,
+                bottom: layout.safeAreaBottom,
+                trailing: layout.safeAreaTrailing
+            ),
+            panelWidth: width
+        )
     }
 
     // MARK: - Which of the design's states this screen can be in
@@ -198,6 +227,7 @@ struct BoardScreen: View {
                 .offset(x: layout.panelX, y: layout.contentTop)
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("tutor-panel")
+            resizeHandle
         case .collapsed:
             // Screen 06 hides the tutor's contents rather than resetting them, which is what
             // lets the dock's orb return the student to screen 05 or 08 correctly.
@@ -206,6 +236,60 @@ struct BoardScreen: View {
             TutorFullScreen(text: $composerText, dictation: dictation, actions: actions)
         }
     }
+
+    /// The drag strip in the gutter between the board and the panel.
+    ///
+    /// Mounted only in the `.docked` case of `tutor`, which means it does not exist when the
+    /// panel is collapsed or full-screen rather than existing invisibly and staying
+    /// hittable — a strip with nothing to resize is a control that eats touches on the
+    /// board. Settings needs no case of its own: `settingsWindow` covers the whole screen,
+    /// so a handle under it is unreachable by construction.
+    ///
+    /// It is positioned by its **trailing** edge against the panel, so the strip runs from
+    /// `panelX − gutter` to `panelX + panelInset` and claims not one point of the canvas.
+    @ViewBuilder
+    private var resizeHandle: some View {
+        let constraints = ResizeConstraints(
+            minimum: ScreenLayout.minimumPanelWidth,
+            maximum: layout.maximumPanelWidth,
+            collapseBelow: ScreenLayout.minimumPanelWidth * Self.panelCollapseFraction
+        )
+        if constraints.isSatisfiable {
+            ResizeHandle(
+                edge: .leading,
+                span: layout.contentHeight,
+                gutter: DS.Space.gap,
+                contentMargin: DS.Space.panelInset,
+                constraints: constraints,
+                label: "Resize the tutor panel",
+                size: Binding(
+                    get: { layout.panelWidth },
+                    set: { uiState.setPanelWidth($0) }
+                ),
+                onCollapse: uiState.collapseTutor,
+                onReset: uiState.resetPanelWidth
+            )
+            .frame(
+                width: ResizeHandleMetrics.hitBreadth(
+                    gutter: DS.Space.gap,
+                    into: DS.Space.panelInset
+                ),
+                height: layout.contentHeight,
+                alignment: .topLeading
+            )
+            .offset(x: layout.panelX - DS.Space.gap, y: layout.contentTop)
+        }
+    }
+
+    /// How far below its floor the *virtual* panel width has to be dragged before the
+    /// gesture collapses the tutor to the dock.
+    ///
+    /// The one proportion in the resize system that no token names, and it earns the
+    /// exception by never landing on screen: it is a gesture threshold, not a layout value.
+    /// `0.6 × 337 = 202`, which is 135 points of finger travel past the floor — far enough
+    /// that no ordinary narrowing drag trips it, close enough that reaching for it is one
+    /// motion rather than two.
+    private static let panelCollapseFraction: CGFloat = 0.6
 
     @ViewBuilder
     private var floatingRegion: some View {
