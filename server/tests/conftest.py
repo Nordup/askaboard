@@ -26,8 +26,8 @@ requires_db = pytest.mark.skipif(
 
 
 @pytest.fixture
-async def db():
-    """A clean schema per test, on a dedicated Neon branch.
+async def db_factory():
+    """A sessionmaker bound to a clean schema per test, on a dedicated Neon branch.
 
     Dropping and recreating is safe only because this branch holds nothing but
     test data. Never point TEST_DATABASE_URL at the branch the app uses.
@@ -40,6 +40,16 @@ async def db():
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
     factory = async_sessionmaker(engine, expire_on_commit=False)
-    async with factory() as session:
-        yield session
+    yield factory
     await engine.dispose()
+
+
+@pytest.fixture
+async def db(db_factory):
+    """A single borrowed session on the schema `db_factory` just built.
+
+    Most tests just want a session to read and write through; `db_factory`
+    itself is for tests exercising code that opens its own sessions.
+    """
+    async with db_factory() as session:
+        yield session
