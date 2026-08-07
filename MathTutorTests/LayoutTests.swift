@@ -687,7 +687,28 @@ final class LayoutTests: XCTestCase {
             size: CGSize(width: 1376, height: 1032),
             panelWidth: 600
         )
+        // Pinned to a literal alongside the relation: both sides derive from the same
+        // `dockedLaneWidth`, so the relation alone could agree with a shared bug twice over.
+        XCTAssertEqual(l.boardWidthDocked, 600)
         XCTAssertEqual(l.boardWidthDocked, l.panelWidth, "the rule the maximum encodes")
+    }
+
+    /// `fit` used to gate `.threeLane` on `dockedMinimumWidth` alone, which only raises the
+    /// board's floor — it says nothing about the panel beside it. A panel past
+    /// `minimumPanelWidth` can clear that floor while still outrunning the board it sits next
+    /// to, which is the inversion `minimumBoardWidth`'s own doc calls out. This is the case
+    /// the fix closes: 1200 clears `dockedMinimumWidth` for a 600pt panel (edge×2 + rail +
+    /// gap×2 + 600 + 337 = 1113), but 600 is over `maximumPanelWidth` at that width (512), so
+    /// the docked layout must not be offered.
+    func testFitRejectsAPanelWiderThanTheBoardItWouldSitBeside() {
+        let l = ScreenLayout(size: CGSize(width: 1200, height: 1032), panelWidth: 600)
+
+        XCTAssertGreaterThanOrEqual(1200, l.dockedMinimumWidth, "the old, incomplete threshold is satisfied")
+        XCTAssertEqual(l.maximumPanelWidth, 512, "half of 1200 − 176")
+        XCTAssertGreaterThan(l.panelWidth, l.maximumPanelWidth, "600 is over the ceiling this width allows")
+
+        XCTAssertEqual(l.fit, .boardOnly, "the panel would outrun the board, so the docked layout is refused")
+        XCTAssertFalse(l.canDockTutor)
     }
 
     /// A wider panel needs a wider window to stay docked. It must not, however, change the

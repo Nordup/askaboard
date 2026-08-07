@@ -207,7 +207,14 @@ struct ScreenLayout: Equatable, Sendable {
     /// `124 + 863 + 24`, equivalently `1376 − 28 − 337 = 1011`. The second spelling is the one
     /// implemented: the panel is pinned to the right edge and the board is what flexes, so the
     /// panel's position must not depend on the board's width.
-    var panelX: CGFloat { contentRight - panelWidth }
+    ///
+    /// Clamped at 0 for the same reason `boardWidthDocked` is: `panelWidth` stopped being a
+    /// 337 constant and became a caller-supplied input, so a panel wider than `contentRight`
+    /// is now representable. Nothing upstream of this file is meant to ask for one — `fit`
+    /// gates the docked layout on `panelWidth <= maximumPanelWidth` before anything draws —
+    /// but a stray or pre-clamp call site should get a pinned-left panel rather than a
+    /// negative x that pushes it off the far edge instead.
+    var panelX: CGFloat { max(0, contentRight - panelWidth) }
 
     /// `--container-panel`, now read as the smallest width the panel is ever *drawn* at.
     ///
@@ -335,9 +342,17 @@ struct ScreenLayout: Equatable, Sendable {
     ///
     /// Instance rather than static since the panel's width became an input: a wider panel
     /// genuinely does need a wider window to stay docked, and a threshold that ignored the
-    /// panel would let a 600pt panel dock beside a 200pt board. `collapsedMinimumWidth`
+    /// panel would let a 600pt panel dock beside a narrower-than-337 board. `collapsedMinimumWidth`
     /// stays static for the mirror-image reason — there is no panel in that state, so a wide
     /// one must not raise the width at which the board alone stops fitting.
+    ///
+    /// **This alone does not guarantee `board >= panel`.** It only raises the board's floor
+    /// from 200 (an unnamed number the design never chose) to `minimumBoardWidth` — the same
+    /// 337 the panel's own floor is. Above that floor the two widths are independent inputs
+    /// again: a `panelWidth` past 337 can still outrun `boardWidthDocked` on a window this
+    /// alone is satisfied by, which is exactly the inversion `minimumBoardWidth`'s doc warns
+    /// against. The actual guarantee is the conjunction `fit` computes — this threshold *and*
+    /// `panelWidth <= maximumPanelWidth` — not this number by itself.
     var dockedMinimumWidth: CGFloat {
         2 * DS.Space.edge + Self.railWidth + 2 * DS.Space.gap + panelWidth + Self.minimumBoardWidth
     }
@@ -353,9 +368,17 @@ struct ScreenLayout: Equatable, Sendable {
     /// and the panel's `18 + 32 + 810 + 58 + 18` stack has a flexible thread in the middle.
     static let minimumContentHeight: CGFloat = DS.Space.gap + collapsedDockHeight
 
+    /// `.threeLane` is two conditions, not one, and both are load-bearing.
+    /// `usableWidth >= dockedMinimumWidth` is the window being wide enough to fit the board at
+    /// its floor beside the panel at its current width; `panelWidth <= maximumPanelWidth` is
+    /// the hierarchy rule — the panel is commentary, so it may never end up wider than the
+    /// board it sits beside. Above `minimumPanelWidth` the two are independent: a window can
+    /// satisfy the first while a sufficiently wide panel already fails the second, and a
+    /// `dockedMinimumWidth` that only checked the first would still report `.threeLane` for a
+    /// panel wider than the board it is next to.
     var fit: Fit {
         guard contentHeight >= Self.minimumContentHeight else { return .unsupported }
-        if usableWidth >= dockedMinimumWidth { return .threeLane }
+        if usableWidth >= dockedMinimumWidth && panelWidth <= maximumPanelWidth { return .threeLane }
         if usableWidth >= Self.collapsedMinimumWidth { return .boardOnly }
         return .unsupported
     }
