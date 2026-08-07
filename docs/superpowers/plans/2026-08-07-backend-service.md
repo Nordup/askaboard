@@ -960,7 +960,12 @@ git commit -m "Translate provider events into the app's own event vocabulary"
 **Interfaces:**
 - Produces: `SYSTEM_PROMPT: str`; `compose_user_prompt(*, conversation: str, goal: str | None, exercise: dict | None, plan: dict | None, image_region: str | None, has_image: bool, signal: str | None) -> str`.
 
-**The one substantive change:** `TutorPromptPolicy.system` paragraph 3 instructs the model to satisfy a strict JSON schema and put its answer in `reply`. Under the tool design there is no envelope — prose *is* the reply and the workspace arrives via a tool. That paragraph is rewritten. Every other paragraph is copied **verbatim**, including the typographic apostrophes (`’`) and the em-dashes; they are part of a prompt that has already been tuned.
+**The substantive changes:** two paragraphs must be rewritten, not copied.
+
+- Paragraph 2 tells the model to "set both to null for ordinary chat". Null-ing an envelope field has no meaning once the workspace arrives through a tool — the tool is either called or it is not. Rewritten to say exactly that.
+- Paragraph 3 instructs the model to satisfy a strict JSON schema and put its answer in `reply`. There is no envelope any more; prose *is* the reply. Rewritten to say the answer is streamed as it is written.
+
+Paragraphs 1, 4 and 5 are copied **verbatim**, including the typographic apostrophes (`’`), curly quotes (`“ ”`) and em-dashes (`—`); they are part of a prompt that has already been tuned, and normalising them to ASCII is a silent regression.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1026,7 +1031,7 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'app.tutor.prompt'`
 
 - [ ] **Step 3: Implement**
 
-`server/app/tutor/prompt.py` — paragraphs 1, 2, 4 and 5 are copied verbatim from `TutorPromptPolicy.swift`; paragraph 3 is the rewrite:
+`server/app/tutor/prompt.py` — paragraphs 1, 4 and 5 are copied verbatim from `TutorPromptPolicy.swift`; paragraphs 2 and 3 are the rewrites:
 
 ```python
 SYSTEM_PROMPT = """You are a capable, patient math tutor across all areas of mathematics. Respond to the learner’s actual request and level: explain, solve, check work, or chat directly as useful. Teach adaptively; do not force Socratic questions or withhold answers when a direct answer helps.
