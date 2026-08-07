@@ -1,6 +1,7 @@
 import os
 
 import pytest
+from dotenv import load_dotenv
 from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -8,6 +9,11 @@ os.environ.setdefault("OPENAI_API_KEY", "sk-test")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 os.environ.setdefault("DEVICE_TOKEN", "test-token")
 os.environ.setdefault("BLOB_DIR", "./.test-blobs")
+
+# Populate TEST_DATABASE_URL (and anything else) from server/.env, without
+# clobbering the test defaults set above — override=False means an already-set
+# var (from the OS environment or the setdefault() calls above) wins.
+load_dotenv(override=False)
 
 from app.store.models import Base
 
