@@ -13,3 +13,8 @@ build/
 
 # macOS
 .DS_Store
+
+# Backend service local secrets
+server/.env
+server/blobs/
+server/.venv/
