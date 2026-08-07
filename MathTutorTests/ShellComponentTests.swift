@@ -805,23 +805,24 @@ final class ShellComponentTests: XCTestCase {
 
     // MARK: - The resizable panel
 
-    /// The reconciliation `BoardScreen` performs, asserted as arithmetic rather than through
-    /// the view: a requested width is clamped by the window it lands in, and the request
-    /// itself is never overwritten.
-    private func clampedPanelWidth(requested: CGFloat, in layout: ScreenLayout) -> CGFloat {
-        min(max(requested, ScreenLayout.minimumPanelWidth), layout.maximumPanelWidth)
-    }
-
+    /// These four call `ScreenLayout.resolvingPanelWidth(_:)` directly — the same function
+    /// `BoardScreen.resized(_:)` calls — rather than a private copy of its arithmetic. An
+    /// earlier version of this file kept its own `min(max(requested, minimumPanelWidth),
+    /// layout.maximumPanelWidth)` here, which pinned the *expression* but not the *contract*:
+    /// deleting `resized(_:)` from `BoardScreen` entirely, or turning it into a write-back
+    /// into `UIState`, left every one of these tests green, because none of them called
+    /// anything `BoardScreen` actually runs. Calling the real, shared function is what makes
+    /// a regression in the clamp itself fail here.
     func testARequestedWidthIsHonouredWhereItFits() {
         let l = ScreenLayout(size: CGSize(width: 1376, height: 1032))
-        XCTAssertEqual(clampedPanelWidth(requested: 480, in: l), 480)
+        XCTAssertEqual(l.resolvingPanelWidth(480), 480)
     }
 
     func testARequestedWidthIsClampedDownOnASmallerWindow() {
         // An 1112 × 834 iPad Air: lane = 1112 − 28 − 72 − 24 − 24 − 28 = 936, so max = 468.
         let l = ScreenLayout(size: CGSize(width: 1112, height: 834))
         XCTAssertEqual(l.maximumPanelWidth, 468, "maximumPanelWidth")
-        XCTAssertEqual(clampedPanelWidth(requested: 600, in: l), 468, "clamped, not honoured")
+        XCTAssertEqual(l.resolvingPanelWidth(600), 468, "clamped, not honoured")
     }
 
     /// The reversibility contract. The requested width is presentation state that survives
@@ -830,17 +831,17 @@ final class ShellComponentTests: XCTestCase {
     func testShrinkingThenGrowingTheWindowRestoresTheRequestedWidth() {
         let requested: CGFloat = 600
         let small = ScreenLayout(size: CGSize(width: 1112, height: 834))
-        XCTAssertEqual(clampedPanelWidth(requested: requested, in: small), 468, "squeezed")
+        XCTAssertEqual(small.resolvingPanelWidth(requested), 468, "squeezed")
 
         let large = ScreenLayout(size: CGSize(width: 1376, height: 1032))
-        XCTAssertEqual(clampedPanelWidth(requested: requested, in: large), 600, "and restored")
+        XCTAssertEqual(large.resolvingPanelWidth(requested), 600, "and restored")
     }
 
     func testTheClampedWidthNeverLeavesTheBoardNarrowerThanThePanel() {
         for width in [1024, 1112, 1180, 1366, 1376] as [CGFloat] {
             let l = ScreenLayout(size: CGSize(width: width, height: 1032))
             guard l.maximumPanelWidth >= ScreenLayout.minimumPanelWidth else { continue }
-            let clamped = clampedPanelWidth(requested: 5000, in: l)
+            let clamped = l.resolvingPanelWidth(5000)
             let resolved = ScreenLayout(size: CGSize(width: width, height: 1032), panelWidth: clamped)
             XCTAssertGreaterThanOrEqual(
                 resolved.boardWidthDocked,

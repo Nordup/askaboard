@@ -85,6 +85,29 @@ enum ResizeModel {
         )
     }
 
+    /// What a caller's bound state should become after one resolved frame.
+    ///
+    /// A bare `size = resolution.size` is right on every frame but one: on the collapse
+    /// frame `resolve` reports `size: constraints.minimum`, which is correct to *draw* — the
+    /// handle and the surface it drives both shrink to the floor — but wrong to *remember*.
+    /// Writing it through a `Binding` puts it wherever the binding is backed by, which for
+    /// the tutor panel is `UIState.panelWidth`: the width the student asked for, permanently
+    /// overwritten by the floor at the exact moment `onCollapse()` is about to take the
+    /// surface off screen anyway. Design spec edge case ⑭ — *"Collapse-by-drag and
+    /// collapse-by-button both land in `.collapsed`. Reopening restores the custom width"* —
+    /// is only true if that write never happens.
+    ///
+    /// So this holds `current` on the collapse frame instead of taking `resolution.size`, and
+    /// is a pass-through everywhere else. Nothing is lost by holding rather than writing: the
+    /// gesture's anchor is untouched by collapsing (see the note on `wasCollapsed` in
+    /// `ResizeHandle`), so a drag back out within the same gesture re-resolves from it and
+    /// this function starts writing again — edge case ⑮, which the model supports even though
+    /// `ResizeHandle`'s own mounting policy never lets the app exercise it (see that type's
+    /// caller for why).
+    static func nextSize(current: CGFloat, resolution: ResizeResolution) -> CGFloat {
+        resolution.isCollapsed ? current : resolution.size
+    }
+
     /// Apple's `UIScrollView` resistance curve, `b = (1 − 1/((|x|·c/d) + 1))·d`, made
     /// odd-symmetric so it works off either bound.
     ///

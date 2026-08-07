@@ -246,6 +246,26 @@ struct ScreenLayout: Equatable, Sendable {
     /// preferring one bound.
     var maximumPanelWidth: CGFloat { dockedLaneWidth / 2 }
 
+    /// What the student asked the panel to be, reconciled with what *this* window can host.
+    ///
+    /// `BoardScreen.resized(_:)` used to inline this as its own `min(max(requested,
+    /// minimumPanelWidth), maximumPanelWidth)`, and `ShellComponentTests` kept a second,
+    /// private copy of the identical expression to pin the arithmetic — which meant the four
+    /// resize-width tests exercised a re-implementation rather than `BoardScreen`'s own code:
+    /// delete `resized(_:)` entirely, or turn it into a write-back into `UIState`, and every
+    /// one of those tests stayed green, because none of them called anything `BoardScreen`
+    /// actually runs. Hoisting the composition here — onto the type that already owns
+    /// `minimumPanelWidth` and `maximumPanelWidth` and every other lane derived from them —
+    /// gives both call sites the one function that is actually load-bearing, so a regression
+    /// in the real clamp now fails the tests that are supposed to catch it.
+    ///
+    /// Deliberately not the whole of `resized(_:)`: that also decides *whether* to reconcile
+    /// at all — see its own guard for a window too narrow to host any panel — which is a
+    /// decision about a `ScreenLayout` under construction, not about a width in isolation.
+    func resolvingPanelWidth(_ requested: CGFloat) -> CGFloat {
+        min(max(requested, Self.minimumPanelWidth), maximumPanelWidth)
+    }
+
     /// `--container-panel-content` = `337 − 2 × 18`.
     static let panelContentWidth: CGFloat = DS.Container.panelContent
     var panelContentWidth: CGFloat { Self.panelContentWidth }

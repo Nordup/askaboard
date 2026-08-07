@@ -100,6 +100,32 @@ final class ResizeModelTests: XCTestCase {
         XCTAssertEqual(r.size, 337, "size")
     }
 
+    // MARK: - What a resolution writes back
+
+    /// The collapse-by-drag regression: a bare `size = resolution.size` writes the floor into
+    /// whatever the caller's binding is backed by, at the exact frame that should instead
+    /// leave the caller's own remembered width untouched. See `nextSize`'s own doc.
+    func testNextSizeHoldsTheCallersCurrentValueOnTheCollapseFrame() {
+        let r = resolve(translation: 140) // crosses the collapse threshold, see above
+        XCTAssertTrue(r.isCollapsed, "sanity: this frame must be the collapse frame")
+        XCTAssertEqual(r.size, 337, "sanity: what is drawn is still the floor")
+
+        XCTAssertEqual(
+            ResizeModel.nextSize(current: 480, resolution: r),
+            480,
+            "the caller's own width — not the floor `resolution.size` carries — survives"
+        )
+    }
+
+    /// Every other frame is a plain pass-through: `nextSize` must not also swallow ordinary
+    /// drag frames, or a widen/narrow drag would silently stop tracking the finger.
+    func testNextSizeIsAPassThroughWhenNotCollapsed() {
+        let r = resolve(translation: -100) // widens to 437, not collapsed
+        XCTAssertFalse(r.isCollapsed, "sanity")
+
+        XCTAssertEqual(ResizeModel.nextSize(current: 337, resolution: r), r.size)
+    }
+
     // MARK: - Anchored, not accumulated
 
     /// The property the whole model exists to guarantee, and the bug it exists to prevent.

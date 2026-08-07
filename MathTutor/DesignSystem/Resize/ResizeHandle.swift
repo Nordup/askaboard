@@ -382,7 +382,17 @@ struct ResizeHandle: View {
                 // which re-triggered a 0.12s ease on every single frame of a rubber-banded
                 // drag and made the capsule visibly trail the finger instead of tracking it;
                 // now it is unanimated here and animated back to zero only once, on release.
-                size = resolution.size
+                //
+                // `ResizeModel.nextSize`, not a bare `resolution.size`: on the collapse frame
+                // `resolution.size` is `constraints.minimum` — right for drawing, wrong for
+                // this view's caller to remember. This view is about to leave the hierarchy
+                // (Task 6 mounts it only in `.docked`), so pinning the bound state to the
+                // floor here buys nothing and costs the width the student actually asked for.
+                // Dragging back out of a collapse within the same gesture resolves from the
+                // same untouched `anchor` and writes again, so nothing already captured is
+                // lost by skipping this one frame's write. See `nextSize`'s own doc for the
+                // design-spec edge case this is.
+                size = ResizeModel.nextSize(current: size, resolution: resolution)
                 limit = resolution.limit
                 overshoot = resolution.handleOffset
 

@@ -117,21 +117,23 @@ struct BoardScreen: View {
     /// overwritten. Clamping here rather than at the gesture is also what handles the window
     /// changing while nobody is dragging at all — Split View, Stage Manager, an external
     /// display — since this evaluates on every layout pass.
-    private func resized(_ layout: ScreenLayout) -> ScreenLayout {
-        guard layout.maximumPanelWidth >= ScreenLayout.minimumPanelWidth else { return layout }
-        let width = min(
-            max(uiState.panelWidth, ScreenLayout.minimumPanelWidth),
-            layout.maximumPanelWidth
-        )
+    ///
+    /// The parameter is named `base` rather than `layout` on purpose: this type already has a
+    /// `layout` computed property one scope up, and a parameter of the same name shadows it
+    /// silently — correct today, since nothing in this function's body reaches for the
+    /// property, but a later edit that added such a reference would recurse `layout` into
+    /// itself with no compiler complaint, because both spellings type-check.
+    private func resized(_ base: ScreenLayout) -> ScreenLayout {
+        guard base.maximumPanelWidth >= ScreenLayout.minimumPanelWidth else { return base }
         return ScreenLayout(
-            size: layout.size,
+            size: base.size,
             safeArea: EdgeInsets(
-                top: layout.safeAreaTop,
-                leading: layout.safeAreaLeading,
-                bottom: layout.safeAreaBottom,
-                trailing: layout.safeAreaTrailing
+                top: base.safeAreaTop,
+                leading: base.safeAreaLeading,
+                bottom: base.safeAreaBottom,
+                trailing: base.safeAreaTrailing
             ),
-            panelWidth: width
+            panelWidth: base.resolvingPanelWidth(uiState.panelWidth)
         )
     }
 
@@ -254,6 +256,15 @@ struct BoardScreen: View {
             maximum: layout.maximumPanelWidth,
             collapseBelow: ScreenLayout.minimumPanelWidth * Self.panelCollapseFraction
         )
+        // Belt-and-braces, not a reachable case here: `presentation == .docked` (the only way
+        // this property is built at all — see `tutor`) requires `layout.canDockTutor`, which
+        // requires `layout.fit == .threeLane`, which requires the docked lane to hold the
+        // board's floor beside the panel's — `lane >= panelWidth + 337 >= 674` — so
+        // `layout.maximumPanelWidth == dockedLaneWidth / 2 >= 337 == constraints.minimum`
+        // always holds by the time this line runs. The guard stays because `ResizeConstraints`
+        // is a public shape that does not know about `ScreenLayout`'s own invariants, and a
+        // future caller of it should not have to re-derive this proof to stay safe; a reader
+        // chasing an `else` branch that can actually run here will not find one.
         if constraints.isSatisfiable {
             ResizeHandle(
                 edge: .leading,
@@ -264,18 +275,23 @@ struct BoardScreen: View {
                 label: "Resize the tutor panel",
                 size: Binding(
                     get: { layout.panelWidth },
+                    // A closure, not the bound method `uiState.setPanelWidth` directly — this
+                    // is a workaround for a toolchain bug, not a style choice. Passing the
+                    // `@MainActor`-isolated method reference straight into `set:` crashes
+                    // `swift-frontend` during IRGen under Apple Swift 6.3
+                    // (swiftlang-6.3.0.123.5): "report_at_maximum_capacity" while lowering a
+                    // reabstraction thunk from `@escaping @isolated(any) … (CGFloat,
+                    // Actor?) -> ()` to `@escaping @isolated(any) … (CGFloat) -> ()` — i.e. the
+                    // thunk the compiler generates to adapt an actor-isolated method reference
+                    // to the plain `(CGFloat) -> Void` shape `Binding`'s `set:` wants. Wrapping
+                    // the call in an explicit closure sidesteps whatever code path emits that
+                    // thunk. `onCollapse` and `onReset` two lines down pass bare bound methods
+                    // safely only because their signatures are `() -> Void`, which does not
+                    // hit the same crash — do not "simplify" this one to match them.
                     set: { uiState.setPanelWidth($0) }
                 ),
                 onCollapse: uiState.collapseTutor,
                 onReset: uiState.resetPanelWidth
-            )
-            .frame(
-                width: ResizeHandleMetrics.hitBreadth(
-                    gutter: DS.Space.gap,
-                    into: DS.Space.panelInset
-                ),
-                height: layout.contentHeight,
-                alignment: .topLeading
             )
             .offset(x: layout.panelX - DS.Space.gap, y: layout.contentTop)
         }

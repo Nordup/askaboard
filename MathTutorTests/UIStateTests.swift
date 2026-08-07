@@ -210,6 +210,42 @@ final class UIStateTests: XCTestCase {
         XCTAssertEqual(state.panelWidth, 480, "and on the way back")
     }
 
+    /// The collapse-by-*drag* route, mirroring exactly what `ResizeHandle.onChanged` does on
+    /// the frame that crosses the collapse threshold: resolve a frame, write it into this
+    /// binding through `ResizeModel.nextSize`, and only then fire `onCollapse`. Reusing the
+    /// two real production functions rather than re-deriving their answer is what lets this
+    /// test catch a regression in either one, rather than only in a hand-rolled copy of what
+    /// they are supposed to do — see `ShellComponentTests`' resize-width tests, fixed for the
+    /// mirror-image reason, for what a copy would miss.
+    ///
+    /// Before `ResizeModel.nextSize` existed, `ResizeHandle` wrote `resolution.size` — the
+    /// floor — directly into this binding before calling `onCollapse`. Replacing the
+    /// `ResizeModel.nextSize(...)` call below with a bare `resolution.size` reproduces that
+    /// bug and fails this test with `panelWidth == 337`.
+    func testCollapsingByDragPreservesTheRequestedWidthNotTheFloor() {
+        let state = UIState()
+        state.setPanelWidth(480)
+
+        // The tutor panel's own numbers, matching `BoardScreen.resizeHandle` and
+        // `ResizeModelTests`' `panel` fixture: 337 floor, 600 ceiling, collapse at 0.6 × 337.
+        let constraints = ResizeConstraints(minimum: 337, maximum: 600, collapseBelow: 337 * 0.6)
+        let resolution = ResizeModel.resolve(
+            start: 480,
+            translation: 400,
+            edge: .leading,
+            constraints: constraints
+        )
+        XCTAssertTrue(resolution.isCollapsed, "sanity: the drag must actually cross the collapse threshold")
+
+        state.setPanelWidth(ResizeModel.nextSize(current: state.panelWidth, resolution: resolution))
+        state.collapseTutor()
+
+        XCTAssertEqual(
+            state.panelWidth, 480,
+            "the drag route must preserve the width exactly like the button route already does"
+        )
+    }
+
     func testSettingWidthDoesNotDisturbEitherOtherAxis() {
         let state = UIState()
         state.beginConversation()
