@@ -25,9 +25,18 @@ targets:
     dependencies:
       - package: markdownUI
         product: MarkdownUI
+    # The device's bearer token, compiled in rather than injected at launch —
+    # a build the user taps has no launching process to take it from. The
+    # committed file holds no secret; see MathTutor/Config/Backend.xcconfig.
+    configFiles:
+      Debug: MathTutor/Config/Backend.xcconfig
+      Release: MathTutor/Config/Backend.xcconfig
     info:
       path: MathTutor/Info.plist
       properties:
+        # Empty when no Backend.local.xcconfig exists, which is a build that
+        # cannot reach a tutor rather than a build that fails to compile.
+        MathTutorBackendToken: $(MATHTUTOR_BACKEND_TOKEN)
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         UIApplicationSupportsIndirectInputEvents: true

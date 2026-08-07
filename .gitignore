@@ -8,8 +8,10 @@ build/
 # Swift Package Manager
 .build/
 
-# Local development secrets (read by scripts/run-sim.sh)
+# Local development secrets (read by scripts/sync-backend-config.sh)
 .env.local
+# The device token, compiled into the app from here. Never commit this.
+MathTutor/Config/Backend.local.xcconfig
 
 # macOS
 .DS_Store

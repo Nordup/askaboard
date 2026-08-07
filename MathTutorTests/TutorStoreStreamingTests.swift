@@ -58,20 +58,19 @@ extension SessionPersistence {
     }
 }
 
-extension KeychainStore {
-    /// A real Keychain-backed store pre-seeded with a token, for tests that
-    /// need `usesLiveTutor` true without exercising credential management
-    /// itself. Every `KeychainStore` shares the same system entry (there is
-    /// no per-instance scoping), matching the pattern the rest of the suite
-    /// already relies on for keychain-backed tests.
+extension BackendConfiguration {
+    /// "This store can reach a tutor", stated rather than arranged.
     ///
-    /// The token is the only half there is to seed: the address is a constant
-    /// in the binary, so a store with a token is a store that can reach a
-    /// tutor. See `BackendConfiguration`.
-    static var stub: KeychainStore {
-        let store = KeychainStore()
-        store.saveBackendToken("tutor-store-streaming-tests-key")
-        return store
+    /// It used to be arranged, by writing a token into the real Keychain. The
+    /// token is compiled in now, so there is nothing to write — and a test that
+    /// read the real one would pass or fail depending on whether the machine
+    /// running it happens to have a `Backend.local.xcconfig`. Injecting the
+    /// answer keeps the suite independent of local credentials entirely.
+    static var stub: BackendConfiguration {
+        BackendConfiguration(
+            baseURL: URL(string: "https://backend.example.com")!,
+            token: "tutor-store-streaming-tests-token"
+        )!
     }
 }
 
@@ -80,7 +79,7 @@ final class TutorStoreStreamingTests: XCTestCase {
     func testTextDeltasAccumulateIntoASingleTutorMessage() async {
         let store = TutorStore(service: ScriptedTutorService(events: [
             .status(.thinking, detail: nil), .textDelta("Nice "), .textDelta("work."), .done,
-        ]), persistence: .inMemory, keychain: .stub)
+        ]), persistence: .inMemory, configuration: .stub)
         await store.sendAndWait("check this")
         XCTAssertEqual(store.session.messages.last?.text, "Nice work.")
         XCTAssertEqual(store.session.messages.filter { $0.role == .tutor }.count, 2)
@@ -89,7 +88,7 @@ final class TutorStoreStreamingTests: XCTestCase {
     func testPhaseClearsWhenTheTurnIsDone() async {
         let store = TutorStore(service: ScriptedTutorService(events: [
             .status(.writing, detail: nil), .textDelta("hi"), .done,
-        ]), persistence: .inMemory, keychain: .stub)
+        ]), persistence: .inMemory, configuration: .stub)
         await store.sendAndWait("hello")
         XCTAssertNil(store.phase)
     }
@@ -97,7 +96,7 @@ final class TutorStoreStreamingTests: XCTestCase {
     func testAWorkspaceEventReplacesThePairAndOpensTheBoard() async {
         let store = TutorStore(service: ScriptedTutorService(events: [
             .workspace(.radicalEquation, .radicalEquation), .textDelta("Here."), .done,
-        ]), persistence: .inMemory, keychain: .stub)
+        ]), persistence: .inMemory, configuration: .stub)
         await store.sendAndWait("give me a problem")
         XCTAssertEqual(store.session.plan?.title, SessionPlan.radicalEquation.title)
         XCTAssertNotNil(store.session.exercise)
@@ -107,7 +106,7 @@ final class TutorStoreStreamingTests: XCTestCase {
     func testAFailureEventLeavesTheWorkspaceUntouchedAndShowsTheMessage() async {
         let store = TutorStore(service: ScriptedTutorService(events: [
             .textDelta("Partial"), .failure(message: "stream died", retryable: true),
-        ]), persistence: .inMemory, keychain: .stub)
+        ]), persistence: .inMemory, configuration: .stub)
         store.applyForTesting(plan: .radicalEquation, exercise: .radicalEquation)
         await store.sendAndWait("continue")
         XCTAssertEqual(store.errorMessage, "stream died")
@@ -140,7 +139,7 @@ final class TutorStoreStreamingTests: XCTestCase {
             [.workspace(replacementPlan, replacementExercise), .textDelta("Here is a new board exercise."), .done],
             [.textDelta("We can discuss that without changing your board."), .done],
         ])
-        let store = TutorStore(service: service, persistence: .inMemory, keychain: .stub)
+        let store = TutorStore(service: service, persistence: .inMemory, configuration: .stub)
 
         await store.sendAndWait("Give me a starter algebra problem")
         XCTAssertEqual(store.session.plan?.title, SessionPlan.radicalEquation.title)
@@ -163,7 +162,7 @@ final class TutorStoreStreamingTests: XCTestCase {
                 onRequest: { request in recorded.withLock { $0.append(request) } }
             ),
             persistence: .inMemory,
-            keychain: .stub
+            configuration: .stub
         )
 
         await store.sendAndWait("first turn")

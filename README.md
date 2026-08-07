@@ -25,21 +25,33 @@ Open `MathTutor.xcodeproj` in Xcode to run on a paired iPad, including devices o
 
 ## How the app reaches its tutor
 
-**The app holds no OpenAI key and never talks to OpenAI.** It talks to one backend ([`server/`](server/README.md)), which holds the key. There is nothing to set up on the device and no credential surface in the app: the backend's address is a constant in `BackendConfiguration`, not a setting, and the device's own bearer token lives in the Keychain — never in source, the Xcode project, or `UserDefaults`. Settings has two panes, Tutor and Session, and neither of them configures a server. Reasoning effort supports none, low, medium, high, xhigh, and max; new and reset sessions default to high and the selected value is persisted with the session. A deterministic demo tutor is available only through explicit test/debug injection.
+**The app holds no OpenAI key and never talks to OpenAI.** It talks to one backend ([`server/`](server/README.md)), which holds the key. There is nothing to set up on the device and no credential surface in the app: the backend's address is a constant in `BackendConfiguration`, not a setting, and the device's own bearer token is compiled in from a gitignored xcconfig — never in source, in git, or in `UserDefaults`. Settings has two panes, Tutor and Session, and neither of them configures a server. Reasoning effort supports none, low, medium, high, xhigh, and max; new and reset sessions default to high and the selected value is persisted with the session. A deterministic demo tutor is available only through explicit test/debug injection.
 
-### Local dev loop (point a build at a local server)
+### The device token
 
-DEBUG builds can override the address and seed the device token from the launch environment, so a simulator run comes up live against a local backend. Put both in a gitignored `.env.local` at the repo root:
+**It is compiled in, not injected at launch.** Launch injection only works when something starts the app *with* those variables — Xcode, `devicectl`, `scripts/run-sim.sh`. Tap the icon on the Home screen and there is no launching process to read them from, in Debug or in Release, so a build installed on an iPad could never reach the backend at all. A build the user taps has to already contain its credential.
+
+Put it in a gitignored `.env.local` at the repo root and run the sync script, which writes `MathTutor/Config/Backend.local.xcconfig` — also gitignored, and the only place in the repo tree the token lands:
 
 ```sh
 cat <<'EOF' > .env.local
-MATHTUTOR_BACKEND_URL=http://localhost:8080
 MATHTUTOR_BACKEND_TOKEN=...
+MATHTUTOR_BACKEND_URL=http://localhost:8080   # optional, DEBUG only
 EOF
+scripts/sync-backend-config.sh
+```
+
+Then build normally. `MathTutor/Config/Backend.xcconfig` is committed, holds no secret, and `#include?`s the local file — the optional form, so a clean checkout with no credentials still builds. It just carries an empty token, `BackendConfiguration.load()` returns `nil`, and the app runs without being able to reach a tutor. `TutorStore` clears both credentials older builds kept in the Keychain (the OpenAI key, and the seeded device token) on every launch, release included.
+
+The **base URL is deliberately not** in the xcconfig: an xcconfig value runs to the end of the line and `//` starts a comment anywhere on it, so `https://host` would be stored as `https:`. It is a constant in `BackendConfiguration` instead. A DEBUG launch can still override it — `MATHTUTOR_BACKEND_URL` in the environment, read fresh per request and never stored — which is what points a simulator run at a local server.
+
+### Local dev loop
+
+```sh
 scripts/run-sim.sh
 ```
 
-The script builds, installs, and launches on `iPad Pro 13-inch (M5)` (override with `MATHTUTOR_SIM_DEVICE`, skip the build with `SKIP_BUILD=1`), passing both through `SIMCTL_CHILD_MATHTUTOR_BACKEND_URL` and `SIMCTL_CHILD_MATHTUTOR_BACKEND_TOKEN`. The two halves behave differently on purpose. `MATHTUTOR_BACKEND_URL` is a pure override of `BackendConfiguration.permanentBaseURL`, read fresh on every request and never stored — unset it and the build is back on the shipped address. `MATHTUTOR_BACKEND_TOKEN` (or a path in `MATHTUTOR_BACKEND_TOKEN_FILE`) is seeded into the Keychain once by `TutorStore`, so later launches stay live without the environment set. Neither value lives in source or the Xcode project. The whole path is compiled out of release builds, and it is deliberately skipped for `--ui-test-reset` launches so UI tests never inherit a developer credential. To clear a seeded token, relaunch with that argument:
+It runs `sync-backend-config.sh` for you, then builds, installs, and launches on `iPad Pro 13-inch (M5)` (override with `MATHTUTOR_SIM_DEVICE`, skip the build with `SKIP_BUILD=1`), passing `MATHTUTOR_BACKEND_URL` through as `SIMCTL_CHILD_MATHTUTOR_BACKEND_URL` so the run points at your local server. `--ui-test-reset` makes `BackendConfiguration.load()` return `nil` regardless of what is compiled in, so a UI test can never reach the real backend on your credential:
 
 ```sh
 xcrun simctl terminate booted com.nordup.MathTutor
@@ -69,7 +81,7 @@ Five layers, each depending only on the ones above it. `DesignSystem` knowing no
 | Layer | Contents |
 | --- | --- |
 | `Domain/` | `Models`, `BoardTool`/`PenColor`/`StrokeThickness`, the tutor prompt policy. No UIKit, no SwiftUI. |
-| `Services/` | `TutorService` protocol with `DemoTutorService`, `TutorServiceRouter` (reads `BackendConfiguration` from `UserDefaults` and the Keychain, routes to `BackendTutorService`), `SessionPersistence`, `KeychainStore`, `BackendConfiguration`. `DictationService` protocol with `DictationServiceRouter`, `BackendDictationService` (`AVAudioEngine` records and meters; the configured backend transcribes), and `ScriptedDictationService`, the fake the tests drive. |
+| `Services/` | `TutorService` protocol with `DemoTutorService`, `TutorServiceRouter` (reads `BackendConfiguration` — a constant address and a compiled-in token — and routes to `BackendTutorService`), `SessionPersistence`, `KeychainStore` (deletes what older builds stored; nothing writes credentials now), `BackendConfiguration`. `DictationService` protocol with `DictationServiceRouter`, `BackendDictationService` (`AVAudioEngine` records and meters; the configured backend transcribes), and `ScriptedDictationService`, the fake the tests drive. |
 | `DesignSystem/` | Generated tokens, the elevation scale, typography, `ScreenLayout`, the icon set, and every component. Depends on nothing. |
 | `Features/` | `Board` (the PencilKit engine), `Tutor` (panel, full screen, and `DictationController` behind the composer's mic), `Settings`, `Plan`. |
 | `App/` | `MathTutorApp`, `RootView`, `UIState`, DEBUG launch options. |
@@ -103,7 +115,7 @@ A FastAPI service at [`server/`](server/README.md) is the only path the app has.
 - Open Settings and confirm the sidebar lists Tutor and Session only: no key field, no server address, nowhere to point the app at a different backend.
 - Tap a suggestion chip and send a typed message; both should move the panel from greeting to thread.
 - **Dictation cannot be exercised in the simulator** — there is no usable microphone input, so the service reports `.audioUnavailable` and a mic tap ends in the "Dictation isn't available right now" notice. That is the simulator behaving, not a bug; check the feature on a real iPad.
-- With no device token there is no mic at all in the composer, because dictation runs over the same backend configuration the tutor does. Relaunch with `--ui-test-reset` to clear the token and confirm the mic is gone; relaunch through `scripts/run-sim.sh` to seed it again and confirm the mic returns.
+- With no device token there is no mic at all in the composer, because dictation runs over the same backend configuration the tutor does. Relaunch with `--ui-test-reset` — which makes the compiled-in token read as absent — and confirm the mic is gone; relaunch without it and confirm the mic returns.
 - On device: tap the mic and confirm the level meter in the text lane moves with your voice — cover the mic and confirm it collapses to five dots, which is the check that it is real and not an animation. Tap again and confirm the lane becomes the thinking dots and "Transcribing…", then the words arrive about a second later, trailed by the streaming caret. Anything you had already typed stays ahead of them. Refuse the permission and confirm the next tap raises an alert with an Open Settings route rather than a dead button.
 - Tap the leading cross during each phase and confirm the recording is discarded, typed text survives, and nothing lands afterwards.
 - Tap the mic and say nothing, and confirm the line "I didn't catch anything that time." appears above the composer rather than a fabricated "Thank you." in the field.

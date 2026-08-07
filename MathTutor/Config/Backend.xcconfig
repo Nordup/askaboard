@@ -1,0 +1,21 @@
+// The device's bearer token, as a build setting.
+//
+// This file is committed and holds no secret. The value comes from
+// `Backend.local.xcconfig` beside it, which is gitignored and written by
+// `scripts/sync-backend-config.sh` from a gitignored `.env.local`.
+//
+// `#include?` — the optional form — is what makes a clean checkout build: with
+// no local file the setting stays empty, `Info.plist` carries an empty string,
+// and `BackendConfiguration.load()` returns nil, so the app builds and runs and
+// simply cannot reach a tutor. That is the honest failure. A hard `#include`
+// would break the build for anyone who has not set up a credential yet.
+//
+// **The base URL is deliberately not here.** An xcconfig value runs to the end
+// of the line and `//` starts a comment *anywhere* on it, so
+// `https://host` would be stored as `https:`. The address is a constant in
+// `BackendConfiguration` instead, which is where a permanent address belongs.
+#include? "Backend.local.xcconfig"
+
+// Declared so the Info.plist substitution always resolves to something, even
+// when the local file is absent. A local definition overrides this.
+MATHTUTOR_BACKEND_TOKEN = $(inherited)

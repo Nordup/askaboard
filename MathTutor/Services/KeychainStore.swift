@@ -1,55 +1,53 @@
 import Foundation
 import Security
 
-/// The device's backend credential: a bearer token, kept in the Keychain and
-/// nowhere else. The address it is paired with is not a secret and not stored
-/// at all — it is a constant in `BackendConfiguration`.
+/// **The app stores no credential.** This type exists only to clear the two it
+/// used to, and it only ever deletes.
+///
+/// The device's bearer token is compiled into the build now — see
+/// `BackendConfiguration` — because a build the user taps has no launching
+/// process to take one from. Before that it was seeded into the Keychain at
+/// launch, and before *that* the Keychain held a real OpenAI API key typed into
+/// Settings. Both accounts can still be sitting on a device that ran an older
+/// build, holding a credential the app has stopped sending anywhere, so
+/// `migrateAwayFromStoredCredentials()` runs on every launch, release included.
 struct KeychainStore: Sendable {
     private let service = "com.nordup.MathTutor"
-    /// The account this type reads and writes today. Named for what it holds
-    /// now — a backend bearer token — rather than for the client-side OpenAI
-    /// prototype that used to occupy this slot.
-    private let account = "backend-token"
-    /// Where the client-side OpenAI prototype kept its key. `migrateAwayFromAPIKey()`
-    /// is the only thing that still touches this account, and it only ever deletes.
+    /// Where the device token lived while it was seeded at launch.
+    private let legacyBackendTokenAccount = "backend-token"
+    /// Where the client-side OpenAI prototype kept its key.
     private let legacyAPIKeyAccount = "openai-api-key"
 
-    func readBackendToken() -> String? {
-        read(account: account)
-    }
-
+    /// Deletes whatever either legacy account still holds. `errSecItemNotFound`
+    /// — nothing left to delete — counts as success, which is the ordinary case
+    /// on any device that never ran one of those builds.
     @discardableResult
-    func saveBackendToken(_ token: String) -> Bool {
-        save(token, account: account)
-    }
-
-    @discardableResult
-    func removeBackendToken() -> Bool {
-        remove(account: account)
-    }
-
-    /// Deletes whatever the old `openai-api-key` account still holds. Meant to run on every
-    /// launch — including release builds — so a real OpenAI key from before this migration
-    /// does not sit in the Keychain forever after the app stopped sending it anywhere.
-    /// `errSecItemNotFound` (nothing left to delete) counts as success, the same way
-    /// `removeBackendToken()` treats it.
-    @discardableResult
-    func migrateAwayFromAPIKey() -> Bool {
-        remove(account: legacyAPIKeyAccount)
+    func migrateAwayFromStoredCredentials() -> Bool {
+        let apiKey = remove(account: legacyAPIKeyAccount)
+        let backendToken = remove(account: legacyBackendTokenAccount)
+        return apiKey && backendToken
     }
 
     #if DEBUG
-    /// Test-only: writes directly to the legacy `openai-api-key` account, so a migration test
-    /// can seed the exact condition `migrateAwayFromAPIKey()` exists to clear, without this
-    /// type exposing that account to anything else.
+    /// Test-only: writes directly to a legacy account, so a migration test can
+    /// seed the exact condition `migrateAwayFromStoredCredentials()` exists to
+    /// clear, without this type exposing those accounts to anything else.
     @discardableResult
     func saveLegacyAPIKeyForTesting(_ key: String) -> Bool {
         save(key, account: legacyAPIKeyAccount)
     }
 
-    /// Test-only: reads the legacy `openai-api-key` account directly.
     func readLegacyAPIKeyForTesting() -> String? {
         read(account: legacyAPIKeyAccount)
+    }
+
+    @discardableResult
+    func saveLegacyBackendTokenForTesting(_ token: String) -> Bool {
+        save(token, account: legacyBackendTokenAccount)
+    }
+
+    func readLegacyBackendTokenForTesting() -> String? {
+        read(account: legacyBackendTokenAccount)
     }
     #endif
 

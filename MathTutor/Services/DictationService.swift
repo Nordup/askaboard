@@ -146,26 +146,23 @@ extension DictationAvailability {
 
 // MARK: - The live-configured default
 
-/// `DictationController`'s default service. Mirrors `TutorServiceRouter` for the same reason:
-/// a `BackendConfiguration` can appear or disappear at any moment — the device is pointed at a
-/// server, or its token is cleared, from the app's own Settings mid-lesson — so this re-reads
-/// it on every call rather than deciding once at launch and freezing that answer for the
-/// controller's whole lifetime.
+/// `DictationController`'s default service. Mirrors `TutorServiceRouter`: it re-reads the
+/// configuration on every call rather than deciding once at launch, so the two routers cannot
+/// disagree about whether a tutor is reachable.
+///
+/// That mattered more when a token could be typed in or removed mid-lesson. It is compiled in
+/// now and cannot change while the app runs — but reading it per call costs nothing and is one
+/// less invariant to hold in your head than a cached answer would be.
 @MainActor
 final class DictationServiceRouter: DictationService {
-    private let keychain: KeychainStore
     private let configurationReader: @Sendable () -> BackendConfiguration?
     /// The service backing the session currently in flight. `nil` between sessions, so every
     /// `start(sessionID:)` re-resolves configuration instead of reusing a stale instance, and
     /// `stop()`/`cancel()`/`inputLevel` route to the one actually holding the microphone.
     private var current: BackendDictationService?
 
-    init(
-        keychain: KeychainStore = KeychainStore(),
-        configurationReader: (@Sendable () -> BackendConfiguration?)? = nil
-    ) {
-        self.keychain = keychain
-        self.configurationReader = configurationReader ?? { BackendConfiguration.load(keychain: keychain) }
+    init(configurationReader: (@Sendable () -> BackendConfiguration?)? = nil) {
+        self.configurationReader = configurationReader ?? { BackendConfiguration.load() }
     }
 
     /// Unlike `OpenAIDictationService.isSupported`, this is never baked into one instance's

@@ -649,6 +649,56 @@ final class MathTutorTests: XCTestCase {
         XCTAssertTrue(store.session.messages.contains(tutorReply), "Dismissing the highlighted feedback must not remove conversation history")
     }
 
+    /// A student who types "check my work" and sends it with a region attached
+    /// must be asking *their* question about the board.
+    ///
+    /// `BoardScreen.send` used to leave the typed text sitting in the composer
+    /// and send a canned "Please evaluate my work on …" in its place, so the one
+    /// message the tutor received was never the one the student wrote.
+    @MainActor
+    func testAnEvaluationCarriesTheStudentsOwnQuestionWhenTheyTypedOne() async throws {
+        let store = TutorStore(service: DemoTutorService())
+        store.resetSession()
+        let initialMessageCount = store.session.messages.count
+
+        store.evaluate(
+            imageData: Data([1, 2, 3]),
+            regionDescription: "the area you selected",
+            question: "did I factor this right?"
+        )
+        for _ in 0..<50 where store.isEvaluating {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        let newMessages = Array(store.session.messages.dropFirst(initialMessageCount))
+        let evaluationTurn = try XCTUnwrap(newMessages.first(where: { $0.signal == .evaluate }))
+        XCTAssertTrue(
+            evaluationTurn.text.contains("did I factor this right?"),
+            "The student's own question must reach the tutor, not be replaced by a canned one"
+        )
+        XCTAssertTrue(
+            evaluationTurn.text.contains("the area you selected"),
+            "The turn still has to say which part of the board the image is of"
+        )
+    }
+
+    /// With nothing typed, the canned line is still what carries the request.
+    @MainActor
+    func testAnEvaluationWithNoTypedQuestionKeepsTheCannedRequest() async throws {
+        let store = TutorStore(service: DemoTutorService())
+        store.resetSession()
+        let initialMessageCount = store.session.messages.count
+
+        store.evaluate(imageData: Data([1, 2, 3]), regionDescription: "the whole board", question: nil)
+        for _ in 0..<50 where store.isEvaluating {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        let newMessages = Array(store.session.messages.dropFirst(initialMessageCount))
+        let evaluationTurn = try XCTUnwrap(newMessages.first(where: { $0.signal == .evaluate }))
+        XCTAssertEqual(evaluationTurn.text, "Please evaluate my work on the whole board.")
+    }
+
     func testNewSessionsDefaultToLuna() {
         XCTAssertEqual(LearningSession.empty.selectedModel, .luna)
         XCTAssertEqual(LearningSession.empty.reasoningEffort, .high)
@@ -843,10 +893,12 @@ final class MathTutorTests: XCTestCase {
     /// the turn fails, leaving the learner's message unsent rather than half-recorded.
     @MainActor
     func testStoreGuardsRequestsWhenTheBackendCannotBeReached() {
-        let keychain = KeychainStore()
-        keychain.removeBackendToken()
-        let router = TutorServiceRouter()
-        let store = TutorStore(service: router, keychain: keychain)
+        // `configuration: nil` is a build compiled with no device token — the
+        // state a clean checkout is in, and the one a Release build used to be
+        // stuck in permanently before the token became a build setting.
+        let store = TutorStore(
+            service: TutorServiceRouter(), persistence: .inMemory, configuration: nil
+        )
         store.resetSession()
         XCTAssertFalse(store.usesLiveTutor)
 

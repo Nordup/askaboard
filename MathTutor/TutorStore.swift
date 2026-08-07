@@ -29,10 +29,17 @@ final class TutorStore: ObservableObject {
     /// turn a `send`/`evaluate`/etc. call just started rather than polling.
     private var activeRequestTask: Task<Void, Never>?
 
+    /// - Parameter configuration: What this build can reach, resolved once at
+    ///   launch because nothing in the app can change it afterwards — the
+    ///   address is a constant and the token is compiled in. An explicit
+    ///   parameter rather than a call to `BackendConfiguration.load()` in the
+    ///   body so a test can state "this store is live" without depending on
+    ///   whether the machine running it happens to have a token compiled in.
     init(
         service: any TutorService = TutorServiceRouter(),
         persistence: SessionPersistence = SessionPersistence(),
-        keychain: KeychainStore = KeychainStore()
+        keychain: KeychainStore = KeychainStore(),
+        configuration: BackendConfiguration? = BackendConfiguration.load()
     ) {
         #if DEBUG
         // The offline tutor is available only when a test/debug launch opts into it
@@ -51,25 +58,14 @@ final class TutorStore: ObservableObject {
         #endif
         self.persistence = persistence
         self.keychain = keychain
-        // Runs on every launch, release included: a real OpenAI key left over from
-        // before this migration must not sit in the Keychain forever just because
-        // the app stopped sending it anywhere.
-        keychain.migrateAwayFromAPIKey()
+        // Runs on every launch, release included. Two accounts to clear and
+        // neither is ever read now: the client-side OpenAI key from before the
+        // backend existed, and the device token from when it was seeded at
+        // launch instead of compiled in. A credential the app has stopped
+        // sending anywhere must not sit in the Keychain forever.
+        keychain.migrateAwayFromStoredCredentials()
         let isUITestReset = ProcessInfo.processInfo.arguments.contains("--ui-test-reset")
         #if DEBUG
-        // UI tests must never inherit a developer credential from the simulator.
-        // This is intentionally compiled only into DEBUG; production launches keep
-        // their existing Keychain-backed live behavior unchanged.
-        if isUITestReset {
-            keychain.removeBackendToken()
-        }
-        // Local dev loop: seed the Keychain from the launch environment so a
-        // simulator run arrives with a token already in place. There is nowhere
-        // in the app to type one — see `BackendConfiguration`. Skipped for UI
-        // test resets by the same rule above.
-        if !isUITestReset, let token = DebugBackendInjection.injectedToken() {
-            keychain.saveBackendToken(token)
-        }
         let shouldSeedE2E = ProcessInfo.processInfo.arguments.contains(E2ESeedFixture.launchArgument)
         #else
         let shouldSeedE2E = false
@@ -82,7 +78,7 @@ final class TutorStore: ObservableObject {
             restored.messages = [TutorMessage(role: .tutor, text: "Hi, I’m your math tutor. What would you like to understand today? You can type a goal in your own words—fractions, algebra, a homework question, anything.")]
         }
         self.session = restored
-        self.usesLiveTutor = BackendConfiguration.load(keychain: keychain) != nil
+        self.usesLiveTutor = configuration != nil
         let usingDemoService = resolvedService is DemoTutorService
         self.isWorkspace = restored.plan != nil && restored.exercise != nil && (self.usesLiveTutor || usingDemoService)
         if shouldSeedE2E { persistence.save(restored) }
@@ -230,7 +226,15 @@ final class TutorStore: ObservableObject {
         boardInkData = nil
     }
 
-    func evaluate(imageData: Data, regionDescription: String?) {
+    /// One board evaluation.
+    ///
+    /// `question` is what the student actually typed into the composer alongside the
+    /// selection, when they typed anything. It used to have nowhere to go — the composer
+    /// held onto the text and sent the canned line below in its place, so a student who
+    /// wrote "check my work" had the one message they wrote dropped and a generic request
+    /// delivered instead. It is spliced in front of the region rather than replacing it:
+    /// the tutor still has to be told which part of the board the image is of.
+    func evaluate(imageData: Data, regionDescription: String?, question: String? = nil) {
         guard !isEvaluating, ensureTutorAvailable() else { return }
         isEvaluating = true
         evaluationText = nil
@@ -238,10 +242,14 @@ final class TutorStore: ObservableObject {
         errorMessage = nil
         let region = regionDescription?.trimmingCharacters(in: .whitespacesAndNewlines)
         let regionLabel = region?.isEmpty == false ? region! : "the whiteboard"
+        let asked = question?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = asked?.isEmpty == false
+            ? asked! + "\n\n(About " + regionLabel + ".)"
+            : "Please evaluate my work on " + regionLabel + "."
         session.messages.append(
             TutorMessage(
                 role: .learner,
-                text: "Please evaluate my work on " + regionLabel + ".",
+                text: text,
                 signal: .evaluate
             )
         )

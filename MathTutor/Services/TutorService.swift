@@ -14,15 +14,10 @@ protocol TutorService: Sendable {
 }
 
 struct TutorServiceRouter: TutorService, Sendable {
-    let keychain: KeychainStore
     private let configurationReader: @Sendable () -> BackendConfiguration?
 
-    init(
-        keychain: KeychainStore = KeychainStore(),
-        configurationReader: (@Sendable () -> BackendConfiguration?)? = nil
-    ) {
-        self.keychain = keychain
-        self.configurationReader = configurationReader ?? { BackendConfiguration.load(keychain: keychain) }
+    init(configurationReader: (@Sendable () -> BackendConfiguration?)? = nil) {
+        self.configurationReader = configurationReader ?? { BackendConfiguration.load() }
     }
 
     /// The real streaming path: a build with no usable token has no

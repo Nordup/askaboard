@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-# Build, install, and launch MathTutor on a simulator with the development backend base
-# URL and device token injected from a gitignored .env.local, so neither has to be
-# retyped in Settings. The app side is DEBUG-only; see
-# MathTutor/DebugBackendInjection.swift.
+# Build, install, and launch MathTutor on a simulator against a local backend.
+#
+# The device token is *compiled in*, not injected: this runs
+# scripts/sync-backend-config.sh first, which writes the gitignored
+# MathTutor/Config/Backend.local.xcconfig from .env.local. The base URL is the
+# one thing still passed at launch, as a DEBUG-only override of
+# BackendConfiguration.permanentBaseURL, so a simulator run can point at
+# http://localhost:8080 without editing that constant.
 #
 # Usage:
 #   scripts/run-sim.sh              build, install, launch
@@ -17,29 +21,17 @@ ENV_FILE="${ROOT}/.env.local"
 DERIVED="${ROOT}/build/DerivedData"
 DEVICE="${MATHTUTOR_SIM_DEVICE:-iPad Pro 13-inch (M5)}"
 
+# Compiles the token into the build. Exits nonzero with its own instructions
+# when there is no token to find, so this script does not repeat them.
+"${ROOT}/scripts/sync-backend-config.sh"
+
 BACKEND_URL="${MATHTUTOR_BACKEND_URL:-}"
-BACKEND_TOKEN="${MATHTUTOR_BACKEND_TOKEN:-}"
-if [[ ( -z "$BACKEND_URL" || -z "$BACKEND_TOKEN" ) && -f "$ENV_FILE" ]]; then
+if [[ -z "$BACKEND_URL" && -f "$ENV_FILE" ]]; then
   set -a
   # shellcheck source=/dev/null
   source "$ENV_FILE"
   set +a
   BACKEND_URL="${MATHTUTOR_BACKEND_URL:-}"
-  BACKEND_TOKEN="${MATHTUTOR_BACKEND_TOKEN:-}"
-fi
-
-if [[ -z "$BACKEND_URL" || -z "$BACKEND_TOKEN" ]]; then
-  cat >&2 <<EOF
-No backend configuration found.
-
-Create ${ENV_FILE} containing:
-
-  MATHTUTOR_BACKEND_URL=http://localhost:8080
-  MATHTUTOR_BACKEND_TOKEN=...
-
-That file is gitignored. Alternatively export both variables yourself.
-EOF
-  exit 1
 fi
 
 UDID="$(xcrun simctl list devices available \
@@ -76,9 +68,13 @@ fi
 echo "==> Installing"
 xcrun simctl install "$UDID" "$APP"
 
-echo "==> Launching with injected backend configuration"
-SIMCTL_CHILD_MATHTUTOR_BACKEND_URL="$BACKEND_URL" \
-  SIMCTL_CHILD_MATHTUTOR_BACKEND_TOKEN="$BACKEND_TOKEN" \
+if [[ -n "$BACKEND_URL" ]]; then
+  echo "==> Launching against ${BACKEND_URL}"
+  SIMCTL_CHILD_MATHTUTOR_BACKEND_URL="$BACKEND_URL" \
+    xcrun simctl launch "$UDID" "$BUNDLE_ID" >/dev/null
+else
+  echo "==> Launching against the shipped address"
   xcrun simctl launch "$UDID" "$BUNDLE_ID" >/dev/null
+fi
 
-echo "==> Running. The base URL and token are seeded into the simulator's UserDefaults/Keychain and persist across relaunches."
+echo "==> Running. The token is in the build; the base URL override lasts only for this launch."
