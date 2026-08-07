@@ -10,7 +10,9 @@
 
 ## Global Constraints
 
-- **Prerequisite:** the backend-service plan is complete and `scripts/run-server.sh` runs.
+- **Prerequisite:** the backend-service plan is complete and `scripts/run-server.sh` runs. It is — 139 tests pass. Two known backend gaps remain open and do **not** block this plan: a client disconnect can strand a turn at `status="running"`, and the live smoke test cannot run.
+- **A concurrent agent is editing this same working tree**, currently on the resize/panel feature (`BoardScreen.swift`, `Layout.swift`, `ResizeHandle.swift`, `UIStateTests.swift`, `ResizeModelTests.swift`). It has already, once this session, absorbed another agent's staged work into its own commit. Every task must stage its own files by explicit path, never `git add -A`, and commit promptly rather than leaving work staged.
+- **The Settings layer was rewritten** since this plan was authored — see the re-base note in Task 6. Read the current file before editing any Settings file; do not trust this plan's descriptions of that layer.
 - Commit directly to `main`. **Do not create branches.**
 - `DemoTutorService` and every test that depends on it must keep working at every commit. It is the deterministic path the whole migration is verified against.
 - No OpenAI API key, endpoint, or model constant may remain in `MathTutor/` when this plan finishes. `grep -ri "api.openai.com" MathTutor/` must return nothing.
@@ -397,7 +399,9 @@ git commit -m "Send dictation through the backend and say plainly that the audio
 
 **Files:**
 - Delete: `MathTutor/Services/OpenAITutorService.swift`, `MathTutor/DebugAPIKeyInjection.swift`
-- Modify: `MathTutor/Services/KeychainStore.swift`, `MathTutor/Features/Settings/KeyField.swift`, `MathTutor/Features/Settings/SettingsScreen.swift`, `MathTutor/Features/Plan/NoAPIKeyState.swift`, `scripts/run-sim.sh`, `README.md`
+- Modify: `MathTutor/Services/KeychainStore.swift`, `MathTutor/Features/Settings/KeyField.swift`, `MathTutor/Features/Settings/SettingsPanes.swift`, `MathTutor/Features/Plan/NoAPIKeyState.swift`, `scripts/run-sim.sh`, `README.md`
+
+**Re-based 2026-08-08.** This plan was written against a Settings layer that no longer exists. A concurrent agent replaced `SettingsScreen.swift` with a pane-based structure: `SettingsWindow.swift`, `SettingsSidebar.swift`, `SettingsPane.swift`, `SettingsPanes.swift`, `SettingsPresentation.swift`, `SettingRow.swift`. The API-key UI now lives in `APIKeyPane` inside `SettingsPanes.swift`, which composes the existing `KeyField`. Read those two files before editing; the structure below describes intent, not current line numbers.
 - Test: `MathTutorTests/SettingsBackendTests.swift`
 
 **Interfaces:**
