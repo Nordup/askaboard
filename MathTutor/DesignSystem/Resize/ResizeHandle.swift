@@ -95,11 +95,13 @@ struct ResizeHandle: View {
     /// to unfreeze it again.
     var onBegin: () -> Void = {}
 
-    /// Fired once when the drag that called `onBegin` concludes — however it concludes. Not
-    /// only a deliberate release: also a cancellation, a system interruption, or `onCollapse`
-    /// below causing this view itself to leave the hierarchy mid-gesture. It is driven off
-    /// `isDragging`'s falling edge rather than `DragGesture.onEnded`, specifically so none of
-    /// those paths can leave it unpaired with `onBegin` — see `isDragging` and `endDrag()`.
+    /// Fired once when the drag that called `onBegin` concludes — however it concludes: a
+    /// deliberate release, a cancellation, a system interruption, or `onCollapse` below
+    /// causing this view itself to leave the hierarchy mid-gesture. No single SwiftUI
+    /// callback covers all four, so `endDrag()` is reachable from three different
+    /// terminators and is idempotent (`hasBegun` guards it) so that whichever one or two of
+    /// them a given gesture happens to trigger, `onEnd()` still fires exactly once. See
+    /// `endDrag()`.
     var onEnd: () -> Void = {}
 
     /// Fired on the transition into collapse — once per crossing, not once per frame spent
@@ -140,14 +142,32 @@ struct ResizeHandle: View {
     /// twice for one logical frame would double the very haptic this exists to de-duplicate.
     /// So the comparison lives in the one place that is guaranteed to run its own reads and
     /// writes in the order they are written: `.onChanged`, sequentially, within a single
-    /// closure invocation. What still needs `@GestureState`'s guarantee is *this* value's
-    /// immunity to leaking across a cancelled gesture into the next one — and it gets that not
-    /// by being read at the top of `.onChanged` (an earlier version tried that, and it does not
-    /// work: `.onChanged` is the *outer* node wrapping `.updating`'s `GestureStateGesture`, so
-    /// `anchor` already reads non-`nil` on the very first `.onChanged` of a gesture, and a check
-    /// there for "is this the first frame" is never true) but by being reset on the rising edge
-    /// of `isDragging` in `body` below, which is ordering-independent by construction.
+    /// closure invocation.
+    ///
+    /// It is reset to `false` inside `.onChanged`'s own `hasBegun` guard, *before* the first
+    /// resolution of a new gesture is examined — not on a rising edge observed elsewhere. An
+    /// earlier version reset it from a `.onChange(of: isDragging)` rising edge instead, which
+    /// looks equivalent but is a distinct SwiftUI callback that runs during a later view
+    /// update, *after* `.onChanged` has already delivered at least one event: if that first
+    /// event already crossed the collapse threshold, `onCollapse()` would fire correctly, and
+    /// then the rising-edge reset would clobber the record of it — so the *next* frame would
+    /// see `wasCollapsed == false` again and fire a second, spurious `onCollapse()`. Resetting
+    /// inside the same guard that decides whether this is the gesture's first event removes
+    /// the gap between "examine this frame's collapse state" and "have last frame's state
+    /// available to compare against" entirely, because both now happen in the one place and
+    /// in the order they are written.
     @State private var wasCollapsed = false
+
+    /// Whether this gesture has already run its begin-of-drag bookkeeping (`onBegin()`, the
+    /// grab haptic, resetting `wasCollapsed`). Plain `@State`, not `@GestureState`, because
+    /// `endDrag()` needs to read and clear it *after* the gesture that set it has already
+    /// concluded — a `@GestureState` would already be back to its initial value by then.
+    ///
+    /// This is what makes `endDrag()` idempotent: guarding on `hasBegun` is what lets three
+    /// independent terminators (`.onEnded`, `isDragging`'s falling edge, `.onDisappear`) all
+    /// call it without coordinating with each other, because at most one of them does
+    /// anything and the rest are no-ops. See `endDrag()`.
+    @State private var hasBegun = false
 
     /// What the last resolved frame reported, kept only to drive the capsule and the
     /// haptics.
@@ -160,65 +180,79 @@ struct ResizeHandle: View {
     /// tracked as its own flag, so there is exactly one thing that can say "dragging" and it
     /// is the one SwiftUI itself keeps honest across a cancellation.
     ///
-    /// This is also the single source of truth for the gesture's begin/end lifecycle — see
-    /// the `.onChange(of: isDragging)` in `body` below, and why it replaced watching for
-    /// `.onChanged`'s first frame.
+    /// Its falling edge is one of `endDrag()`'s three terminators — see `body` — but its
+    /// *rising* edge no longer drives anything: `.onChange(of:)` is a view-graph node that
+    /// runs during a later view update, strictly after `.onChanged` has already delivered
+    /// that gesture's first event and written `size`/`limit`/`overshoot` at least once. A
+    /// begin callback fired from there would arrive too late for a caller's `onBegin` freeze
+    /// to matter and would race `wasCollapsed`'s reset against `.onChanged`'s own read of it.
+    /// See the `hasBegun` guard inside `.onChanged`, in `drag` below, for where begin
+    /// actually lives now.
     private var isDragging: Bool { anchor != nil }
 
     var body: some View {
+        withResizeHaptics(withResizeAccessibility(handle))
+    }
+
+    /// The strip's drag mechanics and its two non-gesture interactions (double-tap, and the
+    /// three ways a gesture can conclude other than a deliberate release — see the comment
+    /// above `.onEnded` in `drag`, and `.onDisappear` here). Kept as its own node, rather than
+    /// folded into `body`'s chain along with the accessibility and haptics modifiers, because
+    /// SourceKit was timing out type-checking `body` as one ~14-modifier expression; splitting
+    /// it into three shorter ones (this, `withResizeAccessibility`, `withResizeHaptics`) is
+    /// what fixed that — see the type doc on `withResizeAccessibility` for the same note.
+    private var handle: some View {
         strip
             .contentShape(Rectangle())
             .overlay(capsule)
             .gesture(drag)
-            // The begin/end edges of a gesture, read off `isDragging` rather than off
-            // `.onChanged`'s first call or `.onEnded`. Two independent problems forced this:
-            //
-            // `.onChanged` cannot see its own first frame. `.onChanged` wraps `.updating`'s
-            // `GestureStateGesture` (`_ChangedGesture` is the outer node), so by the time
-            // `.onChanged` runs for a gesture's first event, `.updating` above has already
-            // committed `anchor`, and a check for "is `anchor` still `nil`" inside `.onChanged`
-            // is never true. An earlier version of this file tried exactly that and, as a
-            // result, never fired `onBegin()` or the grab haptic at all — the single most
-            // important of the three haptics the type doc promises, since it is the only
-            // confirmation on a touchscreen that the handle was caught.
-            //
-            // `.onEnded` cannot see every way a gesture ends. It only fires on a deliberate
-            // release. A cancellation, a system interruption, or `onCollapse` below causing
-            // this view to leave the hierarchy mid-gesture all skip it, which is what left
-            // `onEnd()` unpaired with `onBegin()` on exactly the paths `@GestureState` was
-            // adopted to survive.
-            //
-            // `isDragging` has neither problem: it is a plain computed property over
-            // `@GestureState`, so reading it carries no ordering assumption, and `@GestureState`
-            // resets — and therefore this fires — on every way a gesture can conclude, not only
-            // a deliberate release. As a side effect this is also what makes `endDrag()`'s
-            // `limit = .none` land in a genuinely separate render from the next gesture's first
-            // `onChanged`, which is what makes the `.rigid` haptic re-fire correctly if a fresh
-            // drag immediately re-pins the same bound a cancelled one left behind.
+            // The falling edge of `isDragging`. Fires when `anchor` resets to `nil` — a
+            // deliberate release *if* `.onEnded` below already ran and made `endDrag()` a
+            // no-op, but this is also the only one of the three terminators that reaches a
+            // cancellation or a system interruption: those are exactly the cases
+            // `@GestureState` resets `anchor` for without any event this view is told about,
+            // and `isDragging` is the only one of the three signals derived from `anchor`
+            // rather than from a gesture callback SwiftUI might simply not deliver.
             .onChange(of: isDragging) { _, isNowDragging in
-                if isNowDragging {
-                    onBegin()
-                    grabCount += 1
-                    wasCollapsed = false
-                } else {
-                    endDrag()
-                }
+                if !isNowDragging { endDrag() }
             }
+            // The collapse/dismount path. `onCollapse()` inside `drag` below can lead its
+            // caller to take this view out of the `.docked` state entirely — Task 6 removes
+            // the handle from the hierarchy once the panel is collapsed — and a removed
+            // view's `.onChange` action does not run; disappearance is `.onDisappear`'s
+            // domain, not `.onChange`'s. Without this, `onEnd()` would stay unpaired on
+            // exactly the routine path `onCollapse` names, not just on a rare interruption.
+            .onDisappear { endDrag() }
             .onTapGesture(count: 2) { onReset() }
+    }
+
+    /// The five `.accessibility*` modifiers, split out from `handle` above so `body`'s own
+    /// expression stays short enough for SourceKit to type-check promptly — a 14-modifier
+    /// chain in one expression produced "unable to type-check this expression in reasonable
+    /// time" in live diagnostics (the project still built with `swiftc`; this is a tooling
+    /// cost, not a build failure). Grouping by concern rather than splitting arbitrarily
+    /// keeps each piece readable on its own, which an arbitrary split at, say, the seventh
+    /// modifier would not.
+    private func withResizeAccessibility(_ content: some View) -> some View {
+        content
             .accessibilityElement()
             .accessibilityLabel(label)
             .accessibilityValue("\(Int(size.rounded())) points")
             .accessibilityAdjustableAction(adjust)
             // `.accessibilityElement()` collapses the whole subtree into one node, which is
-            // also why the double-tap above is unreachable to VoiceOver: a VoiceOver
-            // double-tap activates the element's primary action, not the raw tap-gesture
-            // recogniser underneath. This is the same reset surfaced as a named custom
-            // action instead, so the mitigation the type doc promises actually reaches the
-            // audience it is a mitigation for.
+            // also why the double-tap in `handle` above is unreachable to VoiceOver: a
+            // VoiceOver double-tap activates the element's primary action, not the raw
+            // tap-gesture recogniser underneath. This is the same reset surfaced as a named
+            // custom action instead, so the mitigation the type doc promises actually reaches
+            // the audience it is a mitigation for.
             .accessibilityAction(named: "Reset") { onReset() }
-            // The three haptics that replace a desktop cursor. `.rigid` fires on the
-            // *transition* into a limit rather than every frame spent inside one, because
-            // `limit` only changes when the state does.
+    }
+
+    /// The three haptics that replace a desktop cursor. `.rigid` fires on the *transition*
+    /// into a limit rather than every frame spent inside one, because `limit` only changes
+    /// when the state does.
+    private func withResizeHaptics(_ content: some View) -> some View {
+        content
             .sensoryFeedback(.impact(weight: .light), trigger: grabCount)
             .sensoryFeedback(.impact(flexibility: .rigid), trigger: limit) { _, new in
                 new != .none
@@ -297,14 +331,32 @@ struct ResizeHandle: View {
                 if state == nil { state = size }
             }
             .onChanged { value in
+                // Begin runs here, synchronously with the gesture's first delivered event —
+                // not from `isDragging`'s rising edge (see the doc on `isDragging` above).
+                // `.onChanged` is a gesture callback, invoked during event delivery itself;
+                // `.onChange(of:)` is a view-graph node whose action runs during a later view
+                // update. Firing `onBegin()` from the later point would let a caller's freeze
+                // land only *after* `size` had already been written below at least once — the
+                // exact inversion of "freeze before anything moves" `onBegin`'s own doc
+                // promises. `hasBegun` makes this run once per gesture rather than once per
+                // event, and resetting `wasCollapsed` here, before this frame's resolution is
+                // examined, is what keeps that reset from racing the read of it a few lines
+                // down — see `wasCollapsed`'s doc for the failure that ordering caused.
+                if !hasBegun {
+                    hasBegun = true
+                    wasCollapsed = false
+                    grabCount += 1
+                    onBegin()
+                }
+
                 // `anchor ?? size`: by the time `.onChanged` runs, `.updating` above has
-                // already committed `anchor` for this event — see the comment on `body`'s
-                // `.onChange(of: isDragging)` for why that ordering, unlike the begin/end
-                // edges, *is* safe to depend on here (`.onChanged` is the outer node wrapping
-                // `.updating`'s `GestureStateGesture`, so the write is guaranteed to have
-                // already landed). The `?? size` fallback exists only as defence in depth: if
-                // it were ever reached, `size` at gesture-start *is* the correct anchor, so
-                // the fallback cannot silently produce a wrong answer even if that guarantee
+                // already committed `anchor` for this event — `.onChanged` is the outer node
+                // wrapping `.updating`'s `GestureStateGesture`, so the write is guaranteed to
+                // have already landed; that ordering is what makes `hasBegun` legible here in
+                // the first place (`.onChanged` sees every event `.updating` does, in the same
+                // order). The `?? size` fallback exists only as defence in depth: if it were
+                // ever reached, `size` at gesture-start *is* the correct anchor, so the
+                // fallback cannot silently produce a wrong answer even if that guarantee
                 // turned out to be wrong. It must never be relied on past the first frame,
                 // though — by then `size` has moved away from the true anchor, and falling
                 // back to it then would be exactly the anchored-to-accumulated regression
@@ -352,17 +404,39 @@ struct ResizeHandle: View {
                 }
                 wasCollapsed = resolution.isCollapsed
             }
+            // The one gesture callback SwiftUI guarantees fires exactly once per gesture,
+            // however briefly that gesture lived. It exists alongside `isDragging`'s falling
+            // edge and `.onDisappear` in `handle` above rather than replacing either of them,
+            // because each catches a different way this can end and none of the three covers
+            // all of them alone: this one is what closes the case where touch-down, the
+            // qualifying move past `minimumDragDistance`, and the release all land between two
+            // view updates (a main-thread stall, or coalesced event delivery) — `isDragging`
+            // would go `false → true → false` with no render in between, and its `.onChange`
+            // would never fire at all. `endDrag()`'s `hasBegun` guard is what makes calling it
+            // from here safe even when `isDragging`'s `.onChange` also fires for the same
+            // gesture: whichever runs first does the work, the other finds `hasBegun` already
+            // `false` and returns.
+            .onEnded { _ in endDrag() }
     }
 
-    /// Runs on the falling edge of `isDragging`, from `body`'s `.onChange(of: isDragging)` —
-    /// not from `DragGesture.onEnded`, and deliberately: `onEnded` only covers a deliberate
-    /// release, and this needs to cover every way a gesture can conclude, including a
-    /// cancellation, a system interruption, and `onCollapse` above causing this view to leave
-    /// the hierarchy mid-gesture. `isDragging` is derived from `anchor`, `@GestureState`, which
-    /// SwiftUI resets on all of those paths without this file having to enumerate them, so
-    /// tying this to `isDragging` rather than to `.onEnded` is what makes `onEnd()` — and the
-    /// capsule, which is also driven by `isDragging` — impossible to leave stranded.
+    /// The single place a gesture's end-of-drag bookkeeping happens — resetting `limit`,
+    /// animating `overshoot` back to zero, and firing `onEnd()` — reachable from three
+    /// independent terminators in `handle` and `drag` above: `isDragging`'s falling edge
+    /// (covers a cancellation or a system interruption, the cases `@GestureState` resets
+    /// `anchor` for without delivering this view any event), `.onEnded` (covers the
+    /// deliberate-release case even when no intervening render gave `isDragging`'s `.onChange`
+    /// a chance to fire), and `.onDisappear` (covers `onCollapse` causing this view to leave
+    /// the hierarchy mid-gesture, which neither of the other two can reach: a removed view's
+    /// `.onChange` action does not run, and there may be no further gesture event to trigger
+    /// `.onEnded` either).
+    ///
+    /// The `hasBegun` guard is what lets three call sites coexist without coordinating: at
+    /// most one of them ever does anything for a given gesture, because whichever runs first
+    /// sets `hasBegun = false` and every other one that fires afterwards — for the same
+    /// gesture, or spuriously — finds the guard already closed and returns immediately.
     private func endDrag() {
+        guard hasBegun else { return }
+        hasBegun = false
         limit = .none
         withAnimation(.easeOut(duration: ResizeHandleMetrics.disappear)) {
             overshoot = 0
