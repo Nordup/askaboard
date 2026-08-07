@@ -90,6 +90,10 @@ Both have drift tests that re-run the generator in-process and fail if the check
 
 This pass intentionally has no backend, accounts, cloud sync, automatic continuous change detection, handwriting OCR, or teacher analytics. Evaluation is explicit (the whole board or a dragged rectangle) and sends the rendered PencilKit image only when requested; board evaluation renders the bounding box of every stroke, so scrolling away from a long solution does not truncate what the tutor sees. When ink is scattered over more than 4,000 pt of board — further than one legible image can cover — evaluation crops to the student's work and tells the tutor it is looking at a portion rather than the whole board. *Evaluate board* is disabled while the board is empty. Local session persistence is best effort in Application Support; resetting a session removes the local drawing and messages.
 
+## Backend service
+
+A separate FastAPI service now exists at [`server/`](server/README.md), independent of the client-side prototype path described above. It holds the one OpenAI key instead of the device, authenticates the device with its own bearer token, streams turns as Server-Sent Events in its own event vocabulary rather than forwarding OpenAI's, and records every message, request, raw provider event stream, board snapshot, and dictation recording — kept indefinitely, not sampled or expiring. See [`server/README.md`](server/README.md) for setup, running it, the event vocabulary, and the retention position in full. The iOS app is not yet pointed at it; that migration is a separate plan, and it must first correct the microphone permission string below, which still claims no recording is kept.
+
 ## Manual QA checklist
 
 - Launch without a key: the tutor panel shows the first-run state with a single primary action, and no composer — there is no disabled control anywhere in this design.
