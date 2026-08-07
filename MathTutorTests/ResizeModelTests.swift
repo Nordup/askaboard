@@ -126,22 +126,33 @@ final class ResizeModelTests: XCTestCase {
         XCTAssertEqual(ResizeModel.nextSize(current: 337, resolution: r), r.size)
     }
 
-    // MARK: - Anchored, not accumulated
+    // MARK: - Exact values, not merely close
 
-    /// The property the whole model exists to guarantee, and the bug it exists to prevent.
+    /// `ResizeModel` is a pure, stateless function of `(start, translation, edge,
+    /// constraints)` — it holds nothing between calls — so no sequence of calls to it can
+    /// ever "accumulate": there is no state left over from one call for a later one to add a
+    /// delta onto. That is *why* resolving a live gesture from a frozen start and its total
+    /// translation works as a design, but it also means a test built from two independent
+    /// `resolve` calls, as this one is, cannot exercise that design by itself — it would pass
+    /// exactly the same way even if `resolve` secretly cached its last answer, because neither
+    /// call here depends on the other's result. The property these names used to claim to
+    /// guard — that a live gesture resolves from one frozen `start` across many frames rather
+    /// than drifting frame to frame — lives entirely in `ResizeHandle`'s `@GestureState
+    /// anchor`, and nothing in this file touches that: `anchor` has no seam a value test on
+    /// `ResizeModel` can reach. What these two tests actually pin, and can actually fail on,
+    /// is arithmetic exactness — a value landing on the literal answer, not one merely close
+    /// to it.
     ///
-    /// A resizer that accumulates per-frame deltas loses the travel spent pinned at a bound:
-    /// each frame clamps, and the clamped value becomes the next frame's start, so dragging
-    /// 300pt past the ceiling and 300pt back leaves the panel stuck at the ceiling instead
-    /// of where it began. Resolving from the frozen start size and the gesture's *total*
-    /// translation makes the round trip exact.
-    func testDraggingPastABoundAndBackReturnsExactlyToTheStart() {
+    /// Clamping at a bound lands on the literal bound (600, not 599.999996 or 600.0001), and a
+    /// zero translation returns the literal start (337) rather than a value near it.
+    func testClampingAtABoundAndAZeroTranslationBothProduceExactValues() {
         let out = resolve(translation: -900)
-        XCTAssertEqual(out.size, 600, "pinned at the ceiling on the way out")
-        XCTAssertEqual(resolve(translation: 0).size, 337, "exactly back, not merely close")
+        XCTAssertEqual(out.size, 600, "pinned at the ceiling")
+        XCTAssertEqual(resolve(translation: 0).size, 337, "exactly the start, not merely close")
     }
 
-    func testResolutionDependsOnlyOnTotalTranslationNotOnHowItWasReached() {
+    /// The same exactness claim where nothing clamps: `337 - (-120) = 457`, to the point.
+    func testAnUnclampedTranslationProducesTheExactProposedSize() {
         XCTAssertEqual(resolve(translation: -120).size, 457)
     }
 

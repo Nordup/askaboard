@@ -1,3 +1,4 @@
+import CoreGraphics
 import XCTest
 @testable import MathTutor
 
@@ -243,6 +244,86 @@ final class UIStateTests: XCTestCase {
         XCTAssertEqual(
             state.panelWidth, 480,
             "the drag route must preserve the width exactly like the button route already does"
+        )
+    }
+
+    /// Final review, Important 1: the resize binding's `get:` and `set:` are not inverse of
+    /// each other. `BoardScreen.resizeHandle` wires `get:` to `layout.panelWidth` —
+    /// `ScreenLayout.resolvingPanelWidth(uiState.panelWidth)`, clamped against the *current*
+    /// window — but `set:` to `uiState.setPanelWidth`, which stores whatever it is handed,
+    /// raw. `testCollapsingByDragPreservesTheRequestedWidthNotTheFloor` above passes
+    /// `state.panelWidth` itself as `ResizeModel.nextSize`'s `current:` — the raw value — which
+    /// is not what the shipped binding does: the shipped `get:` hands `ResizeHandle` the
+    /// *clamped* read, not the raw store, so a gesture that starts from a stored width already
+    /// pinned to a narrower window's ceiling anchors from the ceiling, not from the wider
+    /// number the student actually asked for.
+    ///
+    /// This composes the same three real functions `BoardScreen` and `ResizeHandle` call —
+    /// `ScreenLayout.resolvingPanelWidth`, `ResizeModel.resolve` / `nextSize`, and
+    /// `UIState.setPanelWidth` — clamped getter in, write out, exactly as the binding does,
+    /// rather than re-deriving their answer, for the same reason the test above does: a
+    /// hand-rolled stand-in for the clamp could drift from the real one and stop protecting
+    /// anything.
+    ///
+    /// `ResizeHandle`'s own write itself lives inside a private `DragGesture` closure with no
+    /// `@testable` seam — a `Binding`'s `get`/`set` pair cannot be reached from outside the
+    /// view that builds it without instantiating and driving the gesture on a live view host,
+    /// which is exactly the kind of simulator-dependent test the suite's own header explains
+    /// `ResizeModelTests` exists to avoid. So the guard `ResizeHandle` applies before writing —
+    /// skip the write when the resolved value already equals what the getter reports — is
+    /// inlined here rather than called, and is what a regression in `ResizeHandle.swift` that
+    /// deleted that guard would *not* be caught by. What this test does cover, and did fail
+    /// before that guard was written, is that the underlying hazard is real: composing a
+    /// clamped read with a raw write, the way the app is actually wired, loses a wider stored
+    /// request the moment the window narrows and the seam is touched again.
+    func testWideningAgainstASplitViewCeilingDoesNotDiscardTheStoredRequest() {
+        let state = UIState()
+        state.setPanelWidth(600)
+
+        // A window narrow enough that its docked lane's own ceiling — half the shared lane —
+        // sits at 468, below the 600 already stored. `1112 - 176 = 936`, halved is 468.
+        let narrowedWindow = ScreenLayout(size: CGSize(width: 1112, height: 1032))
+        XCTAssertEqual(
+            narrowedWindow.maximumPanelWidth, 468,
+            "sanity: this window must actually squeeze the ceiling below the stored 600"
+        )
+
+        // `BoardScreen.resized(_:)`'s own clamp-on-read, and then the value `layout.panelWidth`
+        // — the binding's `get:` — actually reports: the clamped 468, not the raw 600.
+        let resolvedPanelWidth = narrowedWindow.resolvingPanelWidth(state.panelWidth)
+        let layout = ScreenLayout(size: narrowedWindow.size, panelWidth: resolvedPanelWidth)
+        XCTAssertEqual(
+            layout.panelWidth, 468,
+            "sanity: the getter reads back the clamped ceiling, not the raw 600"
+        )
+
+        // The gesture's anchor is `size` at grab time — the clamped getter's answer, exactly
+        // like `ResizeHandle`'s own `@GestureState anchor` — and dragging further outward just
+        // presses harder on the same ceiling, so `resolve` clamps right back to it.
+        let constraints = ResizeConstraints(
+            minimum: ScreenLayout.minimumPanelWidth,
+            maximum: layout.maximumPanelWidth,
+            collapseBelow: ScreenLayout.minimumPanelWidth * 0.6
+        )
+        let resolution = ResizeModel.resolve(
+            start: layout.panelWidth,
+            translation: -50,
+            edge: .leading,
+            constraints: constraints
+        )
+        let next = ResizeModel.nextSize(current: layout.panelWidth, resolution: resolution)
+
+        // `ResizeHandle`'s own guard: skip a write that only hands the getter's own answer
+        // back to the setter. Deleting this `if` and writing unconditionally reproduces the
+        // bug — `state.panelWidth` ends the test at 468, the ceiling, not 600.
+        if next != layout.panelWidth {
+            state.setPanelWidth(next)
+        }
+
+        XCTAssertEqual(
+            state.panelWidth, 600,
+            "the student pushed outward against a ceiling and must not have their 600 silently"
+                + " replaced by the 468 it was clamped to"
         )
     }
 

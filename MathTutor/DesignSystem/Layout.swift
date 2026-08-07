@@ -406,7 +406,8 @@ struct ScreenLayout: Equatable, Sendable {
     /// and the panel's `18 + 32 + 810 + 58 + 18` stack has a flexible thread in the middle.
     static let minimumContentHeight: CGFloat = DS.Space.gap + collapsedDockHeight
 
-    /// `.threeLane` is two conditions, not one, and both are load-bearing.
+    /// `.threeLane` is two conditions, not one, and both are load-bearing for `ScreenLayout`
+    /// itself even though only the first ever actually decides the answer in the shipped app.
     /// `usableWidth >= dockedMinimumWidth` is the window being wide enough to fit the board at
     /// its floor beside the panel at its current width; `panelWidth <= maximumPanelWidth` is
     /// the hierarchy rule — the panel is commentary, so it may never end up wider than the
@@ -414,6 +415,18 @@ struct ScreenLayout: Equatable, Sendable {
     /// satisfy the first while a sufficiently wide panel already fails the second, and a
     /// `dockedMinimumWidth` that only checked the first would still report `.threeLane` for a
     /// panel wider than the board it is next to.
+    ///
+    /// Belt-and-braces, not a reachable case in the shipped app: the only place that builds a
+    /// `ScreenLayout` with a caller-chosen `panelWidth` is `BoardScreen.resized(_:)`, and it
+    /// constructs one from `base.resolvingPanelWidth(uiState.panelWidth)` — already `<=
+    /// maximumPanelWidth` by construction — before `fit` is ever consulted on the result. So
+    /// the second conjunct never actually flips a verdict the first conjunct did not already
+    /// agree with in a running app; a reader chasing a case where it does will not find one.
+    /// The conjunct stays anyway because `ScreenLayout` is a public value type with a public
+    /// `panelWidth:` initializer parameter, not just `BoardScreen`'s private arithmetic — a
+    /// test, a preview, or a future caller that builds one directly with an unclamped width
+    /// should get a `fit` that is honest about what it was actually handed, not one that
+    /// silently trusts a caller it has no way to verify clamped first.
     var fit: Fit {
         guard contentHeight >= Self.minimumContentHeight else { return .unsupported }
         if usableWidth >= dockedMinimumWidth && panelWidth <= maximumPanelWidth { return .threeLane }
@@ -427,18 +440,24 @@ struct ScreenLayout: Equatable, Sendable {
     var canDockTutor: Bool { fit == .threeLane }
 
     /// Every region this type publishes, for a caller that wants to check its own work. Useful
-    /// mostly to the tests, which assert nothing here is negative and nothing overlaps.
+    /// mostly to the tests, which assert nothing here is negative and that every region stays
+    /// on screen — not that nothing overlaps. Nothing here ever asserted non-overlap, and the
+    /// list is not even non-overlapping at face value: "board · docked" and "board · collapsed"
+    /// both start at `boardX` on purpose, because they are two widths for the same lane in two
+    /// presentations that are never drawn at once.
+    ///
+    /// No "resize strip" entry, deliberately: that footprint needs `ResizeHandleMetrics`, a
+    /// SwiftUI component's own metrics enum, and this type is pure lane arithmetic that knows
+    /// nothing about the components drawn in its lanes — `resizeStripX` alone stays here
+    /// because it is genuinely lane arithmetic (see its own doc), but the strip's width is
+    /// asserted in `ShellComponentTests` instead, where a dependency on `ResizeHandleMetrics`
+    /// belongs.
     var namedRegions: [(name: String, x: CGFloat, width: CGFloat)] {
         [
             ("rail", railX, railWidth),
             ("board · docked", boardX, boardWidthDocked),
             ("board · collapsed", boardX, boardWidthCollapsed),
             ("panel", panelX, panelWidth),
-            (
-                "resize strip",
-                resizeStripX,
-                ResizeHandleMetrics.hitBreadth(gutter: DS.Space.gap, into: DS.Space.panelInset)
-            ),
             ("peek", peekX, peekWidth),
             ("column", columnX, columnWidth),
             ("dock", collapsedDockX, collapsedDockWidth),

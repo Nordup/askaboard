@@ -1,6 +1,8 @@
 import CoreGraphics
 
-/// One drag position in, one resolved size out — and nothing else in the file.
+/// One drag position resolved to one size, plus one further function deciding what a
+/// caller's own stored state should become after that resolution — and nothing else in the
+/// file.
 ///
 /// **Anchored, not accumulated.** Every resolution is computed from the size frozen when the
 /// gesture began plus the gesture's *total* translation. It is never the previous frame's

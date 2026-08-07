@@ -169,12 +169,20 @@ struct ResizeHandle: View {
     /// anything and the rest are no-ops. See `endDrag()`.
     @State private var hasBegun = false
 
-    /// What the last resolved frame reported, kept only to drive the capsule and the
+    /// What the last resolved frame reported, kept only to drive the capsule and the drag
     /// haptics.
     @State private var overshoot: CGFloat = 0
     @State private var limit: ResizeLimit = .none
     @State private var collapseCount = 0
     @State private var grabCount = 0
+
+    /// Bumped once per double-tap, kept only to trigger the reset haptic — the same
+    /// increment-only-counter shape `grabCount` and `collapseCount` use, and for the same
+    /// reason: `.sensoryFeedback(_:trigger:)` fires on a *change* to its trigger's value, not
+    /// on the call site running, so a flag that could repeat a value (a `Bool`, or an `Int`
+    /// reset to a fixed number) would silently miss firing on a tap that happened to land on
+    /// a repeat. A counter that only ever increments cannot repeat a value.
+    @State private var resetCount = 0
 
     /// Whether a finger is currently down on the strip. Derived from `anchor` rather than
     /// tracked as its own flag, so there is exactly one thing that can say "dragging" and it
@@ -197,10 +205,13 @@ struct ResizeHandle: View {
     /// The strip's drag mechanics and its two non-gesture interactions (double-tap, and the
     /// three ways a gesture can conclude other than a deliberate release — see the comment
     /// above `.onEnded` in `drag`, and `.onDisappear` here). Kept as its own node, rather than
-    /// folded into `body`'s chain along with the accessibility and haptics modifiers, because
-    /// SourceKit was timing out type-checking `body` as one ~14-modifier expression; splitting
-    /// it into three shorter ones (this, `withResizeAccessibility`, `withResizeHaptics`) is
-    /// what fixed that — see the type doc on `withResizeAccessibility` for the same note.
+    /// folded into `body`'s chain along with the accessibility and haptics modifiers, in
+    /// response to SourceKit timing out type-checking `body` as one ~14-modifier expression.
+    /// Splitting it into three shorter ones (this, `withResizeAccessibility`,
+    /// `withResizeHaptics`) was that response, and the timeout has not recurred since — there
+    /// was no pre-split baseline measurement, so it is not established that the split, rather
+    /// than something else about the change, is what stopped it. See the type doc on
+    /// `withResizeAccessibility` for the same note.
     private var handle: some View {
         strip
             .contentShape(Rectangle())
@@ -223,16 +234,21 @@ struct ResizeHandle: View {
             // domain, not `.onChange`'s. Without this, `onEnd()` would stay unpaired on
             // exactly the routine path `onCollapse` names, not just on a rare interruption.
             .onDisappear { endDrag() }
-            .onTapGesture(count: 2) { onReset() }
+            .onTapGesture(count: 2) {
+                resetCount += 1
+                onReset()
+            }
     }
 
-    /// The five `.accessibility*` modifiers, split out from `handle` above so `body`'s own
-    /// expression stays short enough for SourceKit to type-check promptly — a 14-modifier
-    /// chain in one expression produced "unable to type-check this expression in reasonable
-    /// time" in live diagnostics (the project still built with `swiftc`; this is a tooling
-    /// cost, not a build failure). Grouping by concern rather than splitting arbitrarily
-    /// keeps each piece readable on its own, which an arbitrary split at, say, the seventh
-    /// modifier would not.
+    /// The five `.accessibility*` modifiers, split out from `handle` above in response to
+    /// SourceKit timing out on `body`'s own expression — a 14-modifier chain in one expression
+    /// produced "unable to type-check this expression in reasonable time" in live diagnostics
+    /// (the project still built with `swiftc`; this is a tooling cost, not a build failure).
+    /// The timeout has not recurred since the split, though there was no pre-split baseline
+    /// measurement to confirm the split itself is what stopped it rather than merely moved it
+    /// — see the same note on `handle` above. Grouping by concern rather than splitting
+    /// arbitrarily keeps each piece readable on its own regardless, which an arbitrary split
+    /// at, say, the seventh modifier would not.
     private func withResizeAccessibility(_ content: some View) -> some View {
         content
             .accessibilityElement()
@@ -248,9 +264,12 @@ struct ResizeHandle: View {
             .accessibilityAction(named: "Reset") { onReset() }
     }
 
-    /// The three haptics that replace a desktop cursor. `.rigid` fires on the *transition*
-    /// into a limit rather than every frame spent inside one, because `limit` only changes
-    /// when the state does.
+    /// The four haptics that replace a desktop cursor — one for every row of `design.md`'s
+    /// feedback table that names one. `.rigid` fires on the *transition* into a limit rather
+    /// than every frame spent inside one, because `limit` only changes when the state does.
+    /// `.selection` is keyed on `resetCount` rather than fired directly from the tap gesture
+    /// for the same reason grab and collapse are counters and not booleans — see `resetCount`'s
+    /// own doc.
     private func withResizeHaptics(_ content: some View) -> some View {
         content
             .sensoryFeedback(.impact(weight: .light), trigger: grabCount)
@@ -258,6 +277,7 @@ struct ResizeHandle: View {
                 new != .none
             }
             .sensoryFeedback(.impact(weight: .medium), trigger: collapseCount)
+            .sensoryFeedback(.selection, trigger: resetCount)
     }
 
     // MARK: - Geometry
@@ -278,10 +298,17 @@ struct ResizeHandle: View {
 
     /// The one thing that is ever painted, and only while a finger is down.
     ///
-    /// It is drawn at the strip's centre rather than at the finger's position, which is a
-    /// simplification the span makes safe: the strip is the full height of the band, so a
-    /// centred capsule is never far from the finger, and tracking the touch's `y` would put
-    /// the capsule directly under the fingertip where it cannot be seen anyway.
+    /// It is drawn at the strip's centre rather than at the finger's `y`, and that is a known
+    /// simplification, not a safe consequence of the strip's span — `design.md`'s own feedback
+    /// table specifies the capsule "centred on the seam **at the finger's y**," and its prose
+    /// is explicit about why a fixed position is the wrong shape: *"it cannot appear at a fixed
+    /// position, because the student is looking at their finger."* At 976pt of span a capsule
+    /// pinned to the centre can sit roughly 400pt from a finger working near the top or bottom
+    /// of the strip — a real gap the student's eye has to travel to find it, not "never far."
+    /// This ships anyway because the design also says the haptic carries the primary
+    /// confirmation and the capsule is secondary to it (see `withResizeHaptics`); a capsule in
+    /// the wrong place still beats no capsule, and tracking the touch's `y` remained out of
+    /// scope rather than turning out to be unnecessary.
     ///
     /// The fade is an `AnyTransition` with its own attached animation rather than a
     /// `withAnimation` around the state that adds or removes this view, because that state
@@ -392,7 +419,26 @@ struct ResizeHandle: View {
                 // same untouched `anchor` and writes again, so nothing already captured is
                 // lost by skipping this one frame's write. See `nextSize`'s own doc for the
                 // design-spec edge case this is.
-                size = ResizeModel.nextSize(current: size, resolution: resolution)
+                //
+                // `if next != size` guards a second, independent hazard: this binding's own
+                // accessors are not inverse of each other. `BoardScreen` wires `get:` to
+                // `layout.panelWidth` — `ScreenLayout.resolvingPanelWidth(uiState.panelWidth)`,
+                // clamped against the *current* window — but `set:` to `uiState.setPanelWidth`,
+                // which stores whatever it is handed, raw. Read `size` back with a 600pt
+                // request pinned to a 468pt Split View ceiling and the getter answers 468;
+                // write 468 straight back through the setter and the raw 600 the student is
+                // owed the moment the window widens again is gone for good — not merely on the
+                // collapse frame above, but on any frame whose resolved size happens to equal
+                // what the getter already reports, which an ordinary widening drag against a
+                // ceiling reaches with no unusual timing at all. Skipping an equal write is a
+                // free no-op wherever a binding's accessors *are* inverse of each other — that
+                // is the common case this guard costs nothing on — and it is exactly what
+                // stops the asymmetric case above from losing the wider request: a write that
+                // would only hand the getter's own answer back to the setter is never made, so
+                // there is nothing left for the setter's rawness to overwrite. See `adjust`
+                // below for the same hazard reached by VoiceOver instead of a drag.
+                let next = ResizeModel.nextSize(current: size, resolution: resolution)
+                if next != size { size = next }
                 limit = resolution.limit
                 overshoot = resolution.handleOffset
 
@@ -459,6 +505,11 @@ struct ResizeHandle: View {
         let step = direction == .increment
             ? ResizeHandleMetrics.accessibilityStep
             : -ResizeHandleMetrics.accessibilityStep
-        size = min(max(size + step, constraints.minimum), constraints.maximum)
+        let next = min(max(size + step, constraints.minimum), constraints.maximum)
+        // Same guard, same reason, as the drag path in `drag` above: `size`'s getter clamps
+        // and its setter does not, so a VoiceOver increment that lands on exactly the value
+        // the getter already reports would otherwise overwrite a wider stored request with
+        // the ceiling it was clamped to.
+        if next != size { size = next }
     }
 }

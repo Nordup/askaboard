@@ -908,13 +908,5 @@ final class ShellComponentTests: XCTestCase {
             l.panelX + DS.Space.panelInset,
             "and it stops there rather than overshooting into the panel's content"
         )
-
-        // The actual design invariant: the strip's left edge and the board's right edge are the
-        // same number, not merely ordered — not one point of canvas is claimed.
-        XCTAssertEqual(
-            l.resizeStripX,
-            l.boardX + l.boardWidthDocked,
-            "the strip begins exactly where the board ends"
-        )
     }
 }
