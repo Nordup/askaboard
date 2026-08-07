@@ -1904,7 +1904,7 @@ git commit -m "Stream a turn and accumulate its record in one pass"
 
 **Interfaces:**
 - Consumes: models (Task 3), `BlobStore` (Task 4), `TurnResult` (Task 10).
-- Produces: `Recorder(session_factory, blob_store)` with `async start_turn(...) -> None`, `async finish_turn(*, turn_id, result, ttft_ms, latency_ms) -> None`, `async fail_turn(*, turn_id, message, retryable) -> None`, `async record_attachment(...) -> BlobRef`, `async spend_today() -> float`.
+- Produces: `Recorder(sessionmaker, blob_store)` with `async finish_turn(*, turn_id, result, request_body, ttft_ms, latency_ms, image_blob_key=None) -> None`, `async fail_turn(*, turn_id, message, retryable) -> None`, `async record_attachment(*, turn_id, kind, data, content_type) -> BlobRef`, `async spend_today() -> float`. There is deliberately no `start_turn`: Task 12's endpoint inserts the `Turn` row itself, inside the same transaction that inserts the learner's message, so the two cannot land apart.
 - **Nothing here runs on the token path.** `finish_turn` is called once, after the stream ends.
 - `llm_calls.request` stores the body with base64 image data replaced by `{"blob": "sha256:…"}`.
 
