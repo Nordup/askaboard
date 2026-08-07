@@ -7,9 +7,10 @@ from dataclasses import dataclass
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
-from openai import AsyncOpenAI, APIStatusError
+from openai import APIConnectionError, APIStatusError, AsyncOpenAI
 from pydantic import BaseModel
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_device_token
@@ -100,7 +101,16 @@ async def create_turn(
                    signal=body.signal))
     db.add(Turn(id=body.turn_id, session_id=session.id, status="running",
                 model=body.model, reasoning_effort=body.reasoning_effort))
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # The db.get() check above and this insert are not atomic, so two
+        # near-simultaneous submissions of the same turn_id can both pass it.
+        # Defending against exactly that race is the whole point of the
+        # idempotency check, so the loser gets the same clean 409 the fast
+        # path gives, not a raw 500 on a primary-key violation.
+        await db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "This turn was already handled.")
 
     # assemble_context reads only .role and .text, so the pending learner turn
     # joins the history as a plain record rather than a premature ORM object.
@@ -111,6 +121,7 @@ async def create_turn(
         session=session, messages=messages, image_data=image,
         image_region=body.image_region, signal=body.signal, goal=body.goal,
     )
+    request_body = {"model": body.model, "input": bundle.input}
 
     async def stream():
         started = time.monotonic()
@@ -140,18 +151,50 @@ async def create_turn(
                     ttft_ms = int((time.monotonic() - started) * 1000)
                 yield format_sse(event)
         except APIStatusError as error:
-            decision = classify(error.status_code, error.body)
+            # openai's own _make_status_error() already unwraps the response
+            # body's "error" key onto .body (see openai._client._make_status_error),
+            # so .body here is {"code": ..., "message": ...} — not the raw
+            # {"error": {...}} shape classify()/_error_code() expect. Rewrap
+            # it rather than touching retry.py, which is shared and already
+            # covered by its own tests against the raw response shape.
+            decision = classify(error.status_code, {"error": error.body})
             await recorder.fail_turn(
-                turn_id=body.turn_id, message=str(error), retryable=decision.retry
+                turn_id=body.turn_id, message=str(error), retryable=decision.retry,
+                result=result, request_body=request_body,
+                image_blob_key=image_ref.key if image_ref else None,
             )
             yield format_sse(ErrorEvent(message=str(error), retryable=decision.retry))
+            return
+        except APIConnectionError as error:
+            # Covers APITimeoutError too — it subclasses APIConnectionError.
+            # Both are transient network failures, not a verdict from the
+            # provider, so they are retryable by definition.
+            await recorder.fail_turn(
+                turn_id=body.turn_id, message=str(error), retryable=True,
+                result=result, request_body=request_body,
+                image_blob_key=image_ref.key if image_ref else None,
+            )
+            yield format_sse(ErrorEvent(message=str(error), retryable=True))
+            return
+        except Exception as error:
+            # A mid-stream failure is never silently retried by us, and an
+            # unanticipated exception is treated as a bug in our own code
+            # rather than a transient provider hiccup: telling a learner to
+            # retry into a bug is worse than telling them plainly it failed.
+            # The type name is included so the persisted row is diagnosable
+            # even when the message alone doesn't say enough.
+            message = f"{type(error).__name__}: {error}"
+            await recorder.fail_turn(
+                turn_id=body.turn_id, message=message, retryable=False,
+                result=result, request_body=request_body,
+                image_blob_key=image_ref.key if image_ref else None,
+            )
+            yield format_sse(ErrorEvent(message=message, retryable=False))
             return
 
         if result is not None:
             await recorder.finish_turn(
-                turn_id=body.turn_id, result=result, request_body={
-                    "model": body.model, "input": bundle.input,
-                },
+                turn_id=body.turn_id, result=result, request_body=request_body,
                 ttft_ms=ttft_ms,
                 latency_ms=int((time.monotonic() - started) * 1000),
                 image_blob_key=image_ref.key if image_ref else None,

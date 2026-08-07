@@ -81,3 +81,73 @@ async def test_the_recorder_returns_every_connection_it_takes(db_factory, tmp_pa
     recorder = Recorder(db_factory, LocalBlobStore(tmp_path))
     for _ in range(30):
         assert await recorder.spend_today() == 0.0
+
+
+@requires_db
+async def test_fail_turn_persists_the_partial_output_alongside_the_error(
+    db, db_factory, tmp_path
+):
+    """The text a learner already saw on screen must survive a mid-stream
+    failure, not just the failure message — that partial output is the
+    evidence someone debugging a bad turn needs."""
+    session = Session(model="gpt-5.6-luna", reasoning_effort="high")
+    db.add(session)
+    await db.flush()
+    turn_id = uuid.uuid4()
+    turn = Turn(
+        id=turn_id, session_id=session.id, status="running",
+        model="gpt-5.6-luna", reasoning_effort="high",
+    )
+    db.add(turn)
+    await db.commit()
+
+    blob_store = LocalBlobStore(tmp_path)
+    recorder = Recorder(db_factory, blob_store)
+    from app.tutor.loop import TurnResult
+    result = TurnResult(
+        raw_events=[
+            {"type": "response.created"},
+            {"type": "response.output_text.delta", "delta": "Nice wo"},
+        ],
+        text="Nice wo",
+    )
+    await recorder.fail_turn(
+        turn_id=turn_id, message="connection reset", retryable=True,
+        result=result, request_body={"model": "gpt-5.6-luna"},
+    )
+
+    async with db_factory() as fresh:
+        stored_turn = (await fresh.execute(select(Turn))).scalar_one()
+        assert stored_turn.status == "error"
+        assert stored_turn.error == {"message": "connection reset", "retryable": True}
+
+        call = (await fresh.execute(select(LLMCall))).scalar_one()
+        assert call.response["text"] == "Nice wo"
+        assert call.raw_events_blob is not None
+
+    raw = await blob_store.get(call.raw_events_blob)
+    assert b"response.created" in raw
+    assert b"Nice wo" in raw
+
+
+@requires_db
+async def test_fail_turn_without_a_result_still_records_the_error(db, db_factory, tmp_path):
+    """Failures before any model call exists (idempotency, spend cap) have no
+    TurnResult to persist — fail_turn must still work without one."""
+    session = Session(model="gpt-5.6-luna", reasoning_effort="high")
+    db.add(session)
+    await db.flush()
+    turn_id = uuid.uuid4()
+    db.add(Turn(
+        id=turn_id, session_id=session.id, status="running",
+        model="gpt-5.6-luna", reasoning_effort="high",
+    ))
+    await db.commit()
+
+    recorder = Recorder(db_factory, LocalBlobStore(tmp_path))
+    await recorder.fail_turn(turn_id=turn_id, message="spend cap reached", retryable=False)
+
+    async with db_factory() as fresh:
+        stored_turn = (await fresh.execute(select(Turn))).scalar_one()
+        assert stored_turn.status == "error"
+        assert (await fresh.execute(select(LLMCall))).first() is None

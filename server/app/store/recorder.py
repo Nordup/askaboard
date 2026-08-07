@@ -45,6 +45,38 @@ class Recorder:
         self._sessionmaker = sessionmaker
         self._blobs = blob_store
 
+    async def _add_llm_call(
+        self,
+        session: AsyncSession,
+        *,
+        turn_id: uuid.UUID,
+        result: Any,
+        request_body: dict,
+        image_blob_key: str | None = None,
+    ) -> dict:
+        """Write the LLMCall row shared by finish_turn and fail_turn.
+
+        Whatever text and raw events the model produced before a turn ends —
+        whether it ended cleanly or mid-stream — go through this one path, so
+        a failed turn is exactly as diagnosable as a successful one.
+        """
+        raw = "\n".join(json.dumps(e) for e in result.raw_events).encode()
+        events_ref = await self._blobs.put(raw, "application/jsonl")
+
+        usage = result.usage or {}
+        stored_body = (
+            redact_images(request_body, image_blob_key) if image_blob_key else request_body
+        )
+
+        session.add(LLMCall(
+            turn_id=turn_id, seq=0, model=request_body.get("model", ""),
+            request=stored_body,
+            response={"id": result.response_id, "text": result.text},
+            raw_events_blob=events_ref.key, usage=usage or None,
+            finished_at=datetime.now(timezone.utc),
+        ))
+        return usage
+
     async def finish_turn(
         self,
         *,
@@ -55,22 +87,11 @@ class Recorder:
         latency_ms: int | None,
         image_blob_key: str | None = None,
     ) -> None:
-        raw = "\n".join(json.dumps(e) for e in result.raw_events).encode()
-        events_ref = await self._blobs.put(raw, "application/jsonl")
-
-        usage = result.usage or {}
-        stored_body = (
-            redact_images(request_body, image_blob_key) if image_blob_key else request_body
-        )
-
         async with self._sessionmaker() as session:
-            session.add(LLMCall(
-                turn_id=turn_id, seq=0, model=request_body.get("model", ""),
-                request=stored_body,
-                response={"id": result.response_id, "text": result.text},
-                raw_events_blob=events_ref.key, usage=usage or None,
-                finished_at=datetime.now(timezone.utc),
-            ))
+            usage = await self._add_llm_call(
+                session, turn_id=turn_id, result=result, request_body=request_body,
+                image_blob_key=image_blob_key,
+            )
 
             turn = await session.get(Turn, turn_id)
             if turn is None:
@@ -87,9 +108,32 @@ class Recorder:
             await session.commit()
 
     async def fail_turn(
-        self, *, turn_id: uuid.UUID, message: str, retryable: bool
+        self,
+        *,
+        turn_id: uuid.UUID,
+        message: str,
+        retryable: bool,
+        result: Any | None = None,
+        request_body: dict | None = None,
+        image_blob_key: str | None = None,
     ) -> None:
+        """Record a turn that ended in an error.
+
+        `result` is the TurnResult accumulated up to the point of failure —
+        optional because some failures (the idempotency check, the spend cap)
+        happen before any model call exists to accumulate one. When it is
+        given, the partial raw events and partial text are written the same
+        way a successful turn's are: that partial output is exactly what the
+        learner already saw on screen, and it is what makes a bad turn
+        diagnosable afterwards instead of just a blank error.
+        """
         async with self._sessionmaker() as session:
+            if result is not None:
+                await self._add_llm_call(
+                    session, turn_id=turn_id, result=result,
+                    request_body=request_body or {}, image_blob_key=image_blob_key,
+                )
+
             turn = await session.get(Turn, turn_id)
             if turn is None:
                 raise ValueError(f"fail_turn: no turn found with id {turn_id}")
