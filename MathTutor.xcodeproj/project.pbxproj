@@ -52,6 +52,7 @@
 		72CFCF787A756EB78403E0D7 /* UIStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 363744A8B651DA004FC6F837 /* UIStateTests.swift */; };
 		787930E8CC449D11F3E55A66 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = A68B280F9DD61D293B8E9505 /* MarkdownUI */; };
 		795BF1D65FD2B44DC778AB14 /* NoAPIKeyState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B2D438E78DB8419936D1B9A /* NoAPIKeyState.swift */; };
+		7D3C2F693CC25B87A39B9600 /* BackendTutorServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4321C972F3139C4C616C7600 /* BackendTutorServiceTests.swift */; };
 		7D96576C2631E4C14D389E1C /* BoardPeek.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1777E72E2503235081D9FDA7 /* BoardPeek.swift */; };
 		8248D79E5256A68437A743ED /* ChatComponentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 784BDCC853A7787B6EE7BFFD /* ChatComponentTests.swift */; };
 		82A69FF1ECE0871BCD2AB457 /* LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = F5A6F66827D10068E0AA3FD4 /* LICENSE.txt */; };
@@ -65,6 +66,7 @@
 		9EE208CFC286CC9901CDDBB6 /* ComposerButtons.swift in Sources */ = {isa = PBXBuildFile; fileRef = 268CDEEFE80CA5EDF78FB1EF /* ComposerButtons.swift */; };
 		A295938FFD57678AF0A64E2F /* TutorPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EA4C8E6325776E542D8DA7B /* TutorPanel.swift */; };
 		A7141CE867CF341D0955479E /* DesignSystemTokenTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95328C09291FF057FF5EC160 /* DesignSystemTokenTests.swift */; };
+		A95C07DFBEDE1D12143D4DB5 /* BackendTutorService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 719152B51A668924C3B3FEAF /* BackendTutorService.swift */; };
 		AA43B884F9CF945EA312DEE2 /* LayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 255C26B763A5F36C69C477AD /* LayoutTests.swift */; };
 		B106DCAFBA605E2FF0CCA1E9 /* TutorPanelShell.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F3B35EED7A1DD1AF7C7145F /* TutorPanelShell.swift */; };
 		B1B27D7DCCAEE88572D1FBD4 /* DictationPhase.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B190574F83F26DD21FA3CE7 /* DictationPhase.swift */; };
@@ -90,6 +92,7 @@
 		D75FA125AEEE58676AF22C14 /* ChatGallery.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB96C449E6F25690ABBF7028 /* ChatGallery.swift */; };
 		D7910C45BF8917582767DCE6 /* BoardTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DB98B59876AB7F23B67AB5E /* BoardTool.swift */; };
 		D7C2680C9127BD5115FE8BA8 /* Typography.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C3BD7AF8ABF8A0911D1890A /* Typography.swift */; };
+		DC5AFD891640960B9E77D1D6 /* BackendConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE8BA11A166196B847324B4D /* BackendConfiguration.swift */; };
 		DF4177DBB1F1937F618B9294 /* BoardCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA6C29612083E1C37169C92B /* BoardCapture.swift */; };
 		E3926EFC9E73C2829B0E74F7 /* Icon.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A8932D22AB94BA80F44B1B8 /* Icon.swift */; };
 		E43D765A86D87A3FFF36E324 /* SessionPersistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C3A3607F71F2C99C586DB2 /* SessionPersistence.swift */; };
@@ -147,6 +150,7 @@
 		40CC8590077CACB91515D03B /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		421C4DF671ACFA6D05DA1E08 /* OpenAITutorService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAITutorService.swift; sourceTree = "<group>"; };
 		4249CB09575FAAE3E3B8704E /* DebugAPIKeyInjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugAPIKeyInjection.swift; sourceTree = "<group>"; };
+		4321C972F3139C4C616C7600 /* BackendTutorServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendTutorServiceTests.swift; sourceTree = "<group>"; };
 		437A816AC93664B09A7FEBB9 /* SVGPath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SVGPath.swift; sourceTree = "<group>"; };
 		451EF516B682FFDFDE3298AC /* Orb.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Orb.swift; sourceTree = "<group>"; };
 		48F8A6727EE102FA0FCE0C77 /* BoardCanvas.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardCanvas.swift; sourceTree = "<group>"; };
@@ -164,6 +168,7 @@
 		6B190574F83F26DD21FA3CE7 /* DictationPhase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictationPhase.swift; sourceTree = "<group>"; };
 		6C3BD7AF8ABF8A0911D1890A /* Typography.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Typography.swift; sourceTree = "<group>"; };
 		6DB381E12515DD46A27989D6 /* ChatScale.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatScale.swift; sourceTree = "<group>"; };
+		719152B51A668924C3B3FEAF /* BackendTutorService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendTutorService.swift; sourceTree = "<group>"; };
 		73BF2A95E33679CE90826E51 /* StructuredChatText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StructuredChatText.swift; sourceTree = "<group>"; };
 		77A01E280787A9D796C47A84 /* SettingsOptions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsOptions.swift; sourceTree = "<group>"; };
 		77A7DD39D721ACCC0D62826F /* BoardToolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardToolTests.swift; sourceTree = "<group>"; };
@@ -195,6 +200,7 @@
 		CAB4A0EDD663149C6BE8D7CB /* Layout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Layout.swift; sourceTree = "<group>"; };
 		CB96C449E6F25690ABBF7028 /* ChatGallery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatGallery.swift; sourceTree = "<group>"; };
 		CDC29B5C0EE22B4B88E0C16D /* BoardInk.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardInk.swift; sourceTree = "<group>"; };
+		CE8BA11A166196B847324B4D /* BackendConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendConfiguration.swift; sourceTree = "<group>"; };
 		D0E7C06258FD823C2E5B4C5D /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		D207D577F59A94A0666E7CB3 /* GreetingBlock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GreetingBlock.swift; sourceTree = "<group>"; };
 		D6A6AC55DDB94015492D4C2A /* MathTutorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MathTutorTests.swift; sourceTree = "<group>"; };
@@ -322,6 +328,7 @@
 		4C09AD5A4DD881E454E39B5A /* MathTutorTests */ = {
 			isa = PBXGroup;
 			children = (
+				4321C972F3139C4C616C7600 /* BackendTutorServiceTests.swift */,
 				3DBEC75E12C26E686FF76BDF /* BoardInkPersistenceTests.swift */,
 				07822BFCEDA6CAC5E7B67D24 /* BoardInkTests.swift */,
 				77A7DD39D721ACCC0D62826F /* BoardToolTests.swift */,
@@ -346,6 +353,8 @@
 		5CA1F77DB7BD4652A667C5DA /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				CE8BA11A166196B847324B4D /* BackendConfiguration.swift */,
+				719152B51A668924C3B3FEAF /* BackendTutorService.swift */,
 				9013A7C0B8561D4DADA9553C /* DictationService.swift */,
 				3C742B8F4CF845931CCEFC3D /* KeychainStore.swift */,
 				E06A066A7300269B751887BF /* OpenAIDictationService.swift */,
@@ -629,6 +638,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7D3C2F693CC25B87A39B9600 /* BackendTutorServiceTests.swift in Sources */,
 				E6DD21C7A93C00ECA613EE84 /* BoardInkPersistenceTests.swift in Sources */,
 				3FEAD4CABE221C77708EAE56 /* BoardInkTests.swift in Sources */,
 				2BF595A2FBB67A2BDC49CD01 /* BoardToolTests.swift in Sources */,
@@ -653,6 +663,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				DC5AFD891640960B9E77D1D6 /* BackendConfiguration.swift in Sources */,
+				A95C07DFBEDE1D12143D4DB5 /* BackendTutorService.swift in Sources */,
 				6938C21ECBCEE5D5D0A26299 /* BoardCanvas.swift in Sources */,
 				DF4177DBB1F1937F618B9294 /* BoardCapture.swift in Sources */,
 				29CCD36CA6350F76004148CA /* BoardGeometry.swift in Sources */,

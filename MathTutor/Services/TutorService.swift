@@ -43,17 +43,40 @@ extension TutorService {
 struct TutorServiceRouter: TutorService, Sendable {
     let keychain: KeychainStore
     private let apiKeyReader: @Sendable () -> String?
+    private let configurationReader: @Sendable () -> BackendConfiguration?
 
-    init(keychain: KeychainStore = KeychainStore(), apiKeyReader: (@Sendable () -> String?)? = nil) {
+    init(
+        keychain: KeychainStore = KeychainStore(),
+        apiKeyReader: (@Sendable () -> String?)? = nil,
+        configurationReader: (@Sendable () -> BackendConfiguration?)? = nil
+    ) {
         self.keychain = keychain
         self.apiKeyReader = apiKeyReader ?? { keychain.readAPIKey() }
+        self.configurationReader = configurationReader ?? { BackendConfiguration.load(keychain: keychain) }
     }
 
+    /// Unchanged for now: still the direct-OpenAI path, kept alive only so
+    /// every existing `respond(to:)` caller keeps compiling during the
+    /// migration. A later task (client-migration Task 6) deletes this
+    /// alongside `OpenAITutorService` once every caller is on `stream(_:)`.
     func respond(to request: TutorRequest) async throws -> TutorReply {
         guard let key = apiKeyReader(), !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw TutorServiceError.missingAPIKey
         }
         return try await OpenAITutorService(apiKey: key).respond(to: request)
+    }
+
+    /// The real streaming path: a `BackendConfiguration` that is half set
+    /// (a base URL with no token, or vice versa) is treated exactly like no
+    /// configuration at all, so the app never thinks it can reach a live
+    /// tutor when a request would actually 401 or have nowhere to go.
+    func stream(_ request: TutorRequest) -> AsyncThrowingStream<TutorEvent, Error> {
+        guard let configuration = configurationReader() else {
+            return AsyncThrowingStream { continuation in
+                continuation.finish(throwing: TutorServiceError.missingAPIKey)
+            }
+        }
+        return BackendTutorService(configuration: configuration).stream(request)
     }
 }
 
