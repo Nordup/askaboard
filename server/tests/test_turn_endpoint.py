@@ -206,6 +206,29 @@ async def test_a_billing_429_is_reported_as_not_retryable(db_app):
     assert events[-1]["retryable"] is False
 
 
+@respx.mock
+async def test_a_billing_429_is_not_retried_by_the_sdk(db_app):
+    """classify() alone is not enough — the openai SDK also retries 429s at
+    the transport layer by default (max_retries=2), which would fire off two
+    more requests before classify() ever saw the first response. Without
+    max_retries=0 on the client, this would be call_count == 3."""
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        return_value=Response(
+            429, json={"error": {"code": "credit_balance_exhausted"}}
+        )
+    )
+    payload = _payload()
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        async with client.stream("POST", "/v1/turn", json=payload, headers=AUTH) as r:
+            events = await _collect(r)
+
+    assert events[-1]["type"] == "error"
+    assert events[-1]["retryable"] is False
+    assert route.call_count == 1
+
+
 async def test_the_daily_spend_cap_returns_402(db_app, db_factory):
     cap = get_settings().daily_spend_cap_usd
     session_id = uuid.uuid4()

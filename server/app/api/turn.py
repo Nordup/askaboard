@@ -172,7 +172,13 @@ async def create_turn(
         started = time.monotonic()
         ttft_ms: int | None = None
         image_ref = None
-        client = AsyncOpenAI(api_key=settings.openai_api_key)
+        # max_retries=0: the SDK's own default retry logic (max_retries=2)
+        # retries any 429 or 5xx, including a billing 429 — it has no way to
+        # tell a billing error from a rate limit. Left at its default, the
+        # transport would retry a spend-limit failure before classify() ever
+        # saw it, silently defeating "never retry billing" at a layer this
+        # code cannot see into.
+        client = AsyncOpenAI(api_key=settings.openai_api_key, max_retries=0)
         result: TurnResult | None = None
 
         # The image upload and the model call are both guarded by the same
