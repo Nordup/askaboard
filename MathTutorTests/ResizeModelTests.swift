@@ -116,7 +116,6 @@ final class ResizeModelTests: XCTestCase {
     }
 
     func testResolutionDependsOnlyOnTotalTranslationNotOnHowItWasReached() {
-        XCTAssertEqual(resolve(translation: -120).size, resolve(translation: -120).size)
         XCTAssertEqual(resolve(translation: -120).size, 457)
     }
 
@@ -168,14 +167,66 @@ final class ResizeModelTests: XCTestCase {
             let r = resolve(translation: bad)
             XCTAssertEqual(r.size, 337, "translation \(bad)")
             XCTAssertFalse(r.isCollapsed, "translation \(bad) must not collapse")
+            // 337 is `panel.minimum`, and resting exactly on it — as opposed to being pushed
+            // past it — is the same non-event `testNoTranslationIsNoChange` reports as
+            // `.none` for translation 0. A non-finite translation must not report a limit
+            // just because the start it fell back to happens to coincide with the floor.
+            XCTAssertEqual(r.limit, .none, "translation \(bad) must not report a limit at rest")
         }
         XCTAssertEqual(ResizeModel.resolve(
             start: .nan, translation: -10, edge: .leading, constraints: panel
         ).size, 337, "a non-finite start falls back to the minimum")
     }
 
+    func testNonFiniteTranslationPreservesAnOffMinimumStartRatherThanSubstitutingTheMinimum() {
+        // `resolve(translation:)` defaults `start` to 337, which is coincidentally also
+        // `panel.minimum`, so nothing above proves the non-finite path kept `start` rather
+        // than silently substituting the minimum for it. A start away from the minimum does.
+        XCTAssertEqual(resolve(start: 500, translation: .nan).size, 500)
+    }
+
+    func testAStaleStartAboveTheNewMaximumClampsOnANonFiniteTranslation() {
+        // A window resize (Split View, Stage Manager) can move `maximum` below a `start`
+        // that was valid a moment ago. The very next non-finite translation must clamp to
+        // the new bound rather than handing the view an over-wide frame — `size` promises to
+        // stay within the constraints whenever they are satisfiable, and this path is no
+        // exception.
+        let shrunk = ResizeConstraints(minimum: 337, maximum: 600, collapseBelow: 202)
+        let r = ResizeModel.resolve(start: 900, translation: .nan, edge: .leading, constraints: shrunk)
+        XCTAssertEqual(r.size, 600, "size clamps to the new maximum rather than staying stale")
+        XCTAssertEqual(r.limit, .maximum, "limit")
+    }
+
     func testAFlickFarPastTheCeilingClampsRatherThanOvershooting() {
         XCTAssertEqual(resolve(translation: -100_000).size, 600)
+    }
+
+    // MARK: - Boundaries
+
+    func testLandingExactlyOnTheMinimumIsNotReportedAsAtALimit() {
+        // Proposed size lands exactly on the floor without being pushed past it, so this is
+        // not a clamp: no limit, no handle overshoot.
+        let r = ResizeModel.resolve(start: 400, translation: 63, edge: .leading, constraints: panel)
+        XCTAssertEqual(r.size, 337, "size")
+        XCTAssertEqual(r.limit, .none, "limit")
+        XCTAssertEqual(r.handleOffset, 0, "handleOffset")
+    }
+
+    func testLandingExactlyOnTheMaximumIsNotReportedAsAtALimit() {
+        let r = ResizeModel.resolve(start: 337, translation: -263, edge: .leading, constraints: panel)
+        XCTAssertEqual(r.size, 600, "size")
+        XCTAssertEqual(r.limit, .none, "limit")
+        XCTAssertEqual(r.handleOffset, 0, "handleOffset")
+    }
+
+    func testAFixedSizeSurfaceWhereMinimumEqualsMaximumAlwaysResolvesToThatSize() {
+        // Degenerate but legal: `isSatisfiable` only requires `maximum >= minimum`, and a
+        // surface with no travel at all should still resolve deterministically rather than
+        // hit the unsatisfiable branch.
+        let fixed = ResizeConstraints(minimum: 400, maximum: 400)
+        let r = ResizeModel.resolve(start: 400, translation: 50, edge: .leading, constraints: fixed)
+        XCTAssertEqual(r.size, 400, "size")
+        XCTAssertEqual(r.limit, .minimum, "limit")
     }
 
     // MARK: - The other edges
@@ -183,6 +234,11 @@ final class ResizeModelTests: XCTestCase {
     func testATrailingEdgeSurfaceGrowsInTheOppositeDirection() {
         let r = ResizeModel.resolve(start: 337, translation: 100, edge: .trailing, constraints: panel)
         XCTAssertEqual(r.size, 437, "a left-hand sidebar widens when dragged right")
+    }
+
+    func testATopEdgeSurfaceGrowsTowardTheOrigin() {
+        let r = ResizeModel.resolve(start: 337, translation: -100, edge: .top, constraints: panel)
+        XCTAssertEqual(r.size, 437, "top edge, dragged up (negative), grows")
     }
 
     func testTheVerticalAxisUsesTheSameCodePath() {

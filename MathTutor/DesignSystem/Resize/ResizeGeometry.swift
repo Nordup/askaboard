@@ -99,10 +99,13 @@ struct ResizeConstraints: Equatable, Sendable {
 
     /// False where the window has become too small to honour both bounds at once.
     ///
-    /// The model refuses to guess in that case rather than silently preferring one bound:
-    /// picking the maximum would draw a panel wider than the board it is commentary on, and
-    /// picking the minimum would claim a width that does not exist. The caller — which knows
-    /// it has a collapsed state to fall back to — decides.
+    /// `ResizeModel` does not refuse to choose when this is false — it picks the minimum,
+    /// deliberately: a panel pinned at its floor against a starved board is a visibly wrong,
+    /// recoverable failure, where drawing the panel at the maximum would silently paint it
+    /// over the very board it is commentary on. This property exists so a caller can notice
+    /// the situation coming — `ScreenLayout.fit` is what actually keeps the window out of it
+    /// in the common case — not so the caller can pick a different fallback than the model
+    /// already committed to.
     var isSatisfiable: Bool { maximum >= minimum }
 }
 

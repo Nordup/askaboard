@@ -49,10 +49,12 @@ enum ResizeModel {
             )
         }
 
-        // Too narrow a window to honour both bounds. Refusing to choose is deliberate:
-        // preferring the maximum would draw a panel wider than the board it is commentary
-        // on, and preferring the minimum would claim width that does not exist. The caller
-        // has a collapsed state to fall back to and `ScreenLayout.fit` to decide with.
+        // Too narrow a window to honour both bounds. The model does not refuse to choose
+        // here — it picks the minimum, deliberately, because it is the legible failure: a
+        // panel pinned at its floor against a starved board is visibly wrong and the student
+        // can see why, where drawing the panel at the maximum would silently paint it over
+        // the very board it is commentary on. `ScreenLayout.fit` is what keeps the window
+        // out of this state in the common case; landing here at all means that failed.
         guard constraints.isSatisfiable else {
             return settled(at: constraints.minimum, constraints: constraints)
         }
@@ -96,12 +98,30 @@ enum ResizeModel {
         return x < 0 ? -resisted : resisted
     }
 
-    /// A resolution that is not moving: pinned at `size`, no overshoot, not collapsed.
+    /// A resolution that is not being actively dragged: no overshoot, not collapsed, and
+    /// `size` clamped inside the constraints exactly like the driven path above — never the
+    /// raw `size` handed in, which can already be stale. `start` is frozen for a whole
+    /// gesture, but the constraints are not: a Split View or Stage Manager resize can move
+    /// `maximum` out from under a `start` that was valid a frame ago, and the very next
+    /// non-finite translation must not hand the view that now-too-wide frame back unchanged.
+    /// `ResizeResolution.size`'s own contract — "always within the constraints when they are
+    /// satisfiable" — applies here exactly as it does to the driven path.
+    ///
+    /// `limit` uses the same strict comparison as `resolve` above, against the same
+    /// pre-clamp `size`: a value resting exactly on a bound has not been pushed past it, and
+    /// only being pushed past a bound should read as a limit — that is the one signal that
+    /// fires the haptic, and a value merely coinciding with the floor is not that signal.
     private static func settled(at size: CGFloat, constraints: ResizeConstraints) -> ResizeResolution {
+        guard constraints.isSatisfiable else {
+            // No real bounds to compare against here; the fallback is always "pinned at the
+            // minimum" — see the comment on the `isSatisfiable` guard in `resolve` above.
+            return ResizeResolution(size: constraints.minimum, handleOffset: 0, isCollapsed: false, limit: .minimum)
+        }
+        let pinned = min(max(size, constraints.minimum), constraints.maximum)
         let limit: ResizeLimit =
-            if size <= constraints.minimum { .minimum }
-            else if size >= constraints.maximum { .maximum }
+            if size > constraints.maximum { .maximum }
+            else if size < constraints.minimum { .minimum }
             else { .none }
-        return ResizeResolution(size: size, handleOffset: 0, isCollapsed: false, limit: limit)
+        return ResizeResolution(size: pinned, handleOffset: 0, isCollapsed: false, limit: limit)
     }
 }
