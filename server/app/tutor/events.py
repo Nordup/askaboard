@@ -94,8 +94,9 @@ class EventTranslator:
 
         if kind == "response.output_item.added":
             item = event.get("item") or {}
-            if item.get("type") == "function_call":
-                self._tool_names[event["output_index"]] = item.get("name", "")
+            output_index = event.get("output_index")
+            if item.get("type") == "function_call" and output_index is not None:
+                self._tool_names[output_index] = item.get("name", "")
             return []
 
         if kind == "response.function_call_arguments.done":

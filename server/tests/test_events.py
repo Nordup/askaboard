@@ -75,6 +75,28 @@ def test_malformed_tool_arguments_are_dropped_not_raised():
     assert events == []
 
 
+def test_output_item_added_without_output_index_is_dropped_not_raised():
+    translator = EventTranslator()
+    events = translator.translate({
+        "type": "response.output_item.added",
+        "item": {"type": "function_call", "name": "set_workspace", "call_id": "call_1"},
+    })
+    assert events == []
+
+    translator.translate({
+        "type": "response.output_item.added",
+        "output_index": 0,
+        "item": {"type": "function_call", "name": "set_workspace", "call_id": "call_2"},
+    })
+    events = translator.translate({
+        "type": "response.function_call_arguments.done",
+        "output_index": 0,
+        "arguments": json.dumps(WORKSPACE_ARGS),
+    })
+    assert len(events) == 1
+    assert isinstance(events[0], WorkspaceEvent)
+
+
 def test_file_search_emits_searching_status():
     events = EventTranslator().translate({"type": "response.file_search_call.searching"})
     assert events == [StatusEvent(phase="searching")]
