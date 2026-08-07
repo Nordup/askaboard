@@ -171,4 +171,50 @@ final class UIStateTests: XCTestCase {
         XCTAssertEqual(state.penColor, .red)
         XCTAssertEqual(state.thickness, .bold)
     }
+
+    // MARK: - Panel width
+
+    func testPanelWidthStartsAtTheDesignsOwnWidth() {
+        XCTAssertEqual(UIState().panelWidth, ScreenLayout.minimumPanelWidth)
+    }
+
+    func testSettingPanelWidthRecordsIt() {
+        let state = UIState()
+        state.setPanelWidth(480)
+        XCTAssertEqual(state.panelWidth, 480)
+    }
+
+    func testResettingReturnsToTheDesignsWidth() {
+        let state = UIState()
+        state.setPanelWidth(480)
+        state.resetPanelWidth()
+        XCTAssertEqual(state.panelWidth, ScreenLayout.minimumPanelWidth)
+    }
+
+    func testANonFiniteWidthIsRefusedRatherThanStored() {
+        let state = UIState()
+        state.setPanelWidth(480)
+        state.setPanelWidth(.nan)
+        XCTAssertEqual(state.panelWidth, 480, "the last good width survives")
+    }
+
+    /// Width and presentation are independent axes, exactly like the two the design already
+    /// has. Collapsing must not forget the width, or reopening the panel would silently
+    /// undo a resize the student asked for.
+    func testCollapsingAndRestoringPreservesTheWidth() {
+        let state = UIState()
+        state.setPanelWidth(480)
+        state.collapseTutor()
+        XCTAssertEqual(state.panelWidth, 480, "still 480 while collapsed")
+        state.restoreTutorFromDock()
+        XCTAssertEqual(state.panelWidth, 480, "and on the way back")
+    }
+
+    func testSettingWidthDoesNotDisturbEitherOtherAxis() {
+        let state = UIState()
+        state.beginConversation()
+        state.setPanelWidth(480)
+        XCTAssertEqual(state.presentation, .docked, "presentation")
+        XCTAssertEqual(state.conversation, .active, "conversation")
+    }
 }

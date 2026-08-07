@@ -43,6 +43,22 @@ final class UIState: ObservableObject {
     /// is guarded the same way the other two axes are.
     @Published private(set) var isSelectionAttached: Bool
 
+    /// Axis D: how wide the student has asked the docked panel to be.
+    ///
+    /// Guarded like the other axes rather than left settable, because there is exactly one
+    /// control that changes it and one that resets it — the same shape the design's other
+    /// three axes have.
+    ///
+    /// **Stored unclamped, on purpose.** This is the width that was *asked for*; what fits
+    /// is a question about the window, and the window is not this type's business —
+    /// `UIState` deliberately does not know about the screen, in the same way `ScreenLayout`
+    /// deliberately does not force a presentation. `BoardScreen` reconciles the two, which
+    /// is what makes a resize survive a trip through Split View: the requested width is
+    /// still here when the window comes back.
+    ///
+    /// It does not persist, like everything else on this type.
+    @Published private(set) var panelWidth: CGFloat = ScreenLayout.minimumPanelWidth
+
     /// The rail's three selections carry no invariant between them — any tool
     /// works with any colour and any width — so they are plain settable state
     /// rather than transitions.
@@ -112,5 +128,21 @@ final class UIState: ObservableObject {
     /// screen 08 shows the selection in the thread, not still in the composer.
     func clearBoardSelection() {
         isSelectionAttached = false
+    }
+
+    /// The resize handle in the gutter between the board and the panel.
+    ///
+    /// Non-finite values are refused rather than stored: a NaN here becomes a NaN frame
+    /// width, and SwiftUI's response to that is an unrecoverable layout rather than a crash
+    /// anybody could debug.
+    func setPanelWidth(_ width: CGFloat) {
+        guard width.isFinite else { return }
+        panelWidth = width
+    }
+
+    /// Double-tapping the resize handle — VS Code's `onDidReset`, which is the one gesture
+    /// every splitter in the world agrees on.
+    func resetPanelWidth() {
+        panelWidth = ScreenLayout.minimumPanelWidth
     }
 }
