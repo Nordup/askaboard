@@ -17,14 +17,10 @@ enum BoardViewsMetrics {
     /// column exactly, so a pair fills the lane the thread is drawn in. Four
     /// across the same column would be 68pt each, which is a picture of
     /// handwriting nobody can tell apart from a picture of noise.
+    /// One size at every count. A lone view is one of these rather than a
+    /// full-width special case — one size to implement, one rhythm to read, and
+    /// no branch that can disagree with itself.
     static let thumbnail = CGSize(width: 145, height: 86)
-    /// The single-view size, and the one exception to the grid.
-    ///
-    /// A lone view is nearly always the whole board — the tutor is told to open
-    /// there before it zooms — and that is the one view worth the extra width:
-    /// it is what the learner checks the tutor was even looking at the right
-    /// work. Two of them onward, the grid takes over.
-    static let singleThumbnail = CGSize(width: 301, height: 132)
     /// Off the 4pt scale on purpose; it is what closes the row at 301.
     static let gap: CGFloat = 11
     /// The step from the views to the reply they belong to. Tighter than
@@ -47,38 +43,21 @@ struct BoardViewsRow: View {
     var onOpen: ((BoardView) -> Void)?
 
     var body: some View {
-        if views.count == 1, let only = views.first {
-            BoardViewThumbnail(
-                view: only,
-                size: BoardViewsMetrics.singleThumbnail,
-                onOpen: onOpen
-            )
-            .frame(width: width, alignment: .leading)
-            .accessibilityElement(children: .contain)
-            .accessibilityLabel("The tutor looked at one region of the board")
-        } else {
-            grid
-        }
-    }
-
-    private var grid: some View {
         let columns = BoardViewsMetrics.columns(in: width)
-        return VStack(alignment: .leading, spacing: BoardViewsMetrics.gap) {
+        VStack(alignment: .leading, spacing: BoardViewsMetrics.gap) {
             ForEach(Array(rows(of: columns).enumerated()), id: \.offset) { _, row in
                 HStack(spacing: BoardViewsMetrics.gap) {
                     ForEach(row) { view in
-                        BoardViewThumbnail(
-                            view: view,
-                            size: BoardViewsMetrics.thumbnail,
-                            onOpen: onOpen
-                        )
+                        BoardViewThumbnail(view: view, onOpen: onOpen)
                     }
                 }
             }
         }
         .frame(width: width, alignment: .leading)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("The tutor looked at \(views.count) regions of the board")
+        .accessibilityLabel(views.count == 1
+            ? "The tutor looked at one region of the board"
+            : "The tutor looked at \(views.count) regions of the board")
     }
 
     /// Chunked rather than laid out in a `Grid`, because the last row must sit
@@ -92,15 +71,15 @@ struct BoardViewsRow: View {
 
 struct BoardViewThumbnail: View {
     let view: BoardView
-    /// Given rather than fixed: a lone view is drawn at
-    /// `singleThumbnail`, a pair onward at `thumbnail`. See those two.
-    var size: CGSize = BoardViewsMetrics.thumbnail
     var onOpen: ((BoardView) -> Void)?
 
     var body: some View {
         Button { onOpen?(view) } label: {
             image
-                .frame(width: size.width, height: size.height)
+                .frame(
+                    width: BoardViewsMetrics.thumbnail.width,
+                    height: BoardViewsMetrics.thumbnail.height
+                )
                 .background(DS.Color.surfaceCanvas)
                 .clipShape(RoundedRectangle(cornerRadius: BoardViewsMetrics.cornerRadius))
                 // **A deliberate exception to board 01 rule 1**, which says the

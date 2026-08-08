@@ -71,6 +71,15 @@ MALFORMED_BOARD_ACK = json.dumps({
               "then call `update_board` again with a valid batch.",
 })
 
+# What an unknown tool name is answered with. The provider should only ever
+# call tools in the registry; this keeps a future renamed tool from silently
+# receiving the `set_workspace` ack and being recorded as a workspace change.
+UNSUPPORTED_TOOL_ACK = json.dumps({
+    "status": "unsupported",
+    "detail": "That tool is not available in this tutor session. Continue with "
+              "ordinary prose, or use the tools listed in your instructions.",
+})
+
 # What `view_board` is answered with when the turn carries no board at all.
 #
 # A learner can ask "check this" with an empty canvas, and the model has no way
@@ -167,9 +176,8 @@ def _answer(call: dict, *, has_board: bool) -> ToolAnswer:
         ])
 
     if name != "view_board":
-        # Anything a later seam adds that has no server-side result to report.
         return ToolAnswer(items=[
-            {"type": "function_call_output", "call_id": call_id, "output": SET_WORKSPACE_ACK}
+            {"type": "function_call_output", "call_id": call_id, "output": UNSUPPORTED_TOOL_ACK}
         ])
 
     if not has_board:

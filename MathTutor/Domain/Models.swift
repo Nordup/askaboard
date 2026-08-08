@@ -163,6 +163,12 @@ struct LearningSession: Codable, Sendable, Equatable {
     var plan: SessionPlan?
     var exercise: Exercise?
     var drawingData: Data?
+    /// The tutor-authored semantic scene, separate from learner ink.
+    ///
+    /// Older session files do not carry this key; they decode to an empty
+    /// scene so a saved session never fails to load just because it predates
+    /// semantic drawing.
+    var boardScene: BoardScene = .empty
     var selectedModel: ModelChoice
     var reasoningEffort: ReasoningEffort
     var startedAt: Date
@@ -174,6 +180,7 @@ struct LearningSession: Codable, Sendable, Equatable {
         plan: SessionPlan?,
         exercise: Exercise?,
         drawingData: Data?,
+        boardScene: BoardScene = .empty,
         selectedModel: ModelChoice,
         reasoningEffort: ReasoningEffort = .defaultValue,
         startedAt: Date,
@@ -184,6 +191,7 @@ struct LearningSession: Codable, Sendable, Equatable {
         self.plan = plan
         self.exercise = exercise
         self.drawingData = drawingData
+        self.boardScene = boardScene
         self.selectedModel = selectedModel
         self.reasoningEffort = reasoningEffort
         self.startedAt = startedAt
@@ -196,6 +204,7 @@ struct LearningSession: Codable, Sendable, Equatable {
         case plan
         case exercise
         case drawingData
+        case boardScene
         case selectedModel
         case reasoningEffort
         case startedAt
@@ -214,6 +223,7 @@ struct LearningSession: Codable, Sendable, Equatable {
         plan = try container.decodeIfPresent(SessionPlan.self, forKey: .plan)
         exercise = try container.decodeIfPresent(Exercise.self, forKey: .exercise)
         drawingData = try container.decodeIfPresent(Data.self, forKey: .drawingData)
+        boardScene = (try? container.decodeIfPresent(BoardScene.self, forKey: .boardScene)) ?? .empty
         selectedModel = try container.decode(ModelChoice.self, forKey: .selectedModel)
         // Older session files do not have this key. Keep those sessions intact
         // and opt them into the same default used for a new session.
@@ -297,6 +307,11 @@ struct TutorRequest: Sendable {
     /// a single line. See `CanvasCapture.boardData()`.
     var boardOverview: Data?
     var boardManifest: String?
+    /// The device's compact account of the current board state: coordinate
+    /// system, visible logical rectangle, learner ink bounds/clusters, and the
+    /// exact tutor scene. Sent on every turn, like the overview, so the model
+    /// can see and revise its own semantic output.
+    var boardScene: String?
     var signal: LearningSignal?
     /// The learner's `LearningSession.id`, carried through so the backend can
     /// rebuild this turn's conversation context from what it has stored
@@ -320,6 +335,7 @@ struct TutorRequest: Sendable {
         // board through `TutorStore.requestTutor`.
         boardOverview: Data? = nil,
         boardManifest: String? = nil,
+        boardScene: String? = nil,
         signal: LearningSignal?,
         sessionID: UUID = UUID(),
         model: ModelChoice,
@@ -333,6 +349,7 @@ struct TutorRequest: Sendable {
         self.imageRegionDescription = imageRegionDescription
         self.boardOverview = boardOverview
         self.boardManifest = boardManifest
+        self.boardScene = boardScene
         self.signal = signal
         self.sessionID = sessionID
         self.model = model
@@ -351,6 +368,7 @@ struct TutorRequest: Sendable {
         imageRegionDescription: String?,
         boardOverview: Data? = nil,
         boardManifest: String? = nil,
+        boardScene: String? = nil,
         signal: LearningSignal?,
         sessionID: UUID = UUID(),
         reasoningEffort: ReasoningEffort,
@@ -365,6 +383,7 @@ struct TutorRequest: Sendable {
             imageRegionDescription: imageRegionDescription,
             boardOverview: boardOverview,
             boardManifest: boardManifest,
+            boardScene: boardScene,
             signal: signal,
             sessionID: sessionID,
             model: model,

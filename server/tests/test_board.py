@@ -13,6 +13,11 @@ import json
 import pytest
 
 from app.tutor import board
+from app.tutor.board_scene import (
+    MAX_SCENE_CHARS,
+    parse_board_update,
+    update_payload,
+)
 from app.tutor.loop import (
     MIN_REGION_PERCENT,
     NO_BOARD_ACK,
@@ -208,7 +213,7 @@ def test_a_changed_board_says_the_earlier_description_is_out_of_date():
 def test_an_unchanged_board_says_so_rather_than_staying_silent():
     note = board.describe(has_ink=True, changed=False)
 
-    assert "identical" in note
+    assert "same as the last turn" in note
     assert "HAS CHANGED" not in note
 
 
@@ -238,14 +243,76 @@ def test_a_semantic_scene_is_reflected_back_exactly():
     assert "never convert your own text into simulated handwriting" in note
 
 
-def test_a_semantic_only_board_is_not_described_as_empty():
+def test_scene_data_without_a_renderable_overview_is_still_not_viewable():
     note = board.describe(has_ink=False, scene="[tutor scene]")
 
-    assert "empty right now" not in note
+    assert "no renderable content" in note
+    assert "do not call `view_board`" in note
     assert "[tutor scene]" in note
 
 
-def test_a_scene_without_ink_never_claims_the_board_changed():
+def test_a_scene_context_without_an_overview_is_not_viewable_even_when_changed():
     note = board.describe(has_ink=False, scene="x", changed=True)
 
-    assert "HAS CHANGED" not in note
+    assert "HAS CHANGED" in note
+    assert "do not call `view_board`" in note
+    assert "current board is empty" in note
+
+
+def test_changed_board_wording_does_not_attribute_the_change_to_the_learner():
+    note = board.describe(has_ink=True, changed=True)
+
+    assert "may have been written or erased" in note
+    assert "tutor overlay may have been updated" in note
+    assert "They have written" not in note
+
+
+def test_out_of_range_logical_coordinates_are_clamped():
+    update, error = parse_board_update(json.dumps({
+        "mode": "upsert",
+        "delete_ids": [],
+        "elements": [{
+            "id": "edge",
+            "kind": "line",
+            "x1": -100_000, "y1": 0, "x2": 100_000, "y2": 0,
+            "role": "content", "stroke": "#0A0A0A", "fill": "transparent",
+            "stroke_width": 4, "opacity": 1, "dash": [], "rotation": 0,
+        }],
+    }))
+    assert update is not None, error
+    point = update_payload(update).upserts[0]
+    assert point.x1 == -25_000
+    assert point.x2 == 25_000
+
+
+def test_non_finite_coordinates_are_rejected():
+    update, error = parse_board_update(json.dumps({
+        "mode": "upsert",
+        "delete_ids": [],
+        "elements": [{
+            "id": "nan",
+            "kind": "line",
+            "x1": float("nan"), "y1": 0, "x2": 1, "y2": 1,
+            "role": "content", "stroke": "#0A0A0A", "fill": "transparent",
+            "stroke_width": 4, "opacity": 1, "dash": [], "rotation": 0,
+        }],
+    }))
+    assert update is None
+    assert error is not None
+
+
+def test_extra_keys_are_rejected_by_the_scene_models():
+    update, error = parse_board_update(json.dumps({
+        "mode": "upsert",
+        "delete_ids": [],
+        "elements": [{
+            "id": "x",
+            "kind": "line",
+            "x1": 0, "y1": 0, "x2": 1, "y2": 1,
+            "role": "content", "stroke": "#0A0A0A", "fill": "transparent",
+            "stroke_width": 4, "opacity": 1, "dash": [], "rotation": 0,
+            "unexpected": True,
+        }],
+    }))
+    assert update is None
+    assert "unexpected" in (error or "")

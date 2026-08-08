@@ -7,6 +7,9 @@ import PencilKit
 /// `--e2e-seed-radical-attempt` launch argument in `TutorStore`.
 enum E2ESeedFixture {
     static let launchArgument = "--e2e-seed-radical-attempt"
+    /// Seeds the semantic tutor scene instead of (or alongside) PencilKit ink,
+    /// so Luna can inspect every primitive without a live API.
+    static let sceneLaunchArgument = "--e2e-seed-tutor-scene"
 
     private struct Glyph {
         let width: CGFloat
@@ -58,6 +61,148 @@ enum E2ESeedFixture {
         session.plan = .radicalEquation
         session.exercise = .radicalEquation
         session.drawingData = drawingData()
+        session.lastSavedAt = .now
+    }
+
+    static func scene() -> BoardScene {
+        let triangleStroke = BoardStyle(
+            role: .content, stroke: "#0155FB", fill: "#E3EEFF",
+            strokeWidth: 4, opacity: 1, dash: [], rotation: 0
+        )
+        let labelStyle = BoardStyle(
+            role: .content, stroke: "#0A0A0A", fill: "transparent",
+            strokeWidth: 1, opacity: 1, dash: [], rotation: 0
+        )
+        let hintStyle = BoardStyle(
+            role: .hint, stroke: "#40A365", fill: "transparent",
+            strokeWidth: 3, opacity: 1, dash: [8, 6], rotation: 0
+        )
+        let correctionStyle = BoardStyle(
+            role: .correction, stroke: "#E33E38", fill: "transparent",
+            strokeWidth: 3, opacity: 1, dash: [10, 6], rotation: 0
+        )
+        let emphasisStyle = BoardStyle(
+            role: .emphasis, stroke: "#6051DC", fill: "transparent",
+            strokeWidth: 6, opacity: 1, dash: [], rotation: 0
+        )
+        let circleFill = BoardStyle(
+            role: .content, stroke: "#40A365", fill: "#E7F6EC",
+            strokeWidth: 4, opacity: 1, dash: [], rotation: 0
+        )
+
+        return BoardScene(elements: [
+            .text(TextElement(
+                id: "exercise", x: -285, y: -325,
+                text: "Exercise: find ∠A, then resolve F into components.",
+                fontSize: 18, alignment: .center, width: 570, style: labelStyle
+            )),
+            .freehand(FreehandElement(
+                id: "title-underline",
+                points: [
+                    BoardPoint(x: -220, y: -285), BoardPoint(x: -105, y: -290),
+                    BoardPoint(x: 10, y: -284), BoardPoint(x: 125, y: -289),
+                    BoardPoint(x: 220, y: -285),
+                ],
+                style: hintStyle
+            )),
+            .polygon(PolygonElement(
+                id: "triangle",
+                points: [
+                    BoardPoint(x: -285, y: -105),
+                    BoardPoint(x: -65, y: -105),
+                    BoardPoint(x: -175, y: 165),
+                ],
+                style: triangleStroke
+            )),
+            .line(LineElement(
+                id: "altitude", x1: -175, y1: -105, x2: -175, y2: 165,
+                style: BoardStyle(
+                    role: .hint, stroke: "#40A365", fill: "transparent",
+                    strokeWidth: 2, opacity: 1, dash: [7, 5], rotation: 0
+                )
+            )),
+            .angleMarker(AngleMarkerElement(
+                id: "angle-a", vertexX: -285, vertexY: -105,
+                ray1X: -65, ray1Y: -105, ray2X: -175, ray2Y: 165,
+                radius: 38, rightAngle: false,
+                style: BoardStyle(
+                    role: .content, stroke: "#E33E38", fill: "transparent",
+                    strokeWidth: 4, opacity: 1, dash: [], rotation: 0
+                )
+            )),
+            .text(TextElement(
+                id: "label-a", x: -310, y: -145, text: "A",
+                fontSize: 22, alignment: .center, width: 36, style: labelStyle
+            )),
+            .text(TextElement(
+                id: "label-b", x: -80, y: -145, text: "B",
+                fontSize: 22, alignment: .center, width: 36, style: labelStyle
+            )),
+            .text(TextElement(
+                id: "label-c", x: -193, y: 170, text: "C",
+                fontSize: 22, alignment: .center, width: 36, style: labelStyle
+            )),
+            .circle(CircleElement(
+                id: "circle", cx: 35, cy: -70, radius: 66, style: circleFill
+            )),
+            .arrow(ArrowElement(
+                id: "radius", x1: 35, y1: -70, x2: 85, y2: -28,
+                headSize: 11, style: labelStyle
+            )),
+            .text(TextElement(
+                id: "radius-label", x: 58, y: -68, text: "r",
+                fontSize: 20, alignment: .left, width: 28, style: labelStyle
+            )),
+            .arc(ArcElement(
+                id: "sweep", cx: 225, cy: -70, radius: 48,
+                startAngle: 20, endAngle: 300,
+                style: BoardStyle(
+                    role: .emphasis, stroke: "#6051DC", fill: "transparent",
+                    strokeWidth: 5, opacity: 1, dash: [9, 5], rotation: 0
+                )
+            )),
+            .polyline(PolylineElement(
+                id: "components",
+                points: [
+                    BoardPoint(x: -35, y: 170), BoardPoint(x: -35, y: 45),
+                    BoardPoint(x: 75, y: 45),
+                ],
+                style: hintStyle
+            )),
+            .arrow(ArrowElement(
+                id: "force", x1: -35, y1: 170, x2: 75, y2: 45,
+                headSize: 15, style: emphasisStyle
+            )),
+            .text(TextElement(
+                id: "force-label", x: 45, y: 132, text: "F = 60 N",
+                fontSize: 19, alignment: .left, width: 120, style: emphasisStyle
+            )),
+            .rectangle(RectangleElement(
+                id: "hint-box", x: -300, y: 225, width: 260, height: 82,
+                style: BoardStyle(
+                    role: .hint, stroke: "#40A365", fill: "#E7F6EC",
+                    strokeWidth: 3, opacity: 1, dash: [8, 5], rotation: 0
+                )
+            )),
+            .text(TextElement(
+                id: "hint", x: -284, y: 242,
+                text: "Hint: label known angles first.",
+                fontSize: 16, alignment: .left, width: 228, style: hintStyle
+            )),
+            .ellipse(EllipseElement(
+                id: "correction-ring", x: -5, y: 220, width: 300, height: 85,
+                style: correctionStyle
+            )),
+            .text(TextElement(
+                id: "correction", x: 15, y: 242,
+                text: "Check: split F horizontally and vertically.",
+                fontSize: 15, alignment: .center, width: 260, style: correctionStyle
+            )),
+        ])
+    }
+
+    static func seedScene(_ session: inout LearningSession) {
+        session.boardScene = scene()
         session.lastSavedAt = .now
     }
 

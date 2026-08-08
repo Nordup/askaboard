@@ -24,6 +24,10 @@ MAX_ELEMENTS_PER_UPDATE = 200
 MAX_DELETES_PER_UPDATE = 200
 MAX_POINTS_PER_ELEMENT = 512
 MAX_ID_LENGTH = 128
+#: Hard cap on the scene string the device sends back in `TurnRequest`.
+#: Context already truncates this value, but the request itself should refuse
+#: an over-limit scene rather than paying for it twice.
+MAX_SCENE_CHARS = 60_000
 
 #: The logical board is 50,000 points on a side centred on the drawing-space
 #: origin (25,000, 25,000), so the valid logical range is -25,000...25,000 on

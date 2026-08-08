@@ -74,6 +74,12 @@ Assistant replies render through the pinned `MarkdownUI` 2.4.0 Swift package (`M
 
 Debug launches can seed a legible vector PencilKit attempt for the radical-equation evaluation flow. Pass `--ui-test-reset --ui-test-demo-service --e2e-seed-radical-attempt` as launch arguments; the fixture is compiled out of release builds, while the demo-service routing override is DEBUG-only. Both are ignored unless those explicit arguments are present.
 
+For visual QA of the semantic scene, add `--e2e-seed-tutor-scene` (DEBUG-only):
+it seeds every tutor primitive in one iPad viewport: a labelled triangle and
+angle marker, circle and radius, force/vector components, a >180° arc, text,
+line/polyline/freehand marks, and hint/correction/emphasis callouts without a
+live API.
+
 ## Architecture
 
 Five layers, each depending only on the ones above it. `DesignSystem` knowing nothing about the app is the load-bearing rule — a component that reaches for `TutorStore` is not a component, it is a screen fragment.
@@ -99,11 +105,30 @@ Both have drift tests that re-run the generator in-process and fail if the check
 
 **The board.** A 50,000pt canvas centred at (25,000, 25,000) so panning works in every direction from where a session starts. Evaluation renders every stroke, not the viewport, and when ink is spread over more board than one legible image can hold it crops to the centroid of the strokes' own centres — the bounding box's centre can sit in empty space between two clusters. The app owns tool selection through the design's rail; `PKToolPicker` is gone.
 
+**Tutor-authored content is a separate semantic scene.** Learner handwriting stays
+PencilKit ink. What the tutor draws is a structured scene of text, geometry, and
+math primitives (`text`, `line`, `arrow`, `rectangle`, `ellipse`, `circle`,
+`polygon`, `polyline`, `freehand`, `arc`, `angle_marker`) with stable ids,
+logical board coordinates, colours, widths, dashes, opacity, roles, and
+rotation. The model revises it through the `update_board` tool; the app applies
+each validated `board_update` event immediately, keeps the scene in the session,
+persists it even if the rest of the turn fails, and composites it above learner
+ink in live views and board captures. Every request also reports the visible
+logical rectangle, learner-ink clusters, exact semantic objects, and the logical
+bounds represented by the overview, so the tutor can map an inspected crop back
+to precise placement coordinates. See
+[`server/README.md`](server/README.md) for the wire contract.
+
 **Typography.** Source Sans 3 is the design's only typeface and iOS does not ship it, so the 400/500/600 weights are bundled. Two conversions in `Typography.swift` are easy to get wrong and are unit-tested: CSS `line-height` is a total line box while SwiftUI's `lineSpacing` is the gap *between* lines, and the design's tracking is in `em` while `.tracking()` takes points.
 
 ## Prototype limitations
 
-This pass intentionally has no accounts, cloud sync, automatic continuous change detection, handwriting OCR, or teacher analytics. Evaluation is explicit (the whole board or a dragged rectangle) and sends the rendered PencilKit image only when requested; board evaluation renders the bounding box of every stroke, so scrolling away from a long solution does not truncate what the tutor sees. When ink is scattered over more than 4,000 pt of board — further than one legible image can cover — evaluation crops to the student's work and tells the tutor it is looking at a portion rather than the whole board. *Evaluate board* is disabled while the board is empty. Local session persistence is best effort in Application Support; resetting a session removes the local drawing and messages.
+This pass intentionally has no accounts, cloud sync, automatic continuous change detection, handwriting OCR, or teacher analytics. Evaluation is explicit (the whole board or a dragged rectangle) and sends a fresh composite of PencilKit ink plus tutor semantic objects only when requested; board evaluation renders the full content bounds, so scrolling away from a long solution does not truncate what the tutor sees. When content is scattered over more than 4,000 pt of board — further than one legible image can cover — evaluation crops to the work and tells the tutor it is looking at a portion rather than the whole board. *Evaluate board* is disabled while the board is empty. Local session persistence is best effort in Application Support; resetting a session removes the local drawing, tutor scene, and messages.
+
+Semantic board objects are structured and editable, but this is **not OCR**:
+the learner's handwriting is still understood by the model through images, and
+the tutor never claims to transcribe it. Tutor geometry is not editable with
+the PencilKit lasso; it is revised by the model through stable ids.
 
 ## Backend service
 

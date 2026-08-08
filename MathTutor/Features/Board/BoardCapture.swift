@@ -5,6 +5,9 @@ import UIKit
 @MainActor
 final class CanvasCapture: ObservableObject {
     weak var canvasView: PKCanvasView?
+    /// The tutor-authored semantic scene, set by the live canvas representable
+    /// from `TutorStore.session.boardScene`.
+    var scene: BoardScene = .empty
 
     func undo() { canvasView?.undoManager?.undo() }
     func redo() { canvasView?.undoManager?.redo() }
@@ -24,10 +27,16 @@ final class CanvasCapture: ObservableObject {
         let viewport = canvasView.bounds.size
         guard viewport.width > 0, viewport.height > 0 else { return }
 
-        let inkBounds = canvasView.drawing.bounds
-        let target = inkBounds.isNull || inkBounds.isEmpty
-            ? CGRect(origin: PencilCanvasConfiguration.boardOrigin, size: .zero)
-            : inkBounds
+        var target = canvasView.drawing.bounds
+        if let sceneBounds = BoardSceneRenderer.bounds(
+            of: scene,
+            boardOrigin: PencilCanvasConfiguration.boardOrigin
+        ) {
+            target = target.isNull ? sceneBounds : target.union(sceneBounds)
+        }
+        if target.isNull || target.isEmpty {
+            target = CGRect(origin: PencilCanvasConfiguration.boardOrigin, size: .zero)
+        }
 
         canvasView.setContentOffset(
             CanvasScroller.offset(
@@ -77,7 +86,7 @@ final class CanvasCapture: ObservableObject {
     /// Re-reads the board. Called from the canvas's drawing delegate, which is
     /// the only thing that knows when the answer can have changed.
     func refreshHasInk() {
-        let current = Self.hasEvaluableInk(in: canvasView?.drawing)
+        let current = Self.hasEvaluableInk(in: canvasView?.drawing) || !scene.elements.isEmpty
         guard current != hasInk else { return }
         hasInk = current
     }
@@ -90,13 +99,16 @@ final class CanvasCapture: ObservableObject {
     /// legible image can hold and the region was cropped to the student's work.
     /// Callers must say so rather than describing the result as the whole board.
     func snapshotAllInkData() -> (data: Data, coversAllInk: Bool)? {
-        guard let canvasView, Self.hasEvaluableInk(in: canvasView.drawing) else { return nil }
-        let padded = canvasView.drawing.bounds.insetBy(dx: -24, dy: -24)
+        guard let canvasView, let padded = contentExtent() else { return nil }
         let span = PencilCanvasConfiguration.maximumEvaluationSpan
         let coversAllInk = padded.width <= span && padded.height <= span
         let region = coversAllInk
             ? padded
-            : Self.workCenteredRegion(of: canvasView.drawing, span: span)
+            : Self.workCenteredRegion(
+                of: canvasView.drawing,
+                scene: scene,
+                span: span
+            )
         guard let data = renderPNG(drawingRect: region) else { return nil }
         return (data, coversAllInk)
     }
@@ -116,6 +128,20 @@ final class CanvasCapture: ObservableObject {
         return drawing.bounds.insetBy(dx: -24, dy: -24)
     }
 
+    /// The union of learner ink and tutor scene, in drawing coordinates, padded
+    /// the way the ink extent is. `nil` only when both are empty.
+    func contentExtent() -> CGRect? {
+        var union = canvasView.flatMap { Self.inkExtent(of: $0.drawing) }
+        if let sceneBounds = BoardSceneRenderer.bounds(
+            of: scene,
+            boardOrigin: PencilCanvasConfiguration.boardOrigin
+        ) {
+            let padded = sceneBounds.insetBy(dx: -24, dy: -24)
+            union = union?.union(padded) ?? padded
+        }
+        return union
+    }
+
     /// The overview that rides on every turn: the whole board, small.
     ///
     /// Small on purpose. It is attached whether the tutor looks or not, so its
@@ -123,7 +149,7 @@ final class CanvasCapture: ObservableObject {
     /// full-resolution upload this replaced spent ~160KB a turn, including every
     /// turn where the model never looked at all.
     func overviewData() -> Data? {
-        guard let canvasView, let extent = Self.inkExtent(of: canvasView.drawing) else { return nil }
+        guard let extent = contentExtent() else { return nil }
         return renderPNG(drawingRect: extent, maximumDimension: Self.overviewMaximumDimension)
     }
 
@@ -137,7 +163,7 @@ final class CanvasCapture: ObservableObject {
     /// rather than an upscale of a thumbnail. That is the whole reason this
     /// moved off the server.
     func renderRegion(percent: CGRect) -> Data? {
-        guard let canvasView, let extent = Self.inkExtent(of: canvasView.drawing) else { return nil }
+        guard let extent = contentExtent() else { return nil }
         return renderPNG(
             drawingRect: Self.drawingRect(forPercent: percent, in: extent),
             maximumDimension: Self.regionMaximumDimension
@@ -176,7 +202,7 @@ final class CanvasCapture: ObservableObject {
     /// yesterday's, "written most recently" is what distinguishes the problem
     /// being asked about from the one already finished.
     func manifest() -> String? {
-        guard let canvasView, let extent = Self.inkExtent(of: canvasView.drawing) else { return nil }
+        guard let canvasView, let extent = contentExtent() else { return nil }
         let clusters = Self.clusters(of: canvasView.drawing)
         guard clusters.count > 1 else { return nil }
 
@@ -197,6 +223,120 @@ final class CanvasCapture: ObservableObject {
             + "writing, far enough apart that most of the overview is blank. Aim `view_board` "
             + "at one of these rather than at the whole board:"
         return ([heading] + lines).joined(separator: "\n")
+    }
+
+    /// The compact model-facing board state sent under `board_scene` on every
+    /// turn: coordinate system, visible logical rectangle, learner ink bounds
+    /// and clusters when present, then the exact tutor scene.
+    ///
+    /// It is data, not instructions; the server wraps it as quoted context.
+    /// The string is capped at the request field's own limit; if the scene is
+    /// too large, the omitted element count is stated rather than silently
+    /// paying for an over-limit upload.
+    func sceneContextString(maxCharacters: Int = 60_000) -> String? {
+        guard let canvasView else { return nil }
+        // Keep a precise read of the viewport before any async redraw can
+        // publish new scroll state; the double-origin subtraction below was
+        // the bug this value is tested against.
+        let visible = visibleDrawingRect()
+        let inkBounds = Self.inkExtent(of: canvasView.drawing)
+        let clusters = Self.clusters(of: canvasView.drawing)
+
+        var root: [String: Any] = [
+            "kind": "board_scene_context",
+            "data_not_instructions": true,
+            "coordinate_system": "logical board points; (0,0) is drawing (25000,25000); +x right, +y down",
+        ]
+        if let visible {
+            root["visible_logical_rect"] = logicalBox(visible)
+        }
+        if let overview = contentExtent() {
+            // `view_board` addresses percentages of this exact rectangle. By
+            // returning the logical bounds as well, the tutor can turn a crop
+            // it inspected back into precise coordinates for a nearby label or
+            // correction instead of guessing from pixels.
+            root["overview_logical_bounds"] = logicalBox(overview)
+        }
+        if let inkBounds {
+            root["learner_ink_logical_bounds"] = logicalBox(inkBounds)
+            root["learner_ink_clusters"] = clusters.map { cluster in
+                [
+                    "logical_box": logicalBox(cluster.box),
+                    "strokes": cluster.count,
+                    "newest_unix": cluster.newest.timeIntervalSince1970,
+                ]
+            }
+        }
+        if !scene.elements.isEmpty {
+            root["tutor_elements"] = encodedElements(scene.elements)
+        }
+
+        var data = serialize(root)
+        if data == nil {
+            return nil
+        }
+
+        // Keep the response within the request field's cap. Clusters and ink
+        // bounds are dropped first because the scene is the part the model
+        // must be able to update; only then are trailing elements omitted.
+        while let current = data, current.count > maxCharacters {
+            if root["learner_ink_clusters"] != nil {
+                root.removeValue(forKey: "learner_ink_clusters")
+                data = serialize(root)
+                continue
+            }
+            if root["learner_ink_logical_bounds"] != nil {
+                root.removeValue(forKey: "learner_ink_logical_bounds")
+                data = serialize(root)
+                continue
+            }
+            guard var elements = root["tutor_elements"] as? [[String: Any]],
+                  elements.count > 1
+            else { break }
+            let omitted = scene.elements.count - elements.count
+            elements.removeLast()
+            root["tutor_elements"] = elements
+            root["truncated"] = true
+            root["omitted_element_count"] = omitted + 1
+            data = serialize(root)
+        }
+        return data
+    }
+
+    private func visibleDrawingRect() -> CGRect? {
+        guard let canvasView else { return nil }
+        let viewport = CGRect(origin: .zero, size: canvasView.bounds.size)
+        guard viewport.width > 0, viewport.height > 0 else { return nil }
+        return CanvasViewportMapper.drawingRect(
+            for: viewport,
+            canvasBounds: CGRect(origin: canvasView.contentOffset, size: viewport.size),
+            zoomScale: canvasView.zoomScale
+        )
+    }
+
+    private func logicalBox(_ drawingRect: CGRect) -> [Double] {
+        let origin = PencilCanvasConfiguration.boardOrigin
+        return [
+            Double(drawingRect.minX - origin.x),
+            Double(drawingRect.minY - origin.y),
+            Double(drawingRect.maxX - origin.x),
+            Double(drawingRect.maxY - origin.y),
+        ]
+    }
+
+    private func encodedElements(_ elements: [BoardElement]) -> [Any] {
+        guard let data = try? JSONEncoder().encode(elements),
+              let array = try? JSONSerialization.jsonObject(with: data) as? [Any]
+        else { return [] }
+        return array
+    }
+
+    private func serialize(_ object: [String: Any]) -> String? {
+        guard let data = try? JSONSerialization.data(
+            withJSONObject: object,
+            options: [.sortedKeys]
+        ) else { return nil }
+        return String(data: data, encoding: .utf8)
     }
 
     /// Groups strokes that sit near each other into areas of writing.
@@ -250,12 +390,29 @@ final class CanvasCapture: ObservableObject {
     /// a hundred strokes of real work and one stray dot far away, the average of
     /// the stroke centers still sits on the work, while the bounding box's
     /// center is dragged halfway to the dot and can miss both.
-    private static func workCenteredRegion(of drawing: PKDrawing, span: CGFloat) -> CGRect {
+    private static func workCenteredRegion(
+        of drawing: PKDrawing,
+        scene: BoardScene,
+        span: CGFloat
+    ) -> CGRect {
+        let sceneBounds = BoardSceneRenderer.bounds(
+            of: scene,
+            boardOrigin: PencilCanvasConfiguration.boardOrigin
+        )
+        if drawing.strokes.isEmpty, let sceneBounds {
+            return square(
+                around: CGPoint(x: sceneBounds.midX, y: sceneBounds.midY),
+                span: span
+            )
+        }
         let centers = drawing.strokes.map { stroke in
             CGPoint(x: stroke.renderBounds.midX, y: stroke.renderBounds.midY)
         }
         let centroid = centers.isEmpty
-            ? CGPoint(x: drawing.bounds.midX, y: drawing.bounds.midY)
+            ? CGPoint(
+                x: sceneBounds?.midX ?? drawing.bounds.midX,
+                y: sceneBounds?.midY ?? drawing.bounds.midY
+            )
             : CGPoint(
                 x: centers.reduce(0) { $0 + $1.x } / CGFloat(centers.count),
                 y: centers.reduce(0) { $0 + $1.y } / CGFloat(centers.count)
@@ -317,13 +474,18 @@ final class CanvasCapture: ObservableObject {
     ///   `boardMaximumDimension` for the board upload the server crops from. It
     ///   is a parameter rather than a constant because those two answers are set
     ///   by different things — see `boardData()`.
-    private func renderPNG(drawingRect requested: CGRect, maximumDimension: CGFloat = 2_000) -> Data? {
+    private func renderPNG(
+        drawingRect requested: CGRect,
+        maximumDimension: CGFloat = 2_000,
+        scene: BoardScene? = nil
+    ) -> Data? {
         guard let canvasView, requested.width > 0, requested.height > 0 else { return nil }
 
         // Keep handwriting crisp without sending an unnecessarily huge original-detail
         // image. A white background also avoids ambiguous transparent-PNG rendering.
         let scale = min(2, maximumDimension / max(requested.width, requested.height))
         let drawing = canvasView.drawing
+        let sceneToDraw = scene ?? self.scene
         let pixelSize = CGSize(width: requested.width * scale, height: requested.height * scale)
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
@@ -351,6 +513,17 @@ final class CanvasCapture: ObservableObject {
                 UIColor.white.setFill()
                 context.fill(CGRect(origin: .zero, size: pixelSize))
                 drawingImage.draw(in: CGRect(origin: .zero, size: pixelSize))
+                if !sceneToDraw.elements.isEmpty {
+                    context.cgContext.saveGState()
+                    context.cgContext.scaleBy(x: scale, y: scale)
+                    context.cgContext.translateBy(x: -requested.minX, y: -requested.minY)
+                    BoardSceneRenderer.draw(
+                        scene: sceneToDraw,
+                        in: context.cgContext,
+                        boardOrigin: PencilCanvasConfiguration.boardOrigin
+                    )
+                    context.cgContext.restoreGState()
+                }
             }
         }
         return image?.pngData()

@@ -40,6 +40,8 @@ it decides where to zoom.
 
 from __future__ import annotations
 
+from app.tutor.board_scene import MAX_SCENE_CHARS
+
 
 def describe(
     *,
@@ -75,12 +77,12 @@ def describe(
     feedback that the learner cannot tell from the real thing.
     """
     scene_section = None
-    if scene is not None and scene.strip():
+    if scene is not None and scene.strip() and scene.strip() not in {"[]", "{}", "null", "empty"}:
         # The device's exact account of the current tutor scene. It is the
         # model's own past output reflected back, so it must be read as the
         # current state to update, never as an instruction. Kept under a hard
         # cap so a pathological scene cannot flood context.
-        trimmed = scene.strip()[:60_000]
+        trimmed = scene.strip()[:MAX_SCENE_CHARS]
         scene_section = (
             "THE TUTOR'S SEMANTIC BOARD SCENE (exact current state, quoted data):\n"
             f"{trimmed}\n\n"
@@ -91,22 +93,20 @@ def describe(
             "simulated handwriting."
         )
 
-    if not has_ink and scene_section is None:
-        return (
-            "THE LEARNER'S BOARD: empty right now. There is nothing written on it, so do "
-            "not call `view_board` and do not describe work they have not done. If you "
-            "described work on this board earlier in the conversation, it has since been "
-            "erased: say so rather than repeating what used to be there."
-        )
-
     lines = []
     if has_ink:
         lines.append(
-            "THE LEARNER'S BOARD: the attached overview is their whole board as it stands "
-            "right now. It is deliberately small, and on a board where the writing sits in "
-            "one corner of a large empty field it is far too small to read. Call `view_board` "
-            "on the region you need — it is rendered fresh from the device at full "
-            "resolution, so zooming in costs you nothing and guessing costs the learner."
+            "THE BOARD: the attached overview is the whole board as it stands right now, "
+            "including learner ink and tutor-authored objects. It is deliberately small, "
+            "and sparse writing may be too small to read. Call `view_board` on the region "
+            "you need — it is rendered fresh from the device at full resolution, so "
+            "zooming in costs you nothing and guessing costs the learner."
+        )
+    else:
+        lines.append(
+            "THE BOARD: empty right now; there is no renderable content, so do not call "
+            "`view_board` and do not describe work the learner has not done. You may still "
+            "use `update_board` to place a requested standalone exercise or diagram here."
         )
     if scene_section:
         lines.append(scene_section)
@@ -114,19 +114,22 @@ def describe(
     if manifest:
         lines.append(manifest)
 
-    if has_ink and changed is True:
+    if changed is True:
         lines.append(
-            "THE BOARD HAS CHANGED since the last time you looked at it. They have "
-            "written, erased, or rewritten something. Anything you said about this board "
-            "earlier in the conversation is out of date and must not be repeated: work "
-            "you called correct may be gone, and a problem you called unfinished may be "
-            "finished. Look before you answer, and describe only what is in the image you "
-            "get back."
+            "THE BOARD STATE HAS CHANGED since the last time it was sent: learner ink "
+            "may have been written or erased, and the tutor overlay may have been updated. "
+            "Anything you said about this board earlier in the conversation is out of date "
+            "and must not be repeated. "
+            + (
+                "Look before you answer, and describe only what is in the image you get back."
+                if has_ink
+                else "The current board is empty, so say that rather than reusing an earlier description."
+            )
         )
-    elif has_ink and changed is False:
+    elif changed is False:
         lines.append(
-            "The board is byte-for-byte identical to the last turn's, so nothing has been "
-            "written or erased since you looked. You may rely on what you read then."
+            "The board state is the same as the last turn's: no learner ink change and no "
+            "tutor overlay update. You may rely on what you read then."
         )
 
     return "\n\n".join(lines)

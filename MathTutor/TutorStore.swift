@@ -40,6 +40,11 @@ final class TutorStore: ObservableObject {
     /// The device's account of where the ink sits, sent alongside the overview.
     var boardManifestProvider: (@MainActor () -> String?)?
 
+    /// The device's compact board-state context (coordinate system, visible
+    /// logical rect, learner ink bounds/clusters, exact tutor scene), sent on
+    /// every turn under the request's `board_scene` field.
+    var boardSceneProvider: (@MainActor () -> String?)?
+
     /// The regions the tutor looked at, keyed by the message they belong to.
     ///
     /// Held here rather than on `TutorMessage` because a `TutorMessage` is
@@ -84,6 +89,7 @@ final class TutorStore: ObservableObject {
         let useDebugDemo = ProcessInfo.processInfo.arguments.contains("--demo-tutor")
             || ProcessInfo.processInfo.arguments.contains("--ui-test-demo-service")
             || ProcessInfo.processInfo.arguments.contains(E2ESeedFixture.launchArgument)
+            || ProcessInfo.processInfo.arguments.contains(E2ESeedFixture.sceneLaunchArgument)
         let resolvedService: any TutorService = useDebugDemo && service is TutorServiceRouter
             ? DemoTutorService()
             : service
@@ -103,12 +109,15 @@ final class TutorStore: ObservableObject {
         let isUITestReset = ProcessInfo.processInfo.arguments.contains("--ui-test-reset")
         #if DEBUG
         let shouldSeedE2E = ProcessInfo.processInfo.arguments.contains(E2ESeedFixture.launchArgument)
+        let shouldSeedScene = ProcessInfo.processInfo.arguments.contains(E2ESeedFixture.sceneLaunchArgument)
         #else
         let shouldSeedE2E = false
+        let shouldSeedScene = false
         #endif
         var restored = isUITestReset ? .empty : (persistence.load() ?? .empty)
         #if DEBUG
         if shouldSeedE2E { E2ESeedFixture.seedSession(&restored) }
+        if shouldSeedScene { E2ESeedFixture.seedScene(&restored) }
         #endif
         if restored.messages.isEmpty {
             restored.messages = [TutorMessage(role: .tutor, text: "Hi, I’m your math tutor. What would you like to understand today? You can type a goal in your own words—fractions, algebra, a homework question, anything.")]
@@ -117,7 +126,7 @@ final class TutorStore: ObservableObject {
         self.usesLiveTutor = configuration != nil
         let usingDemoService = resolvedService is DemoTutorService
         self.isWorkspace = restored.plan != nil && restored.exercise != nil && (self.usesLiveTutor || usingDemoService)
-        if shouldSeedE2E { persistence.save(restored) }
+        if shouldSeedE2E || shouldSeedScene { persistence.save(restored) }
     }
 
     var hasGoal: Bool {
@@ -403,6 +412,7 @@ final class TutorStore: ObservableObject {
             // that is about to open a network connection anyway.
             boardOverview: boardProvider?(),
             boardManifest: boardManifestProvider?(),
+            boardScene: boardSceneProvider?(),
             signal: signal,
             sessionID: session.id,
             model: session.selectedModel,
@@ -447,6 +457,13 @@ final class TutorStore: ObservableObject {
                         self.session.plan = plan
                         self.session.exercise = exercise
                         self.isWorkspace = true
+                    case .boardUpdate(let update):
+                        // A board update is a coarse, user-visible mutation,
+                        // not a token delta. Apply and persist it immediately:
+                        // if the prose stream fails afterward, the diagram the
+                        // learner can already see must still survive a relaunch.
+                        self.session.boardScene = self.session.boardScene.applying(update)
+                        self.persist()
                     case .done:
                         self.flushPendingBoardViews(to: tutorMessageIndex)
                         self.phase = nil

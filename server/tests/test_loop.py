@@ -13,6 +13,7 @@ from app.tutor.events import (
 from app.tutor.loop import (
     MALFORMED_BOARD_ACK,
     MAX_TOOL_ROUNDS,
+    UNSUPPORTED_TOOL_ACK,
     UPDATE_BOARD_ACK,
     _answer,
     run_turn,
@@ -219,6 +220,16 @@ def test_malformed_update_board_is_rejected_without_an_applied_ack():
         has_board=True,
     )
     assert answer.items[0]["output"] == MALFORMED_BOARD_ACK
+
+
+def test_an_unknown_tool_is_answered_with_an_unsupported_ack():
+    answer = _answer(
+        {"call_id": "c", "name": "future_web_search", "arguments": "{}"},
+        has_board=True,
+    )
+    assert answer.ask is None
+    assert answer.items[0]["output"] == UNSUPPORTED_TOOL_ACK
+    assert json.loads(answer.items[0]["output"])["status"] == "unsupported"
 
 
 @respx.mock

@@ -182,6 +182,7 @@ struct BackendTutorService: TutorService, Sendable {
             body["board_overview_base64"] = overview.base64EncodedString()
         }
         if let manifest = request.boardManifest { body["board_manifest"] = manifest }
+        if let scene = request.boardScene { body["board_scene"] = scene }
         return body
     }
 }

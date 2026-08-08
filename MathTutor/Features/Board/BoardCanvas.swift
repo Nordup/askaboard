@@ -17,8 +17,37 @@ final class BoardCanvasView: PKCanvasView {
 
     private var reportedViewport: CGSize?
 
+    /// The tutor's semantic scene, drawn by a transparent viewport-pinned
+    /// overlay. `PKCanvasView` keeps its own drawing path completely untouched.
+    var boardScene: BoardScene = .empty {
+        didSet {
+            sceneOverlay.scene = boardScene
+            setNeedsLayout()
+        }
+    }
+
+    private let sceneOverlay = BoardSceneOverlayView()
+
+    /// Keeps the overlay frame pinned to the viewport and its drawing transform
+    /// in sync with the current pan/zoom. Called on layout passes and from the
+    /// scroll delegate so a pan or pinch never leaves tutor geometry behind.
+    func updateSceneOverlay() {
+        if sceneOverlay.superview != self {
+            addSubview(sceneOverlay)
+        }
+        // Always on top after add/update/layout: PencilKit can add its own
+        // sublayers/views between updates, so the semantic layer must be
+        // re-fronted every time rather than only when first attached.
+        bringSubviewToFront(sceneOverlay)
+        sceneOverlay.frame = bounds
+        sceneOverlay.contentOffset = contentOffset
+        sceneOverlay.zoomScale = zoomScale
+        sceneOverlay.setNeedsDisplay()
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
+        updateSceneOverlay()
         let size = bounds.size
         guard size.width > 0, size.height > 0, size != reportedViewport else { return }
         reportedViewport = size
@@ -55,6 +84,8 @@ struct PencilCanvasView: UIViewRepresentable {
     let onDrawingChange: (PKDrawing) -> Void
     let onUndo: () -> Void
     let onRedo: () -> Void
+    /// The tutor-authored semantic scene to render above the learner ink.
+    let scene: BoardScene
 
     init(
         capture: CanvasCapture,
@@ -66,7 +97,8 @@ struct PencilCanvasView: UIViewRepresentable {
         isSelecting: Bool = false,
         onDrawingChange: @escaping (PKDrawing) -> Void,
         onUndo: @escaping () -> Void,
-        onRedo: @escaping () -> Void
+        onRedo: @escaping () -> Void,
+        scene: BoardScene = .empty
     ) {
         self.capture = capture
         self.initialDrawingData = initialDrawingData
@@ -78,6 +110,7 @@ struct PencilCanvasView: UIViewRepresentable {
         self.onDrawingChange = onDrawingChange
         self.onUndo = onUndo
         self.onRedo = onRedo
+        self.scene = scene
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -91,15 +124,15 @@ struct PencilCanvasView: UIViewRepresentable {
         // the time that closure can fire.
         context.coordinator.canvas = canvas
         capture.canvasView = canvas
+        capture.scene = scene
+        canvas.boardScene = scene
         if let initialDrawingData, let drawing = try? PKDrawing(data: initialDrawingData) {
             canvas.drawing = drawing
-            // A restored board has ink before the delegate exists to say so, and
-            // the controls gated on it are drawn from the same update this is
-            // running inside — hence the hop, rather than publishing into a view
-            // tree that is still being built.
-            let capture = capture
-            Task { @MainActor in capture.refreshHasInk() }
         }
+        // Restored ink or a seeded tutor scene exists before the delegate can
+        // report it. Hop out of SwiftUI's update transaction before publishing.
+        let capture = capture
+        Task { @MainActor in capture.refreshHasInk() }
 
         // UIKit's own layout pass — not SwiftUI's update cycle — is what
         // reliably knows the canvas's real size. The canvas owns this closure,
@@ -168,6 +201,13 @@ struct PencilCanvasView: UIViewRepresentable {
     func updateUIView(_ canvas: BoardCanvasView, context: Context) {
         context.coordinator.parent = self
         capture.canvasView = canvas
+        capture.scene = scene
+        canvas.boardScene = scene
+        // `updateUIView` is inside SwiftUI's render transaction. Publishing
+        // `hasInk` synchronously from here triggers the runtime's undefined-
+        // behavior warning when a tutor scene first arrives.
+        let capture = capture
+        Task { @MainActor in capture.refreshHasInk() }
         applyTool(to: canvas, coordinator: context.coordinator)
         // Showing or hiding full chat doesn't change the canvas bounds, but it
         // does change which view should own first responder. Viewport-driven
@@ -207,7 +247,7 @@ struct PencilCanvasView: UIViewRepresentable {
         let thickness: StrokeThickness
     }
 
-    final class Coordinator: NSObject, PKCanvasViewDelegate, UIGestureRecognizerDelegate {
+    final class Coordinator: NSObject, PKCanvasViewDelegate, UIScrollViewDelegate, UIGestureRecognizerDelegate {
         var parent: PencilCanvasView
         weak var canvas: BoardCanvasView?
         /// What `canvas.tool` was last set from — see `applyTool`.
@@ -300,6 +340,14 @@ struct PencilCanvasView: UIViewRepresentable {
             #if DEBUG
             InkTrace.commitEnded()
             #endif
+        }
+
+        func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            (scrollView as? BoardCanvasView)?.updateSceneOverlay()
+        }
+
+        func scrollViewDidZoom(_ scrollView: UIScrollView) {
+            (scrollView as? BoardCanvasView)?.updateSceneOverlay()
         }
 
         @objc func twoFingerUndo() {

@@ -90,6 +90,7 @@ struct BoardScreen: View {
         .task {
             store.boardProvider = { [weak capture] in capture?.overviewData() }
             store.boardManifestProvider = { [weak capture] in capture?.manifest() }
+            store.boardSceneProvider = { [weak capture] in capture?.sceneContextString() }
             // The service answers `view_board` straight from the canvas: the
             // tutor asks for a rectangle mid-turn and this renders it from the
             // vectors, at a resolution a thumbnail upload could never carry.
@@ -214,7 +215,8 @@ struct BoardScreen: View {
                 isSelecting: uiState.selection.capturesBoardDrags,
                 onDrawingChange: store.updateDrawing,
                 onUndo: capture.undo,
-                onRedo: capture.redo
+                onRedo: capture.redo,
+                scene: store.session.boardScene
             )
             // Mounted only while the marquee is armed. A transparent view that
             // takes the whole board's touches is not something to leave lying on

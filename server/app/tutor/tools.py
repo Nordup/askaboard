@@ -172,10 +172,13 @@ UPDATE_BOARD_TOOL: dict = {
         "it. Pass elements=[] to only delete, delete_ids=[] to only upsert, or "
         "mode=replace_all to replace the entire tutor scene. Coordinates are logical "
         "board points: (0,0) is the board centre (25,000,25,000 in drawing "
-        "coordinates), +x right, +y down, and a typical diagram fits within about "
-        "+/-1500 of the origin. Do not cover or erase learner ink; place corrections "
-        "beside the relevant work. Inspect the board with view_board before "
-        "correcting, and do not draw gratuitously for simple conversational answers."
+        "coordinates), +x right, +y down. Keep new standalone diagrams compact and "
+        "inside the current visible logical rectangle supplied in context. Do not cover "
+        "or erase learner ink; place corrections "
+        "beside the relevant work. Inspect the board with view_board before grading, "
+        "correcting, or placing content relative to learner writing; a requested "
+        "standalone exercise or diagram may be drawn on an empty board without that "
+        "look, and do not draw gratuitously for simple conversational answers."
     ),
     "strict": True,
     "parameters": {
@@ -197,7 +200,7 @@ UPDATE_BOARD_TOOL: dict = {
                 "type": "array",
                 "maxItems": 200,
                 "items": {
-                    "oneOf": [
+                    "anyOf": [
                         _board_element(
                             kind="text",
                             fields={
@@ -302,8 +305,8 @@ UPDATE_BOARD_TOOL: dict = {
                                 "cx": {"type": "number", "description": "Centre x, board points."},
                                 "cy": {"type": "number", "description": "Centre y, board points."},
                                 "radius": {"type": "number", "minimum": 0, "maximum": 50000},
-                                "start_angle": {"type": "number", "description": "Start angle in degrees, 0 = right, clockwise."},
-                                "end_angle": {"type": "number", "description": "End angle in degrees, 0 = right, clockwise."},
+                                "start_angle": {"type": "number", "description": "Start angle in degrees; 0 = right and values increase clockwise."},
+                                "end_angle": {"type": "number", "description": "End angle in degrees. The arc sweeps clockwise from start to end, including sweeps over 180 degrees; use circle for a full turn."},
                             },
                             required=["cx", "cy", "radius", "start_angle", "end_angle"],
                         ),

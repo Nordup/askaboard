@@ -161,7 +161,11 @@ The device also sends the current scene back on every turn in the
 the prompt, labelled as quoted data, so the model can see and revise its own
 previous output. The prompt tells the model when to draw, to use semantic text
 rather than simulated handwriting, to place corrections beside learner ink
-without covering it, and to avoid gratuitous drawing.
+without covering it, and to avoid gratuitous drawing. The scene context also
+contains the current viewport and the logical bounds represented by the board
+overview; because `view_board` regions are percentages of that same overview,
+the model can convert what it inspected back into exact coordinates for a
+nearby label or correction.
 
 ## Read-back endpoints
 

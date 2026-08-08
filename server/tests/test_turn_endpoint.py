@@ -4,11 +4,13 @@ import json
 import uuid
 
 import httpx
+import pytest
 import respx
 from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy import select
 
 from app.api.turn import TurnRequest
+from app.tutor.board_scene import MAX_SCENE_CHARS
 from app.config import DEFAULT_MODEL, DEFAULT_REASONING_EFFORT, get_settings
 from app.main import create_app
 from app.store.models import Message, Session, Turn
@@ -51,6 +53,18 @@ def test_turn_request_accepts_a_board_scene():
         board_scene='{"elements":[{"id":"tri","kind":"polygon"}]}',
     )
     assert request.board_scene is not None
+
+
+def test_turn_request_rejects_an_over_limit_board_scene():
+    with pytest.raises(Exception):
+        TurnRequest(
+            turn_id=uuid.uuid4(),
+            session_id=uuid.uuid4(),
+            text="look",
+            model="gpt-5.6-luna",
+            reasoning_effort="high",
+            board_scene="x" * (MAX_SCENE_CHARS + 1),
+        )
 
 
 @respx.mock

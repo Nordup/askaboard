@@ -49,15 +49,17 @@ def assemble_context(
     """
     conversation = "\n".join(f"{m.role}: {m.text}" for m in messages)
 
-    # A semantic-only scene (tutor objects with no learner ink yet) is still a
-    # board the model can see and update, so it must count as a board too.
-    has_board = board_overview is not None or board_scene is not None
+    # `has_board` means the turn carries a renderable overview the model can
+    # actually ask `view_board` to inspect. That overview may contain learner
+    # ink, tutor-authored objects, or both. A scene-context string by itself is
+    # spatial metadata, not proof that the device has pixels to return.
+    has_board = board_overview is not None
     board_note = board_notes.describe(
         has_ink=board_overview is not None,
         manifest=board_manifest,
         changed=board_changed,
         scene=board_scene,
-    ) if has_board or board_changed is True else None
+    ) if board_overview is not None or board_scene is not None or board_changed is True else None
 
     user_text = compose_user_prompt(
         conversation=conversation,

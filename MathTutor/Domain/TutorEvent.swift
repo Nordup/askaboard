@@ -18,6 +18,8 @@ enum TutorEvent: Sendable, Equatable {
     case reasoningDelta(String)
     case textDelta(String)
     case workspace(SessionPlan, Exercise)
+    /// A validated batch of tutor-authored scene changes from `update_board`.
+    case boardUpdate(BoardSceneUpdate)
     /// The tutor asking this device to render a region of its own board.
     ///
     /// The one event that expects an answer. `BackendTutorService` renders the
@@ -59,6 +61,9 @@ enum TutorEvent: Sendable, Equatable {
         case "workspace":
             guard let plan = envelope.plan, let exercise = envelope.exercise else { return nil }
             return .workspace(plan, exercise)
+        case "board_update":
+            guard let payload = envelope.payload else { return nil }
+            return .boardUpdate(payload)
         case "board_request":
             guard let callID = envelope.call_id,
                   let x = envelope.x, let y = envelope.y,
@@ -102,6 +107,7 @@ enum TutorEvent: Sendable, Equatable {
         let text: String?
         let plan: SessionPlan?
         let exercise: Exercise?
+        let payload: BoardSceneUpdate?
         let message: String?
         let retryable: Bool?
         // `board_request`. Snake_case on the wire, and named to match rather

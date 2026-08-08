@@ -38,7 +38,7 @@ def test_update_board_is_strict_and_closed():
 
 
 def test_update_board_primitives_are_a_discriminated_union():
-    arms = UPDATE_BOARD_TOOL["parameters"]["properties"]["elements"]["items"]["oneOf"]
+    arms = UPDATE_BOARD_TOOL["parameters"]["properties"]["elements"]["items"]["anyOf"]
     kinds = {}
     for arm in arms:
         kind = arm["properties"]["kind"]["const"]
@@ -60,7 +60,7 @@ def test_update_board_caps_are_expressed_in_the_schema():
     assert props["elements"]["maxItems"] == 200
     assert props["delete_ids"]["maxItems"] == 200
 
-    arms = props["elements"]["items"]["oneOf"]
+    arms = props["elements"]["items"]["anyOf"]
     polygon = next(arm for arm in arms if arm["properties"]["kind"]["const"] == "polygon")
     assert polygon["properties"]["points"]["maxItems"] == 512
     assert polygon["properties"]["points"]["minItems"] == 3
@@ -69,3 +69,14 @@ def test_update_board_caps_are_expressed_in_the_schema():
     assert text["properties"]["text"]["maxLength"] == 2000
     assert text["properties"]["font_size"]["minimum"] == 8
     assert text["properties"]["font_size"]["maximum"] == 256
+
+
+def test_update_board_schema_bounds_are_the_logical_board_range():
+    arms = UPDATE_BOARD_TOOL["parameters"]["properties"]["elements"]["items"]["anyOf"]
+    line = next(arm for arm in arms if arm["properties"]["kind"]["const"] == "line")
+    # JSON Schema `minimum`/`maximum` express the range directly; `exclusive`
+    # variants are not needed because the server clamps after validation.
+    assert line["properties"]["x1"].get("minimum", -25_000) >= -25_000
+    assert line["properties"]["x1"].get("maximum", 25_000) <= 25_000
+    assert line["properties"]["y1"].get("minimum", -25_000) >= -25_000
+    assert line["properties"]["y1"].get("maximum", 25_000) <= 25_000

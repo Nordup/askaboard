@@ -67,11 +67,26 @@ def test_a_board_scene_is_included_verbatim_in_the_user_prompt():
     assert "SEMANTIC BOARD SCENE" in text
 
 
-def test_a_scene_only_board_still_has_a_board_for_the_tools():
+def test_scene_context_without_an_overview_is_not_viewable():
     bundle = assemble_context(
         session=FakeSession(), messages=[FakeMessage("learner", "hi")],
         image_data=None, image_region=None, signal=None, goal=None,
-        board_scene="[]",
+        board_scene='{"kind":"board_scene_context"}',
+    )
+
+    assert bundle.has_board is False
+    text = bundle.input[1]["content"][0]["text"]
+    assert "no renderable content" in text
+    assert "do not call `view_board`" in text
+
+
+def test_a_semantic_only_overview_is_viewable():
+    bundle = assemble_context(
+        session=FakeSession(), messages=[FakeMessage("learner", "hi")],
+        image_data=None, image_region=None, signal=None, goal=None,
+        board_overview=b"semantic pixels",
+        board_scene='{"tutor_elements":[{"id":"circle"}]}',
     )
 
     assert bundle.has_board is True
+    assert bundle.input[1]["content"][1]["type"] == "input_image"

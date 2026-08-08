@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from openai import APIConnectionError, APIStatusError, AsyncOpenAI
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +24,7 @@ from app.store.models import Attachment, Message, Session, Turn
 from app.store.recorder import Recorder
 from app.tutor.context import assemble_context
 from app.tutor.events import DoneEvent, ErrorEvent, StatusEvent
+from app.tutor.board_scene import MAX_SCENE_CHARS
 from app.tutor import rendezvous
 from app.tutor.loop import TurnResult, run_turn
 from app.tutor.rendezvous import BoardRegion
@@ -128,7 +129,7 @@ class TurnRequest(BaseModel):
     #: compact string the model can read and update. Unlike `board_manifest`
     #: (learner ink clusters), this is the model's own semantic output, so it
     #: goes into context verbatim so the model can see what it already drew.
-    board_scene: str | None = None
+    board_scene: str | None = Field(default=None, max_length=MAX_SCENE_CHARS)
     model: str
     reasoning_effort: str
 

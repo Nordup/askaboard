@@ -10,6 +10,13 @@ def test_system_prompt_directs_the_workspace_through_the_tool():
     assert "set_workspace" in SYSTEM_PROMPT
 
 
+def test_system_prompt_requires_a_look_before_correcting_but_allows_standalone_diagrams():
+    assert "before grading, correcting, or placing content relative to the learner’s writing" in SYSTEM_PROMPT
+    assert "a requested standalone exercise or diagram may be drawn directly on an empty board" in SYSTEM_PROMPT
+    assert "fit a new standalone visual inside it with a clear margin" in SYSTEM_PROMPT
+    assert "Always inspect the board with `view_board` before correcting" not in SYSTEM_PROMPT
+
+
 def test_system_prompt_keeps_the_checking_work_rule():
     assert "Checking work is not the same as being asked for the answer." in SYSTEM_PROMPT
 
