@@ -283,11 +283,11 @@ class MemoryAtom(Base):
 class LearnerProfile(Base):
     """The rendered profile a turn actually reads, cached per learner.
 
-    Purely derived — recomputable from the live atoms — which is why the
+    Purely derived — recomputable from the learner's atoms — which is why the
     learner id is also the primary key: a rebuild replaces the single row
-    instead of appending a version nobody would read. `atom_count` records
-    what the body was built from, so a rebuild can be skipped when nothing
-    has changed.
+    instead of appending a version nobody would read. `atom_count` records how
+    many atoms the body was built from; `app/memory/profile.py` says what that
+    number is and is not good for.
     """
 
     __tablename__ = "learner_profiles"
@@ -297,4 +297,9 @@ class LearnerProfile(Base):
     )
     body: Mapped[str] = mapped_column(Text)
     atom_count: Mapped[int] = mapped_column(Integer)
-    rebuilt_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    #: `onupdate` as well as the default, because a rebuild rewrites this row
+    #: rather than inserting one — without it the column would keep saying when
+    #: the profile was first built and never when it last was.
+    rebuilt_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(), onupdate=func.now()
+    )
