@@ -24,13 +24,24 @@ from app.memory.embed import embed_texts
 from app.store.models import Episode, MemoryAtom
 
 #: RRF's smoothing constant, from the original TREC formulation. Tuning it is
-#: low-yield; tuning the per-ranker weights below is where the gains are.
+#: low-yield; the per-ranker weights are where the gains are.
 K = 60
-DENSE_WEIGHT = 1.0
-SPARSE_WEIGHT = 0.7
 
-#: Each arm's candidate pool. A row outside both pools cannot be fused in, so
-#: this is the true recall ceiling — keep it well above the final limit.
+#: Equal, as canonical RRF has them. Neither number has been measured against a
+#: relevance set — there is nothing to build one from until the store has real
+#: use behind it — so these are the first two to tune when there is. The comment
+#: below is what an asymmetry between them costs in the meantime.
+DENSE_WEIGHT = 1.0
+SPARSE_WEIGHT = 1.0
+
+#: Each arm's candidate pool. A row in neither pool cannot be fused in at all,
+#: but pool size is not what decides recall: an arm's best possible
+#: contribution is `weight / (K + 1)`, so a row only one arm found must outscore
+#: whatever the other arm's whole pool is scoring. Equal weights make a
+#: sparse-only hit at rank 1 tie the dense pool's own best row, which is what
+#: keeps an exact token findable in a store far larger than this one. At 0.7 the
+#: same hit would lose to every dense rank down to 27 — the pool would fill with
+#: rows outranking the one answer the sparse arm exists to rescue.
 POOL = 50
 
 
@@ -119,6 +130,9 @@ async def search_atoms(
     stopword. Returning nothing would be discarding the half of the system that
     still works.
 
+    A `limit` above `POOL` cannot be filled: neither arm offers more rows than
+    its own pool holds, and the fused set is bounded by their union.
+
     Whatever `embed_texts` raises propagates. Callers differ on what a retrieval
     that could not run should mean — the turn's tool handler answers without
     memory rather than failing the turn, an offline pass wants it loud — and
@@ -154,6 +168,7 @@ async def recent_episodes(
     return list((await db.execute(
         select(Episode)
         .where(Episode.learner_id == learner_id, Episode.digest.is_not(None))
-        .order_by(desc(Episode.closed_at))
+        # `id` last for the same reason the retrieval arms carry it.
+        .order_by(desc(Episode.closed_at), Episode.id)
         .limit(limit)
     )).scalars().all())

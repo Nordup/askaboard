@@ -312,7 +312,9 @@ async def consolidate(
     # invariant is enforced. `_candidates` selects on cosine distance, which a
     # NULL or empty embedding fails, so such a row is not merely skipped this
     # pass — it can never be offered as a supersession target again, and
-    # retrieval hides it for the same reason. That is permanent, not conservative.
+    # `retrieve`'s dense arm cannot rank it either. That is permanent, not
+    # conservative. Its keyword arm can still find the row by its words, which
+    # is a way back to the fact and not a way back into consolidation.
     assert all(vectors), "embed_texts returned an empty vector"
 
     existing = await _candidates(db, learner_id, vectors)
@@ -352,8 +354,9 @@ async def consolidate(
             category=atom.category.value,
             # Any other code path that inserts a `MemoryAtom` must embed it too.
             # A row written with a NULL embedding is invisible to consolidation
-            # and to retrieval from the moment it lands — permanently, and with
-            # nothing anywhere to notice it by. See the assert above.
+            # from the moment it lands — permanently, and with nothing anywhere
+            # to notice it by — and reachable in retrieval only by its exact
+            # words, never by meaning. See the assert above.
             embedding=vector,
             source_session_id=session_id,
             source_turn_ids=turn_ids,

@@ -25,6 +25,15 @@ def _axis(index: int) -> list[float]:
     return vector
 
 
+def _near(tilt: float) -> list[float]:
+    """A vector a measured distance from `_axis(0)`, further the bigger the
+    tilt, for when a test needs the dense arm's exact ordering and not just
+    which rows are in it."""
+    vector = _axis(0)
+    vector[1] = tilt
+    return vector
+
+
 class _Embedder:
     """Stands in for `embed_texts`, answering with one fixed query vector."""
 
@@ -114,16 +123,42 @@ async def test_a_paraphrase_is_found_with_no_word_in_common(db, monkeypatch):
 
 
 @requires_db
+async def test_a_sparse_only_hit_outside_the_dense_pool_still_surfaces(db, monkeypatch):
+    """The regime the other tests cannot reach: a store bigger than the pools.
+
+    Every other test here holds two to six atoms, so both pools contain
+    everything and a row can only be lost by scoring badly. With `POOL` cut to
+    3, the needle sits outside the dense pool entirely and the sparse arm is its
+    only route in — and it has to beat two dense rows to be inside `limit=2`.
+    This is the test that fails at the weights the plan originally specified
+    (see the comment on `POOL`).
+    """
+    monkeypatch.setattr("app.memory.retrieve.POOL", 3)
+    _install(monkeypatch, _axis(0))
+    await _learner(db)
+    db.add_all([
+        _atom("Reads 3/4 as three minus four.", _axis(50)),
+        _atom("Enjoys geometry proofs.", _near(0.1)),
+        _atom("Studies on Tuesday evenings.", _near(0.2)),
+        _atom("Prefers worked examples first.", _near(0.3)),
+    ])
+    await db.commit()
+
+    hits = await search_atoms(db, SOLE_LEARNER_ID, "3/4", limit=2)
+
+    # The needle ties the dense pool's own best row, so which of the two comes
+    # first is decided by the id tiebreak and is not what this asserts.
+    assert {hit.text for hit in hits} == {"Reads 3/4 as three minus four.",
+                                          "Enjoys geometry proofs."}
+
+
+@requires_db
 @pytest.mark.parametrize("query", ["the and of it", "?!", '"', "   the   "])
 async def test_a_query_with_no_searchable_words_falls_back_to_dense(db, monkeypatch, query):
-    """Documented decision. Every one of these reduces to an empty tsquery —
-    including the lone quote, which is the sort of thing `to_tsquery` raises on
-    and a model writing the query will eventually send.
-
-    Dense-only rather than nothing: the words carry no index terms, but the
-    sentence still embeds, and "the one from Tuesday" is a real question made
-    entirely of stopwords. Returning nothing would throw away the half of the
-    system that can still read it.
+    """Every one of these reduces to an empty tsquery — including the lone
+    quote, which is the sort of thing `to_tsquery` raises on and a model writing
+    the query will eventually send. The fallback is `search_atoms`' documented
+    decision; this pins that it returns the whole dense ranking and not nothing.
     """
     _install(monkeypatch, _axis(3))
     await _learner(db)
@@ -141,11 +176,10 @@ async def test_a_query_with_no_searchable_words_falls_back_to_dense(db, monkeypa
 
 @requires_db
 async def test_an_empty_query_is_answered_without_a_round_trip(db, monkeypatch):
-    """Documented decision, and the one that is *not* the case above.
+    """The other half of that decision, and deliberately not the same answer.
 
-    There is no question in whitespace to rank anything against. Embedding it
-    and handing back whichever atoms that vector landed near would present an
-    arbitrary slice of the store to the tutor as relevant, and bill for it.
+    Nothing comes back, and the embeddings endpoint is never called — an empty
+    result must not have cost a request.
     """
     embedder = _install(monkeypatch, _axis(3))
     await _learner(db)
@@ -178,12 +212,10 @@ async def test_superseded_atoms_are_never_returned(db, monkeypatch):
 
 @requires_db
 async def test_an_atom_with_no_embedding_is_still_findable_by_its_words(db, monkeypatch):
-    """Documented decision: only the dense arm requires an embedding.
+    """Only the dense arm requires an embedding, and this is what that buys.
 
     Every atom `consolidate` writes has one and it asserts on that, so this is
-    the recovery path for a row that arrived by some other route. Excluding it
-    from the sparse arm too would make a true fact permanently unreadable in
-    order to spare it a rank it cannot have.
+    the recovery path for a row that arrived by some other route.
     """
     _install(monkeypatch, _axis(7))
     await _learner(db)
@@ -215,14 +247,21 @@ async def test_one_learners_atoms_are_invisible_to_another(db, monkeypatch):
 
 @requires_db
 async def test_limit_caps_what_comes_back(db, monkeypatch):
-    _install(monkeypatch, _axis(3))
+    """Which two, not just how many — the fixture fixes both.
+
+    The query shares no stem with any atom, so the sparse arm is empty and the
+    graded tilts decide the order outright.
+    """
+    _install(monkeypatch, _axis(0))
     await _learner(db)
-    db.add_all([_atom(f"Fact {n} about fractions.", _axis(n)) for n in range(5)])
+    db.add_all([_atom(f"Fact {n} about fractions.", _near(n / 10 + 0.1))
+                for n in range(5)])
     await db.commit()
 
-    hits = await search_atoms(db, SOLE_LEARNER_ID, "fractions", limit=2)
+    hits = await search_atoms(db, SOLE_LEARNER_ID, "reducing a ratio", limit=2)
 
-    assert len(hits) == 2
+    assert [hit.text for hit in hits] == ["Fact 0 about fractions.",
+                                          "Fact 1 about fractions."]
 
 
 # ---------------------------------------------------------------------------

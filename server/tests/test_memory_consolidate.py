@@ -315,11 +315,12 @@ async def test_a_short_embedding_response_is_not_silently_dropped(monkeypatch):
 
 
 async def test_an_empty_embedding_is_refused(monkeypatch):
-    """A row written without an embedding is unreachable forever, so refuse it.
+    """A row written without an embedding can never be superseded, so refuse it.
 
-    `_candidates` selects on cosine distance and retrieval requires a non-NULL
-    embedding, so such an atom could never be superseded and could never be
-    read — with nothing anywhere to notice it by.
+    `_candidates` selects on cosine distance, which a NULL embedding fails, so
+    such an atom could never be offered as a supersession target again — and
+    retrieval could only ever reach it through its keyword arm, never by
+    meaning.
     """
     _install(monkeypatch, _Embedder(default=[]), _explode)
 
