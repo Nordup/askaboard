@@ -6,9 +6,20 @@ from openai import AsyncOpenAI
 from openai._streaming import SSEDecoder
 
 from app.tutor.context import ContextBundle
-from app.tutor.events import ReasoningDeltaEvent, StatusEvent, TextDeltaEvent, WorkspaceEvent
-from app.tutor.loop import MAX_TOOL_ROUNDS, run_turn
+from app.tutor.events import (
+    BoardUpdateEvent, ReasoningDeltaEvent, StatusEvent, TextDeltaEvent,
+    WorkspaceEvent,
+)
+from app.tutor.loop import (
+    MALFORMED_BOARD_ACK,
+    MAX_TOOL_ROUNDS,
+    UPDATE_BOARD_ACK,
+    _answer,
+    run_turn,
+)
 from tests.fixtures.sse import (
+    BOARD_UPDATE_FOLLOW_UP,
+    BOARD_UPDATE_TURN,
     REASONING_TURN,
     TEXT_ONLY_TURN,
     TOOL_CALL_FOLLOW_UP,
@@ -87,7 +98,9 @@ async def test_the_request_body_carries_the_tool_and_disables_storage():
     assert body["store"] is False
     assert body["stream"] is True
     assert body["reasoning"] == {"effort": "high", "summary": "auto"}
-    assert [tool["name"] for tool in body["tools"]] == ["set_workspace", "view_board"]
+    assert [tool["name"] for tool in body["tools"]] == [
+        "set_workspace", "view_board", "update_board",
+    ]
 
 
 @respx.mock
@@ -158,6 +171,54 @@ async def test_a_reasoning_turn_yields_reasoning_deltas():
 
     assert ReasoningDeltaEvent(text="Checking the ") in events
     assert ReasoningDeltaEvent(text="denominators.") in events
+
+
+@respx.mock
+async def test_an_update_board_turn_yields_a_board_update_event_and_prose():
+    """The board update event is the mutation, the ack is the handshake, and
+    the model keeps writing after both — the same shape that fixed the
+    workspace silence must hold for the drawing tool."""
+    respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*BOARD_UPDATE_TURN)),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*BOARD_UPDATE_FOLLOW_UP)),
+        ]
+    )
+    client = AsyncOpenAI(api_key="sk-test")
+    bundle = ContextBundle(system="s", input=[{"role": "user", "content": "draw it"}])
+
+    events = []
+    result = None
+    async for event, running in run_turn(
+        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle
+    ):
+        events.append(event)
+        result = running
+
+    update_events = [event for event in events if isinstance(event, BoardUpdateEvent)]
+    assert len(update_events) == 1
+    assert update_events[0].payload.upserts[0].id == "vector"
+    assert update_events[0].payload.deletes == ["old_label"]
+    assert result.text == "Here is the vector diagram."
+
+
+def test_update_board_is_answered_with_its_own_ack_not_set_workspaces():
+    answer = _answer(
+        {"call_id": "c", "name": "update_board", "arguments": '{"mode":"upsert","delete_ids":[],"elements":[]}'},
+        has_board=True,
+    )
+    assert answer.ask is None
+    assert answer.items[0]["output"] == UPDATE_BOARD_ACK
+
+
+def test_malformed_update_board_is_rejected_without_an_applied_ack():
+    answer = _answer(
+        {"call_id": "c", "name": "update_board", "arguments": '{"elements": "not a list"}'},
+        has_board=True,
+    )
+    assert answer.items[0]["output"] == MALFORMED_BOARD_ACK
 
 
 @respx.mock

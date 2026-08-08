@@ -650,11 +650,13 @@ final class MathTutorTests: XCTestCase {
     }
 
     /// A student who types "check my work" and sends it with a region attached
-    /// must be asking *their* question about the board.
+    /// must have that exact text in the thread — with no generated area-description
+    /// paragraph underneath it.
     ///
     /// `BoardScreen.send` used to leave the typed text sitting in the composer
     /// and send a canned "Please evaluate my work on …" in its place, so the one
-    /// message the tutor received was never the one the student wrote.
+    /// message the tutor received was never the one the student wrote. It then
+    /// appended "(About …)" below the student's own question; that paragraph should not exist.
     @MainActor
     func testAnEvaluationCarriesTheStudentsOwnQuestionWhenTheyTypedOne() async throws {
         let store = TutorStore(service: DemoTutorService())
@@ -672,17 +674,22 @@ final class MathTutorTests: XCTestCase {
 
         let newMessages = Array(store.session.messages.dropFirst(initialMessageCount))
         let evaluationTurn = try XCTUnwrap(newMessages.first(where: { $0.signal == .evaluate }))
-        XCTAssertTrue(
-            evaluationTurn.text.contains("did I factor this right?"),
-            "The student's own question must reach the tutor, not be replaced by a canned one"
+        XCTAssertEqual(
+            evaluationTurn.text,
+            "did I factor this right?",
+            "The student's own question must arrive exactly as written"
         )
-        XCTAssertTrue(
-            evaluationTurn.text.contains("the area you selected"),
-            "The turn still has to say which part of the board the image is of"
+        XCTAssertFalse(
+            evaluationTurn.text.contains("area you selected"),
+            "The learner's message must not carry generated area-description text"
+        )
+        XCTAssertFalse(
+            evaluationTurn.text.contains("(About"),
+            "The learner's message must not carry an auto-appended region note"
         )
     }
 
-    /// With nothing typed, the canned line is still what carries the request.
+    /// With nothing typed, the existing canned line is still what carries the request.
     @MainActor
     func testAnEvaluationWithNoTypedQuestionKeepsTheCannedRequest() async throws {
         let store = TutorStore(service: DemoTutorService())

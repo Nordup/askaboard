@@ -52,3 +52,26 @@ def test_an_image_is_appended_as_a_data_url_with_original_detail():
     assert parts[1]["image_url"] == (
         "data:image/png;base64," + base64.b64encode(b"pixels").decode()
     )
+
+
+def test_a_board_scene_is_included_verbatim_in_the_user_prompt():
+    scene = '{"elements":[{"id":"tri","kind":"polygon"}]}'
+    bundle = assemble_context(
+        session=FakeSession(), messages=[FakeMessage("learner", "hi")],
+        image_data=None, image_region=None, signal=None, goal=None,
+        board_scene=scene,
+    )
+
+    text = bundle.input[1]["content"][0]["text"]
+    assert scene in text
+    assert "SEMANTIC BOARD SCENE" in text
+
+
+def test_a_scene_only_board_still_has_a_board_for_the_tools():
+    bundle = assemble_context(
+        session=FakeSession(), messages=[FakeMessage("learner", "hi")],
+        image_data=None, image_region=None, signal=None, goal=None,
+        board_scene="[]",
+    )
+
+    assert bundle.has_board is True

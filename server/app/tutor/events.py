@@ -6,6 +6,12 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, ValidationError
 
+from app.tutor.board_scene import (
+    BoardUpdatePayload,
+    parse_board_update,
+    update_payload,
+)
+
 
 class Plan(BaseModel):
     title: str
@@ -42,6 +48,20 @@ class WorkspaceEvent(BaseModel):
     type: Literal["workspace"] = "workspace"
     plan: Plan
     exercise: ExerciseModel
+
+
+class BoardUpdateEvent(BaseModel):
+    """A validated batch of tutor-authored scene changes for the device.
+
+    The model calls `update_board`; this event is the only thing that changes
+    the learner's screen for that call. It carries the exact validated upserts
+    and deletes (or a `replace_all` request), never PencilKit ink, and it is
+    sent even though the loop also answers the call with a plain text ack —
+    the ack is what lets the provider continue; this event is what draws.
+    """
+
+    type: Literal["board_update"] = "board_update"
+    payload: BoardUpdatePayload
 
 
 class BoardRequestEvent(BaseModel):
@@ -91,7 +111,7 @@ class ErrorEvent(BaseModel):
 
 ClientEvent = Annotated[
     StatusEvent | ReasoningDeltaEvent | TextDeltaEvent | WorkspaceEvent
-    | BoardRequestEvent | DoneEvent | ErrorEvent,
+    | BoardUpdateEvent | BoardRequestEvent | DoneEvent | ErrorEvent,
     Field(discriminator="type"),
 ]
 
@@ -133,9 +153,12 @@ class EventTranslator:
 
         if kind == "response.function_call_arguments.done":
             name = self._tool_names.get(event.get("output_index", -1))
-            if name != "set_workspace":
-                return []
-            return self._workspace_from(event.get("arguments", ""))
+            raw_arguments = event.get("arguments", "")
+            if name == "set_workspace":
+                return self._workspace_from(raw_arguments)
+            if name == "update_board":
+                return self._board_update_from(raw_arguments)
+            return []
 
         if kind.startswith("response.file_search_call.") or kind.startswith(
             "response.web_search_call."
@@ -152,3 +175,12 @@ class EventTranslator:
             return [WorkspaceEvent(plan=payload["plan"], exercise=payload["exercise"])]
         except (json.JSONDecodeError, KeyError, TypeError, ValidationError):
             return []
+
+    def _board_update_from(self, raw_arguments: str) -> list[ClientEvent]:
+        # A malformed scene update is dropped, not guessed at: the device keeps
+        # its current scene and the loop answers the call with a rejection the
+        # model can read.
+        update, _ = parse_board_update(raw_arguments)
+        if update is None:
+            return []
+        return [BoardUpdateEvent(payload=update_payload(update))]

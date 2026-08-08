@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 
 from openai import AsyncOpenAI
 
+from app.tutor.board_scene import parse_board_update
 from app.tutor.context import ContextBundle
 from app.tutor.events import BoardRequestEvent, ClientEvent, EventTranslator, WorkspaceEvent
 from app.tutor.rendezvous import BoardRegion, BoardUnavailable
@@ -49,6 +50,25 @@ SET_WORKSPACE_ACK = json.dumps({
     "status": "applied",
     "detail": "The learner's plan and board exercise now show what you set. "
               "Tell them about it in your reply.",
+})
+
+# What `update_board` is answered with after its `board_update` event has gone
+# out. The event is the actual mutation; this ack is what tells the provider
+# the round succeeded so it can write the accompanying prose.
+UPDATE_BOARD_ACK = json.dumps({
+    "status": "applied",
+    "detail": "The tutor's board objects were updated on the learner's iPad. "
+              "Mention what you drew and why, in your reply.",
+})
+
+# What a malformed `update_board` call is answered with. No event was sent, so
+# the learner's scene is unchanged; the model must read this and revise rather
+# than believing its invalid geometry landed.
+MALFORMED_BOARD_ACK = json.dumps({
+    "status": "rejected",
+    "detail": "The board update could not be parsed or validated, so nothing "
+              "was drawn. Check the id, kind, coordinates, and required fields, "
+              "then call `update_board` again with a valid batch.",
 })
 
 # What `view_board` is answered with when the turn carries no board at all.
@@ -133,9 +153,21 @@ def _answer(call: dict, *, has_board: bool) -> ToolAnswer:
     """
     call_id = call["call_id"]
 
-    if call.get("name") != "view_board":
-        # `set_workspace`, and anything a later seam adds that has no
-        # server-side result to report.
+    name = call.get("name")
+    if name == "set_workspace":
+        return ToolAnswer(items=[
+            {"type": "function_call_output", "call_id": call_id, "output": SET_WORKSPACE_ACK}
+        ])
+
+    if name == "update_board":
+        update, _ = parse_board_update(call.get("arguments") or "{}")
+        output = UPDATE_BOARD_ACK if update is not None else MALFORMED_BOARD_ACK
+        return ToolAnswer(items=[
+            {"type": "function_call_output", "call_id": call_id, "output": output}
+        ])
+
+    if name != "view_board":
+        # Anything a later seam adds that has no server-side result to report.
         return ToolAnswer(items=[
             {"type": "function_call_output", "call_id": call_id, "output": SET_WORKSPACE_ACK}
         ])

@@ -226,3 +226,26 @@ def test_the_manifest_is_passed_through_so_a_sparse_board_can_be_aimed_at():
     note = board.describe(has_ink=True, manifest=manifest)
 
     assert manifest in note
+
+
+def test_a_semantic_scene_is_reflected_back_exactly():
+    scene = '{"elements":[{"id":"tri","kind":"polygon","points":[[0,0],[1,0],[0,1]]}]}'
+    note = board.describe(has_ink=False, scene=scene)
+
+    assert scene in note
+    assert "SEMANTIC BOARD SCENE" in note
+    assert "update_board" in note
+    assert "never convert your own text into simulated handwriting" in note
+
+
+def test_a_semantic_only_board_is_not_described_as_empty():
+    note = board.describe(has_ink=False, scene="[tutor scene]")
+
+    assert "empty right now" not in note
+    assert "[tutor scene]" in note
+
+
+def test_a_scene_without_ink_never_claims_the_board_changed():
+    note = board.describe(has_ink=False, scene="x", changed=True)
+
+    assert "HAS CHANGED" not in note

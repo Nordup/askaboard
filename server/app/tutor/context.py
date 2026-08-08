@@ -31,6 +31,7 @@ def assemble_context(
     goal: str | None,
     board_overview: bytes | None = None,
     board_manifest: str | None = None,
+    board_scene: str | None = None,
     board_changed: bool | None = None,
 ) -> ContextBundle:
     """SEAM: everything the model is told, assembled in one place.
@@ -48,9 +49,14 @@ def assemble_context(
     """
     conversation = "\n".join(f"{m.role}: {m.text}" for m in messages)
 
-    has_board = board_overview is not None
+    # A semantic-only scene (tutor objects with no learner ink yet) is still a
+    # board the model can see and update, so it must count as a board too.
+    has_board = board_overview is not None or board_scene is not None
     board_note = board_notes.describe(
-        has_ink=has_board, manifest=board_manifest, changed=board_changed
+        has_ink=board_overview is not None,
+        manifest=board_manifest,
+        changed=board_changed,
+        scene=board_scene,
     ) if has_board or board_changed is True else None
 
     user_text = compose_user_prompt(

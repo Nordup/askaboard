@@ -284,8 +284,11 @@ final class TutorStore: ObservableObject {
     /// selection, when they typed anything. It used to have nowhere to go — the composer
     /// held onto the text and sent the canned line below in its place, so a student who
     /// wrote "check my work" had the one message they wrote dropped and a generic request
-    /// delivered instead. It is spliced in front of the region rather than replacing it:
-    /// the tutor still has to be told which part of the board the image is of.
+    /// delivered instead. The learner turn is now exactly what they typed — no generated
+    /// area description appended — while `regionDescription` still reaches the service on
+    /// its own so the model can be told which part of the board the image is of. With no
+    /// typed question, retain the existing canned request so an evaluate turn still has
+    /// visible copy.
     func evaluate(imageData: Data, regionDescription: String?, question: String? = nil) {
         guard !isEvaluating, ensureTutorAvailable() else { return }
         isEvaluating = true
@@ -296,7 +299,7 @@ final class TutorStore: ObservableObject {
         let regionLabel = region?.isEmpty == false ? region! : "the whiteboard"
         let asked = question?.trimmingCharacters(in: .whitespacesAndNewlines)
         let text = asked?.isEmpty == false
-            ? asked! + "\n\n(About " + regionLabel + ".)"
+            ? asked!
             : "Please evaluate my work on " + regionLabel + "."
         session.messages.append(
             TutorMessage(

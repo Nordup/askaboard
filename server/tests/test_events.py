@@ -1,7 +1,8 @@
 import json
 
 from app.tutor.events import (
-    EventTranslator, ReasoningDeltaEvent, StatusEvent, TextDeltaEvent, WorkspaceEvent,
+    BoardUpdateEvent, EventTranslator, ReasoningDeltaEvent, StatusEvent,
+    TextDeltaEvent, WorkspaceEvent,
 )
 
 WORKSPACE_ARGS = {
@@ -73,6 +74,74 @@ def test_malformed_tool_arguments_are_dropped_not_raised():
         "arguments": "{not json",
     })
     assert events == []
+
+
+def test_update_board_tool_call_becomes_a_board_update_event():
+    translator = EventTranslator()
+    translator.translate({
+        "type": "response.output_item.added",
+        "output_index": 0,
+        "item": {"type": "function_call", "name": "update_board", "call_id": "call_b"},
+    })
+    events = translator.translate({
+        "type": "response.function_call_arguments.done",
+        "output_index": 0,
+        "arguments": json.dumps({
+            "mode": "upsert",
+            "delete_ids": ["old"],
+            "elements": [{
+                "id": "a",
+                "kind": "line",
+                "x1": 0, "y1": 0, "x2": 100, "y2": 0,
+                "role": "content", "stroke": "#0A0A0A", "fill": "transparent",
+                "stroke_width": 4, "opacity": 1, "dash": [], "rotation": 0,
+            }],
+        }),
+    })
+
+    assert len(events) == 1
+    assert isinstance(events[0], BoardUpdateEvent)
+    assert events[0].payload.deletes == ["old"]
+    assert events[0].payload.upserts[0].id == "a"
+    assert events[0].payload.upserts[0].kind == "line"
+
+
+def test_malformed_update_board_arguments_are_dropped_not_raised():
+    translator = EventTranslator()
+    translator.translate({
+        "type": "response.output_item.added",
+        "output_index": 0,
+        "item": {"type": "function_call", "name": "update_board", "call_id": "call_b"},
+    })
+    events = translator.translate({
+        "type": "response.function_call_arguments.done",
+        "output_index": 0,
+        "arguments": json.dumps({"mode": "replace_all", "delete_ids": [], "elements": [
+            {"id": "bad", "kind": "polygon", "points": [[0, 0]]}
+        ]}),
+    })
+    assert events == []
+
+
+def test_replace_all_update_drops_delete_ids_from_the_payload():
+    translator = EventTranslator()
+    translator.translate({
+        "type": "response.output_item.added",
+        "output_index": 0,
+        "item": {"type": "function_call", "name": "update_board", "call_id": "call_b"},
+    })
+    events = translator.translate({
+        "type": "response.function_call_arguments.done",
+        "output_index": 0,
+        "arguments": json.dumps({
+            "mode": "replace_all",
+            "delete_ids": ["unused"],
+            "elements": [],
+        }),
+    })
+    assert isinstance(events[0], BoardUpdateEvent)
+    assert events[0].payload.replace_all is True
+    assert events[0].payload.deletes == []
 
 
 def test_output_item_added_without_output_index_is_dropped_not_raised():

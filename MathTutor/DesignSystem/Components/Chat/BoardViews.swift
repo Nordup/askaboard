@@ -13,19 +13,25 @@ import SwiftUI
 /// bolted to one. A caption was drawn and removed — the lane already says who
 /// looked, so naming it was noise.
 enum BoardViewsMetrics {
-    /// **Not a design token.** One thumbnail, and the same one at every count —
-    /// a single view is one of these rather than a full-width special case, so
-    /// there is one size to implement and one rhythm to read.
-    static let thumbnail = CGSize(width: 116, height: 69)
-    /// Off the 4pt scale on purpose: `116 + 10 + 116 = 242` sits left inside the
-    /// 301pt content column rather than stretching to fill it, which is what
-    /// makes these read as attachments instead of a block.
-    static let gap: CGFloat = 10
+    /// **Not a design token.** `145 + 11 + 145 = 301` — the panel's content
+    /// column exactly, so a pair fills the lane the thread is drawn in. Four
+    /// across the same column would be 68pt each, which is a picture of
+    /// handwriting nobody can tell apart from a picture of noise.
+    static let thumbnail = CGSize(width: 145, height: 86)
+    /// The single-view size, and the one exception to the grid.
+    ///
+    /// A lone view is nearly always the whole board — the tutor is told to open
+    /// there before it zooms — and that is the one view worth the extra width:
+    /// it is what the learner checks the tutor was even looking at the right
+    /// work. Two of them onward, the grid takes over.
+    static let singleThumbnail = CGSize(width: 301, height: 132)
+    /// Off the 4pt scale on purpose; it is what closes the row at 301.
+    static let gap: CGFloat = 11
     /// The step from the views to the reply they belong to. Tighter than
     /// `--space-message-gap`, because that gap separates *turns* and this one
     /// joins a turn to itself.
     static let replyGap: CGFloat = 8
-    static let cornerRadius = DS.Radius.sm
+    static let cornerRadius = DS.Radius.md
 
     /// How many fit across a column before the grid wraps.
     static func columns(in width: CGFloat) -> Int {
@@ -41,21 +47,38 @@ struct BoardViewsRow: View {
     var onOpen: ((BoardView) -> Void)?
 
     var body: some View {
+        if views.count == 1, let only = views.first {
+            BoardViewThumbnail(
+                view: only,
+                size: BoardViewsMetrics.singleThumbnail,
+                onOpen: onOpen
+            )
+            .frame(width: width, alignment: .leading)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("The tutor looked at one region of the board")
+        } else {
+            grid
+        }
+    }
+
+    private var grid: some View {
         let columns = BoardViewsMetrics.columns(in: width)
-        VStack(alignment: .leading, spacing: BoardViewsMetrics.gap) {
+        return VStack(alignment: .leading, spacing: BoardViewsMetrics.gap) {
             ForEach(Array(rows(of: columns).enumerated()), id: \.offset) { _, row in
                 HStack(spacing: BoardViewsMetrics.gap) {
                     ForEach(row) { view in
-                        BoardViewThumbnail(view: view, onOpen: onOpen)
+                        BoardViewThumbnail(
+                            view: view,
+                            size: BoardViewsMetrics.thumbnail,
+                            onOpen: onOpen
+                        )
                     }
                 }
             }
         }
         .frame(width: width, alignment: .leading)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(views.count == 1
-            ? "The tutor looked at one region of the board"
-            : "The tutor looked at \(views.count) regions of the board")
+        .accessibilityLabel("The tutor looked at \(views.count) regions of the board")
     }
 
     /// Chunked rather than laid out in a `Grid`, because the last row must sit
@@ -69,15 +92,15 @@ struct BoardViewsRow: View {
 
 struct BoardViewThumbnail: View {
     let view: BoardView
+    /// Given rather than fixed: a lone view is drawn at
+    /// `singleThumbnail`, a pair onward at `thumbnail`. See those two.
+    var size: CGSize = BoardViewsMetrics.thumbnail
     var onOpen: ((BoardView) -> Void)?
 
     var body: some View {
         Button { onOpen?(view) } label: {
             image
-                .frame(
-                    width: BoardViewsMetrics.thumbnail.width,
-                    height: BoardViewsMetrics.thumbnail.height
-                )
+                .frame(width: size.width, height: size.height)
                 .background(DS.Color.surfaceCanvas)
                 .clipShape(RoundedRectangle(cornerRadius: BoardViewsMetrics.cornerRadius))
                 // **A deliberate exception to board 01 rule 1**, which says the

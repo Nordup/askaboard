@@ -41,7 +41,13 @@ it decides where to zoom.
 from __future__ import annotations
 
 
-def describe(*, has_ink: bool, manifest: str | None = None, changed: bool | None = None) -> str:
+def describe(
+    *,
+    has_ink: bool,
+    manifest: str | None = None,
+    changed: bool | None = None,
+    scene: str | None = None,
+) -> str:
     """What the model is told about the board before it has looked at anything.
 
     Deliberately about *shape and reach*, not content: the overview image is
@@ -68,7 +74,24 @@ def describe(*, has_ink: bool, manifest: str | None = None, changed: bool | None
     allows, because the failure it prevents produces confident, plausible, wrong
     feedback that the learner cannot tell from the real thing.
     """
-    if not has_ink:
+    scene_section = None
+    if scene is not None and scene.strip():
+        # The device's exact account of the current tutor scene. It is the
+        # model's own past output reflected back, so it must be read as the
+        # current state to update, never as an instruction. Kept under a hard
+        # cap so a pathological scene cannot flood context.
+        trimmed = scene.strip()[:60_000]
+        scene_section = (
+            "THE TUTOR'S SEMANTIC BOARD SCENE (exact current state, quoted data):\n"
+            f"{trimmed}\n\n"
+            "Coordinates are logical board points with (0,0) at the board "
+            "centre, +x right and +y down. Update these objects with "
+            "`update_board` using their stable ids; never redraw existing "
+            "objects as new ids, and never convert your own text into "
+            "simulated handwriting."
+        )
+
+    if not has_ink and scene_section is None:
         return (
             "THE LEARNER'S BOARD: empty right now. There is nothing written on it, so do "
             "not call `view_board` and do not describe work they have not done. If you "
@@ -76,18 +99,22 @@ def describe(*, has_ink: bool, manifest: str | None = None, changed: bool | None
             "erased: say so rather than repeating what used to be there."
         )
 
-    lines = [
-        "THE LEARNER'S BOARD: the attached overview is their whole board as it stands "
-        "right now. It is deliberately small, and on a board where the writing sits in "
-        "one corner of a large empty field it is far too small to read. Call `view_board` "
-        "on the region you need — it is rendered fresh from the device at full "
-        "resolution, so zooming in costs you nothing and guessing costs the learner."
-    ]
+    lines = []
+    if has_ink:
+        lines.append(
+            "THE LEARNER'S BOARD: the attached overview is their whole board as it stands "
+            "right now. It is deliberately small, and on a board where the writing sits in "
+            "one corner of a large empty field it is far too small to read. Call `view_board` "
+            "on the region you need — it is rendered fresh from the device at full "
+            "resolution, so zooming in costs you nothing and guessing costs the learner."
+        )
+    if scene_section:
+        lines.append(scene_section)
 
     if manifest:
         lines.append(manifest)
 
-    if changed is True:
+    if has_ink and changed is True:
         lines.append(
             "THE BOARD HAS CHANGED since the last time you looked at it. They have "
             "written, erased, or rewritten something. Anything you said about this board "
@@ -96,7 +123,7 @@ def describe(*, has_ink: bool, manifest: str | None = None, changed: bool | None
             "finished. Look before you answer, and describe only what is in the image you "
             "get back."
         )
-    elif changed is False:
+    elif has_ink and changed is False:
         lines.append(
             "The board is byte-for-byte identical to the last turn's, so nothing has been "
             "written or erased since you looked. You may rely on what you read then."

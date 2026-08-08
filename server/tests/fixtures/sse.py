@@ -170,3 +170,114 @@ REASONING_TURN = (
         },
     },
 )
+
+
+BOARD_UPDATE_ARGUMENTS = {
+    "mode": "upsert",
+    "delete_ids": ["old_label"],
+    "elements": [
+        {
+            "id": "vector",
+            "kind": "arrow",
+            "x1": 0,
+            "y1": 0,
+            "x2": 300,
+            "y2": -180,
+            "head_size": 18,
+            "role": "content",
+            "stroke": "#0155FB",
+            "fill": "transparent",
+            "stroke_width": 5,
+            "opacity": 1,
+            "dash": [],
+            "rotation": 0,
+        },
+        {
+            "id": "vector_label",
+            "kind": "text",
+            "x": 330,
+            "y": -220,
+            "text": "v = (300, -180)",
+            "font_size": 42,
+            "alignment": "left",
+            "width": 0,
+            "role": "emphasis",
+            "stroke": "#0A0A0A",
+            "fill": "transparent",
+            "stroke_width": 1,
+            "opacity": 1,
+            "dash": [],
+            "rotation": 0,
+        },
+    ],
+}
+
+
+BOARD_UPDATE_TURN = (
+    {"type": "response.created", "sequence_number": 0, "response": {"id": "resp_board"}},
+    {
+        "type": "response.output_item.added",
+        "sequence_number": 1,
+        "output_index": 0,
+        "item": {
+            "type": "function_call",
+            "id": "fc_board",
+            "call_id": "call_board",
+            "name": "update_board",
+            "arguments": "",
+        },
+    },
+    {
+        "type": "response.function_call_arguments.delta",
+        "sequence_number": 2,
+        "output_index": 0,
+        "item_id": "fc_board",
+        "delta": '{"mode": "upsert",',
+    },
+    {
+        "type": "response.function_call_arguments.done",
+        "sequence_number": 3,
+        "output_index": 0,
+        "item_id": "fc_board",
+        "name": "update_board",
+        "arguments": json.dumps(BOARD_UPDATE_ARGUMENTS),
+    },
+    {
+        "type": "response.completed",
+        "sequence_number": 4,
+        "response": {
+            "id": "resp_board",
+            "usage": {"input_tokens": 60, "output_tokens": 24},
+            "output": [
+                {"type": "reasoning", "id": "rs_board", "summary": []},
+                {
+                    "type": "function_call",
+                    "id": "fc_board",
+                    "call_id": "call_board",
+                    "name": "update_board",
+                    "arguments": json.dumps(BOARD_UPDATE_ARGUMENTS),
+                    "status": "completed",
+                },
+            ],
+        },
+    },
+)
+
+
+BOARD_UPDATE_FOLLOW_UP = (
+    {"type": "response.created", "sequence_number": 0, "response": {"id": "resp_board_2"}},
+    {"type": "response.output_text.delta", "sequence_number": 1, "delta": "Here is the vector diagram."},
+    {"type": "response.output_text.done", "sequence_number": 2, "text": "Here is the vector diagram."},
+    {
+        "type": "response.completed",
+        "sequence_number": 3,
+        "response": {
+            "id": "resp_board_2",
+            "usage": {"input_tokens": 90, "output_tokens": 12},
+            "output": [
+                {"type": "message", "id": "msg_board", "role": "assistant",
+                 "content": [{"type": "output_text", "text": "Here is the vector diagram."}]},
+            ],
+        },
+    },
+)

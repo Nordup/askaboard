@@ -124,6 +124,11 @@ class TurnRequest(BaseModel):
     #: percent of a large empty field cannot be aimed at from the overview
     #: alone; this is what makes it aimable.
     board_manifest: str | None = None
+    #: The device's exact current tutor-authored scene and board state, as a
+    #: compact string the model can read and update. Unlike `board_manifest`
+    #: (learner ink clusters), this is the model's own semantic output, so it
+    #: goes into context verbatim so the model can see what it already drew.
+    board_scene: str | None = None
     model: str
     reasoning_effort: str
 
@@ -360,6 +365,7 @@ async def create_turn(
                 session=session, messages=messages, image_data=image,
                 image_region=body.image_region, signal=body.signal, goal=body.goal,
                 board_overview=board, board_manifest=body.board_manifest,
+                board_scene=body.board_scene,
                 board_changed=board_changed,
             )
             request_body["input"] = bundle.input

@@ -105,6 +105,7 @@ which of these it is:
 | `reasoning_delta` | An incremental chunk of the model's reasoning summary. |
 | `text_delta` | An incremental chunk of the reply text. |
 | `workspace` | A full replacement of the session's plan and exercise, arriving together — see below. |
+| `board_update` | A validated batch of tutor-authored scene changes the iPad applies immediately: upserts by stable id, deletes, or a replace-all flag. |
 | `done` | The turn finished; carries `turn_id` and token counts. |
 | `error` | The turn failed; carries a message and whether the client should retry. |
 
@@ -132,6 +133,35 @@ it to continue, up to `MAX_TOOL_ROUNDS`. Both legs stream into the same
 client turn and are recorded as one `Turn`, with usage summed across them. A
 single-request implementation looks like it works right up until the model
 sets the workspace: the board changes and the thread stays empty.
+
+### The tutor's semantic board scene
+
+Learner handwriting remains PencilKit ink on the iPad and is never touched by
+the server. What the tutor draws is a separate structured scene exposed through
+the strict `update_board` function tool in
+[`app/tutor/tools.py`](app/tutor/tools.py). The tool takes a discriminated
+union of primitives — `text`, `line`, `arrow`, `rectangle`, `ellipse`,
+`circle`, `polygon`, `polyline`, `freehand`, `arc`, and `angle_marker` — each
+with a stable id, exact board coordinates, and shared style fields (role,
+stroke/fill colors, width, opacity, dash, rotation where meaningful).
+
+A call is parsed and validated in
+[`app/tutor/board_scene.py`](app/tutor/board_scene.py): coordinates, element
+counts, point counts, text length, font sizes, stroke widths, and opacity are
+all clamped server-side, malformed JSON is dropped, and the translator emits a
+typed `board_update` event carrying only the sanitized payload. The tool loop
+answers `update_board` with its own `applied` ack (or `rejected` for malformed
+arguments), never with the `set_workspace` ack, and the model continues to
+prose on the same turn. `replace_all` clears the scene before applying the
+batch; upsert mode is idempotent by id.
+
+The device also sends the current scene back on every turn in the
+`board_scene` request field, and the context assembler
+([`app/tutor/context.py`](app/tutor/context.py)) includes that exact string in
+the prompt, labelled as quoted data, so the model can see and revise its own
+previous output. The prompt tells the model when to draw, to use semantic text
+rather than simulated handwriting, to place corrections beside learner ink
+without covering it, and to avoid gratuitous drawing.
 
 ## Read-back endpoints
 
@@ -188,12 +218,12 @@ change — every caller already goes through this one function, so a caller
 never has to be taught that memory exists.
 
 **`app/tutor/tools.py`, `TOOL_DEFINITIONS`** — the list of tools offered to
-the model on every turn. Today it holds exactly one, `SET_WORKSPACE_TOOL`.
-Adding web search means appending `{"type": "web_search"}`; adding file
-search means appending `{"type": "file_search", "vector_store_ids": [...]}`;
-adding a domain-specific function (e.g. "grade this step") means writing a
-new tool definition in the same function-call shape as `set_workspace` and
-appending it. The event translator
+the model on every turn. Today it holds `set_workspace`, `view_board`, and
+`update_board`. Adding web search means appending `{"type": "web_search"}`;
+adding file search means appending `{"type": "file_search",
+"vector_store_ids": [...]}`; adding a domain-specific function (e.g. "grade
+this step") means writing a new tool definition in the same function-call
+shape as the existing tools and appending it. The event translator
 ([`app/tutor/events.py`](app/tutor/events.py)) already has a
 `response.output_item.added` / `response.function_call_arguments.done`
 path that correlates a tool call's name with its arguments; a new tool
@@ -229,6 +259,11 @@ under each other. Individual tests within one run still get a clean slate
 via `TRUNCATE` rather than `DROP`/`CREATE`, which was also the leading
 suspect for a prepared-statement-cache/PgBouncer interaction that produced
 one spurious 404 in an earlier run.
+
+**Semantic board objects are structured, not OCR.** The server stores and
+streams the tutor's scene as structured geometry and text; the learner's
+handwriting remains a raster understood by the model through images. There is
+no OCR claim anywhere in the pipeline.
 
 ## Testing
 

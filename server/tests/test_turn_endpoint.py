@@ -8,6 +8,7 @@ import respx
 from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy import select
 
+from app.api.turn import TurnRequest
 from app.config import DEFAULT_MODEL, DEFAULT_REASONING_EFFORT, get_settings
 from app.main import create_app
 from app.store.models import Message, Session, Turn
@@ -38,6 +39,18 @@ async def _collect(response) -> list[dict]:
         if line.startswith("data: "):
             events.append(json.loads(line.removeprefix("data: ")))
     return events
+
+
+def test_turn_request_accepts_a_board_scene():
+    request = TurnRequest(
+        turn_id=uuid.uuid4(),
+        session_id=uuid.uuid4(),
+        text="look at my triangle",
+        model="gpt-5.6-luna",
+        reasoning_effort="high",
+        board_scene='{"elements":[{"id":"tri","kind":"polygon"}]}',
+    )
+    assert request.board_scene is not None
 
 
 @respx.mock
@@ -122,6 +135,28 @@ async def test_an_image_produces_a_looking_status_before_thinking(db_app):
             events = await _collect(r)
 
     assert events[0] == {"type": "status", "phase": "looking", "detail": None}
+
+
+@respx.mock
+async def test_board_scene_reaches_the_provider_prompt(db_app):
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        return_value=Response(200, headers={"Content-Type": "text/event-stream"},
+                              content=sse_stream(*TEXT_ONLY_TURN))
+    )
+    scene = '{"elements":[{"id":"tri","kind":"polygon"}]}'
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        async with client.stream(
+            "POST", "/v1/turn",
+            json=_payload(board_scene=scene),
+            headers=AUTH,
+        ) as r:
+            await _collect(r)
+
+    body = json.loads(route.calls[0].request.content)
+    prompt_text = body["input"][1]["content"][0]["text"]
+    assert scene in prompt_text
 
 
 @respx.mock

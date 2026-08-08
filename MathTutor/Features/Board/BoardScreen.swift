@@ -461,8 +461,8 @@ struct BoardScreen: View {
     private func boardEvaluation() -> (data: Data, description: String)? {
         if let region = uiState.selection.region {
             guard let data = capture.snapshotData(region: region) else { return nil }
-            // No "my" and no "they": the same label is spliced into a first-person
-            // learner turn and a third-person policy line — see `regionDescription`.
+            // No "my" and no "they": the label is spliced into a third-person policy
+            // line on the server, never into the learner's own message.
             return (data, "the area selected on the board")
         }
         guard let snapshot = capture.snapshotAllInkData() else { return nil }
@@ -473,9 +473,9 @@ struct BoardScreen: View {
     /// student's work. Telling the tutor it is looking at the whole board would invite
     /// confident feedback on a portion of it.
     ///
-    /// Both labels are spliced into a first-person learner turn ("Please evaluate my work on
-    /// …") and a third-person policy line ("The learner asked you to evaluate …"), so they
-    /// have to read correctly in both and cannot carry their own "my".
+    /// The label is spliced into a third-person policy line on the server ("The learner
+    /// asked you to evaluate …"), so it cannot carry its own "my" or "they". The learner's
+    /// own message is never rewritten with it.
     private static func regionDescription(coversAllInk: Bool) -> String {
         coversAllInk
             ? "the whole board"
