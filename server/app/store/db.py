@@ -4,6 +4,21 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.config import get_settings
 
+# No pgvector asyncpg codec is registered on this engine, and registering one
+# would break every write to `memory_atoms.embedding`. pgvector's SQLAlchemy
+# `HALFVEC` type already converts a vector to its text form in `bind_processor`
+# and parses it back in `result_processor`, so what reaches asyncpg is a `str`
+# and Postgres casts it on the way in. `pgvector.asyncpg.register_vector`
+# installs a *binary* codec whose encoder expects a list or an ndarray, and it
+# would be handed that string instead: the first INSERT fails with
+# `DataError: invalid input for query argument $N ... (expected list or
+# ndarray)`. The two mechanisms are alternatives, not layers.
+#
+# That vectors survive the trip without it is not assumed:
+# `tests/test_memory_consolidate.py::test_embedding_round_trips_through_postgres`
+# writes one through `consolidate`, reads it back in a session that never saw
+# the object, and then makes the database order by cosine distance on it.
+
 _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
 
