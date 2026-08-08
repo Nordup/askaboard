@@ -70,6 +70,19 @@ final class UIState: ObservableObject {
     /// It does not persist, like everything else on this type.
     @Published private(set) var panelWidth: CGFloat = ScreenLayout.defaultPanelWidth
 
+    /// Whether the session switcher is dropped open under the panel's title.
+    ///
+    /// Here rather than in `@State` on the panel for the reason everything else
+    /// on this type is: it is presentation, it must not persist, and it has to
+    /// survive the panel's body being rebuilt by any of the publishers around it
+    /// — a menu that closed itself every time a tutor delta arrived would be
+    /// impossible to use mid-turn.
+    ///
+    /// It is not a fourth axis. Nothing else reads it, and no transition below
+    /// preserves it: `TutorPanel` closes it on the actions that take the learner
+    /// somewhere else.
+    @Published private(set) var isSessionMenuOpen = false
+
     /// The rail's three selections carry no invariant between them — any tool
     /// works with any colour and any width — so they are plain settable state
     /// rather than transitions.
@@ -130,6 +143,19 @@ final class UIState: ObservableObject {
         conversation = .active
     }
 
+    /// The conversation axis re-derived from a session, rather than moved by a
+    /// control.
+    ///
+    /// `beginConversation` is one-way because no *control* returns a thread to a
+    /// greeting, and none does. This is not that. Switching sessions replaces the
+    /// conversation wholesale, so the axis is being recomputed for a different
+    /// subject rather than walked backwards for the same one — an empty session
+    /// must open on its greeting, and one with a thread must open on the thread.
+    /// `RootView.resumeConversationIfNeeded` derives it the same way at launch.
+    func showConversation(_ phase: ConversationPhase) {
+        conversation = phase
+    }
+
     /// `btn/select`, in the dock and in the composer: arm the marquee, or put the
     /// pencil back on the ink.
     ///
@@ -152,6 +178,18 @@ final class UIState: ObservableObject {
     /// screen 08 shows the selection in the thread, not still in the composer.
     func clearBoardSelection() {
         selection = .none
+    }
+
+    /// The session title in `Panel controls` — drop the switcher open, or put it
+    /// away.
+    func toggleSessionMenu() {
+        isSessionMenuOpen.toggle()
+    }
+
+    /// Tapping the panel behind the open menu, picking a row, or any transition
+    /// that changes what the panel is showing.
+    func closeSessionMenu() {
+        isSessionMenuOpen = false
     }
 
     /// The resize handle in the gutter between the board and the panel.

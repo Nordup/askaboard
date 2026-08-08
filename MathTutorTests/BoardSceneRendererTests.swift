@@ -154,9 +154,40 @@ final class BoardSceneRendererTests: XCTestCase {
         // viewport width/height unchanged.
         let expectedVisible: [Double] = [500, -350, 1_500, 350]
         XCTAssertEqual(visible, expectedVisible)
+        // The tutor layout contract: stable fractions of the visible rect,
+        // with the recommended band in the upper half and the learner band
+        // below an 8% gutter.
+        XCTAssertEqual(
+            object["recommended_tutor_rect"] as? [Double],
+            [560, -308, 1_440, 0]
+        )
+        XCTAssertEqual(
+            object["reserved_learner_work_rect"] as? [Double],
+            [560, 56, 1_440, 308]
+        )
         XCTAssertEqual((object["overview_logical_bounds"] as? [Double])?.count, 4)
         XCTAssertNotNil(object["tutor_elements"])
         XCTAssertTrue(data.count <= 60_000)
+    }
+
+    func testLayoutRegionsDeriveStableFractionsOfTheVisibleRect() {
+        let visible = CGRect(x: 500, y: -350, width: 1_000, height: 700)
+        let regions = CanvasCapture.layoutRegions(visible: visible)
+
+        XCTAssertEqual(
+            regions.recommendedTutor,
+            CGRect(x: 560, y: -308, width: 880, height: 308)
+        )
+        XCTAssertEqual(
+            regions.reservedLearnerWork,
+            CGRect(x: 560, y: 56, width: 880, height: 252)
+        )
+        // Recommended band ends before the learner band begins: the gutter
+        // between them stays clear.
+        XCTAssertLessThanOrEqual(
+            regions.recommendedTutor.maxY,
+            regions.reservedLearnerWork.minY
+        )
     }
 
     func testRightAlignedWideTextHonorsBoxWidthAndAlignment() throws {

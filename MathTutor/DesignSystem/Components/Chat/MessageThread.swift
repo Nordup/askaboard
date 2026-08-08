@@ -13,13 +13,22 @@ struct ChatThreadItem: Identifiable, Sendable {
     /// for every learner message and for any tutor turn that did not look.
     /// Board 14 — they are drawn above the reply, as part of the same turn.
     let boardViews: [BoardView]
+    /// The region the learner marqueed and sent with this message, if any. Drawn
+    /// above their bubble — see `MessageRow`.
+    let selectionView: BoardView?
 
     var id: UUID { message.id }
 
-    init(_ message: TutorMessage, hasSelection: Bool = false, boardViews: [BoardView] = []) {
+    init(
+        _ message: TutorMessage,
+        hasSelection: Bool = false,
+        boardViews: [BoardView] = [],
+        selectionView: BoardView? = nil
+    ) {
         self.message = message
         self.hasSelection = hasSelection
         self.boardViews = boardViews
+        self.selectionView = selectionView
     }
 }
 
@@ -211,12 +220,20 @@ struct MessageRow: View {
     var body: some View {
         switch item.message.role {
         case .learner:
-            HStack(spacing: 0) {
-                Spacer(minLength: 0)
-                if item.hasSelection {
-                    SelectionMessageBubble(text: item.message.text, metrics: metrics)
-                } else {
-                    MessageBubble(text: item.message.text, metrics: metrics)
+            // Board 14: a marqueed region is an image the learner sent, so it sits
+            // on their turn, against the same trailing edge as their bubble and
+            // joined to it by `replyGap` rather than the thread's message gap.
+            VStack(alignment: .trailing, spacing: BoardViewsMetrics.replyGap) {
+                if let selectionView = item.selectionView {
+                    BoardViewThumbnail(view: selectionView)
+                }
+                HStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    if item.hasSelection {
+                        SelectionMessageBubble(text: item.message.text, metrics: metrics)
+                    } else {
+                        MessageBubble(text: item.message.text, metrics: metrics)
+                    }
                 }
             }
             .frame(width: metrics.rowWidth, alignment: .trailing)

@@ -92,6 +92,16 @@ Five layers, each depending only on the ones above it. `DesignSystem` knowing no
 | `Features/` | `Board` (the PencilKit engine), `Tutor` (panel, full screen, and `DictationController` behind the composer's mic), `Settings`, `Plan`. |
 | `App/` | `MathTutorApp`, `RootView`, `UIState`, DEBUG launch options. |
 
+### Sessions
+
+A session is one board and one chat: its ink, the tutor's semantic scene, the whole thread, its plan and exercise, and the model and reasoning effort it runs at. There can be several, and the panel's header names the open one — tapping that name drops board 15a's switcher, six recents above a *New session* row.
+
+They live in `Application Support/MathTutor/Sessions/<id>.json`, one file each, with an `index.json` beside them holding a `SessionSummary` per session and the id of the one open last. **The index is a cache, not the record**: every summary in it is derivable from the session file it names, `rebuildIndex()` does exactly that, and a session file with no index entry is recovered rather than orphaned. It exists so drawing the switcher costs one small read instead of loading every board.
+
+A session's name is derived, never stored — the tutor's `SessionPlan.title` cut at its first comma, else the learner's own opening line, else "New session" — so there is no naming step in front of a learner and nothing to keep in sync. A build that predates this layout is migrated once on first launch: `session.json` is copied in, then removed.
+
+Switching cancels any turn in flight and saves the board before swapping it. What the switcher still cannot do — delete, rename, reach session seven — is written down in [`docs/TODO.md`](docs/TODO.md).
+
 Two things are generated, not typed by hand, so the code cannot silently drift from the design:
 
 ```sh
@@ -114,16 +124,27 @@ rotation. The model revises it through the `update_board` tool; the app applies
 each validated `board_update` event immediately, keeps the scene in the session,
 persists it even if the rest of the turn fails, and composites it above learner
 ink in live views and board captures. Every request also reports the visible
-logical rectangle, learner-ink clusters, exact semantic objects, and the logical
-bounds represented by the overview, so the tutor can map an inspected crop back
-to precise placement coordinates. See
+logical rectangle, a compact upper tutor-content rectangle, a lower rectangle
+reserved for the learner's working, learner-ink clusters, exact semantic
+objects, and the logical bounds represented by the overview. This keeps a new
+exercise and its scratch space visible together without panning, while still
+letting the tutor map an inspected crop back to precise coordinates. See
 [`server/README.md`](server/README.md) for the wire contract.
+
+For rich multi-part material, the same scene accepts a complete raw SVG
+document as one stable object. The SVG string is transported and persisted
+unchanged; the iPad interprets it locally with WebKit, caches a PDF/image for
+the live overlay and board captures, and re-renders it after relaunch. This
+supports WebKit's full declarative SVG feature set—paths, text, gradients,
+masks, filters, clipping, markers, symbols, transforms, and animation—without
+a server-side SVG parser or tag allowlist. JavaScript and external resource
+loads remain disabled in the local renderer.
 
 **Typography.** Source Sans 3 is the design's only typeface and iOS does not ship it, so the 400/500/600 weights are bundled. Two conversions in `Typography.swift` are easy to get wrong and are unit-tested: CSS `line-height` is a total line box while SwiftUI's `lineSpacing` is the gap *between* lines, and the design's tracking is in `em` while `.tracking()` takes points.
 
 ## Prototype limitations
 
-This pass intentionally has no accounts, cloud sync, automatic continuous change detection, handwriting OCR, or teacher analytics. Evaluation is explicit (the whole board or a dragged rectangle) and sends a fresh composite of PencilKit ink plus tutor semantic objects only when requested; board evaluation renders the full content bounds, so scrolling away from a long solution does not truncate what the tutor sees. When content is scattered over more than 4,000 pt of board — further than one legible image can cover — evaluation crops to the work and tells the tutor it is looking at a portion rather than the whole board. *Evaluate board* is disabled while the board is empty. Local session persistence is best effort in Application Support; resetting a session removes the local drawing, tutor scene, and messages.
+This pass intentionally has no accounts, cloud sync, automatic continuous change detection, handwriting OCR, or teacher analytics. Evaluation is explicit (the whole board or a dragged rectangle) and sends a fresh composite of PencilKit ink plus tutor semantic objects only when requested; board evaluation renders the full content bounds, so scrolling away from a long solution does not truncate what the tutor sees. When content is scattered over more than 4,000 pt of board — further than one legible image can cover — evaluation crops to the work and tells the tutor it is looking at a portion rather than the whole board. *Evaluate board* is disabled while the board is empty. Local session persistence is best effort in Application Support; resetting a session removes that session's local drawing, tutor scene, and messages, and leaves every other session alone. The session switcher shows the six most recent sessions and has no delete, rename, or scroller — see [`docs/TODO.md`](docs/TODO.md).
 
 Semantic board objects are structured and editable, but this is **not OCR**:
 the learner's handwriting is still understood by the model through images, and

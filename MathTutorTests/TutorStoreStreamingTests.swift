@@ -48,13 +48,13 @@ final class SequencedTutorService: TutorService, Sendable {
 }
 
 extension SessionPersistence {
-    /// A throwaway, per-call file so streaming tests never read another
-    /// test's (or the app's real) `session.json`. Not a true in-memory
-    /// backing store — `SessionPersistence` has no seam for one — but every
-    /// test gets its own file, which is what actually matters here.
+    /// A throwaway, per-call directory so streaming tests never read another
+    /// test's (or the app's real) sessions. Not a true in-memory backing store —
+    /// `SessionPersistence` has no seam for one — but every test gets its own
+    /// directory, which is what actually matters here.
     static var inMemory: SessionPersistence {
-        SessionPersistence(fileURL: FileManager.default.temporaryDirectory
-            .appendingPathComponent("MathTutorTests-session-\(UUID().uuidString).json"))
+        SessionPersistence(directoryURL: FileManager.default.temporaryDirectory
+            .appendingPathComponent("MathTutorTests-sessions-\(UUID().uuidString)"))
     }
 }
 

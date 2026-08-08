@@ -21,7 +21,12 @@ final class BoardCanvasView: PKCanvasView {
     /// overlay. `PKCanvasView` keeps its own drawing path completely untouched.
     var boardScene: BoardScene = .empty {
         didSet {
+            guard boardScene != oldValue else { return }
             sceneOverlay.scene = boardScene
+            // Restored scenes and scene replacements go through this property,
+            // so this is the one place every SVG element's local render is
+            // scheduled. The overlay redraws when each cache entry completes.
+            BoardSVGCache.shared.prepare(scene: boardScene)
             setNeedsLayout()
         }
     }

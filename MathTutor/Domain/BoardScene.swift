@@ -132,6 +132,7 @@ enum BoardElementKind: String, Codable, Sendable, CaseIterable {
     case freehand
     case arc
     case angleMarker = "angle_marker"
+    case svg
 }
 
 /// Style fields shared by every primitive; all are present on the wire.
@@ -315,6 +316,21 @@ struct AngleMarkerElement: Codable, Equatable, Sendable {
     }
 }
 
+/// A complete raw SVG document, preserved byte-for-byte and rendered
+/// locally by WebKit on the iPad. The frame (`x`, `y`, `width`, `height`)
+/// places it in board coordinates; the SVG owns its internal styling, while
+/// the shared `BoardStyle` still carries scene-level opacity and rotation.
+struct SVGElement: Codable, Equatable, Sendable {
+    var id: String
+    var kind: BoardElementKind = .svg
+    var x: CGFloat
+    var y: CGFloat
+    var width: CGFloat
+    var height: CGFloat
+    var svg: String
+    var style: BoardStyle = BoardStyle()
+}
+
 /// The discriminated primitive union, encoded exactly as the server sends it.
 enum BoardElement: Codable, Equatable, Sendable {
     case text(TextElement)
@@ -328,6 +344,7 @@ enum BoardElement: Codable, Equatable, Sendable {
     case freehand(FreehandElement)
     case arc(ArcElement)
     case angleMarker(AngleMarkerElement)
+    case svg(SVGElement)
 
     var id: String {
         switch self {
@@ -342,6 +359,7 @@ enum BoardElement: Codable, Equatable, Sendable {
         case .freehand(let value): value.id
         case .arc(let value): value.id
         case .angleMarker(let value): value.id
+        case .svg(let value): value.id
         }
     }
 
@@ -358,6 +376,7 @@ enum BoardElement: Codable, Equatable, Sendable {
         case .freehand: .freehand
         case .arc: .arc
         case .angleMarker: .angleMarker
+        case .svg: .svg
         }
     }
 
@@ -374,6 +393,7 @@ enum BoardElement: Codable, Equatable, Sendable {
         case .freehand(let value): value.style
         case .arc(let value): value.style
         case .angleMarker(let value): value.style
+        case .svg(let value): value.style
         }
     }
 
@@ -490,6 +510,17 @@ enum BoardElement: Codable, Equatable, Sendable {
                 rightAngle: wire.rightAngle ?? false,
                 style: wire.style
             ))
+        case .svg:
+            self = .svg(SVGElement(
+                id: wire.id,
+                kind: .svg,
+                x: wire.x ?? 0,
+                y: wire.y ?? 0,
+                width: wire.width ?? 0,
+                height: wire.height ?? 0,
+                svg: wire.svg ?? "",
+                style: wire.style
+            ))
         }
     }
 
@@ -536,9 +567,10 @@ private struct WireElement: Codable {
     var ray2X: CGFloat?
     var ray2Y: CGFloat?
     var rightAngle: Bool?
+    var svg: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, kind, x, y, text, width, height, points
+        case id, kind, x, y, text, width, height, points, svg
         case x1, y1, x2, y2, cx, cy, radius
         case role, stroke, fill, opacity, dash, rotation
         case fontSize = "font_size"
@@ -589,6 +621,9 @@ private struct WireElement: Codable {
             ray1X = value.ray1X; ray1Y = value.ray1Y
             ray2X = value.ray2X; ray2Y = value.ray2Y
             radius = value.radius; rightAngle = value.rightAngle
+        case .svg(let value):
+            x = value.x; y = value.y; width = value.width; height = value.height
+            svg = value.svg
         }
     }
 
@@ -630,6 +665,7 @@ private struct WireElement: Codable {
         ray2X = try container.decodeIfPresent(CGFloat.self, forKey: .ray2X)
         ray2Y = try container.decodeIfPresent(CGFloat.self, forKey: .ray2Y)
         rightAngle = try container.decodeIfPresent(Bool.self, forKey: .rightAngle)
+        svg = try container.decodeIfPresent(String.self, forKey: .svg)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -668,5 +704,6 @@ private struct WireElement: Codable {
         if let ray2X { try container.encode(ray2X, forKey: .ray2X) }
         if let ray2Y { try container.encode(ray2Y, forKey: .ray2Y) }
         if let rightAngle { try container.encode(rightAngle, forKey: .rightAngle) }
+        if let svg { try container.encode(svg, forKey: .svg) }
     }
 }

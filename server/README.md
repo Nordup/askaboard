@@ -105,7 +105,7 @@ which of these it is:
 | `reasoning_delta` | An incremental chunk of the model's reasoning summary. |
 | `text_delta` | An incremental chunk of the reply text. |
 | `workspace` | A full replacement of the session's plan and exercise, arriving together — see below. |
-| `board_update` | A validated batch of tutor-authored scene changes the iPad applies immediately: upserts by stable id, deletes, or a replace-all flag. |
+| `board_update` | A validated batch of tutor-authored scene changes the iPad applies immediately: upserts by stable id (including raw SVG documents), deletes, or a replace-all flag. |
 | `done` | The turn finished; carries `turn_id` and token counts. |
 | `error` | The turn failed; carries a message and whether the client should retry. |
 
@@ -141,19 +141,25 @@ the server. What the tutor draws is a separate structured scene exposed through
 the strict `update_board` function tool in
 [`app/tutor/tools.py`](app/tutor/tools.py). The tool takes a discriminated
 union of primitives — `text`, `line`, `arrow`, `rectangle`, `ellipse`,
-`circle`, `polygon`, `polyline`, `freehand`, `arc`, and `angle_marker` — each
-with a stable id, exact board coordinates, and shared style fields (role,
-stroke/fill colors, width, opacity, dash, rotation where meaningful).
+`circle`, `polygon`, `polyline`, `freehand`, `arc`, `angle_marker`, and a raw
+`svg` element — each with a stable id, exact board coordinates, and shared
+style fields (role, stroke/fill colors, width, opacity, dash, rotation where
+meaningful).
 
 A call is parsed and validated in
 [`app/tutor/board_scene.py`](app/tutor/board_scene.py): coordinates, element
 counts, point counts, text length, font sizes, stroke widths, and opacity are
-all clamped server-side, malformed JSON is dropped, and the translator emits a
-typed `board_update` event carrying only the sanitized payload. The tool loop
-answers `update_board` with its own `applied` ack (or `rejected` for malformed
-arguments), never with the `set_workspace` ack, and the model continues to
-prose on the same turn. `replace_all` clears the scene before applying the
-batch; upsert mode is idempotent by id.
+all clamped server-side for ordinary primitives, malformed JSON is dropped,
+and the translator emits a typed `board_update` event carrying only the
+validated payload. The `svg` element is deliberately opaque transport: the
+server checks only that the complete raw SVG document is non-empty, at most
+40,000 characters, and placed in a finite clamped frame. It never parses,
+whitelists, rewrites, or sanitizes the exact string; all interpretation happens
+locally on the iPad. The tool loop answers `update_board` with its own
+`applied` ack (or `rejected` for malformed arguments), never with the
+`set_workspace` ack, and the model continues to prose on the same turn.
+`replace_all` clears the scene before applying the batch; upsert mode is
+idempotent by id.
 
 The device also sends the current scene back on every turn in the
 `board_scene` request field, and the context assembler
@@ -165,7 +171,12 @@ without covering it, and to avoid gratuitous drawing. The scene context also
 contains the current viewport and the logical bounds represented by the board
 overview; because `view_board` regions are percentages of that same overview,
 the model can convert what it inspected back into exact coordinates for a
-nearby label or correction.
+nearby label or correction. For a fresh standalone exercise, it additionally
+supplies `recommended_tutor_rect`, an inset upper placement budget, and
+`reserved_learner_work_rect`, a lower band the tutor must leave clear. Both use
+logical `[left, top, right, bottom]` coordinates and are derived from the live
+viewport, so a compact diagram and immediately usable scratch space stay on
+screen together across iPad sizes and zoom levels.
 
 ## Read-back endpoints
 
@@ -265,9 +276,10 @@ suspect for a prepared-statement-cache/PgBouncer interaction that produced
 one spurious 404 in an earlier run.
 
 **Semantic board objects are structured, not OCR.** The server stores and
-streams the tutor's scene as structured geometry and text; the learner's
-handwriting remains a raster understood by the model through images. There is
-no OCR claim anywhere in the pipeline.
+streams the tutor's scene as structured geometry and text, plus opaque raw SVG
+documents that the iPad interprets locally; the learner's handwriting remains
+a raster understood by the model through images. There is no OCR claim
+anywhere in the pipeline.
 
 ## Testing
 

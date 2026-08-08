@@ -28,6 +28,10 @@ MAX_ID_LENGTH = 128
 #: Context already truncates this value, but the request itself should refuse
 #: an over-limit scene rather than paying for it twice.
 MAX_SCENE_CHARS = 60_000
+#: Maximum length of one raw SVG document. Kept well under the scene cap so a
+#: complex illustration plus ids and surrounding elements still fits in the
+#: 60,000-character scene string the device sends back on every turn.
+MAX_SVG_CHARS = 40_000
 
 #: The logical board is 50,000 points on a side centred on the drawing-space
 #: origin (25,000, 25,000), so the valid logical range is -25,000...25,000 on
@@ -293,10 +297,40 @@ class AngleMarkerElement(_Identified):
         return _clamp(value, 4.0, MAX_ARC_RADIUS)
 
 
+class SVGElement(_Identified):
+    """Opaque raw SVG transport for complex multi-part illustrations.
+
+    The server deliberately does not parse, whitelist, rewrite, or sanitize the
+    document; the device interprets it locally. The only checks are practical
+    bounds: a finite clamped frame, a non-empty document, and a generous length
+    cap chosen to fit the scene limit.
+    """
+
+    kind: Literal["svg"] = "svg"
+    x: float
+    y: float
+    width: float
+    height: float
+    svg: str
+
+    @field_validator("svg")
+    @classmethod
+    def _svg(cls, value: str) -> str:
+        if not isinstance(value, str):
+            raise ValueError("svg must be a string")
+        if not value:
+            raise ValueError("svg must not be empty")
+        if len(value) > MAX_SVG_CHARS:
+            raise ValueError(
+                f"svg must be at most {MAX_SVG_CHARS} characters; got {len(value)}"
+            )
+        return value
+
+
 BoardElement = Annotated[
     TextElement | LineElement | ArrowElement | RectangleElement | EllipseElement
     | CircleElement | PolygonElement | PolylineElement | FreehandElement
-    | ArcElement | AngleMarkerElement,
+    | ArcElement | AngleMarkerElement | SVGElement,
     Field(discriminator="kind"),
 ]
 

@@ -156,6 +156,13 @@ enum BoardSceneRenderer {
             withRotation(style.rotation, around: bounds, in: context) {
                 draw(angleMarker: value, in: context)
             }
+        case .svg(let value):
+            let rect = CGRect(x: value.x, y: value.y, width: value.width, height: value.height)
+            withRotation(style.rotation, around: rect, in: context) {
+                if let artifact = BoardSVGCache.shared.artifact(for: value) {
+                    artifact.draw(in: rect, into: context)
+                }
+            }
         }
         context.restoreGState()
     }
@@ -460,6 +467,13 @@ enum BoardSceneRenderer {
                     height: radius * 2
                 )
             }
+        case .svg(let value):
+            rect = CGRect(
+                x: value.x + originX,
+                y: value.y + originY,
+                width: value.width,
+                height: value.height
+            ).insetBy(dx: -inset, dy: -inset)
         }
         return rect
     }
@@ -532,6 +546,20 @@ final class BoardSceneOverlayView: UIView {
         isAccessibilityElement = false
         accessibilityElementsHidden = true
         accessibilityIdentifier = "tutor-scene-overlay"
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(svgCacheDidRender),
+            name: .boardSVGCacheDidRender,
+            object: nil
+        )
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    @objc private func svgCacheDidRender() {
+        setNeedsDisplay()
     }
 
     @available(*, unavailable)

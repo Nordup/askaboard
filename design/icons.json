@@ -6,7 +6,8 @@
       "04 — Icons (1IF-0) — the original sixteen",
       "13 — Session plan · full screen (3TM-0) and 14 — Components · Tutor states (3WL-0) — the four added later",
       "11 — First run · no API key (3NQ-0) — control/settings as a panel control",
-      "10 — Settings (3KT-0) — ui/chevron-down, drawn inside row/setting rather than as a specimen"
+      "10 — Settings (3KT-0) — ui/chevron-down, drawn inside row/setting rather than as a specimen",
+      "15a — Sessions · header menu (530-0) — ui/plus, drawn inside row/new-session rather than as a specimen"
     ],
     "readVia": "get_jsx, format inline-styles — never a screenshot",
     "prose": [
@@ -17,7 +18,7 @@
     "generates": "MathTutor/DesignSystem/Generated/IconPaths.swift"
   },
   "coverage": {
-    "productGlyphs": 21,
+    "productGlyphs": 22,
     "excluded": [
       {
         "name": "os/wifi",
@@ -952,6 +953,34 @@
           "stroke": "none",
           "strokeWidth": null,
           "lineCap": null,
+          "lineJoin": null,
+          "dashArray": null
+        }
+      ]
+    },
+    {
+      "name": "ui/plus",
+      "swiftCase": "uiPlus",
+      "viewBox": {
+        "width": 20,
+        "height": 20
+      },
+      "productRenderSizes": [
+        20
+      ],
+      "renderSize": 20,
+      "effectiveStrokeWidth": 2.0,
+      "colorToken": "--color-brand",
+      "dashTexture": null,
+      "notes": "New-session mark in the session switcher, and the twenty-second glyph. Read off board 15a, where it is drawn inside row/new-session rather than as a specimen on board 04 — the same route ui/chevron-down took from board 10. Authored at its render size like ui/chevron-down, so scale is exactly 1.0 and design stroke and effective stroke are both 2. The only glyph in the set whose colour token is --color-brand rather than --color-icon: it is not chrome, it is the one action on the menu, and board 15a draws mark and label in the accent together. One path with two M subpaths, symmetric about (10,10). Round cap, and no linejoin — the strokes cross but never join, exactly as ui/cross.",
+      "elements": [
+        {
+          "type": "path",
+          "d": "M10 4.5 10 15.5M4.5 10 15.5 10",
+          "fill": "none",
+          "stroke": "var(--color-brand)",
+          "strokeWidth": 2,
+          "lineCap": "round",
           "lineJoin": null,
           "dashArray": null
         }

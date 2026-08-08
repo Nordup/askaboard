@@ -318,3 +318,144 @@ async def test_usage_is_summed_across_a_turns_rounds():
 
     assert result.usage["input_tokens"] == 60 + 90
     assert result.usage["output_tokens"] == 24 + 12
+
+
+SVG_UPDATE_ARGUMENTS = {
+    "mode": "upsert",
+    "delete_ids": [],
+    "elements": [{
+        "id": "circuit",
+        "kind": "svg",
+        "x": -200,
+        "y": -160,
+        "width": 400,
+        "height": 320,
+        "svg": (
+            '<svg viewBox="0 0 400 320">'
+            '<defs><linearGradient id="g">'
+            '<stop offset="0" stop-color="#0155FB"/></linearGradient></defs>'
+            '<path d="M20 160 L180 60" fill="url(#g)"/></svg>'
+        ),
+        "role": "content",
+        "stroke": "#0A0A0A",
+        "fill": "transparent",
+        "stroke_width": 4,
+        "opacity": 1,
+        "dash": [],
+        "rotation": 0,
+    }],
+}
+
+
+SVG_BOARD_UPDATE_TURN = (
+    {"type": "response.created", "sequence_number": 0, "response": {"id": "resp_svg"}},
+    {
+        "type": "response.output_item.added",
+        "sequence_number": 1,
+        "output_index": 0,
+        "item": {
+            "type": "function_call",
+            "id": "fc_svg",
+            "call_id": "call_svg",
+            "name": "update_board",
+            "arguments": "",
+        },
+    },
+    {
+        "type": "response.function_call_arguments.done",
+        "sequence_number": 2,
+        "output_index": 0,
+        "item_id": "fc_svg",
+        "name": "update_board",
+        "arguments": json.dumps(SVG_UPDATE_ARGUMENTS),
+    },
+    {
+        "type": "response.completed",
+        "sequence_number": 3,
+        "response": {
+            "id": "resp_svg",
+            "usage": {"input_tokens": 60, "output_tokens": 24},
+            "output": [
+                {"type": "reasoning", "id": "rs_svg", "summary": []},
+                {
+                    "type": "function_call",
+                    "id": "fc_svg",
+                    "call_id": "call_svg",
+                    "name": "update_board",
+                    "arguments": json.dumps(SVG_UPDATE_ARGUMENTS),
+                    "status": "completed",
+                },
+            ],
+        },
+    },
+)
+
+
+SVG_BOARD_UPDATE_FOLLOW_UP = (
+    {"type": "response.created", "sequence_number": 0, "response": {"id": "resp_svg_2"}},
+    {
+        "type": "response.output_text.delta",
+        "sequence_number": 1,
+        "delta": "Here is the circuit.",
+    },
+    {
+        "type": "response.output_text.done",
+        "sequence_number": 2,
+        "text": "Here is the circuit.",
+    },
+    {
+        "type": "response.completed",
+        "sequence_number": 3,
+        "response": {
+            "id": "resp_svg_2",
+            "usage": {"input_tokens": 90, "output_tokens": 12},
+            "output": [
+                {
+                    "type": "message",
+                    "id": "msg_svg",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Here is the circuit."}],
+                }
+            ],
+        },
+    },
+)
+
+
+def test_update_board_accepts_raw_svg_and_acknowledges_it():
+    answer = _answer(
+        {"call_id": "c", "name": "update_board", "arguments": json.dumps(SVG_UPDATE_ARGUMENTS)},
+        has_board=True,
+    )
+
+    assert answer.ask is None
+    assert answer.items[0]["output"] == UPDATE_BOARD_ACK
+
+
+@respx.mock
+async def test_an_svg_update_board_turn_streams_the_raw_document_unchanged():
+    respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*SVG_BOARD_UPDATE_TURN)),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*SVG_BOARD_UPDATE_FOLLOW_UP)),
+        ]
+    )
+    client = AsyncOpenAI(api_key="sk-test")
+    bundle = ContextBundle(system="s", input=[{"role": "user", "content": "draw a circuit"}])
+
+    events = []
+    result = None
+    async for event, running in run_turn(
+        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle
+    ):
+        events.append(event)
+        result = running
+
+    update_events = [event for event in events if isinstance(event, BoardUpdateEvent)]
+    assert len(update_events) == 1
+    svg = update_events[0].payload.upserts[0]
+    assert svg.kind == "svg"
+    assert svg.svg == SVG_UPDATE_ARGUMENTS["elements"][0]["svg"]
+    assert result.text == "Here is the circuit."

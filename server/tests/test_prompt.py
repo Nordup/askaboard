@@ -17,6 +17,25 @@ def test_system_prompt_requires_a_look_before_correcting_but_allows_standalone_d
     assert "Always inspect the board with `view_board` before correcting" not in SYSTEM_PROMPT
 
 
+def test_system_prompt_describes_the_compact_exercise_layout_contract():
+    assert "recommended_tutor_rect" in SYSTEM_PROMPT
+    assert "reserved_learner_work_rect" in SYSTEM_PROMPT
+    assert "placement budget" in SYSTEM_PROMPT
+    assert "35–50% of visible width" in SYSTEM_PROMPT
+    assert "leave `reserved_learner_work_rect` completely clear" in SYSTEM_PROMPT
+
+
+def test_system_prompt_describes_paper_style_raw_svg_behavior():
+    assert "For simple editable diagrams use ordinary primitives" in SYSTEM_PROMPT
+    assert "complex multi-part illustrations use the raw SVG element" in SYSTEM_PROMPT
+    assert "complete SVG document" in SYSTEM_PROMPT
+    assert "paths, gradients, masks, filters" in SYSTEM_PROMPT
+    assert "Keep each SVG document compact" in SYSTEM_PROMPT
+    assert "revise it by replacing that same id" in SYSTEM_PROMPT
+    assert "exact string and interpreted locally" in SYSTEM_PROMPT
+    assert "sanitize" not in SYSTEM_PROMPT
+
+
 def test_system_prompt_keeps_the_checking_work_rule():
     assert "Checking work is not the same as being asked for the answer." in SYSTEM_PROMPT
 

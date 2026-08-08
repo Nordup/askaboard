@@ -21,6 +21,19 @@ WORKSPACE_ARGS = {
     },
 }
 
+RAW_SVG_DOCUMENT = (
+    '<svg viewBox="0 0 800 500" xmlns="http://www.w3.org/2000/svg">'
+    '<defs><linearGradient id="g"><stop offset="0" stop-color="#0155FB"/></linearGradient>'
+    '<filter id="blur"><feGaussianBlur stdDeviation="2"/></filter>'
+    '<mask id="m"><rect x="0" y="0" width="800" height="500" fill="white"/></mask></defs>'
+    '<path d="M10 10 C 40 5 60 90 90 10 A 5 5 0 0 1 100 20" '
+    'fill="url(#g)" filter="url(#blur)" mask="url(#m)"/>'
+    '<foreignObject x="20" y="20" width="100" height="40">'
+    '<div xmlns="http://www.w3.org/1999/xhtml">label</div></foreignObject>'
+    "<animate attributeName=\"opacity\" from=\"0\" to=\"1\" dur=\"2s\"/>"
+    "</svg>"
+)
+
 
 def test_created_emits_thinking_status():
     events = EventTranslator().translate({"type": "response.created"})
@@ -104,6 +117,40 @@ def test_update_board_tool_call_becomes_a_board_update_event():
     assert events[0].payload.deletes == ["old"]
     assert events[0].payload.upserts[0].id == "a"
     assert events[0].payload.upserts[0].kind == "line"
+
+
+def test_update_board_svg_roundtrips_unchanged_through_the_event():
+    translator = EventTranslator()
+    translator.translate({
+        "type": "response.output_item.added",
+        "output_index": 0,
+        "item": {"type": "function_call", "name": "update_board", "call_id": "call_svg"},
+    })
+    events = translator.translate({
+        "type": "response.function_call_arguments.done",
+        "output_index": 0,
+        "arguments": json.dumps({
+            "mode": "upsert",
+            "delete_ids": [],
+            "elements": [{
+                "id": "diagram",
+                "kind": "svg",
+                "x": -250, "y": -300, "width": 500, "height": 320,
+                "svg": RAW_SVG_DOCUMENT,
+                "role": "content", "stroke": "#0A0A0A", "fill": "transparent",
+                "stroke_width": 4, "opacity": 1, "dash": [], "rotation": 0,
+            }],
+        }),
+    })
+
+    assert len(events) == 1
+    assert isinstance(events[0], BoardUpdateEvent)
+    svg = events[0].payload.upserts[0]
+    assert svg.kind == "svg"
+    assert svg.svg == RAW_SVG_DOCUMENT
+
+    encoded = json.loads(events[0].model_dump_json())
+    assert encoded["payload"]["upserts"][0]["svg"] == RAW_SVG_DOCUMENT
 
 
 def test_malformed_update_board_arguments_are_dropped_not_raised():

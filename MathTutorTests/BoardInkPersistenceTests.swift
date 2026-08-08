@@ -15,14 +15,24 @@ import XCTest
 @MainActor
 final class BoardInkPersistenceTests: XCTestCase {
     private var directory: URL!
-    private var fileURL: URL!
 
     override func setUpWithError() throws {
         try super.setUpWithError()
         directory = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("board-ink-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        fileURL = directory.appendingPathComponent("session.json")
+    }
+
+    /// Whether the store has written anything for a session yet.
+    ///
+    /// It used to be `fileExists` on a single `session.json`. The store keeps a
+    /// file per session now, so the question "did writing a stroke touch the
+    /// disk" is asked of the directory those land in — which is the same
+    /// question, and the only one these tests were ever really asking.
+    private var sessionFilesExist: Bool {
+        let sessions = directory.appendingPathComponent("Sessions")
+        let contents = (try? FileManager.default.contentsOfDirectory(atPath: sessions.path)) ?? []
+        return !contents.isEmpty
     }
 
     override func tearDownWithError() throws {
@@ -38,7 +48,7 @@ final class BoardInkPersistenceTests: XCTestCase {
         store.updateDrawing(drawing(strokes: 3))
 
         XCTAssertFalse(
-            FileManager.default.fileExists(atPath: fileURL.path),
+            sessionFilesExist,
             "Writing a stroke must not write the session file: that is the per-stroke disk hit the coalescing exists to remove"
         )
     }
@@ -105,7 +115,7 @@ final class BoardInkPersistenceTests: XCTestCase {
         store.updateDrawing(drawing(strokes: 3))
 
         XCTAssertFalse(
-            FileManager.default.fileExists(atPath: fileURL.path),
+            sessionFilesExist,
             "A pause between strokes is not the end of a line: the rest timer restarts"
         )
 
@@ -167,7 +177,7 @@ final class BoardInkPersistenceTests: XCTestCase {
         store.saveBoardInkNow()
 
         XCTAssertFalse(
-            FileManager.default.fileExists(atPath: fileURL.path),
+            sessionFilesExist,
             "A flush with no pending ink is a no-op, so backgrounding an untouched board costs nothing"
         )
     }
@@ -175,11 +185,11 @@ final class BoardInkPersistenceTests: XCTestCase {
     // MARK: - Helpers
 
     private func makeStore() -> TutorStore {
-        TutorStore(service: DemoTutorService(), persistence: SessionPersistence(fileURL: fileURL))
+        TutorStore(service: DemoTutorService(), persistence: SessionPersistence(directoryURL: directory))
     }
 
     private func loadSaved() -> LearningSession? {
-        SessionPersistence(fileURL: fileURL).load()
+        SessionPersistence(directoryURL: directory).loadCurrent()
     }
 
     private func drawing(strokes count: Int) -> PKDrawing {

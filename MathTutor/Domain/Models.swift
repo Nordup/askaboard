@@ -243,7 +243,7 @@ struct LearningSession: Codable, Sendable, Equatable {
             plan: nil,
             exercise: nil,
             drawingData: nil,
-            selectedModel: .sol,
+            selectedModel: .luna,
             reasoningEffort: .defaultValue,
             startedAt: .now,
             lastSavedAt: .now

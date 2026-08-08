@@ -15,6 +15,7 @@ import pytest
 from app.tutor import board
 from app.tutor.board_scene import (
     MAX_SCENE_CHARS,
+    MAX_SVG_CHARS,
     parse_board_update,
     update_payload,
 )
@@ -35,6 +36,48 @@ from app.tutor.rendezvous import (
 )
 
 TURN = __import__("uuid").UUID("11111111-2222-3333-4444-555555555555")
+
+RAW_SVG_DOCUMENT = (
+    '<svg viewBox="0 0 800 500" xmlns="http://www.w3.org/2000/svg">'
+    '<defs><linearGradient id="g"><stop offset="0" stop-color="#0155FB"/></linearGradient>'
+    '<filter id="blur"><feGaussianBlur stdDeviation="2"/></filter>'
+    '<mask id="m"><rect x="0" y="0" width="800" height="500" fill="white"/></mask></defs>'
+    '<path d="M10 10 C 40 5 60 90 90 10 A 5 5 0 0 1 100 20" '
+    'fill="url(#g)" filter="url(#blur)" mask="url(#m)"/>'
+    '<foreignObject x="20" y="20" width="100" height="40">'
+    '<div xmlns="http://www.w3.org/1999/xhtml">label</div></foreignObject>'
+    '<animate attributeName="opacity" from="0" to="1" dur="2s"/>'
+    "</svg>"
+)
+
+
+def _svg_element(**overrides):
+    element = {
+        "id": "diagram",
+        "kind": "svg",
+        "x": -250,
+        "y": -300,
+        "width": 500,
+        "height": 320,
+        "svg": RAW_SVG_DOCUMENT,
+        "role": "content",
+        "stroke": "#0A0A0A",
+        "fill": "transparent",
+        "stroke_width": 4,
+        "opacity": 1,
+        "dash": [],
+        "rotation": 0,
+    }
+    element.update(overrides)
+    return element
+
+
+def _parse_with_svg(**overrides):
+    return parse_board_update(json.dumps({
+        "mode": "upsert",
+        "delete_ids": [],
+        "elements": [_svg_element(**overrides)],
+    }))
 
 
 # MARK: - Aiming
@@ -316,3 +359,64 @@ def test_extra_keys_are_rejected_by_the_scene_models():
     }))
     assert update is None
     assert "unexpected" in (error or "")
+
+
+# MARK: - Raw SVG transport
+
+
+def test_raw_svg_roundtrips_exactly_through_the_scene_payload():
+    update, error = _parse_with_svg()
+
+    assert update is not None, error
+    payload = update_payload(update)
+    svg = payload.upserts[0]
+    assert svg.kind == "svg"
+    assert svg.id == "diagram"
+    assert (svg.x, svg.y, svg.width, svg.height) == (-250.0, -300.0, 500.0, 320.0)
+    assert svg.svg == RAW_SVG_DOCUMENT
+
+
+def test_raw_svg_is_unchanged_including_full_markup_features():
+    update, error = _parse_with_svg()
+
+    assert update is not None, error
+    svg = update_payload(update).upserts[0]
+    assert "<linearGradient" in svg.svg
+    assert "<filter" in svg.svg
+    assert "<mask" in svg.svg
+    assert "<foreignObject" in svg.svg
+    assert "<animate" in svg.svg
+    assert 'url(#blur)' in svg.svg
+
+
+def test_raw_svg_must_be_nonempty():
+    update, error = _parse_with_svg(svg="")
+
+    assert update is None
+    assert "empty" in (error or "")
+
+
+def test_raw_svg_over_the_document_limit_is_rejected():
+    update, error = _parse_with_svg(svg="x" * (MAX_SVG_CHARS + 1))
+
+    assert update is None
+    assert str(MAX_SVG_CHARS) in (error or "")
+
+
+def test_svg_frame_geometry_is_clamped_to_the_logical_board():
+    update, error = _parse_with_svg(
+        x=-100_000, y=100_000, width=100_000, height=-50_000,
+    )
+
+    assert update is not None, error
+    svg = update_payload(update).upserts[0]
+    assert (svg.x, svg.y, svg.width, svg.height) == (
+        -25_000.0, 25_000.0, 50_000.0, 0.0,
+    )
+
+
+def test_non_finite_svg_frame_geometry_is_rejected():
+    update, error = _parse_with_svg(x=float("nan"))
+
+    assert update is None
+    assert error is not None

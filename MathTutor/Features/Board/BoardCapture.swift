@@ -249,6 +249,13 @@ final class CanvasCapture: ObservableObject {
         ]
         if let visible {
             root["visible_logical_rect"] = logicalBox(visible)
+            // Stable fractions of the visible viewport so the tutor can lay a
+            // new standalone exercise out without guessing pixel sizes: the
+            // upper band is the placement budget, the lower band stays clear
+            // for the learner's own working.
+            let regions = Self.layoutRegions(visible: visible)
+            root["recommended_tutor_rect"] = logicalBox(regions.recommendedTutor)
+            root["reserved_learner_work_rect"] = logicalBox(regions.reservedLearnerWork)
         }
         if let overview = contentExtent() {
             // `view_board` addresses percentages of this exact rectangle. By
@@ -314,6 +321,36 @@ final class CanvasCapture: ObservableObject {
         )
     }
 
+    /// The two spatial bands a fresh standalone exercise should respect:
+    /// `recommendedTutor` is where the tutor draws its content, and
+    /// `reservedLearnerWork` is the band the learner will write in, which the
+    /// tutor must leave clear. Both are fractions of the visible drawing
+    /// rect so the guidance holds at any pan, zoom, or orientation.
+    ///
+    /// Concrete fractions: horizontal inset 6%; the tutor band spans 6%–50%
+    /// of the visible height, the learner band 58%–94%, leaving an 8% gutter
+    /// between them.
+    static func layoutRegions(visible: CGRect) -> (
+        recommendedTutor: CGRect,
+        reservedLearnerWork: CGRect
+    ) {
+        let insetX = visible.width * Self.tutorLayoutHorizontalInset
+        return (
+            CGRect(
+                x: visible.minX + insetX,
+                y: visible.minY + visible.height * Self.tutorLayoutTutorTop,
+                width: visible.width * (1 - 2 * Self.tutorLayoutHorizontalInset),
+                height: visible.height * (Self.tutorLayoutTutorBottom - Self.tutorLayoutTutorTop)
+            ),
+            CGRect(
+                x: visible.minX + insetX,
+                y: visible.minY + visible.height * Self.tutorLayoutLearnerTop,
+                width: visible.width * (1 - 2 * Self.tutorLayoutHorizontalInset),
+                height: visible.height * (Self.tutorLayoutLearnerBottom - Self.tutorLayoutLearnerTop)
+            )
+        )
+    }
+
     private func logicalBox(_ drawingRect: CGRect) -> [Double] {
         let origin = PencilCanvasConfiguration.boardOrigin
         return [
@@ -371,6 +408,17 @@ final class CanvasCapture: ObservableObject {
     /// enough that a worked solution stays one area, far enough that a fresh
     /// start elsewhere on the board reads as a different one.
     private static let clusterGap: CGFloat = 600
+
+    /// Horizontal inset of both layout bands, as a fraction of visible width.
+    private static let tutorLayoutHorizontalInset: CGFloat = 0.06
+    /// Top of the recommended tutor band, as a fraction of visible height.
+    private static let tutorLayoutTutorTop: CGFloat = 0.06
+    /// Bottom of the recommended tutor band, as a fraction of visible height.
+    private static let tutorLayoutTutorBottom: CGFloat = 0.50
+    /// Top of the reserved learner band, as a fraction of visible height.
+    private static let tutorLayoutLearnerTop: CGFloat = 0.58
+    /// Bottom of the reserved learner band, as a fraction of visible height.
+    private static let tutorLayoutLearnerBottom: CGFloat = 0.94
 
     /// The long side of the overview, in pixels. Aiming, not reading.
     private static let overviewMaximumDimension: CGFloat = 900

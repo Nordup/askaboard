@@ -105,6 +105,7 @@ enum E2ESeedFixture {
                 ],
                 style: hintStyle
             )),
+            .svg(complexDiagramElement()),
             .polygon(PolygonElement(
                 id: "triangle",
                 points: [
@@ -199,6 +200,62 @@ enum E2ESeedFixture {
                 fontSize: 15, alignment: .center, width: 260, style: correctionStyle
             )),
         ])
+    }
+
+    /// A genuinely complex raw SVG: gradient fill, clip path, blur filter,
+    /// marker arrowhead, text, groups/transforms, multiple paths, and a
+    /// `foreignObject` label. Kept in the upper tutor band so the learner's
+    /// workspace below stays clear.
+    private static func complexDiagramElement() -> SVGElement {
+        SVGElement(
+            id: "complex-diagram",
+            x: 130,
+            y: -270,
+            width: 260,
+            height: 145,
+            svg: #"""
+            <svg viewBox="0 0 260 160" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0" stop-color="#E3EEFF"/>
+                  <stop offset="1" stop-color="#FFF3C7"/>
+                </linearGradient>
+                <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+                  <feGaussianBlur stdDeviation="2"/>
+                </filter>
+                <clipPath id="clip">
+                  <rect x="10" y="8" width="150" height="92" rx="12"/>
+                </clipPath>
+                <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+                  <path d="M0,0 L9,3 L0,6 z" fill="#E33E38"/>
+                </marker>
+              </defs>
+              <rect x="5" y="5" width="250" height="150" rx="14" fill="url(#bg)" stroke="#0A5A48" stroke-width="2"/>
+              <g clip-path="url(#clip)">
+                <path d="M20 82 C60 12, 110 132, 150 42" fill="none" stroke="#0155FB" stroke-width="4"/>
+                <path d="M60 104 L120 32 L170 32" fill="none" stroke="#40A365" stroke-width="3" stroke-dasharray="6 4" transform="translate(8 0) rotate(-6 100 60)"/>
+              </g>
+              <circle cx="150" cy="42" r="14" fill="#6051DC" filter="url(#soft)"/>
+              <text x="20" y="28" font-family="sans-serif" font-size="16" fill="#0A0A0A">Force diagram</text>
+              <line x1="20" y1="122" x2="232" y2="122" stroke="#E33E38" stroke-width="3" marker-end="url(#arrow)"/>
+              <g transform="rotate(8 190 122)">
+                <path d="M178 122 L198 118 L194 126 z" fill="#E33E38"/>
+              </g>
+              <foreignObject x="118" y="10" width="124" height="24" font-size="12">
+                <div xmlns="http://www.w3.org/1999/xhtml" style="font-family:sans-serif;font-size:12px;color:#0A0A0A">F = 60 N</div>
+              </foreignObject>
+            </svg>
+            """#,
+            style: BoardStyle(
+                role: .content,
+                stroke: "#0A0A0A",
+                fill: "transparent",
+                strokeWidth: 0,
+                opacity: 1,
+                dash: [],
+                rotation: 0
+            )
+        )
     }
 
     static func seedScene(_ session: inout LearningSession) {

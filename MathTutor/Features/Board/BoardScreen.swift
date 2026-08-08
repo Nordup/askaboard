@@ -218,6 +218,13 @@ struct BoardScreen: View {
                 onRedo: capture.redo,
                 scene: store.session.boardScene
             )
+            // Switching sessions swaps the board under the pen, and
+            // `initialDrawingData` is read in `makeUIView` and nowhere else —
+            // by design, see `TutorStore.currentDrawingData`. Without a remount
+            // the new session would open on the previous session's ink, and the
+            // first stroke would save it there. Keyed on the session rather
+            // than the ink so ordinary drawing never remounts the canvas.
+            .id(store.session.id)
             // Mounted only while the marquee is armed. A transparent view that
             // takes the whole board's touches is not something to leave lying on
             // the canvas the rest of the time.

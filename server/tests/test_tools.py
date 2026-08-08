@@ -1,3 +1,4 @@
+from app.tutor.board_scene import MAX_SVG_CHARS
 from app.tutor.tools import (
     SET_WORKSPACE_TOOL,
     TOOL_DEFINITIONS,
@@ -37,6 +38,13 @@ def test_update_board_is_strict_and_closed():
     assert set(params["required"]) == {"mode", "delete_ids", "elements"}
 
 
+def test_update_board_description_carries_the_compact_layout_contract():
+    description = UPDATE_BOARD_TOOL["description"]
+    assert "recommended_tutor_rect" in description
+    assert "reserved_learner_work_rect" in description
+    assert "clear for the learner's working" in description
+
+
 def test_update_board_primitives_are_a_discriminated_union():
     arms = UPDATE_BOARD_TOOL["parameters"]["properties"]["elements"]["items"]["anyOf"]
     kinds = {}
@@ -51,8 +59,33 @@ def test_update_board_primitives_are_a_discriminated_union():
 
     assert set(kinds) == {
         "text", "line", "arrow", "rectangle", "ellipse", "circle",
-        "polygon", "polyline", "freehand", "arc", "angle_marker",
+        "polygon", "polyline", "freehand", "arc", "angle_marker", "svg",
     }
+
+
+def test_update_board_svg_arm_is_an_opaque_raw_document():
+    arms = UPDATE_BOARD_TOOL["parameters"]["properties"]["elements"]["items"]["anyOf"]
+    svg = next(arm for arm in arms if arm["properties"]["kind"]["const"] == "svg")
+
+    assert {"id", "kind", "x", "y", "width", "height", "svg"}.issubset(
+        set(svg["required"])
+    )
+    assert svg["properties"]["svg"]["minLength"] == 1
+    assert svg["properties"]["svg"]["maxLength"] == MAX_SVG_CHARS
+    description = svg["properties"]["svg"]["description"]
+    assert "complete raw SVG document" in description
+    assert "interpreted locally" in description
+
+
+def test_update_board_description_prefers_raw_svg_for_complex_visuals():
+    description = UPDATE_BOARD_TOOL["description"]
+    assert "raw SVG" in description
+    assert "complex multi-part illustrations" in description
+    assert "passed through unchanged" in description
+    assert "interpreted locally" in description
+    assert "complete raw SVG document" in description
+    assert "recommended_tutor_rect" in description
+    assert "reserved_learner_work_rect" in description
 
 
 def test_update_board_caps_are_expressed_in_the_schema():

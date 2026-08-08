@@ -9,7 +9,9 @@
 //           11 — First run · no API key (3NQ-0) — control/settings as a panel control
 //           10 — Settings (3KT-0) — ui/chevron-down, drawn inside row/setting rather than as a
 //           specimen
-// Glyphs:   21 product glyphs.
+//           15a — Sessions · header menu (530-0) — ui/plus, drawn inside row/new-session rather
+//           than as a specimen
+// Glyphs:   22 product glyphs.
 // Prose:    docs/design-system/04-icons.md
 //           docs/design-system/06-states-and-settings.md
 //
@@ -830,6 +832,38 @@ enum IconPaths {
     )
 
 
+    /// `ui/plus` — renders 20 on a 20×20 viewBox, 2.0pt effective stroke, --color-brand.
+    ///
+    /// New-session mark in the session switcher, and the twenty-second glyph. Read off board
+    /// 15a, where it is drawn inside row/new-session rather than as a specimen on board 04 —
+    /// the same route ui/chevron-down took from board 10. Authored at its render size like
+    /// ui/chevron-down, so scale is exactly 1.0 and design stroke and effective stroke are both
+    /// 2. The only glyph in the set whose colour token is --color-brand rather than
+    /// --color-icon: it is not chrome, it is the one action on the menu, and board 15a draws
+    /// mark and label in the accent together. One path with two M subpaths, symmetric about
+    /// (10,10). Round cap, and no linejoin — the strokes cross but never join, exactly as
+    /// ui/cross.
+    static let uiPlus = IconGlyph(
+        name: "ui/plus",
+        viewBox: CGSize(width: 20, height: 20),
+        renderSize: 20,
+        productRenderSizes: [20],
+        strokeWidth: 2,
+        colorToken: "--color-brand",
+        elements: [
+            IconElement(
+                geometry: .path("M10 4.5 10 15.5M4.5 10 15.5 10"),
+                isFilled: false,
+                isStroked: true,
+                lineCap: .round,
+                lineJoin: .miter,
+                dash: nil,
+                designStrokeWidth: 2
+            ),
+        ]
+    )
+
+
     /// Every glyph, by case.
     ///
     /// A switch and not a dictionary: adding a case to `Icon` without adding its
@@ -857,6 +891,7 @@ enum IconPaths {
         case .chipExercise: Self.chipExercise
         case .chipConfused: Self.chipConfused
         case .boardHinge: Self.boardHinge
+        case .uiPlus: Self.uiPlus
         }
     }
 }

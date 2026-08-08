@@ -212,7 +212,7 @@ final class BoardSceneStoreTests: XCTestCase {
         await store.sendAndWait("draw something")
 
         XCTAssertEqual(store.session.boardScene.elements.map(\.id), ["note"])
-        let saved = try XCTUnwrap(SessionPersistence(fileURL: store.persistence.fileURL).load())
+        let saved = try XCTUnwrap(store.persistence.loadCurrent())
         XCTAssertEqual(saved.boardScene.elements.map(\.id), ["note"])
     }
 
@@ -236,7 +236,7 @@ final class BoardSceneStoreTests: XCTestCase {
 
         XCTAssertEqual(store.session.boardScene.elements.map(\.id), ["c"])
         XCTAssertEqual(store.errorMessage, "stream died")
-        let saved = try XCTUnwrap(SessionPersistence(fileURL: store.persistence.fileURL).load())
+        let saved = try XCTUnwrap(store.persistence.loadCurrent())
         XCTAssertEqual(saved.boardScene.elements.map(\.id), ["c"])
     }
 }

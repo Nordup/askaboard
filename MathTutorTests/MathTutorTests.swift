@@ -706,8 +706,8 @@ final class MathTutorTests: XCTestCase {
         XCTAssertEqual(evaluationTurn.text, "Please evaluate my work on the whole board.")
     }
 
-    func testNewSessionsDefaultToSol() {
-        XCTAssertEqual(LearningSession.empty.selectedModel, .sol)
+    func testNewSessionsDefaultToLuna() {
+        XCTAssertEqual(LearningSession.empty.selectedModel, .luna)
         XCTAssertEqual(LearningSession.empty.reasoningEffort, .high)
     }
 

@@ -1,7 +1,7 @@
 import CoreGraphics
 import SwiftUI
 
-/// The design's twenty product glyphs.
+/// The design's twenty-two product glyphs.
 ///
 /// Raw values are the design's own names, so a case traces straight back to
 /// `design/icons.json`, to `docs/design-system/04-icons.md` and
@@ -33,6 +33,7 @@ enum Icon: String, CaseIterable, Sendable {
     case chipExercise = "chip/exercise"
     case chipConfused = "chip/confused"
     case boardHinge = "board/hinge"
+    case uiPlus = "ui/plus"
 }
 
 extension Icon {

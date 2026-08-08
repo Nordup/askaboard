@@ -83,18 +83,76 @@ struct TutorPanel: View {
 
                 TutorControlsRow(
                     width: contentWidth,
-                    onDock: uiState.collapseTutor,
-                    onFullScreen: uiState.expandTutorToFullScreen,
-                    onSettings: actions.openSettings
+                    // Every one of these takes the learner somewhere the menu
+                    // cannot follow — a dock, a full-screen column, a settings
+                    // window — so each puts it away first.
+                    onDock: { uiState.closeSessionMenu(); uiState.collapseTutor() },
+                    onFullScreen: { uiState.closeSessionMenu(); uiState.expandTutorToFullScreen() },
+                    onSettings: { uiState.closeSessionMenu(); actions.openSettings() },
+                    sessionTitle: store.session.title,
+                    isSessionMenuOpen: uiState.isSessionMenuOpen,
+                    onToggleSessionMenu: uiState.toggleSessionMenu
                 )
                 .padding(.top, TutorPanelMetrics.inset)
+
+                if uiState.isSessionMenuOpen {
+                    sessionMenu(in: size)
+                }
             }
         }
         // `DictationController` is constructed with no store in reach (see its own doc
         // comment on `sessionID`), so this is where the session a recording attaches to is
-        // kept current — on first appearance and on every reset, which mints a fresh
-        // `LearningSession.id`.
+        // kept current — on first appearance, and on every change of session id: a reset,
+        // a new session, or a switch to a stored one.
         .task(id: store.session.id) { dictation.sessionID = store.session.id }
+    }
+
+    /// Board 15a's switcher, hanging off the controls row.
+    ///
+    /// Drawn inside the panel rather than as a popover: the panel clips to its
+    /// own radius, the menu is 301 wide in a 337 surface, and the design draws it
+    /// as part of the panel rather than as system chrome floating over the app.
+    ///
+    /// The transparent layer under it is what makes a tap anywhere else close the
+    /// menu, and it is mounted **only while the menu is open**. A view that
+    /// swallows every touch on the panel is not something to leave lying on it
+    /// the rest of the time — the same reasoning `BoardSelectionMarquee` is
+    /// mounted under.
+    @ViewBuilder
+    private func sessionMenu(in size: CGSize) -> some View {
+        Color.clear
+            .contentShape(.rect)
+            .frame(width: size.width, height: size.height)
+            .onTapGesture { uiState.closeSessionMenu() }
+
+        SessionMenu(
+            sessions: store.sessions,
+            currentID: store.session.id,
+            width: contentWidth,
+            onNew: {
+                uiState.closeSessionMenu()
+                store.startNewSession()
+                adoptSessionUI()
+            },
+            onOpen: { id in
+                uiState.closeSessionMenu()
+                store.openSession(id: id)
+                adoptSessionUI()
+            }
+        )
+        .padding(.top, Self.chromeTop + SessionSwitcherMetrics.menuTopGap)
+    }
+
+    /// The screen's own axes, re-derived for the session that just opened.
+    ///
+    /// Neither of these survives a switch. An attached marquee names a rectangle
+    /// on the board that was just swapped out, so it would send the wrong region
+    /// on the next turn; and the conversation axis is the difference between a
+    /// greeting and a thread, which is a property of the session rather than of
+    /// the learner's last tap.
+    private func adoptSessionUI() {
+        uiState.clearBoardSelection()
+        uiState.showConversation(store.hasGoal ? .active : .start)
     }
 
     /// Where the panel's middle region sits.
@@ -225,10 +283,30 @@ struct TutorControlsRow: View {
     let onDock: () -> Void
     let onFullScreen: () -> Void
     let onSettings: () -> Void
+    /// The switcher's title, and its control. Board 15a puts them in the lane the
+    /// row already had between its two icon groups — the row's
+    /// `justify-content: space-between` was drawn with that lane empty, and a
+    /// third child is what it was always going to hold.
+    let sessionTitle: String
+    let isSessionMenuOpen: Bool
+    let onToggleSessionMenu: () -> Void
 
     var body: some View {
         PanelControls(onDock: onDock, onFullScreen: onFullScreen)
             .frame(width: width, height: TutorPanelMetrics.controlsHeight, alignment: .leading)
+            // Placed from the leading edge, not centred — see
+            // `SessionSwitcherMetrics.titleLaneLeading`. The row's flanks are 78
+            // and 32, so centring would put the title's tap target back over
+            // `btn/dock`.
+            .overlay(alignment: .leading) {
+                SessionTitleButton(
+                    title: sessionTitle,
+                    isOpen: isSessionMenuOpen,
+                    maxWidth: SessionSwitcherMetrics.titleMaxWidth(for: width),
+                    action: onToggleSessionMenu
+                )
+                .padding(.leading, SessionSwitcherMetrics.titleLaneLeading)
+            }
             .overlay(alignment: .trailing) { SettingsButton(action: onSettings) }
     }
 }
@@ -293,7 +371,8 @@ struct TutorThreadView: View {
                 // Board 14. Keyed by message id rather than carried on the
                 // message, because these are evidence for the turn and not
                 // session state — see `TutorStore.boardViews`.
-                boardViews: store.boardViews[message.id] ?? []
+                boardViews: store.boardViews[message.id] ?? [],
+                selectionView: store.selectionViews[message.id]
             )
         }
     }

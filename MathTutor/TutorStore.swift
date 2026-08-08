@@ -6,6 +6,9 @@ import SwiftUI
 @MainActor
 final class TutorStore: ObservableObject {
     @Published private(set) var session: LearningSession
+    /// The switcher's rows, most-recent-first, with the open session always at
+    /// the front — see `refreshSessions()`.
+    @Published private(set) var sessions: [SessionSummary] = []
     @Published private(set) var isLoading = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var isWorkspace = false
@@ -57,6 +60,15 @@ final class TutorStore: ObservableObject {
     /// saved.
     @Published private(set) var boardViews: [UUID: [BoardView]] = [:]
 
+    /// The region the learner marqueed and sent, keyed by the message that
+    /// carried it.
+    ///
+    /// Separate from `boardViews` because it is a different claim: these are what
+    /// the *learner* pointed at, and they belong on the learner's own turn. Same
+    /// storage reasoning though — a `TutorMessage` is `Codable` and would carry
+    /// the PNG into `session.json` on every save.
+    @Published private(set) var selectionViews: [UUID: BoardView] = [:]
+
     /// Views for the turn currently streaming, before it has a message to
     /// attach them to. The tutor can look before it writes a word, so the first
     /// view usually arrives with no tutor message in the session yet.
@@ -65,6 +77,11 @@ final class TutorStore: ObservableObject {
     let tutorService: any TutorService
     let persistence: SessionPersistence
     let keychain: KeychainStore
+    /// `--ui-test-reset`. The switcher lists only the session in memory, so a UI
+    /// test never sees — or opens — whatever real sessions are on the machine
+    /// running it. The launch already starts on an empty session; this is the
+    /// same promise extended to the list beside it.
+    private let startsClean: Bool
     private let logger = Logger(subsystem: "com.nordup.MathTutor", category: "TutorStore")
     /// The in-flight turn's task, kept only so tests can await exactly the
     /// turn a `send`/`evaluate`/etc. call just started rather than polling.
@@ -114,20 +131,30 @@ final class TutorStore: ObservableObject {
         let shouldSeedE2E = false
         let shouldSeedScene = false
         #endif
-        var restored = isUITestReset ? .empty : (persistence.load() ?? .empty)
+        self.startsClean = isUITestReset
+        var restored = isUITestReset ? .empty : (persistence.loadCurrent() ?? .empty)
         #if DEBUG
         if shouldSeedE2E { E2ESeedFixture.seedSession(&restored) }
         if shouldSeedScene { E2ESeedFixture.seedScene(&restored) }
         #endif
         if restored.messages.isEmpty {
-            restored.messages = [TutorMessage(role: .tutor, text: "Hi, I’m your math tutor. What would you like to understand today? You can type a goal in your own words—fractions, algebra, a homework question, anything.")]
+            restored.messages = [TutorMessage(role: .tutor, text: Self.greeting)]
         }
         self.session = restored
         self.usesLiveTutor = configuration != nil
         let usingDemoService = resolvedService is DemoTutorService
         self.isWorkspace = restored.plan != nil && restored.exercise != nil && (self.usesLiveTutor || usingDemoService)
         if shouldSeedE2E || shouldSeedScene { persistence.save(restored) }
+        refreshSessions()
     }
+
+    /// The tutor's opening line in a session nobody has said anything in yet.
+    ///
+    /// One constant because three call sites now mint an empty session — launch
+    /// with nothing stored, `startNewSession`, and `resetSession` — and a
+    /// greeting that differs between them is a difference no one would ever
+    /// look for.
+    static let greeting = "Hi, I’m your math tutor. What would you like to understand today? You can type a goal in your own words—fractions, algebra, a homework question, anything."
 
     var hasGoal: Bool {
         session.plan != nil || session.messages.contains { $0.role == .learner && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -310,12 +337,15 @@ final class TutorStore: ObservableObject {
         let text = asked?.isEmpty == false
             ? asked!
             : "Please evaluate my work on " + regionLabel + "."
-        session.messages.append(
-            TutorMessage(
-                role: .learner,
-                text: text,
-                signal: .evaluate
-            )
+        let learnerTurn = TutorMessage(role: .learner, text: text, signal: .evaluate)
+        session.messages.append(learnerTurn)
+        // The picture they sent, kept so the thread can show it. Without this the
+        // turn reads as though the tutor ignored the selection: the thread showed
+        // the region the tutor fetched for itself and not the one the learner
+        // chose, which is exactly the misreading these thumbnails exist to catch.
+        selectionViews[learnerTurn.id] = BoardView(
+            imageData: imageData,
+            detail: regionDescription.map { "Showing " + $0 + "." } ?? "The region you selected."
         )
         session.lastSavedAt = .now
         persist()
@@ -342,15 +372,120 @@ final class TutorStore: ObservableObject {
         persist()
     }
 
+    // MARK: - Sessions
+
+    /// Puts the open session away and opens a new empty one.
+    ///
+    /// The one it leaves is saved, not discarded: `startNewSession` is the
+    /// switcher's "New session" row, and nothing about tapping it says the work
+    /// on screen should stop existing. `resetSession` is the destructive one.
+    func startNewSession() {
+        closeCurrentSession(saving: true)
+        adopt(freshSession())
+        persist()
+    }
+
+    /// Opens a stored session, saving the one on screen first.
+    ///
+    /// A row naming a session that will not load is not an error to show the
+    /// learner — it is an index that has drifted from the directory, so the
+    /// index is rebuilt and the list redrawn without it. Tapping the session
+    /// already open does nothing rather than re-reading it from disk, which
+    /// would throw away anything typed since the last save.
+    func openSession(id: UUID) {
+        guard id != session.id else { return }
+        guard let target = persistence.load(id: id) else {
+            persistence.rebuildIndex()
+            refreshSessions()
+            return
+        }
+        closeCurrentSession(saving: true)
+        persistence.markOpened(target.id)
+        adopt(target)
+    }
+
+    /// Settings' destructive action: this session is deleted and a new empty one
+    /// takes its place. Every other session is untouched.
+    ///
+    /// It used to be the only session there was, so "reset" and "delete
+    /// everything" were the same act. They are not any more, and this is the
+    /// narrower of the two — see `docs/TODO.md` on splitting the control.
     func resetSession() {
+        closeCurrentSession(saving: false)
+        persistence.delete(id: session.id)
+        adopt(freshSession())
+        persist()
+    }
+
+    /// A new session with the tutor's opening line already in it.
+    private func freshSession() -> LearningSession {
+        var fresh = LearningSession.empty
+        fresh.messages = [TutorMessage(role: .tutor, text: Self.greeting)]
+        return fresh
+    }
+
+    /// Stops everything the open session has in flight, and optionally writes it.
+    ///
+    /// **The turn is cancelled, not abandoned.** A streaming reply mutates
+    /// `session.messages` on every delta, so a turn left running would keep
+    /// writing into a session the learner is no longer looking at — and
+    /// `persist()` on its `.done` would then save that half-finished text over
+    /// whatever the switch had already written. Cancelling loses the rest of a
+    /// reply; not cancelling corrupts two sessions. See `docs/TODO.md` — letting
+    /// the turn finish into its own session is the better answer and a larger
+    /// change than this one.
+    private func closeCurrentSession(saving: Bool) {
+        activeRequestTask?.cancel()
+        activeRequestTask = nil
+        isLoading = false
+        isEvaluating = false
+        phase = nil
+        pendingBoardViews = []
+        if saving {
+            // Folds any ink the pen's rest timer has not written yet, so a
+            // stroke made a moment before the switch lands in the session it was
+            // drawn on rather than the one being opened.
+            persist()
+        }
+        boardInkSaveTask?.cancel()
+        boardInkSaveTask = nil
+        boardInkSaveDeadline = nil
+    }
+
+    /// Makes `next` the open session, and clears everything that described the
+    /// last one.
+    ///
+    /// `discardBoardInk()` is the load-bearing line: `boardInkData` outlives
+    /// `session` by design (see `updateDrawing`), so without it the new session's
+    /// first save would write the previous board's ink into it. The board views
+    /// go too — they are evidence for turns in a thread that is no longer on
+    /// screen, and they are keyed by message id, so keeping them would only
+    /// grow.
+    private func adopt(_ next: LearningSession) {
         discardBoardInk()
-        session = .empty
-        session.messages = [TutorMessage(role: .tutor, text: "Hi, I’m your math tutor. What would you like to understand today? You can type a goal in your own words—fractions, algebra, a homework question, anything.")]
-        isWorkspace = false
+        session = next
+        isWorkspace = next.plan != nil && next.exercise != nil && canRequestTutor
         evaluationText = nil
         evaluationMessageID = nil
         errorMessage = nil
-        persist()
+        boardViews = [:]
+        selectionViews = [:]
+        refreshSessions()
+    }
+
+    /// Rebuilds the switcher's rows from the index, with the open session forced
+    /// to the front.
+    ///
+    /// The open session is inserted rather than read from the index because it
+    /// is the one row that must be right the instant something changes: a
+    /// session gets its name from its plan and its first learner turn, so the
+    /// row is expected to stop saying "New session" the moment the learner
+    /// sends one — and the index only catches up on the next save.
+    private func refreshSessions() {
+        var summaries = startsClean ? [] : persistence.loadIndex().sessions
+        summaries.removeAll { $0.id == session.id }
+        summaries.insert(SessionSummary(session), at: 0)
+        sessions = summaries
     }
 
     func setModel(_ model: ModelChoice) {
@@ -517,6 +652,10 @@ final class TutorStore: ObservableObject {
         if let boardInkData { snapshot.drawingData = boardInkData }
         snapshot.lastSavedAt = .now
         persistence.save(snapshot)
+        // The switcher's other rows come from the index, and this is the write
+        // that just changed it — a session saved is a session moved to the top
+        // of the list.
+        refreshSessions()
     }
 
     @discardableResult

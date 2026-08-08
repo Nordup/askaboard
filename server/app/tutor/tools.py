@@ -1,3 +1,6 @@
+from app.tutor.board_scene import MAX_SVG_CHARS
+
+
 SET_WORKSPACE_TOOL: dict = {
     "type": "function",
     "name": "set_workspace",
@@ -166,14 +169,19 @@ UPDATE_BOARD_TOOL: dict = {
         "learner's whiteboard. Use it when the learner explicitly asks for a visual, "
         "exercise, or diagram, and when a small visual correction materially helps "
         "(for example placing a correction beside their work). Tutor objects are "
-        "structured text and geometry, never simulated handwriting, and this tool "
-        "never touches the learner's own PencilKit ink. Each object has a stable id: "
+        "structured text and geometry, never simulated handwriting. Use ordinary "
+        "primitives for simple editable diagrams and raw SVG for complex "
+        "multi-part illustrations such as rich paths, gradients, masks, filters, "
+        "or elaborate figures; provide a complete raw SVG document, passed through unchanged and "
+        "interpreted locally on the learner's device. This tool never touches the "
+        "learner's own PencilKit ink. Each object has a stable id: "
         "reuse ids to revise existing content and list ids in delete_ids to remove "
         "it. Pass elements=[] to only delete, delete_ids=[] to only upsert, or "
         "mode=replace_all to replace the entire tutor scene. Coordinates are logical "
         "board points: (0,0) is the board centre (25,000,25,000 in drawing "
         "coordinates), +x right, +y down. Keep new standalone diagrams compact and "
-        "inside the current visible logical rectangle supplied in context. Do not cover "
+        "inside `recommended_tutor_rect` supplied in context; leave "
+        "`reserved_learner_work_rect` clear for the learner's working. Do not cover "
         "or erase learner ink; place corrections "
         "beside the relevant work. Inspect the board with view_board before grading, "
         "correcting, or placing content relative to learner writing; a requested "
@@ -326,6 +334,22 @@ UPDATE_BOARD_TOOL: dict = {
                                 "vertex_x", "vertex_y", "ray1_x", "ray1_y",
                                 "ray2_x", "ray2_y", "radius", "right_angle",
                             ],
+                        ),
+                        _board_element(
+                            kind="svg",
+                            fields={
+                                "x": {"type": "number", "description": "Left edge of the SVG frame, board points."},
+                                "y": {"type": "number", "description": "Top edge of the SVG frame, board points."},
+                                "width": {"type": "number", "minimum": 0, "maximum": 50000, "description": "SVG frame width in board points."},
+                                "height": {"type": "number", "minimum": 0, "maximum": 50000, "description": "SVG frame height in board points."},
+                                "svg": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": MAX_SVG_CHARS,
+                                    "description": "A complete raw SVG document, passed through unchanged and interpreted locally on the learner's device. Accepts full declarative SVG markup including paths, gradients, masks, filters, clips, markers, symbols, text, and animation.",
+                                },
+                            },
+                            required=["x", "y", "width", "height", "svg"],
                         ),
                     ]
                 },

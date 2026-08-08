@@ -318,7 +318,7 @@ final class SettingsAndPlanTests: XCTestCase {
     func testPickingAModelMovesTheSelectedFillAndPersistsToTheStore() {
         let store = TutorStore(service: DemoTutorService())
         store.resetSession()
-        XCTAssertEqual(store.session.selectedModel, .sol)
+        XCTAssertEqual(store.session.selectedModel, .luna)
 
         store.setModel(.sol)
 
