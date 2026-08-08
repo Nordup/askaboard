@@ -1,3 +1,4 @@
+import uuid
 from functools import lru_cache
 from pathlib import Path
 
@@ -21,6 +22,20 @@ MODEL_ALLOWLIST: frozenset[str] = frozenset({
 # labelled with what would have answered it rather than with a sentinel.
 DEFAULT_MODEL = "gpt-5.6-luna"
 DEFAULT_REASONING_EFFORT = "high"
+
+# There is one learner: me. Memory needs something to key on, and inventing an
+# auth system to express "one person" would be ceremony. Every memory row
+# carries this id, so adding real learners later is a data migration rather
+# than a schema change.
+SOLE_LEARNER_ID = uuid.UUID("00000000-0000-4000-8000-000000000001")
+
+# Deliberately not in MODEL_ALLOWLIST — that gates what the *device* may ask
+# for on a turn. These are server-chosen and never arrive from a request, so
+# the spend they represent is bounded by how often sessions close, not by what
+# anyone puts in a request body.
+EXTRACTION_MODEL = "gpt-5.6-luna"
+EMBEDDING_MODEL = "text-embedding-3-small"
+EMBEDDING_DIMS = 1024
 
 
 class Settings(BaseSettings):
