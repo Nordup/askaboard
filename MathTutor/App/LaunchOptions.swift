@@ -71,7 +71,15 @@ struct LaunchOptions: Sendable {
     func makeUIState() -> UIState {
         switch screen {
         case .dockedStart:
-            UIState(presentation: .docked, conversation: .start, isSelectionAttached: true)
+            // A region rather than a bare flag now that axis C carries one. The
+            // rect is the fixture's own — screen 05 draws no marquee to copy
+            // (open question 7) — and only has to be a plausible pick on the
+            // reference board for the composer's attached chip to be drawn.
+            UIState(
+                presentation: .docked,
+                conversation: .start,
+                selection: .attached(CGRect(x: 120, y: 180, width: 420, height: 300))
+            )
         case .collapsed:
             UIState(presentation: .collapsed, conversation: .start)
         case .fullScreenStart:

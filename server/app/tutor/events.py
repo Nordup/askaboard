@@ -44,6 +44,37 @@ class WorkspaceEvent(BaseModel):
     exercise: ExerciseModel
 
 
+class BoardRequestEvent(BaseModel):
+    """The tutor asking the device to render a region of the board.
+
+    This travels *down* the same SSE stream the turn is writing out of, and the
+    turn then blocks until the device POSTs the render back — see
+    `app.tutor.rendezvous` for the mechanism and its one deployment constraint.
+
+    It carries no image, which is the whole point of the redesign. The device
+    holds the `PKDrawing`, so it can render any rectangle at any scale exactly;
+    a server cutting a fixed uploaded raster returned a smear the moment the
+    model zoomed past the resolution it happened to be given. The device also
+    ends up holding the picture it just drew, which is what lets the thread show
+    the learner what the tutor looked at without the image making a second
+    round trip.
+
+    `x`, `y`, `width` and `height` are percentages of the overview, origin top
+    left — the same coordinates the model was given and the only ones legible in
+    the image it is looking at.
+    """
+
+    type: Literal["board_request"] = "board_request"
+    call_id: str
+    x: float
+    y: float
+    width: float
+    height: float
+    #: What region this is, in words. The device has no other way to label the
+    #: image for VoiceOver, and it is what the model is told it is seeing.
+    detail: str
+
+
 class DoneEvent(BaseModel):
     type: Literal["done"] = "done"
     turn_id: UUID
@@ -59,7 +90,8 @@ class ErrorEvent(BaseModel):
 
 
 ClientEvent = Annotated[
-    StatusEvent | ReasoningDeltaEvent | TextDeltaEvent | WorkspaceEvent | DoneEvent | ErrorEvent,
+    StatusEvent | ReasoningDeltaEvent | TextDeltaEvent | WorkspaceEvent
+    | BoardRequestEvent | DoneEvent | ErrorEvent,
     Field(discriminator="type"),
 ]
 

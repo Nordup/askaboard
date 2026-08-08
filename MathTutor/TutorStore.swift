@@ -21,6 +21,42 @@ final class TutorStore: ObservableObject {
     /// whether that is a clean `.done`, a `.failure`, or a thrown error.
     @Published private(set) var phase: TutorPhase?
 
+    /// Where a turn gets the learner's board from, set by whichever screen owns
+    /// the live canvas.
+    ///
+    /// A closure rather than a `CanvasCapture` reference because the store
+    /// deliberately knows nothing about PencilKit or about which screen is up:
+    /// the board belongs to the canvas, the canvas belongs to `BoardScreen`, and
+    /// this is the one hole through which the two meet. It is also why this is
+    /// not a parameter on `send` — the board has to ride along on *every* turn,
+    /// including the ones no caller passes an image to (a suggestion chip, a
+    /// retry, "I don't know"), and threading it through each of those is how it
+    /// would come to be missing from one of them again.
+    ///
+    /// `nil` means no board is on screen, which is a real state: Settings is up,
+    /// or nothing has mounted a canvas yet.
+    var boardProvider: (@MainActor () -> Data?)?
+
+    /// The device's account of where the ink sits, sent alongside the overview.
+    var boardManifestProvider: (@MainActor () -> String?)?
+
+    /// The regions the tutor looked at, keyed by the message they belong to.
+    ///
+    /// Held here rather than on `TutorMessage` because a `TutorMessage` is
+    /// `Codable` and goes into `session.json` on every save: a turn that looked
+    /// three times would write several hundred kilobytes of PNG into the session
+    /// file, and every later save would rewrite them. These are evidence for the
+    /// turn you are looking at, not session state, so they live for as long as
+    /// the app does and no longer. A thread reloaded from disk shows the replies
+    /// without the views, which is the honest outcome — the pictures were never
+    /// saved.
+    @Published private(set) var boardViews: [UUID: [BoardView]] = [:]
+
+    /// Views for the turn currently streaming, before it has a message to
+    /// attach them to. The tutor can look before it writes a word, so the first
+    /// view usually arrives with no tutor message in the session yet.
+    private var pendingBoardViews: [BoardView] = []
+
     let tutorService: any TutorService
     let persistence: SessionPersistence
     let keychain: KeychainStore
@@ -183,18 +219,32 @@ final class TutorStore: ObservableObject {
     /// launch case, before anything has been drawn at all.
     var currentDrawingData: Data? { boardInkData ?? session.drawingData }
 
+    /// When the pen will have rested long enough to save. Pushed forward by each
+    /// change; the waiting task reads it rather than being replaced.
+    private var boardInkSaveDeadline: ContinuousClock.Instant?
+
     /// The board reporting that its ink changed.
     ///
-    /// This is the hot path — it can fire many times per second while erasing —
-    /// so it does exactly two cheap things: keep the drawing (a struct, so this is
-    /// a retain, not a copy) and push the save out to the far side of the pen's
-    /// next rest.
+    /// This is the hot path. PencilKit reports through here while the pencil is
+    /// still down, so it does the least it can: retain the drawing (a struct, so
+    /// this is a retain rather than a copy) and move a deadline.
+    ///
+    /// **One task per burst of writing, not one per report.** Cancelling and
+    /// replacing a `Task` on every change means an allocation, a cancellation
+    /// throw and an actor hop at the frequency of the pencil, all of it on the
+    /// main actor and all of it competing with the thing it is supposed to be
+    /// staying out of the way of. The task that is already waiting re-reads the
+    /// deadline instead.
     func updateDrawing(_ drawing: PKDrawing) {
         pendingBoardInk = drawing
-        boardInkSaveTask?.cancel()
+        boardInkSaveDeadline = .now + Self.boardInkRestBeforeSave
+        guard boardInkSaveTask == nil else { return }
         boardInkSaveTask = Task { [weak self] in
-            try? await Task.sleep(for: Self.boardInkRestBeforeSave)
-            guard !Task.isCancelled else { return }
+            while let deadline = self?.boardInkSaveDeadline, .now < deadline {
+                try? await Task.sleep(until: deadline, clock: .continuous)
+                if Task.isCancelled { return }
+            }
+            self?.boardInkSaveTask = nil
             self?.saveBoardInkNow()
         }
     }
@@ -205,6 +255,7 @@ final class TutorStore: ObservableObject {
         guard pendingBoardInk != nil else { return }
         boardInkSaveTask?.cancel()
         boardInkSaveTask = nil
+        boardInkSaveDeadline = nil
         persist()
     }
 
@@ -222,6 +273,7 @@ final class TutorStore: ObservableObject {
     private func discardBoardInk() {
         boardInkSaveTask?.cancel()
         boardInkSaveTask = nil
+        boardInkSaveDeadline = nil
         pendingBoardInk = nil
         boardInkData = nil
     }
@@ -334,6 +386,7 @@ final class TutorStore: ObservableObject {
         isLoading = true
         errorMessage = nil
         phase = nil
+        pendingBoardViews = []
         let request = TutorRequest(
             messages: session.messages,
             goal: session.messages.first(where: { $0.role == .learner })?.text,
@@ -341,6 +394,12 @@ final class TutorStore: ObservableObject {
             plan: session.plan,
             imageData: imageData,
             imageRegionDescription: regionDescription,
+            // Every turn, not just the ones that attach a selection — see
+            // `boardProvider`. Rendering is not free (a 3,000px PNG of the
+            // student's work), but it happens once per send, on the same tap
+            // that is about to open a network connection anyway.
+            boardOverview: boardProvider?(),
+            boardManifest: boardManifestProvider?(),
             signal: signal,
             sessionID: session.id,
             model: session.selectedModel,
@@ -367,11 +426,26 @@ final class TutorStore: ObservableObject {
                         if let index = tutorMessageIndex {
                             self.session.messages[index].text = accumulatedText
                         }
+                    case .boardViewed(let imageData, let detail):
+                        let view = BoardView(imageData: imageData, detail: detail)
+                        if let index = tutorMessageIndex {
+                            self.attach(view, to: self.session.messages[index].id)
+                        } else {
+                            // The tutor usually looks before it writes, so there
+                            // is no message to hang this on yet. `.done` flushes
+                            // whatever queued up here.
+                            self.pendingBoardViews.append(view)
+                        }
+                    case .boardRequest:
+                        // Answered inside the service, which owns the network and
+                        // the renderer. It reaches here only as `.boardViewed`.
+                        break
                     case .workspace(let plan, let exercise):
                         self.session.plan = plan
                         self.session.exercise = exercise
                         self.isWorkspace = true
                     case .done:
+                        self.flushPendingBoardViews(to: tutorMessageIndex)
                         self.phase = nil
                         self.isLoading = false
                         self.isEvaluating = false
@@ -396,6 +470,22 @@ final class TutorStore: ObservableObject {
                 self.logger.error("Tutor request failed: \(error.localizedDescription, privacy: .public)")
             }
         }
+    }
+
+    private func attach(_ view: BoardView, to messageID: UUID) {
+        boardViews[messageID, default: []].append(view)
+    }
+
+    /// Hands the turn's queued views to the message it ended up writing.
+    ///
+    /// A turn that looked and then said nothing has nowhere to put them, and
+    /// they are dropped rather than shown against someone else's message — a
+    /// board view under the wrong reply is worse than no board view at all.
+    private func flushPendingBoardViews(to tutorMessageIndex: Int?) {
+        defer { pendingBoardViews = [] }
+        guard let tutorMessageIndex, session.messages.indices.contains(tutorMessageIndex) else { return }
+        let id = session.messages[tutorMessageIndex].id
+        boardViews[id, default: []].insert(contentsOf: pendingBoardViews, at: 0)
     }
 
     /// Every save goes through here, so every save carries the board's current

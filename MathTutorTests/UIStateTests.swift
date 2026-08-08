@@ -144,7 +144,7 @@ final class UIStateTests: XCTestCase {
         let state = UIState()
         XCTAssertFalse(state.isSelectionAttached)
 
-        state.attachBoardSelection()
+        state.attachBoardSelection(region: CGRect(x: 4, y: 8, width: 120, height: 90))
         XCTAssertTrue(state.isSelectionAttached)
 
         state.collapseTutor()
@@ -157,6 +157,53 @@ final class UIStateTests: XCTestCase {
         XCTAssertFalse(state.isSelectionAttached)
         XCTAssertEqual(state.presentation, .fullScreen)
         XCTAssertEqual(state.conversation, .active)
+    }
+
+    /// `btn/select` arms the marquee; it no longer attaches anything by itself.
+    ///
+    /// This is the whole of the reported bug at the state layer: the old control
+    /// went straight to "attached", which meant the only thing a student could
+    /// select was the entire board, and the only way to see that anything had
+    /// happened was a glyph in a composer the collapsed state hides.
+    func testBtnSelectArmsTheMarqueeRatherThanAttachingTheWholeBoard() {
+        let state = UIState()
+
+        state.toggleBoardSelection()
+
+        XCTAssertEqual(state.selection, .arming)
+        XCTAssertFalse(state.isSelectionAttached, "Arming is not yet a selection — the student still has to draw one")
+        XCTAssertTrue(state.selection.capturesBoardDrags)
+    }
+
+    func testASecondTapOfBtnSelectPutsThePencilBackOnTheInk() {
+        let state = UIState()
+
+        state.toggleBoardSelection()
+        state.toggleBoardSelection()
+
+        XCTAssertEqual(state.selection, BoardSelection.none)
+    }
+
+    func testAFinishedMarqueeDragAttachesItsRegion() {
+        let state = UIState()
+        let region = CGRect(x: 120, y: 64, width: 300, height: 180)
+
+        state.toggleBoardSelection()
+        state.attachBoardSelection(region: region)
+
+        XCTAssertEqual(state.selection.region, region)
+        XCTAssertTrue(state.isSelectionAttached)
+    }
+
+    func testTogglingBtnSelectOffThrowsAwayAPickedRegion() {
+        let state = UIState()
+
+        state.toggleBoardSelection()
+        state.attachBoardSelection(region: CGRect(x: 0, y: 0, width: 200, height: 200))
+        state.toggleBoardSelection()
+
+        XCTAssertEqual(state.selection, BoardSelection.none)
+        XCTAssertNil(state.selection.region)
     }
 
     func testRailSelectionsAreIndependentOfEachOtherAndOfThePanel() {
@@ -176,7 +223,7 @@ final class UIStateTests: XCTestCase {
     // MARK: - Panel width
 
     func testPanelWidthStartsAtTheDesignsOwnWidth() {
-        XCTAssertEqual(UIState().panelWidth, ScreenLayout.minimumPanelWidth)
+        XCTAssertEqual(UIState().panelWidth, ScreenLayout.defaultPanelWidth)
     }
 
     func testSettingPanelWidthRecordsIt() {
@@ -189,7 +236,7 @@ final class UIStateTests: XCTestCase {
         let state = UIState()
         state.setPanelWidth(480)
         state.resetPanelWidth()
-        XCTAssertEqual(state.panelWidth, ScreenLayout.minimumPanelWidth)
+        XCTAssertEqual(state.panelWidth, ScreenLayout.defaultPanelWidth)
     }
 
     func testANonFiniteWidthIsRefusedRatherThanStored() {
@@ -247,18 +294,10 @@ final class UIStateTests: XCTestCase {
         )
     }
 
-    /// Final review, Important 1: the resize binding's `get:` and `set:` are not inverse of
-    /// each other. `BoardScreen.resizeHandle` wires `get:` to `layout.panelWidth` —
-    /// `ScreenLayout.resolvingPanelWidth(uiState.panelWidth)`, clamped against the *current*
-    /// window — but `set:` to `uiState.setPanelWidth`, which stores whatever it is handed,
-    /// raw. `testCollapsingByDragPreservesTheRequestedWidthNotTheFloor` above passes
-    /// `state.panelWidth` itself as `ResizeModel.nextSize`'s `current:` — the raw value — which
-    /// is not what the shipped binding does: the shipped `get:` hands `ResizeHandle` the
-    /// *clamped* read, not the raw store, so a gesture that starts from a stored width already
-    /// pinned to a narrower window's ceiling anchors from the ceiling, not from the wider
-    /// number the student actually asked for.
+    /// A gesture starts from the width visible in the current window, which may be clamped
+    /// below the wider value the student asked to restore when the window grows again.
     ///
-    /// This composes the same three real functions `BoardScreen` and `ResizeHandle` call —
+    /// This composes the same three real functions the screen and handle call —
     /// `ScreenLayout.resolvingPanelWidth`, `ResizeModel.resolve` / `nextSize`, and
     /// `UIState.setPanelWidth` — clamped getter in, write out, exactly as the binding does,
     /// rather than re-deriving their answer, for the same reason the test above does: a
@@ -273,28 +312,27 @@ final class UIStateTests: XCTestCase {
     /// skip the write when the resolved value already equals what the getter reports — is
     /// inlined here rather than called, and is what a regression in `ResizeHandle.swift` that
     /// deleted that guard would *not* be caught by. What this test does cover, and did fail
-    /// before that guard was written, is that the underlying hazard is real: composing a
-    /// clamped read with a raw write, the way the app is actually wired, loses a wider stored
-    /// request the moment the window narrows and the seam is touched again.
+    /// before that guard was written, is that the underlying hazard is real. `BoardScreen`
+    /// now additionally previews locally and commits once, but the no-op guard remains the
+    /// reusable handle's protection against asymmetric bindings.
     func testWideningAgainstASplitViewCeilingDoesNotDiscardTheStoredRequest() {
         let state = UIState()
-        state.setPanelWidth(600)
+        state.setPanelWidth(900)
 
-        // A window narrow enough that its docked lane's own ceiling — half the shared lane —
-        // sits at 468, below the 600 already stored. `1112 - 176 = 936`, halved is 468.
+        // A window narrow enough that its docked lane leaves 736 after reserving the board's
+        // 200pt floor, below the 900 already stored.
         let narrowedWindow = ScreenLayout(size: CGSize(width: 1112, height: 1032))
         XCTAssertEqual(
-            narrowedWindow.maximumPanelWidth, 468,
-            "sanity: this window must actually squeeze the ceiling below the stored 600"
+            narrowedWindow.maximumPanelWidth, 736,
+            "sanity: this window must actually squeeze the ceiling below the stored 900"
         )
 
-        // `BoardScreen.resized(_:)`'s own clamp-on-read, and then the value `layout.panelWidth`
-        // — the binding's `get:` — actually reports: the clamped 468, not the raw 600.
+        // `BoardScreen.resized(_:)`'s clamp-on-read reports 736, not the raw 900.
         let resolvedPanelWidth = narrowedWindow.resolvingPanelWidth(state.panelWidth)
         let layout = ScreenLayout(size: narrowedWindow.size, panelWidth: resolvedPanelWidth)
         XCTAssertEqual(
-            layout.panelWidth, 468,
-            "sanity: the getter reads back the clamped ceiling, not the raw 600"
+            layout.panelWidth, 736,
+            "sanity: the getter reads back the clamped ceiling, not the raw 900"
         )
 
         // The gesture's anchor is `size` at grab time — the clamped getter's answer, exactly
@@ -315,15 +353,15 @@ final class UIStateTests: XCTestCase {
 
         // `ResizeHandle`'s own guard: skip a write that only hands the getter's own answer
         // back to the setter. Deleting this `if` and writing unconditionally reproduces the
-        // bug — `state.panelWidth` ends the test at 468, the ceiling, not 600.
+        // bug — `state.panelWidth` ends the test at 736, the ceiling, not 900.
         if next != layout.panelWidth {
             state.setPanelWidth(next)
         }
 
         XCTAssertEqual(
-            state.panelWidth, 600,
-            "the student pushed outward against a ceiling and must not have their 600 silently"
-                + " replaced by the 468 it was clamped to"
+            state.panelWidth, 900,
+            "the student pushed outward against a ceiling and must not have their 900 silently"
+                + " replaced by the 736 it was clamped to"
         )
     }
 

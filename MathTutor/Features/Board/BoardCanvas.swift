@@ -43,6 +43,15 @@ struct PencilCanvasView: UIViewRepresentable {
     /// the full tutor chat is shown, so this explicit contract keeps UIKit focus
     /// in sync with the SwiftUI overlay state.
     let isActive: Bool
+    /// Whether `btn/select`'s marquee is armed over this board.
+    ///
+    /// While it is, the canvas stops taking touches entirely: the pencil belongs
+    /// to `BoardSelectionMarquee`, which is drawn above it. Turning interaction
+    /// off — rather than swapping `canvas.tool` for something inert — is what also
+    /// freezes the scroll, and a frozen scroll is the whole reason a picked region
+    /// can be stored in view coordinates at all (see `BoardSelection`). It leaves
+    /// first responder alone, so ⌘Z still reaches the board's own undo manager.
+    let isSelecting: Bool
     let onDrawingChange: (PKDrawing) -> Void
     let onUndo: () -> Void
     let onRedo: () -> Void
@@ -54,6 +63,7 @@ struct PencilCanvasView: UIViewRepresentable {
         penColor: PenColor = .defaultValue,
         thickness: StrokeThickness = .defaultValue,
         isActive: Bool = true,
+        isSelecting: Bool = false,
         onDrawingChange: @escaping (PKDrawing) -> Void,
         onUndo: @escaping () -> Void,
         onRedo: @escaping () -> Void
@@ -64,6 +74,7 @@ struct PencilCanvasView: UIViewRepresentable {
         self.penColor = penColor
         self.thickness = thickness
         self.isActive = isActive
+        self.isSelecting = isSelecting
         self.onDrawingChange = onDrawingChange
         self.onUndo = onUndo
         self.onRedo = onRedo
@@ -111,13 +122,21 @@ struct PencilCanvasView: UIViewRepresentable {
         canvas.delegate = context.coordinator
 
         context.coordinator.updateFirstResponder(isActive)
+        canvas.isUserInteractionEnabled = !isSelecting
 
-        canvas.addGestureRecognizer(
-            multiTouchTap(touches: 2, action: #selector(Coordinator.twoFingerUndo), coordinator: context.coordinator)
-        )
-        canvas.addGestureRecognizer(
-            multiTouchTap(touches: 3, action: #selector(Coordinator.threeFingerRedo), coordinator: context.coordinator)
-        )
+        #if DEBUG
+        let addsMultiTouchTaps = BoardConfig.current.addsMultiTouchTaps
+        #else
+        let addsMultiTouchTaps = true
+        #endif
+        if addsMultiTouchTaps {
+            canvas.addGestureRecognizer(
+                multiTouchTap(touches: 2, action: #selector(Coordinator.twoFingerUndo), coordinator: context.coordinator)
+            )
+            canvas.addGestureRecognizer(
+                multiTouchTap(touches: 3, action: #selector(Coordinator.threeFingerRedo), coordinator: context.coordinator)
+            )
+        }
         return canvas
     }
 
@@ -154,6 +173,7 @@ struct PencilCanvasView: UIViewRepresentable {
         // does change which view should own first responder. Viewport-driven
         // setup lives in `BoardCanvasView.onViewportChange`.
         context.coordinator.updateFirstResponder(isActive)
+        canvas.isUserInteractionEnabled = !isSelecting
     }
 
     static func dismantleUIView(_ uiView: BoardCanvasView, coordinator: Coordinator) {
@@ -248,9 +268,38 @@ struct PencilCanvasView: UIViewRepresentable {
             self.canvas = nil
         }
 
+        /// **Do not touch up the committed stroke here.** This was tried, on
+        /// device, to hide the one artifact left in the board's ink: drawn fast
+        /// enough, PencilKit's predicted tail is visible for a frame or two after
+        /// the pencil lifts and is then retracted. The idea was to extend the
+        /// committed stroke to where the preview had already drawn, so there was
+        /// nothing to retract.
+        ///
+        /// It cannot be done. The only way to change a committed stroke is to
+        /// assign `canvasView.drawing`, and that makes PencilKit re-render the
+        /// whole drawing — the entire line blinks and redraws on every lift, which
+        /// is far worse than the tail it was meant to hide. There is no
+        /// partial-stroke mutation API. (Assigning `drawing` also does not
+        /// register with PencilKit's undo manager; see `PencilCanvasConfiguration`.)
+        ///
+        /// The tail is PencilKit's own prediction and a stock `PKCanvasView` shows
+        /// it too, so it is not something this app's configuration causes or can
+        /// configure away. Shortening it needs control over the prediction itself —
+        /// a confidence-weighted tail, the way `google/ink-stroke-modeler` and
+        /// Procreate's own engine do it — which means not using PencilKit for ink.
+        #if DEBUG
+        func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) { InkTrace.penLifted() }
+        #endif
+
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
+            #if DEBUG
+            InkTrace.commitBegan(strokes: canvasView.drawing.strokes.count)
+            #endif
             parent.onDrawingChange(canvasView.drawing)
             parent.capture.refreshHasInk()
+            #if DEBUG
+            InkTrace.commitEnded()
+            #endif
         }
 
         @objc func twoFingerUndo() {

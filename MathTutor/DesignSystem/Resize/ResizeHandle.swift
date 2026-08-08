@@ -5,15 +5,6 @@ import SwiftUI
 /// Split out from the view for the same reason `TutorPanelMetrics` is: the numbers are
 /// assertable without a host, and a spec that lives in a `body` cannot be regression-tested.
 enum ResizeHandleMetrics {
-    /// Painted only while the gesture is live. Fits inside `--space-gap` with room either
-    /// side, so it never touches the surfaces it sits between.
-    static let capsuleThickness: CGFloat = DS.Space.s1
-    static let capsuleLength: CGFloat = DS.Space.s12
-    static let capsuleRadius: CGFloat = DS.Radius.xs
-
-    static let appear: Double = 0.12
-    static let disappear: Double = 0.18
-
     /// Non-zero so a tap on the strip is a tap and not a half-point resize. Two points is
     /// enough to reject a tap and small enough that the drag still feels like it starts
     /// under the finger.
@@ -90,9 +81,8 @@ struct ResizeHandle: View {
     /// The size being driven. Written on every frame of the drag.
     @Binding var size: CGFloat
 
-    /// Fired once when a drag begins, so the caller can freeze whatever it needs to. Paired
-    /// with `onEnd`, fired once when the drag concludes, so the caller knows when it is safe
-    /// to unfreeze it again.
+    /// Fired once when a resize interaction begins, so the caller can freeze whatever it
+    /// needs to. VoiceOver adjustments use the same begin/end transaction as a drag.
     var onBegin: () -> Void = {}
 
     /// Fired once when the drag that called `onBegin` concludes — however it concludes: a
@@ -104,8 +94,8 @@ struct ResizeHandle: View {
     /// `endDrag()`.
     var onEnd: () -> Void = {}
 
-    /// Fired on the transition into collapse — once per crossing, not once per frame spent
-    /// collapsed. See the gesture below for why that distinction is load-bearing.
+    /// Fired only when a drag is deliberately released beyond the collapse threshold.
+    /// Merely crossing the threshold while the finger is still down never removes the view.
     var onCollapse: () -> Void = {}
 
     /// Double-tap. VS Code's `onDidReset`.
@@ -127,39 +117,13 @@ struct ResizeHandle: View {
     /// by hand.
     @GestureState private var anchor: CGFloat?
 
-    /// Whether the *previous* frame of the current gesture reported a collapse. Compared
-    /// against this frame's answer to find the false → true transition, so `onCollapse` and
-    /// its haptic fire once per crossing rather than once per frame spent below the
-    /// threshold — see the gesture below.
-    ///
-    /// This is `@State`, not `@GestureState`, and that needs explaining given the note on
-    /// `anchor` above. `@GestureState` can only ever be *written* from inside a `.updating`
-    /// closure — there is no setter anywhere else — which means a value that must be *read*
-    /// for comparison inside `.onChanged` and then *written* for the next frame cannot live
-    /// there: `.onChanged` cannot commit the new value itself, and doing the read-compare-
-    /// write inside `.updating` instead runs into the other documented `.updating` caveat,
-    /// that SwiftUI does not promise to call it exactly once per value — a firing that ran
-    /// twice for one logical frame would double the very haptic this exists to de-duplicate.
-    /// So the comparison lives in the one place that is guaranteed to run its own reads and
-    /// writes in the order they are written: `.onChanged`, sequentially, within a single
-    /// closure invocation.
-    ///
-    /// It is reset to `false` inside `.onChanged`'s own `hasBegun` guard, *before* the first
-    /// resolution of a new gesture is examined — not on a rising edge observed elsewhere. An
-    /// earlier version reset it from a `.onChange(of: isDragging)` rising edge instead, which
-    /// looks equivalent but is a distinct SwiftUI callback that runs during a later view
-    /// update, *after* `.onChanged` has already delivered at least one event: if that first
-    /// event already crossed the collapse threshold, `onCollapse()` would fire correctly, and
-    /// then the rising-edge reset would clobber the record of it — so the *next* frame would
-    /// see `wasCollapsed == false` again and fire a second, spurious `onCollapse()`. Resetting
-    /// inside the same guard that decides whether this is the gesture's first event removes
-    /// the gap between "examine this frame's collapse state" and "have last frame's state
-    /// available to compare against" entirely, because both now happen in the one place and
-    /// in the order they are written.
-    @State private var wasCollapsed = false
+    /// The latest drag frame's collapse eligibility. It is deliberately only a pending
+    /// decision: `.onChanged` updates it, while the deliberate `.onEnded` path is the sole
+    /// place allowed to commit it. Cancellation clears it without minimizing the surface.
+    @State private var pendingCollapse = false
 
     /// Whether this gesture has already run its begin-of-drag bookkeeping (`onBegin()`, the
-    /// grab haptic, resetting `wasCollapsed`). Plain `@State`, not `@GestureState`, because
+    /// grab haptic, and clearing a pending collapse). Plain `@State`, not `@GestureState`, because
     /// `endDrag()` needs to read and clear it *after* the gesture that set it has already
     /// concluded — a `@GestureState` would already be back to its initial value by then.
     ///
@@ -169,9 +133,7 @@ struct ResizeHandle: View {
     /// anything and the rest are no-ops. See `endDrag()`.
     @State private var hasBegun = false
 
-    /// What the last resolved frame reported, kept only to drive the capsule and the drag
-    /// haptics.
-    @State private var overshoot: CGFloat = 0
+    /// What the last resolved frame reported, kept only to drive the limit haptic.
     @State private var limit: ResizeLimit = .none
     @State private var collapseCount = 0
     @State private var grabCount = 0
@@ -191,9 +153,9 @@ struct ResizeHandle: View {
     /// Its falling edge is one of `endDrag()`'s three terminators — see `body` — but its
     /// *rising* edge no longer drives anything: `.onChange(of:)` is a view-graph node that
     /// runs during a later view update, strictly after `.onChanged` has already delivered
-    /// that gesture's first event and written `size`/`limit`/`overshoot` at least once. A
+    /// that gesture's first event and written `size`/`limit` at least once. A
     /// begin callback fired from there would arrive too late for a caller's `onBegin` freeze
-    /// to matter and would race `wasCollapsed`'s reset against `.onChanged`'s own read of it.
+    /// to matter and would race the gesture's begin bookkeeping.
     /// See the `hasBegun` guard inside `.onChanged`, in `drag` below, for where begin
     /// actually lives now.
     private var isDragging: Bool { anchor != nil }
@@ -215,7 +177,6 @@ struct ResizeHandle: View {
     private var handle: some View {
         strip
             .contentShape(Rectangle())
-            .overlay(capsule)
             .gesture(drag)
             // The falling edge of `isDragging`. Fires when `anchor` resets to `nil` — a
             // deliberate release *if* `.onEnded` below already ran and made `endDrag()` a
@@ -227,7 +188,7 @@ struct ResizeHandle: View {
             .onChange(of: isDragging) { _, isNowDragging in
                 if !isNowDragging { endDrag() }
             }
-            // The collapse/dismount path. `onCollapse()` inside `drag` below can lead its
+            // The collapse/dismount path. `onCollapse()` on deliberate release below can lead its
             // caller to take this view out of the `.docked` state entirely — Task 6 removes
             // the handle from the hierarchy once the panel is collapsed — and a removed
             // view's `.onChange` action does not run; disappearance is `.onDisappear`'s
@@ -264,9 +225,9 @@ struct ResizeHandle: View {
             .accessibilityAction(named: "Reset") { onReset() }
     }
 
-    /// The four haptics that replace a desktop cursor — one for every row of `design.md`'s
-    /// feedback table that names one. `.rigid` fires on the *transition* into a limit rather
-    /// than every frame spent inside one, because `limit` only changes when the state does.
+    /// Haptic feedback replaces a desktop cursor. `.rigid` fires on the *transition* into a
+    /// limit rather than every frame spent inside one, because `limit` only changes when the
+    /// state does. Collapse feedback fires when collapse is committed on release.
     /// `.selection` is keyed on `resetCount` rather than fired directly from the tap gesture
     /// for the same reason grab and collapse are counters and not booleans — see `resetCount`'s
     /// own doc.
@@ -296,58 +257,16 @@ struct ResizeHandle: View {
         }
     }
 
-    /// The one thing that is ever painted, and only while a finger is down.
-    ///
-    /// It is drawn at the strip's centre rather than at the finger's `y`, and that is a known
-    /// simplification, not a safe consequence of the strip's span — `design.md`'s own feedback
-    /// table specifies the capsule "centred on the seam **at the finger's y**," and its prose
-    /// is explicit about why a fixed position is the wrong shape: *"it cannot appear at a fixed
-    /// position, because the student is looking at their finger."* At 976pt of span a capsule
-    /// pinned to the centre can sit roughly 400pt from a finger working near the top or bottom
-    /// of the strip — a real gap the student's eye has to travel to find it, not "never far."
-    /// This ships anyway because the design also says the haptic carries the primary
-    /// confirmation and the capsule is secondary to it (see `withResizeHaptics`); a capsule in
-    /// the wrong place still beats no capsule, and tracking the touch's `y` remained out of
-    /// scope rather than turning out to be unnecessary.
-    ///
-    /// The fade is an `AnyTransition` with its own attached animation rather than a
-    /// `withAnimation` around the state that adds or removes this view, because that state
-    /// is now `isDragging` — derived from the `@GestureState` `anchor` — and `@GestureState`
-    /// changes (including its own reset on a cancelled gesture) are not something this view
-    /// can wrap in `withAnimation` itself. Attaching the animation to the transition instead
-    /// means the fade plays however the view enters or leaves, appear and disappear on their
-    /// own separate durations, with no dependency on who caused the change or how.
-    @ViewBuilder
-    private var capsule: some View {
-        if isDragging {
-            RoundedRectangle(cornerRadius: ResizeHandleMetrics.capsuleRadius)
-                .fill(DS.Color.inkTertiary)
-                .frame(
-                    width: edge.axis == .horizontal
-                        ? ResizeHandleMetrics.capsuleThickness
-                        : ResizeHandleMetrics.capsuleLength,
-                    height: edge.axis == .horizontal
-                        ? ResizeHandleMetrics.capsuleLength
-                        : ResizeHandleMetrics.capsuleThickness
-                )
-                .offset(
-                    x: edge.axis == .horizontal ? overshoot : 0,
-                    y: edge.axis == .vertical ? overshoot : 0
-                )
-                .transition(
-                    .asymmetric(
-                        insertion: .opacity.animation(.easeOut(duration: ResizeHandleMetrics.appear)),
-                        removal: .opacity.animation(.easeOut(duration: ResizeHandleMetrics.disappear))
-                    )
-                )
-                .allowsHitTesting(false)
-        }
-    }
-
     // MARK: - The gesture
 
     private var drag: some Gesture {
-        DragGesture(minimumDistance: ResizeHandleMetrics.minimumDragDistance)
+        // The seam itself moves as the panel changes width. Measuring in that moving view's
+        // local coordinates feeds the movement back into `translation` and makes the seam
+        // jitter under the finger. Global coordinates stay fixed for the whole gesture.
+        DragGesture(
+            minimumDistance: ResizeHandleMetrics.minimumDragDistance,
+            coordinateSpace: .global
+        )
             // Idempotent capture of the pre-drag size: the first time this runs for a given
             // gesture, `state` is `nil` and becomes `size`; every time after, it is already
             // set and is left alone. That idempotence is what makes it safe regardless of
@@ -366,12 +285,10 @@ struct ResizeHandle: View {
                 // land only *after* `size` had already been written below at least once — the
                 // exact inversion of "freeze before anything moves" `onBegin`'s own doc
                 // promises. `hasBegun` makes this run once per gesture rather than once per
-                // event, and resetting `wasCollapsed` here, before this frame's resolution is
-                // examined, is what keeps that reset from racing the read of it a few lines
-                // down — see `wasCollapsed`'s doc for the failure that ordering caused.
+                // event, and clears any pending decision left by a prior interaction.
                 if !hasBegun {
                     hasBegun = true
-                    wasCollapsed = false
+                    pendingCollapse = false
                     grabCount += 1
                     onBegin()
                 }
@@ -404,11 +321,7 @@ struct ResizeHandle: View {
 
                 // Unanimated, deliberately. The panel must track the finger one-for-one;
                 // wrapping this in a `withAnimation` is the classic failure and produces a
-                // panel that lags behind the drag. Only the *release* animates — see
-                // `endDrag()`. `overshoot` used to be wrapped in `withAnimation` here too,
-                // which re-triggered a 0.12s ease on every single frame of a rubber-banded
-                // drag and made the capsule visibly trail the finger instead of tracking it;
-                // now it is unanimated here and animated back to zero only once, on release.
+                // panel that lags behind the drag.
                 //
                 // `ResizeModel.nextSize`, not a bare `resolution.size`: on the collapse frame
                 // `resolution.size` is `constraints.minimum` — right for drawing, wrong for
@@ -420,45 +333,12 @@ struct ResizeHandle: View {
                 // lost by skipping this one frame's write. See `nextSize`'s own doc for the
                 // design-spec edge case this is.
                 //
-                // `if next != size` guards a second, independent hazard: this binding's own
-                // accessors are not inverse of each other. `BoardScreen` wires `get:` to
-                // `layout.panelWidth` — `ScreenLayout.resolvingPanelWidth(uiState.panelWidth)`,
-                // clamped against the *current* window — but `set:` to `uiState.setPanelWidth`,
-                // which stores whatever it is handed, raw. Read `size` back with a 600pt
-                // request pinned to a 468pt Split View ceiling and the getter answers 468;
-                // write 468 straight back through the setter and the raw 600 the student is
-                // owed the moment the window widens again is gone for good — not merely on the
-                // collapse frame above, but on any frame whose resolved size happens to equal
-                // what the getter already reports, which an ordinary widening drag against a
-                // ceiling reaches with no unusual timing at all. Skipping an equal write is a
-                // free no-op wherever a binding's accessors *are* inverse of each other — that
-                // is the common case this guard costs nothing on — and it is exactly what
-                // stops the asymmetric case above from losing the wider request: a write that
-                // would only hand the getter's own answer back to the setter is never made, so
-                // there is nothing left for the setter's rawness to overwrite. See `adjust`
-                // below for the same hazard reached by VoiceOver instead of a drag.
+                // Skipping an equal write avoids needless invalidation and protects callers
+                // whose getter presents a window-clamped value over a wider stored request.
                 let next = ResizeModel.nextSize(current: size, resolution: resolution)
                 if next != size { size = next }
                 limit = resolution.limit
-                overshoot = resolution.handleOffset
-
-                // Fire on the false → true transition only, never on every frame spent below
-                // the threshold. The previous version called `endDrag()` from inside this
-                // branch, which — with the finger still down — nils the anchor a real touch
-                // is still using; the very next `onChanged` then re-anchored at the just-
-                // collapsed minimum and re-collapsed against it immediately, every frame,
-                // for as long as the touch stayed down: a haptic and `onCollapse()` storm,
-                // and worse, a collapse that could never reverse within the gesture because
-                // the anchor kept being retaken at the floor. Holding the anchor fixed for
-                // the gesture's entire lifetime — never touched by this branch — is what
-                // restores the reversibility `ResizeModel`'s own doc promises: drag back out
-                // of a collapse within the same gesture and `resolution.isCollapsed` simply
-                // goes back to `false` against the same unmoved anchor.
-                if resolution.isCollapsed && !wasCollapsed {
-                    collapseCount += 1
-                    onCollapse()
-                }
-                wasCollapsed = resolution.isCollapsed
+                pendingCollapse = resolution.isCollapsed
             }
             // The one gesture callback SwiftUI guarantees fires exactly once per gesture,
             // however briefly that gesture lived. It exists alongside `isDragging`'s falling
@@ -472,11 +352,18 @@ struct ResizeHandle: View {
             // from here safe even when `isDragging`'s `.onChange` also fires for the same
             // gesture: whichever runs first does the work, the other finds `hasBegun` already
             // `false` and returns.
-            .onEnded { _ in endDrag() }
+            .onEnded { _ in
+                let shouldCollapse = pendingCollapse
+                if shouldCollapse {
+                    collapseCount += 1
+                    onCollapse()
+                }
+                endDrag()
+            }
     }
 
-    /// The single place a gesture's end-of-drag bookkeeping happens — resetting `limit`,
-    /// animating `overshoot` back to zero, and firing `onEnd()` — reachable from three
+    /// The single place a gesture's end-of-drag bookkeeping happens — resetting `limit` and
+    /// firing `onEnd()` — reachable from three
     /// independent terminators in `handle` and `drag` above: `isDragging`'s falling edge
     /// (covers a cancellation or a system interruption, the cases `@GestureState` resets
     /// `anchor` for without delivering this view any event), `.onEnded` (covers the
@@ -493,10 +380,8 @@ struct ResizeHandle: View {
     private func endDrag() {
         guard hasBegun else { return }
         hasBegun = false
+        pendingCollapse = false
         limit = .none
-        withAnimation(.easeOut(duration: ResizeHandleMetrics.disappear)) {
-            overshoot = 0
-        }
         onEnd()
     }
 
@@ -506,10 +391,12 @@ struct ResizeHandle: View {
             ? ResizeHandleMetrics.accessibilityStep
             : -ResizeHandleMetrics.accessibilityStep
         let next = min(max(size + step, constraints.minimum), constraints.maximum)
-        // Same guard, same reason, as the drag path in `drag` above: `size`'s getter clamps
-        // and its setter does not, so a VoiceOver increment that lands on exactly the value
-        // the getter already reports would otherwise overwrite a wider stored request with
-        // the ceiling it was clamped to.
-        if next != size { size = next }
+        // Same no-op guard as the drag path above. The callbacks make an accessibility
+        // adjustment one complete resize transaction for callers that preview before commit.
+        if next != size {
+            onBegin()
+            size = next
+            onEnd()
+        }
     }
 }

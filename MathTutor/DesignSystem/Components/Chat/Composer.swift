@@ -13,11 +13,24 @@ enum ComposerSelection: Equatable, Sendable {
     case unavailable
     /// A board is reachable. The marquee shows in `--color-icon` grey.
     case idle
+    /// `btn/select` is lit and the board's marquee is armed, but the student has not
+    /// drawn a region yet.
+    ///
+    /// **Not from the design**, which draws this axis as a straight on/off because it
+    /// never drew the drag in between (board 05 open question 7). The state has to exist
+    /// once picking a region takes a gesture: the glyph must go violet the instant the tap
+    /// lands — it is the only feedback the tap has — while the `Selection attached` card
+    /// must not, because nothing is attached yet and a card that says otherwise is simply
+    /// wrong.
+    case arming
     /// A selection is attached: the marquee turns brand violet and the card grows behind
     /// the pill. Board 03 §11.4 flags that colour change as real but undocumented —
     /// *"confirm this is intentional (it reads as a sensible affordance) and add the token
     /// binding"* — which is what the binding here does.
     case attached
+
+    /// Whether the glyph is drawn in `--color-brand` rather than `--color-icon`.
+    var isLit: Bool { self == .arming || self == .attached }
 }
 
 /// Every measured value of the composer, at both scales.
@@ -301,6 +314,10 @@ struct Composer: View {
     /// One line above the pill: nothing came back, or it failed. Board 15 §02.
     var note: String?
     var onDismissSelection: (() -> Void)?
+    /// `btn/select`: arm the board's marquee, or put the pencil back on the ink. Optional so
+    /// a specimen that has no board behind it draws the glyph without pretending to be a
+    /// control — see `leading`.
+    var onToggleSelection: (() -> Void)?
 
     private var metrics: ComposerMetrics { .for(scale, width: width ?? scale.contentWidth) }
 
@@ -369,18 +386,53 @@ struct Composer: View {
 
     /// The marquee's slot, which dictation borrows for its cancel because a lasso attachment is
     /// meaningless while the microphone is open — so nothing on screen moves when it opens.
+    ///
+    /// **This glyph is `btn/select`.** Board 03 §11.4 describes it as *"a persistent
+    /// affordance, not a state indicator"*, and the port read that as "decorative": it was an
+    /// `IconView` with `accessibilityHidden(true)`, so tapping the one selection control on
+    /// the docked screen did nothing and it never changed colour. Meanwhile the working
+    /// control lived in `CollapsedDock`, which the docked screen does not draw — leaving the
+    /// board unreachable from the state the app launches in. An affordance that affords
+    /// nothing is the bug; wiring it to the same action the dock's button already had is the
+    /// smallest fix, and it costs no new pixels because the design already put the glyph here
+    /// in both of its states.
+    ///
+    /// It stays a plain glyph when no handler is supplied, which is what every specimen,
+    /// preview and gallery entry passes.
     @ViewBuilder
     private var leading: some View {
         if let dictation {
             ComposerCancelButton(metrics: metrics, action: dictation.onCancel)
         } else if selection != .unavailable {
-            IconView(
-                .uiSelectionMarker,
-                size: metrics.marqueeSize,
-                tint: selection == .attached ? DS.Color.brand : DS.Color.icon
-            )
-            .accessibilityHidden(true)
+            if let onToggleSelection {
+                Button(action: onToggleSelection) {
+                    marquee
+                        // The glyph is 24pt in a 50pt pill, so it hit-tests well under the
+                        // 44pt minimum. Given back as negative padding, exactly as the
+                        // rail's 27pt swatches are, so the target grows without the row's
+                        // arithmetic — `301 − 18 − 24 − 10 − 151 − 10 − 34 − 10 − 38 − 6 = 0`
+                        // — moving by a point.
+                        .expandedTapTarget(ComposerMetrics.minimumTapTarget, over: metrics.marqueeSize)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Select an area of the board")
+                // "Attached" the moment the marquee is armed, matching the glyph — this
+                // value is what says the tap landed, and the dock's own button reports
+                // the same axis the same way.
+                .accessibilityValue(selection.isLit ? "Attached" : "Not attached")
+                .accessibilityAddTraits(selection.isLit ? .isSelected : [])
+            } else {
+                marquee.accessibilityHidden(true)
+            }
         }
+    }
+
+    private var marquee: some View {
+        IconView(
+            .uiSelectionMarker,
+            size: metrics.marqueeSize,
+            tint: selection.isLit ? DS.Color.brand : DS.Color.icon
+        )
     }
 
     /// The design draws only the empty state, at both widths — no caret, focus ring, or

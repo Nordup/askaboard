@@ -32,6 +32,14 @@ enum PencilCanvasConfiguration {
     /// a few pixels and get confident feedback on a smudge.
     static let maximumEvaluationSpan: CGFloat = 4_000
 
+    /// A canvas that is not in a window yet reports a `displayScale` of 0, and a
+    /// pattern tile rendered at 0 is empty. Every device this ships on is 2x.
+    @MainActor
+    private static func displayScale(for canvas: PKCanvasView) -> CGFloat {
+        let scale = canvas.traitCollection.displayScale
+        return scale > 0 ? scale : 2
+    }
+
     static func contentSize(for viewport: CGSize) -> CGSize {
         CGSize(
             width: max(boardExtent, viewport.width),
@@ -54,11 +62,32 @@ enum PencilCanvasConfiguration {
         viewport: CGSize,
         preserveViewport: Bool = false
     ) {
+        #if DEBUG
+        guard BoardConfig.current.usesBoardGeometry else {
+            canvas.backgroundColor = BoardPaper.background(scale: displayScale(for: canvas))
+            canvas.isOpaque = true
+            canvas.drawingPolicy = .pencilOnly
+            return
+        }
+        #endif
         let previousZoomScale = canvas.zoomScale
         let previousContentOffset = canvas.contentOffset
 
-        canvas.backgroundColor = .clear
-        canvas.isOpaque = false
+        // **The canvas paints the board's paper, and is opaque because of it.**
+        //
+        // This used to be a clear, non-opaque canvas over a SwiftUI fill and dot
+        // grid. That is the configuration PencilKit cannot present in-progress
+        // strokes through: with something to blend against underneath, the wet
+        // ink arrives on ordinary Core Animation commits instead of on its own
+        // high-frequency path, and a stroke lands in visible segments rather than
+        // following the tip. See `BoardPaper`, which is the grid the fill and the
+        // `DotGrid` below it used to draw.
+        //
+        // `WhiteboardSurface` no longer masks this view either — it paints the
+        // card's rounded corners *over* it — because a rounded clip is the other
+        // way the canvas ends up in an offscreen buffer instead of on the screen.
+        canvas.backgroundColor = BoardPaper.background(scale: displayScale(for: canvas))
+        canvas.isOpaque = true
         canvas.drawingPolicy = .pencilOnly
         canvas.isScrollEnabled = true
         canvas.contentInsetAdjustmentBehavior = .never

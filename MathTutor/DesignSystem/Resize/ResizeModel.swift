@@ -101,8 +101,8 @@ enum ResizeModel {
     ///
     /// So this holds `current` on the collapse frame instead of taking `resolution.size`, and
     /// is a pass-through everywhere else. Nothing is lost by holding rather than writing: the
-    /// gesture's anchor is untouched by collapsing (see the note on `wasCollapsed` in
-    /// `ResizeHandle`), so a drag back out within the same gesture re-resolves from it and
+    /// gesture's anchor is untouched while collapse is pending in `ResizeHandle`, so a drag
+    /// back out within the same gesture re-resolves from it and
     /// this function starts writing again — edge case ⑮, which the model supports even though
     /// `ResizeHandle`'s own mounting policy never lets the app exercise it (see that type's
     /// caller for why).

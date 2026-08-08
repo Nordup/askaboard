@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import logging
 import time
 import uuid
@@ -19,16 +20,28 @@ from app.config import MODEL_ALLOWLIST, get_settings
 from app.sse import SSE_HEADERS, format_sse
 from app.store.db import db_session, session_factory
 from app.store.blobs import LocalBlobStore
-from app.store.models import Message, Session, Turn
+from app.store.models import Attachment, Message, Session, Turn
 from app.store.recorder import Recorder
 from app.tutor.context import assemble_context
 from app.tutor.events import DoneEvent, ErrorEvent, StatusEvent
+from app.tutor import rendezvous
 from app.tutor.loop import TurnResult, run_turn
+from app.tutor.rendezvous import BoardRegion
 from app.tutor.retry import classify
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1", dependencies=[Depends(require_device_token)])
+
+# `Attachment.kind` for the whole-board upload every turn carries.
+#
+# Deliberately **not** `board_png`, which is already taken by the region a
+# learner marquees and sends. The two are different things — one is the board,
+# the other is a thing they pointed at — and the turn-to-turn comparison that
+# tells the model whether the board moved has to compare boards with boards. A
+# shared kind would have a selection sent between two identical boards read as
+# the board having changed twice. Fits `Attachment.kind`'s String(16).
+BOARD_KIND = "board_full"
 
 
 def _describe_error(error: Exception) -> str:
@@ -96,6 +109,21 @@ class TurnRequest(BaseModel):
     goal: str | None = None
     image_base64: str | None = None
     image_region: str | None = None
+    #: The learner's whole board as it currently stands, sent on every turn that
+    #: has ink on it — not because they asked for it to be looked at, but so the
+    #: tutor *can* look. `image_base64` above is the other thing: a region they
+    #: chose and pointed at. See `assemble_context`.
+    #:
+    #: A thumbnail, not the board: it is what the model aims with, and anything
+    #: it wants to read it asks the device to render. The full-resolution upload
+    #: this replaced cost ~160KB on every turn, including every turn where the
+    #: model never looked.
+    board_overview_base64: str | None = None
+    #: The device's own account of where the ink sits, in the percent
+    #: coordinates `view_board` takes. A board whose writing occupies two
+    #: percent of a large empty field cannot be aimed at from the overview
+    #: alone; this is what makes it aimable.
+    board_manifest: str | None = None
     model: str
     reasoning_effort: str
 
@@ -123,6 +151,43 @@ def get_recorder() -> Recorder:
     """
     settings = get_settings()
     return Recorder(session_factory(), LocalBlobStore(settings.blob_dir))
+
+
+class BoardRenderBody(BaseModel):
+    """One rendered region, on its way back up to the turn that asked for it."""
+
+    call_id: str
+    image_base64: str
+
+
+@router.post("/turn/{turn_id}/board")
+async def deliver_board_render(turn_id: uuid.UUID, body: BoardRenderBody):
+    """The device answering a `board_request`.
+
+    A second request rather than anything on the SSE stream, because SSE only
+    runs one way. The turn that asked is parked on a future in
+    `app.tutor.rendezvous`; this hands it the bytes and the turn resumes.
+
+    404 when nothing is waiting. That is a real case, not a defensive one: the
+    turn may already have timed out and told the model it could not see the
+    board, and a render that arrives after that must not be silently dropped
+    into a void the device thinks succeeded. It also covers a duplicate POST and
+    a device replaying an old turn.
+    """
+    try:
+        image = base64.b64decode(body.image_base64)
+    except (ValueError, TypeError):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "image_base64 is not valid base64.")
+
+    if not image:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "The render is empty.")
+
+    if not rendezvous.deliver(turn_id, body.call_id, image):
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "No turn is waiting for that render; it may have already timed out.",
+        )
+    return {"status": "ok"}
 
 
 @router.post("/turn")
@@ -165,6 +230,26 @@ async def create_turn(
         session.reasoning_effort = body.reasoning_effort
 
     image = base64.b64decode(body.image_base64) if body.image_base64 else None
+    board = base64.b64decode(body.board_overview_base64) if body.board_overview_base64 else None
+
+    # Whether the board differs from the one this session last sent.
+    #
+    # Computed here rather than left for the model to notice, because it cannot:
+    # its context holds a fresh picture *and* a transcript of its own earlier
+    # descriptions of an older one, and it will repeat the text. This is the
+    # single fact that stops it — see `board.describe`. `None` means "no previous
+    # board to compare against", which is a first look, not an unchanged one.
+    board_sha = hashlib.sha256(board).hexdigest() if board is not None else None
+    previous_sha = (
+        await db.execute(
+            select(Attachment.sha256)
+            .join(Turn, Turn.id == Attachment.turn_id)
+            .where(Turn.session_id == body.session_id, Attachment.kind == BOARD_KIND)
+            .order_by(Attachment.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    board_changed = None if previous_sha is None else (board_sha != previous_sha)
 
     # Fetched explicitly rather than through `session.messages`: on an
     # AsyncSession, touching an unloaded relationship attribute after flush()
@@ -218,6 +303,23 @@ async def create_turn(
         # code cannot see into.
         client = AsyncOpenAI(api_key=settings.openai_api_key, max_retries=0)
 
+        async def fetch_board(call_id: str, region: BoardRegion) -> bytes:
+            """Wait for the device to render one region of its board.
+
+            The matching `board_request` event has already been yielded by
+            `run_turn` — that is what tells the device to draw this — so by the
+            time this runs the ask is on the wire and all that is left is the
+            wait. `open_request` is registered *before* the yield would be a
+            nicer ordering, but the generator cannot hand us control between the
+            two; the device cannot POST faster than its own render, so the small
+            window where the future does not yet exist is not reachable in
+            practice. `deliver` returning False is the guard if it ever is.
+            """
+            future = rendezvous.open_request(body.turn_id, call_id)
+            return await rendezvous.await_render(
+                future, turn_id=body.turn_id, call_id=call_id
+            )
+
         # Everything that can strand a turn at status="running" — the image
         # write, assembling the prompt, the model call, and persisting the
         # result — lives inside this one try, and the matching `finally`
@@ -244,15 +346,27 @@ async def create_turn(
                     content_type="image/png",
                 )
 
+            if board is not None:
+                # Recorded for the *next* turn's comparison as much as for the
+                # audit trail: `board_changed` above reads exactly this row back.
+                # Content-addressed, so a board sent twice unchanged costs one
+                # blob, not two.
+                await recorder.record_attachment(
+                    turn_id=body.turn_id, kind=BOARD_KIND, data=board,
+                    content_type="image/png",
+                )
+
             bundle = assemble_context(
                 session=session, messages=messages, image_data=image,
                 image_region=body.image_region, signal=body.signal, goal=body.goal,
+                board_overview=board, board_manifest=body.board_manifest,
+                board_changed=board_changed,
             )
             request_body["input"] = bundle.input
 
             async for event, running in run_turn(
                 client=client, model=body.model, effort=body.reasoning_effort,
-                bundle=bundle,
+                bundle=bundle, fetch_board=fetch_board,
             ):
                 result = running
                 if ttft_ms is None and event.type == "text_delta":

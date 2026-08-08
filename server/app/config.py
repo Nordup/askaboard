@@ -19,7 +19,7 @@ MODEL_ALLOWLIST: frozenset[str] = frozenset({
 # what the device actually has selected (see app/api/turn.py). These match the
 # client's own defaults for a new session, so a dictation-first session is
 # labelled with what would have answered it rather than with a sentinel.
-DEFAULT_MODEL = "gpt-5.6-luna"
+DEFAULT_MODEL = "gpt-5.6-sol"
 DEFAULT_REASONING_EFFORT = "high"
 
 

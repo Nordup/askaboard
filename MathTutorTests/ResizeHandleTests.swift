@@ -37,27 +37,12 @@ final class ResizeHandleTests: XCTestCase {
         XCTAssertLessThanOrEqual(abs(44 - breadth), 2)
     }
 
-    func testTheCapsuleFitsInsideTheGutterItIsDrawnIn() {
-        XCTAssertLessThanOrEqual(
-            ResizeHandleMetrics.capsuleThickness,
-            DS.Space.gap,
-            "a capsule wider than the gutter would paint over the board or the panel"
-        )
-    }
-
     func testTheDragHasToTravelBeforeItCounts() {
         XCTAssertGreaterThan(
             ResizeHandleMetrics.minimumDragDistance,
             0,
             "otherwise a tap on the strip resizes the panel by half a point"
         )
-    }
-
-    /// Pins the two places `ResizeHandleMetrics` reuses a `DS` token rather than a literal,
-    /// so a future edit that swaps either back to a raw number fails a test instead of
-    /// silently drifting from the token it is supposed to track.
-    func testTheCapsuleRadiusIsTheDesignSystemsExtraSmallRadius() {
-        XCTAssertEqual(ResizeHandleMetrics.capsuleRadius, DS.Radius.xs)
     }
 
     func testTheAccessibilityStepIsTheDesignSystemsGap() {

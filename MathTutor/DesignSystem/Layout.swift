@@ -34,11 +34,9 @@ import SwiftUI
 /// it. `reference` is the boards' screen; a measured layout is the device's.
 ///
 /// **What is fixed and what flexes.** The rail is 72 because `--container-rail` says *"fixed —
-/// the rail never resizes"*, and the docked panel is 337 because that is what leaves the 301pt
-/// content column the 18pt inset is specced against. Every inset is a token. So the board is
-/// the only lane with anywhere to give, and it absorbs all remaining width; the safe band
-/// absorbs all remaining height. Nothing here invents a spacing value — only the *positions*
-/// became derived.
+/// the rail never resizes"*. The dock still starts at the design's 337pt width, while a
+/// student may resize it within the usable range below. The board absorbs the remaining
+/// width and the safe band absorbs the remaining height.
 ///
 /// Named `ScreenLayout` rather than `Layout` because SwiftUI ships a `Layout` protocol. Swift
 /// resolves the bare name to this type — a module prefers its own — so the shorter name did
@@ -68,8 +66,8 @@ struct ScreenLayout: Equatable, Sendable {
     /// `boardWidthDocked` were always written as subtractions from this number, so they
     /// follow for free.
     ///
-    /// The design's 337 is its **floor**, not its value: see `minimumPanelWidth`. A panel is
-    /// never drawn narrower than it was designed, only wider — or collapsed to the dock.
+    /// The design's 337 is the default, not a resize boundary: see `defaultPanelWidth` and
+    /// `minimumPanelWidth`.
     let panelWidth: CGFloat
 
     /// Insets are `EdgeInsets` at the boundary (that is what `GeometryProxy` hands you) and
@@ -83,7 +81,7 @@ struct ScreenLayout: Equatable, Sendable {
     init(
         size: CGSize,
         safeArea: EdgeInsets = EdgeInsets(),
-        panelWidth: CGFloat = ScreenLayout.minimumPanelWidth
+        panelWidth: CGFloat = ScreenLayout.defaultPanelWidth
     ) {
         self.size = size
         safeAreaTop = safeArea.top
@@ -234,13 +232,15 @@ struct ScreenLayout: Equatable, Sendable {
     /// without the two lanes it sits between having already overlapped.
     var resizeStripX: CGFloat { panelX - DS.Space.gap }
 
-    /// `--container-panel`, now read as the smallest width the panel is ever *drawn* at.
+    /// The width used by the design and restored by a resize-handle double tap.
+    static let defaultPanelWidth: CGFloat = DS.Container.panel
+
+    /// Smallest dock width that keeps its fixed controls and composer usable.
     ///
-    /// 337 is what leaves the 301pt column `--space-panel-inset` is specced against, and
-    /// board 05 is explicit that the panel and full-screen treatments are *"two variants,
-    /// not one responsive view."* There is no third variant, so nothing narrower than the
-    /// one that was drawn ever appears: dragging inward pins here and then collapses.
-    static let minimumPanelWidth: CGFloat = DS.Container.panel
+    /// At 260pt the 18pt insets leave a 224pt content column. After the composer's buttons,
+    /// gaps, and padding, its flexible text lane still has 74pt; below this the dock is more
+    /// useful collapsed or full-screen than as a cramped third layout variant.
+    static let minimumPanelWidth: CGFloat = 260
 
     /// The width the board and the panel share, gap included on the panel's side.
     ///
@@ -248,21 +248,14 @@ struct ScreenLayout: Equatable, Sendable {
     /// ceiling is a statement about this lane rather than about the screen.
     var dockedLaneWidth: CGFloat { max(0, contentRight - boardX - DS.Space.gap) }
 
-    /// Half the shared lane — which is `minimumBoardWidth`'s rule applied live rather than
-    /// as a static floor.
+    /// Everything in the shared lane except the board's minimum. The tutor may be much wider
+    /// than the board; widening it is allowed to reduce the whiteboard to a compact strip.
     ///
-    /// That constant says *"the board must never end up narrower than the panel it sits
-    /// beside — the board is the product and the tutor is the commentary."* Written as a
-    /// live constraint, `panel ≤ board` is `panel ≤ lane ÷ 2`, and the recursion the naive
-    /// reading suggests — the maximum depending on `boardWidthDocked`, which depends on the
-    /// panel — collapses algebraically before it ever needs iterating.
-    ///
-    /// `600` on the reference screen, where a panel at its ceiling is exactly as wide as the
-    /// board. Deliberately **not** floored at `minimumPanelWidth`: on a window too narrow to
-    /// dock at all the two bounds genuinely do cross, and reporting that honestly is what
-    /// lets `ResizeConstraints.isSatisfiable` catch it instead of the layout quietly
-    /// preferring one bound.
-    var maximumPanelWidth: CGFloat { dockedLaneWidth / 2 }
+    /// This makes the reference-screen ceiling `1200 - 200 = 1000`. Deliberately **not**
+    /// floored at `minimumPanelWidth`: on a window too narrow to dock at all the two bounds
+    /// genuinely cross, and reporting that honestly lets `ResizeConstraints.isSatisfiable`
+    /// catch it.
+    var maximumPanelWidth: CGFloat { max(0, dockedLaneWidth - Self.minimumBoardWidth) }
 
     /// What the student asked the panel to be, reconciled with what *this* window can host.
     ///
@@ -361,41 +354,35 @@ struct ScreenLayout: Equatable, Sendable {
         /// Screens 05 / 08: rail, board and docked tutor across the safe band.
         case threeLane
         /// Screen 06 only: rail and board, tutor behind the collapsed dock. The docked lane
-        /// arithmetic still evaluates, but the board it leaves is narrower than the panel
-        /// beside it, which inverts the hierarchy the design is built on.
+        /// arithmetic still evaluates, but the board it leaves is below its usable floor.
         case boardOnly
         /// No state in the design fits. Nothing here is negative, but nothing here is usable
         /// either, and a caller should say so rather than draw it.
         case unsupported
     }
 
-    /// The board must never end up narrower than the panel it sits beside — the board is the
-    /// product and the tutor is the commentary, and a 255pt board next to a 337pt panel reads
-    /// as the reverse. `--container-panel` is therefore the board's floor as well as the
-    /// panel's width; no new number is introduced to express it.
-    static let minimumBoardWidth: CGFloat = DS.Container.panel
+    /// Smallest board strip retained beside a maximized dock. It remains large enough to
+    /// preserve spatial context and the drawing surface, while prioritizing chat when the
+    /// student deliberately drags the seam almost all the way across the window.
+    static let minimumBoardWidth: CGFloat = 200
 
-    /// `28 + 72 + 24 + 337 + 24 + 337 + 28 = 850` — edge + rail + gap + board + gap + panel +
-    /// edge, with the board at its floor and the panel at whatever the student has asked for.
+    /// Edge + rail + gap + board floor + gap + requested panel + edge, with the board at its
+    /// floor and the panel at whatever the student has asked for.
     ///
     /// Instance rather than static since the panel's width became an input: a wider panel
     /// genuinely does need a wider window to stay docked, and a threshold that ignored the
-    /// panel would let a 600pt panel dock beside a narrower-than-337 board. `collapsedMinimumWidth`
+    /// panel would let a wide panel dock beside a narrower-than-200 board. `collapsedMinimumWidth`
     /// stays static for the mirror-image reason — there is no panel in that state, so a wide
     /// one must not raise the width at which the board alone stops fitting.
     ///
-    /// **This alone does not guarantee `board >= panel`.** It only raises the board's floor
-    /// from 200 (an unnamed number the design never chose) to `minimumBoardWidth` — the same
-    /// 337 the panel's own floor is. Above that floor the two widths are independent inputs
-    /// again: a `panelWidth` past 337 can still outrun `boardWidthDocked` on a window this
-    /// alone is satisfied by, which is exactly the inversion `minimumBoardWidth`'s doc warns
-    /// against. The actual guarantee is the conjunction `fit` computes — this threshold *and*
-    /// `panelWidth <= maximumPanelWidth` — not this number by itself.
+    /// This threshold and `maximumPanelWidth` express the same usable-board rule from two
+    /// directions: enough total width must exist for the requested panel plus the board's
+    /// floor, and the requested panel must leave that floor in the shared lane.
     var dockedMinimumWidth: CGFloat {
         2 * DS.Space.edge + Self.railWidth + 2 * DS.Space.gap + panelWidth + Self.minimumBoardWidth
     }
 
-    /// `28 + 72 + 24 + 337 + 28 = 489` — the same sum with the panel and one gap removed,
+    /// `28 + 72 + 24 + 200 + 28 = 352` — the same sum with the panel and one gap removed,
     /// which is exactly what collapsing does.
     static let collapsedMinimumWidth: CGFloat =
         2 * DS.Space.edge + railWidth + DS.Space.gap + minimumBoardWidth
@@ -406,15 +393,10 @@ struct ScreenLayout: Equatable, Sendable {
     /// and the panel's `18 + 32 + 810 + 58 + 18` stack has a flexible thread in the middle.
     static let minimumContentHeight: CGFloat = DS.Space.gap + collapsedDockHeight
 
-    /// `.threeLane` is two conditions, not one, and both are load-bearing for `ScreenLayout`
-    /// itself even though only the first ever actually decides the answer in the shipped app.
-    /// `usableWidth >= dockedMinimumWidth` is the window being wide enough to fit the board at
-    /// its floor beside the panel at its current width; `panelWidth <= maximumPanelWidth` is
-    /// the hierarchy rule — the panel is commentary, so it may never end up wider than the
-    /// board it sits beside. Above `minimumPanelWidth` the two are independent: a window can
-    /// satisfy the first while a sufficiently wide panel already fails the second, and a
-    /// `dockedMinimumWidth` that only checked the first would still report `.threeLane` for a
-    /// panel wider than the board it is next to.
+    /// `.threeLane` is two conditions, not one. `usableWidth >= dockedMinimumWidth` is the
+    /// window being wide enough to fit the board at its floor beside the requested panel;
+    /// `panelWidth <= maximumPanelWidth` independently keeps a directly constructed layout
+    /// honest about the same rule.
     ///
     /// Belt-and-braces, not a reachable case in the shipped app: the only place that builds a
     /// `ScreenLayout` with a caller-chosen `panelWidth` is `BoardScreen.resized(_:)`, and it

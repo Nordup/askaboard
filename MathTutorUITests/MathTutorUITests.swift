@@ -366,38 +366,102 @@ final class MathTutorUITests: XCTestCase {
 
     // MARK: - The board selection, which is how work reaches the tutor
 
-    func testDockSelectionAttachesTheBoardAndSendingEvaluatesIt() {
+    /// Arming `btn/select` and sending without drawing anything still evaluates the whole
+    /// board — the zero-effort path this control had before it could pick a region, kept
+    /// exactly as it was so nobody has to learn a gesture to ask for help.
+    func testDockSelectionArmedButUndrawnStillEvaluatesTheWholeBoard() {
         // The seed puts real ink on the board; an empty board has nothing to attach.
         let app = launch(["--ui-test-reset", "--e2e-seed-radical-attempt"], resetting: false)
 
-        attachBoardSelection(in: app)
+        armBoardSelection(in: app)
 
-        tap(app.buttons["Send message"], untilGone: app.staticTexts["Selection attached"],
-            "Sending must consume the attachment")
-        XCTAssertTrue(app.staticTexts["Selection"].waitForExistence(timeout: 8),
-                      "The sent selection arrives in the thread as a capped bubble")
+        // Watched on the thread rather than on the composer: arming draws no
+        // `Selection attached` card, so there is no card for the send to consume and an
+        // `untilGone:` on one would be satisfied before Send was ever tapped.
+        tap(app.buttons["Send message"], untilExists: app.staticTexts["Selection"],
+            "Sending an armed marquee must evaluate the board")
         XCTAssertTrue(
             staticText(containing: "looking at the whole board", in: app, timeout: 10),
-            "The tutor must be told which part of the board it was sent"
+            "An armed but undrawn marquee must still be described as the whole board"
         )
     }
 
-    /// Collapse, attach, reopen — the design's only route from the board to the composer.
+    /// The docked composer's own `btn/select`, and the pencil drag that picks a region.
     ///
-    /// **`btn/select` now has a visible result of its own**, which is what this helper used
-    /// to say it lacked: the dock draws the design's live/idle colour states for
+    /// This is the reported bug end to end. The composer's dashed-square glyph was an
+    /// `IconView` with `accessibilityHidden(true)` — it looked exactly like a button, did
+    /// nothing, and never changed colour — while the only working control lived in the
+    /// collapsed dock, which the docked screen does not draw. So on the screen the app
+    /// launches in there was no way to hand the board to the tutor at all, and no way at all
+    /// to hand it *part* of the board.
+    ///
+    /// The drag is what proves the region, not just the button: sending an armed-but-undrawn
+    /// marquee still evaluates the whole board, so a test that only tapped would pass
+    /// against a marquee that never worked.
+    func testTheComposerSelectButtonArmsAMarqueeAndAPencilDragPicksTheRegion() {
+        // Ink on the board — an empty one has nothing to select, and btn/select says so.
+        let app = launch(["--ui-test-reset", "--e2e-seed-radical-attempt"], resetting: false)
+
+        let selectButton = app.buttons["Select an area of the board"]
+        XCTAssertTrue(
+            selectButton.waitForExistence(timeout: 10),
+            "btn/select must be reachable from the docked screen, not only from the dock"
+        )
+
+        // The first synthesized tap after launch is lossy often enough to matter, so this
+        // retries on the button's own reported state rather than on a longer timeout.
+        for attempt in 1...3 {
+            if isAttached(selectButton) { break }
+            selectButton.tap()
+            if waitUntilAttached(selectButton, timeout: 3) { break }
+            noteDroppedTap(attempt: attempt, of: 3, message: "the composer's btn/select did not arm the marquee")
+        }
+        XCTAssertTrue(
+            isAttached(selectButton),
+            "Tapping the composer's marquee glyph must visibly arm the selection"
+        )
+
+        let board = app.otherElements["whiteboard"]
+        XCTAssertTrue(board.waitForExistence(timeout: 5))
+        board.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.3))
+            .press(
+                forDuration: 0.1,
+                thenDragTo: board.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.75))
+            )
+
+        XCTAssertTrue(
+            app.staticTexts["Selection attached"].waitForExistence(timeout: 5),
+            "A finished marquee drag must attach its region to the composer"
+        )
+
+        tap(app.buttons["Send message"], untilGone: app.staticTexts["Selection attached"],
+            "Sending must consume the attachment")
+        XCTAssertTrue(
+            staticText(containing: "the area selected on the board", in: app, timeout: 10),
+            "The tutor must be told it was sent a picked region, not the whole board"
+        )
+    }
+
+    /// Collapse and arm `btn/select` from the dock.
+    ///
+    /// **`btn/select` has a visible result of its own**, which is what this helper used to
+    /// say it lacked: the dock draws the design's live/idle colour states for
     /// `ui/selection-marker`, so the control reports its own state and the retry can watch
     /// *it* rather than a card three views away. That matters for more than tidiness — the
-    /// button is a toggle now, so a retry that re-taps a tap which actually landed would
-    /// detach the board it had just attached. Only a tap that left the button idle is
-    /// repeated.
-    private func attachBoardSelection(
+    /// button is a toggle, so a retry that re-taps a tap which actually landed would disarm
+    /// the marquee it had just armed. Only a tap that left the button idle is repeated.
+    ///
+    /// It stops at armed, and deliberately does not reopen the panel to look for a
+    /// `Selection attached` card: arming picks no region, so there is nothing attached for a
+    /// card to describe. The drag that does attach one is
+    /// `testTheComposerSelectButtonArmsAMarqueeAndAPencilDragPicksTheRegion`.
+    private func armBoardSelection(
         in app: XCUIApplication,
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
         let selectButton = app.buttons["Select an area of the board"]
-        if !selectButton.exists {
+        if !app.buttons["Open the tutor"].exists {
             tap(app.buttons["Collapse tutor to the dock"], untilExists: selectButton,
                 "btn/dock must collapse the panel to the dock")
         }
@@ -405,15 +469,13 @@ final class MathTutorUITests: XCTestCase {
             if isAttached(selectButton) { break }
             selectButton.tap()
             if waitUntilAttached(selectButton, timeout: 3) { break }
-            noteDroppedTap(attempt: attempt, of: 3, message: "btn/select did not attach the board")
+            noteDroppedTap(attempt: attempt, of: 3, message: "btn/select did not arm the marquee")
         }
         XCTAssertTrue(isAttached(selectButton),
-                      "btn/select never reported an attached board", file: file, line: line)
+                      "btn/select never reported an armed selection", file: file, line: line)
 
         tap(app.buttons["Open the tutor"], untilExists: app.textFields["Ask anything..."],
             "The dock's orb must bring the panel back")
-        XCTAssertTrue(app.staticTexts["Selection attached"].waitForExistence(timeout: 5),
-                      "The attached board must reach the composer", file: file, line: line)
     }
 
     /// `btn/select`'s accessibility value, which is how the attached state leaves the app.
@@ -502,7 +564,7 @@ final class MathTutorUITests: XCTestCase {
 
         let app = launch([], resetting: false)
 
-        attachBoardSelection(in: app)
+        armBoardSelection(in: app)
         app.buttons["Send message"].tap()
 
         // The reply is a plain tutor message in the thread now, not a highlighted card, so

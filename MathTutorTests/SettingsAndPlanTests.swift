@@ -286,10 +286,10 @@ final class SettingsAndPlanTests: XCTestCase {
     // MARK: - The pickers
 
     func testModelOptionsAreTheBoardsThreeRoutesInOrder() {
-        let options = SettingsOption.models(selected: .luna)
+        let options = SettingsOption.models(selected: .sol)
         XCTAssertEqual(options.map(\.title), ["Sol", "Terra", "Luna"])
-        XCTAssertEqual(options.map(\.caption), ["Focused route", "Balanced route", "Default route"])
-        XCTAssertEqual(options.filter(\.isSelected).map(\.value), [.luna])
+        XCTAssertEqual(options.map(\.caption), ["Focused route", "Balanced route", "Vision route"])
+        XCTAssertEqual(options.filter(\.isSelected).map(\.value), [.sol])
     }
 
     func testEffortOptionsAreTheBoardsSixLevelsInOrder() {
@@ -318,7 +318,7 @@ final class SettingsAndPlanTests: XCTestCase {
     func testPickingAModelMovesTheSelectedFillAndPersistsToTheStore() {
         let store = TutorStore(service: DemoTutorService())
         store.resetSession()
-        XCTAssertEqual(store.session.selectedModel, .luna)
+        XCTAssertEqual(store.session.selectedModel, .sol)
 
         store.setModel(.sol)
 

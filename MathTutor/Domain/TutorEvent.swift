@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// Mirrors the server's `StatusEvent.phase` literal in
@@ -17,6 +18,19 @@ enum TutorEvent: Sendable, Equatable {
     case reasoningDelta(String)
     case textDelta(String)
     case workspace(SessionPlan, Exercise)
+    /// The tutor asking this device to render a region of its own board.
+    ///
+    /// The one event that expects an answer. `BackendTutorService` renders the
+    /// region and POSTs it back; the turn on the server is parked waiting for
+    /// exactly that. Nothing above the service layer has to know — the store
+    /// sees `.boardViewed` once the picture exists.
+    case boardRequest(callID: String, region: CGRect, detail: String)
+    /// A region this device rendered for the tutor, on its way into the thread.
+    ///
+    /// Produced locally rather than received: the device drew it, so it already
+    /// holds the bytes and they never make a second round trip. This is what
+    /// lets the thread show the learner what the tutor actually looked at.
+    case boardViewed(imageData: Data, detail: String)
     case done
     case failure(message: String, retryable: Bool)
 
@@ -45,6 +59,16 @@ enum TutorEvent: Sendable, Equatable {
         case "workspace":
             guard let plan = envelope.plan, let exercise = envelope.exercise else { return nil }
             return .workspace(plan, exercise)
+        case "board_request":
+            guard let callID = envelope.call_id,
+                  let x = envelope.x, let y = envelope.y,
+                  let width = envelope.width, let height = envelope.height
+            else { return nil }
+            return .boardRequest(
+                callID: callID,
+                region: CGRect(x: x, y: y, width: width, height: height),
+                detail: envelope.detail ?? ""
+            )
         case "done":
             return .done
         case "error":
@@ -80,5 +104,12 @@ enum TutorEvent: Sendable, Equatable {
         let exercise: Exercise?
         let message: String?
         let retryable: Bool?
+        // `board_request`. Snake_case on the wire, and named to match rather
+        // than aliased, because this envelope decodes the union directly.
+        let call_id: String?
+        let x: CGFloat?
+        let y: CGFloat?
+        let width: CGFloat?
+        let height: CGFloat?
     }
 }

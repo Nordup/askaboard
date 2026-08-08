@@ -115,7 +115,10 @@ class Attachment(Base):
     session_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("sessions.id"), nullable=True, index=True
     )
-    kind: Mapped[str] = mapped_column(String(16))  # board_png | ink | audio
+    # board_png (a region the learner marqueed and sent) | board_full (the whole
+    # board, uploaded every turn so the tutor can crop it with `view_board`) |
+    # ink | audio. The first two are kept apart on purpose — see BOARD_KIND.
+    kind: Mapped[str] = mapped_column(String(16))
     blob_key: Mapped[str] = mapped_column(String(128))
     sha256: Mapped[str] = mapped_column(String(64), index=True)
     bytes: Mapped[int] = mapped_column(Integer)

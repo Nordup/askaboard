@@ -819,25 +819,25 @@ final class ShellComponentTests: XCTestCase {
     }
 
     func testARequestedWidthIsClampedDownOnASmallerWindow() {
-        // An 1112 × 834 iPad Air: lane = 1112 − 28 − 72 − 24 − 24 − 28 = 936, so max = 468.
+        // An 1112 × 834 iPad Air: lane = 936, leaving the board's 200pt floor gives 736.
         let l = ScreenLayout(size: CGSize(width: 1112, height: 834))
-        XCTAssertEqual(l.maximumPanelWidth, 468, "maximumPanelWidth")
-        XCTAssertEqual(l.resolvingPanelWidth(600), 468, "clamped, not honoured")
+        XCTAssertEqual(l.maximumPanelWidth, 736, "maximumPanelWidth")
+        XCTAssertEqual(l.resolvingPanelWidth(800), 736, "clamped, not honoured")
     }
 
     /// The reversibility contract. The requested width is presentation state that survives
     /// the window shrinking, so widening the window restores exactly what the student asked
     /// for rather than whatever the small window allowed.
     func testShrinkingThenGrowingTheWindowRestoresTheRequestedWidth() {
-        let requested: CGFloat = 600
+        let requested: CGFloat = 800
         let small = ScreenLayout(size: CGSize(width: 1112, height: 834))
-        XCTAssertEqual(small.resolvingPanelWidth(requested), 468, "squeezed")
+        XCTAssertEqual(small.resolvingPanelWidth(requested), 736, "squeezed")
 
         let large = ScreenLayout(size: CGSize(width: 1376, height: 1032))
-        XCTAssertEqual(large.resolvingPanelWidth(requested), 600, "and restored")
+        XCTAssertEqual(large.resolvingPanelWidth(requested), 800, "and restored")
     }
 
-    func testTheClampedWidthNeverLeavesTheBoardNarrowerThanThePanel() {
+    func testTheClampedWidthAlwaysLeavesTheBoardAtItsUsableFloor() {
         for width in [1024, 1112, 1180, 1366, 1376] as [CGFloat] {
             let l = ScreenLayout(size: CGSize(width: width, height: 1032))
             guard l.maximumPanelWidth >= ScreenLayout.minimumPanelWidth else { continue }
@@ -845,8 +845,8 @@ final class ShellComponentTests: XCTestCase {
             let resolved = ScreenLayout(size: CGSize(width: width, height: 1032), panelWidth: clamped)
             XCTAssertGreaterThanOrEqual(
                 resolved.boardWidthDocked,
-                resolved.panelWidth,
-                "at \(width): the board is the product and the tutor is the commentary"
+                ScreenLayout.minimumBoardWidth,
+                "at \(width): widening chat must still leave a usable whiteboard"
             )
         }
     }

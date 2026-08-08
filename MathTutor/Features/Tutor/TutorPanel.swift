@@ -11,6 +11,9 @@ struct TutorActions {
     let send: () -> Void
     let selectSuggestion: (Suggestion) -> Void
     let dismissSelection: () -> Void
+    /// `btn/select` in the composer — arm the board's marquee, or disarm it. Same action the
+    /// collapsed dock's button has, because it is the same control at the other presentation.
+    let toggleSelection: () -> Void
     let startPlan: () -> Void
     let retry: () -> Void
     let openSettings: () -> Void
@@ -182,13 +185,25 @@ struct TutorPanel: View {
             scale: .panel,
             width: contentWidth,
             text: $text,
-            selection: uiState.isSelectionAttached ? .attached : .idle,
+            selection: composerSelection,
             onSend: actions.send,
             onVoice: dictation.voiceHandler(text: $text),
             dictation: dictation.composerDictation,
             note: dictation.noteText,
-            onDismissSelection: actions.dismissSelection
+            onDismissSelection: actions.dismissSelection,
+            onToggleSelection: actions.toggleSelection
         )
+    }
+
+    /// Axis C as the composer draws it. The glyph lights the moment `btn/select` is
+    /// tapped — that is the only feedback the tap has — but the `Selection attached` card
+    /// waits for a region to actually exist, because until the drag finishes nothing is.
+    private var composerSelection: ComposerSelection {
+        switch uiState.selection {
+        case .none: .idle
+        case .arming: .arming
+        case .attached: .attached
+        }
     }
 }
 
@@ -272,7 +287,14 @@ struct TutorThreadView: View {
         // is exactly what screen 08's `msg/student · with selection` draws. The domain
         // already records it, so nothing here has to remember which send had an attachment.
         return store.session.messages.map { message in
-            ChatThreadItem(message, hasSelection: message.signal == .evaluate)
+            ChatThreadItem(
+                message,
+                hasSelection: message.signal == .evaluate,
+                // Board 14. Keyed by message id rather than carried on the
+                // message, because these are evidence for the turn and not
+                // session state — see `TutorStore.boardViews`.
+                boardViews: store.boardViews[message.id] ?? []
+            )
         }
     }
 

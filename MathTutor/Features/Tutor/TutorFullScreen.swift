@@ -130,30 +130,15 @@ struct TutorFullScreen: View {
     /// 68 → 100, thread 100 → 900, a 24pt gap, composer 924 → 1004. It reaches the same
     /// composer line screen 07 does, so only the region above it changes.
     private var threadColumn: some View {
-        ZStack(alignment: .top) {
-            TutorThreadView(
-                scale: .fullScreen,
-                width: column.width,
-                clearing: column.threadClearing,
-                actions: actions
-            )
-            .frame(width: column.width, height: column.threadHeight)
-
-            // The bottom fade is not here — it hangs off the composer in `body`, so the
-            // greeting state gets the identical one. Only the top fade is the thread's, because
-            // only the thread has an oldest message to run up behind the gear.
-
-            // *"full screen — top 740 × 64… #FFFFFF… no radius"*. Same component, different
-            // white: the reading column is `--color-surface`, and a fade of the panel's grey
-            // would bleed a visibly different white over the messages — the one failure board
-            // 03 warns about by name.
-            ScrollFade(
-                width: column.width,
-                metrics: .top(for: .fullScreen),
-                color: DS.Color.surface
-            )
-            .frame(height: column.threadHeight, alignment: .top)
-        }
+        // No top fade: boards 07 and 13 no longer draw one over the head of the thread. The
+        // bottom fade is untouched — it hangs off the composer in `body`, so the greeting state
+        // gets the identical one.
+        TutorThreadView(
+            scale: .fullScreen,
+            width: column.width,
+            clearing: column.threadClearing,
+            actions: actions
+        )
         .frame(width: column.width, height: column.threadHeight)
         .offset(x: column.x, y: column.threadTop)
     }
@@ -309,17 +294,24 @@ struct TutorColumnMetrics: Equatable, Sendable {
         settingsOverlapsColumn ? top + TutorPanelMetrics.controlsHeight : top
     }
 
-    /// Board 13: the thread starts at the content top and runs behind the gear.
+    /// **The screen's own top, not the content band's.** The one lane in the product that does
+    /// not start at `contentTop`, and it is the scroll view that makes it different.
     ///
-    /// It used to start one 32pt control band lower, and that band was doing the fade's job by
-    /// hand — *"the band is what keeps the thread from scrolling its oldest message under the
-    /// gear"*. With the fade back there is something to mask the overlap, so the thread gets
-    /// its band back and the design's own answer applies: *"the thread fills the panel from
-    /// top 0 and scrolls behind the controls."*
-    var threadTop: CGFloat { top }
+    /// A `ScrollView` clips to its frame, so a thread starting at `contentTop` cuts its own text
+    /// off at a hard edge — 48 points down a home-button iPad, 52 on one with a camera housing —
+    /// with nothing but white above the cut. That reads as a frame hiding the conversation,
+    /// because that is what it is. The docked panel never shows it: the text dissolves into the
+    /// panel's top fade before it reaches the edge. This surface has no fade to dissolve into,
+    /// so it gets the other half of the same answer — nothing above the thread at all, and the
+    /// text scrolls freely off the top of the screen.
+    ///
+    /// `--space-edge` is not lost, it is just no longer a clip: the newest message still rests
+    /// where the board draws it, and the band above only ever holds text on its way out.
+    var threadTop: CGFloat { 0 }
 
-    /// The whole content band. The composer is painted over its foot rather than sitting below
-    /// it — see `threadClearing`, which is what holds the newest message off the pill.
+    /// Screen top to the content band's floor. The composer is painted over its foot rather
+    /// than sitting below it — see `threadClearing`, which is what holds the newest message off
+    /// the pill.
     var threadHeight: CGFloat { max(0, bottom - threadTop) }
 
     /// What the thread has to clear at the bottom: the composer, and board 13's

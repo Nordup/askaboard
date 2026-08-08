@@ -210,12 +210,12 @@ final class LayoutTests: XCTestCase {
     func testPortraitAndSplitViewFallBackToStatesTheDesignAlreadyHas() throws {
         let expected: [String: ScreenLayout.Fit] = [
             "iPad Pro 13\" portrait": .threeLane,
-            "iPad Pro 11\" portrait": .boardOnly,
-            "iPad Air portrait": .boardOnly,
-            "iPad 9.7\" portrait": .boardOnly,
+            "iPad Pro 11\" portrait": .threeLane,
+            "iPad Air portrait": .threeLane,
+            "iPad 9.7\" portrait": .threeLane,
             "Split View · half of 13\"": .boardOnly,
             "Split View · two-thirds of 13\"": .threeLane,
-            "Split View · one-third": .unsupported,
+            "Split View · one-third": .boardOnly,
             "Split View · narrowest": .unsupported,
             // 512 clears the collapsed sum by 23pt, so screen 06 still fits — the board is
             // 360 wide, which is a board. Height is not the constraint here.
@@ -274,24 +274,24 @@ final class LayoutTests: XCTestCase {
     /// The threshold is the docked lanes with the board at its floor, and nothing else — a
     /// point either side of it flips the answer.
     func testTheDockingThresholdIsExactlyTheLaneSum() {
-        XCTAssertEqual(ScreenLayout.reference.dockedMinimumWidth, 850, "28 + 72 + 24 + 337 + 24 + 337 + 28")
-        XCTAssertEqual(ScreenLayout.collapsedMinimumWidth, 489, "28 + 72 + 24 + 337 + 28")
-        XCTAssertEqual(ScreenLayout.minimumBoardWidth, DS.Container.panel, "the board never reads as the minor lane")
+        XCTAssertEqual(ScreenLayout.reference.dockedMinimumWidth, 713, "28 + 72 + 24 + 337 + 24 + 200 + 28")
+        XCTAssertEqual(ScreenLayout.collapsedMinimumWidth, 352, "28 + 72 + 24 + 200 + 28")
+        XCTAssertEqual(ScreenLayout.minimumBoardWidth, 200, "a compact board strip remains visible")
         XCTAssertEqual(ScreenLayout.minimumContentHeight, 88, "24 + 64 — the dock's own anchor")
 
         let tallEnough: CGFloat = 1032
-        XCTAssertEqual(ScreenLayout(size: CGSize(width: 850, height: tallEnough)).fit, .threeLane)
-        XCTAssertEqual(ScreenLayout(size: CGSize(width: 849, height: tallEnough)).fit, .boardOnly)
-        XCTAssertEqual(ScreenLayout(size: CGSize(width: 489, height: tallEnough)).fit, .boardOnly)
-        XCTAssertEqual(ScreenLayout(size: CGSize(width: 488, height: tallEnough)).fit, .unsupported)
+        XCTAssertEqual(ScreenLayout(size: CGSize(width: 713, height: tallEnough)).fit, .threeLane)
+        XCTAssertEqual(ScreenLayout(size: CGSize(width: 712, height: tallEnough)).fit, .boardOnly)
+        XCTAssertEqual(ScreenLayout(size: CGSize(width: 352, height: tallEnough)).fit, .boardOnly)
+        XCTAssertEqual(ScreenLayout(size: CGSize(width: 351, height: tallEnough)).fit, .unsupported)
 
         // At the threshold the board is exactly its floor, which is the definition of it.
         XCTAssertEqual(
-            ScreenLayout(size: CGSize(width: 850, height: tallEnough)).boardWidthDocked,
+            ScreenLayout(size: CGSize(width: 713, height: tallEnough)).boardWidthDocked,
             ScreenLayout.minimumBoardWidth
         )
         XCTAssertEqual(
-            ScreenLayout(size: CGSize(width: 489, height: tallEnough)).boardWidthCollapsed,
+            ScreenLayout(size: CGSize(width: 352, height: tallEnough)).boardWidthCollapsed,
             ScreenLayout.minimumBoardWidth
         )
     }
@@ -648,7 +648,7 @@ final class LayoutTests: XCTestCase {
         XCTAssertEqual(l.panelWidth, 337, "panelWidth")
         XCTAssertEqual(l.panelX, 1011, "panelX")
         XCTAssertEqual(l.boardWidthDocked, 863, "boardWidthDocked")
-        XCTAssertEqual(l.dockedMinimumWidth, 850, "dockedMinimumWidth")
+        XCTAssertEqual(l.dockedMinimumWidth, 713, "dockedMinimumWidth")
     }
 
     func testAWiderPanelMovesTheSeamAndNarrowsTheBoardByTheSameAmount() {
@@ -666,48 +666,36 @@ final class LayoutTests: XCTestCase {
         )
     }
 
-    /// `--container-panel` stops being the panel's width and becomes its floor.
-    func testMinimumPanelWidthIsTheDesignsOwnPanelWidth() {
-        XCTAssertEqual(ScreenLayout.minimumPanelWidth, DS.Container.panel)
-        XCTAssertEqual(ScreenLayout.minimumPanelWidth, 337)
+    func testPanelStartsAtTheDesignWidthButCanResizeSmaller() {
+        XCTAssertEqual(ScreenLayout.defaultPanelWidth, DS.Container.panel)
+        XCTAssertEqual(ScreenLayout.defaultPanelWidth, 337)
+        XCTAssertEqual(ScreenLayout.minimumPanelWidth, 260)
+        XCTAssertEqual(ScreenLayout.reference.resolvingPanelWidth(100), 260)
     }
 
-    /// The maximum is `ScreenLayout.minimumBoardWidth`'s rule applied live: the board must
-    /// never end up narrower than the panel beside it, so the panel gets at most half the
-    /// lane the two share.
-    func testMaximumPanelWidthIsHalfTheSharedLane() {
+    /// The panel may consume everything except the board's established usable floor.
+    func testMaximumPanelWidthLeavesTheBoardsMinimumInTheSharedLane() {
         let l = ScreenLayout.reference
         // lane = 1348 − 124 − 24 = 1200.
         XCTAssertEqual(l.dockedLaneWidth, 1200, "dockedLaneWidth")
-        XCTAssertEqual(l.maximumPanelWidth, 600, "maximumPanelWidth")
+        XCTAssertEqual(l.maximumPanelWidth, 1000, "maximumPanelWidth")
     }
 
-    func testAtItsMaximumThePanelExactlyEqualsTheBoard() {
+    func testAtItsMaximumThePanelLeavesTheBoardAtItsFloor() {
         let l = ScreenLayout(
             size: CGSize(width: 1376, height: 1032),
-            panelWidth: 600
+            panelWidth: 1000
         )
-        // Pinned to a literal alongside the relation: both sides derive from the same
-        // `dockedLaneWidth`, so the relation alone could agree with a shared bug twice over.
-        XCTAssertEqual(l.boardWidthDocked, 600)
-        XCTAssertEqual(l.boardWidthDocked, l.panelWidth, "the rule the maximum encodes")
+        XCTAssertEqual(l.boardWidthDocked, 200)
+        XCTAssertEqual(l.boardWidthDocked, ScreenLayout.minimumBoardWidth)
     }
 
-    /// `fit` used to gate `.threeLane` on `dockedMinimumWidth` alone, which only raises the
-    /// board's floor — it says nothing about the panel beside it. A panel past
-    /// `minimumPanelWidth` can clear that floor while still outrunning the board it sits next
-    /// to, which is the inversion `minimumBoardWidth`'s own doc calls out. This is the case
-    /// the fix closes: 1200 clears `dockedMinimumWidth` for a 600pt panel (edge×2 + rail +
-    /// gap×2 + 600 + 337 = 1113), but 600 is over `maximumPanelWidth` at that width (512), so
-    /// the docked layout must not be offered.
-    func testFitRejectsAPanelWiderThanTheBoardItWouldSitBeside() {
-        let l = ScreenLayout(size: CGSize(width: 1200, height: 1032), panelWidth: 600)
+    func testFitRejectsAPanelThatWouldShrinkTheBoardBelowItsFloor() {
+        let l = ScreenLayout(size: CGSize(width: 1200, height: 1032), panelWidth: 900)
 
-        XCTAssertGreaterThanOrEqual(1200, l.dockedMinimumWidth, "the old, incomplete threshold is satisfied")
-        XCTAssertEqual(l.maximumPanelWidth, 512, "half of 1200 − 176")
-        XCTAssertGreaterThan(l.panelWidth, l.maximumPanelWidth, "600 is over the ceiling this width allows")
-
-        XCTAssertEqual(l.fit, .boardOnly, "the panel would outrun the board, so the docked layout is refused")
+        XCTAssertEqual(l.maximumPanelWidth, 824, "1200 − fixed lanes − the 200pt board floor")
+        XCTAssertGreaterThan(l.panelWidth, l.maximumPanelWidth)
+        XCTAssertEqual(l.fit, .boardOnly, "the requested panel would leave less than 200pt of board")
         XCTAssertFalse(l.canDockTutor)
     }
 
@@ -715,18 +703,18 @@ final class LayoutTests: XCTestCase {
     /// width at which the *collapsed* layout stops fitting — there is no panel in that state.
     func testAWiderPanelRaisesTheDockedThresholdButNotTheCollapsedOne() {
         let wide = ScreenLayout(size: CGSize(width: 1376, height: 1032), panelWidth: 600)
-        XCTAssertEqual(wide.dockedMinimumWidth, 1113, "28×2 + 72 + 24×2 + 600 + 337")
-        XCTAssertEqual(ScreenLayout.collapsedMinimumWidth, 489, "unchanged by the panel")
+        XCTAssertEqual(wide.dockedMinimumWidth, 976, "28×2 + 72 + 24×2 + 600 + 200")
+        XCTAssertEqual(ScreenLayout.collapsedMinimumWidth, 352, "unchanged by the panel")
     }
 
     /// The reversibility rule: a window too narrow for a wide panel reports `.boardOnly`,
     /// and widening it again reports `.threeLane` — the layout is a function of its inputs
     /// with nothing latched, so nothing can oscillate.
     func testShrinkingAndRegrowingTheWindowRoundTripsTheFit() {
-        let narrow = ScreenLayout(size: CGSize(width: 1024, height: 768), panelWidth: 600)
-        XCTAssertEqual(narrow.fit, .boardOnly, "1024 is under the 1113 a 600pt panel needs")
+        let narrow = ScreenLayout(size: CGSize(width: 1024, height: 768), panelWidth: 900)
+        XCTAssertEqual(narrow.fit, .boardOnly, "1024 is under the 1276 a 900pt panel needs")
 
-        let wide = ScreenLayout(size: CGSize(width: 1376, height: 1032), panelWidth: 600)
+        let wide = ScreenLayout(size: CGSize(width: 1376, height: 1032), panelWidth: 900)
         XCTAssertEqual(wide.fit, .threeLane, "and it comes back")
     }
 
@@ -734,7 +722,7 @@ final class LayoutTests: XCTestCase {
     /// bounds cross. `ResizeConstraints.isSatisfiable` is what a caller checks; the layout
     /// only has to report the numbers honestly rather than clamping them into agreement.
     func testTheBoundsCrossOnAWindowTooNarrowToDock() {
-        let narrow = ScreenLayout(size: CGSize(width: 800, height: 768))
+        let narrow = ScreenLayout(size: CGSize(width: 600, height: 768))
         XCTAssertLessThan(narrow.maximumPanelWidth, ScreenLayout.minimumPanelWidth)
         XCTAssertEqual(narrow.fit, .boardOnly, "which is why nothing draws a docked panel here")
     }

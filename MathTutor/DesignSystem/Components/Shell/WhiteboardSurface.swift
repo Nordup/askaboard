@@ -25,41 +25,88 @@ enum WhiteboardMetrics {
 struct WhiteboardSurface<Content: View>: View {
     private let width: CGFloat
     private let height: CGFloat
+    private let liveCanvasSurround: Color?
     private let content: Content
 
-    init(width: CGFloat, height: CGFloat, @ViewBuilder content: () -> Content) {
+    /// - Parameter liveCanvasOver: the colour the card sits on, and **only** for a
+    ///   `content` that is a live `PKCanvasView`. See `body`. `nil` — the default,
+    ///   and what every specimen uses — draws the paper here and clips the content
+    ///   to the card, exactly as this component always did.
+    init(
+        width: CGFloat,
+        height: CGFloat,
+        liveCanvasOver liveCanvasSurround: Color? = nil,
+        @ViewBuilder content: () -> Content
+    ) {
         // Clamped rather than trusted: a `.frame` with a negative side is a runtime layout
         // error, and the one place these can go negative — a window narrower than the lanes
         // the design reserves — is exactly the case this component was made responsive for.
         self.width = max(0, width)
         self.height = max(0, height)
+        self.liveCanvasSurround = liveCanvasSurround
         self.content = content()
     }
 
+    /// **Nothing is allowed to mask or blend the live canvas.**
+    ///
+    /// PencilKit keeps the stroke under the pencil on its own high-frequency path,
+    /// and that path needs a plain opaque layer it can present. Both of the things
+    /// this component used to do to the canvas took that away: a `clipShape` for
+    /// the 28pt corners put it inside a mask, which is an offscreen buffer, and a
+    /// `--color-surface-canvas` fill plus a `DotGrid` underneath a transparent
+    /// canvas gave every frame of every stroke two layers to blend back over. The
+    /// symptom of losing it is a stroke that arrives in segments instead of
+    /// following the tip.
+    ///
+    /// So when the content *is* that canvas, it paints the paper (`BoardPaper`)
+    /// and this draws the card's corners **on top of it** — four opaque wedges in
+    /// the colour the card sits on, which is what `liveCanvasOver` is. The pixels
+    /// are the ones a rounded clip would produce; the canvas underneath is left
+    /// unmasked. The canvas is its own rectangular clip already — `UIScrollView`
+    /// sets `clipsToBounds` — so the corners are all that was ever missing.
+    ///
+    /// The cost of the wedges is that they are painted in a colour rather than cut
+    /// out, so a caller that puts the board on something other than a flat fill
+    /// would see them. `BoardScreen` is the only caller that passes one, and the
+    /// board sits on `--color-surface-screen` in every state that draws it.
     var body: some View {
         let card = RoundedRectangle(cornerRadius: WhiteboardMetrics.cornerRadius)
         ZStack {
-            DS.Color.surfaceCanvas
-            DotGrid()
-            content
+            // The shadow is cast by an opaque copy of the card rather than by the
+            // stack's own live pixels. Visually identical — the card is an opaque
+            // fill edge to edge — but derived from the content it would be a
+            // function of live ink, and Core Animation would re-derive the board's
+            // shadow on every frame a pencil moved.
+            card.fill(DS.Color.surfaceCanvas).elevation(.canvas)
+
+            if let liveCanvasSurround {
+                content
+                CardCorners(cornerRadius: WhiteboardMetrics.cornerRadius)
+                    .fill(liveCanvasSurround, style: FillStyle(eoFill: true))
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            } else {
+                DotGrid().clipShape(card)
+                content.clipShape(card)
+            }
         }
         .frame(width: width, height: height)
-        // `overflow: clip` on the board is what stops ink and grid escaping the 28pt
-        // corners, and clipping before the shadow is what keeps the shadow the card's
-        // silhouette rather than the ink's.
-        .clipShape(card)
-        // The shadow is cast by an opaque copy of the card *behind* the clipped
-        // content, not by the clipped content itself — which is what `.elevation`
-        // applied to the stack above used to mean.
-        //
-        // Visually it is the same shadow: the card is an opaque `surfaceCanvas`
-        // fill edge to edge, so its silhouette and this rectangle's are the same
-        // shape. What changes is what the shadow depends on. Derived from the
-        // stack, it is a function of live pixels, so every frame a pencil moves
-        // asks Core Animation to re-derive the board's shadow from ink that never
-        // reaches the corners. Cast by a rectangle that never changes, it is
-        // rasterized once and left alone while the student writes.
-        .background(card.fill(DS.Color.surfaceCanvas).elevation(.canvas))
+    }
+}
+
+/// The four corners a rounded card cuts out of its bounding box, as a fillable
+/// shape: the full rectangle with the rounded rectangle punched out of it under
+/// an even-odd fill.
+///
+/// Circular corners, not `.continuous`, for the reason `ToolRail` gives: the
+/// design's radius is a CSS `border-radius`, which is a circular arc.
+struct CardCorners: Shape {
+    let cornerRadius: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path(rect)
+        path.addPath(Path(roundedRect: rect, cornerRadius: cornerRadius, style: .circular))
+        return path
     }
 }
 

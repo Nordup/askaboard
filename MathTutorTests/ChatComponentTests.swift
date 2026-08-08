@@ -1013,11 +1013,11 @@ final class ChatComponentTests: XCTestCase {
             column.bottom - column.top - ComposerMetrics.fullScreen.height
         )
 
-        // Board 13's thread lane, after the fade came back: the thread takes the whole content
-        // band and scrolls *behind* the gear rather than starting a 32pt control band below it.
-        // That band was doing the fade's job by hand — see `TutorColumnMetrics.threadTop`.
-        XCTAssertEqual(column.threadTop, column.top)
-        XCTAssertEqual(column.threadHeight, 976)
+        // Board 13's thread lane runs from the screen's own top, not the content band's: a
+        // scroll view clips to its frame, and a frame starting at `contentTop` cuts the text
+        // off at a hard white edge on its way out. See `TutorColumnMetrics.threadTop`.
+        XCTAssertEqual(column.threadTop, 0)
+        XCTAssertEqual(column.threadHeight, column.bottom)
     }
 
     /// The reason the constants had to go: the grid wraps to one chip a row below 740 and

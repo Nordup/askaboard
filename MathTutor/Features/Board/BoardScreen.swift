@@ -43,6 +43,11 @@ struct BoardScreen: View {
 
     @State private var composerText = ""
     @State private var isShowingSettings = false
+    /// A drag updates only this screen-local preview. Publishing `UIState.panelWidth` on
+    /// every touch event invalidated every environment-object consumer and made the seam
+    /// visibly stutter. A completed resize commits once in `finishPanelResize()`.
+    @State private var previewPanelWidth: CGFloat?
+    @State private var didChangePanelWidth = false
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -76,6 +81,22 @@ struct BoardScreen: View {
         // threshold takes the composer off the screen without either axis moving.
         .onChange(of: presentation) { _, _ in dictation.stop() }
         .onChange(of: isShowingSettings) { _, isShowing in if isShowing { dictation.stop() } }
+        // The one place the store, the network client and the live canvas meet.
+        // Set here rather than passed per-send so no turn can be the one that
+        // forgets the board — see `TutorStore.boardProvider`. `capture` is held
+        // weakly throughout: these outlive this screen, and a board that has
+        // gone away should read as "no board" rather than keep a torn-down
+        // canvas alive.
+        .task {
+            store.boardProvider = { [weak capture] in capture?.overviewData() }
+            store.boardManifestProvider = { [weak capture] in capture?.manifest() }
+            // The service answers `view_board` straight from the canvas: the
+            // tutor asks for a rectangle mid-turn and this renders it from the
+            // vectors, at a resolution a thumbnail upload could never carry.
+            BackendTutorService.boardRenderer = { [weak capture] percent in
+                capture?.renderRegion(percent: percent)
+            }
+        }
     }
 
     /// The screen the lanes are cut from.
@@ -133,7 +154,7 @@ struct BoardScreen: View {
                 bottom: base.safeAreaBottom,
                 trailing: base.safeAreaTrailing
             ),
-            panelWidth: base.resolvingPanelWidth(uiState.panelWidth)
+            panelWidth: base.resolvingPanelWidth(previewPanelWidth ?? uiState.panelWidth)
         )
     }
 
@@ -143,9 +164,9 @@ struct BoardScreen: View {
     ///
     /// `ScreenLayout` deliberately does not force this — it reports `fit` and leaves the
     /// decision to the screen — and `UIState` deliberately does not know about the window.
-    /// Below `dockedMinimumWidth` the docked panel would leave a board narrower than the panel
-    /// beside it, which inverts the hierarchy the whole design is built on, so the docked
-    /// state is drawn as **screen 06**: rail, full-width board, collapsed dock. That is a state
+    /// Below `dockedMinimumWidth` the docked panel would squeeze the board below its usable
+    /// floor, so the docked state is drawn as **screen 06**: rail, full-width board, collapsed
+    /// dock. That is a state
     /// the design already draws and the student already reaches by hand; nothing new is
     /// invented for the narrow case, and the full-screen tutor is untouched because a reading
     /// column has a right answer at any width.
@@ -175,7 +196,14 @@ struct BoardScreen: View {
     /// on its own ink. `isActive` is the representable's own answer to this: the canvas stays
     /// mounted and resigns first responder so the tutor's composer can take the keyboard.
     private var board: some View {
-        WhiteboardSurface(width: boardWidth, height: layout.contentHeight) {
+        // `liveCanvasOver` is what keeps PencilKit's fast stroke path: the canvas
+        // paints the paper and stays unmasked, and the card's corners are painted
+        // over it in the screen's own colour. See `WhiteboardSurface.body`.
+        WhiteboardSurface(
+            width: boardWidth,
+            height: layout.contentHeight,
+            liveCanvasOver: DS.Color.surfaceScreen
+        ) {
             PencilCanvasView(
                 capture: capture,
                 initialDrawingData: store.currentDrawingData,
@@ -183,10 +211,25 @@ struct BoardScreen: View {
                 penColor: uiState.penColor,
                 thickness: uiState.thickness,
                 isActive: !isTutorFullScreen,
+                isSelecting: uiState.selection.capturesBoardDrags,
                 onDrawingChange: store.updateDrawing,
                 onUndo: capture.undo,
                 onRedo: capture.redo
             )
+            // Mounted only while the marquee is armed. A transparent view that
+            // takes the whole board's touches is not something to leave lying on
+            // the canvas the rest of the time.
+            if uiState.selection.capturesBoardDrags {
+                BoardSelectionMarquee(
+                    attachedRegion: uiState.selection.region,
+                    // An explicit closure rather than the bound method, for the
+                    // reason `resizeHandle`'s `set:` spells out at length: a
+                    // `@MainActor`-isolated method reference passed straight into
+                    // a one-argument closure parameter is what crashes
+                    // swift-frontend during IRGen on this toolchain.
+                    onSelect: { uiState.attachBoardSelection(region: $0) }
+                )
+            }
         }
         .offset(x: layout.boardX, y: layout.contentTop)
         .opacity(isTutorFullScreen ? 0 : 1)
@@ -259,8 +302,8 @@ struct BoardScreen: View {
         // Belt-and-braces, not a reachable case here: `presentation == .docked` (the only way
         // this property is built at all — see `tutor`) requires `layout.canDockTutor`, which
         // requires `layout.fit == .threeLane`, which requires the docked lane to hold the
-        // board's floor beside the panel's — `lane >= panelWidth + 337 >= 674` — so
-        // `layout.maximumPanelWidth == dockedLaneWidth / 2 >= 337 == constraints.minimum`
+        // board's floor beside the panel's — `lane >= panelWidth + 200` — so
+        // `layout.maximumPanelWidth == dockedLaneWidth - 200 >= constraints.minimum`
         // always holds by the time this line runs. The guard stays because `ResizeConstraints`
         // is a public shape that does not know about `ScreenLayout`'s own invariants, and a
         // future caller of it should not have to re-derive this proof to stay safe; a reader
@@ -275,21 +318,15 @@ struct BoardScreen: View {
                 label: "Resize the tutor panel",
                 size: Binding(
                     get: { layout.panelWidth },
-                    // A closure, not the bound method `uiState.setPanelWidth` directly — this
-                    // is a workaround for a toolchain bug, not a style choice. Passing the
-                    // `@MainActor`-isolated method reference straight into `set:` crashes
-                    // `swift-frontend` during IRGen under Apple Swift 6.3
-                    // (swiftlang-6.3.0.123.5): "report_at_maximum_capacity" while lowering a
-                    // reabstraction thunk from `@escaping @isolated(any) … (CGFloat,
-                    // Actor?) -> ()` to `@escaping @isolated(any) … (CGFloat) -> ()` — i.e. the
-                    // thunk the compiler generates to adapt an actor-isolated method reference
-                    // to the plain `(CGFloat) -> Void` shape `Binding`'s `set:` wants. Wrapping
-                    // the call in an explicit closure sidesteps whatever code path emits that
-                    // thunk. `onCollapse` and `onReset` two lines down pass bare bound methods
-                    // safely only because their signatures are `() -> Void`, which does not
-                    // hit the same crash — do not "simplify" this one to match them.
-                    set: { uiState.setPanelWidth($0) }
+                    // Preview locally so the environment object is published once on release,
+                    // not on every touch event delivered by the drag.
+                    set: {
+                        previewPanelWidth = $0
+                        didChangePanelWidth = true
+                    }
                 ),
+                onBegin: beginPanelResize,
+                onEnd: finishPanelResize,
                 onCollapse: uiState.collapseTutor,
                 onReset: uiState.resetPanelWidth
             )
@@ -302,17 +339,42 @@ struct BoardScreen: View {
     ///
     /// The one proportion in the resize system that no token names, and it earns the
     /// exception by never landing on screen: it is a gesture threshold, not a layout value.
-    /// `0.6 × 337 = 202`, which is 135 points of finger travel past the floor — far enough
+    /// `0.6 × 260 = 156`, which is 104 points of finger travel past the floor — far enough
     /// that no ordinary narrowing drag trips it, close enough that reaching for it is one
     /// motion rather than two.
     private static let panelCollapseFraction: CGFloat = 0.6
+
+    /// Freeze the visible, window-clamped width for this gesture. Keeping the raw requested
+    /// width untouched also means a release-to-collapse can discard the preview and reopen at
+    /// exactly the width the student had before dragging toward the dock.
+    private func beginPanelResize() {
+        previewPanelWidth = layout.panelWidth
+        didChangePanelWidth = false
+    }
+
+    /// Commit at most once, after a normal release. `ResizeHandle` calls `onCollapse` before
+    /// this end hook on a qualifying release, so a collapsed presentation discards the
+    /// preview and preserves the previously requested width. Cancellation also lands here
+    /// safely with the last valid preview.
+    private func finishPanelResize() {
+        if uiState.presentation == .docked,
+           didChangePanelWidth,
+           let previewPanelWidth {
+            uiState.setPanelWidth(previewPanelWidth)
+        }
+        previewPanelWidth = nil
+        didChangePanelWidth = false
+    }
 
     @ViewBuilder
     private var floatingRegion: some View {
         switch presentation {
         case .collapsed:
             CollapsedDock(
-                isSelectionAttached: uiState.isSelectionAttached,
+                // Lit from the moment the marquee is armed, for the same reason the
+                // composer's glyph is: this button is the only thing on a collapsed
+                // screen that can report the tap landed.
+                isSelectionAttached: uiState.selection.capturesBoardDrags,
                 canSelect: capture.hasInk,
                 onSelect: toggleBoardSelection,
                 onOpenTutor: openTutorFromDock
@@ -335,6 +397,7 @@ struct BoardScreen: View {
             send: send,
             selectSuggestion: selectSuggestion,
             dismissSelection: uiState.clearBoardSelection,
+            toggleSelection: toggleBoardSelection,
             startPlan: startPlan,
             retry: store.retryLastRequest,
             openSettings: { isShowingSettings = true }
@@ -360,19 +423,24 @@ struct BoardScreen: View {
     /// `TutorStore.evaluate` is the only request that carries an image — so a send that
     /// carries a selection is the board evaluation the old workspace had a button for.
     ///
-    /// Typed text is deliberately left in the composer in that case rather than dropped:
-    /// the store has no request that carries a question *and* an image, and inventing one
-    /// would restructure it.
+    /// **The typed text goes with it.** It used to be left sitting in the composer, on the
+    /// grounds that the store had no request carrying a question *and* an image. That is the
+    /// reason a student who wrote "check my work" and sent it got a canned "Please evaluate
+    /// my work on the whole board." delivered in its place and their own question silently
+    /// dropped — so `evaluate` now takes the question, which is a parameter rather than the
+    /// restructuring it was assumed to need.
     private func send() {
         // Sending ends the session outright, in whichever phase it is in: the words already in
         // the field are the ones being sent, and a transcription still in flight would land in
         // an emptied composer a second later.
         dictation.stop()
         let typed = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if uiState.isSelectionAttached, let snapshot = capture.snapshotAllInkData() {
+        if uiState.selection.capturesBoardDrags, let evaluation = boardEvaluation() {
+            composerText = ""
             store.evaluate(
-                imageData: snapshot.data,
-                regionDescription: Self.regionDescription(coversAllInk: snapshot.coversAllInk)
+                imageData: evaluation.data,
+                regionDescription: evaluation.description,
+                question: typed.isEmpty ? nil : typed
             )
             uiState.clearBoardSelection()
         } else if !typed.isEmpty {
@@ -382,6 +450,23 @@ struct BoardScreen: View {
             return
         }
         uiState.beginConversation()
+    }
+
+    /// The image a send carries, and the words that say what it is of.
+    ///
+    /// Two cases, because `btn/select` can be lit without a region having been drawn yet:
+    /// a marqueed region is cropped to exactly that rectangle, and an armed-but-undrawn
+    /// marquee falls back to the whole board — which is precisely what this control did
+    /// before it could pick a region, so the zero-effort path is unchanged.
+    private func boardEvaluation() -> (data: Data, description: String)? {
+        if let region = uiState.selection.region {
+            guard let data = capture.snapshotData(region: region) else { return nil }
+            // No "my" and no "they": the same label is spliced into a first-person
+            // learner turn and a third-person policy line — see `regionDescription`.
+            return (data, "the area selected on the board")
+        }
+        guard let snapshot = capture.snapshotAllInkData() else { return nil }
+        return (snapshot.data, Self.regionDescription(coversAllInk: snapshot.coversAllInk))
     }
 
     /// Ink spread over more board than one legible image can hold is cropped to the
@@ -417,21 +502,21 @@ struct BoardScreen: View {
         uiState.collapseTutor()
     }
 
-    /// `btn/select` in the collapsed dock — the design's one control for attaching a region
-    /// of the board to the composer.
+    /// `btn/select` — the design's one control for attaching a region of the board to the
+    /// composer, reachable now from the collapsed dock *and* from the docked composer.
     ///
-    /// A toggle, because the dock now draws the attached state (`CollapsedDock.selectButton`)
-    /// and there is no other control on the board that could take it back. The attachment
-    /// itself is still the whole board: the design draws no marquee on the canvas (open
-    /// question 7), so *which* region is not something this control can yet be asked.
+    /// It arms the marquee rather than attaching anything, because *which* region is a
+    /// question only a drag can answer; `BoardSelectionMarquee` takes it from here. The
+    /// attachment used to be the whole board — the design draws no marquee on the canvas
+    /// (open question 7) — which is why this control had no visible result and read as
+    /// broken.
     ///
-    /// An empty board has nothing to attach — the same precondition `snapshotAllInkData()`
-    /// has — and the dock reflects that rather than swallowing the tap.
+    /// An empty board still has nothing to select, the same precondition
+    /// `snapshotAllInkData()` has, and both controls reflect that rather than swallowing
+    /// the tap. Disarming is allowed unconditionally so a marquee can never be left armed
+    /// over a board that has since been cleared.
     private func toggleBoardSelection() {
-        if uiState.isSelectionAttached {
-            uiState.clearBoardSelection()
-        } else if capture.hasInk {
-            uiState.attachBoardSelection()
-        }
+        guard uiState.selection.capturesBoardDrags || capture.hasInk else { return }
+        uiState.toggleBoardSelection()
     }
 }

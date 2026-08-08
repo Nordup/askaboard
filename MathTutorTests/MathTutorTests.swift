@@ -699,8 +699,8 @@ final class MathTutorTests: XCTestCase {
         XCTAssertEqual(evaluationTurn.text, "Please evaluate my work on the whole board.")
     }
 
-    func testNewSessionsDefaultToLuna() {
-        XCTAssertEqual(LearningSession.empty.selectedModel, .luna)
+    func testNewSessionsDefaultToSol() {
+        XCTAssertEqual(LearningSession.empty.selectedModel, .sol)
         XCTAssertEqual(LearningSession.empty.reasoningEffort, .high)
     }
 
@@ -780,12 +780,14 @@ final class MathTutorTests: XCTestCase {
         let policy = TutorPromptPolicy.system.lowercased()
         XCTAssertTrue(policy.contains("across all areas of mathematics"))
         XCTAssertTrue(policy.contains("explain, solve, check work, or chat directly"))
-        XCTAssertTrue(policy.contains("do not force socratic questions"))
+        XCTAssertTrue(policy.contains("ask focused questions"))
+        XCTAssertTrue(policy.contains("never give away an answer"))
         XCTAssertTrue(policy.contains("plan and board exercise together"))
         XCTAssertTrue(policy.contains("set both to null"))
         XCTAssertTrue(policy.contains("whiteboard screenshots"))
         XCTAssertTrue(policy.contains("never invent image content"))
         XCTAssertTrue(policy.contains("readable unicode/plain-text math"))
+        XCTAssertFalse(policy.contains("do not force socratic questions"))
         XCTAssertFalse(policy.contains("radical"))
     }
 
@@ -804,10 +806,11 @@ final class MathTutorTests: XCTestCase {
         XCTAssertTrue(policy.contains("do not write the corrected line"))
         XCTAssertTrue(policy.contains("do not state the final answer"))
 
-        // The escape hatch has to survive too, or the tutor becomes the withholding kind the
-        // first paragraph exists to rule out.
+        // The escape hatch has to survive too: a direct answer is still owed when the learner
+        // asks for one in plain words, and a stuck learner is offered the next step rather than
+        // left hanging — but the answer is never volunteered without the ask.
         XCTAssertTrue(policy.contains("ask for one in plain words"))
-        XCTAssertTrue(policy.contains("tried the same step twice"))
+        XCTAssertTrue(policy.contains("offer the next step"))
 
         // The instruction it replaced must be gone, not merely outvoted by later text.
         XCTAssertFalse(policy.contains("identify the smallest useful correction"))

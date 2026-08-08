@@ -1,4 +1,5 @@
 import Combine
+import CoreGraphics
 import Foundation
 
 /// Where the tutor sits on screen. Axis A of the design's state model.
@@ -39,9 +40,19 @@ final class UIState: ObservableObject {
     @Published private(set) var presentation: TutorPresentation
     @Published private(set) var conversation: ConversationPhase
 
-    /// Axis C. The design gives it exactly one control in each direction, so it
-    /// is guarded the same way the other two axes are.
-    @Published private(set) var isSelectionAttached: Bool
+    /// Axis C, now three states rather than two — see `BoardSelection`.
+    ///
+    /// The design gives this axis exactly one control, `btn/select`, and drew it
+    /// as a straight on/off. It cannot be: the thing being turned on is *a region
+    /// of the board*, and picking one takes a drag. So the control arms the
+    /// marquee and the drag attaches it, which is the same one-control axis with
+    /// the middle of the interaction no longer missing.
+    @Published private(set) var selection: BoardSelection
+
+    /// What the composer's marquee glyph and the dock's `btn/select` draw their
+    /// brand-violet state from. Kept as the old spelling because that is the
+    /// question every call site actually asks.
+    var isSelectionAttached: Bool { selection.isAttached }
 
     /// Axis D: how wide the student has asked the docked panel to be.
     ///
@@ -57,7 +68,7 @@ final class UIState: ObservableObject {
     /// still here when the window comes back.
     ///
     /// It does not persist, like everything else on this type.
-    @Published private(set) var panelWidth: CGFloat = ScreenLayout.minimumPanelWidth
+    @Published private(set) var panelWidth: CGFloat = ScreenLayout.defaultPanelWidth
 
     /// The rail's three selections carry no invariant between them — any tool
     /// works with any colour and any width — so they are plain settable state
@@ -69,11 +80,11 @@ final class UIState: ObservableObject {
     init(
         presentation: TutorPresentation = .docked,
         conversation: ConversationPhase = .start,
-        isSelectionAttached: Bool = false
+        selection: BoardSelection = .none
     ) {
         self.presentation = presentation
         self.conversation = conversation
-        self.isSelectionAttached = isSelectionAttached
+        self.selection = selection
     }
 
     /// True for the one cell of the state table the design never drew: the
@@ -119,15 +130,28 @@ final class UIState: ObservableObject {
         conversation = .active
     }
 
-    /// `btn/select` on the board produces the composer's attached selection.
-    func attachBoardSelection() {
-        isSelectionAttached = true
+    /// `btn/select`, in the dock and in the composer: arm the marquee, or put the
+    /// pencil back on the ink.
+    ///
+    /// A toggle over all three states rather than two, because the design gives
+    /// the axis one control and something has to undo an armed-but-undrawn
+    /// marquee as well as a drawn one. Toggling off an attached region throws it
+    /// away, which is the same thing the chip's ✕ does and the only reading of
+    /// "off" that leaves no state behind.
+    func toggleBoardSelection() {
+        selection = selection == .none ? .arming : .none
+    }
+
+    /// A finished marquee drag. Only ever called with a region `BoardMarquee`
+    /// already judged big enough to be one.
+    func attachBoardSelection(region: CGRect) {
+        selection = .attached(region)
     }
 
     /// The ✕ on the `Selection attached` chip, and the send that consumes it —
     /// screen 08 shows the selection in the thread, not still in the composer.
     func clearBoardSelection() {
-        isSelectionAttached = false
+        selection = .none
     }
 
     /// The resize handle in the gutter between the board and the panel.
@@ -143,6 +167,6 @@ final class UIState: ObservableObject {
     /// Double-tapping the resize handle — VS Code's `onDidReset`, which is the one gesture
     /// every splitter in the world agrees on.
     func resetPanelWidth() {
-        panelWidth = ScreenLayout.minimumPanelWidth
+        panelWidth = ScreenLayout.defaultPanelWidth
     }
 }

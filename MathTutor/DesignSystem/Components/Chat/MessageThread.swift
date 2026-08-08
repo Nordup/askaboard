@@ -9,12 +9,17 @@ import SwiftUI
 struct ChatThreadItem: Identifiable, Sendable {
     let message: TutorMessage
     let hasSelection: Bool
+    /// The regions of the board the tutor looked at before writing this. Empty
+    /// for every learner message and for any tutor turn that did not look.
+    /// Board 14 — they are drawn above the reply, as part of the same turn.
+    let boardViews: [BoardView]
 
     var id: UUID { message.id }
 
-    init(_ message: TutorMessage, hasSelection: Bool = false) {
+    init(_ message: TutorMessage, hasSelection: Bool = false, boardViews: [BoardView] = []) {
         self.message = message
         self.hasSelection = hasSelection
+        self.boardViews = boardViews
     }
 }
 
@@ -219,8 +224,17 @@ struct MessageRow: View {
             // The design has two authors and the domain has three. A system line is the
             // surface talking, not the student, so it takes the tutor's register rather
             // than being dropped — dropping it would hide content the caller chose to add.
-            TutorMessageText(markdown: item.message.text, metrics: metrics)
-                .frame(width: metrics.rowWidth, alignment: .leading)
+            //
+            // Board 14: what the tutor looked at sits above what it said, joined to it by
+            // the tighter `replyGap` rather than the thread's own `--space-message-gap`,
+            // because that gap separates turns and this one joins a turn to itself.
+            VStack(alignment: .leading, spacing: BoardViewsMetrics.replyGap) {
+                if !item.boardViews.isEmpty {
+                    BoardViewsRow(views: item.boardViews, width: metrics.rowWidth)
+                }
+                TutorMessageText(markdown: item.message.text, metrics: metrics)
+            }
+            .frame(width: metrics.rowWidth, alignment: .leading)
         }
     }
 }

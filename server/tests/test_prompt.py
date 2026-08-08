@@ -73,10 +73,15 @@ def test_system_prompt_has_no_ascii_normalised_lookalikes():
 
 
 def test_system_prompt_pins_the_em_dash_count():
-    # One em-dash in paragraph 3 ("...ordinary prose — it is streamed...")
-    # and three in paragraph 5: "...they have already done — “how is this
-    # so far”...", "...or a board they have simply sent you — they are
-    # asking...", and "...the same step twice and are still stuck — then
-    # say plainly that you are giving it."
+    # One em-dash in the teaching paragraph ("...not a delay — it is how the
+    # teaching gets calibrated."), one in the answer policy ("...plainly and
+    # completely — the prohibition..."), one in paragraph 3 ("...ordinary prose
+    # — it is streamed..."), two in the board paragraph ("...any region of it —
+    # give x, y, width and height...", "...the tool will tell you so — say
+    # that plainly..."), and two in the checking-work paragraph ("...they have
+    # already done — “how is this so far”...", "...simply sent you — they are
+    # asking..."). The count is pinned to catch ASCII normalisation, not to
+    # forbid new prose, so it moves with deliberate additions.
+    #
     assert "—" in SYSTEM_PROMPT
-    assert SYSTEM_PROMPT.count("—") == 4
+    assert SYSTEM_PROMPT.count("—") == 7

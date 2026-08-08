@@ -233,7 +233,7 @@ struct LearningSession: Codable, Sendable, Equatable {
             plan: nil,
             exercise: nil,
             drawingData: nil,
-            selectedModel: .luna,
+            selectedModel: .sol,
             reasoningEffort: .defaultValue,
             startedAt: .now,
             lastSavedAt: .now
@@ -259,7 +259,7 @@ enum ModelChoice: String, Codable, CaseIterable, Sendable, Identifiable {
         switch self {
         case .sol: return "Focused route"
         case .terra: return "Balanced route"
-        case .luna: return "Default route"
+        case .luna: return "Vision route"
         }
     }
 
@@ -268,7 +268,7 @@ enum ModelChoice: String, Codable, CaseIterable, Sendable, Identifiable {
         switch self {
         case .sol: return "\(effort) route"
         case .terra: return "Balanced route · \(effort)"
-        case .luna: return "Default route · \(effort)"
+        case .luna: return "Vision route · \(effort)"
         }
     }
 }
@@ -280,6 +280,23 @@ struct TutorRequest: Sendable {
     var plan: SessionPlan?
     var imageData: Data?
     var imageRegionDescription: String?
+    /// The learner's whole board as it stands right now, sent on **every** turn
+    /// that has ink on it.
+    ///
+    /// Not the same thing as `imageData`, and the difference is the whole point.
+    /// `imageData` is a region the learner picked out and pointed at — an
+    /// explicit "look at this". This is the board simply being *available*, so
+    /// the tutor can decide for itself whether answering needs a look and crop
+    /// whatever part of it it wants through `view_board`. Without it, a learner
+    /// who typed "check" and nothing else got a tutor answering from the
+    /// transcript alone, because whether the board was visible depended on their
+    /// having armed a selection first.
+    ///
+    /// Rendered larger than an attachment: it is the original the server crops
+    /// from, so its resolution is the ceiling on how closely the tutor can read
+    /// a single line. See `CanvasCapture.boardData()`.
+    var boardOverview: Data?
+    var boardManifest: String?
     var signal: LearningSignal?
     /// The learner's `LearningSession.id`, carried through so the backend can
     /// rebuild this turn's conversation context from what it has stored
@@ -298,6 +315,11 @@ struct TutorRequest: Sendable {
         plan: SessionPlan?,
         imageData: Data?,
         imageRegionDescription: String?,
+        // Defaulted so every existing call site and test fixture keeps
+        // compiling without naming it; the production path threads the real
+        // board through `TutorStore.requestTutor`.
+        boardOverview: Data? = nil,
+        boardManifest: String? = nil,
         signal: LearningSignal?,
         sessionID: UUID = UUID(),
         model: ModelChoice,
@@ -309,6 +331,8 @@ struct TutorRequest: Sendable {
         self.plan = plan
         self.imageData = imageData
         self.imageRegionDescription = imageRegionDescription
+        self.boardOverview = boardOverview
+        self.boardManifest = boardManifest
         self.signal = signal
         self.sessionID = sessionID
         self.model = model
@@ -325,6 +349,8 @@ struct TutorRequest: Sendable {
         plan: SessionPlan?,
         imageData: Data?,
         imageRegionDescription: String?,
+        boardOverview: Data? = nil,
+        boardManifest: String? = nil,
         signal: LearningSignal?,
         sessionID: UUID = UUID(),
         reasoningEffort: ReasoningEffort,
@@ -337,6 +363,8 @@ struct TutorRequest: Sendable {
             plan: plan,
             imageData: imageData,
             imageRegionDescription: imageRegionDescription,
+            boardOverview: boardOverview,
+            boardManifest: boardManifest,
             signal: signal,
             sessionID: sessionID,
             model: model,
