@@ -79,10 +79,10 @@ ADJUDICATION_PROMPT = """\
 You are deciding what to do with newly extracted facts about a learner, given \
 facts already on file.
 
-NEW FACTS:
+NEW FACTS, from a session later than every dated fact below:
 {new_facts}
 
-EXISTING FACTS:
+EXISTING FACTS, each dated with when it started being true:
 {existing_facts}
 
 For each new fact, by its index, choose exactly one:
@@ -90,7 +90,9 @@ For each new fact, by its index, choose exactly one:
 - SUPERSEDE: it contradicts or replaces an existing fact. target is that \
 existing fact's index. Use this when the learner's state has changed — "cannot \
 factor quadratics" followed by "can factor quadratics" is a SUPERSEDE, not two \
-coexisting facts.
+coexisting facts. It always replaces an older fact with a newer one, so check \
+the date: if the existing fact is dated after the events the new fact \
+describes, the new one is not an update to it. Choose ADD and leave it standing.
 - NOOP: it restates an existing fact with no new information. target must be null.
 
 Read carefully for negation. Two sentences differing only by "not" are opposites, \
@@ -193,6 +195,11 @@ def _decide(payload: str, *, n: int) -> list[tuple[str, int | None]]:
             continue
         op = entry.get("op")
         target = entry.get("target")
+        # Same hazard as `index` above, one line further on: `in` on a set
+        # hashes its left operand, so an `op` of `["ADD"]` would raise TypeError
+        # out of the function whose contract is that it never does.
+        if not isinstance(op, str):
+            continue
         if op in {"ADD", "NOOP"}:
             ops[index] = (op, None)
         elif op == "SUPERSEDE" and isinstance(target, int) and not isinstance(target, bool):
@@ -215,12 +222,17 @@ def _distinct(atoms: list[ExtractedAtom]) -> tuple[list[ExtractedAtom], int]:
     fractions" takes a similarity score, and no amount of case folding can do
     it. Anything short of character-identical is left standing for the model to
     rule on next time it sees the two side by side.
+
+    Category is part of the key, so one sentence filed two ways stays two atoms.
+    The extractor can legitimately read "still guesses at negative exponents" as
+    both a `skill_state` and a `misconception`, and keying on text alone would
+    drop whichever came second along with its category.
     """
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     kept: list[ExtractedAtom] = []
     dropped = 0
     for atom in atoms:
-        key = " ".join(atom.text.split()).casefold()
+        key = (" ".join(atom.text.split()).casefold(), atom.category.value)
         if key in seen:
             dropped += 1
             continue
@@ -288,10 +300,20 @@ async def consolidate(
 
     atoms, skipped = _distinct(atoms)
 
-    # Raises rather than returning a short or padded list (see `embed_texts`),
-    # which is what lets the `zip` below pair vectors with atoms positionally
-    # without checking. A failure here leaves the store untouched.
     vectors = await embed_texts([atom.text for atom in atoms])
+    # `embed_texts` documents that it raises rather than returning a short list,
+    # but it never checks the length it got back, and the `zip` below pairs
+    # positionally — one vector short would silently drop the trailing atoms and
+    # report success. Asserted here because this is the caller that depends on it.
+    assert len(vectors) == len(atoms), (
+        f"embed_texts returned {len(vectors)} vectors for {len(atoms)} atoms"
+    )
+    # Every row this writes must carry a real embedding, and this is where that
+    # invariant is enforced. `_candidates` selects on cosine distance, which a
+    # NULL or empty embedding fails, so such a row is not merely skipped this
+    # pass — it can never be offered as a supersession target again, and
+    # retrieval hides it for the same reason. That is permanent, not conservative.
+    assert all(vectors), "embed_texts returned an empty vector"
 
     existing = await _candidates(db, learner_id, vectors)
 
@@ -299,8 +321,14 @@ async def consolidate(
         new_facts = "\n".join(
             f"{i}. [{atom.category}] {atom.text}" for i, atom in enumerate(atoms)
         )
+        # Dated, because the SUPERSEDE rule turns on which way time runs and the
+        # model cannot see that from the sentences. Live, this is redundant with
+        # the batch being newer; walking a backlog out of order it is the only
+        # thing standing between "the learner's state changed" and a fact from
+        # March closing one from June.
         existing_facts = "\n".join(
-            f"{i}. [{row.category}] {row.text}" for i, row in enumerate(existing)
+            f"{i}. ({row.valid_from:%Y-%m-%d}) [{row.category}] {row.text}"
+            for i, row in enumerate(existing)
         )
         ops = _decide(await _adjudicate(new_facts, existing_facts), n=len(atoms))
     else:
@@ -322,6 +350,10 @@ async def consolidate(
             learner_id=learner_id,
             text=atom.text,
             category=atom.category.value,
+            # Any other code path that inserts a `MemoryAtom` must embed it too.
+            # A row written with a NULL embedding is invisible to consolidation
+            # and to retrieval from the moment it lands — permanently, and with
+            # nothing anywhere to notice it by. See the assert above.
             embedding=vector,
             source_session_id=session_id,
             source_turn_ids=turn_ids,

@@ -193,6 +193,10 @@ def test_decide_ignores_non_integer_indexes():
     '["ADD", "ADD"]',            # the bare array a model reaches for
     '{"ops": "ADD"}',            # right key, wrong shape
     '{"ops": [null, 7, "ADD"]}',  # entries that are not objects
+    # An unhashable `op`. `in` on a set hashes its left operand, so this is a
+    # TypeError out of the one function that must not raise.
+    '{"ops": [{"index": 0, "op": ["ADD"], "target": null}]}',
+    '{"ops": [{"index": 0, "op": null, "target": null}]}',
     "",
 ])
 def test_decide_degrades_to_add_on_anything_malformed(payload):
@@ -219,6 +223,18 @@ def test_distinct_collapses_repeats_within_one_batch():
         "Prefers seeing a diagram first.", "Sits the higher paper in June."
     ]
     assert dropped == 1
+
+
+def test_distinct_keeps_the_same_sentence_filed_two_ways():
+    """Category is part of the key, so a second filing is not a duplicate."""
+    kept, dropped = _distinct([
+        _atom("Still guesses at negative exponents.", MemoryCategory.skill_state),
+        _atom("Still guesses at negative exponents.", MemoryCategory.misconception),
+    ])
+    assert [atom.category for atom in kept] == [
+        MemoryCategory.skill_state, MemoryCategory.misconception
+    ]
+    assert dropped == 0
 
 
 def test_distinct_keeps_a_negation():
@@ -278,6 +294,38 @@ async def test_consolidate_no_atoms_does_nothing(monkeypatch):
     assert result == ConsolidationResult(0, 0, 0)
     assert embedder.calls == []
     assert adjudicator.calls == []
+
+
+async def test_a_short_embedding_response_is_not_silently_dropped(monkeypatch):
+    """One vector short would pair the wrong atoms and lose the trailing ones.
+
+    `embed_texts` promises to raise rather than return a short list but never
+    checks, and `zip` truncates in silence. `None` for the session again: this
+    has to fail before anything reaches Postgres.
+    """
+    async def _short(texts):
+        return [_near()]
+
+    _install(monkeypatch, _short, _explode)
+
+    with pytest.raises(AssertionError, match="1 vectors for 2 atoms"):
+        await consolidate(None, SOLE_LEARNER_ID,
+                          [_atom("A first fact."), _atom("A second fact.")],
+                          session_id=None, turn_ids=[])
+
+
+async def test_an_empty_embedding_is_refused(monkeypatch):
+    """A row written without an embedding is unreachable forever, so refuse it.
+
+    `_candidates` selects on cosine distance and retrieval requires a non-NULL
+    embedding, so such an atom could never be superseded and could never be
+    read — with nothing anywhere to notice it by.
+    """
+    _install(monkeypatch, _Embedder(default=[]), _explode)
+
+    with pytest.raises(AssertionError, match="empty vector"):
+        await consolidate(None, SOLE_LEARNER_ID, [_atom("A fact.")],
+                          session_id=None, turn_ids=[])
 
 
 # ---------------------------------------------------------------------------
@@ -482,6 +530,7 @@ async def test_candidates_are_live_and_near(db_factory, monkeypatch):
         await db.flush()
         closed.valid_to = closed.invalidated_at = closed.ingested_at
         await db.commit()
+        stamped = f"({near.valid_from:%Y-%m-%d})"
 
         await consolidate(db, SOLE_LEARNER_ID, [_atom("Something new entirely.")],
                           session_id=None, turn_ids=[])
@@ -491,6 +540,10 @@ async def test_candidates_are_live_and_near(db_factory, monkeypatch):
     assert "NEAR AND LIVE" in existing_facts
     assert "FAR AND LIVE" not in existing_facts
     assert "NEAR BUT CLOSED" not in existing_facts
+    # Dated, so the model can tell which way time runs rather than assuming the
+    # batch in front of it is the later one — which a backlog walked out of
+    # order would make false.
+    assert stamped in existing_facts
 
 
 @requires_db
