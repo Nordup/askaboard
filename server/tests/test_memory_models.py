@@ -1,10 +1,14 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.config import SOLE_LEARNER_ID
-from app.store.models import Episode, Learner, LearnerProfile, MemoryAtom, Session
+from app.store.models import (
+    MEMORY_CATEGORIES, Episode, Learner, LearnerProfile, MemoryAtom, Session,
+)
 from tests.conftest import requires_db
 
 
@@ -21,6 +25,22 @@ async def _sole_learner(db) -> Learner:
     return learner
 
 
+def _forget_everything(db) -> None:
+    """Expire every loaded object so the next read comes back from Postgres.
+
+    The session is built with `expire_on_commit=False` (conftest), so after a
+    commit a SELECT returns the identity-mapped instance still holding the
+    Python values that were assigned to it. Without this, an assertion about a
+    round-tripped column tests the object we just built rather than the
+    database — which is exactly the path (asyncpg decoding `uuid[]`, a server
+    default that only exists in the DDL) that could actually break.
+
+    Read any attribute you need *before* calling this: refreshing an expired
+    attribute needs IO, and outside an awaited query that raises MissingGreenlet.
+    """
+    db.expire_all()
+
+
 @requires_db
 async def test_atom_defaults_to_currently_valid(db):
     await _sole_learner(db)
@@ -34,6 +54,7 @@ async def test_atom_defaults_to_currently_valid(db):
     )
     db.add(atom)
     await db.commit()
+    _forget_everything(db)
 
     live = (await db.execute(
         select(MemoryAtom).where(MemoryAtom.valid_to.is_(None))
@@ -83,14 +104,17 @@ async def test_superseding_an_atom_leaves_the_old_one_readable(db):
     old.superseded_by = new.id
     await db.commit()
 
+    old_id, new_id = old.id, new.id
+    _forget_everything(db)
+
     live = (await db.execute(
         select(MemoryAtom).where(MemoryAtom.valid_to.is_(None))
     )).scalars().all()
-    assert [a.id for a in live] == [new.id]
+    assert [a.id for a in live] == [new_id]
 
-    superseded = await db.get(MemoryAtom, old.id)
+    superseded = await db.get(MemoryAtom, old_id)
     assert superseded.text == "Guesses when negative exponents appear."
-    assert superseded.superseded_by == new.id
+    assert superseded.superseded_by == new_id
     assert superseded.valid_to is not None
 
 
@@ -115,8 +139,11 @@ async def test_episode_records_the_raw_session_and_starts_unextracted(db):
     )
     await db.commit()
 
+    session_id = session.id
+    _forget_everything(db)
+
     stored = (await db.execute(select(Episode))).scalar_one()
-    assert stored.session_id == session.id
+    assert stored.session_id == session_id
     assert stored.digest is None
     assert stored.extracted_at is None
     assert stored.closed_at is not None
@@ -140,9 +167,12 @@ async def test_atom_keeps_the_turns_it_came_from(db):
         )
     )
     await db.commit()
+    _forget_everything(db)
 
     stored = (await db.execute(select(MemoryAtom))).scalar_one()
+    # Read back through asyncpg's uuid[] decoding, not out of the identity map.
     assert stored.source_turn_ids == turn_ids
+    assert all(isinstance(t, uuid.UUID) for t in stored.source_turn_ids)
 
 
 @requires_db
@@ -160,8 +190,61 @@ async def test_learner_profile_is_one_row_per_learner(db):
         )
     )
     await db.commit()
+    _forget_everything(db)
 
     stored = (await db.execute(select(LearnerProfile))).scalar_one()
     assert stored.learner_id == SOLE_LEARNER_ID
     assert stored.atom_count == 2
     assert stored.rebuilt_at is not None
+
+
+@requires_db
+async def test_one_episode_per_closed_session(db):
+    """A session can only be logged once.
+
+    `extracted_at` is per-episode, so a second row for the same session would
+    be extracted again and duplicate every atom derived from it. The close path
+    leans on this: writing the episode twice has to fail, not silently succeed.
+    """
+    await _sole_learner(db)
+
+    session = Session(model="gpt-5.6-luna", reasoning_effort="high")
+    db.add(session)
+    await db.flush()
+
+    for _ in range(2):
+        db.add(
+            Episode(
+                learner_id=SOLE_LEARNER_ID,
+                session_id=session.id,
+                transcript="learner: hello\n",
+                message_count=1,
+                started_at=datetime.now(timezone.utc),
+            )
+        )
+    # Matched by name so that some *other* integrity error — a NOT NULL, the
+    # learner FK — cannot quietly stand in for the constraint under test.
+    with pytest.raises(IntegrityError, match="uq_episodes_session"):
+        await db.commit()
+
+
+@requires_db
+async def test_atom_category_must_be_one_of_the_known_six(db):
+    """The category vocabulary is enforced by the database, not by the prompt.
+
+    An LLM writes this column. A near-miss like "preferences" would otherwise
+    insert cleanly and then match nothing for the rest of the atom's life.
+    """
+    await _sole_learner(db)
+
+    assert "preferences" not in MEMORY_CATEGORIES
+    db.add(
+        MemoryAtom(
+            learner_id=SOLE_LEARNER_ID,
+            text="Likes worked examples.",
+            category="preferences",
+            source_turn_ids=[],
+        )
+    )
+    with pytest.raises(IntegrityError, match="ck_memory_atoms_category"):
+        await db.commit()

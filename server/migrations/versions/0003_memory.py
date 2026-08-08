@@ -74,8 +74,11 @@ def upgrade() -> None:
         sa.Column('extracted_at', sa.DateTime(timezone=True), nullable=True),
         sa.ForeignKeyConstraint(['learner_id'], ['learners.id'],
                                 name='fk_episodes_learner'),
-        sa.ForeignKeyConstraint(['session_id'], ['sessions.id'],
-                                name='fk_episodes_session'),
+        # `session_id` is deliberately not a foreign key to `sessions`: this is
+        # the table everything else is rebuilt from, and its durability must not
+        # be bounded by the lifetime of the rows it points at. Purging a session
+        # should cost the back-reference, not the episode.
+        sa.UniqueConstraint('session_id', name='uq_episodes_session'),
         sa.PrimaryKeyConstraint('id'),
     )
     op.create_index(op.f('ix_episodes_learner_id'), 'episodes', ['learner_id'])
@@ -103,6 +106,16 @@ def upgrade() -> None:
         sa.Column('fts', postgresql.TSVECTOR(),
                   sa.Computed("to_tsvector('english', text)", persisted=True),
                   nullable=False),
+        # Spelled out rather than built from models.MEMORY_CATEGORIES, for the
+        # same reason SOLE_LEARNER_ID is: this records the six values that were
+        # legal the day it ran. Widening the set later is its own ALTER, and a
+        # CHECK is what makes that cheap — an LLM writes this column, and
+        # without it one typo becomes a seventh category nothing ever matches.
+        sa.CheckConstraint(
+            "category IN ('preference', 'goal', 'context', 'skill_state', "
+            "'misconception', 'episode_ref')",
+            name='ck_memory_atoms_category',
+        ),
         sa.ForeignKeyConstraint(['learner_id'], ['learners.id'],
                                 name='fk_atoms_learner'),
         sa.ForeignKeyConstraint(['superseded_by'], ['memory_atoms.id'],

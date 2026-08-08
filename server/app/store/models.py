@@ -5,8 +5,8 @@ from datetime import datetime
 
 from pgvector.sqlalchemy import HALFVEC
 from sqlalchemy import (
-    Boolean, Computed, DateTime, Float, ForeignKey, Index, Integer, String, Text, func,
-    text as sa_text, true,
+    Boolean, CheckConstraint, Computed, DateTime, Float, ForeignKey, Index, Integer,
+    String, Text, UniqueConstraint, func, text as sa_text, true,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR, UUID as PGUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -150,7 +150,7 @@ class Episode(Base):
     """One closed session, as raw material. Ground truth for every derived row.
 
     Atoms, the profile and the learner model are all rebuildable from this
-    plus the session tables. Nothing here is ever rewritten, which is what
+    plus `observations` alone. Nothing here is ever rewritten, which is what
     makes a bad extraction prompt a recoverable mistake: delete the atoms,
     clear `extracted_at`, run the new prompt over the same transcripts.
 
@@ -166,9 +166,12 @@ class Episode(Base):
     learner_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("learners.id", name="fk_episodes_learner"), index=True
     )
-    session_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("sessions.id", name="fk_episodes_session"), index=True
-    )
+    #: Which session this was, but deliberately *not* a foreign key. This table
+    #: is what everything else is rebuilt from, so its durability must not be
+    #: bounded by the lifetime of `sessions`: purging a session should cost the
+    #: back-reference, not the episode and every atom derived from it. Same
+    #: reasoning as MemoryAtom.source_session_id, with more at stake.
+    session_id: Mapped[uuid.UUID] = mapped_column(index=True)
     transcript: Mapped[str] = mapped_column(Text)
     digest: Mapped[str | None] = mapped_column(Text, nullable=True)
     message_count: Mapped[int] = mapped_column(Integer)
@@ -178,6 +181,26 @@ class Episode(Base):
     #: queue because the queue would be a second thing to keep consistent with
     #: this table, and a crashed extraction has to be safe to simply re-run.
     extracted_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+    __table_args__ = (
+        # One episode per closed session. `extracted_at` is per-episode, so a
+        # duplicate row would be extracted a second time and double every atom
+        # derived from it; this is what lets the close path be a plain retry.
+        UniqueConstraint("session_id", name="uq_episodes_session"),
+    )
+
+
+#: The vocabulary an extracted atom may be filed under. Lives here rather than
+#: only in the extractor's prompt because the database enforces it (see
+#: `ck_memory_atoms_category`) and the prompt should be generated from the same
+#: tuple the constraint is built from — a prompt that can offer a value the
+#: column rejects is a silently dropped atom.
+MEMORY_CATEGORIES: tuple[str, ...] = (
+    "preference", "goal", "context", "skill_state", "misconception", "episode_ref",
+)
+_CATEGORY_CHECK = "category IN ({})".format(
+    ", ".join(f"'{category}'" for category in MEMORY_CATEGORIES)
+)
 
 
 class MemoryAtom(Base):
@@ -198,11 +221,12 @@ class MemoryAtom(Base):
         ForeignKey("learners.id", name="fk_atoms_learner"), index=True
     )
     text: Mapped[str] = mapped_column(Text)
-    #: preference | goal | context | skill_state | misconception | episode_ref.
-    #: A plain string rather than a Postgres ENUM: the set is still being
-    #: discovered, and adding a value to an ENUM is a migration on a table the
-    #: extractor writes to, whereas widening a vocabulary the extractor is
-    #: prompted with should not be.
+    #: One of MEMORY_CATEGORIES, enforced by `ck_memory_atoms_category`. A
+    #: constrained string rather than a Postgres ENUM: widening the set is then
+    #: one ALTER of a constraint rather than a type change, but the column is
+    #: still written by an LLM extractor, and without the CHECK a single typo
+    #: in a model's output would quietly become a seventh category that every
+    #: later query silently fails to match.
     category: Mapped[str] = mapped_column(String(16), index=True)
     #: halfvec rather than vector: half precision costs ~nothing in recall at
     #: this scale and halves both the row and the index. 1024 must stay in
@@ -240,6 +264,9 @@ class MemoryAtom(Base):
     )
 
     __table_args__ = (
+        CheckConstraint(
+            _CATEGORY_CHECK, name="ck_memory_atoms_category",
+        ),
         Index("ix_memory_atoms_fts", "fts", postgresql_using="gin"),
         # Retrieval only ever wants live atoms, so the index only holds them:
         # superseded rows accumulate forever and would otherwise bloat every
