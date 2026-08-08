@@ -15,6 +15,27 @@ MIN_TRANSCRIPT_CHARS = 200
 #: six strings per atom per session is work with no reader.
 _CATEGORY_VALUES: frozenset[str] = frozenset(c.value for c in MemoryCategory)
 
+#: Categories kept even when `stated` is false — see `_parse`, which drops
+#: every other unstated atom.
+#:
+#: The exemption is principled, not a loophole, and this is the reasoning to
+#: read before removing it. `stated` exists to stop the system persisting
+#: *inferences about the person* — "seems anxious", "is probably weak at
+#: algebra" — because that is where a memory system starts being confidently
+#: wrong about someone. A record of what a session covered is not a claim about
+#: the learner at all; it is a fact about the session, and the tutor is the
+#: correct authority for it. The filter therefore still applies at full force to
+#: the five categories that do make a claim about the person, which are the ones
+#: that failure mode lives in.
+#:
+#: Without this, `episode_ref` is unreachable by construction: the prompt asks
+#: for what the session covered, the learner did not say it, so the model marks
+#: it unstated and the filter deletes every one of them. `Episode.digest` gives
+#: continuity in date order; these atoms are what make "have we done anything on
+#: factoring before?" answerable by semantic search rather than by scanning
+#: dated summaries. The two do different jobs.
+_STATED_EXEMPT: frozenset[MemoryCategory] = frozenset({MemoryCategory.episode_ref})
+
 EXTRACTION_PROMPT = """\
 You are reading a transcript of one maths tutoring session and recording what \
 is worth remembering about this learner for future sessions.
@@ -49,10 +70,14 @@ they study)
 {session_date}, for continuity
 
 Set `stated` true only when the learner said it themselves. Set it false for \
-anything you concluded, inferred, or would be guessing at. Do not record \
-curriculum content — "the quadratic formula is x = ..." is not a fact about \
-this person. Do not record that a question was asked. If there is nothing \
-durable here, return an empty array.
+anything you concluded, inferred, or would be guessing at. Only stated facts \
+are kept, with one exception: an `episode_ref` is a record of what the session \
+covered rather than a claim about the learner, so it is kept either way — set \
+`stated` false on one you observed rather than heard, and record it anyway.
+
+Do not record curriculum content — "the quadratic formula is x = ..." is not a \
+fact about this person. Do not record that a question was asked. If there is \
+nothing durable here, return an empty array.
 
 TRANSCRIPT:
 {transcript}"""
@@ -131,6 +156,11 @@ def _parse(payload: str) -> list[ExtractedAtom]:
     while a false positive writes something the tutor merely suspected into the
     learner's permanent record with a learner statement's authority, where
     nothing downstream can tell it from the real thing.
+
+    Unstated atoms in `_STATED_EXEMPT` survive — today that is `episode_ref`
+    alone, for the reason written there. They are kept with `stated=False`, not
+    relabelled: the flag records who the fact came from, and an episode summary
+    came from the tutor.
     """
     try:
         raw = json.loads(payload)
@@ -152,13 +182,17 @@ def _parse(payload: str) -> list[ExtractedAtom]:
         # the one function whose contract is that it never does.
         if not isinstance(category, str) or category not in _CATEGORY_VALUES:
             continue
-        if entry.get("stated") is not True:
+        member = MemoryCategory(category)
+        stated = entry.get("stated") is True
+        # Checked by membership in a named set rather than by comparing the
+        # string inline, so the exemption is one thing with one explanation
+        # rather than a special case a reader meets without its reasoning.
+        if not stated and member not in _STATED_EXEMPT:
             continue
         text = entry.get("text")
         if not isinstance(text, str) or not text.strip():
             continue
-        out.append(ExtractedAtom(text=text.strip(),
-                                 category=MemoryCategory(category), stated=True))
+        out.append(ExtractedAtom(text=text.strip(), category=member, stated=stated))
     return out
 
 

@@ -96,6 +96,52 @@ def test_parse_requires_stated_to_be_literally_true():
     assert _parse(payload) == []
 
 
+def test_parse_keeps_unstated_episode_refs_and_only_those():
+    """The one exemption from the `stated` filter, and its boundary.
+
+    `stated` exists to stop the system persisting inferences *about the person*.
+    What a session covered is not a claim about the learner — it is a fact about
+    the session, and the tutor is the right authority for it — so the filter has
+    nothing to protect against there, and applying it anyway made `episode_ref`
+    unreachable by construction: the prompt asks for what the session covered,
+    the learner never said it, every one of them was deleted.
+
+    Both halves are in one payload deliberately. An implementation that dropped
+    the `stated` filter altogether, or one that special-cased the wrong
+    category, passes a test that only checks the episode_ref survived.
+    """
+    payload = json.dumps({"atoms": [
+        {"text": "Covered adding fractions with unlike denominators on 2026-05-12.",
+         "category": "episode_ref", "stated": False},
+        {"text": "Cannot yet find a common denominator without prompting.",
+         "category": "skill_state", "stated": False},
+        {"text": "Said the June paper is the AQA foundation tier.",
+         "category": "context", "stated": True},
+    ]})
+    atoms = _parse(payload)
+    assert [(a.category, a.stated) for a in atoms] == [
+        (MemoryCategory.episode_ref, False),
+        (MemoryCategory.context, True),
+    ]
+
+
+def test_parse_does_not_relabel_an_exempt_atom_as_stated():
+    """Kept is not the same as attributed to the learner.
+
+    `memory_atoms.stated` records who a fact came from. Storing an exempt
+    episode_ref as `stated=True` would keep it *and* claim the learner said it,
+    which is the exact confusion the flag exists to prevent — and it would be
+    invisible, because the atom looks right in every other respect.
+    """
+    payload = json.dumps({"atoms": [
+        {"text": "Covered adding fractions with unlike denominators on 2026-05-12.",
+         "category": "episode_ref", "stated": False},
+        {"text": "Asked to spend the next session on the same topic.",
+         "category": "episode_ref", "stated": True},
+    ]})
+    assert [a.stated for a in _parse(payload)] == [False, True]
+
+
 def test_parse_drops_blank_and_non_string_text():
     """An atom with no text is a row that says nothing and ranks against every
     query. Whitespace-only counts as blank."""
@@ -317,6 +363,18 @@ def test_prompt_bans_relative_dates():
     assert "{session_date}" in EXTRACTION_PROMPT
     for banned in ('"this session"', '"today"', '"last week"', '"Tuesday"'):
         assert banned in EXTRACTION_PROMPT
+
+
+def test_prompt_tells_the_model_an_unstated_episode_ref_is_kept():
+    """`_parse` exempting the category is only half of it.
+
+    A model told that unstated entries are discarded is being invited to either
+    suppress episode_refs or mislabel them `stated: true` to save them — the
+    second being the failure that fills the store with tutor observations
+    wearing the learner's authority. The prompt has to say the exemption out
+    loud for the parser's exemption to produce honest flags.
+    """
+    assert "it is kept either way" in EXTRACTION_PROMPT
 
 
 def test_prompt_demands_self_contained_facts():
