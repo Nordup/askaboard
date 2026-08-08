@@ -303,3 +303,127 @@ class LearnerProfile(Base):
     rebuilt_at: Mapped[datetime] = mapped_column(
         server_default=func.now(), onupdate=func.now()
     )
+
+
+class KC(Base):
+    """One Common Core standard, used as a concept identifier.
+
+    Not authored here: ~480 public, stable, human-meaningful ids that every
+    model already recognizes, which is why the annotator can name them
+    without being taught a private vocabulary.
+    """
+
+    __tablename__ = "kcs"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    #: `7.RP.A.2`, `K.CC.B.4.a`, `HSA-APR.D.6`. Unique because it, not the
+    #: surrogate id, is what every other layer names a concept by: the seed
+    #: reconciles on it, and an annotator only ever emits codes.
+    code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    title: Mapped[str] = mapped_column(Text)
+    description: Mapped[str] = mapped_column(Text)
+    #: 'K', '1'…'8', 'HS' — the publisher's own banding, kept as text because
+    #: 'K' and 'HS' are not numbers and ordering by grade is not what it is for.
+    grade: Mapped[str] = mapped_column(String(8))
+
+
+#: 'prerequisite' is directed, prereq -> kc, and is the only kind traversal may
+#: follow. 'related' is an undirected association between two standards that
+#: illuminate each other; it carries no ordering, so walking it as a dependency
+#: would invent an ordering the source never claimed. Stored one row per pair,
+#: with the endpoints code-ordered, so a reader must match on either column.
+KC_EDGE_KINDS: tuple[str, ...] = ("prerequisite", "related")
+PREREQUISITE = "prerequisite"
+RELATED = "related"
+_EDGE_KIND_CHECK = "kind IN ({})".format(
+    ", ".join(f"'{kind}'" for kind in KC_EDGE_KINDS)
+)
+
+
+class KCEdge(Base):
+    """An arc of the concept graph. See KC_EDGE_KINDS for what an arc means."""
+
+    __tablename__ = "kc_edges"
+
+    prereq_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("kcs.id", name="fk_edges_prereq"), primary_key=True
+    )
+    kc_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("kcs.id", name="fk_edges_kc"), primary_key=True
+    )
+    #: Part of the primary key: the same two standards can be both a
+    #: prerequisite pair and a related pair, and those are two separate facts.
+    kind: Mapped[str] = mapped_column(String(16), primary_key=True)
+
+    __table_args__ = (
+        # Every traversal filters on kind, so an unconstrained typo would not
+        # fail anywhere — it would quietly delete an edge from the graph.
+        CheckConstraint(_EDGE_KIND_CHECK, name="ck_kc_edges_kind"),
+        # Prerequisite walks read edges by their dependent end: "what does this
+        # standard need", once per hop.
+        Index("ix_edges_kc", "kc_id", "kind"),
+    )
+
+
+class Observation(Base):
+    """One piece of evidence about one learner on one concept.
+
+    Append-only, and deliberately finer-grained than a score: `weight` is how
+    much of the turn this concept accounts for, `outcome` is how it went, and
+    `reliability` is how much the annotator's read of it should be trusted.
+    Keeping the three apart is what lets the mastery update downweight a
+    guessy inference without pretending it never happened.
+    """
+
+    __tablename__ = "observations"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    learner_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("learners.id", name="fk_obs_learner")
+    )
+    #: Nullable because not every observation comes from a turn — a placement
+    #: answer or a backfill from an old transcript has no turn to point at.
+    turn_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("turns.id", name="fk_obs_turn"), nullable=True
+    )
+    kc_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("kcs.id", name="fk_obs_kc"))
+    weight: Mapped[float] = mapped_column(Float)
+    outcome: Mapped[float] = mapped_column(Float)
+    reliability: Mapped[float] = mapped_column(Float)
+    kind: Mapped[str] = mapped_column(String(24))
+    difficulty: Mapped[float] = mapped_column(Float, server_default="0")
+    misconception: Mapped[str | None] = mapped_column(Text, nullable=True)
+    detail: Mapped[dict] = mapped_column(JSONB, server_default="{}")
+    observed_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+    __table_args__ = (
+        # The mastery update reads one learner's history for one concept.
+        Index("ix_obs_learner_kc", "learner_id", "kc_id"),
+    )
+
+
+class LearnerKCState(Base):
+    """What we currently believe about one learner on one concept.
+
+    Derived: rebuildable by replaying that learner's observations, which is
+    why it is a single row per pair rather than a history. `theta` is a
+    logit — 0 means no evidence either way, positive means some mastery — and
+    `n_effective` is how much evidence stands behind it, so a theta of 1.2
+    from one lucky answer can be told apart from the same number earned over
+    a dozen.
+    """
+
+    __tablename__ = "learner_kc_state"
+
+    learner_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("learners.id", name="fk_state_learner"), primary_key=True
+    )
+    kc_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("kcs.id", name="fk_state_kc"), primary_key=True
+    )
+    theta: Mapped[float] = mapped_column(Float, server_default="0")
+    n_effective: Mapped[float] = mapped_column(Float, server_default="0.5")
+    last_seen_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    #: When mastery was first reached, kept even if theta later decays, so
+    #: "knew this in March and has since lost it" stays visible.
+    first_mastered_at: Mapped[datetime | None] = mapped_column(nullable=True)
