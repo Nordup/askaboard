@@ -1,4 +1,7 @@
 import json
+from datetime import date
+
+import pytest
 
 from app.config import EXTRACTION_MODEL
 from app.memory.extract import EXTRACTION_PROMPT, MIN_TRANSCRIPT_CHARS, _parse, extract_atoms
@@ -6,19 +9,27 @@ from app.memory.schema import EXTRACTION_SCHEMA, MemoryCategory
 from app.store.models import MEMORY_CATEGORIES
 
 
+class _Boom(RuntimeError):
+    """Whatever the provider raises. The type is not the point — that it
+    reaches the caller unchanged is."""
+
+
 class _FakeResponses:
-    def __init__(self, recorder, payload: str):
+    def __init__(self, recorder, payload: str, raises: bool = False):
         self._recorder = recorder
         self._payload = payload
+        self._raises = raises
 
     async def create(self, **kwargs):
         self._recorder.append(kwargs)
+        if self._raises:
+            raise _Boom("provider said no")
         return type("R", (), {"output_text": self._payload})()
 
 
 class _FakeClient:
-    def __init__(self, recorder, payload: str = '{"atoms": []}'):
-        self.responses = _FakeResponses(recorder, payload)
+    def __init__(self, recorder, payload: str = '{"atoms": []}', raises: bool = False):
+        self.responses = _FakeResponses(recorder, payload, raises)
 
 
 #: Long enough to clear MIN_TRANSCRIPT_CHARS, so a test about the request is
@@ -29,6 +40,11 @@ TRANSCRIPT = (
     "learner: 4/10. And honestly I'd rather you draw it than write the algebra out.\n"
     "tutor: Let's draw the two bars then.\n"
 )
+
+#: When the session happened, which is not when extraction runs — see
+#: `extract_atoms`. A fixed date rather than `date.today()` so the assertions
+#: below pin an interpolated value instead of comparing today to today.
+SESSION_DATE = date(2026, 5, 12)
 
 
 def test_parse_keeps_known_categories():
@@ -111,11 +127,19 @@ def test_parse_survives_malformed_payloads():
 
 
 def test_parse_drops_only_the_malformed_entry():
-    """The cost of one bad entry is that entry."""
+    """The cost of one bad entry is that entry.
+
+    The list-valued category is not decoration: `x in {...}` hashes `x`, so an
+    unhashable category raises TypeError rather than skipping the entry — and
+    it raises out of the function every other case here proves cannot raise,
+    taking a whole backlog pass down with it.
+    """
     payload = json.dumps({"atoms": [
         "a bare string where an object was asked for",
         None,
         {"category": "goal", "stated": True},
+        {"text": "Something.", "category": ["goal"], "stated": True},
+        {"text": "Something else.", "category": {"name": "goal"}, "stated": True},
         {"text": "Sits the AQA foundation paper in June.", "category": "goal", "stated": True},
     ]})
     atoms = _parse(payload)
@@ -126,7 +150,7 @@ async def test_extract_atoms_skips_short_transcripts(monkeypatch):
     called = []
     monkeypatch.setattr("app.memory.extract._complete",
                         lambda *a, **k: called.append(1))
-    assert await extract_atoms("learner: hi") == []
+    assert await extract_atoms("learner: hi", session_date=SESSION_DATE) == []
     assert called == []
 
 
@@ -140,7 +164,7 @@ async def test_extract_atoms_sends_the_transcript_and_parses_the_reply(monkeypat
     monkeypatch.setattr("app.memory.extract._client",
                         lambda: _FakeClient(calls, payload))
 
-    atoms = await extract_atoms(TRANSCRIPT)
+    atoms = await extract_atoms(TRANSCRIPT, session_date=SESSION_DATE)
 
     # The inferred one is gone; the stated one survives with its category.
     assert [(a.text, a.category) for a in atoms] == [
@@ -151,6 +175,25 @@ async def test_extract_atoms_sends_the_transcript_and_parses_the_reply(monkeypat
     # a reach for the turn's model, not the string's value.
     assert calls[0]["model"] == EXTRACTION_MODEL
     assert TRANSCRIPT in calls[0]["input"][0]["content"]
+
+
+async def test_extract_atoms_dates_the_prompt_with_the_session_date(monkeypatch):
+    """The date reaches the model, or `episode_ref` is worthless on readback.
+
+    The whole category exists to be read months later. Without a date in the
+    prompt the model has nothing absolute to write — it cannot resolve
+    "Tuesday" from the transcript alone — so the atoms it produces say "this
+    session" and mean nothing by November. A default `date.today()` would have
+    been worse than no parameter: extraction can run days after the session, on
+    a retry of a backlog, and would then date facts by when the pass happened
+    to run while looking entirely correct.
+    """
+    calls = []
+    monkeypatch.setattr("app.memory.extract._client", lambda: _FakeClient(calls))
+
+    await extract_atoms(TRANSCRIPT, session_date=SESSION_DATE)
+
+    assert "2026-05-12" in calls[0]["input"][0]["content"]
 
 
 async def test_extract_atoms_asks_for_the_strict_schema(monkeypatch):
@@ -164,12 +207,51 @@ async def test_extract_atoms_asks_for_the_strict_schema(monkeypatch):
     calls = []
     monkeypatch.setattr("app.memory.extract._client", lambda: _FakeClient(calls))
 
-    await extract_atoms(TRANSCRIPT)
+    await extract_atoms(TRANSCRIPT, session_date=SESSION_DATE)
 
     fmt = calls[0]["text"]["format"]
     assert fmt["type"] == "json_schema"
     assert fmt["strict"] is True
     assert fmt["schema"] == EXTRACTION_SCHEMA
+
+
+async def test_extract_atoms_does_not_leave_the_transcript_with_the_provider(monkeypatch):
+    """`store=False`, as every turn in app/tutor/loop.py sets it.
+
+    A turn posts one exchange; this posts an entire session's transcript in one
+    body. What is retained of that is a decision this service makes in its own
+    database, and a stored copy on the provider's side is one nothing here can
+    enumerate or delete when the learner asks.
+    """
+    calls = []
+    monkeypatch.setattr("app.memory.extract._client", lambda: _FakeClient(calls))
+
+    await extract_atoms(TRANSCRIPT, session_date=SESSION_DATE)
+
+    assert calls[0]["store"] is False
+
+
+async def test_extract_atoms_raises_rather_than_returning_empty(monkeypatch):
+    """A provider failure reaches the caller. It must not look like "no facts".
+
+    This is the single most expensive silent failure available to this module.
+    The caller is an offline pass that marks a session `extracted_at = now()`
+    when it returns; an empty list is the ordinary, correct answer for a
+    session that held nothing durable. So a swallowed error would mark the
+    session done, and every fact in it would be unreachable forever, with
+    nothing anywhere recording that it happened. `embed.py` propagates for the
+    same reason and has the same test.
+    """
+    calls = []
+    monkeypatch.setattr("app.memory.extract._client",
+                        lambda: _FakeClient(calls, raises=True))
+
+    with pytest.raises(_Boom):
+        await extract_atoms(TRANSCRIPT, session_date=SESSION_DATE)
+
+    # It reached the provider — the failure under test is the response, not an
+    # exception raised before the request was ever made.
+    assert len(calls) == 1
 
 
 def test_extraction_schema_is_valid_under_strict_mode():
@@ -211,6 +293,32 @@ def test_prompt_offers_exactly_the_categories_the_schema_allows():
     ] == [c.value for c in MemoryCategory]
 
 
+def test_prompt_states_the_transcript_format():
+    """`stated` is only meaningful if the model can tell who spoke.
+
+    Nothing renders a transcript yet — the `learner:` / `tutor:` convention
+    exists in this module's prompt and in this file's fixture and nowhere else.
+    Saying it in the prompt is what makes it a contract the renderer in a later
+    task has to meet, rather than an assumption that fails silently by turning
+    every `stated` flag into a guess about an unlabelled line.
+    """
+    assert "`learner:`" in EXTRACTION_PROMPT
+    assert "`tutor:`" in EXTRACTION_PROMPT
+
+
+def test_prompt_bans_relative_dates():
+    """The instruction that makes `episode_ref` survive being read back.
+
+    The model cannot resolve "Tuesday" on its own — the transcript does not say
+    which Tuesday — so the prompt has to both supply the session date and
+    forbid the relative forms, or the fact stored is unresolvable by anyone
+    later, including the model that wrote it.
+    """
+    assert "{session_date}" in EXTRACTION_PROMPT
+    for banned in ('"this session"', '"today"', '"last week"', '"Tuesday"'):
+        assert banned in EXTRACTION_PROMPT
+
+
 def test_prompt_demands_self_contained_facts():
     """Pinning prose, deliberately.
 
@@ -229,6 +337,18 @@ def test_prompt_demands_self_contained_facts():
     assert "only when the learner said it themselves" in EXTRACTION_PROMPT
 
 
-def test_min_transcript_chars_is_a_floor_not_a_ceiling():
-    """A boundary a refactor could invert without any other test noticing."""
-    assert len(TRANSCRIPT) >= MIN_TRANSCRIPT_CHARS
+async def test_min_transcript_chars_is_the_shortest_transcript_still_extracted(monkeypatch):
+    """The boundary itself: exactly MIN is extracted, one character less is not.
+
+    Asserted through the fake client rather than by measuring a fixture, so
+    that flipping `<` to `<=` — which no other test in this file would notice —
+    fails here.
+    """
+    calls = []
+    monkeypatch.setattr("app.memory.extract._client", lambda: _FakeClient(calls))
+
+    await extract_atoms("x" * MIN_TRANSCRIPT_CHARS, session_date=SESSION_DATE)
+    assert len(calls) == 1
+
+    await extract_atoms("x" * (MIN_TRANSCRIPT_CHARS - 1), session_date=SESSION_DATE)
+    assert len(calls) == 1

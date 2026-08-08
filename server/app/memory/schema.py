@@ -34,7 +34,7 @@ class MemoryCategory(StrEnum):
     context = "context"            # durable facts about their situation
     skill_state = "skill_state"    # what they can and cannot do
     misconception = "misconception"  # a specific wrong belief, named
-    episode_ref = "episode_ref"    # "we did X on Tuesday"
+    episode_ref = "episode_ref"    # what a dated session covered
 
 
 class ExtractedAtom(BaseModel):
