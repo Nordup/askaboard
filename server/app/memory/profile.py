@@ -21,26 +21,33 @@ heading, and the date on every one of its lines are all guarding against.
 
 import uuid
 from collections import OrderedDict
+from collections.abc import Callable, Iterable
 from functools import lru_cache
-from typing import Callable, Iterable
 
 from openai import AsyncOpenAI
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.config import EXTRACTION_MODEL, get_settings
 from app.store.models import LearnerProfile, MemoryAtom
 
 #: Rendering order, and the whole of what a portrait is made of.
 #:
-#: Fixed rather than incidental: the rendered block ends up inside a cached
-#: prompt prefix, so two rebuilds over an unchanged store must produce the same
-#: bytes or every following turn pays for a cache miss. Everything downstream of
-#: here — `_group`, and the ORDER BY in both queries — exists to keep that true.
+#: Fixed rather than incidental, and the reason is one step removed from this
+#: file. Reordering the facts changes the prose the model writes from them, and
+#: that prose — `LearnerProfile.body` — is what a later task pastes into the
+#: cached prompt prefix every turn reads. So a rebuild over an unchanged store
+#: reordering two lines is not free: it rewrites the body, and the body moving
+#: invalidates the prefix. `_group` and the ORDER BY in both queries exist to
+#: make the input to that model call a function of the atoms and nothing else.
 #:
 #: `episode_ref` is deliberately absent. Those atoms record what a session
 #: covered rather than anything about the person, and `retrieve.recent_episodes`
-#: already answers "what have we been doing lately" in date order.
+#: already answers "what have we been doing lately" in date order. That makes
+#: this tuple `models.MEMORY_CATEGORIES` minus one member and not a list in its
+#: own right — `test_the_portrait_covers_every_category_but_episodes` is what
+#: notices when a seventh category is added to the vocabulary and not to here.
 ORDER: tuple[str, ...] = (
     "context", "goal", "preference", "skill_state", "misconception",
 )
@@ -65,17 +72,19 @@ teach them and has never met them.
 Use these section headings, omitting any with nothing to say: Context, Goals, \
 How they learn, What they can do, Where they get stuck.
 
-Write flowing prose inside each section, not bullet lists. Where a fact carries \
-a month, keep it — "as of June" tells the tutor how much to trust it. Do not \
-invent anything that is not below. Keep the whole thing under 350 words.
+Write flowing prose inside each section, not bullet lists. Do not invent \
+anything that is not below. Keep the whole thing under 350 words.
 
-The facts arrive in two blocks. Everything under CURRENTLY TRUE holds now: \
-write it in the present tense. Everything under NO LONGER TRUE stopped holding \
-on the date its line gives, and must never be written as though it still holds. \
-Use those only to say how the learner has changed, and only where a current \
-fact covers the same ground — "was stuck on negative exponents in March, \
-handles them now". Drop the ones with nothing current to pair them with rather \
-than reporting them on their own.
+Everything under CURRENTLY TRUE holds now: write it in the present tense, and \
+where one of those lines carries a month, keep it — "as of June" tells the \
+tutor how much to trust it.
+
+A NO LONGER TRUE block may follow. Those facts stopped holding on the second \
+date their line gives. Never write one as though it still holds, and never date \
+the learner by one: neither date on those lines says anything about now. Each \
+one names the fact that replaced it after "replaced by", so use that pairing \
+rather than hunting for one — "was stuck on negative exponents in March, \
+handles them now". Drop any whose replacement adds nothing worth a sentence.
 
 {facts}"""
 
@@ -135,16 +144,22 @@ def _live_line(atom: MemoryAtom) -> str:
     return f"- [{atom.category}] (since {atom.valid_from:%Y-%m-%d}) {atom.text}"
 
 
-def _history_line(atom: MemoryAtom) -> str:
-    """A closed fact, stamped with the window it was true in.
+def _history_line(atom: MemoryAtom, replacement: str) -> str:
+    """A closed fact, stamped with the window it was true in and what took over.
 
-    Every such line repeats its own status instead of leaning on the heading
-    above it. The reader is a model working down a list; a heading is one line
-    it can lose thirty lines later, and what that costs here is a fact the
-    learner has moved past being taught back to them as current.
+    Two things are spelled out here that the heading above already implies, and
+    both are deliberate. The status, because the reader is a model working down
+    a list and a heading is one line it can lose thirty lines later — what that
+    costs is a fact the learner has moved past being taught back to them as
+    current. And the replacement, because the pairing is the whole point of
+    showing a closed fact at all: `superseded_by` records exactly which fact
+    replaced this one, and leaving it out would have the model rediscover by
+    resemblance something the database already knows — reliably enough for
+    quadratics, a coin flip for a subtler pair.
     """
     return (f"- [{atom.category}] (was true {atom.valid_from:%Y-%m-%d} to "
-            f"{atom.valid_to:%Y-%m-%d}, no longer) {atom.text}")
+            f"{atom.valid_to:%Y-%m-%d}, no longer) {atom.text} "
+            f"— replaced by: {replacement}")
 
 
 def _block(
@@ -154,8 +169,13 @@ def _block(
                                  for atom in group)])
 
 
-def _render(live: list[MemoryAtom], historical: list[MemoryAtom]) -> str:
-    """The facts block, in the two-part shape the prompt describes.
+def _render(
+    live: list[MemoryAtom], historical: list[tuple[MemoryAtom, str]]
+) -> str:
+    """The facts block, in the shape the prompt describes.
+
+    `historical` is each closed atom paired with the text of the atom that
+    replaced it, as `_closed_atoms` returns them.
 
     An empty history block is omitted rather than rendered under its heading: a
     heading with nothing beneath it is an invitation to fill it, and the one
@@ -163,7 +183,12 @@ def _render(live: list[MemoryAtom], historical: list[MemoryAtom]) -> str:
     """
     blocks = [_block(_LIVE_HEADING, live, _live_line)]
     if historical:
-        blocks.append(_block(_HISTORY_HEADING, historical, _history_line))
+        replacements = {atom.id: text for atom, text in historical}
+        blocks.append(_block(
+            _HISTORY_HEADING,
+            [atom for atom, _ in historical],
+            lambda atom: _history_line(atom, replacements[atom.id]),
+        ))
     return "\n\n".join(blocks)
 
 
@@ -185,15 +210,17 @@ async def _live_atoms(db: AsyncSession, learner_id: uuid.UUID) -> list[MemoryAto
     )).scalars().all())
 
 
-async def _closed_atoms(db: AsyncSession, learner_id: uuid.UUID) -> list[MemoryAtom]:
-    """The most recently closed atoms, put back in render order once chosen.
+async def _closed_atoms(
+    db: AsyncSession, learner_id: uuid.UUID
+) -> list[tuple[MemoryAtom, str]]:
+    """The most recently closed atoms, each with the fact that replaced it.
 
-    Superseded specifically, not merely closed. `superseded_by` is what marks a
-    row as the earlier half of a trajectory; a row closed with nothing pointing
-    at it is a retraction — something decided to have never been true — and
-    offering that as the learner's past would be reviving a fact on the grounds
-    that we withdrew it. `valid_to` is required alongside it because the line
-    this renders prints that date.
+    The join to the successor is inner, which is also the filter: superseded
+    specifically, not merely closed. A row closed with nothing pointing at it is
+    a retraction — something decided to have never been true — and offering that
+    as the learner's past would revive a fact on the grounds that we withdrew
+    it. It drops out here for free rather than needing a clause of its own.
+    `valid_to` still gets one, because the rendered line prints that date.
 
     The category filter belongs in the query and not only in `_group`: `HISTORY`
     caps rows, so a row that rendering would drop must not be allowed to spend
@@ -202,16 +229,18 @@ async def _closed_atoms(db: AsyncSession, learner_id: uuid.UUID) -> list[MemoryA
     Ordered by closing date to decide which survive the cap, then sorted back
     onto the key `_live_atoms` uses so both blocks read the same way round.
     """
+    successor = aliased(MemoryAtom)
     rows = (await db.execute(
-        select(MemoryAtom)
+        select(MemoryAtom, successor.text)
+        .join(successor, MemoryAtom.superseded_by == successor.id)
         .where(MemoryAtom.learner_id == learner_id,
                MemoryAtom.valid_to.is_not(None),
-               MemoryAtom.superseded_by.is_not(None),
                MemoryAtom.category.in_(ORDER))
         .order_by(desc(MemoryAtom.valid_to), desc(MemoryAtom.id))
         .limit(HISTORY)
-    )).scalars().all()
-    return sorted(rows, key=lambda atom: (atom.valid_from, atom.id))
+    )).all()
+    return sorted(((atom, text) for atom, text in rows),
+                  key=lambda pair: (pair[0].valid_from, pair[0].id))
 
 
 async def rebuild_profile(db: AsyncSession, learner_id: uuid.UUID) -> str:
@@ -235,10 +264,11 @@ async def rebuild_profile(db: AsyncSession, learner_id: uuid.UUID) -> str:
     body = await _synthesize(_render(live, historical))
 
     # Live and historical together: `atom_count` records what the body was made
-    # from. It is provenance for whoever reads the row, and deliberately not
-    # used as a change detector — supersession adds one atom and closes another,
-    # so a rebuild that rewrites the entire portrait can leave the count exactly
-    # where it was.
+    # from. Provenance for whoever reads the row, and deliberately not a change
+    # detector. Once history is at `HISTORY` a supersession adds a live row and
+    # pushes a closed one off the end for a net zero, and any pass that deletes
+    # as many atoms as it writes does the same at any size — a portrait rewritten
+    # end to end, under an unmoved number.
     count = len(live) + len(historical)
     row = await db.get(LearnerProfile, learner_id)
     if row is None:

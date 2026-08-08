@@ -6,7 +6,7 @@ from app.memory.profile import (
     _HISTORY_HEADING, _LIVE_HEADING, ORDER, _group, _render, _synthesize,
     current_profile, rebuild_profile,
 )
-from app.store.models import Learner, LearnerProfile, MemoryAtom
+from app.store.models import MEMORY_CATEGORIES, Learner, LearnerProfile, MemoryAtom
 from tests.conftest import requires_db
 
 # ---------------------------------------------------------------------------
@@ -100,18 +100,40 @@ def test_group_walks_one_fixed_category_order():
     assert "episode_ref" not in grouped
 
 
+def test_the_portrait_covers_every_category_but_episodes():
+    """`ORDER` is the atom vocabulary minus one member, not a list of its own.
+
+    Both queries filter on it, so a seventh category added to
+    `MEMORY_CATEGORIES` and its CHECK constraint would be invisible here: those
+    atoms would simply never reach a portrait. Worse, a learner whose facts were
+    all in the new category would read as having no live atoms at all, and
+    `rebuild_profile` deletes the stored profile when that happens — silence
+    would cost the portrait, not just the new facts.
+
+    Membership only. The two sequences differ on purpose: one is the vocabulary,
+    this one is the order a stranger should meet the learner in — who they are,
+    then what they want, then how to teach them — and pinning that to the
+    vocabulary's order would make renaming the guard's subject a reordering of
+    the prompt.
+    """
+    assert set(ORDER) == set(MEMORY_CATEGORIES) - {"episode_ref"}
+    assert len(ORDER) == len(set(ORDER))
+
+
 def test_render_pins_the_shape_of_both_blocks():
     """The exact bytes, because the exact bytes are the contract.
 
-    A closed atom is unmistakable twice over — under its own heading and again
-    on its own line — and the live atom passed in first still renders second,
-    which is `ORDER` doing its job rather than the input order.
+    A closed atom is unmistakable three times over — under its own heading, by
+    the dates on its own line, and by naming what replaced it — and the live
+    atom passed in first still renders second, which is `ORDER` doing its job
+    rather than the input order.
     """
     live = [
         _atom("Factors simple quadratics unaided.", valid_from=JUNE),
         _atom("In Year 11, sitting AQA higher tier.", category="context"),
     ]
-    historical = [_atom("Cannot factor quadratics.", valid_to=JUNE)]
+    historical = [(_atom("Cannot factor quadratics.", valid_to=JUNE),
+                   "Factors simple quadratics unaided.")]
 
     assert _render(live, historical) == (
         "CURRENTLY TRUE\n"
@@ -120,7 +142,7 @@ def test_render_pins_the_shape_of_both_blocks():
         "\n"
         "NO LONGER TRUE (history, for narrating change only)\n"
         "- [skill_state] (was true 2026-03-04 to 2026-06-01, no longer) "
-        "Cannot factor quadratics."
+        "Cannot factor quadratics. — replaced by: Factors simple quadratics unaided."
     )
 
 
@@ -197,7 +219,8 @@ async def test_a_superseded_atom_arrives_as_history_and_never_as_fact(db, monkey
     Both rows are about the same skill and say opposite things, so an
     implementation that merged the blocks — or dropped the closed row, as the
     live-only selection this replaced did — cannot pass: the March fact has to
-    be present, and present only where it cannot read as current.
+    be present, present only where it cannot read as current, and joined to the
+    June fact that replaced it rather than left to be matched up by resemblance.
     """
     synthesis = _install(monkeypatch)
     await _learner(db)
@@ -213,7 +236,8 @@ async def test_a_superseded_atom_arrives_as_history_and_never_as_fact(db, monkey
     current, _, history = facts.partition(_HISTORY_HEADING)
     assert "Cannot factor quadratics." not in current
     assert ("- [skill_state] (was true 2026-03-04 to 2026-06-01, no longer) "
-            "Cannot factor quadratics.") in history
+            "Cannot factor quadratics. — replaced by: "
+            "Factors simple quadratics unaided.") in history
     assert "Factors simple quadratics unaided." in current
 
 
@@ -295,8 +319,7 @@ async def test_atoms_written_in_one_pass_are_ordered_by_id(db, monkeypatch):
 
 @requires_db
 async def test_two_rebuilds_over_an_unchanged_store_send_the_same_bytes(db, monkeypatch):
-    """What the stable ordering is for: this block sits in a cached prompt
-    prefix, and a reordered line costs a cache miss on every turn after it.
+    """The guarantee `ORDER` exists for, end to end.
 
     Everything is expired between the two runs so the second genuinely re-reads
     the rows rather than re-rendering the objects the first one left behind.
