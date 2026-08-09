@@ -18,6 +18,9 @@ dependencies = [
     "pydantic-settings>=2.6",
     "python-multipart>=0.0.17",
     "pgvector>=0.3",
+    "pillow>=11.0",
+    "pillow-heif>=0.21",
+    "pymupdf>=1.25",
 ]
 
 [dependency-groups]
