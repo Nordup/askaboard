@@ -12,10 +12,9 @@ The arithmetic only. `evidence.py` is what turns a tool call into calls of it.
 import math
 import uuid
 
-from sqlalchemy import desc, select
+from sqlalchemy import ColumnElement, and_, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.learner.kcs import MASTERY_THRESHOLD
 from app.store.models import KC, LearnerKCState
 
 #: How far to trust each evidence channel, as a factor on how far one
@@ -25,11 +24,9 @@ from app.store.models import KC, LearnerKCState
 #: raters. A symbolically checked answer is near-certain. Handwritten symbolic
 #: work reads at roughly human inter-rater agreement (κ≈0.90). A child's
 #: *diagram* does not: models agree with human raters barely above chance on
-#: children's mathematical illustrations (κ≈0.20), and the ceiling described in
-#: `elo_step` is what turns that number into diagram evidence being unable to
-#: certify anything on its own. An explicit "I don't know" is a button press
-#: rather than a judgement of the work, so what limits it is the learner
-#: meaning it, not anything reading it.
+#: children's mathematical illustrations (κ≈0.20). An explicit "I don't know"
+#: is a button press rather than a judgement of the work, so what limits it is
+#: the learner meaning it, not anything reading it.
 #:
 #: `answer_verified` says a symbolic check ran and is settable server-side
 #: only; nothing taking a model's word for it may claim it. This module does
@@ -59,15 +56,61 @@ UNKNOWN_RELIABILITY = 0.5
 K0 = 0.8
 BETA = 0.15
 
-#: How much evidence a concept needs before `band` will say anything sharper
-#: than "attempted" — five or six single-concept observations on a channel we
-#: mostly trust, since each contributes `weight * reliability`.
+#: `theta` is a logit: the chance of getting a fresh item on the concept right
+#: is 1 / (1 + exp(-theta)), so 0 is a coin flip and 1.1 is roughly 75%. Tune
+#: the bar here — one number moves both halves of the question at once, what
+#: counts as not-yet-learned and what counts as a prerequisite already in
+#: place.
+#:
+#: It no longer has to stay above zero to keep `outer_fringe` from returning
+#: the empty list for every learner. That hazard — an unobserved concept has no
+#: state row, so it reads as theta 0 and at a threshold of 0 nothing is below
+#: the bar — is now covered by the evidence half of `is_mastered`, since an
+#: unobserved concept has no evidence either. It should still sit here: this is
+#: where "knows it" is a defensible claim about a fresh item.
+MASTERY_THRESHOLD = 1.1
+
+#: How much evidence a concept needs before it can be called anything sharper
+#: than "attempted".
+#:
+#: This gate, not the reliability factor, is what stops a weak channel
+#: establishing mastery. `n_effective` accrues at `weight * reliability`, so
+#: five or six verified answers clear it while diagrams — 0.35 at a time — take
+#: fifteen. That is the honest form of "diagrams inform but never decide": it
+#: composes across channels, it degrades smoothly, and unlike a cap on theta it
+#: does not quietly stop working when someone retunes a constant.
 MIN_EVIDENCE_FOR_BAND = 5.0
+
+#: Where the sigmoid is flat enough to stop computing it. See `elo_step`.
+_SATURATION = 40.0
 
 
 def reliability_of(kind: str) -> float:
     """How far to trust an observation that arrived through `kind`."""
     return RELIABILITY.get(kind, UNKNOWN_RELIABILITY)
+
+
+def is_mastered(theta: float, n_effective: float) -> bool:
+    """Both halves: the estimate has cleared the bar, and it means something.
+
+    The single definition of mastery in this service. `band` renders it for the
+    prompt and `mastered_clause` asks it of the database; neither has a rule of
+    its own, because the two answering differently is a real failure and not a
+    hypothetical one — see `kcs.outer_fringe`.
+    """
+    return n_effective >= MIN_EVIDENCE_FOR_BAND and theta >= MASTERY_THRESHOLD
+
+
+def mastered_clause(
+    theta: ColumnElement[float], n_effective: ColumnElement[float]
+) -> ColumnElement[bool]:
+    """`is_mastered` as a SQL expression, over columns a query supplies.
+
+    Two spellings because SQLAlchemy's `and_` cannot return a Python bool and
+    `and` cannot return a SQL clause. They are kept adjacent and are checked
+    against each other by test, which is the part that stops them drifting.
+    """
+    return and_(n_effective >= MIN_EVIDENCE_FOR_BAND, theta >= MASTERY_THRESHOLD)
 
 
 def elo_step(
@@ -81,31 +124,34 @@ def elo_step(
     turn this concept accounted for; `difficulty` is the item's logit, on the
     same scale as theta.
 
-    The line worth reading twice is `effective`, which shrinks the outcome
-    toward chance before it is compared with the prediction. The grader is an
-    LLM reading a child's maths, and LLM graders are lopsided: on Khan's
-    published benchmark of real tutoring dialogue the best model was right
-    85.8% of the time when the student was correct but only 68.5% when the
-    student was wrong. Taken at face value that asymmetry more than doubles the
-    effective guess rate, and the estimate drifts confidently upward — deciding
-    a learner has mastered what they have not. Moving an unreliable channel
-    less is the correction. Moving it confidently in a possibly wrong direction
-    is the failure being corrected.
+    Why shrink by reliability at all: the grader is an LLM reading a child's
+    maths, and LLM graders are lopsided: on Khan's published benchmark of real
+    tutoring dialogue the best model was right 85.8% of the time when the
+    student was correct but only 68.5% when the student was wrong. Taken at
+    face value that asymmetry more than doubles the effective guess rate, and
+    the estimate drifts confidently upward — deciding a learner has mastered
+    what they have not.
 
-    The shrink also caps the estimate, which is what keeps a weak channel
-    honest rather than merely slow. Repeated correct answers drive theta to
-    `difficulty + logit(0.5 + reliability / 2)` and no further, so `ink_diagram`
-    tops out near 0.73 on a difficulty-0 item — under MASTERY_THRESHOLD,
-    however many drawings arrive. Diagrams inform; they cannot certify.
+    `reliability` scales the *step*, not the target. Shrinking the target
+    instead — comparing the prediction against `0.5 + reliability * (outcome -
+    0.5)` — reads plausibly and is wrong: it makes the shrunken outcome an
+    attractor, so a *correct* observation on a weak channel drags an
+    established theta down toward chance, a *wrong* one on a badly-lagging
+    concept pulls it up, and a channel worth nothing moves theta rather than
+    leaving it alone. Scaling the step preserves direction — right always
+    raises, wrong always lowers, `reliability=0` does nothing — which is what
+    "an unreliable channel should move the estimate less" has to mean.
     """
-    predicted = 1.0 / (1.0 + math.exp(-(theta - difficulty)))
-    effective = 0.5 + reliability * (outcome - 0.5)
+    # Saturating rather than overflowing: math.exp gives up somewhere past 709
+    # and the sigmoid is flat to within 1e-17 by ±40, so clamping the gap costs
+    # nothing real and keeps this total for whatever a replay hands it.
+    gap = max(-_SATURATION, min(_SATURATION, theta - difficulty))
+    predicted = 1.0 / (1.0 + math.exp(-gap))
     k = K0 / (1.0 + BETA * n_effective)
     return (
-        theta + k * weight * (effective - predicted),
-        # Evidence accrues at the rate it can be trusted, so five diagrams
-        # count for less than two verified answers — which is what stops a
-        # stream of weak observations unlocking `band` on its own.
+        theta + k * weight * reliability * (outcome - predicted),
+        # Evidence accrues at the rate it can be trusted; MIN_EVIDENCE_FOR_BAND
+        # is where that rate does its work.
         n_effective + weight * reliability,
     )
 
@@ -116,14 +162,10 @@ def band(theta: float, *, n_effective: float) -> str:
     A meter reading 0.62 off two observations implies a confidence the model
     does not have, so until there is real evidence every concept reads as
     "attempted" regardless of where theta sits.
-
-    The bar for "mastered" is `kcs.MASTERY_THRESHOLD`, shared with
-    `outer_fringe`: what the tutor is told the learner knows and what the
-    planner treats as a prerequisite already in place have to be one fact.
     """
     if n_effective < MIN_EVIDENCE_FOR_BAND:
         return "attempted"
-    if theta >= MASTERY_THRESHOLD:
+    if is_mastered(theta, n_effective):
         return "mastered"
     if theta >= 0.0:
         return "proficient"

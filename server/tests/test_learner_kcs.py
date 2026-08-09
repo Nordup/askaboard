@@ -203,10 +203,10 @@ async def test_outer_fringe_needs_the_prerequisites_in_place(db_factory):
         _, edges = _load_seed()
         has_prerequisites = {e["kc"] for e in _prerequisite_edges(edges)}
 
-        # A learner we know nothing about sits at theta 0 everywhere. The
-        # fringe is then the roots of the graph, and — the part worth pinning
-        # down — it is not empty: a threshold at or below 0 makes every
-        # concept read as already known and the answer is silently nothing.
+        # A learner we know nothing about has no state rows at all. The fringe
+        # is then the roots of the graph, and — the part worth pinning down —
+        # it is not empty: every concept coalesces to no evidence and no
+        # ability, which has to read as not-yet-learned rather than as known.
         fresh = await outer_fringe(db, SOLE_LEARNER_ID)
         assert len(fresh) == 5
         assert not (set(fresh) & has_prerequisites)
@@ -221,12 +221,14 @@ async def test_outer_fringe_needs_the_prerequisites_in_place(db_factory):
         }
         for code in ("7.RP.A.1", "6.RP.A.2", "6.RP.A.3"):
             db.add(LearnerKCState(
-                learner_id=SOLE_LEARNER_ID, kc_id=ids[code], theta=2.0
+                learner_id=SOLE_LEARNER_ID, kc_id=ids[code],
+                theta=2.0, n_effective=9.0,
             ))
         # Started but well short of the bar, which is what should put it at the
         # head of the fringe: closest to ready, not furthest.
         db.add(LearnerKCState(
-            learner_id=SOLE_LEARNER_ID, kc_id=ids["7.RP.A.2"], theta=0.5
+            learner_id=SOLE_LEARNER_ID, kc_id=ids["7.RP.A.2"],
+            theta=0.5, n_effective=6.0,
         ))
         await db.commit()
 
@@ -237,3 +239,16 @@ async def test_outer_fringe_needs_the_prerequisites_in_place(db_factory):
         assert "7.RP.A.1" not in whole
         # Needs 7.RP.A.2, which is at 0.5 — one prerequisite short is enough.
         assert "7.RP.A.3" not in whole
+
+        # Evidence, not theta alone. Mastery here is `mastery.mastered_clause`,
+        # the same rule the prompt renders through `band`, and it takes both
+        # halves: with only theta consulted, a standard that cleared the bar on
+        # a couple of lucky answers retired every prerequisite depending on it
+        # while the tutor was still being told the learner had merely attempted
+        # it. 6.RP.A.2 keeps its theta of 2.0 and loses its evidence.
+        thin = await db.get(LearnerKCState, (SOLE_LEARNER_ID, ids["6.RP.A.2"]))
+        thin.n_effective = 2.0
+        await db.commit()
+        assert "7.RP.A.2" not in await outer_fringe(
+            db, SOLE_LEARNER_ID, limit=500
+        )

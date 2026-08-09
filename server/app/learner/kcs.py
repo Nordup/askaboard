@@ -14,20 +14,10 @@ from sqlalchemy.dialects.postgresql import UUID as PGUUID, array, insert as pg_i
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from app.learner.mastery import mastered_clause
 from app.store.models import KC, PREREQUISITE, KCEdge, LearnerKCState
 
 SEED = pathlib.Path(__file__).parent / "seed" / "ccss_kcs.json"
-
-#: `theta` is a logit: the chance of getting a fresh item on the concept right
-#: is 1 / (1 + exp(-theta)), so 0 is a coin flip and 1.1 is roughly 75%. That
-#: is the bar `outer_fringe` treats as "knows it", and one number moves both
-#: halves of the question at once — what counts as not-yet-learned, and what
-#: counts as a prerequisite already in place. Tune it here.
-#:
-#: It must stay above zero. An unobserved concept has no state row and so
-#: reads as theta 0; at a threshold of 0 nothing is *below* the bar, and the
-#: query returns an empty list for every learner, forever.
-MASTERY_THRESHOLD = 1.1
 
 
 def _load_seed() -> tuple[list[dict], list[dict]]:
@@ -153,20 +143,30 @@ async def outer_fringe(
     db: AsyncSession,
     learner_id: uuid.UUID,
     *,
-    threshold: float = MASTERY_THRESHOLD,
     limit: int = 5,
 ) -> list[str]:
-    """What this learner is ready to learn: below `threshold` themselves, with
-    every prerequisite above it.
+    """What this learner is ready to learn: not yet mastered themselves, with
+    every prerequisite mastered.
 
     Standards with no prerequisites at all qualify vacuously, which is what
     makes the fringe of a learner we know nothing about the roots of the
     graph rather than the empty set.
+
+    "Mastered" is `mastery.mastered_clause` and nothing else — the same rule
+    `band` renders into the prompt. The two used to differ, and the gap was
+    reachable in two observations: theta alone cleared the bar on a hard item,
+    which retired that standard as a satisfied prerequisite for everything
+    downstream while the tutor was still being told the learner had merely
+    attempted it. A prerequisite declared satisfied on 2.4 units of evidence is
+    exactly the confident-upward drift the reliability weighting exists to
+    prevent. There is no `threshold` override any more for the same reason:
+    half a predicate is a way for the two definitions to drift apart again.
     """
     state = aliased(LearnerKCState)
     prereq_state = aliased(LearnerKCState)
     zero = literal(0.0, Float)
     theta = func.coalesce(state.theta, zero)
+    evidence = func.coalesce(state.n_effective, zero)
 
     unmet_prerequisite = (
         select(literal(1))
@@ -181,7 +181,12 @@ async def outer_fringe(
         .where(
             KCEdge.kc_id == KC.id,
             KCEdge.kind == PREREQUISITE,
-            func.coalesce(prereq_state.theta, zero) < threshold,
+            # Coalesced to zero on both halves, which is what keeps an
+            # unobserved prerequisite unmet rather than vacuously satisfied.
+            ~mastered_clause(
+                func.coalesce(prereq_state.theta, zero),
+                func.coalesce(prereq_state.n_effective, zero),
+            ),
         )
     )
 
@@ -190,7 +195,7 @@ async def outer_fringe(
         .outerjoin(
             state, and_(state.kc_id == KC.id, state.learner_id == learner_id)
         )
-        .where(theta < threshold, ~unmet_prerequisite.exists())
+        .where(~mastered_clause(theta, evidence), ~unmet_prerequisite.exists())
         # Closest to the bar first. `code` only breaks ties, but it has to:
         # a learner with no history has hundreds of concepts at theta 0, and
         # without it `limit` would return an arbitrary handful of them.

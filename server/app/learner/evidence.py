@@ -10,19 +10,25 @@ its accuracy, not cost the child their answer.
 Writes but never commits. The caller owns the transaction, so a turn that
 records evidence and then fails records none of it.
 """
+import math
 import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.learner.mastery import band, elo_step, reliability_of
+from app.learner.mastery import elo_step, is_mastered, reliability_of
 from app.store.models import KC, LearnerKCState, Observation
 
 #: What an observation is assumed to have come through when it does not say.
 #: The commonest channel and a middling one — an omission should be neither the
 #: most nor the least trusted thing that could have happened.
 DEFAULT_KIND = "answer_llm"
+
+#: Difficulty is a logit on theta's scale, where ±6 is already 99.75% either
+#: way. Past that it is not a hard item, it is a broken number, and left alone
+#: it would make every observation a maximal surprise for as long as it stood.
+DIFFICULTY_LIMIT = 6.0
 
 #: `observations.kind` is fixed width and `kind` arrives from a tool call, so
 #: an overlong one is truncated to fit rather than allowed to abort the whole
@@ -31,11 +37,21 @@ _KIND_WIDTH: int = Observation.__table__.c.kind.type.length
 
 
 def _as_float(value: object, default: float = 0.0) -> float:
-    """A number out of whatever the model actually emitted."""
+    """A finite number out of whatever the model actually emitted.
+
+    Non-finite is rejected, and that is the half that matters. A NaN difficulty
+    makes theta NaN, and a NaN theta is worse than a crash: Postgres sorts NaN
+    above every other float, so `theta >= MASTERY_THRESHOLD` is true while
+    `theta < MASTERY_THRESHOLD` is false. The concept vanishes from the fringe
+    and simultaneously reads as a cleared bar for everything downstream, for
+    good, while `band` still calls it "familiar". One malformed number would
+    unlock a subtree of the curriculum in silence.
+    """
     try:
-        return float(value)  # type: ignore[arg-type]
+        number = float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return default
+    return number if math.isfinite(number) else default
 
 
 def _kind(payload: dict) -> str:
@@ -50,6 +66,20 @@ def _kind(payload: dict) -> str:
     if not isinstance(kind, str) or not kind:
         return DEFAULT_KIND
     return kind[:_KIND_WIDTH]
+
+
+def _misconception(payload: dict) -> str | None:
+    """The misconception label, if the model wrote one as text.
+
+    A model describing a misconception as an object rather than a sentence is
+    an entirely natural thing for a model to do, and the column is `Text`: a
+    dict, a list or an int each abort the turn's transaction on the way in.
+    Dropped rather than stringified, because this column gets grouped and
+    counted later and `"{'type': ...}"` is not a label — and because nothing is
+    actually lost, `detail` keeping the payload verbatim either way.
+    """
+    value = payload.get("misconception")
+    return value if isinstance(value, str) and value else None
 
 
 def _shares(entries: object) -> dict[str, float]:
@@ -92,8 +122,8 @@ async def record(
 ) -> int:
     """Log one observation per concept named, and fold each into learner state.
 
-    Returns how many concepts were folded in — fewer than the call named if it
-    named a code outside the vocabulary.
+    Returns how many concepts were folded into state — fewer than the call
+    named if it named a code outside the vocabulary, or gave one a zero share.
     """
     shares = _shares(payload.get("kcs"))
     if not shares:
@@ -105,8 +135,9 @@ async def record(
     # emphatic, and reading it as "better than certain" would let a single turn
     # move theta further than any true answer can.
     outcome = min(1.0, max(0.0, _as_float(payload.get("outcome"))))
-    difficulty = _as_float(payload.get("difficulty"))
-    misconception = payload.get("misconception")
+    difficulty = max(-DIFFICULTY_LIMIT,
+                     min(DIFFICULTY_LIMIT, _as_float(payload.get("difficulty"))))
+    misconception = _misconception(payload)
     # One clock reading for the whole call, so every concept a turn touched
     # carries the same `last_seen_at` and the rows sort as one event.
     now = datetime.now(timezone.utc)
@@ -149,6 +180,12 @@ async def record(
             # of the tool adds before a column exists for them.
             detail=payload,
         ))
+        if weight <= 0.0:
+            # A share of zero is a mention, not evidence. It is logged above,
+            # and that is all it gets: creating a state row for it would put a
+            # concept nothing was actually observed about into `snapshot`
+            # reading "attempted", and into every evidence gate downstream.
+            continue
         state = states.get(kc_id)
         if state is None:
             # Spelled out rather than left to the column defaults, which a
@@ -162,12 +199,12 @@ async def record(
         )
         state.last_seen_at = now
         if (state.first_mastered_at is None
-                and band(state.theta, n_effective=state.n_effective) == "mastered"):
-            # Stamped through `band`, not against the threshold directly, so
-            # the date marks the moment the tutor would have been told this was
-            # mastered and not a first lucky answer. Set once and never moved:
-            # it is the origin of any later rate-of-improvement curve, and a
-            # date that slides is not one.
+                and is_mastered(state.theta, state.n_effective)):
+            # Stamped through the shared predicate rather than against the
+            # threshold alone, so the date marks the moment the tutor would
+            # have been told this was mastered and not a first lucky answer.
+            # Set once and never moved: it is the origin of any later
+            # rate-of-improvement curve, and a date that slides is not one.
             state.first_mastered_at = now
         written += 1
     return written
