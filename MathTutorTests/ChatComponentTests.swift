@@ -1357,6 +1357,88 @@ final class ChatComponentTests: XCTestCase {
         }
     }
 
+    /// **A question grows beside the photo it came with.**
+    ///
+    /// The 224 is the *card's*, by ruling, and it is structural: the card behind is exactly
+    /// as wide, and a card narrower than this shape's straight top run would show the notch
+    /// it exists to hide. The **height** was never part of that ruling, and pinning it
+    /// clipped the second line of the commonest turn this feature has — a photo and a typed
+    /// question. `AttachmentStack` gives its content a `minHeight`; the shape in front has to
+    /// agree, or it overrides it.
+    ///
+    /// Measured rather than derived, because the thing that broke was a `height:` where a
+    /// `minHeight:` belonged, and no metrics value moved when it did.
+    @MainActor
+    func testAStackedBubbleKeepsItsWidthAndGrowsItsHeight() {
+        let oneLine = size(of: StackedMessageBubble(text: "is this right?"))
+        let wrapped = size(of: StackedMessageBubble(
+            text: "is question four right, and should I have multiplied before adding the two fractions?"
+        ))
+
+        // The ruling, and it does not give in either direction.
+        XCTAssertEqual(oneLine.width, AttachmentStackMetrics.sentMessage.width)
+        XCTAssertEqual(wrapped.width, AttachmentStackMetrics.sentMessage.width)
+        // One line is still exactly the 58 screen 08 draws: the floor is what reproduces it,
+        // since the padding puts a single 22pt line at 46.
+        XCTAssertEqual(oneLine.height, AttachmentStackMetrics.sentMessage.bodyHeight)
+        XCTAssertGreaterThan(
+            wrapped.height, oneLine.height,
+            "A wrapped question must make the bubble taller. A fixed height clips it."
+        )
+    }
+
+    /// The same thing one layer up, which is where a learner meets it: the turn itself has to
+    /// get taller, not just the shape inside it.
+    @MainActor
+    func testASentTurnWithAttachmentsGrowsWithItsQuestion() {
+        let attachment = MessageAttachment(
+            id: UUID(), filename: "worksheet.pdf", kind: "pdf", pageCount: 1
+        )
+        func turn(saying text: String) -> MessageRow {
+            MessageRow(
+                item: ChatThreadItem(
+                    TutorMessage(role: .learner, text: text),
+                    attachments: [attachment]
+                ),
+                scale: .panel,
+                width: DS.Container.panelContent
+            )
+        }
+
+        let oneLine = size(of: turn(saying: "is this right?"))
+        let wrapped = size(of: turn(
+            saying: "is question four right, and should I have multiplied before adding the two fractions?"
+        ))
+
+        XCTAssertGreaterThan(wrapped.height, oneLine.height)
+        // The row keeps the thread's column either way — it is the stack inside it that is
+        // 224, and the row's trailing alignment is what puts it on the edge.
+        XCTAssertEqual(oneLine.width, DS.Container.panelContent)
+        XCTAssertEqual(wrapped.width, DS.Container.panelContent)
+        // And the turn is its bubble plus the chips card's visible band, so a growing bubble
+        // is the only thing that moved.
+        XCTAssertEqual(
+            wrapped.height - oneLine.height,
+            size(of: StackedMessageBubble(
+                text: "is question four right, and should I have multiplied before adding the two fractions?"
+            )).height - size(of: StackedMessageBubble(text: "is this right?")).height,
+            accuracy: 0.5
+        )
+    }
+
+    /// What a view actually lays out to, at the widest proposal a chat column ever makes.
+    ///
+    /// `sizeThatFits(in:)` rather than the real-window host `ShellComponentTests` uses: that
+    /// one exists because a `GeometryReader` off-window publishes nothing, and nothing
+    /// measured here contains one — these are intrinsic content sizes, which is exactly what
+    /// this API answers.
+    @MainActor
+    private func size(of view: some View) -> CGSize {
+        UIHostingController(rootView: view).sizeThatFits(
+            in: CGSize(width: DS.Container.column, height: .greatestFiniteMagnitude)
+        )
+    }
+
     /// **The ruling.** The menu is three short labels, so its width follows its content and
     /// not the surface it is on: 301 at both scales, which is what board 16 draws and what
     /// `menu/sessions` beside it takes.

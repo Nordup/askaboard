@@ -170,10 +170,9 @@ struct MessageBubble: View {
 
 /// A sent message with a board selection stuck to it — the attachment stack's second use.
 ///
-/// Fixed at 224 × 58 the way the design draws it — unlike the plain bubble, which hugs its
-/// content. The design has exactly one specimen and states no wrapping rule for this
-/// variant, and the card behind it is sized off that fixed 58, so the height stays fixed
-/// rather than being given a growth rule the board never wrote.
+/// 224 wide the way the design draws it, and 58 tall for the one line the design draws. It
+/// no longer *stops* at 58 — see `StackedMessageBubble`, which is the shape both stacked
+/// cards sit in front of.
 struct SelectionMessageBubble: View {
     let text: String
     var metrics: MessageMetrics = .panel
@@ -185,18 +184,28 @@ struct SelectionMessageBubble: View {
     }
 }
 
-/// The student's words in the fixed box a stacked card sits behind.
+/// The student's words in the box a stacked card sits behind.
 ///
-/// Its own view because there are now **two** cards that sit behind this exact shape: screen
+/// Its own view because there are **two** cards that sit behind this exact shape: screen
 /// 08's "Selection" label, and the chips of a turn that carried files. They are the same
 /// stack at the same 224 by ruling — a sent attachment belongs where the student's other
 /// sent work already is — so the shape in front of them has to be one shape. Restated at
 /// each call site it is a shape that drifts, which is the argument `SelectionAttachment`'s
 /// own doc comment makes about the card.
 ///
-/// Fixed at `bodyHeight`, unlike the plain bubble which hugs its content: the design has
-/// exactly one specimen and states no wrapping rule for this variant, and the card behind it
-/// is sized off that fixed height.
+/// **The width is fixed and the height is a floor**, and the difference between those two
+/// is the bug this shape shipped with. 224 is the ruling and is structural: the card behind
+/// is exactly as wide, and a card narrower than this shape's straight top run would show the
+/// notch it exists to hide. The height is not structural at all — the card is a
+/// `.background(alignment: .top)` offset up by the visible band, so it hangs off this
+/// shape's *top* edge and nothing about the overlap, the band or the radii is a function of
+/// how far the bubble grows downward. `AttachmentStack` already gives its content a
+/// `minHeight` for exactly this reason; a fixed `height` here overrode it and clipped the
+/// second line of any question longer than about six words.
+///
+/// 58 stays as the floor, which is the one line the design draws: the vertical padding puts
+/// a single 22pt line at 46, so the floor is what reproduces screen 08 to the point, and
+/// only a wrapped line pushes past it.
 struct StackedMessageBubble: View {
     let text: String
     var metrics: MessageMetrics = .panel
@@ -206,9 +215,14 @@ struct StackedMessageBubble: View {
             .textStyle(metrics.selectionTextStyle)
             .foregroundStyle(DS.Color.ink)
             .padding(.horizontal, 20)
+            // The panel's block padding at both scales, because this whole stack keeps the
+            // panel's geometry in the reading column — see `AttachmentStackMetrics.sentMessage`.
+            // It costs nothing at one line, where the floor wins; it is what keeps a grown
+            // bubble's last line off the capsule's bottom edge.
+            .padding(.vertical, MessageMetrics.panel.bubblePaddingBlock)
             .frame(
                 width: metrics.selection.width,
-                height: metrics.selection.bodyHeight,
+                minHeight: metrics.selection.bodyHeight,
                 alignment: .leading
             )
             .background(
