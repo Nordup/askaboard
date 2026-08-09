@@ -11,7 +11,7 @@ from app.tutor.board_scene import parse_board_update
 from app.tutor.context import ContextBundle
 from app.tutor.events import BoardRequestEvent, ClientEvent, EventTranslator, WorkspaceEvent
 from app.tutor.rendezvous import BoardRegion, BoardUnavailable
-from app.tutor.tools import TOOL_DEFINITIONS
+from app.tutor.tools import MEMORY_TOOLS, TOOL_DEFINITIONS
 
 # How many times a turn may come back with a tool call before we stop asking.
 #
@@ -106,6 +106,28 @@ UNAVAILABLE_ACK = json.dumps({
 })
 
 
+# What a memory tool is answered with when this turn has no memory wired to it.
+#
+# The four are in `TOOL_DEFINITIONS` unconditionally — varying the tool set per
+# turn invalidates the whole cached prompt prefix — so a caller that passes no
+# handler still gets them called. Plain prose rather than the JSON above
+# because that is what every *successful* memory answer is; see
+# `app/memory/dispatch.py`.
+NO_MEMORY_ACK = (
+    "Memory is not available in this session, so nothing was searched, saved "
+    "or recorded. Do not tell the learner you have remembered anything, and do "
+    "not tell them you have no memory of something — you have not looked."
+)
+
+# What a memory tool call whose arguments will not parse is answered with. The
+# handler never ran, so nothing was written; saying so is what stops the model
+# reporting a save that did not happen.
+MALFORMED_MEMORY_ACK = (
+    "That call's arguments could not be read, so nothing happened. Check the "
+    "field names and types and call it again."
+)
+
+
 #: How `run_turn` gets a region of the board rendered.
 #:
 #: Injected rather than imported so the loop stays testable without a device, a
@@ -113,21 +135,32 @@ UNAVAILABLE_ACK = json.dumps({
 #: Raising `BoardUnavailable` is how a fetcher says the device did not answer.
 BoardFetcher = Callable[[str, BoardRegion], Awaitable[bytes]]
 
+#: How `run_turn` runs a memory tool. Injected for the reason `BoardFetcher` is,
+#: and for one more: the four memory tools need a database session, and the one
+#: the request was served on is closed by the time this loop runs — the endpoint
+#: has returned and its dependencies have been torn down before the
+#: `StreamingResponse` body is iterated. What the caller binds in is a handler
+#: that opens its own; `app.memory.dispatch.memory_handler` is that binding.
+MemoryHandler = Callable[[str, dict], Awaitable[str]]
+
 
 @dataclass
 class ToolAnswer:
     """What answering one tool call produces, before anything is awaited.
 
-    Two shapes, and exactly one of them is set. `items` is a reply the server can
-    write on its own — `set_workspace`, an empty board, a malformed call. `ask`
-    is a `view_board` that needs the device: the caller has to emit it, wait for
-    the render, and only then build the items. Splitting it this way is what lets
-    the waiting live in `run_turn`, which is the only place that can *yield* the
-    request down the stream the device is listening to.
+    Three shapes, and exactly one of them is set. `items` is a reply the server
+    can write on its own — `set_workspace`, an empty board, a malformed call.
+    `ask` is a `view_board` that needs the device: the caller has to emit it,
+    wait for the render, and only then build the items. `run` is a memory tool,
+    which needs a database session `_answer` has not got. Splitting it this way
+    is what lets the awaiting live in `run_turn` — the only place that can
+    *yield* the board request down the stream the device is listening to, and
+    the only place holding the injected handlers.
     """
 
     items: list[dict] | None = None
     ask: tuple[BoardRequestEvent, BoardRegion] | None = None
+    run: tuple[str, dict] | None = None
 
 
 def _region_from(arguments: dict) -> BoardRegion:
@@ -154,11 +187,28 @@ def _region_from(arguments: dict) -> BoardRegion:
     return BoardRegion(x=x, y=y, width=width, height=height)
 
 
-def _answer(call: dict, *, has_board: bool) -> ToolAnswer:
+def _arguments(call: dict) -> dict | None:
+    """A tool call's arguments as a dict, or None if they are not one.
+
+    A model can emit a bare array, a string, or nothing at all where an object
+    was asked for. Each caller decides what that costs: `view_board` treats it
+    as an unaimed look and shows the whole board, a memory tool refuses.
+    """
+    try:
+        arguments = json.loads(call.get("arguments") or "{}")
+    except json.JSONDecodeError:
+        return None
+    return arguments if isinstance(arguments, dict) else None
+
+
+def _answer(call: dict, *, has_board: bool, has_memory: bool = False) -> ToolAnswer:
     """Plan one tool call's reply.
 
-    `view_board` is the only call that cannot be answered here, because the only
-    thing that can render a region of a `PKDrawing` is the iPad holding it.
+    Two calls cannot be answered here. `view_board` needs the iPad, because the
+    only thing that can render a region of a `PKDrawing` is the device holding
+    it. The memory tools need a database session, which this function has no
+    way to be given — it is synchronous and is called per tool call from inside
+    the stream. Both come back as an intent for `run_turn` to carry out.
     """
     call_id = call["call_id"]
 
@@ -175,6 +225,18 @@ def _answer(call: dict, *, has_board: bool) -> ToolAnswer:
             {"type": "function_call_output", "call_id": call_id, "output": output}
         ])
 
+    if name in MEMORY_TOOLS:
+        arguments = _arguments(call)
+        if not has_memory:
+            output = NO_MEMORY_ACK
+        elif arguments is None:
+            output = MALFORMED_MEMORY_ACK
+        else:
+            return ToolAnswer(run=(name, arguments))
+        return ToolAnswer(items=[
+            {"type": "function_call_output", "call_id": call_id, "output": output}
+        ])
+
     if name != "view_board":
         return ToolAnswer(items=[
             {"type": "function_call_output", "call_id": call_id, "output": UNSUPPORTED_TOOL_ACK}
@@ -185,12 +247,7 @@ def _answer(call: dict, *, has_board: bool) -> ToolAnswer:
             {"type": "function_call_output", "call_id": call_id, "output": NO_BOARD_ACK}
         ])
 
-    try:
-        arguments = json.loads(call.get("arguments") or "{}")
-    except json.JSONDecodeError:
-        arguments = {}
-
-    region = _region_from(arguments if isinstance(arguments, dict) else {})
+    region = _region_from(_arguments(call) or {})
     detail = (
         f"Showing x {region.x:.0f}\u2013{region.x + region.width:.0f}%, "
         f"y {region.y:.0f}\u2013{region.y + region.height:.0f}% of the board."
@@ -279,6 +336,7 @@ async def run_turn(
     bundle: ContextBundle,
     translator: EventTranslator | None = None,
     fetch_board: BoardFetcher | None = None,
+    handle_memory: MemoryHandler | None = None,
 ) -> AsyncIterator[tuple[ClientEvent, TurnResult]]:
     """Stream one turn, yielding client events as they happen.
 
@@ -361,11 +419,29 @@ async def run_turn(
             if not call.get("call_id"):
                 continue
             call_id = call["call_id"]
-            answer = _answer(call, has_board=bundle.has_board and fetch_board is not None)
+            answer = _answer(
+                call,
+                has_board=bundle.has_board and fetch_board is not None,
+                has_memory=handle_memory is not None,
+            )
 
             if answer.items is not None:
                 conversation.append(answer.items[0])
                 attachments.extend(answer.items[1:])
+                continue
+
+            if answer.run is not None:
+                # Awaited inline, with nothing yielded around it. A memory tool
+                # costs a query and, for `search_memory`, one embedding round
+                # trip — short next to a board render, which is the wait this
+                # loop was built to survive. The handler answers rather than
+                # raising, so there is no unavailable branch to mirror.
+                name, arguments = answer.run
+                conversation.append({
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": await handle_memory(name, arguments),
+                })
                 continue
 
             request, region = answer.ask

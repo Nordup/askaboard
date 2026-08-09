@@ -1,5 +1,6 @@
 from app.tutor.board_scene import MAX_SVG_CHARS
 from app.tutor.tools import (
+    MEMORY_TOOL_DEFINITIONS,
     SET_WORKSPACE_TOOL,
     TOOL_DEFINITIONS,
     UPDATE_BOARD_TOOL,
@@ -7,8 +8,11 @@ from app.tutor.tools import (
 )
 
 
-def test_the_registry_exposes_the_three_tools_today():
-    assert TOOL_DEFINITIONS == [SET_WORKSPACE_TOOL, VIEW_BOARD_TOOL, UPDATE_BOARD_TOOL]
+def test_the_registry_exposes_the_board_tools_then_the_memory_ones():
+    assert TOOL_DEFINITIONS == [
+        SET_WORKSPACE_TOOL, VIEW_BOARD_TOOL, UPDATE_BOARD_TOOL,
+        *MEMORY_TOOL_DEFINITIONS,
+    ]
 
 
 def test_the_tool_is_strict_and_closed():

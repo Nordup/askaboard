@@ -1,3 +1,5 @@
+from app.learner.mastery import RELIABILITY
+from app.memory.schema import MemoryCategory
 from app.tutor.board_scene import MAX_SVG_CHARS
 
 
@@ -359,6 +361,193 @@ UPDATE_BOARD_TOOL: dict = {
     },
 }
 
+REMEMBER_TOOL: dict = {
+    "type": "function",
+    "name": "remember",
+    "description": (
+        "Save something about this learner for future sessions. Call this when "
+        "they ask you to remember or forget something, and when they tell you "
+        "something that will still matter next time — a preference, a goal, a "
+        "deadline, how they like to work. Write the fact so it stands alone "
+        "with no surrounding conversation: resolve every pronoun and "
+        "reference. Before you write any message containing 'noted', 'got it', "
+        "or 'I'll remember that', call this tool first — otherwise you have "
+        "told them something untrue."
+    ),
+    "strict": True,
+    "parameters": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "text": {
+                "type": "string",
+                "description": "The fact, self-contained, 10-30 words.",
+            },
+            # Generated from `MemoryCategory` for the reason
+            # `EXTRACTION_SCHEMA` gives: a value the model may return and
+            # `ck_memory_atoms_category` will reject is a fact lost between the
+            # two, and here it would be lost in front of a learner who has just
+            # been told it was saved.
+            "category": {
+                "type": "string",
+                "enum": [category.value for category in MemoryCategory],
+            },
+        },
+        "required": ["text", "category"],
+    },
+}
+
+SEARCH_MEMORY_TOOL: dict = {
+    "type": "function",
+    "name": "search_memory",
+    "description": (
+        "Search everything you know about this learner from previous sessions. "
+        "Use it whenever answering depends on something they told you before — "
+        "what they were working on, what they found hard, what they asked for. "
+        "This tool has NO access to the current conversation, so your query "
+        "must be entirely self-contained: write 'what has this learner said "
+        "about preparing for their June exam', never 'what did they mean by "
+        "that'. Never tell the learner you cannot remember something without "
+        "searching here first."
+    ),
+    "strict": True,
+    "parameters": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "A self-contained natural-language question.",
+            },
+        },
+        "required": ["query"],
+    },
+}
+
+RECENT_SESSIONS_TOOL: dict = {
+    "type": "function",
+    "name": "recent_sessions",
+    "description": (
+        "List what happened in recent sessions, most recent first, as short "
+        "summaries. Use this for continuity questions — 'what did we do last "
+        "time', 'where did we leave off' — where a search would be the wrong "
+        "shape because the learner wants the sequence, not a fact."
+    ),
+    "strict": True,
+    "parameters": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "limit": {
+                "type": "integer",
+                "description": "How many sessions to list, 1 to 20.",
+            },
+        },
+        "required": ["limit"],
+    },
+}
+
+#: Evidence channels the model is not allowed to claim for itself.
+#:
+#: `answer_verified` is worth 0.95 in `RELIABILITY` — near-certainty — and it
+#: means a symbolic check actually ran. Nothing in a turn runs one: the model
+#: picks its own `kind`, so offering this value would let the tutor self-award
+#: near-certain evidence for work nobody checked, and eight of those clear the
+#: mastery gate on a concept the learner may not have. `mastery.RELIABILITY`
+#: keeps the number for the day a CAS check exists and names this enum as the
+#: place the rule is enforced.
+SERVER_ONLY_KINDS = frozenset({"answer_verified"})
+
+#: What the model may choose from, derived from `RELIABILITY` rather than typed
+#: out again. A name written here that `RELIABILITY` does not carry does not
+#: fail — it scores `UNKNOWN_RELIABILITY`, quietly, on every observation that
+#: uses it.
+EVIDENCE_KINDS: tuple[str, ...] = tuple(
+    kind for kind in RELIABILITY if kind not in SERVER_ONLY_KINDS
+)
+
+RECORD_EVIDENCE_TOOL: dict = {
+    "type": "function",
+    "name": "record_evidence",
+    "description": (
+        "Record what the learner just demonstrated about a concept, so their "
+        "mastery is tracked across sessions. Call this whenever they attempt "
+        "something and you can judge how it went — a solved problem, a step "
+        "on the board, an explanation, or an explicit 'I don't know'. Name "
+        "Common Core standard codes such as 7.RP.A.2. Weights say how much of "
+        "the attempt each concept accounts for and should sum to about 1. "
+        "Choose `kind` honestly: it decides how much this observation is "
+        "trusted, and calling a glance at a sketch a reading of their working "
+        "corrupts the record."
+    ),
+    "strict": True,
+    "parameters": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "kcs": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "code": {"type": "string"},
+                        "weight": {"type": "number"},
+                    },
+                    "required": ["code", "weight"],
+                },
+            },
+            "outcome": {
+                "type": "number",
+                "description": (
+                    "0 to 1. 1 correct unaided, 0.6 correct after one nudge, "
+                    "0.2 correct after being walked through, 0 wrong."
+                ),
+            },
+            "kind": {
+                "type": "string",
+                "description": (
+                    "How you observed this. dont_know: they said outright they "
+                    "did not know. ink_symbolic: you read the symbolic working "
+                    "they wrote on the board. answer_llm: you judged an answer "
+                    "they wrote or said. hinted: they got there after you gave "
+                    "the step away. ink_diagram: you read a drawing or sketch."
+                ),
+                "enum": list(EVIDENCE_KINDS),
+            },
+            "difficulty": {
+                "type": "number",
+                "description": "How hard this was for their level, -2 to 2.",
+            },
+            "misconception": {
+                "type": ["string", "null"],
+                "description": "The specific wrong belief, named, or null.",
+            },
+        },
+        "required": ["kcs", "outcome", "kind", "difficulty", "misconception"],
+    },
+}
+
+#: The four that need a database session to answer, kept together so the
+#: router and the registry cannot disagree about which those are. A name in one
+#: and not the other is a tool the model is offered and then told is
+#: unsupported — a whole turn spent on a dead round.
+MEMORY_TOOL_DEFINITIONS: list[dict] = [
+    REMEMBER_TOOL, SEARCH_MEMORY_TOOL, RECENT_SESSIONS_TOOL, RECORD_EVIDENCE_TOOL,
+]
+MEMORY_TOOLS: frozenset[str] = frozenset(
+    tool["name"] for tool in MEMORY_TOOL_DEFINITIONS
+)
+
 # SEAM: later work appends here. Web search is {"type": "web_search"};
 # file search is {"type": "file_search", "vector_store_ids": [...]}.
-TOOL_DEFINITIONS: list[dict] = [SET_WORKSPACE_TOOL, VIEW_BOARD_TOOL, UPDATE_BOARD_TOOL]
+#
+# Every tool a session can ever use is here, whether or not this turn could
+# answer it. Tool definitions sit at the top of the provider's
+# cache-invalidation hierarchy, so offering three tools on one turn and seven
+# on the next re-bills the entire prompt prefix every time the set changes.
+# `loop._answer` is where a tool the turn cannot serve is turned down.
+TOOL_DEFINITIONS: list[dict] = [
+    SET_WORKSPACE_TOOL, VIEW_BOARD_TOOL, UPDATE_BOARD_TOOL,
+    *MEMORY_TOOL_DEFINITIONS,
+]

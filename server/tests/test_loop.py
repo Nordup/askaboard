@@ -99,8 +99,11 @@ async def test_the_request_body_carries_the_tool_and_disables_storage():
     assert body["store"] is False
     assert body["stream"] is True
     assert body["reasoning"] == {"effort": "high", "summary": "auto"}
+    # Every tool, on a turn wired for none of the memory ones. The set is fixed
+    # for the whole session on purpose — see the comment on TOOL_DEFINITIONS.
     assert [tool["name"] for tool in body["tools"]] == [
         "set_workspace", "view_board", "update_board",
+        "remember", "search_memory", "recent_sessions", "record_evidence",
     ]
 
 
