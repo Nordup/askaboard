@@ -13,6 +13,11 @@ from app.attachments.convert import Converted
 from app.store.blobs import BlobRef, BlobStore
 from app.store.models import Attachment, LLMCall, Message, Session, Turn
 
+#: What an uploaded file's *original* bytes are recorded as, in the blob store
+#: and in the row that names them — one constant so the two cannot drift. See
+#: `Recorder.record_upload` for why it is deliberately not more specific.
+ORIGINAL_CONTENT_TYPE = "application/octet-stream"
+
 
 def redact_images(body: dict, blob_key: str) -> dict:
     """Swap inline base64 image data for a blob reference.
@@ -276,8 +281,24 @@ class Recorder:
         recoverable from those turns' own recorded request bodies, which name
         `attachment_ids` verbatim — so there is no second row per turn, and a
         worksheet re-sent three times stays one upload.
+
+        `content_type` describes the blob at `blob_key` and nothing else — the
+        same contract `record_attachment` keeps, where the value handed to the
+        blob store is the value written to the column. It used to be set to
+        `converted.content_type`, so a HEIC photo produced a row claiming
+        `image/jpeg`, a `blob_key` holding HEIC, and a blob store entry saying
+        `application/octet-stream`: three answers to one question, none of them
+        readable as "what did the learner actually send". What the model saw is
+        `converted_content_type`, one column over, which is where it belongs.
+
+        The original's own type stays `ORIGINAL_CONTENT_TYPE` because it is not
+        known any more precisely: sniffing decides a *rung* (see
+        `app.attachments.kinds`), not a media type, and the multipart header
+        that claimed one is learner-supplied and deliberately never trusted.
+        Unknown, stated honestly, beats a confident wrong answer in the one
+        place someone goes looking a year later.
         """
-        original_ref = await self._blobs.put(original, "application/octet-stream")
+        original_ref = await self._blobs.put(original, ORIGINAL_CONTENT_TYPE)
         converted_bytes = converted.data if converted.data is not None else converted.text.encode()
         converted_ref = await self._blobs.put(converted_bytes, converted.content_type)
         thumbnail_ref = await self._blobs.put(converted.thumbnail, "image/jpeg")
@@ -288,7 +309,7 @@ class Recorder:
             blob_key=original_ref.key,
             sha256=original_ref.sha256,
             bytes=original_ref.bytes,
-            content_type=converted.content_type,
+            content_type=ORIGINAL_CONTENT_TYPE,
             filename=filename,
             page_count=converted.page_count,
             converted_blob_key=converted_ref.key,

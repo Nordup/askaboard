@@ -16,6 +16,12 @@ The bytes always win. A JPEG named `.txt` is an image, because a learner who
 renamed a file is not asking for it to be read as prose. Nothing here consults
 the extension at all: every rung is decided by magic, and the two zip-container
 formats that would have needed a name are the ones that are out of scope.
+
+Which means an extension can never be *carried* either — it may be absent,
+or wrong, and this module is the reason that is fine. The provider does want
+one, so it is rebuilt downstream from the sniffed type rather than from the
+learner's name: `app.attachments.parts.provider_filename` is the single place
+an extension is ever produced, and it reads a content type, not a filename.
 """
 from __future__ import annotations
 

@@ -72,9 +72,33 @@ def heic_header() -> bytes:
     """An ISO-BMFF box whose brand is `heic` — enough for sniffing.
 
     Not a decodable image: sniffing reads the brand at offset 4, and the
-    conversion tests that need real pixels use PNG_2X2 instead.
+    conversion tests that need real pixels use `heic()` or PNG_2X2 instead.
     """
     return b"\x00\x00\x00\x18ftypheic" + b"\x00" * 32
+
+
+def heic(size: tuple[int, int] = (64, 48), colour: str = "white") -> bytes:
+    """A real, decodable HEIC — pixels and all.
+
+    `heic_header()` is forty bytes of brand and proves only that sniffing reads
+    the right offset. This is the format an iPad's camera roll hands over by
+    default, which makes it the single most likely attachment this feature will
+    ever see, and nothing was pushing actual HEIC bytes through the conversion
+    ladder — the rung that has to open the file, not just recognise it.
+
+    Encoded through the same `pillow_heif` opener `convert` registers, so a
+    build where that dependency is missing or broken fails here rather than in
+    production on the first photo.
+    """
+    import io
+
+    import pillow_heif
+    from PIL import Image
+
+    pillow_heif.register_heif_opener()
+    buffer = io.BytesIO()
+    Image.new("RGB", size, colour).save(buffer, "HEIF")
+    return buffer.getvalue()
 
 
 def docx(text: str = "hello") -> bytes:

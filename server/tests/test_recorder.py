@@ -7,7 +7,7 @@ from app.attachments.convert import Converted
 from app.attachments.kinds import Kind
 from app.store.blobs import LocalBlobStore
 from app.store.models import Attachment, LLMCall, Message, Session, Turn
-from app.store.recorder import Recorder, redact_images
+from app.store.recorder import ORIGINAL_CONTENT_TYPE, Recorder, redact_images
 from tests.conftest import requires_db
 
 
@@ -372,6 +372,57 @@ async def test_record_upload_stores_both_the_original_and_what_the_model_saw(
     assert await blob_store.get(row.converted_blob_key) == b"converted-jpeg-bytes"
     assert row.converted_content_type == "image/jpeg"
     assert row.page_count == 1
+    # And the two content types describe their own blob. `content_type` used to
+    # be set to the *converted* type, so a HEIC upload produced a row saying
+    # `image/jpeg` over a `blob_key` holding HEIC — the one column someone
+    # investigating a bad turn would read first, answering a question it was
+    # not being asked.
+    assert row.content_type == ORIGINAL_CONTENT_TYPE
+
+
+@requires_db
+async def test_a_repeat_upload_of_the_same_file_stores_the_blob_once(
+    db, db_factory, tmp_path
+):
+    """The same worksheet attached to three turns is one blob on disk.
+
+    The blob store is content-addressed, so this falls out of the key rather
+    than out of a check — which is exactly why it is worth pinning: the day
+    `record_upload` starts salting a key or writing per-row paths, a learner
+    re-sending the same 20MB PDF starts costing 20MB each time, and nothing
+    else in the suite would notice.
+
+    Two rows, though, not one. An upload is a thing the learner did, and they
+    did it twice.
+    """
+    session = Session(model="gpt-5.6-luna", reasoning_effort="high")
+    db.add(session)
+    await db.commit()
+
+    blob_store = LocalBlobStore(tmp_path)
+    recorder = Recorder(db_factory, blob_store)
+    converted = Converted(
+        kind=Kind.PDF, data=b"%PDF-1.4 same", text=None,
+        content_type="application/pdf", page_count=1, thumbnail=b"thumb",
+    )
+
+    first = await recorder.record_upload(
+        session_id=session.id, filename="worksheet.pdf",
+        converted=converted, original=b"%PDF-1.4 same",
+    )
+    second = await recorder.record_upload(
+        session_id=session.id, filename="worksheet.pdf",
+        converted=converted, original=b"%PDF-1.4 same",
+    )
+
+    assert first != second
+    rows = await recorder.load_uploads(session_id=session.id, ids=[first, second])
+    assert rows[0].blob_key == rows[1].blob_key
+    assert rows[0].sha256 == rows[1].sha256
+    # One blob for the original, one for the thumbnail. The converted bytes are
+    # the original here — a PDF passes through untouched — and a content
+    # addressed store gives that back for free.
+    assert len(list(tmp_path.rglob("*.blob"))) == 2
 
 
 @requires_db
@@ -393,6 +444,32 @@ async def test_load_uploads_refuses_another_sessions_attachment(db, db_factory, 
     )
 
     assert await recorder.load_uploads(session_id=mine.id, ids=[upload_id]) == []
+
+
+@requires_db
+async def test_load_uploads_refuses_an_attachment_of_another_kind(db, db_factory, tmp_path):
+    """The kind filter is the other half of the same guard, and it had no test:
+    deleting `Attachment.kind == "learner_upload"` left the whole suite green.
+
+    Every row an id could name in this session is reachable without it — the
+    board image uploaded on every turn, a dictation's audio — and the turn
+    handler would hand whichever one it found to the model as a file the
+    learner attached.
+    """
+    session = Session(model="gpt-5.6-luna", reasoning_effort="high")
+    db.add(session)
+    await db.commit()
+
+    recorder = Recorder(db_factory, LocalBlobStore(tmp_path))
+    await recorder.record_attachment(
+        session_id=session.id, kind="audio", data=b"wav", content_type="audio/wav",
+    )
+    async with db_factory() as fresh:
+        audio_id = (await fresh.execute(
+            select(Attachment.id).where(Attachment.session_id == session.id)
+        )).scalar_one()
+
+    assert await recorder.load_uploads(session_id=session.id, ids=[audio_id]) == []
 
 
 @requires_db

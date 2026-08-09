@@ -14,6 +14,29 @@ async def test_an_image_is_normalised_to_jpeg():
     assert result.page_count == 1
 
 
+async def test_real_heic_bytes_convert_to_a_jpeg_the_model_can_read():
+    """**The photo this feature will actually be given.** HEIC is what an
+    iPad's camera roll hands over by default and it is not a format the
+    Responses API takes — which is the whole reason the server converts and the
+    device does not. Sniffing was covered from a forty-byte brand header;
+    nothing opened real HEIC pixels, so a `pillow_heif` that stopped
+    registering its opener would have passed the suite and failed on the first
+    photograph of a worksheet.
+    """
+    from PIL import Image
+    import io
+
+    result = await convert(files.heic(size=(64, 48)), "IMG_4021.HEIC")
+
+    assert result.kind is Kind.IMAGE
+    assert result.content_type == "image/jpeg"
+    assert result.data.startswith(b"\xff\xd8\xff")
+    assert result.page_count == 1
+    # Decoded, not merely re-labelled: the pixels survived the round trip.
+    assert Image.open(io.BytesIO(result.data)).size == (64, 48)
+    assert Image.open(io.BytesIO(result.thumbnail)).format == "JPEG"
+
+
 async def test_a_large_image_is_downscaled():
     from PIL import Image
     import io

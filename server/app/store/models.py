@@ -127,6 +127,10 @@ class Attachment(Base):
     bytes: Mapped[int] = mapped_column(Integer)
     width: Mapped[int | None] = mapped_column(Integer, nullable=True)
     height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: Describes the blob at `blob_key` — the bytes as they arrived — and never
+    #: what they were converted into. For a `learner_upload` that distinction is
+    #: the whole point of the column: what the model actually read is
+    #: `converted_content_type`, two lines down.
     content_type: Mapped[str] = mapped_column(String(64))
     # The five below are `learner_upload`'s alone, and null for every other
     # kind. An upload is the one attachment that arrives named, that may need

@@ -354,6 +354,11 @@ async def create_turn(
         )
     uploads = [
         UploadPart(
+            # What the learner called it, for the prompt's inventory and for
+            # anything the model says back about it. Not what the provider is
+            # told the file is called — that is rebuilt from the content type,
+            # which is why `"attachment"` with no extension is a safe fallback
+            # here. See `parts.provider_filename`.
             filename=row.filename or "attachment",
             kind=_upload_kind(row),
             page_count=row.page_count or 1,
