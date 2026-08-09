@@ -26,7 +26,9 @@ struct AttachmentUploader: Sendable {
     let configuration: BackendConfiguration
     let session: URLSession
 
-    /// A file may be large and the conversion behind it may run LibreOffice,
+    /// The upload carries the file's whole body over a connection that may be
+    /// slow, and the server decodes and re-encodes an image or rasterises a
+    /// PDF page before it answers (see `server/app/attachments/convert.py`) —
     /// so this is deliberately longer than a plain request timeout and
     /// deliberately still finite.
     static let timeout: TimeInterval = 90
@@ -61,7 +63,22 @@ struct AttachmentUploader: Sendable {
             ))
         }
 
-        let decoded = try JSONDecoder().decode(UploadResponse.self, from: responseData)
+        let decoded: UploadResponse
+        do {
+            decoded = try JSONDecoder().decode(UploadResponse.self, from: responseData)
+        } catch {
+            // Every other exit from this method throws a `TutorServiceError`, and a
+            // caller catching that type would otherwise miss a schema drift entirely
+            // — the learner would get a raw Swift decode error where a sentence
+            // belongs.
+            throw TutorServiceError.invalidResponse
+        }
+        // A response we cannot read is a response we cannot read, whichever field
+        // it is: corrupt base64 here is the same class of failure as the decode
+        // above, not a reason to hand `AttachmentStore` a silent zero-byte file.
+        guard let thumbnail = Data(base64Encoded: decoded.thumbnail_base64) else {
+            throw TutorServiceError.invalidResponse
+        }
         return UploadedAttachment(
             attachment: MessageAttachment(
                 id: decoded.id,
@@ -69,7 +86,7 @@ struct AttachmentUploader: Sendable {
                 kind: decoded.kind,
                 pageCount: decoded.page_count
             ),
-            thumbnail: Data(base64Encoded: decoded.thumbnail_base64) ?? Data()
+            thumbnail: thumbnail
         )
     }
 
@@ -116,8 +133,15 @@ struct AttachmentUploader: Sendable {
         append("Content-Disposition: form-data; name=\"session_id\"\r\n\r\n")
         append("\(sessionID.uuidString)\r\n")
 
+        // Escaped per RFC 2183's quoted-string rule: a filename containing a
+        // `"` or `\` — iOS permits both in a Files-picked name — would
+        // otherwise close the quote early or eat the character after it and
+        // hand the server a malformed header.
+        let escapedFilename = filename
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
         append("--\(boundary)\r\n")
-        append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n")
+        append("Content-Disposition: form-data; name=\"file\"; filename=\"\(escapedFilename)\"\r\n")
         append("Content-Type: \(contentType)\r\n\r\n")
         body.append(data)
         append("\r\n--\(boundary)--\r\n")

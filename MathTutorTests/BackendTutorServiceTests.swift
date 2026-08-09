@@ -288,12 +288,38 @@ final class BackendTutorServiceTests: XCTestCase {
         )
         let text = String(decoding: body, as: UTF8.self)
 
-        XCTAssertTrue(text.contains("name=\"session_id\""))
-        XCTAssertTrue(text.contains(sessionID.uuidString))
-        XCTAssertTrue(text.contains("name=\"file\"; filename=\"worksheet.pdf\""))
-        XCTAssertTrue(text.contains("Content-Type: application/pdf"))
-        XCTAssertTrue(text.contains("%PDF-1.4"))
-        XCTAssertTrue(text.hasSuffix("--BOUNDARY--\r\n"))
+        // Each assertion pins the `\r\n` on both sides of the piece it checks,
+        // not just the words — a regression that dropped CRLF everywhere
+        // except the very last line would still pass a bare `.contains` on
+        // the words alone, which is exactly the "miserable to debug" bug the
+        // production code's own comment warns about.
+        XCTAssertTrue(text.contains(
+            "--BOUNDARY\r\nContent-Disposition: form-data; name=\"session_id\"\r\n\r\n"
+        ))
+        XCTAssertTrue(text.contains("\r\n\(sessionID.uuidString)\r\n--BOUNDARY\r\n"))
+        XCTAssertTrue(text.contains(
+            "Content-Disposition: form-data; name=\"file\"; filename=\"worksheet.pdf\"\r\n"
+                + "Content-Type: application/pdf\r\n\r\n"
+        ))
+        XCTAssertTrue(text.contains("\r\n%PDF-1.4\r\n--BOUNDARY--\r\n"))
+    }
+
+    func testMultipartBodyEscapesQuotesInTheFilename() throws {
+        // iOS permits a `"` in a Files-picked filename. Unescaped, it would
+        // close the `Content-Disposition` header's quoting early and hand the
+        // server a malformed part.
+        let body = AttachmentUploader.multipartBody(
+            boundary: "BOUNDARY",
+            sessionID: UUID(),
+            filename: "my \"best\" attempt.pdf",
+            contentType: "application/pdf",
+            data: Data("stub".utf8)
+        )
+        let text = String(decoding: body, as: UTF8.self)
+
+        XCTAssertTrue(text.contains(
+            "Content-Disposition: form-data; name=\"file\"; filename=\"my \\\"best\\\" attempt.pdf\"\r\n"
+        ))
     }
 
     func testUploadRequestTargetsTheAttachmentsRouteWithTheBearer() throws {
@@ -320,5 +346,81 @@ final class BackendTutorServiceTests: XCTestCase {
             statusCode: 415, body: #"{"detail":"I can’t read mystery.bin."}"#
         )
         XCTAssertEqual(refusal, "I can’t read mystery.bin.")
+    }
+
+    // MARK: - AttachmentUploader.upload(_:filename:contentType:sessionID:)
+    //
+    // The three tests above exercise the static helpers in isolation. These
+    // drive `upload()` itself through the same `StubURLProtocol` harness
+    // `BackendTutorServiceTests` uses above, so the async path — status
+    // branching, the `UploadResponse` decode, the `MessageAttachment` field
+    // mapping, and the base64 thumbnail decode — has coverage a typo in the
+    // field mapping could actually fail.
+
+    private func makeUploader() -> AttachmentUploader {
+        let configuration = BackendConfiguration(
+            baseURL: URL(string: "https://backend.example.com")!, token: "test-token"
+        )!
+        return AttachmentUploader(configuration: configuration, session: StubURLProtocol.stubbedSession)
+    }
+
+    func testUploadMapsEveryFieldOnA200() async throws {
+        let responseID = UUID()
+        let thumbnailBytes = Data([0xFF, 0xD8, 0xFF, 0xD9])
+        StubURLProtocol.body = """
+        {"id":"\(responseID.uuidString)","kind":"image","page_count":1,\
+        "thumbnail_base64":"\(thumbnailBytes.base64EncodedString())"}
+        """
+
+        let uploaded = try await makeUploader().upload(
+            Data("stub bytes".utf8),
+            filename: "photo.jpg",
+            contentType: "image/jpeg",
+            sessionID: UUID()
+        )
+
+        XCTAssertEqual(uploaded.attachment.id, responseID)
+        // `filename` comes from the *argument*, not the response body — the
+        // server's `UploadResponse` carries no filename field at all.
+        XCTAssertEqual(uploaded.attachment.filename, "photo.jpg")
+        XCTAssertEqual(uploaded.attachment.kind, "image")
+        XCTAssertEqual(uploaded.attachment.pageCount, 1)
+        XCTAssertEqual(uploaded.thumbnail, thumbnailBytes)
+    }
+
+    func testUploadRefusalSurfacesTheServersSentenceEndToEnd() async {
+        StubURLProtocol.status = 415
+        StubURLProtocol.body = #"{"detail":"I can’t read mystery.bin."}"#
+
+        do {
+            _ = try await makeUploader().upload(
+                Data(), filename: "mystery.bin", contentType: "application/octet-stream", sessionID: UUID()
+            )
+            XCTFail("Expected a thrown error")
+        } catch let error as TutorServiceError {
+            if case .network(let message) = error {
+                XCTAssertEqual(message, "I can’t read mystery.bin.")
+            } else {
+                XCTFail("Expected .network, got \(error)")
+            }
+        }
+    }
+
+    func testUploadThrowsInvalidResponseWhenA200BodyIsUnreadable() async {
+        StubURLProtocol.status = 200
+        StubURLProtocol.body = "not json"
+
+        do {
+            _ = try await makeUploader().upload(
+                Data(), filename: "worksheet.pdf", contentType: "application/pdf", sessionID: UUID()
+            )
+            XCTFail("Expected a thrown error")
+        } catch let error as TutorServiceError {
+            if case .invalidResponse = error {
+                // expected
+            } else {
+                XCTFail("Expected .invalidResponse, got \(error)")
+            }
+        }
     }
 }
