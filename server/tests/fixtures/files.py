@@ -7,6 +7,7 @@ can trust.
 from __future__ import annotations
 
 import io
+import struct
 import zipfile
 
 PNG_2X2 = (
@@ -27,9 +28,44 @@ trailer<</Root 1 0 R>>
 """
 
 JPEG_MAGIC = b"\xff\xd8\xff\xe0" + b"\x00" * 32
+GIF_MAGIC = b"GIF89a" + b"\x00" * 4
+WEBP_MAGIC = b"RIFF" + b"\x00\x00\x00\x00" + b"WEBP" + b"\x00" * 4
 RTF = b"{\\rtf1\\ansi hello}"
 UTF8_TEXT = "x = 2 + 2\nsolve for x\n".encode()
 BINARY_JUNK = b"\x00\x01\x02\x03" * 32
+
+
+def bmp_1x1() -> bytes:
+    """A valid 1x1 24-bit BMP: 14-byte file header + 40-byte
+    BITMAPINFOHEADER + one 4-byte-padded pixel row.
+
+    The size field is read back out of the assembled bytes rather than
+    hard-coded, so it cannot drift from the actual length the way a
+    copy-pasted constant could.
+    """
+    pixel_row = b"\x00\x00\xff\x00"  # one BGR pixel (blue), padded to 4 bytes
+    info_header = struct.pack(
+        "<IiiHHIIiiII",
+        40,              # biSize
+        1,               # biWidth
+        1,               # biHeight
+        1,               # biPlanes
+        24,              # biBitCount
+        0,               # biCompression (BI_RGB)
+        len(pixel_row),  # biSizeImage
+        0, 0,            # biXPelsPerMeter, biYPelsPerMeter
+        0, 0,            # biClrUsed, biClrImportant
+    )
+    body = info_header + pixel_row
+    pixel_offset = 14 + len(info_header)
+    total_size = 14 + len(body)
+    file_header = (
+        b"BM"
+        + total_size.to_bytes(4, "little")
+        + b"\x00\x00\x00\x00"  # reserved
+        + pixel_offset.to_bytes(4, "little")
+    )
+    return file_header + body
 
 
 def heic_header() -> bytes:
