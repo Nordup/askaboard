@@ -26,16 +26,31 @@
 #   question          asked in a fresh session, through a live turn
 #   answer_any        the reply must contain at least one of these
 #   answer_none       the reply must contain none of these
-#   store_any         optional. The profile, or a live atom, must contain at
-#                     least one of these. Its only job is to place a failure:
-#                     store fail = extraction lost the fact, store pass +
-#                     answer fail = the tutor was told and did not use it.
+#   prompt_any        at least one of these must appear in the prompt the model
+#                     was actually given — system message, portrait, digests,
+#                     learner state, transcript. Three things can go wrong and
+#                     this is what tells them apart: not in the store at all
+#                     (extraction), in the store but absent from the prompt
+#                     (synthesis dropped it), or in the prompt and unused (the
+#                     tutor). The runner names which.
 #   expect_supersession
-#                     optional. At least one atom must have been closed by a
-#                     later one. Only the bi-temporal probe asserts it.
+#                     at least one atom must have been closed by a later one.
 #
-# Matching is case-insensitive and on word boundaries, so "not" does not match
-# "nothing" and "don't" does not match "don'ts".
+# Every probe needs `prompt_any` or `expect_supersession`, and the reason is
+# `--control`: that mode skips the transcripts and requires every probe to FAIL
+# against an empty store. A probe that passes with no memory at all is a free
+# pass hiding in a green suite. Assertions about the *answer* alone cannot carry
+# that guarantee — a tutor with nothing on file still says "I don't know", which
+# is exactly what `does_not_invent_memories` asserts — but an assertion about
+# what reached the prompt always can.
+#
+# Watch for an `answer_any` word that the question already contains: "am I ready
+# to move on" makes both "ready" and "move on" satisfiable by "no, you are not
+# ready to move on". The loader refuses those outright, and `--control` catches
+# the rest.
+#
+# Matching is case-insensitive, folds typographic apostrophes and dashes, and
+# respects word boundaries, so "not" does not match "nothing".
 #
 # Placeholders, substituted in transcripts, questions and expectations alike so
 # the suite does not go stale: {deadline} ("12 November 2026"), {deadline_month}
@@ -53,8 +68,15 @@
         learner: yes please, that's how my old teacher did it and it was the only time any of it stuck
   question: "teach me about completing the square"
   answer_any: ["diagram", "picture", "visual", "visually", "geometric", "geometrically", "draw", "sketch"]
-  store_any: ["diagram", "picture", "visual", "geometric"]
+  prompt_any: ["diagram", "picture", "visual", "geometric"]
 
+# Deliberately has no `answer_any`. The tutor's reply to "what should I work on"
+# is good teaching whether or not it recites the date, and demanding the recital
+# turns a pedagogy judgement into a permanent red — which is how a suite stops
+# being read. What is a memory regression is the date failing to survive
+# extraction, consolidation and synthesis and reach the prompt, and that is what
+# is asserted. The separate question of whether the tutor should plan against
+# the time remaining belongs in the system prompt, not here.
 - name: recalls_a_goal_with_a_deadline
   sessions:
     - days_ago: 18
@@ -65,9 +87,13 @@
         tutor: algebra it is, we'll keep coming back to it
         learner: my mock came out a 5 and I need a 7, so there's a fair bit to make up before {deadline}
   question: "what should I work on?"
-  answer_any: ["{deadline_month}", "{deadline_iso}", "GCSE"]
-  store_any: ["{deadline_month}", "{deadline_iso}"]
+  prompt_any: ["{deadline_month}", "{deadline_iso}"]
 
+# No `answer_any` either, and for a sharper reason: every affirmative word for
+# "yes you are ready" is already in the question, so "no, you are not ready to
+# move on" satisfied the list and the probe passed against an empty store. Its
+# teeth are `expect_supersession` and `answer_none`, which is precisely why it
+# was the probe that caught consolidation never closing a reversed fact.
 - name: supersedes_stale_skill_state
   sessions:
     - days_ago: 60
@@ -85,12 +111,17 @@
         tutor: then factoring stops being the thing we drill and becomes a step inside harder questions
         learner: agreed, I don't want to spend another session on it
   question: "am I ready to move on from factoring?"
-  answer_any: ["ready", "yes", "move on", "moved on", "progress", "solid", "confident", "comfortable"]
   answer_none:
     ["you struggle", "you can't factor", "you find factoring hard",
      "don't click", "doesn't click", "never clicks", "still guess", "still guessing"]
   expect_supersession: true
 
+# `prompt_any` here is not about the exam date — it is what makes the probe
+# non-vacuous. A tutor with an empty store also says "you haven't told me",
+# so without an assertion that some *other* memory reached the prompt this
+# probe would pass with no memory at all. What it actually tests is that a
+# tutor holding real facts about this learner still declines to invent the
+# one fact it does not hold.
 - name: does_not_invent_memories
   sessions:
     - days_ago: 9
@@ -105,7 +136,10 @@
   answer_any:
     ["haven't", "have not", "don't", "do not", "didn't", "did not",
      "no record", "nothing on file", "not sure", "never mentioned", "no note"]
-  answer_none: ["{deadline_month}", "{deadline_iso}", "GCSE", "your exam is on", "your exam date is"]
+  # "GCSE" is deliberately absent: a correct reply may reasonably ask whether
+  # they are sitting a GCSE, and failing that would be punishing good teaching.
+  answer_none: ["{deadline_month}", "{deadline_iso}", "your exam is on", "your exam date is"]
+  prompt_any: ["fraction", "fractions", "denominator", "denominators"]
 
 - name: recalls_what_we_did_last_time
   sessions:
@@ -125,6 +159,7 @@
         learner: 14 × 10^7, and I know that's not properly in standard form but I never fix it
   question: "what did we do last time?"
   answer_any: ["standard form", "indices", "index", "powers of ten", "10^", "exponent"]
+  prompt_any: ["standard form"]
 
 - name: recalls_an_older_fact_after_a_later_session
   sessions:
@@ -144,4 +179,4 @@
         learner: that helped, I got the last four right once I labelled them
   question: "when should we do the practice papers?"
   answer_any: ["Sunday", "Sundays"]
-  store_any: ["Sunday", "Sundays"]
+  prompt_any: ["Sunday", "Sundays"]

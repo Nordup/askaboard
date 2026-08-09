@@ -1,12 +1,15 @@
+import json
+import pathlib
 import uuid
+from functools import lru_cache
 
 import pytest
 from sqlalchemy import select
 
-from app.config import EXTRACTION_MODEL, SOLE_LEARNER_ID
+from app.config import EMBEDDING_MODEL, EXTRACTION_MODEL, SOLE_LEARNER_ID
 from app.memory.consolidate import (
-    ADJUDICATION_SCHEMA, ConsolidationResult, _adjudicate, _candidates, _decide,
-    _distinct, consolidate,
+    ADJUDICATION_SCHEMA, FLOOR, ConsolidationResult, _adjudicate, _candidates,
+    _decide, _distinct, consolidate,
 )
 from app.memory.schema import ExtractedAtom, MemoryCategory
 from app.store.models import Learner, MemoryAtom
@@ -24,6 +27,27 @@ from tests.conftest import requires_db
 # two vectors near-identical-but-distinct the way a sentence and its negation
 # are in a real embedding model.
 # ---------------------------------------------------------------------------
+
+
+#: Real vectors from the shipped embedding model, recorded once.
+#:
+#: Regenerate whenever `config.EMBEDDING_MODEL` or `EMBEDDING_DIMS` changes —
+#: the whole value of this fixture is that it is the model's own output, and a
+#: stale one asserts about a model that is no longer in use, which is the exact
+#: failure `test_a_real_supersession_pair_clears_the_shipped_floor` exists to
+#: stop happening a second time.
+_REAL_EMBEDDINGS = pathlib.Path(__file__).parent / "fixtures" / "real_embeddings.json"
+
+
+@lru_cache
+def _real_embeddings() -> dict:
+    fixture = json.loads(_REAL_EMBEDDINGS.read_text())
+    assert fixture["model"] == EMBEDDING_MODEL, (
+        f"{_REAL_EMBEDDINGS.name} holds {fixture['model']} vectors but this "
+        f"service now embeds with {EMBEDDING_MODEL}. Similarity does not carry "
+        "across models — regenerate the fixture and re-check FLOOR against it."
+    )
+    return fixture
 
 
 def _near(tilt: float = 0.0) -> list[float]:
@@ -545,6 +569,75 @@ async def test_candidates_are_live_and_near(db_factory, monkeypatch):
     # batch in front of it is the later one — which a backlog walked out of
     # order would make false.
     assert stamped in existing_facts
+
+
+@requires_db
+async def test_a_real_supersession_pair_clears_the_shipped_floor(
+    db_factory, monkeypatch
+):
+    """`FLOOR`, measured against vectors the real model actually produced.
+
+    This is the one test in the file that does not use `_near`. Every other
+    candidate test builds vectors ~0.99 similar by construction, which is a
+    similarity `text-embedding-3-small` never produces for two different
+    English sentences — so they all assert over a number the shipped system
+    cannot reach, and they all passed while `FLOOR` was set to a figure carried
+    over from `text-embedding-ada-002`. `_candidates` returned empty on every
+    real supersession, `_adjudicate` was never called, and a learner who had
+    stopped struggling with something kept both facts live. Nothing in this
+    file could see it; `tests/eval/run_probes.py` is what found it.
+
+    So the vectors below are checked in rather than generated: real output from
+    the model named in `config.EMBEDDING_MODEL`, recorded once, kept so this
+    costs no provider call and cannot drift. If that constant changes, this
+    fixture has to be regenerated — and the point of the assertion is that
+    regenerating it against a model `FLOOR` was never tuned for turns this red
+    instead of leaving the whole supersede path silently dead.
+    """
+    fixture = _real_embeddings()
+    stale = fixture["texts"]["stale_skill"]
+    current = fixture["texts"]["current_skill"]
+    unrelated = fixture["texts"]["unrelated"]
+
+    # The trap, stated as an assertion rather than a comment: a genuine
+    # supersession pair is nowhere near the old 0.75, so any floor set from
+    # ada-002's scale rejects it outright.
+    assert fixture["cosine_similarity"]["stale_vs_current"] < 0.75
+    assert FLOOR < fixture["cosine_similarity"]["stale_vs_current"]
+
+    adjudicator = _Adjudicator(ADD_0)
+    _install(
+        monkeypatch,
+        _Embedder({current: fixture["vectors"]["current_skill"]}),
+        adjudicator,
+    )
+
+    async with db_factory() as db:
+        await _sole_learner(db)
+        db.add_all([
+            MemoryAtom(learner_id=SOLE_LEARNER_ID, text=stale,
+                       category="skill_state", source_turn_ids=[],
+                       embedding=fixture["vectors"]["stale_skill"]),
+            MemoryAtom(learner_id=SOLE_LEARNER_ID, text=unrelated,
+                       category="context", source_turn_ids=[],
+                       embedding=fixture["vectors"]["unrelated"]),
+        ])
+        await db.flush()
+
+        await consolidate(db, SOLE_LEARNER_ID, [_atom(current)],
+                          session_id=None, turn_ids=[])
+        await db.commit()
+
+    assert adjudicator.calls, (
+        "the adjudicator was never reached: no live atom cleared FLOOR "
+        f"({FLOOR}) against a real embedding of a fact that supersedes one of "
+        "them, so every reversal of the learner's state would be written as a "
+        "second coexisting fact"
+    )
+    existing_facts = adjudicator.calls[0][1]
+    assert stale in existing_facts
+    # The floor still does its job: an unrelated fact is not worth a token.
+    assert unrelated not in existing_facts
 
 
 @requires_db

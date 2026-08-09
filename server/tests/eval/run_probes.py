@@ -19,8 +19,17 @@ consolidate, rebuild the portrait — exactly as a device leaving a session woul
 uses it" are different failures, and only the second one is what the learner
 experiences. So the question goes through `app.tutor.loop.run_turn` with the
 context `app.api.turn` would have assembled and the four memory tools bound, and
-the assertion is on what the tutor said. `store_any` in the probe file is what
-tells the two failures apart in the report.
+the assertion is on what the tutor said. `prompt_any` in the probe file is what
+tells the failures apart: it matches the prompt the model was actually given, so
+a miss is reported as extraction losing the fact, synthesis dropping it, or the
+tutor ignoring it — three states, named rather than collapsed.
+
+**`--control` is what keeps the assertions honest.** It skips the transcripts
+and requires every probe to *fail* against an empty store. A probe that passes
+with nothing in memory is a free pass sitting in a green suite, and this suite
+shipped one: `supersedes_stale_skill_state` asked "am I ready to move on from
+factoring" and accepted "ready" in the reply, which "no, you are not ready"
+satisfies. Six turns, no extraction, so it costs about half a normal run.
 
 What is *not* covered: the HTTP layer above `run_turn` (auth, SSE framing, the
 recorder) and the device's board. Those have unit tests; memory does not have an
@@ -306,8 +315,18 @@ def placeholders(now: datetime) -> dict[str, str]:
 
 
 def _fill(value, values: dict[str, str]):
+    """Substitute the placeholders, and nothing else.
+
+    Plain `str.replace` per key rather than `str.format`, because `format`
+    parses every brace in the string: a probe about set notation or LaTeX —
+    `{x : x > 0}`, `\\frac{1}{2}` — raises `KeyError` or `IndexError` out of
+    the loader, and the person writing the probe has no reason to expect their
+    maths to be a format string.
+    """
     if isinstance(value, str):
-        return value.format(**values)
+        for key, replacement in values.items():
+            value = value.replace("{" + key + "}", replacement)
+        return value
     if isinstance(value, list):
         return [_fill(item, values) for item in value]
     if isinstance(value, dict):
@@ -336,8 +355,30 @@ def load_probes(now: datetime) -> list[dict]:
         seen.add(name)
         if not probe.get("question"):
             raise SystemExit(f"{name}: no question")
-        if not probe.get("answer_any") and not probe.get("answer_none"):
-            raise SystemExit(f"{name}: asserts nothing about the answer")
+        if not probe.get("prompt_any") and not probe.get("expect_supersession"):
+            # What makes `--control` a guarantee rather than a lottery. An
+            # assertion about the answer alone can be satisfied with an empty
+            # store — a tutor that remembers nothing still says "I don't know",
+            # which is what `does_not_invent_memories` asserts — so every probe
+            # has to claim something that only a populated store can satisfy.
+            raise SystemExit(
+                f"{name}: needs prompt_any or expect_supersession, or it can "
+                "pass against an empty store. See the header of probes.yaml."
+            )
+        # An `answer_any` word the question already contains passes on any
+        # reply that echoes the question, including a refusal — which is how
+        # `supersedes_stale_skill_state` came to false-pass against an empty
+        # store. `--control` catches this empirically; this catches the common
+        # case for free, before a run is paid for.
+        question = _fold(probe["question"]).casefold()
+        echoed = [word for word in (probe.get("answer_any") or [])
+                  if re.search(_pattern(word), question, re.IGNORECASE)]
+        if echoed:
+            raise SystemExit(
+                f"{name}: answer_any {echoed} already appears in the question, "
+                "so any reply that echoes it passes — including a refusal. "
+                "Assert on something only a remembering tutor would say."
+            )
         for index, spec in enumerate(probe.get("sessions") or []):
             transcript = spec.get("transcript") or ""
             if len(transcript) < MIN_TRANSCRIPT_CHARS:
@@ -433,6 +474,18 @@ class Snapshot:
 
 
 @dataclass
+class Asked:
+    """One live turn: what went to the model, and what came back."""
+
+    answer: str
+    tools: list[str] = field(default_factory=list)
+    sections: dict[str, bool] = field(default_factory=dict)
+    #: Every word the model was actually shown, system prompt included. This is
+    #: what `prompt_any` matches — see `run_probe`.
+    prompt: str = ""
+
+
+@dataclass
 class Result:
     name: str
     ok: bool
@@ -442,7 +495,14 @@ class Result:
     tools: list[str]
     sections: dict[str, bool]
     failures: list[str] = field(default_factory=list)
-    store_ok: bool | None = None
+    #: Set when the probe carries `prompt_any`: did the fact reach the model at
+    #: all. Used to label a failure, never to decide one.
+    reached_prompt: bool | None = None
+    #: And, when it did not, whether it was at least in the store — which is
+    #: what separates "extraction lost it" from "synthesis dropped it".
+    in_store: bool | None = None
+    #: True when this ran with `--control`, where failing is the pass.
+    control: bool = False
 
 
 async def replay(store: Store, spec: dict, *, now: datetime) -> None:
@@ -514,9 +574,29 @@ async def snapshot(store: Store) -> Snapshot:
                     digests=digests)
 
 
+def _prompt_text(bundle) -> str:
+    """Every word the model was shown, flattened.
+
+    `bundle.input` is the system message plus a user message whose content is a
+    list of typed parts, so the recalled blocks live inside `input_text`. This
+    is deliberately the whole thing rather than the recalled sections alone:
+    what `prompt_any` has to answer is "did the fact reach the model", and it
+    reaches it wherever it lands.
+    """
+    parts: list[str] = [bundle.system]
+    for message in bundle.input:
+        content = message.get("content")
+        if isinstance(content, str):
+            parts.append(content)
+        elif isinstance(content, list):
+            parts.extend(part.get("text", "") for part in content
+                         if isinstance(part, dict))
+    return "\n".join(parts)
+
+
 async def ask(
     store: Store, question: str, *, model: str, effort: str, meter: Meter,
-) -> tuple[str, list[str], dict[str, bool]]:
+) -> Asked:
     """Put the question to the tutor the way `/v1/turn` would.
 
     Everything below the HTTP layer is the real thing: `_memory_sections` reads
@@ -574,47 +654,66 @@ async def ask(
     ):
         result = running
     meter.add_turn_usage(result.usage if result else None)
-    present = {key: bool(value) for key, value in sections.items()}
-    return (result.text if result else ""), called, present
+    return Asked(
+        answer=result.text if result else "",
+        tools=called,
+        sections={key: bool(value) for key, value in sections.items()},
+        prompt=_prompt_text(bundle),
+    )
 
 
 async def run_probe(
     store: Store, probe: dict, *, model: str, effort: str, meter: Meter,
-    now: datetime,
+    now: datetime, control: bool = False,
 ) -> Result:
+    """One probe. Under `--control` the sessions are skipped and failing is the
+    pass — see `main`."""
     started = time.monotonic()
     await reset(store)
-    for spec in probe.get("sessions") or []:
-        await replay(store, spec, now=now)
+    if not control:
+        for spec in probe.get("sessions") or []:
+            await replay(store, spec, now=now)
 
     shot = await snapshot(store)
-    answer, tools, sections = await ask(
-        store, probe["question"], model=model, effort=effort, meter=meter,
-    )
+    asked = await ask(store, probe["question"], model=model, effort=effort,
+                      meter=meter)
 
     failures: list[str] = []
     wanted = probe.get("answer_any")
-    if wanted and not hits(wanted, answer):
+    if wanted and not hits(wanted, asked.answer):
         failures.append(f"the answer contains none of {wanted}")
-    leaked = hits(probe.get("answer_none"), answer)
+    leaked = hits(probe.get("answer_none"), asked.answer)
     if leaked:
         failures.append(f"the answer contains {leaked}, which it must not")
     if probe.get("expect_supersession") and not shot.superseded:
         failures.append("no atom was superseded, so the stale fact is still live")
 
-    store_ok = None
-    if probe.get("store_any"):
-        store_ok = bool(hits(probe["store_any"], shot.text))
-        if not store_ok:
+    # Matched against the prompt, not the store, because there are three states
+    # and only two of them used to be told apart. A fact can be missing from
+    # the store, in the store but dropped by `rebuild_profile` on its way into
+    # the portrait, or in the prompt and unused by the tutor. Matching the store
+    # collapsed the middle one into the last and printed "the store HAD it —
+    # this is the tutor not using what it was given", which for a fact synthesis
+    # had discarded is simply false. The gate is now "did the model see it"; the
+    # store is read alongside only to say which side of the line a miss fell on.
+    reached_prompt = in_store = None
+    if probe.get("prompt_any"):
+        reached_prompt = bool(hits(probe["prompt_any"], asked.prompt))
+        if not reached_prompt:
+            in_store = bool(hits(probe["prompt_any"], shot.text))
             failures.append(
-                f"the store contains none of {probe['store_any']} — extraction "
-                "never produced the fact, so the tutor never had it"
+                f"nothing matching {probe['prompt_any']} reached the model. "
+                + ("It is in the store, so synthesis dropped it on the way "
+                   "into the portrait."
+                   if in_store else
+                   "It is not in the store either, so extraction lost it.")
             )
 
     return Result(
-        name=probe["name"], ok=not failures,
-        seconds=time.monotonic() - started, answer=answer, snapshot=shot,
-        tools=tools, sections=sections, failures=failures, store_ok=store_ok,
+        name=probe["name"], ok=bool(failures) if control else not failures,
+        seconds=time.monotonic() - started, answer=asked.answer, snapshot=shot,
+        tools=asked.tools, sections=asked.sections, failures=failures,
+        reached_prompt=reached_prompt, in_store=in_store, control=control,
     )
 
 
@@ -624,6 +723,22 @@ async def run_probe(
 
 
 def report(result: Result) -> None:
+    if result.control:
+        # Inverted, and labelled so nobody reads a control line as a probe
+        # result. "VACUOUS" is the only outcome worth acting on here.
+        verdict = "TEETH  " if result.ok else "VACUOUS"
+        print(f"{verdict} {result.name}  ({result.seconds:.0f}s)")
+        if result.ok:
+            return
+        print("        passed against an EMPTY store, so it is not testing "
+              "memory. Its assertions are satisfiable without remembering "
+              "anything — usually an answer_any word the question or a "
+              "generic reply already contains.")
+        print("        --- answer, with nothing in memory ---")
+        print(_indent(result.answer or "(empty)"))
+        print()
+        return
+
     verdict = "PASS" if result.ok else "FAIL"
     print(f"{verdict}  {result.name}"
           f"  ({result.seconds:.0f}s, {len(result.snapshot.live)} live atoms, "
@@ -633,9 +748,9 @@ def report(result: Result) -> None:
         return
     for failure in result.failures:
         print(f"        {failure}")
-    if result.store_ok:
-        print("        the store HAD it — this is the tutor not using what it "
-              "was given, not an extraction miss")
+    if result.reached_prompt:
+        print("        the model WAS shown it — this is the tutor not using "
+              "what it was given, not a memory miss")
     blocks = [name for name, present in result.sections.items() if present]
     print(f"        prompt blocks present: {', '.join(blocks) or 'NONE'}")
     print("        --- profile ---")
@@ -679,6 +794,10 @@ async def main() -> int:
     parser.add_argument("--list", action="store_true",
                         help="print the probes and what a run would cost in "
                              "calls, without making any")
+    parser.add_argument("--control", action="store_true",
+                        help="negative control: skip the transcripts and "
+                             "require every probe to FAIL against an empty "
+                             "store. A probe that passes here proves nothing")
     args = parser.parse_args()
 
     now = datetime.now(timezone.utc)
@@ -693,11 +812,16 @@ async def main() -> int:
         sessions = sum(len(p.get("sessions") or []) for p in probes)
         for probe in probes:
             print(f"{probe['name']}  ({len(probe.get('sessions') or [])} sessions)")
-        # Per session: digest, extraction, adjudication (once anything is on
-        # file), synthesis — plus one embedding call. Plus one turn per probe.
+        # Three model calls a session — digest, extraction, synthesis — plus
+        # one embedding call, plus one turn per probe. Adjudication is the
+        # variable: it runs only when a new fact has a live neighbour above
+        # `consolidate.FLOOR`, so it adds up to one more per session and never
+        # on the first session of a probe.
         print(f"\n{len(probes)} probes, {sessions} sessions "
-              f"≈ {sessions * 4 + len(probes)} model calls "
+              f"≈ {sessions * 3 + len(probes)}-"
+              f"{sessions * 4 + len(probes)} model calls "
               f"+ {sessions} embedding calls")
+        print(f"--control is {len(probes)} model calls: turns only.")
         return 0
 
     meter = Meter()
@@ -710,7 +834,7 @@ async def main() -> int:
                 try:
                     result = await run_probe(
                         store, probe, model=args.model, effort=args.effort,
-                        meter=meter, now=now,
+                        meter=meter, now=now, control=args.control,
                     )
                 except Exception as error:  # noqa: BLE001
                     # One probe that blows up must not take the rest of a paid
@@ -723,6 +847,7 @@ async def main() -> int:
                         name=probe["name"], ok=False, seconds=0.0, answer="",
                         snapshot=Snapshot(profile=""), tools=[], sections={},
                         failures=[f"raised {type(error).__name__}: {error}"],
+                        control=args.control,
                     ))
                     continue
                 results.append(result)
@@ -731,14 +856,21 @@ async def main() -> int:
         await close_store(store)
 
     passed = sum(1 for r in results if r.ok)
-    print(f"\n{passed}/{len(results)} probes passed "
+    noun = "probes have teeth" if args.control else "probes passed"
+    print(f"\n{passed}/{len(results)} {noun} "
           f"in {time.monotonic() - started:.0f}s")
     print(meter.line())
-    if not results or passed != len(results):
-        print("\nA failing probe is a finding about the memory system, not "
-              "about the harness. Read the store dump above: an empty or "
-              "wrong profile is extraction or consolidation; a right profile "
-              "with a wrong answer is the prompt or the tutor.")
+    if results and passed != len(results):
+        print("\n" + (
+            "A vacuous probe is a free pass hiding in a green suite: its "
+            "assertions are satisfied without any memory at all. Tighten it "
+            "and re-run --control."
+            if args.control else
+            "A failing probe is a finding about the memory system, not about "
+            "the harness. Read the store dump above: an empty or wrong "
+            "profile is extraction or consolidation; a right profile with a "
+            "wrong answer is the prompt or the tutor."
+        ))
     return 0 if results and passed == len(results) else 1
 
 

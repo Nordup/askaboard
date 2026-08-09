@@ -9,16 +9,25 @@ trajectory a later pass can read rather than a silent overwrite. Nothing in
 this module deletes or rewrites an atom's text; there is no code path that can.
 
 Why a model adjudicates and not a cosine threshold. "Understands fractions" and
-"does not understand fractions" sit at roughly 0.95 similarity in every
-general-purpose embedding model — the sentences differ by one token and share
-every other one. A threshold over that number merges a fact with its own
-negation, writes the merge into the learner's permanent record, and leaves
-nothing behind to notice it by. So similarity is only ever used here to choose
-*what the model is shown*: it narrows a growing table down to `CANDIDATES`
-neighbours per new fact, and narrowing can only ever produce an ADD where a
-SUPERSEDE might have been. That is the recoverable direction — a duplicate
-sitting beside its original is visible and fixable next pass, while a fact
-merged into its opposite is neither.
+"does not understand fractions" differ by one token and share every other one,
+and every general-purpose embedding model puts them close together — measured
+at 0.81-0.90 on `text-embedding-3-small`, which is what this service uses, and
+0.93-0.97 on `text-embedding-ada-002`. A threshold over that number merges a
+fact with its own negation, writes the merge into the learner's permanent
+record, and leaves nothing behind to notice it by. So similarity is only ever
+used here to choose *what the model is shown*: it narrows a growing table down
+to `CANDIDATES` neighbours per new fact, and narrowing can only ever produce an
+ADD where a SUPERSEDE might have been. That is the recoverable direction — a
+duplicate sitting beside its original is visible and fixable next pass, while a
+fact merged into its opposite is neither.
+
+Both numbers are quoted because the gap between them is what shipped a silent
+bug: `FLOOR` was set from the ada-002 scale and kept through the move to
+`text-embedding-3-small`, where the same sentences score fifteen points lower.
+Nothing failed. `_candidates` simply returned nothing, `_adjudicate` was never
+called, and every supersession this module exists for became an ADD. Any number
+in this file that came from a similarity has to be re-measured against the model
+in `config.EMBEDDING_MODEL` when that constant changes.
 """
 
 import json
@@ -41,18 +50,39 @@ CANDIDATES = 8
 
 #: Below this cosine similarity an existing atom is not worth a token. This is
 #: a *cheap reject*, never a merge decision — see the module docstring: negation
-#: sits at ~0.95 similarity to its own affirmation, so no number in this file
-#: is ever allowed to conclude that two facts are the same one.
+#: sits close to its own affirmation, so no number in this file is ever allowed
+#: to conclude that two facts are the same one.
 #:
-#: Rejecting is safe in the way accepting would not be. An atom held back here
-#: is simply never offered as a supersession target, so the worst it can cost is
-#: an ADD where a SUPERSEDE was warranted — a visible duplicate, not a lost
+#: **Measured against `text-embedding-3-small` at 1024 dims, which is the only
+#: model this number means anything for.** It was 0.75 — an ada-002 figure —
+#: and on this model that admitted nothing at all: across a realistic 28-atom
+#: learner store all 378 pairs scored p50 0.330, p99 0.664, max 0.711, and the
+#: probe suite's own supersession pair ("cannot factor quadratics" / "factor
+#: pairs now feel intuitive") scores 0.511. `_candidates` returned empty, so
+#: `_adjudicate` was never called and every reversal in a learner's state was
+#: written as a coexisting fact. `tests/eval/run_probes.py` is what caught it.
+#:
+#: Ranking was never the problem: in ten test supersessions the true target was
+#: the nearest neighbour every time. What the floor has to do is admit it. At
+#: 0.35 all ten are reachable with a mean of 7.7 candidates, and `CANDIDATES`
+#: is the binding constraint below about 0.4 anyway — the eighth-nearest
+#: neighbour sits at 0.30-0.47 — so lowering it further buys nothing.
+#:
+#: **Do not raise this above 0.45**, which is inside the observed range of true
+#: pairs. And do not remove it: `if existing:` already covers an empty store,
+#: but against a full one an unfloored top-8 always returns eight rows, and
+#: eight unrelated facts in front of the adjudicator is an invitation to a
+#: spurious SUPERSEDE — the direction that is not recoverable.
+#:
+#: Rejecting is otherwise safe in the way accepting would not be. An atom held
+#: back here is never offered as a supersession target, so the worst it can cost
+#: is an ADD where a SUPERSEDE was warranted — a visible duplicate, not a lost
 #: fact. The same reasoning covers the rows the SQL comparison drops for a
 #: different reason: an atom with no embedding, or with a zero one, yields NULL
 #: or NaN for cosine distance, fails `<=`, and is left out. Both are cases where
 #: the similarity number means nothing, and leaving them out is the conservative
 #: reading of a number that means nothing.
-FLOOR = 0.75
+FLOOR = 0.35
 
 ADJUDICATION_SCHEMA: dict = {
     "type": "object",
