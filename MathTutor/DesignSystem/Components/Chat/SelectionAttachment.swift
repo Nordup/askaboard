@@ -184,13 +184,18 @@ extension AttachmentStackMetrics {
     /// against the pill's live height rather than the 80 it was written for.
     /// The visible band stays 38 because it is the label row's height, and the label's type
     /// does not change between scales.
+    ///
+    /// The pill's **resting** height and radius, which is also what keeps this correct once the
+    /// composer grows: `bodyHeight` is a floor rather than a fixed height (see `AttachmentStack`),
+    /// and `cornerRadius` is held at half the resting height, so the curve the card is cut to is
+    /// still the curve the pill draws when it is five lines tall.
     static func composer(_ scale: ChatScale, width: CGFloat) -> Self {
-        let pillHeight: CGFloat = ComposerMetrics.for(scale).height
+        let pill = ComposerMetrics.for(scale)
         return card(
             scale,
             width: width,
-            bodyHeight: pillHeight,
-            bodyTopRadius: pillHeight / 2
+            bodyHeight: pill.height,
+            bodyTopRadius: pill.cornerRadius
         )
     }
 
@@ -239,25 +244,36 @@ extension AttachmentStackMetrics {
 /// Card behind, body in front — the z-order the board draws a Correct/Wrong diagram about.
 ///
 /// *"Wrong — card height 38, stacked on the pill instead of behind it. Background bites
-/// into both corners."* The card is the first child so it paints first, and the body is
-/// offset down by the visible band rather than laid out below it, so the two overlap
-/// instead of stacking.
+/// into both corners."* The card is a `.background`, which paints behind and takes no layout,
+/// and it is offset up out of the band the body reserves for it — so the two overlap instead
+/// of stacking.
+///
+/// **The body sets the height and the stack grows upward from the body's bottom edge.** The
+/// composer's pill grows with what is typed into it, and a stack pinned to a fixed
+/// `bodyHeight` would either squash it or push it down through the surface floor it is
+/// anchored to. `minHeight` means the resting geometry is exactly what it was — `visibleBand +
+/// bodyHeight`, the design's `totalHeight` — and the card rides up with the pill's top edge
+/// rather than staying where a resting pill's top used to be. The sent message frames its own
+/// bubble at exactly `bodyHeight`, so nothing about that instance moves.
 struct AttachmentStack<Card: View, Content: View>: View {
     let metrics: AttachmentStackMetrics
     @ViewBuilder let card: () -> Card
     @ViewBuilder let content: () -> Content
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            card()
-                .frame(width: metrics.width, height: metrics.cardHeight)
-            content()
-                .frame(width: metrics.width, height: metrics.bodyHeight)
-                .offset(y: metrics.visibleBand)
-        }
-        // `.offset` moves paint, not layout, so the stack would otherwise measure the taller
-        // of the two children. The design's height is the band plus the whole front shape.
-        .frame(width: metrics.width, height: metrics.totalHeight, alignment: .topLeading)
+        content()
+            .frame(width: metrics.width)
+            .frame(minHeight: metrics.bodyHeight, alignment: .bottom)
+            .background(alignment: .top) {
+                card()
+                    .frame(width: metrics.width, height: metrics.cardHeight)
+                    // Up by the band, so the card's bottom lands `bodyTopRadius` *inside* the
+                    // body — under the shape's corner curves, which is the notch rule.
+                    .offset(y: -metrics.visibleBand)
+            }
+            // The card takes no layout, so the band it shows above the body has to be
+            // reserved here or the stack would measure the body alone.
+            .padding(.top, metrics.visibleBand)
     }
 }
 

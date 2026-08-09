@@ -88,10 +88,61 @@ struct ComposerMetrics: Equatable, Sendable {
     /// the pill. 88 in the panel, once the pill came down to 50.
     var attachedHeight: CGFloat { attachment.totalHeight }
 
+    /// The space above and below the send button — and so the pill's own vertical padding.
+    ///
+    /// Not a new number. The send button is inset uniformly from the pill's edge at both
+    /// scales — `38 + 2 × 6 = 50` and `52 + 2 × 8 = 68` — so this comes out equal to
+    /// `paddingTrailing`, and `height` stops being a value the row is squeezed into and becomes
+    /// a *consequence* of the row: the tallest child, plus this, twice. Which is the whole
+    /// mechanism by which the pill can grow at all.
+    var paddingVertical: CGFloat { (height - sendButtonSize) / 2 }
+
+    /// The pill's interior at rest: the box every fixed child of the row keeps, so a single
+    /// line of text and the three glyphs stay optically centred exactly where the design
+    /// centres them, and a grown pill drops them onto its last line rather than floating them
+    /// in the middle of it.
+    var innerHeight: CGFloat { height - 2 * paddingVertical }
+
+    /// The tallest the pill grows before the text starts scrolling inside it: `maxLines` lines
+    /// of the scale's own placeholder type, in the same interior every other state uses.
+    /// **124.7 in the panel and 163.8 full-screen.**
+    ///
+    /// `max`, not a sum, because the interior already holds the first line and then some — 38
+    /// points of it against a 22.5pt line — so the pill does not move at all until the text
+    /// outgrows the send button, and five lines cost four line boxes plus the change, not five.
+    var maxHeight: CGFloat {
+        max(innerHeight, placeholderStyle.height(lines: Self.maxLines)) + 2 * paddingVertical
+    }
+
+    /// The pill's corner radius — the one number in the row that does **not** follow the pill's
+    /// height once it starts growing.
+    ///
+    /// Board 03: *"the pill height changes (50 in the panel, 68 full-screen) but the radius
+    /// formula never does, so a port must use a capsule shape, not a fixed corner value."* The
+    /// formula is half the height, and it is evaluated at the **resting** height: at rest this
+    /// is exactly `Capsule()` — 25 and 34, the radii the two screens measure — while a capsule
+    /// re-derived from a five-line pill is a 70pt stadium, which is not a shape the design
+    /// draws anywhere. The card behind an attached selection is cut to this same curve.
+    var cornerRadius: CGFloat { height / 2 }
+
     /// Apple's stated default touch target: larger than the 24pt slot the cancel glyph sits in
     /// and larger than the panel's 34pt mic. A touch target, not a visual value — it draws
     /// nothing, and every drawn box stays exactly where the design put it.
     static let minimumTapTarget: CGFloat = 44
+
+    /// How many lines of typing the pill grows to hold, at either scale, before the text
+    /// scrolls inside a pill that has stopped moving.
+    ///
+    /// **Not from the design.** Board 03 §11.11 draws the empty pill and nothing else, so what a
+    /// long question does to it is undrawn — and "one line, then the words slide out of sight"
+    /// is not a state the product can stay in: the panel's text lane is 151pt, which is about
+    /// four words of a question a student is composing about the board in front of them.
+    ///
+    /// One number rather than one per scale, because the rule is *how much of the surface an
+    /// input may take from the conversation it sits under*, and that is a property of the pill,
+    /// not of the column: five lines is 125 of the panel's 976 and 164 of the reading column's,
+    /// the same shallow slice of either surface.
+    static let maxLines = 5
 
     /// The one line above the pill that says nothing came back, or that it failed.
     /// `15 / 18 · 400 · --color-ink-secondary`, the same specimen the error state's reassurance
@@ -203,8 +254,11 @@ struct ComposerSlotMetrics: Equatable, Sendable {
     /// The **full** width of the surface the fade spans — the panel's 337, not its 301 column.
     /// Board 03 puts the fade outside the thread precisely so it can run corner to corner.
     let surfaceWidth: CGFloat
-    /// The resting pill, never the attached one: a card grows the composer upward, and a band
-    /// that followed it would redraw the conversation the moment a selection was attached.
+    /// The resting pill — never the attached one, and never the grown one. Both of those grow
+    /// the composer *upward*, and a band that followed them would redraw the conversation the
+    /// moment a selection was attached or a second line was typed. The pill is opaque and
+    /// carries 03 Control, so what rises above the band reads as floating over the thread,
+    /// which is what it is.
     let composerHeight: CGFloat
     /// What sits under the pill inside the surface — the panel's 18pt inset, and nothing
     /// full-screen, where the pill's bottom *is* the content band's floor.
@@ -362,31 +416,72 @@ struct Composer: View {
         }
     }
 
+    /// **The pill measures its own row rather than being given a height**, which is what lets it
+    /// grow with what is typed into it. At rest the arithmetic is unchanged and exact: every
+    /// fixed child keeps `innerHeight`, the send button *is* `innerHeight`, and `innerHeight`
+    /// plus `paddingVertical` twice is the 50 and the 68 the design measures.
+    ///
+    /// The row is bottom-aligned so the growth goes **upward** — the pill's bottom edge is the
+    /// one thing on this surface a student's thumb has learned the position of, and the mic and
+    /// send sit on the last line of a grown pill the way they sit on the only line of a resting
+    /// one. Nothing below the composer moves, which is also why `ComposerSlotMetrics` still
+    /// measures its band off the resting pill.
     private var pill: some View {
-        HStack(spacing: metrics.gap) {
+        HStack(alignment: .bottom, spacing: metrics.gap) {
             leading
 
+            // The one child with give in it — vertically now as well as horizontally. It fills
+            // the pill's interior at rest, so a single line sits where the design centres it,
+            // and past that it is the thing the pill's height is a consequence of.
             field
+                .frame(maxWidth: .infinity, minHeight: metrics.innerHeight, alignment: .leading)
 
             // The mic is the stop control while capturing, and gone while transcribing: the
             // microphone has already closed, so a button that offered to close it would be
             // describing something that has happened. Cancel is the leading cross.
             if let onVoice, dictation?.phase != .transcribing {
                 ComposerVoiceButton(metrics: metrics, dictation: dictation?.phase, action: onVoice)
+                    .frame(height: metrics.innerHeight)
             }
 
             ComposerSendButton(metrics: metrics, action: send)
+                .frame(height: metrics.innerHeight)
         }
         .padding(.leading, metrics.paddingLeading)
         .padding(.trailing, metrics.paddingTrailing)
-        .frame(width: metrics.width, height: metrics.height)
-        .background(DS.Color.surface, in: Capsule())
+        .padding(.vertical, metrics.paddingVertical)
+        .frame(width: metrics.width)
+        // The pill takes its **ideal** height, not the one it is offered. `ComposerSlot` sizes
+        // itself to the resting band and proposes that band downward, and a vertical-axis text
+        // field is flexible enough to accept it — which capped the composer at the two lines
+        // that fit inside 50 points instead of the five its line limit allows. Vertical only:
+        // the width is still the column's, and still the one thing the design lets move.
+        .fixedSize(horizontal: false, vertical: true)
+        // A capsule at the resting height, held there — see `ComposerMetrics.cornerRadius`.
+        // `.circular`, like every other radius in the product: the design's corners are CSS
+        // corners, and the card tucked behind this shape is sized off that exact curve.
+        .background(DS.Color.surface, in: RoundedRectangle(cornerRadius: metrics.cornerRadius, style: .circular))
         .elevation(.control)
     }
 
     /// The marquee's slot, which dictation borrows for its cancel because a lasso attachment is
     /// meaningless while the microphone is open — so nothing on screen moves when it opens.
     ///
+    /// Either occupant takes the pill's resting interior as its box, like every other fixed
+    /// child of the row. The **empty** branch has to stay genuinely empty, though: a
+    /// zero-width child with a height on it is still a child, and the bottom-aligned row would
+    /// space it — turning `301 − 18 − 24 − 10 − …` into a row with one gap too many.
+    @ViewBuilder
+    private var leading: some View {
+        if let dictation {
+            ComposerCancelButton(metrics: metrics, action: dictation.onCancel)
+                .frame(height: metrics.innerHeight)
+        } else if selection != .unavailable {
+            marqueeControl
+                .frame(height: metrics.innerHeight)
+        }
+    }
+
     /// **This glyph is `btn/select`.** Board 03 §11.4 describes it as *"a persistent
     /// affordance, not a state indicator"*, and the port read that as "decorative": it was an
     /// `IconView` with `accessibilityHidden(true)`, so tapping the one selection control on
@@ -400,30 +495,26 @@ struct Composer: View {
     /// It stays a plain glyph when no handler is supplied, which is what every specimen,
     /// preview and gallery entry passes.
     @ViewBuilder
-    private var leading: some View {
-        if let dictation {
-            ComposerCancelButton(metrics: metrics, action: dictation.onCancel)
-        } else if selection != .unavailable {
-            if let onToggleSelection {
-                Button(action: onToggleSelection) {
-                    marquee
-                        // The glyph is 24pt in a 50pt pill, so it hit-tests well under the
-                        // 44pt minimum. Given back as negative padding, exactly as the
-                        // rail's 27pt swatches are, so the target grows without the row's
-                        // arithmetic — `301 − 18 − 24 − 10 − 151 − 10 − 34 − 10 − 38 − 6 = 0`
-                        // — moving by a point.
-                        .expandedTapTarget(ComposerMetrics.minimumTapTarget, over: metrics.marqueeSize)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Select an area of the board")
-                // "Attached" the moment the marquee is armed, matching the glyph — this
-                // value is what says the tap landed, and the dock's own button reports
-                // the same axis the same way.
-                .accessibilityValue(selection.isLit ? "Attached" : "Not attached")
-                .accessibilityAddTraits(selection.isLit ? .isSelected : [])
-            } else {
-                marquee.accessibilityHidden(true)
+    private var marqueeControl: some View {
+        if let onToggleSelection {
+            Button(action: onToggleSelection) {
+                marquee
+                    // The glyph is 24pt in a 50pt pill, so it hit-tests well under the
+                    // 44pt minimum. Given back as negative padding, exactly as the
+                    // rail's 27pt swatches are, so the target grows without the row's
+                    // arithmetic — `301 − 18 − 24 − 10 − 151 − 10 − 34 − 10 − 38 − 6 = 0`
+                    // — moving by a point.
+                    .expandedTapTarget(ComposerMetrics.minimumTapTarget, over: metrics.marqueeSize)
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Select an area of the board")
+            // "Attached" the moment the marquee is armed, matching the glyph — this
+            // value is what says the tap landed, and the dock's own button reports
+            // the same axis the same way.
+            .accessibilityValue(selection.isLit ? "Attached" : "Not attached")
+            .accessibilityAddTraits(selection.isLit ? .isSelected : [])
+        } else {
+            marquee.accessibilityHidden(true)
         }
     }
 
@@ -453,6 +544,14 @@ struct Composer: View {
         }
     }
 
+    /// **The field wraps.** A vertical-axis field is the whole of it: it reports the height of
+    /// what has been typed, the pill is that height plus its padding, and `lineLimit` is where
+    /// both stop — past `maxLines` the field scrolls its own content and the pill holds still.
+    ///
+    /// Return still sends, which is why the axis costs nothing here: `submitLabel(.send)` is the
+    /// design's, a vertical field routes the return key to `onSubmit` rather than inserting a
+    /// newline, and the lines this grows to hold are wrapped ones — a question too long for a
+    /// 151pt lane, not a student laying out paragraphs.
     private var typingLane: some View {
         ZStack(alignment: .leading) {
             if text.isEmpty {
@@ -460,8 +559,9 @@ struct Composer: View {
                     .textStyle(metrics.placeholderStyle)
                     .foregroundStyle(DS.Color.inkTertiary)
             }
-            TextField("", text: $text)
+            TextField("", text: $text, axis: .vertical)
                 .textFieldStyle(.plain)
+                .lineLimit(1 ... ComposerMetrics.maxLines)
                 .textStyle(metrics.placeholderStyle)
                 .foregroundStyle(DS.Color.ink)
                 .tint(DS.Color.brand)
@@ -469,7 +569,6 @@ struct Composer: View {
                 .onSubmit(send)
                 .accessibilityLabel(metrics.placeholder)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// Board 15's whole design, in one lane.
@@ -505,7 +604,6 @@ struct Composer: View {
                 StreamingCaret(scale: scale)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(dictation.phase == .capturing ? "Recording" : "Transcribing")
     }

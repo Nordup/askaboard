@@ -428,6 +428,101 @@ final class ChatComponentTests: XCTestCase {
         XCTAssertEqual(Icon.uiSelectionMarker.glyph.productRenderSizes, [24])
     }
 
+    /// The resting height is not a number the row is squeezed into — it *is* the row.
+    ///
+    /// Which is the whole mechanism by which the pill can grow with what is typed into it: the
+    /// tallest child plus the vertical padding twice. Both scales close on the design's own
+    /// height from their own send button, `38 + 2 × 6 = 50` and `52 + 2 × 8 = 68`, and that
+    /// padding coming out equal to `paddingTrailing` at both scales is the check that the send
+    /// button is inset uniformly from the pill's edge rather than only from its end.
+    func testTheRestingPillIsItsSendButtonPlusUniformPadding() {
+        for scale in ChatScale.allCases {
+            let composer = ComposerMetrics.for(scale)
+            let context = scale.rawValue
+
+            XCTAssertEqual(composer.paddingVertical, composer.paddingTrailing, context)
+            XCTAssertEqual(composer.sendButtonSize + 2 * composer.paddingVertical, composer.height, context)
+            // The box every fixed child of the row keeps, so one line of text and the three
+            // glyphs stay centred exactly where the design centres them.
+            XCTAssertEqual(composer.innerHeight, composer.sendButtonSize, context)
+            // The dictation cancel borrows the marquee's slot, and its 44pt target overhangs
+            // that slot rather than sizing it — a target taller than the interior would make
+            // the pill grow for as long as the microphone was open.
+            XCTAssertLessThanOrEqual(composer.marqueeSize, composer.innerHeight, context)
+        }
+
+        XCTAssertEqual(ComposerMetrics.panel.paddingVertical, 6)
+        XCTAssertEqual(ComposerMetrics.fullScreen.paddingVertical, DS.Space.s2)
+    }
+
+    /// **Not from the design** — board 03 §11.11 draws the empty pill and nothing else. Five
+    /// wrapped lines at either scale, and then the text scrolls inside a pill that holds still.
+    func testTheComposerGrowsToFiveLinesAndStops() {
+        XCTAssertEqual(ComposerMetrics.maxLines, 5)
+
+        for scale in ChatScale.allCases {
+            let composer = ComposerMetrics.for(scale)
+            let context = scale.rawValue
+
+            // Five lines in the same interior every other state uses — a `max`, not a sum: the
+            // pill does not move at all until the text outgrows the send button.
+            XCTAssertEqual(
+                composer.maxHeight,
+                max(composer.innerHeight, composer.placeholderStyle.height(lines: 5))
+                    + 2 * composer.paddingVertical,
+                accuracy: 0.001,
+                context
+            )
+            XCTAssertGreaterThan(composer.maxHeight, composer.height, context)
+            // A shallow slice of its own surface either way, against the 976pt safe band the
+            // design draws both surfaces in.
+            XCTAssertLessThan(composer.maxHeight, 200, context)
+        }
+
+        // Hand-computed at Source Sans 3's 1.326em, the same way the type tests do it.
+        // The panel: five 22.54pt boxes with no spacing between them — `bodyControl` asks for
+        // a 22pt line box the face draws taller, and SwiftUI cannot compress a line — plus
+        // 2 × 6. 112.71 + 12.
+        XCTAssertEqual(ComposerMetrics.panel.maxHeight, 5 * 17 * 1.326 + 12, accuracy: 0.05)
+        // The reading column: five 27.85pt boxes and the four 2.15pt gaps that make `lead`'s
+        // 30pt line box, plus 2 × 8. 147.85 + 16.
+        let leadBox: CGFloat = 21 * 1.326
+        let leadSpacing: CGFloat = 30 - leadBox
+        XCTAssertEqual(
+            ComposerMetrics.fullScreen.maxHeight,
+            5 * leadBox + 4 * leadSpacing + 16,
+            accuracy: 0.05
+        )
+
+        // One line of either style still fits the interior with room to spare, which is why
+        // the first line costs nothing and the resting pill is the design's to the point.
+        for scale in ChatScale.allCases {
+            let composer = ComposerMetrics.for(scale)
+            XCTAssertLessThan(
+                composer.placeholderStyle.height(lines: 1),
+                composer.innerHeight,
+                scale.rawValue
+            )
+        }
+    }
+
+    /// Board 03's radius formula is half the height — evaluated at the **resting** height and
+    /// held there, because a capsule re-derived from a five-line pill is a 70pt stadium, and
+    /// the card behind an attached selection is cut to this exact curve.
+    func testTheGrownPillKeepsTheRestingCapsulesRadius() {
+        XCTAssertEqual(ComposerMetrics.panel.cornerRadius, 25)
+        XCTAssertEqual(ComposerMetrics.fullScreen.cornerRadius, 34)
+
+        for scale in ChatScale.allCases {
+            let composer = ComposerMetrics.for(scale)
+            XCTAssertEqual(composer.cornerRadius, composer.height / 2, scale.rawValue)
+            XCTAssertEqual(composer.attachment.bodyTopRadius, composer.cornerRadius, scale.rawValue)
+            // The stack's resting geometry is untouched by any of this: the pill grows out of
+            // its top, so `totalHeight` is still the band plus the pill the design draws.
+            XCTAssertEqual(composer.attachedHeight, composer.attachment.visibleBand + composer.height, scale.rawValue)
+        }
+    }
+
     // MARK: - Suggestion chips
 
     func testPanelChipsAreThreeHundredAndOneBySixtyTwoInATwoHundredAndSeventyEightColumn() {

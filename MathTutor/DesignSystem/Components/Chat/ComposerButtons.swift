@@ -104,7 +104,11 @@ struct ComposerCancelButton: View {
                 // Apple's stated default target and the row's arithmetic must not change.
                 .frame(width: ComposerMetrics.minimumTapTarget, height: ComposerMetrics.minimumTapTarget)
                 .contentShape(Rectangle())
-                .frame(width: metrics.marqueeSize, alignment: .leading)
+                // Height as well as width. The overhang is in both directions, and the pill
+                // measures its own row now — an unbounded 44 here would make the composer 6
+                // points taller for as long as the microphone is open, which is exactly the
+                // "nothing on screen moves when a session starts" this slot exists to keep.
+                .frame(width: metrics.marqueeSize, height: metrics.marqueeSize, alignment: .leading)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Cancel dictation")

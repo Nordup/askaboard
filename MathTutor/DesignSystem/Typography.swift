@@ -201,6 +201,25 @@ extension TextStyle {
     /// that tight in the first place.
     var lineSpacing: CGFloat { max(0, leading - naturalLineHeight) }
 
+    /// What a second line costs: the font's own box plus whatever `lineSpacing` puts between
+    /// lines. Equal to `leading` for the five styles the face fits inside, and equal to
+    /// `naturalLineHeight` for the five that clamp — SwiftUI cannot compress a line, so a
+    /// wrapped `bodyControl` paragraph advances 22.54 where the design asked for 22.
+    ///
+    /// The height of `n` lines is therefore `naturalLineHeight + (n − 1) × lineAdvance`, which
+    /// is the same expression `lineBoxCompensation` is derived from — this one names the term
+    /// that a growing control needs on its own.
+    var lineAdvance: CGFloat { naturalLineHeight + lineSpacing }
+
+    /// What `lines` lines of this style lay out at: the first line's own box, and an advance for
+    /// each line after it. `n × naturalLineHeight + (n − 1) × lineSpacing`, rearranged — which is
+    /// one advance short of `n × lineAdvance`, because the spacing sits *between* lines and
+    /// there is none under the last one.
+    func height(lines: Int) -> CGFloat {
+        guard lines > 0 else { return 0 }
+        return naturalLineHeight + CGFloat(lines - 1) * lineAdvance
+    }
+
     /// Vertical padding that makes a rendered `Text` occupy the design's line box rather
     /// than the font's.
     ///
