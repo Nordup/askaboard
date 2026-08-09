@@ -231,6 +231,11 @@ struct MessageRow: View {
         .composerChips(scale, width: metrics.rowWidth)
     }
 
+    /// The same card with nothing in front of it — a turn that is files and no words.
+    private var sentChips: AttachmentStackMetrics {
+        .sentChips(scale, width: metrics.rowWidth)
+    }
+
     var body: some View {
         switch item.message.role {
         case .learner:
@@ -273,34 +278,51 @@ struct MessageRow: View {
     ///
     /// The thumbnails come from `AttachmentStore` by the server's own id, which is why a
     /// session reopened tomorrow still draws the pictures.
+    ///
+    /// **Undrawn: files with no words.** With no bubble there is nothing for the card's
+    /// hidden band to tuck behind, so that branch draws the chips as a self-contained card
+    /// instead of as the back layer of a stack — see `AttachmentStackMetrics.sentChips`,
+    /// which is where the reasoning and the caveat live.
     @ViewBuilder
     private var sentAttachments: some View {
         if item.attachments.isEmpty {
             bubble
+        } else if item.message.text.isEmpty {
+            chipRow(sentChips)
+                // All four corners, where the composer's card cuts only its top two. The
+                // bottom pair are edges here rather than tucks, and a square-cornered
+                // tinted band under a rounded one is the mark of a card that has lost the
+                // shape it was meant to sit behind.
+                .clipShape(RoundedRectangle(cornerRadius: sentChips.bodyTopRadius, style: .circular))
         } else {
             AttachmentStack(metrics: chips) {
-                AttachmentChipRow(
-                    attachments: item.attachments.map {
-                        // A sent attachment is by definition ready; the carried bytes are
-                        // empty because the store is the source here, not the upload that
-                        // finished in a draft that no longer exists.
-                        PendingAttachment(
-                            id: $0.id,
-                            filename: $0.filename,
-                            state: .ready($0, thumbnail: Data())
-                        )
-                    },
-                    showsSelection: false,
-                    metrics: chips,
-                    thumbnail: { AttachmentStore().thumbnail(for: $0) },
-                    onRemove: { _ in },
-                    onDismissSelection: {},
-                    isRemovable: false
-                )
+                chipRow(chips)
             } content: {
                 bubble
             }
         }
+    }
+
+    /// The chips themselves, in whichever card is holding them.
+    private func chipRow(_ card: AttachmentStackMetrics) -> some View {
+        AttachmentChipRow(
+            attachments: item.attachments.map {
+                // A sent attachment is by definition ready; the carried bytes are empty
+                // because the store is the source here, not the upload that finished in a
+                // draft that no longer exists.
+                PendingAttachment(
+                    id: $0.id,
+                    filename: $0.filename,
+                    state: .ready($0, thumbnail: Data())
+                )
+            },
+            showsSelection: false,
+            metrics: card,
+            thumbnail: { AttachmentStore().thumbnail(for: $0) },
+            onRemove: { _ in },
+            onDismissSelection: {},
+            isRemovable: false
+        )
     }
 
     /// The student's words, pinned right.

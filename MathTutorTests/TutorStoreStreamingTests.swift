@@ -58,6 +58,16 @@ extension SessionPersistence {
     }
 }
 
+extension AttachmentStore {
+    /// A throwaway, per-call directory, for exactly the reason `SessionPersistence.inMemory`
+    /// is one: a store test that sends a file writes a thumbnail, and it must not write it
+    /// into the user's real Application Support directory.
+    static var inTemporaryDirectory: AttachmentStore {
+        AttachmentStore(directoryURL: FileManager.default.temporaryDirectory
+            .appendingPathComponent("MathTutorTests-attachments-\(UUID().uuidString)"))
+    }
+}
+
 extension BackendConfiguration {
     /// "This store can reach a tutor", stated rather than arranged.
     ///
@@ -191,12 +201,14 @@ final class TutorStoreStreamingTests: XCTestCase {
     /// names them by id rather than carrying any bytes.
     func testASendWithAttachmentsCarriesThemOnTheMessageAndByIDOnTheTurn() async {
         let recorded = OSAllocatedUnfairLock<[TutorRequest]>(initialState: [])
+        let thumbnails = AttachmentStore.inTemporaryDirectory
         let store = TutorStore(
             service: ScriptedTutorService(
                 events: [.textDelta("ok"), .done],
                 onRequest: { request in recorded.withLock { $0.append(request) } }
             ),
             persistence: .inMemory,
+            attachmentStore: thumbnails,
             configuration: .stub
         )
         let uploaded = UploadedAttachment(
@@ -205,7 +217,6 @@ final class TutorStoreStreamingTests: XCTestCase {
             ),
             thumbnail: Data([0xFF, 0xD8, 0xFF])
         )
-        let sessionID = store.session.id
 
         await store.sendAndWait("is question 4 right?", attachments: [uploaded])
 
@@ -219,12 +230,10 @@ final class TutorStoreStreamingTests: XCTestCase {
             [uploaded.attachment.id],
             "The turn names the file the server already holds — ids, never bytes"
         )
-        // Written at *send* time rather than at upload time: an attachment the learner
-        // removed before sending must leave nothing behind on disk.
-        XCTAssertEqual(
-            AttachmentStore().thumbnail(for: uploaded.attachment.id), uploaded.thumbnail
-        )
-        AttachmentStore().deleteAll(for: sessionID)
+        // The send is what writes the thumbnail. This does not prove *when* relative to the
+        // upload — nothing here uploads — only that the store writes it and that a later
+        // read finds the same bytes, which is what a reopened thread's chips depend on.
+        XCTAssertEqual(thumbnails.thumbnail(for: uploaded.attachment.id), uploaded.thumbnail)
     }
 
     /// A photographed worksheet is a complete request, the same way a lassoed region
@@ -237,6 +246,7 @@ final class TutorStoreStreamingTests: XCTestCase {
                 onRequest: { request in recorded.withLock { $0.append(request) } }
             ),
             persistence: .inMemory,
+            attachmentStore: .inTemporaryDirectory,
             configuration: .stub
         )
         let uploaded = UploadedAttachment(
@@ -245,16 +255,65 @@ final class TutorStoreStreamingTests: XCTestCase {
             ),
             thumbnail: Data([0x01])
         )
-        let sessionID = store.session.id
 
-        await store.sendAndWait("   ", attachments: [uploaded])
+        XCTAssertTrue(await store.sendAndWait("   ", attachments: [uploaded]))
         XCTAssertEqual(recorded.withLock { $0 }.count, 1)
         XCTAssertEqual(store.session.messages.last(where: { $0.role == .learner })?.text, "")
 
         // And nothing at all is still nothing: no words, no files, no turn.
-        await store.sendAndWait("   ")
+        XCTAssertFalse(await store.sendAndWait("   "))
         XCTAssertEqual(recorded.withLock { $0 }.count, 1)
+    }
 
-        AttachmentStore().deleteAll(for: sessionID)
+    /// **The one that cost a learner their photo.** A send that arrives while the tutor is
+    /// still writing is declined, and it used to be declined silently: `BoardScreen` read
+    /// the `Void` return as acceptance and cleared the draft, so the upload was cancelled
+    /// and discarded for a turn that never existed. The `Bool` is what the caller keys the
+    /// whole of that on, and the note is what the learner is told.
+    func testASendDeclinedMidTurnReportsItAndSaysSo() async {
+        let store = TutorStore(
+            // No `.done`: the turn never finishes, so the store stays loading.
+            service: ScriptedTutorService(events: [.textDelta("Let me think")]),
+            persistence: .inMemory,
+            attachmentStore: .inTemporaryDirectory,
+            configuration: .stub
+        )
+        await store.sendAndWait("first")
+        XCTAssertTrue(store.isLoading, "the fixture has to leave a turn in flight for this test to mean anything")
+
+        let uploaded = UploadedAttachment(
+            attachment: MessageAttachment(
+                id: UUID(), filename: "photo.heic", kind: "image", pageCount: 1
+            ),
+            thumbnail: Data([0x01])
+        )
+        let before = store.session.messages.count
+
+        XCTAssertFalse(
+            store.send("second", attachments: [uploaded]),
+            "A declined send must say so, or the caller destroys a draft that was never sent"
+        )
+        XCTAssertEqual(store.session.messages.count, before, "nothing was appended")
+        XCTAssertEqual(
+            store.composerNote,
+            TutorStore.tutorIsStillAnswering,
+            "The tap has to leave a mark: the composer note is the slot for a send that never left the device"
+        )
+    }
+
+    /// The same hole in the other send. `evaluate` guards on `isEvaluating` and carries the
+    /// same attachments, so a silent decline there loses the same uploads.
+    func testAnEvaluateDeclinedMidEvaluationReportsItAndSaysSo() {
+        let store = TutorStore(
+            service: ScriptedTutorService(events: [.textDelta("Looking")]),
+            persistence: .inMemory,
+            attachmentStore: .inTemporaryDirectory,
+            configuration: .stub
+        )
+        // `evaluate` sets `isEvaluating` before it starts the turn, so the second call is
+        // declined without anything having to be awaited between the two.
+        XCTAssertTrue(store.evaluate(imageData: Data([1]), regionDescription: "the whole board"))
+        XCTAssertFalse(store.evaluate(imageData: Data([2]), regionDescription: "the whole board"))
+        XCTAssertEqual(store.composerNote, TutorStore.tutorIsStillAnswering)
     }
 }

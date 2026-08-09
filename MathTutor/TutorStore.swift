@@ -91,6 +91,10 @@ final class TutorStore: ObservableObject {
 
     let tutorService: any TutorService
     let persistence: SessionPersistence
+    /// Where a sent attachment's thumbnail goes. Injected for the reason
+    /// `persistence` is: a test that sent a file used to write into the real
+    /// Application Support directory, which is the user's own data.
+    let attachmentStore: AttachmentStore
     let keychain: KeychainStore
     /// `--ui-test-reset`. The switcher lists only the session in memory, so a UI
     /// test never sees — or opens — whatever real sessions are on the machine
@@ -111,6 +115,7 @@ final class TutorStore: ObservableObject {
     init(
         service: any TutorService = TutorServiceRouter(),
         persistence: SessionPersistence = SessionPersistence(),
+        attachmentStore: AttachmentStore = AttachmentStore(),
         keychain: KeychainStore = KeychainStore(),
         configuration: BackendConfiguration? = BackendConfiguration.load()
     ) {
@@ -131,6 +136,7 @@ final class TutorStore: ObservableObject {
         self.tutorService = service
         #endif
         self.persistence = persistence
+        self.attachmentStore = attachmentStore
         self.keychain = keychain
         // Runs on every launch, release included. Two accounts to clear and
         // neither is ever read now: the client-side OpenAI key from before the
@@ -197,9 +203,28 @@ final class TutorStore: ObservableObject {
     /// worksheet is a complete request, the same way a lassoed region already
     /// was — so the emptiness guard asks about the draft rather than about the
     /// text.
-    func send(_ text: String, attachments: [UploadedAttachment] = []) {
+    ///
+    /// **Returns whether the turn was accepted**, and this is load-bearing: the
+    /// caller clears the composer's draft — the words *and* the uploaded files —
+    /// on a `true` and on nothing else. It used to return `Void` and decline
+    /// silently, so a learner who tapped send while the tutor was still writing
+    /// had their photo cancelled and discarded for a turn that was never sent.
+    /// Reading `isLoading` at the call site instead would be the same decision
+    /// made twice; this is the method that owns it.
+    ///
+    /// The two refusals differ in who says so. A turn already in flight is the
+    /// composer's note — nothing was sent, nothing was consumed, and there is no
+    /// turn in the thread for a failure to be about. An unreachable tutor is
+    /// `ensureTutorAvailable`'s `errorMessage`, which the thread already draws.
+    @discardableResult
+    func send(_ text: String, attachments: [UploadedAttachment] = []) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty || !attachments.isEmpty, !isLoading, ensureTutorAvailable() else { return }
+        guard !trimmed.isEmpty || !attachments.isEmpty else { return false }
+        guard !isLoading else {
+            composerNote = Self.tutorIsStillAnswering
+            return false
+        }
+        guard ensureTutorAvailable() else { return false }
         session.messages.append(
             TutorMessage(role: .learner, text: trimmed, attachments: attachments.map(\.attachment))
         )
@@ -207,7 +232,13 @@ final class TutorStore: ObservableObject {
         session.lastSavedAt = .now
         persist()
         requestTutor(signal: nil, attachmentIDs: attachments.map(\.attachment.id))
+        return true
     }
+
+    /// Board 15's register for a declined send: what happened, and what to do
+    /// about it. No apology and no error code — the draft is still in the
+    /// composer, so trying again is one tap once the reply lands.
+    static let tutorIsStillAnswering = "The tutor is still answering. Send this when it's finished."
 
     /// Keeps the chips a reopened session draws.
     ///
@@ -218,9 +249,8 @@ final class TutorStore: ObservableObject {
     /// why they go to a file at all.
     private func saveThumbnails(for attachments: [UploadedAttachment]) {
         guard !attachments.isEmpty else { return }
-        let store = AttachmentStore()
         for uploaded in attachments {
-            store.save(uploaded.thumbnail, for: uploaded.attachment.id, in: session.id)
+            attachmentStore.save(uploaded.thumbnail, for: uploaded.attachment.id, in: session.id)
         }
     }
 
@@ -232,9 +262,11 @@ final class TutorStore: ObservableObject {
     /// Test-only: sends and then awaits the exact turn `send` just started,
     /// rather than a fixed-length poll — so a test fails on genuine hangs
     /// instead of racing an arbitrary timeout.
-    func sendAndWait(_ text: String, attachments: [UploadedAttachment] = []) async {
-        send(text, attachments: attachments)
+    @discardableResult
+    func sendAndWait(_ text: String, attachments: [UploadedAttachment] = []) async -> Bool {
+        let accepted = send(text, attachments: attachments)
         await activeRequestTask?.value
+        return accepted
     }
 
     /// Test-only: seeds the workspace directly, bypassing a network turn —
@@ -388,13 +420,22 @@ final class TutorStore: ObservableObject {
     /// carries both has to arrive as one message. Routing only the picture here
     /// and dropping the files is the "silently dropped" failure this whole path
     /// is built to avoid.
+    ///
+    /// **Returns whether the turn was accepted**, exactly as `send` does and for
+    /// exactly the same reason — see that method. A silent decline here would
+    /// cancel and discard the same uploads.
+    @discardableResult
     func evaluate(
         imageData: Data,
         regionDescription: String?,
         question: String? = nil,
         attachments: [UploadedAttachment] = []
-    ) {
-        guard !isEvaluating, ensureTutorAvailable() else { return }
+    ) -> Bool {
+        guard !isEvaluating else {
+            composerNote = Self.tutorIsStillAnswering
+            return false
+        }
+        guard ensureTutorAvailable() else { return false }
         isEvaluating = true
         evaluationText = nil
         evaluationMessageID = nil
@@ -427,6 +468,7 @@ final class TutorStore: ObservableObject {
         ) { [weak self] text in
             self?.evaluationText = text
         }
+        return true
     }
 
     /// A send that could not read the board, said above the composer.

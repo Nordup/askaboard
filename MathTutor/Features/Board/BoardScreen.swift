@@ -501,6 +501,14 @@ struct BoardScreen: View {
     /// six-page PDF is mid-upload must have it arrive with the turn rather than dropped —
     /// which is what `deliver` is for, and why the attachment branches are asynchronous
     /// while every send that carries no file stays exactly as synchronous as it was.
+    ///
+    /// **Nothing is consumed until the store says it took the turn.** The store declines a
+    /// send while a reply is still streaming, and it used to do so silently: the words were
+    /// already gone from the field, the uploads were cancelled and discarded, and no turn
+    /// appeared. So the draft, the marquee and the conversation axis all move on the
+    /// store's `Bool` and on nothing else — `uiState.beginConversation()` in particular,
+    /// because it is one-way and a failed first send would have replaced the greeting with
+    /// an empty thread there was no way back from.
     private func send() {
         // One turn at a time. See `isSendingTurn` — `ComposerAttachments.isSending` is not
         // this guard, and cannot be.
@@ -516,38 +524,47 @@ struct BoardScreen: View {
                 store.reportBoardCaptureFailure()
                 return
             }
-            composerText = ""
             deliver { ready in
-                store.evaluate(
+                guard store.evaluate(
                     imageData: evaluation.data,
                     regionDescription: evaluation.description,
                     question: typed.isEmpty ? nil : typed,
                     attachments: ready
-                )
+                ) else { return false }
                 uiState.clearBoardSelection()
+                accept()
                 return true
             }
         } else if !typed.isEmpty || !attachments.isEmpty {
-            composerText = ""
             deliver { ready in
                 // Every attachment failed to convert and there were no words with them:
                 // nothing is sent, and — the point of the `false` — nothing is cleared
                 // either. The failed chips and the sentence above the pill are the only
                 // account the learner has of what happened.
                 guard !typed.isEmpty || !ready.isEmpty else { return false }
-                store.send(typed, attachments: ready)
+                guard store.send(typed, attachments: ready) else { return false }
+                accept()
                 return true
             }
-        } else {
-            return
         }
+    }
+
+    /// What a taken turn costs the composer: the words go, and the panel stops being a
+    /// greeting. The files go too, in `deliver`, which is the only thing that knows whether
+    /// there were any.
+    ///
+    /// On the ordinary send — no attachments — this still runs on the same frame as the tap,
+    /// because `deliver` calls its closure synchronously when there is nothing to wait for.
+    private func accept() {
+        composerText = ""
         uiState.beginConversation()
     }
 
     /// Hands the turn to the store once everything on the draft has finished converting.
     ///
-    /// - Parameter turn: Sends it, and reports whether it consumed the draft. Only a `true`
-    ///   clears the chips.
+    /// - Parameter turn: Sends it, and reports whether the store **took** it. Only a `true`
+    ///   clears the chips — a declined turn leaves the draft, the uploads and the note above
+    ///   the pill exactly as they were, which is the whole point.
     private func deliver(_ turn: @escaping @MainActor ([UploadedAttachment]) -> Bool) {
         // Nothing attached is the overwhelmingly common send, and it stays exactly what it
         // was: no task, no hop, no window at all for a second tap to land in.

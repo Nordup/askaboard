@@ -188,10 +188,11 @@ struct TutorPanel: View {
     /// puts its left edge on the panel's own 18pt inset), and drawn inside
     /// `TutorPanelSurface` so the panel's radius clips it.
     ///
-    /// The top padding is the anchor, derived rather than measured: the pill's top is the
-    /// surface floor less the composer's slot, the card's bottom sits `gapAbovePill` above
-    /// that, and the card is `AttachMenu.height` tall. Clamped at 0 so a panel too short to
-    /// hold the card pins it to the top rather than pushing it out through the surface.
+    /// The top padding is the anchor, and it is `ComposerSlotMetrics.attachMenuTop(in:over:)`
+    /// rather than arithmetic spelled out here — because it is the same arithmetic the
+    /// reading column needs, and because inline it was untestable and got the composer's
+    /// height wrong. It is measured over the composer **with the card it is drawing**: a
+    /// menu anchored on the resting pill covers the chips the learner just made.
     @ViewBuilder
     private func attachMenu(in size: CGSize) -> some View {
         Color.clear
@@ -203,7 +204,14 @@ struct TutorPanel: View {
             isAttachMenuOpen = false
             pickerSource = AttachmentSource(choice)
         }
-        .padding(.top, max(0, size.height - slot.band - AttachMenu.gapAbovePill - AttachMenu.height))
+        .padding(.top, slot.attachMenuTop(in: size.height, over: composerHeight))
+    }
+
+    /// The composer's height right now, card and all — `Composer.card` is the one place that
+    /// decides which card is drawn, so this asks the composer rather than re-deriving it
+    /// from `attachments` and `composerSelection` a second time.
+    private var composerHeight: CGFloat {
+        ComposerMetrics.for(.panel, width: contentWidth).height(showing: composer.card)
     }
 
     /// Both of the panel's own menus, put away. Anything that takes the learner elsewhere —
@@ -315,7 +323,9 @@ struct TutorPanel: View {
     /// intentional."* `Composer` still decides the button's presence by availability, so a
     /// launch that cannot reach dictation gets the composer without it rather than a control
     /// that does nothing.
-    private var composer: some View {
+    /// Typed as `Composer` rather than `some View` so `attachMenu(in:)` can read `card` off
+    /// it. Which card is drawn is one decision and this is where it is made.
+    private var composer: Composer {
         Composer(
             scale: .panel,
             width: contentWidth,
@@ -333,12 +343,20 @@ struct TutorPanel: View {
             canAttach: !attachments.isFull && !attachments.isSending,
             onVoice: dictation.voiceHandler(text: $text),
             dictation: dictation.composerDictation,
-            // One slot, three writers, newest wins. The server writes its
-            // refusals for a learner — *"That file is too large, try a photo of
-            // one page at a time"* — and this is the lane they are written for:
-            // the chip's own label is 84 points wide and would show three words
-            // of it. Ahead of the other two because it is the one that names
-            // something still on screen and still fixable.
+            // One slot, three writers, **fixed priority — not recency.** A failed
+            // attachment is first because it is the only one of the three that
+            // names something still sitting in the composer and still fixable:
+            // the chip is on screen, and removing or replacing that file is the
+            // learner's next move. The other two describe something that has
+            // already happened and cannot be acted on from here. The cost is
+            // real and accepted — a board-capture failure a moment ago is held
+            // behind a refusal from a minute ago — and the chip beside the note
+            // is what says which file it is about.
+            //
+            // The server writes those refusals for a learner ("That file is too
+            // large, try a photo of one page at a time"), and this is the lane
+            // they are written for: the chip's own label is 84 points wide and
+            // would show three words of it.
             note: attachments.failureNote ?? store.composerNote ?? dictation.noteText,
             onDismissSelection: actions.dismissSelection,
             onToggleSelection: actions.toggleSelection,

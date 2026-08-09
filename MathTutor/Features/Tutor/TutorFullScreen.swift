@@ -174,7 +174,9 @@ struct TutorFullScreen: View {
     /// composer passes `selection: .unavailable` when nothing is attachable — board 07 draws
     /// no marquee in the wide pill — and the `+` is beside it either way. There is one
     /// attach control in the product and it is not a panel-scale affordance.
-    private var composer: some View {
+    /// Typed as `Composer` rather than `some View` so `attachMenu` can read `card` off it —
+    /// see `TutorPanel.composer`.
+    private var composer: Composer {
         Composer(
             scale: .fullScreen,
             width: column.width,
@@ -186,7 +188,7 @@ struct TutorFullScreen: View {
             canAttach: !attachments.isFull && !attachments.isSending,
             onVoice: dictation.voiceHandler(text: $text),
             dictation: dictation.composerDictation,
-            // Same slot and same precedence as the panel's — see `TutorPanel`.
+            // Same slot and the same fixed priority as the panel's — see `TutorPanel`.
             note: attachments.failureNote ?? store.composerNote ?? dictation.noteText,
             onDismissSelection: actions.dismissSelection,
             attachments: attachments.pending,
@@ -197,8 +199,11 @@ struct TutorFullScreen: View {
     /// Board 16's card, anchored the way the panel anchors it: bottom edge `gapAbovePill`
     /// clear of the pill's top, on the composer's own leading edge.
     ///
-    /// The pill's top is `column.bottom − slot.band` — the same line `body` offsets the
-    /// composer slot to — so the card's own top is that, less the gap, less its height.
+    /// The same anchor the panel uses — `ComposerSlotMetrics.attachMenuTop(in:over:)` — with
+    /// the content band's floor as the surface, since that is the line the composer slot is
+    /// offset to and this surface has no underhang. Measured over the composer **with the
+    /// card it is drawing**, or the menu lands on top of the chips.
+    ///
     /// There is no surface radius to clip it here and no session menu to be an alternative
     /// to; the dismiss layer is the whole window rather than the panel, because that is
     /// what this surface covers.
@@ -215,7 +220,11 @@ struct TutorFullScreen: View {
         }
         .offset(
             x: column.x,
-            y: column.bottom - slot.band - AttachMenu.gapAbovePill - AttachMenu.height
+            y: slot.attachMenuTop(
+                in: column.bottom,
+                over: ComposerMetrics.for(.fullScreen, width: column.width)
+                    .height(showing: composer.card)
+            )
         )
     }
 }

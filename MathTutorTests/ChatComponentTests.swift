@@ -124,6 +124,10 @@ final class ChatComponentTests: XCTestCase {
             .composerChips(.panel, width: DS.Container.panelContent),
             .composerChips(.fullScreen, width: DS.Container.column),
             .sentMessage,
+            // `sentChips` is deliberately absent and must stay absent: it is the one
+            // instance with *no shape on top*, so there are no curves for it to extend
+            // past and its card is exactly its visible band. See
+            // `testTheSentChipsCardHasNothingHiddenAndNothingReserved`.
         ]
         for stack in cards {
             XCTAssertGreaterThanOrEqual(stack.cardHeight, stack.derivedCardHeight)
@@ -1296,6 +1300,62 @@ final class ChatComponentTests: XCTestCase {
         XCTAssertEqual(column.threadHeight, 976)
     }
 
+    // MARK: - The attach menu's anchor
+
+    /// Board 16 puts the menu's bottom edge `gapAbovePill` clear of the pill's top, and the
+    /// pill's top moves: the card grows the composer **upward** out of the slot. Anchored on
+    /// the slot's own band — which is the *resting* pill, deliberately, so the fade and the
+    /// thread's clearance never move — the menu is drawn over the chips the learner just
+    /// made. With one file in the panel that is 44 of the card's 52 points covered, on the
+    /// very tap that adds the second file.
+    func testTheAttachMenuClearsWhicheverCardTheComposerIsDrawing() {
+        let slot = ComposerSlotMetrics.panel(surfaceWidth: DS.Container.panel)
+        let composer = ComposerMetrics.for(.panel, width: DS.Container.panelContent)
+        // The panel the boards were drawn at.
+        let surface: CGFloat = 936
+
+        // Resting: the card's bottom lands exactly `gapAbovePill` above the pill's top,
+        // which is the surface floor less the slot's whole band.
+        let resting = slot.attachMenuTop(in: surface, over: composer.height(showing: .none))
+        XCTAssertEqual(
+            resting + AttachMenu.height + AttachMenu.gapAbovePill,
+            surface - slot.band
+        )
+
+        // And with a card behind the pill the menu rises by exactly that card's visible
+        // band — 38 for the lassoed region, 52 for the chips — rather than staying put.
+        for card in [ComposerCard.label, .chips] {
+            XCTAssertEqual(
+                slot.attachMenuTop(in: surface, over: composer.height(showing: card)),
+                resting - composer.attachment(showing: card).visibleBand,
+                "\(card)"
+            )
+        }
+        XCTAssertEqual(resting - slot.attachMenuTop(in: surface, over: composer.height(showing: .chips)), 52)
+
+        // A surface too short to hold the card pins it to the top rather than pushing it
+        // out through the surface's own edge.
+        XCTAssertEqual(slot.attachMenuTop(in: 100, over: composer.height(showing: .chips)), 0)
+    }
+
+    /// The reading column asks the same question of the same function, with the content
+    /// band's floor as its surface — it has no underhang, so the pill's bottom *is* that
+    /// floor.
+    func testTheReadingColumnsAttachMenuUsesTheSameAnchor() {
+        let column = TutorColumnMetrics(layout: .reference)
+        let slot = ComposerSlotMetrics.fullScreen(columnWidth: column.width)
+        let composer = ComposerMetrics.for(.fullScreen, width: column.width)
+
+        for card in ComposerCard.allCases {
+            XCTAssertEqual(
+                slot.attachMenuTop(in: column.bottom, over: composer.height(showing: card))
+                    + AttachMenu.height + AttachMenu.gapAbovePill,
+                column.composerTop(showing: card),
+                "The menu's bottom edge is the composer's top, less the gap — \(card)"
+            )
+        }
+    }
+
     // MARK: - Degenerate widths
 
     /// Nothing here is a size the app can reach — they are the sizes a bug reaches. The
@@ -1472,6 +1532,37 @@ final class ChatComponentTests: XCTestCase {
         XCTAssertEqual(full.cardPaddingLeading, 30)
         XCTAssertEqual(full.cardPaddingTrailing, 0)
         XCTAssertEqual(full.labelRowWidth, 710)
+    }
+
+    /// A sent turn that is files and no words has nothing in front of the card, so the band
+    /// the composer's card hides behind the pill would be *drawn* — a square-cornered tinted
+    /// rectangle under the chips, over a pill's height of empty row. `sentChips` takes the
+    /// overlap to zero and reserves no body; the caller rounds all four corners.
+    func testTheSentChipsCardHasNothingHiddenAndNothingReserved() {
+        for scale in ChatScale.allCases {
+            let width = scale.contentWidth
+            let composer = AttachmentStackMetrics.composerChips(scale, width: width)
+            let sent = AttachmentStackMetrics.sentChips(scale, width: width)
+            let context = scale.rawValue
+
+            // Everything that describes the chips themselves is unchanged: it is the same
+            // card the learner was just looking at in the composer.
+            XCTAssertEqual(sent.visibleBand, composer.visibleBand, context)
+            XCTAssertEqual(sent.width, composer.width, context)
+            XCTAssertEqual(sent.cardPaddingLeading, composer.cardPaddingLeading, context)
+            XCTAssertEqual(sent.chipHeight, composer.chipHeight, context)
+            XCTAssertEqual(sent.bodyTopRadius, composer.bodyTopRadius, context)
+
+            // And the two that make it a message rather than a back layer.
+            XCTAssertEqual(sent.cardHeight, sent.visibleBand, context)
+            XCTAssertEqual(sent.overlap, 0, "nothing is hidden, because nothing is in front — \(context)")
+            XCTAssertEqual(sent.bodyHeight, 0, context)
+            XCTAssertEqual(sent.totalHeight, sent.visibleBand, "no dead row under the card — \(context)")
+            XCTAssertGreaterThan(
+                composer.totalHeight, sent.totalHeight,
+                "the composer's instance reserves a pill and this one must not — \(context)"
+            )
+        }
     }
 
     func testTheChipsCardIsEdgeToEdgeWithThePillItIsBehind() {

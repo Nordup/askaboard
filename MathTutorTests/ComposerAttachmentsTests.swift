@@ -194,6 +194,23 @@ final class ComposerAttachmentsTests: XCTestCase {
         XCTAssertEqual(sent.count, 2)
         XCTAssertEqual(Set(sent.map(\.attachment.filename)), ["slow.pdf", "fast.pdf"])
     }
+
+    // MARK: - The menu row to the picker
+
+    /// Three cases, one line each, and nothing in the type system stops two of them being
+    /// swapped: `AttachmentSource(.camera)` returning `.files` opens the wrong picker with
+    /// the whole suite green. The map is exhaustive on `AttachMenuChoice`, so a fourth menu
+    /// row fails to compile here rather than silently opening a photo library.
+    func testEveryMenuRowOpensItsOwnPicker() {
+        XCTAssertEqual(AttachmentSource(.photoLibrary), .photoLibrary)
+        XCTAssertEqual(AttachmentSource(.camera), .camera)
+        XCTAssertEqual(AttachmentSource(.files), .files)
+        XCTAssertEqual(
+            Set(AttachMenuChoice.allCases.map { AttachmentSource($0) }).count,
+            AttachMenuChoice.allCases.count,
+            "Two rows mapping to one picker would leave a row that never opens anything"
+        )
+    }
 }
 
 /// Lets a test hold an injected upload closure open until it explicitly says

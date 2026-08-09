@@ -346,6 +346,29 @@ struct ComposerSlotMetrics: Equatable, Sendable {
             underhang: 0
         )
     }
+
+    /// Where board 16's attach menu's **top** edge lands, measured from the top of a surface
+    /// `surfaceHeight` tall.
+    ///
+    /// The menu hangs *above* the composer — the composer sits on the surface's floor, so a
+    /// menu dropping out of it would leave the surface — with its bottom edge
+    /// `AttachMenu.gapAbovePill` clear of the pill's top. That is the whole of board 16's
+    /// `744 + 156 + 8 = 908`, derived from the surface the app is actually in rather than
+    /// read off the board.
+    ///
+    /// **`composerHeight` is the composer's height with whatever card it is currently
+    /// drawing** — `ComposerMetrics.height(showing:)` — and not this slot's own
+    /// `composerHeight`. The slot measures the *resting* pill on purpose, because the fade
+    /// and the thread's clearance must not move when a card appears; but the card grows the
+    /// composer **upward** out of the band, so a menu anchored on `band` is drawn over the
+    /// chips the learner has just made. With one file attached in the panel that is 44 of
+    /// the card's 52 points covered, on the tap that adds the second file.
+    ///
+    /// Clamped at 0, so a surface too short to hold the card pins it to the top rather than
+    /// pushing it out through the surface's own edge.
+    func attachMenuTop(in surfaceHeight: CGFloat, over composerHeight: CGFloat) -> CGFloat {
+        max(0, surfaceHeight - composerHeight - underhang - AttachMenu.gapAbovePill - AttachMenu.height)
+    }
 }
 
 /// The composer's slot as paint: the fade, then whatever occupies the slot, bottom-anchored.

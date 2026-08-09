@@ -33,13 +33,18 @@ struct AttachmentStackMetrics: Equatable, Sendable {
     let width: CGFloat
     /// How much of the card is left uncovered — and exactly the height of its label row.
     let visibleBand: CGFloat
-    /// The pill or bubble that sits in front.
-    let bodyHeight: CGFloat
+    /// The pill or bubble that sits in front. **Zero** in the one instance that has nothing
+    /// in front of it — see `sentChips`.
+    ///
+    /// `private(set)`, like `ComposerMetrics.width`, so the only thing that can write it is
+    /// a factory in this file: a caller may pick an instance, never assemble one.
+    private(set) var bodyHeight: CGFloat
     /// The front shape's top corner radius. A capsule's is half its height; a bubble's is
     /// `--radius-bubble`.
     let bodyTopRadius: CGFloat
-    /// As drawn in the design, which is not always `derivedCardHeight`.
-    let cardHeight: CGFloat
+    /// As drawn in the design, which is not always `derivedCardHeight`. `private(set)` for
+    /// the same reason `bodyHeight` is.
+    private(set) var cardHeight: CGFloat
     /// Card padding. The label row is inset asymmetrically so the dismiss glyph sits
     /// closer to the edge than the label does.
     let cardPaddingLeading: CGFloat
@@ -268,6 +273,32 @@ extension AttachmentStackMetrics {
             labelStyle: chip.labelStyle,
             dismissGlyphSize: chip.dismissSize
         )
+    }
+
+    /// The chips card as a **message of its own** — a turn that is files and no words.
+    ///
+    /// **Undrawn.** Board 16 draws the chips card in the composer only, where
+    /// `bodyTopRadius` of it is deliberately hidden behind the pill in front (see
+    /// `AttachmentStack`, and the law at the top of this file). A sent turn with no bubble
+    /// has nothing in front of it, so drawing the composer's card there paints that hidden
+    /// band: a square-cornered tinted rectangle hanging under the chips, over a pill's
+    /// height of empty row. Photographing a worksheet and sending it wordlessly is the
+    /// camera row's whole purpose, so that is not a state the product can ship in.
+    ///
+    /// So the overlap goes to zero — the card is exactly its own visible band, and there is
+    /// no body for the stack to reserve. The caller rounds all four corners rather than only
+    /// the top two, because both pairs are now edges rather than tucks. Everything else is
+    /// the composer's own card, at the same scale and the same width.
+    ///
+    /// **This wants a Paper pass.** The radius here is the composer card's own
+    /// `bodyTopRadius` — the curve the learner was just looking at in the composer, carried
+    /// to all four corners — which is a defensible reading of an undrawn state and not a
+    /// designed one.
+    static func sentChips(_ scale: ChatScale, width: CGFloat) -> Self {
+        var metrics = composerChips(scale, width: width)
+        metrics.bodyHeight = 0
+        metrics.cardHeight = metrics.visibleBand
+        return metrics
     }
 
     /// A sent message carrying a selection (screen 08).
