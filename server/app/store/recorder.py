@@ -325,6 +325,10 @@ class Recorder:
         by_id = {row.id: row for row in rows}
         return [by_id[wanted] for wanted in ids if wanted in by_id]
 
+    async def blob(self, key: str) -> bytes:
+        """Read a stored blob back. The store is the same one `put` writes to."""
+        return await self._blobs.get(key)
+
     async def spend_today(self) -> float:
         midnight = datetime.now(timezone.utc).replace(
             hour=0, minute=0, second=0, microsecond=0

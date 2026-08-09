@@ -16,8 +16,9 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.attachments.parts import UploadPart
 from app.auth import require_device_token
-from app.config import MODEL_ALLOWLIST, SOLE_LEARNER_ID, get_settings
+from app.config import MAX_ATTACHMENTS_PER_TURN, MODEL_ALLOWLIST, SOLE_LEARNER_ID, get_settings
 from app.learner.mastery import snapshot
 from app.memory.dispatch import memory_handler
 from app.memory.profile import current_profile
@@ -89,6 +90,21 @@ async def _memory_sections(db: AsyncSession) -> dict[str, str | None]:
         "learner_state": (await snapshot(db, SOLE_LEARNER_ID)) or None,
         "recent_digest": digest,
     }
+
+
+def _upload_kind(row) -> str:
+    """The rung this upload came off, recovered from what it converted to.
+
+    Stored as a content type rather than as a kind because the content type is
+    what the provider needs; the rung is derivable from it, and one column is
+    better than two that can disagree.
+    """
+    content_type = row.converted_content_type or row.content_type
+    if content_type.startswith("image/"):
+        return "image"
+    if content_type == "text/plain":
+        return "text"
+    return "pdf"
 
 
 def _describe_error(error: Exception) -> str:
@@ -189,6 +205,16 @@ class TurnRequest(BaseModel):
     #: (learner ink clusters), this is the model's own semantic output, so it
     #: goes into context verbatim so the model can see what it already drew.
     board_scene: str | None = Field(default=None, max_length=MAX_SCENE_CHARS)
+    #: Files the learner attached in the composer, uploaded ahead of this turn
+    #: through `POST /v1/attachments`. Ids rather than bytes: conversion has
+    #: already happened, the body stays small enough to record verbatim, and a
+    #: retry does not re-upload. See `app/api/attachments.py`.
+    #:
+    #: The cap lives on the field rather than in the handler so a device that
+    #: sends six is refused before anything is loaded, and so the recorded
+    #: request body can never contain more than the tutor was ever going to
+    #: read.
+    attachment_ids: list[uuid.UUID] = Field(default_factory=list, max_length=MAX_ATTACHMENTS_PER_TURN)
     model: str
     reasoning_effort: str
 
@@ -313,6 +339,29 @@ async def create_turn(
 
     image = base64.b64decode(body.image_base64) if body.image_base64 else None
     board = base64.b64decode(body.board_overview_base64) if body.board_overview_base64 else None
+
+    # Loaded before the stream opens, because a missing attachment is a
+    # transport-level refusal — the learner's file never made it — rather than
+    # something to report mid-turn once they have already seen the tutor start
+    # to answer.
+    upload_rows = await recorder.load_uploads(
+        session_id=body.session_id, ids=body.attachment_ids
+    )
+    if len(upload_rows) != len(body.attachment_ids):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "One of those attachments is not on this session.",
+        )
+    uploads = [
+        UploadPart(
+            filename=row.filename or "attachment",
+            kind=_upload_kind(row),
+            page_count=row.page_count or 1,
+            content_type=row.converted_content_type or row.content_type,
+            data=await recorder.blob(row.converted_blob_key or row.blob_key),
+        )
+        for row in upload_rows
+    ]
 
     # Whether the board differs from the one this session last sent.
     #
@@ -496,6 +545,7 @@ async def create_turn(
                 board_overview=board, board_manifest=body.board_manifest,
                 board_scene=body.board_scene,
                 board_changed=board_changed,
+                uploads=uploads,
                 **sections,
             )
             request_body["input"] = bundle.input

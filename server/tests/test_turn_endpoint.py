@@ -17,6 +17,7 @@ from app.main import create_app
 from app.store.models import Message, Session, Turn
 from app.tutor.events import StatusEvent
 from app.tutor.loop import TurnResult
+from tests.conftest import requires_db
 from tests.fixtures.sse import (
     TEXT_ONLY_TURN, TOOL_CALL_FOLLOW_UP, TOOL_CALL_TURN, sse_stream,
 )
@@ -704,3 +705,144 @@ async def test_a_cancel_scope_disconnect_still_leaves_the_turn_not_running(
         assert diagnostics["events_sent"] >= 1
         assert diagnostics["elapsed_ms"] >= 0
         assert "provider_events" in diagnostics
+
+
+def test_turn_request_accepts_attachment_ids():
+    request = TurnRequest(
+        turn_id=uuid.uuid4(),
+        session_id=uuid.uuid4(),
+        text="here's my homework",
+        model="gpt-5.6-luna",
+        reasoning_effort="high",
+        attachment_ids=[uuid.uuid4()],
+    )
+    assert len(request.attachment_ids) == 1
+
+
+def test_turn_request_defaults_attachment_ids_to_empty():
+    """Every existing caller and fixture predates this field."""
+    request = TurnRequest(
+        turn_id=uuid.uuid4(), session_id=uuid.uuid4(), text="hi",
+        model="gpt-5.6-luna", reasoning_effort="high",
+    )
+    assert request.attachment_ids == []
+
+
+def test_turn_request_rejects_more_attachments_than_the_cap():
+    from pydantic import ValidationError
+
+    from app.config import MAX_ATTACHMENTS_PER_TURN
+
+    with pytest.raises(ValidationError):
+        TurnRequest(
+            turn_id=uuid.uuid4(), session_id=uuid.uuid4(), text="hi",
+            model="gpt-5.6-luna", reasoning_effort="high",
+            attachment_ids=[uuid.uuid4() for _ in range(MAX_ATTACHMENTS_PER_TURN + 1)],
+        )
+
+
+@requires_db
+async def test_a_turn_naming_a_foreign_attachment_is_refused(db_app, db_factory, tmp_path):
+    """An attachment id is a capability. This names a *real* upload that
+    belongs to a different session — not merely a random uuid, which would
+    pass this test even if `load_uploads`'s session filter were missing
+    entirely. The learner must never be able to reach another session's
+    files by naming a uuid they happen to hold."""
+    from app.attachments.convert import Converted
+    from app.attachments.kinds import Kind
+    from app.store.blobs import LocalBlobStore
+    from app.store.recorder import Recorder
+
+    mine = Session(model="gpt-5.6-luna", reasoning_effort="high")
+    theirs = Session(model="gpt-5.6-luna", reasoning_effort="high")
+    async with db_factory() as db:
+        db.add_all([mine, theirs])
+        await db.commit()
+
+    recorder = Recorder(db_factory, LocalBlobStore(tmp_path))
+    converted = Converted(
+        kind=Kind.IMAGE, data=b"jpeg-bytes", text=None,
+        content_type="image/jpeg", page_count=1, thumbnail=b"thumb",
+    )
+    foreign_upload_id = await recorder.record_upload(
+        session_id=theirs.id, filename="private.png",
+        converted=converted, original=b"original-png-bytes",
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/v1/turn",
+            headers=AUTH,
+            json=_payload(session_id=str(mine.id), attachment_ids=[str(foreign_upload_id)]),
+        )
+
+    assert response.status_code == 400
+
+
+@requires_db
+async def test_a_turn_naming_an_unknown_attachment_is_refused(db_app):
+    """The same refusal for the simpler case: an id that names no row at
+    all, not just one that belongs to someone else."""
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/v1/turn",
+            headers=AUTH,
+            json=_payload(attachment_ids=[str(uuid.uuid4())]),
+        )
+
+    assert response.status_code == 400
+
+
+@respx.mock
+async def test_a_turn_naming_a_valid_attachment_includes_it_in_the_prompt(
+    db_app, db_factory, tmp_path
+):
+    """The happy path: an upload that really is on this session becomes a
+    content part the model sees, appended after the board images (pinned by
+    a dedicated test on `assemble_context` itself — this only proves the
+    turn handler wires the loaded upload through to the provider call)."""
+    from app.attachments.convert import Converted
+    from app.attachments.kinds import Kind
+    from app.store.recorder import Recorder
+
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        return_value=Response(200, headers={"Content-Type": "text/event-stream"},
+                              content=sse_stream(*TEXT_ONLY_TURN))
+    )
+
+    session_id = uuid.uuid4()
+    async with db_factory() as db:
+        db.add(Session(id=session_id, model="gpt-5.6-luna", reasoning_effort="high"))
+        await db.commit()
+
+    from app.api.turn import get_recorder
+    recorder = db_app.dependency_overrides[get_recorder]()
+    assert isinstance(recorder, Recorder)
+    converted = Converted(
+        kind=Kind.TEXT, data=None, text="2 + 2 = ?", content_type="text/plain",
+        page_count=1, thumbnail=b"thumb",
+    )
+    upload_id = await recorder.record_upload(
+        session_id=session_id, filename="homework.txt",
+        converted=converted, original=b"2 + 2 = ?",
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        async with client.stream(
+            "POST", "/v1/turn",
+            json=_payload(session_id=str(session_id), attachment_ids=[str(upload_id)]),
+            headers=AUTH,
+        ) as r:
+            assert r.status_code == 200
+            await _collect(r)
+
+    body = json.loads(route.calls[0].request.content)
+    content = body["input"][1]["content"]
+    texts = [part["text"] for part in content if part.get("type") == "input_text"]
+    assert any("homework.txt" in text and "2 + 2 = ?" in text for text in texts)
