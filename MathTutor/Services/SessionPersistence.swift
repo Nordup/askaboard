@@ -87,9 +87,11 @@ struct SessionPersistence {
         writeIndex(loadIndex().opened(id))
     }
 
-    /// Forgets a session entirely — its file and its index entry.
+    /// Forgets a session entirely — its file, its index entry, and the
+    /// thumbnails of anything the learner attached to it.
     func delete(id: UUID) {
         try? FileManager.default.removeItem(at: fileURL(for: id))
+        AttachmentStore().deleteAll(for: id)
         writeIndex(loadIndex().removing(id: id))
     }
 

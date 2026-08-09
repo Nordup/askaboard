@@ -100,13 +100,26 @@ struct TutorMessage: Identifiable, Codable, Sendable, Equatable {
     var text: String
     let createdAt: Date
     var signal: LearningSignal?
+    /// Files sent with this turn. Empty for every message that predates the
+    /// composer's attach button, which is what the default in `init` and the
+    /// decoder's own defaulting are for — a session already on disk was
+    /// written without this key.
+    var attachments: [MessageAttachment] = []
 
-    init(id: UUID = UUID(), role: MessageRole, text: String, createdAt: Date = .now, signal: LearningSignal? = nil) {
+    init(
+        id: UUID = UUID(),
+        role: MessageRole,
+        text: String,
+        createdAt: Date = .now,
+        signal: LearningSignal? = nil,
+        attachments: [MessageAttachment] = []
+    ) {
         self.id = id
         self.role = role
         self.text = text
         self.createdAt = createdAt
         self.signal = signal
+        self.attachments = attachments
     }
 }
 
