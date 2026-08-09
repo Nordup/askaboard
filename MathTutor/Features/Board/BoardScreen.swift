@@ -122,7 +122,8 @@ struct BoardScreen: View {
                         leading: measuredLayout.safeAreaLeading,
                         bottom: measuredLayout.safeAreaBottom,
                         trailing: measuredLayout.safeAreaTrailing
-                    )
+                    ),
+                    keyboardInset: measuredLayout.keyboardInset
                 )
             )
         }
@@ -145,6 +146,13 @@ struct BoardScreen: View {
     /// silently — correct today, since nothing in this function's body reaches for the
     /// property, but a later edit that added such a reference would recurse `layout` into
     /// itself with no compiler complaint, because both spellings type-check.
+    ///
+    /// **Every input is carried, including the ones this function does not care
+    /// about.** It rebuilds the value rather than mutating one field of it, so
+    /// anything left out of this initializer is silently reset to a default for
+    /// the whole screen below — which is exactly what happened to
+    /// `keyboardInset` the first time: measured correctly at the root, dropped
+    /// here, and the composer spent the fix still sitting under the keyboard.
     private func resized(_ base: ScreenLayout) -> ScreenLayout {
         guard base.maximumPanelWidth >= ScreenLayout.minimumPanelWidth else { return base }
         return ScreenLayout(
@@ -155,7 +163,8 @@ struct BoardScreen: View {
                 bottom: base.safeAreaBottom,
                 trailing: base.safeAreaTrailing
             ),
-            panelWidth: base.resolvingPanelWidth(previewPanelWidth ?? uiState.panelWidth)
+            panelWidth: base.resolvingPanelWidth(previewPanelWidth ?? uiState.panelWidth),
+            keyboardInset: base.keyboardInset
         )
     }
 
@@ -230,13 +239,17 @@ struct BoardScreen: View {
             // the canvas the rest of the time.
             if uiState.selection.capturesBoardDrags {
                 BoardSelectionMarquee(
-                    attachedRegion: uiState.selection.region,
+                    // Back through the mapping the drag came in on: the region is
+                    // kept in the drawing's coordinates, and this is the one place
+                    // that needs it in the view's. The mark then follows the ink it
+                    // was drawn around through anything that moves the board.
+                    attachedRegion: uiState.selection.region.flatMap(capture.viewRect(forDrawingRect:)),
                     // An explicit closure rather than the bound method, for the
                     // reason `resizeHandle`'s `set:` spells out at length: a
                     // `@MainActor`-isolated method reference passed straight into
                     // a one-argument closure parameter is what crashes
                     // swift-frontend during IRGen on this toolchain.
-                    onSelect: { uiState.attachBoardSelection(region: $0) }
+                    onSelect: { attachBoardSelection(viewRegion: $0) }
                 )
             }
         }
@@ -438,13 +451,27 @@ struct BoardScreen: View {
     /// my work on the whole board." delivered in its place and their own question silently
     /// dropped — so `evaluate` now takes the question, which is a parameter rather than the
     /// restructuring it was assumed to need.
+    ///
+    /// **A send with a selection is never quietly downgraded to one without.** The
+    /// two branches used to be one condition — `capturesBoardDrags` *and* an image
+    /// — so a capture that came back nil fell through to the text-only branch and
+    /// delivered the question with no picture, no error, and the selection still
+    /// sitting in the composer as though it had never been consumed. The learner
+    /// had pointed at their working and been answered as if they hadn't. Now the
+    /// attachment decides the branch and only the capture can fail inside it, out
+    /// loud, with the text and the selection both left where they were.
     private func send() {
         // Sending ends the session outright, in whichever phase it is in: the words already in
         // the field are the ones being sent, and a transcription still in flight would land in
         // an emptied composer a second later.
         dictation.stop()
+        store.clearComposerNote()
         let typed = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if uiState.selection.capturesBoardDrags, let evaluation = boardEvaluation() {
+        if uiState.selection.capturesBoardDrags {
+            guard let evaluation = boardEvaluation() else {
+                store.reportBoardCaptureFailure()
+                return
+            }
             composerText = ""
             store.evaluate(
                 imageData: evaluation.data,
@@ -469,7 +496,7 @@ struct BoardScreen: View {
     /// before it could pick a region, so the zero-effort path is unchanged.
     private func boardEvaluation() -> (data: Data, description: String)? {
         if let region = uiState.selection.region {
-            guard let data = capture.snapshotData(region: region) else { return nil }
+            guard let data = capture.snapshotData(drawingRegion: region) else { return nil }
             // No "my" and no "they": the label is spliced into a third-person policy
             // line on the server, never into the learner's own message.
             return (data, "the area selected on the board")
@@ -527,5 +554,17 @@ struct BoardScreen: View {
     private func toggleBoardSelection() {
         guard uiState.selection.capturesBoardDrags || capture.hasInk else { return }
         uiState.toggleBoardSelection()
+    }
+
+    /// A finished marquee drag, stored against the learner's ink rather than
+    /// against the window.
+    ///
+    /// The gesture can only report view coordinates — it is a drag on a view —
+    /// so this is where they stop being view coordinates, at the one boundary
+    /// that has the canvas in reach. A drag with no canvas under it leaves the
+    /// marquee armed rather than attaching a rectangle measured against nothing.
+    private func attachBoardSelection(viewRegion: CGRect) {
+        guard let region = capture.drawingRect(forViewRect: viewRegion) else { return }
+        uiState.attachBoardSelection(region: region)
     }
 }

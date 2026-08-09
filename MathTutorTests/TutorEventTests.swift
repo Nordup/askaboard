@@ -34,4 +34,20 @@ final class TutorEventTests: XCTestCase {
         let event = TutorEvent.decode(from: #"data: {"type":"error","message":"rate limited","retryable":true}"#)
         XCTAssertEqual(event, .failure(message: "rate limited", retryable: true))
     }
+
+    /// The phase the server sends while an `update_board` call's arguments are
+    /// streaming — the longest stretch of a drawing turn, and the one the
+    /// thread used to have no way to describe.
+    func testDecodesTheDrawingPhase() {
+        let event = TutorEvent.decode(from: #"data: {"type":"status","phase":"drawing","detail":null}"#)
+        XCTAssertEqual(event, .status(.drawing, detail: nil))
+    }
+
+    /// The heartbeat repeats whatever phase is current, so the same status
+    /// event arrives many times in a turn. It has to stay a plain assignment —
+    /// nothing may treat a repeat as a transition.
+    func testARepeatedStatusDecodesIdenticallyEveryTime() {
+        let line = #"data: {"type":"status","phase":"drawing","detail":null}"#
+        XCTAssertEqual(TutorEvent.decode(from: line), TutorEvent.decode(from: line))
+    }
 }

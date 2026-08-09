@@ -58,6 +58,32 @@ struct ScreenLayout: Equatable, Sendable {
     let safeAreaTrailing: CGFloat
     let safeAreaBottom: CGFloat
 
+    /// How far the software keyboard reaches **past the device's own bottom
+    /// inset**, and deliberately not folded into `safeAreaBottom`.
+    ///
+    /// Past, not from the screen edge, because the keyboard is drawn over the
+    /// home indicator: the two are alternatives, and a sum would be 20 points of
+    /// double-counting. Stated as the difference, `safeAreaBottom + keyboardInset`
+    /// is the obstruction either way and no case needs a `max`.
+    ///
+    /// SwiftUI reports the keyboard as a bottom safe-area inset like any other,
+    /// and folding it in there is what this separation exists to undo: it made
+    /// `contentHeight` — and with it the board, the rail and the peek — shrink
+    /// by ~350 points the moment a student tapped the composer. On the board
+    /// that was not cosmetic. A marquee region picked before the keyboard opened
+    /// stopped intersecting the canvas's own bounds, so `snapshotData` returned
+    /// nil and the send silently degraded to a text-only turn: the learner
+    /// pointed at their working, typed a question, and the tutor was handed the
+    /// question with no picture. See `BoardSelection`.
+    ///
+    /// So the two answers are kept apart. `contentHeight` is the *screen's*
+    /// band and never moves for a keyboard; `contentHeightAboveKeyboard` is the
+    /// one for a surface that has to stay reachable while typing, which is the
+    /// tutor panel and the full-screen column and nothing else. The board is an
+    /// infinite scrolling canvas — a keyboard over its bottom edge costs
+    /// nothing, and resizing it costs the selection.
+    let keyboardInset: CGFloat
+
     /// What the student has asked the docked panel to be, clamped by whoever set it.
     ///
     /// Board 02 called the panel *"the only fixed-width surface in the product"*, and for as
@@ -81,7 +107,8 @@ struct ScreenLayout: Equatable, Sendable {
     init(
         size: CGSize,
         safeArea: EdgeInsets = EdgeInsets(),
-        panelWidth: CGFloat = ScreenLayout.defaultPanelWidth
+        panelWidth: CGFloat = ScreenLayout.defaultPanelWidth,
+        keyboardInset: CGFloat = 0
     ) {
         self.size = size
         safeAreaTop = safeArea.top
@@ -89,6 +116,7 @@ struct ScreenLayout: Equatable, Sendable {
         safeAreaTrailing = safeArea.trailing
         safeAreaBottom = safeArea.bottom
         self.panelWidth = panelWidth
+        self.keyboardInset = max(0, keyboardInset)
     }
 
     // MARK: - The reference device
@@ -171,6 +199,25 @@ struct ScreenLayout: Equatable, Sendable {
     /// `1032 − 28 − 28 = 976`. The safe band is the height lane with give in it, so it takes
     /// whatever the status region and the two edge insets leave.
     var contentHeight: CGFloat { max(0, contentBottom - contentTop) }
+
+    /// `contentBottom`, raised to clear the software keyboard.
+    ///
+    /// The same rule `contentTop` and `contentBottom` are, against one more
+    /// obstruction: `--space-edge` from whatever is nearest, and while a student
+    /// is typing the nearest thing is the keyboard. With none up `keyboardInset`
+    /// is zero and this *is* `contentBottom`, which is why every surface that
+    /// took the one number before this existed can keep taking it.
+    var contentBottomAboveKeyboard: CGFloat {
+        size.height - safeAreaBottom - keyboardInset - DS.Space.edge
+    }
+
+    /// The band for a surface that has to stay reachable while the student is
+    /// typing into it: the tutor panel and the full-screen column.
+    ///
+    /// **Not the board's.** See `keyboardInset` for what shrinking the board
+    /// costs — this is the half of that split that flexes, and it is spent on
+    /// the two surfaces that own a composer.
+    var contentHeightAboveKeyboard: CGFloat { max(0, contentBottomAboveKeyboard - contentTop) }
 
     // MARK: - Horizontal lanes, docked layout (screens 05 and 08)
 
@@ -519,21 +566,83 @@ extension View {
     /// screen and draws from global (0, 0) exactly as before — only the numbers it is handed
     /// change.
     func measuringScreenLayout() -> some View {
-        GeometryReader { proxy in
-            let insets = proxy.safeAreaInsets
-            self
-                .environment(
-                    \.screenLayout,
-                    ScreenLayout(
-                        size: CGSize(
-                            width: proxy.size.width + insets.leading + insets.trailing,
-                            height: proxy.size.height + insets.top + insets.bottom
-                        ),
-                        safeArea: insets
+        modifier(ScreenLayoutMeasurement())
+    }
+}
+
+/// The measurement, and the one thing it has to keep separate from it.
+///
+/// **The keyboard is not an inset like the others.** The device's insets describe
+/// the screen and change when the screen does — a rotation, a Split View drag.
+/// SwiftUI reports the software keyboard through the same channel, and a single
+/// reader cannot tell the two apart: it hands back one bottom number that
+/// silently grows by ~350 points while a student types, and every lane cut from
+/// it shrinks, the board included. See `ScreenLayout.keyboardInset` for what that
+/// cost the one feature that stores coordinates against the board.
+///
+/// So the reader takes `.ignoresSafeArea(.keyboard)` and measures the screen as
+/// though no keyboard existed — that is the measurement everything is cut from —
+/// and the keyboard is measured *beside* it rather than around it. A sibling is
+/// the load-bearing part: wrapping the reader in a second, keyboard-aware one
+/// does not work, because a subtree that ignores the keyboard stops the inset
+/// being applied anywhere above it and the outer reader reads a flat zero. The
+/// probe is the only thing in the app still asking for keyboard avoidance, which
+/// is what keeps SwiftUI applying it at all.
+private struct ScreenLayoutMeasurement: ViewModifier {
+    /// What the probe reports: the bottom inset *with* the keyboard in it, which
+    /// is the device's own whenever there is no keyboard. The difference between
+    /// this and the reader's bottom is the keyboard's own reach — see
+    /// `ScreenLayout.keyboardInset` for why it is stored as the difference.
+    @State private var bottomInsetWithKeyboard: CGFloat = 0
+
+    func body(content: Content) -> some View {
+        ZStack {
+            KeyboardInsetProbe()
+
+            GeometryReader { screen in
+                let insets = screen.safeAreaInsets
+                content
+                    .environment(
+                        \.screenLayout,
+                        ScreenLayout(
+                            size: CGSize(
+                                width: screen.size.width + insets.leading + insets.trailing,
+                                height: screen.size.height + insets.top + insets.bottom
+                            ),
+                            safeArea: insets,
+                            keyboardInset: bottomInsetWithKeyboard - insets.bottom
+                        )
                     )
-                )
-                .ignoresSafeArea()
+                    .ignoresSafeArea()
+            }
+            .ignoresSafeArea(.keyboard)
         }
+        .onPreferenceChange(KeyboardInsetKey.self) { bottomInsetWithKeyboard = $0 }
+    }
+}
+
+/// How far up the screen the keyboard reaches, reported by the one view that has
+/// not opted out of it.
+///
+/// Zero-sized and hit-testing nothing: it is a measurement, not a layer. It sits
+/// at the bottom of the stack so its own safe-area inset *is* the keyboard's
+/// intrusion, which on iPad is also correct for the shortcut bar a hardware
+/// keyboard leaves behind — that band covers the composer just as the full
+/// keyboard does, and it is not the device's inset either.
+private struct KeyboardInsetProbe: View {
+    var body: some View {
+        GeometryReader { proxy in
+            Color.clear.preference(key: KeyboardInsetKey.self, value: proxy.safeAreaInsets.bottom)
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+private struct KeyboardInsetKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
 

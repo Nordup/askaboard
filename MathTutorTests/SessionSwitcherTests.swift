@@ -297,22 +297,45 @@ final class SessionSwitcherTests: XCTestCase {
         )
     }
 
-    func testTheOpenSessionIsAlwaysTheFirstRowOfTheSwitcher() {
+    func testANewSessionIsListedAndIsTheMostRecent() {
         let store = makeStore()
         store.send("vectors")
         store.startNewSession()
 
-        XCTAssertEqual(store.sessions.first?.id, store.session.id)
         XCTAssertEqual(store.sessions.count, 2)
+        XCTAssertEqual(
+            store.sessions.first?.id,
+            store.session.id,
+            "A session made a moment ago is the most recent one — by date, not because it is open"
+        )
+    }
+
+    func testOpeningAnOlderSessionLeavesItWhereItsDatePutsIt() async {
+        let store = makeStore()
+        await store.sendAndWait("older")
+        let older = store.session.id
+        store.startNewSession()
+        await store.sendAndWait("newer")
+        let newer = store.session.id
+
+        store.openSession(id: older)
+
+        XCTAssertEqual(
+            store.sessions.map(\.id),
+            [newer, older],
+            "Selecting a chat must not haul it to the top of the switcher — the tint says which one is open"
+        )
+        XCTAssertEqual(store.session.id, older)
     }
 
     func testTheOpenRowIsRenamedBySendingWithoutWaitingForASave() {
         let store = makeStore()
-        XCTAssertEqual(store.sessions.first?.title, "New session")
+        let openRow = { store.sessions.first { $0.id == store.session.id } }
+        XCTAssertEqual(openRow()?.title, "New session")
 
         store.send("circle theorems")
 
-        XCTAssertEqual(store.sessions.first?.title, "circle theorems")
+        XCTAssertEqual(openRow()?.title, "circle theorems")
     }
 
     func testAStaleRowRebuildsTheIndexRatherThanFailing() throws {
@@ -329,6 +352,103 @@ final class SessionSwitcherTests: XCTestCase {
 
         XCTAssertEqual(store.session.id, current, "The open session is left alone")
         XCTAssertFalse(store.sessions.contains { $0.id == first }, "The row that named nothing is gone")
+    }
+
+    // MARK: - "Last modified" means modified
+
+    func testJustOpeningASessionDoesNotAgeIt() async throws {
+        let persistence = SessionPersistence(directoryURL: directory)
+        let store = makeStore()
+        await store.sendAndWait("vectors")
+        let looked = store.session.id
+        store.startNewSession()
+        let savedAt = try XCTUnwrap(persistence.load(id: looked)).lastSavedAt
+
+        store.openSession(id: looked)
+        store.startNewSession()
+
+        XCTAssertEqual(
+            try XCTUnwrap(persistence.load(id: looked)).lastSavedAt,
+            savedAt,
+            "Reading a session is not editing it — switching away must not restamp the clock"
+        )
+    }
+
+    func testJustOpeningASessionDoesNotFloatItUpTheList() async {
+        let persistence = SessionPersistence(directoryURL: directory)
+        let store = makeStore()
+        await store.sendAndWait("older")
+        let older = store.session.id
+        store.startNewSession()
+        await store.sendAndWait("newer")
+        let newer = store.session.id
+        XCTAssertEqual(persistence.loadIndex().sessions.map(\.id), [newer, older])
+
+        // Glance at the old one and go back — switching away with
+        // `startNewSession` would mint a third session and prove nothing.
+        store.openSession(id: older)
+        store.openSession(id: newer)
+
+        XCTAssertEqual(
+            persistence.loadIndex().sessions.map(\.id),
+            [newer, older],
+            "The list is ordered by when a session was worked on, not when it was last glanced at"
+        )
+    }
+
+    func testActuallyEditingASessionAgesIt() async throws {
+        let persistence = SessionPersistence(directoryURL: directory)
+        let store = makeStore()
+        await store.sendAndWait("vectors")
+        let edited = store.session.id
+        store.startNewSession()
+        let before = try XCTUnwrap(persistence.load(id: edited)).lastSavedAt
+
+        store.openSession(id: edited)
+        await store.sendAndWait("one more question")
+        store.startNewSession()
+
+        XCTAssertGreaterThan(
+            try XCTUnwrap(persistence.load(id: edited)).lastSavedAt,
+            before
+        )
+    }
+
+    func testInkDrawnAfterOpeningAgesTheSession() async throws {
+        let persistence = SessionPersistence(directoryURL: directory)
+        let store = makeStore()
+        await store.sendAndWait("vectors")
+        let edited = store.session.id
+        store.startNewSession()
+        let before = try XCTUnwrap(persistence.load(id: edited)).lastSavedAt
+
+        store.openSession(id: edited)
+        store.updateDrawing(inkedDrawing())
+        store.startNewSession()
+
+        let after = try XCTUnwrap(persistence.load(id: edited))
+        XCTAssertGreaterThan(after.lastSavedAt, before)
+        XCTAssertNotNil(after.drawingData, "and the ink is the thing that aged it")
+    }
+
+    func testAWorkspaceToggleIsNotAnEdit() async throws {
+        let persistence = SessionPersistence(directoryURL: directory)
+        let store = makeStore()
+        await store.sendAndWait("vectors")
+        store.applyForTesting(plan: plan(titled: "Vectors in 2D"), exercise: .radicalEquation)
+        let id = store.session.id
+        store.startNewSession()
+        store.openSession(id: id)
+        let before = try XCTUnwrap(persistence.load(id: id)).lastSavedAt
+
+        store.startWorking()
+        store.returnToChat()
+
+        XCTAssertEqual(
+            try XCTUnwrap(persistence.load(id: id)).lastSavedAt,
+            before,
+            "isWorkspace is not on LearningSession, so nothing a reload would restore has changed"
+        )
     }
 
     // MARK: - Reset

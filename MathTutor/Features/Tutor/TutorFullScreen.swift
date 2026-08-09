@@ -157,7 +157,8 @@ struct TutorFullScreen: View {
             onSend: actions.send,
             onVoice: dictation.voiceHandler(text: $text),
             dictation: dictation.composerDictation,
-            note: dictation.noteText,
+            // Same slot and same precedence as the panel's — see `TutorPanel`.
+            note: store.composerNote ?? dictation.noteText,
             onDismissSelection: actions.dismissSelection
         )
     }
@@ -221,7 +222,11 @@ struct TutorColumnMetrics: Equatable, Sendable {
         width = layout.columnWidth
         contentRight = layout.contentRight
         top = layout.contentTop
-        bottom = layout.contentBottom
+        // The composer is anchored to this line, so it is the keyboard-aware one:
+        // the column is the other surface that has to stay typed into. Identical
+        // to `contentBottom` whenever no keyboard is up, which is every screen the
+        // boards were drawn for.
+        bottom = layout.contentBottomAboveKeyboard
         greetingHeight = GreetingMetrics.for(.fullScreen, width: layout.columnWidth).totalHeight
         suggestionsHeight = SuggestionChipMetrics.for(.fullScreen, width: layout.columnWidth)
             .containerHeight

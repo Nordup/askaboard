@@ -6,11 +6,26 @@ import SwiftUI
 @MainActor
 final class TutorStore: ObservableObject {
     @Published private(set) var session: LearningSession
-    /// The switcher's rows, most-recent-first, with the open session always at
-    /// the front — see `refreshSessions()`.
+    /// The switcher's rows, most-recently-modified first — and nothing else.
+    ///
+    /// The open session gets no special place in the order. It used to be
+    /// pinned to the front, which meant selecting an old chat visibly hauled it
+    /// to the top of the menu even once the stored order had stopped moving.
+    /// Which session you are in is said by the row's tint and its "Open" label,
+    /// not by where it sits. See `refreshSessions()`.
     @Published private(set) var sessions: [SessionSummary] = []
     @Published private(set) var isLoading = false
     @Published private(set) var errorMessage: String?
+    /// One line above the composer: a send that never left the device.
+    ///
+    /// Board 15 §02's note slot, not the thread's failure state, and the
+    /// difference is which of the two is true. `errorMessage` is a turn that was
+    /// sent and went wrong — there is a turn in the thread for it to be about,
+    /// and a retry to offer. This is the other case: nothing was sent, nothing
+    /// was consumed, and the composer still holds exactly what it held a moment
+    /// ago. Saying that in the thread would draw a failure against a turn that
+    /// does not exist.
+    @Published private(set) var composerNote: String?
     @Published private(set) var isWorkspace = false
     @Published private(set) var evaluationText: String?
     /// Identifies the tutor turn currently shown in the transient highlighted
@@ -51,7 +66,7 @@ final class TutorStore: ObservableObject {
     /// The regions the tutor looked at, keyed by the message they belong to.
     ///
     /// Held here rather than on `TutorMessage` because a `TutorMessage` is
-    /// `Codable` and goes into `session.json` on every save: a turn that looked
+    /// `Codable` and goes into the session's file on every save: a turn that looked
     /// three times would write several hundred kilobytes of PNG into the session
     /// file, and every later save would rewrite them. These are evidence for the
     /// turn you are looking at, not session state, so they live for as long as
@@ -66,7 +81,7 @@ final class TutorStore: ObservableObject {
     /// Separate from `boardViews` because it is a different claim: these are what
     /// the *learner* pointed at, and they belong on the learner's own turn. Same
     /// storage reasoning though — a `TutorMessage` is `Codable` and would carry
-    /// the PNG into `session.json` on every save.
+    /// the PNG into the session's file on every save.
     @Published private(set) var selectionViews: [UUID: BoardView] = [:]
 
     /// Views for the turn currently streaming, before it has a message to
@@ -132,15 +147,25 @@ final class TutorStore: ObservableObject {
         let shouldSeedScene = false
         #endif
         self.startsClean = isUITestReset
-        var restored = isUITestReset ? .empty : (persistence.loadCurrent() ?? .empty)
+        let stored = isUITestReset ? nil : persistence.loadCurrent()
+        var restored = stored ?? .empty
         #if DEBUG
         if shouldSeedE2E { E2ESeedFixture.seedSession(&restored) }
         if shouldSeedScene { E2ESeedFixture.seedScene(&restored) }
         #endif
-        if restored.messages.isEmpty {
+        let addedGreeting = restored.messages.isEmpty
+        if addedGreeting {
             restored.messages = [TutorMessage(role: .tutor, text: Self.greeting)]
         }
         self.session = restored
+        // What is already on disk, so launching and quitting without touching
+        // anything writes nothing and moves no clocks. `nil` whenever the
+        // session in hand is *not* what the file holds — nothing stored, a
+        // greeting added, or a seeded fixture — because then the first save has
+        // real work to do.
+        self.lastWritten = (stored != nil && !addedGreeting && !shouldSeedE2E && !shouldSeedScene)
+            ? restored
+            : nil
         self.usesLiveTutor = configuration != nil
         let usingDemoService = resolvedService is DemoTutorService
         self.isWorkspace = restored.plan != nil && restored.exercise != nil && (self.usesLiveTutor || usingDemoService)
@@ -318,26 +343,28 @@ final class TutorStore: ObservableObject {
     ///
     /// `question` is what the student actually typed into the composer alongside the
     /// selection, when they typed anything. It used to have nowhere to go — the composer
-    /// held onto the text and sent the canned line below in its place, so a student who
+    /// held onto the text and sent a canned line in its place, so a student who
     /// wrote "check my work" had the one message they wrote dropped and a generic request
     /// delivered instead. The learner turn is now exactly what they typed — no generated
     /// area description appended — while `regionDescription` still reaches the service on
-    /// its own so the model can be told which part of the board the image is of. With no
-    /// typed question, retain the existing canned request so an evaluate turn still has
-    /// visible copy.
+    /// its own so the model can be told which part of the board the image is of.
+    ///
+    /// **With nothing typed, the turn carries no words at all.** The canned "Please
+    /// evaluate my work on the area selected on the board." was the device writing a
+    /// sentence in the learner's voice that the learner had not said, and then showing it
+    /// back to them in their own bubble. Pointing at a piece of working is already a
+    /// complete request; `regionDescription` tells the model what it is looking at, in the
+    /// third person, where a policy line belongs. So the message is empty, and the thread
+    /// draws the picture on its own — see `MessageRow`.
     func evaluate(imageData: Data, regionDescription: String?, question: String? = nil) {
         guard !isEvaluating, ensureTutorAvailable() else { return }
         isEvaluating = true
         evaluationText = nil
         evaluationMessageID = nil
         errorMessage = nil
-        let region = regionDescription?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let regionLabel = region?.isEmpty == false ? region! : "the whiteboard"
+        composerNote = nil
         let asked = question?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let text = asked?.isEmpty == false
-            ? asked!
-            : "Please evaluate my work on " + regionLabel + "."
-        let learnerTurn = TutorMessage(role: .learner, text: text, signal: .evaluate)
+        let learnerTurn = TutorMessage(role: .learner, text: asked ?? "", signal: .evaluate)
         session.messages.append(learnerTurn)
         // The picture they sent, kept so the thread can show it. Without this the
         // turn reads as though the tutor ignored the selection: the thread showed
@@ -353,6 +380,26 @@ final class TutorStore: ObservableObject {
             self?.evaluationText = text
         }
     }
+
+    /// A send that could not read the board, said above the composer.
+    ///
+    /// Reachable now only with no canvas mounted at all — a region is stored in
+    /// the drawing's own coordinates, so neither a scroll nor a resize can put it
+    /// out of reach any more. It stays because the alternative to saying so is
+    /// what this replaced: sending the question without the picture and letting
+    /// the learner work out from the reply that the tutor never looked.
+    func reportBoardCaptureFailure() {
+        composerNote = Self.boardCaptureFailed
+    }
+
+    func clearComposerNote() {
+        composerNote = nil
+    }
+
+    /// Board 15's register for a note: what happened, and what to do about it.
+    /// No apology and no error code — the selection is still attached, so trying
+    /// again is one tap.
+    static let boardCaptureFailed = "I couldn't capture that part of the board. Try sending it again."
 
     func sayIDontKnow() {
         guard !isLoading, ensureTutorAvailable() else { return }
@@ -381,7 +428,7 @@ final class TutorStore: ObservableObject {
     /// on screen should stop existing. `resetSession` is the destructive one.
     func startNewSession() {
         closeCurrentSession(saving: true)
-        adopt(freshSession())
+        adopt(freshSession(), isStored: false)
         persist()
     }
 
@@ -401,7 +448,7 @@ final class TutorStore: ObservableObject {
         }
         closeCurrentSession(saving: true)
         persistence.markOpened(target.id)
-        adopt(target)
+        adopt(target, isStored: true)
     }
 
     /// Settings' destructive action: this session is deleted and a new empty one
@@ -413,7 +460,7 @@ final class TutorStore: ObservableObject {
     func resetSession() {
         closeCurrentSession(saving: false)
         persistence.delete(id: session.id)
-        adopt(freshSession())
+        adopt(freshSession(), isStored: false)
         persist()
     }
 
@@ -526,8 +573,13 @@ final class TutorStore: ObservableObject {
     /// go too — they are evidence for turns in a thread that is no longer on
     /// screen, and they are keyed by message id, so keeping them would only
     /// grow.
-    private func adopt(_ next: LearningSession) {
+    /// - Parameter isStored: Whether `next` is byte-for-byte what is on disk. A
+    ///   session just read from a file is; a freshly minted one has never been
+    ///   written, and saying so is what lets the very next `persist()` create it
+    ///   instead of deciding nothing has changed.
+    private func adopt(_ next: LearningSession, isStored: Bool) {
         discardBoardInk()
+        lastWritten = isStored ? next : nil
         session = next
         isWorkspace = next.plan != nil && next.exercise != nil && canRequestTutor
         evaluationText = nil
@@ -538,19 +590,33 @@ final class TutorStore: ObservableObject {
         refreshSessions()
     }
 
-    /// Rebuilds the switcher's rows from the index, with the open session forced
-    /// to the front.
+    /// Rebuilds the switcher's rows from the index, ordered by when each session
+    /// was last modified and by nothing else.
     ///
-    /// The open session is inserted rather than read from the index because it
-    /// is the one row that must be right the instant something changes: a
-    /// session gets its name from its plan and its first learner turn, so the
-    /// row is expected to stop saying "New session" the moment the learner
-    /// sends one — and the index only catches up on the next save.
+    /// The open session's row is refreshed from the live session rather than
+    /// taken whole from the index, because it is the one row that must be right
+    /// the instant something changes: a session gets its name from its plan and
+    /// its first learner turn, so the row is expected to stop saying "New
+    /// session" the moment the learner sends one — and the index only catches up
+    /// on the next save. Its *date* still comes from the index, because that is
+    /// the last time it was actually written and the whole order is built on it.
     private func refreshSessions() {
         var summaries = startsClean ? [] : persistence.loadIndex().sessions
-        summaries.removeAll { $0.id == session.id }
-        summaries.insert(SessionSummary(session), at: 0)
-        sessions = summaries
+        if let row = summaries.firstIndex(where: { $0.id == session.id }) {
+            // Keep the stored date — that is the fact the order is built on —
+            // and take only what can move before the next save.
+            summaries[row] = SessionSummary(
+                id: session.id,
+                title: session.title,
+                lastSavedAt: summaries[row].lastSavedAt,
+                messageCount: session.messages.count
+            )
+        } else {
+            // Never written: a session created and not yet touched. It still
+            // belongs in the list, dated from when it was made.
+            summaries.append(SessionSummary(session))
+        }
+        sessions = summaries.sorted { $0.lastSavedAt > $1.lastSavedAt }
     }
 
     func setModel(_ model: ModelChoice) {
@@ -582,7 +648,7 @@ final class TutorStore: ObservableObject {
     /// had already streamed into the tutor message stays visible.
     ///
     /// `persist()` runs once, on `.done` — not per delta, or every token
-    /// would thrash the disk with a `session.json` write.
+    /// would thrash the disk with a session-file write.
     private func requestTutor(
         signal: LearningSignal?,
         imageData: Data? = nil,
@@ -601,7 +667,12 @@ final class TutorStore: ObservableObject {
         pendingBoardViews = []
         let request = TutorRequest(
             messages: session.messages,
-            goal: session.messages.first(where: { $0.role == .learner })?.text,
+            // The first thing they *said*. A selection sent on its own carries no
+            // words at all now, so "first learner turn" and "first learner turn
+            // with something in it" have stopped being the same message — and a
+            // session that opened with a picture would otherwise report its goal
+            // as the empty string.
+            goal: session.messages.first { $0.role == .learner && !$0.text.isEmpty }?.text,
             exercise: session.exercise,
             plan: session.plan,
             imageData: imageData,
@@ -687,9 +758,38 @@ final class TutorStore: ObservableObject {
                 self.isLoading = false
                 self.isEvaluating = false
                 self.errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-                self.logger.error("Tutor request failed: \(error.localizedDescription, privacy: .public)")
+                // `localizedDescription` alone is what made a real failure
+                // undiagnosable: "The request timed out." and "I couldn't reach
+                // the tutor service just now." are the same sentence to anyone
+                // reading afterwards, and the thread deliberately shows the
+                // second no matter which happened. The domain and code are the
+                // part that names it — `NSURLErrorDomain` −1001 is a timeout,
+                // −1009 is no network, −1005 is the connection dropped — and
+                // they are what a `log show` from the device can be grepped for.
+                self.logger.error("""
+                    Tutor turn failed: \(Self.describe(error), privacy: .public)
+                    """)
             }
         }
+    }
+
+    /// A failure named precisely enough to act on — for the log, never a screen.
+    ///
+    /// The thread deliberately shows board 14's fixed copy whatever went wrong,
+    /// so this is the only place the actual cause is ever stated, and it is free
+    /// to be exact and unfriendly. A `URLError`'s numeric code is the part that
+    /// distinguishes the cases that look identical to a learner: −1001 timed out
+    /// (the stream went quiet for longer than `BackendTutorService.streamTimeout`),
+    /// −1005 the connection dropped, −1009 the iPad had no route to the Mac.
+    static func describe(_ error: Error) -> String {
+        if let urlError = error as? URLError {
+            let url = urlError.failingURL?.absoluteString ?? "-"
+            return "URLError \(urlError.code.rawValue) \(urlError.localizedDescription) url=\(url)"
+        }
+        if let serviceError = error as? TutorServiceError {
+            return "TutorServiceError.\(serviceError)"
+        }
+        return "\(type(of: error)) \(error.localizedDescription)"
     }
 
     private func attach(_ view: BoardView, to messageID: UUID) {
@@ -715,12 +815,45 @@ final class TutorStore: ObservableObject {
         foldPendingBoardInk()
         var snapshot = session
         if let boardInkData { snapshot.drawingData = boardInkData }
+        guard changedSinceLastWrite(snapshot) else { return }
         snapshot.lastSavedAt = .now
+        lastWritten = snapshot
         persistence.save(snapshot)
         // The switcher's other rows come from the index, and this is the write
         // that just changed it — a session saved is a session moved to the top
         // of the list.
         refreshSessions()
+    }
+
+    /// The session exactly as it was last written to disk, or `nil` when what is
+    /// in hand has never been written.
+    ///
+    /// This is what makes "last modified" mean modified. Without it every
+    /// `persist()` stamped `lastSavedAt = .now`, so simply opening a session and
+    /// moving on re-saved it unchanged — the switcher then showed it as the most
+    /// recent thing you did and floated it to the top of the list, when all you
+    /// had done was look at it.
+    private var lastWritten: LearningSession?
+
+    /// Whether `snapshot` differs from the last thing written in any way that is
+    /// not the clock itself.
+    ///
+    /// `lastSavedAt` is normalised out before comparing because it is the field
+    /// being decided: several callers set it before calling `persist`, and
+    /// comparing it would make every save look like a change and defeat the
+    /// whole check. Everything else on `LearningSession` is content — messages,
+    /// ink, the tutor's scene, the plan, the model — and any of it moving is a
+    /// real edit.
+    ///
+    /// Note what is deliberately *not* here: `isWorkspace`, the presentation
+    /// axes, and which session is open. None of them lives on
+    /// `LearningSession`, so `startWorking()` and `returnToChat()` no longer
+    /// touch the clock — correctly, because neither changes anything a reload
+    /// would bring back.
+    private func changedSinceLastWrite(_ snapshot: LearningSession) -> Bool {
+        guard var previous = lastWritten else { return true }
+        previous.lastSavedAt = snapshot.lastSavedAt
+        return previous != snapshot
     }
 
     @discardableResult

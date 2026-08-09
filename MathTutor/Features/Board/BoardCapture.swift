@@ -49,19 +49,56 @@ final class CanvasCapture: ObservableObject {
         )
     }
 
-    func snapshotData(region: CGRect? = nil) -> Data? {
+    /// One region of the board, rendered from the vectors.
+    ///
+    /// - Parameter drawingRegion: what to render, **in drawing coordinates**, or
+    ///   `nil` for whatever is on screen right now.
+    ///
+    /// It used to take a viewport rectangle and intersect it with the canvas's
+    /// current bounds, and that intersection is the bug this signature closes.
+    /// A region the learner picked is a region of their *work*; the canvas's
+    /// bounds are a fact about the window, and they move — the keyboard alone
+    /// took a third of the board's height. A picked region that had scrolled or
+    /// been resized out of view intersected to nothing, this returned nil, and
+    /// `BoardScreen.send` quietly sent the question without the picture.
+    ///
+    /// Drawing coordinates have no such dependency: the strokes are where they
+    /// have always been, so the render is correct whether the region is on
+    /// screen, half off it, or behind the keyboard.
+    func snapshotData(drawingRegion: CGRect? = nil) -> Data? {
         guard let canvasView else { return nil }
-        let viewport = CGRect(origin: .zero, size: canvasView.bounds.size)
-        let requestedViewport = (region ?? viewport).intersection(viewport)
-        guard !requestedViewport.isNull, requestedViewport.width > 0, requestedViewport.height > 0 else {
-            return nil
-        }
-        let requested = CanvasViewportMapper.drawingRect(
-            for: requestedViewport,
+        let requested = drawingRegion ?? CanvasViewportMapper.drawingRect(
+            for: CGRect(origin: .zero, size: canvasView.bounds.size),
             canvasBounds: canvasView.bounds,
             zoomScale: canvasView.zoomScale
         )
+        guard requested.width > 0, requested.height > 0 else { return nil }
         return renderPNG(drawingRect: requested)
+    }
+
+    /// Where a rectangle drawn on screen sits in the drawing, and back again.
+    ///
+    /// The pair exists so `BoardSelection` can hold one honest answer: a marquee
+    /// arrives from the gesture in view coordinates, is stored in the drawing's,
+    /// and is converted back only to *draw* the mark. `nil` when there is no
+    /// canvas to measure against, which is the same "no board" every other
+    /// reader here returns.
+    func drawingRect(forViewRect viewRect: CGRect) -> CGRect? {
+        guard let canvasView else { return nil }
+        return CanvasViewportMapper.drawingRect(
+            for: viewRect,
+            canvasBounds: canvasView.bounds,
+            zoomScale: canvasView.zoomScale
+        )
+    }
+
+    func viewRect(forDrawingRect drawingRect: CGRect) -> CGRect? {
+        guard let canvasView else { return nil }
+        return CanvasViewportMapper.viewportRect(
+            for: drawingRect,
+            canvasBounds: canvasView.bounds,
+            zoomScale: canvasView.zoomScale
+        )
     }
 
     /// Whether a drawing carries ink that board evaluation can render. This is

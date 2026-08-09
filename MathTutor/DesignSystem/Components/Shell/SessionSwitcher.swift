@@ -132,7 +132,20 @@ struct SessionMenu: View {
     /// it needs a bigger number here.
     static let visibleRows = 6
 
-    private var rows: [SessionSummary] { Array(sessions.prefix(Self.visibleRows)) }
+    /// The six most recent, plus the open session if it is not among them.
+    ///
+    /// Rows are ordered by when a session was last modified and the open one
+    /// gets no special place, so once you have seven sessions and go back to an
+    /// old one, the session you are *in* can fall past the window. A switcher
+    /// that omits the current session is worse than one row too long, so it is
+    /// appended rather than dropped.
+    private var rows: [SessionSummary] {
+        let visible = Array(sessions.prefix(Self.visibleRows))
+        guard !visible.contains(where: { $0.id == currentID }),
+              let current = sessions.first(where: { $0.id == currentID })
+        else { return visible }
+        return visible + [current]
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: SessionSwitcherMetrics.menuRowGap) {

@@ -8,6 +8,10 @@ enum TutorPhase: String, Sendable {
     case looking
     case searching
     case writing
+    /// The tutor is writing a diagram, not prose — an `update_board` call whose
+    /// arguments are still streaming. The longest phase of a drawing turn by
+    /// far, and until it existed it was indistinguishable from `thinking`.
+    case drawing
 }
 
 /// The client's streaming vocabulary for a tutor turn. This is a direct

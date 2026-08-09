@@ -67,7 +67,11 @@ struct TutorPanel: View {
     /// full width rather than its 301 column. Order here is the design's own, bottom of the
     /// stack first: *"Thread · fade bottom · Composer · fade top · Panel controls"*.
     var body: some View {
-        let size = CGSize(width: layout.panelWidth, height: layout.contentHeight)
+        // The one band in the app that gives way to the keyboard, and the reason
+        // `ScreenLayout` keeps two: the composer is bottom-anchored in this
+        // surface, so shortening it is what lifts the pill clear of the keys.
+        // The board behind it keeps its own height — see `keyboardInset`.
+        let size = CGSize(width: layout.panelWidth, height: layout.contentHeightAboveKeyboard)
 
         return TutorPanelSurface(size: size) {
             ZStack(alignment: .top) {
@@ -247,7 +251,10 @@ struct TutorPanel: View {
             onSend: actions.send,
             onVoice: dictation.voiceHandler(text: $text),
             dictation: dictation.composerDictation,
-            note: dictation.noteText,
+            // One slot, two writers, newest wins: a send that could not read the
+            // board is the thing that just happened, and a dictation note is
+            // whatever was left over from before it.
+            note: store.composerNote ?? dictation.noteText,
             onDismissSelection: actions.dismissSelection,
             onToggleSelection: actions.toggleSelection
         )
@@ -396,6 +403,24 @@ struct TutorThreadView: View {
             ChatErrorState.network(onRetry: actions.retry, metrics: .for(scale, width: column))
         }
 
+        if store.isLoading, store.phase != .writing {
+            // The working state board 14 designed and the panel never wired up — the orb
+            // immediately below is presence, and presence is not progress. Without this the
+            // thread said nothing at all for the length of a turn, which on a turn that
+            // spends two minutes drawing a diagram is the whole turn.
+            //
+            // Variant B, the dots *with* a status line: the dots alone say "something is
+            // happening" and the complaint this answers is that something is happening and
+            // you cannot tell what.
+            //
+            // Hidden during `.writing` rather than shown throughout, because at that point
+            // the reply itself is streaming into the thread above and is a better progress
+            // indicator than any mark next to it. `nil` reads as `.thinking` and covers the
+            // gap between the send and the first `status` event, which is a real few seconds
+            // — the connection, the board upload and the prompt all happen in it.
+            ThinkingIndicator(status: (store.phase ?? .thinking).statusLine, scale: scale)
+        }
+
         // Screen 08's tenth thread child — **unconditional**, and that is a decision the
         // boards left open. `05-screens.md` labels it "thinking indicator" and
         // `03-chat-components.md` contradicts it in the same breath: *"it is documented as a
@@ -409,5 +434,26 @@ struct TutorThreadView: View {
         // the tail once there is a conversation — never absent. A working state, if one is
         // ever designed, is `state/thinking`'s dots (board 14), which is a different mark.
         Orb(.thread)
+    }
+}
+
+private extension TutorPhase {
+    /// What the thread says the tutor is doing, in the tutor's own register.
+    ///
+    /// Board 14 writes this line's one worked example as *"Reading your board"* — a
+    /// sentence about the learner's work, not a machine reporting its state — so the rest
+    /// follow it rather than the phase names on the wire. Nothing here is a gerund-shaped
+    /// label for a subsystem: `.searching` is not "Searching the corpus", and `.drawing` is
+    /// not "Rendering SVG".
+    var statusLine: String {
+        switch self {
+        case .thinking: "Thinking"
+        case .looking: "Reading your board"
+        case .searching: "Looking something up"
+        case .drawing: "Drawing on the board"
+        // Never shown today — the thread hides the indicator once the reply is streaming —
+        // but a phase with no copy would be a trap for whoever changes that.
+        case .writing: "Writing"
+        }
     }
 }

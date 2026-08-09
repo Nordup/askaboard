@@ -233,6 +233,32 @@ final class BackendTutorServiceTests: XCTestCase {
         XCTAssertEqual(text, "whole")
     }
 
+    /// A turn is a deliberately long-lived stream, and `URLSession`'s 60-second
+    /// default is an *inactivity* timeout — it ended real turns while the tutor
+    /// was mid-diagram, after the model's work had been generated and billed.
+    /// Asserted on the request rather than only on the session because
+    /// `URLRequest` carries its own 60-second default that would otherwise be
+    /// the one in force.
+    func testTheTurnRequestOutlivesTheSixtySecondDefault() throws {
+        let configuration = BackendConfiguration(
+            baseURL: URL(string: "https://backend.example.com")!, token: "test-token"
+        )!
+        let request = try BackendTutorService.urlRequest(
+            for: .fixture(), configuration: configuration
+        )
+        XCTAssertEqual(request.timeoutInterval, BackendTutorService.streamTimeout)
+        XCTAssertGreaterThan(BackendTutorService.streamTimeout, 60)
+    }
+
+    /// The session the app actually streams on — `.shared` would carry the 60
+    /// seconds no matter what the request said on some paths.
+    func testTheStreamingSessionCarriesTheSameTimeout() {
+        XCTAssertEqual(
+            BackendTutorService.streamingSession.configuration.timeoutIntervalForRequest,
+            BackendTutorService.streamTimeout
+        )
+    }
+
     // MARK: - TutorServiceRouter.stream(_:)
 
     func testRouterStreamThrowsNotConfiguredWhenThereIsNoUsableToken() async throws {

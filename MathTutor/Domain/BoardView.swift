@@ -7,7 +7,7 @@ import Foundation
 /// value: the picture plus the words the model was given for it.
 ///
 /// Deliberately not `Codable`. These belong to the turn you are reading, not to
-/// the session: a `TutorMessage` is written into `session.json` on every save,
+/// the session: a `TutorMessage` is written into the session's file on every save,
 /// so attaching a few hundred kilobytes of PNG to one would rewrite them on
 /// every later save for the rest of the session. `TutorStore.boardViews` holds
 /// them beside the thread for as long as the app runs, and a thread restored

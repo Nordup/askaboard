@@ -227,12 +227,19 @@ struct MessageRow: View {
                 if let selectionView = item.selectionView {
                     BoardViewThumbnail(view: selectionView)
                 }
-                HStack(spacing: 0) {
-                    Spacer(minLength: 0)
-                    if item.hasSelection {
-                        SelectionMessageBubble(text: item.message.text, metrics: metrics)
-                    } else {
-                        MessageBubble(text: item.message.text, metrics: metrics)
+                // A selection sent on its own is the picture and nothing else.
+                // The store no longer writes a sentence the learner did not say
+                // (see `TutorStore.evaluate`), and an empty bubble under the
+                // thumbnail would be a mark for the words that are deliberately
+                // not there — a 50pt violet crumb the eye reads as a failure.
+                if !item.message.text.isEmpty {
+                    HStack(spacing: 0) {
+                        Spacer(minLength: 0)
+                        if item.hasSelection {
+                            SelectionMessageBubble(text: item.message.text, metrics: metrics)
+                        } else {
+                            MessageBubble(text: item.message.text, metrics: metrics)
+                        }
                     }
                 }
             }

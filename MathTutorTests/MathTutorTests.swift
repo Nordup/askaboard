@@ -203,19 +203,88 @@ final class MathTutorTests: XCTestCase {
 
         let fullData = try XCTUnwrap(capture.snapshotData())
         let selectedViewport = CGRect(x: 0, y: 240, width: 500, height: 300)
-        let selectedData = try XCTUnwrap(capture.snapshotData(region: selectedViewport))
+        let selected = try XCTUnwrap(capture.drawingRect(forViewRect: selectedViewport))
+        let selectedData = try XCTUnwrap(capture.snapshotData(drawingRegion: selected))
         XCTAssertGreaterThan(try pixelStats(for: fullData).darkPixelCount, 40)
         XCTAssertGreaterThan(try pixelStats(for: selectedData).darkPixelCount, 20, "The selected visible region must retain its ink after pan and zoom")
 
-        let expected = CanvasViewportMapper.drawingRect(
-            for: selectedViewport,
-            canvasBounds: canvas.bounds,
-            zoomScale: canvas.zoomScale
+        XCTAssertEqual(selected.origin.x, 90, accuracy: 0.001)
+        XCTAssertEqual(selected.origin.y, 230, accuracy: 0.001)
+        XCTAssertEqual(selected.width, 250, accuracy: 0.001)
+        XCTAssertEqual(selected.height, 150, accuracy: 0.001)
+    }
+
+    /// The regression the whole selection path was rebuilt around.
+    ///
+    /// A region picked while the board was tall — the learner's own working, low
+    /// on the canvas — used to stop existing the moment the keyboard shortened
+    /// the board under it: the stored rectangle no longer intersected the
+    /// canvas's bounds, the capture came back nil, and the send went out as text
+    /// with no picture. Rendering from the drawing's coordinates makes the
+    /// viewport irrelevant, which is the point.
+    @MainActor
+    func testAPickedRegionSurvivesTheBoardShrinkingUnderIt() throws {
+        let canvas = configuredCanvas()
+        canvas.drawing = makeDrawing(color: .black)
+        let capture = CanvasCapture()
+        capture.canvasView = canvas
+
+        // Picked around the working, low on a board that was fully on screen —
+        // `makeDrawing` puts its ink at y 250.
+        let picked = try XCTUnwrap(
+            capture.drawingRect(forViewRect: CGRect(x: 100, y: 230, width: 200, height: 200))
         )
-        XCTAssertEqual(expected.origin.x, 90, accuracy: 0.001)
-        XCTAssertEqual(expected.origin.y, 230, accuracy: 0.001)
-        XCTAssertEqual(expected.width, 250, accuracy: 0.001)
-        XCTAssertEqual(expected.height, 150, accuracy: 0.001)
+
+        // The keyboard opens: the canvas keeps its origin and loses its bottom,
+        // leaving the picked region entirely below the visible band. This is
+        // where the old viewport intersection came back empty.
+        canvas.bounds = CGRect(x: 0, y: 0, width: canvas.bounds.width, height: 60)
+
+        let data = try XCTUnwrap(
+            capture.snapshotData(drawingRegion: picked),
+            "A region off the bottom of a shortened board is still a region of the learner's work"
+        )
+        XCTAssertGreaterThan(try pixelStats(for: data).darkPixelCount, 20)
+    }
+
+    /// The two conversions are one mapping read in both directions, so a region
+    /// that goes out and comes back is the region that went out — which is what
+    /// lets the marquee be drawn from a rectangle stored in the other space.
+    @MainActor
+    func testAViewRectRoundTripsThroughDrawingCoordinates() throws {
+        let canvas = configuredCanvas()
+        let capture = CanvasCapture()
+        capture.canvasView = canvas
+        canvas.setZoomScale(2, animated: false)
+        canvas.contentOffset = CGPoint(x: 180, y: 220)
+
+        let picked = CGRect(x: 40, y: 240, width: 500, height: 300)
+        let stored = try XCTUnwrap(capture.drawingRect(forViewRect: picked))
+        let drawn = try XCTUnwrap(capture.viewRect(forDrawingRect: stored))
+
+        XCTAssertEqual(drawn.minX, picked.minX, accuracy: 0.001)
+        XCTAssertEqual(drawn.minY, picked.minY, accuracy: 0.001)
+        XCTAssertEqual(drawn.width, picked.width, accuracy: 0.001)
+        XCTAssertEqual(drawn.height, picked.height, accuracy: 0.001)
+    }
+
+    /// Scrolling moves the mark, because the region is anchored to the ink now
+    /// rather than to the window: the same working stays inside the same
+    /// rectangle, and the rectangle is drawn wherever that working currently is.
+    @MainActor
+    func testAStoredRegionFollowsTheInkWhenTheBoardScrolls() throws {
+        let canvas = configuredCanvas()
+        let capture = CanvasCapture()
+        capture.canvasView = canvas
+
+        let picked = CGRect(x: 100, y: 100, width: 200, height: 200)
+        let stored = try XCTUnwrap(capture.drawingRect(forViewRect: picked))
+        canvas.contentOffset = CGPoint(x: 0, y: 150)
+        let drawn = try XCTUnwrap(capture.viewRect(forDrawingRect: stored))
+
+        XCTAssertEqual(drawn.minY, picked.minY - 150, accuracy: 0.001, "The mark scrolls with the work")
+        XCTAssertEqual(drawn.minX, picked.minX, accuracy: 0.001)
+        XCTAssertEqual(drawn.size, picked.size)
     }
 
     @MainActor
@@ -638,7 +707,10 @@ final class MathTutorTests: XCTestCase {
         let newMessages = Array(store.session.messages.dropFirst(initialMessageCount))
         let evaluationTurn = try XCTUnwrap(newMessages.first(where: { $0.signal == .evaluate }))
         XCTAssertEqual(evaluationTurn.role, .learner)
-        XCTAssertTrue(evaluationTurn.text.lowercased().contains("selected rectangle"))
+        XCTAssertTrue(
+            evaluationTurn.text.isEmpty,
+            "Nothing was typed, so the turn carries no words — see the region description instead"
+        )
 
         let tutorReply = try XCTUnwrap(newMessages.first(where: { $0.role == .tutor }))
         XCTAssertFalse(tutorReply.text.isEmpty)
@@ -689,9 +761,16 @@ final class MathTutorTests: XCTestCase {
         )
     }
 
-    /// With nothing typed, the existing canned line is still what carries the request.
+    /// With nothing typed, the turn is the picture and nothing else.
+    ///
+    /// It used to be a canned "Please evaluate my work on the whole board." — the
+    /// device writing a sentence in the learner's voice that the learner had not
+    /// said, and then showing it back to them in their own bubble. Pointing at a
+    /// piece of working is already a complete request, and `regionDescription`
+    /// says what is being pointed at where a policy line belongs: in the third
+    /// person, in the prompt, not in the thread.
     @MainActor
-    func testAnEvaluationWithNoTypedQuestionKeepsTheCannedRequest() async throws {
+    func testAnEvaluationWithNoTypedQuestionCarriesNoWords() async throws {
         let store = TutorStore(service: DemoTutorService())
         store.resetSession()
         let initialMessageCount = store.session.messages.count
@@ -703,7 +782,65 @@ final class MathTutorTests: XCTestCase {
 
         let newMessages = Array(store.session.messages.dropFirst(initialMessageCount))
         let evaluationTurn = try XCTUnwrap(newMessages.first(where: { $0.signal == .evaluate }))
-        XCTAssertEqual(evaluationTurn.text, "Please evaluate my work on the whole board.")
+        XCTAssertEqual(evaluationTurn.text, "")
+        XCTAssertNotNil(
+            store.selectionViews[evaluationTurn.id],
+            "The picture is the whole turn, so it has to be there for the thread to draw"
+        )
+    }
+
+    /// Whitespace is not a question. A composer holding only a space must produce
+    /// the same wordless turn a empty one does, rather than a bubble with a space in it.
+    @MainActor
+    func testAnEvaluationTreatsBlankTypingAsNoQuestion() async throws {
+        let store = TutorStore(service: DemoTutorService())
+        store.resetSession()
+        let initialMessageCount = store.session.messages.count
+
+        store.evaluate(imageData: Data([1, 2, 3]), regionDescription: "the whole board", question: "   ")
+        for _ in 0..<50 where store.isEvaluating {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        let newMessages = Array(store.session.messages.dropFirst(initialMessageCount))
+        let evaluationTurn = try XCTUnwrap(newMessages.first(where: { $0.signal == .evaluate }))
+        XCTAssertEqual(evaluationTurn.text, "")
+    }
+
+    /// A session that opens with a picture has no words to take a goal from, and
+    /// must not report the empty string as one.
+    @MainActor
+    func testAWordlessFirstTurnDoesNotBecomeTheGoal() async throws {
+        let store = TutorStore(service: DemoTutorService())
+        store.resetSession()
+
+        store.evaluate(imageData: Data([1, 2, 3]), regionDescription: "the whole board", question: nil)
+        for _ in 0..<50 where store.isEvaluating {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        store.send("is this right?")
+        for _ in 0..<50 where store.isLoading {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        let goal = store.session.messages.first { $0.role == .learner && !$0.text.isEmpty }?.text
+        XCTAssertEqual(goal, "is this right?")
+    }
+
+    /// A send that could not read the board says so above the composer, and says
+    /// it there rather than in the thread: nothing was sent, so there is no turn
+    /// for a thread failure to be about.
+    @MainActor
+    func testABoardCaptureFailureIsSaidAboveTheComposer() {
+        let store = TutorStore(service: DemoTutorService())
+
+        XCTAssertNil(store.composerNote)
+        store.reportBoardCaptureFailure()
+        XCTAssertEqual(store.composerNote, TutorStore.boardCaptureFailed)
+        XCTAssertNil(store.errorMessage, "Nothing was sent, so no turn failed")
+
+        store.clearComposerNote()
+        XCTAssertNil(store.composerNote)
     }
 
     func testNewSessionsDefaultToLuna() {

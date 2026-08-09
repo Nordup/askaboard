@@ -176,4 +176,30 @@ enum CanvasViewportMapper {
             height: viewportRect.height / scale
         )
     }
+
+    /// The inverse: where a rectangle of the drawing currently sits on screen.
+    ///
+    /// Only one thing needs this — drawing the marquee over the region it picked,
+    /// now that the region is *kept* in drawing coordinates (see `BoardSelection`).
+    /// The mark has to follow the ink it was drawn around when the board resizes,
+    /// and going back through the same mapping is what makes that automatic
+    /// rather than a second set of coordinates to keep in step.
+    ///
+    /// It may well return a rectangle partly or wholly off screen. That is a true
+    /// answer, not an error: the region is still selected, it is simply not
+    /// visible, and what gets *sent* is rendered from the vectors and does not
+    /// come through here at all.
+    static func viewportRect(
+        for drawingRect: CGRect,
+        canvasBounds: CGRect,
+        zoomScale: CGFloat
+    ) -> CGRect {
+        let scale = max(zoomScale, .leastNonzeroMagnitude)
+        return CGRect(
+            x: drawingRect.minX * scale - canvasBounds.minX,
+            y: drawingRect.minY * scale - canvasBounds.minY,
+            width: drawingRect.width * scale,
+            height: drawingRect.height * scale
+        )
+    }
 }

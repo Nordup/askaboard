@@ -8,10 +8,47 @@ import Foundation
 /// `X-Accel-Buffering: no`) for the source of truth. Do not change field
 /// names here without re-reading those files first.
 struct BackendTutorService: TutorService, Sendable {
+    /// How long a turn may go without a single byte arriving before URLSession
+    /// gives up on it.
+    ///
+    /// `URLSession.shared` carries `URLSessionConfiguration.default`'s 60
+    /// seconds, and that is an *inactivity* timeout, not a duration cap — the
+    /// wrong default for a connection that is deliberately long-lived. It cost
+    /// real turns: while the tutor streamed one `update_board` call's
+    /// arguments the service had nothing to translate and put nothing on the
+    /// wire, so a diagram that took longer than a minute to write timed the
+    /// request out with the model's work already generated and already billed.
+    ///
+    /// The server heartbeating every `HEARTBEAT_SECONDS`
+    /// (`server/app/tutor/events.py`) is the actual fix. This is the second
+    /// line of defence, and it is deliberately still finite: a connection that
+    /// has been silent for two minutes despite a five-second heartbeat is dead,
+    /// and failing then beats hanging forever.
+    static let streamTimeout: TimeInterval = 120
+
+    /// The session every live turn streams on.
+    ///
+    /// Not `.shared`, because its timeout cannot be changed without changing it
+    /// for every other request this process makes, and this is the only one
+    /// that wants a different answer.
+    ///
+    /// `timeoutIntervalForResource` is deliberately left alone: it caps the
+    /// whole task rather than the gaps in it, and a legitimate turn can run for
+    /// several minutes across `MAX_TOOL_ROUNDS` rounds of drawing. Silence is
+    /// the thing worth bounding here, not length.
+    static let streamingSession: URLSession = {
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = BackendTutorService.streamTimeout
+        return URLSession(configuration: configuration)
+    }()
+
     let configuration: BackendConfiguration
     let session: URLSession
 
-    init(configuration: BackendConfiguration, session: URLSession = .shared) {
+    init(
+        configuration: BackendConfiguration,
+        session: URLSession = BackendTutorService.streamingSession
+    ) {
         self.configuration = configuration
         self.session = session
     }
@@ -172,6 +209,11 @@ struct BackendTutorService: TutorService, Sendable {
     ) throws -> URLRequest {
         let url = configuration.baseURL.appendingPathComponent("v1/turn")
         var urlRequest = URLRequest(url: url)
+        // Set on the request as well as on `streamingSession`, because
+        // `URLRequest` carries its own 60-second default and which of the two
+        // wins is a detail of URLSession this code should not have to be right
+        // about. Stated in both places, they agree either way.
+        urlRequest.timeoutInterval = streamTimeout
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("Bearer \(configuration.token)", forHTTPHeaderField: "Authorization")
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")

@@ -353,6 +353,87 @@ final class LayoutTests: XCTestCase {
         XCTAssertEqual(l.panelX, ScreenLayout.reference.panelX)
     }
 
+    // MARK: - The keyboard
+
+    /// The regression this split exists for.
+    ///
+    /// A keyboard folded into `safeAreaBottom` took ~350 points out of every lane
+    /// cut from the content band, and on the board that was not cosmetic: a
+    /// marquee region picked before the keyboard opened no longer intersected the
+    /// canvas's own bounds, so the send dropped the picture and delivered the
+    /// question alone. The board's band must not move for a keyboard.
+    func testTheBoardsBandDoesNotMoveWhenTheKeyboardOpens() {
+        let screen = CGSize(width: 1376, height: 1032)
+        let insets = EdgeInsets(top: 24, leading: 0, bottom: 20, trailing: 0)
+        let resting = ScreenLayout(size: screen, safeArea: insets)
+        let typing = ScreenLayout(size: screen, safeArea: insets, keyboardInset: 350)
+
+        XCTAssertEqual(typing.contentTop, resting.contentTop)
+        XCTAssertEqual(typing.contentBottom, resting.contentBottom)
+        XCTAssertEqual(
+            typing.contentHeight, resting.contentHeight,
+            "The board keeps its height while the student types — the selection is stored against it"
+        )
+    }
+
+    /// The other half of the split: the two surfaces that own a composer do give way.
+    ///
+    /// A keyboard whose top edge is 350 above the screen's bottom leaves the
+    /// composer `--space-edge` clear of it — the same rule every other edge in the
+    /// design follows, measured from the obstruction rather than from the glass.
+    func testTheComposerBandClearsTheKeyboard() {
+        let screen = CGSize(width: 1376, height: 1032)
+        let insets = EdgeInsets(top: 24, leading: 0, bottom: 20, trailing: 0)
+        // The keyboard reaches 350 up from the screen's edge, which is 330 past
+        // the home indicator it is drawn over.
+        let typing = ScreenLayout(size: screen, safeArea: insets, keyboardInset: 330)
+
+        XCTAssertEqual(typing.contentBottomAboveKeyboard, 654, "(1032 − 350) − 28")
+        XCTAssertEqual(typing.contentHeightAboveKeyboard, 602, "654 − 52")
+        XCTAssertEqual(
+            typing.contentHeight - typing.contentHeightAboveKeyboard, 330,
+            "The panel gives up the keyboard and not one point more"
+        )
+    }
+
+    /// The keyboard is drawn *over* the home indicator, so the two are never
+    /// summed: the inset is stated as the reach *past* the device's own, which is
+    /// what makes the composer land 28 above the keys rather than 48.
+    func testTheHomeIndicatorIsNotCountedTwice() {
+        let l = ScreenLayout(
+            size: CGSize(width: 1376, height: 1032),
+            safeArea: EdgeInsets(top: 24, leading: 0, bottom: 20, trailing: 0),
+            keyboardInset: 330
+        )
+        let keyboardTop = 1032 - 350.0
+
+        XCTAssertEqual(l.contentBottomAboveKeyboard, keyboardTop - 28)
+    }
+
+    /// With no keyboard the two answers are the same number, which is what lets every
+    /// surface that read one before this existed keep reading it.
+    func testWithNoKeyboardBothBandsAgree() {
+        for l in [ScreenLayout.reference, ScreenLayout(size: CGSize(width: 1024, height: 768))] {
+            XCTAssertEqual(l.keyboardInset, 0)
+            XCTAssertEqual(l.contentHeightAboveKeyboard, l.contentHeight)
+            XCTAssertEqual(l.contentBottomAboveKeyboard, l.contentBottom)
+        }
+    }
+
+    /// The reader hands over a difference of two measurements, and a transient layout
+    /// pass can make that negative. A negative inset must read as "no keyboard" rather
+    /// than growing the band past the screen.
+    func testANegativeKeyboardInsetIsRefused() {
+        let l = ScreenLayout(
+            size: CGSize(width: 1376, height: 1032),
+            safeArea: EdgeInsets(top: 24, leading: 0, bottom: 20, trailing: 0),
+            keyboardInset: -120
+        )
+
+        XCTAssertEqual(l.keyboardInset, 0)
+        XCTAssertEqual(l.contentHeightAboveKeyboard, l.contentHeight)
+    }
+
     /// A home-button iPad reserves 20 — the shallowest bar any supported device has, and four
     /// points shallower than the app's own 24pt band.
     func testAHomeButtonIPadMeasuresFromItsOwnTwentyPointBar() {

@@ -10,15 +10,25 @@ import CoreGraphics
 /// screen it appears on, which is a control that does not work. This is the
 /// missing state, kept as small as a state can be: three cases and a rectangle.
 ///
-/// The rectangle is in the **canvas's own view coordinates**, not in PencilKit's
-/// drawing coordinates, and that is only honest because the board stops scrolling
-/// while a selection is live — see `PencilCanvasView.isSelecting`. View space is
-/// what `CanvasCapture.snapshotData(region:)` already takes, and freezing the
-/// scroll is what stops a stored rect from drifting onto different ink than the
-/// one it was drawn around. The alternative, storing drawing coordinates and
-/// mapping back for every frame, needs the canvas to republish its pan and zoom
-/// into SwiftUI at scroll frequency — the same per-frame publish cost
-/// `TutorStore.updateDrawing` exists to keep off the board.
+/// The rectangle is in **PencilKit's drawing coordinates** — the strokes' own
+/// space, not the canvas's view space.
+///
+/// It was view space, on the grounds that the board stops scrolling while a
+/// selection is live (see `PencilCanvasView.isSelecting`), so nothing could move
+/// underneath a stored rect. Freezing the scroll is not enough: a *resize* moves
+/// the same mapping, and one happened on almost every send. The software
+/// keyboard used to shorten the board by a third, so a region picked over the
+/// learner's working — which is usually low on the board — no longer intersected
+/// the canvas's bounds by the time they finished typing. `snapshotData` returned
+/// nil for it and the send went out as text with no picture at all. The layout
+/// half of that is fixed too (`ScreenLayout.keyboardInset`), but a region that
+/// only survives while nothing resizes is a region that will be lost again by
+/// the next thing that resizes.
+///
+/// Drawing coordinates have no such dependency, and the cost the old note
+/// worried about does not appear: mapping back is needed only to *draw* the
+/// marquee, once per layout pass, not once per scroll frame. What gets sent is
+/// rendered from the vectors and never converts at all.
 enum BoardSelection: Equatable, Sendable {
     /// Nothing picked, and the pencil inks.
     case none
@@ -27,7 +37,7 @@ enum BoardSelection: Equatable, Sendable {
     /// this control did before it could pick a region, so the zero-effort path
     /// keeps its old behaviour.
     case arming
-    /// A region is picked, in canvas view coordinates.
+    /// A region is picked, in the drawing's own coordinates.
     case attached(CGRect)
 
     var isAttached: Bool { region != nil }

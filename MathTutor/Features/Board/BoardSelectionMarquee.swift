@@ -12,14 +12,18 @@ import SwiftUI
 /// a new colour; it is the product's existing "a region of the board" mark, drawn
 /// at board scale.
 ///
-/// It draws in the canvas's own coordinate space and reports the same, which is
-/// what `CanvasCapture.snapshotData(region:)` takes — see `BoardSelection` for why
-/// view coordinates are the honest place to keep a picked region.
+/// It draws and reports in the canvas's own **view** coordinates, because that is
+/// all a drag on a view can know. Storing them is a different question, and the
+/// answer is no: `BoardScreen.attachBoardSelection(viewRegion:)` converts to the
+/// drawing's coordinates on the way in and back again on the way out, so a region
+/// stays glued to the ink it was drawn around rather than to the window. See
+/// `BoardSelection`.
 struct BoardSelectionMarquee: View {
-    /// The region already picked, if any. Drawn while it stands so the student can
-    /// see what they are about to send.
+    /// The region already picked, if any, converted back into this view's
+    /// coordinates by the caller. Drawn while it stands so the student can see
+    /// what they are about to send.
     let attachedRegion: CGRect?
-    /// A finished drag that was big enough to be a region.
+    /// A finished drag that was big enough to be a region, in this view's coordinates.
     let onSelect: (CGRect) -> Void
 
     /// Where the current drag started, in this view's coordinates. `DragGesture`
