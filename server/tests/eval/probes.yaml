@@ -1,0 +1,147 @@
+# Memory probes: prior sessions, then a question whose good answer requires
+# remembering them.
+#
+# `run_probes.py` replays each `sessions` list through the real close path —
+# digest, extract, consolidate, rebuild the portrait — and then asks `question`
+# through the real turn path, with the real prompt and the real memory tools
+# bound. Both halves are needed: a probe that only read the store would pass
+# while the tutor ignored what was in it, and a probe that only read the answer
+# could not tell "extraction never produced the fact" from "the tutor did not
+# use it". The runner reports both.
+#
+# Add one every time the tutor forgets something it should have known. That is
+# what turns an annoyance into a regression test.
+#
+# Fields
+#   name              identifier; `--only` matches on it
+#   sessions          prior sessions, oldest first. Each is
+#                       days_ago:   when it happened (drives the fact's
+#                                   valid_from and the date the extractor is
+#                                   told to resolve "last week" against)
+#                       transcript: one line per turn, `learner:` / `tutor:`.
+#                                   Must exceed extract.MIN_TRANSCRIPT_CHARS
+#                                   or extraction is skipped entirely and the
+#                                   probe is measuring nothing — the runner
+#                                   refuses to run one that does not.
+#   question          asked in a fresh session, through a live turn
+#   answer_any        the reply must contain at least one of these
+#   answer_none       the reply must contain none of these
+#   store_any         optional. The profile, or a live atom, must contain at
+#                     least one of these. Its only job is to place a failure:
+#                     store fail = extraction lost the fact, store pass +
+#                     answer fail = the tutor was told and did not use it.
+#   expect_supersession
+#                     optional. At least one atom must have been closed by a
+#                     later one. Only the bi-temporal probe asserts it.
+#
+# Matching is case-insensitive and on word boundaries, so "not" does not match
+# "nothing" and "don't" does not match "don'ts".
+#
+# Placeholders, substituted in transcripts, questions and expectations alike so
+# the suite does not go stale: {deadline} ("12 November 2026"), {deadline_month}
+# ("November"), {deadline_iso} ("2026-11-12"). The deadline is always about
+# three months out from whenever the suite is run.
+
+- name: recalls_a_stated_preference
+  sessions:
+    - days_ago: 21
+      transcript: |
+        learner: before we start, I really need to see the picture before the algebra
+        tutor: noted, I'll lead with diagrams
+        learner: symbols first never works for me, I just lose track of what the letters are standing for
+        tutor: then we draw it first every time, and only write the algebra once you can see what it describes
+        learner: yes please, that's how my old teacher did it and it was the only time any of it stuck
+  question: "teach me about completing the square"
+  answer_any: ["diagram", "picture", "visual", "visually", "geometric", "geometrically", "draw", "sketch"]
+  store_any: ["diagram", "picture", "visual", "geometric"]
+
+- name: recalls_a_goal_with_a_deadline
+  sessions:
+    - days_ago: 18
+      transcript: |
+        learner: I've got my GCSE higher paper on {deadline}
+        tutor: that gives us a clear target to work back from
+        learner: yeah, and I want to be solid on algebra by then, it's the bit that costs me the most marks
+        tutor: algebra it is, we'll keep coming back to it
+        learner: my mock came out a 5 and I need a 7, so there's a fair bit to make up before {deadline}
+  question: "what should I work on?"
+  answer_any: ["{deadline_month}", "{deadline_iso}", "GCSE"]
+  store_any: ["{deadline_month}", "{deadline_iso}"]
+
+- name: supersedes_stale_skill_state
+  sessions:
+    - days_ago: 60
+      transcript: |
+        learner: I can never factor quadratics, they just don't click for me
+        tutor: what happens when you try one, say x² + 7x + 12
+        learner: I stare at it and guess, I never know which pair of numbers to look for and I get the signs backwards
+        tutor: alright, we'll do the pair-finding on its own until it stops being a guess
+        learner: fine, but I've been stuck on this since year 9 so don't expect much
+    - days_ago: 6
+      transcript: |
+        learner: I did twenty factoring questions last night and got all twenty of them
+        tutor: that's a real change from where you started
+        learner: yeah, the pair thing just clicks now, even the ones with a negative constant, the signs don't catch me out any more
+        tutor: then factoring stops being the thing we drill and becomes a step inside harder questions
+        learner: agreed, I don't want to spend another session on it
+  question: "am I ready to move on from factoring?"
+  answer_any: ["ready", "yes", "move on", "moved on", "progress", "solid", "confident", "comfortable"]
+  answer_none:
+    ["you struggle", "you can't factor", "you find factoring hard",
+     "don't click", "doesn't click", "never clicks", "still guess", "still guessing"]
+  expect_supersession: true
+
+- name: does_not_invent_memories
+  sessions:
+    - days_ago: 9
+      transcript: |
+        learner: help me with fractions
+        tutor: what have you got so far
+        learner: I'm okay adding them when the bottoms match but I get lost when they don't, like 2/3 + 1/4
+        tutor: what would you try first
+        learner: find a number both bottoms go into? I did 12 and got 8/12 + 3/12 which is 11/12
+        tutor: that's exactly right, and you got there without being handed the method
+  question: "what did I say my exam date was?"
+  answer_any:
+    ["haven't", "have not", "don't", "do not", "didn't", "did not",
+     "no record", "nothing on file", "not sure", "never mentioned", "no note"]
+  answer_none: ["{deadline_month}", "{deadline_iso}", "GCSE", "your exam is on", "your exam date is"]
+
+- name: recalls_what_we_did_last_time
+  sessions:
+    - days_ago: 14
+      transcript: |
+        learner: can we do percentages today
+        tutor: sure, where do you want to start
+        learner: reverse percentages mostly, the ones where you're given the price after a 20% discount
+        tutor: so the £48 is 80% of the original rather than the original itself
+        learner: right, that's the bit I keep getting wrong, I just add 20% back on
+    - days_ago: 3
+      transcript: |
+        learner: today can we do standard form
+        tutor: what's giving you trouble with it
+        learner: multiplying two numbers in standard form, I get the powers of ten right but the front number ends up wrong
+        tutor: so 3.5 × 10^4 times 4 × 10^3 gives you what
+        learner: 14 × 10^7, and I know that's not properly in standard form but I never fix it
+  question: "what did we do last time?"
+  answer_any: ["standard form", "indices", "index", "powers of ten", "10^", "exponent"]
+
+- name: recalls_an_older_fact_after_a_later_session
+  sessions:
+    - days_ago: 30
+      transcript: |
+        learner: quick thing before we start, I'm in Year 11 and my board is OCR
+        tutor: good to know, I'll keep the OCR style of question in mind
+        learner: also Sunday evening is the only time I can actually do this, weeknights are gone with school clubs
+        tutor: Sunday evenings it is, we'll plan around that
+        learner: yeah, so anything you set me has to fit into one Sunday
+    - days_ago: 5
+      transcript: |
+        learner: can we do some trigonometry
+        tutor: sure, what have you covered
+        learner: SOHCAHTOA, but I keep picking the wrong ratio when the triangle is drawn rotated
+        tutor: then we label the sides relative to the angle first, every time, before choosing anything
+        learner: that helped, I got the last four right once I labelled them
+  question: "when should we do the practice papers?"
+  answer_any: ["Sunday", "Sundays"]
+  store_any: ["Sunday", "Sundays"]
