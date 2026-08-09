@@ -572,6 +572,69 @@ async def test_candidates_are_live_and_near(db_factory, monkeypatch):
 
 
 @requires_db
+async def test_an_episode_ref_is_never_offered_as_a_supersession_target(
+    db_factory, monkeypatch,
+):
+    """A closed `episode_ref` is read by nothing, anywhere, forever.
+
+    `profile._closed_atoms` only renders categories in `profile.ORDER`, and
+    `episode_ref` is deliberately not one of them; retrieval and the live
+    profile query both filter `valid_to IS NULL`. So a superseded episode atom
+    is dropped by all three readers at once — not demoted, gone. And it can
+    never be superseded *back*, because `_candidates` offers live rows only.
+
+    Nothing stopped that happening. These atoms are the most formulaic text in
+    the store — "Covered adding fractions on <date>", one a session — so two of
+    them are far closer to each other than two real facts are, which is exactly
+    what `FLOOR = 0.35` newly admits. Dormant at 0.75, live now.
+
+    The category is also the reason this is a rule and not a saving: an episode
+    record is a fact about a *session*, and a session cannot stop having
+    happened. There is nothing for a later fact to replace.
+    """
+    adjudicator = _Adjudicator(ADD_0)
+    _install(monkeypatch, _Embedder(default=_near(0.08)), adjudicator)
+
+    async with db_factory() as db:
+        await _sole_learner(db)
+        episode = MemoryAtom(learner_id=SOLE_LEARNER_ID,
+                             text="Covered adding fractions on 2026-08-02.",
+                             category=MemoryCategory.episode_ref.value,
+                             source_turn_ids=[], embedding=_near(0.02),
+                             stated=False)
+        skill = MemoryAtom(learner_id=SOLE_LEARNER_ID,
+                           text="Adds fractions with unlike denominators.",
+                           category="skill_state", source_turn_ids=[],
+                           embedding=_near(0.03))
+        db.add_all([episode, skill])
+        await db.commit()
+
+        # Both are live and both are well inside `FLOOR` of the query vector,
+        # so the episode atom is excluded by its category and by nothing else.
+        nearest = await _candidates(db, SOLE_LEARNER_ID, [_near(0.025)])
+        assert [row.text for row in nearest] == [
+            "Adds fractions with unlike denominators."
+        ]
+
+        await consolidate(
+            db, SOLE_LEARNER_ID,
+            [_atom("Covered adding fractions on 2026-08-09.",
+                   MemoryCategory.episode_ref)],
+            session_id=None, turn_ids=[],
+        )
+        await db.commit()
+
+    assert "2026-08-02" not in adjudicator.calls[0][1]
+    async with db_factory() as db:
+        episodes = (await db.execute(
+            select(MemoryAtom)
+            .where(MemoryAtom.category == MemoryCategory.episode_ref.value)
+        )).scalars().all()
+    assert len(episodes) == 2
+    assert all(row.valid_to is None for row in episodes)
+
+
+@requires_db
 async def test_a_real_supersession_pair_clears_the_shipped_floor(
     db_factory, monkeypatch
 ):

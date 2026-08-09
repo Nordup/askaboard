@@ -39,6 +39,23 @@ cp .env.example .env   # then fill in real values — see below
 uv run alembic upgrade head
 ```
 
+**`alembic upgrade head` creates the tables; it does not fill the curriculum.**
+The 480 Common Core standards and their 899 prerequisite/related edges come
+from a checked-in JSON (`app/learner/seed/ccss_kcs.json`) and are written by
+`app.learner.kcs.seed_curriculum`, which the service runs **on every startup**.
+It is idempotent and keyed on the standard's code, so a re-run refreshes a
+standard's wording and never its id — the ids are what observations and mastery
+state point at. There is no manual seed step, and deliberately no seed inside a
+migration: the JSON is regenerated from an upstream source by
+`scripts/build_kc_seed.py`, and a migration carrying it would have to be
+re-opened every time that happens (see `migrations/versions/0004_learner_model.py`).
+
+Until it lands the learner model is inert rather than merely empty: the tutor's
+`record_evidence` calls resolve their standard codes against `kcs`, an empty
+table resolves none of them, and every call is answered "none of those codes
+are in the curriculum". A successful boot logs `curriculum seeded | kcs=480`; a
+failed one logs why and the service still comes up.
+
 ### Environment variables
 
 | Variable | What it's for |
@@ -181,10 +198,11 @@ screen together across iPad sizes and zoom levels.
 ## Read-back endpoints
 
 This service is built to record everything about a session — that's the
-whole point of the recorder. These four routes are how any of it actually
-gets read back out. **They're for the project owner and for agents
+whole point of the recorder. These routes are how any of it actually
+gets read back out. **The four `GET`s are for the project owner and for agents
 debugging a bad tutoring turn, not for the iPad app** — the app never calls
-any of them; it only ever calls `POST /v1/turn` and `POST /v1/dictation`.
+any of them; it only ever calls `POST /v1/turn` and `POST /v1/dictation`. The
+one `POST` in the table is the exception and is meant for the device.
 Like every other route in this service, they sit behind the same bearer
 token (`Authorization: Bearer <DEVICE_TOKEN>`) — there's no separate,
 unauthenticated path to a student's handwriting or voice. Defined in
@@ -192,10 +210,36 @@ unauthenticated path to a student's handwriting or voice. Defined in
 
 | Route | Returns |
 | --- | --- |
+| `POST /v1/sessions/{id}/close` | `204`, immediately, reporting nothing about the work. The device saying it has left this session for good; it starts the memory pipeline for that session and then drains whatever else is waiting. **Call it on a session switch and on an explicit end, never on backgrounding** — a close freezes the transcript into the one `Episode` that session will ever get, so a close sent while the learner is coming back drops every turn after it, permanently. Safe to send twice. `404` for an unknown id, so a device with the wrong one finds out. See [Memory and the learner model](#memory-and-the-learner-model). |
 | `GET /v1/sessions` | `{"sessions": [...]}` — session summaries (id, model, reasoning effort, current plan/exercise, timestamps), newest-started first. Paginated with `limit` (default 50, max 200) and `offset`. |
 | `GET /v1/sessions/{id}` | One session's summary plus its full `messages` (ordered by `seq`) and `turns` (ordered by start time, summarised — status, timing, token counts, error if any). `404` if the id is unknown. |
 | `GET /v1/turns/{id}` | The full trace of one turn: its summary plus `llm_calls` (each with the *exact* request and response JSON sent to and received from OpenAI, the raw-event blob key, and usage), `tool_calls`, and `attachments` (kind, blob key, sha256, size). This is what makes a bad turn diagnosable after the fact — everything the model was told and everything it did, not a summary of it. `404` if the id is unknown. |
 | `GET /v1/blobs/{key}` | Streams the raw bytes back for a blob key referenced by an attachment or an `llm_call`'s `raw_events_blob` (board PNGs, ink, dictation audio, raw provider event logs) — `Content-Type` recovered from the matching attachment where one exists, `application/octet-stream` otherwise. `404` if the key is unknown. |
+
+## Health
+
+`GET /health` is the one route that takes no bearer token, and it answers two
+questions rather than one:
+
+```json
+{"status": "ok",
+ "memory": {"unextracted_episodes": 0, "oldest_unextracted_age_seconds": null}}
+```
+
+`status` is liveness. The `memory` block is the extraction backlog, and it is
+here because a stalled backlog has no other symptom: nothing errors, no request
+fails, and the tutor simply stops learning anything new. `run_extraction_backlog`
+halts on the first failure rather than stepping over it — an episode extracted
+out of order can let a March fact close a June one — so a poison episode blocks
+everything behind it, and these two numbers are what make that visible before
+someone notices the tutor has gone vague. A rising `unextracted_episodes` with
+an `oldest_unextracted_age_seconds` that keeps growing is a stuck drain;
+restarting the service retries it.
+
+Both values are `null` when the count could not be read. `backlog_status` never
+raises, deliberately: health is asked whether the process is alive, and
+answering "no" because a memory counter was unavailable would turn a memory
+problem into a failed liveness probe.
 
 ## Retention
 
@@ -217,33 +261,86 @@ talks to this service** — shipping the old string alongside this service's
 actual behavior would be telling a parent something false about where their
 child's voice goes.
 
-## The two seams
+## Memory and the learner model
 
-Two places in this codebase are deliberately built as extension points
-rather than as finished features, because the plan that produced this
-service scoped memory/retrieval and additional tools out of this pass.
+The service remembers across sessions. Both seams this README used to describe
+as future work — everything the model is told, and the tools it is offered —
+are now what memory is built through, so they are described here as they are
+rather than as extension points.
 
-**`app/tutor/context.py`, `assemble_context`** — everything the model is
-told, assembled in one function. Today it composes the system prompt, the
-conversation history, and the optional board image. Adding memory or
-retrieval means: look up whatever facts or prior-session summaries apply to
-this student, format them as additional sections of the user prompt (or as
-extra `input` entries), and append them here. No other file needs to
-change — every caller already goes through this one function, so a caller
-never has to be taught that memory exists.
+**The offline pipeline.** A closed session becomes an `Episode` (the frozen
+transcript), and the episode becomes a digest, a set of atoms, and a rebuilt
+portrait. Five provider round trips, which is why none of it happens on the
+request path. [`app/memory/jobs.py`](app/memory/jobs.py) owns the ordering, and
+the recovery story is one nullable column: the episode is committed *before*
+any model is called, with `extracted_at` NULL, so a provider error or a process
+that goes away leaves a row saying "this happened and has not been read yet".
 
-**`app/tutor/tools.py`, `TOOL_DEFINITIONS`** — the list of tools offered to
-the model on every turn. Today it holds `set_workspace`, `view_board`, and
-`update_board`. Adding web search means appending `{"type": "web_search"}`;
-adding file search means appending `{"type": "file_search",
-"vector_store_ids": [...]}`; adding a domain-specific function (e.g. "grade
-this step") means writing a new tool definition in the same function-call
-shape as the existing tools and appending it. The event translator
-([`app/tutor/events.py`](app/tutor/events.py)) already has a
-`response.output_item.added` / `response.function_call_arguments.done`
-path that correlates a tool call's name with its arguments; a new tool
-either reuses that path (if the client needs to see the result as an event)
-or is handled purely server-side, depending on what it's for.
+Three things start that pipeline, and only the first involves the device:
+
+- `POST /v1/sessions/{id}/close`, on a session switch or an explicit end.
+- `sweep_abandoned_sessions`, which records an episode for any session whose
+  last message is older than `STALE_AFTER` (6 hours). This is what covers the
+  sessions nobody ever leaves on purpose — an app killed from the switcher, a
+  crash, an iPad put down.
+- **Startup.** The lifespan runs the sweep and then the backlog drain, detached
+  so boot never waits on a provider. That is what makes the whole pipeline work
+  with no client change at all, and it is also the only thing that retries a
+  failed extraction: the drain halts rather than stepping over a failure, and
+  restarting the service is the recovery step.
+
+**What a fact is.** `memory_atoms` is bi-temporal and append-only. Six
+categories (`preference`, `goal`, `context`, `skill_state`, `misconception`,
+`episode_ref`), a `stated` flag recording whether the learner said it
+themselves, and a validity interval. A fact that stops being true is
+*superseded*, never rewritten: the old row keeps its text and gains a
+`superseded_by` pointer, which is what makes "was stuck on negative exponents
+in March, fluent by June" a trajectory a later pass can read.
+[`app/memory/consolidate.py`](app/memory/consolidate.py) is where a model — not
+a cosine threshold — decides ADD / SUPERSEDE / NOOP, because a sentence and its
+negation are near-identical to every embedding model and a threshold over that
+number merges a fact with its own opposite.
+
+**`app/tutor/context.py`, `assemble_context`** — still the one place
+everything the model is told is assembled, and memory arrived through it
+exactly as predicted. The prompt is now: the learner portrait, recent session
+digests, the conversation transcript, the learner model, then the per-turn
+tail. Every recalled block is *fenced* — each body line prefixed with `> ` —
+rather than merely labelled, because the profile body is unbounded model prose
+and a body containing a blank line plus a forged heading would otherwise render
+an attacker-controlled section of the prompt.
+
+**`app/tutor/tools.py`, `TOOL_DEFINITIONS`** — now `set_workspace`,
+`view_board`, `update_board`, and four memory tools: `search_memory`,
+`recent_sessions`, `remember`, and `record_evidence`. They are dispatched by
+[`app/memory/dispatch.py`](app/memory/dispatch.py) through the
+`handle_memory` handler `run_turn` is given, which opens its own database
+session per call rather than pinning a pooled connection for a multi-minute
+turn. Each call is bounded by `MEMORY_TIMEOUT_SECONDS`, and the whole turn by
+`MEMORY_BUDGET_SECONDS` — a per-call bound alone does not stop one response
+issuing seven memory calls and blowing past the client's 120s stream timeout
+inside a single round.
+
+**The learner model** is separate from memory and coarser.
+[`app/learner/`](app/learner) holds the Common Core concept graph (see
+[Setup](#setup) for the seed), an Elo-style ability estimate per concept, and
+the write path the `record_evidence` tool feeds it through — each observation
+weighted by how reliable the channel that produced it is, from a verified
+answer down to a glance at a diagram. Reliability scales the *step* and not
+the target, so an unreliable channel moves the estimate less rather than
+dragging it toward chance — an LLM grader reading a child's maths is right
+about 86% of the time when the student is correct and 69% when they are wrong,
+and taking that at face value drifts the estimate confidently upward.
+
+**Still seams.** `TOOL_DEFINITIONS` remains the whole of what it takes to add
+a tool: web search is `{"type": "web_search"}` appended to that list, file
+search is `{"type": "file_search", "vector_store_ids": [...]}`, and a
+domain-specific function is a new definition in the same shape. The event
+translator ([`app/tutor/events.py`](app/tutor/events.py)) already correlates a
+tool call's name with its arguments through
+`response.output_item.added` / `response.function_call_arguments.done`, so a
+new tool either reuses that path (if the client needs to see the result as an
+event) or is handled purely server-side.
 
 ## Known limitations
 
@@ -313,3 +410,45 @@ MATHTUTOR_LIVE_TESTS=1 uv run pytest tests/test_live_smoke.py -v
 It is excluded from the default `uv run pytest -v` run's meaningful work
 (it collects but skips) precisely so that CI, or anyone running the suite
 day to day, never accidentally spends money or depends on network access.
+
+### Memory probes
+
+`server/tests/eval/run_probes.py` is the end-to-end check on whether the tutor
+actually remembers. It is a plain script and not a test module, so `pytest`
+cannot collect it — `testpaths = ["tests"]` only picks up `test_*.py`.
+
+```sh
+cd server
+uv run python tests/eval/run_probes.py            # ~$0.035, ~6 minutes
+uv run python tests/eval/run_probes.py --list     # names only, spends nothing
+uv run python tests/eval/run_probes.py --only supersedes_stale_skill_state
+uv run python tests/eval/run_probes.py --control  # ~$0.016
+```
+
+**It costs real money — about $0.035 a full run** (36 model calls), and the run
+prints what it spent. It needs `TEST_DATABASE_URL` (it creates and drops a
+throwaway schema on that branch) and `OPENAI_API_KEY`, both read from
+`server/.env`.
+
+Each probe starts from an empty schema, replays raw transcripts through the
+real `app.memory.jobs.run_session_close` — digest, extract, consolidate,
+rebuild the portrait — and then asks a live question through the real
+`app.tutor.loop.run_turn`. Both halves are the point: "the fact is in the
+store" and "the tutor uses it" are different failures, and only the second is
+what a learner experiences. A miss is reported as extraction losing the fact,
+synthesis dropping it, or the tutor ignoring it, rather than collapsed into one
+red line.
+
+**`--control` skips the transcripts and requires every probe to *fail* against
+an empty store.** A probe that passes with nothing in memory is a free pass
+sitting in a green suite, and this suite shipped one: a probe asking "am I
+ready to move on from factoring" accepted "ready" in the reply, which "no, you
+are not ready" also satisfies. Run it after changing a probe's wording.
+
+This suite is not decoration — it found the bug that made supersession
+impossible. `FLOOR` in `consolidate.py` had been calibrated for
+`text-embedding-ada-002` and carried through a move to
+`text-embedding-3-small`, where the same sentences score fifteen points lower;
+the candidate query returned nothing, the adjudicator was never called, and
+every reversal in a learner's state was written as a coexisting fact. Every
+unit test passed throughout, because they build their vectors by construction.

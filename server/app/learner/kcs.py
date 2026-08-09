@@ -6,16 +6,20 @@ without being taught a private taxonomy first. `scripts/build_kc_seed.py`
 says where the seed comes from and how it was parsed.
 """
 import json
+import logging
 import pathlib
 import uuid
 
 from sqlalchemy import ARRAY, Float, and_, cast, func, literal, select
 from sqlalchemy.dialects.postgresql import UUID as PGUUID, array, insert as pg_insert
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
 
 from app.learner.mastery import mastered_clause
+from app.store.db import session_factory
 from app.store.models import KC, PREREQUISITE, KCEdge, LearnerKCState
+
+log = logging.getLogger(__name__)
 
 SEED = pathlib.Path(__file__).parent / "seed" / "ccss_kcs.json"
 
@@ -83,6 +87,50 @@ async def seed_kcs(db: AsyncSession) -> int:
         ])
     )
     return len(by_code)
+
+
+async def seed_curriculum(
+    *, db_factory: async_sessionmaker[AsyncSession] | None = None
+) -> int | None:
+    """Seed the vocabulary at startup. Returns the KC count, or None on failure.
+
+    Every boot, and it has to be a boot rather than a migration. `0004`'s
+    docstring gives the reason: the seed is 480 standards and 899 edges built
+    from a checked-in JSON that is regenerated from an upstream source, and a
+    migration carrying it would have to be re-opened every time that file is
+    rebuilt. Migrations own the shape of the tables; this owns their contents.
+
+    Nothing else calls `seed_kcs`, and until something did, an empty `kcs` was
+    not a degraded learner model but an inert one that failed loudly at the
+    model: `evidence.record` resolves the tutor's codes against this table, an
+    empty table resolves none of them, and `dispatch._record_evidence` then
+    answers "none of those codes are in the curriculum" to every call it will
+    ever receive. The tutor reads that as "wrong codes", tries different ones,
+    and spends `MAX_TOOL_ROUNDS` doing it. `mastery.snapshot` returns "" the
+    whole time, so the prompt says nothing about the learner either.
+
+    Cheap enough to repeat: two statements, both upserts keyed on the natural
+    key, so re-running refreshes the wording of a standard and never its id.
+
+    **Never raises.** For the reason `jobs.backlog_status` does not: a boot
+    that cannot reach the database must still produce a process that answers
+    `/health` and says what is wrong, rather than a container that exits before
+    anything can be asked. The log line is the account, and the next boot
+    retries.
+    """
+    try:
+        factory = db_factory or session_factory()
+        async with factory() as db:
+            total = await seed_kcs(db)
+            await db.commit()
+    except Exception:
+        log.exception(
+            "could not seed the curriculum; the learner model is inert until a "
+            "boot succeeds — every record_evidence call will report unknown codes"
+        )
+        return None
+    log.info("curriculum seeded | kcs=%d", total)
+    return total
 
 
 async def prerequisites_of(

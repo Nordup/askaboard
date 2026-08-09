@@ -9,8 +9,8 @@ from sqlalchemy import func as sa_func, select
 from app.config import EMBEDDING_DIMS, SOLE_LEARNER_ID
 from app.memory.jobs import (
     STALE_AFTER, _TASKS, _extract_episode, backlog_status,
-    run_extraction_backlog, run_session_close, schedule_session_close,
-    sweep_abandoned_sessions,
+    run_extraction_backlog, run_session_close, run_startup_drain,
+    schedule_session_close, schedule_startup_drain, sweep_abandoned_sessions,
 )
 from app.memory.schema import ExtractedAtom, MemoryCategory
 from app.store.models import Episode, Learner, MemoryAtom, Message, Session
@@ -566,3 +566,81 @@ async def test_schedule_never_raises_at_its_caller(monkeypatch, caplog):
         await next(iter(_TASKS))
 
     assert str(session_id) in caplog.text
+
+
+@requires_db
+async def test_the_startup_drain_remembers_a_session_no_client_ever_closed(
+    db_factory, monkeypatch,
+):
+    """Boot is the pipeline's only trigger that does not need the device.
+
+    `sweep_abandoned_sessions` is reachable from the close endpoint alone and
+    the Swift client never calls it, so before this ran at startup nothing ever
+    closed a session and nothing was ever extracted — the whole memory system
+    was inert in production while every unit test passed. `STALE_AFTER` is six
+    hours, so a restart catches every session that is genuinely over.
+
+    Sweep then drain, in that order: an episode the sweep writes after the
+    drain has finished waits for the next boot.
+    """
+    _install(monkeypatch)
+    silent_since = datetime.now(timezone.utc) - STALE_AFTER - timedelta(minutes=1)
+    session_id = await _session_with(
+        db_factory, [("learner", "help with fractions")],
+        last_message_at=silent_since,
+    )
+
+    await run_startup_drain(db_factory=db_factory)
+
+    episodes = await _episodes(db_factory, session_id)
+    assert len(episodes) == 1
+    assert episodes[0].extracted_at is not None
+    assert await backlog_status(db_factory=db_factory) == {
+        "unextracted_episodes": 0, "oldest_unextracted_age_seconds": None,
+    }
+
+
+@requires_db
+async def test_the_startup_drain_retries_an_extraction_that_failed(
+    db_factory, monkeypatch,
+):
+    """Nothing else retries one. A restart is the recovery step.
+
+    `run_extraction_backlog` halts on the first failure rather than stepping
+    over it, deliberately — and the only other thing that runs it again is the
+    next close, which a client that never closes never sends. So a provider
+    blip left an episode unread permanently.
+    """
+    _install(monkeypatch, digest=_Digest(fails=True))
+    await _backlog(db_factory, [(MARCH, "march")])
+
+    with pytest.raises(RuntimeError):
+        await run_startup_drain(db_factory=db_factory)
+    assert (await backlog_status(db_factory=db_factory))["unextracted_episodes"] == 1
+
+    _install(monkeypatch)
+    await run_startup_drain(db_factory=db_factory)
+    assert (await backlog_status(db_factory=db_factory))["unextracted_episodes"] == 0
+
+
+async def test_the_startup_drain_never_stops_the_app_booting(monkeypatch, caplog):
+    """A drain is provider calls, and none of them may keep the service down.
+
+    Detached rather than awaited for the same reason: uvicorn accepts no
+    connection until the lifespan's startup phase returns, so an awaited drain
+    of twenty episodes is a service that answers nothing at all for as long as
+    the provider takes.
+    """
+    async def _boom(*, db_factory=None):
+        raise RuntimeError("no database today")
+
+    monkeypatch.setattr("app.memory.jobs.run_startup_drain", _boom)
+
+    with caplog.at_level(logging.ERROR, logger="app.memory.jobs"):
+        schedule_startup_drain()
+        # The set holds the only strong reference to the task; awaiting through
+        # it is also the assertion that the reference exists at all.
+        assert len(_TASKS) == 1
+        await next(iter(_TASKS))
+
+    assert "startup memory drain failed" in caplog.text

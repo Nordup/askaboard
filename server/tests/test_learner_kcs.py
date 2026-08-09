@@ -1,8 +1,10 @@
-from sqlalchemy import select, update
+import logging
+
+from sqlalchemy import func as sa_func, select, update
 
 from app.config import SOLE_LEARNER_ID
 from app.learner.kcs import (
-    _load_seed, outer_fringe, prerequisites_of, seed_kcs,
+    _load_seed, outer_fringe, prerequisites_of, seed_curriculum, seed_kcs,
 )
 from app.store.models import KC, KCEdge, Learner, LearnerKCState
 from tests.conftest import requires_db
@@ -252,3 +254,50 @@ async def test_outer_fringe_needs_the_prerequisites_in_place(db_factory):
         assert "7.RP.A.2" not in await outer_fringe(
             db, SOLE_LEARNER_ID, limit=500
         )
+
+
+@requires_db
+async def test_seed_curriculum_fills_the_vocabulary_at_startup(db_factory):
+    """The startup entry point, and until it existed nothing called `seed_kcs`.
+
+    An empty `kcs` is not a degraded learner model, it is an inert one that
+    fails loudly at the model: `evidence.record` resolves the tutor's codes
+    against this table, an empty table resolves none of them, and the tutor is
+    told "none of those codes are in the curriculum" on every call it will ever
+    make. Asserted on the count in the table rather than on the return value,
+    because the return value would be satisfied by a function that read the
+    JSON and wrote nothing.
+    """
+    async with db_factory() as db:
+        db.add(Learner(id=SOLE_LEARNER_ID, display_name="me"))
+        await db.commit()
+
+    assert await seed_curriculum(db_factory=db_factory) == 480
+
+    async with db_factory() as db:
+        assert (await db.execute(
+            select(sa_func.count()).select_from(KC)
+        )).scalar_one() == 480
+        assert (await db.execute(
+            select(sa_func.count()).select_from(KCEdge)
+        )).scalar_one() == len(_load_seed()[1])
+
+    # Every boot runs it, so re-running has to be a no-op rather than a
+    # duplicate-key failure that stops the service coming up.
+    assert await seed_curriculum(db_factory=db_factory) == 480
+
+
+async def test_seed_curriculum_never_stops_the_service_starting(caplog):
+    """A boot that cannot reach the database still has to produce a process.
+
+    Raising here would exit the container before anyone could ask `/health`
+    what was wrong — the same reasoning `jobs.backlog_status` is built on. The
+    log line is the account, and the next boot retries.
+    """
+    def _broken():
+        raise RuntimeError("no database today")
+
+    with caplog.at_level(logging.ERROR, logger="app.learner.kcs"):
+        assert await seed_curriculum(db_factory=_broken) is None
+
+    assert "inert" in caplog.text

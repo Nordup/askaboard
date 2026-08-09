@@ -138,9 +138,15 @@ def elo_step(
     attractor, so a *correct* observation on a weak channel drags an
     established theta down toward chance, a *wrong* one on a badly-lagging
     concept pulls it up, and a channel worth nothing moves theta rather than
-    leaving it alone. Scaling the step preserves direction — right always
-    raises, wrong always lowers, `reliability=0` does nothing — which is what
+    leaving it alone. Scaling the step preserves direction — right never
+    lowers, wrong never raises, `reliability=0` does nothing — which is what
     "an unreliable channel should move the estimate less" has to mean.
+
+    "Never lowers" and not "always raises", because at saturation the update is
+    exactly zero: `1 - sigmoid(40)` underflows to 0.0, so a correct answer on
+    an absurdly easy item leaves theta untouched while still accruing evidence.
+    That is the property this rule is correct by, so it is stated as the rule
+    actually holds rather than one case stronger.
     """
     # Saturating rather than overflowing: math.exp gives up somewhere past 709
     # and the sigmoid is flat to within 1e-17 by ±40, so clamping the gap costs

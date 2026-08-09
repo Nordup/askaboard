@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import logging
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 
@@ -64,6 +65,25 @@ MIN_REGION_PERCENT = 2.0
 # eventless wait in this loop, and already known to be survivable — against
 # work that is normally a query and one embedding.
 MEMORY_TIMEOUT_SECONDS = 20.0
+
+# How long a whole turn may spend waiting on memory tools, added up.
+#
+# `MEMORY_TIMEOUT_SECONDS` bounds one call and nothing bounds the number of
+# them: the per-call timeout sits inside `for call in calls`, inside the
+# `MAX_TOOL_ROUNDS` loop, and nothing caps calls-per-response. Seven
+# `search_memory` calls in one response is 140 seconds of silence inside a
+# single round — past the client's 120s `streamTimeout` before the second round
+# even starts, which is exactly the failure the per-call bound above was added
+# to prevent, arrived at by a different road.
+#
+# So the budget is cumulative across the turn: each call is allowed
+# `min(MEMORY_TIMEOUT_SECONDS, what is left)`, and once nothing is left the
+# tool is answered immediately with `MEMORY_TIMEOUT_ACK` rather than waited on.
+# That introduces no new failure mode — the model already has to handle that
+# string, and it already means "this was abandoned and you do not know what it
+# managed to do". Forty seconds is two full-length calls, comfortably inside
+# 120s alongside the model streaming that has to fit there too.
+MEMORY_BUDGET_SECONDS = 40.0
 
 # What the tool call is answered with. `set_workspace` has no server-side
 # effect to report: the plan and exercise ride out on the WorkspaceEvent and
@@ -411,6 +431,12 @@ async def run_turn(
     translator = translator or EventTranslator()
     result = TurnResult()
     conversation = list(bundle.input)
+    # Time left for memory tools across the whole turn, spent down by every
+    # call in every round. Wall-clock spent *waiting on memory*, not wall-clock
+    # since the turn began: a turn is legitimately minutes of model streaming,
+    # and a deadline measured from the start would refuse a memory call in a
+    # later round for time the model spent thinking.
+    memory_budget = MEMORY_BUDGET_SECONDS
 
     for _ in range(MAX_TOOL_ROUNDS):
         output_items: list[dict] = []
@@ -483,28 +509,52 @@ async def run_turn(
 
             if answer.run is not None:
                 name, arguments = answer.run
-                # Announced before the wait, for the reason the `board_request`
-                # below is: this is an eventless stretch, so nothing else will
-                # put anything on the wire until it ends. A status is what tells
-                # the learner the tutor is doing something, and what stops the
-                # gap being the largest silence in the turn.
-                yield StatusEvent(
-                    phase=MEMORY_PHASES.get(name, "thinking"), detail=None
-                ), result
-                try:
-                    # Bounded, because nothing else bounds it. The handler
-                    # answers rather than raising, so a timeout is the only
-                    # failure that can reach this branch — and cancelling
-                    # mid-flight can hand a half-used connection back to the
-                    # pool, which is what `pool_pre_ping` on the engine is for.
-                    async with asyncio.timeout(MEMORY_TIMEOUT_SECONDS):
-                        output = await handle_memory(name, arguments)
-                except TimeoutError:
+                if memory_budget <= 0:
+                    # Answered without waiting, and no status first: there is
+                    # no eventless stretch to cover, because nothing is being
+                    # awaited. The ack is the same string a timeout produces,
+                    # which is the point — the model already knows how to read
+                    # "abandoned, and you do not know what it managed to do".
                     logger.warning(
-                        "memory tool timed out after %.0fs | tool=%s",
-                        MEMORY_TIMEOUT_SECONDS, name,
+                        "memory budget of %.0fs exhausted; answering without "
+                        "running | tool=%s", MEMORY_BUDGET_SECONDS, name,
                     )
                     output = MEMORY_TIMEOUT_ACK
+                else:
+                    # Announced before the wait, for the reason the
+                    # `board_request` below is: this is an eventless stretch,
+                    # so nothing else will put anything on the wire until it
+                    # ends. A status is what tells the learner the tutor is
+                    # doing something, and what stops the gap being the largest
+                    # silence in the turn.
+                    yield StatusEvent(
+                        phase=MEMORY_PHASES.get(name, "thinking"), detail=None
+                    ), result
+                    allowance = min(MEMORY_TIMEOUT_SECONDS, memory_budget)
+                    started = time.monotonic()
+                    try:
+                        # Bounded twice, because nothing else bounds either
+                        # one: `MEMORY_TIMEOUT_SECONDS` is what one call may
+                        # take, `memory_budget` is what the turn has left. The
+                        # handler answers rather than raising, so a timeout is
+                        # the only failure that can reach this branch — and
+                        # cancelling mid-flight can hand a half-used connection
+                        # back to the pool, which is what `pool_pre_ping` on
+                        # the engine is for.
+                        async with asyncio.timeout(allowance):
+                            output = await handle_memory(name, arguments)
+                    except TimeoutError:
+                        logger.warning(
+                            "memory tool timed out after %.0fs | tool=%s",
+                            allowance, name,
+                        )
+                        output = MEMORY_TIMEOUT_ACK
+                    finally:
+                        # In `finally` so a call that timed out still spends
+                        # what it burned. Charging only successful calls would
+                        # let a run of timeouts cost 20s each and never reduce
+                        # the budget that exists to stop exactly that.
+                        memory_budget -= time.monotonic() - started
                 conversation.append({
                     "type": "function_call_output",
                     "call_id": call_id,

@@ -32,8 +32,10 @@ from app.tutor.context import ContextBundle
 from app.tutor.loop import (
     MALFORMED_MEMORY_ACK,
     MAX_TOOL_ROUNDS,
+    MEMORY_BUDGET_SECONDS,
     MEMORY_PHASES,
     MEMORY_TIMEOUT_ACK,
+    MEMORY_TIMEOUT_SECONDS,
     NO_MEMORY_ACK,
     UNSUPPORTED_TOOL_ACK,
     _answer,
@@ -346,6 +348,78 @@ async def test_a_memory_call_that_hangs_is_abandoned_rather_than_held_forever(
     outputs = [item for item in second if item.get("type") == "function_call_output"]
     assert outputs[0]["output"] == MEMORY_TIMEOUT_ACK
     # And the turn carried on: the model still got its second round.
+    assert route.call_count == 2
+
+
+def _memory_calls_turn(*names: str) -> tuple[dict, ...]:
+    """A response ending on several memory tool calls at once.
+
+    Which the model is entitled to do, and nothing caps how many.
+    """
+    return (
+        {"type": "response.created", "sequence_number": 0,
+         "response": {"id": "resp_m"}},
+        {"type": "response.completed", "sequence_number": 1, "response": {
+            "id": "resp_m",
+            "usage": {"input_tokens": 10, "output_tokens": 4},
+            "output": [
+                {"type": "function_call", "id": f"fc_{i}", "call_id": f"call_{i}",
+                 "name": name, "arguments": "{}", "status": "completed"}
+                for i, name in enumerate(names)
+            ],
+        }},
+    )
+
+
+def test_the_memory_budget_sits_between_one_call_and_the_client_timeout():
+    """Below one call's timeout the budget short-changes the first call; above
+    the client's 120s `streamTimeout` it bounds nothing the client will wait
+    for. Neither end is a defensible place for this number to drift to."""
+    assert MEMORY_TIMEOUT_SECONDS <= MEMORY_BUDGET_SECONDS < 120
+
+
+@respx.mock
+async def test_memory_calls_share_one_budget_across_the_turn(monkeypatch, caplog):
+    """The per-call timeout does not bound a turn, and nothing else did.
+
+    `asyncio.timeout(MEMORY_TIMEOUT_SECONDS)` sits inside `for call in calls`,
+    inside the `MAX_TOOL_ROUNDS` loop, with nothing capping calls per response.
+    Seven `search_memory` calls in one response is 140 seconds of silence
+    inside a single round — past the client's 120s `streamTimeout` before the
+    second round begins, which is the exact failure the per-call bound was
+    added to prevent, reached by a different road.
+
+    So the budget is spent down across the turn and an exhausted one answers
+    immediately, with the same ack a timeout produces. The assertion that
+    matters is that the third handler *never ran*: a test on the acks alone
+    would pass on a version that waited its full 20 seconds first.
+    """
+    monkeypatch.setattr("app.tutor.loop.MEMORY_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr("app.tutor.loop.MEMORY_BUDGET_SECONDS", 0.08)
+    ran: list[str] = []
+
+    async def handle(name: str, arguments: dict) -> str:
+        ran.append(name)
+        await asyncio.sleep(5)
+        return "Nothing on file about that."
+
+    route = respx.post("https://api.openai.com/v1/responses")
+    with caplog.at_level(logging.WARNING, logger="app.tutor.loop"):
+        async for _ in _run(
+            handle,
+            _memory_calls_turn("search_memory", "search_memory", "search_memory"),
+            TEXT_ONLY_TURN,
+        ):
+            pass
+
+    # Two calls burned 0.05 and the 0.03 that was left; the third was answered
+    # without being started.
+    assert ran == ["search_memory", "search_memory"]
+    second = json.loads(route.calls[1].request.content)["input"]
+    outputs = [item for item in second if item.get("type") == "function_call_output"]
+    assert [item["output"] for item in outputs] == [MEMORY_TIMEOUT_ACK] * 3
+    assert "budget" in caplog.text
+    # And the turn still finished: a spent budget costs memory, not the reply.
     assert route.call_count == 2
 
 

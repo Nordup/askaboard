@@ -11,8 +11,11 @@ with `extracted_at` NULL, so the two failures that actually happen — the
 provider erroring, and the process going away with the background task still
 running — leave a row saying "this session happened and has not been read
 yet" instead of leaving nothing at all. `run_extraction_backlog` reads those
-rows back and every close runs it, so a lost session is retried by the next
-close rather than by a queue this service does not have.
+rows back, and both a close and a service start run it — so a lost session is
+retried by the next of either, rather than by a queue this service does not
+have. Startup is the one that matters in practice: the device does not call
+the close endpoint, so `run_startup_drain` is very nearly the only trigger the
+whole pipeline has.
 
 One episode per session, forever, is the invariant `uq_episodes_session`
 enforces — which makes *when* a session is recorded the load-bearing decision
@@ -27,7 +30,7 @@ import asyncio
 import logging
 import uuid
 import weakref
-from collections.abc import Sequence
+from collections.abc import Coroutine, Sequence
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 
@@ -466,21 +469,75 @@ async def run_session_close(
     await run_extraction_backlog(db_factory=factory)
 
 
+async def run_startup_drain(*, db_factory: Factory | None = None) -> None:
+    """Sweep, then extract, once at boot. Returns nothing; logs what it did.
+
+    This is the whole pipeline's trigger of last resort, and today it is very
+    nearly the only one. `sweep_abandoned_sessions` is reachable from the close
+    endpoint alone and the device never calls it, so without this nothing ever
+    closes a session and the store stays empty forever. `STALE_AFTER` is six
+    hours, which catches every session that is genuinely over — so a restart
+    is enough to make the whole thing work with no client change at all.
+
+    It also closes the hole that nothing anywhere retries a failed extraction.
+    `run_extraction_backlog` halts the drain on the first failure, deliberately,
+    and the only thing that runs it again is the next close — which, with no
+    client calling close, is never. Running it at boot turns "restart the
+    service" into the recovery step, which is the one operators already reach
+    for.
+
+    Sweep before drain, in that order and not the other way: the sweep is what
+    turns quiet sessions into episodes, and an episode written after the drain
+    has finished waits for the next boot.
+    """
+    factory = db_factory or session_factory()
+    swept = await sweep_abandoned_sessions(db_factory=factory)
+    extracted = await run_extraction_backlog(db_factory=factory)
+    log.info("startup memory drain | swept=%d extracted=%d", swept, extracted)
+
+
+def _spawn(coro: Coroutine[object, object, None], *, description: str) -> asyncio.Task:
+    """Run `coro` detached, keeping a strong reference to it, logging failures.
+
+    Both callers need the same three things and get them wrong in the same two
+    ways otherwise — see `_TASKS` for why the reference has to be held, and the
+    two `schedule_*` docstrings for why swallowing the exception is honest in
+    each case rather than in general.
+    """
+    async def _guarded() -> None:
+        try:
+            await coro
+        except Exception:
+            log.exception("%s failed", description)
+
+    task = asyncio.create_task(_guarded())
+    _TASKS.add(task)
+    task.add_done_callback(_TASKS.discard)
+    return task
+
+
+def schedule_startup_drain() -> None:
+    """Fire and forget, from the app's lifespan. Boot never waits on a provider.
+
+    Detached rather than awaited because a backlog is provider calls, five per
+    episode, and uvicorn does not accept a connection until the lifespan's
+    startup phase returns. Awaiting a drain of twenty episodes would mean a
+    service that answers nothing — not `/health`, not a turn — for as long as
+    the provider takes. Every failure inside is already recoverable by
+    construction: the episodes keep `extracted_at` NULL and the next boot or
+    close tries again.
+    """
+    _spawn(run_startup_drain(), description="startup memory drain")
+
+
 async def schedule_session_close(session_id: uuid.UUID) -> None:
     """Fire and forget. A device closing a session never waits on extraction.
 
-    The `except` is not a swallow: by the time anything in here can fail, the
-    episode is already committed with `extracted_at` NULL, so the failure is a
-    row in the backlog and this log line is the account of why it is there.
-    That ordering is the whole reason a bare `except Exception: log` is honest
-    here — it would not be if the failure left nothing behind.
+    The swallowed exception is not a shrug: by the time anything in here can
+    fail, the episode is already committed with `extracted_at` NULL, so the
+    failure is a row in the backlog and the log line is the account of why it
+    is there. That ordering is the whole reason logging and carrying on is
+    honest here — it would not be if the failure left nothing behind.
     """
-    async def _run() -> None:
-        try:
-            await run_session_close(session_id)
-        except Exception:
-            log.exception("session close failed for %s", session_id)
-
-    task = asyncio.create_task(_run())
-    _TASKS.add(task)
-    task.add_done_callback(_TASKS.discard)
+    _spawn(run_session_close(session_id),
+           description=f"session close for {session_id}")

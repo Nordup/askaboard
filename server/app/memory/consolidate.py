@@ -42,7 +42,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import EXTRACTION_MODEL, get_settings
 from app.memory.embed import embed_texts
-from app.memory.schema import ExtractedAtom
+from app.memory.schema import ExtractedAtom, MemoryCategory
 from app.store.models import MemoryAtom
 
 #: How many existing atoms to put in front of the adjudicator per new atom.
@@ -105,11 +105,19 @@ ADJUDICATION_SCHEMA: dict = {
     "required": ["ops"],
 }
 
+#: The header deliberately says only "from one session" and does not claim the
+#: batch is newer than what is on file. It very nearly always is, but
+#: `jobs.sweep_abandoned_sessions` documents the case where it is not: an
+#: abandoned session swept months late is recorded behind the extraction
+#: watermark, which that function allows on purpose and logs. Asserting recency
+#: here would state a falsehood in exactly the case the dated SUPERSEDE rule
+#: below exists to contain, and put two instructions in tension with the false
+#: one first. The dates on `existing_facts` and that rule carry it alone.
 ADJUDICATION_PROMPT = """\
 You are deciding what to do with newly extracted facts about a learner, given \
 facts already on file.
 
-NEW FACTS, from a session later than every dated fact below:
+NEW FACTS, from one session:
 {new_facts}
 
 EXISTING FACTS, each dated with when it started being true:
@@ -297,6 +305,19 @@ async def _candidates(
     Only live atoms are offered. A superseded row is already closed, and closing
     it again would overwrite the `superseded_by` pointer that records what
     replaced it the first time.
+
+    `episode_ref` atoms are never offered, and that is a correctness rule
+    rather than a saving. An episode record is a fact about a *session* and not
+    a claim about the learner — `schema.STATED_EXEMPT` sets out the same
+    reasoning for why it escapes the `stated` filter — so it cannot stop being
+    true and there is nothing for a later fact to supersede. Superseding one
+    anyway makes it unreachable everywhere at once: `profile._closed_atoms`
+    only reads categories in `profile.ORDER`, which excludes `episode_ref`,
+    while retrieval and the live-profile query both filter `valid_to IS NULL`.
+    A closed episode atom is therefore read by nothing, forever. Their text is
+    also the most formulaic in the store ("Covered adding fractions on
+    2026-08-09"), so at `FLOOR = 0.35` two of them are exactly the pairs that
+    now clear the floor and reach the adjudicator — dormant at 0.75, live now.
     """
     pooled: list[MemoryAtom] = []
     seen: set[uuid.UUID] = set()
@@ -307,6 +328,7 @@ async def _candidates(
             .where(
                 MemoryAtom.learner_id == learner_id,
                 MemoryAtom.valid_to.is_(None),
+                MemoryAtom.category != MemoryCategory.episode_ref.value,
                 distance <= 1 - FLOOR,
             )
             .order_by(distance)
@@ -356,10 +378,17 @@ async def consolidate(
     # `embed_texts` documents that it raises rather than returning a short list,
     # but it never checks the length it got back, and the `zip` below pairs
     # positionally — one vector short would silently drop the trailing atoms and
-    # report success. Asserted here because this is the caller that depends on it.
-    assert len(vectors) == len(atoms), (
-        f"embed_texts returned {len(vectors)} vectors for {len(atoms)} atoms"
-    )
+    # report success. Checked here because this is the caller that depends on it.
+    #
+    # `raise AssertionError` and not `assert`: both invariants below guard
+    # against writing a permanently invisible row, and `assert` is compiled out
+    # under `PYTHONOPTIMIZE`/`python -O`. Nothing in this repo runs with it
+    # today, but a base image that sets it would silently remove the two checks
+    # that stop a lost fact, and the removal would look like nothing at all.
+    if len(vectors) != len(atoms):
+        raise AssertionError(
+            f"embed_texts returned {len(vectors)} vectors for {len(atoms)} atoms"
+        )
     # Every row this writes must carry a real embedding, and this is where that
     # invariant is enforced. `_candidates` selects on cosine distance, which a
     # NULL or empty embedding fails, so such a row is not merely skipped this
@@ -367,7 +396,8 @@ async def consolidate(
     # `retrieve`'s dense arm cannot rank it either. That is permanent, not
     # conservative. Its keyword arm can still find the row by its words, which
     # is a way back to the fact and not a way back into consolidation.
-    assert all(vectors), "embed_texts returned an empty vector"
+    if not all(vectors):
+        raise AssertionError("embed_texts returned an empty vector")
 
     existing = await _candidates(db, learner_id, vectors)
 
@@ -408,7 +438,7 @@ async def consolidate(
             # A row written with a NULL embedding is invisible to consolidation
             # from the moment it lands — permanently, and with nothing anywhere
             # to notice it by — and reachable in retrieval only by its exact
-            # words, never by meaning. See the assert above.
+            # words, never by meaning. See the empty-vector check above.
             embedding=vector,
             source_session_id=session_id,
             source_turn_ids=turn_ids,
