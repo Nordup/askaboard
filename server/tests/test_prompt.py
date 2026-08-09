@@ -104,10 +104,12 @@ def test_system_prompt_pins_the_em_dash_count():
     # completely — the prohibition..."), one in paragraph 3 ("...ordinary prose
     # — it is streamed..."), two in the board paragraph ("...any region of it —
     # give x, y, width and height...", "...the tool will tell you so — say
-    # that plainly..."), and two in the checking-work paragraph ("...they have
-    # already done — “how is this so far”...", "...simply sent you — they are
-    # asking..."). The count is pinned to catch ASCII normalisation, not to
-    # forbid new prose, so it moves with deliberate additions.
+    # that plainly..."), one in the memory paragraph ("...narrate a lookup —
+    # just teach someone you already know."), and two in the checking-work
+    # paragraph ("...they have already done — “how is this so far”...",
+    # "...simply sent you — they are asking..."). The count is pinned to catch
+    # ASCII normalisation, not to forbid new prose, so it moves with deliberate
+    # additions.
     #
     assert "—" in SYSTEM_PROMPT
-    assert SYSTEM_PROMPT.count("—") == 7
+    assert SYSTEM_PROMPT.count("—") == 8

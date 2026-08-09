@@ -33,11 +33,16 @@ def assemble_context(
     board_manifest: str | None = None,
     board_scene: str | None = None,
     board_changed: bool | None = None,
+    profile: str | None = None,
+    learner_state: str | None = None,
+    recent_digest: str | None = None,
 ) -> ContextBundle:
     """SEAM: everything the model is told, assembled in one place.
 
-    Retrieved memory facts and RAG chunks become additional sections appended to
-    the user prompt here. No caller changes when they do.
+    Memory arrives as three blocks its own modules have already rendered —
+    `profile`, `learner_state`, `recent_digest` — and passes straight through.
+    Where they sit relative to the transcript, and why, belongs to
+    `compose_user_prompt`; a caller that has none of them changes nothing.
 
     There are two separate ways the board reaches this function, and they mean
     different things. `image_data` is a region the learner *chose* and sent — an
@@ -70,6 +75,9 @@ def assemble_context(
         has_image=image_data is not None,
         signal=signal,
         board_note=board_note,
+        profile=profile,
+        learner_state=learner_state,
+        recent_digest=recent_digest,
     )
 
     content: list[dict[str, Any]] = [{"type": "input_text", "text": user_text}]
