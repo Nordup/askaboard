@@ -86,11 +86,27 @@ lane at both scales:
 | | panel (301) | full-screen (740) |
 |---|---|---|
 | today | 151 | 534 |
-| with `+` | 117 | 494 |
+| with `+` | 121 | 498 |
 
-The `+` is drawn at the marquee's 24pt with the same
-`expandedTapTarget(ComposerMetrics.minimumTapTarget, over:)` treatment, so the
-tap target is 44 and the row arithmetic does not move.
+The `+` is drawn at **20**, the single render size `design/icons.json` publishes
+for `ui/plus` — not stepped up to the marquee's 24 to make the two glyphs
+match. It is the same rule the marquee itself is held to at full-screen, where
+it stays 24 while every other glyph in the row steps up: inventing a render
+size for a documented icon to tidy an alignment is how an icon set drifts.
+
+It carries the same `expandedTapTarget(ComposerMetrics.minimumTapTarget, over:)`
+treatment as the marquee, so the tap target is 44 and the row arithmetic does
+not move.
+
+**Its colour is the one open question for Paper.** `ui/plus` is the only glyph
+in the set whose colour token is `--color-brand` rather than `--color-icon`,
+and board 15a explains why: on the session menu *"it is not chrome, it is the
+one action on the menu."* In the composer it is chrome — one of four controls
+in a row where everything else is grey, and a violet `+` sitting beside a grey
+marquee would read as lit, which is what the marquee's violet already means.
+This design assumes `--color-icon`, which is a deliberate departure from the
+glyph's published token and belongs in the Paper file with a note rather than
+in a Swift file as a surprise.
 
 While the dictation lane is open the leading slot belongs to the cancel cross,
 exactly as it does today, and the `+` is not drawn. A lasso attachment is
@@ -254,14 +270,19 @@ once too often.
 
 ### Recording
 
-Two `record_attachment` calls per upload: the original as
-`kind: "learner_upload"`, and the converted derivative as
-`kind: "learner_upload_converted"` when conversion produced different bytes.
-The audit trail then holds both what the learner sent and what the model
-actually saw, which are the two things a later investigation needs.
+One `attachments` row per upload, `kind: "learner_upload"`, session-scoped with
+a null `turn_id` — exactly how a dictation's audio is stored, and the case that
+column was made nullable for. The row carries both blob keys: the original the
+learner sent, and the converted bytes the model actually saw. Those are the two
+things a later investigation needs.
+
+The link from a turn back to its attachments is the turn's own recorded request
+body, which already names `attachment_ids` verbatim. There is no second row per
+turn: the same worksheet re-sent across three turns is one upload and three
+references, and the transcript already says so.
 
 The blob store is content-addressed, so the same worksheet uploaded twice costs
-one blob and two rows — the behaviour `record_attachment` already has.
+one blob — the behaviour `Recorder` already has.
 
 ## The prompt
 
