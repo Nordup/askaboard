@@ -77,6 +77,7 @@
 		8B9AC755A10DFAF39CA985CD /* SettingsWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CDCEE851D84DD0BD8B2DB86 /* SettingsWindow.swift */; };
 		8CFFCA8713A559A17AA2D839 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C742B8F4CF845931CCEFC3D /* KeychainStore.swift */; };
 		8EF8D1DBB69B35CD52FE47A8 /* TutorEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4D02DCD5A1B7D6CBA594BAF /* TutorEvent.swift */; };
+		960BF188040438DC7F5C1D9B /* AttachmentUploader.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE21716456338270C146DD1F /* AttachmentUploader.swift */; };
 		9986C716988CA98C7B16DA42 /* IconPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CBDF79C9C7A38D6240F017F /* IconPaths.swift */; };
 		9EE208CFC286CC9901CDDBB6 /* ComposerButtons.swift in Sources */ = {isa = PBXBuildFile; fileRef = 268CDEEFE80CA5EDF78FB1EF /* ComposerButtons.swift */; };
 		A295938FFD57678AF0A64E2F /* TutorPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EA4C8E6325776E542D8DA7B /* TutorPanel.swift */; };
@@ -234,6 +235,7 @@
 		CAB4A0EDD663149C6BE8D7CB /* Layout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Layout.swift; sourceTree = "<group>"; };
 		CB96C449E6F25690ABBF7028 /* ChatGallery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatGallery.swift; sourceTree = "<group>"; };
 		CDC29B5C0EE22B4B88E0C16D /* BoardInk.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardInk.swift; sourceTree = "<group>"; };
+		CE21716456338270C146DD1F /* AttachmentUploader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentUploader.swift; sourceTree = "<group>"; };
 		CE8BA11A166196B847324B4D /* BackendConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendConfiguration.swift; sourceTree = "<group>"; };
 		D0E7C06258FD823C2E5B4C5D /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		D207D577F59A94A0666E7CB3 /* GreetingBlock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GreetingBlock.swift; sourceTree = "<group>"; };
@@ -410,6 +412,7 @@
 			isa = PBXGroup;
 			children = (
 				7B2EAA96D5D01DB1432106F3 /* AttachmentStore.swift */,
+				CE21716456338270C146DD1F /* AttachmentUploader.swift */,
 				CE8BA11A166196B847324B4D /* BackendConfiguration.swift */,
 				71B9E9F758F84F04CE79345C /* BackendDictationService.swift */,
 				719152B51A668924C3B3FEAF /* BackendTutorService.swift */,
@@ -740,6 +743,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				41E73D693A9C4EC247E50BDB /* AttachmentStore.swift in Sources */,
+				960BF188040438DC7F5C1D9B /* AttachmentUploader.swift in Sources */,
 				DC5AFD891640960B9E77D1D6 /* BackendConfiguration.swift in Sources */,
 				0A56BB7A4D3BB365E2B8E4B0 /* BackendDictationService.swift in Sources */,
 				A95C07DFBEDE1D12143D4DB5 /* BackendTutorService.swift in Sources */,

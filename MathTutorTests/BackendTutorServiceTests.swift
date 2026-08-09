@@ -274,4 +274,51 @@ final class BackendTutorServiceTests: XCTestCase {
             }
         }
     }
+
+    // MARK: - AttachmentUploader
+
+    func testMultipartBodyCarriesTheSessionAndTheFile() throws {
+        let sessionID = UUID()
+        let body = AttachmentUploader.multipartBody(
+            boundary: "BOUNDARY",
+            sessionID: sessionID,
+            filename: "worksheet.pdf",
+            contentType: "application/pdf",
+            data: Data("%PDF-1.4".utf8)
+        )
+        let text = String(decoding: body, as: UTF8.self)
+
+        XCTAssertTrue(text.contains("name=\"session_id\""))
+        XCTAssertTrue(text.contains(sessionID.uuidString))
+        XCTAssertTrue(text.contains("name=\"file\"; filename=\"worksheet.pdf\""))
+        XCTAssertTrue(text.contains("Content-Type: application/pdf"))
+        XCTAssertTrue(text.contains("%PDF-1.4"))
+        XCTAssertTrue(text.hasSuffix("--BOUNDARY--\r\n"))
+    }
+
+    func testUploadRequestTargetsTheAttachmentsRouteWithTheBearer() throws {
+        let configuration = BackendConfiguration(
+            baseURL: URL(string: "https://example.test")!, token: "abc"
+        )
+        let request = AttachmentUploader.urlRequest(
+            boundary: "BOUNDARY", configuration: configuration!, body: Data()
+        )
+
+        XCTAssertEqual(request.url?.path, "/v1/attachments")
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer abc")
+        XCTAssertEqual(
+            request.value(forHTTPHeaderField: "Content-Type"),
+            "multipart/form-data; boundary=BOUNDARY"
+        )
+    }
+
+    func testAnUploadRefusalSurfacesTheServersSentence() async {
+        // The server writes that sentence for a chip in the composer. Replacing it
+        // with a generic message here would be writing it twice, worse.
+        let refusal = AttachmentUploader.refusal(
+            statusCode: 415, body: #"{"detail":"I can’t read mystery.bin."}"#
+        )
+        XCTAssertEqual(refusal, "I can’t read mystery.bin.")
+    }
 }
