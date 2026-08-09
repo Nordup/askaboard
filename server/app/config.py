@@ -37,6 +37,20 @@ EXTRACTION_MODEL = "gpt-5.6-luna"
 EMBEDDING_MODEL = "text-embedding-3-small"
 EMBEDDING_DIMS = 1024
 
+# What a learner may attach to a turn. Each of these is a refusal with a
+# sentence the composer shows, never a silent truncation — a worksheet quietly
+# cut off at page 20 is worse than one that was never accepted.
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+MAX_ATTACHMENTS_PER_TURN = 5
+MAX_PDF_PAGES = 20
+MAX_TEXT_CHARS = 100_000
+#: The longest edge of the thumbnail the device stores and draws in the thread.
+THUMBNAIL_MAX_EDGE = 256
+#: The longest edge an uploaded photo is downscaled to before the model sees
+#: it. A 12MP camera image costs tokens proportional to its pixels and carries
+#: no more legible handwriting than this does.
+IMAGE_MAX_EDGE = 2000
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
