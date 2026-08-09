@@ -259,7 +259,6 @@ _IMAGE_MAGIC = (
     b"\xff\xd8\xff",       # JPEG
     b"\x89PNG\r\n\x1a\n",  # PNG
     b"GIF87a", b"GIF89a",  # GIF
-    b"BM",                 # BMP
 )
 #: ISO-BMFF brands that mean "this is a picture", read at offset 4. iOS hands
 #: these out by default, and they are not an image format the model accepts —
@@ -290,7 +289,23 @@ def _is_image(data: bytes) -> bool:
         return True
     if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return True
+    if _is_bmp(data):
+        return True
     return data[4:8] == b"ftyp" and data[8:12] in _BMFF_IMAGE_BRANDS
+
+
+def _is_bmp(data: bytes) -> bool:
+    """BMP, checked by more than its two-letter magic.
+
+    `BM` alone is the shortest magic in the set and the only one that is
+    ordinary text: a learner's note beginning "BMI calculator" or "BMW" would
+    be sniffed as an image and sent down the image rung. So the header is
+    validated properly — the size field at offset 2 has to agree with the
+    bytes actually present — which no English sentence does by accident.
+    """
+    if not data.startswith(b"BM") or len(data) < 14:
+        return False
+    return int.from_bytes(data[2:6], "little") == len(data)
 
 
 def _is_text(data: bytes) -> bool:
@@ -312,7 +327,7 @@ def _is_text(data: bytes) -> bool:
 - [ ] **Step 6: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_attachment_kinds.py -v`
-Expected: 13 PASS
+Expected: 12 PASS
 
 - [ ] **Step 7: Commit**
 
