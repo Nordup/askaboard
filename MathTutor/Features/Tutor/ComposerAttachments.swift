@@ -66,6 +66,24 @@ final class ComposerAttachments: ObservableObject {
     var isEmpty: Bool { pending.isEmpty }
     var isFull: Bool { pending.count >= Self.limit }
 
+    /// The first failed attachment's sentence, for the composer's note line.
+    ///
+    /// Not the chip: the chip's label lane is 84pt, and a sentence written to tell a
+    /// learner what to do instead — "That file is too large, try a photo of one page at a
+    /// time" — arrives there as three words and an ellipsis. Board 15 §02's note line above
+    /// the pill is a full-width lane that already exists for exactly this, and the failed
+    /// chip is still marked as failed beside it.
+    ///
+    /// The first rather than all of them: the note is one line, and a learner who fixes the
+    /// first refusal gets the next one as soon as that chip goes. Reading it costs nothing
+    /// when nothing has failed, which is the common case, because the search is lazy.
+    var failureNote: String? {
+        pending.lazy.compactMap { attachment in
+            if case let .failed(sentence) = attachment.state { return sentence }
+            return nil
+        }.first
+    }
+
     /// Shows the chip, then starts the upload behind it.
     ///
     /// In that order on purpose: the learner picked a file and the feedback for

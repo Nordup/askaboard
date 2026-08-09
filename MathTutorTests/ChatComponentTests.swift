@@ -1400,12 +1400,19 @@ final class ChatComponentTests: XCTestCase {
     }
 
     func testTheChipsCardObeysTheDerivedHeightLaw() {
-        // `visibleBand + bodyTopRadius`. The chips card is taller than the label card, and
-        // taller is the only thing about it that differs — a card that stopped obeying the
-        // law would show the notch board 03 §2 is about.
-        for scale in [ChatScale.panel, .fullScreen] {
+        // `followsDerivedLaw` holds by construction here — `cardHeight` is *built* as
+        // `band + bodyTopRadius` — so on its own it asserts nothing. What makes the law
+        // worth stating is that both terms are the drawing's: task 8 §5 measured the band
+        // at 52 and 64 and the card at 77 and 98, so these literals are what a wrong band
+        // (the brief's 62 / 78, say) actually fails against.
+        let measured: [(ChatScale, CGFloat, CGFloat)] = [(.panel, 52, 77), (.fullScreen, 64, 98)]
+        for (scale, band, card) in measured {
             let metrics = AttachmentStackMetrics.composerChips(scale, width: scale.contentWidth)
+            XCTAssertEqual(metrics.visibleBand, band, "\(scale)")
+            XCTAssertEqual(metrics.cardHeight, card, "\(scale)")
             XCTAssertTrue(metrics.followsDerivedLaw, "\(scale)")
+            // The one assertion in here that is about a relationship rather than a value:
+            // a chip carrying a thumbnail does not fit a card sized to one label row.
             XCTAssertGreaterThan(
                 metrics.visibleBand,
                 AttachmentStackMetrics.composer(scale, width: scale.contentWidth).visibleBand,
@@ -1415,14 +1422,12 @@ final class ChatComponentTests: XCTestCase {
     }
 
     func testTheChipsCardIsTheDrawingsOwnArithmetic() {
-        // Task 8 §5, both stages. `52 = 6 + 40 + 6` behind a 50pt pill of radius 25 gives
-        // `77`; `64 = 8 + 48 + 8` behind a 68pt pill of radius 34 gives `98`.
+        // Task 8 §5, both stages. The band and the card height are pinned in
+        // `testTheChipsCardObeysTheDerivedHeightLaw`; this is the rest of the table.
         let panel = AttachmentStackMetrics.composerChips(.panel, width: DS.Container.panelContent)
         XCTAssertEqual(panel.width, 301)
-        XCTAssertEqual(panel.visibleBand, 52)
         XCTAssertEqual(panel.bodyHeight, 50)
         XCTAssertEqual(panel.bodyTopRadius, 25)
-        XCTAssertEqual(panel.cardHeight, 77)
         // The composer's whole frame once chips are in it: 52 + 50. Today's selection card
         // gives 88.
         XCTAssertEqual(panel.totalHeight, 102)
@@ -1434,10 +1439,8 @@ final class ChatComponentTests: XCTestCase {
 
         let full = AttachmentStackMetrics.composerChips(.fullScreen, width: DS.Container.column)
         XCTAssertEqual(full.width, 740)
-        XCTAssertEqual(full.visibleBand, 64)
         XCTAssertEqual(full.bodyHeight, 68)
         XCTAssertEqual(full.bodyTopRadius, 34)
-        XCTAssertEqual(full.cardHeight, 98)
         XCTAssertEqual(full.totalHeight, 132)
         // 30, measured — two points wider than the label card's 28, and off the 4pt scale.
         XCTAssertEqual(full.cardPaddingLeading, 30)
@@ -1445,11 +1448,23 @@ final class ChatComponentTests: XCTestCase {
         XCTAssertEqual(full.labelRowWidth, 710)
     }
 
-    func testTheChipsCardIsEdgeToEdgeWithThePill() {
-        // The notch rule from the other side: a card narrower than the pill shows the
-        // corner it is meant to hide.
-        let metrics = AttachmentStackMetrics.composerChips(.panel, width: 301)
-        XCTAssertEqual(metrics.width, 301)
+    func testTheChipsCardIsEdgeToEdgeWithThePillItIsBehind() {
+        // The notch rule from the other side, in the case that actually bites: a portrait
+        // iPad hands the wide composer 644, and a card still 740 wide behind a 644 pill
+        // hangs off the column — while a card that kept the *design's* width would be
+        // narrower than the pill everywhere the column is wider. Both are one substitution
+        // away, so the card is asserted against the pill rather than against a constant.
+        let column: CGFloat = 644
+        let pill = ComposerMetrics.for(.fullScreen, width: column)
+        let card = AttachmentStackMetrics.composerChips(.fullScreen, width: column)
+
+        XCTAssertEqual(card.width, pill.width)
+        // The straight run of the pill's top edge is what the card must extend past —
+        // `644 − 2 × 34`. A card that stopped there would show the notch at both corners.
+        XCTAssertEqual(card.straightTopRun, column - 2 * pill.cornerRadius)
+        XCTAssertGreaterThan(card.width, card.straightTopRun)
+        // And the treatment does not follow the column: the band is still the scale's.
+        XCTAssertEqual(card.visibleBand, 64)
     }
 
     func testAChipsSizeIsItsPartsAddedUp() {
@@ -1485,18 +1500,6 @@ final class ChatComponentTests: XCTestCase {
         XCTAssertEqual(AttachmentChipMetrics.fullScreen.labelStyle.weight, .semibold)
     }
 
-    func testTheBandAndTheChipAgreeOnOneHeight() {
-        // The card's band is built from the chip and the chip is drawn from the band, so
-        // the round trip has to close — otherwise a chip sits proud of the tint it is on.
-        for scale in [ChatScale.panel, .fullScreen] {
-            XCTAssertEqual(
-                AttachmentStackMetrics.composerChips(scale, width: scale.contentWidth).chipHeight,
-                AttachmentChipMetrics.for(scale).height,
-                "\(scale)"
-            )
-        }
-    }
-
     func testThreeChipsDoNotFitThePanelAndDoFitTheReadingColumn() {
         // §6a, settled: the row scrolls, it does not wrap. Chip 1 shows whole and 115 of
         // chip 2 is the cue. Full-screen has no such problem.
@@ -1522,6 +1525,45 @@ final class ChatComponentTests: XCTestCase {
         let chip = AttachmentChipMetrics.panel
         XCTAssertEqual(chip.width(removable: false), 158 - 14 - 8)
         XCTAssertEqual(chip.width(removable: false), 136)
+    }
+
+    // Constructs SwiftUI values, and `View` carries `@MainActor`.
+    @MainActor
+    func testARefusalGoesToTheNoteLineAndNotOntoTheChip() async {
+        // The chip's label lane is 84pt at 15pt on one line, so a sentence written to say
+        // what to do instead reaches the learner as three words and an ellipsis. It goes to
+        // the note line above the pill, which board 15 §02 draws full width and which the
+        // composer already announces when it appears — and the chip stays, still marked
+        // failed, so the learner can see *which* file it is about.
+        let sentence = "That file is too large — try a photo of one page at a time."
+        let attachments = ComposerAttachments(upload: { _, _, _, _ in
+            throw TutorServiceError.network(sentence)
+        })
+
+        attachments.add(data: Data(), filename: "whole-book.pdf",
+                        contentType: "application/pdf", sessionID: UUID())
+        _ = await attachments.readyForSend()
+
+        XCTAssertEqual(attachments.failureNote, sentence)
+        // The chip has not been swept up with its words.
+        XCTAssertEqual(attachments.pending.count, 1)
+        XCTAssertEqual(attachments.pending[0].filename, "whole-book.pdf")
+        XCTAssertEqual(attachments.pending[0].state, .failed(sentence))
+        // What the chip itself carries now: a mark, and the state in the other modality.
+        XCTAssertEqual(AttachmentChip.value(for: .failed), "Failed")
+    }
+
+    @MainActor
+    func testNothingFailedIsNoNote() async {
+        let attachments = ComposerAttachments(upload: { _, _, _, _ in
+            throw TutorServiceError.network("nope")
+        })
+        XCTAssertNil(attachments.failureNote)
+
+        attachments.add(data: Data(), filename: "a.pdf",
+                        contentType: "application/pdf", sessionID: UUID())
+        // Still in flight — a chip that has not failed yet says nothing.
+        XCTAssertNil(attachments.failureNote)
     }
 
     // Constructs SwiftUI values, and `View` carries `@MainActor`.

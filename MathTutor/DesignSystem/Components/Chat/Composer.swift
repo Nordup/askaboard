@@ -439,7 +439,20 @@ struct Composer: View {
             || !attachments.isEmpty
     }
 
+    /// **`drawsAttachmentCard` is the branch, not a description of it.** It was stated as a
+    /// rule and then re-expressed as a condition chain here, which is two places to change
+    /// and four tests reading the one that draws nothing. Whether there is a card is this
+    /// property; *which* card is the only thing left inside.
     var body: some View {
+        if drawsAttachmentCard {
+            attachmentCard
+        } else {
+            annotatedPill
+        }
+    }
+
+    @ViewBuilder
+    private var attachmentCard: some View {
         if !attachments.isEmpty {
             // Chips: `AttachmentStack` directly, with the taller card. Not
             // `SelectionAttachment.composer`, which is the *label* card — the one the
@@ -456,15 +469,13 @@ struct Composer: View {
             } content: {
                 annotatedPill
             }
-        } else if selection == .attached {
+        } else {
             SelectionAttachment.composer(
                 metrics: metrics.attachment,
                 onDismiss: onDismissSelection
             ) {
                 annotatedPill
             }
-        } else {
-            annotatedPill
         }
     }
 

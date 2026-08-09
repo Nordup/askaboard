@@ -201,13 +201,22 @@ struct AttachmentChipRow: View {
         }
     }
 
-    /// The second line: what went wrong, or how many pages arrived. Nothing at all for a
-    /// one-page file, because "1 page" is noise on a chip that already shows the file's
-    /// name — and nothing while it converts, because the ring is already saying it.
+    /// The second line: how many pages arrived, and nothing else.
+    ///
+    /// Nothing for a one-page file, because "1 page" is noise on a chip that already shows
+    /// the file's name. Nothing while it converts, because the ring is already saying it.
+    ///
+    /// **And nothing when it fails**, which is the one that had to be taken back out. The
+    /// server's refusal is a sentence written to tell a learner what to do instead — *"That
+    /// file is too large, try a photo of one page at a time"* — and this lane is 84 points
+    /// wide at 15pt with one line, so it arrived as three words and an ellipsis: enough to
+    /// know something broke and not enough to know what. It goes to the note line above the
+    /// pill instead, which board 15 §02 draws full-width for exactly this and which the
+    /// composer already announces to VoiceOver when it appears. See
+    /// `ComposerAttachments.failureNote`. The chip is still visibly the failed one.
     private func subtitle(for attachment: PendingAttachment) -> String? {
         switch attachment.state {
-        case .uploading: nil
-        case let .failed(sentence): sentence
+        case .uploading, .failed: nil
         case let .ready(message, _):
             message.pageCount > 1 ? "\(message.pageCount) pages" : nil
         }
@@ -284,7 +293,7 @@ struct AttachmentChip: View {
                 if let subtitle {
                     Text(verbatim: subtitle)
                         .textStyle(ComposerMetrics.noteStyle)
-                        .foregroundStyle(state == .failed ? DS.Color.incorrect : DS.Color.inkSecondary)
+                        .foregroundStyle(DS.Color.inkSecondary)
                         .lineLimit(1)
                 }
             }
@@ -311,6 +320,23 @@ struct AttachmentChip: View {
         )
         .background(DS.Color.surface, in: RoundedRectangle(cornerRadius: metrics.radius))
         .accessibilityElement(children: .combine)
+        .accessibilityValue(Self.value(for: state))
+    }
+
+    /// What the chip's mark says, for a learner who cannot see it. The filename is the
+    /// label and does not move; this is the state beside it — Apple's own split, and the
+    /// one `ComposerVoiceButton` already follows.
+    ///
+    /// It carries more weight than it looks now that the failed chip has no sentence on it:
+    /// the box's grey and its cross are the whole of that state on screen, and this is the
+    /// whole of it in the other modality. The refusal's *words* arrive through the note
+    /// line, which the composer announces separately.
+    static func value(for state: State) -> String {
+        switch state {
+        case .converting: "Converting"
+        case .failed: "Failed"
+        case .thumbnail, .selection: ""
+        }
     }
 
     /// The filename drops to `--color-ink-tertiary` while the file converts and comes back
@@ -335,9 +361,14 @@ struct AttachmentChip: View {
                 DS.Color.brandTint
             }
         case .failed:
-            // Undrawn. The neutral box the bubble grey already provides, with the server's
-            // own sentence under the filename doing the work a glyph would do worse.
-            DS.Color.surfaceBubble
+            // Undrawn — task 8 draws the chip and the converting chip and stops there. The
+            // bubble grey stands in for the picture that never arrived, and the cross on it
+            // is now the whole of "this one did not work" on screen, since the sentence
+            // moved to the note line. `--color-incorrect` rather than `--color-icon` so it
+            // does not read as a second dismiss control beside the real one.
+            IconView(.uiCross, size: metrics.dismissSize, tint: DS.Color.incorrect)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(DS.Color.surfaceBubble)
         case .selection:
             IconView(.uiSelectionMarker, tint: DS.Color.brand)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
