@@ -11,6 +11,21 @@ import Foundation
 /// anything outside this file calls it.
 protocol TutorService: Sendable {
     func stream(_ request: TutorRequest) -> AsyncThrowingStream<TutorEvent, Error>
+
+    /// Tells the backend the learner has left this session for good, so it can
+    /// freeze the transcript and remember what is worth remembering from it.
+    ///
+    /// Only the moments that genuinely end a session may call this, and
+    /// backgrounding is not one of them — `TutorStore.closeCurrentSession` is
+    /// the single caller and says why at length.
+    func closeSession(id: UUID) async
+}
+
+extension TutorService {
+    /// Nothing to close. A service with no backend behind it keeps no
+    /// transcript, so the demo tutor and the test doubles inherit this instead
+    /// of each writing the same empty body.
+    func closeSession(id: UUID) async {}
 }
 
 struct TutorServiceRouter: TutorService, Sendable {
@@ -30,6 +45,14 @@ struct TutorServiceRouter: TutorService, Sendable {
             }
         }
         return BackendTutorService(configuration: configuration).stream(request)
+    }
+
+    /// Same gate as `stream(_:)`: a build with no usable token has no backend
+    /// holding a transcript, so there is nothing to close and no 401 to earn
+    /// by asking.
+    func closeSession(id: UUID) async {
+        guard let configuration = configurationReader() else { return }
+        await BackendTutorService(configuration: configuration).closeSession(id: id)
     }
 }
 

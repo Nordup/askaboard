@@ -133,6 +133,38 @@ struct BackendTutorService: TutorService, Sendable {
         return image
     }
 
+    /// How long a close may take before it is abandoned to the server's sweep.
+    ///
+    /// Nothing waits on this call, so the only thing a long timeout buys is a
+    /// request outliving the reason it was sent. Fifteen seconds is generous
+    /// for a request whose whole body is a URL and whose answer is 204.
+    static let closeTimeout: TimeInterval = 15
+
+    /// `POST {baseURL}/v1/sessions/{id}/close` — the device saying the learner
+    /// has left this session for good.
+    ///
+    /// Nothing is thrown and nothing is returned, and both are deliberate. The
+    /// server answers 204 *before* it starts the work — extraction is several
+    /// provider calls, minutes away — so there is no outcome here to report.
+    /// And a close that never arrives is not a failure the learner can act on:
+    /// `jobs.sweep_abandoned_sessions` picks up any session nobody closed on
+    /// the next server start. There is deliberately no retry for the same
+    /// reason — it would duplicate that sweep with weaker guarantees, from an
+    /// app that is frequently about to be put down.
+    ///
+    /// See `server/app/api/sessions.py:close_session` for what sending this at
+    /// the wrong moment costs: a close freezes the transcript into the one
+    /// `Episode` the session will ever have.
+    func closeSession(id: UUID) async {
+        let url = configuration.baseURL
+            .appendingPathComponent("v1/sessions/\(id.uuidString)/close")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = Self.closeTimeout
+        request.setValue("Bearer \(configuration.token)", forHTTPHeaderField: "Authorization")
+        _ = try? await session.data(for: request)
+    }
+
     static func urlRequest(
         for request: TutorRequest,
         turnID: String = UUID().uuidString,

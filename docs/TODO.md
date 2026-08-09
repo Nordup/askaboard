@@ -82,3 +82,26 @@ no switcher. The board peek returns to the docked panel in one tap, so this is
 survivable, but a learner working full-screen cannot see which session they are in.
 
 Board 15a was drawn for the panel only. Screen 07 would need its own placement.
+
+### 7. A close can freeze a transcript that is still being written
+
+`TutorStore.endSessionOnServer` suppresses the close when a turn is in flight,
+which is the client half of a problem that only the server can actually solve.
+
+`POST /v1/sessions/{id}/close` schedules `_record_episode`, which reads
+`sessions` and `messages` the moment it runs. Nothing there asks whether a turn
+is still writing into them, and `uq_episodes_session` makes whatever it reads
+the only episode that session will ever have. So a close that lands mid-turn
+freezes a torn transcript permanently, and every later turn in that session is
+never remembered.
+
+The device cannot close this hole from its side. It cancels its own stream on a
+switch, but the server is another process and may still be several seconds into
+a reply — and a close sent from a *different* device, or a retry, has no idea a
+turn is running at all. The client guard only means the common case does not
+trip it.
+
+The fix belongs in `_record_episode`: refuse to record while the session has a
+turn with no end recorded, and leave it for `sweep_abandoned_sessions`. The
+client guard can stay as cheap insurance, but it should stop being the only
+thing standing there.

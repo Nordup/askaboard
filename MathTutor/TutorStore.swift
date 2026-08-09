@@ -435,6 +435,13 @@ final class TutorStore: ObservableObject {
     /// the turn finish into its own session is the better answer and a larger
     /// change than this one.
     private func closeCurrentSession(saving: Bool) {
+        // Read before the lines below clear them, and read from these two
+        // rather than from `activeRequestTask`: that handle is only cleared
+        // when a turn fails to start, so it stays non-nil holding a finished
+        // task for the whole life of any session that has ever run one. These
+        // two are set as a turn begins and cleared on every way it can end,
+        // which is the actual question `endSessionOnServer` is asking.
+        let turnWasInFlight = isLoading || isEvaluating
         activeRequestTask?.cancel()
         activeRequestTask = nil
         isLoading = false
@@ -450,6 +457,64 @@ final class TutorStore: ObservableObject {
         boardInkSaveTask?.cancel()
         boardInkSaveTask = nil
         boardInkSaveDeadline = nil
+        endSessionOnServer(turnWasInFlight: turnWasInFlight)
+    }
+
+    /// Tells the backend the learner has left this session, so it can freeze
+    /// the transcript and remember what came out of it.
+    ///
+    /// This is the only place that sends it, and the three callers above are
+    /// the only three moments that qualify: the switcher's "New session", the
+    /// switcher opening another one, and Settings' reset. **Backgrounding must
+    /// never reach here.** An iPad backgrounds constantly and says nothing
+    /// about whether the learner is done; the one scene-phase hook this app has
+    /// (`MathTutorApp`) saves ink and nothing else, and it must stay that way.
+    ///
+    /// Two conditions suppress the call.
+    ///
+    /// **A turn that was in flight.** The switch has just cancelled the
+    /// client's end of it, but the server's end is another process and may
+    /// still be writing the reply. `_record_episode` reads the transcript the
+    /// moment a close lands, with no guard against that, and
+    /// `uq_episodes_session` makes what it reads the only episode the session
+    /// will ever have — so closing now would freeze a torn transcript
+    /// permanently. `sweep_abandoned_sessions` closes it later and whole, which
+    /// is worth more than closing it now and wrong. The real fix belongs on the
+    /// server, which is the side that knows when a turn has finished; see
+    /// `docs/TODO.md`.
+    ///
+    /// **A session the backend has never heard of.** The endpoint answers 404
+    /// for an unknown id deliberately, so that a device sending the wrong one
+    /// finds out; filling its log with 404s for sessions that were never sent
+    /// anywhere would spend that signal for nothing.
+    ///
+    /// Reset closes too, though it deletes the session locally a moment later.
+    /// The server keeps its own transcript either way and the sweep would
+    /// extract it within the day regardless, so skipping the close would not
+    /// make a deleted session unremembered — it would only make it remembered
+    /// later. Genuinely forgetting one needs an endpoint that discards rather
+    /// than closes, and there isn't one.
+    private func endSessionOnServer(turnWasInFlight: Bool) {
+        guard !turnWasInFlight, usesLiveTutor, hasReachedTheBackend else { return }
+        let service = tutorService
+        let id = session.id
+        // Detached, and its handle deliberately dropped: it has to outlive the
+        // switch that triggered it, and nothing on screen is waiting for it.
+        Task.detached { await service.closeSession(id: id) }
+    }
+
+    /// Whether a turn has ever gone out for the open session.
+    ///
+    /// Every path that starts one appends a learner message first — `send`,
+    /// `sayIDontKnow` and `evaluate` — and a turn is the only thing that
+    /// creates the session server-side, so this is the same question as "does
+    /// the backend have a row for this id", short of a turn that never reached
+    /// the network at all.
+    private var hasReachedTheBackend: Bool {
+        session.messages.contains {
+            $0.role == .learner
+                && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
     }
 
     /// Makes `next` the open session, and clears everything that described the

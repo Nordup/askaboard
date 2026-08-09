@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		04B0397394D95DC1D07E010D /* LevelMeter.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB18B52F534A50CDC47FF228 /* LevelMeter.swift */; };
+		05DFAB3B39DF31E39B689D66 /* SessionCloseTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87415DD3800DFEE8AF03DDC3 /* SessionCloseTests.swift */; };
 		08EF5D10480D0105D90EB2E9 /* ResizeHandleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF203F43C82054D956C00D85 /* ResizeHandleTests.swift */; };
 		090540C2A451B7303C90A2C3 /* SettingsAndPlanTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAF8603329EBED4EA8EE8199 /* SettingsAndPlanTests.swift */; };
 		09EB62BB947A97E5442AE3CA /* BoardSVGCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B9320F41DE3BD94B154DA88 /* BoardSVGCache.swift */; };
@@ -203,6 +204,7 @@
 		81C51E33F52C1D6BD5DB1664 /* PlanLane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanLane.swift; sourceTree = "<group>"; };
 		8217EBB13B758B525C439539 /* SourceSans3-Regular.otf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "SourceSans3-Regular.otf"; sourceTree = "<group>"; };
 		8253C7910B50F4BAAB7D0BF0 /* SessionSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSummary.swift; sourceTree = "<group>"; };
+		87415DD3800DFEE8AF03DDC3 /* SessionCloseTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionCloseTests.swift; sourceTree = "<group>"; };
 		8809C49CCC126B75ED2651B4 /* SourceSans3-Semibold.otf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "SourceSans3-Semibold.otf"; sourceTree = "<group>"; };
 		893D3B3086BA9C4D9374718B /* SettingsPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPresentation.swift; sourceTree = "<group>"; };
 		8AF47E8C131D8376D61F3E65 /* WhiteboardSurface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhiteboardSurface.swift; sourceTree = "<group>"; };
@@ -384,6 +386,7 @@
 				D6A6AC55DDB94015492D4C2A /* MathTutorTests.swift */,
 				AF203F43C82054D956C00D85 /* ResizeHandleTests.swift */,
 				DE2F1C8A199C9377474DF7AA /* ResizeModelTests.swift */,
+				87415DD3800DFEE8AF03DDC3 /* SessionCloseTests.swift */,
 				F1AD1D26A28E26E3C17AC894 /* SessionSwitcherTests.swift */,
 				EAF8603329EBED4EA8EE8199 /* SettingsAndPlanTests.swift */,
 				EE5DD8927CD5344E4BB7A676 /* SettingsBackendTests.swift */,
@@ -711,6 +714,7 @@
 				08EF5D10480D0105D90EB2E9 /* ResizeHandleTests.swift in Sources */,
 				86FF5393AB87153348D04F74 /* ResizeModelTests.swift in Sources */,
 				13E86E94188874ABEB3431DB /* SVGPathTests.swift in Sources */,
+				05DFAB3B39DF31E39B689D66 /* SessionCloseTests.swift in Sources */,
 				62D3D1170425BC618AE2CE4E /* SessionSwitcherTests.swift in Sources */,
 				090540C2A451B7303C90A2C3 /* SettingsAndPlanTests.swift in Sources */,
 				6D8407FD79D89CEB5292F2E1 /* SettingsBackendTests.swift in Sources */,
