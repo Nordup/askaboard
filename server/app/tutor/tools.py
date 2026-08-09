@@ -366,13 +366,15 @@ REMEMBER_TOOL: dict = {
     "name": "remember",
     "description": (
         "Save something about this learner for future sessions. Call this when "
-        "they ask you to remember or forget something, and when they tell you "
-        "something that will still matter next time — a preference, a goal, a "
-        "deadline, how they like to work. Write the fact so it stands alone "
-        "with no surrounding conversation: resolve every pronoun and "
-        "reference. Before you write any message containing 'noted', 'got it', "
-        "or 'I'll remember that', call this tool first — otherwise you have "
-        "told them something untrue."
+        "they ask you to remember something, and when they tell you something "
+        "that will still matter next time — a preference, a goal, a deadline, "
+        "how they like to work. Write the fact so it stands alone with no "
+        "surrounding conversation: resolve every pronoun and reference. Before "
+        "you write any message containing 'noted', 'got it', or 'I'll remember "
+        "that', call this tool first — otherwise you have told them something "
+        "untrue. Saving is all this does: there is no way to make you forget "
+        "anything yet, so if they ask you to forget something, tell them "
+        "plainly that you cannot do that yet rather than calling this."
     ),
     "strict": True,
     "parameters": {
@@ -382,6 +384,18 @@ REMEMBER_TOOL: dict = {
             "text": {
                 "type": "string",
                 "description": "The fact, self-contained, 10-30 words.",
+            },
+            # The same question `EXTRACTION_SCHEMA` asks the offline extractor,
+            # asked here because this path writes the column directly. It is
+            # not a label: an unstated fact outside `STATED_EXEMPT` is dropped
+            # rather than written, on both paths, so answering it wrongly is
+            # how an inference about the learner acquires their own authority.
+            "stated": {
+                "type": "boolean",
+                "description": (
+                    "True only if the learner said this themselves; false for "
+                    "anything concluded, inferred, or guessed at."
+                ),
             },
             # Generated from `MemoryCategory` for the reason
             # `EXTRACTION_SCHEMA` gives: a value the model may return and
@@ -393,7 +407,7 @@ REMEMBER_TOOL: dict = {
                 "enum": [category.value for category in MemoryCategory],
             },
         },
-        "required": ["text", "category"],
+        "required": ["text", "category", "stated"],
     },
 }
 

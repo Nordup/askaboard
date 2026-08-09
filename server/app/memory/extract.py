@@ -5,7 +5,12 @@ from functools import lru_cache
 from openai import AsyncOpenAI
 
 from app.config import EXTRACTION_MODEL, get_settings
-from app.memory.schema import EXTRACTION_SCHEMA, ExtractedAtom, MemoryCategory
+from app.memory.schema import (
+    EXTRACTION_SCHEMA,
+    STATED_EXEMPT,
+    ExtractedAtom,
+    MemoryCategory,
+)
 
 #: Below this many characters a transcript cannot hold a durable fact, and
 #: calling the model to confirm that costs more than skipping it.
@@ -14,27 +19,6 @@ MIN_TRANSCRIPT_CHARS = 200
 #: Built once. `_parse` checks every entry against it, and rebuilding a set of
 #: six strings per atom per session is work with no reader.
 _CATEGORY_VALUES: frozenset[str] = frozenset(c.value for c in MemoryCategory)
-
-#: Categories kept even when `stated` is false — see `_parse`, which drops
-#: every other unstated atom.
-#:
-#: The exemption is principled, not a loophole, and this is the reasoning to
-#: read before removing it. `stated` exists to stop the system persisting
-#: *inferences about the person* — "seems anxious", "is probably weak at
-#: algebra" — because that is where a memory system starts being confidently
-#: wrong about someone. A record of what a session covered is not a claim about
-#: the learner at all; it is a fact about the session, and the tutor is the
-#: correct authority for it. The filter therefore still applies at full force to
-#: the five categories that do make a claim about the person, which are the ones
-#: that failure mode lives in.
-#:
-#: Without this, `episode_ref` is unreachable by construction: the prompt asks
-#: for what the session covered, the learner did not say it, so the model marks
-#: it unstated and the filter deletes every one of them. `Episode.digest` gives
-#: continuity in date order; these atoms are what make "have we done anything on
-#: factoring before?" answerable by semantic search rather than by scanning
-#: dated summaries. The two do different jobs.
-_STATED_EXEMPT: frozenset[MemoryCategory] = frozenset({MemoryCategory.episode_ref})
 
 EXTRACTION_PROMPT = """\
 You are reading a transcript of one maths tutoring session and recording what \
@@ -157,7 +141,7 @@ def _parse(payload: str) -> list[ExtractedAtom]:
     learner's permanent record with a learner statement's authority, where
     nothing downstream can tell it from the real thing.
 
-    Unstated atoms in `_STATED_EXEMPT` survive — today that is `episode_ref`
+    Unstated atoms in `STATED_EXEMPT` survive — today that is `episode_ref`
     alone, for the reason written there. They are kept with `stated=False`, not
     relabelled: the flag records who the fact came from, and an episode summary
     came from the tutor.
@@ -187,7 +171,7 @@ def _parse(payload: str) -> list[ExtractedAtom]:
         # Checked by membership in a named set rather than by comparing the
         # string inline, so the exemption is one thing with one explanation
         # rather than a special case a reader meets without its reasoning.
-        if not stated and member not in _STATED_EXEMPT:
+        if not stated and member not in STATED_EXEMPT:
             continue
         text = entry.get("text")
         if not isinstance(text, str) or not text.strip():

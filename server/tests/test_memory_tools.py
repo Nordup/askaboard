@@ -8,10 +8,24 @@ from openai import AsyncOpenAI
 from sqlalchemy import select
 
 from app.config import SOLE_LEARNER_ID
+from app.learner.evidence import DEFAULT_KIND
 from app.learner.mastery import RELIABILITY
-from app.memory.dispatch import _FAILED, handle_memory_tool, memory_handler
-from app.memory.schema import MemoryCategory
-from app.store.models import KC, Episode, Learner, LearnerKCState, MemoryAtom, Observation
+from app.memory.dispatch import (
+    _FAILED,
+    _HANDLERS,
+    handle_memory_tool,
+    memory_handler,
+)
+from app.store.models import (
+    KC,
+    MEMORY_CATEGORIES,
+    Episode,
+    Learner,
+    LearnerKCState,
+    MemoryAtom,
+    Observation,
+)
+from app.memory.schema import EXTRACTION_SCHEMA, STATED_EXEMPT, MemoryCategory
 from app.tutor.context import ContextBundle
 from app.tutor.loop import (
     MALFORMED_MEMORY_ACK,
@@ -52,6 +66,14 @@ def test_the_router_and_the_registry_name_the_same_four():
     assert MEMORY_TOOLS <= {tool["name"] for tool in TOOL_DEFINITIONS}
 
 
+def test_every_offered_memory_tool_has_a_handler():
+    """`_HANDLERS` and `_FAILED` cannot be derived from the JSON definitions —
+    they hold functions and sentences, not schemas — so this is what stops a
+    fifth tool being offered, routed to dispatch, and told it does not exist."""
+    assert set(_HANDLERS) == MEMORY_TOOLS
+    assert set(_FAILED) == MEMORY_TOOLS
+
+
 def test_search_memory_demands_a_self_contained_query():
     """The tool has no access to the conversation, so the query must carry
     its own context or it retrieves nothing."""
@@ -69,12 +91,34 @@ def test_remember_forbids_claiming_a_save_before_making_one():
     assert "call this tool first" in description
 
 
+def test_remember_does_not_offer_itself_as_a_way_to_forget():
+    """There is no delete path. Sending the model here to handle "forget my old
+    exam date" would add an atom and hand back a licence to say it was done."""
+    description = _named("remember")["description"]
+    assert "remember or forget" not in description
+    assert "no way to make you forget anything yet" in description
+
+
+def test_remember_asks_who_the_fact_came_from():
+    """`stated` is not a label. An unstated fact outside STATED_EXEMPT is
+    dropped on both write paths, so the model has to be asked the question the
+    offline extractor is asked."""
+    params = _named("remember")["parameters"]
+    assert "stated" in params["required"]
+    assert params["properties"]["stated"]["type"] == "boolean"
+    assert (params["properties"]["stated"]["description"]
+            == EXTRACTION_SCHEMA["properties"]["atoms"]["items"]
+               ["properties"]["stated"]["description"])
+
+
 def test_remember_offers_exactly_the_categories_the_column_allows():
-    """A category the model may pick and the CHECK will reject is a fact lost
-    between the tool call and the INSERT, in front of a learner who was just
-    told it was saved."""
+    """Asserted against `MEMORY_CATEGORIES`, which is the tuple
+    `ck_memory_atoms_category` is built from — not against `MemoryCategory`,
+    which is a hand-maintained copy of it. A category the model may pick and
+    the CHECK will reject is a fact lost between the tool call and the INSERT,
+    in front of a learner who was just told it was saved."""
     offered = _named("remember")["parameters"]["properties"]["category"]["enum"]
-    assert offered == [category.value for category in MemoryCategory]
+    assert offered == list(MEMORY_CATEGORIES)
 
 
 def test_record_evidence_requires_weights_and_kind():
@@ -269,10 +313,10 @@ async def test_remember_writes_a_fact_that_can_be_found_by_meaning(db, monkeypat
     await _learner(db)
     await db.commit()
 
+    fact = {"text": "Sits the higher tier paper in June.", "category": "goal",
+            "stated": True}
     saved = await handle_memory_tool(
-        db, SOLE_LEARNER_ID, "remember",
-        {"text": "Sits the higher tier paper in June.", "category": "goal"},
-        turn_id=None,
+        db, SOLE_LEARNER_ID, "remember", fact, turn_id=None,
     )
     assert saved.startswith("Saved.")
 
@@ -288,6 +332,17 @@ async def test_remember_writes_a_fact_that_can_be_found_by_meaning(db, monkeypat
     )
     assert found == "- [goal] Sits the higher tier paper in June."
 
+    # Saying it again stores it once. Nothing downstream would catch this:
+    # `consolidate` rules on the atoms handed to it, and a row already in the
+    # table only ever appears on the candidate side.
+    again = await handle_memory_tool(
+        db, SOLE_LEARNER_ID, "remember",
+        {**fact, "text": "  sits the HIGHER tier paper in June.  "}, turn_id=None,
+    )
+    assert "Already on file" in again
+    db.expire_all()
+    assert len((await db.execute(select(MemoryAtom))).scalars().all()) == 1
+
 
 @requires_db
 async def test_an_embedding_failure_saves_nothing_and_says_so(db, monkeypatch):
@@ -299,7 +354,8 @@ async def test_an_embedding_failure_saves_nothing_and_says_so(db, monkeypatch):
 
     answer = await handle_memory_tool(
         db, SOLE_LEARNER_ID, "remember",
-        {"text": "Prefers being asked before being told.", "category": "preference"},
+        {"text": "Prefers being asked before being told.",
+         "category": "preference", "stated": True},
         turn_id=None,
     )
 
@@ -311,13 +367,56 @@ async def test_an_embedding_failure_saves_nothing_and_says_so(db, monkeypatch):
     # return, so this distinguishes "refused" from "tried and broke".
     refused = await handle_memory_tool(
         db, SOLE_LEARNER_ID, "remember",
-        {"text": {"fact": "prefers mornings"}, "category": "preference"},
+        {"text": {"fact": "prefers mornings"}, "category": "preference",
+         "stated": True},
         turn_id=None,
     )
     assert "Nothing was saved" in refused
 
     db.expire_all()
     assert (await db.execute(select(MemoryAtom))).scalars().all() == []
+
+
+@requires_db
+async def test_an_inference_is_refused_rather_than_stored_as_the_learners_words(
+    db, monkeypatch
+):
+    """`stated` decides whether the row is written at all, not how it is
+    labelled — the same rule `extract._parse` applies, because it is the same
+    column and provenance cannot be reconstructed afterwards. `_explode` is
+    installed so a refusal that still embedded would be visible."""
+    monkeypatch.setattr("app.memory.dispatch.embed_texts", _explode)
+    await _learner(db)
+    await db.commit()
+
+    guessed = await handle_memory_tool(
+        db, SOLE_LEARNER_ID, "remember",
+        {"text": "Seems anxious about the higher tier paper.",
+         "category": "skill_state", "stated": False},
+        turn_id=None,
+    )
+    assert "your own inference" in guessed
+    assert "Do not tell them you have remembered it." in guessed
+    db.expire_all()
+    assert (await db.execute(select(MemoryAtom))).scalars().all() == []
+
+    # `episode_ref` is exempt: it records what a session covered, which is a
+    # fact about the session and the tutor's to state. It must survive unstated
+    # and keep `stated=False` — relabelling it True would give a tutor's
+    # summary a learner statement's authority.
+    monkeypatch.setattr("app.memory.dispatch.embed_texts", _Embedder(_axis(2)))
+    kept = await handle_memory_tool(
+        db, SOLE_LEARNER_ID, "remember",
+        {"text": "Covered adding unlike fractions on 2026-06-01.",
+         "category": "episode_ref", "stated": False},
+        turn_id=None,
+    )
+    assert kept.startswith("Saved.")
+    db.expire_all()
+    stored = (await db.execute(select(MemoryAtom))).scalar_one()
+    assert stored.category == "episode_ref"
+    assert stored.stated is False
+    assert MemoryCategory(stored.category) in STATED_EXEMPT
 
 
 @requires_db
@@ -404,6 +503,31 @@ async def test_record_evidence_moves_the_learner_model_and_commits(db_factory):
 
 
 @requires_db
+async def test_a_server_only_kind_is_refused_at_the_write_and_not_just_the_enum(db):
+    """Leaving `answer_verified` out of the schema is a request to the
+    provider. `Observation.kind` is a bare String(24) and `reliability_of` is a
+    dict lookup, so a model that ignores the enum would have its own guess
+    stored at 0.95 — near-certainty — with nothing to notice it by."""
+    await _learner(db)
+    db.add(KC(id=uuid.uuid4(), code=RATIO, title="Ratios", description="",
+              grade="7"))
+    await db.commit()
+
+    assert await handle_memory_tool(
+        db, SOLE_LEARNER_ID, "record_evidence",
+        {"kcs": [{"code": RATIO, "weight": 1.0}], "outcome": 1.0,
+         "kind": "answer_verified", "difficulty": 0.0, "misconception": None},
+        turn_id=None,
+    ) == "Recorded against 1 concept(s)."
+
+    db.expire_all()
+    stored = (await db.execute(select(Observation))).scalar_one()
+    assert stored.kind == DEFAULT_KIND
+    assert stored.reliability == RELIABILITY[DEFAULT_KIND]
+    assert stored.reliability < RELIABILITY["answer_verified"]
+
+
+@requires_db
 async def test_an_unknown_concept_code_is_reported_rather_than_swallowed(db):
     """`record` returns 0 and writes nothing when no code resolves, and the
     model cannot see that happened unless the answer says so."""
@@ -425,8 +549,9 @@ async def test_an_unknown_concept_code_is_reported_rather_than_swallowed(db):
 
 @requires_db
 async def test_the_bound_handler_needs_only_a_sessionmaker(db_factory, monkeypatch):
-    """What `run_turn` is actually given. The request's own session is closed
-    by the time the stream body runs, so the handler must open its own."""
+    """What `run_turn` is actually given. A turn runs for minutes, so the
+    handler opens a session per call rather than holding one — and rolls back
+    only its own work when a tool fails."""
     monkeypatch.setattr("app.memory.dispatch.embed_texts", _Embedder(_axis(1)))
     async with db_factory() as db:
         await _learner(db)
@@ -434,7 +559,8 @@ async def test_the_bound_handler_needs_only_a_sessionmaker(db_factory, monkeypat
 
     handle = memory_handler(db_factory, learner_id=SOLE_LEARNER_ID)
     assert (await handle("remember", {"text": "Works best in the morning.",
-                                      "category": "preference"})).startswith("Saved.")
+                                      "category": "preference",
+                                      "stated": True})).startswith("Saved.")
 
     async with db_factory() as db:
         stored = (await db.execute(select(MemoryAtom))).scalar_one()

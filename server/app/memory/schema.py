@@ -37,6 +37,34 @@ class MemoryCategory(StrEnum):
     episode_ref = "episode_ref"    # what a dated session covered
 
 
+#: Categories kept even when `stated` is false. Every other unstated fact is
+#: dropped, by `extract._parse` on the offline path and by
+#: `dispatch._remember` on the tutor's own.
+#:
+#: Here rather than in `extract.py` because it is not the extractor's rule: it
+#: is what the `stated` flag means, and two write paths now enforce it. This
+#: module exists so both can name the vocabulary without importing a module
+#: whose job is talking to a provider.
+#:
+#: The exemption is principled, not a loophole, and this is the reasoning to
+#: read before removing it. `stated` exists to stop the system persisting
+#: *inferences about the person* — "seems anxious", "is probably weak at
+#: algebra" — because that is where a memory system starts being confidently
+#: wrong about someone. A record of what a session covered is not a claim about
+#: the learner at all; it is a fact about the session, and the tutor is the
+#: correct authority for it. The filter therefore still applies at full force to
+#: the five categories that do make a claim about the person, which are the ones
+#: that failure mode lives in.
+#:
+#: Without this, `episode_ref` is unreachable by construction: the prompt asks
+#: for what the session covered, the learner did not say it, so the model marks
+#: it unstated and the filter deletes every one of them. `Episode.digest` gives
+#: continuity in date order; these atoms are what make "have we done anything on
+#: factoring before?" answerable by semantic search rather than by scanning
+#: dated summaries. The two do different jobs.
+STATED_EXEMPT: frozenset[MemoryCategory] = frozenset({MemoryCategory.episode_ref})
+
+
 class ExtractedAtom(BaseModel):
     """One candidate fact, before anything has decided to keep it.
 

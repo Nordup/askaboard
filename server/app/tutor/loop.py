@@ -136,11 +136,12 @@ MALFORMED_MEMORY_ACK = (
 BoardFetcher = Callable[[str, BoardRegion], Awaitable[bytes]]
 
 #: How `run_turn` runs a memory tool. Injected for the reason `BoardFetcher` is,
-#: and for one more: the four memory tools need a database session, and the one
-#: the request was served on is closed by the time this loop runs — the endpoint
-#: has returned and its dependencies have been torn down before the
-#: `StreamingResponse` body is iterated. What the caller binds in is a handler
-#: that opens its own; `app.memory.dispatch.memory_handler` is that binding.
+#: and for one more: the four memory tools need a database session, and this
+#: loop is the wrong place to decide where one comes from. It runs for the whole
+#: length of a turn, so a session handed in here would be a pooled connection
+#: pinned for minutes of model streaming. What the caller binds in is a handler
+#: that opens its own; `app.memory.dispatch.memory_handler` is that binding and
+#: says the rest.
 MemoryHandler = Callable[[str, dict], Awaitable[str]]
 
 

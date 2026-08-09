@@ -207,6 +207,20 @@ def _decide(payload: str, *, n: int) -> list[tuple[str, int | None]]:
     return ops
 
 
+def normalised(text: str) -> str:
+    """A fact's text reduced to what makes two of them the same *string*.
+
+    Whitespace-collapsed and case-folded, and nothing more. This is string
+    identity and never similarity — the distinction this whole module is
+    about: turning "understands fractions" into "does not understand
+    fractions" takes a similarity score, and no amount of case folding can do
+    it. Shared with `dispatch._remember`, which needs the same key to keep the
+    tutor's own writes from duplicating each other, and one definition so the
+    two paths cannot disagree about what a duplicate is.
+    """
+    return " ".join(text.split()).casefold()
+
+
 def _distinct(atoms: list[ExtractedAtom]) -> tuple[list[ExtractedAtom], int]:
     """Drop atoms this batch already contains, keeping the first of each.
 
@@ -216,12 +230,9 @@ def _distinct(atoms: list[ExtractedAtom]) -> tuple[list[ExtractedAtom], int]:
     be two live rows saying the same thing forever: neither can supersede the
     other, because a later pass only ever compares new facts against them.
 
-    The key is the text itself — whitespace-collapsed and case-folded — which is
-    string identity and never similarity. That distinction is the whole subject
-    of this module: turning "understands fractions" into "does not understand
-    fractions" takes a similarity score, and no amount of case folding can do
-    it. Anything short of character-identical is left standing for the model to
-    rule on next time it sees the two side by side.
+    The key is the text itself, through `normalised` above. Anything short of
+    character-identical is left standing for the model to rule on next time it
+    sees the two side by side.
 
     Category is part of the key, so one sentence filed two ways stays two atoms.
     The extractor can legitimately read "still guesses at negative exponents" as
@@ -232,7 +243,7 @@ def _distinct(atoms: list[ExtractedAtom]) -> tuple[list[ExtractedAtom], int]:
     kept: list[ExtractedAtom] = []
     dropped = 0
     for atom in atoms:
-        key = (" ".join(atom.text.split()).casefold(), atom.category.value)
+        key = (normalised(atom.text), atom.category.value)
         if key in seen:
             dropped += 1
             continue
@@ -362,7 +373,7 @@ async def consolidate(
             source_turn_ids=turn_ids,
             # Carried verbatim, never coerced. `stated` records who the fact
             # came from, and an `episode_ref` legitimately arrives False (see
-            # `extract._STATED_EXEMPT`) — defaulting it to True here would give
+            # `schema.STATED_EXEMPT`) — defaulting it to True here would give
             # the tutor's own observation a learner statement's authority.
             stated=atom.stated,
         )

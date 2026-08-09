@@ -667,7 +667,7 @@ async def test_unstated_episode_ref_is_stored_unstated(db_factory, monkeypatch):
 
     An `episode_ref` legitimately arrives unstated — it is a record of what the
     session covered rather than a claim about the learner, so the tutor is its
-    author (see `extract._STATED_EXEMPT`). Defaulting it to True here would
+    author (see `schema.STATED_EXEMPT`). Defaulting it to True here would
     give an observation a learner statement's authority, and nothing
     downstream could tell the two apart again.
     """
