@@ -69,11 +69,24 @@ SYNTHESIS_PROMPT = """\
 Write a compact portrait of this learner for a maths tutor who is about to \
 teach them and has never met them.
 
+Address the learner as "you" throughout — "you are working towards", "you \
+prefer", "you get stuck on". Never write about them in the third person and \
+never call them "the learner". The tutor is the one who reads this, but a note \
+written to someone reads as knowing them; the same facts written about someone \
+read as a case file, and a tutor who has been handed a case file teaches like \
+it. Nothing below records this learner's name or pronouns, so third person \
+cannot say "you like X" without first inventing who X is liked by.
+
 Use these section headings, omitting any with nothing to say: Context, Goals, \
-How they learn, What they can do, Where they get stuck.
+How you learn, What you can do, Where you get stuck.
 
 Write flowing prose inside each section, not bullet lists. Do not invent \
 anything that is not below. Keep the whole thing under 350 words.
+
+Write any maths in plain Unicode text — h, v, x² + y², √2, a/b — and never in \
+LaTeX delimiters. This body is quoted verbatim into the tutor's own prompt, \
+where the same rule holds because the chat renderer does not render LaTeX, so \
+a delimiter written here is one the tutor has seen modelled before it writes.
 
 Everything under CURRENTLY TRUE holds now: write it in the present tense, and \
 where one of those lines carries a month, keep it — "as of June" tells the \

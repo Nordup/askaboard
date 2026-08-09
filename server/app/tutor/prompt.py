@@ -84,9 +84,16 @@ def compose_user_prompt(
     # anyway. Last-read is also where the model is most likely to act on it, so
     # nothing is traded away by putting it there.
     if profile:
+        # The body is written addressed to the learner, so it says "you" about
+        # someone who is not the reader — and every other "you" in this prompt
+        # is the tutor. The label has to resolve that before the block starts,
+        # because a portrait read as self-description is worse than no portrait:
+        # it would have the tutor teaching to its own stated weaknesses.
         sections.append(
             "WHAT YOU KNOW ABOUT THIS LEARNER (recalled from earlier sessions; "
-            f"this is {_RECALLED}):\n{_quoted(profile)}"
+            f"this is {_RECALLED}). It is written addressed to them, so every "
+            "“you” inside it means the learner and never you:\n"
+            f"{_quoted(profile)}"
         )
     if recent_digest:
         sections.append(
