@@ -16,7 +16,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_device_token
-from app.config import MODEL_ALLOWLIST, get_settings
+from app.config import MODEL_ALLOWLIST, SOLE_LEARNER_ID, get_settings
+from app.learner.mastery import snapshot
+from app.memory.dispatch import memory_handler
+from app.memory.profile import current_profile
+from app.memory.retrieve import recent_episodes
 from app.sse import SSE_HEADERS, format_sse
 from app.store.db import db_session, session_factory
 from app.store.blobs import LocalBlobStore
@@ -43,6 +47,40 @@ router = APIRouter(prefix="/v1", dependencies=[Depends(require_device_token)])
 # shared kind would have a selection sent between two identical boards read as
 # the board having changed twice. Fits `Attachment.kind`'s String(16).
 BOARD_KIND = "board_full"
+
+
+#: How many past sessions ride along in every prompt. Enough for "what did we
+#: do last week" without paying for a year of history on every turn.
+RECENT_SESSION_COUNT = 12
+
+
+async def _memory_sections(db: AsyncSession) -> dict[str, str | None]:
+    """Everything memory contributes to one turn's context.
+
+    Three blocks, already rendered by the modules that own them, in the shape
+    `assemble_context` takes them — see its docstring for where each one sits
+    in the prompt and why.
+
+    `None` rather than `""` for a block with nothing in it, and the difference
+    is not cosmetic: `compose_user_prompt` omits a falsy section, so an empty
+    string would be dropped too — but only by luck, and a caller reading this
+    dict would see a section that exists and is blank. `snapshot` returns `""`
+    for a learner nothing has been measured about yet, which is a learner we
+    have no reading on, not one who knows nothing.
+    """
+    episodes = await recent_episodes(db, SOLE_LEARNER_ID,
+                                     limit=RECENT_SESSION_COUNT)
+    # Dated, because "we did fractions" is a different fact depending on
+    # whether it was yesterday or in March, and the model cannot tell from
+    # order alone.
+    digest = "\n".join(
+        f"{e.closed_at:%Y-%m-%d}: {e.digest}" for e in episodes if e.digest
+    ) or None
+    return {
+        "profile": await current_profile(db, SOLE_LEARNER_ID),
+        "learner_state": (await snapshot(db, SOLE_LEARNER_ID)) or None,
+        "recent_digest": digest,
+    }
 
 
 def _describe_error(error: Exception) -> str:
@@ -157,6 +195,23 @@ def get_recorder() -> Recorder:
     """
     settings = get_settings()
     return Recorder(session_factory(), LocalBlobStore(settings.blob_dir))
+
+
+def _memory_sessions() -> AsyncSession:
+    """One session for one memory tool call.
+
+    Shaped like an `async_sessionmaker` because that is what `memory_handler`
+    takes, and it wants the maker rather than this request's session on
+    purpose — its docstring gives the two reasons.
+
+    `session_factory()` is resolved here, when a tool actually runs, and not
+    when the turn is built: a turn that calls no memory tool then never reaches
+    the process engine at all. That keeps the memory tools out of the way of a
+    caller that has pointed `db_session` and `get_recorder` somewhere else —
+    the tests do exactly that — instead of dragging the process engine in
+    behind them on every turn.
+    """
+    return session_factory()()
 
 
 class BoardRenderBody(BaseModel):
@@ -362,18 +417,37 @@ async def create_turn(
                     content_type="image/png",
                 )
 
+            # Read inside the guard, not before the stream opens. These are
+            # three round trips to Neon, and a failure in any of them has to
+            # fail the turn visibly rather than raise past `create_turn` and
+            # leave the row at status="running" forever — the same hole
+            # `assemble_context` itself was moved in here to close.
+            sections = await _memory_sections(db)
+
             bundle = assemble_context(
                 session=session, messages=messages, image_data=image,
                 image_region=body.image_region, signal=body.signal, goal=body.goal,
                 board_overview=board, board_manifest=body.board_manifest,
                 board_scene=body.board_scene,
                 board_changed=board_changed,
+                **sections,
             )
             request_body["input"] = bundle.input
 
             async for event, running in run_turn(
                 client=client, model=body.model, effort=body.reasoning_effort,
                 bundle=bundle, fetch_board=fetch_board,
+                # Without this the four memory tools are inert. They sit in
+                # `TOOL_DEFINITIONS` unconditionally — varying the tool set per
+                # turn would invalidate the cached prompt prefix — so the model
+                # is offered them, calls them, and is answered `NO_MEMORY_ACK`
+                # every time. Bound per turn rather than once per process
+                # because `remember` and `record_evidence` file the turn and
+                # session they came from as provenance.
+                handle_memory=memory_handler(
+                    _memory_sessions, learner_id=SOLE_LEARNER_ID,
+                    turn_id=body.turn_id, session_id=session.id,
+                ),
             ):
                 result = running
                 if ttft_ms is None and event.type == "text_delta":
