@@ -200,10 +200,17 @@ struct TutorPanel: View {
             .frame(width: size.width, height: size.height)
             .onTapGesture { isAttachMenuOpen = false }
 
-        AttachMenu(width: contentWidth) { choice in
+        AttachMenu(width: AttachMenu.width(in: contentWidth)) { choice in
             isAttachMenuOpen = false
             pickerSource = AttachmentSource(choice)
         }
+        // Pinned to the panel's own 18pt inset rather than left to the `ZStack`'s centring.
+        // `SessionMenu` can rely on centring because it is exactly `contentWidth` wide, so
+        // the two margins are equal by construction; this card is capped at 301 and stops
+        // being the content column the moment the student widens the panel — at which point
+        // a centred card would drift off board 16's `left: 18`.
+        .padding(.leading, TutorPanelMetrics.inset)
+        .frame(width: size.width, alignment: .leading)
         .padding(.top, slot.attachMenuTop(in: size.height, over: composerHeight))
     }
 

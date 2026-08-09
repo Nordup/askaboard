@@ -224,17 +224,13 @@ struct MessageRow: View {
 
     private var metrics: MessageMetrics { .for(scale, width: width ?? scale.contentWidth) }
 
-    /// The chips card in this row's own column — the same substitution the composer makes,
-    /// for the same reason: a card wider than the shape in front of it shows the notch board
-    /// 03's rule is about.
-    private var chips: AttachmentStackMetrics {
-        .composerChips(scale, width: metrics.rowWidth)
-    }
+    /// The chips a sent turn carried — `sentMessage`'s stack rather than the thread's own
+    /// column, so it lands on the trailing edge where the student's other sent work already
+    /// is. Clamped by the row, which is the only thing that can take the 224 away.
+    private var chips: AttachmentStackMetrics { .sentChips(in: metrics.rowWidth) }
 
     /// The same card with nothing in front of it — a turn that is files and no words.
-    private var sentChips: AttachmentStackMetrics {
-        .sentChips(scale, width: metrics.rowWidth)
-    }
+    private var chipsAlone: AttachmentStackMetrics { .sentChipsAlone(in: metrics.rowWidth) }
 
     var body: some View {
         switch item.message.role {
@@ -267,10 +263,16 @@ struct MessageRow: View {
         }
     }
 
-    /// The chips this turn was sent with, above the bubble.
+    /// The chips this turn was sent with, above the words.
     ///
-    /// The same construction the composer draws — `AttachmentStack` with the chips card in
-    /// its band — because it is the same card and the learner has just been looking at it.
+    /// **Screen 08's stack, not the composer's.** By ruling: a sent attachment is part of
+    /// the student's turn, so it sits where their sent selection already sits — trailing
+    /// edge, 224 wide, the same 58pt bubble in front of it — rather than as a band running
+    /// the thread's whole column, which read as the surface talking rather than as something
+    /// the student sent. The stack is narrower than the row, and the enclosing
+    /// `VStack(alignment: .trailing)` is what puts it on the edge, exactly as it already
+    /// does for `SelectionMessageBubble`.
+    ///
     /// **Read-only**: `isRemovable: false`, so no ✕ is drawn and the chips give back the
     /// width the control would have taken. `onRemove` and `onDismissSelection` are never
     /// reached; the turn has already gone, which is the distinction
@@ -281,24 +283,28 @@ struct MessageRow: View {
     ///
     /// **Undrawn: files with no words.** With no bubble there is nothing for the card's
     /// hidden band to tuck behind, so that branch draws the chips as a self-contained card
-    /// instead of as the back layer of a stack — see `AttachmentStackMetrics.sentChips`,
+    /// instead of as the back layer of a stack — see `AttachmentStackMetrics.sentChipsAlone`,
     /// which is where the reasoning and the caveat live.
     @ViewBuilder
     private var sentAttachments: some View {
         if item.attachments.isEmpty {
             bubble
         } else if item.message.text.isEmpty {
-            chipRow(sentChips)
-                // All four corners, where the composer's card cuts only its top two. The
-                // bottom pair are edges here rather than tucks, and a square-cornered
-                // tinted band under a rounded one is the mark of a card that has lost the
-                // shape it was meant to sit behind.
-                .clipShape(RoundedRectangle(cornerRadius: sentChips.bodyTopRadius, style: .circular))
+            chipRow(chipsAlone)
+                // All four corners, where every other card in the file cuts only its top
+                // two. The bottom pair are edges here rather than tucks, and a
+                // square-cornered tinted band under a rounded one is the mark of a card
+                // that has lost the shape it was meant to sit behind.
+                .clipShape(RoundedRectangle(cornerRadius: chipsAlone.bodyTopRadius, style: .circular))
         } else {
             AttachmentStack(metrics: chips) {
                 chipRow(chips)
             } content: {
-                bubble
+                // The fixed box, not the hugging bubble: the card behind it is sized off
+                // that fixed height, which is the same reason `SelectionMessageBubble` uses
+                // it. Not `SelectionMessageBubble` itself — that brings its own card, and
+                // the chips card is the one this turn draws.
+                StackedMessageBubble(text: item.message.text, metrics: metrics)
             }
         }
     }

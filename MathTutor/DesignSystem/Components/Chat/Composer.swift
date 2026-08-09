@@ -371,6 +371,27 @@ struct ComposerSlotMetrics: Equatable, Sendable {
     }
 }
 
+extension AttachMenu {
+    /// How wide the card is drawn in a surface whose content column is `contentColumn`.
+    ///
+    /// **Capped at `--container-panel-content` at both scales, by ruling.** A menu is a list
+    /// of three short labels, not a reading column: its width follows its content, not the
+    /// surface it happens to be on. 301 is what board 16 draws and what `menu/sessions`
+    /// beside it takes, so full-screen the card sits left-aligned above the composer rather
+    /// than stretching 740 points across the screen for three left-aligned words.
+    ///
+    /// A `min` rather than the bare constant, because the cap has to give in one direction:
+    /// a panel the student has narrowed past 301 has no room for the card, and a menu wider
+    /// than the surface clipping it is a menu with its rows running off the edge.
+    ///
+    /// It lives here beside `attachMenuTop` rather than on `AttachMenu` itself: both are how
+    /// a *surface* places board 16's card relative to its composer, which is a question the
+    /// menu does not answer for itself.
+    static func width(in contentColumn: CGFloat) -> CGFloat {
+        min(max(0, contentColumn), DS.Container.panelContent)
+    }
+}
+
 /// The composer's slot as paint: the fade, then whatever occupies the slot, bottom-anchored.
 ///
 /// Bottom-anchored rather than offset to a computed top, which is what makes the attached

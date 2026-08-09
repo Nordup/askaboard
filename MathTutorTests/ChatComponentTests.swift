@@ -124,7 +124,8 @@ final class ChatComponentTests: XCTestCase {
             .composerChips(.panel, width: DS.Container.panelContent),
             .composerChips(.fullScreen, width: DS.Container.column),
             .sentMessage,
-            // `sentChips` is deliberately absent and must stay absent: it is the one
+            .sentChips(in: DS.Container.panelContent),
+            // `sentChipsAlone` is deliberately absent and must stay absent: it is the one
             // instance with *no shape on top*, so there are no curves for it to extend
             // past and its card is exactly its visible band. See
             // `testTheSentChipsCardHasNothingHiddenAndNothingReserved`.
@@ -1356,6 +1357,30 @@ final class ChatComponentTests: XCTestCase {
         }
     }
 
+    /// **The ruling.** The menu is three short labels, so its width follows its content and
+    /// not the surface it is on: 301 at both scales, which is what board 16 draws and what
+    /// `menu/sessions` beside it takes.
+    ///
+    /// The equality across the two scales is the assertion that matters. Making the card
+    /// scale with its column looks like consistency — every other chat component does — and
+    /// it is what produced a 740 × 156 card for three left-aligned words.
+    func testTheAttachMenuIsTheSameWidthAtBothScales() {
+        XCTAssertEqual(
+            AttachMenu.width(in: DS.Container.panelContent),
+            AttachMenu.width(in: DS.Container.column),
+            "A menu is a list of three labels, not a reading column"
+        )
+        XCTAssertEqual(AttachMenu.width(in: DS.Container.column), DS.Container.panelContent)
+        // Every column the reading lane can produce, and a panel the student has widened.
+        for column in [CGFloat(644), 740, 900, 1200] {
+            XCTAssertEqual(AttachMenu.width(in: column), DS.Container.panelContent, "column \(column)")
+        }
+        // The one direction the cap gives: a panel narrowed past 301 has no room for the
+        // card, and rows running off the surface that clips them is worse than a narrow menu.
+        XCTAssertEqual(AttachMenu.width(in: 224), 224)
+        XCTAssertEqual(AttachMenu.width(in: -10), 0)
+    }
+
     // MARK: - Degenerate widths
 
     /// Nothing here is a size the app can reach — they are the sizes a bug reaches. The
@@ -1534,33 +1559,70 @@ final class ChatComponentTests: XCTestCase {
         XCTAssertEqual(full.labelRowWidth, 710)
     }
 
+    /// **The ruling.** A sent attachment sits where the student's other sent work sits: the
+    /// 224pt stack on the trailing edge, not a band across the thread's whole column. So the
+    /// chips card's geometry is `sentMessage`'s — asserted against it rather than against
+    /// 224, because the day that stack is redrawn wide the chips must follow it — and only
+    /// the band is the chips'.
+    func testTheSentChipsCardTakesTheSentMessagesStackAndNotTheThreadsColumn() {
+        // Every column the app produces, including the two the design draws in.
+        for row in [DS.Container.panelContent, DS.Container.column, CGFloat(644), 200] {
+            let sent = AttachmentStackMetrics.sentMessage(in: row)
+            let chips = AttachmentStackMetrics.sentChips(in: row)
+            let context = "row \(row)"
+
+            XCTAssertEqual(chips.width, sent.width, context)
+            XCTAssertEqual(chips.bodyHeight, sent.bodyHeight, context)
+            XCTAssertEqual(chips.bodyTopRadius, sent.bodyTopRadius, context)
+            XCTAssertEqual(chips.scale, sent.scale, "panel geometry at both scales — \(context)")
+            XCTAssertLessThanOrEqual(chips.width, row, "the row is the only thing that can take the 224 — \(context)")
+
+            // Not the thread's column, which is what this ruling overturned.
+            if row > sent.width {
+                XCTAssertLessThan(chips.width, row, context)
+            }
+
+            // Only the band is the chips': a 32pt thumbnail does not fit a card sized to one
+            // label row. And it obeys the derived law, which `sentMessage` itself does not.
+            XCTAssertEqual(chips.visibleBand, AttachmentChipMetrics.panel.height + 2 * sent.labelRowPaddingTop, context)
+            XCTAssertGreaterThan(chips.visibleBand, sent.visibleBand, context)
+            XCTAssertTrue(chips.followsDerivedLaw, context)
+            // The row bleeds to the card's edge so an overflowing chip is cut by the clip —
+            // the same scroll cue the composer's card gives, in a 204pt lane instead of 281.
+            XCTAssertEqual(chips.cardPaddingTrailing, 0, context)
+        }
+        XCTAssertEqual(AttachmentStackMetrics.sentChips(in: DS.Container.panelContent).labelRowWidth, 204)
+    }
+
     /// A sent turn that is files and no words has nothing in front of the card, so the band
-    /// the composer's card hides behind the pill would be *drawn* — a square-cornered tinted
-    /// rectangle under the chips, over a pill's height of empty row. `sentChips` takes the
-    /// overlap to zero and reserves no body; the caller rounds all four corners.
+    /// every card in the file hides behind the shape on top would be *drawn* — a
+    /// square-cornered tinted rectangle under the chips, over a bubble's height of empty row.
+    /// `sentChipsAlone` takes the overlap to zero and reserves no body; the caller rounds all
+    /// four corners.
     func testTheSentChipsCardHasNothingHiddenAndNothingReserved() {
-        for scale in ChatScale.allCases {
-            let width = scale.contentWidth
-            let composer = AttachmentStackMetrics.composerChips(scale, width: width)
-            let sent = AttachmentStackMetrics.sentChips(scale, width: width)
-            let context = scale.rawValue
+        for row in [DS.Container.panelContent, DS.Container.column] {
+            let behindABubble = AttachmentStackMetrics.sentChips(in: row)
+            let alone = AttachmentStackMetrics.sentChipsAlone(in: row)
+            let context = "row \(row)"
 
             // Everything that describes the chips themselves is unchanged: it is the same
-            // card the learner was just looking at in the composer.
-            XCTAssertEqual(sent.visibleBand, composer.visibleBand, context)
-            XCTAssertEqual(sent.width, composer.width, context)
-            XCTAssertEqual(sent.cardPaddingLeading, composer.cardPaddingLeading, context)
-            XCTAssertEqual(sent.chipHeight, composer.chipHeight, context)
-            XCTAssertEqual(sent.bodyTopRadius, composer.bodyTopRadius, context)
+            // card, at the same width, in the same lane.
+            XCTAssertEqual(alone.visibleBand, behindABubble.visibleBand, context)
+            XCTAssertEqual(alone.width, behindABubble.width, context)
+            XCTAssertEqual(alone.cardPaddingLeading, behindABubble.cardPaddingLeading, context)
+            XCTAssertEqual(alone.chipHeight, behindABubble.chipHeight, context)
+            // The radius the caller rounds all four corners to — the bubble's, which is the
+            // curve every other thing the student sent is drawn with.
+            XCTAssertEqual(alone.bodyTopRadius, DS.Radius.bubble, context)
 
             // And the two that make it a message rather than a back layer.
-            XCTAssertEqual(sent.cardHeight, sent.visibleBand, context)
-            XCTAssertEqual(sent.overlap, 0, "nothing is hidden, because nothing is in front — \(context)")
-            XCTAssertEqual(sent.bodyHeight, 0, context)
-            XCTAssertEqual(sent.totalHeight, sent.visibleBand, "no dead row under the card — \(context)")
+            XCTAssertEqual(alone.cardHeight, alone.visibleBand, context)
+            XCTAssertEqual(alone.overlap, 0, "nothing is hidden, because nothing is in front — \(context)")
+            XCTAssertEqual(alone.bodyHeight, 0, context)
+            XCTAssertEqual(alone.totalHeight, alone.visibleBand, "no dead row under the card — \(context)")
             XCTAssertGreaterThan(
-                composer.totalHeight, sent.totalHeight,
-                "the composer's instance reserves a pill and this one must not — \(context)"
+                behindABubble.totalHeight, alone.totalHeight,
+                "the stacked instance reserves a bubble and this one must not — \(context)"
             )
         }
     }

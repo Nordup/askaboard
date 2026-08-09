@@ -207,6 +207,11 @@ struct TutorFullScreen: View {
     /// There is no surface radius to clip it here and no session menu to be an alternative
     /// to; the dismiss layer is the whole window rather than the panel, because that is
     /// what this surface covers.
+    ///
+    /// **The card is 301 here too, not the 740 column** — a menu's width follows its three
+    /// short labels rather than the surface it is on. `x: column.x` puts its leading edge on
+    /// the column's, which is the composer's own leading edge: left-aligned above the pill,
+    /// not centred in the reading lane.
     @ViewBuilder
     private var attachMenu: some View {
         Color.clear
@@ -214,7 +219,7 @@ struct TutorFullScreen: View {
             .frame(width: layout.size.width, height: layout.size.height)
             .onTapGesture { isAttachMenuOpen = false }
 
-        AttachMenu(width: column.width) { choice in
+        AttachMenu(width: AttachMenu.width(in: column.width)) { choice in
             isAttachMenuOpen = false
             pickerSource = AttachmentSource(choice)
         }

@@ -180,19 +180,40 @@ struct SelectionMessageBubble: View {
 
     var body: some View {
         SelectionAttachment.sent(metrics: metrics.selection) {
-            LearnerLiteralText(text)
-                .textStyle(metrics.selectionTextStyle)
-                .foregroundStyle(DS.Color.ink)
-                .padding(.horizontal, 20)
-                .frame(
-                    width: metrics.selection.width,
-                    height: metrics.selection.bodyHeight,
-                    alignment: .leading
-                )
-                .background(
-                    DS.Color.surfaceBubble,
-                    in: RoundedRectangle(cornerRadius: metrics.bubbleRadius, style: .circular)
-                )
+            StackedMessageBubble(text: text, metrics: metrics)
         }
+    }
+}
+
+/// The student's words in the fixed box a stacked card sits behind.
+///
+/// Its own view because there are now **two** cards that sit behind this exact shape: screen
+/// 08's "Selection" label, and the chips of a turn that carried files. They are the same
+/// stack at the same 224 by ruling — a sent attachment belongs where the student's other
+/// sent work already is — so the shape in front of them has to be one shape. Restated at
+/// each call site it is a shape that drifts, which is the argument `SelectionAttachment`'s
+/// own doc comment makes about the card.
+///
+/// Fixed at `bodyHeight`, unlike the plain bubble which hugs its content: the design has
+/// exactly one specimen and states no wrapping rule for this variant, and the card behind it
+/// is sized off that fixed height.
+struct StackedMessageBubble: View {
+    let text: String
+    var metrics: MessageMetrics = .panel
+
+    var body: some View {
+        LearnerLiteralText(text)
+            .textStyle(metrics.selectionTextStyle)
+            .foregroundStyle(DS.Color.ink)
+            .padding(.horizontal, 20)
+            .frame(
+                width: metrics.selection.width,
+                height: metrics.selection.bodyHeight,
+                alignment: .leading
+            )
+            .background(
+                DS.Color.surfaceBubble,
+                in: RoundedRectangle(cornerRadius: metrics.bubbleRadius, style: .circular)
+            )
     }
 }
