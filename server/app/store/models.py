@@ -119,7 +119,8 @@ class Attachment(Base):
     )
     # board_png (a region the learner marqueed and sent) | board_full (the whole
     # board, uploaded every turn so the tutor can crop it with `view_board`) |
-    # ink | audio. The first two are kept apart on purpose — see BOARD_KIND.
+    # ink | audio | learner_upload (a file the learner attached in the composer).
+    # The first two are kept apart on purpose — see BOARD_KIND.
     kind: Mapped[str] = mapped_column(String(16))
     blob_key: Mapped[str] = mapped_column(String(128))
     sha256: Mapped[str] = mapped_column(String(64), index=True)
@@ -127,6 +128,19 @@ class Attachment(Base):
     width: Mapped[int | None] = mapped_column(Integer, nullable=True)
     height: Mapped[int | None] = mapped_column(Integer, nullable=True)
     content_type: Mapped[str] = mapped_column(String(64))
+    # The five below are `learner_upload`'s alone, and null for every other
+    # kind. An upload is the one attachment that arrives named, that may need
+    # converting before a model can read it, and that a later turn refers to by
+    # id — so it is the one that has to remember what it was called, what it
+    # became, and what it looks like.
+    filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: The bytes the model actually saw. Equal in content to `blob_key` when
+    #: the file needed no conversion, and the blob store is content-addressed,
+    #: so that case costs one blob rather than two.
+    converted_blob_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    converted_content_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    thumbnail_blob_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
 

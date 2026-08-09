@@ -3,6 +3,8 @@ import uuid
 import pytest
 from sqlalchemy import select
 
+from app.attachments.convert import Converted
+from app.attachments.kinds import Kind
 from app.store.blobs import LocalBlobStore
 from app.store.models import Attachment, LLMCall, Message, Session, Turn
 from app.store.recorder import Recorder, redact_images
@@ -338,3 +340,80 @@ async def test_fail_turn_without_a_result_still_records_the_error(db, db_factory
         stored_turn = (await fresh.execute(select(Turn))).scalar_one()
         assert stored_turn.status == "error"
         assert (await fresh.execute(select(LLMCall))).first() is None
+
+
+@requires_db
+async def test_record_upload_stores_both_the_original_and_what_the_model_saw(
+    db, db_factory, tmp_path
+):
+    """An investigation needs two things: what the learner sent, and what the
+    model actually read. One row holds both blob keys."""
+    session = Session(model="gpt-5.6-luna", reasoning_effort="high")
+    db.add(session)
+    await db.commit()
+
+    blob_store = LocalBlobStore(tmp_path)
+    recorder = Recorder(db_factory, blob_store)
+    converted = Converted(
+        kind=Kind.IMAGE, data=b"converted-jpeg-bytes", text=None,
+        content_type="image/jpeg", page_count=1, thumbnail=b"thumb",
+    )
+
+    upload_id = await recorder.record_upload(
+        session_id=session.id, filename="worksheet.png",
+        converted=converted, original=b"original-png-bytes",
+    )
+
+    [row] = await recorder.load_uploads(session_id=session.id, ids=[upload_id])
+    assert row.kind == "learner_upload"
+    assert row.filename == "worksheet.png"
+    assert row.turn_id is None
+    assert await blob_store.get(row.blob_key) == b"original-png-bytes"
+    assert await blob_store.get(row.converted_blob_key) == b"converted-jpeg-bytes"
+    assert row.converted_content_type == "image/jpeg"
+    assert row.page_count == 1
+
+
+@requires_db
+async def test_load_uploads_refuses_another_sessions_attachment(db, db_factory, tmp_path):
+    """An attachment id is a capability. One device must not be able to name
+    another's, and the session is what scopes it."""
+    mine = Session(model="gpt-5.6-luna", reasoning_effort="high")
+    theirs = Session(model="gpt-5.6-luna", reasoning_effort="high")
+    db.add_all([mine, theirs])
+    await db.commit()
+
+    recorder = Recorder(db_factory, LocalBlobStore(tmp_path))
+    converted = Converted(
+        kind=Kind.IMAGE, data=b"jpeg", text=None,
+        content_type="image/jpeg", page_count=1, thumbnail=b"thumb",
+    )
+    upload_id = await recorder.record_upload(
+        session_id=theirs.id, filename="private.png", converted=converted, original=b"png",
+    )
+
+    assert await recorder.load_uploads(session_id=mine.id, ids=[upload_id]) == []
+
+
+@requires_db
+async def test_load_uploads_returns_rows_in_the_order_asked_for(db, db_factory, tmp_path):
+    """The order is the learner's chip order, and it decides the order the
+    model sees the pages in."""
+    session = Session(model="gpt-5.6-luna", reasoning_effort="high")
+    db.add(session)
+    await db.commit()
+
+    recorder = Recorder(db_factory, LocalBlobStore(tmp_path))
+    converted = Converted(
+        kind=Kind.IMAGE, data=b"jpeg", text=None,
+        content_type="image/jpeg", page_count=1, thumbnail=b"thumb",
+    )
+    first = await recorder.record_upload(
+        session_id=session.id, filename="a.png", converted=converted, original=b"a",
+    )
+    second = await recorder.record_upload(
+        session_id=session.id, filename="b.png", converted=converted, original=b"b",
+    )
+
+    rows = await recorder.load_uploads(session_id=session.id, ids=[second, first])
+    assert [row.filename for row in rows] == ["b.png", "a.png"]

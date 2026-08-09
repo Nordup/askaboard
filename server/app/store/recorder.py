@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.attachments.convert import Converted
 from app.store.blobs import BlobRef, BlobStore
 from app.store.models import Attachment, LLMCall, Message, Session, Turn
 
@@ -258,6 +259,71 @@ class Recorder:
             ))
             await session.commit()
         return ref
+
+    async def record_upload(
+        self,
+        *,
+        session_id: uuid.UUID,
+        filename: str,
+        converted: Converted,
+        original: bytes,
+    ) -> uuid.UUID:
+        """One row for one file the learner attached, holding both blob keys.
+
+        Session-scoped with a null `turn_id`, exactly as a dictation's audio
+        is: the upload happens while the learner is still typing, and the turn
+        it ends up on does not exist yet. Which turns referred to it is
+        recoverable from those turns' own recorded request bodies, which name
+        `attachment_ids` verbatim — so there is no second row per turn, and a
+        worksheet re-sent three times stays one upload.
+        """
+        original_ref = await self._blobs.put(original, "application/octet-stream")
+        converted_bytes = converted.data if converted.data is not None else converted.text.encode()
+        converted_ref = await self._blobs.put(converted_bytes, converted.content_type)
+        thumbnail_ref = await self._blobs.put(converted.thumbnail, "image/jpeg")
+
+        attachment = Attachment(
+            session_id=session_id,
+            kind="learner_upload",
+            blob_key=original_ref.key,
+            sha256=original_ref.sha256,
+            bytes=original_ref.bytes,
+            content_type=converted.content_type,
+            filename=filename,
+            page_count=converted.page_count,
+            converted_blob_key=converted_ref.key,
+            converted_content_type=converted.content_type,
+            thumbnail_blob_key=thumbnail_ref.key,
+        )
+        async with self._sessionmaker() as session:
+            session.add(attachment)
+            await session.commit()
+            return attachment.id
+
+    async def load_uploads(
+        self, *, session_id: uuid.UUID, ids: list[uuid.UUID]
+    ) -> list[Attachment]:
+        """The named uploads, in the order named, and only this session's.
+
+        The session filter is the whole security property: an attachment id is
+        a capability, and the device holding one token must not be able to
+        reach another session's files by guessing a uuid. An id that does not
+        match is simply absent from the result, which is what lets the caller
+        answer with one 400 for "one of these is not yours" without saying
+        which.
+        """
+        if not ids:
+            return []
+        async with self._sessionmaker() as session:
+            rows = (await session.execute(
+                select(Attachment).where(
+                    Attachment.id.in_(ids),
+                    Attachment.session_id == session_id,
+                    Attachment.kind == "learner_upload",
+                )
+            )).scalars().all()
+        by_id = {row.id: row for row in rows}
+        return [by_id[wanted] for wanted in ids if wanted in by_id]
 
     async def spend_today(self) -> float:
         midnight = datetime.now(timezone.utc).replace(
