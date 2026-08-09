@@ -40,12 +40,16 @@ final class AttachmentStoreTests: XCTestCase {
 
     func testDeletingOneSessionLeavesAnothersThumbnailsAlone() {
         let store = AttachmentStore(directoryURL: directory)
+        let doomed = UUID()
+        let survivor = UUID()
+        let dropped = UUID()
         let kept = UUID()
-        store.save(Data("keep-me".utf8), for: kept, in: UUID())
-        store.save(Data("drop-me".utf8), for: UUID(), in: UUID())
+        store.save(Data("drop-me".utf8), for: dropped, in: doomed)
+        store.save(Data("keep-me".utf8), for: kept, in: survivor)
 
-        store.deleteAll(for: UUID())
+        store.deleteAll(for: doomed)
 
+        XCTAssertNil(store.thumbnail(for: dropped))
         XCTAssertEqual(store.thumbnail(for: kept), Data("keep-me".utf8))
     }
 

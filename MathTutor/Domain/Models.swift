@@ -121,6 +121,29 @@ struct TutorMessage: Identifiable, Codable, Sendable, Equatable {
         self.signal = signal
         self.attachments = attachments
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, role, text, createdAt, signal, attachments
+    }
+
+    /// Written out for one line of it: `attachments`.
+    ///
+    /// Swift's synthesised decoder does **not** fall back to a stored
+    /// property's default value when its key is missing — it throws
+    /// `keyNotFound`. Every session written before attachments existed lacks
+    /// the key, and `LearningSession` decodes `messages` with a plain `try`,
+    /// so one legacy message would take the whole session down and
+    /// `SessionPersistence.load` would return nil for it. A default value is
+    /// not a migration; this is.
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        role = try container.decode(MessageRole.self, forKey: .role)
+        text = try container.decode(String.self, forKey: .text)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        signal = try container.decodeIfPresent(LearningSignal.self, forKey: .signal)
+        attachments = try container.decodeIfPresent([MessageAttachment].self, forKey: .attachments) ?? []
+    }
 }
 
 enum LearningSignal: String, Codable, Sendable {

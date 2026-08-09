@@ -27,14 +27,17 @@ struct AttachmentStore {
         thumbnailsURL.appendingPathComponent(id.uuidString + ".jpg")
     }
 
+    /// Writes the thumbnail and only then folds it into the index, in that
+    /// order — mirroring `SessionPersistence.save`'s `guard write(...) else
+    /// { return }`. A failed write (full disk, sandbox denial) must not leave
+    /// an index entry pointing at a file that was never created, which is a
+    /// thumbnail `deleteAll` believes it owns and `thumbnail(for:)` can never
+    /// return.
     func save(_ thumbnail: Data, for id: UUID, in sessionID: UUID) {
-        try? FileManager.default.createDirectory(
-            at: thumbnailsURL, withIntermediateDirectories: true
-        )
-        try? thumbnail.write(to: fileURL(for: id), options: .atomic)
+        guard write(thumbnail, for: id) else { return }
 
         var index = loadIndex()
-        index[sessionID, default: []].append(id)
+        index[sessionID.uuidString, default: []].append(id)
         writeIndex(index)
     }
 
@@ -46,22 +49,40 @@ struct AttachmentStore {
     /// deleted — the one place these files would otherwise accumulate forever.
     func deleteAll(for sessionID: UUID) {
         var index = loadIndex()
-        for id in index[sessionID] ?? [] {
+        for id in index[sessionID.uuidString] ?? [] {
             try? FileManager.default.removeItem(at: fileURL(for: id))
         }
-        index[sessionID] = nil
+        index[sessionID.uuidString] = nil
         writeIndex(index)
     }
 
-    private func loadIndex() -> [UUID: [UUID]] {
+    @discardableResult
+    private func write(_ thumbnail: Data, for id: UUID) -> Bool {
+        do {
+            try FileManager.default.createDirectory(
+                at: thumbnailsURL, withIntermediateDirectories: true
+            )
+            try thumbnail.write(to: fileURL(for: id), options: .atomic)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// Keyed by `sessionID.uuidString` rather than `UUID` itself: `Dictionary`
+    /// only encodes as a JSON object when `Key` is `String` or `Int`, so a
+    /// `[UUID: [UUID]]` index would silently encode as a flat alternating
+    /// array — round-trippable, but not the JSON object `bySession.json`'s
+    /// name and doc comment claim it is.
+    private func loadIndex() -> [String: [UUID]] {
         guard let data = try? Data(contentsOf: indexURL),
-              let index = try? JSONDecoder().decode([UUID: [UUID]].self, from: data) else {
+              let index = try? JSONDecoder().decode([String: [UUID]].self, from: data) else {
             return [:]
         }
         return index
     }
 
-    private func writeIndex(_ index: [UUID: [UUID]]) {
+    private func writeIndex(_ index: [String: [UUID]]) {
         try? FileManager.default.createDirectory(
             at: directoryURL, withIntermediateDirectories: true
         )
