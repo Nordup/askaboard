@@ -2524,7 +2524,8 @@ git commit -m "Send the composer's file to the backend and keep its thumbnail"
 - Produces:
   - `enum PendingAttachmentState: Equatable` — `.uploading`, `.ready(MessageAttachment, thumbnail: Data)`, `.failed(String)`
   - `struct PendingAttachment: Identifiable, Equatable` — `id: UUID` (local), `filename: String`, `state: PendingAttachmentState`
-  - `@MainActor final class ComposerAttachments: ObservableObject` — `@Published private(set) var pending: [PendingAttachment]`, `var isFull: Bool`, `func add(data:filename:contentType:sessionID:)`, `func remove(_ id: UUID)`, `func readyForSend() async -> [UploadedAttachment]`, `func clear()`
+  - `@MainActor final class ComposerAttachments: ObservableObject` — `@Published private(set) var pending: [PendingAttachment]`, `@Published private(set) var isSending: Bool`, `var isFull: Bool`, `func add(data:filename:contentType:sessionID:)`, `func remove(_ id: UUID)`, `func readyForSend() async -> [UploadedAttachment]`, `func clear()`
+  - `readyForSend()` must send **exactly the draft that was on screen when it was called**: snapshot the ids, await only those, and filter the result to them. Waiting on a snapshot while returning the live array lets an attachment added mid-send be either included in a send it was never part of, or dropped and then destroyed by the caller's `clear()`. `isSending` closes the window rather than only coping with it, and Task 13 binds the `+` to it.
   - `static let limit = 5`
 
 - [ ] **Step 1: Write the failing test**
