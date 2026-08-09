@@ -21,6 +21,13 @@ import SwiftUI
 /// does not obey the law — see `sentMessage`. `derivedCardHeight` is the law itself, so the
 /// divergence is visible in code and asserted in tests instead of living in a comment.
 struct AttachmentStackMetrics: Equatable, Sendable {
+    /// Which of the two treatments this instance is.
+    ///
+    /// Stored rather than recovered from one of the values it picks. The card's contents
+    /// need it — a chip's thumbnail box, label lane and ✕ all step with the scale, and
+    /// `AttachmentChipMetrics` is the lookup — and inferring it from, say, the label style
+    /// breaks the moment two instances at different scales happen to share one.
+    let scale: ChatScale
     /// Both layers are edge-to-edge; a card narrower than the shape on top would show the
     /// notch the rule is about.
     let width: CGFloat
@@ -67,7 +74,20 @@ struct AttachmentStackMetrics: Equatable, Sendable {
 
     /// `265 = 301 − 20 − 16` in the composer, `188 = 224 − 20 − 16` in the sent message;
     /// the board calls it *"fills the card's visible band exactly"*.
+    ///
+    /// The chips card's trailing padding is 0, so this is its whole scrolling lane:
+    /// `281 = 301 − 20`, which is the number task 8 §6a does the three-chip arithmetic
+    /// against.
     var labelRowWidth: CGFloat { max(0, width - cardPaddingLeading - cardPaddingTrailing) }
+
+    /// One chip's height: the visible band less the row's padding above and below it.
+    ///
+    /// The inverse of the band's own arithmetic — task 8 §5 states the band as
+    /// `6 + 40 + 6` in the panel and `8 + 48 + 8` full-screen — so a chip's height is a
+    /// *consequence* of the band rather than a third number that can drift out of
+    /// agreement with it. It comes back out at `AttachmentChipMetrics.height`, and a test
+    /// asserts the round trip.
+    var chipHeight: CGFloat { max(0, visibleBand - 2 * labelRowPaddingTop) }
 }
 
 /// Everything about the card that is the *card's* rather than the shape's, as one per-scale
@@ -156,6 +176,7 @@ extension AttachmentStackMetrics {
     ) -> Self {
         let style = CardStyle.for(scale)
         return Self(
+            scale: scale,
             width: max(0, width),
             visibleBand: style.visibleBand,
             bodyHeight: bodyHeight,
@@ -201,6 +222,53 @@ extension AttachmentStackMetrics {
 
     /// The composer's card at the column the design drew this scale at.
     static func composer(_ scale: ChatScale) -> Self { composer(scale, width: scale.contentWidth) }
+
+    /// The composer's card when it holds chips rather than a label — board 16 and board
+    /// 03b §3.
+    ///
+    /// **A second instance, not the first one with different contents.** The label card's
+    /// `visibleBand` is *exactly the height of its label row*, and a chip carrying a
+    /// thumbnail does not fit one line of text: 40 points of chip do not go into 38, and
+    /// 48 do not go into 52 with any room around them. Everything structural is still the
+    /// label card's — the same width edge-to-edge with the pill, the same front shape, the
+    /// same top radii — and `derivedCardHeight` still holds, which is what the tests pin.
+    ///
+    /// The band is task 8 §5's own arithmetic rather than a measured constant:
+    /// `6 + 40 + 6 = 52` in the panel and `8 + 48 + 8 = 64` full-screen, against a card of
+    /// `52 + 25 = 77` and `64 + 34 = 98` — the two sizes the drawing reports.
+    ///
+    /// Two paddings are the chips card's own and not the label card's:
+    ///
+    /// - **Trailing is 0.** The row is a horizontal scroller and bleeds to the card's right
+    ///   edge, so an overflowing chip is cut by the card's own clip rather than stopping
+    ///   short in a gutter. That cut *is* the scroll cue — see `AttachmentChipRow`.
+    /// - **Leading is 20 / 30.** The panel's is the label card's 20; the wide card's 30 is
+    ///   measured, and two points wider than the label card's 28. Off the 4pt scale, and
+    ///   taken as drawn rather than snapped to `--spacing-7`: the drawing is the source and
+    ///   this is not a value the port gets to round.
+    static func composerChips(_ scale: ChatScale, width: CGFloat) -> Self {
+        let label = composer(scale, width: width)
+        let chip = AttachmentChipMetrics.for(scale)
+        let band = chip.height + 2 * label.labelRowPaddingTop
+        return Self(
+            scale: scale,
+            width: label.width,
+            visibleBand: band,
+            bodyHeight: label.bodyHeight,
+            bodyTopRadius: label.bodyTopRadius,
+            cardHeight: band + label.bodyTopRadius,
+            cardPaddingLeading: scale == .panel ? DS.Space.s5 : 30,
+            cardPaddingTrailing: 0,
+            labelRowPaddingTop: label.labelRowPaddingTop,
+            labelRowPaddingInline: label.labelRowPaddingInline,
+            // The card draws no label of its own — the chips carry the names — so these
+            // two are the *chip's* type and glyph rather than the band label's. Set
+            // rather than inherited so nothing reading this instance is handed the label
+            // card's 20/24 and 18, which are a full step off what the chips draw.
+            labelStyle: chip.labelStyle,
+            dismissGlyphSize: chip.dismissSize
+        )
+    }
 
     /// A sent message carrying a selection (screen 08).
     ///
@@ -345,6 +413,13 @@ struct SelectionCard: View {
     /// Screen 08's sent message. Shorter copy, and no dismiss: a sent message cannot be
     /// detached.
     static let sentLabel = "Selection"
+    /// The same word on a chip, where the container is 84 points wide and
+    /// "Selection attached" would truncate to about half of itself.
+    ///
+    /// Its own constant rather than a second use of `sentLabel`: the two agree today by
+    /// coincidence of length, and a chip in the composer and a cap on a sent message are
+    /// not the same string with the same reason behind it.
+    static let chipLabel = "Selection"
 
     let metrics: AttachmentStackMetrics
     let label: String
@@ -364,16 +439,7 @@ struct SelectionCard: View {
             .padding(.trailing, metrics.cardPaddingTrailing)
             // `align-items: flex-start` — the label pins to the band, not to the middle of
             // a card that is mostly hidden.
-            .frame(width: metrics.width, height: metrics.cardHeight, alignment: .topLeading)
-            .background(
-                DS.Color.brandTintSoft,
-                in: UnevenRoundedRectangle(
-                    topLeadingRadius: metrics.bodyTopRadius,
-                    bottomLeadingRadius: 0,
-                    bottomTrailingRadius: 0,
-                    topTrailingRadius: metrics.bodyTopRadius
-                )
-            )
+            .attachmentCardSurface(metrics)
     }
 
     private var labelRow: some View {
@@ -393,5 +459,28 @@ struct SelectionCard: View {
         }
         .padding(.top, metrics.labelRowPaddingTop)
         .padding(.horizontal, metrics.labelRowPaddingInline)
+    }
+}
+
+extension View {
+    /// The card itself, under whatever fills its band: full width, `cardHeight` tall, its
+    /// two top corners cut to the curve of the shape in front and its bottom two square
+    /// because they are behind it.
+    ///
+    /// Extracted because there are two things that fill the band now — the selection's
+    /// label row and the attachment chips — and the card under them is the same card. Two
+    /// call sites each spelling out a fill, a height and four radii is how one of them
+    /// gains a modifier the other does not.
+    func attachmentCardSurface(_ metrics: AttachmentStackMetrics) -> some View {
+        frame(width: metrics.width, height: metrics.cardHeight, alignment: .topLeading)
+            .background(
+                DS.Color.brandTintSoft,
+                in: UnevenRoundedRectangle(
+                    topLeadingRadius: metrics.bodyTopRadius,
+                    bottomLeadingRadius: 0,
+                    bottomTrailingRadius: 0,
+                    topTrailingRadius: metrics.bodyTopRadius
+                )
+            )
     }
 }

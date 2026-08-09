@@ -376,6 +376,27 @@ struct Composer: View {
     @Binding var text: String
     var selection: ComposerSelection = .idle
     let onSend: () -> Void
+    /// The attach button's action — opening the menu. Optional so a specimen with nowhere
+    /// to put a picker draws the composer without it, the rule `onVoice` and
+    /// `onToggleSelection` already follow.
+    var onAttach: (() -> Void)?
+    /// Whether the draft can take another file at all.
+    ///
+    /// **Not from the design**, which draws exactly one `+` and no unavailable state for
+    /// it. It has to exist because the thing behind the button can refuse:
+    /// `ComposerAttachments.add(...)` returns `Void` and silently does nothing once the
+    /// draft holds five files or while a send is in flight, and a control that swallows a
+    /// tap is worse than one that says it cannot be used.
+    ///
+    /// **Greyed rather than a menu that opens and refuses.** Three reasons. The row's
+    /// arithmetic must not move — the `+` keeps its 20pt slot and its gap in both
+    /// compositions, so nothing on the pill shifts when the fifth file lands. The tint
+    /// change is the mechanism the glyph *beside* it already uses to say lit or unlit, so
+    /// the composer is not learning a second vocabulary. And the reason is already on
+    /// screen: five chips are sitting in the card directly above the button, or a send is
+    /// visibly under way — a menu that opened only to restate that would cost a tap and a
+    /// card height the design never drew.
+    var canAttach = true
     /// Dictation, when the platform has it. Board 03's unresolved note says the voice
     /// button's full-screen-only appearance *"is an inconsistency in the design, not a
     /// considered rule ... do not copy the current asymmetry into code as if it were
@@ -391,11 +412,51 @@ struct Composer: View {
     /// a specimen that has no board behind it draws the glyph without pretending to be a
     /// control — see `leading`.
     var onToggleSelection: (() -> Void)?
+    /// The files on this draft, in the order they were picked. Empty is the composer every
+    /// screen has drawn until now.
+    var attachments: [PendingAttachment] = []
+    var onRemoveAttachment: ((UUID) -> Void)?
+    /// A thumbnail for a *server* id, when one has been stored. The draft's own chips carry
+    /// the bytes their upload returned, so this is the seam a sent message's chips use.
+    var attachmentThumbnail: ((UUID) -> Data?)?
 
     private var metrics: ComposerMetrics { .for(scale, width: width ?? scale.contentWidth) }
 
+    /// Drawn when there is somewhere for it to lead, and never while dictation holds the
+    /// leading slot — a file picker mid-recording is meaningless, and nothing on screen
+    /// should move when the microphone opens.
+    var drawsAttachButton: Bool { onAttach != nil && dictation == nil }
+
+    /// The card above the pill, which used to belong to the board selection alone. It now
+    /// appears for anything attached at all.
+    var drawsAttachmentCard: Bool { selection == .attached || !attachments.isEmpty }
+
+    /// Nothing to send is not a designed state — there is no disabled send button on the
+    /// board — so the button keeps its one appearance and the action declines instead.
+    var canSend: Bool {
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || selection == .attached
+            || !attachments.isEmpty
+    }
+
     var body: some View {
-        if selection == .attached {
+        if !attachments.isEmpty {
+            // Chips: `AttachmentStack` directly, with the taller card. Not
+            // `SelectionAttachment.composer`, which is the *label* card — the one the
+            // design drew, and still exactly right for a lassoed region on its own.
+            AttachmentStack(metrics: chipsMetrics) {
+                AttachmentChipRow(
+                    attachments: attachments,
+                    showsSelection: selection == .attached,
+                    metrics: chipsMetrics,
+                    thumbnail: { attachmentThumbnail?($0) ?? nil },
+                    onRemove: { onRemoveAttachment?($0) },
+                    onDismissSelection: { onDismissSelection?() }
+                )
+            } content: {
+                annotatedPill
+            }
+        } else if selection == .attached {
             SelectionAttachment.composer(
                 metrics: metrics.attachment,
                 onDismiss: onDismissSelection
@@ -405,6 +466,13 @@ struct Composer: View {
         } else {
             annotatedPill
         }
+    }
+
+    /// The chips card, in the column this composer was given — the same substitution
+    /// `ComposerMetrics.attachment` makes, for the same reason: a card still 740 wide
+    /// behind a 644 pill is the notch rule broken from the other side.
+    private var chipsMetrics: AttachmentStackMetrics {
+        .composerChips(scale, width: width ?? scale.contentWidth)
     }
 
     /// The note is drawn as an overlay rather than as a row above the pill, so a sentence that
@@ -447,6 +515,10 @@ struct Composer: View {
     /// measures its band off the resting pill.
     private var pill: some View {
         HStack(alignment: .bottom, spacing: metrics.gap) {
+            if drawsAttachButton {
+                attachButton.frame(height: metrics.innerHeight)
+            }
+
             leading
 
             // The one child with give in it — vertically now as well as horizontally. It fills
@@ -482,6 +554,47 @@ struct Composer: View {
         .background(DS.Color.surface, in: RoundedRectangle(cornerRadius: metrics.cornerRadius, style: .circular))
         .elevation(.control)
     }
+
+    /// `ui/plus` at its one published render size, in `--color-icon` rather than the
+    /// `--color-brand` the icon set publishes for it.
+    ///
+    /// Board 15a's violet is right where the plus is *the* action on a menu of neutral
+    /// rows. Here it is one of four controls in a grey row, and violet already means "lit"
+    /// — the marquee immediately beside it uses exactly that to say a selection is armed.
+    /// Two violet glyphs side by side meaning different things is worse than departing from
+    /// the token, so the composer's instance departs and the published token does not
+    /// change. The departure is recorded on the Paper node itself, in its layer name.
+    ///
+    /// The unavailable tint is `--color-ink-tertiary`, the token the placeholder already
+    /// uses for text that is present but is not content — see `canAttach`.
+    private var attachButton: some View {
+        Button(action: { onAttach?() }) {
+            IconView(
+                .uiPlus,
+                size: metrics.plusSize,
+                tint: canAttach ? DS.Color.icon : DS.Color.inkTertiary
+            )
+            // 20 points in a 50pt pill hit-tests well under the 44pt minimum. Given back as
+            // negative padding, like the marquee beside it, so the row's arithmetic —
+            // `301 − 18 − 20 − 10 − 24 − 10 − 121 − 10 − 34 − 10 − 38 − 6 = 0` — does not
+            // move by a point.
+            .expandedTapTarget(ComposerMetrics.minimumTapTarget, over: metrics.plusSize)
+        }
+        .buttonStyle(.plain)
+        .disabled(!canAttach)
+        .accessibilityLabel(Self.attachLabel)
+        .accessibilityValue(canAttach ? "" : Self.attachUnavailableValue)
+    }
+
+    static let attachLabel = "Attach a photo or file"
+    /// What VoiceOver says in place of the grey the button turns. The learner using a
+    /// screen reader gets a sentence where the sighted learner gets the full card above the
+    /// button.
+    ///
+    /// One sentence for both refusals — a draft holding its fifth file, and a send already
+    /// under way — because what it says is true of both and the composer is not told which
+    /// of the two it is in.
+    static let attachUnavailableValue = "Unavailable — this message can't take another file"
 
     /// The marquee's slot, which dictation borrows for its cancel because a lasso attachment is
     /// meaningless while the microphone is open — so nothing on screen moves when it opens.
@@ -630,10 +743,10 @@ struct Composer: View {
     /// Named, not a spinner.
     static let transcribingLabel = "Transcribing…"
 
-    /// Nothing to send is not a designed state — there is no disabled send button on the
-    /// board — so the button keeps its one appearance and the action declines instead.
+    /// See `canSend` — the condition grew a third term when the draft learned to hold
+    /// files, and it lives on the property so the tests can read it.
     private func send() {
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || selection == .attached else { return }
+        guard canSend else { return }
         onSend()
     }
 }

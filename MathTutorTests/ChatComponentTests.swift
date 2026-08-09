@@ -118,7 +118,14 @@ final class ChatComponentTests: XCTestCase {
     func testEveryCardExtendsPastTheCurvesOfTheShapeOnTop() {
         // The failure the Wrong diagram draws: a card that stops at the visible band leaves
         // the corner curves uncovered and the background bites into them.
-        for stack in [AttachmentStackMetrics.composer(.panel), .composer(.fullScreen), .sentMessage] {
+        let cards: [AttachmentStackMetrics] = [
+            .composer(.panel),
+            .composer(.fullScreen),
+            .composerChips(.panel, width: DS.Container.panelContent),
+            .composerChips(.fullScreen, width: DS.Container.column),
+            .sentMessage,
+        ]
+        for stack in cards {
             XCTAssertGreaterThanOrEqual(stack.cardHeight, stack.derivedCardHeight)
             XCTAssertLessThan(stack.straightTopRun, stack.width)
         }
@@ -1295,8 +1302,266 @@ final class ChatComponentTests: XCTestCase {
                 let card = AttachmentStackMetrics.composer(scale, width: width)
                 XCTAssertGreaterThanOrEqual(card.width, 0, context)
                 XCTAssertGreaterThanOrEqual(card.labelRowWidth, 0, context)
+
+                let chips = AttachmentStackMetrics.composerChips(scale, width: width)
+                XCTAssertGreaterThanOrEqual(chips.width, 0, context)
+                XCTAssertGreaterThanOrEqual(chips.labelRowWidth, 0, context)
+                // The band is the scale's, not the column's — a narrower iPad must not
+                // restyle the chips, only give them less lane to scroll in.
+                XCTAssertEqual(chips.visibleBand, AttachmentStackMetrics.composerChips(scale, width: 301).visibleBand, context)
             }
         }
+    }
+
+    // MARK: - The attach button, the menu and the chips
+
+    // Constructs SwiftUI values, and `View` carries `@MainActor`.
+    @MainActor
+    func testTheComposerDrawsAnAttachButtonOnlyWhenItCanAttach() {
+        // A specimen, preview or gallery entry passes no handler and gets the composer it
+        // has always had — the rule `onVoice` already follows.
+        XCTAssertFalse(Composer(scale: .panel, text: .constant(""), onSend: {}).drawsAttachButton)
+        XCTAssertTrue(
+            Composer(scale: .panel, text: .constant(""), onSend: {}, onAttach: {}).drawsAttachButton
+        )
+    }
+
+    // Constructs SwiftUI values, and `View` carries `@MainActor`.
+    @MainActor
+    func testTheAttachButtonIsNotDrawnWhileDictationHoldsTheLeadingSlot() {
+        // The leading slot belongs to the cancel cross while the microphone is open, and a
+        // file picker mid-recording is meaningless. Nothing on screen should move when
+        // dictation starts.
+        let composer = Composer(
+            scale: .panel, text: .constant(""), onSend: {}, onAttach: {},
+            dictation: ComposerDictation(phase: .capturing, startedAt: .now)
+        )
+        XCTAssertFalse(composer.drawsAttachButton)
+    }
+
+    // Constructs SwiftUI values, and `View` carries `@MainActor`.
+    @MainActor
+    func testAFullDraftGreysTheAttachButtonRatherThanRemovingIt() {
+        // `ComposerAttachments.add` silently no-ops once the draft holds five files or
+        // while a send is in flight, so the button has to say so. It says so by going
+        // `--color-ink-tertiary` and refusing the tap — and it stays in the row, because a
+        // control that vanishes moves the four beside it.
+        let composer = Composer(
+            scale: .panel, text: .constant(""), onSend: {}, onAttach: {}, canAttach: false
+        )
+        XCTAssertTrue(composer.drawsAttachButton)
+        XCTAssertFalse(composer.canAttach)
+        // The default is the composer every other screen draws.
+        XCTAssertTrue(Composer(scale: .panel, text: .constant(""), onSend: {}, onAttach: {}).canAttach)
+    }
+
+    // Constructs SwiftUI values, and `View` carries `@MainActor`.
+    @MainActor
+    func testTheAttachmentCardIsDrawnForAFileWithNoBoardSelection() {
+        // The card used to belong to the board selection alone. A worksheet with nothing
+        // lassoed must still get one.
+        let composer = Composer(
+            scale: .panel, text: .constant(""), selection: .idle, onSend: {},
+            attachments: [PendingAttachment(id: UUID(), filename: "a.pdf", state: .uploading)]
+        )
+        XCTAssertTrue(composer.drawsAttachmentCard)
+    }
+
+    // Constructs SwiftUI values, and `View` carries `@MainActor`.
+    @MainActor
+    func testTheAttachmentCardIsStillDrawnForABoardSelectionAlone() {
+        let composer = Composer(scale: .panel, text: .constant(""), selection: .attached, onSend: {})
+        XCTAssertTrue(composer.drawsAttachmentCard)
+    }
+
+    // Constructs SwiftUI values, and `View` carries `@MainActor`.
+    @MainActor
+    func testNoAttachmentsAndNoSelectionDrawsNoCard() {
+        let composer = Composer(scale: .panel, text: .constant(""), selection: .idle, onSend: {})
+        XCTAssertFalse(composer.drawsAttachmentCard)
+    }
+
+    // Constructs SwiftUI values, and `View` carries `@MainActor`.
+    @MainActor
+    func testSendIsDeclinedWithNoTextAndNothingAttached() {
+        // Unchanged behaviour, restated because the condition grew a third term.
+        let composer = Composer(scale: .panel, text: .constant("  "), selection: .idle, onSend: {})
+        XCTAssertFalse(composer.canSend)
+    }
+
+    // Constructs SwiftUI values, and `View` carries `@MainActor`.
+    @MainActor
+    func testSendIsAllowedWithNoTextButAFileAttached() {
+        let composer = Composer(
+            scale: .panel, text: .constant(""), selection: .idle, onSend: {},
+            attachments: [PendingAttachment(id: UUID(), filename: "a.pdf", state: .uploading)]
+        )
+        XCTAssertTrue(composer.canSend)
+    }
+
+    func testTheChipsCardObeysTheDerivedHeightLaw() {
+        // `visibleBand + bodyTopRadius`. The chips card is taller than the label card, and
+        // taller is the only thing about it that differs — a card that stopped obeying the
+        // law would show the notch board 03 §2 is about.
+        for scale in [ChatScale.panel, .fullScreen] {
+            let metrics = AttachmentStackMetrics.composerChips(scale, width: scale.contentWidth)
+            XCTAssertTrue(metrics.followsDerivedLaw, "\(scale)")
+            XCTAssertGreaterThan(
+                metrics.visibleBand,
+                AttachmentStackMetrics.composer(scale, width: scale.contentWidth).visibleBand,
+                "\(scale) — a chip with a thumbnail does not fit one label row"
+            )
+        }
+    }
+
+    func testTheChipsCardIsTheDrawingsOwnArithmetic() {
+        // Task 8 §5, both stages. `52 = 6 + 40 + 6` behind a 50pt pill of radius 25 gives
+        // `77`; `64 = 8 + 48 + 8` behind a 68pt pill of radius 34 gives `98`.
+        let panel = AttachmentStackMetrics.composerChips(.panel, width: DS.Container.panelContent)
+        XCTAssertEqual(panel.width, 301)
+        XCTAssertEqual(panel.visibleBand, 52)
+        XCTAssertEqual(panel.bodyHeight, 50)
+        XCTAssertEqual(panel.bodyTopRadius, 25)
+        XCTAssertEqual(panel.cardHeight, 77)
+        // The composer's whole frame once chips are in it: 52 + 50. Today's selection card
+        // gives 88.
+        XCTAssertEqual(panel.totalHeight, 102)
+        // Left 20, right 0 — the row bleeds to the card's edge so an overflowing chip is
+        // cut by the clip. 281 is the lane §6a does the three-chip arithmetic against.
+        XCTAssertEqual(panel.cardPaddingLeading, 20)
+        XCTAssertEqual(panel.cardPaddingTrailing, 0)
+        XCTAssertEqual(panel.labelRowWidth, 281)
+
+        let full = AttachmentStackMetrics.composerChips(.fullScreen, width: DS.Container.column)
+        XCTAssertEqual(full.width, 740)
+        XCTAssertEqual(full.visibleBand, 64)
+        XCTAssertEqual(full.bodyHeight, 68)
+        XCTAssertEqual(full.bodyTopRadius, 34)
+        XCTAssertEqual(full.cardHeight, 98)
+        XCTAssertEqual(full.totalHeight, 132)
+        // 30, measured — two points wider than the label card's 28, and off the 4pt scale.
+        XCTAssertEqual(full.cardPaddingLeading, 30)
+        XCTAssertEqual(full.cardPaddingTrailing, 0)
+        XCTAssertEqual(full.labelRowWidth, 710)
+    }
+
+    func testTheChipsCardIsEdgeToEdgeWithThePill() {
+        // The notch rule from the other side: a card narrower than the pill shows the
+        // corner it is meant to hide.
+        let metrics = AttachmentStackMetrics.composerChips(.panel, width: 301)
+        XCTAssertEqual(metrics.width, 301)
+    }
+
+    func testAChipsSizeIsItsPartsAddedUp() {
+        // Task 8 §4's own check: `4 + 32 + 8 + 84 + 8 + 14 + 8 = 158` and
+        // `5 + 38 + 10 + 120 + 10 + 16 + 10 = 209`. The parts are the drawing; the two
+        // sizes are what proves the parts were read right.
+        XCTAssertEqual(AttachmentChipMetrics.panel.width(), 158)
+        XCTAssertEqual(AttachmentChipMetrics.fullScreen.width(), 209)
+        // The thumbnail box is inset uniformly, so the height falls out of the same padding.
+        XCTAssertEqual(AttachmentChipMetrics.panel.height, 40)
+        XCTAssertEqual(AttachmentChipMetrics.fullScreen.height, 48)
+
+        XCTAssertEqual(AttachmentChipMetrics.panel.thumbnailSize, 32)
+        XCTAssertEqual(AttachmentChipMetrics.panel.thumbnailRadius, DS.Radius.xs)
+        XCTAssertEqual(AttachmentChipMetrics.panel.labelWidth, 84)
+        XCTAssertEqual(AttachmentChipMetrics.panel.dismissSize, 14)
+        XCTAssertEqual(AttachmentChipMetrics.panel.radius, DS.Radius.sm)
+        XCTAssertEqual(AttachmentChipMetrics.panel.rowGap, 8)
+
+        XCTAssertEqual(AttachmentChipMetrics.fullScreen.thumbnailSize, 38)
+        XCTAssertEqual(AttachmentChipMetrics.fullScreen.thumbnailRadius, DS.Radius.sm)
+        XCTAssertEqual(AttachmentChipMetrics.fullScreen.labelWidth, 120)
+        XCTAssertEqual(AttachmentChipMetrics.fullScreen.dismissSize, 16)
+        XCTAssertEqual(AttachmentChipMetrics.fullScreen.radius, DS.Radius.md)
+        XCTAssertEqual(AttachmentChipMetrics.fullScreen.rowGap, 12)
+
+        // The chip's label is 15 / 18 · 600 and 17 / 22 · 600 — *not* the label card's
+        // 20 / 24 at the wide scale, which is the band label this replaced.
+        XCTAssertEqual(AttachmentChipMetrics.panel.labelStyle.size, 15)
+        XCTAssertEqual(AttachmentChipMetrics.panel.labelStyle.leading, 18)
+        XCTAssertEqual(AttachmentChipMetrics.fullScreen.labelStyle.size, 17)
+        XCTAssertEqual(AttachmentChipMetrics.fullScreen.labelStyle.leading, 22)
+        XCTAssertEqual(AttachmentChipMetrics.fullScreen.labelStyle.weight, .semibold)
+    }
+
+    func testTheBandAndTheChipAgreeOnOneHeight() {
+        // The card's band is built from the chip and the chip is drawn from the band, so
+        // the round trip has to close — otherwise a chip sits proud of the tint it is on.
+        for scale in [ChatScale.panel, .fullScreen] {
+            XCTAssertEqual(
+                AttachmentStackMetrics.composerChips(scale, width: scale.contentWidth).chipHeight,
+                AttachmentChipMetrics.for(scale).height,
+                "\(scale)"
+            )
+        }
+    }
+
+    func testThreeChipsDoNotFitThePanelAndDoFitTheReadingColumn() {
+        // §6a, settled: the row scrolls, it does not wrap. Chip 1 shows whole and 115 of
+        // chip 2 is the cue. Full-screen has no such problem.
+        let panel = AttachmentStackMetrics.composerChips(.panel, width: DS.Container.panelContent)
+        let panelChip = AttachmentChipMetrics.panel
+        let threePanel = 3 * panelChip.width() + 2 * panelChip.rowGap
+        XCTAssertEqual(threePanel, 490)
+        XCTAssertEqual(panel.labelRowWidth, 281)
+        XCTAssertGreaterThan(threePanel, panel.labelRowWidth)
+        // What the second chip shows past the first: 281 − 158 − 8.
+        XCTAssertEqual(panel.labelRowWidth - panelChip.width() - panelChip.rowGap, 115)
+
+        let full = AttachmentStackMetrics.composerChips(.fullScreen, width: DS.Container.column)
+        let fullChip = AttachmentChipMetrics.fullScreen
+        let threeFull = 3 * fullChip.width() + 2 * fullChip.rowGap
+        XCTAssertEqual(threeFull, 651)
+        XCTAssertLessThanOrEqual(threeFull, full.labelRowWidth)
+    }
+
+    func testASentChipGivesBackTheWidthOfTheControlItDoesNotHave() {
+        // Task 14 draws these on a sent message, where there is nothing to take back. The
+        // ✕ and the gap before it come off rather than leaving a hole where a control was.
+        let chip = AttachmentChipMetrics.panel
+        XCTAssertEqual(chip.width(removable: false), 158 - 14 - 8)
+        XCTAssertEqual(chip.width(removable: false), 136)
+    }
+
+    // Constructs SwiftUI values, and `View` carries `@MainActor`.
+    @MainActor
+    func testASelectionAndFilesShareOneCard() {
+        // "Here is the worksheet, and here is what I tried" — one card, three chips.
+        let row = AttachmentChipRow(
+            attachments: [PendingAttachment(id: UUID(), filename: "a.pdf", state: .uploading)],
+            showsSelection: true,
+            metrics: .composerChips(.panel, width: 301),
+            thumbnail: { _ in nil },
+            onRemove: { _ in },
+            onDismissSelection: {}
+        )
+        XCTAssertEqual(row.chipCount, 2)
+    }
+
+    // Constructs SwiftUI values, and `View` carries `@MainActor`.
+    @MainActor
+    func testTheAttachMenuIsTheSessionMenusConstruction() {
+        // Task 8 §3: "construction is inherited from `menu/sessions` exactly". The card is
+        // `3 × 44 + 2 × 4 + 2 × 8 = 156`, and it opens 8 clear of the pill — the same gap
+        // the session menu leaves under the header it drops from.
+        XCTAssertEqual(AttachMenu.height, 156)
+        XCTAssertEqual(AttachMenu.gapAbovePill, 8)
+        XCTAssertEqual(SessionSwitcherMetrics.rowHeight, 44)
+        XCTAssertEqual(SessionSwitcherMetrics.menuRowGap, 4)
+        XCTAssertEqual(SessionSwitcherMetrics.menuPadding, 8)
+        XCTAssertEqual(SessionSwitcherMetrics.rowPaddingInline, 12)
+        // 17 / 22 · 600, the specimen the session menu sets its own action row in.
+        XCTAssertEqual(SessionSwitcherMetrics.newSessionLabel.size, 17)
+        XCTAssertEqual(SessionSwitcherMetrics.newSessionLabel.leading, 22)
+        XCTAssertEqual(SessionSwitcherMetrics.newSessionLabel.weight, .semibold)
+    }
+
+    func testTheAttachMenuOffersThreeRowsInTheOrderTheBoardDrawsThem() {
+        XCTAssertEqual(
+            AttachMenuChoice.allCases.map(\.label),
+            ["Photo Library", "Take Photo", "Files"]
+        )
     }
 
     // MARK: - The columns these components are checked at
