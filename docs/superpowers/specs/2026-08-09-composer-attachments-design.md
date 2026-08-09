@@ -93,8 +93,15 @@ lane at both scales:
 
 | | panel (301) | full-screen (740) |
 |---|---|---|
-| today | 151 | 534 |
-| with `+` | 121 | 498 |
+| today | 151 | 574 |
+| with `+` | 121 | 538 |
+
+**The wide composer has no marquee**, which is why its lane is not 534 − 20 − 16.
+It never had one — not on screens 07 or 13, not in board 03's spec — and
+`TutorFullScreen` passes `.unavailable` with no toggle handler. Board 03 gives
+the reason: the glyph's presence is a property of whether there is a board to
+lasso from, not of scale, and full-screen hides the board. The `+` joins a row
+of three there, not four.
 
 The `+` is drawn at **20**, the single render size `design/icons.json` publishes
 for `ui/plus` — not stepped up to the marquee's 24 to make the two glyphs

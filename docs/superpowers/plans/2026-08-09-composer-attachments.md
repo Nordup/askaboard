@@ -1823,7 +1823,7 @@ Constraints:
 - `ui/plus` at its one published render size, **20**. Do not scale it to 24 to match the marquee.
 - Order in the row: `+`, then the marquee, then the text lane.
 - The gap either side is the composer's existing gap — 10 in the panel, 16 full-screen. No new spacing value.
-- Resulting text lane: **121** in the panel, **498** full-screen. If the drawing produces different numbers, the drawing is right and this plan is wrong — carry the drawing's numbers into Task 9.
+- Resulting text lane: **121** in the panel, **538** full-screen. The wide row has no marquee — see Task 9.
 - **Colour is the open question.** `ui/plus` publishes `--color-brand`, which is correct on the session menu where it is the one action, and wrong here where it is one of four grey controls and violet already means "lit". Draw it `--color-icon` and leave a note on the node saying the token was departed from deliberately.
 
 - [ ] **Step 4: Draw the attach menu**
@@ -1881,9 +1881,13 @@ func testPanelRowClosesExactlyWithThePlus() {
 }
 
 func testFullScreenRowClosesExactlyWithThePlus() {
+    // No marquee full-screen — the wide composer has never had one, because
+    // full-screen hides the board there would be to lasso from. `TutorFullScreen`
+    // passes `.unavailable` and no toggle handler, and board 03 says the glyph's
+    // presence is a property of whether there is a board to lasso, not of scale.
     let composer = ComposerMetrics.fullScreen
     XCTAssertEqual(composer.plusSize, 20)
-    XCTAssertEqual(composer.placeholderWidth(includingPlus: true, includingMarquee: true), 498)
+    XCTAssertEqual(composer.placeholderWidth(includingPlus: true, includingMarquee: false), 538)
 }
 
 func testThePlusKeepsItsOnePublishedRenderSizeAtBothScales() {
@@ -1902,17 +1906,21 @@ func testPlaceholderWidthWithoutThePlusIsUnchanged() {
 }
 
 func testTheRowClosesAtEveryColumnWidthWithThePlus() {
+    // Both marquee states, because the two surfaces differ: the panel draws it
+    // and the full-screen column does not.
     for scale in [ChatScale.panel, .fullScreen] {
         for width in [CGFloat(301), 337, 644, 740] {
-            let composer = ComposerMetrics.for(scale, width: width)
-            let children = composer.plusSize + composer.marqueeSize
-                + composer.voiceButtonSize + composer.sendButtonSize
-            let gaps = composer.gap * 4
-            XCTAssertEqual(
-                composer.placeholderWidth(includingPlus: true, includingMarquee: true),
-                width - composer.paddingLeading - composer.paddingTrailing - children - gaps,
-                "\(scale) at \(width)"
-            )
+            for marquee in [true, false] {
+                let composer = ComposerMetrics.for(scale, width: width)
+                let children = composer.plusSize + (marquee ? composer.marqueeSize : 0)
+                    + composer.voiceButtonSize + composer.sendButtonSize
+                let gaps = composer.gap * CGFloat(marquee ? 4 : 3)
+                XCTAssertEqual(
+                    composer.placeholderWidth(includingPlus: true, includingMarquee: marquee),
+                    width - composer.paddingLeading - composer.paddingTrailing - children - gaps,
+                    "\(scale) at \(width), marquee: \(marquee)"
+                )
+            }
         }
     }
 }
@@ -1969,7 +1977,8 @@ state the four:
 /// `301 − 18 − 24 − 10 − 151 − 10 − 34 − 10 − 38 − 6 = 0` and
 /// `740 − 28 − 574 − 16 − 46 − 16 − 52 − 8 = 0`. With it:
 /// `301 − 18 − 20 − 10 − 24 − 10 − 121 − 10 − 34 − 10 − 38 − 6 = 0` and
-/// `740 − 28 − 20 − 16 − 24 − 16 − 498 − 16 − 46 − 16 − 52 − 8 = 0`.
+/// `740 − 28 − 20 − 16 − 538 − 16 − 46 − 16 − 52 − 8 = 0` — two fewer terms in
+/// the wide row, which has no marquee.
 /// `placeholderWidth(includingPlus:includingMarquee:)` is that arithmetic, and the
 /// tests run it against the widths screens 05 and 07 measure.
 ```
