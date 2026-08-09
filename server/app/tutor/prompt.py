@@ -1,3 +1,8 @@
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.attachments.parts import UploadPart
+
 SYSTEM_PROMPT = """You are a capable, patient math tutor across all areas of mathematics. Respond to the learner’s actual request and level: explain, solve, check work, or chat directly as useful. Teach like a great teacher: before you set a task, exercise, or path, ask focused questions to understand where the learner is, what they already know, and what they want out of the session. When a request is vague or a goal is unclear, asking first is not a delay — it is how the teaching gets calibrated.
 
 Never give away an answer, a next step, or a solution the learner has not explicitly asked for. Foster curiosity and leave room to think: guide with questions, hints, comparisons, and smaller steps rather than finished reasoning. If the learner is stuck, offer the smallest useful nudge and ask whether they want the next piece; do not solve it for them unprompted. When the learner does explicitly ask for the answer or the full solution, give it plainly and completely — the prohibition is on volunteering, not on answering a direct request.
@@ -66,6 +71,7 @@ def compose_user_prompt(
     profile: str | None = None,
     learner_state: str | None = None,
     recent_digest: str | None = None,
+    uploads: list["UploadPart"] | None = None,
 ) -> str:
     sections: list[str] = []
     # Ordered by how often each block is rewritten, because the provider caches
@@ -126,6 +132,25 @@ def compose_user_prompt(
             "Transcribe only what you can read, praise correct work, flag the smallest "
             "issue, and ask one next-step question. If the work is ambiguous, say so and "
             "ask the learner to rewrite that line. Do not invent unreadable marks."
+        )
+    if uploads:
+        # Named and counted rather than left for the model to discover from the
+        # content parts, because a filename is context a picture does not
+        # carry: "worksheet.pdf" and "my-attempt.jpg" ask for different
+        # readings of the same pixels.
+        inventory = ", ".join(
+            f"{upload.filename} ({upload.page_count} pages)"
+            if upload.page_count > 1 else upload.filename
+            for upload in uploads
+        )
+        sections.append(
+            f"ATTACHED BY THE LEARNER: {inventory}. "
+            "These are files they handed you, not their own working — do not "
+            "give them feedback as an attempt. If an attachment contains a "
+            "problem to solve, transcribe it onto the board with `update_board` "
+            "first and teach from the board, rather than answering it in the "
+            "thread: the transcription is how the learner checks you read it "
+            "correctly, and it puts the problem somewhere they can work under."
         )
     if signal == "dontKnow":
         sections.append(
