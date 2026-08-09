@@ -1,5 +1,5 @@
 """Read-back endpoints for the project owner and for agents debugging a bad
-turn — the iPad app never calls any of these.
+turn, plus the one write the device does make: telling us a session is over.
 
 `/v1/turns/{id}` in particular exists to make a bad turn diagnosable without
 touching the database directly: it returns the full trace of `llm_calls`
@@ -20,6 +20,7 @@ from sqlalchemy.orm import selectinload
 
 from app.auth import require_device_token
 from app.config import get_settings
+from app.memory.jobs import schedule_session_close
 from app.store.blobs import LocalBlobStore
 from app.store.db import db_session
 from app.store.models import Attachment, LLMCall, Message, Session, ToolCall, Turn
@@ -162,6 +163,33 @@ async def get_session(session_id: uuid.UUID, db: AsyncSession = Depends(db_sessi
             _turn_summary(t) for t in sorted(session.turns, key=lambda t: t.started_at)
         ],
     }
+
+
+@router.post("/sessions/{session_id}/close", status_code=status.HTTP_204_NO_CONTENT)
+async def close_session(
+    session_id: uuid.UUID, db: AsyncSession = Depends(db_session)
+):
+    """The device saying it has moved on from this session.
+
+    Called when the learner switches sessions or backgrounds the app, and safe
+    to call again on either — `run_session_close` is idempotent, which is what
+    lets the device retry a close it is not sure landed rather than having to
+    track whether it already sent one.
+
+    Returns before any of the work starts, and deliberately reports nothing
+    about it. Extraction is four provider calls; the answer to "did the memory
+    write succeed" is minutes away and is not something the device can act on
+    in either case. `app/memory/jobs.py` is where a failed one is accounted
+    for.
+
+    404 rather than a silent 204 for a session that does not exist: a device
+    with the wrong id would otherwise get the same answer as one that worked,
+    and every session it ever closed would go unremembered with nothing
+    anywhere saying so.
+    """
+    if await db.get(Session, session_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown session.")
+    await schedule_session_close(session_id)
 
 
 @router.get("/turns/{turn_id}")
