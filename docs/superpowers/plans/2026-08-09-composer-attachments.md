@@ -506,7 +506,7 @@ from dataclasses import dataclass
 
 import fitz  # PyMuPDF
 import pillow_heif
-from PIL import Image
+from PIL import Image, ImageOps
 
 from app.attachments.kinds import Kind, sniff
 from app.config import (
@@ -570,9 +570,13 @@ def _convert_image(data: bytes, filename: str) -> Converted:
     except Exception:
         raise Unconvertible(422, f"{filename} looks like an image but I couldn’t open it.")
 
-    # `RGB` unconditionally: JPEG has no alpha channel, and a transparent PNG
-    # saved straight to JPEG raises rather than flattening.
-    flattened = image.convert("RGB")
+    # A phone stores a portrait photo as sensor-native landscape pixels plus an
+    # orientation tag, and the JPEG written below carries no EXIF at all — so
+    # without this a photo of a worksheet reaches the tutor on its side. First,
+    # because every measurement after it assumes the pixels are upright.
+    image = ImageOps.exif_transpose(image)
+
+    flattened = _on_white(image)
     return Converted(
         kind=Kind.IMAGE,
         data=_jpeg(flattened, IMAGE_MAX_EDGE),
@@ -590,6 +594,16 @@ def _convert_pdf(data: bytes, filename: str) -> Converted:
         raise Unconvertible(422, f"{filename} is a PDF I couldn’t open. It may be damaged.")
 
     with document:
+        # An encrypted PDF opens, reports its page count, and only then raises
+        # from the first render — so without this the failure surfaces as a bare
+        # ValueError from inside the renderer rather than as a sentence. Being
+        # handed a password-protected worksheet is an ordinary thing.
+        if document.needs_pass:
+            raise Unconvertible(
+                422,
+                f"{filename} is password-protected, so I can’t open it. Try saving "
+                "a copy without the password, or take a photo of it.",
+            )
         if document.page_count == 0:
             raise Unconvertible(422, f"{filename} has no pages in it.")
         if document.page_count > MAX_PDF_PAGES:
@@ -599,7 +613,16 @@ def _convert_pdf(data: bytes, filename: str) -> Converted:
                 f"{MAX_PDF_PAGES} — try sending just the pages you need.",
             )
         page_count = document.page_count
-        pixmap = document[0].get_pixmap(dpi=72)
+        try:
+            # `csRGB` explicitly: `frombytes("RGB", ...)` below wants three bytes
+            # per pixel, and a page in a grayscale or CMYK colorspace would
+            # otherwise hand back a buffer of the wrong length.
+            pixmap = document[0].get_pixmap(dpi=72, colorspace=fitz.csRGB)
+        except Exception:
+            raise Unconvertible(
+                422,
+                f"I couldn’t read the first page of {filename}. It may be damaged.",
+            )
         first_page = Image.frombytes("RGB", (pixmap.width, pixmap.height), pixmap.samples)
 
     return Converted(
@@ -630,6 +653,21 @@ def _convert_text(data: bytes, filename: str) -> Converted:
     )
 
 
+def _on_white(image: Image.Image) -> Image.Image:
+    """RGB, with any transparency composited onto white rather than dropped.
+
+    `convert("RGB")` alone throws the alpha channel away and keeps whatever RGB
+    was stored underneath it — for a board export, usually solid black. So a
+    blank region of a worksheet reached the model as a black rectangle. White
+    because the surface behind every one of these images is paper.
+    """
+    if image.mode not in ("RGBA", "LA", "P", "PA"):
+        return image.convert("RGB")
+    with_alpha = image.convert("RGBA")
+    background = Image.new("RGBA", with_alpha.size, (255, 255, 255, 255))
+    return Image.alpha_composite(background, with_alpha).convert("RGB")
+
+
 def _jpeg(image: Image.Image, max_edge: int) -> bytes:
     """A copy of `image` fitted inside `max_edge`, as JPEG.
 
@@ -657,7 +695,7 @@ def _render_text_preview(text: str) -> Image.Image:
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_attachment_convert.py -v`
-Expected: 10 PASS
+Expected: 14 PASS
 
 - [ ] **Step 6: Commit**
 
