@@ -33,6 +33,7 @@
 		329E65E8B5B6D98ADA6CC2E6 /* DemoTutorServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEB67774A3E9FFC188FF1D75 /* DemoTutorServiceTests.swift */; };
 		3A01F5C14CC3FFFBC9E449C7 /* WhiteboardSurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AF47E8C131D8376D61F3E65 /* WhiteboardSurface.swift */; };
 		3BBF7D7BBDB2FA5CE0B097D5 /* ToolRailParts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52D52C388DABD65744236C2D /* ToolRailParts.swift */; };
+		3EB6FC3723C2F3C3BC722EEC /* ComposerAttachments.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1F88476F614A427A0D4A7BE /* ComposerAttachments.swift */; };
 		3FEAD4CABE221C77708EAE56 /* BoardInkTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07822BFCEDA6CAC5E7B67D24 /* BoardInkTests.swift */; };
 		4043B865BA699B98EF86D3E1 /* SettingsControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3060534FE8CEE11D285FC7FF /* SettingsControls.swift */; };
 		40770A68324C01ADF951C19C /* MessageAttachment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 266FC9D0B6735EED1A0CCC0B /* MessageAttachment.swift */; };
@@ -122,6 +123,7 @@
 		EDEB51FDD8E17D13290CD0AF /* OrbHalo.swift in Sources */ = {isa = PBXBuildFile; fileRef = E954D06964D3CD29E7E328C4 /* OrbHalo.swift */; };
 		EFA499781E9199548F353D2C /* SourceSans3-Regular.otf in Resources */ = {isa = PBXBuildFile; fileRef = 8217EBB13B758B525C439539 /* SourceSans3-Regular.otf */; };
 		F04349D3E6E4B1597D648774 /* BoardInk.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDC29B5C0EE22B4B88E0C16D /* BoardInk.swift */; };
+		F41397690D69C8D2F528A80D /* ComposerAttachmentsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B11E1EAAEC87BB250A9A9797 /* ComposerAttachmentsTests.swift */; };
 		FCAB37D9BB091699455CE680 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40CC8590077CACB91515D03B /* Models.swift */; };
 /* End PBXBuildFile section */
 
@@ -222,9 +224,11 @@
 		95328C09291FF057FF5EC160 /* DesignSystemTokenTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystemTokenTests.swift; sourceTree = "<group>"; };
 		9B0E027F5827A16DC5016AA6 /* ResizeHandle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResizeHandle.swift; sourceTree = "<group>"; };
 		9D3C08CEF2BB69842ABC9BBF /* TutorService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TutorService.swift; sourceTree = "<group>"; };
+		A1F88476F614A427A0D4A7BE /* ComposerAttachments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerAttachments.swift; sourceTree = "<group>"; };
 		A6C3A3607F71F2C99C586DB2 /* SessionPersistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionPersistence.swift; sourceTree = "<group>"; };
 		AF203F43C82054D956C00D85 /* ResizeHandleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResizeHandleTests.swift; sourceTree = "<group>"; };
 		AFCCD95B7E728A12D36C3E74 /* BoardSelectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardSelectionTests.swift; sourceTree = "<group>"; };
+		B11E1EAAEC87BB250A9A9797 /* ComposerAttachmentsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerAttachmentsTests.swift; sourceTree = "<group>"; };
 		B707E1CFA3F0C0117CDF5213 /* Composer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Composer.swift; sourceTree = "<group>"; };
 		B7A7B29659EE4E89E8E0044F /* UIState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIState.swift; sourceTree = "<group>"; };
 		BE113B7E3E62FDCFA7413776 /* MathTutorApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MathTutorApp.swift; sourceTree = "<group>"; };
@@ -322,6 +326,7 @@
 		20163A2B118504D3DE8DE099 /* Tutor */ = {
 			isa = PBXGroup;
 			children = (
+				A1F88476F614A427A0D4A7BE /* ComposerAttachments.swift */,
 				2830CE96CFA1A85F968C195C /* DictationController.swift */,
 				5F72154788FE13A7EB4C9342 /* TutorFullScreen.swift */,
 				2EA4C8E6325776E542D8DA7B /* TutorPanel.swift */,
@@ -387,6 +392,7 @@
 				6C40D818D42C36ADE7FAFDF9 /* BoardSVGTests.swift */,
 				77A7DD39D721ACCC0D62826F /* BoardToolTests.swift */,
 				784BDCC853A7787B6EE7BFFD /* ChatComponentTests.swift */,
+				B11E1EAAEC87BB250A9A9797 /* ComposerAttachmentsTests.swift */,
 				DEB67774A3E9FFC188FF1D75 /* DemoTutorServiceTests.swift */,
 				95328C09291FF057FF5EC160 /* DesignSystemTokenTests.swift */,
 				5E71EAD98E5C0012B1C4D4B2 /* DictationTests.swift */,
@@ -718,6 +724,7 @@
 				5CBB424BA32ED023B20F5A96 /* BoardSelectionTests.swift in Sources */,
 				2BF595A2FBB67A2BDC49CD01 /* BoardToolTests.swift in Sources */,
 				8248D79E5256A68437A743ED /* ChatComponentTests.swift in Sources */,
+				F41397690D69C8D2F528A80D /* ComposerAttachmentsTests.swift in Sources */,
 				329E65E8B5B6D98ADA6CC2E6 /* DemoTutorServiceTests.swift in Sources */,
 				A7141CE867CF341D0955479E /* DesignSystemTokenTests.swift in Sources */,
 				D620B41620F9A2C4C9C26AD0 /* DictationTests.swift in Sources */,
@@ -768,6 +775,7 @@
 				CB77A0EAB9544BC656A90049 /* ChatStates.swift in Sources */,
 				1BA05D06F2185E9DEE0B93BC /* CollapsedDock.swift in Sources */,
 				6AA705D59A52E5C5968CB6AA /* Composer.swift in Sources */,
+				3EB6FC3723C2F3C3BC722EEC /* ComposerAttachments.swift in Sources */,
 				9EE208CFC286CC9901CDDBB6 /* ComposerButtons.swift in Sources */,
 				5910EF3099331973135B40FD /* DesignTokens.swift in Sources */,
 				BA51B8E621AFAE76A8E925FE /* DictationController.swift in Sources */,
