@@ -32,18 +32,28 @@ enum AttachmentSource: Identifiable, Sendable {
 /// filename and a content type — the app makes no judgement about what a file *is*, which
 /// is the server's job (see `server/app/attachments/convert.py`), and it makes no
 /// conversion either.
+///
+/// The one judgement it does make is *how big*, and only because size is the one property
+/// it can read without opening the file. See `onRefused`.
 extension View {
+    /// - Parameter onRefused: A file that never became bytes, and the sentence saying why.
+    ///   Only the size cap reaches here: everything else a file can be wrong about is the
+    ///   server's answer, which arrives as a failed chip after the upload. This one has to
+    ///   be answered before the read, so it is answered here — and it lands on the same
+    ///   failed chip, so a learner cannot tell the two apart.
     func attachmentPickers(
         source: Binding<AttachmentSource?>,
-        onPicked: @escaping (Data, String, String) -> Void
+        onPicked: @escaping (Data, String, String) -> Void,
+        onRefused: @escaping (String, String) -> Void
     ) -> some View {
-        modifier(AttachmentPickers(source: source, onPicked: onPicked))
+        modifier(AttachmentPickers(source: source, onPicked: onPicked, onRefused: onRefused))
     }
 }
 
 private struct AttachmentPickers: ViewModifier {
     @Binding var source: AttachmentSource?
     let onPicked: (Data, String, String) -> Void
+    let onRefused: (String, String) -> Void
 
     @State private var photoItem: PhotosPickerItem?
 
@@ -79,9 +89,24 @@ private struct AttachmentPickers: ViewModifier {
                 // and no error at all.
                 guard url.startAccessingSecurityScopedResource() else { return }
                 defer { url.stopAccessingSecurityScopedResource() }
+                let name = url.lastPathComponent
+                // **Asked before the bytes are read.** `allowedContentTypes: [.item]`
+                // accepts anything the learner can see in Files, video included, and
+                // `Data(contentsOf:)` has no ceiling — a 350MB clip is 350MB resident here
+                // and 350MB again once `AttachmentUploader.multipartBody` copies it, with
+                // the main actor blocked for the whole read and a ninety-second upload
+                // still to come before the 413 the server was always going to send.
+                //
+                // Metadata rather than a judgement about the file: this is still not the
+                // device deciding what an attachment *is*.
+                let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize
+                if let size, size > AttachmentUploader.maxBytes {
+                    onRefused(name, AttachmentUploader.tooLargeSentence(filename: name))
+                    return
+                }
                 guard let data = try? Data(contentsOf: url) else { return }
                 let type = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType
-                onPicked(data, url.lastPathComponent, type ?? "application/octet-stream")
+                onPicked(data, name, type ?? "application/octet-stream")
             }
     }
 

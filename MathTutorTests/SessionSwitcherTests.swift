@@ -182,6 +182,59 @@ final class SessionSwitcherTests: XCTestCase {
         XCTAssertNil(persistence.loadIndex().lastOpened)
     }
 
+    /// **A deleted session takes its sidecar with it.** The thumbnails of everything the
+    /// learner attached are the one part of a session that is not in its file, and nothing
+    /// else ever removes them — so a session deleted without them leaves a photo of a
+    /// child's homework on disk forever.
+    ///
+    /// Untestable until `delete(id:)` stopped building an `AttachmentStore()` of its own:
+    /// that default resolves to the real Application Support directory whatever this
+    /// persistence was pointed at, so this test would have deleted from — and written
+    /// `bySession.json` into — the user's own data while asserting nothing.
+    func testDeletingASessionTakesItsAttachmentThumbnailsWithIt() {
+        let persistence = SessionPersistence(directoryURL: directory)
+        let doomed = LearningSession.empty
+        let survivor = LearningSession.empty
+        persistence.save(doomed)
+        persistence.save(survivor)
+        let dropped = UUID()
+        let kept = UUID()
+        persistence.attachmentStore.save(Data("worksheet".utf8), for: dropped, in: doomed.id)
+        persistence.attachmentStore.save(Data("still here".utf8), for: kept, in: survivor.id)
+
+        persistence.delete(id: doomed.id)
+
+        XCTAssertNil(persistence.attachmentStore.thumbnail(for: dropped))
+        XCTAssertEqual(
+            persistence.attachmentStore.thumbnail(for: kept),
+            Data("still here".utf8),
+            "Deleting one session must not touch another's files"
+        )
+    }
+
+    /// And the sidecar lands *inside* the directory this store was given, which is the
+    /// property that makes the test above mean anything: a store pointed at a temporary
+    /// directory must not reach into Application Support to find its thumbnails.
+    func testTheAttachmentSidecarSitsUnderThePersistencesOwnDirectory() {
+        let scoped = SessionPersistence(directoryURL: directory)
+
+        XCTAssertTrue(
+            scoped.attachmentStore.directoryURL.path.hasPrefix(directory.path),
+            "Expected the sidecar under \(directory.path), got \(scoped.attachmentStore.directoryURL.path)"
+        )
+        XCTAssertNotEqual(
+            scoped.attachmentStore.directoryURL,
+            AttachmentStore().directoryURL,
+            "A store pointed at a temporary directory must not reach into Application Support"
+        )
+        // And the app's own store is exactly where it always was: deriving the sidecar
+        // from `directoryURL` has to be a seam, not a move of the user's files.
+        XCTAssertEqual(
+            SessionPersistence().attachmentStore.directoryURL,
+            AttachmentStore().directoryURL
+        )
+    }
+
     func testADeletedIndexIsRebuiltFromTheSessionsThemselves() throws {
         let persistence = SessionPersistence(directoryURL: directory)
         let older = LearningSession.empty

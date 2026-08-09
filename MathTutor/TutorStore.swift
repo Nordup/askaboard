@@ -187,8 +187,25 @@ final class TutorStore: ObservableObject {
     /// look for.
     static let greeting = "Hi, I’m your math tutor. What would you like to understand today? You can type a goal in your own words—fractions, algebra, a homework question, anything."
 
+    /// Whether this session has started — the one question that decides between
+    /// the greeting and the thread, at launch (`RootView`) and on every session
+    /// switch (`TutorPanel.adoptSessionUI`).
+    ///
+    /// **A learner turn counts if it has words *or* files.** A photographed
+    /// worksheet sent with nothing typed is a complete turn, so a session can
+    /// hold a real exchange and no learner text at all — and asking about text
+    /// alone drew the orb, the greeting and the suggestion chips straight over
+    /// that exchange the next time the app was launched.
+    ///
+    /// Deliberately a different question from `requestTutor`'s `goal:`, which
+    /// stays text-only and correctly so: that one is *what the learner said they
+    /// want*, and a photo is not an answer to it.
     var hasGoal: Bool {
-        session.plan != nil || session.messages.contains { $0.role == .learner && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        session.plan != nil || session.messages.contains { message in
+            guard message.role == .learner else { return false }
+            return !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || !message.attachments.isEmpty
+        }
     }
 
     /// True only for an explicitly injected/debug demo service. An unreachable
@@ -267,6 +284,14 @@ final class TutorStore: ObservableObject {
         let accepted = send(text, attachments: attachments)
         await activeRequestTask?.value
         return accepted
+    }
+
+    /// Test-only: awaits the turn currently in flight, for the callers that
+    /// start one without going through `send` — `evaluate`, and a retry. Same
+    /// reasoning as `sendAndWait`: await the exact turn rather than sleep for a
+    /// length of time that is either wrong or flaky.
+    func awaitActiveRequestForTesting() async {
+        await activeRequestTask?.value
     }
 
     /// Test-only: seeds the workspace directly, bypassing a network turn —
@@ -675,6 +700,9 @@ final class TutorStore: ObservableObject {
         evaluationText = nil
         evaluationMessageID = nil
         errorMessage = nil
+        // Attachment ids are scoped to the session they were uploaded against,
+        // so the previous session's payload is not a thing this one may re-send.
+        retryPayload = RetryPayload()
         boardViews = [:]
         selectionViews = [:]
         refreshSessions()
@@ -719,9 +747,37 @@ final class TutorStore: ObservableObject {
         persist()
     }
 
+    /// What the last turn carried besides its transcript, so a retry can carry
+    /// it again.
+    ///
+    /// A turn is not only the messages: it names the files the learner attached
+    /// and it may hold a region of the board they pointed at. `retryLastRequest`
+    /// re-ran `requestTutor` on the defaults, so the retry of a photo turn was
+    /// sent with no attachment ids and no image — the tutor answered a worksheet
+    /// it had never been shown, with the learner's chips still on screen above
+    /// the reply.
+    ///
+    /// `signal` stays out on purpose. It is the only one of the five that is not
+    /// a thing the learner *attached*: `.evaluate` drives `isEvaluating` and an
+    /// `onDone` the retry path has no continuation for, and `.dontKnow` is an
+    /// admission, not a payload. A retry has always been a plain turn and stays
+    /// one.
+    private struct RetryPayload {
+        var imageData: Data?
+        var regionDescription: String?
+        var attachmentIDs: [UUID] = []
+    }
+
+    private var retryPayload = RetryPayload()
+
     func retryLastRequest() {
         guard !isLoading, ensureTutorAvailable() else { return }
-        requestTutor(signal: nil)
+        requestTutor(
+            signal: nil,
+            imageData: retryPayload.imageData,
+            regionDescription: retryPayload.regionDescription,
+            attachmentIDs: retryPayload.attachmentIDs
+        )
     }
 
     /// Starts one tutor turn and consumes it as a stream rather than waiting
@@ -756,6 +812,13 @@ final class TutorStore: ObservableObject {
         errorMessage = nil
         phase = nil
         pendingBoardViews = []
+        // Recorded before the turn goes out, so a retry re-sends what this one
+        // sent rather than a stripped-down version of it. See `RetryPayload`.
+        retryPayload = RetryPayload(
+            imageData: imageData,
+            regionDescription: regionDescription,
+            attachmentIDs: attachmentIDs
+        )
         let request = TutorRequest(
             messages: session.messages,
             // The first thing they *said*. A selection sent on its own carries no

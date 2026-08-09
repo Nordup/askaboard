@@ -33,6 +33,26 @@ struct AttachmentUploader: Sendable {
     /// deliberately still finite.
     static let timeout: TimeInterval = 90
 
+    /// `MAX_UPLOAD_BYTES` in `server/app/config.py`, which is the source of
+    /// truth: the endpoint refuses anything larger, with a 413 and the sentence
+    /// below. Stated here as well — and only here, the way
+    /// `ComposerAttachments.limit` states `MAX_ATTACHMENTS_PER_TURN` — so the
+    /// device can decline a file *before reading it off disk*. Without that, a
+    /// 350MB video costs two copies of itself in memory and a ninety-second
+    /// upload on the way to a refusal that was never in doubt.
+    static let maxBytes = 25 * 1024 * 1024
+
+    /// The server's own refusal, said on the device instead.
+    ///
+    /// Word for word what `upload_attachment` returns for an oversize body (see
+    /// `server/app/api/attachments.py`), because a learner must not be able to
+    /// tell which side of the wire turned their file down — and because the
+    /// sentence was written for the chip it lands on either way.
+    static func tooLargeSentence(filename: String) -> String {
+        "\(filename) is larger than \(maxBytes / (1024 * 1024))MB. "
+            + "Try a photo of just the part you need."
+    }
+
     init(configuration: BackendConfiguration, session: URLSession = .shared) {
         self.configuration = configuration
         self.session = session

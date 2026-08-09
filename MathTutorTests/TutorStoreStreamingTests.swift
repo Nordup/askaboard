@@ -316,4 +316,95 @@ final class TutorStoreStreamingTests: XCTestCase {
         XCTAssertFalse(store.evaluate(imageData: Data([2]), regionDescription: "the whole board"))
         XCTAssertEqual(store.composerNote, TutorStore.tutorIsStillAnswering)
     }
+
+    /// **The greeting drawn over a real conversation.** A wordless photo turn is a complete
+    /// turn, so `hasGoal` — the one question deciding between the orb-and-chips start state
+    /// and the thread — must count a learner message with files on it. It asked about text
+    /// alone, so photographing a worksheet, sending it with nothing typed, and relaunching
+    /// put the greeting on top of the exchange.
+    func testAWordlessAttachmentTurnCountsAsAStartedSession() async {
+        let store = TutorStore(
+            service: ScriptedTutorService(events: [.textDelta("Let me look."), .done]),
+            persistence: .inMemory,
+            attachmentStore: .inTemporaryDirectory,
+            configuration: .stub
+        )
+        XCTAssertFalse(store.hasGoal, "a session with only the tutor's greeting has not started")
+
+        await store.sendAndWait("", attachments: [UploadedAttachment(
+            attachment: MessageAttachment(
+                id: UUID(), filename: "worksheet.heic", kind: "image", pageCount: 1
+            ),
+            thumbnail: Data([0x01])
+        )])
+
+        XCTAssertTrue(
+            store.hasGoal,
+            "A turn the tutor already answered is a conversation, whether or not anyone typed a word"
+        )
+    }
+
+    /// **A retry re-sends the turn, not a stripped-down version of it.** The failed turn
+    /// named a file the server holds; the retry named nothing, so the tutor answered a
+    /// photo it had never been shown with the learner's chips still on screen above it.
+    func testARetryCarriesTheAttachmentsAndImageTheFailedTurnCarried() async {
+        let recorded = OSAllocatedUnfairLock<[TutorRequest]>(initialState: [])
+        let store = TutorStore(
+            service: ScriptedTutorService(
+                events: [.failure(message: "stream died", retryable: true)],
+                onRequest: { request in recorded.withLock { $0.append(request) } }
+            ),
+            persistence: .inMemory,
+            attachmentStore: .inTemporaryDirectory,
+            configuration: .stub
+        )
+        let uploaded = UploadedAttachment(
+            attachment: MessageAttachment(
+                id: UUID(), filename: "worksheet.pdf", kind: "pdf", pageCount: 3
+            ),
+            thumbnail: Data([0xFF])
+        )
+
+        await store.sendAndWait("is question 4 right?", attachments: [uploaded])
+        XCTAssertNotNil(store.errorMessage, "the fixture has to fail for a retry to be reachable")
+
+        store.retryLastRequest()
+        await store.awaitActiveRequestForTesting()
+
+        let requests = recorded.withLock { $0 }
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertEqual(
+            requests[1].attachmentIDs,
+            [uploaded.attachment.id],
+            "The retry has to name the same file, or the tutor answers a worksheet it was never shown"
+        )
+    }
+
+    /// The same hole on the other payload, and it predates attachments: an evaluate that
+    /// failed was retried without the region the learner had marqueed.
+    func testARetryCarriesTheBoardRegionTheFailedTurnCarried() async {
+        let recorded = OSAllocatedUnfairLock<[TutorRequest]>(initialState: [])
+        let store = TutorStore(
+            service: ScriptedTutorService(
+                events: [.failure(message: "stream died", retryable: true)],
+                onRequest: { request in recorded.withLock { $0.append(request) } }
+            ),
+            persistence: .inMemory,
+            attachmentStore: .inTemporaryDirectory,
+            configuration: .stub
+        )
+
+        XCTAssertTrue(store.evaluate(
+            imageData: Data([0xAB]), regionDescription: "the area selected on the board"
+        ))
+        await store.awaitActiveRequestForTesting()
+
+        store.retryLastRequest()
+        await store.awaitActiveRequestForTesting()
+
+        let requests = recorded.withLock { $0 }
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertEqual(requests[1].imageData, Data([0xAB]))
+        XCTAssertEqual(requests[1].imageRegionDescription, "the area selected on the board")
+    }
 }

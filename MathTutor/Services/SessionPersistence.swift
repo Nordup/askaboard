@@ -19,8 +19,23 @@ struct SessionPersistence {
     /// on trust. Nothing in the app passes it.
     let directoryURL: URL
 
-    init(directoryURL: URL? = nil) {
-        self.directoryURL = directoryURL ?? Self.defaultDirectoryURL
+    /// The thumbnails a deleted session takes with it.
+    ///
+    /// Derived from `directoryURL` rather than constructed as a bare
+    /// `AttachmentStore()` inside `delete(id:)`. That default resolves to the
+    /// real Application Support directory whatever this store was pointed at, so
+    /// a test deleting a session out of a temporary directory wrote
+    /// `bySession.json` into the user's own data — and the promise that a
+    /// deleted session takes its sidecar with it could not be asserted at all.
+    /// Production is unchanged: `defaultDirectoryURL` is what
+    /// `AttachmentStore()`'s own default is built from.
+    let attachmentStore: AttachmentStore
+
+    init(directoryURL: URL? = nil, attachmentStore: AttachmentStore? = nil) {
+        let resolved = directoryURL ?? Self.defaultDirectoryURL
+        self.directoryURL = resolved
+        self.attachmentStore = attachmentStore
+            ?? AttachmentStore(directoryURL: resolved.appendingPathComponent("Attachments"))
     }
 
     static var defaultDirectoryURL: URL {
@@ -91,7 +106,7 @@ struct SessionPersistence {
     /// thumbnails of anything the learner attached to it.
     func delete(id: UUID) {
         try? FileManager.default.removeItem(at: fileURL(for: id))
-        AttachmentStore().deleteAll(for: id)
+        attachmentStore.deleteAll(for: id)
         writeIndex(loadIndex().removing(id: id))
     }
 

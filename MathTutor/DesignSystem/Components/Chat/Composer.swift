@@ -500,9 +500,6 @@ struct Composer: View {
     /// screen has drawn until now.
     var attachments: [PendingAttachment] = []
     var onRemoveAttachment: ((UUID) -> Void)?
-    /// A thumbnail for a *server* id, when one has been stored. The draft's own chips carry
-    /// the bytes their upload returned, so this is the seam a sent message's chips use.
-    var attachmentThumbnail: ((UUID) -> Data?)?
 
     private var metrics: ComposerMetrics { .for(scale, width: width ?? scale.contentWidth) }
 
@@ -558,7 +555,6 @@ struct Composer: View {
                     attachments: attachments,
                     showsSelection: selection == .attached,
                     metrics: chipsMetrics,
-                    thumbnail: { attachmentThumbnail?($0) ?? nil },
                     onRemove: { onRemoveAttachment?($0) },
                     onDismissSelection: { onDismissSelection?() }
                 )

@@ -62,14 +62,20 @@ struct TutorFullScreen: View {
                 attachMenu
             }
         }
-        .attachmentPickers(source: $pickerSource) { data, filename, contentType in
-            attachments.add(
-                data: data,
-                filename: filename,
-                contentType: contentType,
-                sessionID: store.session.id
-            )
-        }
+        .attachmentPickers(
+            source: $pickerSource,
+            onPicked: { data, filename, contentType in
+                attachments.add(
+                    data: data,
+                    filename: filename,
+                    contentType: contentType,
+                    sessionID: store.session.id
+                )
+            },
+            onRefused: { filename, sentence in
+                attachments.refuse(filename: filename, sentence: sentence)
+            }
+        )
         // `DictationController` is constructed with no store in reach (see its own doc
         // comment on `sessionID`), so this is where the session a recording attaches to is
         // kept current — on first appearance and on every reset, which mints a fresh

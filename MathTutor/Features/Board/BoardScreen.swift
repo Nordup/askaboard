@@ -564,7 +564,9 @@ struct BoardScreen: View {
     ///
     /// - Parameter turn: Sends it, and reports whether the store **took** it. Only a `true`
     ///   clears the chips — a declined turn leaves the draft, the uploads and the note above
-    ///   the pill exactly as they were, which is the whole point.
+    ///   the pill exactly as they were, which is the whole point. And even a `true` clears
+    ///   only the chips that *went*: a refused one keeps its sentence until the learner
+    ///   takes it off (see `ComposerAttachments.clearSent`).
     private func deliver(_ turn: @escaping @MainActor ([UploadedAttachment]) -> Bool) {
         // Nothing attached is the overwhelmingly common send, and it stays exactly what it
         // was: no task, no hop, no window at all for a second tap to land in.
@@ -577,7 +579,7 @@ struct BoardScreen: View {
             defer { isSendingTurn = false }
             let ready = await attachments.readyForSend()
             guard turn(ready) else { return }
-            attachments.clear()
+            attachments.clearSent()
         }
     }
 

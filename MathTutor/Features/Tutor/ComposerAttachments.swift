@@ -126,6 +126,18 @@ final class ComposerAttachments: ObservableObject {
         }
     }
 
+    /// A file that was turned down before it ever became bytes.
+    ///
+    /// The one caller is the Files picker's size check (see `AttachmentPickers`), which
+    /// has to answer before reading the file and so cannot go through `add`. The chip it
+    /// leaves is indistinguishable from the one a server refusal leaves — same failed
+    /// state, same sentence, same note line above the pill, same ✕ to clear it — because
+    /// from the learner's side it is the same event.
+    func refuse(filename: String, sentence: String) {
+        guard !isFull, !isSending else { return }
+        pending.append(PendingAttachment(id: UUID(), filename: filename, state: .failed(sentence)))
+    }
+
     func remove(_ id: UUID) {
         tasks[id]?.cancel()
         tasks[id] = nil
@@ -175,8 +187,31 @@ final class ComposerAttachments: ObservableObject {
         }
     }
 
-    /// After a send, or a session switch. Cancels anything still in flight —
-    /// an upload for a draft that no longer exists has nowhere to land.
+    /// After a send: forget what went, keep what did not.
+    ///
+    /// Exactly the chips `readyForSend()` just returned — the `.ready` ones —
+    /// and nothing else. `clear()` used to run here and took the failed chips
+    /// with them, so attaching a too-large worksheet beside a photo and sending
+    /// put one file on the turn and made the refused one disappear along with
+    /// the sentence explaining it. A refused chip carries the server's own
+    /// words and the learner is the one who removes it; a send is not that.
+    ///
+    /// Safe to key on the state rather than on an id list because nothing can
+    /// have been added since: `readyForSend()` holds `isSending` for its whole
+    /// wait, and the caller runs from there to here without suspending.
+    func clearSent() {
+        let sent = Set(pending.compactMap { attachment -> UUID? in
+            guard case .ready = attachment.state else { return nil }
+            return attachment.id
+        })
+        for id in sent { tasks[id] = nil }
+        pending.removeAll { sent.contains($0.id) }
+    }
+
+    /// After a session switch. Cancels anything still in flight — an upload for
+    /// a draft that no longer exists has nowhere to land — and unlike
+    /// `clearSent()` this drops the failed chips too, because their sentences
+    /// were about a draft in a session the learner has left.
     func clear() {
         for task in tasks.values { task.cancel() }
         tasks = [:]

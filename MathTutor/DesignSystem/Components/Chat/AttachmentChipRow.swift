@@ -128,7 +128,11 @@ struct AttachmentChipRow: View {
     /// file is picked and its bytes arrive later, and a chip rebuilt for a *sent* message
     /// has only the store to get them from. `PendingAttachmentState.ready` carries the
     /// bytes the upload returned, which is what the composer's own draft uses.
-    let thumbnail: (UUID) -> Data?
+    ///
+    /// So the default — no store behind it — is right for every draft, and `MessageThread`
+    /// is the one caller that passes anything: it is the only place a row is rebuilt for a
+    /// message that was already sent.
+    var thumbnail: (UUID) -> Data? = { _ in nil }
     let onRemove: (UUID) -> Void
     let onDismissSelection: () -> Void
     /// A sent message's chips carry no ✕ — there is nothing to take back.

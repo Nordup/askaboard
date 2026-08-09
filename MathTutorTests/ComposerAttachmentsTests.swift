@@ -195,6 +195,89 @@ final class ComposerAttachmentsTests: XCTestCase {
         XCTAssertEqual(Set(sent.map(\.attachment.filename)), ["slow.pdf", "fast.pdf"])
     }
 
+    // MARK: - What a send leaves behind
+
+    /// **A send clears what it sent, and only that.** Attach a worksheet the server
+    /// refuses and a photo it takes, hit send: the turn goes with the photo, and the
+    /// refused chip has to still be there with its sentence. `clear()` used to run here
+    /// and took it with them, so the file that failed vanished along with the only
+    /// account of why.
+    func testASendClearsWhatWentAndKeepsWhatDidNot() async {
+        let attachments = ComposerAttachments(upload: { _, filename, _, _ in
+            guard filename == "photo.heic" else {
+                throw TutorServiceError.network("\(filename) is larger than 25MB.")
+            }
+            return .stub(filename: filename)
+        })
+
+        attachments.add(data: Data(), filename: "worksheet.pdf",
+                        contentType: "application/pdf", sessionID: UUID())
+        attachments.add(data: Data(), filename: "photo.heic",
+                        contentType: "image/heic", sessionID: UUID())
+
+        let sent = await attachments.readyForSend()
+        XCTAssertEqual(sent.map(\.attachment.filename), ["photo.heic"])
+
+        attachments.clearSent()
+
+        XCTAssertEqual(
+            attachments.pending.map(\.filename),
+            ["worksheet.pdf"],
+            "A refused chip is the learner's to remove — a successful send must not do it for them"
+        )
+        XCTAssertEqual(
+            attachments.failureNote,
+            "worksheet.pdf is larger than 25MB.",
+            "The sentence above the pill is the whole explanation, and it goes with the chip"
+        )
+    }
+
+    /// A session switch is the other case, and it still takes everything: the chips were
+    /// uploaded against a session id the new session's turn has no claim on.
+    func testASessionSwitchStillClearsFailedChipsToo() async {
+        let attachments = ComposerAttachments(upload: { _, _, _, _ in
+            throw TutorServiceError.network("nope")
+        })
+
+        attachments.add(data: Data(), filename: "mystery.bin",
+                        contentType: "application/octet-stream", sessionID: UUID())
+        _ = await attachments.readyForSend()
+
+        attachments.clear()
+
+        XCTAssertTrue(attachments.isEmpty)
+        XCTAssertNil(attachments.failureNote)
+    }
+
+    // MARK: - Refused before it was ever read
+
+    /// The Files picker's size check cannot go through `add` — the whole point is that it
+    /// answers before the bytes are read — so it lands here instead. What the learner sees
+    /// must be indistinguishable from a server refusal: same failed chip, same sentence in
+    /// the note line, same ✕.
+    func testAFileRefusedBeforeReadingLooksExactlyLikeAServerRefusal() {
+        let attachments = ComposerAttachments(upload: { _, _, _, _ in .stub() })
+        let sentence = AttachmentUploader.tooLargeSentence(filename: "lecture.mov")
+
+        attachments.refuse(filename: "lecture.mov", sentence: sentence)
+
+        XCTAssertEqual(attachments.pending.map(\.filename), ["lecture.mov"])
+        XCTAssertEqual(attachments.pending[0].state, .failed(sentence))
+        XCTAssertEqual(attachments.failureNote, sentence)
+    }
+
+    /// The cap the device declines on is the server's, restated once — and the sentence is
+    /// the server's too, word for word (`upload_attachment` in
+    /// `server/app/api/attachments.py`). A learner must not be able to tell which side of
+    /// the wire turned their file down.
+    func testTheClientSideCapAndItsSentenceMirrorTheEndpoint() {
+        XCTAssertEqual(AttachmentUploader.maxBytes, 25 * 1024 * 1024)
+        XCTAssertEqual(
+            AttachmentUploader.tooLargeSentence(filename: "lecture.mov"),
+            "lecture.mov is larger than 25MB. Try a photo of just the part you need."
+        )
+    }
+
     // MARK: - The menu row to the picker
 
     /// Three cases, one line each, and nothing in the type system stops two of them being
