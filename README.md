@@ -70,6 +70,14 @@ Because the recording is transcribed after it ends rather than as the student sp
 
 Assistant replies render through the pinned `MarkdownUI` 2.4.0 Swift package (`Markdown`) with selectable GitHub-Flavored Markdown headings, lists, quotes, tables, code, links, and visible single-newline breaks. Math is requested and displayed as readable Unicode/plain text because the renderer does not render LaTeX math delimiters. Learner messages stay literal text so their punctuation, whitespace, and line breaks are preserved exactly.
 
+### Attachments
+
+The composer's `+` attaches a photo — library or camera — or a file, and **the device converts nothing**: it uploads the raw bytes to `POST /v1/attachments`, and the server decides what the file actually is from its own bytes rather than its extension. Three rungs reach the model: an image becomes a normalised JPEG (`input_image`), a PDF passes through untouched (`input_file`), and text is decoded and quoted line by line (`input_text`). The server stores both the original and the converted bytes and hands back a thumbnail; the turn then carries `attachment_ids`, not bytes.
+
+So the app holds no format knowledge, no PDF library, and no original files. It keeps one small JPEG thumbnail per sent attachment in `Application Support/MathTutor/Attachments/Thumbnails/`, deleted with the session it belongs to, and never keeps an original.
+
+Word, Pages, and the rest are refused with a sentence telling the learner to send a PDF instead or take a photo. Reading them means converting them with the layout intact — which for a maths worksheet *is* the content — through a headless LibreOffice subprocess: a ~1GB binary and a process of its own, for a format one tap already exports a PDF from. See `server/app/attachments/kinds.py` for the reasoning in full, and [`server/README.md`](server/README.md) for the wire contract, the refusal statuses, and the caps.
+
 ## Debug E2E fixture
 
 Debug launches can seed a legible vector PencilKit attempt for the radical-equation evaluation flow. Pass `--ui-test-reset --ui-test-demo-service --e2e-seed-radical-attempt` as launch arguments; the fixture is compiled out of release builds, while the demo-service routing override is DEBUG-only. Both are ignored unless those explicit arguments are present.
