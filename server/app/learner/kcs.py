@@ -46,21 +46,28 @@ async def seed_kcs(db: AsyncSession) -> int:
 
     # One multi-row INSERT rather than 480: this runs against a remote
     # database, where the round trips cost more than the statement does.
+    insert_kcs = pg_insert(KC).values([
+        {
+            "id": uuid.uuid4(),
+            "code": entry["code"],
+            "title": entry["title"],
+            "description": entry["description"],
+            "grade": entry["grade"],
+        }
+        for entry in kcs
+    ])
     await db.execute(
-        pg_insert(KC)
-        .values([
-            {
-                "id": uuid.uuid4(),
-                "code": entry["code"],
-                "title": entry["title"],
-                "description": entry["description"],
-                "grade": entry["grade"],
-            }
-            for entry in kcs
-        ])
-        .on_conflict_do_update(
+        insert_kcs.on_conflict_do_update(
             index_elements=[KC.code],
-            set_={"title": KC.title, "description": KC.description, "grade": KC.grade},
+            # `excluded` is the row the INSERT proposed; naming the columns
+            # themselves here would compile to `SET title = kcs.title`, which
+            # assigns a row its own value and refreshes nothing. `id` is
+            # deliberately absent: it stays whatever it already was.
+            set_={
+                "title": insert_kcs.excluded.title,
+                "description": insert_kcs.excluded.description,
+                "grade": insert_kcs.excluded.grade,
+            },
         )
     )
 
@@ -97,10 +104,13 @@ async def prerequisites_of(
     association with no ordering, so treating one as a dependency would invent
     an ordering the source never claimed.
 
-    The `path` guard is not decoration. The seed graph is acyclic today, but
-    hand-authored prerequisite data routinely is not — Junyi's published
-    expert graph ships with a three-node cycle — and an unguarded recursive
-    CTE over a cyclic graph does not terminate.
+    The `path` guard is not decoration. `depth` bounds the walk on its own,
+    so the recursion terminates either way; what the guard prevents is the
+    number of distinct paths within that bound growing combinatorially once
+    the graph has a cycle in it, and a standard coming back as its own
+    prerequisite. The seed is acyclic today, but hand-authored prerequisite
+    data routinely is not — Junyi's published expert graph ships with a
+    three-node cycle its loader hard-codes around.
     """
     walk = (
         select(

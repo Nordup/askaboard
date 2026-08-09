@@ -1,4 +1,4 @@
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.config import SOLE_LEARNER_ID
 from app.learner.kcs import (
@@ -24,13 +24,17 @@ def test_seed_file_is_acyclic_and_populated():
     feeding them to a topological sort would report cycles that are not there.
     """
     kcs, edges = _load_seed()
-    assert len(kcs) >= 400
     codes = {kc["code"] for kc in kcs}
     assert len(codes) == len(kcs), "codes must be unique — they are the vocabulary"
     assert all(e["prereq"] in codes and e["kc"] in codes for e in edges)
 
     prerequisites = _prerequisite_edges(edges)
-    assert len(prerequisites) >= 700
+    # Exact, not lower bounds. The builder walks three joined tables to
+    # assemble every code, and a bound loose enough to be safe is loose
+    # enough to accept a parse that silently dropped a fifth of the graph.
+    assert len(kcs) == 480
+    assert len(prerequisites) == 757
+    assert len(edges) - len(prerequisites) == 142
 
     # Kahn's algorithm: a graph with no topological order has a cycle.
     incoming = {code: 0 for code in codes}
@@ -48,6 +52,39 @@ def test_seed_file_is_acyclic_and_populated():
             if incoming[successor] == 0:
                 queue.append(successor)
     assert seen == len(codes), "prerequisite graph contains a cycle"
+
+
+def test_codes_and_grades_come_out_of_the_three_way_join():
+    """The source carries no Common Core code and no grade on a standard.
+
+    Both are assembled by walking standard -> cluster -> domain, which is the
+    most fragile part of the parser and the part that fails quietly: a wrong
+    join still produces plausible-looking codes. These three pin the three
+    shapes a grade can take, each from a standard whose code is unmistakable.
+    """
+    kcs, _ = _load_seed()
+    grades = {kc["code"]: kc["grade"] for kc in kcs}
+    assert grades["K.CC.A.1"] == "K"
+    assert grades["7.RP.A.2"] == "7"
+    assert grades["HSA-APR.A.1"] == "HS"
+    assert set(grades.values()) == {"K", "1", "2", "3", "4", "5", "6", "7", "8", "HS"}
+
+
+def test_exponents_survive_the_html_strip():
+    """`<sup>` is 61 descriptions' worth of arithmetic, not decoration.
+
+    Flattening the tag the way the surrounding paragraphs and anchors are
+    flattened leaves `3 2 × 3 –5`, which is not what the standard says. An
+    annotator reads these to reason about the maths.
+    """
+    kcs, _ = _load_seed()
+    described = {kc["code"]: kc["description"] for kc in kcs}
+    assert "3^2 × 3^(–5) = 3^(–3)" in described["8.EE.A.1"]
+    # Parenthesised because `5^1/3` is (5^1)/3, a different number.
+    assert "5^(1/3) to be the cube root of 5" in described["HSN-RN.A.1"]
+    # The other use of <sup> is a footnote marker's sentence, not an exponent.
+    assert "^*" not in described["1.OA.B.3"]
+    assert "*Students need not use formal terms" in described["1.OA.B.3"]
 
 
 def test_related_pairs_are_stored_once_each():
@@ -78,7 +115,7 @@ async def _seed_for(db) -> int:
 @requires_db
 async def test_prerequisites_of_walks_transitively(db_factory):
     async with db_factory() as db:
-        assert await _seed_for(db) >= 400
+        assert await _seed_for(db) == 480
 
         direct = await prerequisites_of(db, "7.RP.A.2", depth=1)
         assert set(direct) == {"7.RP.A.1", "6.RP.A.2", "6.RP.A.3"}
@@ -96,17 +133,65 @@ async def test_prerequisites_of_walks_transitively(db_factory):
 
 
 @requires_db
+async def test_the_walk_survives_a_cycle(db_factory):
+    """The path guard needs its own test, because the seed cannot give it one.
+
+    `test_seed_file_is_acyclic_and_populated` guards the data; this guards the
+    code. With an acyclic seed the guard can be deleted outright and every
+    other test here still passes, so the cycle has to be introduced on purpose.
+    """
+    async with db_factory() as db:
+        await _seed_for(db)
+        before = set(await prerequisites_of(db, "7.RP.A.2", depth=6))
+
+        ids = {
+            code: kc_id
+            for kc_id, code in (await db.execute(
+                select(KC.id, KC.code).where(KC.code.in_(["7.RP.A.2", "6.RP.A.2"]))
+            )).all()
+        }
+        # 6.RP.A.2 is already a prerequisite of 7.RP.A.2; this closes the loop.
+        db.add(KCEdge(
+            prereq_id=ids["7.RP.A.2"], kc_id=ids["6.RP.A.2"], kind="prerequisite"
+        ))
+        await db.commit()
+
+        after = await prerequisites_of(db, "7.RP.A.2", depth=6)
+        # A standard is not its own prerequisite. Without the guard the walk
+        # goes back around the loop and emits the node it started from.
+        assert "7.RP.A.2" not in after
+        # And nothing else changes: the only new arc leads back to the start.
+        assert set(after) == before
+
+
+@requires_db
 async def test_seed_is_idempotent(db_factory):
     async with db_factory() as db:
         first = await _seed_for(db)
+        original_id = await db.scalar(select(KC.id).where(KC.code == "7.RP.A.2"))
+
+        # As if the seed had been rebuilt with a better parser: same code,
+        # different wording. Re-seeding has to carry the new text across.
+        await db.execute(
+            update(KC).where(KC.code == "7.RP.A.2").values(title="stale")
+        )
+        await db.commit()
+
         second = await seed_kcs(db)
         await db.commit()
         assert second == first
 
         kcs, edges = _load_seed()
-        assert await db.scalar(
-            select(KC.code).where(KC.code == "7.RP.A.2")
-        ) == "7.RP.A.2"
+        db.expire_all()
+        stored = (await db.execute(
+            select(KC).where(KC.code == "7.RP.A.2")
+        )).scalar_one()
+        assert stored.title == next(
+            kc["title"] for kc in kcs if kc["code"] == "7.RP.A.2"
+        )
+        # Observations and mastery state point at this id, so a re-seed
+        # updates the row it found by code and never replaces it.
+        assert stored.id == original_id
         assert len((await db.execute(select(KC.id))).all()) == len(kcs)
         assert len((await db.execute(select(KCEdge.kind))).all()) == len(edges)
 

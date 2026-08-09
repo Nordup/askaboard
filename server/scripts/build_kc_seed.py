@@ -49,8 +49,36 @@ OUT = pathlib.Path(__file__).parent.parent / "app/learner/seed/ccss_kcs.json"
 HEADERS = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"}
 
 _TAG = re.compile(r"<[^>]+>")
+_SUP = re.compile(r"<sup>(.*?)</sup>", re.DOTALL | re.IGNORECASE)
 _SPACE = re.compile(r"\s+")
 _SPACE_BEFORE_PUNCTUATION = re.compile(r"\s+([,.;:!?)])")
+
+
+def _superscript(match: re.Match) -> str:
+    """`<sup>` carries two unrelated things, and one of them is arithmetic.
+
+    61 of the 480 descriptions superscript an exponent, so flattening the tag
+    to a space turns `3^2 × 3^-5 = 3^-3` into `3 2 × 3 -5 = 3 -3`: not merely
+    uglier, false. These descriptions exist so an annotator can reason about
+    the standard, and false arithmetic in one is worse than none.
+
+    The other use is a footnote whose whole sentence is superscripted to hang
+    it off a marker in the text above — always asterisk-led, never an
+    exponent — so those keep their text and lose the caret.
+
+    Exponents longer than a character are parenthesised: `5^1/3` reads as
+    `(5^1)/3`, which is a different number from the cube root of 5.
+    """
+    body = _SPACE.sub(" ", _TAG.sub(" ", match.group(1))).strip()
+    # Entities are decoded only to judge the body; the caller unescapes the
+    # whole string once, and unescaping twice would decode any `&amp;lt;` that
+    # is meant to survive as text.
+    plain = html.unescape(body).strip()
+    if not plain:
+        return " "
+    if plain.startswith("*"):
+        return f" {body} "
+    return f"^{body}" if len(plain) == 1 else f"^({body})"
 
 
 def _plain(markup: str) -> str:
@@ -59,8 +87,12 @@ def _plain(markup: str) -> str:
     Tags become a space rather than nothing: several descriptions wrap a
     phrase in an anchor mid-sentence, and deleting the tags outright would
     weld the words on either side of it together.
+
+    Unescaping happens after the tags are gone, never before: the maths uses
+    `&lt;` and `&gt;` for its comparisons, and decoding those first would hand
+    the tag stripper live angle brackets to eat.
     """
-    text = html.unescape(_TAG.sub(" ", markup or ""))
+    text = html.unescape(_TAG.sub(" ", _SUP.sub(_superscript, markup or "")))
     text = _SPACE.sub(" ", text).strip()
     return _SPACE_BEFORE_PUNCTUATION.sub(r"\1", text)
 

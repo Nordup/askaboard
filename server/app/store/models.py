@@ -334,7 +334,6 @@ class KC(Base):
 #: with the endpoints code-ordered, so a reader must match on either column.
 KC_EDGE_KINDS: tuple[str, ...] = ("prerequisite", "related")
 PREREQUISITE = "prerequisite"
-RELATED = "related"
 _EDGE_KIND_CHECK = "kind IN ({})".format(
     ", ".join(f"'{kind}'" for kind in KC_EDGE_KINDS)
 )

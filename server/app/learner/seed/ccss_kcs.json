@@ -1023,7 +1023,7 @@
   {
    "code": "6.EE.A.2.c",
    "title": "Evaluate expressions at specific values of their variables",
-   "description": "Evaluate expressions at specific values of their variables. Include expressions that arise from formulas used in real-world problems. Perform arithmetic operations, including those involving whole- number exponents, in the conventional order when there are no parentheses to specify a particular order (Order of Operations). For example, use the formulas V = s 3 and A = 6 s 2 to find the volume and surface area of a cube with sides of length s = 1/2.",
+   "description": "Evaluate expressions at specific values of their variables. Include expressions that arise from formulas used in real-world problems. Perform arithmetic operations, including those involving whole- number exponents, in the conventional order when there are no parentheses to specify a particular order (Order of Operations). For example, use the formulas V = s^3 and A = 6 s^2 to find the volume and surface area of a cube with sides of length s = 1/2.",
    "grade": "6"
   },
   {
@@ -1539,19 +1539,19 @@
   {
    "code": "8.EE.A.1",
    "title": "Know and apply the properties of integer exponents to generate equivalent numerical expressions",
-   "description": "Know and apply the properties of integer exponents to generate equivalent numerical expressions. For example, 3 2 \u00d7 3 \u20135 = 3 \u20133 = 1/3 3 = 1/27.",
+   "description": "Know and apply the properties of integer exponents to generate equivalent numerical expressions. For example, 3^2 \u00d7 3^(\u20135) = 3^(\u20133) = 1/3^3 = 1/27.",
    "grade": "8"
   },
   {
    "code": "8.EE.A.2",
-   "title": "Use square root and cube root symbols to represent solutions to equations of the form x 2 = p and x 3 = p, where p is\u2026",
-   "description": "Use square root and cube root symbols to represent solutions to equations of the form x 2 = p and x 3 = p, where p is a positive rational number. Evaluate square roots of small perfect squares and cube roots of small perfect cubes. Know that \u221a2 is irrational.",
+   "title": "Use square root and cube root symbols to represent solutions to equations of the form x^2 = p and x^3 = p, where p is\u2026",
+   "description": "Use square root and cube root symbols to represent solutions to equations of the form x^2 = p and x^3 = p, where p is a positive rational number. Evaluate square roots of small perfect squares and cube roots of small perfect cubes. Know that \u221a2 is irrational.",
    "grade": "8"
   },
   {
    "code": "8.EE.A.3",
    "title": "Use numbers expressed in the form of a single digit times an integer power of 10 to estimate very large or very small\u2026",
-   "description": "Use numbers expressed in the form of a single digit times an integer power of 10 to estimate very large or very small quantities, and to express how many times as much one is than the other. For example, estimate the population of the United States as 3 \u00d7 10 8 and the population of the world as 7 \u00d7 10 9, and determine that the world population is more than 20 times larger.",
+   "description": "Use numbers expressed in the form of a single digit times an integer power of 10 to estimate very large or very small quantities, and to express how many times as much one is than the other. For example, estimate the population of the United States as 3 \u00d7 10^8 and the population of the world as 7 \u00d7 10^9, and determine that the world population is more than 20 times larger.",
    "grade": "8"
   },
   {
@@ -1629,7 +1629,7 @@
   {
    "code": "8.F.A.3",
    "title": "Interpret the equation y = mx + b as defining a linear function, whose graph is a straight line; give examples of\u2026",
-   "description": "Interpret the equation y = mx + b as defining a linear function, whose graph is a straight line; give examples of functions that are not linear. For example, the function A = s 2 giving the area of a square as a function of its side length is not linear because its graph contains the points (1,1), (2,4) and (3,9), which are not on a straight line.",
+   "description": "Interpret the equation y = mx + b as defining a linear function, whose graph is a straight line; give examples of functions that are not linear. For example, the function A = s^2 giving the area of a square as a function of its side length is not linear because its graph contains the points (1,1), (2,4) and (3,9), which are not on a straight line.",
    "grade": "8"
   },
   {
@@ -1773,13 +1773,13 @@
   {
    "code": "HSA-APR.C.4",
    "title": "Prove polynomial identities and use them to describe numerical relationships",
-   "description": "Prove polynomial identities and use them to describe numerical relationships. For example, the polynomial identity (x 2 + y 2) 2 = (x 2 - y 2) 2 + (2xy) 2 can be used to generate Pythagorean triples.",
+   "description": "Prove polynomial identities and use them to describe numerical relationships. For example, the polynomial identity (x^2 + y^2)^2= (x^2 - y^2)^2 + (2xy)^2 can be used to generate Pythagorean triples.",
    "grade": "HS"
   },
   {
    "code": "HSA-APR.C.5",
-   "title": "(+) Know and apply the Binomial Theorem for the expansion of (x + y) n in powers of x and y for a positive integer n,\u2026",
-   "description": "(+) Know and apply the Binomial Theorem for the expansion of (x + y) n in powers of x and y for a positive integer n, where x and y are any numbers, with coefficients determined for example by Pascal\u2019s Triangle.* *The Binomial Theorem can be proved by mathematical induction or by a combinatorial argument.",
+   "title": "(+) Know and apply the Binomial Theorem for the expansion of (x + y)^n in powers of x and y for a positive integer n,\u2026",
+   "description": "(+) Know and apply the Binomial Theorem for the expansion of (x + y)^n in powers of x and y for a positive integer n, where x and y are any numbers, with coefficients determined for example by Pascal\u2019s Triangle.* *The Binomial Theorem can be proved by mathematical induction or by a combinatorial argument.",
    "grade": "HS"
   },
   {
@@ -1844,14 +1844,14 @@
   },
   {
    "code": "HSA-REI.B.4.a",
-   "title": "Use the method of completing the square to transform any quadratic equation in x into an equation of the form (x \u2013 p)\u2026",
-   "description": "Use the method of completing the square to transform any quadratic equation in x into an equation of the form (x \u2013 p) 2 = q that has the same solutions. Derive the quadratic formula from this form.",
+   "title": "Use the method of completing the square to transform any quadratic equation in x into an equation of the form (x \u2013\u2026",
+   "description": "Use the method of completing the square to transform any quadratic equation in x into an equation of the form (x \u2013 p)^2 = q that has the same solutions. Derive the quadratic formula from this form.",
    "grade": "HS"
   },
   {
    "code": "HSA-REI.B.4.b",
-   "title": "Solve quadratic equations by inspection (e.g., for x 2 = 49), taking square roots, completing the square, the\u2026",
-   "description": "Solve quadratic equations by inspection (e.g., for x 2 = 49), taking square roots, completing the square, the quadratic formula and factoring, as appropriate to the initial form of the equation. Recognize when the quadratic formula gives complex solutions and write them as a \u00b1 bi for real numbers a and b.",
+   "title": "Solve quadratic equations by inspection (e.g., for x^2 = 49), taking square roots, completing the square, the\u2026",
+   "description": "Solve quadratic equations by inspection (e.g., for x^2 = 49), taking square roots, completing the square, the quadratic formula and factoring, as appropriate to the initial form of the equation. Recognize when the quadratic formula gives complex solutions and write them as a \u00b1 bi for real numbers a and b.",
    "grade": "HS"
   },
   {
@@ -1869,7 +1869,7 @@
   {
    "code": "HSA-REI.C.7",
    "title": "Solve a simple system consisting of a linear equation and a quadratic equation in two variables algebraically and\u2026",
-   "description": "Solve a simple system consisting of a linear equation and a quadratic equation in two variables algebraically and graphically. For example, find the points of intersection between the line y = \u20133x and the circle x 2 + y 2 = 3.",
+   "description": "Solve a simple system consisting of a linear equation and a quadratic equation in two variables algebraically and graphically. For example, find the points of intersection between the line y = \u20133x and the circle x^2 + y^2 = 3.",
    "grade": "HS"
   },
   {
@@ -1905,13 +1905,13 @@
   {
    "code": "HSA-SSE.A.1.b",
    "title": "Interpret complicated expressions by viewing one or more of their parts as a single entity",
-   "description": "Interpret complicated expressions by viewing one or more of their parts as a single entity. For example, interpret P(1+r) n as the product of P and a factor not depending on P.",
+   "description": "Interpret complicated expressions by viewing one or more of their parts as a single entity. For example, interpret P(1+r)^n as the product of P and a factor not depending on P.",
    "grade": "HS"
   },
   {
    "code": "HSA-SSE.A.2",
    "title": "Use the structure of an expression to identify ways to rewrite it",
-   "description": "Use the structure of an expression to identify ways to rewrite it. For example, see x 4 \u2013 y 4 as (x 2) 2 \u2013 (y 2) 2, thus recognizing it as a difference of squares that can be factored as (x 2 \u2013 y 2)(x 2 + y 2).",
+   "description": "Use the structure of an expression to identify ways to rewrite it. For example, see x^4 \u2013 y^4 as (x^2)^2 \u2013 (y^2)^2, thus recognizing it as a difference of squares that can be factored as (x^2 \u2013 y^2)(x^2 + y^2).",
    "grade": "HS"
   },
   {
@@ -1935,7 +1935,7 @@
   {
    "code": "HSA-SSE.B.3.c",
    "title": "Use the properties of exponents to transform expressions for exponential functions",
-   "description": "Use the properties of exponents to transform expressions for exponential functions. For example the expression 1.15 t can be rewritten as (1.151/12) 12t \u2248 1.012 12t to reveal the approximate equivalent monthly interest rate if the annual rate is 15%.",
+   "description": "Use the properties of exponents to transform expressions for exponential functions. For example the expression 1.15^t can be rewritten as (1.151/12)^(12t) \u2248 1.012^(12t)to reveal the approximate equivalent monthly interest rate if the annual rate is 15%.",
    "grade": "HS"
   },
   {
@@ -1983,7 +1983,7 @@
   {
    "code": "HSF-BF.B.4.a",
    "title": "Solve an equation of the form f(x) = c for a simple function f that has an inverse and write an expression for the\u2026",
-   "description": "Solve an equation of the form f(x) = c for a simple function f that has an inverse and write an expression for the inverse. For example, f(x)=2x 3 or f(x) = (x+1)/(x-1) for x \u22601",
+   "description": "Solve an equation of the form f(x) = c for a simple function f that has an inverse and write an expression for the inverse. For example, f(x)=2x^3 or f(x) = (x+1)/(x-1) for x \u22601",
    "grade": "HS"
   },
   {
@@ -2097,7 +2097,7 @@
   {
    "code": "HSF-IF.C.8.b",
    "title": "Use the properties of exponents to interpret expressions for exponential functions",
-   "description": "Use the properties of exponents to interpret expressions for exponential functions. For example, identify percent rate of change in functions such as y = (1.02) t, y = (0.97) t, y = (1.01) 12 t, y = (1.2) t/10, and classify them as representing exponential growth or decay.",
+   "description": "Use the properties of exponents to interpret expressions for exponential functions. For example, identify percent rate of change in functions such as y = (1.02)^t, y = (0.97)^t, y = (1.01)^(12)^t, y = (1.2)^(t/10), and classify them as representing exponential growth or decay.",
    "grade": "HS"
   },
   {
@@ -2144,8 +2144,8 @@
   },
   {
    "code": "HSF-LE.A.4",
-   "title": "For exponential models, express as a logarithm the solution to ab ct = d where a, c,and d are numbers and the base b\u2026",
-   "description": "For exponential models, express as a logarithm the solution to ab ct = d where a, c,and d are numbers and the base b is 2,10, or e; evaluate the logarithm using technology.",
+   "title": "For exponential models, express as a logarithm the solution to ab^(ct) = d where a, c,and d are numbers and the base b\u2026",
+   "description": "For exponential models, express as a logarithm the solution to ab^(ct) = d where a, c,and d are numbers and the base b is 2,10, or e; evaluate the logarithm using technology.",
    "grade": "HS"
   },
   {
@@ -2198,8 +2198,8 @@
   },
   {
    "code": "HSF-TF.C.8",
-   "title": "Prove the Pythagorean identity sin 2 (\u03b8) + cos 2 (\u03b8) = 1 and use it to find sin(\u03b8), cos(\u03b8), or tan(\u03b8) given sin(\u03b8),\u2026",
-   "description": "Prove the Pythagorean identity sin 2 (\u03b8) + cos 2 (\u03b8) = 1 and use it to find sin(\u03b8), cos(\u03b8), or tan(\u03b8) given sin(\u03b8), cos(\u03b8), or tan(\u03b8) and the quadrant of the angle.",
+   "title": "Prove the Pythagorean identity sin^2(\u03b8) + cos^2(\u03b8) = 1 and use it to find sin(\u03b8), cos(\u03b8), or tan(\u03b8) given sin(\u03b8),\u2026",
+   "description": "Prove the Pythagorean identity sin^2(\u03b8) + cos^2(\u03b8) = 1 and use it to find sin(\u03b8), cos(\u03b8), or tan(\u03b8) given sin(\u03b8), cos(\u03b8), or tan(\u03b8) and the quadrant of the angle.",
    "grade": "HS"
   },
   {
@@ -2480,14 +2480,14 @@
   },
   {
    "code": "HSN-CN.A.1",
-   "title": "Know there is a complex number i such that i 2 = \u20131, and every complex number has the form a + bi with a and b real.",
-   "description": "Know there is a complex number i such that i 2 = \u20131, and every complex number has the form a + bi with a and b real.",
+   "title": "Know there is a complex number i such that i^2 = \u20131, and every complex number has the form a + bi with a and b real.",
+   "description": "Know there is a complex number i such that i^2 = \u20131, and every complex number has the form a + bi with a and b real.",
    "grade": "HS"
   },
   {
    "code": "HSN-CN.A.2",
-   "title": "Use the relation i 2 = \u20131 and the commutative, associative, and distributive properties to add, subtract, and multiply\u2026",
-   "description": "Use the relation i 2 = \u20131 and the commutative, associative, and distributive properties to add, subtract, and multiply complex numbers.",
+   "title": "Use the relation i^2 = \u20131 and the commutative, associative, and distributive properties to add, subtract, and multiply\u2026",
+   "description": "Use the relation i^2 = \u20131 and the commutative, associative, and distributive properties to add, subtract, and multiply complex numbers.",
    "grade": "HS"
   },
   {
@@ -2505,7 +2505,7 @@
   {
    "code": "HSN-CN.B.5",
    "title": "(+) Represent addition, subtraction, multiplication, and conjugation of complex numbers geometrically on the complex\u2026",
-   "description": "(+) Represent addition, subtraction, multiplication, and conjugation of complex numbers geometrically on the complex plane; use properties of this representation for computation. For example, (\u20131 + \u221a3 i) 3 = 8 because (\u20131 + \u221a3 i) has modulus 2 and argument 120\u00b0.",
+   "description": "(+) Represent addition, subtraction, multiplication, and conjugation of complex numbers geometrically on the complex plane; use properties of this representation for computation. For example, (\u20131 + \u221a3 i)^3 = 8 because (\u20131 + \u221a3 i) has modulus 2 and argument 120\u00b0.",
    "grade": "HS"
   },
   {
@@ -2523,7 +2523,7 @@
   {
    "code": "HSN-CN.C.8",
    "title": "(+) Extend polynomial identities to the complex numbers",
-   "description": "(+) Extend polynomial identities to the complex numbers. For example, rewrite x 2 + 4 as (x + 2i)(x \u2013 2i).",
+   "description": "(+) Extend polynomial identities to the complex numbers. For example, rewrite x^2 + 4 as (x + 2i)(x \u2013 2i).",
    "grade": "HS"
   },
   {
@@ -2553,7 +2553,7 @@
   {
    "code": "HSN-RN.A.1",
    "title": "Explain how the definition of the meaning of rational exponents follows from extending the properties of integer\u2026",
-   "description": "Explain how the definition of the meaning of rational exponents follows from extending the properties of integer exponents to those values, allowing for a notation for radicals in terms of rational exponents. For example, we define 5 1/3 to be the cube root of 5 because we want (5 1/3) 3 = 5 (1/3)3 to hold, so (5 1/3) 3 must equal 5.",
+   "description": "Explain how the definition of the meaning of rational exponents follows from extending the properties of integer exponents to those values, allowing for a notation for radicals in terms of rational exponents. For example, we define 5^(1/3) to be the cube root of 5 because we want (5^(1/3))^3= 5^((1/3)3) to hold, so (5^(1/3))^3 must equal 5.",
    "grade": "HS"
   },
   {
