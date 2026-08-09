@@ -2055,13 +2055,20 @@ final class AttachmentStoreTests: XCTestCase {
     }
 
     func testDeletingOneSessionLeavesAnothersThumbnailsAlone() {
+        // The session ids have to be bound, not anonymous: deleting a session
+        // nothing was ever saved under runs the delete loop zero times, so a
+        // no-op `deleteAll` would pass.
         let store = AttachmentStore(directoryURL: directory)
+        let doomed = UUID()
+        let survivor = UUID()
+        let dropped = UUID()
         let kept = UUID()
-        store.save(Data("keep-me".utf8), for: kept, in: UUID())
-        store.save(Data("drop-me".utf8), for: UUID(), in: UUID())
+        store.save(Data("drop-me".utf8), for: dropped, in: doomed)
+        store.save(Data("keep-me".utf8), for: kept, in: survivor)
 
-        store.deleteAll(for: UUID())
+        store.deleteAll(for: doomed)
 
+        XCTAssertNil(store.thumbnail(for: dropped))
         XCTAssertEqual(store.thumbnail(for: kept), Data("keep-me".utf8))
     }
 
@@ -2082,7 +2089,10 @@ final class AttachmentStoreTests: XCTestCase {
     }
 
     func testAMessageStoredBeforeAttachmentsExistedStillDecodes() throws {
-        // Every session already on disk was written without this key.
+        // Every session already on disk was written without this key, and a
+        // default value does not rescue it — the synthesised decoder throws
+        // keyNotFound. This test is the whole reason TutorMessage has a
+        // hand-written init(from:).
         let legacy = Data("""
         {"id":"\(UUID().uuidString)","role":"learner","text":"hi",
          "createdAt":0}
@@ -2164,8 +2174,18 @@ and extend the initialiser:
     }
 ```
 
-A `var` with a default value gets synthesised decoding that tolerates a missing
-key, so no custom `init(from:)` is needed.
+**A default value is not a migration.** Swift's synthesised `Decodable` does
+*not* fall back to a stored property's default when its key is missing — it
+throws `keyNotFound`. It substitutes a default only for an `Optional` property,
+or for a key an explicit `CodingKeys` omits entirely. So `TutorMessage` needs a
+hand-written `init(from:)` that reads this one key with `decodeIfPresent(...)
+?? []`; `encode(to:)` stays synthesised.
+
+Without it every session already on disk stops loading: `LearningSession`
+decodes `messages` with a plain `try`, so one legacy message throws the whole
+session decode, `SessionPersistence.load(id:)` swallows it with `try?` and
+returns `nil`, and `loadCurrent()` finds nothing to fall back to. The learner's
+entire history goes invisible.
 
 - [ ] **Step 5: Write the store**
 
