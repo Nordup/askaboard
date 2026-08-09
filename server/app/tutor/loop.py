@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 
@@ -9,9 +11,13 @@ from openai import AsyncOpenAI
 
 from app.tutor.board_scene import parse_board_update
 from app.tutor.context import ContextBundle
-from app.tutor.events import BoardRequestEvent, ClientEvent, EventTranslator, WorkspaceEvent
+from app.tutor.events import (
+    BoardRequestEvent, ClientEvent, EventTranslator, StatusEvent, WorkspaceEvent,
+)
 from app.tutor.rendezvous import BoardRegion, BoardUnavailable
 from app.tutor.tools import MEMORY_TOOLS, TOOL_DEFINITIONS
+
+logger = logging.getLogger(__name__)
 
 # How many times a turn may come back with a tool call before we stop asking.
 #
@@ -40,6 +46,24 @@ MAX_TOOL_ROUNDS = 5
 # picture of a slightly larger area; the `detail` string says what was actually
 # shown, so the model can tell its aim was adjusted.
 MIN_REGION_PERCENT = 2.0
+
+# How long a memory tool may run before the turn gives up on it.
+#
+# This is the only wait in a turn that no provider event passes through, so it
+# is the only one the heartbeat cannot cover: `EventTranslator.translate` is
+# what emits a keep-alive, and it runs on incoming provider events, of which
+# there are none while this is awaited. Unbounded, the worst case is not the
+# "one embedding round trip" this used to claim — `embed_texts` keeps the SDK
+# defaults, two retries against a 600s request timeout, so a hung embeddings
+# call is minutes of absolute silence.
+#
+# What that costs is not a slow turn, it is a lie: the client gives up at 120s
+# (`BackendTutorService.streamTimeout`) while the server carries on and records
+# a *successful* turn. `max_silence_ms` observes that afterwards, it does not
+# prevent it. Twenty seconds is `rendezvous.RENDER_TIMEOUT_SECONDS` — the other
+# eventless wait in this loop, and already known to be survivable — against
+# work that is normally a query and one embedding.
+MEMORY_TIMEOUT_SECONDS = 20.0
 
 # What the tool call is answered with. `set_workspace` has no server-side
 # effect to report: the plan and exercise ride out on the WorkspaceEvent and
@@ -127,6 +151,20 @@ MALFORMED_MEMORY_ACK = (
     "field names and types and call it again."
 )
 
+# What a memory tool is answered with when it ran past
+# `MEMORY_TIMEOUT_SECONDS` and was abandoned.
+#
+# Deliberately does not claim nothing was written. The timeout cancels the
+# handler wherever it had got to, which may be either side of its commit, so
+# "nothing was saved" would be a guess — and the one thing these strings exist
+# to stop is the model reporting a state of the store it does not know.
+MEMORY_TIMEOUT_ACK = (
+    "That took too long and was abandoned, and whether it finished is not "
+    "known. Do not tell the learner you have remembered anything, and do not "
+    "tell them you have no memory of something — you have not looked. Carry "
+    "on without it."
+)
+
 
 #: How `run_turn` gets a region of the board rendered.
 #:
@@ -143,6 +181,18 @@ BoardFetcher = Callable[[str, BoardRegion], Awaitable[bytes]]
 #: that opens its own; `app.memory.dispatch.memory_handler` is that binding and
 #: says the rest.
 MemoryHandler = Callable[[str, dict], Awaitable[str]]
+
+#: What the learner's status line says while a memory tool runs.
+#:
+#: Not in `events.TOOL_PHASES`: that maps a call to a phase as its *arguments*
+#: stream in, and by the time the wait below happens the call is complete and
+#: the translator has nothing left to react to. A name missing from here falls
+#: back to "thinking", which is true of any tool, so this cannot drift into
+#: telling the learner a tool does not exist — it can only be less specific.
+MEMORY_PHASES: dict[str, str] = {
+    "search_memory": "searching",
+    "recent_sessions": "searching",
+}
 
 
 @dataclass
@@ -432,16 +482,33 @@ async def run_turn(
                 continue
 
             if answer.run is not None:
-                # Awaited inline, with nothing yielded around it. A memory tool
-                # costs a query and, for `search_memory`, one embedding round
-                # trip — short next to a board render, which is the wait this
-                # loop was built to survive. The handler answers rather than
-                # raising, so there is no unavailable branch to mirror.
                 name, arguments = answer.run
+                # Announced before the wait, for the reason the `board_request`
+                # below is: this is an eventless stretch, so nothing else will
+                # put anything on the wire until it ends. A status is what tells
+                # the learner the tutor is doing something, and what stops the
+                # gap being the largest silence in the turn.
+                yield StatusEvent(
+                    phase=MEMORY_PHASES.get(name, "thinking"), detail=None
+                ), result
+                try:
+                    # Bounded, because nothing else bounds it. The handler
+                    # answers rather than raising, so a timeout is the only
+                    # failure that can reach this branch — and cancelling
+                    # mid-flight can hand a half-used connection back to the
+                    # pool, which is what `pool_pre_ping` on the engine is for.
+                    async with asyncio.timeout(MEMORY_TIMEOUT_SECONDS):
+                        output = await handle_memory(name, arguments)
+                except TimeoutError:
+                    logger.warning(
+                        "memory tool timed out after %.0fs | tool=%s",
+                        MEMORY_TIMEOUT_SECONDS, name,
+                    )
+                    output = MEMORY_TIMEOUT_ACK
                 conversation.append({
                     "type": "function_call_output",
                     "call_id": call_id,
-                    "output": await handle_memory(name, arguments),
+                    "output": output,
                 })
                 continue
 
@@ -463,3 +530,16 @@ async def run_turn(
             conversation.append(items[0])
             attachments.extend(items[1:])
         conversation = conversation + attachments
+    else:
+        # The cap bit — `return` above is the only other way out, so this runs
+        # exactly when the last round still ended on tool calls. Hitting it is
+        # not an error, but it is invisible: whatever prose arrived is the
+        # answer, and if none did the learner gets a `done` event and silence,
+        # which is the failure `MAX_TOOL_ROUNDS`' own comment was written to
+        # prevent. Nothing anywhere said it had happened. `text_chars=0` is the
+        # bad case; the tool names say which loop the model was stuck in.
+        logger.warning(
+            "tool rounds exhausted | rounds=%d text_chars=%d last_tools=%s",
+            MAX_TOOL_ROUNDS, len(result.text),
+            ",".join(call.get("name") or "?" for call in calls),
+        )

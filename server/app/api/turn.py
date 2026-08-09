@@ -20,7 +20,7 @@ from app.config import MODEL_ALLOWLIST, SOLE_LEARNER_ID, get_settings
 from app.learner.mastery import snapshot
 from app.memory.dispatch import memory_handler
 from app.memory.profile import current_profile
-from app.memory.retrieve import recent_episodes
+from app.memory.retrieve import recent_episodes, render_digests
 from app.sse import SSE_HEADERS, format_sse
 from app.store.db import db_session, session_factory
 from app.store.blobs import LocalBlobStore
@@ -70,12 +70,10 @@ async def _memory_sections(db: AsyncSession) -> dict[str, str | None]:
     """
     episodes = await recent_episodes(db, SOLE_LEARNER_ID,
                                      limit=RECENT_SESSION_COUNT)
-    # Dated, because "we did fractions" is a different fact depending on
-    # whether it was yesterday or in March, and the model cannot tell from
-    # order alone.
-    digest = "\n".join(
-        f"{e.closed_at:%Y-%m-%d}: {e.digest}" for e in episodes if e.digest
-    ) or None
+    # Rendered by the module that owns the rows, so the `recent_sessions` tool
+    # cannot answer with the same sessions written a second way inside the same
+    # prompt as this block.
+    digest = render_digests(episodes) or None
     return {
         "profile": await current_profile(db, SOLE_LEARNER_ID),
         "learner_state": (await snapshot(db, SOLE_LEARNER_ID)) or None,

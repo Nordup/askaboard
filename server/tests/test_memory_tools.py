@@ -1,4 +1,6 @@
+import asyncio
 import json
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -29,6 +31,9 @@ from app.memory.schema import EXTRACTION_SCHEMA, STATED_EXEMPT, MemoryCategory
 from app.tutor.context import ContextBundle
 from app.tutor.loop import (
     MALFORMED_MEMORY_ACK,
+    MAX_TOOL_ROUNDS,
+    MEMORY_PHASES,
+    MEMORY_TIMEOUT_ACK,
     NO_MEMORY_ACK,
     UNSUPPORTED_TOOL_ACK,
     _answer,
@@ -261,6 +266,123 @@ async def test_run_turn_hands_the_handlers_answer_back_to_the_model():
         "type": "function_call_output", "call_id": "call_m",
         "output": "- [goal] Sits the higher tier paper in June.",
     }]
+
+
+def _run(handle, *legs):
+    """One `run_turn` over the given provider responses, with `handle` bound."""
+    respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*leg))
+            for leg in legs
+        ]
+    )
+    return run_turn(
+        client=AsyncOpenAI(api_key="sk-test"), model="gpt-5.6-luna", effort="high",
+        bundle=ContextBundle(system="s", input=[{"role": "user", "content": "hi"}]),
+        handle_memory=handle,
+    )
+
+
+@respx.mock
+async def test_a_memory_call_announces_itself_so_the_wait_is_not_silent():
+    """The one stretch of a turn no provider event passes through.
+
+    `EventTranslator`'s keep-alive fires on incoming provider events, and there
+    are none while the handler is awaited — so without this status the wire is
+    silent for the whole call, and the client gives up at 120 seconds. The
+    assertion is on the event *immediately* before the handler ran, not merely
+    that a status appeared somewhere: `response.created` emits one too.
+    """
+    async def phase_for(tool: str) -> str:
+        before: list = []
+        events: list = []
+
+        async def handle(name: str, arguments: dict) -> str:
+            before.append(events[-1])
+            return "Nothing on file about that."
+
+        async for event, _ in _run(
+            handle, _memory_call_turn(tool, {}), TEXT_ONLY_TURN
+        ):
+            events.append(event)
+        assert before[0].type == "status"
+        return before[0].phase
+
+    assert await phase_for("search_memory") == "searching"
+    # Not in `MEMORY_PHASES`, so it falls back rather than going unannounced.
+    assert await phase_for("remember") == "thinking"
+    assert set(MEMORY_PHASES) <= MEMORY_TOOLS
+
+
+@respx.mock
+async def test_a_memory_call_that_hangs_is_abandoned_rather_than_held_forever(
+    monkeypatch
+):
+    """Unbounded, this is the worst failure in the turn.
+
+    `embed_texts` keeps the SDK's two retries against a 600s request timeout,
+    so a hung embeddings call is minutes of silence — the client dies at 120s
+    while the server finishes and records a *successful* turn. The ack says
+    nothing about whether the write landed, because the cancellation can fall
+    either side of the handler's commit.
+    """
+    monkeypatch.setattr("app.tutor.loop.MEMORY_TIMEOUT_SECONDS", 0.05)
+    started = asyncio.Event()
+
+    async def handle(name: str, arguments: dict) -> str:
+        started.set()
+        await asyncio.sleep(5)
+        return "Saved."
+
+    route = respx.post("https://api.openai.com/v1/responses")
+    async for _ in _run(
+        handle, _memory_call_turn("remember", {"text": "x"}), TEXT_ONLY_TURN
+    ):
+        pass
+
+    assert started.is_set()
+    second = json.loads(route.calls[1].request.content)["input"]
+    outputs = [item for item in second if item.get("type") == "function_call_output"]
+    assert outputs[0]["output"] == MEMORY_TIMEOUT_ACK
+    # And the turn carried on: the model still got its second round.
+    assert route.call_count == 2
+
+
+@respx.mock
+async def test_exhausting_the_tool_rounds_says_so(caplog):
+    """Hitting the cap is not an error, but it is invisible.
+
+    A last round that ends on tool calls leaves `result.text` empty, so the
+    learner gets a `done` event and silence — the exact failure
+    `MAX_TOOL_ROUNDS`' own comment was written to prevent — and nothing
+    anywhere said it had happened.
+    """
+    async def handle(name: str, arguments: dict) -> str:
+        return "Nothing on file about that."
+
+    with caplog.at_level(logging.WARNING, logger="app.tutor.loop"):
+        async for _ in _run(
+            handle,
+            *[_memory_call_turn("search_memory", {"query": "q"})] * MAX_TOOL_ROUNDS,
+        ):
+            pass
+
+    assert "tool rounds exhausted" in caplog.text
+    assert "text_chars=0" in caplog.text
+    assert "search_memory" in caplog.text
+
+
+async def test_a_session_that_cannot_be_opened_answers_instead_of_killing_the_turn():
+    """Acquiring and releasing the session sit outside `handle_memory_tool`'s
+    own guard, so this was the one memory failure that took the whole turn
+    down while every other one was answered politely."""
+    def _broken():
+        raise RuntimeError("QueuePool limit reached")
+
+    handle = memory_handler(_broken, learner_id=SOLE_LEARNER_ID)
+
+    assert await handle("search_memory", {"query": "x"}) == _FAILED["search_memory"]
 
 
 # ---------------------------------------------------------------------------

@@ -16,6 +16,7 @@ the store grows. A row's position in a ranked list needs no such mapping.
 """
 
 import uuid
+from collections.abc import Iterable
 
 from sqlalchemy import Select, desc, func, join, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -172,3 +173,21 @@ async def recent_episodes(
         .order_by(desc(Episode.closed_at), Episode.id)
         .limit(limit)
     )).scalars().all())
+
+
+def render_digests(episodes: Iterable[Episode]) -> str:
+    """Session digests as dated lines, in the order given.
+
+    One rendering because there are two readers and one prompt. The turn's
+    standing `RECENT SESSIONS` block and the `recent_sessions` tool both paste
+    this, often into the same context — two copies of the format is two chances
+    for a tutor to show the learner the same sessions written two ways.
+
+    The date is load-bearing, not decoration: "we did fractions" is a different
+    fact depending on whether it was yesterday or in March, and position in a
+    list does not say which. No None-guard on `digest`, because
+    `recent_episodes` above is where that filter belongs and it is already
+    there — a second one here would read as though undigested episodes could
+    reach this, which is the thing a reader should not have to wonder about.
+    """
+    return "\n".join(f"{e.closed_at:%Y-%m-%d}: {e.digest}" for e in episodes)

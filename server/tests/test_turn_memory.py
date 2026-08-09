@@ -98,18 +98,19 @@ def _stub_sources(monkeypatch, *, profile, state, episodes, seen=None):
     monkeypatch.setattr("app.api.turn.recent_episodes", _episodes)
 
 
-async def test_the_digest_is_dated_newest_first_and_asked_for_by_the_dozen(
-    monkeypatch
-):
+async def test_the_digest_is_dated_and_asked_for_by_the_dozen(monkeypatch):
+    """Deliberately claims nothing about ordering.
+
+    The stub hands back whatever order the test wrote, so an assertion here
+    would only be reading its own input. `recent_episodes` is what orders these
+    and `test_memory_retrieve` is where that is pinned; what this covers is the
+    limit, the learner, and the line format.
+    """
     seen: dict = {}
     _stub_sources(
         monkeypatch, profile=None, state="", seen=seen,
         episodes=[
             _FakeEpisode(datetime(2026, 6, 3, tzinfo=timezone.utc), "ratios"),
-            # NULL until the close path has written one. `recent_episodes`
-            # filters these out itself; a blank line under a date would read as
-            # a session where nothing happened.
-            _FakeEpisode(datetime(2026, 6, 1, tzinfo=timezone.utc), None),
             _FakeEpisode(datetime(2026, 5, 28, tzinfo=timezone.utc), "fractions"),
         ],
     )
@@ -162,11 +163,15 @@ async def _seed(db) -> None:
     db.add(LearnerKCState(learner_id=SOLE_LEARNER_ID, kc_id=kc_id,
                           theta=2.0, n_effective=7.0))
 
-    closed = datetime(2026, 6, 3, 9, 0, tzinfo=timezone.utc)
-    db.add(Episode(learner_id=SOLE_LEARNER_ID, session_id=uuid.uuid4(),
-                   transcript="learner: hi", digest="Worked through unit rates.",
-                   message_count=2, started_at=closed - timedelta(hours=1),
-                   closed_at=closed))
+    # Two, added oldest-first, so the newest-first ordering the block claims is
+    # the database's answer and not the order they were written in.
+    for closed, digest in (
+        (datetime(2026, 5, 28, 9, 0, tzinfo=timezone.utc), "Simplified fractions."),
+        (datetime(2026, 6, 3, 9, 0, tzinfo=timezone.utc), "Worked through unit rates."),
+    ):
+        db.add(Episode(learner_id=SOLE_LEARNER_ID, session_id=uuid.uuid4(),
+                       transcript="learner: hi", digest=digest, message_count=2,
+                       started_at=closed - timedelta(hours=1), closed_at=closed))
     await db.commit()
 
 
@@ -181,7 +186,12 @@ async def test_memory_sections_reads_the_three_blocks_out_of_the_real_store(db):
     assert sections["learner_state"] == (
         f"WHAT THIS LEARNER KNOWS:\n- Unit rate ({RATIO}): mastered"
     )
-    assert sections["recent_digest"] == "2026-06-03: Worked through unit rates."
+    # Newest first, dated, both lines — the ordering the stubbed test above
+    # cannot assert, because here `recent_episodes` is the thing producing it.
+    assert sections["recent_digest"] == (
+        "2026-06-03: Worked through unit rates.\n"
+        "2026-05-28: Simplified fractions."
+    )
 
 
 @respx.mock

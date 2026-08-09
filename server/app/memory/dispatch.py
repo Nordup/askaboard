@@ -31,7 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.learner.evidence import DEFAULT_KIND, record
 from app.memory.consolidate import normalised
 from app.memory.embed import embed_texts
-from app.memory.retrieve import recent_episodes, search_atoms
+from app.memory.retrieve import recent_episodes, render_digests, search_atoms
 from app.memory.schema import STATED_EXEMPT, MemoryCategory
 from app.store.models import MemoryAtom
 from app.tutor.tools import MEMORY_TOOLS, SERVER_ONLY_KINDS
@@ -246,7 +246,7 @@ async def _recent_sessions(
     episodes = await recent_episodes(db, learner_id, limit=limit)
     if not episodes:
         return "No previous sessions on file."
-    return "\n".join(f"{e.closed_at:%Y-%m-%d}: {e.digest}" for e in episodes)
+    return render_digests(episodes)
 
 
 async def _record_evidence(
@@ -319,9 +319,21 @@ def memory_handler(
     is the wrong session to use, not a closed one.)
     """
     async def handle(name: str, arguments: dict) -> str:
-        async with sessions() as db:
-            return await handle_memory_tool(
-                db, learner_id, name, arguments,
-                turn_id=turn_id, session_id=session_id,
+        try:
+            async with sessions() as db:
+                return await handle_memory_tool(
+                    db, learner_id, name, arguments,
+                    turn_id=turn_id, session_id=session_id,
+                )
+        except Exception:
+            # Opening the session, and closing it again, both sit outside
+            # `handle_memory_tool`'s own guard — so a pool that cannot hand one
+            # out, or an `__aexit__` that raises on the way back, was the one
+            # memory failure that took the learner's whole turn down while
+            # every other one was answered politely. `except Exception` and not
+            # bare, so the turn's timeout cancellation still unwinds.
+            logger.exception(
+                "memory session failed | tool=%s turn_id=%s", name, turn_id
             )
+            return _FAILED.get(name, f"The tool {name} could not be run.")
     return handle
