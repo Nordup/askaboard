@@ -96,18 +96,28 @@ _TASKS: set[asyncio.Task] = set()
 
 #: One drain at a time, per event loop.
 #:
-#: Two closes seconds apart — a session switch followed by the app going to the
-#: background — otherwise run two drains over the same backlog concurrently.
-#: The row lock in `_extract_episode` stops them double-writing, but only after
-#: the loser has already paid for a digest and an extraction it throws away,
-#: and nothing stops the two of them taking episodes in interleaved order,
-#: which is the inversion `run_extraction_backlog` halts to avoid. Serialising
-#: here is what makes both of those unreachable rather than merely survivable.
+#: Two closes seconds apart — a session switch followed by an explicit end —
+#: otherwise run two drains over the same backlog concurrently. The row lock in
+#: `_extract_episode` stops them double-writing, but only after the loser has
+#: already paid for a digest and an extraction it throws away, and nothing
+#: stops the two of them taking episodes in interleaved order.
+#:
+#: **In-process only.** Correctness does not depend on it: the blocking row
+#: lock is what actually carries the ordering guarantee, across processes as
+#: well as within one. This removes the wasted provider calls, and it does that
+#: only for drains sharing this interpreter — a second uvicorn worker would
+#: still pay for a digest and an extraction it discards on every overlap. That
+#: costs nothing under the single worker this service runs today, and is the
+#: thing to remember on the day a second one is added.
 #:
 #: Keyed by loop rather than a module-level `asyncio.Lock`, because a Lock
 #: binds to the loop it first blocks on and raises ever after on any other —
 #: which under pytest, where every test gets its own loop, is a failure in
-#: whichever test happens to run second.
+#: whichever test happens to run second. The weak key does not make this
+#: self-cleaning in the case that matters: `Lock._get_loop()` runs precisely on
+#: the blocking path, so a lock that has ever been contended holds a strong
+#: reference to its own key and that entry never expires. One entry, for the
+#: process's one loop, which is why it is left alone.
 _DRAIN_LOCKS: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]" = (
     weakref.WeakKeyDictionary()
 )
@@ -308,10 +318,27 @@ async def sweep_abandoned_sessions(*, db_factory: Factory | None = None) -> int:
     is measured from the last message rather than `sessions.updated_at`,
     because that column is touched by anything that writes the row and is not
     a statement about the learner.
+
+    The sweep is the one thing in this file that can add an episode *behind*
+    the extraction watermark, and an ordinary sequence gets there: a session
+    that dies on Monday afternoon is still too fresh to sweep when Monday
+    evening's session is closed and extracted, and by the time Tuesday's close
+    sweeps it, a newer episode has already been read. `run_extraction_backlog`
+    orders a batch and cannot order across batches, so that one is extracted
+    late whatever this does — recording it with a fabricated `closed_at` would
+    hide the inversion rather than prevent it, and skipping it would trade a
+    mis-ordered session for a lost one. So it is recorded, honestly dated, and
+    logged loudly. What actually protects the store is downstream: the atoms
+    carry the session's own `valid_from`, and consolidation is shown those
+    dates and told not to let an older fact supersede a newer one.
     """
     factory = db_factory or session_factory()
     cutoff = datetime.now(timezone.utc) - STALE_AFTER
     async with factory() as db:
+        watermark = (await db.execute(
+            select(sa_func.max(Episode.closed_at))
+            .where(Episode.extracted_at.is_not(None))
+        )).scalar_one()
         last_message = (
             select(
                 Message.session_id.label("session_id"),
@@ -328,8 +355,16 @@ async def sweep_abandoned_sessions(*, db_factory: Factory | None = None) -> int:
         )).all()
 
     for session_id, last_at in stale:
-        log.info("sweeping abandoned session %s, silent since %s",
-                 session_id, last_at)
+        if watermark is not None and last_at < watermark:
+            log.warning(
+                "sweeping session %s behind the extraction watermark: it went "
+                "quiet at %s, but an episode closed %s has already been "
+                "extracted. Its facts will be consolidated after newer ones",
+                session_id, last_at, watermark,
+            )
+        else:
+            log.info("sweeping abandoned session %s, silent since %s",
+                     session_id, last_at)
         await _record_episode(factory, session_id, closed_at=last_at)
     return len(stale)
 

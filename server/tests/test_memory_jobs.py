@@ -397,7 +397,7 @@ async def test_two_passes_cannot_extract_the_same_episode(db_factory, monkeypatc
     atom = ExtractedAtom(text="Sits Edexcel higher tier in May 2027.",
                          category=MemoryCategory.context, stated=True)
     rebuild = _Rebuild(gated=True)
-    _, _, consolidate, _ = _install(
+    _, extract, consolidate, _ = _install(
         monkeypatch, extract=_Extract([atom]), rebuild=rebuild,
     )
     await _backlog(db_factory, [(MARCH, "march")])
@@ -408,10 +408,31 @@ async def test_two_passes_cannot_extract_the_same_episode(db_factory, monkeypatc
     # The first pass is now inside its write transaction holding the lock.
     await asyncio.wait_for(rebuild.entered.wait(), 30)
     second = asyncio.create_task(_extract_episode(db_factory, episode_id))
-    # Long enough for the second to get past its own provider stubs and block
-    # on the lock. If it does not, the assertions below still hold — it would
-    # simply be testing the cheap `extracted_at` check instead.
-    await asyncio.sleep(1.0)
+
+    # `_Extract` is the last stub before the locked SELECT, so its second call
+    # is the second pass arriving at the lock.
+    for _ in range(300):
+        if len(extract.dates) == 2:
+            break
+        await asyncio.sleep(0.1)
+    else:
+        pytest.fail("the second pass never got as far as the lock")
+
+    # The assertion that separates waiting from skipping. Every other
+    # assertion here holds just as well under `skip_locked=True`, which is the
+    # behaviour finding 2 was about: a pass that steps over a held episode goes
+    # on to extract a newer one, and the ordering guarantee is gone.
+    #
+    # Expressed as a timeout on the pass finishing, rather than a sleep
+    # followed by `not second.done()`. A sleep has to be longer than the
+    # non-blocking path takes, and that path is not fast — measured at 2.1s,
+    # nearly all of it Neon round trips, which is why the first version of
+    # this passed under `skip_locked=True` and proved nothing. Under a
+    # blocking lock the wait cannot end at all until the gate below is
+    # released, so the margin only has to clear that 2.1s and can be as
+    # generous as patience allows.
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(asyncio.shield(second), 8)
     rebuild.release.set()
     assert await asyncio.wait_for(asyncio.gather(first, second), 60) == [True, False]
 
@@ -475,6 +496,37 @@ async def test_the_sweep_ignores_a_session_already_closed(db_factory, monkeypatc
 
     assert await sweep_abandoned_sessions(db_factory=db_factory) == 0
     assert len(await _episodes(db_factory, session_id)) == 1
+
+
+@requires_db
+async def test_a_late_sweep_says_so_rather_than_slipping_in_quietly(
+    db_factory, monkeypatch, caplog,
+):
+    """A session that crashed before an already-extracted one still exists.
+
+    It is recorded — losing a session's memory is worse than reading it late —
+    and honestly dated, so the log line is the only thing standing between an
+    out-of-order consolidation and nobody knowing one happened.
+    """
+    _install(monkeypatch)
+    session_id = await _session_with(
+        db_factory, [("learner", "help with fractions")], last_message_at=MARCH,
+    )
+    async with db_factory() as db:
+        db.add(Episode(
+            learner_id=SOLE_LEARNER_ID, session_id=uuid.uuid4(),
+            transcript="june", message_count=1, started_at=JUNE, closed_at=JUNE,
+            extracted_at=JUNE,
+        ))
+        await db.commit()
+
+    with caplog.at_level(logging.WARNING, logger="app.memory.jobs"):
+        assert await sweep_abandoned_sessions(db_factory=db_factory) == 1
+
+    assert "behind the extraction watermark" in caplog.text
+    episodes = await _episodes(db_factory, session_id)
+    assert len(episodes) == 1
+    assert episodes[0].closed_at == MARCH
 
 
 @requires_db
