@@ -4,6 +4,7 @@ import base64
 from dataclasses import dataclass
 from typing import Any
 
+from app.attachments.parts import UploadPart, content_part
 from app.tutor import board as board_notes
 from app.tutor.prompt import SYSTEM_PROMPT, compose_user_prompt
 
@@ -36,6 +37,7 @@ def assemble_context(
     profile: str | None = None,
     learner_state: str | None = None,
     recent_digest: str | None = None,
+    uploads: list[UploadPart] | None = None,
 ) -> ContextBundle:
     """SEAM: everything the model is told, assembled in one place.
 
@@ -51,6 +53,10 @@ def assemble_context(
     whether the learner mentioned it or not, small enough to be free; anything
     the model wants to actually read, it asks the device for. The first is the
     learner pointing; the second is the tutor being able to look.
+
+    `uploads` is neither: files the learner attached in the composer, already
+    converted server-side to something the provider reads. They are not the
+    board at all, and a turn can carry both.
     """
     conversation = "\n".join(f"{m.role}: {m.text}" for m in messages)
 
@@ -78,6 +84,7 @@ def assemble_context(
         profile=profile,
         learner_state=learner_state,
         recent_digest=recent_digest,
+        uploads=uploads or [],
     )
 
     content: list[dict[str, Any]] = [{"type": "input_text", "text": user_text}]
@@ -99,6 +106,12 @@ def assemble_context(
             "image_url": f"data:image/png;base64,{encoded}",
             "detail": "low",
         })
+
+    # After both board images, and in the learner's own chip order. The board
+    # is what the tutor can look at; these are what the learner handed over,
+    # and the prompt above has already named them.
+    for upload in uploads or []:
+        content.append(content_part(upload))
 
     return ContextBundle(
         system=SYSTEM_PROMPT,

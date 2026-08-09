@@ -1,20 +1,5 @@
-from dataclasses import dataclass
-
+from app.attachments.parts import UploadPart
 from app.tutor.prompt import SYSTEM_PROMPT, compose_user_prompt
-
-
-@dataclass(frozen=True)
-class _StandInUploadPart:
-    """Stand-in for `app.attachments.parts.UploadPart` (Task 5, not yet built).
-
-    `compose_user_prompt` only reads `.filename` and `.page_count`, so those
-    are the only two fields this needs to carry for these tests.
-    """
-    filename: str
-    kind: str
-    page_count: int
-    content_type: str
-    data: bytes
 
 
 def test_system_prompt_no_longer_mentions_the_json_envelope():
@@ -142,8 +127,8 @@ def _prompt(**overrides):
 
 def test_attachments_are_listed_by_name_and_page_count():
     text = _prompt(uploads=[
-        _StandInUploadPart(filename="worksheet.pdf", kind="pdf", page_count=3,
-                            content_type="application/pdf", data=b""),
+        UploadPart(filename="worksheet.pdf", kind="pdf", page_count=3,
+                   content_type="application/pdf", data=b""),
     ])
 
     assert "worksheet.pdf" in text
@@ -154,8 +139,8 @@ def test_an_attachment_is_told_to_be_transcribed_onto_the_board():
     """The tutor draws the problem out before coaching. It is also the check
     that it read the thing correctly."""
     text = _prompt(uploads=[
-        _StandInUploadPart(filename="worksheet.pdf", kind="pdf", page_count=1,
-                            content_type="application/pdf", data=b""),
+        UploadPart(filename="worksheet.pdf", kind="pdf", page_count=1,
+                   content_type="application/pdf", data=b""),
     ])
 
     assert "update_board" in text
@@ -165,8 +150,8 @@ def test_the_visible_attempt_guidance_still_belongs_to_the_board_image():
     """A photo of a textbook is not the learner's work, and must not get
     feedback written for the learner's work."""
     attachment_only = _prompt(uploads=[
-        _StandInUploadPart(filename="textbook.jpg", kind="image", page_count=1,
-                            content_type="image/jpeg", data=b""),
+        UploadPart(filename="textbook.jpg", kind="image", page_count=1,
+                   content_type="image/jpeg", data=b""),
     ])
     assert "VISIBLE ATTEMPT" not in attachment_only
 
