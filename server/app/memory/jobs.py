@@ -1,7 +1,7 @@
 """Turning a finished session into memory, once nobody is waiting.
 
 A session becomes an `Episode` — the transcript, frozen — and that episode
-becomes a digest, a set of atoms, and a rebuilt profile. Four provider round
+becomes a digest, a set of atoms, and a rebuilt profile. Five provider round
 trips end to end, which is the whole reason none of it happens on the request
 path.
 
@@ -13,17 +13,26 @@ running — leave a row saying "this session happened and has not been read
 yet" instead of leaving nothing at all. `run_extraction_backlog` reads those
 rows back and every close runs it, so a lost session is retried by the next
 close rather than by a queue this service does not have.
+
+One episode per session, forever, is the invariant `uq_episodes_session`
+enforces — which makes *when* a session is recorded the load-bearing decision
+in this file, not just how. Recording it while the learner is still in it
+freezes the transcript at that moment and drops everything they do afterwards,
+silently and permanently. So a close is only ever taken from a device that has
+genuinely left the session, and `sweep_abandoned_sessions` is what covers the
+sessions nobody ever leaves on purpose.
 """
 
 import asyncio
 import logging
 import uuid
+import weakref
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 
 from openai import AsyncOpenAI
-from sqlalchemy import select
+from sqlalchemy import func as sa_func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -37,6 +46,33 @@ from app.store.models import Episode, Message, Session
 log = logging.getLogger(__name__)
 
 Factory = async_sessionmaker[AsyncSession]
+
+#: How quiet a session has to go before `sweep_abandoned_sessions` closes it
+#: for the learner.
+#:
+#: Deliberately long, because the two ways of being wrong here do not cost the
+#: same. Sweeping too late delays a memory by hours. Sweeping too early records
+#: the episode mid-session, and `uq_episodes_session` then makes that
+#: permanent — every turn after it is dropped with nothing recording that they
+#: existed. Six hours is past any plausible within-session pause and still
+#: catches the same evening's work.
+STALE_AFTER = timedelta(hours=6)
+
+#: Ceiling on the write transaction in `_extract_episode`.
+#:
+#: The transaction holds a row lock on `episodes` and update locks on every
+#: atom it supersedes, across three provider calls it does not own the timeouts
+#: of — the SDK's own default is ten minutes with two retries behind it. Left
+#: unbounded, one wedged provider call parks a pooled Neon connection
+#: idle-in-transaction for most of an hour. A timeout here costs nothing that
+#: is not already recoverable: the transaction rolls back, `extracted_at` stays
+#: NULL, and the next close tries again.
+WRITE_TIMEOUT_SECONDS = 180.0
+
+#: `23505`, unique_violation. Named because `IntegrityError` covers every
+#: constraint on the table, and the one this code expects is a very specific
+#: race — see `_record_episode`.
+_UNIQUE_VIOLATION = "23505"
 
 #: Undated on purpose. `dispatch._recent_sessions` prefixes every digest with
 #: its episode's `closed_at` when it renders them, so a date in the prose would
@@ -57,6 +93,33 @@ the learner got stuck. Write plainly, no preamble.
 #: would look exactly like a task that is still working. The done callback is
 #: what keeps this set from being a leak.
 _TASKS: set[asyncio.Task] = set()
+
+#: One drain at a time, per event loop.
+#:
+#: Two closes seconds apart — a session switch followed by the app going to the
+#: background — otherwise run two drains over the same backlog concurrently.
+#: The row lock in `_extract_episode` stops them double-writing, but only after
+#: the loser has already paid for a digest and an extraction it throws away,
+#: and nothing stops the two of them taking episodes in interleaved order,
+#: which is the inversion `run_extraction_backlog` halts to avoid. Serialising
+#: here is what makes both of those unreachable rather than merely survivable.
+#:
+#: Keyed by loop rather than a module-level `asyncio.Lock`, because a Lock
+#: binds to the loop it first blocks on and raises ever after on any other —
+#: which under pytest, where every test gets its own loop, is a failure in
+#: whichever test happens to run second.
+_DRAIN_LOCKS: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]" = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _drain_lock() -> asyncio.Lock:
+    loop = asyncio.get_running_loop()
+    lock = _DRAIN_LOCKS.get(loop)
+    if lock is None:
+        lock = asyncio.Lock()
+        _DRAIN_LOCKS[loop] = lock
+    return lock
 
 
 @lru_cache
@@ -99,7 +162,9 @@ def _render(messages: Sequence[Message]) -> str:
     return "\n".join(f"{m.role}: {m.text}" for m in messages)
 
 
-async def _record_episode(factory: Factory, session_id: uuid.UUID) -> None:
+async def _record_episode(
+    factory: Factory, session_id: uuid.UUID, *, closed_at: datetime | None = None,
+) -> None:
     """Freeze this session as an episode, if it is not already one.
 
     Committed on its own, before anything is extracted from it, because this
@@ -108,11 +173,19 @@ async def _record_episode(factory: Factory, session_id: uuid.UUID) -> None:
     everything downstream works from the episode, so a session purged after
     close costs the back-reference and not the memory.
 
+    `closed_at` defaults to the column's `now()`, which is the truth when a
+    device says it has left. The sweep passes the last message's timestamp
+    instead: an abandoned March session noticed in June ended in March, and
+    that column is both what the drain orders by and what the tutor is shown
+    as the session's date.
+
     Two things can already have recorded this session: an earlier close (the
     ordinary case) and a concurrent one (the double-schedule). The SELECT
     catches the first cheaply; `uq_episodes_session` catches the second, and
     the loser of that race returns rather than re-reading and extracting, so
-    the winner owns the episode outright.
+    the winner owns the episode outright. Only that violation is treated as
+    the race — every other constraint on this table means something has gone
+    wrong that a shrug and an INFO line would bury.
     """
     async with factory() as db:
         already = (await db.execute(
@@ -135,27 +208,35 @@ async def _record_episode(factory: Factory, session_id: uuid.UUID) -> None:
             # member of the backlog that every close pays a provider call for.
             return
 
-        db.add(Episode(
+        episode = Episode(
             learner_id=SOLE_LEARNER_ID,
             session_id=session_id,
             transcript=_render(messages),
             message_count=len(messages),
             started_at=session.started_at,
-        ))
+        )
+        if closed_at is not None:
+            episode.closed_at = closed_at
+        db.add(episode)
         try:
             await db.commit()
-        except IntegrityError:
+        except IntegrityError as error:
             await db.rollback()
+            code = getattr(error.orig, "sqlstate", None) or getattr(
+                error.orig, "pgcode", None
+            )
+            if code != _UNIQUE_VIOLATION:
+                raise
             log.info("session %s was already recorded by a concurrent close",
                      session_id)
 
 
-async def _extract_episode(factory: Factory, episode_id: uuid.UUID) -> None:
+async def _extract_episode(factory: Factory, episode_id: uuid.UUID) -> bool:
     """Digest one episode, mine it for facts, and mark it read.
 
     Three transactions and not one, and the split is the point. The naive
     shape holds a session open across the digest, the extraction, the
-    adjudication and the synthesis — four provider calls, seconds each, with a
+    adjudication and the synthesis — five provider calls, seconds each, with a
     pooled Neon connection pinned for all of them and doing nothing. So the
     two calls that need no database at all are made with no session open, and
     what remains is a short read, a gap, and one write transaction.
@@ -166,47 +247,95 @@ async def _extract_episode(factory: Factory, episode_id: uuid.UUID) -> None:
     land together. A crash between them would leave atoms written under an
     unmarked episode, and the retry would write them a second time. Those two
     do make provider calls of their own while the connection is held; that is
-    their contract and not something this module can unpick from outside.
+    their contract, and `WRITE_TIMEOUT_SECONDS` is what bounds it.
 
-    The re-select locks, which is what stops two overlapping drains from
-    extracting the same episode twice. `SKIP LOCKED` rather than a wait: a
-    runner that finds the row taken has nothing useful to do with it, and
-    queueing behind the holder would only earn it the `extracted_at IS NOT
-    NULL` bail-out a few seconds later.
+    The re-select takes a row lock, and it *waits* for one already held rather
+    than skipping past it. Skipping looks like the cheaper answer and is the
+    wrong one: a runner that steps over a locked episode goes on to extract a
+    newer one, which is precisely the out-of-order supersession
+    `run_extraction_backlog` halts a whole drain to prevent. Waiting costs a
+    few seconds and then, under READ COMMITTED, re-evaluates `extracted_at IS
+    NULL` against the row the holder committed — so the waiter still cannot
+    double-extract, it just cannot jump the queue.
     """
     async with factory() as db:
         episode = await db.get(Episode, episode_id)
         if episode is None or episode.extracted_at is not None:
-            return
+            return False
         transcript = episode.transcript
         source_session_id = episode.session_id
-        # The date the session happened, never today's. A backlog retry can run
-        # days later, and `extract_atoms` writes this date into the facts it
-        # produces — dating them by the pass rather than by the session is a
-        # wrong answer that reads exactly like a right one.
-        session_date = episode.started_at.date()
+        # The session's own clock, never the pass's. A backlog retry can run
+        # days later, and both of these end up in the permanent record: the
+        # date is written into the fact text, and `valid_from` is the "when
+        # was this true" axis the store is bi-temporal for. Dating either by
+        # when extraction happened to run is a wrong answer that reads exactly
+        # like a right one.
+        started_at = episode.started_at
 
     digest = await _digest(transcript)
-    atoms = await extract_atoms(transcript, session_date=session_date)
+    atoms = await extract_atoms(transcript, session_date=started_at.date())
 
+    async with asyncio.timeout(WRITE_TIMEOUT_SECONDS):
+        async with factory() as db:
+            episode = (await db.execute(
+                select(Episode)
+                .where(Episode.id == episode_id, Episode.extracted_at.is_(None))
+                .with_for_update()
+            )).scalar_one_or_none()
+            if episode is None:
+                log.info("episode %s was extracted by another pass", episode_id)
+                return False
+            episode.digest = digest
+            await consolidate(db, SOLE_LEARNER_ID, atoms,
+                              session_id=source_session_id, turn_ids=[],
+                              valid_from=started_at)
+            await rebuild_profile(db, SOLE_LEARNER_ID)
+            episode.extracted_at = datetime.now(timezone.utc)
+            await db.commit()
+    return True
+
+
+async def sweep_abandoned_sessions(*, db_factory: Factory | None = None) -> int:
+    """Record an episode for every session nobody closed. Returns how many.
+
+    The close endpoint is only called when a device has genuinely left a
+    session, which leaves one hole: the sessions it never leaves. An app
+    killed from the switcher, a crash, an iPad put down and not picked up
+    again — none of those produce a close, and without this the session is
+    never remembered at all.
+
+    A session is fair game once it has been silent for `STALE_AFTER`. Silence
+    is measured from the last message rather than `sessions.updated_at`,
+    because that column is touched by anything that writes the row and is not
+    a statement about the learner.
+    """
+    factory = db_factory or session_factory()
+    cutoff = datetime.now(timezone.utc) - STALE_AFTER
     async with factory() as db:
-        episode = (await db.execute(
-            select(Episode)
-            .where(Episode.id == episode_id, Episode.extracted_at.is_(None))
-            .with_for_update(skip_locked=True)
-        )).scalar_one_or_none()
-        if episode is None:
-            return
-        episode.digest = digest
-        await consolidate(db, SOLE_LEARNER_ID, atoms,
-                          session_id=source_session_id, turn_ids=[])
-        await rebuild_profile(db, SOLE_LEARNER_ID)
-        episode.extracted_at = datetime.now(timezone.utc)
-        await db.commit()
+        last_message = (
+            select(
+                Message.session_id.label("session_id"),
+                sa_func.max(Message.created_at).label("last_at"),
+            )
+            .group_by(Message.session_id)
+            .subquery()
+        )
+        stale = (await db.execute(
+            select(last_message.c.session_id, last_message.c.last_at)
+            .outerjoin(Episode, Episode.session_id == last_message.c.session_id)
+            .where(Episode.id.is_(None), last_message.c.last_at < cutoff)
+            .order_by(last_message.c.last_at)
+        )).all()
+
+    for session_id, last_at in stale:
+        log.info("sweeping abandoned session %s, silent since %s",
+                 session_id, last_at)
+        await _record_episode(factory, session_id, closed_at=last_at)
+    return len(stale)
 
 
 async def run_extraction_backlog(*, db_factory: Factory | None = None) -> int:
-    """Extract every episode written but never read. Returns how many.
+    """Extract every episode written but never read. Returns how many were.
 
     Oldest first, and that is a correctness requirement rather than tidiness.
     Consolidation's SUPERSEDE rule is "the learner's state has changed", which
@@ -218,29 +347,63 @@ async def run_extraction_backlog(*, db_factory: Factory | None = None) -> int:
     Carrying on would extract a newer episode while an older one is still
     unread, and the eventual retry of the older one is then the inversion
     above. The cost of that choice is a poison episode blocking the ones
-    behind it until someone looks — visible in the logs, and preferable to a
-    silently mis-ordered store.
+    behind it until someone looks — which is what `backlog_status` puts on the
+    health endpoint, because a halt whose only symptom is a log line is a
+    silence, not a signal.
     """
     factory = db_factory or session_factory()
-    async with factory() as db:
-        pending = list((await db.execute(
-            select(Episode.id).where(Episode.extracted_at.is_(None))
-            # `id` last for the same reason every ordered query in this package
-            # carries it: episodes closed in the same transaction share a
-            # `closed_at`, and without a tiebreak their order is the planner's.
-            .order_by(Episode.closed_at, Episode.id)
-        )).scalars().all())
+    async with _drain_lock():
+        async with factory() as db:
+            pending = list((await db.execute(
+                select(Episode.id).where(Episode.extracted_at.is_(None))
+                # `id` last for the same reason every ordered query in this
+                # package carries it: episodes closed in one statement share a
+                # `closed_at`, and without a tiebreak their order is the
+                # planner's.
+                .order_by(Episode.closed_at, Episode.id)
+            )).scalars().all())
 
-    for done, episode_id in enumerate(pending):
-        try:
-            await _extract_episode(factory, episode_id)
-        except Exception:
-            log.exception(
-                "extraction failed for episode %s; it and the %d behind it stay "
-                "in the backlog", episode_id, len(pending) - done - 1,
-            )
-            raise
-    return len(pending)
+        extracted = 0
+        for done, episode_id in enumerate(pending):
+            try:
+                if await _extract_episode(factory, episode_id):
+                    extracted += 1
+            except Exception:
+                log.exception(
+                    "extraction failed for episode %s; it and the %d behind it "
+                    "stay in the backlog", episode_id, len(pending) - done - 1,
+                )
+                raise
+        return extracted
+
+
+async def backlog_status(*, db_factory: Factory | None = None) -> dict:
+    """How much unread memory is waiting, and how long the oldest has waited.
+
+    On the health endpoint because a halted drain has no other symptom. The
+    episodes are safe, nothing raises again until the next close, and the only
+    account of it is a log line — so without two numbers on a page someone
+    already watches, "memory quietly stopped updating in March" is discovered
+    by noticing the tutor has gone vague.
+
+    Never raises. Health is asked whether the process is alive, and answering
+    "no" because a count could not be read would turn a memory problem into a
+    failed liveness probe.
+    """
+    try:
+        factory = db_factory or session_factory()
+        async with factory() as db:
+            count, oldest = (await db.execute(
+                select(sa_func.count(Episode.id), sa_func.min(Episode.closed_at))
+                .where(Episode.extracted_at.is_(None))
+            )).one()
+    except Exception:
+        log.exception("could not read the extraction backlog")
+        return {"unextracted_episodes": None, "oldest_unextracted_age_seconds": None}
+    age = None if oldest is None else int(
+        (datetime.now(timezone.utc) - oldest).total_seconds()
+    )
+    return {"unextracted_episodes": count, "oldest_unextracted_age_seconds": age}
 
 
 async def run_session_close(
@@ -254,15 +417,17 @@ async def run_session_close(
     a session's contribution to the learner's permanent record — which is what
     `uq_episodes_session` and the `extracted_at` check are both for.
 
-    It drains the whole backlog rather than only the session it was given
+    It sweeps and drains rather than handling only the session it was given
     because that is where the retry lives: there is no queue and no cron here,
-    so an episode that failed to extract is picked up by whichever close
-    happens next. Draining also keeps the ordering `run_extraction_backlog`
-    describes — extracting this session alone, while an older one sat unread,
-    is exactly the inversion that function exists to avoid.
+    so an episode that failed to extract, or a session nobody ever closed, is
+    picked up by whichever close happens next. Draining also keeps the
+    ordering `run_extraction_backlog` describes — extracting this session
+    alone, while an older one sat unread, is exactly the inversion that
+    function exists to avoid.
     """
     factory = db_factory or session_factory()
     await _record_episode(factory, session_id)
+    await sweep_abandoned_sessions(db_factory=factory)
     await run_extraction_backlog(db_factory=factory)
 
 

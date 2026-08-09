@@ -296,6 +296,7 @@ async def consolidate(
     *,
     session_id: uuid.UUID | None,
     turn_ids: list[uuid.UUID],
+    valid_from: datetime | None = None,
 ) -> ConsolidationResult:
     """Write a session's facts into the store, superseding what they replace.
 
@@ -305,6 +306,16 @@ async def consolidate(
     `session_id` is nullable because `MemoryAtom.source_session_id` is — the
     citation is deliberately not a foreign key, and an atom whose session has
     been purged keeps the fact and loses the pointer.
+
+    `valid_from` is when these facts *started being true*, which is when the
+    session happened and not when this ran. It matters to any caller that can
+    lag: an offline pass draining a backlog in June would otherwise stamp a
+    March session's atoms with June, on the one axis whose entire job is to say
+    when something was true. That also quietly weakens this module's own last
+    line of defence — the `existing_facts` block below is dated from this
+    column, and a backlog dated by the pass makes every fact look
+    simultaneous. Left unset the column's `now()` stands, which is right for a
+    caller writing a fact as the learner states it.
     """
     if not atoms:
         return ConsolidationResult(0, 0, 0)
@@ -377,6 +388,11 @@ async def consolidate(
             # the tutor's own observation a learner statement's authority.
             stated=atom.stated,
         )
+        # Assigned rather than passed to the constructor, so a caller with no
+        # opinion leaves the column's server-side `now()` in place instead of
+        # being handed a Python clock that is nearly but not quite it.
+        if valid_from is not None:
+            row.valid_from = valid_from
         db.add(row)
         # Flushed inside the loop so `row.id` exists for the `superseded_by`
         # pointer written immediately below it.

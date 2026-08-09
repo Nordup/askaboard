@@ -169,18 +169,26 @@ async def get_session(session_id: uuid.UUID, db: AsyncSession = Depends(db_sessi
 async def close_session(
     session_id: uuid.UUID, db: AsyncSession = Depends(db_session)
 ):
-    """The device saying it has moved on from this session.
+    """The device saying it has left this session for good.
 
-    Called when the learner switches sessions or backgrounds the app, and safe
-    to call again on either — `run_session_close` is idempotent, which is what
-    lets the device retry a close it is not sure landed rather than having to
-    track whether it already sent one.
+    Call it on a session switch and on an explicit end. **Never on
+    backgrounding.** A close freezes the transcript into an `Episode`, and
+    `uq_episodes_session` makes that the only one this session will ever
+    get — so a close sent while the learner is coming back drops every turn
+    after it, permanently and with nothing recording that it happened. An iPad
+    backgrounds constantly and says nothing about whether the learner is done.
+    `jobs.sweep_abandoned_sessions` is what covers the sessions that are never
+    explicitly left; it needs no help from the device.
+
+    Safe to send twice — `run_session_close` is idempotent, so a device can
+    retry a close it is not sure landed rather than tracking whether it
+    already sent one.
 
     Returns before any of the work starts, and deliberately reports nothing
-    about it. Extraction is four provider calls; the answer to "did the memory
+    about it. Extraction is five provider calls; the answer to "did the memory
     write succeed" is minutes away and is not something the device can act on
     in either case. `app/memory/jobs.py` is where a failed one is accounted
-    for.
+    for, and `/health` is where a stuck one shows up.
 
     404 rather than a silent 204 for a session that does not exist: a device
     with the wrong id would otherwise get the same answer as one that worked,
