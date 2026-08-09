@@ -19,7 +19,16 @@ struct TutorFullScreen: View {
     @Environment(\.screenLayout) private var layout
     @Binding var text: String
     @ObservedObject var dictation: DictationController
+    /// The same draft the docked panel holds — see `TutorPanel.attachments`. Observed, not
+    /// owned: a learner who attaches a photo in the panel and then expands to the reading
+    /// column is looking at one message, not two.
+    @ObservedObject var attachments: ComposerAttachments
     let actions: TutorActions
+
+    /// Board 16's menu and the picker it asked for. The reading column has no session menu
+    /// to be an alternative to, so these are the only two pieces of state this surface owns.
+    @State private var isAttachMenuOpen = false
+    @State private var pickerSource: AttachmentSource? = nil
 
     private var column: TutorColumnMetrics { TutorColumnMetrics(layout: layout) }
     /// The composer and the band behind it, as one thing. See `ComposerSlotMetrics`.
@@ -48,6 +57,18 @@ struct TutorFullScreen: View {
             // conversation phase is exactly how that comes back.
             SettingsButton(action: actions.openSettings)
                 .offset(x: column.settingsX, y: column.top)
+
+            if isAttachMenuOpen {
+                attachMenu
+            }
+        }
+        .attachmentPickers(source: $pickerSource) { data, filename, contentType in
+            attachments.add(
+                data: data,
+                filename: filename,
+                contentType: contentType,
+                sessionID: store.session.id
+            )
         }
         // `DictationController` is constructed with no store in reach (see its own doc
         // comment on `sessionID`), so this is where the session a recording attaches to is
@@ -148,6 +169,11 @@ struct TutorFullScreen: View {
     /// `AttachmentStackMetrics.composer(.fullScreen)` is the extrapolation board 03 states
     /// for it — and a selection that was invisible here would be consumed by the next send
     /// without the student ever seeing it.
+    ///
+    /// The attach button is drawn at both scales and is independent of the marquee: this
+    /// composer passes `selection: .unavailable` when nothing is attachable — board 07 draws
+    /// no marquee in the wide pill — and the `+` is beside it either way. There is one
+    /// attach control in the product and it is not a panel-scale affordance.
     private var composer: some View {
         Composer(
             scale: .fullScreen,
@@ -155,11 +181,41 @@ struct TutorFullScreen: View {
             text: $text,
             selection: uiState.isSelectionAttached ? .attached : .unavailable,
             onSend: actions.send,
+            onAttach: { isAttachMenuOpen = true },
+            // See `TutorPanel.composer` — the refusal is silent without it.
+            canAttach: !attachments.isFull && !attachments.isSending,
             onVoice: dictation.voiceHandler(text: $text),
             dictation: dictation.composerDictation,
             // Same slot and same precedence as the panel's — see `TutorPanel`.
-            note: store.composerNote ?? dictation.noteText,
-            onDismissSelection: actions.dismissSelection
+            note: attachments.failureNote ?? store.composerNote ?? dictation.noteText,
+            onDismissSelection: actions.dismissSelection,
+            attachments: attachments.pending,
+            onRemoveAttachment: { attachments.remove($0) }
+        )
+    }
+
+    /// Board 16's card, anchored the way the panel anchors it: bottom edge `gapAbovePill`
+    /// clear of the pill's top, on the composer's own leading edge.
+    ///
+    /// The pill's top is `column.bottom − slot.band` — the same line `body` offsets the
+    /// composer slot to — so the card's own top is that, less the gap, less its height.
+    /// There is no surface radius to clip it here and no session menu to be an alternative
+    /// to; the dismiss layer is the whole window rather than the panel, because that is
+    /// what this surface covers.
+    @ViewBuilder
+    private var attachMenu: some View {
+        Color.clear
+            .contentShape(.rect)
+            .frame(width: layout.size.width, height: layout.size.height)
+            .onTapGesture { isAttachMenuOpen = false }
+
+        AttachMenu(width: column.width) { choice in
+            isAttachMenuOpen = false
+            pickerSource = AttachmentSource(choice)
+        }
+        .offset(
+            x: column.x,
+            y: column.bottom - slot.band - AttachMenu.gapAbovePill - AttachMenu.height
         )
     }
 }
@@ -213,9 +269,17 @@ struct TutorColumnMetrics: Equatable, Sendable {
     let greetingHeight: CGFloat
     /// 168 in the row the design drew, 356 where it wrapped.
     let suggestionsHeight: CGFloat
-    /// The resting pill, and the pill with a selection card grown behind it.
-    let composerHeight: CGFloat
-    let attachedComposerHeight: CGFloat
+    /// The composer this column draws, kept whole rather than reduced to two heights.
+    ///
+    /// It used to be `composerHeight` and one `attachedComposerHeight`, and the second was
+    /// wrong the moment the composer learned to hold files: it measured board 03's label
+    /// card (120) while a composer showing chips is board 16's (132). *Which* card is drawn
+    /// is a runtime fact, so the question has to be asked with the card named — see
+    /// `ComposerCard` and `composerTop(showing:)`.
+    private let composer: ComposerMetrics
+
+    /// The resting pill — 68 in this column, at every width the scale is drawn at.
+    var composerHeight: CGFloat { composer.height }
 
     init(layout: ScreenLayout) {
         x = layout.columnX
@@ -230,15 +294,14 @@ struct TutorColumnMetrics: Equatable, Sendable {
         greetingHeight = GreetingMetrics.for(.fullScreen, width: layout.columnWidth).totalHeight
         suggestionsHeight = SuggestionChipMetrics.for(.fullScreen, width: layout.columnWidth)
             .containerHeight
-        let composer = ComposerMetrics.for(.fullScreen, width: layout.columnWidth)
-        composerHeight = composer.height
-        attachedComposerHeight = composer.attachedHeight
+        composer = ComposerMetrics.for(.fullScreen, width: layout.columnWidth)
     }
 
-    /// Bottom-anchored on the content band, as both boards draw it. With a selection attached
-    /// the block grows upward by the card's visible band, so the pill stays put.
-    func composerTop(isAttached: Bool) -> CGFloat {
-        bottom - (isAttached ? attachedComposerHeight : composerHeight)
+    /// Bottom-anchored on the content band, as both boards draw it. With something attached
+    /// the block grows upward by that card's visible band, so the pill stays put — and the
+    /// two cards are not the same band, which is why this takes the card rather than a bool.
+    func composerTop(showing card: ComposerCard) -> CGFloat {
+        bottom - composer.height(showing: card)
     }
 
     /// The band the start block flows in: the content top down to the designed 164 above the
@@ -250,7 +313,7 @@ struct TutorColumnMetrics: Equatable, Sendable {
     /// the column above it does not move. A greeting that jumped 38 points the moment a
     /// selection was attached would be the composer redrawing the screen behind it.
     var startRegionHeight: CGFloat {
-        max(0, composerTop(isAttached: false) - Self.suggestionsToComposer - columnTop)
+        max(0, composerTop(showing: .none) - Self.suggestionsToComposer - columnTop)
     }
 
     /// Greeting, the board's 174, grid. The one rigid run in the column.

@@ -41,7 +41,25 @@ struct BoardScreen: View {
     /// change the tutor makes.
     @StateObject private var dictation = DictationController()
 
+    /// The files on the message being written, owned here for the same reason `composerText`
+    /// and `dictation` are: the draft is the *learner's*, and it has to survive every
+    /// presentation change the tutor makes. A `@StateObject` inside `TutorPanel` would be
+    /// destroyed the moment the panel unmounted — docking, collapsing, going full-screen —
+    /// and a photo attached a second earlier would go with it.
+    @StateObject private var attachments = ComposerAttachments.forThisBuild()
+
     @State private var composerText = ""
+    /// True from the tap on `composer/send` until the turn has actually been handed to the
+    /// store.
+    ///
+    /// `ComposerAttachments.isSending` cannot be this guard on its own: it is a plain `Bool`
+    /// set at the top of `readyForSend()` and cleared by that call's own `defer`, so the
+    /// first of two overlapping sends reopens the window for the second on its way out — and
+    /// the second would then send a draft the first has already cleared. This is the flag the
+    /// *button* reads. It is set and read on the main actor with no suspension between the
+    /// guard and the write, and it stays true across the whole wait, so a second tap while a
+    /// six-page PDF is still converting cannot start a second turn.
+    @State private var isSendingTurn = false
     @State private var isShowingSettings = false
     /// A drag updates only this screen-local preview. Publishing `UIState.panelWidth` on
     /// every touch event invalidated every environment-object consumer and made the seam
@@ -81,6 +99,14 @@ struct BoardScreen: View {
         // threshold takes the composer off the screen without either axis moving.
         .onChange(of: presentation) { _, _ in dictation.stop() }
         .onChange(of: isShowingSettings) { _, isShowing in if isShowing { dictation.stop() } }
+        // The backstop for the one session change that does not go through
+        // `TutorPanel.adoptSessionUI` — Settings' "Reset this session", which calls the
+        // store directly with no surface in between. An attachment was uploaded *against a
+        // session id*, so a chip carried into the session next door names a file the new
+        // session's turn has no claim on. `onChange` rather than `task(id:)`: this screen is
+        // never remounted, so it fires on a real switch and never on an appearance — a
+        // `task(id:)` on the panel would wipe the draft every time the tutor docked.
+        .onChange(of: store.session.id) { _, _ in attachments.clear() }
         // The one place the store, the network client and the live canvas meet.
         // Set here rather than passed per-send so no turn can be the one that
         // forgets the board — see `TutorStore.boardProvider`. `capture` is held
@@ -290,7 +316,12 @@ struct BoardScreen: View {
     private var tutor: some View {
         switch presentation {
         case .docked:
-            TutorPanel(text: $composerText, dictation: dictation, actions: actions)
+            TutorPanel(
+                text: $composerText,
+                dictation: dictation,
+                attachments: attachments,
+                actions: actions
+            )
                 .offset(x: layout.panelX, y: layout.contentTop)
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("tutor-panel")
@@ -300,7 +331,12 @@ struct BoardScreen: View {
             // lets the dock's orb return the student to screen 05 or 08 correctly.
             EmptyView()
         case .fullScreen:
-            TutorFullScreen(text: $composerText, dictation: dictation, actions: actions)
+            TutorFullScreen(
+                text: $composerText,
+                dictation: dictation,
+                attachments: attachments,
+                actions: actions
+            )
         }
     }
 
@@ -460,7 +496,15 @@ struct BoardScreen: View {
     /// had pointed at their working and been answered as if they hadn't. Now the
     /// attachment decides the branch and only the capture can fail inside it, out
     /// loud, with the text and the selection both left where they were.
+    ///
+    /// **A send waits for what is still converting.** A learner who taps send while a
+    /// six-page PDF is mid-upload must have it arrive with the turn rather than dropped —
+    /// which is what `deliver` is for, and why the attachment branches are asynchronous
+    /// while every send that carries no file stays exactly as synchronous as it was.
     private func send() {
+        // One turn at a time. See `isSendingTurn` — `ComposerAttachments.isSending` is not
+        // this guard, and cannot be.
+        guard !isSendingTurn else { return }
         // Sending ends the session outright, in whichever phase it is in: the words already in
         // the field are the ones being sent, and a transcription still in flight would land in
         // an emptied composer a second later.
@@ -473,19 +517,51 @@ struct BoardScreen: View {
                 return
             }
             composerText = ""
-            store.evaluate(
-                imageData: evaluation.data,
-                regionDescription: evaluation.description,
-                question: typed.isEmpty ? nil : typed
-            )
-            uiState.clearBoardSelection()
-        } else if !typed.isEmpty {
+            deliver { ready in
+                store.evaluate(
+                    imageData: evaluation.data,
+                    regionDescription: evaluation.description,
+                    question: typed.isEmpty ? nil : typed,
+                    attachments: ready
+                )
+                uiState.clearBoardSelection()
+                return true
+            }
+        } else if !typed.isEmpty || !attachments.isEmpty {
             composerText = ""
-            store.send(typed)
+            deliver { ready in
+                // Every attachment failed to convert and there were no words with them:
+                // nothing is sent, and — the point of the `false` — nothing is cleared
+                // either. The failed chips and the sentence above the pill are the only
+                // account the learner has of what happened.
+                guard !typed.isEmpty || !ready.isEmpty else { return false }
+                store.send(typed, attachments: ready)
+                return true
+            }
         } else {
             return
         }
         uiState.beginConversation()
+    }
+
+    /// Hands the turn to the store once everything on the draft has finished converting.
+    ///
+    /// - Parameter turn: Sends it, and reports whether it consumed the draft. Only a `true`
+    ///   clears the chips.
+    private func deliver(_ turn: @escaping @MainActor ([UploadedAttachment]) -> Bool) {
+        // Nothing attached is the overwhelmingly common send, and it stays exactly what it
+        // was: no task, no hop, no window at all for a second tap to land in.
+        guard !attachments.isEmpty else {
+            _ = turn([])
+            return
+        }
+        isSendingTurn = true
+        Task {
+            defer { isSendingTurn = false }
+            let ready = await attachments.readyForSend()
+            guard turn(ready) else { return }
+            attachments.clear()
+        }
     }
 
     /// The image a send carries, and the words that say what it is of.

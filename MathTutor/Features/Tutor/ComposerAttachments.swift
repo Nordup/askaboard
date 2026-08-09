@@ -63,6 +63,22 @@ final class ComposerAttachments: ObservableObject {
         }
     }
 
+    /// What the app's own composer holds, for whatever this build can reach.
+    ///
+    /// A build with no backend — a checkout with no `Backend.local.xcconfig`, or a UI test
+    /// run — has nowhere to upload to, so every attachment fails with the same sentence the
+    /// chip already shows for any other refusal. That is the honest outcome and the visible
+    /// one: hiding the `+` instead would make the control's absence the only report, on a
+    /// surface where the tutor itself is already failing out loud for the same reason.
+    static func forThisBuild(
+        configuration: BackendConfiguration? = BackendConfiguration.load()
+    ) -> ComposerAttachments {
+        guard let configuration else {
+            return ComposerAttachments { _, _, _, _ in throw TutorServiceError.notConfigured }
+        }
+        return ComposerAttachments(configuration: configuration)
+    }
+
     var isEmpty: Bool { pending.isEmpty }
     var isFull: Bool { pending.count >= Self.limit }
 

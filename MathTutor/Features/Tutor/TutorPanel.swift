@@ -49,7 +49,18 @@ struct TutorPanel: View {
     @Environment(\.screenLayout) private var layout
     @Binding var text: String
     @ObservedObject var dictation: DictationController
+    /// The files on the draft. Observed rather than owned for exactly the reason the
+    /// dictation controller is: the draft outlives every presentation change the tutor
+    /// makes, and a `@StateObject` here would be destroyed — taking a half-uploaded photo
+    /// with it — the moment the panel docks, collapses or goes full-screen.
+    @ObservedObject var attachments: ComposerAttachments
     let actions: TutorActions
+
+    /// Board 16's menu, and which of the three pickers it asked for. Both are the *panel's*
+    /// rather than the draft's: a menu open when the learner collapses the tutor is a card
+    /// hanging over nothing, and the draft it would have added to is still there.
+    @State private var isAttachMenuOpen = false
+    @State private var pickerSource: AttachmentSource? = nil
 
     /// `337 − 2 × 18` at the design's panel width, derived rather than read off the 301 token
     /// because board 02 says hard-coding it *"is a bug waiting for the first panel-width
@@ -90,19 +101,39 @@ struct TutorPanel: View {
                     // Every one of these takes the learner somewhere the menu
                     // cannot follow — a dock, a full-screen column, a settings
                     // window — so each puts it away first.
-                    onDock: { uiState.closeSessionMenu(); uiState.collapseTutor() },
-                    onFullScreen: { uiState.closeSessionMenu(); uiState.expandTutorToFullScreen() },
-                    onSettings: { uiState.closeSessionMenu(); actions.openSettings() },
+                    onDock: { closeMenus(); uiState.collapseTutor() },
+                    onFullScreen: { closeMenus(); uiState.expandTutorToFullScreen() },
+                    onSettings: { closeMenus(); actions.openSettings() },
                     sessionTitle: store.session.title,
                     isSessionMenuOpen: uiState.isSessionMenuOpen,
-                    onToggleSessionMenu: uiState.toggleSessionMenu
+                    // The two menus are alternatives, not layers: one opening puts the
+                    // other away, the same way every control in this row already puts the
+                    // session menu away before it moves the learner somewhere.
+                    onToggleSessionMenu: {
+                        isAttachMenuOpen = false
+                        uiState.toggleSessionMenu()
+                    }
                 )
                 .padding(.top, TutorPanelMetrics.inset)
 
                 if uiState.isSessionMenuOpen {
                     sessionMenu(in: size)
                 }
+
+                if isAttachMenuOpen {
+                    attachMenu(in: size)
+                }
             }
+        }
+        // Mounted on the panel rather than on the composer: a sheet presented from a view
+        // inside a `ComposerSlot` is presented from a view the slot may stop drawing.
+        .attachmentPickers(source: $pickerSource) { data, filename, contentType in
+            attachments.add(
+                data: data,
+                filename: filename,
+                contentType: contentType,
+                sessionID: store.session.id
+            )
         }
         // `DictationController` is constructed with no store in reach (see its own doc
         // comment on `sessionID`), so this is where the session a recording attaches to is
@@ -147,15 +178,57 @@ struct TutorPanel: View {
         .padding(.top, Self.chromeTop + SessionSwitcherMetrics.menuTopGap)
     }
 
+    /// Board 16's three-row card, hanging **above** the composer.
+    ///
+    /// Above rather than below because the composer sits on the panel's floor and a menu
+    /// dropping from it would leave the surface. Everything else is `sessionMenu`'s
+    /// construction verbatim, which is what board 16 asks for — *"construction is inherited
+    /// from `menu/sessions` exactly"*: the same transparent dismiss layer mounted only while
+    /// the menu is open, the same 301pt card centred in the 337pt surface (which is what
+    /// puts its left edge on the panel's own 18pt inset), and drawn inside
+    /// `TutorPanelSurface` so the panel's radius clips it.
+    ///
+    /// The top padding is the anchor, derived rather than measured: the pill's top is the
+    /// surface floor less the composer's slot, the card's bottom sits `gapAbovePill` above
+    /// that, and the card is `AttachMenu.height` tall. Clamped at 0 so a panel too short to
+    /// hold the card pins it to the top rather than pushing it out through the surface.
+    @ViewBuilder
+    private func attachMenu(in size: CGSize) -> some View {
+        Color.clear
+            .contentShape(.rect)
+            .frame(width: size.width, height: size.height)
+            .onTapGesture { isAttachMenuOpen = false }
+
+        AttachMenu(width: contentWidth) { choice in
+            isAttachMenuOpen = false
+            pickerSource = AttachmentSource(choice)
+        }
+        .padding(.top, max(0, size.height - slot.band - AttachMenu.gapAbovePill - AttachMenu.height))
+    }
+
+    /// Both of the panel's own menus, put away. Anything that takes the learner elsewhere —
+    /// a dock, a full-screen column, a settings window — calls this first.
+    private func closeMenus() {
+        uiState.closeSessionMenu()
+        isAttachMenuOpen = false
+    }
+
     /// The screen's own axes, re-derived for the session that just opened.
     ///
-    /// Neither of these survives a switch. An attached marquee names a rectangle
+    /// None of these survives a switch. An attached marquee names a rectangle
     /// on the board that was just swapped out, so it would send the wrong region
     /// on the next turn; and the conversation axis is the difference between a
     /// greeting and a thread, which is a property of the session rather than of
     /// the learner's last tap.
+    ///
+    /// The draft's files go for the same reason and one more: they were uploaded
+    /// *against a session id* (`POST /v1/attachments` takes one), so a chip
+    /// carried into the session next door names a file the new session's turn
+    /// has no claim on. `clear()` also cancels anything still in flight, which
+    /// is an upload for a draft that no longer exists.
     private func adoptSessionUI() {
         uiState.clearBoardSelection()
+        attachments.clear()
         uiState.showConversation(store.hasGoal ? .active : .start)
     }
 
@@ -249,14 +322,32 @@ struct TutorPanel: View {
             text: $text,
             selection: composerSelection,
             onSend: actions.send,
+            onAttach: {
+                uiState.closeSessionMenu()
+                isAttachMenuOpen = true
+            },
+            // `ComposerAttachments.add(...)` returns `Void` and does nothing at
+            // all once the draft holds five files or while a send is in flight,
+            // so without this the learner picking a sixth gets no chip, no
+            // sentence and no clue. See `Composer.canAttach`.
+            canAttach: !attachments.isFull && !attachments.isSending,
             onVoice: dictation.voiceHandler(text: $text),
             dictation: dictation.composerDictation,
-            // One slot, two writers, newest wins: a send that could not read the
-            // board is the thing that just happened, and a dictation note is
-            // whatever was left over from before it.
-            note: store.composerNote ?? dictation.noteText,
+            // One slot, three writers, newest wins. The server writes its
+            // refusals for a learner — *"That file is too large, try a photo of
+            // one page at a time"* — and this is the lane they are written for:
+            // the chip's own label is 84 points wide and would show three words
+            // of it. Ahead of the other two because it is the one that names
+            // something still on screen and still fixable.
+            note: attachments.failureNote ?? store.composerNote ?? dictation.noteText,
             onDismissSelection: actions.dismissSelection,
-            onToggleSelection: actions.toggleSelection
+            onToggleSelection: actions.toggleSelection,
+            attachments: attachments.pending,
+            // An explicit closure rather than the bound method: a
+            // `@MainActor`-isolated method reference passed straight into a
+            // one-argument closure parameter crashes swift-frontend during
+            // IRGen on this toolchain — see `BoardScreen.board`.
+            onRemoveAttachment: { attachments.remove($0) }
         )
     }
 
@@ -375,6 +466,10 @@ struct TutorThreadView: View {
             ChatThreadItem(
                 message,
                 hasSelection: message.signal == .evaluate,
+                // Carried on the message, unlike the two below: a file the learner
+                // attached is part of what they said, and it survives a relaunch
+                // because `AttachmentStore` kept its thumbnail.
+                attachments: message.attachments,
                 // Board 14. Keyed by message id rather than carried on the
                 // message, because these are evidence for the turn and not
                 // session state — see `TutorStore.boardViews`.

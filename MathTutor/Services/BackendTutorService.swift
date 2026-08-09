@@ -257,6 +257,11 @@ struct BackendTutorService: TutorService, Sendable {
         }
         if let manifest = request.boardManifest { body["board_manifest"] = manifest }
         if let scene = request.boardScene { body["board_scene"] = scene }
+        // Only when there are any, so every turn that carries no file is
+        // byte-identical to what it was before the composer grew a `+`.
+        if !request.attachmentIDs.isEmpty {
+            body["attachment_ids"] = request.attachmentIDs.map(\.uuidString)
+        }
         return body
     }
 }

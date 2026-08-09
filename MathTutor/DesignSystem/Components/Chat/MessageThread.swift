@@ -9,6 +9,11 @@ import SwiftUI
 struct ChatThreadItem: Identifiable, Sendable {
     let message: TutorMessage
     let hasSelection: Bool
+    /// Files sent with this turn. Read back from `AttachmentStore`, which is why a reopened
+    /// session still shows them — unlike `selectionView`, which is a crop of a board the
+    /// device still holds and can re-derive, and unlike a photo of homework, which it
+    /// cannot.
+    let attachments: [MessageAttachment]
     /// The regions of the board the tutor looked at before writing this. Empty
     /// for every learner message and for any tutor turn that did not look.
     /// Board 14 — they are drawn above the reply, as part of the same turn.
@@ -22,11 +27,13 @@ struct ChatThreadItem: Identifiable, Sendable {
     init(
         _ message: TutorMessage,
         hasSelection: Bool = false,
+        attachments: [MessageAttachment] = [],
         boardViews: [BoardView] = [],
         selectionView: BoardView? = nil
     ) {
         self.message = message
         self.hasSelection = hasSelection
+        self.attachments = attachments
         self.boardViews = boardViews
         self.selectionView = selectionView
     }
@@ -217,6 +224,13 @@ struct MessageRow: View {
 
     private var metrics: MessageMetrics { .for(scale, width: width ?? scale.contentWidth) }
 
+    /// The chips card in this row's own column — the same substitution the composer makes,
+    /// for the same reason: a card wider than the shape in front of it shows the notch board
+    /// 03's rule is about.
+    private var chips: AttachmentStackMetrics {
+        .composerChips(scale, width: metrics.rowWidth)
+    }
+
     var body: some View {
         switch item.message.role {
         case .learner:
@@ -227,21 +241,7 @@ struct MessageRow: View {
                 if let selectionView = item.selectionView {
                     BoardViewThumbnail(view: selectionView)
                 }
-                // A selection sent on its own is the picture and nothing else.
-                // The store no longer writes a sentence the learner did not say
-                // (see `TutorStore.evaluate`), and an empty bubble under the
-                // thumbnail would be a mark for the words that are deliberately
-                // not there — a 50pt violet crumb the eye reads as a failure.
-                if !item.message.text.isEmpty {
-                    HStack(spacing: 0) {
-                        Spacer(minLength: 0)
-                        if item.hasSelection {
-                            SelectionMessageBubble(text: item.message.text, metrics: metrics)
-                        } else {
-                            MessageBubble(text: item.message.text, metrics: metrics)
-                        }
-                    }
-                }
+                sentAttachments
             }
             .frame(width: metrics.rowWidth, alignment: .trailing)
         case .tutor, .system:
@@ -259,6 +259,68 @@ struct MessageRow: View {
                 TutorMessageText(markdown: item.message.text, metrics: metrics)
             }
             .frame(width: metrics.rowWidth, alignment: .leading)
+        }
+    }
+
+    /// The chips this turn was sent with, above the bubble.
+    ///
+    /// The same construction the composer draws — `AttachmentStack` with the chips card in
+    /// its band — because it is the same card and the learner has just been looking at it.
+    /// **Read-only**: `isRemovable: false`, so no ✕ is drawn and the chips give back the
+    /// width the control would have taken. `onRemove` and `onDismissSelection` are never
+    /// reached; the turn has already gone, which is the distinction
+    /// `SelectionAttachment.sent` already makes by taking no `onDismiss`.
+    ///
+    /// The thumbnails come from `AttachmentStore` by the server's own id, which is why a
+    /// session reopened tomorrow still draws the pictures.
+    @ViewBuilder
+    private var sentAttachments: some View {
+        if item.attachments.isEmpty {
+            bubble
+        } else {
+            AttachmentStack(metrics: chips) {
+                AttachmentChipRow(
+                    attachments: item.attachments.map {
+                        // A sent attachment is by definition ready; the carried bytes are
+                        // empty because the store is the source here, not the upload that
+                        // finished in a draft that no longer exists.
+                        PendingAttachment(
+                            id: $0.id,
+                            filename: $0.filename,
+                            state: .ready($0, thumbnail: Data())
+                        )
+                    },
+                    showsSelection: false,
+                    metrics: chips,
+                    thumbnail: { AttachmentStore().thumbnail(for: $0) },
+                    onRemove: { _ in },
+                    onDismissSelection: {},
+                    isRemovable: false
+                )
+            } content: {
+                bubble
+            }
+        }
+    }
+
+    /// The student's words, pinned right.
+    ///
+    /// Nothing at all when there are none: a selection — or a file — sent on its own is the
+    /// picture and nothing else. The store no longer writes a sentence the learner did not
+    /// say (see `TutorStore.evaluate`), and an empty bubble under the thumbnail would be a
+    /// mark for words that are deliberately not there — a 50pt violet crumb the eye reads
+    /// as a failure.
+    @ViewBuilder
+    private var bubble: some View {
+        if !item.message.text.isEmpty {
+            HStack(spacing: 0) {
+                Spacer(minLength: 0)
+                if item.hasSelection {
+                    SelectionMessageBubble(text: item.message.text, metrics: metrics)
+                } else {
+                    MessageBubble(text: item.message.text, metrics: metrics)
+                }
+            }
         }
     }
 }

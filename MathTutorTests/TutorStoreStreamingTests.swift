@@ -183,4 +183,78 @@ final class TutorStoreStreamingTests: XCTestCase {
             "A reset session must mint a fresh session_id, or its turns would leak into the old session's transcript"
         )
     }
+
+    // MARK: - The composer's attachments
+
+    /// The `+`, from the store's side: the files land on the learner's own message,
+    /// their thumbnails go to disk under the session that sent them, and the turn
+    /// names them by id rather than carrying any bytes.
+    func testASendWithAttachmentsCarriesThemOnTheMessageAndByIDOnTheTurn() async {
+        let recorded = OSAllocatedUnfairLock<[TutorRequest]>(initialState: [])
+        let store = TutorStore(
+            service: ScriptedTutorService(
+                events: [.textDelta("ok"), .done],
+                onRequest: { request in recorded.withLock { $0.append(request) } }
+            ),
+            persistence: .inMemory,
+            configuration: .stub
+        )
+        let uploaded = UploadedAttachment(
+            attachment: MessageAttachment(
+                id: UUID(), filename: "worksheet.pdf", kind: "pdf", pageCount: 3
+            ),
+            thumbnail: Data([0xFF, 0xD8, 0xFF])
+        )
+        let sessionID = store.session.id
+
+        await store.sendAndWait("is question 4 right?", attachments: [uploaded])
+
+        XCTAssertEqual(
+            store.session.messages.last(where: { $0.role == .learner })?.attachments,
+            [uploaded.attachment],
+            "The chips a reopened thread draws come off the message, so the message has to carry them"
+        )
+        XCTAssertEqual(
+            recorded.withLock { $0 }.first?.attachmentIDs,
+            [uploaded.attachment.id],
+            "The turn names the file the server already holds — ids, never bytes"
+        )
+        // Written at *send* time rather than at upload time: an attachment the learner
+        // removed before sending must leave nothing behind on disk.
+        XCTAssertEqual(
+            AttachmentStore().thumbnail(for: uploaded.attachment.id), uploaded.thumbnail
+        )
+        AttachmentStore().deleteAll(for: sessionID)
+    }
+
+    /// A photographed worksheet is a complete request, the same way a lassoed region
+    /// already was — so the emptiness guard asks about the draft, not about the text.
+    func testFilesWithNoWordsAreStillATurnAndAnEmptyDraftIsStillNothing() async {
+        let recorded = OSAllocatedUnfairLock<[TutorRequest]>(initialState: [])
+        let store = TutorStore(
+            service: ScriptedTutorService(
+                events: [.textDelta("Let me look."), .done],
+                onRequest: { request in recorded.withLock { $0.append(request) } }
+            ),
+            persistence: .inMemory,
+            configuration: .stub
+        )
+        let uploaded = UploadedAttachment(
+            attachment: MessageAttachment(
+                id: UUID(), filename: "photo.heic", kind: "image", pageCount: 1
+            ),
+            thumbnail: Data([0x01])
+        )
+        let sessionID = store.session.id
+
+        await store.sendAndWait("   ", attachments: [uploaded])
+        XCTAssertEqual(recorded.withLock { $0 }.count, 1)
+        XCTAssertEqual(store.session.messages.last(where: { $0.role == .learner })?.text, "")
+
+        // And nothing at all is still nothing: no words, no files, no turn.
+        await store.sendAndWait("   ")
+        XCTAssertEqual(recorded.withLock { $0 }.count, 1)
+
+        AttachmentStore().deleteAll(for: sessionID)
+    }
 }

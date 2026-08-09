@@ -355,7 +355,11 @@ final class ChatComponentTests: XCTestCase {
         // what proves the paddings and the gap are right.
         XCTAssertEqual(composer.placeholderWidth(includingMarquee: true), 151)
         // With a selection attached the composer grows the card: 38 visible + 50 pill.
-        XCTAssertEqual(composer.attachedHeight, 88)
+        XCTAssertEqual(composer.height(showing: .label), 88)
+        // And with files it grows the *other* card, which is 14 points taller: a chip
+        // carrying a 32pt thumbnail does not go into a 38pt band, so the band is 52.
+        XCTAssertEqual(composer.height(showing: .chips), 102)
+        XCTAssertEqual(composer.height(showing: .none), 50)
     }
 
     func testFullScreenComposerMeasuresSevenHundredAndFortyBySixtyEight() {
@@ -526,7 +530,18 @@ final class ChatComponentTests: XCTestCase {
             XCTAssertEqual(composer.attachment.bodyTopRadius, composer.cornerRadius, scale.rawValue)
             // The stack's resting geometry is untouched by any of this: the pill grows out of
             // its top, so `totalHeight` is still the band plus the pill the design draws.
-            XCTAssertEqual(composer.attachedHeight, composer.attachment.visibleBand + composer.height, scale.rawValue)
+            XCTAssertEqual(
+                composer.height(showing: .label),
+                composer.attachment.visibleBand + composer.height,
+                scale.rawValue
+            )
+            // The same law for the taller card, against its own band — which is the
+            // property a single "attached" height could not state.
+            XCTAssertEqual(
+                composer.height(showing: .chips),
+                composer.attachment(showing: .chips).visibleBand + composer.height,
+                scale.rawValue
+            )
         }
     }
 
@@ -911,7 +926,7 @@ final class ChatComponentTests: XCTestCase {
             composerSendIsRaised = composer.sendIsRaised
             // The card's visible band is the label row's height and the pill's is the scale's,
             // so the stack's total is a treatment number even though its width is not.
-            composerAttachedHeight = composer.attachedHeight
+            composerAttachedHeight = composer.height(showing: .label)
 
             let error = ChatErrorMetrics.for(scale, width: width ?? scale.contentWidth)
             errorChipTopMargin = error.chipTopMargin
@@ -1156,7 +1171,7 @@ final class ChatComponentTests: XCTestCase {
         XCTAssertEqual(column.greetingTop, 162)
         XCTAssertEqual(column.suggestionsTop, 604)
         XCTAssertEqual(column.suggestionsTop + column.suggestionsHeight, 772)
-        XCTAssertEqual(column.composerTop(isAttached: false), 936)
+        XCTAssertEqual(column.composerTop(showing: .none), 936)
         XCTAssertEqual(column.bottom, 1004)
 
         // The 134 is what the band has left after the block, and the sum is the check that the
@@ -1179,7 +1194,7 @@ final class ChatComponentTests: XCTestCase {
     func testTheReadingColumnStaysCorrectWhenTheGridWraps() {
         for device in Column.all {
             let column = TutorColumnMetrics(layout: device.layout)
-            let composerTop = column.composerTop(isAttached: false)
+            let composerTop = column.composerTop(showing: .none)
             let context = "\(device.name) · column \(column.width)"
 
             // Nothing above the composer, and nothing above the band.
@@ -1247,7 +1262,7 @@ final class ChatComponentTests: XCTestCase {
         // Even scrolled, every chip is above the composer rather than under it.
         XCTAssertLessThan(
             portrait.suggestionsTop + portrait.suggestionsHeight,
-            portrait.composerTop(isAttached: false)
+            portrait.composerTop(showing: .none)
         )
     }
 
@@ -1261,9 +1276,20 @@ final class ChatComponentTests: XCTestCase {
         let column = TutorColumnMetrics(layout: .reference)
 
         XCTAssertEqual(
-            column.composerTop(isAttached: true),
-            column.composerTop(isAttached: false) - AttachmentStackMetrics.composer(.fullScreen).visibleBand
+            column.composerTop(showing: .label),
+            column.composerTop(showing: .none) - AttachmentStackMetrics.composer(.fullScreen).visibleBand
         )
+        // And the chips card is the *other* band — 64, not 52 — which is the whole reason
+        // this takes a card rather than a bool: a composer holding a file is 132 tall where
+        // one holding a lassoed region is 120, and everything that reserves room for a grown
+        // composer used to be told 120 either way.
+        XCTAssertEqual(
+            column.composerTop(showing: .chips),
+            column.composerTop(showing: .none)
+                - AttachmentStackMetrics.composerChips(.fullScreen, width: column.width).visibleBand
+        )
+        XCTAssertEqual(column.bottom - column.composerTop(showing: .label), 120)
+        XCTAssertEqual(column.bottom - column.composerTop(showing: .chips), 132)
         // Both lanes above are measured off the resting composer, so neither moves.
         XCTAssertEqual(column.greetingTop, 162)
         XCTAssertEqual(column.suggestionsTop, 604)

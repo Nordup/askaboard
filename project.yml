@@ -68,6 +68,22 @@ targets:
           turns it into text you can read and edit before sending. OpenAI does not use it to
           train its models, but can keep it for up to 30 days to check for misuse before
           deleting it.
+        # The composer's camera, for photographing a worksheet or a page of a textbook.
+        # Written the way the microphone string above is, and for the same reason: it names
+        # what is captured, what happens to it and where it goes, because the person reading
+        # this alert may be a parent and "to take photos" tells them nothing.
+        #
+        # It says the photo leaves the iPad, because it does. It says OpenAI does not train
+        # on it and may hold it for up to 30 days for abuse monitoring, which is the default
+        # for API data — Zero Data Retention exists but is application-gated, so this must
+        # not be written as though it applied. And it says the photo is not posted anywhere,
+        # because a camera permission in a child's app is the one a parent reads twice.
+        NSCameraUsageDescription: >-
+          Math Tutor uses the camera only when you tap the camera row in the tutor's message
+          box, to take a photo of a worksheet or a page of a book so the tutor can read it.
+          The photo is sent to Math Tutor's server and on to OpenAI, which does not use it to
+          train its models but can keep it for up to 30 days to check for misuse before
+          deleting it. Nothing is posted anywhere or shared with anyone else.
         # Source Sans 3 is the design's only typeface and iOS does not ship it.
         # Bundled at exactly the three weights the product uses: 400, 500, 600.
         UIAppFonts:

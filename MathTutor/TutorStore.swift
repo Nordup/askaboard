@@ -191,13 +191,37 @@ final class TutorStore: ObservableObject {
 
     private var canRequestTutor: Bool { demoMode || usesLiveTutor }
 
-    func send(_ text: String) {
+    /// One learner turn, with whatever the composer's `+` put on it.
+    ///
+    /// **A turn may now be files and no words at all** — a photographed
+    /// worksheet is a complete request, the same way a lassoed region already
+    /// was — so the emptiness guard asks about the draft rather than about the
+    /// text.
+    func send(_ text: String, attachments: [UploadedAttachment] = []) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !isLoading, ensureTutorAvailable() else { return }
-        session.messages.append(TutorMessage(role: .learner, text: trimmed))
+        guard !trimmed.isEmpty || !attachments.isEmpty, !isLoading, ensureTutorAvailable() else { return }
+        session.messages.append(
+            TutorMessage(role: .learner, text: trimmed, attachments: attachments.map(\.attachment))
+        )
+        saveThumbnails(for: attachments)
         session.lastSavedAt = .now
         persist()
-        requestTutor(signal: nil)
+        requestTutor(signal: nil, attachmentIDs: attachments.map(\.attachment.id))
+    }
+
+    /// Keeps the chips a reopened session draws.
+    ///
+    /// Written **now rather than at upload time**: an attachment the learner
+    /// removed before sending should leave nothing behind on disk. Unlike
+    /// `selectionViews`, these cannot be re-derived from anything the device
+    /// still holds — a photo of homework is not a crop of the board — which is
+    /// why they go to a file at all.
+    private func saveThumbnails(for attachments: [UploadedAttachment]) {
+        guard !attachments.isEmpty else { return }
+        let store = AttachmentStore()
+        for uploaded in attachments {
+            store.save(uploaded.thumbnail, for: uploaded.attachment.id, in: session.id)
+        }
     }
 
     func sendQuickPrompt(_ text: String) {
@@ -208,8 +232,8 @@ final class TutorStore: ObservableObject {
     /// Test-only: sends and then awaits the exact turn `send` just started,
     /// rather than a fixed-length poll — so a test fails on genuine hangs
     /// instead of racing an arbitrary timeout.
-    func sendAndWait(_ text: String) async {
-        send(text)
+    func sendAndWait(_ text: String, attachments: [UploadedAttachment] = []) async {
+        send(text, attachments: attachments)
         await activeRequestTask?.value
     }
 
@@ -356,7 +380,20 @@ final class TutorStore: ObservableObject {
     /// complete request; `regionDescription` tells the model what it is looking at, in the
     /// third person, where a policy line belongs. So the message is empty, and the thread
     /// draws the picture on its own — see `MessageRow`.
-    func evaluate(imageData: Data, regionDescription: String?, question: String? = nil) {
+    ///
+    /// **`attachments` rides along rather than being a second turn.** The
+    /// composer draws the selection as one chip among the files (see
+    /// `AttachmentChipRow`), which is what lets a learner say *"here is the
+    /// worksheet, here is what I tried"* in a single send — so a send that
+    /// carries both has to arrive as one message. Routing only the picture here
+    /// and dropping the files is the "silently dropped" failure this whole path
+    /// is built to avoid.
+    func evaluate(
+        imageData: Data,
+        regionDescription: String?,
+        question: String? = nil,
+        attachments: [UploadedAttachment] = []
+    ) {
         guard !isEvaluating, ensureTutorAvailable() else { return }
         isEvaluating = true
         evaluationText = nil
@@ -364,8 +401,14 @@ final class TutorStore: ObservableObject {
         errorMessage = nil
         composerNote = nil
         let asked = question?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let learnerTurn = TutorMessage(role: .learner, text: asked ?? "", signal: .evaluate)
+        let learnerTurn = TutorMessage(
+            role: .learner,
+            text: asked ?? "",
+            signal: .evaluate,
+            attachments: attachments.map(\.attachment)
+        )
         session.messages.append(learnerTurn)
+        saveThumbnails(for: attachments)
         // The picture they sent, kept so the thread can show it. Without this the
         // turn reads as though the tutor ignored the selection: the thread showed
         // the region the tutor fetched for itself and not the one the learner
@@ -376,7 +419,12 @@ final class TutorStore: ObservableObject {
         )
         session.lastSavedAt = .now
         persist()
-        requestTutor(signal: .evaluate, imageData: imageData, regionDescription: regionDescription) { [weak self] text in
+        requestTutor(
+            signal: .evaluate,
+            imageData: imageData,
+            regionDescription: regionDescription,
+            attachmentIDs: attachments.map(\.attachment.id)
+        ) { [weak self] text in
             self?.evaluationText = text
         }
     }
@@ -653,6 +701,7 @@ final class TutorStore: ObservableObject {
         signal: LearningSignal?,
         imageData: Data? = nil,
         regionDescription: String? = nil,
+        attachmentIDs: [UUID] = [],
         onDone: ((String) -> Void)? = nil
     ) {
         guard ensureTutorAvailable() else {
@@ -684,6 +733,10 @@ final class TutorStore: ObservableObject {
             boardOverview: boardProvider?(),
             boardManifest: boardManifestProvider?(),
             boardScene: boardSceneProvider?(),
+            // The ids the composer's uploads came back with. Nothing here has
+            // bytes: the server already holds the file and this turn only names
+            // it — see `TutorRequest.attachmentIDs`.
+            attachmentIDs: attachmentIDs,
             signal: signal,
             sessionID: session.id,
             model: session.selectedModel,

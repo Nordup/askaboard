@@ -33,6 +33,28 @@ enum ComposerSelection: Equatable, Sendable {
     var isLit: Bool { self == .arming || self == .attached }
 }
 
+/// Which card the composer has grown behind its pill.
+///
+/// **Two cards, not one card with two fills**, and this is the axis that says which. The
+/// label card is board 03's — a 38pt band with "Selection attached" written across it, and
+/// still exactly right for a lassoed region on its own. The chips card is board 16's: a
+/// chip carrying a 32pt thumbnail does not fit in 38 points, so the band is 52 and the
+/// composer is 102 rather than 88 (132 rather than 120 full-screen).
+///
+/// It exists because that difference was invisible in code. `attachedHeight` measured the
+/// label card and was read by everything that reserves space for a grown composer, so a
+/// composer showing chips was 14 points taller than anything measuring it believed. Every
+/// such measurement now has to name the card, which is a question with an answer rather
+/// than a bool with a default.
+enum ComposerCard: Equatable, Sendable, CaseIterable {
+    /// The resting pill: nothing behind it.
+    case none
+    /// `SelectionAttachment.composer` — a board region and nothing else.
+    case label
+    /// `AttachmentChipRow` — one or more files, with the region as a chip among them.
+    case chips
+}
+
 /// Every measured value of the composer, at both scales.
 ///
 /// The child sizes close the row exactly at both scales, which is the check that the
@@ -96,9 +118,27 @@ struct ComposerMetrics: Equatable, Sendable {
     /// behind a 644 pill is the notch rule broken from the other side.
     var attachment: AttachmentStackMetrics { .composer(scale, width: width) }
 
-    /// The composer's height once a selection is attached: the card's visible band plus
-    /// the pill. 88 in the panel, once the pill came down to 50.
-    var attachedHeight: CGFloat { attachment.totalHeight }
+    /// The stack behind the pill for whichever card is drawn — see `ComposerCard`.
+    ///
+    /// `.none` takes the label card's geometry because that is what a caller asking about
+    /// the *shape* of a resting composer means; nothing is drawn either way.
+    func attachment(showing card: ComposerCard) -> AttachmentStackMetrics {
+        switch card {
+        case .none, .label: attachment
+        case .chips: .composerChips(scale, width: width)
+        }
+    }
+
+    /// The composer's whole height with `card` behind the pill — the card's visible band
+    /// plus the pill, or just the pill when there is no card.
+    ///
+    /// **50 / 88 / 102 in the panel, 68 / 120 / 132 full-screen.** Anything reserving space
+    /// for a grown composer has to say which of the three it means; there is no single
+    /// "attached" height, and the one that used to exist measured the label card while the
+    /// composer drew chips.
+    func height(showing card: ComposerCard) -> CGFloat {
+        card == .none ? height : attachment(showing: card).totalHeight
+    }
 
     /// The space above and below the send button — and so the pill's own vertical padding.
     ///
@@ -427,9 +467,21 @@ struct Composer: View {
     /// should move when the microphone opens.
     var drawsAttachButton: Bool { onAttach != nil && dictation == nil }
 
+    /// Which card is above the pill — **the one place that decides**, so the branch in
+    /// `attachmentCard`, the metrics the chips are measured with, and any surface reserving
+    /// room for a grown composer are all reading the same answer.
+    ///
+    /// Files win over the lone region because the region becomes a chip among them: the
+    /// chips card is what draws both, and the label card is only ever a region on its own.
+    var card: ComposerCard {
+        if !attachments.isEmpty { .chips }
+        else if selection == .attached { .label }
+        else { .none }
+    }
+
     /// The card above the pill, which used to belong to the board selection alone. It now
     /// appears for anything attached at all.
-    var drawsAttachmentCard: Bool { selection == .attached || !attachments.isEmpty }
+    var drawsAttachmentCard: Bool { card != .none }
 
     /// Nothing to send is not a designed state — there is no disabled send button on the
     /// board — so the button keeps its one appearance and the action declines instead.
@@ -453,7 +505,7 @@ struct Composer: View {
 
     @ViewBuilder
     private var attachmentCard: some View {
-        if !attachments.isEmpty {
+        if card == .chips {
             // Chips: `AttachmentStack` directly, with the taller card. Not
             // `SelectionAttachment.composer`, which is the *label* card — the one the
             // design drew, and still exactly right for a lassoed region on its own.
@@ -482,9 +534,7 @@ struct Composer: View {
     /// The chips card, in the column this composer was given — the same substitution
     /// `ComposerMetrics.attachment` makes, for the same reason: a card still 740 wide
     /// behind a 644 pill is the notch rule broken from the other side.
-    private var chipsMetrics: AttachmentStackMetrics {
-        .composerChips(scale, width: width ?? scale.contentWidth)
-    }
+    private var chipsMetrics: AttachmentStackMetrics { metrics.attachment(showing: .chips) }
 
     /// The note is drawn as an overlay rather than as a row above the pill, so a sentence that
     /// appears after a failed dictation cannot move the composer the student is about to type

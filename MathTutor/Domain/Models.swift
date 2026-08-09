@@ -348,6 +348,16 @@ struct TutorRequest: Sendable {
     /// exact tutor scene. Sent on every turn, like the overview, so the model
     /// can see and revise its own semantic output.
     var boardScene: String?
+    /// Files the learner attached in the composer, already uploaded through
+    /// `POST /v1/attachments`. Ids rather than bytes: conversion has already
+    /// happened server-side, so this turn carries a reference to something the
+    /// tutor can already read.
+    ///
+    /// Not the same thing as `imageData`, which stays exactly what it was — a
+    /// region rendered from the live canvas. A lassoed region is not a file and
+    /// routing it through an upload would add a round trip to the product's
+    /// most common interaction.
+    var attachmentIDs: [UUID] = []
     var signal: LearningSignal?
     /// The learner's `LearningSession.id`, carried through so the backend can
     /// rebuild this turn's conversation context from what it has stored
@@ -372,6 +382,7 @@ struct TutorRequest: Sendable {
         boardOverview: Data? = nil,
         boardManifest: String? = nil,
         boardScene: String? = nil,
+        attachmentIDs: [UUID] = [],
         signal: LearningSignal?,
         sessionID: UUID = UUID(),
         model: ModelChoice,
@@ -386,6 +397,7 @@ struct TutorRequest: Sendable {
         self.boardOverview = boardOverview
         self.boardManifest = boardManifest
         self.boardScene = boardScene
+        self.attachmentIDs = attachmentIDs
         self.signal = signal
         self.sessionID = sessionID
         self.model = model
@@ -405,6 +417,7 @@ struct TutorRequest: Sendable {
         boardOverview: Data? = nil,
         boardManifest: String? = nil,
         boardScene: String? = nil,
+        attachmentIDs: [UUID] = [],
         signal: LearningSignal?,
         sessionID: UUID = UUID(),
         reasoningEffort: ReasoningEffort,
@@ -420,6 +433,7 @@ struct TutorRequest: Sendable {
             boardOverview: boardOverview,
             boardManifest: boardManifest,
             boardScene: boardScene,
+            attachmentIDs: attachmentIDs,
             signal: signal,
             sessionID: sessionID,
             model: model,

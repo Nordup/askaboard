@@ -423,4 +423,30 @@ final class BackendTutorServiceTests: XCTestCase {
             }
         }
     }
+
+    // MARK: - Attachment ids on the turn
+
+    /// The field is absent, not empty — so every turn the app has ever sent is
+    /// byte-identical to what it was before the composer grew a `+`.
+    func testBodyOmitsAttachmentIDsWhenThereAreNone() {
+        let body = BackendTutorService.body(for: .fixture())
+        XCTAssertNil(body["attachment_ids"])
+    }
+
+    /// Strings, in the order the learner picked them: `attachment_ids` on the
+    /// wire is a list of the ids `POST /v1/attachments` minted, and the server
+    /// resolves each to a file it already holds.
+    func testBodyCarriesAttachmentIDsAsStrings() {
+        let first = UUID()
+        let second = UUID()
+        var request = TutorRequest.fixture()
+        request.attachmentIDs = [first, second]
+
+        let body = BackendTutorService.body(for: request)
+
+        XCTAssertEqual(
+            body["attachment_ids"] as? [String],
+            [first.uuidString, second.uuidString]
+        )
+    }
 }

@@ -14,6 +14,7 @@
 		09EB62BB947A97E5442AE3CA /* BoardSVGCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B9320F41DE3BD94B154DA88 /* BoardSVGCache.swift */; };
 		0A56BB7A4D3BB365E2B8E4B0 /* BackendDictationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71B9E9F758F84F04CE79345C /* BackendDictationService.swift */; };
 		13E86E94188874ABEB3431DB /* SVGPathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCA9CA61147AAAE5C1519199 /* SVGPathTests.swift */; };
+		15DE20BAF00D42A3F648AB5D /* AttachmentPickers.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5536C323F707DE80AC54BD8 /* AttachmentPickers.swift */; };
 		1722042A53F36F287BC8BCD3 /* ToolRail.swift in Sources */ = {isa = PBXBuildFile; fileRef = D947222D75F7A3F2ED55D0DD /* ToolRail.swift */; };
 		1728A9F9E59638F9AE239EA1 /* BoardDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB608BD6660FBD1ACAD2D15B /* BoardDiagnostics.swift */; };
 		188FF479B57E626EF148EC12 /* MessageThread.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0042681934772C27C33B7D0 /* MessageThread.swift */; };
@@ -258,6 +259,7 @@
 		DEB67774A3E9FFC188FF1D75 /* DemoTutorServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoTutorServiceTests.swift; sourceTree = "<group>"; };
 		E0042681934772C27C33B7D0 /* MessageThread.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageThread.swift; sourceTree = "<group>"; };
 		E5350113098845186BFC0238 /* Elevation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Elevation.swift; sourceTree = "<group>"; };
+		E5536C323F707DE80AC54BD8 /* AttachmentPickers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentPickers.swift; sourceTree = "<group>"; };
 		E954D06964D3CD29E7E328C4 /* OrbHalo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrbHalo.swift; sourceTree = "<group>"; };
 		EAF8603329EBED4EA8EE8199 /* SettingsAndPlanTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsAndPlanTests.swift; sourceTree = "<group>"; };
 		EB608BD6660FBD1ACAD2D15B /* BoardDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardDiagnostics.swift; sourceTree = "<group>"; };
@@ -330,6 +332,7 @@
 		20163A2B118504D3DE8DE099 /* Tutor */ = {
 			isa = PBXGroup;
 			children = (
+				E5536C323F707DE80AC54BD8 /* AttachmentPickers.swift */,
 				A1F88476F614A427A0D4A7BE /* ComposerAttachments.swift */,
 				2830CE96CFA1A85F968C195C /* DictationController.swift */,
 				5F72154788FE13A7EB4C9342 /* TutorFullScreen.swift */,
@@ -757,6 +760,7 @@
 			files = (
 				F1DFB7BCEA5833AA08AF2487 /* AttachMenu.swift in Sources */,
 				7BED106A2DD67CADD9A9D121 /* AttachmentChipRow.swift in Sources */,
+				15DE20BAF00D42A3F648AB5D /* AttachmentPickers.swift in Sources */,
 				41E73D693A9C4EC247E50BDB /* AttachmentStore.swift in Sources */,
 				960BF188040438DC7F5C1D9B /* AttachmentUploader.swift in Sources */,
 				DC5AFD891640960B9E77D1D6 /* BackendConfiguration.swift in Sources */,

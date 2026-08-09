@@ -20,6 +20,8 @@
 	<string>1</string>
 	<key>MathTutorBackendToken</key>
 	<string>$(MATHTUTOR_BACKEND_TOKEN)</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Math Tutor uses the camera only when you tap the camera row in the tutor's message box, to take a photo of a worksheet or a page of a book so the tutor can read it. The photo is sent to Math Tutor's server and on to OpenAI, which does not use it to train its models but can keep it for up to 30 days to check for misuse before deleting it. Nothing is posted anywhere or shared with anyone else.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Math Tutor records your voice only while you have tapped the microphone in the tutor's message box. When you tap it again the recording is sent to OpenAI, which turns it into text you can read and edit before sending. OpenAI does not use it to train its models, but can keep it for up to 30 days to check for misuse before deleting it.</string>
 	<key>UIAppFonts</key>
