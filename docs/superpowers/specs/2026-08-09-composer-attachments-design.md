@@ -61,16 +61,24 @@ The upload is its own request, not part of the turn. The turn carries
 - **Out-of-band bytes.** `POST /v1/turn/{turn_id}/board` already establishes
   that large payloads travel outside the turn body.
 
-### The one external dependency
+### No external binaries
 
-LibreOffice, headless, as a subprocess, to turn Office and iWork documents into
-PDF. It is the only piece of this that is not a Python package.
+Everything the server needs is a Python package: Pillow and pillow-heif for
+images, PyMuPDF for a PDF's page count and first-page thumbnail. Nothing
+shells out.
 
-The alternative considered and rejected was `python-docx`-style text
-extraction. For a math worksheet the layout *is* the content: a fraction laid
-out over two lines, a geometry figure, an equation with alignment. Text
-extraction discards precisely the part the tutor needs to read. LibreOffice
-preserves it, and PDF is a format the model reads natively.
+**Office and iWork documents are deliberately not handled.** An earlier draft
+converted `.docx`, `.pages` and friends to PDF through a headless LibreOffice
+subprocess, which works and is the only way to preserve the layout that *is*
+the content of a maths worksheet — text extraction throws away exactly the
+fraction laid over two lines and the geometry figure. It was cut anyway: a
+~1GB binary, a subprocess with its own profile directory and timeout, and a
+rung that cannot be verified on a machine without it, in exchange for a format
+a learner can export from with one tap. `.docx` gets the same 415 as any other
+unreadable file, with a sentence saying to send a PDF or a photo.
+
+The rung is a clean addition later — one branch in `convert`, one entry in the
+extension set — if attaching a Word file turns out to be a real case.
 
 ## The composer
 
@@ -188,13 +196,13 @@ that a file cannot be read while they are still looking at the picker:
 - `413` — over the size cap.
 - `415` — a type no rung of the ladder handles, with a sentence written for the
   learner rather than for a log.
-- `422` — a file that matched a rung and failed to convert (a corrupt PDF, a
-  LibreOffice timeout), also with a learner-facing sentence.
+- `422` — a file that matched a rung and failed to convert: a corrupt PDF, a
+  PDF over the page cap, a text file over the character cap. Also with a
+  learner-facing sentence.
 
-The response is returned when conversion has finished. There is no job queue: a
-LibreOffice run inside the request is a few seconds, it happens while the
-learner is still typing, and a queue would add a polling protocol to save
-nothing.
+The response is returned when conversion has finished. There is no job queue:
+conversion is a decode and a resize, it happens while the learner is still
+typing, and a queue would add a polling protocol to save nothing.
 
 `multipart` rather than base64 JSON because `python-multipart` is already a
 dependency and base64 inflates every upload by a third.
@@ -228,14 +236,13 @@ build, or on the one new one.
 |---|---|---|
 | `image/*`, including HEIC | `input_image`, `detail: "original"` | Pillow + pillow-heif; normalise to JPEG, longest edge capped |
 | `application/pdf` | `input_file` with `filename` | passthrough |
-| docx, xlsx, pptx, pages, key, numbers, rtf, odt | `input_file` with `filename` | LibreOffice headless → PDF |
 | txt, md, csv, json, source | `input_text`, fenced and named | UTF-8 decode, capped |
-| anything else | `415` at upload | — |
+| anything else, `.docx` included | `415` at upload | — |
 
 `input_file` is a first-class content part of the Responses API alongside
-`input_text` and `input_image`, taking `file_data` and `filename`. This is why
-PDFs need no rasterizing, and why every document rung can aim at PDF rather
-than at a pile of page images.
+`input_text` and `input_image`, taking `file_data` and `filename`. That is why
+the PDF rung is a passthrough: rasterizing one would be work that makes the
+result worse, discarding the document's own text layer for a photograph of it.
 
 Type is decided from the bytes' own magic first and the filename's extension
 second, so a `.txt` that is really a JPEG is handled as what it is.
@@ -243,11 +250,11 @@ second, so a `.txt` that is really a JPEG is handled as what it is.
 ### Thumbnails
 
 The server returns the thumbnail because it has already opened the file:
-downscale for an image, first page for a PDF, first page of the converted PDF
-for a document, and a rendering of the first lines for text.
+downscale for an image, first page for a PDF, and a rendering of the first
+lines for text.
 
 The device therefore stores a small JPEG and a name per attachment — never the
-original. A 20MB Keynote costs the device a few kilobytes.
+original. A 30-page PDF costs the device a few kilobytes.
 
 ### Caps
 
@@ -255,7 +262,7 @@ original. A 20MB Keynote costs the device a few kilobytes.
 |---|---|
 | bytes per file | 25 MB |
 | attachments per turn | 5 |
-| pages per document | 20 |
+| pages per PDF | 20 |
 | characters per text file | 100,000 |
 
 Each is a named constant in `app/config.py`, alongside the ones already there.
@@ -327,14 +334,15 @@ Changing it is a separate improvement and this design does not need it.
 
 **Server** — the ladder is pure input/output and gets the bulk of the coverage:
 
-- One test per rung: image normalisation including HEIC, PDF passthrough, a
-  document through LibreOffice, text inlining.
+- One test per rung: image normalisation including HEIC, PDF passthrough,
+  text inlining.
 - Type decided from magic bytes over a lying extension.
-- Each cap: oversize file, sixth attachment, page overflow, text truncation.
-- `415` for an unhandled type; `422` for a file that fails conversion.
+- Each cap: oversize file, sixth attachment, page overflow, text overflow.
+- `415` for an unhandled type, `.docx` included; `422` for a file that matched
+  a rung and failed to convert.
 - `attachment_ids` → the exact content-part list `assemble_context` produces.
 - An attachment id from another session is refused.
-- The two `record_attachment` rows, and the blob dedup on a repeat upload.
+- The upload row carries both blob keys, and a repeat upload dedups the blob.
 
 **Device**:
 
@@ -350,6 +358,10 @@ Changing it is a separate improvement and this design does not need it.
 
 ## Out of scope
 
+- Office and iWork documents. `.docx`, `.xlsx`, `.pptx`, `.pages`, `.key`,
+  `.numbers` and `.rtf` are refused with a 415 telling the learner to send a
+  PDF or a photo. See "No external binaries" above for why, and for how small
+  the addition would be.
 - The attachment as an object on the board. Needs an image element kind in
   `BoardScene` with persistence, rendering, and placement.
 - Attachments on a dictated turn.

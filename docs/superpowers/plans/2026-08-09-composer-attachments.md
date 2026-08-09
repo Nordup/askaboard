@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Put a `+` in the tutor composer that attaches photos, PDFs and documents to a turn, with every format conversion happening on the backend.
+**Goal:** Put a `+` in the tutor composer that attaches photos, PDFs and text files to a turn, with every format conversion happening on the backend.
 
 **Architecture:** The device picks bytes and uploads them to a new `POST /v1/attachments`; the server sniffs the type, converts it to something the Responses API reads (image, PDF, or text), stores both the original and the converted bytes, and returns a thumbnail. The turn body then carries `attachment_ids` instead of bytes. The device never converts anything and never stores an original.
 
-**Tech Stack:** FastAPI + SQLAlchemy + Alembic + Pillow/pillow-heif/PyMuPDF + LibreOffice (headless subprocess) on the server; SwiftUI + PhotosUI + UniformTypeIdentifiers on the device.
+**Tech Stack:** FastAPI + SQLAlchemy + Alembic + Pillow/pillow-heif/PyMuPDF on the server — no external binaries; SwiftUI + PhotosUI + UniformTypeIdentifiers on the device.
 
 **Spec:** [`docs/superpowers/specs/2026-08-09-composer-attachments-design.md`](../specs/2026-08-09-composer-attachments-design.md)
 
@@ -20,6 +20,7 @@
 - **Design values come from Paper**, not from taste. Task 8 draws the new UI there and every later view task reads its numbers back out.
 - **Icon render sizes are fixed.** `ui/plus` renders at 20 and only 20. Do not scale it to match the marquee's 24.
 - **No new client credential surface.** The upload endpoint uses the same `Depends(require_device_token)` bearer as every other route.
+- **No external binaries.** Office and iWork documents are out of scope: `.docx`, `.xlsx`, `.pptx`, `.pages`, `.key`, `.numbers` and `.rtf` are refused with a 415 telling the learner to send a PDF or a photo. Do not add LibreOffice, a subprocess, or a text-extraction library to handle them. See "No external binaries" in the spec.
 
 ### Caps (exact values, used verbatim in several tasks)
 
@@ -27,11 +28,10 @@
 |---|---|
 | `MAX_UPLOAD_BYTES` | `25 * 1024 * 1024` |
 | `MAX_ATTACHMENTS_PER_TURN` | `5` |
-| `MAX_DOCUMENT_PAGES` | `20` |
+| `MAX_PDF_PAGES` | `20` |
 | `MAX_TEXT_CHARS` | `100_000` |
 | `THUMBNAIL_MAX_EDGE` | `256` |
 | `IMAGE_MAX_EDGE` | `2000` |
-| `LIBREOFFICE_TIMEOUT_SECONDS` | `30.0` |
 
 ---
 
@@ -80,7 +80,7 @@
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `Kind` (str enum: `IMAGE`, `PDF`, `DOCUMENT`, `TEXT`, `UNSUPPORTED`), `sniff(data: bytes, filename: str) -> Kind`, and the seven cap constants in `app.config`.
+- Produces: `Kind` (str enum: `IMAGE`, `PDF`, `TEXT`, `UNSUPPORTED`), `sniff(data: bytes, filename: str) -> Kind`, and the six cap constants in `app.config`.
 
 - [ ] **Step 1: Write the byte fixtures**
 
@@ -162,8 +162,6 @@ from tests.fixtures import files
     (files.JPEG_MAGIC, "photo.jpg", Kind.IMAGE),
     (files.heic_header(), "IMG_0001.HEIC", Kind.IMAGE),
     (files.PDF_ONE_PAGE, "homework.pdf", Kind.PDF),
-    (files.docx(), "worksheet.docx", Kind.DOCUMENT),
-    (files.RTF, "notes.rtf", Kind.DOCUMENT),
     (files.UTF8_TEXT, "problem.txt", Kind.TEXT),
     (files.UTF8_TEXT, "data.csv", Kind.TEXT),
     (files.BINARY_JUNK, "mystery.bin", Kind.UNSUPPORTED),
@@ -177,9 +175,16 @@ def test_magic_bytes_beat_a_lying_extension():
     assert sniff(files.PNG_2X2, "definitely-a-note.txt") == Kind.IMAGE
 
 
-def test_a_zip_that_is_not_a_document_is_unsupported():
-    """PK magic alone is not enough — .docx and .zip share it."""
-    assert sniff(files.plain_zip(), "archive.zip") == Kind.UNSUPPORTED
+@pytest.mark.parametrize("data,filename", [
+    (files.docx(), "worksheet.docx"),
+    (files.plain_zip(), "archive.zip"),
+    (files.RTF, "notes.rtf"),
+])
+def test_office_and_iwork_documents_are_unsupported(data, filename):
+    """Deliberately out of scope. Handling `.docx` means LibreOffice — a ~1GB
+    binary and a subprocess — for a format the learner can export from with one
+    tap. `.rtf` and a plain zip come with it: they are the same rung."""
+    assert sniff(data, filename) == Kind.UNSUPPORTED
 
 
 def test_an_empty_file_is_unsupported():
@@ -201,7 +206,7 @@ Append to `server/app/config.py`, after `EMBEDDING_DIMS`:
 # cut off at page 20 is worse than one that was never accepted.
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 MAX_ATTACHMENTS_PER_TURN = 5
-MAX_DOCUMENT_PAGES = 20
+MAX_PDF_PAGES = 20
 MAX_TEXT_CHARS = 100_000
 #: The longest edge of the thumbnail the device stores and draws in the thread.
 THUMBNAIL_MAX_EDGE = 256
@@ -209,9 +214,6 @@ THUMBNAIL_MAX_EDGE = 256
 #: it. A 12MP camera image costs tokens proportional to its pixels and carries
 #: no more legible handwriting than this does.
 IMAGE_MAX_EDGE = 2000
-#: LibreOffice cold-starts in a couple of seconds and a document that has not
-#: converted in thirty is one that never will.
-LIBREOFFICE_TIMEOUT_SECONDS = 30.0
 ```
 
 - [ ] **Step 5: Write the sniffer**
@@ -221,34 +223,34 @@ Create `server/app/attachments/__init__.py` (empty file), then `server/app/attac
 ```python
 """What an uploaded file *is*, decided from its bytes.
 
-The extension is consulted only where the bytes genuinely cannot decide:
-`.docx`, `.xlsx`, `.pptx`, `.odt`, `.pages`, `.key` and `.numbers` are all zip
-archives with the same four magic bytes as any other zip, and the name is the
-only thing that separates a worksheet from a download folder.
+Three rungs reach the model — an image, a PDF, or text — and everything else
+is refused here rather than further down, so a learner finds out while they are
+still looking at the picker.
 
-Everywhere else the bytes win. A JPEG named `.txt` is an image, because a
-learner who renamed a file is not asking for it to be read as prose.
+**Office and iWork documents are deliberately not a rung.** Reading a `.docx`
+means converting it, and converting it with the layout intact — which for a
+maths worksheet *is* the content — means a headless LibreOffice subprocess: a
+~1GB binary and a process with its own profile directory and timeout, for a
+format the learner can export a PDF from with one tap. They are refused with
+the same 415 as anything else unreadable. Adding the rung later is one branch
+here and one in `convert`.
+
+The bytes always win. A JPEG named `.txt` is an image, because a learner who
+renamed a file is not asking for it to be read as prose. Nothing here consults
+the extension at all: every rung is decided by magic, and the two zip-container
+formats that would have needed a name are the ones that are out of scope.
 """
 from __future__ import annotations
 
 from enum import Enum
-from pathlib import PurePosixPath
 
 
 class Kind(str, Enum):
     IMAGE = "image"
     PDF = "pdf"
-    DOCUMENT = "document"
     TEXT = "text"
     UNSUPPORTED = "unsupported"
 
-
-#: Zip containers LibreOffice can open. The extension is load-bearing here —
-#: see the module docstring.
-DOCUMENT_EXTENSIONS = frozenset({
-    ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt",
-    ".odt", ".ods", ".odp", ".rtf", ".pages", ".key", ".numbers",
-})
 
 _ZIP_MAGIC = b"PK\x03\x04"
 _PDF_MAGIC = b"%PDF-"
@@ -274,12 +276,10 @@ def sniff(data: bytes, filename: str) -> Kind:
     if _is_image(data):
         return Kind.IMAGE
 
-    extension = PurePosixPath(filename).suffix.lower()
-    if data.startswith(_RTF_MAGIC):
-        return Kind.DOCUMENT
-    if data.startswith(_ZIP_MAGIC) and extension in DOCUMENT_EXTENSIONS:
-        return Kind.DOCUMENT
-    if data.startswith(_ZIP_MAGIC):
+    # A zip is a `.docx`, a `.pages`, or a download folder, and all three are
+    # out of scope. Excluded before the text check rather than after, because a
+    # zip's stored filenames are ASCII and a small one can decode as UTF-8.
+    if data.startswith(_ZIP_MAGIC) or data.startswith(_RTF_MAGIC):
         return Kind.UNSUPPORTED
 
     return Kind.TEXT if _is_text(data) else Kind.UNSUPPORTED
@@ -327,7 +327,7 @@ git commit -m "Decide what an uploaded file is from its own bytes"
 
 **Files:**
 - Create: `server/app/attachments/convert.py`, `server/tests/test_attachment_convert.py`
-- Modify: `server/pyproject.toml`, `server/README.md`
+- Modify: `server/pyproject.toml`
 
 **Interfaces:**
 - Consumes: `Kind`, `sniff` (Task 1); the caps in `app.config`.
@@ -350,43 +350,17 @@ Then run `uv sync` from `server/`.
 
 PyMuPDF is AGPL. This server is not distributed — it runs on one machine for one learner — so the licence is satisfied by not shipping it. If that ever changes, `pypdf` covers the page count and a poppler subprocess covers the render.
 
-- [ ] **Step 2: Document the LibreOffice prerequisite**
-
-In `server/README.md`, under the setup section, add:
-
-```markdown
-### Attachments need LibreOffice
-
-Word, Excel, PowerPoint, Pages, Keynote and Numbers files are converted to PDF
-by a headless LibreOffice subprocess before the model sees them, because a
-maths worksheet's layout *is* its content and text extraction throws exactly
-that away.
-
-    brew install --cask libreoffice     # macOS
-    apt install libreoffice-core        # Debian/Ubuntu
-
-Without it, images, PDFs and text files still work; documents are refused with
-a 422 rather than failing silently.
-```
-
-- [ ] **Step 3: Write the failing test**
+- [ ] **Step 2: Write the failing test**
 
 Create `server/tests/test_attachment_convert.py`:
 
 ```python
-import shutil
-
 import pytest
 
 from app.attachments.convert import Unconvertible, convert
 from app.attachments.kinds import Kind
-from app.config import IMAGE_MAX_EDGE, MAX_TEXT_CHARS, THUMBNAIL_MAX_EDGE
+from app.config import IMAGE_MAX_EDGE, MAX_PDF_PAGES, MAX_TEXT_CHARS, THUMBNAIL_MAX_EDGE
 from tests.fixtures import files
-
-needs_libreoffice = pytest.mark.skipif(
-    shutil.which("soffice") is None,
-    reason="LibreOffice is not installed; see server/README.md.",
-)
 
 
 async def test_an_image_is_normalised_to_jpeg():
@@ -456,38 +430,54 @@ async def test_a_corrupt_pdf_raises_422():
     assert raised.value.status == 422
 
 
-@needs_libreoffice
-async def test_a_document_becomes_a_pdf():
-    result = await convert(files.docx("solve for x"), "worksheet.docx")
-    assert result.kind is Kind.DOCUMENT
-    assert result.content_type == "application/pdf"
-    assert result.data.startswith(b"%PDF-")
-    assert result.page_count >= 1
+async def test_a_word_document_is_refused_with_a_way_out():
+    """Out of scope by choice — see the module docstring in `kinds.py`. The
+    sentence has to tell the learner what to do instead, because the file they
+    picked is a perfectly reasonable thing to have picked."""
+    with pytest.raises(Unconvertible) as raised:
+        await convert(files.docx(), "worksheet.docx")
+    assert raised.value.status == 415
+    assert "worksheet.docx" in raised.value.sentence
+    assert "PDF" in raised.value.sentence
+
+
+async def test_a_pdf_over_the_page_cap_is_refused():
+    """A cap is a refusal, never a silent truncation: a worksheet quietly cut
+    off at page 20 is worse than one that was never accepted."""
+    import fitz
+
+    document = fitz.open()
+    for _ in range(MAX_PDF_PAGES + 1):
+        document.new_page()
+    oversize = document.tobytes()
+
+    with pytest.raises(Unconvertible) as raised:
+        await convert(oversize, "long.pdf")
+    assert raised.value.status == 422
+    assert str(MAX_PDF_PAGES) in raised.value.sentence
 ```
 
-- [ ] **Step 4: Run test to verify it fails**
+- [ ] **Step 3: Run test to verify it fails**
 
 Run: `uv run pytest tests/test_attachment_convert.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'app.attachments.convert'`
 
-- [ ] **Step 5: Write the ladder**
+- [ ] **Step 4: Write the ladder**
 
 Create `server/app/attachments/convert.py`:
 
 ```python
 """Every uploaded file, turned into something the model can read.
 
-Four rungs, each landing on a content part the Responses API already takes:
+Three rungs, each landing on a content part the Responses API already takes:
 
-  image/*  -> a normalised JPEG            -> input_image
-  PDF      -> itself, untouched            -> input_file
-  document -> a PDF, via LibreOffice       -> input_file
-  text     -> a decoded string             -> input_text
+  image/*  -> a normalised JPEG   -> input_image
+  PDF      -> itself, untouched   -> input_file
+  text     -> a decoded string    -> input_text
 
 The PDF rung is the one worth explaining: `input_file` is a first-class content
-part, so a PDF needs no rasterizing at all — which is also why every document
-aims at PDF rather than at a pile of page images. Fewer bytes, better fidelity,
-and the model gets the document's own text layer instead of a photograph of it.
+part, so a PDF needs no rasterizing at all. Rasterizing would be work that makes
+the result worse — more bytes, and a photograph of the text instead of the text.
 
 Refusals are exceptions carrying a sentence written for a twelve-year-old,
 because that sentence is displayed on a chip in the composer. Nothing here logs
@@ -496,11 +486,8 @@ while the learner is still looking at the picker.
 """
 from __future__ import annotations
 
-import asyncio
 import io
-import tempfile
 from dataclasses import dataclass
-from pathlib import Path
 
 import fitz  # PyMuPDF
 import pillow_heif
@@ -508,8 +495,7 @@ from PIL import Image
 
 from app.attachments.kinds import Kind, sniff
 from app.config import (
-    IMAGE_MAX_EDGE, LIBREOFFICE_TIMEOUT_SECONDS, MAX_DOCUMENT_PAGES,
-    MAX_TEXT_CHARS, THUMBNAIL_MAX_EDGE,
+    IMAGE_MAX_EDGE, MAX_PDF_PAGES, MAX_TEXT_CHARS, THUMBNAIL_MAX_EDGE,
 )
 
 pillow_heif.register_heif_opener()
@@ -542,19 +528,24 @@ class Converted:
 
 
 async def convert(data: bytes, filename: str) -> Converted:
+    """`async` although nothing here awaits.
+
+    Kept async because the caller is a FastAPI handler and this is the seam a
+    rung that *does* need to await — a document converter, an OCR pass — would
+    arrive at. Making it sync now would mean changing every call site to add
+    one back.
+    """
     kind = sniff(data, filename)
     if kind is Kind.UNSUPPORTED:
         raise Unconvertible(
             415,
-            f"I can’t read {filename}. Try a photo, a PDF, or a document.",
+            f"I can’t read {filename}. Try sending it as a PDF, or take a photo of it.",
         )
     if kind is Kind.IMAGE:
         return _convert_image(data, filename)
     if kind is Kind.PDF:
-        return _convert_pdf(data, filename, kind=Kind.PDF)
-    if kind is Kind.TEXT:
-        return _convert_text(data, filename)
-    return await _convert_document(data, filename)
+        return _convert_pdf(data, filename)
+    return _convert_text(data, filename)
 
 
 def _convert_image(data: bytes, filename: str) -> Converted:
@@ -577,7 +568,7 @@ def _convert_image(data: bytes, filename: str) -> Converted:
     )
 
 
-def _convert_pdf(data: bytes, filename: str, *, kind: Kind) -> Converted:
+def _convert_pdf(data: bytes, filename: str) -> Converted:
     try:
         document = fitz.open(stream=data, filetype="pdf")
     except Exception:
@@ -586,18 +577,18 @@ def _convert_pdf(data: bytes, filename: str, *, kind: Kind) -> Converted:
     with document:
         if document.page_count == 0:
             raise Unconvertible(422, f"{filename} has no pages in it.")
-        if document.page_count > MAX_DOCUMENT_PAGES:
+        if document.page_count > MAX_PDF_PAGES:
             raise Unconvertible(
                 422,
                 f"{filename} has {document.page_count} pages. I can take up to "
-                f"{MAX_DOCUMENT_PAGES} — try sending just the pages you need.",
+                f"{MAX_PDF_PAGES} — try sending just the pages you need.",
             )
         page_count = document.page_count
         pixmap = document[0].get_pixmap(dpi=72)
         first_page = Image.frombytes("RGB", (pixmap.width, pixmap.height), pixmap.samples)
 
     return Converted(
-        kind=kind,
+        kind=Kind.PDF,
         data=data,
         text=None,
         content_type="application/pdf",
@@ -624,50 +615,6 @@ def _convert_text(data: bytes, filename: str) -> Converted:
     )
 
 
-async def _convert_document(data: bytes, filename: str) -> Converted:
-    """LibreOffice, headless, in a scratch directory it is free to litter.
-
-    Its own `--outdir` and `-env:UserInstallation` per call: LibreOffice keeps a
-    per-user profile and refuses to start a second instance against one that is
-    already in use, which turns two concurrent uploads into a hang. A profile
-    inside the scratch directory makes concurrent calls independent.
-    """
-    suffix = Path(filename).suffix or ".docx"
-    with tempfile.TemporaryDirectory() as scratch:
-        source = Path(scratch) / f"input{suffix}"
-        source.write_bytes(data)
-        profile = Path(scratch) / "profile"
-
-        try:
-            process = await asyncio.create_subprocess_exec(
-                "soffice", "--headless", "--norestore",
-                f"-env:UserInstallation=file://{profile}",
-                "--convert-to", "pdf", "--outdir", scratch, str(source),
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-        except FileNotFoundError:
-            raise Unconvertible(
-                422,
-                f"I can’t open {filename} right now. Try exporting it as a PDF.",
-            )
-
-        try:
-            await asyncio.wait_for(process.wait(), LIBREOFFICE_TIMEOUT_SECONDS)
-        except TimeoutError:
-            process.kill()
-            raise Unconvertible(422, f"{filename} took too long to open. Try exporting it as a PDF.")
-
-        produced = source.with_suffix(".pdf")
-        if process.returncode != 0 or not produced.exists():
-            raise Unconvertible(422, f"I couldn’t open {filename}. Try exporting it as a PDF.")
-
-        pdf = produced.read_bytes()
-
-    converted = _convert_pdf(pdf, filename, kind=Kind.DOCUMENT)
-    return converted
-
-
 def _jpeg(image: Image.Image, max_edge: int) -> bytes:
     """A copy of `image` fitted inside `max_edge`, as JPEG.
 
@@ -692,15 +639,15 @@ def _render_text_preview(text: str) -> Image.Image:
     return canvas
 ```
 
-- [ ] **Step 6: Run tests to verify they pass**
+- [ ] **Step 5: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_attachment_convert.py -v`
-Expected: 9 PASS (the LibreOffice one skips if `soffice` is absent)
+Expected: 10 PASS
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add server/app/attachments/convert.py server/tests/test_attachment_convert.py server/pyproject.toml server/uv.lock server/README.md
+git add server/app/attachments/convert.py server/tests/test_attachment_convert.py server/pyproject.toml server/uv.lock
 git commit -m "Convert every uploadable file into something the model reads"
 ```
 
@@ -1273,18 +1220,6 @@ def test_a_pdf_becomes_an_input_file_carrying_its_name():
     assert part["file_data"] == "data:application/pdf;base64," + base64.b64encode(b"%PDF-1.4").decode()
 
 
-def test_a_converted_document_is_an_input_file_under_its_original_name():
-    """The learner attached `worksheet.docx`; LibreOffice made a PDF of it.
-    The model is told the name the learner knows."""
-    part = content_part(UploadPart(
-        filename="worksheet.docx", kind="document", page_count=2,
-        content_type="application/pdf", data=b"%PDF-1.4",
-    ))
-
-    assert part["type"] == "input_file"
-    assert part["filename"] == "worksheet.docx.pdf"
-
-
 def test_text_becomes_named_fenced_input_text():
     part = content_part(UploadPart(
         filename="problem.txt", kind="text", page_count=1,
@@ -1351,14 +1286,17 @@ def content_part(upload: UploadPart) -> dict[str, Any]:
             "text": f"ATTACHED FILE — {upload.filename}:\n```\n{upload.data.decode()}\n```",
         }
 
+    # A PDF, which is the only remaining kind. Written as the fall-through
+    # rather than as `if upload.kind == "pdf"` so a rung added later lands here
+    # loudly — as a wrong content part in a test — rather than silently
+    # returning None.
     encoded = base64.b64encode(upload.data).decode()
     return {
         "type": "input_file",
-        # A converted document keeps the name the learner knows, with the new
-        # extension appended rather than substituted: `worksheet.docx.pdf` says
-        # both what they attached and what the model is holding, and the
-        # provider requires the extension to match the bytes.
-        "filename": upload.filename if upload.kind == "pdf" else f"{upload.filename}.pdf",
+        # The provider requires the extension to match the bytes, and this
+        # filename is also how the model refers to the file when it talks to
+        # the learner about it.
+        "filename": upload.filename,
         "file_data": f"data:{upload.content_type};base64,{encoded}",
     }
 ```
@@ -1366,7 +1304,7 @@ def content_part(upload: UploadPart) -> dict[str, Any]:
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_attachment_parts.py -v`
-Expected: 4 PASS
+Expected: 3 PASS
 
 - [ ] **Step 5: Write the failing context test**
 
@@ -1478,7 +1416,7 @@ paragraph with a third sentence:
 - [ ] **Step 8: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_attachment_parts.py tests/test_attachment_context.py -v`
-Expected: 7 PASS. (Task 6 adds `compose_user_prompt`'s `uploads` parameter — if
+Expected: 6 PASS. (Task 6 adds `compose_user_prompt`'s `uploads` parameter — if
 Step 7's call fails with an unexpected keyword, do Task 6 first and come back.)
 
 - [ ] **Step 9: Commit**
@@ -1750,8 +1688,8 @@ and add the helper beside the other module-level helpers in that file:
 def _upload_kind(row) -> str:
     """The rung this upload came off, recovered from what it converted to.
 
-    Stored as a content type rather than a kind because the content type is
-    what the provider needs; the rung is derivable from it and one column is
+    Stored as a content type rather than as a kind because the content type is
+    what the provider needs; the rung is derivable from it, and one column is
     better than two that can disagree.
     """
     content_type = row.converted_content_type or row.content_type
@@ -1759,7 +1697,7 @@ def _upload_kind(row) -> str:
         return "image"
     if content_type == "text/plain":
         return "text"
-    return "pdf" if (row.filename or "").lower().endswith(".pdf") else "document"
+    return "pdf"
 ```
 
 Then pass them into the context assembly — in the existing
@@ -2121,10 +2059,11 @@ struct MessageAttachment: Identifiable, Codable, Sendable, Equatable {
     let id: UUID
     /// What the learner called it, as shown on the chip.
     let filename: String
-    /// `image` | `pdf` | `document` | `text`, as the server decided. Held as a
-    /// string rather than an enum because the ladder is the server's to extend
-    /// and a device that has not been updated should draw a new kind as a chip
-    /// rather than fail to decode a session.
+    /// `image` | `pdf` | `text`, as the server decided. Held as a string
+    /// rather than an enum because the ladder is the server's to extend — a
+    /// document rung is a live possibility — and a device that has not been
+    /// updated should draw an unknown kind as a chip rather than fail to
+    /// decode the whole session.
     let kind: String
     let pageCount: Int
 }
@@ -3757,7 +3696,7 @@ Under "How the app reaches its tutor" in the root `README.md`:
 ```markdown
 ### Attachments
 
-The composer's `+` attaches a photo, a document or any file the learner has.
+The composer's `+` attaches a photo, a PDF, or a text file.
 **The device never converts anything**: it uploads the bytes to
 `POST /v1/attachments`, and the server decides what the file is, turns it into
 something the model reads — a normalised JPEG, a PDF, or plain text — and hands
@@ -3766,6 +3705,12 @@ back a thumbnail. The turn then carries `attachment_ids`, not bytes.
 So the app holds no format knowledge, no PDF library and no original files. It
 keeps one small JPEG per sent attachment in `Application Support/MathTutor/
 Attachments/`, deleted with the session it belongs to.
+
+Word, Pages and the rest are refused with a sentence telling the learner to send
+a PDF instead. Reading them means a headless LibreOffice on the server — a ~1GB
+binary and a subprocess — for a format one tap exports a PDF from. See
+`server/app/attachments/kinds.py` for the note, and how small the addition
+would be if that changes.
 ```
 
 - [ ] **Step 2: Write the server README section**
