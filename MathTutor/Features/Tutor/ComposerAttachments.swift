@@ -41,6 +41,12 @@ final class ComposerAttachments: ObservableObject {
 
     @Published private(set) var pending: [PendingAttachment] = []
 
+    /// True while `readyForSend()` is waiting. The composer stops accepting new
+    /// attachments for that stretch: a file picked mid-send belongs to the next
+    /// message, not this one, and the caller clears the draft as soon as the
+    /// send returns.
+    @Published private(set) var isSending = false
+
     private let upload: Upload
     private var tasks: [UUID: Task<Void, Never>] = [:]
 
@@ -66,7 +72,7 @@ final class ComposerAttachments: ObservableObject {
     /// that tap is the chip, not a spinner somewhere else. The upload runs in a
     /// task keyed by the chip's id so `remove` can cancel it.
     func add(data: Data, filename: String, contentType: String, sessionID: UUID) {
-        guard !isFull else { return }
+        guard !isFull, !isSending else { return }
         let id = UUID()
         pending.append(PendingAttachment(id: id, filename: filename, state: .uploading))
 
@@ -75,9 +81,12 @@ final class ComposerAttachments: ObservableObject {
             do {
                 let uploaded = try await self.upload(data, filename, contentType, sessionID)
                 self.update(id, to: .ready(uploaded.attachment, thumbnail: uploaded.thumbnail))
-            } catch is CancellationError {
-                return
             } catch {
+                // `Task.isCancelled` rather than `catch is CancellationError`:
+                // URLSession surfaces cancellation as `URLError(.cancelled)`, so
+                // matching on the Swift error type misses every real cancelled
+                // upload and only ever caught the test double's `Task.sleep`.
+                guard !Task.isCancelled else { return }
                 self.update(id, to: .failed(Self.sentence(for: error)))
             }
         }
@@ -97,24 +106,37 @@ final class ComposerAttachments: ObservableObject {
     /// must not have it silently dropped. A failed attachment is excluded —
     /// its chip is still on screen saying why.
     ///
-    /// `tasks.values` is read into the loop once, up front. `remove` and
-    /// `clear` can and do run on this actor while a `task.value` await here is
-    /// suspended — but `Dictionary` is a value type, so that snapshot is
-    /// independent of whatever `self.tasks` becomes afterward; mutating
-    /// `self.tasks` mid-loop copies its storage rather than invalidating the
-    /// iterator (Swift's own "mutating a collection while iterating it" trap
-    /// is about the same stored variable, not an independent copy that
-    /// happens to share a buffer until COW forks it). A task cancelled by
-    /// `remove` mid-await still resolves quickly — the closures here treat
-    /// `CancellationError` as a fast exit — so this loop never hangs on a chip
-    /// the learner just removed. And because the result below is read from
-    /// `pending` *after* every await finishes, not from the stale snapshot,
-    /// anything removed mid-wait is correctly absent from what gets sent, and
-    /// `clear()` mid-wait correctly drains this to `[]`.
+    /// Snapshot the draft as it stands *now*: this call sends these and only
+    /// these. Waiting on a snapshot of the tasks but building the result from
+    /// the live `pending` array (a first version of this method did exactly
+    /// that) let an attachment added mid-send be either included in a send it
+    /// was never part of, or dropped and then destroyed by the caller's
+    /// `clear()` — the same "silently dropped" failure this method exists to
+    /// prevent, just relocated. `isSending` closes the window that made this
+    /// possible (see `add`), and `inThisSend` makes the result correct even
+    /// so: `sending` is the id list at call time, and both what is awaited and
+    /// what is returned are pinned to it.
+    ///
+    /// `await tasks[id]?.value` re-reads `tasks` fresh at each step rather
+    /// than holding a `Task` reference across a suspension — `remove(_:)`
+    /// cancelling and dropping an id mid-wait is simply skipped (`tasks[id]`
+    /// is `nil` by the time this line runs for it) rather than awaited on a
+    /// stale reference. Either way the wait is bounded: a task's own body
+    /// treats cancellation as a fast exit (see `add`), so this never hangs on
+    /// a chip the learner just removed.
     func readyForSend() async -> [UploadedAttachment] {
-        for task in tasks.values { await task.value }
+        isSending = true
+        defer { isSending = false }
+
+        let sending = pending.map(\.id)
+        for id in sending {
+            await tasks[id]?.value
+        }
+
+        let inThisSend = Set(sending)
         return pending.compactMap { attachment in
-            guard case let .ready(message, thumbnail) = attachment.state else { return nil }
+            guard inThisSend.contains(attachment.id),
+                  case let .ready(message, thumbnail) = attachment.state else { return nil }
             return UploadedAttachment(attachment: message, thumbnail: thumbnail)
         }
     }

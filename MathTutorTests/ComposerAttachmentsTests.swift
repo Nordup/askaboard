@@ -32,6 +32,14 @@ final class ComposerAttachmentsTests: XCTestCase {
     func testAReadyForSendWaitsForAnUploadStillInFlight() async {
         // The learner hits send while a six-page PDF is still converting. The
         // attachment must not be dropped.
+        //
+        // This test was independently reviewed for whether it would actually
+        // fail a filter-instead-of-await regression, and confirmed to: `add()`
+        // enqueues the upload as a MainActor job, and a `readyForSend()` with
+        // no internal `await` never yields the actor, so a filtering
+        // implementation would return before that job ever ran, seeing
+        // `.uploading` and reporting `ready.count == 0`. One sleep, no race
+        // against a second duration, so it's left as the brief wrote it.
         let attachments = ComposerAttachments(upload: { _, _, _, _ in
             try await Task.sleep(nanoseconds: 100_000_000)
             return .stub()
@@ -93,16 +101,22 @@ final class ComposerAttachmentsTests: XCTestCase {
         XCTAssertEqual(attachments.pending.count, ComposerAttachments.limit)
     }
 
+    /// A learner removes a chip mid-upload while a send is already awaiting
+    /// it. That attachment must not appear in what gets sent.
+    ///
+    /// Gated on `UploadGate` rather than two racing sleep durations (an
+    /// earlier version of this test raced a ~20ms remove against a ~100ms
+    /// upload — a 5x margin, but still a clock bet). `isSending` flips to
+    /// `true` as `readyForSend()`'s first statement, before its own first
+    /// `await`, so spinning on it with `Task.yield()` is a condition wait,
+    /// not a timing guess: it can only stop once `readyForSend()` has
+    /// actually snapshotted both attachments as part of this send, however
+    /// many yields that takes.
     func testRemovingDuringReadyForSendExcludesItFromWhatIsSent() async {
-        // A learner who removes a chip mid-upload — while a concurrent send is
-        // already awaiting it — must not have that attachment appear in the
-        // batch that goes out. `readyForSend()` reads `pending` fresh only
-        // after every in-flight task resolves, so a removal that lands during
-        // the wait has to be reflected in the result, not just in the array
-        // you'd see afterward.
-        let attachments = ComposerAttachments(upload: { _, _, _, _ in
-            try await Task.sleep(nanoseconds: 100_000_000)
-            return .stub()
+        let gate = UploadGate()
+        let attachments = ComposerAttachments(upload: { _, filename, _, _ in
+            await gate.wait(for: filename)
+            return .stub(filename: filename)
         })
 
         attachments.add(data: Data(), filename: "keep.pdf",
@@ -111,21 +125,105 @@ final class ComposerAttachmentsTests: XCTestCase {
                         contentType: "application/pdf", sessionID: UUID())
         let removeID = attachments.pending[1].id
 
-        async let ready = attachments.readyForSend()
-        try? await Task.sleep(nanoseconds: 20_000_000)
-        attachments.remove(removeID)
+        async let result = attachments.readyForSend()
+        while !attachments.isSending { await Task.yield() }
 
-        let result = await ready
-        XCTAssertEqual(result.count, 1)
+        attachments.remove(removeID)
+        await gate.open("keep.pdf")
+        // The cancelled task is still parked in `gate.wait` — resume it too so
+        // it finishes cleanly instead of leaking for the rest of the run. Its
+        // outcome no longer matters: `update` no-ops once the id is gone from
+        // `pending`.
+        await gate.open("remove-me.pdf")
+
+        let sent = await result
+        XCTAssertEqual(sent.count, 1)
         XCTAssertTrue(attachments.pending.allSatisfy { $0.id != removeID })
+    }
+
+    /// While a send is in flight, the composer refuses new attachments
+    /// outright rather than merely excluding them afterward — a file picked
+    /// mid-send belongs to the next message, and the caller clears the draft
+    /// the moment this send returns, so there would be nowhere for it to land.
+    func testAddDuringAnInFlightSendIsRefused() async {
+        let gate = UploadGate()
+        let attachments = ComposerAttachments(upload: { _, filename, _, _ in
+            await gate.wait(for: filename)
+            return .stub(filename: filename)
+        })
+
+        attachments.add(data: Data(), filename: "first.pdf",
+                        contentType: "application/pdf", sessionID: UUID())
+
+        async let result = attachments.readyForSend()
+        while !attachments.isSending { await Task.yield() }
+
+        attachments.add(data: Data(), filename: "too-late.pdf",
+                        contentType: "application/pdf", sessionID: UUID())
+        XCTAssertEqual(attachments.pending.count, 1)
+        XCTAssertEqual(attachments.pending[0].filename, "first.pdf")
+
+        await gate.open("first.pdf")
+        _ = await result
+    }
+
+    /// The result of a send is exactly the draft as it stood when send was
+    /// tapped — a slow attachment and a fast one both belong to it, whichever
+    /// order they actually finish in.
+    func testSendReturnsExactlyTheDraftThatExistedAtCallTime() async {
+        let gate = UploadGate()
+        let attachments = ComposerAttachments(upload: { _, filename, _, _ in
+            await gate.wait(for: filename)
+            return .stub(filename: filename)
+        })
+
+        attachments.add(data: Data(), filename: "slow.pdf",
+                        contentType: "application/pdf", sessionID: UUID())
+        attachments.add(data: Data(), filename: "fast.pdf",
+                        contentType: "application/pdf", sessionID: UUID())
+
+        async let result = attachments.readyForSend()
+
+        // Resolve out of order — the second-added attachment finishes first —
+        // to prove the result is the set that existed at call time, not an
+        // artifact of resolution order.
+        await gate.open("fast.pdf")
+        await gate.open("slow.pdf")
+
+        let sent = await result
+        XCTAssertEqual(sent.count, 2)
+        XCTAssertEqual(Set(sent.map(\.attachment.filename)), ["slow.pdf", "fast.pdf"])
+    }
+}
+
+/// Lets a test hold an injected upload closure open until it explicitly says
+/// to finish — an actor, so it's `Sendable` and safe to capture in the
+/// `@Sendable` `Upload` closure.
+private actor UploadGate {
+    private var continuations: [String: CheckedContinuation<Void, Never>] = [:]
+    private var opened: Set<String> = []
+
+    /// Called from inside the injected upload closure. Suspends until `open`
+    /// is called for this same key, or returns immediately if it already was.
+    func wait(for key: String) async {
+        if opened.contains(key) { return }
+        await withCheckedContinuation { continuation in
+            continuations[key] = continuation
+        }
+    }
+
+    /// Called from the test. Lets the matching `wait(for:)` proceed.
+    func open(_ key: String) {
+        opened.insert(key)
+        continuations.removeValue(forKey: key)?.resume()
     }
 }
 
 private extension UploadedAttachment {
-    static func stub() -> UploadedAttachment {
+    static func stub(filename: String = "worksheet.pdf") -> UploadedAttachment {
         UploadedAttachment(
             attachment: MessageAttachment(
-                id: UUID(), filename: "worksheet.pdf", kind: "pdf", pageCount: 1
+                id: UUID(), filename: filename, kind: "pdf", pageCount: 1
             ),
             thumbnail: Data("thumb".utf8)
         )
