@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     database_url: str
     device_token: str
     blob_dir: Path = Path("./blobs")
+    #: Where the rotating server log is written. Its own directory rather than
+    #: a path, because the handler rotates into siblings (`server.log.1` and
+    #: so on) and they should land together.
+    log_dir: Path = Path("./logs")
     daily_spend_cap_usd: float = 5.0
     persist_dictation_audio: bool = True
 

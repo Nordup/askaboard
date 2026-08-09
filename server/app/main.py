@@ -1,3 +1,4 @@
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -6,13 +7,23 @@ from fastapi import FastAPI
 from app.api.dictation import router as dictation_router
 from app.api.sessions import router as sessions_router
 from app.api.turn import router as turn_router
+from app.config import get_settings
 from app.learner.kcs import seed_curriculum
+from app.logging_config import configure_logging
 from app.memory.jobs import backlog_status, schedule_startup_drain
 from app.store.db import dispose_engine, init_engine
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    # Here rather than in create_app(), so that constructing an app in a test
+    # does not start writing log files into the repository — the real server
+    # is the thing with a lifespan, and the real server is the thing whose
+    # logs need to outlive its terminal.
+    path = configure_logging(get_settings().log_dir)
+    logger.info("service starting | log_file=%s", path)
     init_engine()
     # Both are startup work the rest of the service assumes has happened, and
     # neither may stop the service coming up: `seed_curriculum` swallows and
@@ -23,6 +34,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        logger.info("service stopping")
         await dispose_engine()
 
 

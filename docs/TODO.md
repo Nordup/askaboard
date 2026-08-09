@@ -83,25 +83,23 @@ survivable, but a learner working full-screen cannot see which session they are 
 
 Board 15a was drawn for the panel only. Screen 07 would need its own placement.
 
-### 7. A close can freeze a transcript that is still being written
+### 7. A dead turn delays a session's memory by up to six hours
 
-`TutorStore.endSessionOnServer` suppresses the close when a turn is in flight,
-which is the client half of a problem that only the server can actually solve.
+`_record_episode` now declines to record a session while it has a turn at
+status="running" that started within `TURN_ASSUMED_DEAD_AFTER`, which closes the
+race this entry was originally opened for: a close landing mid-turn used to
+freeze the transcript short, permanently, because `uq_episodes_session` allows
+no second attempt.
 
-`POST /v1/sessions/{id}/close` schedules `_record_episode`, which reads
-`sessions` and `messages` the moment it runs. Nothing there asks whether a turn
-is still writing into them, and `uq_episodes_session` makes whatever it reads
-the only episode that session will ever have. So a close that lands mid-turn
-freezes a torn transcript permanently, and every later turn in that session is
-never remembered.
+What is left is the other side of that trade. "running" is a claim made by a
+process that can die, so the guard is bounded by age rather than trusted
+outright — and a turn killed hard leaves its row saying "running" until the
+fifteen minutes are up. A close arriving inside that window is declined, and
+nothing retries it until `sweep_abandoned_sessions` reaches the session six
+hours later. The learner gets their memory the same day rather than the same
+minute, which is the right way round, but it is not free.
 
-The device cannot close this hole from its side. It cancels its own stream on a
-switch, but the server is another process and may still be several seconds into
-a reply — and a close sent from a *different* device, or a retry, has no idea a
-turn is running at all. The client guard only means the common case does not
-trip it.
-
-The fix belongs in `_record_episode`: refuse to record while the session has a
-turn with no end recorded, and leave it for `sweep_abandoned_sessions`. The
-client guard can stay as cheap insurance, but it should stop being the only
-thing standing there.
+The fix, if it ever matters: have `turn.py` relabel abandoned turns on the way
+in as well as on the way out — a new turn arriving for a session is proof the
+previous one is over — or have the close reschedule itself once the blocking
+turn leaves "running", instead of waiting for the sweep.

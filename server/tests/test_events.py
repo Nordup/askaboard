@@ -220,3 +220,171 @@ def test_file_search_emits_searching_status():
 
 def test_unknown_events_are_ignored():
     assert EventTranslator().translate({"type": "response.content_part.added"}) == []
+
+
+class FakeClock:
+    """A monotonic clock a test can move by hand."""
+
+    def __init__(self) -> None:
+        self.seconds = 0.0
+
+    def __call__(self) -> float:
+        return self.seconds
+
+
+def _begin_update_board(translator: EventTranslator) -> list:
+    return translator.translate({
+        "type": "response.output_item.added",
+        "output_index": 0,
+        "item": {"type": "function_call", "name": "update_board", "call_id": "call_b"},
+    })
+
+
+def test_starting_update_board_announces_drawing_immediately():
+    # Not left to the first heartbeat: this is the moment the turn stops
+    # thinking and starts drawing, and the device should be able to say so then.
+    assert _begin_update_board(EventTranslator()) == [StatusEvent(phase="drawing")]
+
+
+def test_starting_view_board_announces_looking():
+    events = EventTranslator().translate({
+        "type": "response.output_item.added",
+        "output_index": 0,
+        "item": {"type": "function_call", "name": "view_board", "call_id": "call_v"},
+    })
+    assert events == [StatusEvent(phase="looking")]
+
+
+def test_argument_deltas_stay_silent_until_the_heartbeat_is_due():
+    clock = FakeClock()
+    translator = EventTranslator(now=clock, heartbeat_seconds=5.0)
+    _begin_update_board(translator)
+
+    clock.seconds += 4.9
+    delta = {
+        "type": "response.function_call_arguments.delta",
+        "output_index": 0,
+        "delta": "<svg",
+    }
+    assert translator.translate(delta) == []
+
+
+def test_a_long_update_board_heartbeats_as_drawing():
+    """The failure this exists for: minutes of SVG arguments used to put not one
+    byte on the wire, and `URLSession` gives up after sixty silent seconds."""
+    clock = FakeClock()
+    translator = EventTranslator(now=clock, heartbeat_seconds=5.0)
+    _begin_update_board(translator)
+
+    delta = {
+        "type": "response.function_call_arguments.delta",
+        "output_index": 0,
+        "delta": '<path d="M10 10"/>',
+    }
+    beats = []
+    for _ in range(12):
+        clock.seconds += 1.0
+        beats.extend(translator.translate(delta))
+
+    # Twelve seconds of pure argument streaming, and the connection heard from
+    # the server twice — not once.
+    assert beats == [StatusEvent(phase="drawing")] * 2
+
+
+def test_a_translated_event_resets_the_heartbeat_clock():
+    clock = FakeClock()
+    translator = EventTranslator(now=clock, heartbeat_seconds=5.0)
+    _begin_update_board(translator)
+
+    clock.seconds += 4.0
+    assert translator.translate(
+        {"type": "response.reasoning_summary_text.delta", "delta": "Sketching"}
+    ) == [ReasoningDeltaEvent(text="Sketching")]
+
+    # Four seconds after that real event, not nine after the last beat.
+    clock.seconds += 4.0
+    assert translator.translate({
+        "type": "response.function_call_arguments.delta",
+        "output_index": 0,
+        "delta": "x",
+    }) == []
+
+
+def test_a_heartbeat_outside_any_tool_call_repeats_the_current_phase():
+    clock = FakeClock()
+    translator = EventTranslator(now=clock, heartbeat_seconds=5.0)
+    translator.translate({"type": "response.created"})
+
+    clock.seconds += 6.0
+    assert translator.translate({"type": "response.content_part.added"}) == [
+        StatusEvent(phase="thinking")
+    ]
+
+
+def test_prose_after_a_tool_call_announces_writing_again():
+    # The phase drives the thread's working indicator, which hides itself on
+    # `writing` precisely because the reply is then visible on its own. A phase
+    # left on `drawing` leaves that indicator up for the rest of the turn,
+    # claiming the tutor is still drawing over prose the learner is reading.
+    translator = EventTranslator()
+    translator.translate({"type": "response.output_text.delta", "delta": "Let me draw."})
+    _begin_update_board(translator)
+    translator.translate({
+        "type": "response.function_call_arguments.done",
+        "output_index": 0,
+        "arguments": "{}",
+    })
+
+    events = translator.translate(
+        {"type": "response.output_text.delta", "delta": "Now try it."}
+    )
+
+    assert events[0] == StatusEvent(phase="writing")
+
+
+def test_a_heartbeat_after_a_tool_call_does_not_still_claim_drawing():
+    clock = FakeClock()
+    translator = EventTranslator(now=clock, heartbeat_seconds=5.0)
+    # The prose *before* the tool call is what arms the bug: it is the delta
+    # that sets `_writing_announced`, and without it here the delta after the
+    # call announces `writing` on its own and the test proves nothing.
+    translator.translate({"type": "response.output_text.delta", "delta": "Let me draw."})
+    _begin_update_board(translator)
+    translator.translate({
+        "type": "response.function_call_arguments.done",
+        "output_index": 0,
+        "arguments": "{}",
+    })
+    translator.translate({"type": "response.output_text.delta", "delta": "Now try it."})
+
+    clock.seconds += 6.0
+    quiet = translator.translate({"type": "response.content_part.added"})
+
+    assert quiet == [StatusEvent(phase="writing")]
+
+
+def test_a_memory_tool_puts_something_on_the_wire_before_it_blocks():
+    # `search_memory` is awaited inside the tool round, and for the length of
+    # that await no provider events are consumed — so `translate` is not called
+    # and the heartbeat cannot fire. The status announced here is the last byte
+    # the device gets before the silence, which is what keeps the silence from
+    # being added to whatever quiet already preceded it.
+    events = EventTranslator().translate({
+        "type": "response.output_item.added",
+        "output_index": 0,
+        "item": {"type": "function_call", "name": "search_memory", "call_id": "call_m"},
+    })
+    assert events == [StatusEvent(phase="searching")]
+
+
+def test_every_memory_tool_announces_a_phase():
+    # A tool missing from TOOL_PHASES is silent by design, which is right for a
+    # tool that returns instantly and wrong for these four: each one is a
+    # database round trip, and `search_memory` an embedding call on top.
+    for name in ("remember", "search_memory", "recent_sessions", "record_evidence"):
+        events = EventTranslator().translate({
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "item": {"type": "function_call", "name": name, "call_id": "c"},
+        })
+        assert events, f"{name} announces nothing at the head of its call"

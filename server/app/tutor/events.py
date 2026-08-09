@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import time
+from collections.abc import Callable
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -28,9 +30,18 @@ class ExerciseModel(BaseModel):
     context: str
 
 
+#: What a turn can be doing, as the device is told it.
+#:
+#: `drawing` is the newest and the reason the others were not enough: a
+#: diagram's SVG is thousands of tokens of tool-call arguments, and until it
+#: existed that whole stretch looked identical to `thinking` — which is to say,
+#: it looked like nothing at all.
+PhaseName = Literal["thinking", "looking", "searching", "writing", "drawing"]
+
+
 class StatusEvent(BaseModel):
     type: Literal["status"] = "status"
-    phase: Literal["thinking", "looking", "searching", "writing"]
+    phase: PhaseName
     detail: str | None = None
 
 
@@ -116,19 +127,122 @@ ClientEvent = Annotated[
 ]
 
 
+#: The longest this translator will let a turn go without putting a single byte
+#: on the wire.
+#:
+#: Not a cosmetic number. `URLSession` gives up on a request that receives no
+#: data for 60 seconds, and the client streams a turn on exactly that timer, so
+#: any silence longer than a minute ends the turn — with the model's work
+#: already generated and already billed. Before this, one `update_board` call
+#: was a single unbroken silence for as long as its arguments took to stream,
+#: which for a detailed diagram is minutes. Five seconds is a wide margin
+#: against the shortest timeout in the path and still nowhere near often enough
+#: to be noise.
+HEARTBEAT_SECONDS = 5.0
+
+#: What the device is told the tutor is doing while each tool call's arguments
+#: stream in — and, because a heartbeat has to say *something*, what the
+#: keep-alive says too.
+#:
+#: Only these three exist; a tool absent from this map is announced as nothing
+#: and falls back to whatever phase was already current.
+#: The memory tools earn their place here for a second reason on top of the
+#: status line. Every one of them is awaited inside the tool round
+#: (`turn.py`'s `handle_memory`), and while that await runs this translator is
+#: not called at all — no provider events are being consumed, so the heartbeat
+#: below cannot fire and the wire is genuinely silent for as long as the
+#: embedding and the query take. Announcing the phase at the head of the call
+#: is what puts a byte on the wire immediately before that gap, so the gap
+#: starts from zero rather than on top of whatever quiet came before it.
+TOOL_PHASES: dict[str, PhaseName] = {
+    "update_board": "drawing",
+    "view_board": "looking",
+    "set_workspace": "thinking",
+    "search_memory": "searching",
+    "recent_sessions": "searching",
+    "remember": "thinking",
+    "record_evidence": "thinking",
+}
+
+
 class EventTranslator:
     """Turns Responses API events into our own vocabulary.
 
     Stateful on purpose: a function call's name arrives on
     `response.output_item.added` and its arguments arrive later carrying only
-    `output_index`, so the two have to be correlated.
+    `output_index`, so the two have to be correlated. That correlation now
+    earns its keep twice — it is also what lets a heartbeat during a long tool
+    call say *which* tool, so the keep-alive and the thing that drives the
+    device's status line are one mechanism rather than two.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        now: Callable[[], float] = time.monotonic,
+        heartbeat_seconds: float = HEARTBEAT_SECONDS,
+    ) -> None:
         self._tool_names: dict[int, str] = {}
         self._writing_announced = False
+        # Injected so a test can drive the heartbeat without sleeping. Monotonic
+        # rather than wall clock: this measures an interval, and a clock that
+        # steps backwards mid-turn would stop the keep-alive dead.
+        self._now = now
+        self._heartbeat_seconds = heartbeat_seconds
+        self._phase: PhaseName = "thinking"
+        self._last_emit = now()
 
     def translate(self, event: dict) -> list[ClientEvent]:
+        """Translate one provider event, or keep the connection alive.
+
+        Every raw event is a chance to notice that nothing has reached the
+        device for a while. Provider events arrive continuously — argument
+        deltas most of all — so hanging the check here needs no timer and no
+        second task, and the only genuinely eventless wait in a turn (the
+        device rendering a board region) is already bounded by
+        `rendezvous.RENDER_TIMEOUT_SECONDS`.
+        """
+        produced = self._translate(event)
+        if produced:
+            self._remember(produced)
+            return produced
+        return self._heartbeat(event)
+
+    def _remember(self, produced: list[ClientEvent]) -> None:
+        """Record that the device just heard from us, and what we said."""
+        self._last_emit = self._now()
+        for event in produced:
+            if isinstance(event, StatusEvent):
+                self._phase = event.phase
+
+    def _heartbeat(self, event: dict) -> list[ClientEvent]:
+        """A status event sent for no reason except that the line is quiet.
+
+        Repeating the current phase rather than inventing a new event type: the
+        client already handles `status` idempotently (it assigns the phase and
+        redraws nothing else), and a device too old to know a phase name drops
+        the event and keeps its connection, which is the half that matters.
+        """
+        self._phase = self._phase_of(event) or self._phase
+        now = self._now()
+        if now - self._last_emit < self._heartbeat_seconds:
+            return []
+        self._last_emit = now
+        return [StatusEvent(phase=self._phase)]
+
+    def _phase_of(self, event: dict) -> PhaseName | None:
+        """The phase an *untranslatable* event still tells us we are in.
+
+        Argument deltas are the whole point: they carry no content this service
+        forwards, but they do say which tool is mid-flight, and that is exactly
+        the stretch the learner used to spend staring at nothing.
+        """
+        if event.get("type") != "response.function_call_arguments.delta":
+            return None
+        name = self._tool_names.get(event.get("output_index", -1), "")
+        return TOOL_PHASES.get(name)
+
+    def _translate(self, event: dict) -> list[ClientEvent]:
         kind = event.get("type", "")
 
         if kind == "response.created":
@@ -148,7 +262,23 @@ class EventTranslator:
             item = event.get("item") or {}
             output_index = event.get("output_index")
             if item.get("type") == "function_call" and output_index is not None:
-                self._tool_names[output_index] = item.get("name", "")
+                name = item.get("name", "")
+                self._tool_names[output_index] = name
+                # Announced here, at the head of the call, rather than left to
+                # the first heartbeat: this is the moment the turn stops
+                # thinking and starts drawing, and the device should say so
+                # then, not up to `HEARTBEAT_SECONDS` later.
+                phase = TOOL_PHASES.get(name)
+                if phase is not None:
+                    # Clearing the latch is what lets prose *after* this call
+                    # announce `writing` again. Without it `_writing_announced`
+                    # stays true from the first text delta of the turn, no
+                    # later one emits a status, and the phase sticks on this
+                    # tool until the turn ends — so the thread goes on saying
+                    # "Drawing on the board" over a reply that is streaming in
+                    # underneath it, and every heartbeat repeats the claim.
+                    self._writing_announced = False
+                    return [StatusEvent(phase=phase)]
             return []
 
         if kind == "response.function_call_arguments.done":

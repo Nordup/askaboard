@@ -3,6 +3,7 @@ import contextlib
 import json
 import uuid
 
+import anyio
 import httpx
 import pytest
 import respx
@@ -582,7 +583,8 @@ async def test_a_client_disconnect_mid_stream_leaves_the_turn_not_running(
     regardless of what triggered it — and checks the one thing the finding
     actually requires: the turn does not stay "running"."""
 
-    async def _cancelled_run_turn(*, client, model, effort, bundle):
+    async def _cancelled_run_turn(*, client, model, effort, bundle, fetch_board,
+                                  handle_memory):
         result = TurnResult()
         yield StatusEvent(phase="thinking"), result
         raise asyncio.CancelledError()
@@ -604,3 +606,101 @@ async def test_a_client_disconnect_mid_stream_leaves_the_turn_not_running(
         turn = await db.get(Turn, uuid.UUID(payload["turn_id"]))
         assert turn is not None
         assert turn.status != "running"
+
+
+async def test_a_cancel_scope_disconnect_still_leaves_the_turn_not_running(
+    db_app, db_factory, monkeypatch
+):
+    """The disconnect the test above *doesn't* reproduce, and the one that
+    actually happened.
+
+    Raising `CancelledError` inside the generator is a plain exception: the
+    task's cancel state is never set, no cancel scope is cancelled, and every
+    `await` in the closing `finally` therefore runs to completion. A real
+    disconnect is the other thing — Starlette cancels the anyio scope the
+    generator runs in, and a cancelled scope re-delivers cancellation at every
+    subsequent `await`, so the `finally` was killed on its first one and the
+    turn stayed "running" forever. Four of them are sitting in the production
+    database, put there while the test above was green.
+
+    So this cancels from the outside, through a real scope, which is the only
+    version of the failure that exercises the shield."""
+
+    async def _hanging_run_turn(*, client, model, effort, bundle, fetch_board,
+                                handle_memory):
+        result = TurnResult()
+        yield StatusEvent(phase="thinking"), result
+        # Parked, so the cancellation below lands mid-turn rather than racing a
+        # generator that has already finished and closed the turn out cleanly.
+        await anyio.sleep_forever()
+
+    monkeypatch.setattr("app.api.turn.run_turn", _hanging_run_turn)
+
+    payload = _payload()
+    body = json.dumps(payload).encode()
+    streaming = anyio.Event()
+    request_sent = False
+
+    # Driven as raw ASGI rather than through `AsyncClient`, because httpx's
+    # `ASGITransport` cannot express this at all: it accumulates the whole
+    # response body and only constructs a `Response` once the app has returned,
+    # so by the time `client.stream(...)` hands anything back the turn is over
+    # and there is nothing left to disconnect from. This is what uvicorn does —
+    # and sending a real `http.disconnect` means Starlette cancels its own task
+    # group exactly the way it does in production, rather than the test
+    # cancelling something from outside and hoping the shape matches.
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/v1/turn",
+        "raw_path": b"/v1/turn",
+        "query_string": b"",
+        "root_path": "",
+        "headers": [
+            (b"host", b"test"),
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(body)).encode()),
+            (b"authorization", b"Bearer test-token"),
+        ],
+        "client": ("127.0.0.1", 51234),
+        "server": ("test", 80),
+    }
+
+    async def receive():
+        nonlocal request_sent
+        if not request_sent:
+            request_sent = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        # Starlette's `listen_for_disconnect` is what calls this next. Hold the
+        # disconnect until the turn is genuinely mid-stream: dropping it any
+        # earlier and the endpoint has not committed the turn row yet, which is
+        # a different failure that this test would otherwise pass by accident.
+        await streaming.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message) -> None:
+        if message["type"] == "http.response.body" and message.get("body"):
+            streaming.set()
+
+    with anyio.fail_after(30):
+        await db_app(scope, receive, send)
+
+    async with db_factory() as db:
+        turn = await db.get(Turn, uuid.UUID(payload["turn_id"]))
+        assert turn is not None
+        assert turn.status == "error"
+        assert turn.error is not None
+        assert turn.error["retryable"] is True
+
+        # The row has to say *how* it died, not just that it did. `max_silence_ms`
+        # is what separates a client timeout from someone closing the app, and
+        # its absence is why the original four stranded turns could not be told
+        # apart from each other by anyone reading the table.
+        diagnostics = turn.error["diagnostics"]
+        assert diagnostics["max_silence_ms"] >= 0
+        assert diagnostics["events_sent"] >= 1
+        assert diagnostics["elapsed_ms"] >= 0
+        assert "provider_events" in diagnostics

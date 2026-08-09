@@ -61,7 +61,14 @@ async def db_factory():
     global _schema_ready
     if TEST_DATABASE_URL is None:
         pytest.skip("TEST_DATABASE_URL is not set.")
-    engine = create_async_engine(TEST_DATABASE_URL)
+    # `pool_pre_ping` for the same reason `app/store/db.py` sets it, plus one
+    # this fixture has and the app does not: a test that cancels a request
+    # mid-flight (the disconnect tests) interrupts the request-scoped session's
+    # own teardown, and asyncpg hands a connection in that state back to the
+    # pool. Without a pre-ping the *next* test to check it out gets
+    # "connection is closed" and fails for a reason that has nothing to do with
+    # what it was testing.
+    engine = create_async_engine(TEST_DATABASE_URL, pool_pre_ping=True)
     engine = engine.execution_options(schema_translate_map={None: _SCHEMA_NAME})
     async with engine.begin() as conn:
         if not _schema_ready:

@@ -171,6 +171,7 @@ class Recorder:
         result: Any | None = None,
         request_body: dict | None = None,
         image_blob_key: str | None = None,
+        diagnostics: dict | None = None,
     ) -> None:
         """Record a turn that ended in an error.
 
@@ -181,10 +182,23 @@ class Recorder:
         way a successful turn's are: that partial output is exactly what the
         learner already saw on screen, and it is what makes a bad turn
         diagnosable afterwards instead of just a blank error.
+
+        `diagnostics` is how the turn looked from the wire — elapsed, events
+        sent, and above all the longest silence. It goes into `turns.error`
+        rather than into new columns because it is diagnostic detail attached
+        to a failure, not a fact about every turn, and because JSONB means the
+        next thing worth recording needs no migration.
+
+        Token counts are written here as well as in `finish_turn`. A turn that
+        died after the provider had already billed for its output used to
+        record none of them, which is precisely the shape of the failure this
+        service exists to make visible: money spent, nothing to show for it,
+        and no row saying how much.
         """
         call = None
+        usage: dict = {}
         if result is not None:
-            call, _ = await self._build_llm_call(
+            call, usage = await self._build_llm_call(
                 turn_id=turn_id, result=result,
                 request_body=request_body or {}, image_blob_key=image_blob_key,
             )
@@ -197,7 +211,16 @@ class Recorder:
             if turn is None:
                 raise ValueError(f"fail_turn: no turn found with id {turn_id}")
             turn.status = "error"
-            turn.error = {"message": message, "retryable": retryable}
+            turn.error = {
+                "message": message,
+                "retryable": retryable,
+                **({"diagnostics": diagnostics} if diagnostics else {}),
+            }
+            turn.input_tokens = usage.get("input_tokens")
+            turn.output_tokens = usage.get("output_tokens")
+            turn.reasoning_tokens = (usage.get("output_tokens_details") or {}).get(
+                "reasoning_tokens"
+            )
             turn.finished_at = datetime.now(timezone.utc)
             await session.commit()
 

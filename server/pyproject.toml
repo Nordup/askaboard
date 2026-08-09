@@ -3,6 +3,12 @@ name = "mathtutor-server"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
+    # Imported directly by app/api/turn.py for `move_on_after(shield=True)`,
+    # the construct that lets a disconnected turn still record itself. It
+    # arrives transitively through Starlette either way, but a direct import
+    # is a direct dependency: pinned here so a resolver is never free to drop
+    # it, and so the version floor is stated by the code that needs it.
+    "anyio>=4.0",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
     "openai>=2.8",

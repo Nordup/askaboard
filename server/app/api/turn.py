@@ -7,6 +7,7 @@ import time
 import uuid
 from dataclasses import dataclass
 
+import anyio
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from openai import APIConnectionError, APIStatusError, AsyncOpenAI
@@ -47,6 +48,15 @@ router = APIRouter(prefix="/v1", dependencies=[Depends(require_device_token)])
 # shared kind would have a selection sent between two identical boards read as
 # the board having changed twice. Fits `Attachment.kind`'s String(16).
 BOARD_KIND = "board_full"
+
+#: How long the close-out in `stream`'s `finally` may take before it is
+#: abandoned.
+#:
+#: It runs shielded from cancellation, which is the only way it can run at all
+#: on the disconnect path — and a shield with no deadline is how a wedged
+#: database turns one dropped connection into a coroutine that never returns.
+#: Two writes against a warm pool; ten seconds is slack, not a budget.
+CLEANUP_TIMEOUT_SECONDS = 10.0
 
 
 #: How many past sessions ride along in every prompt. Enough for "what did we
@@ -107,6 +117,7 @@ async def _fail_turn_and_report(
     result: TurnResult | None,
     request_body: dict,
     image_blob_key: str | None,
+    diagnostics: dict | None = None,
 ) -> ErrorEvent:
     """Persist the failure, but never let persisting it fail silently.
 
@@ -115,11 +126,23 @@ async def _fail_turn_and_report(
     and would leave the turn "running" forever with no ErrorEvent ever
     reaching the client. A learner seeing a clear (if unrecorded) error beats
     a stream that just stops.
+
+    Logged as well as persisted, and logged *first*, because the two failure
+    modes this has to survive are "the database write failed" and "the process
+    is about to go away" — in both, the log line is the only account that will
+    exist.
     """
+    logger.warning(
+        "turn failed | turn_id=%s retryable=%s %s | %s",
+        turn_id, retryable,
+        " ".join(f"{k}={v}" for k, v in (diagnostics or {}).items()),
+        message,
+    )
     try:
         await recorder.fail_turn(
             turn_id=turn_id, message=message, retryable=retryable,
             result=result, request_body=request_body, image_blob_key=image_blob_key,
+            diagnostics=diagnostics,
         )
     except Exception:
         # The client still gets its ErrorEvent below either way — this
@@ -343,11 +366,56 @@ async def create_turn(
     ]
     next_seq = seq + 1
 
+    logger.info(
+        "turn started | turn_id=%s session_id=%s model=%s effort=%s "
+        "has_image=%s has_board=%s history=%d",
+        body.turn_id, session.id, body.model, body.reasoning_effort,
+        image is not None, board is not None, seq,
+    )
+
     async def stream():
         started = time.monotonic()
         ttft_ms: int | None = None
         image_ref = None
         result: TurnResult | None = None
+        # How long this turn has gone without putting anything on the wire, and
+        # the worst such gap so far.
+        #
+        # This is *the* number. The failure that produced all of this was a
+        # client giving up after sixty silent seconds, and nothing recorded
+        # anywhere said how quiet the connection had been — so the one fact that
+        # would have identified it in a single query was the one fact nobody
+        # had. It is now on every turn's log line and in every failed turn's
+        # `error` column, healthy turns included, because a turn creeping toward
+        # the timeout is worth seeing *before* it crosses it.
+        last_sent = started
+        max_silence = 0.0
+        events_sent = 0
+
+        def sse(event) -> str:
+            """Serialise one event, and remember that the line just went quiet."""
+            nonlocal last_sent, max_silence, events_sent
+            now = time.monotonic()
+            max_silence = max(max_silence, now - last_sent)
+            last_sent = now
+            events_sent += 1
+            return format_sse(event)
+
+        def diagnostics() -> dict:
+            """What this turn looked like from the wire, whatever happened to it."""
+            now = time.monotonic()
+            return {
+                "elapsed_ms": int((now - started) * 1000),
+                "ttft_ms": ttft_ms,
+                "events_sent": events_sent,
+                # The trailing gap counts: on a timeout it *is* the failure, and
+                # it is the one interval no `sse()` call ever closes.
+                "max_silence_ms": int(max(max_silence, now - last_sent) * 1000),
+                # Provider events consumed, not tool rounds — it is the cheapest
+                # way to tell "the model never answered" from "the model was
+                # answering and something cut it off".
+                "provider_events": len(result.raw_events) if result is not None else 0,
+            }
         # Always defined, even if assemble_context itself never runs: an
         # except clause (or the finally guard) reached before "input" is
         # filled in must still have something to hand to fail_turn/
@@ -399,7 +467,7 @@ async def create_turn(
                 # provider event. detail is left unset: image_region already
                 # reaches the model through the assembled prompt, and the wire
                 # contract for this status is bare.
-                yield format_sse(StatusEvent(phase="looking", detail=None))
+                yield sse(StatusEvent(phase="looking", detail=None))
                 image_ref = await recorder.record_attachment(
                     turn_id=body.turn_id, kind="board_png", data=image,
                     content_type="image/png",
@@ -450,7 +518,7 @@ async def create_turn(
                 result = running
                 if ttft_ms is None and event.type == "text_delta":
                     ttft_ms = int((time.monotonic() - started) * 1000)
-                yield format_sse(event)
+                yield sse(event)
 
             if result is not None:
                 await recorder.finish_turn(
@@ -461,19 +529,32 @@ async def create_turn(
                     image_blob_key=image_ref.key if image_ref else None,
                 )
                 usage = result.usage or {}
-                yield format_sse(DoneEvent(
+                yield sse(DoneEvent(
                     turn_id=body.turn_id,
                     input_tokens=usage.get("input_tokens"),
                     output_tokens=usage.get("output_tokens"),
                 ))
+                # Logged on the happy path too, not only on failure. The turns
+                # that died were preceded by turns that *worked* while creeping
+                # toward the client's timeout — the last good one sent nothing
+                # for 59.5 of its 62.7 seconds. Only a line on every turn makes
+                # that trend visible before it becomes an outage.
+                logger.info(
+                    "turn ok | turn_id=%s %s in=%s out=%s reasoning=%s",
+                    body.turn_id,
+                    " ".join(f"{k}={v}" for k, v in diagnostics().items()),
+                    usage.get("input_tokens"), usage.get("output_tokens"),
+                    (usage.get("output_tokens_details") or {}).get("reasoning_tokens"),
+                )
         except APIStatusError as error:
             decision = classify(error.status_code, error.body)
             event = await _fail_turn_and_report(
                 recorder, turn_id=body.turn_id, message=_describe_error(error),
                 retryable=decision.retry, result=result, request_body=request_body,
                 image_blob_key=image_ref.key if image_ref else None,
+                diagnostics=diagnostics(),
             )
-            yield format_sse(event)
+            yield sse(event)
         except APIConnectionError as error:
             # Covers APITimeoutError too — it subclasses APIConnectionError.
             # Both are transient network failures, not a verdict from the
@@ -482,8 +563,9 @@ async def create_turn(
                 recorder, turn_id=body.turn_id, message=_describe_error(error),
                 retryable=True, result=result, request_body=request_body,
                 image_blob_key=image_ref.key if image_ref else None,
+                diagnostics=diagnostics(),
             )
-            yield format_sse(event)
+            yield sse(event)
         except Exception as error:
             # A mid-stream failure is never silently retried by us, and an
             # unanticipated exception is treated as a bug in our own code
@@ -496,8 +578,9 @@ async def create_turn(
                 recorder, turn_id=body.turn_id, message=_describe_error(error),
                 retryable=False, result=result, request_body=request_body,
                 image_blob_key=image_ref.key if image_ref else None,
+                diagnostics=diagnostics(),
             )
-            yield format_sse(event)
+            yield sse(event)
         finally:
             # The structural backstop: whatever just happened above — a
             # clean finish, one of the classified excepts above (which
@@ -512,27 +595,47 @@ async def create_turn(
             # never be retried. Re-read through the recorder, not a local
             # variable, since a disconnect can land here without any of the
             # in-generator state being trustworthy.
-            try:
-                status_now = await recorder.turn_status(body.turn_id)
-            except Exception:
-                # A database that can't answer this check can't persist a
-                # fail_turn write either — logging is the only thing left to
-                # do, same reasoning as _fail_turn_and_report's own swallow.
-                logger.exception(
-                    "could not check turn status while closing out turn_id=%s",
-                    body.turn_id,
-                )
-                status_now = None
-            if status_now == "running":
-                await _fail_turn_and_report(
-                    recorder, turn_id=body.turn_id,
-                    message=(
-                        "the turn ended without completing (the client "
-                        "disconnected, or a failure went unrecorded)"
-                    ),
-                    retryable=True, result=result, request_body=request_body,
-                    image_blob_key=image_ref.key if image_ref else None,
-                )
+            #
+            # **Shielded, or none of the above happens.** This guard was
+            # written for the disconnect case and did not survive it: a
+            # disconnect cancels the anyio scope Starlette runs this generator
+            # in, and a cancelled scope re-delivers cancellation at every
+            # subsequent `await` — so `turn_status` below was cancelled on the
+            # first one, every time, and `except Exception` never saw it
+            # because `CancelledError` is a `BaseException`. The turns this was
+            # supposed to rescue sat at status="running" forever, which is
+            # exactly the state it exists to prevent. `move_on_after(...,
+            # shield=True)` is the construct that lets cleanup finish inside a
+            # cancelled scope, and its deadline is what keeps the shield from
+            # becoming a hang.
+            with anyio.move_on_after(CLEANUP_TIMEOUT_SECONDS, shield=True):
+                try:
+                    status_now = await recorder.turn_status(body.turn_id)
+                except Exception:
+                    # A database that can't answer this check can't persist a
+                    # fail_turn write either — logging is the only thing left to
+                    # do, same reasoning as _fail_turn_and_report's own swallow.
+                    logger.exception(
+                        "could not check turn status while closing out turn_id=%s",
+                        body.turn_id,
+                    )
+                    status_now = None
+                if status_now == "running":
+                    await _fail_turn_and_report(
+                        recorder, turn_id=body.turn_id,
+                        message=(
+                            "the turn ended without completing (the client "
+                            "disconnected, or a failure went unrecorded)"
+                        ),
+                        retryable=True, result=result, request_body=request_body,
+                        image_blob_key=image_ref.key if image_ref else None,
+                        # `max_silence_ms` is the tell for this specific exit.
+                        # A disconnect after a long quiet stretch is a client
+                        # timeout; a disconnect at a few hundred milliseconds is
+                        # someone closing the app. The row could not previously
+                        # distinguish those, and neither could anyone reading it.
+                        diagnostics=diagnostics(),
+                    )
             # Deliberately not caught anywhere above: re-raising is what
             # tells the ASGI server the connection is really gone, and
             # swallowing a BaseException here would be exactly the kind of

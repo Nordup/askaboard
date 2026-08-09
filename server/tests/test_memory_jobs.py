@@ -8,12 +8,12 @@ from sqlalchemy import func as sa_func, select
 
 from app.config import EMBEDDING_DIMS, SOLE_LEARNER_ID
 from app.memory.jobs import (
-    STALE_AFTER, _TASKS, _extract_episode, backlog_status,
+    STALE_AFTER, TURN_ASSUMED_DEAD_AFTER, _TASKS, _extract_episode, backlog_status,
     run_extraction_backlog, run_session_close, run_startup_drain,
     schedule_session_close, schedule_startup_drain, sweep_abandoned_sessions,
 )
 from app.memory.schema import ExtractedAtom, MemoryCategory
-from app.store.models import Episode, Learner, MemoryAtom, Message, Session
+from app.store.models import Episode, Learner, MemoryAtom, Message, Session, Turn
 from tests.conftest import requires_db
 
 # Every model call in the pipeline is stubbed. What is under test is the order
@@ -644,3 +644,87 @@ async def test_the_startup_drain_never_stops_the_app_booting(monkeypatch, caplog
         await next(iter(_TASKS))
 
     assert "startup memory drain failed" in caplog.text
+
+
+async def _add_turn(db_factory, session_id: uuid.UUID, *, status: str,
+                    started_at: datetime | None = None) -> uuid.UUID:
+    """One turn row against `session_id`, committed. Returns its id."""
+    turn_id = uuid.uuid4()
+    async with db_factory() as db:
+        turn = Turn(id=turn_id, session_id=session_id, status=status,
+                    model="gpt-5.6-luna", reasoning_effort="high")
+        if started_at is not None:
+            turn.started_at = started_at
+        db.add(turn)
+        await db.commit()
+    return turn_id
+
+
+@requires_db
+async def test_a_close_landing_mid_turn_records_nothing(db_factory, monkeypatch):
+    """The permanent one.
+
+    `uq_episodes_session` gives a session exactly one episode ever, so an
+    episode written while the reply is still being appended is a transcript
+    frozen short — and every turn after it goes unremembered with nothing
+    anywhere saying so. Declining leaves the session eligible; the sweep takes
+    it whole once the turn is over.
+    """
+    _install(monkeypatch)
+    session_id = await _session_with(db_factory, [("learner", "help with fractions")])
+    await _add_turn(db_factory, session_id, status="running")
+
+    await run_session_close(session_id, db_factory=db_factory)
+
+    assert await _episodes(db_factory, session_id) == []
+
+
+@requires_db
+async def test_the_session_is_recorded_once_that_turn_ends(db_factory, monkeypatch):
+    """Declining is a deferral, not a refusal — the next close must succeed."""
+    _install(monkeypatch)
+    session_id = await _session_with(db_factory, [("learner", "help with fractions")])
+    turn_id = await _add_turn(db_factory, session_id, status="running")
+    await run_session_close(session_id, db_factory=db_factory)
+
+    async with db_factory() as db:
+        (await db.get(Turn, turn_id)).status = "ok"
+        await db.commit()
+    await run_session_close(session_id, db_factory=db_factory)
+
+    assert len(await _episodes(db_factory, session_id)) == 1
+
+
+@requires_db
+async def test_a_turn_that_died_still_running_cannot_block_a_session_forever(
+    db_factory, monkeypatch
+):
+    """A process killed mid-turn leaves "running" in the row and nobody to fix it.
+
+    Trusting that state indefinitely would answer one lost process with a
+    session that can never be remembered, which is a worse failure than the
+    torn transcript the guard exists to prevent.
+    """
+    _install(monkeypatch)
+    session_id = await _session_with(db_factory, [("learner", "help with fractions")])
+    await _add_turn(
+        db_factory, session_id, status="running",
+        started_at=datetime.now(timezone.utc) - TURN_ASSUMED_DEAD_AFTER
+        - timedelta(minutes=1),
+    )
+
+    await run_session_close(session_id, db_factory=db_factory)
+
+    assert len(await _episodes(db_factory, session_id)) == 1
+
+
+@requires_db
+async def test_a_finished_turn_does_not_hold_the_close_up(db_factory, monkeypatch):
+    """The ordinary path: the learner switches away after a reply landed."""
+    _install(monkeypatch)
+    session_id = await _session_with(db_factory, [("learner", "help with fractions")])
+    await _add_turn(db_factory, session_id, status="ok")
+
+    await run_session_close(session_id, db_factory=db_factory)
+
+    assert len(await _episodes(db_factory, session_id)) == 1

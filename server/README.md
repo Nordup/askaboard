@@ -64,6 +64,7 @@ failed one logs why and the service still comes up.
 | `DATABASE_URL` | The Postgres (Neon) connection string the app writes to. |
 | `DEVICE_TOKEN` | The bearer token the iPad app presents. Generate with `python -c "import secrets; print(secrets.token_urlsafe(32))"`. |
 | `BLOB_DIR` | *Optional*, defaults to `./blobs`. Local directory for the blob store (board PNGs, ink, dictation audio, raw event logs). |
+| `LOG_DIR` | *Optional*, defaults to `./logs`. Where the rotating `server.log` is written. See [When a turn goes wrong](#when-a-turn-goes-wrong). |
 | `DAILY_SPEND_CAP_USD` | *Optional*, defaults to `5.0`. Turns are refused with `402` once today's recorded spend reaches this. See [Known limitations](#known-limitations) — today this never trips. |
 | `PERSIST_DICTATION_AUDIO` | *Optional*, defaults to **`true`**. Whether dictation recordings are written to the blob store. Leaving this unset does not mean recordings are skipped — it means they're kept, same as if you'd set it to `true` explicitly. Retention below applies whenever this is `true`. |
 | `TEST_DATABASE_URL` | A **separate** database the test suite runs against. See the warning immediately below — do not skip it. |
@@ -118,7 +119,7 @@ which of these it is:
 
 | `type` | Meaning |
 | --- | --- |
-| `status` | A phase change: `thinking`, `looking` (an image is being uploaded), `searching` (a tool call is running), or `writing` (text has started). |
+| `status` | The current phase: `thinking`, `looking` (an image is being uploaded, or the tutor is reading a region of the board), `searching` (a tool call is running), `drawing` (an `update_board` call's arguments are streaming), or `writing` (text has started). Repeats — see [Keeping the stream alive](#keeping-the-stream-alive). |
 | `reasoning_delta` | An incremental chunk of the model's reasoning summary. |
 | `text_delta` | An incremental chunk of the reply text. |
 | `workspace` | A full replacement of the session's plan and exercise, arriving together — see below. |
@@ -128,6 +129,97 @@ which of these it is:
 
 These are defined once, as Pydantic models, in
 [`app/tutor/events.py`](app/tutor/events.py).
+
+## When a turn goes wrong
+
+Two turns once failed in a row, cost about twenty cents each, and left behind
+a row saying `running` and nothing else. Reconstructing what happened took an
+hour of reading source. These are the three places that now answer it directly.
+
+**1. `logs/server.log`** — a rotating file, written whether or not anyone is
+watching the terminal. `uvicorn --reload` writes to stdout, and stdout is gone
+the moment that terminal scrolls; this is the copy that is still there
+tomorrow. uvicorn's own loggers are captured into it too, so a server that
+restarted mid-turn says so in the same file as the turn it interrupted.
+
+Every turn writes a line when it starts and a line when it ends, failed or not:
+
+```
+turn started | turn_id=fab8b28c… session_id=4cf009a6… model=gpt-5.6-sol effort=high has_image=False has_board=True history=6
+turn ok      | turn_id=fab8b28c… elapsed_ms=62659 ttft_ms=59563 events_sent=41 max_silence_ms=54120 provider_events=812 in=24294 out=4314 reasoning=467
+```
+
+**`max_silence_ms` is the one to watch.** It is the longest the connection went
+without a single byte, and it is what killed those turns: the client abandons a
+request after 60 s of silence. The last turn that *worked* before the two
+failures sent nothing for 54 of its 62 seconds — the trend was visible one turn
+ahead of the outage, if anything had been recording it.
+
+**2. `turns.error`** — every failed turn now carries the same numbers in JSONB,
+so the question can be asked in SQL instead of grep:
+
+```sql
+select id, started_at, error->>'message' as message,
+       error->'diagnostics'->>'max_silence_ms' as silence_ms,
+       input_tokens, output_tokens
+from turns where status = 'error' order by started_at desc limit 20;
+```
+
+A disconnect after a long silence is a client timeout. A disconnect at a few
+hundred milliseconds is someone closing the app. The row used to be unable to
+tell you which.
+
+**3. Token counts on failed turns.** `fail_turn` records `input_tokens` /
+`output_tokens` / `reasoning_tokens`, not just `finish_turn`. A turn that dies
+after the model has generated its answer has still been billed for it, and that
+is precisely the case that used to record nothing at all.
+
+**4. On the device.** The app logs the real error, which is the only place it
+appears at all — the thread deliberately shows the same fixed copy whatever
+happened. A `URLError` is logged with its numeric code, and that code is what
+separates the cases that look identical on screen: −1001 timed out, −1005
+connection dropped, −1009 no route to the Mac.
+
+These are the iPad's logs, not the Mac's, so a plain `log show` will not find
+them — it has to be aimed at the device, which must be connected and unlocked:
+
+```sh
+log stream --device-name "iPad" --predicate 'subsystem == "com.nordup.MathTutor"' --level info
+```
+
+After the fact instead of live:
+
+```sh
+log collect --device-name "iPad" --last 30m --output ipad.logarchive
+log show ipad.logarchive --predicate 'subsystem == "com.nordup.MathTutor"' --info
+```
+
+Use the name `xcrun devicectl list devices` prints. In practice the server-side
+account above is the faster one to reach for: a client that times out now shows
+up as an errored turn with a large `max_silence_ms`, without touching the iPad
+at all.
+
+### Keeping the stream alive
+
+**`status` is not edge-triggered, and a client must not treat a repeat as a
+transition.** The translator re-sends the current phase whenever nothing else
+has reached the device for `HEARTBEAT_SECONDS`, so a long turn produces the
+same `status` many times over. Assigning the phase on each one is the whole of
+the correct handling.
+
+This exists because of a failure that cost real turns. A `update_board` call's
+arguments — a diagram's SVG — stream as provider events this service does not
+forward, so the connection went completely silent for as long as the model took
+to write the picture. `URLSession` abandons a request that receives nothing for
+60 seconds, which meant a diagram that took longer than a minute ended the turn
+*after* the model had generated it and the account had been billed for it, and
+the learner saw only "I couldn't reach the tutor service just now."
+
+Hanging the check on incoming provider events needs no timer and no second
+task: argument deltas arrive continuously, and the one genuinely eventless wait
+in a turn — the device rendering a board region — is already bounded by
+`rendezvous.RENDER_TIMEOUT_SECONDS`. That the heartbeat also names *which* tool
+is mid-flight is what gives the iPad something to say while it waits.
 
 ### The workspace replaces the old nullable envelope
 

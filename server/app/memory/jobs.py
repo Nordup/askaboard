@@ -44,7 +44,7 @@ from app.memory.consolidate import consolidate
 from app.memory.extract import extract_atoms
 from app.memory.profile import rebuild_profile
 from app.store.db import session_factory
-from app.store.models import Episode, Message, Session
+from app.store.models import Episode, Message, Session, Turn
 
 log = logging.getLogger(__name__)
 
@@ -60,6 +60,24 @@ Factory = async_sessionmaker[AsyncSession]
 #: existed. Six hours is past any plausible within-session pause and still
 #: catches the same evening's work.
 STALE_AFTER = timedelta(hours=6)
+
+#: How long a turn may sit at status="running" before this file stops believing
+#: it.
+#:
+#: A running turn is the one thing that must stop a close: it means the reply
+#: is still being written into `messages`, and `_record_episode` would freeze
+#: the transcript without it — permanently, because `uq_episodes_session`
+#: allows no second attempt. But "running" is a claim made by a process that
+#: can die, and `turn.py`'s close-out only relabels the turns whose generator
+#: got to run its `finally`. A hard kill leaves the row saying "running"
+#: forever, and a guard that trusted it forever would answer one lost process
+#: with a session that can never be remembered.
+#:
+#: Fifteen minutes is well past a real turn — several tool rounds against a
+#: reasoning model, the provider's own ten-minute default behind them — and
+#: well short of `STALE_AFTER`, so a session held up by a dead turn is still
+#: swept the same day.
+TURN_ASSUMED_DEAD_AFTER = timedelta(minutes=15)
 
 #: Ceiling on the write transaction in `_extract_episode`.
 #:
@@ -175,6 +193,26 @@ def _render(messages: Sequence[Message]) -> str:
     return "\n".join(f"{m.role}: {m.text}" for m in messages)
 
 
+async def _running_turn(db: AsyncSession, session_id: uuid.UUID) -> uuid.UUID | None:
+    """The id of a turn still plausibly writing into this session, if any.
+
+    "Plausibly" is `TURN_ASSUMED_DEAD_AFTER`, and it is the whole reason this
+    is a function rather than one clause. Filtering on `status == "running"`
+    alone would let a single crashed process make a session permanently
+    unrememberable; filtering on age alone would ignore the state the column
+    actually records. Both together say what is meant: a turn that claims to be
+    running and started recently enough for the claim to be worth anything.
+    """
+    return (await db.execute(
+        select(Turn.id)
+        .where(Turn.session_id == session_id,
+               Turn.status == "running",
+               Turn.started_at
+               > datetime.now(timezone.utc) - TURN_ASSUMED_DEAD_AFTER)
+        .limit(1)
+    )).scalar_one_or_none()
+
+
 async def _record_episode(
     factory: Factory, session_id: uuid.UUID, *, closed_at: datetime | None = None,
 ) -> None:
@@ -210,6 +248,23 @@ async def _record_episode(
         session = await db.get(Session, session_id)
         if session is None:
             log.warning("close asked for unknown session %s", session_id)
+            return
+
+        # A turn still writing into this session makes the transcript below a
+        # moving target, and `uq_episodes_session` means whatever is read here
+        # is read once and for all. So the close is declined rather than
+        # served: the session keeps no episode, stays eligible, and
+        # `sweep_abandoned_sessions` records it whole once the turn is over.
+        #
+        # The device guards this too (`TutorStore.endSessionOnServer`), but it
+        # can only speak for itself — it cannot see a retry, another device, or
+        # the moment between its own last event and this service finishing the
+        # write. This is the side that knows.
+        if (live := await _running_turn(db, session_id)) is not None:
+            log.info(
+                "close declined for session %s: turn %s is still running; "
+                "the sweep will take it", session_id, live,
+            )
             return
         messages = (await db.execute(
             select(Message).where(Message.session_id == session_id)

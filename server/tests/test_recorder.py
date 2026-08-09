@@ -272,6 +272,52 @@ async def test_fail_turn_persists_the_partial_output_alongside_the_error(
 
 
 @requires_db
+async def test_fail_turn_records_the_tokens_the_provider_already_billed_for(
+    db, db_factory, tmp_path
+):
+    """A turn that dies after the model has produced output has still been paid
+    for. Recording nothing was the exact shape of the failure that started all
+    of this: money spent, no reply, and no row saying how much."""
+    session = Session(model="gpt-5.6-luna", reasoning_effort="high")
+    db.add(session)
+    await db.flush()
+    turn_id = uuid.uuid4()
+    db.add(Turn(
+        id=turn_id, session_id=session.id, status="running",
+        model="gpt-5.6-luna", reasoning_effort="high",
+    ))
+    await db.commit()
+
+    from app.tutor.loop import TurnResult
+    result = TurnResult(
+        raw_events=[{"type": "response.created"}],
+        text="",
+        usage={
+            "input_tokens": 24294,
+            "output_tokens": 4314,
+            "output_tokens_details": {"reasoning_tokens": 467},
+        },
+    )
+    recorder = Recorder(db_factory, LocalBlobStore(tmp_path))
+    await recorder.fail_turn(
+        turn_id=turn_id, message="the client disconnected", retryable=True,
+        result=result, request_body={"model": "gpt-5.6-luna"},
+        diagnostics={"elapsed_ms": 109_000, "max_silence_ms": 61_000, "events_sent": 3},
+    )
+
+    async with db_factory() as fresh:
+        stored = (await fresh.execute(select(Turn))).scalar_one()
+        assert stored.input_tokens == 24294
+        assert stored.output_tokens == 4314
+        assert stored.reasoning_tokens == 467
+        # Over sixty seconds of silence on a turn the client gave up on is the
+        # signature of a timeout, and now it is a value someone can query for
+        # rather than a theory someone has to reconstruct.
+        assert stored.error["diagnostics"]["max_silence_ms"] == 61_000
+        assert stored.error["message"] == "the client disconnected"
+
+
+@requires_db
 async def test_fail_turn_without_a_result_still_records_the_error(db, db_factory, tmp_path):
     """Failures before any model call exists (idempotency, spend cap) have no
     TurnResult to persist — fail_turn must still work without one."""
