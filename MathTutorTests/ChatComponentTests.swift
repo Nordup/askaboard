@@ -523,6 +523,58 @@ final class ChatComponentTests: XCTestCase {
         }
     }
 
+    func testPanelRowClosesExactlyWithThePlus() {
+        // 301 − 18 − 20 − 10 − 24 − 10 − 121 − 10 − 34 − 10 − 38 − 6 = 0
+        let composer = ComposerMetrics.panel
+        XCTAssertEqual(composer.plusSize, 20)
+        XCTAssertEqual(composer.placeholderWidth(includingPlus: true, includingMarquee: true), 121)
+    }
+
+    func testFullScreenRowClosesExactlyWithThePlus() {
+        // No marquee full-screen — the wide composer has never had one, because
+        // full-screen hides the board there would be to lasso from. `TutorFullScreen`
+        // passes `.unavailable` and no toggle handler, and board 03 says the glyph's
+        // presence is a property of whether there is a board to lasso, not of scale.
+        let composer = ComposerMetrics.fullScreen
+        XCTAssertEqual(composer.plusSize, 20)
+        XCTAssertEqual(composer.placeholderWidth(includingPlus: true, includingMarquee: false), 538)
+    }
+
+    func testThePlusKeepsItsOnePublishedRenderSizeAtBothScales() {
+        // `ui/plus` publishes exactly one render size. Stepping it to 24 to match
+        // the marquee would add a size to a documented icon set to tidy an
+        // alignment — the thing the composer's own doc comment warns against.
+        XCTAssertEqual(ComposerMetrics.panel.plusSize, Icon.uiPlus.renderSize)
+        XCTAssertEqual(ComposerMetrics.fullScreen.plusSize, Icon.uiPlus.renderSize)
+    }
+
+    func testPlaceholderWidthWithoutThePlusIsUnchanged() {
+        // Every existing caller and specimen passes no plus, and must get exactly
+        // what it got before.
+        XCTAssertEqual(ComposerMetrics.panel.placeholderWidth(includingMarquee: true), 151)
+        XCTAssertEqual(ComposerMetrics.fullScreen.placeholderWidth(includingMarquee: false), 574)
+    }
+
+    func testTheRowClosesAtEveryColumnWidthWithThePlus() {
+        // Both marquee states, because the two surfaces differ: the panel draws it
+        // and the full-screen column does not.
+        for scale in [ChatScale.panel, .fullScreen] {
+            for width in [CGFloat(301), 337, 644, 740] {
+                for marquee in [true, false] {
+                    let composer = ComposerMetrics.for(scale, width: width)
+                    let children = composer.plusSize + (marquee ? composer.marqueeSize : 0)
+                        + composer.voiceButtonSize + composer.sendButtonSize
+                    let gaps = composer.gap * CGFloat(marquee ? 4 : 3)
+                    XCTAssertEqual(
+                        composer.placeholderWidth(includingPlus: true, includingMarquee: marquee),
+                        width - composer.paddingLeading - composer.paddingTrailing - children - gaps,
+                        "\(scale) at \(width), marquee: \(marquee)"
+                    )
+                }
+            }
+        }
+    }
+
     // MARK: - Suggestion chips
 
     func testPanelChipsAreThreeHundredAndOneBySixtyTwoInATwoHundredAndSeventyEightColumn() {

@@ -36,9 +36,14 @@ enum ComposerSelection: Equatable, Sendable {
 /// Every measured value of the composer, at both scales.
 ///
 /// The child sizes close the row exactly at both scales, which is the check that the
-/// padding and gap are right: `301 − 18 − 24 − 10 − 151 − 10 − 34 − 10 − 38 − 6 = 0` and
-/// `740 − 28 − 574 − 16 − 46 − 16 − 52 − 8 = 0`. `placeholderWidth(_:)` is that
-/// arithmetic, and the tests run it against the widths screens 05 and 07 measure.
+/// padding and gap are right. Without the attach button:
+/// `301 − 18 − 24 − 10 − 151 − 10 − 34 − 10 − 38 − 6 = 0` and
+/// `740 − 28 − 574 − 16 − 46 − 16 − 52 − 8 = 0`. With it:
+/// `301 − 18 − 20 − 10 − 24 − 10 − 121 − 10 − 34 − 10 − 38 − 6 = 0` and
+/// `740 − 28 − 20 − 16 − 538 − 16 − 46 − 16 − 52 − 8 = 0` — two fewer terms in
+/// the wide row, which has no marquee.
+/// `placeholderWidth(includingPlus:includingMarquee:)` is that arithmetic, and the
+/// tests run it against the widths screens 05 and 07 measure.
 ///
 /// **The pill came down a step.** 58 → 50 in the panel and 80 → 68 full-screen, because at the
 /// old heights the input was the heaviest thing on a surface whose subject is the
@@ -64,6 +69,13 @@ struct ComposerMetrics: Equatable, Sendable {
     let gap: CGFloat
     /// `ui/selection-marker`, the leading glyph.
     let marqueeSize: CGFloat
+    /// `ui/plus`, the attach button in the leading group.
+    ///
+    /// 20 at both scales, which is the single render size `design/icons.json` publishes for
+    /// it. It is not stepped up to the marquee's 24 to make the two glyphs match: the
+    /// marquee itself holds at 24 full-screen while every other glyph in the row steps up,
+    /// for exactly this reason.
+    let plusSize: CGFloat
     let voiceButtonSize: CGFloat
     let voiceGlyphSize: CGFloat
     let sendButtonSize: CGFloat
@@ -152,8 +164,13 @@ struct ComposerMetrics: Equatable, Sendable {
     static let noteGap = DS.Space.s3
 
     /// What is left for the text once every fixed-width child and every gap comes off.
-    func placeholderWidth(includingMarquee: Bool) -> CGFloat {
-        let children: [CGFloat] = (includingMarquee ? [marqueeSize] : []) + [voiceButtonSize, sendButtonSize]
+    ///
+    /// `includingPlus` defaults to `false` so every specimen, preview and gallery entry —
+    /// none of which mounts an attach button — keeps the width it had.
+    func placeholderWidth(includingPlus: Bool = false, includingMarquee: Bool) -> CGFloat {
+        let children: [CGFloat] = (includingPlus ? [plusSize] : [])
+            + (includingMarquee ? [marqueeSize] : [])
+            + [voiceButtonSize, sendButtonSize]
         let gaps = gap * CGFloat(children.count)
         return width - paddingLeading - paddingTrailing - children.reduce(0, +) - gaps
     }
@@ -171,6 +188,7 @@ extension ComposerMetrics {
         paddingTrailing: 6,
         gap: 10,
         marqueeSize: Icon.uiSelectionMarker.renderSize,
+        plusSize: Icon.uiPlus.renderSize,
         voiceButtonSize: 34,
         voiceGlyphSize: 20,
         sendButtonSize: 38,
@@ -193,6 +211,7 @@ extension ComposerMetrics {
         paddingTrailing: DS.Space.s2,
         gap: DS.Space.s4,
         marqueeSize: Icon.uiSelectionMarker.renderSize,
+        plusSize: Icon.uiPlus.renderSize,
         voiceButtonSize: 46,
         voiceGlyphSize: Icon.composerVoice.renderSize,
         sendButtonSize: 52,
