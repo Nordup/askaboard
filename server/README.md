@@ -293,8 +293,9 @@ This service is built to record everything about a session — that's the
 whole point of the recorder. These routes are how any of it actually
 gets read back out. **The four `GET`s are for the project owner and for agents
 debugging a bad tutoring turn, not for the iPad app** — the app never calls
-any of them; it only ever calls `POST /v1/turn` and `POST /v1/dictation`. The
-one `POST` in the table is the exception and is meant for the device.
+any of them; it only ever calls `POST /v1/turn`, `POST /v1/dictation`, and
+`POST /v1/sessions/{id}/close`. The one `POST` in the table is the exception
+and is meant for the device.
 Like every other route in this service, they sit behind the same bearer
 token (`Authorization: Bearer <DEVICE_TOKEN>`) — there's no separate,
 unauthenticated path to a student's handwriting or voice. Defined in
@@ -368,18 +369,23 @@ the recovery story is one nullable column: the episode is committed *before*
 any model is called, with `extracted_at` NULL, so a provider error or a process
 that goes away leaves a row saying "this happened and has not been read yet".
 
-Three things start that pipeline, and only the first involves the device:
+Four things start that pipeline, and only the first involves the device:
 
 - `POST /v1/sessions/{id}/close`, on a session switch or an explicit end.
 - `sweep_abandoned_sessions`, which records an episode for any session whose
-  last message is older than `STALE_AFTER` (6 hours). This is what covers the
+  last message is older than `STALE_AFTER` (one hour). This is what covers the
   sessions nobody ever leaves on purpose — an app killed from the switcher, a
   crash, an iPad put down.
-- **Startup.** The lifespan runs the sweep and then the backlog drain, detached
-  so boot never waits on a provider. That is what makes the whole pipeline work
-  with no client change at all, and it is also the only thing that retries a
-  failed extraction: the drain halts rather than stepping over a failure, and
-  restarting the service is the recovery step.
+- **The periodic sweep.** `run_periodic_sweep` runs that same sweep and the
+  backlog drain every `SWEEP_INTERVAL` (5 minutes), detached so boot never
+  waits on a provider. This is the reliable no-restart answer: a session that
+  crosses the one-hour threshold is recorded within five minutes of doing so,
+  with no device close and no service restart.
+- **Startup.** The lifespan also runs the sweep and drain once, detached, so a
+  service that was down catches up immediately instead of waiting for the
+  first tick. Startup and the periodic sweep are also what retry a failed
+  extraction: the drain halts rather than stepping over a failure, and the
+  next pass is the recovery step.
 
 **What a fact is.** `memory_atoms` is bi-temporal and append-only. Six
 categories (`preference`, `goal`, `context`, `skill_state`, `misconception`,

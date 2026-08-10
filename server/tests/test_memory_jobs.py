@@ -8,9 +8,10 @@ from sqlalchemy import func as sa_func, select
 
 from app.config import EMBEDDING_DIMS, SOLE_LEARNER_ID
 from app.memory.jobs import (
-    STALE_AFTER, TURN_ASSUMED_DEAD_AFTER, _TASKS, _extract_episode, backlog_status,
-    run_extraction_backlog, run_session_close, run_startup_drain,
-    schedule_session_close, schedule_startup_drain, sweep_abandoned_sessions,
+    STALE_AFTER, SWEEP_INTERVAL, TURN_ASSUMED_DEAD_AFTER, _TASKS, _extract_episode,
+    backlog_status, run_extraction_backlog, run_periodic_sweep, run_session_close,
+    run_startup_drain, schedule_periodic_sweep, schedule_session_close,
+    schedule_startup_drain, sweep_abandoned_sessions,
 )
 from app.memory.schema import ExtractedAtom, MemoryCategory
 from app.store.models import Episode, Learner, MemoryAtom, Message, Session, Turn
@@ -484,6 +485,11 @@ async def test_the_sweep_leaves_a_session_still_in_use_alone(db_factory, monkeyp
     assert await _episodes(db_factory, session_id) == []
 
 
+def test_stale_after_is_one_hour():
+    """Abandonment must not wait a working day before memory appears."""
+    assert STALE_AFTER == timedelta(hours=1)
+
+
 @requires_db
 async def test_the_sweep_ignores_a_session_already_closed(db_factory, monkeypatch):
     """Otherwise every closed session is swept again on every close."""
@@ -572,16 +578,16 @@ async def test_schedule_never_raises_at_its_caller(monkeypatch, caplog):
 async def test_the_startup_drain_remembers_a_session_no_client_ever_closed(
     db_factory, monkeypatch,
 ):
-    """Boot is the pipeline's only trigger that does not need the device.
+    """Boot catches what crossed the threshold while the service was down.
 
-    `sweep_abandoned_sessions` is reachable from the close endpoint alone and
-    the Swift client never calls it, so before this ran at startup nothing ever
-    closed a session and nothing was ever extracted — the whole memory system
-    was inert in production while every unit test passed. `STALE_AFTER` is six
-    hours, so a restart catches every session that is genuinely over.
+    The periodic sweep makes abandonment independent of a restart; this boot
+    pass runs the same sweep-and-drain work immediately, so a session that
+    went quiet while the service was down does not wait for the first
+    five-minute tick. `STALE_AFTER` is one hour, so a restart catches every
+    session that is genuinely over.
 
     Sweep then drain, in that order: an episode the sweep writes after the
-    drain has finished waits for the next boot.
+    drain has finished waits for the next pass.
     """
     _install(monkeypatch)
     silent_since = datetime.now(timezone.utc) - STALE_AFTER - timedelta(minutes=1)
@@ -604,12 +610,11 @@ async def test_the_startup_drain_remembers_a_session_no_client_ever_closed(
 async def test_the_startup_drain_retries_an_extraction_that_failed(
     db_factory, monkeypatch,
 ):
-    """Nothing else retries one. A restart is the recovery step.
+    """The periodic sweep and the next boot are the recovery steps.
 
     `run_extraction_backlog` halts on the first failure rather than stepping
-    over it, deliberately — and the only other thing that runs it again is the
-    next close, which a client that never closes never sends. So a provider
-    blip left an episode unread permanently.
+    over it, deliberately — so a provider blip leaves an episode unread until
+    the next close, boot, or periodic sweep comes along.
     """
     _install(monkeypatch, digest=_Digest(fails=True))
     await _backlog(db_factory, [(MARCH, "march")])
@@ -644,6 +649,100 @@ async def test_the_startup_drain_never_stops_the_app_booting(monkeypatch, caplog
         await next(iter(_TASKS))
 
     assert "startup memory drain failed" in caplog.text
+
+
+async def test_the_periodic_sweep_runs_until_cancelled(monkeypatch):
+    """The loop is the reliable trigger: every tick, until shutdown cancels it.
+
+    Two ticks, asserted by call counts rather than a wall-clock wait. The
+    second `asyncio.sleep` is where the lifespan's shutdown cancellation lands
+    (`server/app/main.py` cancels the task and suppresses the error), and that
+    is what proves the loop is cancellable rather than a task that must be
+    killed with the process.
+    """
+    sweeps = []
+    extracts = []
+
+    async def fake_sweep(*, db_factory=None):
+        sweeps.append("sweep")
+        return 0
+
+    async def fake_extract(*, db_factory=None):
+        extracts.append("extract")
+        return 0
+
+    monkeypatch.setattr("app.memory.jobs.sweep_abandoned_sessions", fake_sweep)
+    monkeypatch.setattr("app.memory.jobs.run_extraction_backlog", fake_extract)
+
+    sleeps = []
+
+    async def fake_sleep(_seconds):
+        sleeps.append(1)
+        if len(sleeps) == 2:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr("app.memory.jobs.asyncio.sleep", fake_sleep)
+
+    with pytest.raises(asyncio.CancelledError):
+        await run_periodic_sweep(interval=timedelta(seconds=1))
+
+    assert sweeps == ["sweep", "sweep"]
+    assert extracts == ["extract", "extract"]
+
+
+async def test_the_periodic_sweep_survives_a_failed_iteration(monkeypatch, caplog):
+    """A transient failure costs one tick, never the whole loop.
+
+    The next tick retries the same sweep-and-drain work, which is the recovery
+    story the periodic sweep exists to provide. The sleep is what ends the
+    test: after the successful second pass it raises `CancelledError`, so the
+    loop terminates instead of spinning forever.
+    """
+    sweeps = []
+
+    async def flaky_sweep(*, db_factory=None):
+        sweeps.append(1)
+        if len(sweeps) == 1:
+            raise RuntimeError("database down")
+        return 1
+
+    async def fake_extract(*, db_factory=None):
+        return 2
+
+    monkeypatch.setattr("app.memory.jobs.sweep_abandoned_sessions", flaky_sweep)
+    monkeypatch.setattr("app.memory.jobs.run_extraction_backlog", fake_extract)
+
+    async def fake_sleep(_seconds):
+        if len(sweeps) >= 2:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr("app.memory.jobs.asyncio.sleep", fake_sleep)
+
+    with caplog.at_level(logging.ERROR, logger="app.memory.jobs"):
+        with pytest.raises(asyncio.CancelledError):
+            await run_periodic_sweep()
+
+    assert sweeps == [1, 1]
+    assert "periodic memory sweep iteration failed" in caplog.text
+
+
+async def test_schedule_periodic_sweep_never_raises_at_its_caller(
+    monkeypatch, caplog,
+):
+    """The lifespan must not come up or down because a sweep failed to start."""
+    async def _boom(*, db_factory=None, interval=SWEEP_INTERVAL):
+        raise RuntimeError("no database today")
+
+    monkeypatch.setattr("app.memory.jobs.run_periodic_sweep", _boom)
+
+    with caplog.at_level(logging.ERROR, logger="app.memory.jobs"):
+        schedule_periodic_sweep()
+        # The set holds the only strong reference to the task; awaiting through
+        # it is also the assertion that the reference exists at all.
+        assert len(_TASKS) == 1
+        await next(iter(_TASKS))
+
+    assert "periodic memory sweep failed" in caplog.text
 
 
 async def _add_turn(db_factory, session_id: uuid.UUID, *, status: str,

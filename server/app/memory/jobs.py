@@ -11,19 +11,19 @@ with `extracted_at` NULL, so the two failures that actually happen — the
 provider erroring, and the process going away with the background task still
 running — leave a row saying "this session happened and has not been read
 yet" instead of leaving nothing at all. `run_extraction_backlog` reads those
-rows back, and both a close and a service start run it — so a lost session is
-retried by the next of either, rather than by a queue this service does not
-have. Startup is the one that matters in practice: the device does not call
-the close endpoint, so `run_startup_drain` is very nearly the only trigger the
-whole pipeline has.
+rows back, and every close, the startup drain, and the periodic sweep run it —
+so a lost session is retried by the next of any of them, rather than by a
+queue this service does not have.
 
 One episode per session, forever, is the invariant `uq_episodes_session`
 enforces — which makes *when* a session is recorded the load-bearing decision
 in this file, not just how. Recording it while the learner is still in it
 freezes the transcript at that moment and drops everything they do afterwards,
 silently and permanently. So a close is only ever taken from a device that has
-genuinely left the session, and `sweep_abandoned_sessions` is what covers the
-sessions nobody ever leaves on purpose.
+genuinely left the session, and `sweep_abandoned_sessions` plus the periodic
+sweep cover the sessions nobody ever leaves on purpose: a device close is
+immediate, abandonment is one hour of silence, and the periodic sweep is the
+answer that needs neither a restart nor another close.
 """
 
 import asyncio
@@ -57,9 +57,18 @@ Factory = async_sessionmaker[AsyncSession]
 #: same. Sweeping too late delays a memory by hours. Sweeping too early records
 #: the episode mid-session, and `uq_episodes_session` then makes that
 #: permanent — every turn after it is dropped with nothing recording that they
-#: existed. Six hours is past any plausible within-session pause and still
-#: catches the same evening's work.
-STALE_AFTER = timedelta(hours=6)
+#: existed. One hour is past any plausible within-session pause, and the
+#: periodic sweep means patience costs nothing: a session that is genuinely
+#: over is recorded within `SWEEP_INTERVAL` of the hour passing, without
+#: needing a device close or a restart.
+STALE_AFTER = timedelta(hours=1)
+
+#: How often the periodic sweep wakes up to look for abandoned sessions and
+#: retry the extraction backlog. Five minutes of extra latency is invisible
+#: against the one-hour threshold, and it is what makes a service restart or
+#: another device close unnecessary for a session nobody ever leaves on
+#: purpose.
+SWEEP_INTERVAL = timedelta(minutes=5)
 
 #: How long a turn may sit at status="running" before this file stops believing
 #: it.
@@ -87,7 +96,7 @@ TURN_ASSUMED_DEAD_AFTER = timedelta(minutes=15)
 #: unbounded, one wedged provider call parks a pooled Neon connection
 #: idle-in-transaction for most of an hour. A timeout here costs nothing that
 #: is not already recoverable: the transaction rolls back, `extracted_at` stays
-#: NULL, and the next close tries again.
+#: NULL, and the next close or sweep tries again.
 WRITE_TIMEOUT_SECONDS = 180.0
 
 #: `23505`, unique_violation. Named because `IntegrityError` covers every
@@ -168,7 +177,8 @@ async def _digest(transcript: str) -> str:
     """Two or three sentences of prose. Raises whatever the provider raised.
 
     Nothing is caught, for the reason the module docstring gives: a failure has
-    to leave `extracted_at` NULL so the next close picks the episode up again.
+    to leave `extracted_at` NULL so the next close or sweep picks the episode
+    up again.
     A caught error would write an empty digest, and `retrieve.recent_episodes`
     filters on `digest IS NOT NULL` — the episode would be marked done and be
     invisible forever.
@@ -366,14 +376,15 @@ async def _extract_episode(factory: Factory, episode_id: uuid.UUID) -> bool:
 async def sweep_abandoned_sessions(*, db_factory: Factory | None = None) -> int:
     """Record an episode for every session nobody closed. Returns how many.
 
-    The close endpoint is only called when a device has genuinely left a
-    session, which leaves one hole: the sessions it never leaves. An app
-    killed from the switcher, a crash, an iPad put down and not picked up
-    again — none of those produce a close, and without this the session is
-    never remembered at all.
+    A deliberate device close handles the sessions a learner leaves on
+    purpose; this handles the rest. An app killed from the switcher, a crash,
+    an iPad put down and not picked up again — none of those produce a close,
+    and without this the session is never remembered at all. A session is
+    fair game once it has been silent for `STALE_AFTER` (one hour), and the
+    periodic sweep means one that crosses the threshold is recorded within
+    `SWEEP_INTERVAL`, without a restart or another close.
 
-    A session is fair game once it has been silent for `STALE_AFTER`. Silence
-    is measured from the last message rather than `sessions.updated_at`,
+    Silence is measured from the last message rather than `sessions.updated_at`,
     because that column is touched by anything that writes the row and is not
     a statement about the learner.
 
@@ -474,10 +485,10 @@ async def backlog_status(*, db_factory: Factory | None = None) -> dict:
     """How much unread memory is waiting, and how long the oldest has waited.
 
     On the health endpoint because a halted drain has no other symptom. The
-    episodes are safe, nothing raises again until the next close, and the only
-    account of it is a log line — so without two numbers on a page someone
-    already watches, "memory quietly stopped updating in March" is discovered
-    by noticing the tutor has gone vague.
+    episodes are safe, nothing raises again until the next close, boot, or
+    periodic sweep, and the only account of it is a log line — so without two
+    numbers on a page someone already watches, "memory quietly stopped
+    updating in March" is discovered by noticing the tutor has gone vague.
 
     Never raises. Health is asked whether the process is alive, and answering
     "no" because a count could not be read would turn a memory problem into a
@@ -511,12 +522,12 @@ async def run_session_close(
     `uq_episodes_session` and the `extracted_at` check are both for.
 
     It sweeps and drains rather than handling only the session it was given
-    because that is where the retry lives: there is no queue and no cron here,
-    so an episode that failed to extract, or a session nobody ever closed, is
-    picked up by whichever close happens next. Draining also keeps the
-    ordering `run_extraction_backlog` describes — extracting this session
-    alone, while an older one sat unread, is exactly the inversion that
-    function exists to avoid.
+    because that is where the retry lives: there is no queue here, so an
+    episode that failed to extract, or a session nobody ever closed, is picked
+    up by whichever close, startup drain, or periodic sweep happens next.
+    Draining also keeps the ordering `run_extraction_backlog` describes —
+    extracting this session alone, while an older one sat unread, is exactly
+    the inversion that function exists to avoid.
     """
     factory = db_factory or session_factory()
     await _record_episode(factory, session_id)
@@ -524,31 +535,67 @@ async def run_session_close(
     await run_extraction_backlog(db_factory=factory)
 
 
-async def run_startup_drain(*, db_factory: Factory | None = None) -> None:
-    """Sweep, then extract, once at boot. Returns nothing; logs what it did.
+async def run_sweep_and_drain(*, db_factory: Factory | None = None) -> tuple[int, int]:
+    """Sweep abandoned sessions, then extract the backlog. Returns both counts.
 
-    This is the whole pipeline's trigger of last resort, and today it is very
-    nearly the only one. `sweep_abandoned_sessions` is reachable from the close
-    endpoint alone and the device never calls it, so without this nothing ever
-    closes a session and the store stays empty forever. `STALE_AFTER` is six
-    hours, which catches every session that is genuinely over — so a restart
-    is enough to make the whole thing work with no client change at all.
-
-    It also closes the hole that nothing anywhere retries a failed extraction.
-    `run_extraction_backlog` halts the drain on the first failure, deliberately,
-    and the only thing that runs it again is the next close — which, with no
-    client calling close, is never. Running it at boot turns "restart the
-    service" into the recovery step, which is the one operators already reach
-    for.
+    The shared work of every trigger that is not a specific session close: the
+    startup drain and each periodic sweep iteration both run this, so the two
+    of them cannot drift apart in ordering or in what they log.
 
     Sweep before drain, in that order and not the other way: the sweep is what
     turns quiet sessions into episodes, and an episode written after the drain
-    has finished waits for the next boot.
+    has finished waits for the next pass.
     """
-    factory = db_factory or session_factory()
-    swept = await sweep_abandoned_sessions(db_factory=factory)
-    extracted = await run_extraction_backlog(db_factory=factory)
+    swept = await sweep_abandoned_sessions(db_factory=db_factory)
+    extracted = await run_extraction_backlog(db_factory=db_factory)
+    return swept, extracted
+
+
+async def run_startup_drain(*, db_factory: Factory | None = None) -> None:
+    """Sweep, then extract, once at boot. Returns nothing; logs what it did.
+
+    The periodic sweep makes abandonment independent of a restart, and this
+    boot pass is the same work done immediately: it catches anything that
+    crossed the one-hour threshold while the service was down, instead of
+    making it wait for the first five-minute tick.
+
+    It also keeps the retry path honest. `run_extraction_backlog` halts the
+    drain on the first failure, deliberately, and the periodic sweep would
+    retry on its next tick — but a service that just failed an extraction and
+    was restarted would otherwise wait up to `SWEEP_INTERVAL` to recover.
+    Running the same pass at boot makes "restart the service" the recovery
+    step operators already reach for.
+    """
+    swept, extracted = await run_sweep_and_drain(db_factory=db_factory)
     log.info("startup memory drain | swept=%d extracted=%d", swept, extracted)
+
+
+async def run_periodic_sweep(
+    *, db_factory: Factory | None = None, interval: timedelta = SWEEP_INTERVAL
+) -> None:
+    """Sweep and drain every `interval`, forever. Returns nothing.
+
+    The reliable no-restart answer for abandonment: a session that crosses
+    `STALE_AFTER` is recorded on the next tick without any device close and
+    without a service restart. The same pass also retries the extraction
+    backlog, so a provider blip that halted a drain heals by itself instead of
+    waiting for the next boot.
+
+    One failed iteration must not stop the loop: the next tick retries the
+    same work, which is exactly how a transient provider or database failure
+    is supposed to behave. Cancellation is the one thing that ends it.
+    """
+    while True:
+        try:
+            swept, extracted = await run_sweep_and_drain(db_factory=db_factory)
+            if swept or extracted:
+                log.info("periodic memory sweep | swept=%d extracted=%d",
+                         swept, extracted)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("periodic memory sweep iteration failed")
+        await asyncio.sleep(interval.total_seconds())
 
 
 def _spawn(coro: Coroutine[object, object, None], *, description: str) -> asyncio.Task:
@@ -556,7 +603,7 @@ def _spawn(coro: Coroutine[object, object, None], *, description: str) -> asynci
 
     Both callers need the same three things and get them wrong in the same two
     ways otherwise — see `_TASKS` for why the reference has to be held, and the
-    two `schedule_*` docstrings for why swallowing the exception is honest in
+    three `schedule_*` docstrings for why swallowing the exception is honest in
     each case rather than in general.
     """
     async def _guarded() -> None:
@@ -579,10 +626,22 @@ def schedule_startup_drain() -> None:
     startup phase returns. Awaiting a drain of twenty episodes would mean a
     service that answers nothing — not `/health`, not a turn — for as long as
     the provider takes. Every failure inside is already recoverable by
-    construction: the episodes keep `extracted_at` NULL and the next boot or
-    close tries again.
+    construction: the episodes keep `extracted_at` NULL and the next boot,
+    close, or periodic sweep tries again.
     """
     _spawn(run_startup_drain(), description="startup memory drain")
+
+
+def schedule_periodic_sweep() -> asyncio.Task:
+    """Fire and forget, from the app's lifespan. Boot never waits on a provider.
+
+    The periodic sweep is the same promise as `schedule_startup_drain`, made
+    continuous: it must not stop the service coming up, and its failures are
+    already recoverable by construction because the next tick simply runs the
+    same pass again. The task is returned so the lifespan can cancel it when
+    the service stops.
+    """
+    return _spawn(run_periodic_sweep(), description="periodic memory sweep")
 
 
 async def schedule_session_close(session_id: uuid.UUID) -> None:
