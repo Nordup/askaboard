@@ -740,3 +740,49 @@ The board's own audit warning:
 7. **`--color-pen-violet` and `--color-brand` are the same hex** (`#6051DC`) and the token descriptions explicitly warn not to alias them. No icon uses `--color-pen-violet` — `tool/pen`'s violet is `--color-brand` ("tool is active", not "current ink"). Preserve that distinction in the port; they are documented to diverge on retheme.
 
 8. **The board is described as normalised, but the specimens are not.** Section 08 is written as a prescription ("→ set 2.0"), and the icon-board specimens still carry the pre-normalisation attributes. Only the product artboards carry the overrides. If someone exports icons from the icon board rather than from the screens, they will get the un-normalised set.
+
+---
+
+## Section 07 — Activity trail (added 2026-08-10)
+
+Four glyphs, drawn for the activity trail's step rows. The set covered two of the seven step
+types already: `tool/pen` for `update_board`, `ui/check` for `record_evidence`. These are the
+other four.
+
+| Glyph | Swift case | Step it marks |
+| --- | --- | --- |
+| `trail/eye` | `trailEye` | `view_board` — "Looked at the top left of the board" |
+| `trail/search` | `trailSearch` | `search_memory` and `recent_sessions` — one glyph for both |
+| `trail/plan` | `trailPlan` | `set_workspace` — "Set the plan: Fractions" |
+| `trail/note` | `trailNote` | `remember` — "Saved a note" |
+
+All four: **24 viewBox, effective stroke 2.0, `--color-icon`, stroke-only.** They are the first
+glyphs authored on the board's own recommended 24 grid from the start rather than retrofitted
+onto a 28, so the attribute at native size is a flat `2` with nothing to re-derive — which is
+the argument section 08 makes and the earlier marks could not follow.
+
+### Rendering at 16
+
+Trail rows render these at **16**, where a 24 viewBox scales by 0.667 and the authored `2.0`
+would land at 1.33. The attribute is compensated at the call site to **`3.0`** to reach the
+set's effective 2.0. `tool/pen` shares those rows off a 28 viewBox and needs **`3.5`** for the
+same result. Getting this wrong is visible: the first draft rendered the eye at 1.33 beside the
+pen at 1.20 and they read as two different weights on adjacent rows.
+
+`ui/chevron-down` is the precedent that settles what "correct at 16" means — it is authored on a
+16 viewBox at stroke 2 and renders effective 2.0.
+
+### Why `trail/eye` was redrawn
+
+The first draft used control points at y 6.6 and a pupil at r2.7. Both work at 24 and both fail
+at 16: with effective 2.0 the stroke closes the pupil into a blob, the same failure `tool/lasso`
+carries a documented exception for. Rather than take a second exception the glyph was redrawn —
+control points to 5.2 (lens 10.2 tall instead of 8.1) and pupil to r3.3 — so it survives the
+rule with nothing special-cased.
+
+### Rejected reuse
+
+`tool/lasso` and `ui/selection-marker` both exist and both look like candidates for "the tutor
+looked at the board". Neither was used. Both mean *the learner marqueed a region* — they belong
+to the learner's own selection, drawn on board 14 in `--color-brand` — and reusing either would
+have quietly said the wrong thing.

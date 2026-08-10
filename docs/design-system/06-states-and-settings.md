@@ -1063,6 +1063,72 @@ Move the label onto the arrow itself and it's exactly right.
 
 ---
 
+## Section 04 — Activity trail (added 2026-08-10)
+
+Children: `Section head` · `state/trail · open` · `state/trail · closed`. Both states use
+board 14's standard stage — `--color-surface-panel`, radius 20, padding 44, min-width 389,
+content column 301.
+
+### Prose, verbatim
+
+> **04 — ACTIVITY TRAIL · What the turn did**
+>
+> "state/thinking above covers a wait of a few seconds. It cannot carry a minute. A reasoning turn spends most of its length before the first word of the reply — thinking, then reading the board, then drawing — and three dots describe all of it identically. The trail is what fills that: the reasoning as it streams, and a named row for every tool the tutor reaches for. When the turn ends it collapses to a single line, and the line is a disclosure, not a label. This is the only place in the product where a hairline rule groups content, and it earns the exception — board 14's no-card rule holds everywhere else because the tutor's prose is the only thing in the lane, and here it is not."
+
+### `state/trail · open` — NEW component
+
+| Property | Value |
+| --- | --- |
+| Rule | `1px solid var(--color-ink-tertiary)`, full height |
+| Inset | 12 left of the rule; content 289 = 301 − 12 |
+| Item gap | `var(--spacing-3)` 12 |
+| Trail → reply | 8 — the same gap a board view takes to the reply beneath it (board 14) |
+| Reasoning | 15 / 22 · 400 · `var(--color-ink-secondary)` |
+| Step label | 15 / 22 · **600** · `var(--color-ink-secondary)` |
+| Icon slot | 16 × 22, `flexShrink: 0`, gap 8 to the label |
+| Icon stroke | rendered 16, **effective 2.0** — attribute `3.0` on a 24 viewBox, `3.5` on `tool/pen`'s 28 |
+| Crop | 145 × 86 · `var(--radius-md)` — board 14's tile, indented 24 onto the label lane |
+
+**The rule is `--color-ink-tertiary`, not `--color-divider`.** This looks wrong against every
+other rule in the system and it is deliberate. `--color-divider` `#EFEFEF` against the panel's
+`--color-surface-panel` `#FCFCFC` is about **1.06:1** — it does not render. `--color-divider`
+earns its value on separators between rows that are already spatially separated; this rule is
+the only thing grouping the trail, so it has to be seen. It was drawn with `--color-divider`
+first and the grouping simply did not exist.
+
+**Weight, not colour, separates reasoning from steps.** Both are `--color-ink-secondary` at 15.
+Reasoning is 400, a step label is 600. Dropping the reasoning to `--color-ink-tertiary` was
+tried and rejected: `#A0A1AA` on the panel is ~2.5:1 at 15px, which fails the system's own
+"can this be read at a glance" test for small text.
+
+**The icon slot is fixed width even though every row currently has an icon.** The lane is the
+point — `flexShrink: 0` at 16 is what keeps "Looked", "Drew" and "Searched" starting on one
+vertical line as labels change length.
+
+### `state/trail · closed` — NEW component
+
+| Property | Value |
+| --- | --- |
+| Row | height 22, `align-items: center`, gap `var(--spacing-1)` 4 |
+| Label | `Worked for 1m 15s` · 15 / 22 · 600 · `var(--color-ink-secondary)` |
+| Chevron | `ui/chevron-down` rotated −90° — **no new glyph**; 16 viewBox at 16, stroke 2 |
+| Row → reply | 8, unchanged from the open state so nothing shifts when it collapses |
+
+Under a minute the label drops the minutes entirely — `Worked for 8s`, never `Worked for 0m 8s`.
+
+The chevron points right when closed and down when open, which is why it is the existing
+`ui/chevron-down` under a rotation rather than a new right-facing glyph.
+
+### The four new icons
+
+`04 — Icons` section 07 adds `trail/eye`, `trail/search`, `trail/plan` and `trail/note`. The set
+already covered two of the seven step types — `tool/pen` draws, `ui/check` records — and had
+nothing for looked, searched, planned or remembered. `tool/lasso` and `ui/selection-marker` were
+both tried for "looked" and both rejected: they mean *the learner marqueed a region*, and
+borrowing either would have said the wrong thing quietly. See `docs/design-system/04-icons.md`.
+
+---
+
 ## Unresolved block (1520 × 348 at y 2931)
 
 | Property | Value |
