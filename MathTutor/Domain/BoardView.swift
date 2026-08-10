@@ -6,13 +6,20 @@ import Foundation
 /// never drew the tutor looking at anything. Board 14 does, and this is its
 /// value: the picture plus the words the model was given for it.
 ///
-/// Deliberately not `Codable`. These belong to the turn you are reading, not to
-/// the session: a `TutorMessage` is written into the session's file on every save,
-/// so attaching a few hundred kilobytes of PNG to one would rewrite them on
-/// every later save for the rest of the session. `TutorStore.boardViews` holds
-/// them beside the thread for as long as the app runs, and a thread restored
-/// from disk shows the replies without the views — which is honest, because the
-/// pictures were never saved.
+/// Deliberately not `Codable`, and that half still holds: a `TutorMessage` is
+/// written into the session's file on every save, so attaching a few hundred
+/// kilobytes of PNG to one would rewrite them for the rest of the session.
+///
+/// What has changed is where the bytes go instead. This type used to be the
+/// tutor's own board crops as well, held in a `TutorStore.boardViews` dictionary
+/// that lived only as long as the app did — a thread restored from disk showed
+/// the replies without the pictures. The activity trail needs those crops to
+/// survive a relaunch, so they now go to `BoardCropStore` on disk and a
+/// `TrailStep` carries only their `UUID`. `TutorStore.boardViews` is gone.
+///
+/// What is left here is the *learner's* own marqueed selection
+/// (`TutorStore.selectionViews`), which is a different claim and still in
+/// memory only.
 struct BoardView: Identifiable, Sendable, Equatable {
     let id: UUID
     let imageData: Data

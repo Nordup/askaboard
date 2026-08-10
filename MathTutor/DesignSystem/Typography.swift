@@ -278,6 +278,18 @@ extension TextStyle {
     /// product — nothing goes below this.
     static let label = TextStyle(size: DS.Size.label, leading: DS.Leading.label, weight: .semibold)
 
+    /// A trail step's own label, and the closed summary row's `Worked for 1m 15s` — board
+    /// 14 §04, the activity trail. `--text-label` 15 pairs with `--leading-control` 22
+    /// rather than `label`'s own `--leading-label` 18: every other 15pt run in the product
+    /// is a tight single-line label, and a step's own label is the first one that wraps.
+    /// The step label and the closed summary are typographically identical, so this is the
+    /// one name for both rather than two names for one value.
+    static let trailLabel = TextStyle(size: DS.Size.label, leading: DS.Leading.control, weight: .semibold)
+
+    /// The trail's reasoning paragraph — the same 15/22 line box as `trailLabel`, dropped to
+    /// 400 weight. Board 14: *"weight, not colour, separates reasoning from steps."*
+    static let trailReasoning = TextStyle(size: DS.Size.label, leading: DS.Leading.control, weight: .regular)
+
     /// The same small semibold label on the reading column — 17 / 25 where the panel's is
     /// 15 / 18.
     ///
@@ -309,6 +321,7 @@ extension TextStyle {
     /// Every style the design specifies, for tests and for a specimen screen.
     static let scale: [TextStyle] = [
         display, title, lead, chipFullScreen, body, bodyCentred, bodyControl, chipPanel, label,
+        trailLabel, trailReasoning,
     ]
 }
 

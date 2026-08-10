@@ -318,6 +318,38 @@ final class ChatComponentTests: XCTestCase {
         XCTAssertTrue(StreamingCaret.isVisible(at: start.addingTimeInterval(1.1)))
     }
 
+    // MARK: - Activity trail
+
+    /// Board 14 §04: "Under a minute the label drops the minutes entirely — `Worked for 8s`,
+    /// never `Worked for 0m 8s`." Asserted on the model rather than the rendered row, matching
+    /// this file's own rule: a number only a rendered `View` can check is a number nobody can
+    /// diff against the design.
+    func testAFinishedTrailReportsItsDuration() {
+        var trail = ActivityTrail()
+        trail.appendReasoning("Checking the domain")
+        trail.duration = 75
+        XCTAssertEqual(ActivityTrailView.summaryLabel(for: trail), "Worked for 1m 15s")
+    }
+
+    func testASubMinuteTrailOmitsTheMinutes() {
+        var trail = ActivityTrail()
+        trail.duration = 8
+        XCTAssertEqual(ActivityTrailView.summaryLabel(for: trail), "Worked for 8s")
+    }
+
+    /// `duration` stays `nil` for a turn that failed or is still running — `ActivityTrail`'s
+    /// own doc comment: "a trail with no duration is what tells the view to say nothing rather
+    /// than report a time it never measured."
+    func testAnUnfinishedTrailHasNoSummary() {
+        var trail = ActivityTrail()
+        trail.appendReasoning("Checking")
+        XCTAssertNil(ActivityTrailView.summaryLabel(for: trail))
+    }
+
+    func testAnEmptyTrailDrawsNothing() {
+        XCTAssertTrue(ActivityTrail().isEmpty)
+    }
+
     // MARK: - Bubbles
 
     func testBubbleHeightIsTwelvePlusTwentyFivePerLinePlusTwelve() {

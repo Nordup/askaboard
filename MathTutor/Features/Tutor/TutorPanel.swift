@@ -483,7 +483,17 @@ struct TutorThreadView: View {
     private var column: CGFloat { width ?? scale.contentWidth }
 
     var body: some View {
-        MessageThread(items: items, scale: scale, width: column, clearing: clearing) { accessory }
+        MessageThread(
+            items: items,
+            scale: scale,
+            width: column,
+            clearing: clearing,
+            // Read straight off `BoardCropStore` rather than through a bound method
+            // reference, which crashes swift-frontend during IRGen on this toolchain when
+            // handed straight to a one-argument closure parameter — see `Composer`'s own
+            // `onRemoveAttachment` for the precedent this follows.
+            crop: { id in store.boardCropStore.crop(for: id) }
+        ) { accessory }
     }
 
     private var items: [ChatThreadItem] {
@@ -493,19 +503,20 @@ struct TutorThreadView: View {
         // A turn carrying `signal: .evaluate` is a send that took the board with it, which
         // is exactly what screen 08's `msg/student · with selection` draws. The domain
         // already records it, so nothing here has to remember which send had an attachment.
+        //
+        // Nothing here builds an activity trail — `MessageRow` (`MessageThread.swift`) reads
+        // `message.activity` itself now, and draws it inline above the reply for every tutor
+        // message that has one, not only the most recent. That is what makes a trail three
+        // turns back still open on a session reopened after a relaunch: it is a property of
+        // the message being rendered, not of a second path that only ever sees the last one.
         return store.session.messages.map { message in
             ChatThreadItem(
                 message,
                 hasSelection: message.signal == .evaluate,
-                // Carried on the message, unlike the two below: a file the learner
+                // Carried on the message, unlike the one below: a file the learner
                 // attached is part of what they said, and it survives a relaunch
                 // because `AttachmentStore` kept its thumbnail.
                 attachments: message.attachments,
-                // Task 9 replaces this with the real activity-trail view.
-                // `TutorStore.boardViews` no longer exists — the trail on
-                // `message.activity` is what carries this turn's board crops
-                // now — so this stays empty only to keep the build green.
-                boardViews: [],
                 selectionView: store.selectionViews[message.id]
             )
         }

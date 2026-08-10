@@ -14,10 +14,6 @@ struct ChatThreadItem: Identifiable, Sendable {
     /// device still holds and can re-derive, and unlike a photo of homework, which it
     /// cannot.
     let attachments: [MessageAttachment]
-    /// The regions of the board the tutor looked at before writing this. Empty
-    /// for every learner message and for any tutor turn that did not look.
-    /// Board 14 — they are drawn above the reply, as part of the same turn.
-    let boardViews: [BoardView]
     /// The region the learner marqueed and sent with this message, if any. Drawn
     /// above their bubble — see `MessageRow`.
     let selectionView: BoardView?
@@ -28,13 +24,11 @@ struct ChatThreadItem: Identifiable, Sendable {
         _ message: TutorMessage,
         hasSelection: Bool = false,
         attachments: [MessageAttachment] = [],
-        boardViews: [BoardView] = [],
         selectionView: BoardView? = nil
     ) {
         self.message = message
         self.hasSelection = hasSelection
         self.attachments = attachments
-        self.boardViews = boardViews
         self.selectionView = selectionView
     }
 }
@@ -158,6 +152,12 @@ struct MessageThread<Accessory: View>: View {
     /// the composer, on both surfaces. The thread scrolls its history behind it, so this is
     /// what keeps the newest message clear of it. See `ThreadMetrics.for(_:width:clearing:)`.
     var clearing: CGFloat = 0
+    /// A `view_board` step's rendered crop, by the id `BoardCropStore` filed it under —
+    /// handed to every tutor row's `ActivityTrailView` rather than resolved here, because
+    /// this file has no store of its own to resolve it from (see `ChatThreadItem`'s own doc
+    /// comment on why a crop's bytes never travel as data on the item). Defaulted so a
+    /// gallery specimen or a preview thread, which draws no trail, needs no argument for it.
+    var crop: (UUID) -> Data? = { _ in nil }
     /// `btn/orb`, the thread's one non-message child. It belongs to the shell, so the
     /// thread reserves its place rather than drawing it — and the place matters: *"`btn/orb`
     /// is a normal flow child at the end of the message list, so it rides up and down with
@@ -173,7 +173,7 @@ struct MessageThread<Accessory: View>: View {
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: metrics.gap) {
                     ForEach(items) { item in
-                        MessageRow(item: item, scale: scale, width: column)
+                        MessageRow(item: item, scale: scale, width: column, crop: crop)
                     }
                     accessory()
                 }
@@ -221,6 +221,11 @@ struct MessageRow: View {
     /// The column this row spans. The bubble is pinned to its trailing edge, so this is also
     /// what decides where "right" is.
     var width: CGFloat?
+    /// A `view_board` step's rendered crop, by the id `BoardCropStore` filed it under. See
+    /// `MessageThread`'s own property of the same name — this is threaded straight through
+    /// from there, one closure rather than one resolved per row, because a closed trail
+    /// never needs to read the store at all.
+    var crop: (UUID) -> Data? = { _ in nil }
 
     private var metrics: MessageMetrics { .for(scale, width: width ?? scale.contentWidth) }
 
@@ -250,12 +255,16 @@ struct MessageRow: View {
             // surface talking, not the student, so it takes the tutor's register rather
             // than being dropped — dropping it would hide content the caller chose to add.
             //
-            // Board 14: what the tutor looked at sits above what it said, joined to it by
+            // Board 14 §04: what the tutor did sits above what it said, joined to it by
             // the tighter `replyGap` rather than the thread's own `--space-message-gap`,
-            // because that gap separates turns and this one joins a turn to itself.
+            // because that gap separates turns and this one joins a turn to itself. Read
+            // straight off `item.message.activity` — the trail is carried on the message
+            // itself and persists with it, unlike a photo of a board region a moment ago,
+            // so every tutor message in history draws its own trail here, not only the
+            // most recent one.
             VStack(alignment: .leading, spacing: BoardViewsMetrics.replyGap) {
-                if !item.boardViews.isEmpty {
-                    BoardViewsRow(views: item.boardViews, width: metrics.rowWidth)
+                if let activity = item.message.activity, !activity.isEmpty {
+                    ActivityTrailView(trail: activity, width: metrics.rowWidth, crop: crop)
                 }
                 TutorMessageText(markdown: item.message.text, metrics: metrics)
             }
