@@ -68,6 +68,20 @@ extension AttachmentStore {
     }
 }
 
+extension BoardCropStore {
+    /// A throwaway, per-call directory, for exactly the reason
+    /// `AttachmentStore.inTemporaryDirectory` is one: `BoardCropStore()`'s
+    /// default resolves to the real Application Support directory, and
+    /// `SessionPersistence.inMemory` gives a test its own session directory
+    /// but has no say over where crops go — the two are independent stores.
+    /// A test that lets a `.boardViewed` event through without this would
+    /// write a PNG into the user's own data and never clean it up.
+    static var inTemporaryDirectory: BoardCropStore {
+        BoardCropStore(directoryURL: FileManager.default.temporaryDirectory
+            .appendingPathComponent("MathTutorTests-boardcrops-\(UUID().uuidString)"))
+    }
+}
+
 extension BackendConfiguration {
     /// "This store can reach a tutor", stated rather than arranged.
     ///
@@ -406,5 +420,112 @@ final class TutorStoreStreamingTests: XCTestCase {
         XCTAssertEqual(requests.count, 2)
         XCTAssertEqual(requests[1].imageData, Data([0xAB]))
         XCTAssertEqual(requests[1].imageRegionDescription, "the area selected on the board")
+    }
+
+    // MARK: - The activity trail
+
+    /// The message can no longer wait for the first `.textDelta` — the trail
+    /// has to start before any prose exists, or a turn that reasons for a
+    /// long time before writing a word would show nothing at all.
+    func testAReasoningDeltaCreatesTheMessageBeforeAnyText() async {
+        let store = TutorStore(
+            service: ScriptedTutorService(events: [
+                .reasoningDelta("Checking the domain"),
+                .done,
+            ]),
+            persistence: .inMemory,
+            configuration: .stub
+        )
+        await store.sendAndWait("Solve it")
+
+        let tutor = store.session.messages.last { $0.role == .tutor }
+        XCTAssertEqual(tutor?.text, "")
+        XCTAssertEqual(tutor?.activity?.items.count, 1)
+    }
+
+    /// Every step arrives twice — a general label, then a specific one, under
+    /// the same server `call_id` — and the second must replace the first
+    /// rather than add a second row, or the trail would grow a duplicate for
+    /// every tool call a turn makes.
+    func testAStepArrivingTwiceLeavesOneRow() async {
+        let store = TutorStore(
+            service: ScriptedTutorService(events: [
+                .step(id: "call_a", tool: "view_board", label: "Looking at the board"),
+                .step(id: "call_a", tool: "view_board", label: "Looked at the top left of the board"),
+                .textDelta("Try squaring."),
+                .done,
+            ]),
+            persistence: .inMemory,
+            configuration: .stub
+        )
+        await store.sendAndWait("Check this")
+
+        let trail = store.session.messages.last { $0.role == .tutor }?.activity
+        XCTAssertEqual(trail?.items.count, 1)
+    }
+
+    /// A turn can ask to view the board more than once, and the renders can
+    /// come back in a different order than they were requested — `callID` is
+    /// what lets each crop find its way back to the step that asked for it
+    /// rather than to whichever `view_board` step happens to be unfinished.
+    func testACropIsFiledOnTheStepThatAskedForIt() async {
+        let store = TutorStore(
+            service: ScriptedTutorService(events: [
+                .step(id: "call_a", tool: "view_board", label: "Looking at the board"),
+                .step(id: "call_b", tool: "view_board", label: "Looking at the board"),
+                // Out of order on purpose: the second render returns first.
+                .boardViewed(callID: "call_b", imageData: Data("b".utf8), detail: "b"),
+                .boardViewed(callID: "call_a", imageData: Data("a".utf8), detail: "a"),
+                .done,
+            ]),
+            persistence: .inMemory,
+            boardCropStore: .inTemporaryDirectory,
+            configuration: .stub
+        )
+        await store.sendAndWait("Check both")
+
+        let trail = store.session.messages.last { $0.role == .tutor }?.activity
+        let steps = trail?.items.compactMap { item -> TrailStep? in
+            if case let .step(step) = item { return step }
+            return nil
+        }
+        XCTAssertEqual(steps?.count, 2)
+        XCTAssertNotNil(steps?.first { $0.id == "call_a" }?.imageID)
+        XCTAssertNotNil(steps?.first { $0.id == "call_b" }?.imageID)
+        XCTAssertNotEqual(steps?[0].imageID, steps?[1].imageID)
+    }
+
+    /// The duration the trail's header reports is measured on the device —
+    /// the wait as the learner actually experienced it, network included —
+    /// not a figure the server sends.
+    func testDoneRecordsHowLongTheLearnerWaited() async {
+        let store = TutorStore(
+            service: ScriptedTutorService(events: [.textDelta("Hi"), .done]),
+            persistence: .inMemory,
+            configuration: .stub
+        )
+        await store.sendAndWait("Hello")
+
+        let duration = store.session.messages.last { $0.role == .tutor }?.activity?.duration
+        XCTAssertNotNil(duration)
+        XCTAssertGreaterThanOrEqual(duration ?? -1, 0)
+    }
+
+    /// **The empty bubble a lazily-created message exists to prevent.** A
+    /// turn that fails before the provider sends any reasoning, step, or
+    /// text has nothing worth showing — the message must never have been
+    /// created at all, not created and then left blank.
+    func testATurnThatFailsImmediatelyLeavesNoEmptyBubble() async {
+        let store = TutorStore(
+            service: ScriptedTutorService(events: [
+                .failure(message: "The tutor is unavailable.", retryable: true),
+            ]),
+            persistence: .inMemory,
+            configuration: .stub
+        )
+        await store.sendAndWait("Hello")
+
+        XCTAssertNil(store.session.messages.last { $0.role == .tutor })
+        XCTAssertEqual(store.errorMessage, "The tutor is unavailable.")
     }
 }

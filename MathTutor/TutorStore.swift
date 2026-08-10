@@ -63,31 +63,17 @@ final class TutorStore: ObservableObject {
     /// every turn under the request's `board_scene` field.
     var boardSceneProvider: (@MainActor () -> String?)?
 
-    /// The regions the tutor looked at, keyed by the message they belong to.
-    ///
-    /// Held here rather than on `TutorMessage` because a `TutorMessage` is
-    /// `Codable` and goes into the session's file on every save: a turn that looked
-    /// three times would write several hundred kilobytes of PNG into the session
-    /// file, and every later save would rewrite them. These are evidence for the
-    /// turn you are looking at, not session state, so they live for as long as
-    /// the app does and no longer. A thread reloaded from disk shows the replies
-    /// without the views, which is the honest outcome — the pictures were never
-    /// saved.
-    @Published private(set) var boardViews: [UUID: [BoardView]] = [:]
-
     /// The region the learner marqueed and sent, keyed by the message that
     /// carried it.
     ///
-    /// Separate from `boardViews` because it is a different claim: these are what
-    /// the *learner* pointed at, and they belong on the learner's own turn. Same
-    /// storage reasoning though — a `TutorMessage` is `Codable` and would carry
-    /// the PNG into the session's file on every save.
+    /// This is a different claim from the activity trail: this is what the
+    /// *learner* pointed at, and it belongs on the learner's own turn. Held
+    /// here rather than on `TutorMessage` because a `TutorMessage` is
+    /// `Codable` and goes into the session's file on every save, and this is
+    /// a PNG — every later save would rewrite it. A thread reloaded from disk
+    /// shows the reply without the picture, which is the honest outcome: it
+    /// was never saved.
     @Published private(set) var selectionViews: [UUID: BoardView] = [:]
-
-    /// Views for the turn currently streaming, before it has a message to
-    /// attach them to. The tutor can look before it writes a word, so the first
-    /// view usually arrives with no tutor message in the session yet.
-    private var pendingBoardViews: [BoardView] = []
 
     let tutorService: any TutorService
     let persistence: SessionPersistence
@@ -615,7 +601,6 @@ final class TutorStore: ObservableObject {
         isLoading = false
         isEvaluating = false
         phase = nil
-        pendingBoardViews = []
         if saving {
             // Folds any ink the pen's rest timer has not written yet, so a
             // stroke made a moment before the switch lands in the session it was
@@ -690,10 +675,9 @@ final class TutorStore: ObservableObject {
     ///
     /// `discardBoardInk()` is the load-bearing line: `boardInkData` outlives
     /// `session` by design (see `updateDrawing`), so without it the new session's
-    /// first save would write the previous board's ink into it. The board views
-    /// go too — they are evidence for turns in a thread that is no longer on
-    /// screen, and they are keyed by message id, so keeping them would only
-    /// grow.
+    /// first save would write the previous board's ink into it. `selectionViews`
+    /// goes too — it is evidence for turns in a thread that is no longer on
+    /// screen, and it is keyed by message id, so keeping it would only grow.
     /// - Parameter isStored: Whether `next` is byte-for-byte what is on disk. A
     ///   session just read from a file is; a freshly minted one has never been
     ///   written, and saying so is what lets the very next `persist()` create it
@@ -709,7 +693,6 @@ final class TutorStore: ObservableObject {
         // Attachment ids are scoped to the session they were uploaded against,
         // so the previous session's payload is not a thing this one may re-send.
         retryPayload = RetryPayload()
-        boardViews = [:]
         selectionViews = [:]
         refreshSessions()
     }
@@ -789,15 +772,20 @@ final class TutorStore: ObservableObject {
     /// Starts one tutor turn and consumes it as a stream rather than waiting
     /// for a single reply.
     ///
-    /// The first `.textDelta` appends an empty tutor `TutorMessage`; every
-    /// delta after that mutates that same message's `text` in place, so the
-    /// bubble grows as the reply is written instead of appearing all at
-    /// once. `.workspace` arrives as a whole, already-paired plan and
-    /// exercise — the streaming protocol makes a mismatched half-pair
-    /// structurally impossible, so unlike the old `TutorReply` path there is
-    /// nothing to defensively guard here. `.failure` surfaces its message and
-    /// leaves the current workspace exactly as it was; whatever partial text
-    /// had already streamed into the tutor message stays visible.
+    /// The first of `.reasoningDelta`, `.step` or `.textDelta` appends an
+    /// empty tutor `TutorMessage` with an empty `ActivityTrail`; every event
+    /// after that mutates that same message in place — reasoning and steps
+    /// build the trail, text grows the reply — so the bubble and its trail
+    /// fill in as the turn runs instead of appearing all at once. A turn
+    /// that never reaches any of the three (an immediate `.failure`, say)
+    /// never creates a message at all, which is deliberate: an empty bubble
+    /// for a turn that never said anything would be a bubble about nothing.
+    /// `.workspace` arrives as a whole, already-paired plan and exercise —
+    /// the streaming protocol makes a mismatched half-pair structurally
+    /// impossible, so unlike the old `TutorReply` path there is nothing to
+    /// defensively guard here. `.failure` surfaces its message and leaves
+    /// the current workspace exactly as it was; whatever partial text had
+    /// already streamed into the tutor message stays visible.
     ///
     /// `persist()` runs once, on `.done` — not per delta, or every token
     /// would thrash the disk with a session-file write.
@@ -817,7 +805,6 @@ final class TutorStore: ObservableObject {
         isLoading = true
         errorMessage = nil
         phase = nil
-        pendingBoardViews = []
         // Recorded before the turn goes out, so a retry re-sends what this one
         // sent rather than a stripped-down version of it. See `RetryPayload`.
         retryPayload = RetryPayload(
@@ -858,45 +845,70 @@ final class TutorStore: ObservableObject {
             guard let self else { return }
             var accumulatedText = ""
             var tutorMessageIndex: Int?
+            // Measured on the device, not sent by the server: `ActivityTrail.duration`
+            // claims to be the wait as the learner experienced it, and that includes
+            // the network. Started here rather than at `requestTutor`'s first line so
+            // it does not also count the time this closure spent waiting to be
+            // scheduled.
+            let startedAt = Date.now
+
+            /// The tutor's message for this turn, created on first use.
+            ///
+            /// Lazily rather than at the head of the turn: the trail now starts
+            /// before any prose exists, so the message can no longer wait for the
+            /// first `.textDelta` the way it used to — but a turn that dies before
+            /// the provider answers still must not leave an empty bubble in the
+            /// thread. So the message is created by whichever of reasoning, a step,
+            /// or text happens to arrive first, and by nothing else.
+            func messageIndex() -> Int {
+                if let tutorMessageIndex { return tutorMessageIndex }
+                self.session.messages.append(TutorMessage(role: .tutor, text: ""))
+                let index = self.session.messages.count - 1
+                self.session.messages[index].activity = ActivityTrail()
+                tutorMessageIndex = index
+                return index
+            }
+
+            /// Reads the turn's trail out of the message, lets `change` mutate it,
+            /// and writes the result back.
+            ///
+            /// `ActivityTrail` is a value type sitting inside `session.messages`,
+            /// an `@Published` array — there is no way to mutate one of its rows in
+            /// place, only to replace it, so every trail edit is a read-modify-write
+            /// through here rather than through the array's subscript directly.
+            func withTrail(_ change: (inout ActivityTrail) -> Void) {
+                let index = messageIndex()
+                var trail = self.session.messages[index].activity ?? ActivityTrail()
+                change(&trail)
+                self.session.messages[index].activity = trail
+            }
+
             do {
                 for try await event in service.stream(request) {
                     switch event {
                     case .status(let newPhase, _):
                         self.phase = newPhase
-                    case .reasoningDelta:
-                        break
+                    case .reasoningDelta(let chunk):
+                        withTrail { $0.appendReasoning(chunk) }
+                    case .step(let id, let tool, let label):
+                        withTrail { $0.upsert(TrailStep(id: id, tool: tool, label: label)) }
                     case .textDelta(let chunk):
                         accumulatedText += chunk
-                        if tutorMessageIndex == nil {
-                            self.session.messages.append(TutorMessage(role: .tutor, text: ""))
-                            tutorMessageIndex = self.session.messages.count - 1
-                        }
-                        if let index = tutorMessageIndex {
-                            self.session.messages[index].text = accumulatedText
-                        }
-                    case .boardViewed(let callID, let imageData, let detail):
-                        // `callID` is bound but not yet used — Task 7 rewrites
-                        // this loop to file the crop on the trail row it
-                        // answers rather than on whatever tutor message is
-                        // currently streaming. See `TutorEvent.boardViewed`.
-                        _ = callID
-                        let view = BoardView(imageData: imageData, detail: detail)
-                        if let index = tutorMessageIndex {
-                            self.attach(view, to: self.session.messages[index].id)
-                        } else {
-                            // The tutor usually looks before it writes, so there
-                            // is no message to hang this on yet. `.done` flushes
-                            // whatever queued up here.
-                            self.pendingBoardViews.append(view)
-                        }
+                        let index = messageIndex()
+                        self.session.messages[index].text = accumulatedText
+                    case .boardViewed(let callID, let imageData, _):
+                        // Written to `boardCropStore`, not into the message: a
+                        // `TutorMessage` is `Codable` and goes into the session
+                        // file on every save, so a PNG carried on it would be
+                        // rewritten on every later save for the rest of the
+                        // session. The trail holds only the id `crop(for:)` reads
+                        // back by.
+                        let imageID = UUID()
+                        self.boardCropStore.save(imageData, for: imageID, in: self.session.id)
+                        withTrail { $0.setImage(imageID, forStep: callID) }
                     case .boardRequest:
                         // Answered inside the service, which owns the network and
                         // the renderer. It reaches here only as `.boardViewed`.
-                        break
-                    case .step:
-                        // Handled in Task 7, which rewrites this loop to build the
-                        // activity trail. Present only so the switch stays exhaustive
-                        // and the app keeps compiling until then.
                         break
                     case .workspace(let plan, let exercise):
                         self.session.plan = plan
@@ -910,7 +922,10 @@ final class TutorStore: ObservableObject {
                         self.session.boardScene = self.session.boardScene.applying(update)
                         self.persist()
                     case .done:
-                        self.flushPendingBoardViews(to: tutorMessageIndex)
+                        if let tutorMessageIndex {
+                            self.session.messages[tutorMessageIndex].activity?.duration =
+                                Date.now.timeIntervalSince(startedAt)
+                        }
                         self.phase = nil
                         self.isLoading = false
                         self.isEvaluating = false
@@ -921,6 +936,10 @@ final class TutorStore: ObservableObject {
                         self.persist()
                         onDone?(accumulatedText)
                     case .failure(let message, _):
+                        // `activity?.duration` is deliberately left untouched here
+                        // — it stays `nil` unless a message was never even
+                        // created. A trail that never finished must not claim a
+                        // time.
                         self.phase = nil
                         self.isLoading = false
                         self.isEvaluating = false
@@ -964,22 +983,6 @@ final class TutorStore: ObservableObject {
             return "TutorServiceError.\(serviceError)"
         }
         return "\(type(of: error)) \(error.localizedDescription)"
-    }
-
-    private func attach(_ view: BoardView, to messageID: UUID) {
-        boardViews[messageID, default: []].append(view)
-    }
-
-    /// Hands the turn's queued views to the message it ended up writing.
-    ///
-    /// A turn that looked and then said nothing has nowhere to put them, and
-    /// they are dropped rather than shown against someone else's message — a
-    /// board view under the wrong reply is worse than no board view at all.
-    private func flushPendingBoardViews(to tutorMessageIndex: Int?) {
-        defer { pendingBoardViews = [] }
-        guard let tutorMessageIndex, session.messages.indices.contains(tutorMessageIndex) else { return }
-        let id = session.messages[tutorMessageIndex].id
-        boardViews[id, default: []].insert(contentsOf: pendingBoardViews, at: 0)
     }
 
     /// Every save goes through here, so every save carries the board's current

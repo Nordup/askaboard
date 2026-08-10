@@ -501,10 +501,11 @@ struct TutorThreadView: View {
                 // attached is part of what they said, and it survives a relaunch
                 // because `AttachmentStore` kept its thumbnail.
                 attachments: message.attachments,
-                // Board 14. Keyed by message id rather than carried on the
-                // message, because these are evidence for the turn and not
-                // session state — see `TutorStore.boardViews`.
-                boardViews: store.boardViews[message.id] ?? [],
+                // Task 9 replaces this with the real activity-trail view.
+                // `TutorStore.boardViews` no longer exists — the trail on
+                // `message.activity` is what carries this turn's board crops
+                // now — so this stays empty only to keep the build green.
+                boardViews: [],
                 selectionView: store.selectionViews[message.id]
             )
         }
