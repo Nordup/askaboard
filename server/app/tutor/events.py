@@ -106,12 +106,37 @@ class BoardRequestEvent(BaseModel):
     detail: str
 
 
+class StepEvent(BaseModel):
+    """One thing the tutor did, as a row in the device's activity trail.
+
+    Sent twice for every call. Once at `response.output_item.added`, carrying
+    `TOOL_STEP_LABELS`' general wording, because that is the moment the turn
+    starts doing this and the device should say so then. Once again at
+    `response.function_call_arguments.done`, carrying a label built from the
+    arguments — which is the only place a specific one can come from, and which
+    for a large diagram is minutes later. The device replaces the row.
+
+    `id` is the provider's `call_id`, deliberately not its `output_index`. A
+    turn runs up to `MAX_TOOL_ROUNDS` rounds and every round numbers its own
+    output from zero, so two unrelated calls in one turn share an index. A
+    device keying rows on that would overwrite a finished step with a stranger.
+    """
+
+    type: Literal["step"] = "step"
+    id: str
+    tool: str
+    label: str
+
+
 class DoneEvent(BaseModel):
     type: Literal["done"] = "done"
     turn_id: UUID
     input_tokens: int | None = None
     output_tokens: int | None = None
     reasoning_tokens: int | None = None
+    #: How much of `input_tokens` the provider had already cached. Optional and
+    #: additive, so a client that does not know the field ignores it.
+    cached_tokens: int | None = None
 
 
 class ErrorEvent(BaseModel):
@@ -122,7 +147,7 @@ class ErrorEvent(BaseModel):
 
 ClientEvent = Annotated[
     StatusEvent | ReasoningDeltaEvent | TextDeltaEvent | WorkspaceEvent
-    | BoardUpdateEvent | BoardRequestEvent | DoneEvent | ErrorEvent,
+    | BoardUpdateEvent | BoardRequestEvent | StepEvent | DoneEvent | ErrorEvent,
     Field(discriminator="type"),
 ]
 
@@ -165,6 +190,26 @@ TOOL_PHASES: dict[str, PhaseName] = {
 }
 
 
+#: What a step says the moment it starts, before any argument has arrived.
+#:
+#: Separate from `TOOL_PHASES` even though the keys match today. A phase is one
+#: of five words the status line cycles through; this is a sentence about one
+#: call. They will drift — a sixth tool wanting a row but no new phase is the
+#: obvious next case — and merging them would make that a schema change.
+#:
+#: `remember` and `record_evidence` stay coarse on purpose. Their arguments are
+#: what the tutor concluded about the learner, and the learner reads this.
+TOOL_STEP_LABELS: dict[str, str] = {
+    "update_board": "Drawing on the board",
+    "view_board": "Looking at the board",
+    "set_workspace": "Making a plan",
+    "search_memory": "Searching memory",
+    "recent_sessions": "Searching memory",
+    "remember": "Saving a note",
+    "record_evidence": "Recording progress",
+}
+
+
 class EventTranslator:
     """Turns Responses API events into our own vocabulary.
 
@@ -183,6 +228,11 @@ class EventTranslator:
         heartbeat_seconds: float = HEARTBEAT_SECONDS,
     ) -> None:
         self._tool_names: dict[int, str] = {}
+        # `output_index` -> `call_id`, because the refinement event carries only
+        # the index and the step id has to be the call id. Overwritten by a
+        # later round using the same index, which is correct: the lookup only
+        # ever happens inside the round that wrote it.
+        self._call_ids: dict[int, str] = {}
         self._writing_announced = False
         # Injected so a test can drive the heartbeat without sleeping. Monotonic
         # rather than wall clock: this measures an interval, and a clock that
@@ -264,6 +314,7 @@ class EventTranslator:
             if item.get("type") == "function_call" and output_index is not None:
                 name = item.get("name", "")
                 self._tool_names[output_index] = name
+                produced: list[ClientEvent] = []
                 # Announced here, at the head of the call, rather than left to
                 # the first heartbeat: this is the moment the turn stops
                 # thinking and starts drawing, and the device should say so
@@ -274,11 +325,15 @@ class EventTranslator:
                     # announce `writing` again. Without it `_writing_announced`
                     # stays true from the first text delta of the turn, no
                     # later one emits a status, and the phase sticks on this
-                    # tool until the turn ends — so the thread goes on saying
-                    # "Drawing on the board" over a reply that is streaming in
-                    # underneath it, and every heartbeat repeats the claim.
+                    # tool until the turn ends.
                     self._writing_announced = False
-                    return [StatusEvent(phase=phase)]
+                    produced.append(StatusEvent(phase=phase))
+                label = TOOL_STEP_LABELS.get(name)
+                call_id = item.get("call_id")
+                if label is not None and call_id:
+                    self._call_ids[output_index] = call_id
+                    produced.append(StepEvent(id=call_id, tool=name, label=label))
+                return produced
             return []
 
         if kind == "response.function_call_arguments.done":

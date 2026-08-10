@@ -2,7 +2,7 @@ import json
 
 from app.tutor.events import (
     BoardUpdateEvent, EventTranslator, ReasoningDeltaEvent, StatusEvent,
-    TextDeltaEvent, WorkspaceEvent,
+    StepEvent, TextDeltaEvent, WorkspaceEvent,
 )
 
 WORKSPACE_ARGS = {
@@ -243,7 +243,10 @@ def _begin_update_board(translator: EventTranslator) -> list:
 def test_starting_update_board_announces_drawing_immediately():
     # Not left to the first heartbeat: this is the moment the turn stops
     # thinking and starts drawing, and the device should be able to say so then.
-    assert _begin_update_board(EventTranslator()) == [StatusEvent(phase="drawing")]
+    assert _begin_update_board(EventTranslator()) == [
+        StatusEvent(phase="drawing"),
+        StepEvent(id="call_b", tool="update_board", label="Drawing on the board"),
+    ]
 
 
 def test_starting_view_board_announces_looking():
@@ -252,7 +255,10 @@ def test_starting_view_board_announces_looking():
         "output_index": 0,
         "item": {"type": "function_call", "name": "view_board", "call_id": "call_v"},
     })
-    assert events == [StatusEvent(phase="looking")]
+    assert events == [
+        StatusEvent(phase="looking"),
+        StepEvent(id="call_v", tool="view_board", label="Looking at the board"),
+    ]
 
 
 def test_argument_deltas_stay_silent_until_the_heartbeat_is_due():
@@ -374,7 +380,10 @@ def test_a_memory_tool_puts_something_on_the_wire_before_it_blocks():
         "output_index": 0,
         "item": {"type": "function_call", "name": "search_memory", "call_id": "call_m"},
     })
-    assert events == [StatusEvent(phase="searching")]
+    assert events == [
+        StatusEvent(phase="searching"),
+        StepEvent(id="call_m", tool="search_memory", label="Searching memory"),
+    ]
 
 
 def test_every_memory_tool_announces_a_phase():
@@ -388,3 +397,51 @@ def test_every_memory_tool_announces_a_phase():
             "item": {"type": "function_call", "name": name, "call_id": "c"},
         })
         assert events, f"{name} announces nothing at the head of its call"
+
+
+def test_function_call_added_emits_a_step_with_the_general_label():
+    translator = EventTranslator()
+    events = translator.translate({
+        "type": "response.output_item.added",
+        "output_index": 0,
+        "item": {"type": "function_call", "name": "update_board", "call_id": "call_a"},
+    })
+    assert events == [
+        StatusEvent(phase="drawing"),
+        StepEvent(id="call_a", tool="update_board", label="Drawing on the board"),
+    ]
+
+
+def test_a_tool_with_no_label_emits_no_step():
+    translator = EventTranslator()
+    events = translator.translate({
+        "type": "response.output_item.added",
+        "output_index": 0,
+        "item": {"type": "function_call", "name": "not_a_tool", "call_id": "call_a"},
+    })
+    assert events == []
+
+
+def test_a_heartbeat_never_emits_a_step():
+    # A clock that has already passed the heartbeat interval.
+    translator = EventTranslator(now=lambda: 1_000.0, heartbeat_seconds=0.0)
+    events = translator.translate({"type": "response.some.unknown.event"})
+    assert events == [StatusEvent(phase="thinking")]
+
+
+def test_two_rounds_reusing_output_index_zero_produce_distinct_step_ids():
+    # Each round numbers its own output from zero. `call_id` is what keeps the
+    # second round's first call from overwriting the first round's.
+    translator = EventTranslator()
+    first = translator.translate({
+        "type": "response.output_item.added",
+        "output_index": 0,
+        "item": {"type": "function_call", "name": "view_board", "call_id": "call_a"},
+    })
+    second = translator.translate({
+        "type": "response.output_item.added",
+        "output_index": 0,
+        "item": {"type": "function_call", "name": "view_board", "call_id": "call_b"},
+    })
+    assert first[-1].id == "call_a"
+    assert second[-1].id == "call_b"
