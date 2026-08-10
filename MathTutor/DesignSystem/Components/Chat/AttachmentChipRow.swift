@@ -196,7 +196,7 @@ struct AttachmentChipRow: View {
         return { onRemove(attachment.id) }
     }
 
-    private func state(for attachment: PendingAttachment) -> AttachmentChip.State {
+    private func state(for attachment: PendingAttachment) -> AttachmentChip.Appearance {
         switch attachment.state {
         case .uploading: .converting
         case .failed: .failed
@@ -239,7 +239,7 @@ struct AttachmentChipRow: View {
 /// and the card can hold several of them now. The chip's own fill is `--color-surface`, so
 /// each one reads as a separate removable object on the tinted card (§7.4).
 struct AttachmentChip: View {
-    enum State: Equatable {
+    enum Appearance: Equatable {
         /// The upload is in flight. The whole of "converting" — there is no server-side
         /// status to poll.
         case converting
@@ -252,7 +252,7 @@ struct AttachmentChip: View {
 
     let title: String
     let subtitle: String?
-    let state: State
+    let state: Appearance
     let metrics: AttachmentChipMetrics
     /// `nil` renders no ✕ at all, which is the sent-message case — the same rule
     /// `SelectionCard` follows.
@@ -335,7 +335,7 @@ struct AttachmentChip: View {
     /// the box's grey and its cross are the whole of that state on screen, and this is the
     /// whole of it in the other modality. The refusal's *words* arrive through the note
     /// line, which the composer announces separately.
-    static func value(for state: State) -> String {
+    static func value(for state: Appearance) -> String {
         switch state {
         case .converting: "Converting"
         case .failed: "Failed"

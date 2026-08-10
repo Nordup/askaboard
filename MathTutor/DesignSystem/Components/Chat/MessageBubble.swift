@@ -220,8 +220,14 @@ struct StackedMessageBubble: View {
             // It costs nothing at one line, where the floor wins; it is what keeps a grown
             // bubble's last line off the capsule's bottom edge.
             .padding(.vertical, MessageMetrics.panel.bubblePaddingBlock)
+            // `minWidth`/`maxWidth` pinned to the same number rather than `width:`, because
+            // there is no `frame(width:minHeight:)` — the fixed-size overload takes
+            // `width`/`height` and the flexible one takes the min/ideal/max set, and this
+            // shape needs one of each: a width the card must match exactly, and a height
+            // free to grow past the floor.
             .frame(
-                width: metrics.selection.width,
+                minWidth: metrics.selection.width,
+                maxWidth: metrics.selection.width,
                 minHeight: metrics.selection.bodyHeight,
                 alignment: .leading
             )
