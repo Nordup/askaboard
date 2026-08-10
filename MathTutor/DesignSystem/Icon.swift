@@ -34,6 +34,14 @@ enum Icon: String, CaseIterable, Sendable {
     case chipConfused = "chip/confused"
     case boardHinge = "board/hinge"
     case uiPlus = "ui/plus"
+    // The activity trail's step rows. `tool/pen` and `ui/check` already covered
+    // two of the seven steps; these are the other four. All drawn on a 24
+    // viewBox, and all rendered at 16 in a trail row — where the authored 2.0
+    // scales to 1.33 and the call site compensates. See `04-icons.md` §07.
+    case trailEye = "trail/eye"
+    case trailSearch = "trail/search"
+    case trailPlan = "trail/plan"
+    case trailNote = "trail/note"
 }
 
 extension Icon {

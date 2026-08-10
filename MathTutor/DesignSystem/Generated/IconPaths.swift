@@ -11,7 +11,8 @@
 //           specimen
 //           15a — Sessions · header menu (530-0) — ui/plus, drawn inside row/new-session rather
 //           than as a specimen
-// Glyphs:   22 product glyphs.
+//           04 — Icons (1IF-0) section 07 — the four added for the activity trail
+// Glyphs:   26 product glyphs.
 // Prose:    docs/design-system/04-icons.md
 //           docs/design-system/06-states-and-settings.md
 //
@@ -864,6 +865,205 @@ enum IconPaths {
     )
 
 
+    /// `trail/eye` — renders 24 (product draws it at 16, 24) on a 24×24 viewBox, 2.0pt
+    /// effective stroke, --color-icon.
+    ///
+    /// The tutor looked at the board — the `view_board` row in the activity trail. A lens of
+    /// two mirrored cubics meeting at 2.6 and 21.4, so the ink spans 18.8 of 24 (78%), the same
+    /// share control/dock holds in the panel row. Control points at y 5.2 put the curve
+    /// extremum near 6.9 and make the lens 10.2 tall against 18.8 wide. Pupil r3.3, and both
+    /// numbers were set by the 16 render rather than by the 24: at 16 with the set's effective
+    /// 2.0 the first draft (control points 6.6, pupil r2.7) closed the pupil to a blob — the
+    /// same failure tool/lasso carries an exception for. Rather than take a second exception
+    /// the glyph was redrawn to survive the rule, so trail/eye renders a real ring at 16 with
+    /// nothing special-cased. tool/lasso and ui/selection-marker were both tried here first and
+    /// both rejected: they mean the LEARNER marqueed a region, and borrowing either would have
+    /// said the wrong thing quietly. Rendered at 16 in a trail row, where the 24 viewBox scales
+    /// by 0.667 — so the authored 2.0 becomes 1.33 and the attribute is compensated to 3.0 at
+    /// the call site to land the set's effective 2.0. tool/pen shares these rows off a 28
+    /// viewBox and needs 3.5 for the same result.
+    static let trailEye = IconGlyph(
+        name: "trail/eye",
+        viewBox: CGSize(width: 24, height: 24),
+        renderSize: 24,
+        productRenderSizes: [16, 24],
+        strokeWidth: 2,
+        colorToken: "--color-icon",
+        elements: [
+            IconElement(
+                geometry: .path("M2.6 12C6.1 5.2 17.9 5.2 21.4 12C17.9 18.8 6.1 18.8 2.6 12Z"),
+                isFilled: false,
+                isStroked: true,
+                lineCap: .butt,
+                lineJoin: .round,
+                dash: nil,
+                designStrokeWidth: 2
+            ),
+            IconElement(
+                geometry: .circle(centerX: 12, centerY: 12, radius: 3.3),
+                isFilled: false,
+                isStroked: true,
+                lineCap: .butt,
+                lineJoin: .miter,
+                dash: nil,
+                designStrokeWidth: 2
+            ),
+        ]
+    )
+
+
+    /// `trail/search` — renders 24 on a 24×24 viewBox, 2.0pt effective stroke, --color-icon.
+    ///
+    /// Memory was searched — the `search_memory` and `recent_sessions` rows, which share one
+    /// glyph because the learner does not care which of the two the tutor reached for. Ring r7
+    /// at (10,10) with the handle leaving at the 45 degree point (14.95) and running to 21, so
+    /// the ink spans 3.0 to 21.0 — 18 of 24, 75%. The handle is a separate path rather than
+    /// part of the ring so the round cap lands only on the free end; a cap on both would
+    /// thicken the join into the circle. Rendered at 16 in a trail row, where the 24 viewBox
+    /// scales by 0.667 — so the authored 2.0 becomes 1.33 and the attribute is compensated to
+    /// 3.0 at the call site to land the set's effective 2.0. tool/pen shares these rows off a
+    /// 28 viewBox and needs 3.5 for the same result.
+    static let trailSearch = IconGlyph(
+        name: "trail/search",
+        viewBox: CGSize(width: 24, height: 24),
+        renderSize: 24,
+        productRenderSizes: [16],
+        strokeWidth: 2,
+        colorToken: "--color-icon",
+        elements: [
+            IconElement(
+                geometry: .circle(centerX: 10, centerY: 10, radius: 7),
+                isFilled: false,
+                isStroked: true,
+                lineCap: .butt,
+                lineJoin: .miter,
+                dash: nil,
+                designStrokeWidth: 2
+            ),
+            IconElement(
+                geometry: .path("M14.95 14.95L21 21"),
+                isFilled: false,
+                isStroked: true,
+                lineCap: .round,
+                lineJoin: .miter,
+                dash: nil,
+                designStrokeWidth: 2
+            ),
+        ]
+    )
+
+
+    /// `trail/plan` — renders 24 on a 24×24 viewBox, 2.0pt effective stroke, --color-icon.
+    ///
+    /// The plan and board exercise were replaced — the `set_workspace` row. Three rules at y
+    /// 6.5/12/17.5 with a bullet each, spanning 2.45 to 21.6 (80%), the widest of the four and
+    /// deliberately so: it is the only one of them whose meaning is carried by rhythm rather
+    /// than by silhouette. The bullets are circles at r1.15 rather than filled dots, because
+    /// the set is stroke-only everywhere — at a 2.0 stroke the inner radius closes to 0.15 and
+    /// the ring reads as solid without ever becoming a fill. Rules are equal length; graduated
+    /// lengths were tried and read as a paragraph of text rather than as a list. Rendered at 16
+    /// in a trail row, where the 24 viewBox scales by 0.667 — so the authored 2.0 becomes 1.33
+    /// and the attribute is compensated to 3.0 at the call site to land the set's effective
+    /// 2.0. tool/pen shares these rows off a 28 viewBox and needs 3.5 for the same result.
+    static let trailPlan = IconGlyph(
+        name: "trail/plan",
+        viewBox: CGSize(width: 24, height: 24),
+        renderSize: 24,
+        productRenderSizes: [16],
+        strokeWidth: 2,
+        colorToken: "--color-icon",
+        elements: [
+            IconElement(
+                geometry: .circle(centerX: 4.6, centerY: 6.5, radius: 1.15),
+                isFilled: false,
+                isStroked: true,
+                lineCap: .butt,
+                lineJoin: .miter,
+                dash: nil,
+                designStrokeWidth: 2
+            ),
+            IconElement(
+                geometry: .circle(centerX: 4.6, centerY: 12, radius: 1.15),
+                isFilled: false,
+                isStroked: true,
+                lineCap: .butt,
+                lineJoin: .miter,
+                dash: nil,
+                designStrokeWidth: 2
+            ),
+            IconElement(
+                geometry: .circle(centerX: 4.6, centerY: 17.5, radius: 1.15),
+                isFilled: false,
+                isStroked: true,
+                lineCap: .butt,
+                lineJoin: .miter,
+                dash: nil,
+                designStrokeWidth: 2
+            ),
+            IconElement(
+                geometry: .path("M9.4 6.5H20.6"),
+                isFilled: false,
+                isStroked: true,
+                lineCap: .round,
+                lineJoin: .miter,
+                dash: nil,
+                designStrokeWidth: 2
+            ),
+            IconElement(
+                geometry: .path("M9.4 12H20.6"),
+                isFilled: false,
+                isStroked: true,
+                lineCap: .round,
+                lineJoin: .miter,
+                dash: nil,
+                designStrokeWidth: 2
+            ),
+            IconElement(
+                geometry: .path("M9.4 17.5H20.6"),
+                isFilled: false,
+                isStroked: true,
+                lineCap: .round,
+                lineJoin: .miter,
+                dash: nil,
+                designStrokeWidth: 2
+            ),
+        ]
+    )
+
+
+    /// `trail/note` — renders 24 on a 24×24 viewBox, 2.0pt effective stroke, --color-icon.
+    ///
+    /// Something was saved for a future session — the `remember` row. One closed polygon, 12.8
+    /// wide by 16.6 tall, whose notch rises to 15.1 and leaves the tails 5.2 units proud. It is
+    /// the only glyph of the four that is taller than it is wide, and that is the point:
+    /// proportion is what separates a bookmark from a shield at 16, not detail. Corners are
+    /// rounded by stroke-linejoin rather than by geometry, the same economy control/settings
+    /// uses for its teeth — the vertex list stays five points with nothing to re-derive if the
+    /// size changes. Rendered at 16 in a trail row, where the 24 viewBox scales by 0.667 — so
+    /// the authored 2.0 becomes 1.33 and the attribute is compensated to 3.0 at the call site
+    /// to land the set's effective 2.0. tool/pen shares these rows off a 28 viewBox and needs
+    /// 3.5 for the same result.
+    static let trailNote = IconGlyph(
+        name: "trail/note",
+        viewBox: CGSize(width: 24, height: 24),
+        renderSize: 24,
+        productRenderSizes: [16],
+        strokeWidth: 2,
+        colorToken: "--color-icon",
+        elements: [
+            IconElement(
+                geometry: .path("M5.6 3.7H18.4V20.3L12 15.1L5.6 20.3Z"),
+                isFilled: false,
+                isStroked: true,
+                lineCap: .butt,
+                lineJoin: .round,
+                dash: nil,
+                designStrokeWidth: 2
+            ),
+        ]
+    )
+
+
     /// Every glyph, by case.
     ///
     /// A switch and not a dictionary: adding a case to `Icon` without adding its
@@ -892,6 +1092,10 @@ enum IconPaths {
         case .chipConfused: Self.chipConfused
         case .boardHinge: Self.boardHinge
         case .uiPlus: Self.uiPlus
+        case .trailEye: Self.trailEye
+        case .trailSearch: Self.trailSearch
+        case .trailPlan: Self.trailPlan
+        case .trailNote: Self.trailNote
         }
     }
 }
