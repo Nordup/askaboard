@@ -31,6 +31,15 @@ enum TutorEvent: Sendable, Equatable {
     /// exactly that. Nothing above the service layer has to know — the store
     /// sees `.boardViewed` once the picture exists.
     case boardRequest(callID: String, region: CGRect, detail: String)
+    /// One row of the activity trail — a tool call, named.
+    ///
+    /// Arrives twice per call under the same `id`, which is the server's
+    /// `call_id`: once when the call starts, once when its arguments are
+    /// complete and a specific label exists. The store replaces the row rather
+    /// than appending, so `id` is the whole contract — see
+    /// `StepEvent` in `server/app/tutor/events.py` for why it is not the
+    /// provider's output index.
+    case step(id: String, tool: String, label: String)
     /// A region this device rendered for the tutor, on its way into the thread.
     ///
     /// Produced locally rather than received: the device drew it, so it already
@@ -78,6 +87,11 @@ enum TutorEvent: Sendable, Equatable {
                 region: CGRect(x: x, y: y, width: width, height: height),
                 detail: envelope.detail ?? ""
             )
+        case "step":
+            guard let id = envelope.id, let tool = envelope.tool,
+                  let label = envelope.label
+            else { return nil }
+            return .step(id: id, tool: tool, label: label)
         case "done":
             return .done
         case "error":
@@ -121,5 +135,9 @@ enum TutorEvent: Sendable, Equatable {
         let y: CGFloat?
         let width: CGFloat?
         let height: CGFloat?
+        // `step`.
+        let id: String?
+        let tool: String?
+        let label: String?
     }
 }

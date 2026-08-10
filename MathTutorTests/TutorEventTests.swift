@@ -50,4 +50,22 @@ final class TutorEventTests: XCTestCase {
         let line = #"data: {"type":"status","phase":"drawing","detail":null}"#
         XCTAssertEqual(TutorEvent.decode(from: line), TutorEvent.decode(from: line))
     }
+
+    func testDecodesAStepEvent() {
+        let line = #"data: {"type":"step","id":"call_a","tool":"update_board","label":"Drawing on the board"}"#
+        XCTAssertEqual(
+            TutorEvent.decode(from: line),
+            .step(id: "call_a", tool: "update_board", label: "Drawing on the board")
+        )
+    }
+
+    func testAStepMissingItsIDIsIgnored() {
+        let line = #"data: {"type":"step","tool":"update_board","label":"Drawing"}"#
+        XCTAssertNil(TutorEvent.decode(from: line))
+    }
+
+    func testAnUnknownEventTypeIsStillIgnored() {
+        let line = #"data: {"type":"something_new","text":"hi"}"#
+        XCTAssertNil(TutorEvent.decode(from: line))
+    }
 }
