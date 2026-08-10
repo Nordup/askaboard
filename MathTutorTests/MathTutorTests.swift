@@ -1004,6 +1004,70 @@ final class MathTutorTests: XCTestCase {
         XCTAssertEqual(decoded, session)
     }
 
+    func testReasoningDeltasGrowASingleItem() {
+        var trail = ActivityTrail()
+        trail.appendReasoning("Checking ")
+        trail.appendReasoning("the domain")
+        XCTAssertEqual(trail.items.count, 1)
+        guard case let .reasoning(_, text) = trail.items[0] else {
+            return XCTFail("expected a reasoning item")
+        }
+        XCTAssertEqual(text, "Checking the domain")
+    }
+
+    func testReasoningAfterAStepStartsANewItem() {
+        var trail = ActivityTrail()
+        trail.appendReasoning("First")
+        trail.upsert(TrailStep(id: "call_a", tool: "view_board", label: "Looking"))
+        trail.appendReasoning("Second")
+        XCTAssertEqual(trail.items.count, 3)
+    }
+
+    func testAStepWithAKnownIDIsReplacedInPlace() {
+        var trail = ActivityTrail()
+        trail.upsert(TrailStep(id: "call_a", tool: "view_board", label: "Looking at the board"))
+        trail.upsert(TrailStep(id: "call_a", tool: "view_board", label: "Looked at the top left of the board"))
+        XCTAssertEqual(trail.items.count, 1)
+        guard case let .step(step) = trail.items[0] else {
+            return XCTFail("expected a step item")
+        }
+        XCTAssertEqual(step.label, "Looked at the top left of the board")
+    }
+
+    func testReplacingAStepKeepsItsImage() {
+        var trail = ActivityTrail()
+        var first = TrailStep(id: "call_a", tool: "view_board", label: "Looking at the board")
+        first.imageID = UUID()
+        trail.upsert(first)
+        trail.upsert(TrailStep(id: "call_a", tool: "view_board", label: "Looked at the top left of the board"))
+        guard case let .step(step) = trail.items[0] else {
+            return XCTFail("expected a step item")
+        }
+        XCTAssertEqual(step.imageID, first.imageID)
+    }
+
+    func testATutorMessageWrittenBeforeTrailsExistedStillDecodes() throws {
+        let json = Data("""
+        {"id":"\(UUID().uuidString)","role":"tutor","text":"Hello","createdAt":0}
+        """.utf8)
+        let message = try JSONDecoder().decode(TutorMessage.self, from: json)
+        XCTAssertNil(message.activity)
+        XCTAssertEqual(message.text, "Hello")
+    }
+
+    func testATrailSurvivesEncodingAndDecoding() throws {
+        var trail = ActivityTrail()
+        trail.appendReasoning("Checking the domain")
+        trail.upsert(TrailStep(id: "call_a", tool: "view_board", label: "Looked at the top left of the board"))
+        trail.duration = 75
+        var message = TutorMessage(role: .tutor, text: "Try squaring both sides.")
+        message.activity = trail
+
+        let data = try JSONEncoder().encode(message)
+        let decoded = try JSONDecoder().decode(TutorMessage.self, from: data)
+        XCTAssertEqual(decoded.activity, trail)
+    }
+
     #if DEBUG
     func testE2EFixtureContainsVectorInkWithUsefulBounds() throws {
         let drawing = E2ESeedFixture.drawing()

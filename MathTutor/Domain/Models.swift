@@ -105,6 +105,10 @@ struct TutorMessage: Identifiable, Codable, Sendable, Equatable {
     /// decoder's own defaulting are for — a session already on disk was
     /// written without this key.
     var attachments: [MessageAttachment] = []
+    /// What the tutor did to produce this message. `nil` on every learner
+    /// message, and on every tutor message written before the trail existed —
+    /// which is what the decoder below defaults.
+    var activity: ActivityTrail?
 
     init(
         id: UUID = UUID(),
@@ -112,7 +116,8 @@ struct TutorMessage: Identifiable, Codable, Sendable, Equatable {
         text: String,
         createdAt: Date = .now,
         signal: LearningSignal? = nil,
-        attachments: [MessageAttachment] = []
+        attachments: [MessageAttachment] = [],
+        activity: ActivityTrail? = nil
     ) {
         self.id = id
         self.role = role
@@ -120,19 +125,21 @@ struct TutorMessage: Identifiable, Codable, Sendable, Equatable {
         self.createdAt = createdAt
         self.signal = signal
         self.attachments = attachments
+        self.activity = activity
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, role, text, createdAt, signal, attachments
+        case id, role, text, createdAt, signal, attachments, activity
     }
 
-    /// Written out for one line of it: `attachments`.
+    /// Written out for two lines of it: `attachments` and `activity`.
     ///
     /// Swift's synthesised decoder does **not** fall back to a stored
     /// property's default value when its key is missing — it throws
     /// `keyNotFound`. Every session written before attachments existed lacks
-    /// the key, and `LearningSession` decodes `messages` with a plain `try`,
-    /// so one legacy message would take the whole session down and
+    /// that key, and every session written before the activity trail existed
+    /// lacks this one; `LearningSession` decodes `messages` with a plain
+    /// `try`, so one legacy message would take the whole session down and
     /// `SessionPersistence.load` would return nil for it. A default value is
     /// not a migration; this is.
     init(from decoder: any Decoder) throws {
@@ -143,6 +150,7 @@ struct TutorMessage: Identifiable, Codable, Sendable, Equatable {
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         signal = try container.decodeIfPresent(LearningSignal.self, forKey: .signal)
         attachments = try container.decodeIfPresent([MessageAttachment].self, forKey: .attachments) ?? []
+        activity = try container.decodeIfPresent(ActivityTrail.self, forKey: .activity)
     }
 }
 
