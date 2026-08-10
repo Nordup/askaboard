@@ -144,11 +144,19 @@ Labels, by tool:
 | `remember` | Saving a note | Saved a note |
 | `record_evidence` | Recording progress | Recorded progress |
 
-`view_board` gets its refined label from the `detail` argument, which
-`BoardRequestEvent` already carries. `update_board` gets its count from the
-payload `parse_board_update` already returns. `remember` and `record_evidence`
-keep a coarse label on purpose: their arguments are what the tutor concluded
-about the learner, and that is not a thing to put on the learner's screen.
+`view_board` has no `detail` argument — the model sends only `x`, `y`,
+`width` and `height`, and the "Showing x 40–70%, y 20–55%" string is built
+later, inside `run_turn`. So the translator computes its own label from those
+four numbers: the whole board when the region covers nearly all of it, and
+otherwise a vertical band (top / middle / bottom) joined to a horizontal one
+(left / centre / right). Percentages are what the model was given and they are
+not a phrase a learner should have to read.
+
+`update_board` gets its count from the payload `parse_board_update` already
+returns. `set_workspace` uses `plan.title`. `search_memory` uses `query`.
+`remember` and `record_evidence` keep a coarse label on purpose: their
+arguments are what the tutor concluded about the learner, and that is not a
+thing to put on the learner's screen.
 
 A tool that is not in this table produces no step. This is the same rule
 `TOOL_PHASES` already uses.
