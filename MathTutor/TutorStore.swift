@@ -874,7 +874,12 @@ final class TutorStore: ObservableObject {
                         if let index = tutorMessageIndex {
                             self.session.messages[index].text = accumulatedText
                         }
-                    case .boardViewed(let imageData, let detail):
+                    case .boardViewed(let callID, let imageData, let detail):
+                        // `callID` is bound but not yet used — Task 7 rewrites
+                        // this loop to file the crop on the trail row it
+                        // answers rather than on whatever tutor message is
+                        // currently streaming. See `TutorEvent.boardViewed`.
+                        _ = callID
                         let view = BoardView(imageData: imageData, detail: detail)
                         if let index = tutorMessageIndex {
                             self.attach(view, to: self.session.messages[index].id)

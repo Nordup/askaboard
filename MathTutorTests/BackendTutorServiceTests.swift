@@ -259,6 +259,42 @@ final class BackendTutorServiceTests: XCTestCase {
         )
     }
 
+    /// The service turns one `board_request` into a `boardViewed` naming the
+    /// same call, so the store can file the crop on the step that asked rather
+    /// than guessing at the most recent one. Guessing breaks the moment a turn
+    /// asks for two regions and the second render answers first — see
+    /// `TutorEvent.boardViewed`.
+    ///
+    /// This fixture is deliberately the worst case for the race
+    /// `stream(_:)`'s task group exists to close: `board_request` is followed
+    /// immediately by `done`, with nothing between them to give the render a
+    /// head start. Without that group awaiting the render before
+    /// `continuation.finish()`, this test would be flaky rather than
+    /// reliably wrong — a `for try await` loop that drains the stream in one
+    /// pass has no way to wait for a value that hasn't been decided yet, so
+    /// it is the production fix that makes this assertion deterministic, not
+    /// anything added here.
+    func testABoardViewCarriesTheCallItAnswered() async throws {
+        await MainActor.run { BackendTutorService.boardRenderer = { _ in Data("png".utf8) } }
+        defer { Task { @MainActor in BackendTutorService.boardRenderer = nil } }
+
+        StubURLProtocol.body = """
+        data: {"type":"board_request","call_id":"call_a","x":0,"y":0,"width":40,"height":40,"detail":"Showing x 0–40%, y 0–40% of the board."}
+
+        data: {"type":"done","turn_id":"\(UUID().uuidString)"}
+
+
+        """
+        var events: [TutorEvent] = []
+        for try await event in makeService().stream(.fixture()) { events.append(event) }
+
+        let viewed = events.compactMap { event -> String? in
+            if case let .boardViewed(callID, _, _) = event { return callID }
+            return nil
+        }
+        XCTAssertEqual(viewed, ["call_a"])
+    }
+
     // MARK: - TutorServiceRouter.stream(_:)
 
     func testRouterStreamThrowsNotConfiguredWhenThereIsNoUsableToken() async throws {

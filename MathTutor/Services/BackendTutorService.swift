@@ -86,32 +86,59 @@ struct BackendTutorService: TutorService, Sendable {
                         throw TutorServiceError.network(message)
                     }
 
-                    // `bytes.lines` reassembles complete lines even when the
-                    // server flushes a payload across more than one TCP
-                    // write — a partial JSON line is buffered internally
-                    // until its terminating newline arrives, so every line
-                    // handed to `TutorEvent.decode` here is always whole.
-                    for try await line in bytes.lines {
-                        guard let event = TutorEvent.decode(from: line) else { continue }
-                        // The one event this layer answers rather than forwards.
-                        // The turn on the server is blocked on the render, so it
-                        // is dispatched immediately and detached: awaiting it
-                        // here would stop reading the very stream the rest of
-                        // the turn arrives on.
-                        if case let .boardRequest(callID, region, detail) = event {
-                            let configuration = configuration
-                            let session = session
-                            Task {
-                                if let image = await Self.answerBoardRequest(
-                                    callID: callID, region: region, turnID: turnID,
-                                    configuration: configuration, session: session
-                                ) {
-                                    continuation.yield(.boardViewed(imageData: image, detail: detail))
+                    // Each `.boardRequest` is answered by a child task added to
+                    // this group, rather than awaited inline — awaiting it here
+                    // would stop reading the very stream the rest of the turn
+                    // arrives on, exactly as the loop below still does not.
+                    //
+                    // It is a *group* child rather than a bare, unstructured
+                    // `Task { }` for one reason: `continuation.yield(_:)` after
+                    // `continuation.finish()` is documented to have no effect —
+                    // the value is silently dropped, not buffered. A render has
+                    // two suspension points ahead of it (the `MainActor` hop to
+                    // draw, then the upload) while the loop below usually only
+                    // has to read one more already-buffered line before it falls
+                    // off the end and this function calls `finish()`. Left as a
+                    // bare `Task { }`, a render still in flight at that moment
+                    // would lose its `.boardViewed` for good — invisibly, since
+                    // nothing throws and nothing logs. Grouping fixes both
+                    // halves of that at once: falling off the end of
+                    // `withThrowingTaskGroup`'s closure implicitly awaits every
+                    // outstanding child before this scope continues, so
+                    // `continuation.finish()` below is unconditionally the last
+                    // thing said on this stream — and a child task is a
+                    // structured child of `task`, so `continuation.onTermination`
+                    // cancelling `task` below cancels every render still running
+                    // rather than leaving it to outlive the stream it was
+                    // answering.
+                    try await withThrowingTaskGroup(of: Void.self) { group in
+                        // `bytes.lines` reassembles complete lines even when the
+                        // server flushes a payload across more than one TCP
+                        // write — a partial JSON line is buffered internally
+                        // until its terminating newline arrives, so every line
+                        // handed to `TutorEvent.decode` here is always whole.
+                        for try await line in bytes.lines {
+                            guard let event = TutorEvent.decode(from: line) else { continue }
+                            // The one event this layer answers rather than
+                            // forwards. See the group's doc comment above for why
+                            // this is tracked rather than fire-and-forget.
+                            if case let .boardRequest(callID, region, detail) = event {
+                                let configuration = configuration
+                                let session = session
+                                group.addTask {
+                                    if let image = await Self.answerBoardRequest(
+                                        callID: callID, region: region, turnID: turnID,
+                                        configuration: configuration, session: session
+                                    ) {
+                                        continuation.yield(.boardViewed(
+                                            callID: callID, imageData: image, detail: detail
+                                        ))
+                                    }
                                 }
+                                continue
                             }
-                            continue
+                            continuation.yield(event)
                         }
-                        continuation.yield(event)
                     }
                     continuation.finish()
                 } catch {
@@ -132,8 +159,8 @@ struct BackendTutorService: TutorService, Sendable {
     ///
     /// Main-actor isolated because rendering a `PKDrawing` touches the live
     /// canvas, and because Swift 6 will not have mutable global state any other
-    /// way. `BoardScreen` sets it; the detached task below reads it back on the
-    /// main actor before rendering.
+    /// way. `BoardScreen` sets it; the render task in `stream(_:)`'s task group
+    /// reads it back on the main actor before rendering.
     @MainActor static var boardRenderer: ((CGRect) -> Data?)?
 
     /// Renders the region the tutor asked for and POSTs it back to the turn

@@ -45,7 +45,13 @@ enum TutorEvent: Sendable, Equatable {
     /// Produced locally rather than received: the device drew it, so it already
     /// holds the bytes and they never make a second round trip. This is what
     /// lets the thread show the learner what the tutor actually looked at.
-    case boardViewed(imageData: Data, detail: String)
+    ///
+    /// `callID` is the `board_request` this answers, and it is the same id the
+    /// matching `step` carries. Without it the store would have to file the
+    /// crop on "the most recent `view_board` step with no image", which is the
+    /// wrong step as soon as one turn asks for two regions and the second
+    /// render returns first.
+    case boardViewed(callID: String, imageData: Data, detail: String)
     case done
     case failure(message: String, retryable: Bool)
 
