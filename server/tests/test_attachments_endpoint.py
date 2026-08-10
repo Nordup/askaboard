@@ -3,7 +3,7 @@ import uuid
 
 from httpx import ASGITransport, AsyncClient
 
-from app.config import MAX_UPLOAD_BYTES
+from app.config import DEFAULT_MODEL, DEFAULT_REASONING_EFFORT, MAX_UPLOAD_BYTES
 from app.store.models import Session
 from tests.conftest import requires_db
 from tests.fixtures import files
@@ -99,36 +99,48 @@ async def test_a_lying_content_length_is_refused_with_413(db_app, db_factory):
 
 
 @requires_db
-async def test_an_unknown_session_is_refused(db_app):
+async def test_a_brand_new_session_is_created_rather_than_refused(db_app, db_factory):
+    """The feature's opening move: open the app, tap +, photograph the
+    worksheet, send. The device mints the session id locally and nothing has
+    reached the server yet, so refusing an id it has not seen would 404 the
+    one flow this exists for — the chip read "No such session" at the moment
+    nothing was wrong. `/v1/turn` has always materialised the device's id on
+    first contact; so does this.
+    """
+    session_id = uuid.uuid4()
     async with AsyncClient(transport=ASGITransport(app=db_app), base_url="http://test") as client:
         response = await client.post(
             "/v1/attachments",
             headers=AUTH,
-            data={"session_id": str(uuid.uuid4())},
+            data={"session_id": str(session_id)},
             files={"file": ("board.png", files.PNG_2X2, "image/png")},
         )
 
-    assert response.status_code == 404
+    assert response.status_code == 200
+    async with db_factory() as fresh:
+        created = await fresh.get(Session, session_id)
+        assert created is not None
+        # The form carries neither, so the row takes the defaults the next
+        # turn will overwrite.
+        assert created.model == DEFAULT_MODEL
+        assert created.reasoning_effort == DEFAULT_REASONING_EFFORT
 
 
 @requires_db
-async def test_an_unknown_session_is_refused_before_any_conversion_work(db_app):
-    """`test_an_unknown_session_is_refused` above uses a file that converts
-    fine either way, so it cannot tell the session-check-first ordering
-    apart from a convert-first one — both orderings would pass it. Pairing
-    an unknown session with a file that convert() itself would refuse
-    (BINARY_JUNK, a 415) is the only combination that distinguishes the two:
-    whichever check runs first decides whether the response is 404 or 415.
+async def test_a_second_upload_adopts_the_session_the_first_one_created(db_app, db_factory):
+    """Two files picked in quick succession on a brand-new session. The
+    second must not fail on the row the first just wrote.
     """
+    session_id = uuid.uuid4()
     async with AsyncClient(transport=ASGITransport(app=db_app), base_url="http://test") as client:
-        response = await client.post(
-            "/v1/attachments",
-            headers=AUTH,
-            data={"session_id": str(uuid.uuid4())},
-            files={"file": ("mystery.bin", files.BINARY_JUNK, "application/octet-stream")},
-        )
-
-    assert response.status_code == 404
+        for _ in range(2):
+            response = await client.post(
+                "/v1/attachments",
+                headers=AUTH,
+                data={"session_id": str(session_id)},
+                files={"file": ("board.png", files.PNG_2X2, "image/png")},
+            )
+            assert response.status_code == 200
 
 
 async def test_upload_requires_the_device_token(db_app):

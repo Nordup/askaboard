@@ -19,13 +19,13 @@ from fastapi import (
     APIRouter, Depends, File, Form, Header, HTTPException, UploadFile, status,
 )
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.turn import get_recorder
 from app.attachments.convert import Unconvertible, convert
 from app.auth import require_device_token
-from app.config import MAX_UPLOAD_BYTES
+from app.config import DEFAULT_MODEL, DEFAULT_REASONING_EFFORT, MAX_UPLOAD_BYTES
 from app.store.db import db_session
 from app.store.models import Session
 from app.store.recorder import Recorder
@@ -108,12 +108,31 @@ async def upload_attachment(
             )
     data = bytes(buffer)
 
-    # Checked before converting rather than after: LibreOffice is thirty
-    # seconds of work, and doing it for a session that does not exist would be
-    # thirty seconds spent on a request that was always going to 404.
-    exists = await db.scalar(select(Session.id).where(Session.id == session_id))
-    if exists is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such session.")
+    # Created on demand, not 404'd. The device mints a session id locally and
+    # the server materialises it on first contact — `/v1/turn` has always
+    # worked that way, and the learner's first act in a brand-new session is
+    # very often the `+` rather than a typed question: open the app, photograph
+    # the worksheet, send. Refusing that would 404 the feature's opening move,
+    # and the chip would read "No such session" at the one moment nothing is
+    # wrong.
+    #
+    # The form carries no model or effort, hence the defaults; the next turn
+    # overwrites both with what the device actually has selected. Same shape as
+    # `/v1/dictation`, which reaches a session before any turn for the same
+    # reason.
+    if await db.get(Session, session_id) is None:
+        db.add(Session(
+            id=session_id,
+            model=DEFAULT_MODEL,
+            reasoning_effort=DEFAULT_REASONING_EFFORT,
+        ))
+        try:
+            await db.commit()
+        except IntegrityError:
+            # Two uploads racing on the same brand-new session id — the learner
+            # picking a second file before the first has landed. Whichever lost
+            # simply adopts the row the other wrote.
+            await db.rollback()
 
     try:
         converted = await convert(data, file.filename or "attachment")

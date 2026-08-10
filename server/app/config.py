@@ -14,12 +14,13 @@ MODEL_ALLOWLIST: frozenset[str] = frozenset({
     "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
 })
 
-# What a session gets when something other than a turn creates it — today only
-# /v1/dictation, whose form carries neither value. Both columns are NOT NULL,
+# What a session gets when something other than a turn creates it — /v1/dictation
+# and /v1/attachments, whose forms carry neither value. Both columns are NOT NULL,
 # so a row has to be given something, and the next turn overwrites both with
 # what the device actually has selected (see app/api/turn.py). These match the
-# client's own defaults for a new session, so a dictation-first session is
-# labelled with what would have answered it rather than with a sentinel.
+# client's own defaults for a new session, so a session that begins with a
+# dictation or an attachment is labelled with what would have answered it
+# rather than with a sentinel.
 DEFAULT_MODEL = "gpt-5.6-luna"
 DEFAULT_REASONING_EFFORT = "high"
 
