@@ -12,6 +12,22 @@ The four live product screens, extracted from the Paper file
 
 Target device: iPad Pro 13" landscape, 1376 × 1032 pt.
 
+> **The composer pill came down a step**, and every number derived from it moved
+> with it. 58 → **50** in the panel, 80 → **68** full-screen; paddings 20/8 →
+> **18/6** and 32/12 → **28/8**; gap 12 → **10** and 18 → **16**; `btn/send`
+> 42 → **38** and 56 → **52**; `btn/voice` 38 → **34** and 52 → **46**; the
+> attached-selection card 67 → **63** with its top radius 29 → **25**; the
+> attached composer 96 → **88**. The **glyphs did not move** — 20, 22 and 26
+> are what `04-icons.md` publishes and the boxes shrank around them. Every
+> composer number in this file is at the current pill.
+>
+> Two things reached these screens after this file was written and are recorded
+> here only where the row arithmetic needs them: a leading **`ui/plus`** in both
+> composers (specified on board **03b — Components · Attachments**, which has no
+> transcription file), and the panel's **top and bottom scroll fades** replacing
+> the thread's single internal fade. `03-chat-components.md` §2 and §7 still
+> draw the 58 pt-era card and buttons and are flagged there as stale.
+
 ## How to read the numbers in this document
 
 - **All coordinates are frame-relative** — i.e. `worldX/worldY` minus the artboard
@@ -236,22 +252,33 @@ z-order is not load-bearing here.
 | Radius | `--radius-3xl` (28) |
 | Background | `--color-surface-panel` |
 | Shadow | `shadow/panel` |
-| Layout | `flex column`, `align-items: center`, `padding-top: 18` (= `--space-panel-inset`) |
+| Layout | `flex column`, `align-items: center`, `padding-block: 18` (= `--space-panel-inset`) |
 | Content width | `301` (= `--container-panel-content`) → 18 pt inset each side |
 
-Stack (y within the panel):
+Stack (y within the panel). **Every child is `position: absolute` now** — the
+panel no longer flows them, so the margins this file used to record are gone
+and the `y` values below are the placements themselves:
 
-| # | Child | y | Size | Spacing |
+| # | Child | y | Size | x |
 |---|---|---|---|---|
-| 1 | `Panel controls` | 18 | `301 × 32` | — |
-| 2 | `Orb` | 170 | `96 × 90` | `margin-top: 120` |
-| 3 | `Start state` | 300 | `301 × 522` | `margin-top: var(--spacing-10)` = 40 |
-| 4 | `Composer` | 822 | `301 × 96` | — |
+| 1 | `Scroll fade · top` | 0 | `337 × 80` | 0 — overlay, full panel width |
+| 2 | `Panel controls` | 18 | `301 × 32` | 18 |
+| 3 | `Orb` | 170 | `96 × 90` | 120.5 |
+| 4 | `Start state` | 300 | `301 × 530` | 18 |
+| 5 | `Composer` | **870** | **`301 × 88`** | 18 |
+| 6 | `Scroll fade · bottom` | **908** | `337 × 68` | 0 — overlay, full panel width |
 
-Content bottom = `822 + 96 = 918`; the panel is 976 tall, so **18 pt of slack
+Content bottom = `870 + 88 = 958`; the panel is 976 tall, so **18 pt of slack
 remains at the bottom**. Implement the composer as bottom-anchored with an
 18 pt bottom inset — that reproduces the design exactly and is more robust
 than reproducing the flex slack.
+
+The bottom fade's **68** is the composer band: pill `50` + the 18 pt inset
+under it, so it covers exactly what the composer occupies. It spans the full
+`337`, not the `301` content column, and carries the panel's bottom corner
+radii. **The two fades are not transcribed in detail here** — this file
+predates them, as does §6 of `03-chat-components.md`, which still documents a
+single `301 × 72` fade inside the thread.
 
 #### 1. Panel controls (`301 × 32`, `flex row`, `gap: 14`, `justify-content: flex-start`)
 
@@ -270,9 +297,9 @@ Neither button carries a selected/pressed background in this design.
   `gap: 18`, linear gradient `oklab(25.4% …) → oklab(13% …)` at 180°.
 - Two eyes: `7 × 7` white circles. **No smile in the panel-size orb.**
 
-#### 3. Start state (`301 × 522` — verified)
+#### 3. Start state (`301 × 530` — verified)
 
-`flex column`, `align-items: center`, `padding-bottom: 120`.
+`flex column`, `align-items: center`, `padding-bottom: 128`.
 
 | Element | Style | Copy |
 |---|---|---|
@@ -280,7 +307,7 @@ Neither button carries a selected/pressed background in this design.
 | Subtitle | `277` wide, centred, 17 / 24, weight 400, `--color-ink-secondary`, `margin-top: 10` | `I'm here to help you learn, practice and achieve your goals.` |
 | `Suggestions` | `301` wide, flex column, `gap: 10`, `margin-top: 32`, height `278` | four chips |
 
-Height check: `34 + 10 + 48 + 32 + 278 + 120 = 522`. ✔
+Height check: `34 + 10 + 48 + 32 + 278 + 128 = 530`. ✔
 
 Suggestion chips — four identical `chip/*` instances, `301 × 62`:
 `align-items: center`, `padding-left: 18`, `gap: 14`,
@@ -295,16 +322,20 @@ Label 17 / 22, weight 500, `--color-ink`.
 | `chip/exercise` | 144 | `Create an exercise` | pencil-on-square |
 | `chip/confused` | 216 | `I don't understand this` | question-mark circle |
 
-#### 4. Composer (`301 × 96`, `position: relative`; two absolutely-positioned layers)
+#### 4. Composer (`301 × 88`, `position: relative`; two absolutely-positioned layers)
 
 | Layer | Position | Size | Style |
 |---|---|---|---|
-| `Attached context` | `0, 0` | `301 × 67` | background `--color-brand-tint-soft`, top radii `29 / 29` (bottom square), `padding-left: 20`, `padding-right: 16`, `align-items: flex-start` |
-| `Input` | `0, 38` | `301 × 58` | background `--color-surface`, `border-radius: 9999`, `shadow/card`, `padding-left: 20`, `padding-right: 8`, `gap: 12`, `align-items: center` |
+| `Attached context` | `0, 0` | **`301 × 63`** | background `--color-brand-tint-soft`, top radii **`25 / 25`** (bottom square), `padding-left: 20`, `padding-right: 16`, `align-items: flex-start` |
+| `Input` | `0, 38` | **`301 × 50`** | background `--color-surface`, `border-radius: 9999`, `shadow/card`, `padding-left: 18`, `padding-right: 6`, `gap: 10`, `align-items: center` |
 
-The attached-context strip is 67 tall but the input is placed at `y = 38`, so
-29 pt of the strip is hidden behind the input pill — it reads as a tab
-growing out from behind the composer.
+The attached-context strip is 63 tall but the input is placed at `y = 38`, so
+**25** pt of the strip is hidden behind the input pill — it reads as a tab
+growing out from behind the composer. The 25 is the pill's own corner radius
+(`50 ÷ 2`), which is the whole point of the number: the strip has to reach past
+the pill's top curves or the panel shows through at both corners. Board 03's
+§2 still states this rule at the 58pt pill (29 / 67) and is stale; **63 / 25 is
+what this screen and screen 15a draw.**
 
 Attached context inner row: `265 × 38`, `padding-inline: 3`, `padding-top: 6`,
 `justify-content: space-between`.
@@ -315,10 +346,16 @@ Input row children (computed from padding/gap; widths are exact):
 
 | Child | x within input | Size | Notes |
 |---|---|---|---|
-| Selection glyph | 20 | `24 × 24` | dashed rounded square, `stroke-dasharray 4.6 3.9`, stroke `--color-brand`, width 2 |
-| Placeholder text | 56 | `133 × 22` | `Ask anything...` — 17 / 22, `--color-ink-tertiary`, `flex-grow: 1` |
-| `btn/voice` | 201 | `38 × 38` | mic glyph `20 × 20`, stroke `--color-icon`, width 2.4 |
-| `btn/send` | 251 | `42 × 42` | filled circle `--color-brand`, up-arrow glyph `22 × 22` stroke `#FFFFFF` |
+| `ui/plus` | 18 | `20 × 20` | **new** — the attach affordance. Stroke `--color-icon`, *not* brand. Specified on board 03b, which has no transcription file yet |
+| Selection glyph | 48 | `24 × 24` | dashed rounded square, `stroke-dasharray 4.6 3.9`, stroke `--color-brand`, width 2 |
+| Placeholder text | 82 | **`121 × 22`** | `Ask anything...` — 17 / 22, `--color-ink-tertiary`, `flex-grow: 1` |
+| `btn/voice` | 213 | **`34 × 34`** | mic glyph `20 × 20`, stroke `--color-icon`, width 2.4 |
+| `btn/send` | 257 | **`38 × 38`** | filled circle `--color-brand`, up-arrow glyph `22 × 22` stroke `#FFFFFF` |
+
+The row closes exactly:
+`301 − 18 − 20 − 10 − 24 − 10 − 121 − 10 − 34 − 10 − 38 − 6 = 0`.
+Without the plus — the row the Swift `ComposerMetrics.panel` currently builds —
+the lane is `151` and everything else is unchanged.
 
 ### All literal copy on screen 05
 
@@ -414,7 +451,7 @@ The tool rail is not present at all.
 | `Panel controls` | absolute | **352** | 68 | **996** | 32 | none — settings-only variant, added 2026-08-07 |
 | `Greeting block` | absolute | **352** | 150 | **740** | **268** | none |
 | `Suggestion grid` | absolute | **352** | 592 | **740** | 168 | none |
-| `Composer · wide` | absolute | **352** | 924 | **740** | 80 | `--color-surface` |
+| `Composer · wide` | absolute | **352** | **936** | **740** | **68** | `--color-surface` |
 | `Board peek` | absolute overlay | 0 | 28 | 68 | 976 | see below |
 
 **Verified:** the content column is `740` wide at `x = 352`. ✔
@@ -451,10 +488,13 @@ Vertical rhythm of the column:
 174  gap
 592  suggestion grid top
 760  suggestion grid bottom (592 + 168)
-164  gap
-924  composer top
+176  gap
+936  composer top
 1004 composer bottom       (matches the 1004 content-band bottom of 05/06/08)
 ```
+
+The composer bottom is the fixed end of that column: when the pill came down
+80 → 68 its **top** moved 924 → 936 and the gap above it absorbed the 12.
 
 **Z-order** (back → front): Status bar → Greeting block → Suggestion grid →
 Composer → **Board peek** → Panel controls. The board peek is painted over the
@@ -502,17 +542,27 @@ background `--color-surface`, `shadow/card`.
 Icon **`24 × 24`**, stroke `--color-brand`, **stroke-width 2**.
 Label **20 / 24**, weight 500, `--color-ink`.
 
-### Composer · wide (`740 × 80`)
+### Composer · wide (`740 × 68`)
 
 `flex row`, `align-items: center`, `border-radius: 9999`,
 background `--color-surface`, `shadow/card`,
-`padding-left: 32`, `padding-right: 12`, `gap: 18`.
+`padding-left: 28` (`--spacing-7`), `padding-right: 8` (`--spacing-2`),
+`gap: 16` (`--spacing-4`).
 
 | Child | x, y within composer | Size | Notes |
 |---|---|---|---|
-| Placeholder text | `32, 27` | `552 × 26` | `Ask me anything...` — 21 / 26, weight 400, `--color-ink-tertiary`, `flex-grow: 1` |
-| `btn/voice` | `602, 14` | `52 × 52` | mic glyph `26 × 26` |
-| `btn/send` | `672, 12` | `56 × 56` | filled circle `--color-brand`, up-arrow glyph `26 × 26` |
+| `ui/plus` | `28, 24` | `20 × 20` | **new** — same glyph and same `--color-icon` stroke as the panel's. Board 03b |
+| Placeholder text | `64, 21` | **`538 × 26`** | `Ask me anything...` — 21 / 26, weight 400, `--color-ink-tertiary`, `flex-grow: 1` |
+| `btn/voice` | `618, 11` | **`46 × 46`** | mic glyph `26 × 26` |
+| `btn/send` | `680, 8` | **`52 × 52`** | filled circle `--color-brand`, up-arrow glyph `26 × 26` |
+
+The row closes exactly:
+`740 − 28 − 20 − 16 − 538 − 16 − 46 − 16 − 52 − 8 = 0`.
+Without the plus the lane is `574`.
+
+**The glyphs did not scale with the boxes.** Send went 56 → 52 and voice
+52 → 46 while both stayed at 26, so the ring of colour around the send arrow
+tightened from 15 pt to 13.
 
 There is **no** selection glyph and **no** attached-context strip in the
 full-screen composer.
@@ -593,16 +643,27 @@ Tutor chat panel.
 
 Panel container is identical to screen 05 (`337 × 976`, `--radius-3xl`,
 `--color-surface-panel`, `shadow/panel`, `flex column`, `align-items: center`,
-`padding-top: 18`, content width `301`).
+`padding-block: 18`, content width `301`), and as on screen 05 every child is
+absolutely positioned.
 
 | # | Child | y within panel | Size |
 |---|---|---|---|
-| 1 | `Panel controls` | 18 | `301 × 32` |
-| 2 | `Thread` | 50 | `301 × 810` |
-| 3 | `Composer` | 860 | `301 × 58` |
+| 1 | `Thread` | **0** | **`301 × 976`** — absolute, `left: 18` |
+| 2 | `Scroll fade · top` | 0 | `337 × 80` — absolute overlay |
+| 3 | `Panel controls` | 18 | `301 × 32` |
+| 4 | `Scroll fade · bottom` | **908** | `337 × 68` — absolute overlay |
+| 5 | `Composer` | **908** | **`301 × 50`** — absolute, `left: 18` |
 
-Content bottom = `918`; again 18 pt of slack at the panel bottom — implement
-the composer bottom-anchored with an 18 pt inset.
+Content bottom = `908 + 50 = 958`; again 18 pt of slack at the panel bottom —
+implement the composer bottom-anchored with an 18 pt inset.
+
+**The thread now spans the full panel height** and the composer floats over its
+last 68 pt, with the bottom fade dissolving the messages into that band. This
+is a structural change from the version this file was first written against
+(thread `301 × 810` starting below the controls, one top-only fade inside it);
+`03-chat-components.md` §5–§6 still describe the old arrangement. The thread's
+own `padding-bottom` carries the clearance: **86** = the 68 pt composer band
+plus 18.
 
 `Panel controls` is identical to screen 05: `btn/dock` at `x = 0`,
 `btn/full-screen` at `x = 46`, `gap: 14`, both `32 × 32`.
@@ -610,31 +671,37 @@ the composer bottom-anchored with an 18 pt inset.
 Note the **absence of an Orb block** in the panel header — the orb only
 appears inline at the tail of the thread while the tutor is responding.
 
-#### Thread (`301 × 810`)
+#### Thread (`301 × 976`)
 
 `flex column`, **`justify-content: flex-end`**, `gap: var(--space-message-gap)`
-= 22, `padding-bottom: 18`, `position: relative`.
+= 22, **`padding-bottom: 86`**, `position: absolute` at `18, 0`,
+`overflow: visible`.
 
 Because the thread is bottom-anchored, the visible content is pinned to the
 bottom and the top of the oldest visible message is clipped/faded.
 
+Heights are measured; the `y` column is **derived** from them, the 22 pt gap and
+the 86 pt bottom padding (flex children report no offset of their own).
+
 | # | Node | y within thread | h | Kind | Copy |
 |---|---|---|---|---|---|
-| 1 | `msg/tutor` | 5 | 50 | plain text, 301 wide | `Welcome back — let's pick up where we left off with vectors.` |
-| 2 | `msg/student` | 77 | 49 | bubble | `ok` |
-| 3 | `msg/tutor` | 148 | 50 | plain text | `Draw a pair of axes and one arrow from the origin, then I'll take a look.` |
-| 4 | `msg/student` | 220 | 49 | bubble | `done` |
-| 5 | `msg/tutor` | 291 | 50 | text in a `flex column gap:12` wrapper | `Great start! 🎉 A vector in 2D has two components — x and y.` |
-| 6 | `msg/student` | 363 | 74 | bubble (2 lines) | `why does the arrow start at 0?` |
-| 7 | `msg/tutor` | 459 | 75 | plain text (3 lines) | `It doesn't have to. Starting at the origin is just standard position — slide it anywhere and it's the same vector.` |
-| 8 | `msg/student · with selection` | 556 | 96 | **selection bubble stack** | `Selection` / `is my (x, y) label right?` |
-| 9 | `msg/tutor` | 674 | 50 | plain text | `Yes — that point is the head of the vector, so (x, y) are exactly its components.` |
-| 10 | `btn/orb` | 746 | 46 | thinking indicator | — |
-| — | `Scroll fade` | absolute `0, 0` | `301 × 72` | overlay, painted last | — |
+| 1 | `msg/tutor` | 103 | 50 | plain text, 301 wide | `Welcome back — let's pick up where we left off with vectors.` |
+| 2 | `msg/student` | 175 | 49 | bubble | `ok` |
+| 3 | `msg/tutor` | 246 | 50 | plain text | `Draw a pair of axes and one arrow from the origin, then I'll take a look.` |
+| 4 | `msg/student` | 318 | 49 | bubble | `done` |
+| 5 | `msg/tutor` | 389 | 50 | text in a `flex column gap:12` wrapper | `Great start! 🎉 A vector in 2D has two components — x and y.` |
+| 6 | `msg/student` | 461 | 74 | bubble (2 lines) | `why does the arrow start at 0?` |
+| 7 | `msg/tutor` | 557 | 75 | plain text (3 lines) | `It doesn't have to. Starting at the origin is just standard position — slide it anywhere and it's the same vector.` |
+| 8 | `msg/student · with selection` | 654 | 96 | **selection bubble stack** | `Selection` / `is my (x, y) label right?` |
+| 9 | `msg/tutor` | 772 | 50 | plain text | `Yes — that point is the head of the vector, so (x, y) are exactly its components.` |
+| 10 | `btn/orb` | 844 | 46 | thinking indicator | — |
 
 Arithmetic check: items sum `589` + nine 22 pt gaps `198` = `787`;
-`787 + 18` padding = `805`; bottom-anchored inside `810` → first item starts
-at `y = 5`. ✔
+`787 + 86` padding = `873`; bottom-anchored inside `976` → first item starts
+at `y = 103`, and the orb's bottom lands on `890 = 976 − 86`. ✔
+
+The fades are **siblings of the thread**, not children of it — see the panel
+stack above. They are not transcribed in detail in this file.
 
 Message styles:
 
@@ -647,11 +714,15 @@ Message styles:
 `Halo` absolute `-24, -23`, `94 × 92`; `Orb body` `32 × 25`, radius 9999,
 `padding-top: 3`, `gap: 10`, two `4 × 4` white eyes.
 
-`Scroll fade`: absolutely positioned at the **top** of the thread,
-`301 × 72`, `linear-gradient(in oklab 180deg, oklab(99.1% 0 0) 0%,
-oklab(99.1% 0 0) 34%, oklab(99.1% 0 0 / 72%) 62%, oklab(99.1% 0 0 / 0%) 100%)`
-— i.e. `--color-surface-panel` (#FCFCFC) fading to transparent downward.
-There is **no** matching fade at the bottom of the thread.
+`Scroll fade · top`: absolutely positioned at `0, 0` of the **panel**,
+`337 × 80`, carrying `--radius-3xl` on its two top corners, a many-stop
+`linear-gradient(in oklab 180deg, …)` from opaque `oklab(99.1% 0 0)` to
+transparent — i.e. `--color-surface-panel` (#FCFCFC) fading downward.
+**There is now a matching bottom fade** (`Scroll fade · bottom`, `337 × 68` at
+`0, 908`, the ramp reversed and stopping at 80 % rather than full opacity, with
+`--radius-3xl` on the two bottom corners). Both are full panel width and both
+sit outside the thread. The single `301 × 72` fade this file and
+`03-chat-components.md` §6 describe is superseded.
 
 #### The selection hand-off affordance (message 8)
 
@@ -666,14 +737,22 @@ absolutely-positioned layers:
 | Message bubble | `0, 38` | `224 × 58` | background `--color-surface-bubble`, `border-radius: --radius-bubble` (18), `padding-inline: 20`, `gap: 12`, `align-items: center` | `is my (x, y) label right?` — 17 / 22, `--color-ink` |
 
 Same "tab tucked behind the bubble" construction as the composer's attached
-context on screen 05 (67 tall cap, bubble placed at `y = 38`, so 29 pt hidden).
+context on screen 05 — but **this one did not come down with the pill**: the cap
+is still 67 tall over a 58 pt bubble, so 29 pt is hidden. That is correct as
+drawn (the bubble's 18 pt radius only needs 18 covered, and 67 over-covers it
+harmlessly), and it is what board 03 §11.5 already flags as 11 pt hidden for
+nothing. **Do not "fix" it to match the composer's new 63 / 25** — the shape in
+front here is a bubble, not a capsule, so the radius that drives the law is
+different.
 
 Differences from the composer version on screen 05:
 
 | | Screen 05 composer | Screen 08 sent message |
 |---|---|---|
 | Width | 301 | 224 |
-| Cap top radius | 29 | 18 |
+| Body height | **50** | 58 |
+| Cap height | **63** | 67 |
+| Cap top radius | **25** (= pill 50 ÷ 2) | 18 (`--radius-bubble`) |
 | Label | `Selection attached` | `Selection` |
 | Dismiss ✕ | yes (`14 × 14`, brand) | **no** |
 | Body background | `--color-surface` (input pill) | `--color-surface-bubble` |
@@ -683,17 +762,18 @@ Differences from the composer version on screen 05:
 highlight, or lasso outline on the board itself in screen 08. The board ink
 asset is identical to screen 05's. See open questions.
 
-#### Composer (`301 × 58`)
+#### Composer (`301 × 50`)
 
 `position: relative` wrapper, one absolutely-positioned `Input` at `0, 0`:
-`301 × 58`, background `--color-surface`, `border-radius: 9999`,
-`shadow/card`, `padding-left: 20`, `padding-right: 8`, `gap: 12`,
+**`301 × 50`**, background `--color-surface`, `border-radius: 9999`,
+`shadow/card`, `padding-left: 18`, `padding-right: 6`, `gap: 10`,
 `align-items: center`.
 
-Children identical to screen 05's input row: selection glyph `24 × 24`
-(dashed square, brand) at `x = 20`; placeholder `Ask anything...`
-(`133 × 22`, 17 / 22, `--color-ink-tertiary`) at `x = 56`; `btn/voice`
-`38 × 38` at `x = 201`; `btn/send` `42 × 42` brand circle at `x = 251`.
+Children identical to screen 05's input row: `ui/plus` `20 × 20` at `x = 18`;
+selection glyph `24 × 24` (dashed square, brand) at `x = 48`; placeholder
+`Ask anything...` (`121 × 22`, 17 / 22, `--color-ink-tertiary`) at `x = 82`;
+`btn/voice` **`34 × 34`** at `x = 213`; `btn/send` **`38 × 38`** brand circle at
+`x = 257`.
 
 The dashed selection glyph is still present in the input even though nothing
 is currently attached — it is a persistent affordance, not a state indicator.
@@ -790,17 +870,19 @@ conversation state is simply not visible.
 
 - **Content column vs panel column.** 301 pt (panel) vs 740 pt (full screen).
   This is not a scale factor: the type scale, chip layout (1-up vs 2-up), chip
-  height (62 vs 74), icon size (22 vs 24), composer height (58/96 vs 80) and
+  height (62 vs 74), icon size (22 vs 24), composer height (**50/88 vs 68**) and
   the composer's contents all change. Treat the greeting/chips/composer as
   **two variants**, not one responsive view.
-- **Start state vs Thread.** 522 pt fixed-height, centred, top-down flow vs
-  810 pt bottom-anchored scrolling list with a top scroll-fade. Different
-  layout model.
+- **Start state vs Thread.** 530 pt fixed-height, centred, top-down flow vs
+  976 pt bottom-anchored scrolling list under a top and a bottom scroll-fade.
+  Different layout model.
 - **Screen background.** #F8F8F8 on 05/06/08 vs #FFFFFF on 07.
 - **The board.** A real 863/1224-wide interactive canvas on 05/06/08 vs a
   decorative 68 pt vector edge on 07 (which is *not* a live canvas — it is a
   static path plus a dot-grid path).
-- **Composer height.** 96 (with attachment) vs 58 (without) in the panel.
+- **Composer height.** 88 (with attachment) vs 50 (without) in the panel — and
+  only the *card* differs between them, since the 38 pt visible band plus the
+  pill is the whole of the 88.
 - **Panel orb.** Present as a header element in 05, absent in 08 (where the
   orb appears only inline at the tail of the thread).
 
@@ -874,13 +956,14 @@ silently.
     above the keyboard, whether the thread shrinks or scrolls, or what the
     full-screen column does. The design also shows no focused-composer or
     caret state, and no filled (non-placeholder) composer.
-13. **Scrolling.** The thread's `justify-content: flex-end` and its 72 pt top
+13. **Scrolling.** The thread's `justify-content: flex-end` and its 80 pt top
     scroll-fade imply a scroll view, but there is no scrollbar treatment, no
-    "scroll to latest" affordance, no bottom fade, and no over-scroll spec.
-    Whether the board itself pans/zooms (and whether `tool/center` is the
-    recentre control) is implied by naming only.
+    "scroll to latest" affordance and no over-scroll spec. *(The "no bottom
+    fade" half of this is now answered: `Scroll fade · bottom`, `337 × 68`,
+    covers the composer band.)* Whether the board itself pans/zooms (and
+    whether `tool/center` is the recentre control) is implied by naming only.
 14. **The 18 pt bottom slack in the panel.** Content in both panel screens
-    ends at `y = 918` inside a 936 pt panel. It is not expressed as a
+    ends at `y = 958` inside the 976 pt panel. It is not expressed as a
     `padding-bottom` — it falls out of the flex stack. Confirm the intent is
     "composer bottom-anchored with an 18 pt inset" (which is what this
     document recommends) rather than "content flows from the top and happens

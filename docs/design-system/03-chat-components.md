@@ -1,6 +1,6 @@
 # 03 — Components · Chat
 
-Code-ready transcription of the Paper board **"03 — Components · Chat"** (1680 × 10220) from
+Code-ready transcription of the Paper board **"03 — Components · Chat"** (1680 × 12127) from
 **"AI Whiteboard Tutor — Design System, Components & Page"**.
 
 Every number, colour and radius below was read from `get_computed_styles` / `get_jsx` /
@@ -13,6 +13,22 @@ Target device: **iPad Pro 13-inch landscape, 1376 × 1032 pt. Single device, no 
 
 Token reference: see `01-foundations.md`. Elevation names used here (`02 Panel`, `03 Control`) are
 the Foundations names.
+
+> **The pill came down a step.** 58 → **50** in the panel and 80 → **68** full-screen, and the
+> paddings, the gap and both button boxes came down with it. Every number below is at the current
+> height. **Board 03 was only half re-drawn for it:** §1 (the composer specimens and the section
+> blurb) is current; §2 (the rule, the notch diagram, the standalone card) and §7 (the button
+> specimens) still draw the 58pt-era numbers. Where the board contradicts itself, the value that
+> screens 05 / 07 / 08 / 15a and board 03b draw is reported as the number, the board's stale
+> specimen is named inline, and the contradiction is listed in §11.
+
+> **Not covered here.** The board has grown two specimens this file does not transcribe —
+> `Composer · panel, five lines (cap)` and `Composer · full-screen, five lines (cap)` — and its
+> §05 is now a two-specimen scroll-fade section (`Body`, `Body · bottom`) rather than the single
+> top fade documented in §6. A sibling board, **"03b — Components · Attachments"**, carries the
+> composer's `ui/plus`, `menu/attach` and the attachment-chip card, and has no transcription file
+> at all. The panel composer's leading slot now holds a plus *and* the marquee on every screen;
+> only the plus's own geometry is deferred to 03b.
 
 ---
 
@@ -28,11 +44,11 @@ the Foundations names.
 
 | # | Section | Specimens |
 | --- | --- | --- |
-| 01 | Composer | `Composer · panel, plain`, `Composer · panel, with attached selection`, `Composer · full-screen wide` |
+| 01 | Composer | `Composer · panel, plain`, **`Composer · panel, five lines (cap)`**, `Composer · panel, with attached selection`, `Composer · full-screen wide`, **`Composer · full-screen, five lines (cap)`** |
 | 02 | Attached selection | "The rule" prose, notch diagram (Correct / Wrong), `Attached context — card`, `Attached context — label row` |
 | 03 | Messages | `msg/tutor · plain`, `msg/tutor · with emoji`, `msg/student · short`, `msg/student · with selection` |
 | 04 | Thread | `Thread` (full 9-message demo incl. orb + scroll fade) |
-| 05 | Scroll fade | `Scroll fade` |
+| 05 | Scroll fade | **`Body`, `Body · bottom`** — §6 below still transcribes the single top fade only |
 | 06 | Suggestion chips | `chip · panel`, `chip · full-screen` |
 | 07 | Buttons | `btn/send · btn/voice` (three sizes), "Unresolved — decide before build" |
 | 08 | Greeting blocks | `Greeting · panel`, `Greeting · full-screen` |
@@ -51,14 +67,20 @@ padding is documentation chrome — **it is not part of any component.**
 > **Section blurb:** "One control, restated at two column widths. The input is a full pill —
 > `border-radius: calc(infinity * 1px)` on all four corners — because the composer is the only
 > element that floats free of the panel edge, and a pill is the shape that reads as floating. The
-> pill height changes (58 in the panel, 80 full-screen) but the radius formula never does, so a port
-> must use a capsule shape, not a fixed corner value. Elevation 03 Control on every variant."
+> pill height changes (50 in the panel, 68 full-screen) but the radius formula never does, so a port
+> must use a capsule shape, not a fixed corner value. Elevation 03 Control on every variant.
+>
+> The resting height is the send button in a uniform inset — 38 + 2 × 6 = 50, 52 + 2 × 8 = 68 — so
+> it is a consequence of the row, and a question too long for the lane grows the pill upward from a
+> bottom edge that never moves. Five lines is the cap; past it the text scrolls inside a pill that
+> has stopped. The radius is the one thing the growth does not carry: resolved once at the resting
+> height (25 and 34) and held, because a capsule re-derived from a five-line pill is a stadium."
 
 ### 1.1 `Composer · panel, plain`
 
-Stage 389 × 146 → component 301 × 58.
+Stage 389 × 138 → component 301 × 50.
 
-**Outer wrapper** — layer `Composer`, 301 × 58, `position: relative`, `display: flex`,
+**Outer wrapper** — layer `Composer`, 301 × 50, `position: relative`, `display: flex`,
 `flex-direction: column`, `flex-shrink: 0`. Exists only to be the positioning context for the
 absolutely-positioned `Input`; it carries no paint.
 
@@ -66,10 +88,10 @@ absolutely-positioned `Input`; it carries no paint.
 
 | Property | Value |
 | --- | --- |
-| Size | **301 × 58** — width fixed (`--container-panel-content`), height fixed |
+| Size | **301 × 50** — width fixed (`--container-panel-content`), height fixed |
 | Position | `absolute`, `left: 0`, `top: 0` |
-| Padding | left **20**, right **8**, top 0, bottom 0 (no token for either) |
-| Gap | **12** (no token) |
+| Padding | left **18**, right **6**, top 0, bottom 0 (no token for either) |
+| Gap | **10** (no token) |
 | Radius | `calc(infinity * 1px)` — **all four corners** (no token; source is `--radius-full`) |
 | Fill | `var(--color-surface)` `#FFFFFF` |
 | Border | none |
@@ -82,35 +104,55 @@ absolutely-positioned `Input`; it carries no paint.
 | Child | Size | Detail |
 | --- | --- | --- |
 | Marquee icon (SVG) | 24 × 24 | `flex-shrink: 0`. viewBox `0 0 24 24`; `<rect x=2.6 y=2.6 w=18.8 h=18.8 rx=4 fill=none stroke-width=2 stroke-dasharray="4.6 3.9">`. **Stroke = `var(--color-icon)` `#55565A`** (grey — see §1.2 for the attached state) |
-| Placeholder text | intrinsic, `flex-grow: 1` | "Ask anything…" — **17 / 22 · 400 · `var(--color-ink-tertiary)`**, `font-family: var(--font-sans)` |
-| `btn/send` | 42 × 42 | `flex-shrink: 0`, see §7.1 |
+| Placeholder text | **195** × 22, `flex-grow: 1` | "Ask anything…" — **17 / 22 · 400 · `var(--color-ink-tertiary)`**, `font-family: var(--font-sans)` |
+| `btn/send` | **38 × 38** | `flex-shrink: 0`, see §7.1 |
 
-Spec table, verbatim: `Size: var(--container-panel-content) 301 × 58` · `Padding: left 20 · right 8
-· no token` · `Gap: 12 · no token` · `Radius: calc(infinity * 1px) — all 4 · no token` ·
+The row closes exactly: `301 − 18 − 24 − 10 − 195 − 10 − 38 − 6 = 0`.
+
+Spec table, verbatim: `Size: var(--container-panel-content) 301 × 50` · `Padding: left 18 · right 6
+· no token` · `Gap: 10 · no token` · `Radius: calc(infinity * 1px) — all 4 · no token` ·
 `Fill: var(--color-surface) · #FFFFFF` · `Text: 17 / 22 · 400 · var(--color-ink-tertiary)` ·
-`Elevation: 03 Control` · `Children: icon 24 · placeholder flex-grow 1 · send 42`.
+`Elevation: 03 Control — #1414320D 0 2 6, #14143208 0 1 2` ·
+`Children: icon 24 · placeholder flex-grow 1 · send 38`.
+
+> **This specimen's row is not the panel composer's row — do not port it.** The three children
+> above are all board 03 draws, and both the spec row and the 195pt lane are faithful to it. Every
+> *screen* draws five: **`ui/plus` 20 · marquee 24 · placeholder 121 · `btn/voice` 34 · `btn/send`
+> 38**, closing `301 − 18 − 20 − 10 − 24 − 10 − 121 − 10 − 34 − 10 − 38 − 6 = 0` — verified on
+> screens 05, 08 and 15a, and restated on board 03b's `Composer · panel, with plus`. The voice
+> button in particular is the thing this specimen loses: 34 × 34 with a 20pt mic glyph, sitting
+> between the placeholder and send. Board 03's own §7 still calls voice full-screen-only (§7.4);
+> the screens have settled it the other way. Without the plus the lane is 151, which is the row the
+> Swift `ComposerMetrics.panel` currently builds. See §11.
 
 ### 1.2 `Composer · panel, with attached selection`
 
-Stage 389 × 184 → component **301 × 96**.
+Stage 389 × 176 → component **301 × 88**.
 
 This is the composite. **It is not a stack — the card is edge-to-edge *behind* the pill.**
 
-**Outer wrapper** — layer `Composer`, **301 × 96**, `position: relative`, `display: flex`,
+**Outer wrapper** — layer `Composer`, **301 × 88**, `position: relative`, `display: flex`,
 `flex-direction: column`.
 
 **Layer order (first child paints first = furthest back):**
 
 | z | Layer | Position | Size | Radius (TL / TR / BR / BL) | Fill | Shadow |
 | --- | --- | --- | --- | --- | --- | --- |
-| 0 (back) | `Attached context` (card) | `absolute` `left: 0`, **`top: 0`** | **301 × 67** | **29 / 29 / 0 / 0** | `var(--color-brand-tint-soft)` `#F1F0FB` | **none** |
-| 1 (front) | `Input` (pill) | `absolute` `left: 0`, **`top: 38`** | **301 × 58** | `calc(infinity * 1px)` all 4 | `var(--color-surface)` `#FFFFFF` | 03 Control |
+| 0 (back) | `Attached context` (card) | `absolute` `left: 0`, **`top: 0`** | **301 × 63** | **25 / 25 / 0 / 0** | `var(--color-brand-tint-soft)` `#F1F0FB` | **none** |
+| 1 (front) | `Input` (pill) | `absolute` `left: 0`, **`top: 38`** | **301 × 50** | `calc(infinity * 1px)` all 4 | `var(--color-surface)` `#FFFFFF` | 03 Control |
 
-- **Overlap = 29pt** (card bottom 67 − pill top 38).
+- **Overlap = 25pt** (card bottom 63 − pill top 38) — the pill's radius, `50 ÷ 2`.
 - **Visible band of the card = 38pt** (y 0 → 38).
-- **Total component height = 96** (38 + 58).
+- **Total component height = 88** (38 + 50).
 - Card padding: left **20**, right **16**. Card layout: `display: flex`, **`align-items:
   flex-start`** — "label pins to the visible band".
+
+> **Board 03 still draws this card at the 58pt pill's size.** Its `Attached context` layer measures
+> **301 × 67 with a 29pt top radius**, and its spec rows say `card 301 × 67`, `29 overlap` and
+> `card 29 / 29 / 0 / 0` — all left over from the 58pt pill, against a pill the same board has
+> already brought down to 50. Screens 05 and 15a draw **301 × 63 / radius 25**, which is what the
+> board's own derived law gives (`38 + 25`) and what is reported above. The **total is 88 either
+> way**: only the hidden part of the card moved. See §11.
 
 **Card contents** — a single `Frame` **265 × 38** (= 301 − 20 − 16):
 `display: flex`, `align-items: center`, `justify-content: space-between`, `padding-top: 6`,
@@ -128,23 +170,24 @@ nodes: the plain icon's computed style is `{ stroke: "var(--color-icon)" }`; the
 `{}`. This is a real visual state change (grey → violet) and it is **not** mentioned in any spec row
 or prose on the board. See §11.
 
-Spec table, verbatim: `Size: 301 × 96 overall — card 301 × 67 + pill 301 × 58` · `Stacking: card
-absolute 0,0 · pill absolute 0,38 · 29 overlap` · `Padding: pill left 20 · right 8 — card left 20 ·
-right 16` · `Gap: pill 12 · no token` · `Radius: pill calc(infinity * 1px) — card 29 / 29 / 0 / 0 ·
-no token` · `Fill: pill var(--color-surface) · card var(--color-brand-tint-soft)` · `Text: label 15 /
+Spec table, verbatim (**the card numbers in it are the stale ones — see the note above**):
+`Size: 301 × 88 overall — card 301 × 67 + pill 301 × 50` · `Stacking: card absolute 0,0 · pill
+absolute 0,38 · 29 overlap` · `Padding: pill left 18 · right 6 — card left 20 · right 16` ·
+`Gap: pill 10 · no token` · `Radius: pill calc(infinity * 1px) — card 29 / 29 / 0 / 0 · no token` ·
+`Fill: pill var(--color-surface) · card var(--color-brand-tint-soft)` · `Text: label 15 /
 18 · 600 · var(--color-brand)` · `Elevation: pill 03 Control — card none` · `Layer path: Tutor chat /
 Composer / {Attached context, Input}`.
 
 ### 1.3 `Composer · full-screen wide`
 
-Stage 828 × 168 → component **740 × 80**. No wrapper — the pill is the component
+Stage 828 × 156 → component **740 × 68**. No wrapper — the pill is the component
 (`position: relative`, `left: 0`, `top: 0`, `flex-shrink: 0`).
 
 | Property | Value |
 | --- | --- |
-| Size | **740 × 80** — width `var(--container-column)`, height fixed |
-| Padding | left **32** (`--spacing-8`), right **12**, top/bottom 0 |
-| Gap | **18** (no token) |
+| Size | **740 × 68** — width `var(--container-column)`, height fixed |
+| Padding | left **28** (`--spacing-7`), right **8** (`--spacing-2`), top/bottom 0 |
+| Gap | **16** (`--spacing-4`) |
 | Radius | `calc(infinity * 1px)` — all four corners |
 | Fill | `var(--color-surface)` `#FFFFFF` |
 | Shadow | **03 Control** — `#1414320D 0px 2px 6px, #14143208 0px 1px 2px` |
@@ -155,27 +198,37 @@ Stage 828 × 168 → component **740 × 80**. No wrapper — the pill is the com
 
 | Child | Size | Detail |
 | --- | --- | --- |
-| Placeholder text | `flex-grow: 1` | **"Ask me anything…"** (note: different copy from the panel's "Ask anything…") — **21 / 26 · 400 · `var(--color-ink-tertiary)`** |
-| `btn/voice` | **52 × 52** | `flex-shrink: 0`, no fill, no radius, glyph 26 × 26 stroke `var(--color-icon)` — see §7.3 |
-| `btn/send` | **56 × 56** | `flex-shrink: 0`, brand fill, radius full, **carries a shadow** — see §7.2 |
+| Placeholder text | **574** × 26, `flex-grow: 1` | **"Ask me anything…"** (note: different copy from the panel's "Ask anything…") — **21 / 26 · 400 · `var(--color-ink-tertiary)`** |
+| `btn/voice` | **46 × 46** | `flex-shrink: 0`, no fill, no radius, glyph 26 × 26 stroke `var(--color-icon)` — see §7.3 |
+| `btn/send` | **52 × 52** | `flex-shrink: 0`, brand fill, radius full, **carries a shadow** — see §7.2 |
+
+The row closes exactly: `740 − 28 − 574 − 16 − 46 − 16 − 52 − 8 = 0`.
+
+Spec table, verbatim: `Size: var(--container-column) 740 × 68` · `Padding: left 28 · right 8 · no
+token` · `Gap: 16 · no token` · `Radius: calc(infinity * 1px) — all 4 · no token` ·
+`Fill: var(--color-surface) · #FFFFFF` · `Text: 21 / 26 · 400 · var(--color-ink-tertiary)` ·
+`Elevation: 03 Control — #1414320D 0 2 6, #14143208 0 1 2` ·
+`Children: placeholder flex-grow 1 · voice 46 · send 52`.
 
 **There is no marquee / attachment icon in the full-screen composer**, and no full-screen variant of
-the attached-selection card exists on this board. See §11.
+the attached-selection card exists on this board. See §11. Screen 07 does add a leading **`ui/plus`
+20 × 20** here — `740 − 28 − 20 − 16 − 538 − 16 − 46 − 16 − 52 − 8 = 0`, the lane dropping 574 → 538
+— which is board 03b's to specify, not this board's.
 
 ### 1.4 Composer variants — side-by-side diff
 
 | | Panel (plain) | Panel (with selection) | Full-screen |
 | --- | --- | --- | --- |
-| Pill size | 301 × 58 | 301 × 58 (at `top: 38`) | 740 × 80 |
-| Component height | 58 | **96** | 80 |
-| Padding L / R | 20 / 8 | 20 / 8 | **32 / 12** |
-| Gap | 12 | 12 | **18** |
-| Radius | capsule (all 4) | capsule (all 4) | capsule (all 4) |
-| Placeholder | "Ask anything…" 17/22 | "Ask anything…" 17/22 | **"Ask me anything…" 21/26** |
+| Pill size | 301 × 50 | 301 × 50 (at `top: 38`) | 740 × 68 |
+| Component height | 50 | **88** | 68 |
+| Padding L / R | 18 / 6 | 18 / 6 | **28 / 8** |
+| Gap | 10 | 10 | **16** |
+| Radius | capsule (all 4) — 25 at rest | capsule (all 4) — 25 at rest | capsule (all 4) — **34** at rest |
+| Placeholder | "Ask anything…" 17/22, lane 195 | "Ask anything…" 17/22, lane 195 | **"Ask me anything…" 21/26**, lane 574 |
 | Leading marquee icon | 24 × 24, `--color-icon` | 24 × 24, **`#6051DC`** | **absent** |
-| Voice button | **absent** | **absent** | 52 × 52 |
-| Send button | 42 × 42, **no shadow** | 42 × 42, no shadow | 56 × 56, **shadow** |
-| Attachment card | — | 301 × 67, radius 29/29/0/0 | **no variant exists** |
+| Voice button | **absent on this board — 34 × 34 on every screen** | **absent on this board — 34 × 34 on every screen** | 46 × 46 |
+| Send button | 38 × 38, **no shadow** | 38 × 38, no shadow | 52 × 52, **shadow** |
+| Attachment card | — | 301 × 63, radius 25/25/0/0 | **no variant exists** |
 | Elevation | 03 Control | 03 Control (pill only) | 03 Control |
 
 ---
@@ -190,6 +243,10 @@ the attached-selection card exists on this board. See §11.
 
 ### 2.1 THE RULE (verbatim)
 
+**This whole section is still written against the 58pt pill.** The law is right and is what the
+current geometry is derived from; only the numbers plugged into it are stale. Both texts are quoted
+as they stand, with the current arithmetic beneath.
+
 > "A pill's top edge is only straight between its corner radii. At 301 wide with a 29 radius, that
 > straight run is 301 − 2 × 29 = **243pt**. Anything full-width sitting behind the pill must extend
 > past those curves, or a notch of background shows through at both corners."
@@ -198,7 +255,14 @@ the attached-selection card exists on this board. See §11.
 > of whatever sits on top of it. Here 67 = 38 visible + 29 hidden. The card's top two corners take
 > that same 29 (58 ÷ 2) so the silhouette continues without a step."
 
-So for a capsule of height *h*, effective corner radius = *h* / 2 → **58 / 2 = 29**.
+So for a capsule of height *h*, effective corner radius = *h* / 2. **At the current pill: 50 / 2 =
+25 in the panel and 68 / 2 = 34 full-screen.** The straight run is `301 − 2 × 25 = 251pt`, and the
+composer's card is `38 + 25 = 63`.
+
+Board 03b restates the same law at the current height, verbatim: *"card height = visible band + the
+corner radius of whatever sits on top of it. The pill's radius is half its height, so the panel card
+is 52 + 25 = 77 and the full-screen card is 64 + 34 = 98."* (Those are the **attachment-chip** card's
+taller bands, not the selection card's 38 — the radii are the part to carry across.)
 
 ```
 cardHeight   = visibleBand + radiusOfShapeOnTop
@@ -208,6 +272,10 @@ stackHeight  = visibleBand + pillHeight
 ```
 
 ### 2.2 Notch diagram — Correct vs Wrong
+
+**Both stages are still drawn at the 58pt pill** and are transcribed as found; the *ordering* lesson
+is what they are for, and it is unaffected. At the current pill the same diagram would be a 301 × 88
+composite of a 301 × 63 card and a 301 × 50 pill.
 
 Both stages are 389 × 244 (component 301 × 96 + a 44pt caption block).
 
@@ -230,20 +298,29 @@ from y = 38 to y = 67, so the panel background shows through at both top corners
 
 ### 2.3 `Attached context — card` (standalone specimen)
 
-Stage 389 × 155 → component **301 × 67**. Identical geometry to §1.2's card, restated on its own.
+Stage 389 × 155 → component **301 × 63**. Identical geometry to §1.2's card, restated on its own.
+(The stage is 155 = 67 + 2 × 44 because it is still built around the stale 67pt card; at 63 it
+would be 151. Every other stage on the board is the current component plus the same 88.)
 
 | Property | Value |
 | --- | --- |
-| Size | **301 × 67** — 38 visible + 29 behind the pill. Width fixed, height fixed |
+| Size | **301 × 63** — 38 visible + 25 behind the pill. Width fixed, height fixed |
 | Position | `absolute 0, 0` — edge-to-edge, **first child of `Composer`** |
 | Padding | left **20** · right **16** (no token); top/bottom 0 |
 | Layout | `display: flex`, **`align-items: flex-start`** — label pins to the visible band |
-| Radius | **29 / 29 / 0 / 0** — top two = pill 58 ÷ 2 (no token) |
+| Radius | **25 / 25 / 0 / 0** — top two = pill 50 ÷ 2 (no token) |
 | Fill | `var(--color-brand-tint-soft)` `#F1F0FB` |
 | Border | none |
 | Elevation | **none** — "the pill above it carries 03 Control" |
 | Text | 15 / 18 · 600 · `var(--color-brand)` |
 | Layer path | `Tutor chat / Composer / Attached context` |
+
+> **Board 03's specimen is 301 × 67 / radius 29**, and its spec rows read `301 × 67 — 38 visible +
+> 29 behind the pill` and `29 / 29 / 0 / 0 — top two = pill 58 ÷ 2 · no token`. Those are the 58pt
+> pill's numbers, still drawn against a 50pt pill. **Screens 05 and 15a both measure 301 × 63 with
+> a 25pt top radius**, which is also what §2.1's law gives, so 63 / 25 is what is reported above and
+> what a port should build. The visible band, the padding, the label row and the total stack height
+> are unaffected. See §11.
 
 ### 2.4 `Attached context — label row`
 
@@ -531,6 +608,20 @@ The demo's container (`Fade demo`) is 301 wide, `height: fit-content`, `flex` co
 
 ## 7. Section 07 — Composer buttons
 
+> **This entire section is still drawn at the 58pt pill and every box in it is superseded.** The
+> button boxes came down with the pill; the **glyphs did not move**. Current sizes, from the
+> composer specimens on this same board (§1.1, §1.3) and from every screen:
+>
+> | | Board 03 §7 draws | Current | Glyph |
+> | --- | --- | --- | --- |
+> | `btn/send`, panel | 42 × 42 | **38 × 38** | 22 (unchanged) |
+> | `btn/send`, full-screen | 56 × 56 | **52 × 52** | 26 (unchanged) |
+> | `btn/voice`, full-screen | 52 × 52 | **46 × 46** | 26 (unchanged) |
+> | `btn/voice`, panel | *not drawn* | **34 × 34** | **20** |
+>
+> Everything else below — the radii, the fills, the shadow asymmetry, the glyph paths — is
+> unaffected and still holds. See §11.
+
 > **Section blurb:** "Send is the only filled brand-colour object in the chat surface, which is what
 > lets it hold its own inside a white pill without a border. It scales with the composer — 42 in the
 > panel, 56 full-screen — while the glyph stays fixed at 22 and 26, so the ring of colour grows
@@ -543,11 +634,11 @@ var(--color-brand) — voice none, glyph only` · `Layout: flex · align-items c
 center · flex-shrink 0` · `Elevation: send 42 none — send 56 has #1414320F 0 2 6, #1414320A 0 1 2` ·
 `Layer path: Composer / btn/send · Composer / btn/voice`.
 
-### 7.1 `btn/send` — 42 (panel)
+### 7.1 `btn/send` — 42 as drawn here, **38 in the panel**
 
 | Property | Value |
 | --- | --- |
-| Size | **42 × 42**, `flex-shrink: 0` |
+| Size | 42 × 42 on this board — **38 × 38** in §1.1 and on every screen, `flex-shrink: 0` |
 | Radius | `calc(infinity * 1px)` |
 | Fill | `var(--color-brand)` `#6051DC` |
 | Border | none |
@@ -555,30 +646,35 @@ center · flex-shrink 0` · `Elevation: send 42 none — send 56 has #1414320F 0
 | Layout | `flex`, `align-items: center`, `justify-content: center`, no padding |
 | Glyph | **22 × 22**, viewBox `0 0 24 24`; `M12 19.4V5.4` + `M5.8 11.6 12 5.4l6.2 6.2`; `stroke #FFFFFF`, `stroke-width 2.5`, `linecap round`, `linejoin round` |
 
-### 7.2 `btn/send` — 56 (full-screen)
+### 7.2 `btn/send` — 56 as drawn here, **52 full-screen**
 
 Identical to §7.1 except:
 
 | Property | Value |
 | --- | --- |
-| Size | **56 × 56** |
+| Size | 56 × 56 on this board — **52 × 52** in §1.3 and on screen 07 |
 | Glyph | **26 × 26** (same viewBox and paths, same 2.5 stroke) |
 | Shadow | **`#1414320F 0px 2px 6px, #1414320A 0px 1px 2px`** |
 
-### 7.3 `btn/voice` — 52 (full-screen only)
+### 7.3 `btn/voice` — 52 as drawn here, **46 full-screen and 34 in the panel**
 
 | Property | Value |
 | --- | --- |
-| Size | **52 × 52**, `flex-shrink: 0` |
+| Size | 52 × 52 on this board — **46 × 46** in §1.3 and on screen 07; **34 × 34** in the panel row (screens 05 / 08 / 15a, board 03b), `flex-shrink: 0` |
 | Radius | **none set** |
 | Fill | **none** — glyph only |
 | Shadow | none |
 | Layout | `flex`, `align-items: center`, `justify-content: center` |
-| Glyph | **26 × 26**, viewBox `0 0 24 24`, mic: capsule body + arc + stem; `stroke: var(--color-icon)` on all three paths, `stroke-width 1.9` |
+| Glyph | **26 × 26** full-screen — **20 × 20** in the panel. viewBox `0 0 24 24`, mic: capsule body + arc + stem; `stroke: var(--color-icon)` on all three paths, `stroke-width 1.9` |
 
-It is a **bare 52 × 52 hit area around a glyph**, not a pill.
+It is a **bare hit area around a glyph**, not a pill, at every size.
 
 ### 7.4 "UNRESOLVED — DECIDE BEFORE BUILD" (verbatim)
+
+**The first of these three is no longer unresolved — the screens decided it.** `btn/voice` 34 × 34
+is drawn in the panel composer on screens 05, 08 and 15a and on board 03b, i.e. the design took the
+"add voice to the panel composer" branch. Only this section still says otherwise. The two smaller
+mismatches in the second quote do still stand (with the boxes renumbered 52 → 46 and 42 → 38).
 
 > "The voice button exists only in the full-screen composer. It is absent from the panel composer
 > and from the collapsed dock, so dictation silently disappears when the tutor is not full-screen.
@@ -794,12 +890,12 @@ Spec row, verbatim: `Orb: hero 150 × 142 · halo 296 × 282`.
 
 | Component (as named in the design) | Frame (W × H) | Intrinsic dimension |
 | --- | --- | --- |
-| `Composer · panel, plain` (Input pill) | 301 × 58 | neither — both fixed |
-| `Composer · panel, with attached selection` | 301 × 96 | height = 38 + 58, both fixed |
-| ↳ `Attached context` card | 301 × 67 | both fixed |
-| ↳ `Input` pill | 301 × 58 | both fixed |
-| `Composer · full-screen wide` | 740 × 80 | both fixed |
-| `Attached context — card` (standalone) | 301 × 67 | both fixed |
+| `Composer · panel, plain` (Input pill) | 301 × 50 | neither — both fixed |
+| `Composer · panel, with attached selection` | 301 × 88 | height = 38 + 50, both fixed |
+| ↳ `Attached context` card | 301 × 63 | both fixed (board 03 still draws 67 — §11) |
+| ↳ `Input` pill | 301 × 50 | both fixed |
+| `Composer · full-screen wide` | 740 × 68 | both fixed |
+| `Attached context — card` (standalone) | 301 × 63 | both fixed (board 03 still draws 67 — §11) |
 | `Attached context — label row` | 265 × 38 | both fixed |
 | `msg/tutor · plain` | 301 × auto | **height intrinsic** |
 | `msg/tutor · with emoji` | 301 × auto | **height intrinsic** |
@@ -816,9 +912,10 @@ Spec row, verbatim: `Orb: hero 150 × 142 · halo 296 × 282`.
 | ↳ `Suggestions` container | 301 × 278 | **height intrinsic** |
 | `chip/suggestion — full-screen` | 360 × 74 | both fixed |
 | ↳ container | 740 × 168 | **height intrinsic (wrapping)** |
-| `btn/send` (panel) | 42 × 42 | both fixed |
-| `btn/send` (full-screen) | 56 × 56 | both fixed |
-| `btn/voice` | 52 × 52 | both fixed |
+| `btn/send` (panel) | 38 × 38 | both fixed (§7 still draws 42 — §11) |
+| `btn/send` (full-screen) | 52 × 52 | both fixed (§7 still draws 56 — §11) |
+| `btn/voice` (full-screen) | 46 × 46 | both fixed (§7 still draws 52 — §11) |
+| `btn/voice` (panel) | 34 × 34 | both fixed — **not drawn on board 03 at all** |
 | `Greeting · panel` | 301 × 94 | **height intrinsic** |
 | `Greeting · full-screen` | 740 × 264 (1376 in situ) | **height intrinsic** |
 | ↳ `Orb · hero` | 150 × 142 | both fixed |
@@ -850,12 +947,16 @@ Spec row, verbatim: `Orb: hero 150 × 142 · halo 296 × 282`.
    03 Control's *geometry* with two different alphas (`0F` / `0A`). It is a fourth, undocumented
    shadow. **Decide: promote it to 03 Control, or add it to the elevation scale.**
 
-2. **Voice button exists only at full-screen scale.** Flagged by the designer as an unresolved
-   inconsistency, with an explicit instruction not to encode the asymmetry. Needs a product
-   decision before build.
+2. ~~**Voice button exists only at full-screen scale.**~~ **Resolved by the screens, not yet by
+   board 03.** Screens 05, 08 and 15a and board 03b all draw `btn/voice` **34 × 34** with a 20pt mic
+   glyph in the panel composer, between the placeholder and send. The design took the "add voice to
+   the panel composer" branch. Board 03's §1.1 specimen and its §7.4 note are the only places that
+   still say otherwise, and they are stale, not a second opinion. **Nothing to decide — board 03
+   needs redrawing.**
 
-3. **`btn/voice` has no radius and no fill**, so its 52 × 52 box is a bare hit area. It reads as a
-   pill in the mock only because of the glyph. Decide whether it should get a shape.
+3. **`btn/voice` has no radius and no fill**, so its box (46 full-screen, 34 in the panel) is a bare
+   hit area. It reads as a pill in the mock only because of the glyph. Decide whether it should get
+   a shape.
 
 4. **The composer's marquee icon changes colour between states and this is undocumented.** Plain:
    `stroke: var(--color-icon)` `#55565A`. With selection attached: no override, so the raw
@@ -896,10 +997,11 @@ Spec row, verbatim: `Orb: hero 150 × 142 · halo 296 × 282`.
     drawn, at both widths. Focus ring, caret, filled-text colour, disabled send, and character
     limits are all undefined.
 
-12. **No full-screen variant of the attached-selection composer exists.** The 740 × 80 pill has no
-    card specimen, so the card width, the 32/12 padding interaction, and the capsule radius
-    (80 ÷ 2 = 40, implying a 40pt overlap and 40pt top radii by the derived law) are all
-    unverified extrapolations.
+12. **No full-screen variant of the attached-selection composer exists.** The 740 × 68 pill has no
+    card specimen, so the card width, the 28/8 padding interaction, and the capsule radius
+    (68 ÷ 2 = **34**, implying a 34pt overlap and 34pt top radii by the derived law) are all
+    unverified extrapolations. Board 03b's chip card is the nearest drawn thing and uses that same
+    34 full-screen, which is corroboration but not the selection card.
 
 13. **Thread height 810 is a single measured instance,** not a formula. It is the panel height minus
     the panel's own chrome on board 05/08; this board does not state how it is derived.
@@ -908,3 +1010,30 @@ Spec row, verbatim: `Orb: hero 150 × 142 · halo 296 × 282`.
     first path is bound to `var(--color-brand)` while every other path in every chip carries the raw
     `#6051DC`. Same rendered colour, so no visual bug — but a find-and-replace on the token will
     miss them.
+
+15. **Board 03 is half-redrawn for the 50pt pill, and contradicts itself.** §1 (the blurb and all
+    three composer specimens) is current; §2 and §7 are not. The live disagreements, all confirmed
+    on the nodes:
+
+    | Where | Board 03 draws | Screens 05 / 07 / 08 / 15a + board 03b | Reported above as |
+    | --- | --- | --- | --- |
+    | Attached card, §1.2 + §2.3 | 301 × **67**, radius **29** | 301 × **63**, radius **25** | 63 / 25 |
+    | The rule, §2.1 | `301 − 2 × 29 = 243` | `301 − 2 × 25 = 251` | both |
+    | Derived law, §2.1 | `67 = 38 + 29`, "29 (58 ÷ 2)" | `63 = 38 + 25`, "25 (50 ÷ 2)" | both |
+    | Notch diagram, §2.2 | 301 × 96 of 67 + 58 | 301 × 88 of 63 + 50 | as drawn, flagged |
+    | `btn/send` panel, §7 | 42 | **38** | 38 |
+    | `btn/send` full-screen, §7 | 56 | **52** | 52 |
+    | `btn/voice` full-screen, §7 | 52 | **46** | 46 |
+    | `btn/voice` panel, §1.1 + §7 | absent | **34**, glyph 20 | 34 |
+
+    The composite's **total** height is 88 on every surface, because the overlap absorbs the card's
+    4pt — which is why the stale card survived a partial redraw without looking wrong. **Redraw §2
+    and §7 at the 50/68 pill before either is used as a source again.**
+
+16. **The panel composer's row is documented in three places and only one of them is the product's.**
+    §1.1's specimen is `icon 24 · placeholder 195 · send 38`; the screens are `plus 20 · marquee 24 ·
+    placeholder 121 · voice 34 · send 38`; the Swift `ComposerMetrics.panel` is the screens' row
+    without the plus, `marquee 24 · placeholder 151 · voice 34 · send 38`. All three close on 301,
+    which is exactly why the discrepancy is easy to miss — the lane absorbs it. The plus is new
+    design (board 03b) that the code has not taken yet; the voice button is not new and the
+    specimen is simply behind.
