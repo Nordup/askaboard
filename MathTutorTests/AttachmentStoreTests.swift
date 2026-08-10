@@ -53,6 +53,31 @@ final class AttachmentStoreTests: XCTestCase {
         XCTAssertEqual(store.thumbnail(for: kept), Data("keep-me".utf8))
     }
 
+    func testACropIsReadBackByID() {
+        let store = BoardCropStore(directoryURL: directory)
+        let id = UUID()
+        store.save(Data("png".utf8), for: id, in: UUID())
+        XCTAssertEqual(store.crop(for: id), Data("png".utf8))
+    }
+
+    func testAnUnknownCropIsNil() {
+        let store = BoardCropStore(directoryURL: directory)
+        XCTAssertNil(store.crop(for: UUID()))
+    }
+
+    func testDeletingASessionForgetsOnlyItsCrops() {
+        let store = BoardCropStore(directoryURL: directory)
+        let mine = UUID(), theirs = UUID()
+        let mySession = UUID(), theirSession = UUID()
+        store.save(Data("a".utf8), for: mine, in: mySession)
+        store.save(Data("b".utf8), for: theirs, in: theirSession)
+
+        store.deleteAll(for: mySession)
+
+        XCTAssertNil(store.crop(for: mine))
+        XCTAssertEqual(store.crop(for: theirs), Data("b".utf8))
+    }
+
     func testAMessageWithAttachmentsRoundTripsThroughCoding() throws {
         let message = TutorMessage(
             role: .learner,

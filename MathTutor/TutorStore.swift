@@ -95,6 +95,10 @@ final class TutorStore: ObservableObject {
     /// `persistence` is: a test that sent a file used to write into the real
     /// Application Support directory, which is the user's own data.
     let attachmentStore: AttachmentStore
+    /// Where a board crop the tutor looked at goes. Injected for the same
+    /// reason `attachmentStore` is: a test must never write into the real
+    /// Application Support directory.
+    let boardCropStore: BoardCropStore
     let keychain: KeychainStore
     /// `--ui-test-reset`. The switcher lists only the session in memory, so a UI
     /// test never sees — or opens — whatever real sessions are on the machine
@@ -116,6 +120,7 @@ final class TutorStore: ObservableObject {
         service: any TutorService = TutorServiceRouter(),
         persistence: SessionPersistence = SessionPersistence(),
         attachmentStore: AttachmentStore = AttachmentStore(),
+        boardCropStore: BoardCropStore = BoardCropStore(),
         keychain: KeychainStore = KeychainStore(),
         configuration: BackendConfiguration? = BackendConfiguration.load()
     ) {
@@ -137,6 +142,7 @@ final class TutorStore: ObservableObject {
         #endif
         self.persistence = persistence
         self.attachmentStore = attachmentStore
+        self.boardCropStore = boardCropStore
         self.keychain = keychain
         // Runs on every launch, release included. Two accounts to clear and
         // neither is ever read now: the client-side OpenAI key from before the
@@ -881,6 +887,11 @@ final class TutorStore: ObservableObject {
                     case .boardRequest:
                         // Answered inside the service, which owns the network and
                         // the renderer. It reaches here only as `.boardViewed`.
+                        break
+                    case .step:
+                        // Handled in Task 7, which rewrites this loop to build the
+                        // activity trail. Present only so the switch stays exhaustive
+                        // and the app keeps compiling until then.
                         break
                     case .workspace(let plan, let exercise):
                         self.session.plan = plan

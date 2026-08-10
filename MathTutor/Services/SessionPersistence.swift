@@ -31,11 +31,28 @@ struct SessionPersistence {
     /// `AttachmentStore()`'s own default is built from.
     let attachmentStore: AttachmentStore
 
-    init(directoryURL: URL? = nil, attachmentStore: AttachmentStore? = nil) {
+    /// The board crops a deleted session takes with it.
+    ///
+    /// Derived from `directoryURL` for the same reason `attachmentStore` is: a
+    /// bare `BoardCropStore()` inside `delete(id:)` would resolve to the real
+    /// Application Support directory whatever this store was pointed at, and a
+    /// test deleting a session out of a temporary directory would write
+    /// `bySession.json` into the user's own data. Production is unchanged:
+    /// `defaultDirectoryURL` is what `BoardCropStore()`'s own default is built
+    /// from.
+    let boardCropStore: BoardCropStore
+
+    init(
+        directoryURL: URL? = nil,
+        attachmentStore: AttachmentStore? = nil,
+        boardCropStore: BoardCropStore? = nil
+    ) {
         let resolved = directoryURL ?? Self.defaultDirectoryURL
         self.directoryURL = resolved
         self.attachmentStore = attachmentStore
             ?? AttachmentStore(directoryURL: resolved.appendingPathComponent("Attachments"))
+        self.boardCropStore = boardCropStore
+            ?? BoardCropStore(directoryURL: resolved.appendingPathComponent("BoardCrops"))
     }
 
     static var defaultDirectoryURL: URL {
@@ -102,11 +119,13 @@ struct SessionPersistence {
         writeIndex(loadIndex().opened(id))
     }
 
-    /// Forgets a session entirely — its file, its index entry, and the
-    /// thumbnails of anything the learner attached to it.
+    /// Forgets a session entirely — its file, its index entry, the
+    /// thumbnails of anything the learner attached to it, and the board
+    /// crops the tutor looked at during it.
     func delete(id: UUID) {
         try? FileManager.default.removeItem(at: fileURL(for: id))
         attachmentStore.deleteAll(for: id)
+        boardCropStore.deleteAll(for: id)
         writeIndex(loadIndex().removing(id: id))
     }
 
