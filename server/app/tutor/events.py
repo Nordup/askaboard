@@ -210,6 +210,45 @@ TOOL_STEP_LABELS: dict[str, str] = {
 }
 
 
+#: At or above this, in both directions, a region is the whole board rather
+#: than a part of it. Not 100: a model asking to see everything routinely sends
+#: 0/0/100/100, but it also sends 2/0/98/99, and both mean the same thing to
+#: the learner reading the row.
+WHOLE_BOARD_PERCENT = 90.0
+
+
+def region_label(x: float, y: float, width: float, height: float) -> str:
+    """A board region, in words a learner can read.
+
+    The model works in percentages of the overview and that is the right unit
+    for the model. It is the wrong one for a row in the trail: "Showing x
+    40–70%, y 20–55%" is a coordinate dump, and the learner only wants to know
+    which part of their own board the tutor looked at.
+
+    Bands are chosen off the region's centre rather than its edges, so a region
+    that straddles a boundary is named for where most of it is.
+    """
+    if width >= WHOLE_BOARD_PERCENT and height >= WHOLE_BOARD_PERCENT:
+        return "Looked at the whole board"
+
+    def band(centre: float, low: str, middle: str, high: str) -> str:
+        if centre < 100 / 3:
+            return low
+        if centre < 200 / 3:
+            return middle
+        return high
+
+    vertical = band(y + height / 2, "top", "middle", "bottom")
+    horizontal = band(x + width / 2, "left", "centre", "right")
+    if vertical == "middle" and horizontal == "centre":
+        return "Looked at the centre of the board"
+    if vertical == "middle":
+        return f"Looked at the {horizontal} of the board"
+    if horizontal == "centre":
+        return f"Looked at the {vertical} of the board"
+    return f"Looked at the {vertical} {horizontal} of the board"
+
+
 class EventTranslator:
     """Turns Responses API events into our own vocabulary.
 
@@ -337,13 +376,20 @@ class EventTranslator:
             return []
 
         if kind == "response.function_call_arguments.done":
-            name = self._tool_names.get(event.get("output_index", -1))
+            output_index = event.get("output_index", -1)
+            name = self._tool_names.get(output_index)
             raw_arguments = event.get("arguments", "")
+            produced: list[ClientEvent] = []
             if name == "set_workspace":
-                return self._workspace_from(raw_arguments)
-            if name == "update_board":
-                return self._board_update_from(raw_arguments)
-            return []
+                produced.extend(self._workspace_from(raw_arguments))
+            elif name == "update_board":
+                produced.extend(self._board_update_from(raw_arguments))
+            # After the tool's own event, not before: the board must change on
+            # the device before a row claims it did.
+            step = self._refined_step(output_index, name, raw_arguments)
+            if step is not None:
+                produced.append(step)
+            return produced
 
         if kind.startswith("response.file_search_call.") or kind.startswith(
             "response.web_search_call."
@@ -369,3 +415,67 @@ class EventTranslator:
         if update is None:
             return []
         return [BoardUpdateEvent(payload=update_payload(update))]
+
+    def _refined_step(
+        self, output_index: int, name: str | None, raw_arguments: str
+    ) -> StepEvent | None:
+        """This call's row, restated now that its arguments are complete.
+
+        Falls back to the general label rather than to nothing. A step that was
+        already sent must be re-sent with *some* label or the device is left
+        showing "Drawing on the board" under a finished turn — the argument
+        parse failing is exactly when that is most likely.
+        """
+        call_id = self._call_ids.get(output_index)
+        if call_id is None or name is None:
+            return None
+        label = self._refined_label(name, raw_arguments) or TOOL_STEP_LABELS.get(name)
+        if label is None:
+            return None
+        return StepEvent(id=call_id, tool=name, label=label)
+
+    def _refined_label(self, name: str, raw_arguments: str) -> str | None:
+        """A label built from what the model actually asked for.
+
+        `None` for every tool with nothing worth saying, for arguments that do
+        not parse, and for `remember` and `record_evidence` — whose arguments
+        are the tutor's judgement of the learner, which the learner should not
+        read off a status row.
+        """
+        try:
+            arguments = json.loads(raw_arguments)
+        except (json.JSONDecodeError, TypeError):
+            return None
+        if not isinstance(arguments, dict):
+            return None
+
+        if name == "view_board":
+            try:
+                return region_label(
+                    float(arguments["x"]), float(arguments["y"]),
+                    float(arguments["width"]), float(arguments["height"]),
+                )
+            except (KeyError, TypeError, ValueError):
+                return None
+
+        if name == "search_memory":
+            query = arguments.get("query")
+            return f"Searched memory for {query}" if query else None
+
+        if name == "set_workspace":
+            title = (arguments.get("plan") or {}).get("title")
+            return f"Set the plan: {title}" if title else None
+
+        if name == "update_board":
+            update, _ = parse_board_update(raw_arguments)
+            if update is None:
+                return None
+            payload = update_payload(update)
+            if payload.replace_all:
+                return "Redrew the board"
+            count = len(payload.upserts) + len(payload.deletes)
+            if count == 0:
+                return None
+            return f"Drew {count} object" + ("" if count == 1 else "s")
+
+        return None

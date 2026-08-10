@@ -2,7 +2,7 @@ import json
 
 from app.tutor.events import (
     BoardUpdateEvent, EventTranslator, ReasoningDeltaEvent, StatusEvent,
-    StepEvent, TextDeltaEvent, WorkspaceEvent,
+    StepEvent, TextDeltaEvent, WorkspaceEvent, region_label,
 )
 
 WORKSPACE_ARGS = {
@@ -33,6 +33,23 @@ RAW_SVG_DOCUMENT = (
     "<animate attributeName=\"opacity\" from=\"0\" to=\"1\" dur=\"2s\"/>"
     "</svg>"
 )
+
+# A single upsert, no deletes: `update_payload(...).upserts` plus `.deletes` is
+# exactly 1. Lifted from the svg round-trip test below rather than invented,
+# because `BoardSceneUpdate` validates strictly and a made-up element shape
+# fails validation before it ever reaches the code this task adds.
+ONE_ELEMENT_UPDATE = json.dumps({
+    "mode": "upsert",
+    "delete_ids": [],
+    "elements": [{
+        "id": "diagram",
+        "kind": "svg",
+        "x": -250, "y": -300, "width": 500, "height": 320,
+        "svg": RAW_SVG_DOCUMENT,
+        "role": "content", "stroke": "#0A0A0A", "fill": "transparent",
+        "stroke_width": 4, "opacity": 1, "dash": [], "rotation": 0,
+    }],
+})
 
 
 def test_created_emits_thinking_status():
@@ -68,10 +85,14 @@ def test_set_workspace_tool_call_becomes_a_workspace_event():
         "output_index": 0,
         "arguments": json.dumps(WORKSPACE_ARGS),
     })
-    assert len(events) == 1
+    # Two events, not one: the tool's own event, then the refined step that
+    # restates the general "Making a plan" row with the plan's actual title.
+    assert len(events) == 2
     assert isinstance(events[0], WorkspaceEvent)
     assert events[0].plan.title == "Radical equations"
     assert events[0].exercise.prompt.startswith("Solve")
+    assert events[1] == StepEvent(id="call_1", tool="set_workspace",
+                                  label="Set the plan: Radical equations")
 
 
 def test_malformed_tool_arguments_are_dropped_not_raised():
@@ -86,7 +107,12 @@ def test_malformed_tool_arguments_are_dropped_not_raised():
         "output_index": 0,
         "arguments": "{not json",
     })
-    assert events == []
+    # No WorkspaceEvent: the malformed call is still dropped, not raised. But
+    # the step already announced at the head of the call is re-sent, falling
+    # back to its general label rather than leaving the row unrefined forever.
+    assert events == [
+        StepEvent(id="call_1", tool="set_workspace", label="Making a plan")
+    ]
 
 
 def test_update_board_tool_call_becomes_a_board_update_event():
@@ -112,11 +138,13 @@ def test_update_board_tool_call_becomes_a_board_update_event():
         }),
     })
 
-    assert len(events) == 1
+    assert len(events) == 2
     assert isinstance(events[0], BoardUpdateEvent)
     assert events[0].payload.deletes == ["old"]
     assert events[0].payload.upserts[0].id == "a"
     assert events[0].payload.upserts[0].kind == "line"
+    # One upsert plus one delete: the refined label counts both.
+    assert events[1] == StepEvent(id="call_b", tool="update_board", label="Drew 2 objects")
 
 
 def test_update_board_svg_roundtrips_unchanged_through_the_event():
@@ -129,25 +157,15 @@ def test_update_board_svg_roundtrips_unchanged_through_the_event():
     events = translator.translate({
         "type": "response.function_call_arguments.done",
         "output_index": 0,
-        "arguments": json.dumps({
-            "mode": "upsert",
-            "delete_ids": [],
-            "elements": [{
-                "id": "diagram",
-                "kind": "svg",
-                "x": -250, "y": -300, "width": 500, "height": 320,
-                "svg": RAW_SVG_DOCUMENT,
-                "role": "content", "stroke": "#0A0A0A", "fill": "transparent",
-                "stroke_width": 4, "opacity": 1, "dash": [], "rotation": 0,
-            }],
-        }),
+        "arguments": ONE_ELEMENT_UPDATE,
     })
 
-    assert len(events) == 1
+    assert len(events) == 2
     assert isinstance(events[0], BoardUpdateEvent)
     svg = events[0].payload.upserts[0]
     assert svg.kind == "svg"
     assert svg.svg == RAW_SVG_DOCUMENT
+    assert events[1] == StepEvent(id="call_svg", tool="update_board", label="Drew 1 object")
 
     encoded = json.loads(events[0].model_dump_json())
     assert encoded["payload"]["upserts"][0]["svg"] == RAW_SVG_DOCUMENT
@@ -167,7 +185,12 @@ def test_malformed_update_board_arguments_are_dropped_not_raised():
             {"id": "bad", "kind": "polygon", "points": [[0, 0]]}
         ]}),
     })
-    assert events == []
+    # No BoardUpdateEvent: the malformed call is still dropped, not raised. But
+    # the refined label also fails to parse the same malformed arguments, so
+    # the step re-sent here falls back to the general "Drawing on the board".
+    assert events == [
+        StepEvent(id="call_b", tool="update_board", label="Drawing on the board")
+    ]
 
 
 def test_replace_all_update_drops_delete_ids_from_the_payload():
@@ -209,8 +232,10 @@ def test_output_item_added_without_output_index_is_dropped_not_raised():
         "output_index": 0,
         "arguments": json.dumps(WORKSPACE_ARGS),
     })
-    assert len(events) == 1
+    assert len(events) == 2
     assert isinstance(events[0], WorkspaceEvent)
+    assert events[1] == StepEvent(id="call_2", tool="set_workspace",
+                                  label="Set the plan: Radical equations")
 
 
 def test_file_search_emits_searching_status():
@@ -445,3 +470,104 @@ def test_two_rounds_reusing_output_index_zero_produce_distinct_step_ids():
     })
     assert first[-1].id == "call_a"
     assert second[-1].id == "call_b"
+
+
+def test_view_board_refines_to_a_named_region():
+    translator = EventTranslator()
+    translator.translate({
+        "type": "response.output_item.added",
+        "output_index": 0,
+        "item": {"type": "function_call", "name": "view_board", "call_id": "call_a"},
+    })
+    events = translator.translate({
+        "type": "response.function_call_arguments.done",
+        "output_index": 0,
+        "arguments": json.dumps({"x": 0, "y": 0, "width": 40, "height": 40}),
+    })
+    assert events == [
+        StepEvent(id="call_a", tool="view_board",
+                  label="Looked at the top left of the board")
+    ]
+
+
+def test_view_board_covering_everything_says_the_whole_board():
+    assert region_label(0, 0, 100, 100) == "Looked at the whole board"
+
+
+def test_search_memory_refines_to_its_query():
+    translator = EventTranslator()
+    translator.translate({
+        "type": "response.output_item.added",
+        "output_index": 0,
+        "item": {"type": "function_call", "name": "search_memory", "call_id": "call_a"},
+    })
+    events = translator.translate({
+        "type": "response.function_call_arguments.done",
+        "output_index": 0,
+        "arguments": json.dumps({"query": "what does this learner find hard?"}),
+    })
+    assert events == [
+        StepEvent(id="call_a", tool="search_memory",
+                  label="Searched memory for what does this learner find hard?")
+    ]
+
+
+def test_update_board_refines_to_a_count_and_still_emits_the_board_update():
+    translator = EventTranslator()
+    translator.translate({
+        "type": "response.output_item.added",
+        "output_index": 0,
+        "item": {"type": "function_call", "name": "update_board", "call_id": "call_a"},
+    })
+    events = translator.translate({
+        "type": "response.function_call_arguments.done",
+        "output_index": 0,
+        "arguments": ONE_ELEMENT_UPDATE,
+    })
+    assert isinstance(events[0], BoardUpdateEvent)
+    assert events[1] == StepEvent(id="call_a", tool="update_board",
+                                  label="Drew 1 object")
+
+
+def test_set_workspace_refines_to_its_plan_title():
+    translator = EventTranslator()
+    translator.translate({
+        "type": "response.output_item.added",
+        "output_index": 0,
+        "item": {"type": "function_call", "name": "set_workspace", "call_id": "call_a"},
+    })
+    events = translator.translate({
+        "type": "response.function_call_arguments.done",
+        "output_index": 0,
+        "arguments": json.dumps(WORKSPACE_ARGS),
+    })
+    assert isinstance(events[0], WorkspaceEvent)
+    assert events[1] == StepEvent(id="call_a", tool="set_workspace",
+                                  label="Set the plan: Radical equations")
+
+
+def test_unparseable_arguments_keep_the_general_label():
+    translator = EventTranslator()
+    translator.translate({
+        "type": "response.output_item.added",
+        "output_index": 0,
+        "item": {"type": "function_call", "name": "search_memory", "call_id": "call_a"},
+    })
+    events = translator.translate({
+        "type": "response.function_call_arguments.done",
+        "output_index": 0,
+        "arguments": "{not json",
+    })
+    assert events == [
+        StepEvent(id="call_a", tool="search_memory", label="Searching memory")
+    ]
+
+
+def test_arguments_done_for_a_call_never_added_emits_nothing():
+    translator = EventTranslator()
+    events = translator.translate({
+        "type": "response.function_call_arguments.done",
+        "output_index": 7,
+        "arguments": "{}",
+    })
+    assert events == []
