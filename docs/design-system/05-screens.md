@@ -284,8 +284,8 @@ single `301 × 72` fade inside the thread.
 
 | Button | x within controls | Size | Icon |
 |---|---|---|---|
-| `btn/dock` | 0 | `32 × 32` | 28 × 28: rounded rect `x3.5 y5.5 w21 h17 rx5` + vertical line at `x = 16.8` → a "right sidebar" glyph. Stroke `--color-icon`, width 2. |
-| `btn/full-screen` | 46 | `32 × 32` | 28 × 28: rounded rect `x3.5 y5.5 w21 h17 rx5`, no divider. Stroke `--color-icon`, width 2. |
+| `btn/full-screen` | 0 | `32 × 32` | 28 × 28: rounded rect `x3.5 y5.5 w21 h17 rx5`, no divider. Stroke `--color-icon`, width 2. |
+| `btn/dock` | 46 | `32 × 32` | 28 × 28: rounded rect `x3.5 y5.5 w21 h17 rx5` + vertical line at `x = 11.2` → a "left sidebar" glyph. Stroke `--color-icon`, width 2. |
 
 Neither button carries a selected/pressed background in this design.
 

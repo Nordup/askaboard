@@ -234,8 +234,12 @@ enum IconPaths {
     /// `control/dock` — renders 28 on a 28×28 viewBox, 2.0pt effective stroke, --color-icon.
     ///
     /// control/dock and control/full are the same 21×17 rect at radius 5; dock adds the divider
-    /// at x=16.8. The board: 'draw them as one shape with a conditional second path — the rect
+    /// at x=11.2. The board: 'draw them as one shape with a conditional second path — the rect
     /// must not shift by even a subpixel when the state toggles.'
+    ///
+    /// The divider sits left of centre because the panel sits on the left of the screen. The
+    /// glyph is a map of the layout, so the small region has to be on the side the panel is on.
+    /// It was mirrored from x=16.8 when the shell mirrored.
     static let controlDock = IconGlyph(
         name: "control/dock",
         viewBox: CGSize(width: 28, height: 28),
@@ -254,7 +258,7 @@ enum IconPaths {
                 designStrokeWidth: 2.1
             ),
             IconElement(
-                geometry: .path("M16.8 5.5V22.5"),
+                geometry: .path("M11.2 5.5V22.5"),
                 isFilled: false,
                 isStroked: true,
                 lineCap: .butt,

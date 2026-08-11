@@ -328,7 +328,7 @@ Glyphs (identical rect; the dock variant adds one divider stroke):
 ```svg
 <!-- btn/dock -->
 <rect x="3.5" y="5.5" width="21" height="17" rx="5" fill="none" stroke="var(--color-icon)" stroke-width="2.1"/>
-<path d="M16.8 5.5V22.5" fill="none" stroke="var(--color-icon)" stroke-width="2.1"/>
+<path d="M11.2 5.5V22.5" fill="none" stroke="var(--color-icon)" stroke-width="2.1"/>
 
 <!-- btn/full-screen — identical rect, divider omitted -->
 <rect x="3.5" y="5.5" width="21" height="17" rx="5" fill="none" stroke="var(--color-icon)" stroke-width="2.1"/>

@@ -309,7 +309,7 @@
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-icon",
       "dashTexture": null,
-      "notes": "control/dock and control/full are the same 21×17 rect at radius 5; dock adds the divider at x=16.8. The board: 'draw them as one shape with a conditional second path — the rect must not shift by even a subpixel when the state toggles.'",
+      "notes": "control/dock and control/full are the same 21×17 rect at radius 5; dock adds the divider at x=11.2. The board: 'draw them as one shape with a conditional second path — the rect must not shift by even a subpixel when the state toggles.' The divider sits left of centre, mirrored from x=16.8 when the shell mirrored: the panel is on the left of the screen, so the glyph's small region has to be on the left too.",
       "elements": [
         {
           "type": "rect",
@@ -327,7 +327,7 @@
         },
         {
           "type": "path",
-          "d": "M16.8 5.5V22.5",
+          "d": "M11.2 5.5V22.5",
           "fill": "none",
           "stroke": "var(--color-icon)",
           "strokeWidth": 2.1,

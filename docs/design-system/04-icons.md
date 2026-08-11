@@ -273,7 +273,9 @@ Five glyphs on a 28pt frame, each centred in a 54pt slot.
 
 # control/
 
-> The most disciplined pair in the set, and the one to copy when drawing anything new. Both are the identical 21×17 rounded rect at radius 5 on a 28pt frame; the docked state adds a single vertical divider at x=16.8, which is exactly where the panel's own edge falls. **Draw them as one shape with a conditional second path rather than two separate assets — the rect must not shift by even a subpixel when the state toggles.**
+> The most disciplined pair in the set, and the one to copy when drawing anything new. Both are the identical 21×17 rounded rect at radius 5 on a 28pt frame; the docked state adds a single vertical divider at x=11.2, which is exactly where the panel's own edge falls. **Draw them as one shape with a conditional second path rather than two separate assets — the rect must not shift by even a subpixel when the state toggles.**
+>
+> The divider is left of centre. It was at x=16.8 until the shell mirrored the panel to the left of the screen; the glyph is a map of the layout, so it mirrored with it.
 
 ---
 
@@ -295,7 +297,7 @@ Five glyphs on a 28pt frame, each centred in a 54pt slot.
 
 ```svg
 <rect x="3.5" y="5.5" width="21" height="17" rx="5" fill="none" stroke="var(--color-icon)" stroke-width="2.1" />
-<path d="M16.8 5.5V22.5" fill="none" stroke="var(--color-icon)" stroke-width="2.1" />
+<path d="M11.2 5.5V22.5" fill="none" stroke="var(--color-icon)" stroke-width="2.1" />
 ```
 
 ---
