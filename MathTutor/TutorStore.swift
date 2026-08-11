@@ -860,6 +860,12 @@ final class TutorStore: ObservableObject {
             /// the provider answers still must not leave an empty bubble in the
             /// thread. So the message is created by whichever of reasoning, a step,
             /// or text happens to arrive first, and by nothing else.
+            ///
+            /// `@MainActor` because a nested function does not inherit the actor
+            /// isolation of the closure holding it, the way the closure itself
+            /// inherits it from `TutorStore`. Without it this reads and mutates
+            /// `session` from a nonisolated context, which Swift 6 rejects.
+            @MainActor
             func messageIndex() -> Int {
                 if let tutorMessageIndex { return tutorMessageIndex }
                 self.session.messages.append(TutorMessage(role: .tutor, text: ""))
@@ -876,6 +882,9 @@ final class TutorStore: ObservableObject {
             /// an `@Published` array — there is no way to mutate one of its rows in
             /// place, only to replace it, so every trail edit is a read-modify-write
             /// through here rather than through the array's subscript directly.
+            ///
+            /// `@MainActor` for the reason `messageIndex` above carries it.
+            @MainActor
             func withTrail(_ change: (inout ActivityTrail) -> Void) {
                 let index = messageIndex()
                 var trail = self.session.messages[index].activity ?? ActivityTrail()
