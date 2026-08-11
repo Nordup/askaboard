@@ -23,11 +23,14 @@ enum SessionSwitcherMetrics {
     /// Where the title's lane starts, measured from the row's leading edge.
     ///
     /// The title is placed from the left rather than centred in the row, and the
-    /// difference is not cosmetic: the flanks are 78 and 32, so a box centred in
-    /// the row sits 23pt left of the lane between them and its trailing edge —
-    /// and its *tap target* — reaches back over `btn/dock`. A centred title
-    /// would silently eat taps meant for the layout controls.
-    static var titleLaneLeading: CGFloat { layoutControlsWidth + lane }
+    /// difference is not cosmetic: the flanks are 32 and 78, so a box centred in
+    /// the row sits 23pt right of the lane between them and its leading edge —
+    /// and its *tap target* — reaches back over `btn/settings`. A centred title
+    /// would silently eat taps meant for the gear.
+    ///
+    /// The gear is the leading flank now, not the layout pair: the row mirrored
+    /// with the shell, and this is the one number in it that names a side.
+    static var titleLaneLeading: CGFloat { TutorPanelMetrics.controlButton + lane }
 
     /// `Layout controls`: two 32pt buttons on a 14pt gap.
     static var layoutControlsWidth: CGFloat {

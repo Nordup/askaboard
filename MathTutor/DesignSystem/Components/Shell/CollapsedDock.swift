@@ -20,11 +20,11 @@ enum CollapsedDockMetrics {
 /// What the tutor becomes when collapsed: a selection button plus the orb.
 ///
 /// Board 02: *"When the tutor collapses, the dock anchors to the board, not the screen:
-/// 24pt inside the board's bottom-right corner. Measured from the screen edge the same
+/// 24pt inside the board's bottom-left corner. Measured from the screen edge the same
 /// position reads 52pt, which is a number that quietly breaks the moment the board's own
 /// 28pt inset changes. Anchor to the board rect and the dock follows it for free."* The
 /// anchoring is the caller's — the layout carries it, measured off the collapsed board's
-/// bottom-right corner at whatever size that board came out — and this view is only the
+/// bottom-left corner at whatever size that board came out — and this view is only the
 /// 132 × 64 row.
 ///
 /// **Elevation drift, unresolved in the design.** The board gives `btn/select` the shadow
@@ -43,10 +43,14 @@ struct CollapsedDock: View {
     let onSelect: () -> Void
     let onOpenTutor: () -> Void
 
+    /// Orb first, then the selection button. The dock anchors to the board's bottom-**left**
+    /// corner now, so the orb takes the outer side — the side the reach comes from — and the
+    /// pair reads outward from the screen edge exactly as it did when the dock sat in the
+    /// opposite corner.
     var body: some View {
         HStack(spacing: CollapsedDockMetrics.gap) {
-            selectButton
             orbButton
+            selectButton
         }
         .frame(width: CollapsedDockMetrics.width, height: CollapsedDockMetrics.height)
     }

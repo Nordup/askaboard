@@ -279,7 +279,7 @@ struct BoardScreen: View {
                 )
             }
         }
-        .offset(x: layout.boardX, y: layout.contentTop)
+        .offset(x: boardX, y: layout.contentTop)
         .opacity(isTutorFullScreen ? 0 : 1)
         .allowsHitTesting(!isTutorFullScreen)
         .accessibilityElement(children: .contain)
@@ -292,6 +292,21 @@ struct BoardScreen: View {
     /// a board the student never saw change.
     private var boardWidth: CGFloat {
         presentation == .collapsed ? layout.boardWidthCollapsed : layout.boardWidthDocked
+    }
+
+    /// Where that board starts. The row reads panel · rail · board, so collapsing the tutor
+    /// takes the panel and one gap out of the row and moves the two lanes after it — the board
+    /// gains width **and** a new left edge, where before it only ever gained width. Both
+    /// numbers come from the same presentation, so the canvas cannot be drawn at one state's
+    /// width in the other state's lane.
+    private var boardX: CGFloat {
+        presentation == .collapsed ? layout.boardXCollapsed : layout.boardX
+    }
+
+    /// The rail's lane, by the same rule and for the same reason: leading when the tutor is
+    /// collapsed, between the tutor and the canvas when it is docked.
+    private var railX: CGFloat {
+        presentation == .collapsed ? layout.railXCollapsed : layout.railX
     }
 
     @ViewBuilder
@@ -308,7 +323,7 @@ struct BoardScreen: View {
                 onSelectColor: { uiState.penColor = $0 },
                 onCentreOnWork: { capture.centerOnContent(animated: true) }
             )
-            .offset(x: layout.railX, y: layout.contentTop)
+            .offset(x: railX, y: layout.contentTop)
         }
     }
 
@@ -340,7 +355,7 @@ struct BoardScreen: View {
         }
     }
 
-    /// The drag strip in the gutter between the board and the panel.
+    /// The drag strip in the gutter between the panel and the tool rail.
     ///
     /// Mounted only in the `.docked` case of `tutor`, which means it does not exist when the
     /// panel is collapsed or full-screen rather than existing invisibly and staying
@@ -348,8 +363,9 @@ struct BoardScreen: View {
     /// board. Settings needs no case of its own: `settingsWindow` covers the whole screen,
     /// so a handle under it is unreachable by construction.
     ///
-    /// It is positioned by its **trailing** edge against the panel, so the strip runs from
-    /// `panelX − gutter` to `panelX + panelInset` and claims not one point of the canvas.
+    /// It is positioned by its **leading** edge against the panel's own trailing inset, so the
+    /// strip runs from `panelX + panelWidth − panelInset` to the rail's left edge and claims
+    /// not one point of the rail — or, now that the panel leads, of the canvas.
     @ViewBuilder
     private var resizeHandle: some View {
         let constraints = ResizeConstraints(
@@ -368,7 +384,11 @@ struct BoardScreen: View {
         // chasing an `else` branch that can actually run here will not find one.
         if constraints.isSatisfiable {
             ResizeHandle(
-                edge: .leading,
+                // The panel is pinned to the leading edge, so its free edge — the one that
+                // moves — is the trailing one, and dragging *away* from the origin widens it.
+                // `ResizeEdge` is where that sign lives; nothing else in the resize system
+                // changes for the mirror.
+                edge: .trailing,
                 span: layout.contentHeight,
                 gutter: DS.Space.gap,
                 contentMargin: DS.Space.panelInset,

@@ -6,10 +6,16 @@ enum WhiteboardMetrics {
 
 /// The drawing surface's card.
 ///
-/// Board 02: *"The board keeps a constant 936pt height and a constant top-left origin in
+/// Board 02: *"The board keeps a constant 936pt height and a constant top origin in
 /// every state; only its width changes when the tutor docks or collapses. That is what lets
-/// the ink layer stay put instead of reflowing — the board is resized from the right edge,
+/// the ink layer stay put instead of reflowing — the board is resized from one edge,
 /// never re-laid-out."*
+///
+/// **Which edge is the leading one now.** The redesign puts the tutor and the rail before the
+/// board in the row, so docking and collapsing move the card's left edge while its right edge
+/// stays on the screen's trailing inset. Nothing here changes for that: the card is still one
+/// height, one width per state, and the ink still rides with it rather than reflowing inside
+/// it. The caller supplies both the width and the origin — see `BoardScreen.boardX`.
 ///
 /// **Both numbers are now given rather than known.** 936 was the content band of one 1032pt
 /// screen and 863/1224 were what one 1376pt screen had left over; on a 768pt iPad the same

@@ -13,12 +13,19 @@ import SwiftUI
 /// derivation, written out longhand:
 ///
 /// ```
-/// board width  = 1376 − 28 − 72 − 24 − 337 − 24 − 28 = 863
+/// board width  = 1376 − 28 − 337 − 24 − 72 − 24 − 28 = 863
 /// content top  = 0 + 28 = 28
 /// safe band    = 1032 − 28 − 28 = 976
 /// collapsed    = 863 + 24 + 337 = 1224
-/// column x     = 68 + (1376 − 68 − 740) ÷ 2 = 352
+/// column x     = 0 + (1376 − 68 − 740) ÷ 2 = 284
 /// ```
+///
+/// **The lanes read left to right: panel, rail, board.** The redesign mirrors the shell — the
+/// tutor takes the leading edge, the rail sits between the tutor and the canvas, and the board
+/// runs to the trailing edge inset. Collapsing the tutor takes the panel and one gap out of
+/// the row, so the rail slides into the leading position and the board absorbs the rest. That
+/// is why the rail and the board each publish two x's rather than one: their lane depends on
+/// whether the panel is in the row, which is the screen's decision and not this type's.
 ///
 /// Only the left-hand operand of each is device-specific. Substituting the real width, the
 /// real height and the real status-bar bottom for 1376, 1032 and 0 is therefore *more*
@@ -221,63 +228,75 @@ struct ScreenLayout: Equatable, Sendable {
 
     // MARK: - Horizontal lanes, docked layout (screens 05 and 08)
 
-    /// `--space-edge` from the left.
-    var railX: CGFloat { safeAreaLeading + DS.Space.edge }
+    /// `0 + 28 = 28` — the left edge everything is measured out from, and the mirror of
+    /// `contentRight`. `--space-edge` from the leading obstruction, the same rule `contentTop`
+    /// and `contentBottom` are.
+    var contentLeft: CGFloat { safeAreaLeading + DS.Space.edge }
+
+    /// `1376 − 28 = 1348` — the right edge the board is measured back from.
+    var contentRight: CGFloat { size.width - safeAreaTrailing - DS.Space.edge }
+
+    /// `28` — the tutor takes the leading edge, and it is the one lane whose position does not
+    /// depend on anything else in the row.
+    ///
+    /// It used to be `contentRight − panelWidth`, pinned to the trailing edge. Pinned leading
+    /// it needs no clamp: `panelWidth` is a caller-supplied input, and a panel too wide for the
+    /// window now overflows the *board's* lane — which `boardWidthDocked` clamps and `fit`
+    /// refuses — rather than being pushed off the front of the screen.
+    var panelX: CGFloat { contentLeft }
+
+    /// `28 + 337 + 24 = 389` — the rail sits between the tutor and the canvas, so its lane
+    /// starts where the panel ends. **The docked position**; see `railXCollapsed`.
+    var railX: CGFloat { panelX + panelWidth + DS.Space.gap }
+
+    /// `--space-edge` from the leading edge. With no panel in the row the rail takes the
+    /// leading position, which is what screen 06 draws.
+    var railXCollapsed: CGFloat { contentLeft }
 
     /// `--container-rail`, *"fixed — the rail never resizes"*. Height is fit-content and
     /// belongs to the rail component.
     static let railWidth: CGFloat = DS.Container.rail
     var railWidth: CGFloat { Self.railWidth }
 
-    /// `28 + 72 + 24 = 124` — edge + rail + gap.
+    /// `389 + 72 + 24 = 485` — rail + gap, in the docked row.
     var boardX: CGFloat { railX + Self.railWidth + DS.Space.gap }
 
-    /// `1376 − 28 = 1348` — the right edge everything docked is measured back from.
-    var contentRight: CGFloat { size.width - safeAreaTrailing - DS.Space.edge }
+    /// `28 + 72 + 24 = 124` — the same sum with the panel and one gap taken out of the row.
+    var boardXCollapsed: CGFloat { railXCollapsed + Self.railWidth + DS.Space.gap }
 
-    /// `1376 − 28 − 72 − 24 − 337 − 24 − 28 = 863` — the width left over once both edge
-    /// insets, the rail and both inter-panel gaps come off. Written here as the distance
-    /// between two already-derived edges, which is the same arithmetic with the terms
-    /// collected, and which cannot drift out of step with `boardX` and `panelX`.
+    /// `1376 − 28 − 337 − 24 − 72 − 24 − 28 = 863` — the width left over once both edge
+    /// insets, the panel, the rail and both gaps come off. Written here as the distance from
+    /// the board's own left edge to the trailing edge inset, which is the same arithmetic with
+    /// the terms collected, and which cannot drift out of step with `boardX`.
     ///
     /// Clamped at 0 rather than allowed to go negative: below `Self.dockedMinimumWidth` this
     /// state does not fit at all, and `fit` says so out loud instead of handing a caller a
     /// negative frame.
-    var boardWidthDocked: CGFloat { max(0, panelX - DS.Space.gap - boardX) }
+    var boardWidthDocked: CGFloat { max(0, contentRight - boardX) }
 
-    /// `863 + 24 + 337 = 1224` — the board absorbs the gap it used to sit behind plus the
-    /// panel, so it runs from its own left edge to the screen's edge inset.
-    var boardWidthCollapsed: CGFloat { max(0, contentRight - boardX) }
+    /// `863 + 337 + 24 = 1224` — the board absorbs the panel and the gap the row no longer
+    /// holds, so it runs from the collapsed rail's right edge to the screen's edge inset.
+    var boardWidthCollapsed: CGFloat { max(0, contentRight - boardXCollapsed) }
 
-    /// `124 + 863 + 24`, equivalently `1376 − 28 − 337 = 1011`. The second spelling is the one
-    /// implemented: the panel is pinned to the right edge and the board is what flexes, so the
-    /// panel's position must not depend on the board's width.
-    ///
-    /// Clamped at 0 for the same reason `boardWidthDocked` is: `panelWidth` stopped being a
-    /// 337 constant and became a caller-supplied input, so a panel wider than `contentRight`
-    /// is now representable. Nothing upstream of this file is meant to ask for one — `fit`
-    /// gates the docked layout on `panelWidth <= maximumPanelWidth` before anything draws —
-    /// but a stray or pre-clamp call site should get a pinned-left panel rather than a
-    /// negative x that pushes it off the far edge instead.
-    var panelX: CGFloat { max(0, contentRight - panelWidth) }
-
-    /// Where the resize strip's left edge sits — the gutter's own left edge, one `--space-gap`
-    /// inside `panelX`.
+    /// Where the resize strip's left edge sits — one `--space-panel-inset` back inside the
+    /// panel's trailing edge, so the strip covers the panel's dead margin and the whole gutter
+    /// between the panel and the rail.
     ///
     /// Published so both the strip's drawing code and its tests read the same number instead of
-    /// each writing `panelX - --space-gap` at its own call site. That duplication is exactly how
+    /// each writing the expression at its own call site. That duplication is exactly how
     /// this file's own reference-render test used to go tautological: the test's private copy of
     /// the expression could never disagree with a re-derivation of itself, so a bug in the real
     /// call site had nothing to fail against. One property, read by both, closes that gap.
     ///
-    /// It also states a fact `boardWidthDocked` already implies rather than a new one:
-    /// `boardWidthDocked` is `max(0, panelX - --space-gap - boardX)`, so wherever that clamp does
-    /// not fire — every size this type produces a docked layout for — `boardX + boardWidthDocked`
-    /// reduces algebraically to `panelX - --space-gap`, this property's own definition. The strip
-    /// therefore begins exactly where the board ends, by construction, not by coincidence: it
-    /// lives entirely inside the gutter between them and cannot claim a point of the canvas
-    /// without the two lanes it sits between having already overlapped.
-    var resizeStripX: CGFloat { panelX - DS.Space.gap }
+    /// **The strip changed sides with the panel, and the neighbour it leans on changed with
+    /// it.** It used to run from `panelX − --space-gap` into the gutter between the board and a
+    /// trailing panel; the panel now leads, so the strip runs from the panel's trailing edge
+    /// and the surface on the other side of the gutter is the rail. Both surfaces still keep
+    /// every point of their own content: the strip claims `--space-panel-inset`, which board 02
+    /// specs as dead margin inside the panel, plus the `--space-gap` of empty screen-grey, and
+    /// it stops on the rail's own left edge. It never touches the canvas at all now, which is
+    /// the hazard `ResizeHandleMetrics.hitBreadth` was written against.
+    var resizeStripX: CGFloat { panelX + panelWidth - DS.Space.panelInset }
 
     /// The width used by the design and restored by a resize-handle double tap.
     static let defaultPanelWidth: CGFloat = DS.Container.panel
@@ -291,9 +310,15 @@ struct ScreenLayout: Equatable, Sendable {
 
     /// The width the board and the panel share, gap included on the panel's side.
     ///
-    /// `1348 − 124 − 24 = 1200` on the reference screen. It exists because the panel's
+    /// `1348 − 28 − 72 − 2 × 24 = 1200` on the reference screen. It exists because the panel's
     /// ceiling is a statement about this lane rather than about the screen.
-    var dockedLaneWidth: CGFloat { max(0, contentRight - boardX - DS.Space.gap) }
+    ///
+    /// Stated as the row minus the rail and both gaps rather than as a subtraction from
+    /// `boardX`: `boardX` is now a function of `panelWidth`, so deriving the lane from it would
+    /// make the ceiling depend on the width it is supposed to bound.
+    var dockedLaneWidth: CGFloat {
+        max(0, contentRight - contentLeft - Self.railWidth - 2 * DS.Space.gap)
+    }
 
     /// Everything in the shared lane except the board's minimum. The tutor may be much wider
     /// than the board; widening it is allowed to reduce the whiteboard to a compact strip.
@@ -330,20 +355,23 @@ struct ScreenLayout: Equatable, Sendable {
 
     // MARK: - Full-screen tutor (screen 07)
 
-    /// Flush left, no 28 inset — *"the one panel that touches a screen edge."* It still clears
+    /// Flush right, no 28 inset — *"the one panel that touches a screen edge."* It still clears
     /// the safe area, which on the reference device is 0.
-    var peekX: CGFloat { safeAreaLeading }
+    ///
+    /// The board hinges off the **trailing** edge now, which is the edge the board itself is on
+    /// in every other state. `1376 − 68 = 1308` on the reference screen.
+    var peekX: CGFloat { max(safeAreaLeading, size.width - safeAreaTrailing - Self.peekWidth) }
 
     /// Fixed by its own artwork: the peek is a board-edge SVG path with a hinge icon at local
     /// (23, 22), not a lane cut out of the screen.
     static let peekWidth: CGFloat = 68
     var peekWidth: CGFloat { Self.peekWidth }
 
-    /// Where the reading column is allowed to live: everything to the right of the peek.
-    /// *"because the peek occupies the left 68, that column is centred in what remains rather
-    /// than on the screen."*
-    var columnRegionX: CGFloat { peekX + Self.peekWidth }
-    var columnRegionWidth: CGFloat { max(0, size.width - safeAreaTrailing - columnRegionX) }
+    /// Where the reading column is allowed to live: everything to the left of the peek.
+    /// *"because the peek occupies the trailing 68, that column is centred in what remains
+    /// rather than on the screen."*
+    var columnRegionX: CGFloat { safeAreaLeading }
+    var columnRegionWidth: CGFloat { max(0, peekX - columnRegionX) }
 
     /// `--container-column`, or whatever fits — `min(740, region − 2 × 28)`.
     ///
@@ -358,7 +386,7 @@ struct ScreenLayout: Equatable, Sendable {
     /// `(1376 − 68 − 740) ÷ 2 = 284` — equal margins inside the region, not on the screen.
     var columnMargin: CGFloat { (columnRegionWidth - columnWidth) / 2 }
 
-    /// `68 + (1376 − 68 − 740) ÷ 2 = 352`. Margins 284 / 284.
+    /// `0 + (1376 − 68 − 740) ÷ 2 = 284`. Margins 284 / 284.
     var columnX: CGFloat { columnRegionX + columnMargin }
 
     // MARK: - Collapsed dock (screen 06)
@@ -369,23 +397,28 @@ struct ScreenLayout: Equatable, Sendable {
     var collapsedDockWidth: CGFloat { Self.collapsedDockWidth }
     var collapsedDockHeight: CGFloat { Self.collapsedDockHeight }
 
-    /// `124 + 1224 = 1348` — the collapsed board's right edge, which is the dock's anchor.
-    var collapsedBoardRight: CGFloat { boardX + boardWidthCollapsed }
+    /// `124` — the collapsed board's left edge, which is the dock's anchor.
+    var collapsedBoardLeft: CGFloat { boardXCollapsed }
 
-    /// `1348 − 24 − 132 = 1192`.
+    /// `124 + 1224 = 1348` — the collapsed board's right edge. No longer the dock's anchor;
+    /// kept because it is the one number that says where the collapsed canvas ends.
+    var collapsedBoardRight: CGFloat { boardXCollapsed + boardWidthCollapsed }
+
+    /// `124 + 24 = 148`.
     ///
     /// Board 09 calls this out as *"the one exception to the edge rule"*: the dock is inset
-    /// `--space-gap` 24 from the **board's** bottom-right corner rather than `--space-edge`
+    /// `--space-gap` 24 from the **board's** bottom-left corner rather than `--space-edge`
     /// 28 from the screen's, *"so it reads as sitting on the board rather than on the
     /// screen."* The 24-against-28 is the whole of the exception, and it is why this cannot be
-    /// spelled `contentRight − edge − width`.
+    /// spelled `contentLeft + edge`.
     ///
-    /// It is anchored to `collapsedBoardRight` rather than `contentRight` even though those two
-    /// are the same number wherever the collapsed board reaches the edge inset — which is every
-    /// size the app supports. They part company only where `boardWidthCollapsed` clamps at
-    /// zero, and there following the board is the reading that stays true to *"sitting on the
-    /// board"*.
-    var collapsedDockX: CGFloat { collapsedBoardRight - DS.Space.gap - Self.collapsedDockWidth }
+    /// The corner is the board's leading one now rather than its trailing one, for the reason
+    /// the whole shell mirrored: the tutor lives on the leading side, so the affordance that
+    /// brings it back belongs on the side the hand already goes to. It is anchored to
+    /// `collapsedBoardLeft` rather than to `contentLeft` because the two part company wherever
+    /// the rail pushes the board in, and following the board is what stays true to *"sitting on
+    /// the board"*.
+    var collapsedDockX: CGFloat { collapsedBoardLeft + DS.Space.gap }
 
     /// `1004 − 24 − 64 = 916`, measured up from the board's bottom edge for the same reason.
     var collapsedDockY: CGFloat { contentBottom - DS.Space.gap - Self.collapsedDockHeight }
@@ -413,7 +446,7 @@ struct ScreenLayout: Equatable, Sendable {
     /// student deliberately drags the seam almost all the way across the window.
     static let minimumBoardWidth: CGFloat = 200
 
-    /// Edge + rail + gap + board floor + gap + requested panel + edge, with the board at its
+    /// Edge + requested panel + gap + rail + gap + board floor + edge, with the board at its
     /// floor and the panel at whatever the student has asked for.
     ///
     /// Instance rather than static since the panel's width became an input: a wider panel
@@ -471,9 +504,9 @@ struct ScreenLayout: Equatable, Sendable {
     /// Every region this type publishes, for a caller that wants to check its own work. Useful
     /// mostly to the tests, which assert nothing here is negative and that every region stays
     /// on screen — not that nothing overlaps. Nothing here ever asserted non-overlap, and the
-    /// list is not even non-overlapping at face value: "board · docked" and "board · collapsed"
-    /// both start at `boardX` on purpose, because they are two widths for the same lane in two
-    /// presentations that are never drawn at once.
+    /// list is not even non-overlapping at face value: the docked and collapsed entries are the
+    /// same two lanes in two presentations that are never drawn at once, so the collapsed board
+    /// runs straight through the docked panel's lane on purpose.
     ///
     /// No "resize strip" entry, deliberately: that footprint needs `ResizeHandleMetrics`, a
     /// SwiftUI component's own metrics enum, and this type is pure lane arithmetic that knows
@@ -483,9 +516,10 @@ struct ScreenLayout: Equatable, Sendable {
     /// belongs.
     var namedRegions: [(name: String, x: CGFloat, width: CGFloat)] {
         [
-            ("rail", railX, railWidth),
+            ("rail · docked", railX, railWidth),
+            ("rail · collapsed", railXCollapsed, railWidth),
             ("board · docked", boardX, boardWidthDocked),
-            ("board · collapsed", boardX, boardWidthCollapsed),
+            ("board · collapsed", boardXCollapsed, boardWidthCollapsed),
             ("panel", panelX, panelWidth),
             ("peek", peekX, peekWidth),
             ("column", columnX, columnWidth),

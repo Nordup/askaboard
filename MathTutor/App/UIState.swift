@@ -131,7 +131,7 @@ final class UIState: ObservableObject {
         presentation = .docked
     }
 
-    /// The board peek on the left edge of screen 07 — the only board affordance
+    /// The board peek on the trailing edge of screen 07 — the only board affordance
     /// on that screen, and the way back to the docked panel.
     func returnToBoard() {
         presentation = .docked

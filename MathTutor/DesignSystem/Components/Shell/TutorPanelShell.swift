@@ -131,6 +131,18 @@ struct PanelControls: View {
     let onDock: () -> Void
     let onFullScreen: () -> Void
 
+    /// Which end of the row the pair sits at. The redesign puts the layout controls on the
+    /// **trailing** side and the gear on the leading one, so `TutorControlsRow` asks for
+    /// `.trailing`; the gallery specimen keeps the default and draws the pair on its own.
+    ///
+    /// A parameter rather than a hard-coded edge because the alignment has to compose: this
+    /// view's own frame is the design's fixed 301, while the row that hosts it is the panel's
+    /// *derived* content width, and the two only agree about where the buttons land if they
+    /// align to the same end.
+    var alignment: Alignment = .leading
+
+    /// The pair keeps its internal order in every mirror — dock, then full-screen — because the
+    /// two glyphs are read as a sequence rather than as a pair of edges.
     var body: some View {
         HStack(spacing: TutorPanelMetrics.controlsGap) {
             button(.controlDock, label: "Collapse tutor to the dock", action: onDock)
@@ -139,7 +151,7 @@ struct PanelControls: View {
         .frame(
             width: TutorPanelMetrics.contentWidth,
             height: TutorPanelMetrics.controlsHeight,
-            alignment: .leading
+            alignment: alignment
         )
     }
 

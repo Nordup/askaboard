@@ -14,11 +14,11 @@ enum ResizeAxis: Equatable, Sendable {
 /// Which edge of the surface the handle sits on — and therefore which direction of drag
 /// makes the surface bigger.
 ///
-/// This is the only place the sign lives. The tutor panel is pinned to the screen's right
-/// edge and its handle is on its **leading** side, so dragging left (a negative translation)
-/// must *widen* it: `growthSign` is −1. A left-hand sidebar would put its handle on
-/// `.trailing` and get +1. Every other type in the resize system is sign-agnostic because
-/// of this property.
+/// This is the only place the sign lives. The tutor panel is pinned to the screen's leading
+/// edge and its handle is on its **trailing** side, so dragging right (a positive translation)
+/// must *widen* it: `growthSign` is +1. A right-hand sidebar would put its handle on
+/// `.leading` and get −1 — which is what the tutor panel itself was before the shell mirrored.
+/// Every other type in the resize system is sign-agnostic because of this property.
 enum ResizeEdge: Equatable, Sendable {
     case leading
     case trailing

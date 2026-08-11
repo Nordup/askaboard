@@ -10,7 +10,10 @@ import SwiftUI
 ///
 /// The column's origin is a screen constant *"reserve the 68pt peek, centre a 740pt column in
 /// the remainder"* — which `ScreenLayout` now answers for the screen the app is actually on:
-/// 352 wide of 1376, and a narrower column, still centred past the peek, on anything smaller.
+/// x 284 of 1376, and a narrower column, still centred inside the peek, on anything smaller.
+/// The peek is on the trailing edge in the redesign, and the column is centred all the same —
+/// it is centred in *what the peek leaves*, which is a rule about a region and not about a
+/// side.
 struct TutorFullScreen: View {
     @EnvironmentObject private var store: TutorStore
     @EnvironmentObject private var uiState: UIState
@@ -107,7 +110,7 @@ struct TutorFullScreen: View {
     /// this port is diffed on.
     ///
     /// The block does not move for `btn/settings` at the width the board was drawn at: the
-    /// gear sits at `contentRight − 32`, 224 points clear of the column's right edge, so the
+    /// gear sits at `contentLeft`, 224 points clear of the column's left edge, so the
     /// greeting keeps its 150. It *does* move on a narrow enough window, where `columnWidth`
     /// stops centring 740 and starts fitting the region until the column reaches the gear —
     /// every portrait iPad, in practice. `columnTop` is that decision, and the column gives up
@@ -276,11 +279,11 @@ struct TutorColumnMetrics: Equatable, Sendable {
     let x: CGFloat
     /// `min(740, region − 2 × edge)`.
     let width: CGFloat
-    /// Where the screen's content stops on the right — `--space-edge` in from the trailing
-    /// safe area, the same lane the docked panel's right edge lands on. Board 13 anchors the
-    /// gear here rather than to the reading column, which on the reference screen is the
-    /// difference between x 1316 and x 1060.
-    let contentRight: CGFloat
+    /// Where the screen's content starts on the left — `--space-edge` in from the leading
+    /// safe area, the same lane the docked panel's left edge lands on. Boards 07 and 13 anchor
+    /// the gear here rather than to the reading column, which on the reference screen is the
+    /// difference between x 28 and x 284.
+    let contentLeft: CGFloat
     /// The content band's top and bottom, the same two lines every other screen is cut from.
     let top: CGFloat
     let bottom: CGFloat
@@ -304,7 +307,7 @@ struct TutorColumnMetrics: Equatable, Sendable {
     init(layout: ScreenLayout) {
         x = layout.columnX
         width = layout.columnWidth
-        contentRight = layout.contentRight
+        contentLeft = layout.contentLeft
         top = layout.contentTop
         // The composer is anchored to this line, so it is the keyboard-aware one:
         // the column is the other surface that has to stay typed into. Identical
@@ -358,19 +361,19 @@ struct TutorColumnMetrics: Equatable, Sendable {
     /// `150 + 268 + 174 = 592` on the reference screen.
     var suggestionsTop: CGFloat { greetingTop + greetingHeight + Self.greetingToSuggestions }
 
-    /// `btn/settings`, pinned to the screen's trailing edge rather than the column's —
-    /// `1348 − 32 = 1316` on the reference screen. Clamped at the column's own left edge so a
-    /// window too narrow to hold both cannot push the gear off the front of the peek.
-    var settingsX: CGFloat { max(x, contentRight - TutorPanelMetrics.controlButton) }
+    /// `btn/settings`, pinned to the screen's leading edge rather than the column's — `28` on
+    /// the reference screen. Clamped at the column's own right edge so a window too narrow to
+    /// hold both cannot push the gear out under the peek.
+    var settingsX: CGFloat { min(contentLeft, x + width - TutorPanelMetrics.controlButton) }
 
     /// Whether the gear overlaps the reading column horizontally.
     ///
     /// It does not at any width the boards were drawn for: the column is centred in what the
-    /// peek leaves and stops 224 points short of the screen's edge at the reference. But
+    /// peek leaves and starts 224 points clear of the screen's edge at the reference. But
     /// `columnWidth` is `min(740, region − 2 × edge)`, so a narrow enough window stops
     /// centring a 740 column and starts fitting the region instead — and then the column's own
-    /// right edge reaches the gear. Around 700 points of window is where the two meet.
-    var settingsOverlapsColumn: Bool { settingsX < x + width }
+    /// left edge reaches the gear. Around 700 points of window is where the two meet.
+    var settingsOverlapsColumn: Bool { settingsX + TutorPanelMetrics.controlButton > x }
 
     /// The top of the band the column's content may use.
     ///

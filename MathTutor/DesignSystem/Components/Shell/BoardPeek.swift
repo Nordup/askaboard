@@ -10,13 +10,19 @@ enum BoardPeekMetrics {
     /// with nothing reserved at the top — `1032 − 28 − 28`.
     static let referenceHeight: CGFloat = 976
     /// `Board hinge icon`, absolute within the peek.
+    ///
+    /// **Unchanged by the mirror, and that is the design's own number rather than an
+    /// oversight.** The glyph is 22 wide in a 68 tab, so `68 − 23 − 22 = 23`: the authored
+    /// offset is already symmetric, and the icon itself is not mirrored — a hinge reads the
+    /// same either way round.
     static let hingeOrigin = CGPoint(x: 23, y: 22)
 
     // MARK: - Edge shadow
 
-    /// The design's fake shadow is `left 3, top 2`, and a real shadow takes the same
-    /// offsets.
-    static let shadowOffset = CGSize(width: 3, height: 2)
+    /// The design's fake shadow is `left −3, top 2`, and a real shadow takes the same
+    /// offsets. The peek hangs off the trailing edge, so the shadow falls *inward*, away from
+    /// the screen edge — which is the horizontal mirror of the old left-hand strip.
+    static let shadowOffset = CGSize(width: -3, height: 2)
     /// **`filter: blur(5px)`, not a `box-shadow` blur.** The two are different units: a CSS
     /// filter blur states the Gaussian's standard deviation directly, while a box-shadow's
     /// blur is twice it — which is why `Elevation.Layer` halves its own values and this does
@@ -29,7 +35,9 @@ enum BoardPeekMetrics {
 ///
 /// Board 02: *"The silhouette is a single concave-fillet path, not a rounded rectangle: the
 /// notch is what reads as a hinge."* A 68-wide tab down to `y = 64` holding the hinge icon,
-/// then an 18pt concave fillet in to a 28-wide strip that runs to the bottom.
+/// then an 18pt concave fillet in to a 28-wide strip that runs to the bottom. Everything
+/// rounded faces **inward**, toward the tutor; the trailing edge is the flat one, because that
+/// is the screen edge the board is hinged off.
 ///
 /// **The path is re-authored at the height it is drawn at, not scaled to it.** Every arc in
 /// this `d` has `r = 18`, and a non-uniform scale to a shorter band would squash exactly
@@ -51,7 +59,7 @@ enum BoardPeekMetrics {
 /// 18pt fillets is the only part with any give in it, and it absorbs the whole difference.
 struct BoardPeekShape: Shape {
     /// The bottom fillet's radius, and so the gap between the strip's end and the box's
-    /// bottom: the design's own `V958 … 10,976` is this relationship at 976.
+    /// bottom: the design's own `V958 … 58,976` is this relationship at 976.
     static let bottomFillet: CGFloat = 18
     /// Below this the strip has no length left and the bottom fillet would start inside the
     /// hinge notch. It is a floor, not a size — no real band comes near it.
@@ -59,12 +67,18 @@ struct BoardPeekShape: Shape {
 
     /// The design's verbatim `d`, with the two band numbers substituted. At
     /// `BoardPeekMetrics.referenceHeight` this reproduces the authored string character for
-    /// character: `V958 A18,18 0 0 1 10,976`.
+    /// character: `V958 A18,18 0 0 0 58,976 H68 Z`.
+    ///
+    /// **Mirrored in the authoring, not by a transform.** The redesign hinges the board off the
+    /// trailing edge, and the board's own `d` is the horizontal mirror of the old one — every x
+    /// is `68 − x` and every arc's sweep flag is flipped. Taking it verbatim is what keeps the
+    /// string diffable against the design; a `scaleEffect(x: -1)` over the old path would draw
+    /// the same silhouette and leave nothing to compare.
     static func pathData(height: CGFloat) -> String {
         let bottom = max(height, minimumHeight)
-        return "M0,0 H50 A18,18 0 0 1 68,18 V46 A18,18 0 0 1 50,64 H46 "
-            + "A18,18 0 0 0 28,82 V\(number(bottom - bottomFillet)) "
-            + "A18,18 0 0 1 10,\(number(bottom)) H0 Z"
+        return "M68,0 H18 A18,18 0 0 0 0,18 V46 A18,18 0 0 0 18,64 H22 "
+            + "A18,18 0 0 1 40,82 V\(number(bottom - bottomFillet)) "
+            + "A18,18 0 0 0 58,\(number(bottom)) H68 Z"
     }
 
     /// The design's `d`, as authored.
@@ -116,7 +130,7 @@ struct BoardPeek: View {
             // happened to offer.
             .frame(width: BoardPeekMetrics.width, height: height)
             // The grid is drawn full-bleed and clipped to the silhouette, which is how the
-            // design's own "columns past x = 23.9 stop once the shape necks in" falls out
+            // design's own "columns before x = 44.1 stop once the shape necks in" falls out
             // rather than being special-cased.
             .overlay { DotGrid().clipShape(BoardPeekShape()) }
             .overlay(alignment: .topLeading) {
@@ -143,8 +157,8 @@ struct BoardPeek: View {
 #if DEBUG
 #Preview("Board peek") {
     BoardPeek(height: BoardPeekMetrics.referenceHeight, onTap: {})
-        .padding(.leading, 0)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.trailing, 0)
+        .frame(maxWidth: .infinity, alignment: .trailing)
         .background(DS.Color.surface)
 }
 #endif

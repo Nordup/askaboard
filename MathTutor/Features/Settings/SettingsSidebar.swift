@@ -84,22 +84,28 @@ struct SettingsNavItem: View {
     }
 }
 
-/// The window's left column: the way out, then the table of contents.
+/// The window's left column: the table of contents, and nothing else.
 ///
-/// The close control sits here rather than in the pane's top-right corner, which is where a
-/// dialog usually puts it. Two reasons, both the product's own: every other close in this
-/// system is a leading-edge affordance — the board peek, `btn/dock` — and the sidebar is the
-/// only part of the window that does not change when you switch panes, so a control that is
-/// always in the same place belongs in the part that is always the same.
+/// The close control used to live here, on the reading that every other close in this system
+/// is a leading-edge affordance — the board peek, `btn/dock`. The redesign mirrors all three:
+/// the peek hinges off the trailing edge, the panel's layout pair moved to the trailing end of
+/// its row, and the window's exit went with them. The nav column did **not** move — a sidebar
+/// is a table of contents, and this product reads left to right — so the two are now in
+/// opposite corners, which is also where a dialog usually puts them.
+///
+/// The band the button occupied is still spent above the nav, so the first item sits on
+/// exactly the line it always did. See `SettingsWindowMetrics.sidebarPaddingTop`.
 struct SettingsSidebar: View {
     @Binding var selection: SettingsPane
     let metrics: SettingsWindowMetrics
-    let onClose: () -> Void
 
     /// 36 × 36 with a 22pt glyph. Both the design's, and the glyph is `ui/cross` at its one
     /// product render size. No fill and no radius — the same nothing `btn/dock` and the other
     /// panel controls are drawn with, so the window's exit reads as chrome and not as a
     /// button competing with the nav.
+    ///
+    /// Still published here, and by the type that no longer draws it, because the sidebar is
+    /// what has to reserve the button's band: `sidebarPaddingTop` is written from this number.
     static let closeButton: CGFloat = 36
     static let closeGlyph = Icon.uiCross.renderSize
 
@@ -112,11 +118,11 @@ struct SettingsSidebar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: SettingsWindowMetrics.sidebarGap) {
-            close
             nav
             Spacer(minLength: 0)
         }
-        .padding(.vertical, SettingsWindowMetrics.sidebarPaddingBlock)
+        .padding(.top, SettingsWindowMetrics.sidebarPaddingTop)
+        .padding(.bottom, SettingsWindowMetrics.sidebarPaddingBlock)
         .padding(.horizontal, SettingsWindowMetrics.sidebarPaddingInline)
         .frame(width: SettingsWindowMetrics.sidebarWidth, alignment: .topLeading)
         .frame(maxHeight: .infinity)
@@ -135,17 +141,6 @@ struct SettingsSidebar: View {
                 .fill(SettingsWindowMetrics.rule)
                 .frame(width: SettingsWindowMetrics.ruleWidth)
         }
-    }
-
-    private var close: some View {
-        Button(action: onClose) {
-            IconView(.uiCross, size: Self.closeGlyph)
-                .frame(width: Self.closeButton, height: Self.closeButton)
-                .expandedTapTarget(Self.closeTapTarget, over: Self.closeButton)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(SettingsCopy.close)
-        .accessibilityIdentifier("close-settings")
     }
 
     private var nav: some View {

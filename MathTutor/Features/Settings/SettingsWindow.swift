@@ -39,8 +39,26 @@ struct SettingsWindowMetrics: Equatable, Sendable {
 
     static let sidebarPaddingBlock = DS.Space.s5
     static let sidebarPaddingInline = DS.Space.s4
-    /// Close button → nav list.
+    /// Between the band the close button used to occupy and the nav list.
     static let sidebarGap = DS.Space.s6
+
+    /// `20 + 36 + 24 = 80`.
+    ///
+    /// The close control left the sidebar for the window's own top-right corner, and the nav
+    /// list did **not** move with it: the design keeps the first item on the same line it was
+    /// always on. So the band the button used to fill is still spent, and it is spelled as the
+    /// sum it always was rather than as an 80 that would say nothing about where it came from.
+    static var sidebarPaddingTop: CGFloat {
+        sidebarPaddingBlock + SettingsSidebar.closeButton + sidebarGap
+    }
+
+    // MARK: - Close
+
+    /// `btn/close`, absolute in the window's top-right corner. Both numbers are the design's,
+    /// and neither is a token: the button is 36 in a 28pt-radius corner, so it is placed by eye
+    /// against the curve rather than on the 4px scale.
+    static let closePaddingTrailing = DS.Space.s4
+    static let closePaddingTop = DS.Space.s5
 
     // MARK: - Pane
 
@@ -141,7 +159,7 @@ struct SettingsWindow: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            SettingsSidebar(selection: $pane, metrics: metrics, onClose: onClose)
+            SettingsSidebar(selection: $pane, metrics: metrics)
             SettingsPaneContent(pane: pane, metrics: metrics)
         }
         .frame(width: metrics.size.width, height: metrics.size.height)
@@ -155,9 +173,44 @@ struct SettingsWindow: View {
         // sit outside the window's 28pt radius at the top and bottom left. Before `.elevation`,
         // so the shadow is cast by the rounded silhouette and not by the square one.
         .clipShape(RoundedRectangle(cornerRadius: SettingsWindowMetrics.radius, style: .circular))
+        // The way out is the window's, not the sidebar's. It sits in the corner opposite the
+        // nav column — which the redesign puts on the trailing side, since the whole shell
+        // mirrored and the sidebar stayed where it was. An overlay rather than a child of
+        // either half, because it belongs to neither: it closes the window.
+        //
+        // **After the clip, deliberately.** The button's tap target is 44 over a 36pt glyph
+        // frame, so it reaches 4 points past the window's own edge; inside the `clipShape` those
+        // four points are cut off the *hit* region as well as the paint, and the corner nearest
+        // the finger is the corner that stops working.
+        .overlay(alignment: .topTrailing) {
+            SettingsCloseButton(action: onClose)
+                .padding(.trailing, SettingsWindowMetrics.closePaddingTrailing)
+                .padding(.top, SettingsWindowMetrics.closePaddingTop)
+        }
         .elevation(SettingsWindowMetrics.elevation)
         .accessibilityElement(children: .contain)
         .accessibilityAddTraits(.isModal)
         .accessibilityIdentifier("settings-window")
+    }
+}
+
+/// `btn/close` — the window's way out, in its top-right corner.
+///
+/// Its own type for the reason `SettingsButton` is one: the control moved surfaces, and the
+/// thing that must not move with it is the 36pt frame, the 22pt glyph and the 44pt tap target.
+/// Those three numbers stay published by `SettingsSidebar`, which still reserves the band this
+/// button used to stand in — see `SettingsWindowMetrics.sidebarPaddingTop`.
+struct SettingsCloseButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            IconView(.uiCross, size: SettingsSidebar.closeGlyph)
+                .frame(width: SettingsSidebar.closeButton, height: SettingsSidebar.closeButton)
+                .expandedTapTarget(SettingsSidebar.closeTapTarget, over: SettingsSidebar.closeButton)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(SettingsCopy.close)
+        .accessibilityIdentifier("close-settings")
     }
 }

@@ -421,12 +421,14 @@ struct TutorControlsRow: View {
     let onToggleSessionMenu: () -> Void
 
     var body: some View {
-        PanelControls(onDock: onDock, onFullScreen: onFullScreen)
-            .frame(width: width, height: TutorPanelMetrics.controlsHeight, alignment: .leading)
+        // The row mirrored with the shell: `btn/settings` leads and the layout pair sits at
+        // the trailing edge. The pair keeps its own order — dock, then full-screen.
+        PanelControls(onDock: onDock, onFullScreen: onFullScreen, alignment: .trailing)
+            .frame(width: width, height: TutorPanelMetrics.controlsHeight, alignment: .trailing)
             // Placed from the leading edge, not centred — see
-            // `SessionSwitcherMetrics.titleLaneLeading`. The row's flanks are 78
-            // and 32, so centring would put the title's tap target back over
-            // `btn/dock`.
+            // `SessionSwitcherMetrics.titleLaneLeading`. The row's flanks are 32
+            // and 78, so centring would put the title's tap target back over
+            // `btn/full-screen`.
             .overlay(alignment: .leading) {
                 SessionTitleButton(
                     title: sessionTitle,
@@ -436,7 +438,7 @@ struct TutorControlsRow: View {
                 )
                 .padding(.leading, SessionSwitcherMetrics.titleLaneLeading)
             }
-            .overlay(alignment: .trailing) { SettingsButton(action: onSettings) }
+            .overlay(alignment: .leading) { SettingsButton(action: onSettings) }
     }
 }
 
