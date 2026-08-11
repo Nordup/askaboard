@@ -605,7 +605,21 @@ and the content column is derived from the frame the way the panel's 301 is deri
 | `Session list` | `margin-top 10`, `gap 2`. |
 | `row/session` | `44` tall, `--radius-sm` 10, `padding-inline 12`, `gap 10`. Glyph `ui/session` `18 × 18`. Title 17 / 22, weight 500. |
 | `row/session · current` | Same box, filled `--color-brand-tint` `#E6E3F9`; glyph and title both `--color-brand`, title weight 600. The drawer names the open session by marking it, since the title that used to say so in words is gone. |
-| `row/session` · long press | The system context menu, one destructive **Delete**. Not a swipe action or an edit mode — those are `List` affordances and this is not a `List` — and a destructive action that asks for no confirmation should at least take a deliberate gesture to reach. Deleting the open session falls back to the most recent one left, or to a fresh empty session when none are. |
+| `row/session` · long press | A half-second hold raises a **delete confirmation**, titled "Delete this session?" with a destructive **Delete** and a **Cancel**. Not a swipe action or an edit mode — those are `List` affordances and this is not a `List`. Deleting the open session falls back to the most recent one left, or to a fresh empty session when none are. |
+
+The hold and the tap are an *exclusive* pair, not two simultaneous gestures: the hold wins
+outright when it recognises, so lifting the finger after one cannot also open the session. The
+row is therefore a plain view with gestures rather than a `Button` — a `Button`'s action fires
+on touch-up whatever else happened, which is exactly the thing that must not happen here. Button
+semantics are restored in the accessibility layer, where the destructive action is published as
+a named action rather than a gesture VoiceOver cannot perform.
+
+It was a system `.contextMenu` first, and that is a presentation with no binding: nothing in the
+app is told when it opens or closes, so nothing can be made inert around it, and whether the
+tap that cancels it is swallowed or falls through to the row underneath is the platform's
+decision. On iPadOS 17 it fell through, and cancelling switched sessions. A confirmation dialog
+is modal and driven by state the drawer owns, so the dismiss tap is consumed by its own
+presentation controller and the rows are held inert until the dismissal has finished animating.
 | `Drawer bottom bar` | `44` tall, on the content column, `justify-content: space-between`, one inset up from the floor (docked `top 914`, full screen `top 960`). |
 | `btn/new-chat` | Bottom **left**. `44` tall pill, `--color-brand` fill, `--radius-full`, `gap 8`, `padding-left 16`, `padding-right 20`. Glyph `ui/plus` `20 × 20` white, label "New chat" 17 / 22 weight 600 white. Shadow `#6051DC33 0 4 12` + `#14143214 0 1 2`. |
 | `btn/settings` | Bottom **right**. `44 × 44` `--color-surface` circle, glyph `control/settings` at 24, elevation 03 · Control. Already at the tap-target minimum, so unlike the panel's 32pt controls it needs no expansion. **It leaves the drawer open**: Settings is a window over the whole screen and it is reached from here, so closing the thing you opened it from returns you somewhere you were not. Every other action in this drawer replaces what the chat is showing, which is why they all close it and this one does not. |
