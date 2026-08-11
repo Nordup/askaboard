@@ -141,12 +141,12 @@ struct PanelControls: View {
     /// align to the same end.
     var alignment: Alignment = .leading
 
-    /// The pair keeps its internal order in every mirror — dock, then full-screen — because the
-    /// two glyphs are read as a sequence rather than as a pair of edges.
+    /// The pair reads full-screen, then dock in every mirror. The redesign moved the pair to the
+    /// trailing end of the header, and the internal order is mirrored with it.
     var body: some View {
         HStack(spacing: TutorPanelMetrics.controlsGap) {
-            button(.controlDock, label: "Collapse tutor to the dock", action: onDock)
             button(.controlFull, label: "Show tutor full screen", action: onFullScreen)
+            button(.controlDock, label: "Collapse tutor to the dock", action: onDock)
         }
         .frame(
             width: TutorPanelMetrics.contentWidth,

@@ -422,13 +422,13 @@ struct TutorControlsRow: View {
 
     var body: some View {
         // The row mirrored with the shell: `btn/settings` leads and the layout pair sits at
-        // the trailing edge. The pair keeps its own order — dock, then full-screen.
+        // the trailing edge. The pair mirrored with it — full-screen, then dock.
         PanelControls(onDock: onDock, onFullScreen: onFullScreen, alignment: .trailing)
             .frame(width: width, height: TutorPanelMetrics.controlsHeight, alignment: .trailing)
             // Placed from the leading edge, not centred — see
             // `SessionSwitcherMetrics.titleLaneLeading`. The row's flanks are 32
             // and 78, so centring would put the title's tap target back over
-            // `btn/full-screen`.
+            // the layout pair.
             .overlay(alignment: .leading) {
                 SessionTitleButton(
                     title: sessionTitle,
