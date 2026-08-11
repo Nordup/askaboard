@@ -6,6 +6,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass
+from functools import lru_cache
 
 import anyio
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -18,7 +19,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.attachments.parts import UploadPart
 from app.auth import require_device_token
-from app.config import MAX_ATTACHMENTS_PER_TURN, MODEL_ALLOWLIST, SOLE_LEARNER_ID, get_settings
+from app.config import (
+    MAX_ATTACHMENTS_PER_TURN, MODEL_ALLOWLIST, REASONING_EFFORT_ALLOWLIST,
+    SOLE_LEARNER_ID, get_settings,
+)
 from app.learner.mastery import snapshot
 from app.memory.dispatch import memory_handler
 from app.memory.profile import current_profile
@@ -27,7 +31,7 @@ from app.sse import SSE_HEADERS, format_sse
 from app.store.db import db_session, session_factory
 from app.store.blobs import LocalBlobStore
 from app.store.models import Attachment, Message, Session, Turn
-from app.store.recorder import Recorder
+from app.store.recorder import Recorder, cache_tokens
 from app.tutor.context import assemble_context
 from app.tutor.events import DoneEvent, ErrorEvent, StatusEvent
 from app.tutor.board_scene import MAX_SCENE_CHARS
@@ -63,6 +67,25 @@ CLEANUP_TIMEOUT_SECONDS = 10.0
 #: How many past sessions ride along in every prompt. Enough for "what did we
 #: do last week" without paying for a year of history on every turn.
 RECENT_SESSION_COUNT = 12
+
+
+@lru_cache
+def _client() -> AsyncOpenAI:
+    """The one provider client, built on first use and then kept.
+
+    Cached for the reason every module in `app/memory` caches its own: a client
+    built per request is a fresh `httpx.AsyncClient`, which is a fresh
+    connection pool, which is a DNS lookup and a TLS handshake in front of the
+    first token of every turn. The pools are never closed either, so they
+    accumulate until they are collected. The offline memory passes had this
+    right and the two request paths did not.
+
+    `max_retries=0`: the SDK's own retry (default 2) retries any 429 or 5xx,
+    including a billing 429, because it cannot tell one from the other. Left on,
+    the transport would sit through backoff on an exhausted account before
+    `classify` ever saw the error. `loop._open_round` is the only retry that may run.
+    """
+    return AsyncOpenAI(api_key=get_settings().openai_api_key, max_retries=0)
 
 
 async def _memory_sections(db: AsyncSession) -> dict[str, str | None]:
@@ -231,6 +254,20 @@ class TurnRequest(BaseModel):
             )
         return value
 
+    @field_validator("reasoning_effort")
+    @classmethod
+    def _effort_must_be_allowed(cls, value: str) -> str:
+        # The other half of the same gap the check above closes. Effort is a
+        # multiplier on reasoning tokens, which bill at the output rate, so a
+        # device free to name it is a device free to choose the bill. It went
+        # unguarded while the model beside it did not.
+        if value not in REASONING_EFFORT_ALLOWLIST:
+            raise ValueError(
+                f"Unknown reasoning effort {value!r}. "
+                f"Allowed: {sorted(REASONING_EFFORT_ALLOWLIST)}"
+            )
+        return value
+
 
 def get_recorder() -> Recorder:
     """A dependency, not a direct construction.
@@ -334,6 +371,12 @@ async def create_turn(
         # carry `DEFAULT_MODEL` for the rest of its life. The per-turn record is
         # on `Turn` and is unaffected either way — this is the *current*
         # selection, not a history.
+        #
+        # Changing the model mid-session is allowed and costs more than it
+        # looks: prompt caches are model-scoped, so the next turn re-processes
+        # the entire prefix — system prompt, tools, portrait, transcript — at
+        # full price on the new model. Effort is a request parameter and not
+        # part of the prefix, so switching that is free.
         session.model = body.model
         session.reasoning_effort = body.reasoning_effort
 
@@ -415,6 +458,10 @@ async def create_turn(
 
     # assemble_context reads only .role and .text, so the pending learner turn
     # joins the history as a plain record rather than a premature ORM object.
+    # It joins it at the end, and being last is what makes it the turn rather
+    # than more history: `context.split_live_turn` takes the trailing learner
+    # message back off and sends it as its own message, so the request is asked
+    # rather than quoted. Appending it anywhere else would bury it again.
     messages = list(existing_messages) + [
         PendingMessage(role="learner", text=body.text)
     ]
@@ -471,18 +518,22 @@ async def create_turn(
                 "provider_events": len(result.raw_events) if result is not None else 0,
             }
         # Always defined, even if assemble_context itself never runs: an
-        # except clause (or the finally guard) reached before "input" is
-        # filled in must still have something to hand to fail_turn/
+        # except clause (or the finally guard) reached before the first
+        # model round must still have something to hand to fail_turn/
         # finish_turn rather than raising NameError on top of the original
-        # failure.
-        request_body: dict = {"model": body.model, "input": None}
-        # max_retries=0: the SDK's own default retry logic (max_retries=2)
-        # retries any 429 or 5xx, including a billing 429 — it has no way to
-        # tell a billing error from a rate limit. Left at its default, the
-        # transport would retry a spend-limit failure before classify() ever
-        # saw it, silently defeating "never retry billing" at a layer this
-        # code cannot see into.
-        client = AsyncOpenAI(api_key=settings.openai_api_key, max_retries=0)
+        # failure. Once a round actually starts, run_turn replaces this
+        # envelope wholesale with the real payload — tools, reasoning,
+        # store, stream and all — so the fallback only ever records the
+        # skeleton of a turn that never reached the provider.
+        request_body: dict = {
+            "model": body.model,
+            "input": None,
+            # Recorded so a cache miss can be diagnosed from the stored call
+            # rather than guessed at: the key is half of what decides which
+            # cache a request reaches, and the prompt is the other half.
+            "prompt_cache_key": str(session.id),
+        }
+        client = _client()
 
         async def fetch_board(call_id: str, region: BoardRegion) -> bytes:
             """Wait for the device to render one region of its board.
@@ -553,11 +604,13 @@ async def create_turn(
                 uploads=uploads,
                 **sections,
             )
-            request_body["input"] = bundle.input
-
             async for event, running in run_turn(
                 client=client, model=body.model, effort=body.reasoning_effort,
-                bundle=bundle, fetch_board=fetch_board,
+                bundle=bundle, request_body=request_body, fetch_board=fetch_board,
+                # Every turn of one session shares the longest prompt prefix
+                # there is, so they should all reach the same cache. The
+                # session id is what says "these belong together".
+                cache_key=str(session.id),
                 # Without this the four memory tools are inert. They sit in
                 # `TOOL_DEFINITIONS` unconditionally — varying the tool set per
                 # turn would invalidate the cached prompt prefix — so the model
@@ -584,21 +637,31 @@ async def create_turn(
                     image_blob_key=image_ref.key if image_ref else None,
                 )
                 usage = result.usage or {}
+                cached, written = cache_tokens(usage)
                 yield sse(DoneEvent(
                     turn_id=body.turn_id,
                     input_tokens=usage.get("input_tokens"),
                     output_tokens=usage.get("output_tokens"),
+                    cached_tokens=cached,
                 ))
                 # Logged on the happy path too, not only on failure. The turns
                 # that died were preceded by turns that *worked* while creeping
                 # toward the client's timeout — the last good one sent nothing
                 # for 59.5 of its 62.7 seconds. Only a line on every turn makes
                 # that trend visible before it becomes an outage.
+                #
+                # `cached` and `written` ride on the same line as the rest.
+                # A cache hit rate is not something anyone goes looking for —
+                # it is only ever noticed when it is already on the page next
+                # to the cost it explains, and a prompt whose whole layout is
+                # built around earning that hit deserves to say whether it did.
                 logger.info(
-                    "turn ok | turn_id=%s %s in=%s out=%s reasoning=%s",
+                    "turn ok | turn_id=%s %s in=%s cached=%s written=%s "
+                    "out=%s reasoning=%s",
                     body.turn_id,
                     " ".join(f"{k}={v}" for k, v in diagnostics().items()),
-                    usage.get("input_tokens"), usage.get("output_tokens"),
+                    usage.get("input_tokens"), cached, written,
+                    usage.get("output_tokens"),
                     (usage.get("output_tokens_details") or {}).get("reasoning_tokens"),
                 )
         except APIStatusError as error:

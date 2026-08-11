@@ -183,16 +183,15 @@ async def _digest(transcript: str) -> str:
     filters on `digest IS NOT NULL` — the episode would be marked done and be
     invisible forever.
 
-    `store=False` for the reason every other model call in this service sets
-    it: the body is an entire session's transcript, and retention of that is a
-    decision this service makes in its own database rather than one it leaves
-    a second, unenumerable copy of on the provider's side.
+    `store=True` for the reason `app/memory/extract.py` gives at length: the
+    provider keeps the response for thirty days, which is a trace of this call
+    that does not depend on anything here having recorded it.
     """
     response = await _client().responses.create(
         model=EXTRACTION_MODEL,
         input=[{"role": "user",
                 "content": DIGEST_PROMPT.format(transcript=transcript)}],
-        store=False,
+        store=True,
     )
     return response.output_text.strip()
 

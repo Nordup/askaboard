@@ -64,8 +64,15 @@ async def _collect(response) -> list[dict]:
 
 
 def _prompt_of(call) -> str:
-    """The user text in one captured provider request."""
-    return json.loads(call.request.content)["input"][1]["content"][0]["text"]
+    """The user text in one captured provider request.
+
+    Joined across the parts: the prompt goes out as a cacheable half and a
+    per-turn half, and which side a block lands on is `prompt._sections`'
+    business, not this file's.
+    """
+    content = json.loads(call.request.content)["input"][1]["content"]
+    return "".join(part["text"] for part in content
+                   if part["type"] == "input_text")
 
 
 # ---------------------------------------------------------------------------

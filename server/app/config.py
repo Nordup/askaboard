@@ -14,6 +14,19 @@ MODEL_ALLOWLIST: frozenset[str] = frozenset({
     "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
 })
 
+# The only reasoning efforts a turn may name, for the reason MODEL_ALLOWLIST
+# exists — and it is the same reason, applied to the other half of the lever.
+# `TurnRequest.reasoning_effort` arrives unvalidated from the device, and effort
+# multiplies reasoning tokens, which bill at the *output* rate: six times input
+# on Luna, and $30 per million on Sol. Gating the model and not the effort
+# closes half of "any model at any price".
+#
+# It also stops a typo becoming a failed turn. An unknown effort string is a
+# 400 from the provider mid-stream; a 422 from here says which values exist.
+REASONING_EFFORT_ALLOWLIST: frozenset[str] = frozenset({
+    "low", "medium", "high", "xhigh", "max",
+})
+
 # What a session gets when something other than a turn creates it — /v1/dictation
 # and /v1/attachments, whose forms carry neither value. Both columns are NOT NULL,
 # so a row has to be given something, and the next turn overwrites both with

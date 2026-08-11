@@ -1,8 +1,9 @@
 import json
 
+import pytest
 import respx
 from httpx import Response
-from openai import AsyncOpenAI
+from openai import APIStatusError, AsyncOpenAI
 from openai._streaming import SSEDecoder
 
 from app.tutor.context import ContextBundle
@@ -10,6 +11,7 @@ from app.tutor.events import (
     BoardUpdateEvent, ReasoningDeltaEvent, StatusEvent, TextDeltaEvent,
     WorkspaceEvent,
 )
+from app.tutor.retry import RETRY_LIMIT
 from app.tutor.loop import (
     MALFORMED_BOARD_ACK,
     MAX_TOOL_ROUNDS,
@@ -79,7 +81,7 @@ async def test_a_text_only_turn_streams_status_then_text():
 
 
 @respx.mock
-async def test_the_request_body_carries_the_tool_and_disables_storage():
+async def test_the_request_body_carries_every_tool_and_stores_the_response():
     route = respx.post("https://api.openai.com/v1/responses").mock(
         return_value=Response(
             200,
@@ -96,7 +98,10 @@ async def test_the_request_body_carries_the_tool_and_disables_storage():
         pass
 
     body = json.loads(route.calls[0].request.content)
-    assert body["store"] is False
+    # Retained for thirty days on purpose: it is what `previous_response_id`
+    # chains against, and the provider's dashboard is the only view of a turn
+    # that does not come out of this service's own recorder.
+    assert body["store"] is True
     assert body["stream"] is True
     assert body["reasoning"] == {"effort": "high", "summary": "auto"}
     # Every tool, on a turn wired for none of the memory ones. The set is fixed
@@ -268,14 +273,52 @@ async def test_a_tool_call_is_answered_so_the_model_writes_its_reply():
     assert result.workspace is not None, "and the first leg still set the workspace"
 
     second = json.loads(route.calls[1].request.content)
-    kinds = [item.get("type") for item in second["input"]]
-    assert "function_call" in kinds
-    assert "function_call_output" in kinds
-    output = next(i for i in second["input"] if i.get("type") == "function_call_output")
-    assert output["call_id"] == "call_1"
-    # A reasoning item from a store=False response is a bare id the API has not
-    # kept; handing it back names an item that does not exist.
-    assert "reasoning" not in kinds
+    # The second round names the first and sends nothing but the answer to the
+    # call. The prompt, the call, and the reasoning behind it are all in the
+    # response being named — echoing any of them would show the model a copy.
+    assert second["previous_response_id"] == "resp_2"
+    assert [item.get("type") for item in second["input"]] == ["function_call_output"]
+    assert second["input"][0]["call_id"] == "call_1"
+
+
+@respx.mock
+async def test_the_first_round_carries_the_prompt_and_names_no_previous_response():
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        return_value=Response(200, headers={"Content-Type": "text/event-stream"},
+                              content=sse_stream(*TEXT_ONLY_TURN))
+    )
+    client = AsyncOpenAI(api_key="sk-test")
+    bundle = ContextBundle(system="s", input=[{"role": "user", "content": "hi"}])
+
+    async for _ in run_turn(
+        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle,
+        cache_key="sesn-7",
+    ):
+        pass
+
+    body = json.loads(route.calls[0].request.content)
+    assert "previous_response_id" not in body
+    assert body["input"] == [{"role": "user", "content": "hi"}]
+    # Requests are routed to a cache by a hash of the start of the prompt; this
+    # joins that hash so every round of one session reaches the same cache.
+    assert body["prompt_cache_key"] == "sesn-7"
+
+
+@respx.mock
+async def test_without_a_cache_key_the_field_is_left_off_rather_than_nulled():
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        return_value=Response(200, headers={"Content-Type": "text/event-stream"},
+                              content=sse_stream(*TEXT_ONLY_TURN))
+    )
+    client = AsyncOpenAI(api_key="sk-test")
+    bundle = ContextBundle(system="s", input=[{"role": "user", "content": "hi"}])
+
+    async for _ in run_turn(
+        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle
+    ):
+        pass
+
+    assert "prompt_cache_key" not in json.loads(route.calls[0].request.content)
 
 
 @respx.mock
@@ -462,3 +505,79 @@ async def test_an_svg_update_board_turn_streams_the_raw_document_unchanged():
     assert svg.kind == "svg"
     assert svg.svg == SVG_UPDATE_ARGUMENTS["elements"][0]["svg"]
     assert result.text == "Here is the circuit."
+
+
+# --- opening a round --------------------------------------------------------
+
+@respx.mock
+async def test_a_server_error_opening_a_round_is_retried_silently():
+    """`max_retries=0` on the client is right — the SDK cannot tell a rate
+    limit from an exhausted account — but for a long time it left the turn
+    path with no retry at all, so one 500 ended a learner's turn. /v1/dictation
+    had already solved this; this is the same loop against the same classify.
+    """
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(500, json={"error": {"message": "boom"}}),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*TEXT_ONLY_TURN)),
+        ]
+    )
+    # max_retries=0, as `turn._client` builds it. Left at the SDK default
+    # its retries would stack on top of `_open_round`'s, and a billing
+    # 429 would be retried by the layer that cannot recognise one.
+    client = AsyncOpenAI(api_key="sk-test", max_retries=0)
+    bundle = ContextBundle(system="s", input=[{"role": "user", "content": "hi"}])
+
+    result = None
+    async for _event, running in run_turn(
+        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle
+    ):
+        result = running
+
+    assert route.call_count == 2
+    assert result.text == "Nice work.", "the learner never sees the 500"
+
+
+@respx.mock
+async def test_a_billing_429_is_not_retried():
+    """An exhausted account is final. Retrying it spends the learner's wait on
+    backoff before failing anyway — the reason the SDK's blind retry is off."""
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        return_value=Response(
+            429, json={"error": {"code": "insufficient_quota", "message": "no"}}
+        )
+    )
+    # max_retries=0, as `turn._client` builds it. Left at the SDK default
+    # its retries would stack on top of `_open_round`'s, and a billing
+    # 429 would be retried by the layer that cannot recognise one.
+    client = AsyncOpenAI(api_key="sk-test", max_retries=0)
+    bundle = ContextBundle(system="s", input=[{"role": "user", "content": "hi"}])
+
+    with pytest.raises(APIStatusError):
+        async for _ in run_turn(
+            client=client, model="gpt-5.6-luna", effort="high", bundle=bundle
+        ):
+            pass
+
+    assert route.call_count == 1
+
+
+@respx.mock
+async def test_a_retryable_failure_gives_up_after_the_limit():
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        return_value=Response(503, json={"error": {"message": "down"}})
+    )
+    # max_retries=0, as `turn._client` builds it. Left at the SDK default
+    # its retries would stack on top of `_open_round`'s, and a billing
+    # 429 would be retried by the layer that cannot recognise one.
+    client = AsyncOpenAI(api_key="sk-test", max_retries=0)
+    bundle = ContextBundle(system="s", input=[{"role": "user", "content": "hi"}])
+
+    with pytest.raises(APIStatusError):
+        async for _ in run_turn(
+            client=client, model="gpt-5.6-luna", effort="high", bundle=bundle
+        ):
+            pass
+
+    assert route.call_count == RETRY_LIMIT + 1

@@ -1,6 +1,9 @@
+import httpx
 import pytest
 
-from app.tutor.retry import classify
+from app.tutor.retry import (
+    FALLBACK_RETRY_DELAY, MAX_RETRY_DELAY, classify, retry_delay,
+)
 
 
 @pytest.mark.parametrize("code", [
@@ -70,3 +73,28 @@ def test_client_errors_are_not_retried(status):
 
 def test_success_is_not_retried():
     assert classify(200, None).retry is False
+
+
+# --- retry_delay ------------------------------------------------------------
+# Moved here from `app/api/dictation.py` when `run_turn` grew a retry of its
+# own. Both callers want the same answer, and it had no test in either place.
+
+def _response(header: str | None) -> httpx.Response:
+    headers = {} if header is None else {"Retry-After": header}
+    return httpx.Response(429, headers=headers)
+
+
+def test_a_usable_retry_after_is_honoured():
+    assert retry_delay(_response("3")) == 3.0
+    assert retry_delay(_response(" 2.5 ")) == 2.5
+
+
+def test_a_provider_asking_for_longer_than_a_learner_waits_is_capped():
+    assert retry_delay(_response("600")) == MAX_RETRY_DELAY
+
+
+@pytest.mark.parametrize("header", [None, "", "soon", "0", "-5", "NaN", "nan", "-inf"])
+def test_every_unusable_header_falls_back_rather_than_raising(header):
+    """A malformed header is the provider having a bad day, which is exactly
+    when this must keep working."""
+    assert retry_delay(_response(header)) == FALLBACK_RETRY_DELAY

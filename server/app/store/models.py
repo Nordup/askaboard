@@ -65,6 +65,17 @@ class Turn(Base):
     input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     reasoning_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: How much of `input_tokens` the provider served from its prompt cache,
+    #: and how much this turn wrote into it.
+    #:
+    #: Their own columns rather than a read of `llm_calls.usage`, because they
+    #: are the only measurement of whether the prompt's whole static-first
+    #: layout is working. A prefix that quietly stopped matching — a block that
+    #: moved, a tool set that varied, a session that idled past the cache's
+    #: lifetime — costs ten times what it should and looks, in `input_tokens`
+    #: alone, exactly like a prefix that never stopped matching.
+    cached_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cache_write_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     error: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     started_at: Mapped[datetime] = mapped_column(server_default=func.now())

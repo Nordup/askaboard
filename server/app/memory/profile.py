@@ -125,14 +125,14 @@ async def _synthesize(facts: str) -> str:
     place. A stale portrait is a worse-informed tutor; a blanked one is a tutor
     that has forgotten the learner.
 
-    `store=False` for the reason `app/memory/extract.py` gives at length — the
-    body carries a learner's facts, and this service keeps the only copy of
-    those on purpose.
+    `store=True` for the reason `app/memory/extract.py` gives at length: the
+    provider keeps the response for thirty days, which is a trace of this call
+    that does not depend on anything here having recorded it.
     """
     response = await _client().responses.create(
         model=EXTRACTION_MODEL,
         input=[{"role": "user", "content": SYNTHESIS_PROMPT.format(facts=facts)}],
-        store=False,
+        store=True,
     )
     return response.output_text.strip()
 

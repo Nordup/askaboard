@@ -25,6 +25,26 @@ from tests.fixtures.sse import (
 AUTH = {"Authorization": "Bearer test-token"}
 
 
+def _prompt_text(body) -> str:
+    """Every word of the context message in one captured provider request.
+
+    The prompt goes out as two text parts — a half that only grows, closing a
+    cache breakpoint, and a half this turn rewrites. Which side a given block
+    lands on belongs to `prompt._sections`; what these tests assert is that the
+    model was shown it.
+
+    Not the turn being answered. That is a message of its own — see
+    `context.split_live_turn` — and `_live_text` is what reads it.
+    """
+    return "".join(part["text"] for part in body["input"][1]["content"]
+                   if part["type"] == "input_text")
+
+
+def _live_text(body) -> str:
+    """The learner turn the captured request was asking the model to answer."""
+    return "".join(part["text"] for part in body["input"][-1]["content"])
+
+
 def _payload(**overrides):
     body = {
         "turn_id": str(uuid.uuid4()),
@@ -171,7 +191,7 @@ async def test_board_scene_reaches_the_provider_prompt(db_app):
             await _collect(r)
 
     body = json.loads(route.calls[0].request.content)
-    prompt_text = body["input"][1]["content"][0]["text"]
+    prompt_text = _prompt_text(body)
     assert scene in prompt_text
 
 
@@ -414,10 +434,13 @@ async def test_a_second_turns_prompt_contains_the_first_turns_reply(db_app):
 
     assert route.call_count == 2
     second_turn_body = json.loads(route.calls[1].request.content)
-    prompt_text = second_turn_body["input"][1]["content"][0]["text"]
+    prompt_text = _prompt_text(second_turn_body)
     assert "learner: first" in prompt_text
     assert "tutor: Nice work." in prompt_text
-    assert "learner: second" in prompt_text
+    # The turn being answered is not history and is not in that block. It is
+    # the request, and it goes as its own message — see `split_live_turn`.
+    assert "learner: second" not in prompt_text
+    assert _live_text(second_turn_body) == "second"
 
 
 @respx.mock
@@ -467,7 +490,7 @@ async def test_a_turn_that_sets_the_workspace_persists_plan_and_exercise(
 
     assert route.call_count == 3
     second_turn_body = json.loads(route.calls[2].request.content)
-    prompt_text = second_turn_body["input"][1]["content"][0]["text"]
+    prompt_text = _prompt_text(second_turn_body)
     assert "EXERCISE CONTEXT" in prompt_text
     assert "SESSION PLAN" in prompt_text
 
@@ -627,8 +650,12 @@ async def test_a_cancel_scope_disconnect_still_leaves_the_turn_not_running(
     So this cancels from the outside, through a real scope, which is the only
     version of the failure that exercises the shield."""
 
+    # `**_` rather than the argument list `run_turn` happens to take today: this
+    # fake stands in for the whole signature, and every keyword the endpoint
+    # learns to pass would otherwise fail it as a TypeError that reads like a
+    # cancellation bug. `request_body` did exactly that.
     async def _hanging_run_turn(*, client, model, effort, bundle, fetch_board,
-                                handle_memory):
+                                handle_memory, **_):
         result = TurnResult()
         yield StatusEvent(phase="thinking"), result
         # Parked, so the cancellation below lands mid-turn rather than racing a

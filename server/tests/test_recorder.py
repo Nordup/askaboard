@@ -6,9 +6,37 @@ from sqlalchemy import select
 from app.attachments.convert import Converted
 from app.attachments.kinds import Kind
 from app.store.blobs import LocalBlobStore
-from app.store.models import Attachment, LLMCall, Message, Session, Turn
-from app.store.recorder import ORIGINAL_CONTENT_TYPE, Recorder, redact_images
+from app.store.models import Attachment, LLMCall, Message, Session, ToolCall, Turn
+from app.store.recorder import (
+    ORIGINAL_CONTENT_TYPE, Recorder, cache_tokens, redact_images,
+)
 from tests.conftest import requires_db
+
+
+def test_cache_tokens_reads_the_nested_hit_count():
+    cached, written = cache_tokens({
+        "input_tokens": 9_800,
+        "input_tokens_details": {"cached_tokens": 9_216},
+    })
+    assert cached == 9_216
+    assert written is None
+
+
+def test_cache_tokens_finds_the_write_count_wherever_it_is_reported():
+    """The provider documents the field beside `cached_tokens` but reports it
+    at the top level in some responses. Reading one place and guessing wrong
+    is a column that is silently always NULL."""
+    nested = cache_tokens({"input_tokens_details": {"cache_write_tokens": 512}})
+    top = cache_tokens({"cache_write_tokens": 512})
+
+    assert nested[1] == 512
+    assert top[1] == 512
+
+
+def test_cache_tokens_of_a_turn_that_reported_nothing_is_two_nones():
+    """A failed turn's usage is often `{}`. Zero would be a measurement; None
+    is the truth, which is that nothing was measured."""
+    assert cache_tokens({}) == (None, None)
 
 
 def test_redact_images_replaces_the_data_url_with_a_blob_ref():
@@ -88,6 +116,11 @@ async def test_finish_turn_writes_the_turn_and_its_llm_call(db, db_factory, tmp_
         raw_events=[{"type": "response.created"}],
         usage={"input_tokens": 100, "output_tokens": 20},
         text="Nice work.",
+        tool_calls=[{
+            "name": "remember",
+            "arguments": {"text": "Prefers diagrams first."},
+            "result": "Saved. You can tell the learner you will remember it.",
+        }],
     )
     await recorder.finish_turn(
         turn_id=turn_id, session_id=session.id, next_seq=1,
@@ -112,6 +145,15 @@ async def test_finish_turn_writes_the_turn_and_its_llm_call(db, db_factory, tmp_
 
         call = (await fresh.execute(select(LLMCall))).scalar_one()
         assert call.raw_events_blob is not None
+
+        tools = (await fresh.execute(select(ToolCall))).scalars().all()
+        assert len(tools) == 1
+        assert tools[0].llm_call_id == call.id
+        assert tools[0].name == "remember"
+        assert tools[0].arguments == {"text": "Prefers diagrams first."}
+        assert tools[0].result == {
+            "output": "Saved. You can tell the learner you will remember it.",
+        }
 
 
 @requires_db

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from functools import lru_cache
 from typing import Literal
 
-import httpx
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import StreamingResponse
 from openai import APIConnectionError, APIError, APIStatusError, AsyncOpenAI
@@ -20,7 +20,7 @@ from app.store.db import db_session
 from app.store.models import Session
 from app.store.recorder import Recorder
 from app.tutor.events import ErrorEvent
-from app.tutor.retry import classify
+from app.tutor.retry import RETRY_LIMIT, classify, retry_delay
 from app.tutor.vocabulary import DICTATION_PROMPT, KEYWORDS, LANGUAGES, is_silence, sanitize
 
 router = APIRouter(prefix="/v1", dependencies=[Depends(require_device_token)])
@@ -35,11 +35,6 @@ CONTENT_TYPE = "audio/wav"
 
 # `OpenAITranscriptionClient.retryLimit` / `.fallbackRetryDelay`, ported
 # server-side now that this client proxies the request instead of the app.
-RETRY_LIMIT = 2
-FALLBACK_RETRY_DELAY = 1.0
-# A provider asking for longer than the student will wait is a failure, not
-# a pause — `OpenAITranscriptionClient.retryDelay(from:)`.
-MAX_RETRY_DELAY = 10.0
 
 
 class DictationTextDeltaEvent(BaseModel):
@@ -92,17 +87,23 @@ def _error_code(body: object) -> str | None:
     return code if isinstance(code, str) else None
 
 
-def _retry_delay(response: httpx.Response) -> float:
-    header = response.headers.get("Retry-After")
-    if header is None:
-        return FALLBACK_RETRY_DELAY
-    try:
-        seconds = float(header.strip())
-    except ValueError:
-        return FALLBACK_RETRY_DELAY
-    if seconds <= 0:
-        return FALLBACK_RETRY_DELAY
-    return min(seconds, MAX_RETRY_DELAY)
+@lru_cache
+def _client() -> AsyncOpenAI:
+    """The one provider client, built on first use and then kept.
+
+    Cached for the reason every module in `app/memory` caches its own: a client
+    built per request is a fresh `httpx.AsyncClient`, which is a fresh
+    connection pool, which is a DNS lookup and a TLS handshake in front of the
+    first token of every dictation. The pools are never closed either, so they
+    accumulate until they are collected. The offline memory passes had this
+    right and the two request paths did not.
+
+    `max_retries=0`: the SDK's own retry (default 2) retries any 429 or 5xx,
+    including a billing 429, because it cannot tell one from the other. Left on,
+    the transport would sit through backoff on an exhausted account before
+    `classify` ever saw the error. `_open_stream` is the only retry that may run.
+    """
+    return AsyncOpenAI(api_key=get_settings().openai_api_key, max_retries=0)
 
 
 async def _open_stream(client: AsyncOpenAI, audio: bytes):
@@ -133,7 +134,7 @@ async def _open_stream(client: AsyncOpenAI, audio: bytes):
             decision = classify(error.status_code, error.body)
             if not decision.retry or attempt == RETRY_LIMIT:
                 raise
-            await asyncio.sleep(_retry_delay(error.response))
+            await asyncio.sleep(retry_delay(error.response))
     raise AssertionError("unreachable: loop above always returns or raises")
 
 
@@ -196,14 +197,7 @@ async def create_dictation(
                 ))
                 return
 
-        # max_retries=0: the SDK's own default retry logic (max_retries=2)
-        # retries any 429 or 5xx, including a billing 429 — it has no way to
-        # tell a billing error from a rate limit. Left at its default, the
-        # transport would retry a spend-limit failure before classify() ever
-        # saw it, silently defeating "never retry billing" at a layer this
-        # code cannot see into. _open_stream is the only retry loop that may
-        # run.
-        client = AsyncOpenAI(api_key=settings.openai_api_key, max_retries=0)
+        client = _client()
 
         # One guard around the connection AND the whole consumption loop —
         # not just the open. openai/_streaming.py's AsyncStream.__stream__

@@ -8,7 +8,7 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 
-from openai import AsyncOpenAI
+from openai import APIStatusError, AsyncOpenAI
 
 from app.tutor.board_scene import parse_board_update
 from app.tutor.context import ContextBundle
@@ -16,6 +16,7 @@ from app.tutor.events import (
     BoardRequestEvent, ClientEvent, EventTranslator, StatusEvent, WorkspaceEvent,
 )
 from app.tutor.rendezvous import BoardRegion, BoardUnavailable
+from app.tutor.retry import RETRY_LIMIT, classify, retry_delay
 from app.tutor.tools import MEMORY_TOOLS, TOOL_DEFINITIONS
 
 logger = logging.getLogger(__name__)
@@ -184,6 +185,41 @@ MEMORY_TIMEOUT_ACK = (
     "tell them you have no memory of something — you have not looked. Carry "
     "on without it."
 )
+
+
+async def _open_round(client: AsyncOpenAI, payload: dict):
+    """Open one round's stream, retrying a retryable failure silently.
+
+    The turn client keeps `max_retries=0`, because the SDK's own retry cannot
+    tell a rate-limit 429 from a billing one and would sit through backoff on
+    an exhausted account before `classify` ever saw it. That is the right call
+    — but for a long time it left the turn path with *no* retry at all, so a
+    single refused connection or one 500 ended a learner's turn outright.
+    `/v1/dictation` had solved this already; this is the same shape, against
+    the same `classify`.
+
+    Only the open is retried. `responses.create` returns once the response
+    headers arrive, so a failure here means nothing has streamed and nothing
+    has been yielded — the round can be started again with no visible seam. A
+    failure *after* that point is a different thing and is never retried:
+    re-running a round whose text the learner has already read would write it
+    twice. This holds for a later round as much as the first, because
+    `previous_response_id` names a response the provider is holding, and
+    re-opening against it asks for the same continuation again.
+    """
+    for attempt in range(RETRY_LIMIT + 1):
+        try:
+            return await client.responses.create(**payload)
+        except APIStatusError as error:
+            decision = classify(error.status_code, error.body)
+            if not decision.retry or attempt == RETRY_LIMIT:
+                raise
+            logger.warning(
+                "retrying round after %s | attempt=%d reason=%s",
+                error.status_code, attempt + 1, decision.reason,
+            )
+            await asyncio.sleep(retry_delay(error.response))
+    raise AssertionError("unreachable: loop above always returns or raises")
 
 
 #: How `run_turn` gets a region of the board rendered.
@@ -374,6 +410,10 @@ class TurnResult:
     workspace: dict | None = None
     text: str = ""
     response_id: str | None = None
+    #: Every tool call this turn made, in order, with the answer it got back.
+    #: The recorder turns these into `tool_calls` rows; without them the only
+    #: trace of a tool use was the raw events blob, which the API never read.
+    tool_calls: list[dict] = field(default_factory=list)
 
 
 def _merge_usage(total: dict | None, addition: dict | None) -> dict | None:
@@ -405,9 +445,11 @@ async def run_turn(
     model: str,
     effort: str,
     bundle: ContextBundle,
+    request_body: dict | None = None,
     translator: EventTranslator | None = None,
     fetch_board: BoardFetcher | None = None,
     handle_memory: MemoryHandler | None = None,
+    cache_key: str | None = None,
 ) -> AsyncIterator[tuple[ClientEvent, TurnResult]]:
     """Stream one turn, yielding client events as they happen.
 
@@ -425,12 +467,32 @@ async def run_turn(
     and stream again, up to `MAX_TOOL_ROUNDS`. Every round appends to the same
     `TurnResult`, so the recording is the whole turn rather than its last leg.
 
+    **Only the first round sends the prompt.** Every round after it names the
+    previous response with `previous_response_id` and sends nothing but the
+    tool results. The provider already holds the rest — including the model's
+    own reasoning, which is what a later round needs and cannot otherwise have:
+    a function call ends a response, and the thinking that chose to make that
+    call is not something the caller is ever shown. Rebuilt from the caller's
+    side instead, each round would start from nothing and work out again what
+    it had already decided before it reached for the tool, at the output rate.
+
     The accumulating TurnResult rides along on every yield so the caller can
     persist it after the stream ends — including when the stream ends badly.
+
+    ``request_body``, when given, is the dict the caller records as this
+    turn's request envelope. The loop fills it with the *actual* first-round
+    payload — tools, reasoning, store, stream and all — so a stored call says
+    what the model was really offered, not the subset a parallel hand-built
+    dict happened to remember. The recorded body is the only place a bad turn
+    can be diagnosed from; finding there that ``tools`` was never recorded
+    would read as "the model had no tools" whether or not that was true.
     """
     translator = translator or EventTranslator()
     result = TurnResult()
-    conversation = list(bundle.input)
+    #: What the next round puts on the wire. The whole prompt to begin with,
+    #: and after that only what the provider does not already hold.
+    outbox = list(bundle.input)
+    previous_id: str | None = None
     # Time left for memory tools across the whole turn, spent down by every
     # call in every round. Wall-clock spent *waiting on memory*, not wall-clock
     # since the turn began: a turn is legitimately minutes of model streaming,
@@ -441,14 +503,42 @@ async def run_turn(
     for _ in range(MAX_TOOL_ROUNDS):
         output_items: list[dict] = []
 
-        stream = await client.responses.create(
-            model=model,
-            input=conversation,
-            reasoning={"effort": effort, "summary": "auto"},
-            tools=TOOL_DEFINITIONS,
-            store=False,
-            stream=True,
-        )
+        # `payload`, not `request`: a `BoardRequestEvent` is already called
+        # that further down this same function.
+        payload: dict = {
+            "model": model,
+            "input": outbox,
+            "reasoning": {"effort": effort, "summary": "auto"},
+            "tools": TOOL_DEFINITIONS,
+            # Retained by the provider for thirty days, and that is the point.
+            # It is what `previous_response_id` below needs to chain against,
+            # so the reasoning behind a tool call survives into the round that
+            # has to act on it. The traces are also readable in the provider's
+            # dashboard, which is the only view of a turn that does not come
+            # out of this service's own recorder.
+            "store": True,
+            "stream": True,
+        }
+        if previous_id is not None:
+            # Names the round this one continues. With it, `outbox` holds only
+            # the tool results; without it, every round would resend the whole
+            # prompt and the model would lose its own reasoning each time.
+            payload["previous_response_id"] = previous_id
+        if cache_key is not None:
+            # Requests are routed to a cache by a hash of the start of the
+            # prompt; this joins that hash so every round of every turn of one
+            # session lands where that session's prefix already is. The
+            # provider's guidance is roughly fifteen requests a minute per key,
+            # which one learner in one session cannot reach.
+            payload["prompt_cache_key"] = cache_key
+        if request_body is not None and previous_id is None:
+            # First round only: later rounds are `previous_response_id` plus
+            # tool outputs, which the envelope's `input` already accounts for.
+            # Copy rather than assign so the recorded dict is detached from the
+            # payload the SDK mutates during send.
+            request_body.clear()
+            request_body.update(payload)
+        stream = await _open_round(client, payload)
 
         # `async with` guarantees the upstream HTTP response is closed
         # deterministically — including when the caller stops iterating early
@@ -478,19 +568,18 @@ async def run_turn(
         if not calls:
             return
 
-        # Only the calls go back, not the whole `output` list. A reasoning item
-        # returned by a `store=False` response is a bare id with no content —
-        # the encrypted payload is only present when the request asked for it —
-        # and handing that id back names an item the API has not kept. The
-        # function calls are self-contained and are what the outputs attach to.
-        #
-        # Outputs stay packed immediately behind the calls, and anything a tool
-        # wants to *show* the model goes after all of them. A response carrying
-        # two `view_board` calls would otherwise interleave — call, call,
-        # output, picture, output — putting the second output behind a user
-        # message and breaking the run of outputs the API expects to find
-        # answering the run of calls.
-        conversation = conversation + calls
+        # Nothing from `output_items` is echoed back. The calls, the reasoning
+        # that led to them, and the prompt they came from are all in the
+        # response this round is about to name — sending copies would show the
+        # model each of them twice.
+        previous_id = result.response_id
+
+        # Outputs stay packed together, and anything a tool wants to *show* the
+        # model goes after all of them. A response carrying two `view_board`
+        # calls would otherwise interleave — output, picture, output — putting
+        # the second output behind a user message and breaking the run of
+        # outputs the API expects to find answering the run of calls.
+        outputs: list[dict] = []
         attachments: list[dict] = []
         for call in calls:
             if not call.get("call_id"):
@@ -503,7 +592,7 @@ async def run_turn(
             )
 
             if answer.items is not None:
-                conversation.append(answer.items[0])
+                outputs.append(answer.items[0])
                 attachments.extend(answer.items[1:])
                 continue
 
@@ -555,7 +644,7 @@ async def run_turn(
                         # let a run of timeouts cost 20s each and never reduce
                         # the budget that exists to stop exactly that.
                         memory_budget -= time.monotonic() - started
-                conversation.append({
+                outputs.append({
                     "type": "function_call_output",
                     "call_id": call_id,
                     "output": output,
@@ -577,9 +666,41 @@ async def run_turn(
                     "call_id": call_id,
                     "output": UNAVAILABLE_ACK,
                 }]
-            conversation.append(items[0])
+            outputs.append(items[0])
             attachments.extend(items[1:])
-        conversation = conversation + attachments
+
+        # Captured here, after every branch has filled `outputs`, so the
+        # recorded call carries the answer it actually got — the memory
+        # handler's reply, the board render, the ack — rather than only the
+        # call the model made. Attachments are not outputs and carry no
+        # `call_id`, which is why they are matched through the outputs list
+        # rather than the outbox.
+        answers = {
+            item["call_id"]: item.get("output")
+            for item in outputs if item.get("call_id") is not None
+        }
+        for call in calls:
+            if call.get("call_id") is None:
+                continue
+            result.tool_calls.append({
+                "name": call.get("name") or "?",
+                "arguments": _arguments(call),
+                "result": answers.get(call["call_id"]),
+            })
+
+        if not outputs:
+            # Every call was skipped, which only happens if the provider sent
+            # calls with no `call_id` at all. There is nothing to answer them
+            # with, and a round that names the previous response and posts an
+            # empty `input` asks the model to continue from nothing. Stop
+            # instead: whatever prose arrived is the answer, and the warning is
+            # what says a round was thrown away.
+            logger.warning(
+                "tool calls arrived with no call_id; ending the turn | tools=%s",
+                ",".join(call.get("name") or "?" for call in calls),
+            )
+            return
+        outbox = outputs + attachments
     else:
         # The cap bit — `return` above is the only other way out, so this runs
         # exactly when the last round still ended on tool calls. Hitting it is

@@ -21,7 +21,42 @@ xcodebuild -project MathTutor.xcodeproj \
   test
 ```
 
-Open `MathTutor.xcodeproj` in Xcode to run on a paired iPad, including devices on iPadOS 17.7.11. If that simulator name is not installed, choose any available iPadOS 17+ destination from `xcrun simctl list devices available`.
+Open `MathTutor.xcodeproj` in Xcode to run on a paired iPad, including devices on iPadOS 17.7.11. If that simulator name is not installed, choose any available iPadOS 17+ destination from `xcrun simctl list devices available`. To install on an iPad from the command line, see [Install on a paired iPad](#install-on-a-paired-ipad).
+
+### Install on a paired iPad
+
+`scripts/run-sim.sh` builds for a simulator only. An iPad needs a different destination and `devicectl` instead of `simctl`. First read the device identifier:
+
+```sh
+xcrun devicectl list devices
+```
+
+Then sync the token, build, install, and launch. The sync step is not optional: the token is compiled in, so a build without it installs and runs but cannot reach the backend — see [The device token](#the-device-token).
+
+```sh
+scripts/sync-backend-config.sh
+xcodebuild -project MathTutor.xcodeproj \
+  -scheme MathTutor \
+  -configuration Debug \
+  -destination 'platform=iOS,id=<UDID>' \
+  -derivedDataPath build/DerivedData \
+  -allowProvisioningUpdates \
+  build
+
+xcrun devicectl device install app --device <UDID> \
+  build/DerivedData/Build/Products/Debug-iphoneos/MathTutor.app
+xcrun devicectl device process launch --device <UDID> com.nordup.MathTutor
+```
+
+**Unlock the iPad first.** A locked device fails the install with `Could not get service com.apple.remote.installcoordination_proxy`, error 83. That message does not name the lock, and the build is not at fault. Developer Mode must also be on, at Settings > Privacy & Security > Developer Mode.
+
+**Attach a cable if you can.** With no cable the transport is `localNetwork`, and that link drops the device services. `devicectl device info processes` then fails with "Couldn't get the message from the device", and an install can fail once and succeed on the next attempt. Retry before you look for a cause in the build. A launch that reports success is not proof the app stayed alive, because the process listing is the part that fails — look at the iPad.
+
+**A device build has no base URL override.** `MATHTUTOR_BACKEND_URL` reaches the app only when a process launches it, so it does nothing for an icon tap. The iPad uses `BackendConfiguration.permanentBaseURL`, which is a tailnet address, and the iPad must be on that tailnet to reach it. Confirm the backend answers before you debug the app:
+
+```sh
+curl -sk -o /dev/null -w '%{http_code}\n' https://air.tail27c2bc.ts.net:8443/v1/turn   # 405 means the route is live
+```
 
 ## How the app reaches its tutor
 

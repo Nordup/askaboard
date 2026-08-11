@@ -261,20 +261,20 @@ async def test_extract_atoms_asks_for_the_strict_schema(monkeypatch):
     assert fmt["schema"] == EXTRACTION_SCHEMA
 
 
-async def test_extract_atoms_does_not_leave_the_transcript_with_the_provider(monkeypatch):
-    """`store=False`, as every turn in app/tutor/loop.py sets it.
+async def test_extract_atoms_stores_the_response_with_the_provider(monkeypatch):
+    """`store=True`, as every model call in this service sets it.
 
-    A turn posts one exchange; this posts an entire session's transcript in one
-    body. What is retained of that is a decision this service makes in its own
-    database, and a stored copy on the provider's side is one nothing here can
-    enumerate or delete when the learner asks.
+    This one posts an entire session's transcript in one body, so it is the
+    call whose thirty-day trace is worth the most when a batch of extracted
+    facts comes back looking wrong. The durable copy is still this service's
+    own database; the provider's is a debugging window.
     """
     calls = []
     monkeypatch.setattr("app.memory.extract._client", lambda: _FakeClient(calls))
 
     await extract_atoms(TRANSCRIPT, session_date=SESSION_DATE)
 
-    assert calls[0]["store"] is False
+    assert calls[0]["store"] is True
 
 
 async def test_extract_atoms_raises_rather_than_returning_empty(monkeypatch):

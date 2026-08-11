@@ -156,7 +156,7 @@ def test_render_leaves_the_history_heading_out_when_there_is_no_history():
 
 
 async def test_the_request_is_the_shape_the_other_memory_calls_use(monkeypatch):
-    """Same model and the same `store=False` as extraction and consolidation.
+    """Same model and the same `store=True` as extraction and consolidation.
 
     The facts block reaches the provider inside the prompt and not as a second
     message, so a prompt template that stopped interpolating it would fail here
@@ -175,7 +175,7 @@ async def test_the_request_is_the_shape_the_other_memory_calls_use(monkeypatch):
     assert await _synthesize("CURRENTLY TRUE\n- [goal] Wants the June exam.") == \
         "A portrait."
     assert sent[0]["model"] == EXTRACTION_MODEL
-    assert sent[0]["store"] is False
+    assert sent[0]["store"] is True
     assert "- [goal] Wants the June exam." in sent[0]["input"][0]["content"]
 
 

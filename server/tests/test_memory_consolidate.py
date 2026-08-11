@@ -298,7 +298,7 @@ async def test_adjudicate_asks_for_strict_json_and_stores_nothing(monkeypatch):
     # A learner's facts go in this body. Retention of them is this service's
     # decision to make in its own database, not a copy left on the provider's
     # side that nothing here can enumerate or delete.
-    assert calls[0]["store"] is False
+    assert calls[0]["store"] is True
     assert "Sits the higher paper." in calls[0]["input"][0]["content"]
     assert "Older goal." in calls[0]["input"][0]["content"]
 

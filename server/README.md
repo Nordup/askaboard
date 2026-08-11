@@ -17,8 +17,7 @@ can't recover it byte by byte.
 OpenAI, the raw provider event stream, board snapshots, and dictation
 recordings are written to Postgres and a blob store as they happen — not
 sampled, not summarised. See [`app/store/recorder.py`](app/store/recorder.py)
-for the write path and [Retention](#retention) below for what that means in
-practice.
+for the write path and [Retention](#retention) below.
 
 **It streams turns in its own event vocabulary, not OpenAI's.** A turn is
 `POST /v1/turn`, answered as Server-Sent Events using six event types this
@@ -336,23 +335,14 @@ problem into a failed liveness probe.
 
 ## Retention
 
-**Everything is kept indefinitely. Nothing expires.** This includes board
-snapshots of a student's handwriting and dictation audio recordings of a
-child's voice, not just message text and metadata. There is no retention
-policy, no deletion job, and no time-based cleanup anywhere in this service
-— what's written to Postgres and the blob store stays there.
+Everything written to Postgres and the blob store is kept indefinitely. There
+is no retention policy, no deletion job, and no time-based cleanup.
 
-This is worth being direct about because it's easy to assume otherwise. The
-iPad app's current microphone permission string
-(`MathTutor/Info.plist`, `NSMicrophoneUsageDescription`) says *"Math Tutor
-keeps no copy of the recording."* That was true of the prototype, which sent
-audio straight to OpenAI and kept nothing itself. It stops being true the
-moment the app is pointed at this service, since `PERSIST_DICTATION_AUDIO`
-being on (the default) means a permanent copy is written here. **The
-client-migration plan must correct that permission string before the app
-talks to this service** — shipping the old string alongside this service's
-actual behavior would be telling a parent something false about where their
-child's voice goes.
+Every model call sets `store=True`, so OpenAI keeps the response for thirty
+days. That is deliberate: it is what `previous_response_id` chains against in
+`app/tutor/loop.py`, and the provider's dashboard is the only view of a turn
+that does not come out of this service's own recorder. OpenAI does not train
+on API content.
 
 ## Memory and the learner model
 

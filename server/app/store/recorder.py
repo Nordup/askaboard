@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.attachments.convert import Converted
 from app.store.blobs import BlobRef, BlobStore
-from app.store.models import Attachment, LLMCall, Message, Session, Turn
+from app.store.models import Attachment, LLMCall, Message, Session, ToolCall, Turn
 
 #: What an uploaded file's *original* bytes are recorded as, in the blob store
 #: and in the row that names them — one constant so the two cannot drift. See
@@ -19,21 +19,75 @@ from app.store.models import Attachment, LLMCall, Message, Session, Turn
 ORIGINAL_CONTENT_TYPE = "application/octet-stream"
 
 
+def _redact_part(part: object, blob_key: str) -> object:
+    if isinstance(part, dict) and part.get("type") == "input_image":
+        return {**part, "image_url": {"blob": blob_key}}
+    return copy.deepcopy(part)
+
+
 def redact_images(body: dict, blob_key: str) -> dict:
     """Swap inline base64 image data for a blob reference.
 
     Keeps llm_calls rows small enough to read, and means a board that did not
     change between turns is stored once rather than once per turn.
+
+    Copied part by part rather than with one `deepcopy` of the whole body. The
+    images are the largest thing in a turn's request — a board overview, a
+    selected region at full detail, and up to five uploads — and deep-copying
+    the body first meant duplicating every one of those base64 strings in
+    memory purely to overwrite them on the next line. The parts that survive
+    are still copied, so the caller's body is left alone either way.
     """
-    redacted = copy.deepcopy(body)
-    for item in redacted.get("input", []):
-        content = item.get("content")
+    redacted = dict(body)
+    items = body.get("input")
+    if not isinstance(items, list):
+        return redacted
+
+    rebuilt: list[object] = []
+    for item in items:
+        content = item.get("content") if isinstance(item, dict) else None
         if not isinstance(content, list):
+            rebuilt.append(copy.deepcopy(item))
             continue
-        for part in content:
-            if isinstance(part, dict) and part.get("type") == "input_image":
-                part["image_url"] = {"blob": blob_key}
+        rebuilt.append({
+            **item,
+            "content": [_redact_part(part, blob_key) for part in content],
+        })
+    redacted["input"] = rebuilt
     return redacted
+
+
+def cache_tokens(usage: dict) -> tuple[int | None, int | None]:
+    """What the provider read from its prompt cache, and what it wrote to it.
+
+    Two lookups for `cache_write_tokens` because the provider documents the
+    field without pinning where it sits: `cached_tokens` is nested under
+    `input_tokens_details`, and the write counter is described beside it but
+    reported at the top level in some responses. Reading both places is three
+    lines; reading one and guessing wrong is a column that is silently always
+    NULL, which is the exact failure these columns exist to end.
+    """
+    details = usage.get("input_tokens_details") or {}
+    written = details.get("cache_write_tokens")
+    if written is None:
+        written = usage.get("cache_write_tokens")
+    return details.get("cached_tokens"), written
+
+
+def _apply_usage(turn: Turn, usage: dict) -> None:
+    """Copy one turn's token counts onto its row.
+
+    Shared by the success and the failure path, which have to record the same
+    five numbers: a turn that spent money and then died is exactly the turn
+    whose usage matters most. `loop._merge_usage` has already summed the nested
+    detail dicts across every round, so these are per-turn totals.
+    """
+    turn.input_tokens = usage.get("input_tokens")
+    turn.output_tokens = usage.get("output_tokens")
+    turn.reasoning_tokens = (usage.get("output_tokens_details") or {}).get(
+        "reasoning_tokens"
+    )
+    turn.cached_tokens, turn.cache_write_tokens = cache_tokens(usage)
 
 
 class Recorder:
@@ -124,9 +178,24 @@ class Recorder:
             turn_id=turn_id, result=result, request_body=request_body,
             image_blob_key=image_blob_key,
         )
+        tool_calls = getattr(result, "tool_calls", None) or []
 
         async with self._sessionmaker() as session:
             session.add(call)
+            await session.flush()
+            # The turn's tool calls, as rows, so `GET /v1/turns/{id}` and the
+            # inspection script can see them without opening the raw events
+            # blob. `run_turn` records each call with the answer it received;
+            # without this, `tool_calls` was a table only tests wrote to and
+            # every real tool use was invisible to the API.
+            for tool in tool_calls:
+                session.add(ToolCall(
+                    turn_id=turn_id,
+                    llm_call_id=call.id,
+                    name=tool.get("name") or "",
+                    arguments=tool.get("arguments"),
+                    result={"output": tool.get("result")},
+                ))
 
             turn = await session.get(Turn, turn_id)
             if turn is None:
@@ -134,11 +203,7 @@ class Recorder:
             turn.status = "ok"
             turn.ttft_ms = ttft_ms
             turn.latency_ms = latency_ms
-            turn.input_tokens = usage.get("input_tokens")
-            turn.output_tokens = usage.get("output_tokens")
-            turn.reasoning_tokens = (usage.get("output_tokens_details") or {}).get(
-                "reasoning_tokens"
-            )
+            _apply_usage(turn, usage)
             turn.finished_at = datetime.now(timezone.utc)
 
             if result.text:
@@ -222,11 +287,7 @@ class Recorder:
                 "retryable": retryable,
                 **({"diagnostics": diagnostics} if diagnostics else {}),
             }
-            turn.input_tokens = usage.get("input_tokens")
-            turn.output_tokens = usage.get("output_tokens")
-            turn.reasoning_tokens = (usage.get("output_tokens_details") or {}).get(
-                "reasoning_tokens"
-            )
+            _apply_usage(turn, usage)
             turn.finished_at = datetime.now(timezone.utc)
             await session.commit()
 

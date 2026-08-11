@@ -254,14 +254,22 @@ async def test_run_turn_hands_the_handlers_answer_back_to_the_model():
         seen.append((name, arguments))
         return "- [goal] Sits the higher tier paper in June."
 
-    async for _ in run_turn(
+    result = None
+    async for _event, running in run_turn(
         client=AsyncOpenAI(api_key="sk-test"), model="gpt-5.6-luna", effort="high",
         bundle=ContextBundle(system="s", input=[{"role": "user", "content": "hi"}]),
         handle_memory=handle,
     ):
-        pass
+        result = running
 
     assert seen == [("search_memory", {"query": "their exam date"})]
+    # The recorder turns these into `tool_calls` rows; the answer the model
+    # was fed back is the result the row must carry.
+    assert result.tool_calls == [{
+        "name": "search_memory",
+        "arguments": {"query": "their exam date"},
+        "result": "- [goal] Sits the higher tier paper in June.",
+    }]
     second = json.loads(route.calls[1].request.content)["input"]
     outputs = [item for item in second if item.get("type") == "function_call_output"]
     assert outputs == [{

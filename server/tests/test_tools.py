@@ -1,3 +1,5 @@
+import json
+
 from app.tutor.board_scene import MAX_SVG_CHARS
 from app.tutor.tools import (
     MEMORY_TOOL_DEFINITIONS,
@@ -117,3 +119,64 @@ def test_update_board_schema_bounds_are_the_logical_board_range():
     assert line["properties"]["x1"].get("maximum", 25_000) <= 25_000
     assert line["properties"]["y1"].get("minimum", -25_000) >= -25_000
     assert line["properties"]["y1"].get("maximum", 25_000) <= 25_000
+
+
+def test_the_style_fields_are_written_once_not_once_per_primitive():
+    """Twelve copies of the same seven descriptions was most of this tool.
+
+    `update_board` serialised to about 5,800 tokens — three times the system
+    prompt, and 78% of every tool definition the service sends on every round
+    of every turn. Eleven of the twelve copies were the same bytes.
+    """
+    serialised = json.dumps(UPDATE_BOARD_TOOL)
+
+    assert serialised.count("Stroke width in board points.") == 1
+    assert serialised.count("One board point as [x, y].") == 1
+    assert serialised.count("Reuse it in a later call to revise this object") == 1
+
+
+def test_every_ref_in_the_update_board_schema_resolves():
+    """A dangling pointer is a 400 on the first diagram a learner asks for.
+
+    The schema is assembled at import time from three dicts, so nothing else
+    between here and the provider ever looks at it.
+    """
+    parameters = UPDATE_BOARD_TOOL["parameters"]
+    defined = set(parameters["$defs"])
+
+    def refs(node):
+        if isinstance(node, dict):
+            if "$ref" in node:
+                yield node["$ref"]
+            for value in node.values():
+                yield from refs(value)
+        elif isinstance(node, list):
+            for value in node:
+                yield from refs(value)
+
+    used = set(refs(parameters["properties"]))
+    assert used, "the arms are supposed to reference the shared definitions"
+    for ref in used:
+        assert ref.startswith("#/$defs/"), ref
+        assert ref.removeprefix("#/$defs/") in defined, ref
+
+
+def test_every_primitive_still_demands_the_whole_style_block():
+    """Referencing a definition changes where it is written, not what the
+    model has to supply. Strict schemas have no optional fields."""
+    arms = UPDATE_BOARD_TOOL["parameters"]["properties"]["elements"]["items"]["anyOf"]
+    style = {"role", "stroke", "fill", "stroke_width", "opacity", "dash", "rotation"}
+
+    for arm in arms:
+        assert style.issubset(arm["required"])
+        assert style.issubset(arm["properties"])
+
+
+def test_the_tool_surface_stays_inside_its_budget():
+    """Every request carries all seven tools, in every round of every turn.
+
+    Constant, so it caches — but it is also read by the model on each of those
+    requests, and it is the floor under every prompt the service sends. The
+    bound is generous; it is here to catch a schema that quietly doubles.
+    """
+    assert len(json.dumps(TOOL_DEFINITIONS)) < 24_000

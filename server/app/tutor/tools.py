@@ -85,82 +85,98 @@ VIEW_BOARD_TOOL: dict = {
 }
 
 
-def _style_properties() -> dict:
-    """The style fields every semantic board element carries.
+#: The style fields every semantic board element carries, defined once.
+#:
+#: These were written out in full inside each of the twelve union arms, on the
+#: reasoning that a self-contained arm is easier for a model to satisfy. The
+#: cost of that turned out to be most of the tool surface: `update_board`
+#: serialised to about 5,800 tokens, roughly three times the system prompt and
+#: 78% of every tool definition this service sends, and eleven of the twelve
+#: copies were the same bytes.
+#:
+#: Strict schemas take `$defs` and `$ref`, including inside `anyOf`, so the
+#: duplication bought nothing that a reference does not. Each arm still lists
+#: every one of these in its own `required`, so what a model must supply is
+#: unchanged — only the description of it is now written once.
+#:
+#: Every field is required because strict function schemas have no optional
+#: fields; the device defaults absent style to the same values these describe.
+_STYLE_DEFS: dict = {
+    "role": {
+        "type": "string",
+        "enum": ["content", "hint", "correction", "emphasis"],
+        "description": "What the object is for: regular content, a hint, a correction beside learner work, or emphasis.",
+    },
+    "stroke": {
+        "type": "string",
+        "pattern": "^#[0-9A-Fa-f]{6}$",
+        "description": "Stroke colour as #RRGGBB.",
+    },
+    "fill": {
+        "type": "string",
+        "pattern": "^(transparent|#[0-9A-Fa-f]{6})$",
+        "description": "Fill colour as #RRGGBB, or transparent.",
+    },
+    "stroke_width": {
+        "type": "number",
+        "minimum": 0.5,
+        "maximum": 60,
+        "description": "Stroke width in board points.",
+    },
+    "opacity": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "description": "Element opacity from 0 to 1.",
+    },
+    "dash": {
+        "type": "array",
+        "maxItems": 8,
+        "items": {"type": "number", "minimum": 0, "maximum": 200},
+        "description": "Optional dash pattern in board points; use [] for a solid stroke.",
+    },
+    "rotation": {
+        "type": "number",
+        "description": "Clockwise rotation in degrees around the object's own centre; 0 for none.",
+    },
+}
 
-    Inline in each union arm rather than `$defs`: the strict schema is handed
-    to the provider verbatim and a self-contained arm is easier for a model to
-    satisfy. Every field is required because strict function schemas have no
-    optional fields; the device defaults absent style to the same values these
-    describe.
-    """
-    return {
-        "role": {
-            "type": "string",
-            "enum": ["content", "hint", "correction", "emphasis"],
-            "description": "What the object is for: regular content, a hint, a correction beside learner work, or emphasis.",
-        },
-        "stroke": {
-            "type": "string",
-            "pattern": "^#[0-9A-Fa-f]{6}$",
-            "description": "Stroke colour as #RRGGBB.",
-        },
-        "fill": {
-            "type": "string",
-            "pattern": "^(transparent|#[0-9A-Fa-f]{6})$",
-            "description": "Fill colour as #RRGGBB, or transparent.",
-        },
-        "stroke_width": {
-            "type": "number",
-            "minimum": 0.5,
-            "maximum": 60,
-            "description": "Stroke width in board points.",
-        },
-        "opacity": {
-            "type": "number",
-            "minimum": 0,
-            "maximum": 1,
-            "description": "Element opacity from 0 to 1.",
-        },
-        "dash": {
-            "type": "array",
-            "maxItems": 8,
-            "items": {"type": "number", "minimum": 0, "maximum": 200},
-            "description": "Optional dash pattern in board points; use [] for a solid stroke.",
-        },
-        "rotation": {
-            "type": "number",
-            "description": "Clockwise rotation in degrees around the object's own centre; 0 for none.",
-        },
-    }
+#: The two other shapes every arm repeated: the id, and one [x, y] pair.
+_BOARD_DEFS: dict = {
+    **_STYLE_DEFS,
+    "element_id": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9._:+-]{1,128}$",
+        "description": "Stable id. Reuse it in a later call to revise this object, or list it in delete_ids to remove it.",
+    },
+    "point": {
+        "type": "array",
+        "items": {"type": "number"},
+        "minItems": 2,
+        "maxItems": 2,
+        "description": "One board point as [x, y].",
+    },
+}
+
+#: `$defs` lives at the root of the tool's `parameters`, so every reference is
+#: rooted there too. Named once so a rename cannot leave a dangling pointer.
+_POINT_REF = {"$ref": "#/$defs/point"}
+_STYLE_REFS: dict = {name: {"$ref": f"#/$defs/{name}"} for name in _STYLE_DEFS}
 
 
 def _board_element(*, kind: str, fields: dict, required: list[str]) -> dict:
-    properties = {
-        "id": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9._:+-]{1,128}$",
-            "description": "Stable id. Reuse it in a later call to revise this object, or list it in delete_ids to remove it.",
-        },
+    properties: dict = {
+        "id": {"$ref": "#/$defs/element_id"},
         "kind": {"type": "string", "const": kind},
     }
     properties.update(fields)
-    properties.update(_style_properties())
+    properties.update(_STYLE_REFS)
     return {
         "type": "object",
         "additionalProperties": False,
         "properties": properties,
-        "required": ["id", "kind"] + required + list(_style_properties()),
+        "required": ["id", "kind"] + required + list(_STYLE_REFS),
     }
-
-
-_POINT_SCHEMA = {
-    "type": "array",
-    "items": {"type": "number"},
-    "minItems": 2,
-    "maxItems": 2,
-    "description": "One board point as [x, y].",
-}
 
 
 UPDATE_BOARD_TOOL: dict = {
@@ -194,6 +210,10 @@ UPDATE_BOARD_TOOL: dict = {
     "parameters": {
         "type": "object",
         "additionalProperties": False,
+        # Referenced from inside `elements.items.anyOf`, which is allowed:
+        # every arm is still a complete strict schema, it just names the parts
+        # it shares with its eleven siblings instead of restating them.
+        "$defs": _BOARD_DEFS,
         "properties": {
             "mode": {
                 "type": "string",
@@ -280,7 +300,7 @@ UPDATE_BOARD_TOOL: dict = {
                                     "type": "array",
                                     "minItems": 3,
                                     "maxItems": 512,
-                                    "items": _POINT_SCHEMA,
+                                    "items": _POINT_REF,
                                 }
                             },
                             required=["points"],
@@ -292,7 +312,7 @@ UPDATE_BOARD_TOOL: dict = {
                                     "type": "array",
                                     "minItems": 2,
                                     "maxItems": 512,
-                                    "items": _POINT_SCHEMA,
+                                    "items": _POINT_REF,
                                 }
                             },
                             required=["points"],
@@ -304,7 +324,7 @@ UPDATE_BOARD_TOOL: dict = {
                                     "type": "array",
                                     "minItems": 2,
                                     "maxItems": 512,
-                                    "items": _POINT_SCHEMA,
+                                    "items": _POINT_REF,
                                 }
                             },
                             required=["points"],
@@ -442,10 +462,13 @@ RECENT_SESSIONS_TOOL: dict = {
     "type": "function",
     "name": "recent_sessions",
     "description": (
-        "List what happened in recent sessions, most recent first, as short "
-        "summaries. Use this for continuity questions — 'what did we do last "
-        "time', 'where did we leave off' — where a search would be the wrong "
-        "shape because the learner wants the sequence, not a fact."
+        "Reach further back through the session history than the RECENT "
+        "SESSIONS block already in your context. That block holds the most "
+        "recent sessions and says how many; answer from it directly when it "
+        "covers the question, and call this only to see sessions older than "
+        "the ones listed there. Returns short summaries, most recent first — "
+        "the sequence, which is what a continuity question wants and what a "
+        "search is the wrong shape for."
     ),
     "strict": True,
     "parameters": {

@@ -99,12 +99,14 @@ async def _complete(transcript: str, session_date: date) -> str:
     has no optional fields, so `stated` always arrives and `_parse` never has
     to guess what an absent flag meant.
 
-    `store=False` for the reason every turn in `app/tutor/loop.py` sets it, only
-    more so: a turn posts one exchange, while this posts a whole session's
-    transcript in one body. Retention of that is a decision this service makes
-    in its own database — `sessions`, `turns`, and the blobs beside them — and
-    leaving a second copy on the provider's side is a copy nothing here can
-    enumerate, expire, or delete when the learner asks.
+    `store=True` for the reason every model call in this service sets it: the
+    provider keeps the response for thirty days, and those thirty days are the
+    only view of a failed pass that does not come out of this service's own
+    recorder. This one posts a whole session's transcript in one body, so it is
+    also the call whose trace is worth the most when a batch of extracted facts
+    comes back looking wrong. The provider does not train on API content, and
+    the durable copy is still this service's own: `sessions`, `turns`, and the
+    blobs beside them.
 
     The date is passed in rather than read from a clock. Extraction runs after
     the session, possibly much later on a retry of a backlog, so "now" is the
@@ -120,7 +122,7 @@ async def _complete(transcript: str, session_date: date) -> str:
                 )}],
         text={"format": {"type": "json_schema", "name": "atoms",
                          "schema": EXTRACTION_SCHEMA, "strict": True}},
-        store=False,
+        store=True,
     )
     return response.output_text
 

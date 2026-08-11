@@ -19,9 +19,10 @@ def test_uploads_are_appended_after_the_prompt_text():
         )],
     )
 
-    content = bundle.input[1]["content"]
-    assert content[0]["type"] == "input_text"
-    assert content[1]["type"] == "input_file"
+    # Two text parts, not one: the prompt is split at the cache breakpoint.
+    # What this pins is that every one of them precedes the material.
+    kinds = [part["type"] for part in bundle.input[1]["content"]]
+    assert kinds == ["input_text", "input_text", "input_file"]
 
 
 def test_no_uploads_changes_nothing():
@@ -50,7 +51,7 @@ def test_uploads_and_a_board_selection_coexist():
     )
 
     kinds = [part["type"] for part in bundle.input[1]["content"]]
-    assert kinds == ["input_text", "input_image", "input_file"]
+    assert kinds == ["input_text", "input_text", "input_image", "input_file"]
 
 
 def test_uploads_come_after_both_board_images():
@@ -71,10 +72,12 @@ def test_uploads_come_after_both_board_images():
 
     content = bundle.input[1]["content"]
     kinds = [part["type"] for part in content]
-    assert kinds == ["input_text", "input_image", "input_image", "input_file"]
+    assert kinds == [
+        "input_text", "input_text", "input_image", "input_image", "input_file",
+    ]
 
     # The lassoed region is full detail; the overview is the low-detail
     # thumbnail. Pinning both confirms the uploads loop runs after *both*
     # image appends, not just after the first one.
-    assert content[1]["detail"] == "original"
-    assert content[2]["detail"] == "low"
+    assert content[2]["detail"] == "original"
+    assert content[3]["detail"] == "low"

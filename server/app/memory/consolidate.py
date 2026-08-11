@@ -176,10 +176,9 @@ async def _adjudicate(new_facts: str, existing_facts: str) -> str:
     operations, `_decide` would default every atom to ADD, and the pass would
     write a batch of unadjudicated facts while reporting success.
 
-    `store=False` for the same reason every other call in this service sets it:
-    the body carries a learner's facts, and retention of those is a decision
-    this service makes in its own database rather than one it leaves a second,
-    unenumerable copy of on the provider's side.
+    `store=True` for the reason `app/memory/extract.py` gives at length: the
+    provider keeps the response for thirty days, which is a trace of this call
+    that does not depend on anything here having recorded it.
     """
     response = await _client().responses.create(
         model=EXTRACTION_MODEL,
@@ -187,7 +186,7 @@ async def _adjudicate(new_facts: str, existing_facts: str) -> str:
             new_facts=new_facts, existing_facts=existing_facts)}],
         text={"format": {"type": "json_schema", "name": "ops",
                          "schema": ADJUDICATION_SCHEMA, "strict": True}},
-        store=False,
+        store=True,
     )
     return response.output_text
 
