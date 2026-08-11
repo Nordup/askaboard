@@ -647,6 +647,17 @@ that list and the drawer takes nothing from the touch. On release it settles by 
 first — a fling over **400 pt/s** decides the direction outright — and by the 50% line
 otherwise. A tap on the chat strip also closes it.
 
+**A swipe must not press what it crosses.** The lock also puts every control under the finger
+out of reach the moment it commits: session rows, `btn/new-chat`, the gear, the suggestion
+chips, and the strip's own tap-to-close. A `Button` fires on touch-*up* and cancels only when
+the finger leaves its bounds — which never happens here, because a session row is 239 × 44 and
+a chip is 301 × 62, so a whole 100 pt swipe starts and ends inside one control. Without the
+lock, a left-swipe out of the drawer opened whichever session it happened to cross. The
+control is *disabled* rather than guarded inside its action, so a press already in flight is
+cancelled and the pressed state clears at the instant the axis commits. The composer is the one
+exception and stays live: disabling a focused text field resigns first responder, and a swipe
+that dismissed the keyboard mid-sentence is a worse bug than the one being fixed.
+
 ### 14.2 The full-screen sidebar (board 19)
 
 **Persistent, not modal.** The chat does not move, dim, or clip; both panes are active at the

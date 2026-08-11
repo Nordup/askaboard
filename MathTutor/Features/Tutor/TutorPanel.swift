@@ -129,7 +129,9 @@ struct TutorPanel: View {
             //
             // Simultaneous rather than exclusive so a vertical drag still scrolls whichever
             // list is under the finger. The exclusivity the note asks for is the intent lock
-            // instead, and it now suppresses *both* scrollers — see `isListScrollLocked`.
+            // instead: once it commits, both scrollers hold still and every control under the
+            // finger goes inert, so a swipe cannot press what it crosses. See
+            // `isPanCommitted`.
             .contentShape(.rect)
             .simultaneousGesture(drawerPan(travel: travel))
         }
@@ -173,8 +175,8 @@ struct TutorPanel: View {
             inset: SessionsDrawerMetrics.insetInline,
             height: height,
             // The drawer is swiped from as well as onto, so its list takes the same lock the
-            // thread does — see `isListScrollLocked`.
-            scrollDisabled: isListScrollLocked,
+            // thread does — see `isPanCommitted`.
+            scrollDisabled: isPanCommitted,
             onNewChat: {
                 closeDrawer()
                 store.startNewSession()
@@ -195,6 +197,11 @@ struct TutorPanel: View {
         // Unreachable while it is fully covered, so a stray touch on the strip's own edge
         // cannot land on a session row behind the chat.
         .allowsHitTesting(progress > 0)
+        // And unreachable *while the pan owns the touch* — see `isPanCommitted`. Without
+        // this a left-swipe across a session row opened that session on the way out: the
+        // rows are 239 × 44, so a 100pt swipe starts and ends inside the same one and
+        // `Button`'s own leave-the-bounds cancellation never fires.
+        .disabled(isPanCommitted)
         .accessibilityHidden(progress == 0)
     }
 
@@ -252,6 +259,9 @@ struct TutorPanel: View {
                 Color.clear
                     .contentShape(.rect)
                     .onTapGesture { withAnimation(DrawerReveal.settle(velocity: 0, travel: travel)) { closeDrawer() } }
+                    // A left-swipe *from* the strip is a close as well, and it must close
+                    // once rather than settle and then be tapped shut by its own release.
+                    .disabled(isPanCommitted)
                     .accessibilityLabel("Close sessions")
                     .accessibilityAddTraits(.isButton)
             }
@@ -278,21 +288,33 @@ struct TutorPanel: View {
         return uiState.isSessionsDrawerOpen ? 1 : 0
     }
 
-    /// Whether the scrollers must hold still for this touch.
+    /// Whether this touch now belongs to the pan, and nothing else may act on it.
     ///
     /// This is the other half of the intent lock, and the half that makes it exclusive rather
-    /// than merely simultaneous. `DragGesture(minimumDistance:)` and a `ScrollView` both
-    /// recognise, so without this a diagonal drag pans the drawer *and* scrolls whatever is
-    /// under the finger. The note: *"once the horizontal pan commits, vertical scroll is
-    /// suppressed until the finger lifts."*
+    /// than merely simultaneous. It suppresses two different things, for one reason.
     ///
-    /// **Both lists, not just the thread.** The gesture starts on either pane, so either pane's
-    /// scroller can be the one competing with it: the conversation on the way open, the session
-    /// rows on the way closed.
+    /// **The scrollers.** `DragGesture(minimumDistance:)` and a `ScrollView` both recognise, so
+    /// without this a diagonal drag pans the drawer *and* scrolls whatever is under the finger.
+    /// The note: *"once the horizontal pan commits, vertical scroll is suppressed until the
+    /// finger lifts."* Both lists, not just the thread — the gesture starts on either pane, so
+    /// either pane's scroller can be the one competing with it.
+    ///
+    /// **The buttons.** A `Button` fires on touch-*up*, and its own cancellation is
+    /// leave-the-bounds — which never triggers here, because a session row is 239 × 44 and a
+    /// chat suggestion chip is 301 × 62, so a whole 100pt horizontal swipe starts and ends
+    /// inside one control. A swipe across the drawer therefore opened whichever session it
+    /// happened to cross. Disabling is the mechanism rather than a guard inside each action
+    /// closure, and that is deliberate: `disabled` cancels a press that is already in flight,
+    /// so the row stops looking pressed the instant the axis commits and its action is never
+    /// reached. A guard would have to run *after* the gesture's own `onEnded` had already
+    /// cleared the flag it read, which is an ordering SwiftUI does not promise.
+    ///
+    /// It goes false again at the end of the gesture, but nothing is resurrected by that: the
+    /// press it cancelled is long gone, and the next touch starts clean.
     ///
     /// The mirror case needs no code: a touch locked to `.vertical` never writes `progress`,
     /// so the drawer takes nothing from it.
-    private var isListScrollLocked: Bool { drawerDrag?.axis == .horizontal }
+    private var isPanCommitted: Bool { drawerDrag?.axis == .horizontal }
 
     /// Board 18's pan.
     ///
@@ -421,6 +443,13 @@ struct TutorPanel: View {
     /// top fade is for. The start state still begins below them: screen 05's orb hangs 120
     /// under the controls row, a chain the design measures from the row rather than from the
     /// panel's edge. Only the thread scrolls, so only the thread has anything to pass behind.
+    ///
+    /// Everything in it goes inert while the pan owns the touch, for the reason the drawer
+    /// does: an opening right-swipe crosses the suggestion chips, and a chip is 301 × 62, so
+    /// the whole swipe fits inside one. The composer is deliberately **not** in here and
+    /// deliberately not disabled — disabling a focused `TextField` resigns first responder,
+    /// and a swipe that dismissed the keyboard mid-sentence would be a worse bug than the one
+    /// this fixes.
     @ViewBuilder
     private func fillBand(in size: CGSize) -> some View {
         if case .active = uiState.conversation {
@@ -428,15 +457,17 @@ struct TutorPanel: View {
                 scale: .panel,
                 width: contentWidth,
                 clearing: slot.band,
-                // The other half of board 18's intent lock — see `isListScrollLocked`.
-                scrollDisabled: isListScrollLocked,
+                // One half of board 18's intent lock — see `isPanCommitted`.
+                scrollDisabled: isPanCommitted,
                 actions: actions
             )
             .frame(width: contentWidth, height: size.height)
+            .disabled(isPanCommitted)
         } else {
             fill
                 .frame(width: contentWidth, height: max(0, size.height - Self.chromeTop), alignment: .top)
                 .padding(.top, Self.chromeTop)
+                .disabled(isPanCommitted)
         }
     }
 

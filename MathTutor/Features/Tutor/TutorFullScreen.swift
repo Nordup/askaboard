@@ -32,6 +32,20 @@ struct TutorFullScreen: View {
     @State private var isAttachMenuOpen = false
     @State private var pickerSource: AttachmentSource? = nil
 
+    /// This touch's committed axis — board 18's intent lock, on this surface too.
+    ///
+    /// The sidebar settles on release rather than tracking the finger, so for a while this
+    /// gesture had no `onChanged` at all and decided everything in `onEnded`. That was the bug
+    /// the drawer's rows showed: a `Button` fires on touch-*up*, so a swipe that crossed a
+    /// session row opened that session, and by the time `onEnded` ran the row had already
+    /// acted. The lock has to be taken **during** the drag for anything to be cancellable, so
+    /// the axis is committed on the first frame and read by `isPanCommitted`.
+    @State private var panAxis: DrawerReveal.Axis = .undecided
+
+    /// Whether this touch belongs to the pan — see `TutorPanel.isPanCommitted`, which carries
+    /// the whole argument for why this disables rather than guards.
+    private var isPanCommitted: Bool { panAxis == .horizontal }
+
     /// How much of the leading edge the sessions sidebar has taken — board 19's 372 while it
     /// is open, nothing while it is not.
     ///
@@ -52,10 +66,15 @@ struct TutorFullScreen: View {
             chatSurface
             sessionsSidebar
 
-            switch uiState.conversation {
-            case .start: startColumn
-            case .active: threadColumn
+            Group {
+                switch uiState.conversation {
+                case .start: startColumn
+                case .active: threadColumn
+                }
             }
+            // The chips and the thread go inert with the drawer's rows, and the composer
+            // deliberately does not — see `TutorPanel.fillBand(in:)`.
+            .disabled(isPanCommitted)
 
             // Outside the switch, for the same reason the composer is: the slot belongs to the
             // input field, not to the conversation. The fade used to live inside `threadColumn`
@@ -166,6 +185,9 @@ struct TutorFullScreen: View {
                 }
             )
             .offset(x: layout.sessionsSidebarX)
+            // Inert while the pan owns the touch, so a left-swipe out of the sidebar cannot
+            // open whichever session it crossed on the way — see `isPanCommitted`.
+            .disabled(isPanCommitted)
             .transition(.move(edge: .leading))
         }
     }
@@ -186,8 +208,18 @@ struct TutorFullScreen: View {
     /// where the drawer already was.
     private func drawerPan(travel: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: DrawerReveal.intentThreshold, coordinateSpace: .local)
+            // Nothing here moves the sidebar — the axis is all this frame is for, and taking it
+            // now is what lets `isPanCommitted` cancel a press before the finger lifts. Written
+            // once per touch, on the transition out of `.undecided`, not on every frame.
+            .onChanged { value in
+                guard panAxis == .undecided else { return }
+                panAxis = DrawerReveal.axis(for: value.translation)
+            }
             .onEnded { value in
-                guard DrawerReveal.axis(for: value.translation) == .horizontal else { return }
+                // Cleared however this ends, so a touch that scrolled the sessions list leaves
+                // nothing behind for the next one to inherit.
+                defer { panAxis = .undecided }
+                guard panAxis == .horizontal else { return }
                 let opens = DrawerReveal.settlesOpen(
                     progress: value.translation.width > 0 ? 1 : 0,
                     velocity: value.velocity.width
