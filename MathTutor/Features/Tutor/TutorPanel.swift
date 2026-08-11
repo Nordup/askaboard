@@ -65,29 +65,6 @@ struct TutorPanel: View {
     @State private var isAttachMenuOpen = false
     @State private var pickerSource: AttachmentSource? = nil
 
-    /// The reveal gesture in progress, or `nil` between gestures — board 18.
-    ///
-    /// `@State` on the panel rather than on `UIState` for the reason
-    /// `BoardScreen.previewPanelWidth` is: this is written on every touch event, and
-    /// publishing an environment object at that rate invalidates every consumer of it and
-    /// makes the pane visibly stutter. `UIState` learns the answer once, on release.
-    ///
-    /// It is also what carries the intent lock: the axis is decided on the first frame and
-    /// stored here for the rest of the touch, so a drag that starts sideways and curls
-    /// downward keeps panning, and one that starts downward never pans at all.
-    @State private var drawerDrag: DrawerDrag?
-
-    /// One touch's committed answer. See `DrawerReveal.Axis`.
-    private struct DrawerDrag {
-        let axis: DrawerReveal.Axis
-        /// Where the drawer was when this touch landed — 0 or 1. Every frame resolves from
-        /// this plus the gesture's *total* translation, never from the previous frame, which
-        /// is the anchor rule `ResizeModel` is built on for the same reason: a per-frame sum
-        /// accumulates rounding and drifts away from the finger over a long drag.
-        let anchor: CGFloat
-        var progress: CGFloat
-    }
-
     /// `337 − 2 × 18` at the design's panel width, derived rather than read off the 301 token
     /// because board 02 says hard-coding it *"is a bug waiting for the first panel-width
     /// change"*. Every child of the panel is laid out in this column.
@@ -110,30 +87,24 @@ struct TutorPanel: View {
         // surface, so shortening it is what lifts the pill clear of the keys.
         // The board behind it keeps its own height — see `keyboardInset`.
         let size = CGSize(width: layout.panelWidth, height: layout.contentHeightAboveKeyboard)
-        let travel = layout.sessionsDrawerWidth
-        let progress = drawerProgress
 
         return TutorPanelSurface(size: size) {
-            ZStack(alignment: .topLeading) {
-                drawer(travel: travel, height: size.height, progress: progress)
-                chatPane(in: size, travel: travel, progress: progress)
+            // The gesture, the travel and the veils all live in the layer, and so does the
+            // only state a finger writes. Nothing here is a function of how far the drawer is
+            // open — that is the rule the layer's own doc sets out, and it is what keeps a
+            // swipe from rebuilding the whole thread sixty times a second on an A10.
+            DrawerRevealLayer(
+                travel: layout.sessionsDrawerWidth,
+                size: size,
+                isOpen: uiState.isSessionsDrawerOpen,
+                onSettle: { opens in
+                    if opens { uiState.openSessionsDrawer() } else { uiState.closeSessionsDrawer() }
+                }
+            ) {
+                drawer(width: layout.sessionsDrawerWidth, height: size.height)
+            } chat: {
+                chatPane(in: size)
             }
-            .frame(width: size.width, height: size.height, alignment: .topLeading)
-            // **The whole panel is the grab region, both panes.** Board 18 states the opening
-            // half — *"A right-swipe anywhere in the chat area drags the drawer"* — and the
-            // closing half has to hold on the other pane or the gesture is one-way: a
-            // left-swipe that starts on a session row closes the drawer exactly as one that
-            // starts on the 74pt chat strip does. So the gesture is on the container rather
-            // than on either child, and `contentShape` makes the gaps between them grabbable
-            // too.
-            //
-            // Simultaneous rather than exclusive so a vertical drag still scrolls whichever
-            // list is under the finger. The exclusivity the note asks for is the intent lock
-            // instead: once it commits, both scrollers hold still and every control under the
-            // finger goes inert, so a swipe cannot press what it crosses. See
-            // `isPanCommitted`.
-            .contentShape(.rect)
-            .simultaneousGesture(drawerPan(travel: travel))
         }
         // Mounted on the panel rather than on the composer: a sheet presented from a view
         // inside a `ComposerSlot` is presented from a view the slot may stop drawing.
@@ -160,23 +131,14 @@ struct TutorPanel: View {
 
     // MARK: - The two panes
 
-    /// Board 17's drawer, under the chat.
-    ///
-    /// It carries the white veil while it is the pane being covered, and loses it across the
-    /// crossfade band — see `DrawerReveal.drawerVeil(at:)`. The veil is an overlay rather than
-    /// an opacity on the drawer itself because it is a wash and not a fade: the surface colour
-    /// stays exactly what the panel's is, which is the whole reason the seam between the two
-    /// panes can be a rounded corner and nothing else.
-    private func drawer(travel: CGFloat, height: CGFloat, progress: CGFloat) -> some View {
+    /// Board 17's drawer, under the chat. The layer places it, veils it and moves it.
+    private func drawer(width: CGFloat, height: CGFloat) -> some View {
         SessionsDrawer(
             sessions: store.sessions,
             currentID: store.session.id,
-            width: travel,
+            width: width,
             inset: SessionsDrawerMetrics.insetInline,
             height: height,
-            // The drawer is swiped from as well as onto, so its list takes the same lock the
-            // thread does — see `isPanCommitted`.
-            scrollDisabled: isPanCommitted,
             onNewChat: {
                 closeDrawer()
                 store.startNewSession()
@@ -187,34 +149,22 @@ struct TutorPanel: View {
                 store.openSession(id: id)
                 adoptSessionUI()
             },
-            onSettings: {
-                closeDrawer()
-                actions.openSettings()
-            }
+            onDelete: { id in
+                store.deleteSession(id: id)
+                adoptSessionUI()
+            },
+            // **The drawer stays open.** Settings is a window drawn over the whole screen and
+            // it is reached *from here*; closing the thing you opened it from means coming back
+            // to a panel that has forgotten where you were. Every other action in this drawer
+            // replaces what the chat is showing, which is why they all close it and this one
+            // does not.
+            onSettings: actions.openSettings
         )
-        .overlay(veil(DrawerReveal.drawerVeil(at: progress)))
-        .offset(x: DrawerReveal.drawerOffset(at: progress))
-        // Unreachable while it is fully covered, so a stray touch on the strip's own edge
-        // cannot land on a session row behind the chat.
-        .allowsHitTesting(progress > 0)
-        // And unreachable *while the pan owns the touch* — see `isPanCommitted`. Without
-        // this a left-swipe across a session row opened that session on the way out: the
-        // rows are 239 × 44, so a 100pt swipe starts and ends inside the same one and
-        // `Button`'s own leave-the-bounds cancellation never fires.
-        .disabled(isPanCommitted)
-        .accessibilityHidden(progress == 0)
     }
 
-    /// Screens 05 and 08, as one opaque pane that travels.
-    ///
-    /// Opaque is load-bearing: it is the panel's own `--color-surface-panel`, and without it
-    /// the drawer would read straight through the thread. Board 17 gives the two the same
-    /// fill deliberately, so the boundary is carried by the pane's leading radius alone.
-    ///
-    /// The radius is 0 while the drawer is shut, which makes the closed state the panel
-    /// exactly as it shipped: the pane fills the surface and the surface's own 28 is the only
-    /// corner on screen.
-    private func chatPane(in size: CGSize, travel: CGFloat, progress: CGFloat) -> some View {
+    /// Screens 05 and 08 — the pane the layer slides. It draws no surface and no radius of its
+    /// own; both belong to the layer, which is the only thing that knows how far it has moved.
+    private func chatPane(in size: CGSize) -> some View {
         ZStack(alignment: .top) {
             fillBand(in: size)
 
@@ -241,131 +191,11 @@ struct TutorPanel: View {
                 attachMenu(in: size)
             }
         }
-        .frame(width: size.width, height: size.height, alignment: .top)
-        .background(DS.Color.surfacePanel)
-        .clipShape(
-            UnevenRoundedRectangle(
-                topLeadingRadius: progress > 0 ? SessionsDrawerMetrics.stripCornerRadius : 0,
-                bottomLeadingRadius: progress > 0 ? SessionsDrawerMetrics.stripCornerRadius : 0
-            )
-        )
-        .overlay(veil(DrawerReveal.chatVeil(at: progress)))
-        // Board 18: *"A tap on the chat strip, or a left-swipe from it, closes the drawer."*
-        // The layer is mounted only while the drawer is showing, for the reason the switcher's
-        // dismiss layer was: a view that swallows every touch on the chat is not something to
-        // leave lying on it the rest of the time.
-        .overlay {
-            if progress > 0 {
-                Color.clear
-                    .contentShape(.rect)
-                    .onTapGesture { withAnimation(DrawerReveal.settle(velocity: 0, travel: travel)) { closeDrawer() } }
-                    // A left-swipe *from* the strip is a close as well, and it must close
-                    // once rather than settle and then be tapped shut by its own release.
-                    .disabled(isPanCommitted)
-                    .accessibilityLabel("Close sessions")
-                    .accessibilityAddTraits(.isButton)
-            }
-        }
-        .offset(x: progress * travel)
     }
 
-    /// The wash. White at an alpha, over content, with the surface colour untouched.
-    @ViewBuilder
-    private func veil(_ alpha: Double) -> some View {
-        if alpha > 0 {
-            DS.Color.surface.opacity(alpha)
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-        }
-    }
-
-    // MARK: - The reveal gesture
-
-    /// Where the drawer is right now: the live drag if one has committed to the horizontal
-    /// axis, and the settled state otherwise.
-    private var drawerProgress: CGFloat {
-        if let drag = drawerDrag, drag.axis == .horizontal { return drag.progress }
-        return uiState.isSessionsDrawerOpen ? 1 : 0
-    }
-
-    /// Whether this touch now belongs to the pan, and nothing else may act on it.
-    ///
-    /// This is the other half of the intent lock, and the half that makes it exclusive rather
-    /// than merely simultaneous. It suppresses two different things, for one reason.
-    ///
-    /// **The scrollers.** `DragGesture(minimumDistance:)` and a `ScrollView` both recognise, so
-    /// without this a diagonal drag pans the drawer *and* scrolls whatever is under the finger.
-    /// The note: *"once the horizontal pan commits, vertical scroll is suppressed until the
-    /// finger lifts."* Both lists, not just the thread — the gesture starts on either pane, so
-    /// either pane's scroller can be the one competing with it.
-    ///
-    /// **The buttons.** A `Button` fires on touch-*up*, and its own cancellation is
-    /// leave-the-bounds — which never triggers here, because a session row is 239 × 44 and a
-    /// chat suggestion chip is 301 × 62, so a whole 100pt horizontal swipe starts and ends
-    /// inside one control. A swipe across the drawer therefore opened whichever session it
-    /// happened to cross. Disabling is the mechanism rather than a guard inside each action
-    /// closure, and that is deliberate: `disabled` cancels a press that is already in flight,
-    /// so the row stops looking pressed the instant the axis commits and its action is never
-    /// reached. A guard would have to run *after* the gesture's own `onEnded` had already
-    /// cleared the flag it read, which is an ordering SwiftUI does not promise.
-    ///
-    /// It goes false again at the end of the gesture, but nothing is resurrected by that: the
-    /// press it cancelled is long gone, and the next touch starts clean.
-    ///
-    /// The mirror case needs no code: a touch locked to `.vertical` never writes `progress`,
-    /// so the drawer takes nothing from it.
-    private var isPanCommitted: Bool { drawerDrag?.axis == .horizontal }
-
-    /// Board 18's pan.
-    ///
-    /// `minimumDistance` is the intent threshold itself, so the first frame this ever sees is
-    /// already far enough to have an axis and no travel is spent undecided. It is also what
-    /// keeps every button on the panel working: a tap does not move 12 points.
-    private func drawerPan(travel: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: DrawerReveal.intentThreshold, coordinateSpace: .local)
-            .onChanged { value in
-                let axis = drawerDrag?.axis ?? DrawerReveal.axis(for: value.translation)
-                let anchor = drawerDrag?.anchor ?? (uiState.isSessionsDrawerOpen ? 1 : 0)
-                guard axis == .horizontal else {
-                    drawerDrag = DrawerDrag(axis: axis, anchor: anchor, progress: anchor)
-                    return
-                }
-                // A drag that reaches for the drawer puts the attach menu away: the card
-                // hangs over the chat and the chat is about to leave.
-                if isAttachMenuOpen { isAttachMenuOpen = false }
-                drawerDrag = DrawerDrag(
-                    axis: .horizontal,
-                    anchor: anchor,
-                    progress: DrawerReveal.progress(
-                        from: anchor,
-                        translation: value.translation.width,
-                        travel: travel
-                    )
-                )
-            }
-            .onEnded { value in
-                guard let drag = drawerDrag else { return }
-                guard drag.axis == .horizontal else {
-                    drawerDrag = nil
-                    return
-                }
-                let opens = DrawerReveal.settlesOpen(
-                    progress: drag.progress,
-                    velocity: value.velocity.width
-                )
-                // Both writes inside the one transaction. Clearing the drag outside it would
-                // hand `drawerProgress` straight back to the settled value and the pane would
-                // jump to its destination instead of springing to it.
-                withAnimation(DrawerReveal.settle(velocity: value.velocity.width, travel: travel)) {
-                    drawerDrag = nil
-                    if opens { uiState.openSessionsDrawer() } else { uiState.closeSessionsDrawer() }
-                }
-            }
-    }
-
-    /// Put the drawer away, and forget any drag that is still notionally in flight.
+    /// Put the drawer away. The layer clears its own drag on release, so there is nothing
+    /// here to forget.
     private func closeDrawer() {
-        drawerDrag = nil
         uiState.closeSessionsDrawer()
     }
 
@@ -444,12 +274,9 @@ struct TutorPanel: View {
     /// under the controls row, a chain the design measures from the row rather than from the
     /// panel's edge. Only the thread scrolls, so only the thread has anything to pass behind.
     ///
-    /// Everything in it goes inert while the pan owns the touch, for the reason the drawer
-    /// does: an opening right-swipe crosses the suggestion chips, and a chip is 301 × 62, so
-    /// the whole swipe fits inside one. The composer is deliberately **not** in here and
-    /// deliberately not disabled — disabling a focused `TextField` resigns first responder,
-    /// and a swipe that dismissed the keyboard mid-sentence would be a worse bug than the one
-    /// this fixes.
+    /// Nothing here knows about the drawer's gesture. A swipe that crosses the chips, the
+    /// thread's accessories or the composer's buttons is stopped at the pan surface, one level
+    /// up — see `View.inertToTouches(_:)`.
     @ViewBuilder
     private func fillBand(in size: CGSize) -> some View {
         if case .active = uiState.conversation {
@@ -457,17 +284,13 @@ struct TutorPanel: View {
                 scale: .panel,
                 width: contentWidth,
                 clearing: slot.band,
-                // One half of board 18's intent lock — see `isPanCommitted`.
-                scrollDisabled: isPanCommitted,
                 actions: actions
             )
             .frame(width: contentWidth, height: size.height)
-            .disabled(isPanCommitted)
         } else {
             fill
                 .frame(width: contentWidth, height: max(0, size.height - Self.chromeTop), alignment: .top)
                 .padding(.top, Self.chromeTop)
-                .disabled(isPanCommitted)
         }
     }
 
@@ -611,10 +434,6 @@ struct TutorThreadView: View {
     /// thread runs behind it on both surfaces, so this is the clearance the newest message
     /// keeps from the pill.
     var clearing: CGFloat = 0
-    /// Board 18's intent lock, from the surface that owns the drawer pan: while a touch has
-    /// committed to dragging the drawer, the conversation behind it must hold still. Defaulted
-    /// off, so the full-screen column and every gallery specimen need not pass it.
-    var scrollDisabled = false
     let actions: TutorActions
 
     private var column: CGFloat { width ?? scale.contentWidth }
@@ -625,7 +444,6 @@ struct TutorThreadView: View {
             scale: scale,
             width: column,
             clearing: clearing,
-            scrollDisabled: scrollDisabled,
             // Read straight off `BoardCropStore` rather than through a bound method
             // reference, which crashes swift-frontend during IRGen on this toolchain when
             // handed straight to a one-argument closure parameter — see `Composer`'s own

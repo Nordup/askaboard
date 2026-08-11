@@ -960,20 +960,36 @@ final class ShellComponentTests: XCTestCase {
         XCTAssertEqual(layout.columnX, 284, "screen 07, untouched")
     }
 
-    /// Board 18's intent lock: the first 12 points and 15° decide the axis.
+    /// Board 18's intent lock: the first 12 points and 38° decide the axis.
     func testTheIntentLockCommitsOnAngleAndNotOnDirection() {
-        // Under the threshold nothing is decided, however sideways it looks.
+        // Under the threshold nothing is decided, however sideways it looks — and `.undecided`
+        // means "ask again", which is why it is a case and not a `.vertical` default.
         XCTAssertEqual(DrawerReveal.axis(for: CGSize(width: 8, height: 0)), .undecided)
+        XCTAssertEqual(DrawerReveal.axis(for: CGSize(width: 0, height: 0)), .undecided)
 
         // Flat, and either way round — a left-swipe from an open drawer is the same gesture.
         XCTAssertEqual(DrawerReveal.axis(for: CGSize(width: 40, height: 0)), .horizontal)
         XCTAssertEqual(DrawerReveal.axis(for: CGSize(width: -40, height: 0)), .horizontal)
 
-        // 100 across may drift 26 down (tan 15° = 0.268) and still pan; 30 scrolls.
+        // 100 across may drift 78 down (tan 38° = 0.781) and still pan; 80 scrolls. The old
+        // cone allowed 26, which is less drift than a thumb's own pivot across a 337pt panel
+        // produces — the swipes that went missing on the iPad 6th generation were all in here.
+        XCTAssertEqual(DrawerReveal.axis(for: CGSize(width: 100, height: 78)), .horizontal)
+        XCTAssertEqual(DrawerReveal.axis(for: CGSize(width: 100, height: -78)), .horizontal)
         XCTAssertEqual(DrawerReveal.axis(for: CGSize(width: 100, height: 26)), .horizontal)
-        XCTAssertEqual(DrawerReveal.axis(for: CGSize(width: 100, height: -26)), .horizontal)
-        XCTAssertEqual(DrawerReveal.axis(for: CGSize(width: 100, height: 30)), .vertical)
+        XCTAssertEqual(DrawerReveal.axis(for: CGSize(width: 100, height: 80)), .vertical)
+
+        // And the scroller keeps everything past dominance, with 7° of margin either side of
+        // it: a drag steeper than 45° is never the drawer's, and one at 45° is not either.
+        XCTAssertEqual(DrawerReveal.axis(for: CGSize(width: 100, height: 100)), .vertical)
+        XCTAssertEqual(DrawerReveal.axis(for: CGSize(width: 100, height: 120)), .vertical)
         XCTAssertEqual(DrawerReveal.axis(for: CGSize(width: 0, height: 40)), .vertical)
+        XCTAssertEqual(DrawerReveal.axis(for: CGSize(width: 10, height: 40)), .vertical)
+        XCTAssertLessThan(
+            DrawerReveal.intentAngle,
+            45,
+            "a bias toward the scroller, not a coin toss on the diagonal"
+        )
     }
 
     /// One-to-one with the finger, anchored on where the drawer was, clamped at both ends.
@@ -994,8 +1010,11 @@ final class ShellComponentTests: XCTestCase {
         // A fling wins from anywhere, in both directions — which is what makes it reversible.
         XCTAssertTrue(DrawerReveal.settlesOpen(progress: 0.05, velocity: 1_400))
         XCTAssertFalse(DrawerReveal.settlesOpen(progress: 0.95, velocity: -1_400))
-        // And the tail of a slow drag is not a fling.
+        // And the tail of a drag being carefully placed is not a fling.
         XCTAssertFalse(DrawerReveal.settlesOpen(progress: 0.2, velocity: 120))
+        // The unhurried swipe that used to spring back: a third of the way across, still
+        // moving. 400 rejected it and read as the gesture having been missed.
+        XCTAssertTrue(DrawerReveal.settlesOpen(progress: 0.34, velocity: 350))
     }
 
     /// The three frames the design publishes, and the crossover between them.

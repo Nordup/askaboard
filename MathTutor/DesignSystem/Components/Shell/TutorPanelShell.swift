@@ -105,15 +105,34 @@ struct TutorPanelSurface<Content: View>: View {
         self.content = content()
     }
 
+    /// **The shadow is cast by the background shape, not by the panel's contents.**
+    ///
+    /// It used to be `.clipShape(…).elevation(.panel)` on the whole thing, which is the obvious
+    /// spelling and is wrong twice over. `shadow` renders its input into an offscreen buffer to
+    /// derive the silhouette — so every frame of a sessions-drawer swipe, with two panes moving
+    /// inside the panel, re-rasterised 337 × 976 points of thread and drawer *twice*, once per
+    /// shadow layer, for a silhouette that is a rounded rectangle and never changes. On an iPad
+    /// 6th generation that was the single most expensive thing in the frame.
+    ///
+    /// It is also what let the drawer's white veil paint outside the dock mid-animation: the
+    /// clip sat under that offscreen pass, and what came back out of it was composited against
+    /// the screen rather than against the clip.
+    ///
+    /// Casting from the background shape fixes both. The shape is opaque, exactly the panel's
+    /// bounds and completely static, so the shadow is identical to the point and is rasterised
+    /// once; the content is clipped over the top of it and never enters a shadow's buffer at
+    /// all. `compositingGroup` keeps the two shadow layers stacking against the shape rather
+    /// than each against the other's output, which is the ordering `Elevation` documents.
     var body: some View {
         content
             .frame(width: size.width, height: size.height, alignment: .top)
-            .background(
+            .clipShape(RoundedRectangle(cornerRadius: TutorPanelMetrics.cornerRadius))
+            .background {
                 RoundedRectangle(cornerRadius: TutorPanelMetrics.cornerRadius)
                     .fill(DS.Color.surfacePanel)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: TutorPanelMetrics.cornerRadius))
-            .elevation(.panel)
+                    .compositingGroup()
+                    .elevation(.panel)
+            }
     }
 }
 

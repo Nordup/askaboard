@@ -42,6 +42,7 @@
 		40F8CD19E0DED1C0D7B74793 /* SelectionAttachment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B4837CE04C13B9963DC4754 /* SelectionAttachment.swift */; };
 		4176586452BF327D5F482C23 /* SettingsOptions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77A01E280787A9D796C47A84 /* SettingsOptions.swift */; };
 		41E73D693A9C4EC247E50BDB /* AttachmentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B2EAA96D5D01DB1432106F3 /* AttachmentStore.swift */; };
+		4250B2E071DC9D8F67852F79 /* DrawerRevealLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18525748C4B0E4A66289FAD0 /* DrawerRevealLayer.swift */; };
 		42A90FCA38591E34983FDF54 /* BoardSceneRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED7FDD72E49425CDA75ED766 /* BoardSceneRendererTests.swift */; };
 		4A2005B81332690077C10194 /* BoardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55615CBEB6C020BA51B4B0F9 /* BoardView.swift */; };
 		4AA3F4C0BFEA2AB82805CE1B /* MathTutorUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26956CCCFC6FFCD8051E2C53 /* MathTutorUITests.swift */; };
@@ -161,6 +162,7 @@
 		0CDCEE851D84DD0BD8B2DB86 /* SettingsWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindow.swift; sourceTree = "<group>"; };
 		0DD4F32A96308B60DB93BAF4 /* SessionsDrawer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsDrawer.swift; sourceTree = "<group>"; };
 		1777E72E2503235081D9FDA7 /* BoardPeek.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardPeek.swift; sourceTree = "<group>"; };
+		18525748C4B0E4A66289FAD0 /* DrawerRevealLayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrawerRevealLayer.swift; sourceTree = "<group>"; };
 		1F5E4A4B0992C23D2307164F /* SettingsSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsSidebar.swift; sourceTree = "<group>"; };
 		24435A913AF42AFF16A13D99 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		255C26B763A5F36C69C477AD /* LayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutTests.swift; sourceTree = "<group>"; };
@@ -463,6 +465,7 @@
 				1777E72E2503235081D9FDA7 /* BoardPeek.swift */,
 				FE9DB5B1FABF8AE2042CA456 /* CollapsedDock.swift */,
 				C8A7B6F0848E8835429BD3DF /* DrawerReveal.swift */,
+				18525748C4B0E4A66289FAD0 /* DrawerRevealLayer.swift */,
 				4B072CAB2B50300D01AC544E /* MenuCardMetrics.swift */,
 				451EF516B682FFDFDE3298AC /* Orb.swift */,
 				E954D06964D3CD29E7E328C4 /* OrbHalo.swift */,
@@ -812,6 +815,7 @@
 				B1B27D7DCCAEE88572D1FBD4 /* DictationPhase.swift in Sources */,
 				51C9078C7A31F977269DD7B1 /* DictationService.swift in Sources */,
 				58850E0F2948D03BCE020AE4 /* DrawerReveal.swift in Sources */,
+				4250B2E071DC9D8F67852F79 /* DrawerRevealLayer.swift in Sources */,
 				531F009665ACB36BD4EAA770 /* E2ESeedFixture.swift in Sources */,
 				2DC01E6E2E4264C7D9EFC51C /* Elevation.swift in Sources */,
 				1A7DC8AA3FFB0BE378905526 /* GreetingBlock.swift in Sources */,

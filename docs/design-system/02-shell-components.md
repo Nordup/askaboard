@@ -605,9 +605,10 @@ and the content column is derived from the frame the way the panel's 301 is deri
 | `Session list` | `margin-top 10`, `gap 2`. |
 | `row/session` | `44` tall, `--radius-sm` 10, `padding-inline 12`, `gap 10`. Glyph `ui/session` `18 × 18`. Title 17 / 22, weight 500. |
 | `row/session · current` | Same box, filled `--color-brand-tint` `#E6E3F9`; glyph and title both `--color-brand`, title weight 600. The drawer names the open session by marking it, since the title that used to say so in words is gone. |
+| `row/session` · long press | The system context menu, one destructive **Delete**. Not a swipe action or an edit mode — those are `List` affordances and this is not a `List` — and a destructive action that asks for no confirmation should at least take a deliberate gesture to reach. Deleting the open session falls back to the most recent one left, or to a fresh empty session when none are. |
 | `Drawer bottom bar` | `44` tall, on the content column, `justify-content: space-between`, one inset up from the floor (docked `top 914`, full screen `top 960`). |
 | `btn/new-chat` | Bottom **left**. `44` tall pill, `--color-brand` fill, `--radius-full`, `gap 8`, `padding-left 16`, `padding-right 20`. Glyph `ui/plus` `20 × 20` white, label "New chat" 17 / 22 weight 600 white. Shadow `#6051DC33 0 4 12` + `#14143214 0 1 2`. |
-| `btn/settings` | Bottom **right**. `44 × 44` `--color-surface` circle, glyph `control/settings` at 24, elevation 03 · Control. Already at the tap-target minimum, so unlike the panel's 32pt controls it needs no expansion. |
+| `btn/settings` | Bottom **right**. `44 × 44` `--color-surface` circle, glyph `control/settings` at 24, elevation 03 · Control. Already at the tap-target minimum, so unlike the panel's 32pt controls it needs no expansion. **It leaves the drawer open**: Settings is a window over the whole screen and it is reached from here, so closing the thing you opened it from returns you somewhere you were not. Every other action in this drawer replaces what the chat is showing, which is why they all close it and this one does not. |
 
 > **The one non-neutral shadow in the product.** §0 of `01-foundations.md` states that every
 > shadow is `--color-shadow` at one of five alphas. `btn/new-chat`'s outer layer is the brand
@@ -647,16 +648,19 @@ that list and the drawer takes nothing from the touch. On release it settles by 
 first — a fling over **400 pt/s** decides the direction outright — and by the 50% line
 otherwise. A tap on the chat strip also closes it.
 
-**A swipe must not press what it crosses.** The lock also puts every control under the finger
-out of reach the moment it commits: session rows, `btn/new-chat`, the gear, the suggestion
-chips, and the strip's own tap-to-close. A `Button` fires on touch-*up* and cancels only when
-the finger leaves its bounds — which never happens here, because a session row is 239 × 44 and
-a chip is 301 × 62, so a whole 100 pt swipe starts and ends inside one control. Without the
-lock, a left-swipe out of the drawer opened whichever session it happened to cross. The
-control is *disabled* rather than guarded inside its action, so a press already in flight is
-cancelled and the pressed state clears at the instant the axis commits. The composer is the one
-exception and stays live: disabling a focused text field resigns first responder, and a swipe
-that dismissed the keyboard mid-sentence is a worse bug than the one being fixed.
+**A swipe must not press what it crosses.** The lock withdraws the entire pan surface from hit
+testing the moment it commits — one modifier on the container, both panes, every control in
+them, present and future. A `Button` fires on touch-*up* and cancels only when the finger
+leaves its bounds, which never happens here: a session row is 239 × 44 and a chip is 301 × 62,
+so a whole 100 pt swipe starts and ends inside one control. Without the lock, a left-swipe out
+of the drawer opened whichever session it crossed.
+
+It is `allowsHitTesting`, not `disabled`, and the difference is load-bearing rather than
+stylistic: `disabled` writes `isEnabled` into the environment, and a focused text field resigns
+first responder when it is disabled — so the container-level version of that would drop the
+keyboard every time a learner swiped mid-sentence. Hit testing changes neither focus nor
+enablement; the press in flight ends, the keyboard stays up, and the composer needs no
+exception. There is no list of exempt controls to keep in step.
 
 ### 14.2 The full-screen sidebar (board 19)
 

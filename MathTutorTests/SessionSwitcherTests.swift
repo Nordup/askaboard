@@ -523,6 +523,96 @@ final class SessionSwitcherTests: XCTestCase {
         XCTAssertEqual(store.session.title, "New session")
     }
 
+    // MARK: - Delete (board 17's long press)
+
+    func testDeletingASessionYouAreNotInLeavesTheOpenOneAlone() {
+        let store = makeStore()
+        store.send("vectors")
+        let doomed = store.session.id
+        store.startNewSession()
+        store.send("quadratics")
+        let open = store.session.id
+
+        store.deleteSession(id: doomed)
+
+        let persistence = SessionPersistence(directoryURL: directory)
+        XCTAssertNil(persistence.load(id: doomed), "gone from storage, not just from the list")
+        XCTAssertEqual(store.session.id, open, "nothing on screen changes")
+        XCTAssertTrue(store.session.messages.contains { $0.text == "quadratics" })
+        XCTAssertFalse(store.sessions.contains { $0.id == doomed }, "and gone from the index")
+    }
+
+    /// The interesting case: the app has no state in which no session is open, so deleting the
+    /// one you are in has to answer "and then what".
+    func testDeletingTheOpenSessionFallsBackToTheMostRecentThatIsLeft() {
+        let store = makeStore()
+        store.send("vectors")
+        let older = store.session.id
+        store.startNewSession()
+        store.send("quadratics")
+        let newer = store.session.id
+        store.startNewSession()
+        store.send("trigonometry")
+        let open = store.session.id
+
+        store.deleteSession(id: open)
+
+        let persistence = SessionPersistence(directoryURL: directory)
+        XCTAssertNil(persistence.load(id: open))
+        XCTAssertEqual(store.session.id, newer, "the row that was under the one deleted")
+        XCTAssertTrue(store.session.messages.contains { $0.text == "quadratics" })
+        XCTAssertNotNil(persistence.load(id: older), "and the rest are untouched")
+    }
+
+    func testDeletingTheLastSessionLeavesAFreshOne() {
+        let store = makeStore()
+        store.send("vectors")
+        let only = store.session.id
+
+        store.deleteSession(id: only)
+
+        XCTAssertNotEqual(store.session.id, only)
+        XCTAssertEqual(store.session.title, "New session")
+        XCTAssertNil(SessionPersistence(directoryURL: directory).load(id: only))
+        XCTAssertFalse(
+            store.sessions.contains { $0.id == only },
+            "the deleted session must not come back as the index entry of the fresh one"
+        )
+    }
+
+    /// The open session is deliberately not saved on its way out — a write that landed after
+    /// the delete would put the file back. See `TutorStore.deleteSession(id:)`.
+    func testDeletingTheOpenSessionDoesNotWriteItOnTheWayOut() {
+        let store = makeStore()
+        store.send("vectors")
+        let open = store.session.id
+        store.startNewSession()
+        store.send("quadratics")
+        store.openSession(id: open)
+        store.send("one more thing, unsaved")
+
+        store.deleteSession(id: open)
+
+        XCTAssertNil(
+            SessionPersistence(directoryURL: directory).load(id: open),
+            "no resurrection by a save racing the delete"
+        )
+    }
+
+    /// A row naming a session that is not there is an index that has drifted from the
+    /// directory, which is the same drift `openSession(id:)` already rebuilds rather than
+    /// reports.
+    func testDeletingASessionThatIsNotThereChangesNothingOnScreen() {
+        let store = makeStore()
+        store.send("vectors")
+        let open = store.session.id
+
+        store.deleteSession(id: UUID())
+
+        XCTAssertEqual(store.session.id, open)
+        XCTAssertTrue(store.session.messages.contains { $0.text == "vectors" })
+    }
+
     // MARK: - How old a session reads
 
     func testRelativeAgeSpeaksInTheRowsOwnWords() {

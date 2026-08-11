@@ -191,15 +191,12 @@ struct SessionsDrawer: View {
     let inset: CGFloat
     /// The band the drawer occupies — the panel's content height, or the screen's.
     let height: CGFloat
-    /// Board 18's intent lock, from the surface that owns the pan.
-    ///
-    /// The drawer is as swipable as the chat is — a left-swipe that *starts on a session row*
-    /// closes it — so the list has the same problem the thread does: a touch that has committed
-    /// to the horizontal pan must not also scroll the rows it is dragging. Defaulted off, so a
-    /// preview or a specimen needs no argument for it.
-    var scrollDisabled = false
     let onNewChat: () -> Void
     let onOpen: (UUID) -> Void
+    /// The destructive action on a row's context menu. It is the caller's because deleting the
+    /// *open* session has to decide what to open next, and that is the store's question rather
+    /// than this view's — see `TutorStore.deleteSession(id:)`.
+    let onDelete: (UUID) -> Void
     let onSettings: () -> Void
 
     private var contentWidth: CGFloat {
@@ -276,9 +273,11 @@ struct SessionsDrawer: View {
         }
         return ViewThatFits(in: .vertical) {
             rows
+            // No `scrollDisabled` of its own: the intent lock suspends this scroller from
+            // `DrawerRevealLayer` through the environment, and an explicit write here would
+            // override it. See `MessageThread`, which had the same flag taken off it.
             ScrollView(.vertical, showsIndicators: false) { rows }
                 .scrollBounceBehavior(.basedOnSize)
-                .scrollDisabled(scrollDisabled)
         }
     }
 
@@ -311,9 +310,23 @@ struct SessionsDrawer: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
+        // A long press deletes. The system's own menu rather than a swipe action or an edit
+        // mode: those are `List` affordances and this is not a `List`, and a destructive action
+        // that needs no confirmation should at least need a deliberate gesture to reach.
+        //
+        // It coexists with the two gestures already on this row for free. A tap is over long
+        // before the menu's own delay, and a committed pan withdraws the whole pane from hit
+        // testing — see `View.inertToTouches(_:)` — which ends the long press with it. A swipe
+        // therefore cannot open this menu any more than it can open the session.
+        .contextMenu {
+            Button(role: .destructive) { onDelete(summary.id) } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        }
         .accessibilityLabel(summary.title)
         .accessibilityValue(isCurrent ? "Open" : SessionsDrawer.relativeAge(of: summary.lastSavedAt))
         .accessibilityAddTraits(isCurrent ? [.isSelected] : [])
+        .accessibilityAction(named: "Delete") { onDelete(summary.id) }
     }
 
     private var bottomBar: some View {
@@ -412,6 +425,7 @@ struct SessionsDrawer: View {
         height: 976,
         onNewChat: {},
         onOpen: { _ in },
+        onDelete: { _ in },
         onSettings: {}
     )
     .background(DS.Color.surfacePanel)

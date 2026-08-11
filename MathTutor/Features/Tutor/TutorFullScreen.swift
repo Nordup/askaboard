@@ -42,8 +42,8 @@ struct TutorFullScreen: View {
     /// the axis is committed on the first frame and read by `isPanCommitted`.
     @State private var panAxis: DrawerReveal.Axis = .undecided
 
-    /// Whether this touch belongs to the pan — see `TutorPanel.isPanCommitted`, which carries
-    /// the whole argument for why this disables rather than guards.
+    /// Whether this touch belongs to the pan — see `DrawerRevealLayer.isPanCommitted`, which
+    /// carries the whole argument for why the suppression is structural.
     private var isPanCommitted: Bool { panAxis == .horizontal }
 
     /// How much of the leading edge the sessions sidebar has taken — board 19's 372 while it
@@ -66,15 +66,10 @@ struct TutorFullScreen: View {
             chatSurface
             sessionsSidebar
 
-            Group {
-                switch uiState.conversation {
-                case .start: startColumn
-                case .active: threadColumn
-                }
+            switch uiState.conversation {
+            case .start: startColumn
+            case .active: threadColumn
             }
-            // The chips and the thread go inert with the drawer's rows, and the composer
-            // deliberately does not — see `TutorPanel.fillBand(in:)`.
-            .disabled(isPanCommitted)
 
             // Outside the switch, for the same reason the composer is: the slot belongs to the
             // input field, not to the conversation. The fade used to live inside `threadColumn`
@@ -91,6 +86,10 @@ struct TutorFullScreen: View {
                 attachMenu
             }
         }
+        // Everything on this screen goes inert the moment the axis commits — one modifier at
+        // the container, the sidebar and the reading column both, the same way the docked
+        // panel does it. See `View.inertToTouches(_:)`.
+        .inertToTouches(isPanCommitted)
         // The same right-swipe the docked panel takes — board 19: *"The same right-swipe still
         // opens the sidebar, and a left-swipe closes it."* Simultaneous, and locked to an axis
         // exactly as the panel's is.
@@ -179,15 +178,15 @@ struct TutorFullScreen: View {
                     store.openSession(id: id)
                     adoptSessionUI()
                 },
-                onSettings: {
-                    closeSidebar()
-                    actions.openSettings()
-                }
+                onDelete: { id in
+                    store.deleteSession(id: id)
+                    adoptSessionUI()
+                },
+                // **The sidebar stays open**, unlike every other action here — see
+                // `TutorPanel.drawer(width:height:)` for the argument.
+                onSettings: actions.openSettings
             )
             .offset(x: layout.sessionsSidebarX)
-            // Inert while the pan owns the touch, so a left-swipe out of the sidebar cannot
-            // open whichever session it crossed on the way — see `isPanCommitted`.
-            .disabled(isPanCommitted)
             .transition(.move(edge: .leading))
         }
     }

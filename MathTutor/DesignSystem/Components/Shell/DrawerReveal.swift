@@ -27,12 +27,30 @@ enum DrawerReveal {
     /// the note gives as the same 10–15 in points on the artboard. 12 is the middle of it, and
     /// it is also `DragGesture`'s `minimumDistance`, so the first frame the view ever sees is
     /// already past the threshold and no travel is spent undecided.
+    ///
+    /// **Kept at 12, and the widened cone is why.** The distance was the other suspect for the
+    /// rejected swipes, and it is the wrong one: a slow swipe crosses 12 points just as surely
+    /// as a fast one, only later. What 12 buys is a decision vector long enough to have a
+    /// meaningful angle — at 4 points the ratio is mostly touch-digitiser noise, and widening
+    /// the cone on a noisy vector would start stealing the scroller's drags instead. So the
+    /// angle moved and the distance did not.
     static let intentThreshold: CGFloat = 12
 
-    /// How far off horizontal a start may be and still commit to the drawer. The note's
-    /// *"within 10–15°"*, taken at its upper bound: below 15° a deliberate sideways swipe on a
-    /// tall list is regularly rejected, because a finger crossing a 337pt panel drifts.
-    static let intentAngle: CGFloat = 15
+    /// How far off horizontal a start may be and still commit to the drawer.
+    ///
+    /// **38°, not the note's 10–15.** The note states the cone as the angle a *deliberate*
+    /// sideways swipe stays inside, and on a 13-inch desk that is true. On an iPad 6th
+    /// generation held in two hands it is not: a thumb swiping across a 337pt panel travels on
+    /// an arc, and at 15° a 100pt swipe was rejected for 27 points of drift — which is less
+    /// drift than the thumb's own pivot produces. The reports were all of the same thing, a
+    /// swipe that was plainly a swipe doing nothing.
+    ///
+    /// 38° is dominant-axis (45°) with a modest bias kept for the scroller: a drag has to be
+    /// more horizontal than vertical *and then some* before the drawer takes it, so a
+    /// mostly-vertical drag still scrolls and the list never feels stolen. The seven degrees
+    /// between 38 and 45 are the whole of that bias, and they are what this number is for —
+    /// widening to 45 would make every diagonal a coin toss between two behaviours.
+    static let intentAngle: CGFloat = 38
 
     /// Which way a touch went, decided once and never revisited for that touch.
     ///
@@ -60,7 +78,8 @@ enum DrawerReveal {
     /// That case does not arise from `DragGesture(minimumDistance: intentThreshold)`, which is
     /// how the view drives it; it exists so a caller that drives this from raw touches — a
     /// `UIPanGestureRecognizer`, a test — gets the same answer and not a coin toss on the
-    /// first pixel.
+    /// first pixel. A caller **must not store** an `.undecided` answer as this touch's axis;
+    /// it means "ask me again", and `DrawerRevealLayer` re-asks until it is told something.
     static func axis(for translation: CGSize) -> Axis {
         let dx = abs(translation.width)
         let dy = abs(translation.height)
@@ -83,11 +102,16 @@ enum DrawerReveal {
 
     /// How fast the finger has to be going for the release to override the halfway line.
     ///
-    /// Points per second, and deliberately well above a lazy drag: a flick across the 263pt
-    /// travel takes about 200ms, which is 1300 pt/s, while the tail of an ordinary slow drag
-    /// dies below 100. 400 sits in the empty band between them, so neither a deliberate flick
-    /// nor a careful placement is ever read as the other.
-    static let flingVelocity: CGFloat = 400
+    /// Points per second, and deliberately above a lazy drag: a flick across the 263pt travel
+    /// takes about 200ms, which is 1300 pt/s, while the tail of a drag being carefully placed
+    /// dies below 100. 300 sits in the empty band between them, so neither a deliberate flick
+    /// nor a careful placement is read as the other.
+    ///
+    /// **Lowered from 400** with the cone, and for the same complaint. An unhurried swipe that
+    /// stopped short of halfway — 90 points of the 263, still moving at 350 — sprang back
+    /// closed, which reads as the gesture having been missed rather than judged. 300 lets that
+    /// one through and still holds the line against a drag that is genuinely being placed.
+    static let flingVelocity: CGFloat = 300
 
     /// Whether the drawer settles open. The note's release rule, in one expression.
     ///

@@ -571,6 +571,54 @@ final class TutorStore: ObservableObject {
         persist()
     }
 
+    /// A long press on a session row, and its destructive action.
+    ///
+    /// **Two cases, and only one of them is interesting.** Deleting a session the
+    /// learner is not in is a file and an index entry, and nothing on screen
+    /// changes except the row leaving. Deleting the one they *are* in has to
+    /// answer "and then what", because the app has no state in which no session
+    /// is open.
+    ///
+    /// It falls back to the most recently saved session that is left, which is
+    /// the row that was directly under the deleted one — deleting from a list
+    /// should leave you looking at that list's next item, not somewhere new.
+    /// With nothing left it opens a fresh empty session, the same one a first
+    /// launch gets, so the app is never in a state the rest of it has to guard
+    /// against.
+    ///
+    /// The open session is **not** saved on its way out, unlike every other
+    /// switch: `closeCurrentSession(saving: true)` would write the file this
+    /// call is about to delete, and on a slow device the write can land after
+    /// the delete and resurrect it. `resetSession` passes `false` for the same
+    /// reason.
+    ///
+    /// Deleting a session that is not there is not an error to report — the
+    /// index has drifted from the directory, so it is rebuilt and the list
+    /// redrawn, exactly as `openSession(id:)` handles the same drift.
+    func deleteSession(id: UUID) {
+        guard id == session.id else {
+            persistence.delete(id: id)
+            refreshSessions()
+            return
+        }
+
+        closeCurrentSession(saving: false)
+        persistence.delete(id: id)
+
+        // Read *after* the delete, so the session being deleted cannot be the
+        // one picked as its own replacement.
+        refreshSessions()
+        guard let next = sessions.first(where: { $0.id != id }),
+              let restored = persistence.load(id: next.id)
+        else {
+            adopt(freshSession(), isStored: false)
+            persist()
+            return
+        }
+        persistence.markOpened(restored.id)
+        adopt(restored, isStored: true)
+    }
+
     /// A new session with the tutor's opening line already in it.
     private func freshSession() -> LearningSession {
         var fresh = LearningSession.empty
