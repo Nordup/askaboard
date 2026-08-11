@@ -677,19 +677,36 @@ that list and the drawer takes nothing from the touch. On release it settles by 
 first — a fling over **400 pt/s** decides the direction outright — and by the 50% line
 otherwise. A tap on the chat strip also closes it.
 
-**A swipe must not press what it crosses.** The lock withdraws the entire pan surface from hit
-testing the moment it commits — one modifier on the container, both panes, every control in
-them, present and future. A `Button` fires on touch-*up* and cancels only when the finger
-leaves its bounds, which never happens here: a session row is 239 × 44 and a chip is 301 × 62,
-so a whole 100 pt swipe starts and ends inside one control. Without the lock, a left-swipe out
-of the drawer opened whichever session it crossed.
+**A swipe must not press what it crosses.** A `Button` fires on touch-*up* and cancels only
+when the finger leaves its bounds, which never happens here: a session row is 239 × 44 and a
+chip is 301 × 62, so a whole 100 pt swipe starts and ends inside one control. Without a guard,
+a left-swipe out of the drawer opened whichever session it crossed.
 
-It is `allowsHitTesting`, not `disabled`, and the difference is load-bearing rather than
-stylistic: `disabled` writes `isEnabled` into the environment, and a focused text field resigns
-first responder when it is disabled — so the container-level version of that would drop the
-keyboard every time a learner swiped mid-sentence. Hit testing changes neither focus nor
-enablement; the press in flight ends, the keyboard stays up, and the composer needs no
-exception. There is no list of exempt controls to keep in step.
+It takes **two mechanisms**, because they answer different halves and the first one alone was
+shipped and found wanting on device:
+
+- A press that would *begin* during a pan — `allowsHitTesting(false)` on the whole pan surface.
+  Hit testing is consulted when a touch lands, so a finger already travelling cannot pick up a
+  new control on its way past. Safe over everything including the composer, because it changes
+  neither focus nor enablement.
+- A press that had *already begun* when the axis committed — `disabled`. On iPadOS 17 hit
+  testing does not reach this case at all: the target was resolved at touch-down and the
+  in-flight press keeps it, so the button still fires on touch-up. `disabled` reaches it
+  because it does not filter events, it removes the recogniser — `isEnabled` going false tears
+  the control's gesture out of the view, and a gesture that no longer exists cannot complete.
+
+The second is attached to **subtrees that contain no text field**, and that is the whole of the
+keyboard exception: `disabled` resigns a focused field's first responder, so a swipe
+mid-sentence would drop the keyboard. The composer is a sibling of every disabled group, never
+a descendant — the exception is expressed by where the modifier hangs rather than by a list of
+controls to keep in step.
+
+**The session rows need neither.** They are a plain view with a `LongPressGesture` and a
+`DragGesture`, not a `Button`, so the row proves for itself that a swipe was not a tap: the
+drag's own translation has to be within 10 pt for the tap to count. Evidence the row already
+holds cannot be raced by anything that failed to switch it off in time. The hold is checked
+first — `LongPressGesture` ends half a second in with the finger still down, so a lift after a
+hold cannot also open the session.
 
 ### 14.2 The full-screen sidebar (board 19)
 

@@ -160,13 +160,24 @@ struct TutorPanel: View {
             // does not.
             onSettings: actions.openSettings
         )
+        // One modifier, whole subtree, and safe to disable outright: there is no text field in
+        // the drawer, so the keyboard exception does not reach here. See
+        // `View.inertDuringDrawerPan()`.
+        .inertDuringDrawerPan()
     }
 
     /// Screens 05 and 08 — the pane the layer slides. It draws no surface and no radius of its
     /// own; both belong to the layer, which is the only thing that knows how far it has moved.
     private func chatPane(in size: CGSize) -> some View {
+        // **The composer is a sibling of both disabled groups, never a descendant.** That is
+        // the whole of the keyboard exception, and stating it as structure rather than as a
+        // list is the point: `inertDuringDrawerPan` disables what it is attached to, and
+        // disabling a focused `TextField` resigns first responder — so a swipe mid-sentence
+        // would drop the keyboard. Everything a swipe can press is in one of the two groups;
+        // the pill is between them, in paint order, and stays live.
         ZStack(alignment: .top) {
             fillBand(in: size)
+                .inertDuringDrawerPan()
 
             // Fade and pill together, bottom-anchored: the slot owns the 18pt inset under
             // the composer, so screen 08's pill bottom lands on the panel floor less that
@@ -174,22 +185,25 @@ struct TutorPanel: View {
             ComposerSlot(metrics: slot) { composer }
                 .frame(maxHeight: .infinity, alignment: .bottom)
 
-            ScrollFade(width: size.width, metrics: .top(for: .panel))
+            Group {
+                ScrollFade(width: size.width, metrics: .top(for: .panel))
 
-            // Board 17's header, after: the session title and the gear are gone and only the
-            // layout pair is left, at the trailing end where it already sat. The drawer owns
-            // both of the controls that left — see `note/17 — header after`.
-            PanelControls(
-                onDock: { closeMenus(); uiState.collapseTutor() },
-                onFullScreen: { closeMenus(); uiState.expandTutorToFullScreen() },
-                alignment: .trailing
-            )
-            .frame(width: contentWidth, height: TutorPanelMetrics.controlsHeight, alignment: .trailing)
-            .padding(.top, TutorPanelMetrics.inset)
+                // Board 17's header, after: the session title and the gear are gone and only
+                // the layout pair is left, at the trailing end where it already sat. The
+                // drawer owns both of the controls that left — see `note/17 — header after`.
+                PanelControls(
+                    onDock: { closeMenus(); uiState.collapseTutor() },
+                    onFullScreen: { closeMenus(); uiState.expandTutorToFullScreen() },
+                    alignment: .trailing
+                )
+                .frame(width: contentWidth, height: TutorPanelMetrics.controlsHeight, alignment: .trailing)
+                .padding(.top, TutorPanelMetrics.inset)
 
-            if isAttachMenuOpen {
-                attachMenu(in: size)
+                if isAttachMenuOpen {
+                    attachMenu(in: size)
+                }
             }
+            .inertDuringDrawerPan()
         }
     }
 
@@ -274,9 +288,8 @@ struct TutorPanel: View {
     /// under the controls row, a chain the design measures from the row rather than from the
     /// panel's edge. Only the thread scrolls, so only the thread has anything to pass behind.
     ///
-    /// Nothing here knows about the drawer's gesture. A swipe that crosses the chips, the
-    /// thread's accessories or the composer's buttons is stopped at the pan surface, one level
-    /// up — see `View.inertToTouches(_:)`.
+    /// Nothing here knows about the drawer's gesture; the pane it sits in disables this whole
+    /// band while a pan owns the touch — see `chatPane(in:)`.
     @ViewBuilder
     private func fillBand(in size: CGSize) -> some View {
         if case .active = uiState.conversation {

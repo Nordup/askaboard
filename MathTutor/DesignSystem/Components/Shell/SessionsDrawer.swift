@@ -141,6 +141,15 @@ enum SessionsDrawerMetrics {
     static let heldRowScale: CGFloat = 1.02
     static let heldRowRise: Double = 0.18
 
+    /// How far a finger may travel and still have been a tap on a row.
+    ///
+    /// The row proves for itself that a swipe was not a tap, rather than trusting anything
+    /// outside it to have switched it off in time — see `SessionsDrawer.rowGestures(_:)`. 10 is
+    /// `LongPressGesture`'s own `maximumDistance`, so the two halves of the row's gesture agree
+    /// about what counts as having moved, and it sits just under the drawer pan's 12: a touch
+    /// that goes on to become a pan has already failed this by the time the pan commits.
+    static let tapSlop: CGFloat = 10
+
     /// How long a press on a row has to be held before it offers to delete it.
     ///
     /// `UIContextMenuInteraction`'s own delay, matched deliberately: this replaced a
@@ -270,6 +279,16 @@ struct SessionsDrawer: View {
     /// that is no longer there is exactly the state a plain `@State` would strand it in.
     @GestureState private var heldRow: UUID?
 
+    /// The row whose hold has already fired, so the touch that ends it cannot also open it.
+    ///
+    /// Ordinary `@State` and not `@GestureState`, deliberately: it has to outlive the gesture
+    /// that set it by exactly one callback. `LongPressGesture` ends at half a second with the
+    /// finger still down, and the drag that is watching the same touch ends when the finger
+    /// lifts — so this is always written before it is read, and the reader clears it. That
+    /// ordering is the whole mechanism, and it is a property of the two gestures rather than of
+    /// anything SwiftUI promises about the order it calls things in.
+    @State private var longPressedRow: UUID?
+
     /// True through the prompt's dismissal animation, after `pendingDelete` has already gone.
     @State private var isDismissingDelete = false
 
@@ -389,30 +408,8 @@ struct SessionsDrawer: View {
     private func row(_ summary: SessionSummary) -> some View {
         let isCurrent = summary.id == currentID
         return rowLabel(summary, isCurrent: isCurrent)
-            // A tap opens; a half-second hold offers to delete. `ExclusiveGesture` and not two
-            // simultaneous ones: the long press wins outright when it recognises, so lifting
-            // the finger after a hold cannot also fire the tap. That was the second half of
-            // this bug — a `Button` with a menu attached runs its own action on touch-up
-            // regardless of what the hold did.
-            //
-            // This is a plain view with gestures rather than a `Button` because a `Button`'s
-            // action is exactly the thing that must not fire, and `.plain` styling draws no
-            // pressed state, so nothing is lost by not being one. The button *semantics* are
-            // restored below where they belong, in the accessibility layer.
-            .gesture(
-                ExclusiveGesture(
-                    LongPressGesture(minimumDuration: SessionsDrawerMetrics.deletePressDuration)
-                        .onEnded { _ in pendingDelete = summary },
-                    TapGesture().onEnded { onOpen(summary.id) }
-                )
-                // `.first(true)` is the long press reporting that a finger is down and the
-                // clock is running. The tap arm never reports anything until it has already
-                // fired, so a quick tap flashes nothing — which is right: the lift is the
-                // hold's feedback, not the tap's.
-                .updating($heldRow) { value, state, _ in
-                    if case .first(true) = value { state = summary.id }
-                }
-            )
+            .simultaneousGesture(holdGesture(summary))
+            .simultaneousGesture(tapGesture(summary))
             .accessibilityElement(children: .combine)
             .accessibilityLabel(summary.title)
             .accessibilityValue(isCurrent ? "Open" : SessionsDrawer.relativeAge(of: summary.lastSavedAt))
@@ -422,6 +419,49 @@ struct SessionsDrawer: View {
             // published as a named one instead — and it goes straight through rather than
             // raising the prompt, because a rotor action is already deliberate.
             .accessibilityAction(named: "Delete") { onDelete(summary.id) }
+    }
+
+    /// The half-second hold that offers to delete, and the lift that says it is running.
+    private func holdGesture(_ summary: SessionSummary) -> some Gesture {
+        LongPressGesture(minimumDuration: SessionsDrawerMetrics.deletePressDuration)
+            // `true` while the finger is down and the clock is running. The lift is the hold's
+            // feedback and not the tap's, so a quick tap flashes nothing.
+            .updating($heldRow) { isPressing, state, _ in
+                if isPressing { state = summary.id }
+            }
+            .onEnded { _ in
+                longPressedRow = summary.id
+                pendingDelete = summary
+            }
+    }
+
+    /// The tap that opens the session — **and the proof that it was a tap.**
+    ///
+    /// A `DragGesture` measuring its own travel rather than a `TapGesture`, and that is the
+    /// fix rather than a stylistic choice. A tap recogniser fires on touch-*up* whenever the
+    /// touch stayed inside the view, and these rows are 239 × 44, so a 100pt horizontal swipe
+    /// starts and ends inside the same one and reads as a tap on it. Every way of switching
+    /// that off from outside — hit testing, `isEnabled` — depends on something else having
+    /// noticed in time; the translation is evidence the row already holds, so it needs no help
+    /// and cannot be raced.
+    ///
+    /// `minimumDistance: 0` so the gesture exists from touch-down and always reports. A scroll
+    /// takes the touch away in the ordinary way and this still ends, with a translation far
+    /// past the slop, which is exactly the answer wanted.
+    ///
+    /// The hold is checked first for the other half of the same rule: `LongPressGesture` ends
+    /// half a second in with the finger still down, so by the time this runs the flag is
+    /// already set and a lift after a hold cannot also open the session.
+    private func tapGesture(_ summary: SessionSummary) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onEnded { value in
+                let wasHold = longPressedRow == summary.id
+                longPressedRow = nil
+                guard !wasHold else { return }
+                let travelled = hypot(value.translation.width, value.translation.height)
+                guard travelled <= SessionsDrawerMetrics.tapSlop else { return }
+                onOpen(summary.id)
+            }
     }
 
     private func rowLabel(_ summary: SessionSummary, isCurrent: Bool) -> some View {

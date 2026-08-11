@@ -66,10 +66,16 @@ struct TutorFullScreen: View {
             chatSurface
             sessionsSidebar
 
-            switch uiState.conversation {
-            case .start: startColumn
-            case .active: threadColumn
+            // Disabled as one subtree while a pan owns the touch, so a swipe cannot press a
+            // suggestion chip or a thread accessory on its way past. The composer below is a
+            // sibling and stays live — see `TutorPanel.chatPane(in:)` for the argument.
+            Group {
+                switch uiState.conversation {
+                case .start: startColumn
+                case .active: threadColumn
+                }
             }
+            .disabled(isPanCommitted)
 
             // Outside the switch, for the same reason the composer is: the slot belongs to the
             // input field, not to the conversation. The fade used to live inside `threadColumn`
@@ -83,7 +89,7 @@ struct TutorFullScreen: View {
                 .offset(x: column.x, y: column.bottom - slot.band)
 
             if isAttachMenuOpen {
-                attachMenu
+                attachMenu.disabled(isPanCommitted)
             }
         }
         // Everything on this screen goes inert the moment the axis commits — one modifier at
@@ -187,6 +193,7 @@ struct TutorFullScreen: View {
                 onSettings: actions.openSettings
             )
             .offset(x: layout.sessionsSidebarX)
+            .disabled(isPanCommitted)
             .transition(.move(edge: .leading))
         }
     }

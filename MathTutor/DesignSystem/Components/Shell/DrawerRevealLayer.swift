@@ -88,11 +88,24 @@ struct DrawerRevealLayer<Drawer: View, Chat: View>: View {
     /// to run *after* the gesture's own `onEnded` had already cleared the flag it read, which
     /// is an ordering SwiftUI does not promise.
     ///
-    /// **Suppression is structural, at the container, and covers everything beneath it.** It
-    /// was a `.disabled` on each control that a swipe seemed likely to cross, and that approach
-    /// is wrong in the way hand-maintained lists are always wrong: it missed the composer's own
-    /// buttons and the thread's accessories the first time, and it would miss the next control
-    /// anyone adds. `inertToTouches(_:)` on the whole pan surface has no list to fall behind.
+    /// **Two mechanisms, because one of them only covers half the problem.**
+    ///
+    /// A press that would *begin* during a pan is stopped by `inertToTouches(_:)` on the whole
+    /// container — hit testing is consulted when a touch lands, so a finger already sliding
+    /// cannot pick up a new control on its way past.
+    ///
+    /// A press that had *already begun* when the axis committed is a different question, and on
+    /// iPadOS 17 hit testing does not answer it: the target was resolved at touch-down and the
+    /// in-flight press keeps it, so the button still fires on touch-up. That one needs
+    /// `isEnabled`, which is what `inertDuringDrawerPan()` writes — disabling a control tears
+    /// down its gesture, and a gesture that no longer exists cannot complete. It is published
+    /// down the environment so the panes can read it without taking an argument that changes
+    /// while a finger is down, which is the rule this whole type is built on.
+    ///
+    /// Both are applied to subtrees rather than to controls: there is no list of buttons to
+    /// keep in step, and the one place the two differ — the composer, which must not be
+    /// disabled or a focused field resigns and the keyboard drops mid-sentence — is expressed
+    /// by where the modifier is attached, not by an exception inside it.
     private var isPanCommitted: Bool { drag?.axis == .horizontal }
 
     var body: some View {
@@ -124,13 +137,13 @@ struct DrawerRevealLayer<Drawer: View, Chat: View>: View {
         // under the finger; the exclusivity the note asks for is the intent lock instead.
         .contentShape(.rect)
         .simultaneousGesture(pan)
-        // Belt to `inertToTouches`' braces, and the one thing hit testing alone does not
-        // promise: a scroll already carrying momentum is stopped rather than left to coast
-        // under a pane that has started moving. It reaches every scroller below through the
-        // environment, so neither pane declares a parameter for it — which is the rule this
-        // type is built on, since a parameter that changed while a finger was down would
-        // rebuild the pane it was passed to.
+        // A scroll already carrying momentum is stopped rather than left to coast under a pane
+        // that has started moving. It reaches every scroller below through the environment, so
+        // neither pane declares a parameter for it — which is the rule this type is built on,
+        // since a parameter that changed while a finger was down would rebuild the pane it was
+        // passed to. `isDrawerPanCommitted` travels the same way and for the same reason.
         .scrollDisabled(isPanCommitted)
+        .environment(\.isDrawerPanCommitted, isPanCommitted)
     }
 
     /// Board 17's drawer, under the chat.
@@ -273,7 +286,55 @@ struct DrawerRevealLayer<Drawer: View, Chat: View>: View {
 
 // MARK: - Going inert while a gesture owns the touch
 
+private struct DrawerPanCommittedKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// Whether a drawer pan has committed to the horizontal axis for the touch in progress.
+    ///
+    /// Published by `DrawerRevealLayer` and read by `inertDuringDrawerPan()`. An environment
+    /// value rather than an argument for two reasons: it reaches a control eight levels down
+    /// without every view in between declaring a parameter it does not use, and — the
+    /// load-bearing one — it changes twice per gesture rather than every frame, so the panes
+    /// can stay untouched view values while the pan is running.
+    var isDrawerPanCommitted: Bool {
+        get { self[DrawerPanCommittedKey.self] }
+        set { self[DrawerPanCommittedKey.self] = newValue }
+    }
+}
+
+private struct InertDuringDrawerPan: ViewModifier {
+    @Environment(\.isDrawerPanCommitted) private var isPanCommitted
+
+    func body(content: Content) -> some View {
+        content.disabled(isPanCommitted)
+    }
+}
+
 extension View {
+    /// Cancels any press in this subtree that is already under way when a drawer pan commits.
+    ///
+    /// **This is the half `inertToTouches(_:)` cannot do.** Hit testing is consulted when a
+    /// touch lands: withdrawing a view from it stops a *new* touch finding a control, but a
+    /// press that began before the pan committed has already resolved its target and keeps it,
+    /// so on iPadOS 17 the button fires on touch-up regardless. A `Button` acts on touch-*up*
+    /// and cancels only when the finger leaves its bounds, which never happens here — a session
+    /// row is 239 × 44 and a suggestion chip is 301 × 62, so a whole 100pt swipe starts and
+    /// ends inside one control.
+    ///
+    /// `disabled` reaches it because it does not filter events, it removes the recogniser:
+    /// `isEnabled` going false tears the control's gesture out of the view, and a gesture that
+    /// no longer exists cannot complete or fire its action. The pressed state clears with it.
+    ///
+    /// **Attach it to a subtree that contains no text field.** That is the whole of the
+    /// keyboard exception, and it is structural rather than a list: `disabled` resigns a focused
+    /// `TextField`'s first responder, so a swipe mid-sentence would drop the keyboard. The
+    /// composer is a sibling of everything this is applied to, never a descendant.
+    func inertDuringDrawerPan() -> some View {
+        modifier(InertDuringDrawerPan())
+    }
+
     /// Stops this subtree responding to touches, without changing whether it is *enabled*.
     ///
     /// The one mechanism the drawer's gesture uses to keep a swipe from pressing what it
@@ -284,15 +345,15 @@ extension View {
     /// from hit testing ends the press that is already in flight, so the control stops looking
     /// pressed at the instant the axis commits and its action is never reached.
     ///
-    /// **`allowsHitTesting` and not `disabled`, and that is the whole reason this is its own
-    /// modifier.** The two look interchangeable here and are not: `disabled` writes
-    /// `isEnabled` into the environment, and a focused `TextField` resigns first responder when
-    /// it is disabled — so the container-level version of that would drop the keyboard every
-    /// time a learner swiped mid-sentence, which is a worse bug than the one being fixed. It
-    /// also announces the whole surface as disabled to VoiceOver for the length of a drag.
-    /// Hit testing changes neither: the field keeps focus and the keyboard stays up, and the
-    /// only thing that changes is that touches stop landing. The composer therefore needs no
-    /// exception, and there is no list of exceptions to keep.
+    /// **It covers touches that have not landed yet, and only those.** Hit testing is consulted
+    /// when a touch begins, so this cannot reach a press that is already under way — that was
+    /// found the hard way on an iPadOS 17 device, where a swipe still pressed the button it
+    /// started on. `inertDuringDrawerPan()` is the other half and cancels those.
+    ///
+    /// It is worth keeping both rather than collapsing to the second: this one is safe to put
+    /// over *everything*, the composer included, because it changes neither focus nor
+    /// enablement — so a finger already travelling cannot pick up a new control on its way
+    /// past, including one inside the composer that `disabled` must never touch.
     ///
     /// Applied *inside* whatever carries the gesture. The recognizer's own hit region comes
     /// from the `contentShape` outside this, so the pan keeps receiving while everything it is
