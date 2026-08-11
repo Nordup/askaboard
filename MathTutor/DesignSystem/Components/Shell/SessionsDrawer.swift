@@ -71,26 +71,18 @@ enum SessionsDrawerMetrics {
 
     // MARK: - Header
 
-    /// `Drawer header`: 44 tall, `padding-left: 12`, `padding-right: 8`, `gap: 10`.
+    /// `Drawer header`: 44 tall, `padding-left: 12`, `padding-right: 8`.
     static let headerHeight: CGFloat = 44
-    static let headerGap: CGFloat = 10
     static let headerPaddingLeading = DS.Space.s3
     static let headerPaddingTrailing = DS.Space.s2
 
-    /// `Orb mark`: a 30 × 24 pill with two 4pt eyes on a 6pt gap, 3 down from the top.
+    /// **No mark beside the wordmark.** Board 17 drew a 30 × 24 halo-less orb here and the
+    /// design has since taken it out. The header keeps its 44pt height and its 12pt leading
+    /// inset, so the wordmark lands on the same line the rows' titles do and the drawer opens
+    /// on one left edge rather than two. A second orb was also the product's fifth, three
+    /// hundred points from the one at the tail of the thread.
     ///
-    /// Not an `OrbSize` case, and deliberately: every one of the four the design draws carries a
-    /// halo roughly twice its own frame, and this mark has none — board 17 draws the body
-    /// gradient and the eyes and nothing else. Adding a fifth halo-less case would make
-    /// `OrbSize`'s own claim — *"one adaptive component driven by remaining space"* — false for
-    /// a fifth of its cases. It shares `OrbPalette.bodyGradient`, which is the part that must
-    /// not drift.
-    static let markSize = CGSize(width: 30, height: 24)
-    static let markEye: CGFloat = 4
-    static let markEyeGap: CGFloat = 6
-    static let markEyeTop: CGFloat = 3
-
-    /// 17 / 22 semibold at `--tracking-tight` — the wordmark beside the orb.
+    /// 17 / 22 semibold at `--tracking-tight` — the wordmark, alone.
     static let wordmark = TextStyle(
         size: DS.Size.body,
         leading: DS.Leading.control,
@@ -177,34 +169,6 @@ enum SessionsDrawerMetrics {
     static let settingsGlyph: CGFloat = 24
 }
 
-/// The tutor's mark at drawer-header size: the orb's body, without its halo.
-///
-/// See `SessionsDrawerMetrics.markSize` for why this is not a fifth `OrbSize`.
-struct DrawerBrandMark: View {
-    var body: some View {
-        Capsule()
-            .fill(OrbPalette.bodyGradient)
-            .frame(
-                width: SessionsDrawerMetrics.markSize.width,
-                height: SessionsDrawerMetrics.markSize.height
-            )
-            .overlay(alignment: .top) {
-                HStack(spacing: SessionsDrawerMetrics.markEyeGap) {
-                    eye
-                    eye
-                }
-                .padding(.top, SessionsDrawerMetrics.markEyeTop)
-            }
-            .accessibilityHidden(true)
-    }
-
-    private var eye: some View {
-        Circle()
-            .fill(DS.Color.surface)
-            .frame(width: SessionsDrawerMetrics.markEye, height: SessionsDrawerMetrics.markEye)
-    }
-}
-
 /// `Sessions drawer` — boards 17 and 19.
 ///
 /// One component at two frames. It is the whole of the sessions UI now: board 15a's header
@@ -227,6 +191,13 @@ struct SessionsDrawer: View {
     let inset: CGFloat
     /// The band the drawer occupies — the panel's content height, or the screen's.
     let height: CGFloat
+    /// Board 18's intent lock, from the surface that owns the pan.
+    ///
+    /// The drawer is as swipable as the chat is — a left-swipe that *starts on a session row*
+    /// closes it — so the list has the same problem the thread does: a touch that has committed
+    /// to the horizontal pan must not also scroll the rows it is dragging. Defaulted off, so a
+    /// preview or a specimen needs no argument for it.
+    var scrollDisabled = false
     let onNewChat: () -> Void
     let onOpen: (UUID) -> Void
     let onSettings: () -> Void
@@ -267,9 +238,13 @@ struct SessionsDrawer: View {
         .accessibilityLabel("Sessions")
     }
 
+    /// The wordmark, on the rows' own left edge.
+    ///
+    /// Still a 44pt band with the design's insets, so nothing below it moves for the mark that
+    /// left — see `SessionsDrawerMetrics`. `headerGap` has nothing left to separate and is gone
+    /// with it.
     private var header: some View {
-        HStack(spacing: SessionsDrawerMetrics.headerGap) {
-            DrawerBrandMark()
+        HStack(spacing: 0) {
             Text("AI Tutor")
                 .textStyle(SessionsDrawerMetrics.wordmark)
                 .foregroundStyle(DS.Color.ink)
@@ -303,6 +278,7 @@ struct SessionsDrawer: View {
             rows
             ScrollView(.vertical, showsIndicators: false) { rows }
                 .scrollBounceBehavior(.basedOnSize)
+                .scrollDisabled(scrollDisabled)
         }
     }
 

@@ -600,7 +600,7 @@ and the content column is derived from the frame the way the panel's 301 is deri
 
 | Element | Spec |
 |---|---|
-| `Drawer header` | `44` tall, `gap 10`, `padding-left 12`, `padding-right 8`. `Orb mark` `30 × 24` — the orb's body gradient, two `4 × 4` white eyes on a `6` gap, `padding-top 3`, **no halo**. Wordmark "AI Tutor", 17 / 22 weight 600, `--tracking-tight`, `--color-ink`. |
+| `Drawer header` | `44` tall, `padding-left 12`, `padding-right 8`. Wordmark "AI Tutor", 17 / 22 weight 600, `--tracking-tight`, `--color-ink`, and **nothing else**. Board 17 first drew a `30 × 24` halo-less orb beside it; the design has taken it out. The band keeps its height and its insets, so the wordmark sits on the rows' own left edge and the drawer opens on one left edge rather than two. |
 | `Label · Recent` | `margin-top 26`, `padding-left 12`. "RECENT", 15 / 18 weight 600, `--tracking-wide` (0.06em), uppercase, `--color-ink-tertiary`. **The first all-caps label in the product** — `--tracking-wide` stopped being documentation-only for it. |
 | `Session list` | `margin-top 10`, `gap 2`. |
 | `row/session` | `44` tall, `--radius-sm` 10, `padding-inline 12`, `gap 10`. Glyph `ui/session` `18 × 18`. Title 17 / 22, weight 500. |
@@ -636,12 +636,16 @@ reverse. From there the **chat** carries it, reaching `55%` fully open, and pass
 eased rather than linear so all three of the design's published frames are reproduced — see
 `DrawerReveal.chatVeil(at:)`.
 
-**Gesture.** A right-swipe anywhere in the chat area. The pane tracks the finger one-to-one.
-The first **12 pt** of travel decide the axis: within **15°** of horizontal commits to the
-drawer pan and suppresses the thread's scroll until the finger lifts; anything steeper scrolls
-the thread and the drawer takes nothing from that touch. On release it settles by velocity
+**Gesture.** A right-swipe anywhere in the chat area opens it; a left-swipe closes it, **and
+that one may start on either pane** — on the 74 pt chat strip, or on a session row inside the
+drawer itself. The pane tracks the finger one-to-one either way.
+
+The first **12 pt** of travel decide the axis: within **15°** of horizontal commits to the pan
+and suppresses the scroll of whichever list is under the finger — the conversation on the way
+open, the session rows on the way closed — until the finger lifts. Anything steeper scrolls
+that list and the drawer takes nothing from the touch. On release it settles by velocity
 first — a fling over **400 pt/s** decides the direction outright — and by the 50% line
-otherwise. A tap on the chat strip, or a left-swipe, closes it.
+otherwise. A tap on the chat strip also closes it.
 
 ### 14.2 The full-screen sidebar (board 19)
 
@@ -656,9 +660,10 @@ same time and neither carries a veil.
   `x = 372 + 98 = 470`. Same rule as screen 07, one more term —
   `ScreenLayout.columnX(reserving:)`.
 - The board peek is untouched at `(1308, 28)`.
-- The same right-swipe opens it and a left-swipe closes it. It springs rather than tracking the
-  finger: the chat is stationary and the column re-centres, so a finger-tracked sidebar would
-  drag 740 points of text sideways a frame at a time.
+- The same right-swipe opens it, and a left-swipe closes it — including one that starts inside
+  the sidebar, on a session row. It springs rather than tracking the finger: the chat is
+  stationary and the column re-centres, so a finger-tracked sidebar would drag 740 points of
+  text sideways a frame at a time.
 
 ---
 

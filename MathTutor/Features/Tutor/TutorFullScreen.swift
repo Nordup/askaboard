@@ -74,7 +74,14 @@ struct TutorFullScreen: View {
         }
         // The same right-swipe the docked panel takes — board 19: *"The same right-swipe still
         // opens the sidebar, and a left-swipe closes it."* Simultaneous, and locked to an axis
-        // on the first frame, exactly as the panel's is.
+        // exactly as the panel's is.
+        //
+        // On the container rather than on the chat, so the sidebar is swiped *from* as well as
+        // onto: a left-swipe that starts on a session row closes it. `contentShape` is what
+        // makes the sidebar's own empty space grabbable — the pane behind it is the screen
+        // ground and the board below that takes no touches at all in this state, so without it
+        // a swipe that misses a row would land on nothing.
+        .contentShape(.rect)
         .simultaneousGesture(drawerPan(travel: layout.sessionsSidebarWidth))
         .attachmentPickers(
             source: $pickerSource,

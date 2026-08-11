@@ -119,11 +119,18 @@ struct TutorPanel: View {
                 chatPane(in: size, travel: travel, progress: progress)
             }
             .frame(width: size.width, height: size.height, alignment: .topLeading)
-            // The whole panel is the grab region — board 18: *"A right-swipe anywhere in the
-            // chat area drags the drawer."* Simultaneous rather than exclusive so the thread's
-            // own scroll still starts on a vertical drag; the exclusivity the note asks for is
-            // the intent lock instead, which suppresses whichever of the two lost. See
-            // `isThreadScrollLocked`.
+            // **The whole panel is the grab region, both panes.** Board 18 states the opening
+            // half — *"A right-swipe anywhere in the chat area drags the drawer"* — and the
+            // closing half has to hold on the other pane or the gesture is one-way: a
+            // left-swipe that starts on a session row closes the drawer exactly as one that
+            // starts on the 74pt chat strip does. So the gesture is on the container rather
+            // than on either child, and `contentShape` makes the gaps between them grabbable
+            // too.
+            //
+            // Simultaneous rather than exclusive so a vertical drag still scrolls whichever
+            // list is under the finger. The exclusivity the note asks for is the intent lock
+            // instead, and it now suppresses *both* scrollers — see `isListScrollLocked`.
+            .contentShape(.rect)
             .simultaneousGesture(drawerPan(travel: travel))
         }
         // Mounted on the panel rather than on the composer: a sheet presented from a view
@@ -165,6 +172,9 @@ struct TutorPanel: View {
             width: travel,
             inset: SessionsDrawerMetrics.insetInline,
             height: height,
+            // The drawer is swiped from as well as onto, so its list takes the same lock the
+            // thread does — see `isListScrollLocked`.
+            scrollDisabled: isListScrollLocked,
             onNewChat: {
                 closeDrawer()
                 store.startNewSession()
@@ -268,17 +278,21 @@ struct TutorPanel: View {
         return uiState.isSessionsDrawerOpen ? 1 : 0
     }
 
-    /// Whether the thread must stop scrolling for this touch.
+    /// Whether the scrollers must hold still for this touch.
     ///
     /// This is the other half of the intent lock, and the half that makes it exclusive rather
     /// than merely simultaneous. `DragGesture(minimumDistance:)` and a `ScrollView` both
-    /// recognise, so without this a diagonal drag pans the drawer *and* scrolls the
-    /// conversation behind it. The note: *"once the horizontal pan commits, vertical scroll is
+    /// recognise, so without this a diagonal drag pans the drawer *and* scrolls whatever is
+    /// under the finger. The note: *"once the horizontal pan commits, vertical scroll is
     /// suppressed until the finger lifts."*
+    ///
+    /// **Both lists, not just the thread.** The gesture starts on either pane, so either pane's
+    /// scroller can be the one competing with it: the conversation on the way open, the session
+    /// rows on the way closed.
     ///
     /// The mirror case needs no code: a touch locked to `.vertical` never writes `progress`,
     /// so the drawer takes nothing from it.
-    private var isThreadScrollLocked: Bool { drawerDrag?.axis == .horizontal }
+    private var isListScrollLocked: Bool { drawerDrag?.axis == .horizontal }
 
     /// Board 18's pan.
     ///
@@ -414,8 +428,8 @@ struct TutorPanel: View {
                 scale: .panel,
                 width: contentWidth,
                 clearing: slot.band,
-                // The other half of board 18's intent lock — see `isThreadScrollLocked`.
-                scrollDisabled: isThreadScrollLocked,
+                // The other half of board 18's intent lock — see `isListScrollLocked`.
+                scrollDisabled: isListScrollLocked,
                 actions: actions
             )
             .frame(width: contentWidth, height: size.height)
