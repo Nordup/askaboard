@@ -218,7 +218,7 @@ struct PencilCanvasView: UIViewRepresentable {
         // does change which view should own first responder. Viewport-driven
         // setup lives in `BoardCanvasView.onViewportChange`.
         context.coordinator.updateFirstResponder(isActive)
-        canvas.isUserInteractionEnabled = !isSelecting
+        context.coordinator.updateInteraction(enabled: !isSelecting)
     }
 
     static func dismantleUIView(_ uiView: BoardCanvasView, coordinator: Coordinator) {
@@ -322,6 +322,22 @@ struct PencilCanvasView: UIViewRepresentable {
                 } else {
                     canvas.resignFirstResponder()
                 }
+            }
+        }
+
+        /// Deferred and change-guarded for exactly the reason `updateFirstResponder`
+        /// is, one method up: disabling interaction on the view that currently holds
+        /// first responder makes UIKit resign it synchronously, which is the same
+        /// re-entrant keyboard path that froze the full-screen control on an
+        /// iPadOS 17 device — this time from the marquee's `btn/select`. The desired
+        /// state is re-read inside the hop, so a stale queued toggle is a no-op and
+        /// an unchanged value never reaches UIKit at all.
+        func updateInteraction(enabled: Bool) {
+            guard let canvas, canvas.isUserInteractionEnabled != enabled else { return }
+
+            DispatchQueue.main.async { [weak canvas] in
+                guard let canvas, canvas.isUserInteractionEnabled != enabled else { return }
+                canvas.isUserInteractionEnabled = enabled
             }
         }
 
