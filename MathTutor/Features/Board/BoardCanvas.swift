@@ -298,13 +298,30 @@ struct PencilCanvasView: UIViewRepresentable {
         /// failed leaves `isFirstResponder` false, so the next update tries
         /// again — while a canvas that already holds focus is left alone rather
         /// than being asked, on every SwiftUI update, for something it has.
+        ///
+        /// **Deferred out of the caller's render transaction, never run inline.**
+        ///
+        /// `updateUIView` runs inside SwiftUI's render transaction, and a responder
+        /// change is not transaction-safe: resigning kicks off UIKit's keyboard
+        /// machinery synchronously, and on iPadOS 17 on device — with a third-party
+        /// keyboard extension loaded — `resignFirstResponder()` re-enters layout and
+        /// never returns. The main thread froze on the panel's full-screen control
+        /// with exactly this call at the top of the stack. Same rule `refreshHasInk`
+        /// already follows in `updateUIView`, for the same reason.
+        ///
+        /// The desired state is re-read inside the hop rather than captured: two
+        /// updates queued in one runloop turn must land on the *latest* ask, and a
+        /// canvas already in the right state must not be toggled again.
         func updateFirstResponder(_ active: Bool) {
             guard let canvas, canvas.isFirstResponder != active else { return }
 
-            if active {
-                canvas.becomeFirstResponder()
-            } else {
-                canvas.resignFirstResponder()
+            DispatchQueue.main.async { [weak canvas] in
+                guard let canvas, canvas.isFirstResponder != active else { return }
+                if active {
+                    canvas.becomeFirstResponder()
+                } else {
+                    canvas.resignFirstResponder()
+                }
             }
         }
 
