@@ -145,10 +145,12 @@ struct DrawerRevealLayer<Drawer: View, Chat: View>: View {
             .frame(width: travel, height: size.height, alignment: .topLeading)
             .overlay(veil(DrawerReveal.drawerVeil(at: progress)))
             // The veil and the pane become one layer before either is moved. Without it the
-            // wash is a second layer that the parallax offset transforms independently, and a
-            // sub-pixel disagreement between the two shows as a bright hairline down the seam.
+            // wash is a second layer transformed independently, and a sub-pixel disagreement
+            // between the two shows as a bright hairline down the seam.
             .compositingGroup()
-            .offset(x: DrawerReveal.drawerOffset(at: progress))
+            // **The drawer does not move.** Board 18's 12pt parallax is deliberately not
+            // implemented — see `DrawerReveal.wholePoints(_:)` for the whole argument. It is
+            // laid out once, at its full width, and the chat is the only thing that travels.
             // Unreachable while it is fully covered, so a stray touch on the strip's own edge
             // cannot land on a session row behind the chat.
             .allowsHitTesting(progress > 0)
@@ -199,7 +201,11 @@ struct DrawerRevealLayer<Drawer: View, Chat: View>: View {
                         .accessibilityAddTraits(.isButton)
                 }
             }
-            .offset(x: progress * travel)
+            // Whole points. A `compositingGroup` rasterises the pane, and translating that
+            // raster by a fraction resamples every glyph in it a little differently on every
+            // frame — which on an A10 at 2x reads as the contents shimmering rather than
+            // sliding. The travel is 263 points, so rounding costs nothing anyone can see.
+            .offset(x: DrawerReveal.wholePoints(progress * travel))
     }
 
     /// The wash. White at an alpha, over content, with the surface colour untouched.

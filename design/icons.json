@@ -8,8 +8,7 @@
       "11 \u2014 First run \u00b7 no API key (3NQ-0) \u2014 control/settings as a panel control",
       "10 \u2014 Settings (3KT-0) \u2014 ui/chevron-down, drawn inside row/setting rather than as a specimen",
       "15a \u2014 Sessions \u00b7 header menu (530-0) \u2014 ui/plus, drawn inside row/new-session rather than as a specimen",
-      "04 \u2014 Icons (1IF-0) section 07 \u2014 the four added for the activity trail",
-      "17 \u2014 Sessions drawer \u00b7 docked open (60P-0) \u2014 ui/session, drawn inside row/session rather than as a specimen"
+      "04 \u2014 Icons (1IF-0) section 07 \u2014 the four added for the activity trail"
     ],
     "readVia": "get_jsx, format inline-styles \u2014 never a screenshot",
     "prose": [
@@ -20,7 +19,7 @@
     "generates": "MathTutor/DesignSystem/Generated/IconPaths.swift"
   },
   "coverage": {
-    "productGlyphs": 27,
+    "productGlyphs": 26,
     "excluded": [
       {
         "name": "os/wifi",
@@ -45,11 +44,6 @@
         "name": "board/hinge",
         "effectiveStrokeWidth": 1.9,
         "reason": "The rule would push its attribute to 2.4, a 26% jump. The heavier frame closes in on the six r=1 interior dots and the mark reads as a blob at true size. It is also the one glyph that never appears beside another, so matching the rail's weight buys nothing."
-      },
-      {
-        "name": "ui/session",
-        "effectiveStrokeWidth": 1.6,
-        "reason": "Authored at its render size on an 18 viewBox, the smallest box in the set, and the only glyph whose interior detail is a 3-unit zigzag. At the rule's 2.0 the polyline's own steps close into a solid wedge and the mark stops reading as a board with working on it. The drawer's rows are the one place it appears, always at 18, so matching the rail's weight buys nothing."
       }
     ]
   },
@@ -989,49 +983,6 @@
           "strokeWidth": 2,
           "lineCap": "round",
           "lineJoin": null,
-          "dashArray": null
-        }
-      ]
-    },
-    {
-      "name": "ui/session",
-      "swiftCase": "uiSession",
-      "viewBox": {
-        "width": 18,
-        "height": 18
-      },
-      "productRenderSizes": [
-        18
-      ],
-      "renderSize": 18,
-      "effectiveStrokeWidth": 1.6,
-      "colorToken": "--color-icon",
-      "dashTexture": null,
-      "notes": "A stored session, in the sessions drawer's rows \u2014 board 17. The twenty-seventh glyph, and read off row/session rather than off a specimen, the same route ui/plus and ui/chevron-down took. A rounded board with a line of working on it: the rect is the board and the four-point polyline is the ink. Drawn on an 18 viewBox and rendered at 18, so the scale is exactly 1.0 and design stroke and effective stroke are the same 1.6. Its colour is the call site's, not the glyph's: the drawer tints the open session's row --color-brand and every other row --color-ink-tertiary, the same way ui/selection-marker carries one case and two colour states. --color-icon is what the data binds, because a glyph that baked in either state would eventually be drawn in the wrong one.",
-      "designAnomaly": null,
-      "elements": [
-        {
-          "type": "rect",
-          "x": 2,
-          "y": 3.25,
-          "width": 14,
-          "height": 11.5,
-          "rx": 2.6,
-          "fill": "none",
-          "stroke": "var(--color-icon)",
-          "strokeWidth": 1.6,
-          "lineCap": null,
-          "lineJoin": null,
-          "dashArray": null
-        },
-        {
-          "type": "path",
-          "d": "M5.2 11.2 L7.6 8.2 L9.9 10.2 L12.8 6.6",
-          "fill": "none",
-          "stroke": "var(--color-icon)",
-          "strokeWidth": 1.6,
-          "lineCap": "round",
-          "lineJoin": "round",
           "dashArray": null
         }
       ]

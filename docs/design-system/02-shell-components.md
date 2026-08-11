@@ -603,7 +603,8 @@ and the content column is derived from the frame the way the panel's 301 is deri
 | `Drawer header` | `44` tall, `padding-left 12`, `padding-right 8`. Wordmark "AI Tutor", 17 / 22 weight 600, `--tracking-tight`, `--color-ink`, and **nothing else**. Board 17 first drew a `30 × 24` halo-less orb beside it; the design has taken it out. The band keeps its height and its insets, so the wordmark sits on the rows' own left edge and the drawer opens on one left edge rather than two. |
 | `Label · Recent` | `margin-top 26`, `padding-left 12`. "RECENT", 15 / 18 weight 600, `--tracking-wide` (0.06em), uppercase, `--color-ink-tertiary`. **The first all-caps label in the product** — `--tracking-wide` stopped being documentation-only for it. |
 | `Session list` | `margin-top 10`, `gap 2`. |
-| `row/session` | `44` tall, `--radius-sm` 10, `padding-inline 12`, `gap 10`. Glyph `ui/session` `18 × 18`. Title 17 / 22, weight 500. |
+| `row/session` | `44` tall, `--radius-sm` 10, `padding-inline 12`. Title 17 / 22, weight 500, and **nothing else** — the 18pt board glyph that sat in a fixed slot before it is gone with the header's orb. With no slot and no gap the title starts on the row's own 12pt inset, which is where the wordmark starts, so the drawer reads down one left edge. |
+| `row/session` · held | Under a finger, a row lifts: 03 · Control shadow at the row's own 10pt radius, scaled 1.02 over 180ms. A row with no tint takes `--color-surface` while held rather than staying transparent — **opaque is the point, not the colour**: a lifted row with nothing behind it shows the drawer through its own shadow and reads as greyed out, which is the fault the system's own context-menu preview had. |
 | `row/session · current` | Same box, filled `--color-brand-tint` `#E6E3F9`; glyph and title both `--color-brand`, title weight 600. The drawer names the open session by marking it, since the title that used to say so in words is gone. |
 | `row/session` · long press | A half-second hold raises a **delete confirmation**, titled "Delete this session?" with a destructive **Delete** and a **Cancel**. Not a swipe action or an edit mode — those are `List` affordances and this is not a `List`. Deleting the open session falls back to the most recent one left, or to a fresh empty session when none are. |
 
@@ -642,7 +643,21 @@ chat pane travels over it.
 | Chat strip left visible | **74** = `337 − 263` |
 | Chat pane radius while revealed | `--radius-2xl` **20**, leading two corners only. Tighter than the panel's 28 because the two surfaces touch. |
 | Shadow at the seam | **none** — the panel's outer elevation is unchanged and nothing is added between the panes |
-| Drawer parallax | **12** — the drawer sits at local `x −12` closed and `0` open |
+| Drawer parallax | Board 18 says **12**; **not implemented** — see below |
+
+**The parallax is deliberately not implemented.** It is a pure translation of the whole
+drawer — nothing inside it resizes — and on the artboard it reads as intended, a layer sliding
+up from underneath. On the device it does not, because board 17 gives the drawer and the panel
+the *same fill*, deliberately, so the seam can be the chat's rounded corner and nothing else. A
+surface with no visible edge gives the eye nothing to attach the movement to, so the only
+reference left is the panel's own edge — and 12 pt of content moving away from a fixed edge is
+indistinguishable from 12 pt of padding growing. It was reported as the drawer's margins
+changing during the swipe. The drawer therefore stays still and only the chat travels. If the
+drawer is ever given a fill of its own the parallax becomes legible and is worth restoring.
+
+Both panes translate by **whole points**. Each is rasterised by a compositing group, and
+translating a raster by a fraction resamples every glyph in it differently on each frame, which
+on an A10 at 2x reads as the contents shimmering rather than sliding.
 
 **White veil crossfade.** A white overlay washes whichever pane is inactive; the surface colour
 never changes. At rest the **drawer** carries `55%`. Across `20% → 30%` of the travel the two

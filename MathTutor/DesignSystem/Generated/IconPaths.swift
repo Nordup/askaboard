@@ -12,9 +12,7 @@
 //           15a — Sessions · header menu (530-0) — ui/plus, drawn inside row/new-session rather
 //           than as a specimen
 //           04 — Icons (1IF-0) section 07 — the four added for the activity trail
-//           17 — Sessions drawer · docked open (60P-0) — ui/session, drawn inside row/session
-//           rather than as a specimen
-// Glyphs:   27 product glyphs.
+// Glyphs:   26 product glyphs.
 // Prose:    docs/design-system/04-icons.md
 //           docs/design-system/06-states-and-settings.md
 //
@@ -869,52 +867,6 @@ enum IconPaths {
     )
 
 
-    /// `ui/session` — renders 18 on a 18×18 viewBox, 1.6pt effective stroke, --color-icon.
-    ///
-    /// A stored session, in the sessions drawer's rows — board 17. The twenty-seventh glyph,
-    /// and read off row/session rather than off a specimen, the same route ui/plus and
-    /// ui/chevron-down took. A rounded board with a line of working on it: the rect is the
-    /// board and the four-point polyline is the ink. Drawn on an 18 viewBox and rendered at 18,
-    /// so the scale is exactly 1.0 and design stroke and effective stroke are the same 1.6. Its
-    /// colour is the call site's, not the glyph's: the drawer tints the open session's row
-    /// --color-brand and every other row --color-ink-tertiary, the same way ui/selection-marker
-    /// carries one case and two colour states. --color-icon is what the data binds, because a
-    /// glyph that baked in either state would eventually be drawn in the wrong one.
-    static let uiSession = IconGlyph(
-        name: "ui/session",
-        viewBox: CGSize(width: 18, height: 18),
-        renderSize: 18,
-        productRenderSizes: [18],
-        // Exception to the 2.0 rule, kept deliberately. Authored at its render size on an 18
-        // viewBox, the smallest box in the set, and the only glyph whose interior detail is a
-        // 3-unit zigzag. At the rule's 2.0 the polyline's own steps close into a solid wedge
-        // and the mark stops reading as a board with working on it. The drawer's rows are the
-        // one place it appears, always at 18, so matching the rail's weight buys nothing.
-        strokeWidth: 1.6,
-        colorToken: "--color-icon",
-        elements: [
-            IconElement(
-                geometry: .rect(x: 2, y: 3.25, width: 14, height: 11.5, cornerRadius: 2.6),
-                isFilled: false,
-                isStroked: true,
-                lineCap: .butt,
-                lineJoin: .miter,
-                dash: nil,
-                designStrokeWidth: 1.6
-            ),
-            IconElement(
-                geometry: .path("M5.2 11.2 L7.6 8.2 L9.9 10.2 L12.8 6.6"),
-                isFilled: false,
-                isStroked: true,
-                lineCap: .round,
-                lineJoin: .round,
-                dash: nil,
-                designStrokeWidth: 1.6
-            ),
-        ]
-    )
-
-
     /// `trail/eye` — renders 24 (product draws it at 16, 24) on a 24×24 viewBox, 2.0pt
     /// effective stroke, --color-icon.
     ///
@@ -1142,7 +1094,6 @@ enum IconPaths {
         case .chipConfused: Self.chipConfused
         case .boardHinge: Self.boardHinge
         case .uiPlus: Self.uiPlus
-        case .uiSession: Self.uiSession
         case .trailEye: Self.trailEye
         case .trailSearch: Self.trailSearch
         case .trailPlan: Self.trailPlan

@@ -113,12 +113,17 @@ enum SessionsDrawerMetrics {
     static let listTopGap: CGFloat = 10
     static let rowGap: CGFloat = 2
 
-    /// `row/session`: 44 tall, `--radius-sm`, `padding-inline: 12`, `gap: 10`, an 18pt glyph.
+    /// `row/session`: 44 tall, `--radius-sm`, `padding-inline: 12`.
+    ///
+    /// **No glyph.** The rows carried an 18pt board mark in a fixed slot, and the design has
+    /// taken it out along with the header's orb. What it leaves behind is the alignment that
+    /// was the point: with no slot and no gap the title starts on the row's own 12pt inset,
+    /// which is exactly where the "AI Tutor" wordmark starts, so the whole drawer reads down
+    /// one left edge. It also leaves the row nothing to say but its name, which is all a list
+    /// of things that are all the same kind of thing needs.
     static let rowHeight: CGFloat = 44
     static let rowRadius = DS.Radius.sm
     static let rowPaddingInline = DS.Space.s3
-    static let rowGlyphGap: CGFloat = 10
-    static let rowGlyph: CGFloat = 18
 
     /// 17 / 22, semibold for the open session and medium for the rest — the same two weights
     /// the switcher's rows carried, so a learner who used the dropdown reads the drawer the
@@ -126,6 +131,15 @@ enum SessionsDrawerMetrics {
     static func rowTitle(current: Bool) -> TextStyle {
         TextStyle(size: DS.Size.body, leading: DS.Leading.control, weight: current ? .semibold : .medium)
     }
+
+    /// How far a held row rises, and how long it takes.
+    ///
+    /// Small on purpose: the row is 44 tall in a 239 column with two points between it and its
+    /// neighbours, so anything past a couple of percent overlaps the rows above and below. Two
+    /// percent is 4.8 points of width and just under one of height — enough to read as a lift
+    /// against the shadow that arrives with it, not enough to touch anything.
+    static let heldRowScale: CGFloat = 1.02
+    static let heldRowRise: Double = 0.18
 
     /// How long a press on a row has to be held before it offers to delete it.
     ///
@@ -235,6 +249,26 @@ struct SessionsDrawer: View {
     /// It also gains a confirmation the context menu never had, which a destructive action with
     /// no undo should have wanted anyway.
     @State private var pendingDelete: SessionSummary?
+
+    /// Which row is under a finger that is still holding — the press feedback, and the
+    /// replacement for the lift the system context menu used to draw.
+    ///
+    /// Losing `.contextMenu` lost its preview with it, and that preview was the only sign the
+    /// hold had registered: without one, a half-second press is half a second of nothing
+    /// followed by a dialog. It also arrived with two faults of its own — square corners on a
+    /// 10pt row, and a *dimmed* lift for any row that was not the current one, because the
+    /// system composites its preview over its own scrim and these rows have a transparent
+    /// background for it to show through.
+    ///
+    /// Drawing it here fixes both by construction: the lift is the row's own shape at its own
+    /// radius, and it is opaque, so nothing shows through it.
+    ///
+    /// `@GestureState` rather than `@State`, for the reason `ResizeHandle.anchor` is: SwiftUI
+    /// returns it to `nil` when the gesture ends *for any reason*, including a cancellation
+    /// this view is never told about — a system alert taking the touch, the pan committing and
+    /// withdrawing the whole pane from hit testing. A row left looking lifted under a finger
+    /// that is no longer there is exactly the state a plain `@State` would strand it in.
+    @GestureState private var heldRow: UUID?
 
     /// True through the prompt's dismissal animation, after `pendingDelete` has already gone.
     @State private var isDismissingDelete = false
@@ -371,6 +405,13 @@ struct SessionsDrawer: View {
                         .onEnded { _ in pendingDelete = summary },
                     TapGesture().onEnded { onOpen(summary.id) }
                 )
+                // `.first(true)` is the long press reporting that a finger is down and the
+                // clock is running. The tap arm never reports anything until it has already
+                // fired, so a quick tap flashes nothing — which is right: the lift is the
+                // hold's feedback, not the tap's.
+                .updating($heldRow) { value, state, _ in
+                    if case .first(true) = value { state = summary.id }
+                }
             )
             .accessibilityElement(children: .combine)
             .accessibilityLabel(summary.title)
@@ -384,12 +425,12 @@ struct SessionsDrawer: View {
     }
 
     private func rowLabel(_ summary: SessionSummary, isCurrent: Bool) -> some View {
-        HStack(spacing: SessionsDrawerMetrics.rowGlyphGap) {
-            IconView(
-                .uiSession,
-                size: SessionsDrawerMetrics.rowGlyph,
-                tint: isCurrent ? DS.Color.brand : DS.Color.inkTertiary
-            )
+        let isHeld = heldRow == summary.id
+        return rowContent(summary, isCurrent: isCurrent, isHeld: isHeld)
+    }
+
+    private func rowContent(_ summary: SessionSummary, isCurrent: Bool, isHeld: Bool) -> some View {
+        HStack(spacing: 0) {
             Text(summary.title)
                 .textStyle(SessionsDrawerMetrics.rowTitle(current: isCurrent))
                 .foregroundStyle(isCurrent ? DS.Color.brand : DS.Color.ink)
@@ -405,9 +446,38 @@ struct SessionsDrawer: View {
                 // 01 reserves for marking exactly one item at a time. That is what this row
                 // is: the drawer replaces a control that named the open session in words, so
                 // the mark has to carry the same fact on its own.
-                .fill(isCurrent ? DS.Color.brandTint : Color.clear)
+                //
+                // Held, a row that carries no tint takes `--color-surface` instead of staying
+                // transparent. Opaque is the point rather than the colour: a lifted row with
+                // nothing behind it shows the drawer through its own shadow and reads as
+                // greyed out, which is the fault the system's preview had.
+                .fill(rowFill(isCurrent: isCurrent, isHeld: isHeld))
         )
+        // The lift, at the row's own radius. 03 · Control is the level the design gives a
+        // button, which is what a row under a finger is behaving as.
+        //
+        // The two layers are always mounted and their alpha is what moves, rather than the
+        // modifiers appearing when `isHeld` flips. A shadow that comes and goes is a change to
+        // the modifier tree, so SwiftUI has nothing to interpolate and the lift would pop; at a
+        // fixed structure it fades with the scale, which is the whole of the effect.
+        .shadow(
+            color: DS.Color.shadow.opacity(isHeld ? Elevation.controlLift.alpha : 0),
+            radius: Elevation.controlLift.shadowRadius,
+            y: Elevation.controlLift.y
+        )
+        .shadow(
+            color: DS.Color.shadow.opacity(isHeld ? Elevation.controlContact.alpha : 0),
+            radius: Elevation.controlContact.shadowRadius,
+            y: Elevation.controlContact.y
+        )
+        .scaleEffect(isHeld ? SessionsDrawerMetrics.heldRowScale : 1)
+        .animation(.easeOut(duration: SessionsDrawerMetrics.heldRowRise), value: isHeld)
         .contentShape(.rect)
+    }
+
+    private func rowFill(isCurrent: Bool, isHeld: Bool) -> Color {
+        if isCurrent { return DS.Color.brandTint }
+        return isHeld ? DS.Color.surface : .clear
     }
 
     private var bottomBar: some View {

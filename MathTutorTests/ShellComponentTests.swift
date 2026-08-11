@@ -1053,10 +1053,13 @@ final class ShellComponentTests: XCTestCase {
         }
     }
 
-    /// The drawer sits 12 behind its open position and arrives at 0 — board 18's parallax.
-    func testTheDrawerParallaxRunsFromTwelveBackToNothing() {
-        XCTAssertEqual(DrawerReveal.drawerOffset(at: 0), -12)
-        XCTAssertEqual(DrawerReveal.drawerOffset(at: 1), 0)
-        XCTAssertEqual(DrawerReveal.drawerOffset(at: 0.5), -6)
+    /// Board 18's 12pt parallax is deliberately not implemented — the drawer and the panel
+    /// share a fill, so a translation with no visible edge behind it reads as the drawer's
+    /// margins changing. See `DrawerReveal.wholePoints(_:)`.
+    func testThePanesTranslateByWholePointsOnly() {
+        XCTAssertEqual(DrawerReveal.wholePoints(0), 0)
+        XCTAssertEqual(DrawerReveal.wholePoints(131.5), 132)
+        XCTAssertEqual(DrawerReveal.wholePoints(0.4 * 263), 105, "0.4 × 263 = 105.2")
+        XCTAssertEqual(DrawerReveal.wholePoints(263), 263, "and the ends are exact")
     }
 }

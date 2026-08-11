@@ -188,21 +188,32 @@ enum DrawerReveal {
         return t * t * (3 - 2 * t)
     }
 
-    // MARK: - Parallax
+    // MARK: - Parallax, and why there is none
 
-    /// How far the drawer sits behind its open position while the chat is still over it —
-    /// board 18's *"a 12px parallax"*.
-    static let parallax: CGFloat = 12
-
-    /// The drawer's own x within the panel: `−12` closed, `0` open.
+    /// Board 18 gives the drawer *"a 12px parallax"* — it sits 12 points behind its open
+    /// position while the chat is still over it, and eases up to 0. **It is not implemented,
+    /// and the reason is a property of the two surfaces rather than a disagreement with the
+    /// board.**
     ///
-    /// Linear in the progress, which is a reading of *"eases in behind it"* rather than a
-    /// transcription of it — board 18 draws the drawer at −12 at 42% of the travel, where this
-    /// puts it at −7. The artboard is a single frame of a continuous motion and the offset it
-    /// measures is 5 points on a 263pt slide; a curve fitted to that one frame would be a
-    /// guess with more parameters than evidence. Stated as the simple rule, so what ships is
-    /// legible rather than merely close.
-    static func drawerOffset(at progress: CGFloat) -> CGFloat {
-        -parallax * (1 - progress)
+    /// The parallax is a pure translation of the whole drawer, padding and all: nothing inside
+    /// it resizes, and on the artboard it reads exactly as intended, as a layer sliding up from
+    /// underneath. On the device it does not, because board 17 gives the drawer and the panel
+    /// the *same fill* — deliberately, so that the seam between the two panes can be the chat's
+    /// rounded corner and nothing else. A surface with no visible edge has nothing for the eye
+    /// to attach the movement to, so the only reference left is the panel's own edge, and 12
+    /// points of content moving away from a fixed edge is indistinguishable from 12 points of
+    /// padding growing. That is what it was reported as: the drawer's margins changing while
+    /// the pan was in motion.
+    ///
+    /// So the drawer stays exactly still and only the chat travels. If the design ever gives
+    /// the drawer a fill of its own, the parallax becomes legible and is worth restoring; until
+    /// then it is an effect that can only be read as a bug.
+    ///
+    /// The other half of the same report was sub-pixel: both panes are rasterised by a
+    /// `compositingGroup` and were then translated by fractional offsets, so every frame
+    /// resampled the text a fraction of a pixel differently. `wholePoints(_:)` is that fix.
+    static func wholePoints(_ offset: CGFloat) -> CGFloat {
+        offset.rounded()
     }
+
 }
