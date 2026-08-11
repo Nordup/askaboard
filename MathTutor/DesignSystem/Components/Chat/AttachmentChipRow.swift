@@ -72,7 +72,7 @@ struct AttachmentChipMetrics: Equatable, Sendable {
     )
 
     /// Board 03b §3, full-screen stage. `5` and `10` are off the 4pt scale and are taken as
-    /// drawn — the same licence `SessionSwitcherMetrics` already takes for its own 10.
+    /// drawn — the same licence `MenuCardMetrics` already takes for its own 10.
     static let fullScreen = Self(
         paddingLeading: 5,
         paddingTrailing: 10,

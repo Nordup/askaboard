@@ -528,14 +528,14 @@ final class SessionSwitcherTests: XCTestCase {
     func testRelativeAgeSpeaksInTheRowsOwnWords() {
         let now = Date(timeIntervalSince1970: 1_770_000_000)
         let age = { (seconds: TimeInterval) in
-            SessionMenu.relativeAge(of: now.addingTimeInterval(-seconds), now: now)
+            SessionsDrawer.relativeAge(of: now.addingTimeInterval(-seconds), now: now)
         }
 
         XCTAssertEqual(age(5), "Now")
         XCTAssertEqual(age(60 * 20), "20m ago")
         XCTAssertEqual(age(60 * 59), "59m ago")
         XCTAssertEqual(
-            SessionMenu.relativeAge(of: now.addingTimeInterval(30), now: now),
+            SessionsDrawer.relativeAge(of: now.addingTimeInterval(30), now: now),
             "Now",
             "A clock that moved backwards must not produce a negative age"
         )

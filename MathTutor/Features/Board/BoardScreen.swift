@@ -97,7 +97,14 @@ struct BoardScreen: View {
         // an open microphone would outlive the field it is writing to. Keyed on what is drawn
         // rather than on what `UIState` holds: a window that shrinks past the docking
         // threshold takes the composer off the screen without either axis moving.
-        .onChange(of: presentation) { _, _ in dictation.stop() }
+        .onChange(of: presentation) { _, _ in
+            dictation.stop()
+            // The drawer is drawn by whichever tutor surface is on screen, and the two draw it
+            // at different widths in different places. A drawer left open across the change
+            // would be reopened, mid-spring, as a different shape — and in the collapsed state
+            // it is left open behind nothing at all.
+            uiState.closeSessionsDrawer()
+        }
         .onChange(of: isShowingSettings) { _, isShowing in if isShowing { dictation.stop() } }
         // The backstop for the one session change that does not go through
         // `TutorPanel.adoptSessionUI` — Settings' "Reset this session", which calls the
@@ -218,10 +225,17 @@ struct BoardScreen: View {
 
     // MARK: - Regions
 
-    /// Screen 07 is the one state on pure white; the other three sit on the screen grey.
+    /// Every state sits on the screen grey now, screen 07 included.
+    ///
+    /// It used to be the one state on pure white, because the full-screen tutor filled the
+    /// window and there was nothing else on it. Board 19 puts a sessions sidebar against the
+    /// leading edge, and the sidebar's ground is `--color-surface-screen` with the chat a white
+    /// surface beside it — so the white belongs to the chat pane rather than to the screen, and
+    /// `TutorFullScreen.chatSurface` is where it is painted. With the sidebar shut that pane
+    /// still runs the whole window, so nothing about screen 07 changes on screen; what changes
+    /// is which view owns the colour.
     private var background: some View {
-        (isTutorFullScreen ? DS.Color.surface : DS.Color.surfaceScreen)
-            .ignoresSafeArea()
+        DS.Color.surfaceScreen.ignoresSafeArea()
     }
 
     /// The board card, mounted in every state and hidden in exactly one.
@@ -335,6 +349,10 @@ struct BoardScreen: View {
                 text: $composerText,
                 dictation: dictation,
                 attachments: attachments,
+                // The same flag the collapsed dock's `btn/select` takes, for the same
+                // control at the other presentation — an empty board has nothing to
+                // select, and `toggleBoardSelection` would swallow the tap.
+                canSelect: capture.hasInk,
                 actions: actions
             )
                 .offset(x: layout.panelX, y: layout.contentTop)

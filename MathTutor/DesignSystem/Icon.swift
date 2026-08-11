@@ -34,6 +34,11 @@ enum Icon: String, CaseIterable, Sendable {
     case chipConfused = "chip/confused"
     case boardHinge = "board/hinge"
     case uiPlus = "ui/plus"
+    /// The sessions drawer's row mark — board 17. Read off `row/session` rather than
+    /// off a specimen, the route `ui/plus` and `ui/chevron-down` also took. One case,
+    /// two colour states: the drawer tints the open row `--color-brand` and the rest
+    /// `--color-ink-tertiary`, exactly as `ui/selection-marker` works.
+    case uiSession = "ui/session"
     // The activity trail's step rows. `tool/pen` and `ui/check` already covered
     // two of the seven steps; these are the other four. All drawn on a 24
     // viewBox, and all rendered at 16 in a trail row — where the authored 2.0

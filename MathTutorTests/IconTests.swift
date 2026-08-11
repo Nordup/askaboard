@@ -447,10 +447,10 @@ final class IconTests: XCTestCase {
     /// `ui/check`, `ui/cross` and `ui/retry` were read off boards 13 and 14, and
     /// `control/settings` off board 11. Board 04 is *"the original sixteen"*, not the set.
     /// `design/icons.json` is the source of truth and names the board each glyph came from.
-    func testTheSetIsTheTwentyTwoProductGlyphs() {
-        XCTAssertEqual(Icon.allCases.count, 22)
+    func testTheSetIsTheTwentySevenProductGlyphs() {
+        XCTAssertEqual(Icon.allCases.count, 27)
         XCTAssertTrue(Icon.allCases.allSatisfy { !$0.rawValue.hasPrefix("os/") })
-        XCTAssertEqual(Set(Icon.allCases.map(\.rawValue)).count, 22)
+        XCTAssertEqual(Set(Icon.allCases.map(\.rawValue)).count, 27)
     }
 
     // MARK: - Transcription
@@ -720,7 +720,8 @@ final class IconTests: XCTestCase {
             .uiSelectionMarker: 24, .uiCheck: 24, .uiCross: 22, .uiChevronDown: 16, .uiRetry: 22,
             .composerVoice: 26, .composerSend: 26, .composerDismiss: 14,
             .chipExplain: 24, .chipExample: 24, .chipExercise: 24, .chipConfused: 24,
-            .boardHinge: 22, .uiPlus: 20
+            .boardHinge: 22, .uiPlus: 20, .uiSession: 18,
+            .trailEye: 24, .trailSearch: 24, .trailPlan: 24, .trailNote: 24
         ]
 
         for icon in Icon.allCases {

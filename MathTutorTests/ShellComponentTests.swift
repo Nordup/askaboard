@@ -909,4 +909,135 @@ final class ShellComponentTests: XCTestCase {
             "and it stops there rather than overshooting into the panel's content"
         )
     }
+
+
+    // MARK: - Sessions drawer (boards 17 · 18 · 19)
+
+    /// Board 17's frame, and the rule under it. The 263 is the design's number and the
+    /// fraction is what actually ships, because the panel resizes and a stored 263 in a panel
+    /// dragged to 1000 leaves a 737pt chat strip where the design leaves 74.
+    func testTheDockedDrawerIsSeventyEightPercentOfWhateverThePanelIs() {
+        XCTAssertEqual(SessionsDrawerMetrics.width(inPanel: 337), 263, "337 × 0.78, rounded")
+        XCTAssertEqual(SessionsDrawerMetrics.stripWidth(inPanel: 337), 74, "337 − 263")
+        XCTAssertEqual(
+            SessionsDrawerMetrics.contentWidth(
+                for: 263,
+                inset: SessionsDrawerMetrics.insetInline
+            ),
+            239,
+            "263 − 2 × 12"
+        )
+
+        // The two are complements at every width the panel can be, with nothing left over.
+        for panel in [ScreenLayout.minimumPanelWidth, 300, 337, 512, 1000] as [CGFloat] {
+            XCTAssertEqual(
+                SessionsDrawerMetrics.width(inPanel: panel)
+                    + SessionsDrawerMetrics.stripWidth(inPanel: panel),
+                panel,
+                "panel \(panel)"
+            )
+            XCTAssertGreaterThan(SessionsDrawerMetrics.stripWidth(inPanel: panel), 0)
+        }
+    }
+
+    /// Board 19's sidebar, and the column that re-centres around it.
+    func testTheFullScreenSidebarLeavesTheColumnWhereBoardNineteenDrawsIt() {
+        let layout = ScreenLayout.reference
+        XCTAssertEqual(SessionsDrawerMetrics.sidebarWidth, 372, "316 + 2 × 28")
+        XCTAssertEqual(SessionsDrawerMetrics.sidebarContentWidth, 316)
+        XCTAssertEqual(layout.sessionsSidebarX, 0, "flush against the leading edge")
+
+        let reserved = layout.sessionsSidebarWidth
+        XCTAssertEqual(layout.columnRegionWidth(reserving: reserved), 936, "1308 − 372")
+        XCTAssertEqual(layout.columnWidth(reserving: reserved), 740, "min(740, 936 − 56)")
+        XCTAssertEqual(layout.columnMargin(reserving: reserved), 98, "(936 − 740) ÷ 2")
+        XCTAssertEqual(layout.columnX(reserving: reserved), 470, "372 + 98 — board 19")
+
+        // Reserving nothing is screen 07 unchanged, which is what lets the closed sidebar be
+        // the layout that shipped rather than a re-derivation of it.
+        XCTAssertEqual(layout.columnX(reserving: 0), layout.columnX)
+        XCTAssertEqual(layout.columnWidth(reserving: 0), layout.columnWidth)
+        XCTAssertEqual(layout.columnX, 284, "screen 07, untouched")
+    }
+
+    /// Board 18's intent lock: the first 12 points and 15° decide the axis.
+    func testTheIntentLockCommitsOnAngleAndNotOnDirection() {
+        // Under the threshold nothing is decided, however sideways it looks.
+        XCTAssertEqual(DrawerReveal.axis(for: CGSize(width: 8, height: 0)), .undecided)
+
+        // Flat, and either way round — a left-swipe from an open drawer is the same gesture.
+        XCTAssertEqual(DrawerReveal.axis(for: CGSize(width: 40, height: 0)), .horizontal)
+        XCTAssertEqual(DrawerReveal.axis(for: CGSize(width: -40, height: 0)), .horizontal)
+
+        // 100 across may drift 26 down (tan 15° = 0.268) and still pan; 30 scrolls.
+        XCTAssertEqual(DrawerReveal.axis(for: CGSize(width: 100, height: 26)), .horizontal)
+        XCTAssertEqual(DrawerReveal.axis(for: CGSize(width: 100, height: -26)), .horizontal)
+        XCTAssertEqual(DrawerReveal.axis(for: CGSize(width: 100, height: 30)), .vertical)
+        XCTAssertEqual(DrawerReveal.axis(for: CGSize(width: 0, height: 40)), .vertical)
+    }
+
+    /// One-to-one with the finger, anchored on where the drawer was, clamped at both ends.
+    func testTravelTracksTheFingerFromTheAnchorAndStopsAtBothEnds() {
+        XCTAssertEqual(DrawerReveal.progress(from: 0, translation: 131.5, travel: 263), 0.5)
+        XCTAssertEqual(DrawerReveal.progress(from: 1, translation: -131.5, travel: 263), 0.5)
+        XCTAssertEqual(DrawerReveal.progress(from: 0, translation: -400, travel: 263), 0, "no rubber band")
+        XCTAssertEqual(DrawerReveal.progress(from: 1, translation: 400, travel: 263), 1)
+        XCTAssertEqual(DrawerReveal.progress(from: 0.4, translation: 0, travel: 0), 0.4, "no travel, no move")
+    }
+
+    /// *"It opens past 50% of the travel, or on a fast fling in either direction below 50%."*
+    func testTheReleaseSettlesByVelocityFirstAndPositionSecond() {
+        XCTAssertTrue(DrawerReveal.settlesOpen(progress: 0.51, velocity: 0))
+        XCTAssertFalse(DrawerReveal.settlesOpen(progress: 0.49, velocity: 0))
+        XCTAssertTrue(DrawerReveal.settlesOpen(progress: 0.5, velocity: 0), "the line itself opens")
+
+        // A fling wins from anywhere, in both directions — which is what makes it reversible.
+        XCTAssertTrue(DrawerReveal.settlesOpen(progress: 0.05, velocity: 1_400))
+        XCTAssertFalse(DrawerReveal.settlesOpen(progress: 0.95, velocity: -1_400))
+        // And the tail of a slow drag is not a fling.
+        XCTAssertFalse(DrawerReveal.settlesOpen(progress: 0.2, velocity: 120))
+    }
+
+    /// The three frames the design publishes, and the crossover between them.
+    func testTheVeilsCrossOverBetweenTwentyAndThirtyPercentOfTheTravel() {
+        let tolerance = 0.005
+
+        // At rest the drawer carries it and the chat has none — board 17's closed panel.
+        XCTAssertEqual(DrawerReveal.drawerVeil(at: 0), 0.55, accuracy: tolerance)
+        XCTAssertEqual(DrawerReveal.chatVeil(at: 0), 0, accuracy: tolerance)
+
+        // Board 18, at 42% of the travel: `#FFFFFF4D` on the chat, 77/255.
+        XCTAssertEqual(DrawerReveal.chatVeil(at: 111.0 / 263.0), 0.302, accuracy: 0.01)
+        XCTAssertEqual(DrawerReveal.drawerVeil(at: 111.0 / 263.0), 0, accuracy: tolerance)
+
+        // Board 17, fully open: `#FFFFFF8C` on the chat, 140/255.
+        XCTAssertEqual(DrawerReveal.chatVeil(at: 1), 0.55, accuracy: tolerance)
+        XCTAssertEqual(DrawerReveal.drawerVeil(at: 1), 0, accuracy: tolerance)
+
+        // The band, and only the band, is where the drawer's veil moves.
+        XCTAssertEqual(DrawerReveal.drawerVeil(at: 0.2), 0.55, accuracy: tolerance)
+        XCTAssertEqual(DrawerReveal.drawerVeil(at: 0.3), 0, accuracy: tolerance)
+        XCTAssertEqual(DrawerReveal.chatVeil(at: 0.2), 0, accuracy: tolerance)
+        XCTAssertEqual(DrawerReveal.chatVeil(at: 0.3), 0.30, accuracy: tolerance)
+
+        // Neither veil ever goes backwards, and neither exceeds the design's ceiling.
+        var previousChat = -1.0
+        for step in 0...100 {
+            let p = CGFloat(step) / 100
+            let chat = DrawerReveal.chatVeil(at: p)
+            let drawer = DrawerReveal.drawerVeil(at: p)
+            XCTAssertGreaterThanOrEqual(chat, previousChat - tolerance, "chat veil at \(p)")
+            XCTAssertLessThanOrEqual(chat, DrawerReveal.fullVeil + tolerance, "chat veil at \(p)")
+            XCTAssertLessThanOrEqual(drawer, DrawerReveal.fullVeil + tolerance, "drawer veil at \(p)")
+            XCTAssertGreaterThanOrEqual(drawer, -tolerance, "drawer veil at \(p)")
+            previousChat = chat
+        }
+    }
+
+    /// The drawer sits 12 behind its open position and arrives at 0 — board 18's parallax.
+    func testTheDrawerParallaxRunsFromTwelveBackToNothing() {
+        XCTAssertEqual(DrawerReveal.drawerOffset(at: 0), -12)
+        XCTAssertEqual(DrawerReveal.drawerOffset(at: 1), 0)
+        XCTAssertEqual(DrawerReveal.drawerOffset(at: 0.5), -6)
+    }
 }

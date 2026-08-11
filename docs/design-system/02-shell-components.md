@@ -577,6 +577,91 @@ The long decimals (`57.99999999999999`, `28.000000000000004`) are the literal co
 
 ---
 
+## 14. Sessions drawer — `Sessions drawer` (boards 17 · 18 · 19)
+
+**Purpose:** the whole of the sessions UI, and the home of Settings. It replaces board 15a's
+header dropdown, which is deleted. Layer paths: `17 — Sessions drawer · docked open / Tutor
+panel / Sessions drawer`, and `19 — Sessions drawer · full screen / Sessions drawer`.
+
+One component at two frames. The contents are identical; only the frame and its inset differ,
+and the content column is derived from the frame the way the panel's 301 is derived from its
+337 — `SessionsDrawerMetrics.contentWidth(for:inset:)`.
+
+| Property | Docked (board 17) | Full screen (board 19) |
+|---|---|---|
+| Frame | **263 × 976**, inside the panel at local `(0, 0)` | **372 × 1032**, against the leading screen edge |
+| Width rule | `panel × 0.78`, rounded — **derive it**, the panel resizes | `316 + 2 × 28` |
+| Padding | `block 18` (`--space-panel-inset`), `inline 12` | `28` (`--space-edge`) all round |
+| Content column | **239** | **316** |
+| Background | `--color-surface-panel` — the panel's own, so the seam is a corner and not a colour change | the screen's `--color-surface-screen`; the drawer paints no fill |
+| Radius / shadow | none, either frame — the panel's own clip and elevation cover the docked case, and the full-screen sidebar is a lane rather than a surface |
+
+**Contents**, top to bottom, in the content column:
+
+| Element | Spec |
+|---|---|
+| `Drawer header` | `44` tall, `gap 10`, `padding-left 12`, `padding-right 8`. `Orb mark` `30 × 24` — the orb's body gradient, two `4 × 4` white eyes on a `6` gap, `padding-top 3`, **no halo**. Wordmark "AI Tutor", 17 / 22 weight 600, `--tracking-tight`, `--color-ink`. |
+| `Label · Recent` | `margin-top 26`, `padding-left 12`. "RECENT", 15 / 18 weight 600, `--tracking-wide` (0.06em), uppercase, `--color-ink-tertiary`. **The first all-caps label in the product** — `--tracking-wide` stopped being documentation-only for it. |
+| `Session list` | `margin-top 10`, `gap 2`. |
+| `row/session` | `44` tall, `--radius-sm` 10, `padding-inline 12`, `gap 10`. Glyph `ui/session` `18 × 18`. Title 17 / 22, weight 500. |
+| `row/session · current` | Same box, filled `--color-brand-tint` `#E6E3F9`; glyph and title both `--color-brand`, title weight 600. The drawer names the open session by marking it, since the title that used to say so in words is gone. |
+| `Drawer bottom bar` | `44` tall, on the content column, `justify-content: space-between`, one inset up from the floor (docked `top 914`, full screen `top 960`). |
+| `btn/new-chat` | Bottom **left**. `44` tall pill, `--color-brand` fill, `--radius-full`, `gap 8`, `padding-left 16`, `padding-right 20`. Glyph `ui/plus` `20 × 20` white, label "New chat" 17 / 22 weight 600 white. Shadow `#6051DC33 0 4 12` + `#14143214 0 1 2`. |
+| `btn/settings` | Bottom **right**. `44 × 44` `--color-surface` circle, glyph `control/settings` at 24, elevation 03 · Control. Already at the tap-target minimum, so unlike the panel's 32pt controls it needs no expansion. |
+
+> **The one non-neutral shadow in the product.** §0 of `01-foundations.md` states that every
+> shadow is `--color-shadow` at one of five alphas. `btn/new-chat`'s outer layer is the brand
+> violet at 20%. It is not an oversight: every other shadow separates a near-white surface from
+> a near-white surface, and this one falls under the only saturated fill in the product, where a
+> neutral grey reads as dirt. Carried at the call site rather than added to the elevation scale,
+> so the scale keeps saying what it says.
+
+### 14.1 The docked reveal (board 18)
+
+The drawer is **revealed**, not pushed in. It sits still at the panel's leading edge and the
+chat pane travels over it.
+
+| Property | Value |
+|---|---|
+| Travel | **263** — the drawer's own width, 78% of the panel |
+| Chat strip left visible | **74** = `337 − 263` |
+| Chat pane radius while revealed | `--radius-2xl` **20**, leading two corners only. Tighter than the panel's 28 because the two surfaces touch. |
+| Shadow at the seam | **none** — the panel's outer elevation is unchanged and nothing is added between the panes |
+| Drawer parallax | **12** — the drawer sits at local `x −12` closed and `0` open |
+
+**White veil crossfade.** A white overlay washes whichever pane is inactive; the surface colour
+never changes. At rest the **drawer** carries `55%`. Across `20% → 30%` of the travel the two
+reverse. From there the **chat** carries it, reaching `55%` fully open, and passing through
+`30%` at the 42% of travel board 18 draws (`#FFFFFF4D` on a 226pt strip). The second leg is
+eased rather than linear so all three of the design's published frames are reproduced — see
+`DrawerReveal.chatVeil(at:)`.
+
+**Gesture.** A right-swipe anywhere in the chat area. The pane tracks the finger one-to-one.
+The first **12 pt** of travel decide the axis: within **15°** of horizontal commits to the
+drawer pan and suppresses the thread's scroll until the finger lifts; anything steeper scrolls
+the thread and the drawer takes nothing from that touch. On release it settles by velocity
+first — a fling over **400 pt/s** decides the direction outright — and by the 50% line
+otherwise. A tap on the chat strip, or a left-swipe, closes it.
+
+### 14.2 The full-screen sidebar (board 19)
+
+**Persistent, not modal.** The chat does not move, dim, or clip; both panes are active at the
+same time and neither carries a veil.
+
+- Ground becomes `--color-surface-screen` `#F8F8F8`; the chat is a `--color-surface` pane with
+  `--radius-3xl` **28** on its leading corners. *"That edge carries the boundary, so there is
+  no divider rule."*
+- The reading column re-centres in what the sidebar and the board peek leave:
+  region `1308 − 372 = 936`, column `min(740, 936 − 56) = 740`, margins `98`, so
+  `x = 372 + 98 = 470`. Same rule as screen 07, one more term —
+  `ScreenLayout.columnX(reserving:)`.
+- The board peek is untouched at `(1308, 28)`.
+- The same right-swipe opens it and a left-swipe closes it. It springs rather than tracking the
+  finger: the chat is stationary and the column re-centres, so a finger-tracked sidebar would
+  drag 740 points of text sideways a frame at a time.
+
+---
+
 ## Open questions / ambiguities
 
 1. **No scroll fade exists on this artboard.** The panel's scroll-fade gradient is not present here — a `linear-gradient` search across the whole artboard returns only the five orb bodies, and no text node mentions "fade". The tutor panel specimen is a truncated placeholder with no header, message list, composer or fade. Those must live on another board (likely the conversation/messages artboard). **The requested exact scroll-fade gradient value cannot be sourced from `02 — Components · Shell`.**

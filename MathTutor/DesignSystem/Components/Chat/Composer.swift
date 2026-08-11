@@ -496,6 +496,19 @@ struct Composer: View {
     /// a specimen that has no board behind it draws the glyph without pretending to be a
     /// control — see `leading`.
     var onToggleSelection: (() -> Void)?
+    /// Whether there is anything on the board to select — `canAttach`'s twin, for the
+    /// glyph on the other side of the field.
+    ///
+    /// The thing behind this button refuses the same way `ComposerAttachments.add(...)`
+    /// does: `BoardScreen.toggleBoardSelection` guards on the board holding ink and
+    /// silently returns, so on an empty board the one selection control in the docked
+    /// composer swallowed its tap. The dock's `btn/select` already takes the same flag
+    /// (`CollapsedDock.canSelect`), so the two instances of the control agree.
+    ///
+    /// A lit glyph stays enabled regardless — disarming is allowed unconditionally, so a
+    /// marquee can never be left armed over a board that has since been cleared. That is
+    /// the dock's rule too.
+    var canSelect = true
     /// The files on this draft, in the order they were picked. Empty is the composer every
     /// screen has drawn until now.
     var attachments: [PendingAttachment] = []
@@ -740,22 +753,38 @@ struct Composer: View {
                     .expandedTapTarget(ComposerMetrics.minimumTapTarget, over: metrics.marqueeSize)
             }
             .buttonStyle(.plain)
+            .disabled(!marqueeIsAvailable)
             .accessibilityLabel("Select an area of the board")
             // "Attached" the moment the marquee is armed, matching the glyph — this
             // value is what says the tap landed, and the dock's own button reports
-            // the same axis the same way.
-            .accessibilityValue(selection.isLit ? "Attached" : "Not attached")
+            // the same axis the same way. Unavailable gets a sentence instead, as
+            // the `+` beside the field does — see `attachUnavailableValue`.
+            .accessibilityValue(
+                marqueeIsAvailable
+                    ? (selection.isLit ? "Attached" : "Not attached")
+                    : Self.selectUnavailableValue
+            )
             .accessibilityAddTraits(selection.isLit ? .isSelected : [])
         } else {
             marquee.accessibilityHidden(true)
         }
     }
 
+    /// Lit wins over unavailable by construction: a lit glyph means the marquee is armed
+    /// or a region is attached, and that keeps the control enabled — see `canSelect`.
+    private var marqueeIsAvailable: Bool { canSelect || selection.isLit }
+
+    /// What VoiceOver says in place of the grey the glyph turns — the sentence pattern
+    /// `attachUnavailableValue` set.
+    static let selectUnavailableValue = "Unavailable — the board has nothing to select"
+
     private var marquee: some View {
         IconView(
             .uiSelectionMarker,
             size: metrics.marqueeSize,
-            tint: selection.isLit ? DS.Color.brand : DS.Color.icon
+            tint: selection.isLit
+                ? DS.Color.brand
+                : (marqueeIsAvailable ? DS.Color.icon : DS.Color.inkTertiary)
         )
     }
 

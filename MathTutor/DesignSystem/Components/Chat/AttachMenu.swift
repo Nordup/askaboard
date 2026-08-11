@@ -44,23 +44,23 @@ struct AttachMenu: View {
     /// `3 × 44 + 2 × 4 + 2 × 8` — **156**, the card height board 16 measures.
     static var height: CGFloat {
         let rows = CGFloat(AttachMenuChoice.allCases.count)
-        return rows * SessionSwitcherMetrics.rowHeight
-            + (rows - 1) * SessionSwitcherMetrics.menuRowGap
-            + 2 * SessionSwitcherMetrics.menuPadding
+        return rows * MenuCardMetrics.rowHeight
+            + (rows - 1) * MenuCardMetrics.menuRowGap
+            + 2 * MenuCardMetrics.menuPadding
     }
 
     /// How far clear of the pill the card's bottom edge sits. The same 8 the session menu
     /// leaves below the header it drops from, measured on board 16 as `744 + 156 + 8 = 908`,
     /// the composer's top.
-    static var gapAbovePill: CGFloat { SessionSwitcherMetrics.menuTopGap }
+    static var gapAbovePill: CGFloat { MenuCardMetrics.menuTopGap }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: SessionSwitcherMetrics.menuRowGap) {
+        VStack(alignment: .leading, spacing: MenuCardMetrics.menuRowGap) {
             ForEach(AttachMenuChoice.allCases, id: \.self) { choice in
                 row(choice)
             }
         }
-        .padding(SessionSwitcherMetrics.menuPadding)
+        .padding(MenuCardMetrics.menuPadding)
         .frame(width: width, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: DS.Radius.lg).fill(DS.Color.surface)
@@ -72,7 +72,7 @@ struct AttachMenu: View {
 
     private func row(_ choice: AttachMenuChoice) -> some View {
         Button { onSelect(choice) } label: {
-            HStack(spacing: SessionSwitcherMetrics.newSessionGap) {
+            HStack(spacing: MenuCardMetrics.rowGlyphGap) {
                 // `ui/photo`, `ui/camera` and `ui/file` belong here at 20 × 20 in
                 // `--color-icon`. Board 16 draws them; task 8 §7.10 records that all three
                 // are **new glyphs not yet catalogued on board 04**, so `design/icons.json`
@@ -84,13 +84,13 @@ struct AttachMenu: View {
                 Text(verbatim: choice.label)
                     // 17 / 22 · 600 — the specimen `menu/sessions` sets its own action row
                     // in, which is what these three are.
-                    .textStyle(SessionSwitcherMetrics.newSessionLabel)
+                    .textStyle(MenuCardMetrics.actionLabel)
                     .foregroundStyle(DS.Color.ink)
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, SessionSwitcherMetrics.rowPaddingInline)
-            .frame(height: SessionSwitcherMetrics.rowHeight)
+            .padding(.horizontal, MenuCardMetrics.rowPaddingInline)
+            .frame(height: MenuCardMetrics.rowHeight)
             // `--radius-sm`, the shape the row highlights and hit-tests as. The session
             // menu's rows take the same corner for the fill they get when they are current.
             .contentShape(RoundedRectangle(cornerRadius: DS.Radius.sm))

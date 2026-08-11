@@ -70,18 +70,26 @@ final class UIState: ObservableObject {
     /// It does not persist, like everything else on this type.
     @Published private(set) var panelWidth: CGFloat = ScreenLayout.defaultPanelWidth
 
-    /// Whether the session switcher is dropped open under the panel's title.
+    /// Whether the sessions drawer is revealed — boards 17 and 19.
     ///
     /// Here rather than in `@State` on the panel for the reason everything else
     /// on this type is: it is presentation, it must not persist, and it has to
     /// survive the panel's body being rebuilt by any of the publishers around it
-    /// — a menu that closed itself every time a tutor delta arrived would be
-    /// impossible to use mid-turn.
+    /// — a drawer that shut itself every time a tutor delta arrived would be
+    /// impossible to use mid-turn. It has to be here for a second reason board
+    /// 15a's dropdown did not: full-screen, the drawer is a lane of the *screen*
+    /// and the reading column re-centres around it, so two surfaces read it.
     ///
-    /// It is not a fourth axis. Nothing else reads it, and no transition below
-    /// preserves it: `TutorPanel` closes it on the actions that take the learner
-    /// somewhere else.
-    @Published private(set) var isSessionMenuOpen = false
+    /// It replaces `isSessionMenuOpen`, and it is the same kind of thing: not a
+    /// fifth axis, and no transition below preserves it. Every control that takes
+    /// the learner somewhere the drawer cannot follow closes it first.
+    ///
+    /// **The open/closed state only.** The live position of a drag is not here —
+    /// it is `@State` on the surface being dragged, for the reason
+    /// `BoardScreen.previewPanelWidth` is: publishing an environment object on
+    /// every touch event invalidates every consumer of it and the pane visibly
+    /// stutters. This is written once, on release.
+    @Published private(set) var isSessionsDrawerOpen = false
 
     /// The rail's three selections carry no invariant between them — any tool
     /// works with any colour and any width — so they are plain settable state
@@ -180,16 +188,15 @@ final class UIState: ObservableObject {
         selection = .none
     }
 
-    /// The session title in `Panel controls` — drop the switcher open, or put it
-    /// away.
-    func toggleSessionMenu() {
-        isSessionMenuOpen.toggle()
+    /// A right-swipe that settled open — see `DrawerReveal.settlesOpen(progress:velocity:)`.
+    func openSessionsDrawer() {
+        isSessionsDrawerOpen = true
     }
 
-    /// Tapping the panel behind the open menu, picking a row, or any transition
-    /// that changes what the panel is showing.
-    func closeSessionMenu() {
-        isSessionMenuOpen = false
+    /// A left-swipe, a tap on the pushed-aside chat strip, picking a session, or
+    /// any transition that changes what the tutor is showing.
+    func closeSessionsDrawer() {
+        isSessionsDrawerOpen = false
     }
 
     /// The resize handle in the gutter between the board and the panel.

@@ -370,8 +370,8 @@ struct ScreenLayout: Equatable, Sendable {
     /// Where the reading column is allowed to live: everything to the left of the peek.
     /// *"because the peek occupies the trailing 68, that column is centred in what remains
     /// rather than on the screen."*
-    var columnRegionX: CGFloat { safeAreaLeading }
-    var columnRegionWidth: CGFloat { max(0, peekX - columnRegionX) }
+    var columnRegionX: CGFloat { columnRegionX(reserving: 0) }
+    var columnRegionWidth: CGFloat { columnRegionWidth(reserving: 0) }
 
     /// `--container-column`, or whatever fits — `min(740, region − 2 × 28)`.
     ///
@@ -379,15 +379,68 @@ struct ScreenLayout: Equatable, Sendable {
     /// drops below 740 + 2 × edge: at that point the margins stop being generous and become
     /// exactly `--space-edge`, which is the rule for a panel against a screen edge anyway. On
     /// the reference device `min(740, 1308 − 56) = 740`, so nothing changes.
-    var columnWidth: CGFloat {
-        max(0, min(DS.Container.column, columnRegionWidth - 2 * DS.Space.edge))
-    }
+    var columnWidth: CGFloat { columnWidth(reserving: 0) }
 
     /// `(1376 − 68 − 740) ÷ 2 = 284` — equal margins inside the region, not on the screen.
-    var columnMargin: CGFloat { (columnRegionWidth - columnWidth) / 2 }
+    var columnMargin: CGFloat { columnMargin(reserving: 0) }
 
     /// `0 + (1376 − 68 − 740) ÷ 2 = 284`. Margins 284 / 284.
-    var columnX: CGFloat { columnRegionX + columnMargin }
+    var columnX: CGFloat { columnX(reserving: 0) }
+
+    /// The same four numbers, with a lane taken off the **leading** side of the region first.
+    ///
+    /// This is what the full-screen sessions sidebar needs, and it is deliberately the existing
+    /// rule with one more term rather than a second rule. Board 19: *"The chat column re-centers
+    /// in the width that is left of the sidebar and the board peek."* The peek already came off
+    /// the trailing side; the sidebar comes off the leading one; the column is still centred in
+    /// what is left, which is the sentence screen 07 was always written as.
+    ///
+    /// `reserving: 0` is screen 07 exactly, which is why every property above delegates here
+    /// instead of the two spellings living side by side — the closed sidebar has to be
+    /// bit-for-bit the layout that shipped, not a re-derivation of it.
+    ///
+    /// On the reference screen with board 19's 372 reserved: region `1308 − 372 = 936`, column
+    /// `min(740, 936 − 56) = 740`, margins `(936 − 740) ÷ 2 = 98`, and `372 + 98 = 470` — which
+    /// is where board 19 draws the greeting and the composer.
+    func columnRegionX(reserving leading: CGFloat) -> CGFloat {
+        safeAreaLeading + max(0, leading)
+    }
+
+    func columnRegionWidth(reserving leading: CGFloat) -> CGFloat {
+        max(0, peekX - columnRegionX(reserving: leading))
+    }
+
+    func columnWidth(reserving leading: CGFloat) -> CGFloat {
+        max(0, min(DS.Container.column, columnRegionWidth(reserving: leading) - 2 * DS.Space.edge))
+    }
+
+    func columnMargin(reserving leading: CGFloat) -> CGFloat {
+        (columnRegionWidth(reserving: leading) - columnWidth(reserving: leading)) / 2
+    }
+
+    func columnX(reserving leading: CGFloat) -> CGFloat {
+        columnRegionX(reserving: leading) + columnMargin(reserving: leading)
+    }
+
+    // MARK: - Sessions drawer (screens 17 · 18 · 19)
+
+    /// The full-screen sessions sidebar's lane: flush against the leading edge, the full height
+    /// of the screen, and only present while the sidebar is open.
+    ///
+    /// Not in `namedRegions`, for the reason the resize strip is not: those entries are the
+    /// lanes the screen is *cut into*, all present at once and all checked against each other,
+    /// and this is a lane that exists in one state of one screen and overlaps the column's own
+    /// region by construction when it does. What it is checked against is `columnX(reserving:)`,
+    /// which is where it actually bites.
+    var sessionsSidebarX: CGFloat { safeAreaLeading }
+    var sessionsSidebarWidth: CGFloat { SessionsDrawerMetrics.sidebarWidth }
+
+    /// How far the docked chat pane slides to reveal the drawer beneath it — the drawer's own
+    /// width, since the two are the same travel seen from either side. `337 × 0.78 = 263`.
+    var sessionsDrawerWidth: CGFloat { SessionsDrawerMetrics.width(inPanel: panelWidth) }
+
+    /// What is left of the panel for the pushed-aside chat: `337 − 263 = 74`.
+    var pushedChatWidth: CGFloat { SessionsDrawerMetrics.stripWidth(inPanel: panelWidth) }
 
     // MARK: - Collapsed dock (screen 06)
 

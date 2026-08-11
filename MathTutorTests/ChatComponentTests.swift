@@ -1277,9 +1277,10 @@ final class ChatComponentTests: XCTestCase {
         // than the design's 610 in a band that is 60 shorter. The old constants would have
         // drawn the grid straight through the composer; here the block takes the whole band,
         // the greeting starts at the top of it and the column scrolls, which is what
-        // `TutorFullScreen` wraps it in a scroll view for. The band is 684 rather than 704
-        // because the gear overlaps a column this narrow, so `columnTop` gives way by one
-        // 32pt control band — which the shorter pill only hands 12 of back.
+        // `TutorFullScreen` wraps it in a scroll view for. The band is 716 rather than 704
+        // because the shorter pill in a narrow column hands 12 points back — and it is no
+        // longer 684: board 19 took `btn/settings` off this screen, so `columnTop` has nothing
+        // in the corner to give a 32pt control band up to. See `TutorColumnMetrics.columnTop`.
         let portrait = TutorColumnMetrics(
             layout: ScreenLayout(
                 size: CGSize(width: 768, height: 1024),
@@ -1289,7 +1290,7 @@ final class ChatComponentTests: XCTestCase {
         XCTAssertEqual(portrait.width, 644)
         XCTAssertEqual(portrait.suggestionsHeight, 356)
         XCTAssertEqual(portrait.startContentHeight, 798)
-        XCTAssertEqual(portrait.startRegionHeight, 684)
+        XCTAssertEqual(portrait.startRegionHeight, 716)
         XCTAssertEqual(portrait.startSlack, 0)
         XCTAssertEqual(portrait.greetingTop, portrait.columnTop)
         XCTAssertTrue(portrait.startScrolls, "this is the column that has to scroll")
@@ -1876,20 +1877,20 @@ final class ChatComponentTests: XCTestCase {
 
     // Constructs SwiftUI values, and `View` carries `@MainActor`.
     @MainActor
-    func testTheAttachMenuIsTheSessionMenusConstruction() {
+    func testTheAttachMenuKeepsTheSessionMenusConstruction() {
         // Task 8 §3: "construction is inherited from `menu/sessions` exactly". The card is
         // `3 × 44 + 2 × 4 + 2 × 8 = 156`, and it opens 8 clear of the pill — the same gap
         // the session menu leaves under the header it drops from.
         XCTAssertEqual(AttachMenu.height, 156)
         XCTAssertEqual(AttachMenu.gapAbovePill, 8)
-        XCTAssertEqual(SessionSwitcherMetrics.rowHeight, 44)
-        XCTAssertEqual(SessionSwitcherMetrics.menuRowGap, 4)
-        XCTAssertEqual(SessionSwitcherMetrics.menuPadding, 8)
-        XCTAssertEqual(SessionSwitcherMetrics.rowPaddingInline, 12)
+        XCTAssertEqual(MenuCardMetrics.rowHeight, 44)
+        XCTAssertEqual(MenuCardMetrics.menuRowGap, 4)
+        XCTAssertEqual(MenuCardMetrics.menuPadding, 8)
+        XCTAssertEqual(MenuCardMetrics.rowPaddingInline, 12)
         // 17 / 22 · 600, the specimen the session menu sets its own action row in.
-        XCTAssertEqual(SessionSwitcherMetrics.newSessionLabel.size, 17)
-        XCTAssertEqual(SessionSwitcherMetrics.newSessionLabel.leading, 22)
-        XCTAssertEqual(SessionSwitcherMetrics.newSessionLabel.weight, .semibold)
+        XCTAssertEqual(MenuCardMetrics.actionLabel.size, 17)
+        XCTAssertEqual(MenuCardMetrics.actionLabel.leading, 22)
+        XCTAssertEqual(MenuCardMetrics.actionLabel.weight, .semibold)
     }
 
     func testTheAttachMenuOffersThreeRowsInTheOrderTheBoardDrawsThem() {

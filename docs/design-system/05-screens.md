@@ -280,14 +280,22 @@ radii. **The two fades are not transcribed in detail here** — this file
 predates them, as does §6 of `03-chat-components.md`, which still documents a
 single `301 × 72` fade inside the thread.
 
-#### 1. Panel controls (`301 × 32`, `flex row`, `gap: 14`, `justify-content: flex-start`)
+#### 1. Panel controls (`301 × 32`, `flex row`, `gap: 14`, `justify-content: flex-end`)
 
-| Button | x within controls | Size | Icon |
-|---|---|---|---|
-| `btn/full-screen` | 0 | `32 × 32` | 28 × 28: rounded rect `x3.5 y5.5 w21 h17 rx5`, no divider. Stroke `--color-icon`, width 2. |
-| `btn/dock` | 46 | `32 × 32` | 28 × 28: rounded rect `x3.5 y5.5 w21 h17 rx5` + vertical line at `x = 11.2` → a "left sidebar" glyph. Stroke `--color-icon`, width 2. |
+| Button | Size | Icon |
+|---|---|---|
+| `btn/full-screen` | `32 × 32` | 28 × 28: rounded rect `x3.5 y5.5 w21 h17 rx5`, no divider. Stroke `--color-icon`, width 2. |
+| `btn/dock` | `32 × 32` | 28 × 28: rounded rect `x3.5 y5.5 w21 h17 rx5` + vertical line at `x = 11.2` → a "left sidebar" glyph. Stroke `--color-icon`, width 2. |
 
 Neither button carries a selected/pressed background in this design.
+
+**The row holds these two and nothing else.** It briefly also held board 15a's
+session-title dropdown in the middle lane and `btn/settings` at the leading
+edge. Board 17 (`note/17 — header after`) takes both out: *"The session title
+dropdown and the settings gear leave the header. The drawer owns both. Only the
+full-screen and minimize pair stays."* The row justifies to `flex-end` and the
+pair reads full-screen, then dock. See §14 of `02-shell-components.md` for what
+took them.
 
 #### 2. Orb (`96 × 90`, centred; `x = 120.5` within the panel)
 
@@ -462,23 +470,24 @@ right of the board peek: `(1376 − 68 − 740) / 2 = 284`, so
 `left = 68 + 284 = 352`, `right = 284`. Implement it as: reserve the 68 pt
 peek, centre a 740 pt column in the remainder.
 
-### Panel controls — settings-only variant
+### No panel controls, and no gear
 
-**996 × 32 at (352, 28)**, `display: flex`, `align-items: center`,
-`justify-content: flex-end`. One child: **`btn/settings`** 32 × 32, glyph
-`control/settings` 28 × 28 (the cog), `stroke-width 2`.
+This screen draws **no** chrome. `btn/dock` and `btn/full-screen` are absent —
+the board peek is the way back, and a full-screen button is a control for the
+state you are already in.
 
-Added 2026-08-07. This board used to draw **no** chrome at all — the peek was
-its only affordance — which left Settings unreachable from the greeting. It is
-now byte-identical to board 13's row, so the two full-screen states carry the
-same gear in the same lane.
+It carried a settings-only row for a while: `996 × 32 at (352, 28)`,
+`justify-content: flex-end`, one `btn/settings` landing on x 1316. Board 19
+removes it. The gear is in the sessions drawer now, which is reachable from
+this screen by the same right-swipe the docked panel takes, so Settings is
+still one gesture and one tap away from the greeting — which is the gap the
+gear was added to close. See §14 of `02-shell-components.md`.
 
-The row is 996 wide rather than 740 so that `flex-end` lands the gear on
-**x 1316**, `--space-edge` in from the screen's right — the same lane the docked
-panel's right edge sits on, not the reading column's. Nothing in the column
-moves for it: the column ends at 1092, so the gear is 224 pt clear.
-`btn/dock` and `btn/full-screen` are absent here for the same reason they are
-absent on board 13.
+One consequence in code: `TutorColumnMetrics.columnTop` used to give the column
+up one 32 pt control band on any window narrow enough for the column's leading
+edge to reach the gear — every portrait iPad. With no gear in the corner there
+is nothing to give way to, and the narrow-window column gets those 32 points
+back.
 
 Vertical rhythm of the column:
 

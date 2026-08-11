@@ -152,6 +152,13 @@ struct MessageThread<Accessory: View>: View {
     /// the composer, on both surfaces. The thread scrolls its history behind it, so this is
     /// what keeps the newest message clear of it. See `ThreadMetrics.for(_:width:clearing:)`.
     var clearing: CGFloat = 0
+    /// Whether the scroll is suspended for the touch in progress.
+    ///
+    /// Board 18's intent lock, and the only thing in this file that is not the thread's own
+    /// business: a drag that has committed to revealing the sessions drawer must not also
+    /// scroll the conversation it is sliding away. Defaulted off, so nothing that does not
+    /// live beside a drawer has to know the rule exists.
+    var scrollDisabled = false
     /// A `view_board` step's rendered crop, by the id `BoardCropStore` filed it under —
     /// handed to every tutor row's `ActivityTrailView` rather than resolved here, because
     /// this file has no store of its own to resolve it from (see `ChatThreadItem`'s own doc
@@ -188,6 +195,7 @@ struct MessageThread<Accessory: View>: View {
                 .frame(width: metrics.clipWidth)
             }
             .defaultScrollAnchor(.bottom)
+            .scrollDisabled(scrollDisabled)
             // A scroll view clips to its bounds and that is the whole reason this is here:
             // clipping to the column would cut `btn/orb`'s halo down the column's left edge.
             // See `ThreadMetrics.bleed`.

@@ -1,16 +1,17 @@
 {
   "source": {
-    "file": "AI Whiteboard Tutor — Design System, Components & Page",
+    "file": "AI Whiteboard Tutor \u2014 Design System, Components & Page",
     "fileId": "01KZAH9BZ4FRZXKG2309B7SSRG",
     "artboards": [
-      "04 — Icons (1IF-0) — the original sixteen",
-      "13 — Session plan · full screen (3TM-0) and 14 — Components · Tutor states (3WL-0) — the four added later",
-      "11 — First run · no API key (3NQ-0) — control/settings as a panel control",
-      "10 — Settings (3KT-0) — ui/chevron-down, drawn inside row/setting rather than as a specimen",
-      "15a — Sessions · header menu (530-0) — ui/plus, drawn inside row/new-session rather than as a specimen",
-      "04 — Icons (1IF-0) section 07 — the four added for the activity trail"
+      "04 \u2014 Icons (1IF-0) \u2014 the original sixteen",
+      "13 \u2014 Session plan \u00b7 full screen (3TM-0) and 14 \u2014 Components \u00b7 Tutor states (3WL-0) \u2014 the four added later",
+      "11 \u2014 First run \u00b7 no API key (3NQ-0) \u2014 control/settings as a panel control",
+      "10 \u2014 Settings (3KT-0) \u2014 ui/chevron-down, drawn inside row/setting rather than as a specimen",
+      "15a \u2014 Sessions \u00b7 header menu (530-0) \u2014 ui/plus, drawn inside row/new-session rather than as a specimen",
+      "04 \u2014 Icons (1IF-0) section 07 \u2014 the four added for the activity trail",
+      "17 \u2014 Sessions drawer \u00b7 docked open (60P-0) \u2014 ui/session, drawn inside row/session rather than as a specimen"
     ],
-    "readVia": "get_jsx, format inline-styles — never a screenshot",
+    "readVia": "get_jsx, format inline-styles \u2014 never a screenshot",
     "prose": [
       "docs/design-system/04-icons.md",
       "docs/design-system/06-states-and-settings.md"
@@ -19,15 +20,15 @@
     "generates": "MathTutor/DesignSystem/Generated/IconPaths.swift"
   },
   "coverage": {
-    "productGlyphs": 26,
+    "productGlyphs": 27,
     "excluded": [
       {
         "name": "os/wifi",
-        "reason": "Board section 06 heads these 'OS CHROME — DO NOT SHIP'. They are stand-ins for the iPadOS status bar; iPadOS supplies the real ones at runtime."
+        "reason": "Board section 06 heads these 'OS CHROME \u2014 DO NOT SHIP'. They are stand-ins for the iPadOS status bar; iPadOS supplies the real ones at runtime."
       },
       {
         "name": "os/battery",
-        "reason": "Same. Also runs stroke 1.7 on a non-square 27×14 viewBox, which the board says no product glyph should copy."
+        "reason": "Same. Also runs stroke 1.7 on a non-square 27\u00d714 viewBox, which the board says no product glyph should copy."
       }
     ]
   },
@@ -44,6 +45,11 @@
         "name": "board/hinge",
         "effectiveStrokeWidth": 1.9,
         "reason": "The rule would push its attribute to 2.4, a 26% jump. The heavier frame closes in on the six r=1 interior dots and the mark reads as a blob at true size. It is also the one glyph that never appears beside another, so matching the rail's weight buys nothing."
+      },
+      {
+        "name": "ui/session",
+        "effectiveStrokeWidth": 1.6,
+        "reason": "Authored at its render size on an 18 viewBox, the smallest box in the set, and the only glyph whose interior detail is a 3-unit zigzag. At the rule's 2.0 the polyline's own steps close into a solid wedge and the mark stops reading as a board with working on it. The drawer's rows are the one place it appears, always at 18, so matching the rail's weight buys nothing."
       }
     ]
   },
@@ -72,7 +78,7 @@
       "usedBy": [
         "ui/selection-marker"
       ],
-      "note": "Butt cap, not declared in the markup — it is the SVG default. It is what makes the segments read as clean marching ants."
+      "note": "Butt cap, not declared in the markup \u2014 it is the SVG default. It is what makes the segments read as clean marching ants."
     }
   },
   "icons": [
@@ -90,7 +96,7 @@
       "effectiveStrokeWidth": null,
       "colorToken": "--color-brand",
       "dashTexture": null,
-      "notes": "Fill-only — the one glyph in the set with no stroke at all. Shown selected, which is its resting appearance in the live rail. The width=27 attribute is stale: the product overrides it to 28 inline, so the port authors a plain 28. Violet means 'tool is active', not 'current ink', which is why it binds --color-brand and not --color-pen-violet.",
+      "notes": "Fill-only \u2014 the one glyph in the set with no stroke at all. Shown selected, which is its resting appearance in the live rail. The width=27 attribute is stale: the product overrides it to 28 inline, so the port authors a plain 28. Violet means 'tool is active', not 'current ink', which is why it binds --color-brand and not --color-pen-violet.",
       "elements": [
         {
           "type": "path",
@@ -186,7 +192,7 @@
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-icon",
       "dashTexture": null,
-      "notes": "One of only two glyphs that needed no override — attribute 2 on a 1:1 scale already renders 2.00.",
+      "notes": "One of only two glyphs that needed no override \u2014 attribute 2 on a 1:1 scale already renders 2.00.",
       "elements": [
         {
           "type": "path",
@@ -224,7 +230,7 @@
       "effectiveStrokeWidth": 2.7,
       "colorToken": "--color-icon",
       "dashTexture": "dash/dotted",
-      "notes": "Exception 1 of the board's three. Keeps 2.7 — for a dotted mark the perceived weight is dot diameter, not line weight.",
+      "notes": "Exception 1 of the board's three. Keeps 2.7 \u2014 for a dotted mark the perceived weight is dot diameter, not line weight.",
       "elements": [
         {
           "type": "circle",
@@ -309,7 +315,7 @@
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-icon",
       "dashTexture": null,
-      "notes": "control/dock and control/full are the same 21×17 rect at radius 5; dock adds the divider at x=11.2. The board: 'draw them as one shape with a conditional second path — the rect must not shift by even a subpixel when the state toggles.' The divider sits left of centre, mirrored from x=16.8 when the shell mirrored: the panel is on the left of the screen, so the glyph's small region has to be on the left too.",
+      "notes": "control/dock and control/full are the same 21\u00d717 rect at radius 5; dock adds the divider at x=11.2. The board: 'draw them as one shape with a conditional second path \u2014 the rect must not shift by even a subpixel when the state toggles.' The divider sits left of centre, mirrored from x=16.8 when the shell mirrored: the panel is on the left of the screen, so the glyph's small region has to be on the left too.",
       "elements": [
         {
           "type": "rect",
@@ -384,7 +390,7 @@
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-icon",
       "dashTexture": null,
-      "notes": "A six-tooth cog around an open centre — redrawn from the sliders mark the boards used to carry. The third panel control on boards 11/12/13 at 28 (attribute 2, renders 2.00), and the auth-error recovery glyph on board 14 at 22 (attribute 2.545, renders 2.00). The cog is one closed polygon whose tooth corners are rounded by stroke-linejoin rather than by geometry, so the tooth count and the tip radius are the only two numbers to hold. Six teeth, not eight: at the 22 the recovery chip draws it, eight blur into a bumpy circle. Tip 10.27 puts its ink at 82% of the box, matching control/dock beside it in the panel row; root 7.35 leaves the teeth 2.9 units proud, which stays legible against a 2.0 stroke; the r3.27 centre keeps a visible hole at 22. The redraw also retired this glyph's stroke anomaly — the old mark ran 2.18 at 22 on a 28 viewBox and rendered 1.71.",
+      "notes": "A six-tooth cog around an open centre \u2014 redrawn from the sliders mark the boards used to carry. The third panel control on boards 11/12/13 at 28 (attribute 2, renders 2.00), and the auth-error recovery glyph on board 14 at 22 (attribute 2.545, renders 2.00). The cog is one closed polygon whose tooth corners are rounded by stroke-linejoin rather than by geometry, so the tooth count and the tip radius are the only two numbers to hold. Six teeth, not eight: at the 22 the recovery chip draws it, eight blur into a bumpy circle. Tip 10.27 puts its ink at 82% of the box, matching control/dock beside it in the panel row; root 7.35 leaves the teeth 2.9 units proud, which stays legible against a 2.0 stroke; the r3.27 centre keeps a visible hole at 22. The redraw also retired this glyph's stroke anomaly \u2014 the old mark ran 2.18 at 22 on a 28 viewBox and rendered 1.71.",
       "designAnomaly": null,
       "elements": [
         {
@@ -425,7 +431,7 @@
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-brand | --color-icon",
       "dashTexture": "dash/marching",
-      "notes": "One asset, two colour states: --color-brand when a board selection is live in the composer, --color-icon when it is the collapsed dock's idle select control. The markup attribute says #6051DC in BOTH cases and an inline style decides — this is the set's one genuine markup-vs-render colour disagreement, and the board's instruction is to port it as a single view with the colour injected, never by copy-paste.",
+      "notes": "One asset, two colour states: --color-brand when a board selection is live in the composer, --color-icon when it is the collapsed dock's idle select control. The markup attribute says #6051DC in BOTH cases and an inline style decides \u2014 this is the set's one genuine markup-vs-render colour disagreement, and the board's instruction is to port it as a single view with the colour injected, never by copy-paste.",
       "elements": [
         {
           "type": "rect",
@@ -461,7 +467,7 @@
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-icon",
       "dashTexture": null,
-      "notes": "Correct-finding mark in the evaluation lane, and the bullet for plan/outcome. Authored on board 04's recommended 24 grid: 24 render with a flat 2 in the full-screen plan, 22 render with 2.18 in the panel — both render 2.00. The markup binds --color-icon; the evaluation state overrides it inline with --color-correct, exactly as ui/selection-marker's two states do. That tint is the call site's to pass — the semantic pair is stroke-only and must never become a fill, so it is not baked in here.",
+      "notes": "Correct-finding mark in the evaluation lane, and the bullet for plan/outcome. Authored on board 04's recommended 24 grid: 24 render with a flat 2 in the full-screen plan, 22 render with 2.18 in the panel \u2014 both render 2.00. The markup binds --color-icon; the evaluation state overrides it inline with --color-correct, exactly as ui/selection-marker's two states do. That tint is the call site's to pass \u2014 the semantic pair is stroke-only and must never become a fill, so it is not baked in here.",
       "elements": [
         {
           "type": "path",
@@ -489,7 +495,7 @@
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-icon",
       "dashTexture": null,
-      "notes": "Incorrect-finding mark, and the shape is the entire signal — it is drawn in the same colour as ui/check, and the evaluation state tints it --color-incorrect at the call site. One path with two M subpaths, not two elements. Symmetric about (12,12) on an 11.2pt half-diagonal. Round cap, and deliberately no linejoin: the two strokes never meet, so there is no join to round.",
+      "notes": "Incorrect-finding mark, and the shape is the entire signal \u2014 it is drawn in the same colour as ui/check, and the evaluation state tints it --color-incorrect at the call site. One path with two M subpaths, not two elements. Symmetric about (12,12) on an 11.2pt half-diagonal. Round cap, and deliberately no linejoin: the two strokes never meet, so there is no join to round.",
       "elements": [
         {
           "type": "path",
@@ -517,7 +523,7 @@
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-icon",
       "dashTexture": null,
-      "notes": "Disclosure mark in row/setting on the settings window, and the twenty-first glyph. Authored on a 16 grid rather than board 04's recommended 24 because it is the smallest mark in the product: a 24 viewBox rendered at 16 would need a 3.0 design stroke to land on 2.0 effective, which is further from the set's own weights than drawing it at its render size. Scale is exactly 1.0, so design stroke and effective stroke are both 2. Read off board 10, where the mark is drawn inside the row rather than as a specimen on board 04 — the same route ui/check, ui/cross, ui/retry and control/settings took from boards 11, 13 and 14. Board 04 holds the original sixteen and is not the whole set.",
+      "notes": "Disclosure mark in row/setting on the settings window, and the twenty-first glyph. Authored on a 16 grid rather than board 04's recommended 24 because it is the smallest mark in the product: a 24 viewBox rendered at 16 would need a 3.0 design stroke to land on 2.0 effective, which is further from the set's own weights than drawing it at its render size. Scale is exactly 1.0, so design stroke and effective stroke are both 2. Read off board 10, where the mark is drawn inside the row rather than as a specimen on board 04 \u2014 the same route ui/check, ui/cross, ui/retry and control/settings took from boards 11, 13 and 14. Board 04 holds the original sixteen and is not the whole set.",
       "elements": [
         {
           "type": "path",
@@ -545,7 +551,7 @@
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-icon",
       "dashTexture": null,
-      "notes": "Network-error recovery glyph — an open circular arrow with an arrowhead at the top right. Recovery chips take --color-icon rather than --color-brand because a repair is not a suggestion. The ring is a large-arc segment around an implied centre of (12,12) at r 8.4, left open where the arrowhead lands.",
+      "notes": "Network-error recovery glyph \u2014 an open circular arrow with an arrowhead at the top right. Recovery chips take --color-icon rather than --color-brand because a repair is not a suggestion. The ring is a large-arc segment around an implied centre of (12,12) at r 8.4, left open where the arrowhead lands.",
       "elements": [
         {
           "type": "path",
@@ -631,7 +637,7 @@
       ],
       "renderSize": 26,
       "effectiveStrokeWidth": 2.0,
-      "colorToken": "#FFFFFF → --color-surface",
+      "colorToken": "#FFFFFF \u2192 --color-surface",
       "dashTexture": null,
       "notes": "The only glyph in the set that does not bind a colour token: a literal #FFFFFF, because it always rides the filled --color-brand send button. The port substitutes --color-surface, which is that same white as a token. It is also the board's own proof that per-size attributes do not converge: 'send would need 2.18 at 22pt and 1.85 at 26pt.'",
       "elements": [
@@ -671,7 +677,7 @@
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-brand",
       "dashTexture": null,
-      "notes": "The smallest glyph in the set and the only one on a 14 viewBox. The width=13 attribute is stale — the product overrides it to 14, which is the board's 'one free re-fit' (scale exactly 1.0, so the stroke is a plain 2.0 rather than the tabled 2.15). The port follows the product, not the table.",
+      "notes": "The smallest glyph in the set and the only one on a 14 viewBox. The width=13 attribute is stale \u2014 the product overrides it to 14, which is the board's 'one free re-fit' (scale exactly 1.0, so the stroke is a plain 2.0 rather than the tabled 2.15). The port follows the product, not the table.",
       "elements": [
         {
           "type": "path",
@@ -700,7 +706,7 @@
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-brand",
       "dashTexture": null,
-      "notes": "Suggestion chip — 'Explain this concept'. A lightbulb.",
+      "notes": "Suggestion chip \u2014 'Explain this concept'. A lightbulb.",
       "elements": [
         {
           "type": "path",
@@ -739,7 +745,7 @@
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-brand",
       "dashTexture": null,
-      "notes": "Suggestion chip — 'Give me an example'. Two four-point sparkles. Both paths open with an implicit lineto (an M followed by a second coordinate pair).",
+      "notes": "Suggestion chip \u2014 'Give me an example'. Two four-point sparkles. Both paths open with an implicit lineto (an M followed by a second coordinate pair).",
       "elements": [
         {
           "type": "path",
@@ -778,7 +784,7 @@
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-brand",
       "dashTexture": null,
-      "notes": "Suggestion chip — 'Create an exercise'. A pencil over an open square.",
+      "notes": "Suggestion chip \u2014 'Create an exercise'. A pencil over an open square.",
       "elements": [
         {
           "type": "path",
@@ -817,7 +823,7 @@
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-brand",
       "dashTexture": null,
-      "notes": "Suggestion chip — 'I don't understand this'. The group's one internal exception: the question-mark dot is a filled circle rather than stroked, because 'a rounded 1.9 cap would have read as a dash at this size'. The hook is the set's only large-arc segment.",
+      "notes": "Suggestion chip \u2014 'I don't understand this'. The group's one internal exception: the question-mark dot is a filled circle rather than stroked, because 'a rounded 1.9 cap would have read as a dash at this size'. The hook is the set's only large-arc segment.",
       "elements": [
         {
           "type": "circle",
@@ -869,7 +875,7 @@
       "effectiveStrokeWidth": 1.9,
       "colorToken": "--color-ink",
       "dashTexture": null,
-      "notes": "Exception 2 of the board's three, and the only non-square product glyph. Its six interior dots are filled at r=1 rather than stroked, which is why it holds up when the board peek shrinks it. renderSize is the width — the height follows the 26×24 aspect, because the board's rule is that a non-square mark centred in a square slot is correct and a stretched one is not.",
+      "notes": "Exception 2 of the board's three, and the only non-square product glyph. Its six interior dots are filled at r=1 rather than stroked, which is why it holds up when the board peek shrinks it. renderSize is the width \u2014 the height follows the 26\u00d724 aspect, because the board's rule is that a non-square mark centred in a square slot is correct and a stretched one is not.",
       "elements": [
         {
           "type": "rect",
@@ -973,7 +979,7 @@
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-brand",
       "dashTexture": null,
-      "notes": "New-session mark in the session switcher, and the twenty-second glyph. Read off board 15a, where it is drawn inside row/new-session rather than as a specimen on board 04 — the same route ui/chevron-down took from board 10. Authored at its render size like ui/chevron-down, so scale is exactly 1.0 and design stroke and effective stroke are both 2. The only glyph in the set whose colour token is --color-brand rather than --color-icon: it is not chrome, it is the one action on the menu, and board 15a draws mark and label in the accent together. One path with two M subpaths, symmetric about (10,10). Round cap, and no linejoin — the strokes cross but never join, exactly as ui/cross.",
+      "notes": "New-session mark in the session switcher, and the twenty-second glyph. Read off board 15a, where it is drawn inside row/new-session rather than as a specimen on board 04 \u2014 the same route ui/chevron-down took from board 10. Authored at its render size like ui/chevron-down, so scale is exactly 1.0 and design stroke and effective stroke are both 2. The only glyph in the set whose colour token is --color-brand rather than --color-icon: it is not chrome, it is the one action on the menu, and board 15a draws mark and label in the accent together. One path with two M subpaths, symmetric about (10,10). Round cap, and no linejoin \u2014 the strokes cross but never join, exactly as ui/cross.",
       "elements": [
         {
           "type": "path",
@@ -983,6 +989,49 @@
           "strokeWidth": 2,
           "lineCap": "round",
           "lineJoin": null,
+          "dashArray": null
+        }
+      ]
+    },
+    {
+      "name": "ui/session",
+      "swiftCase": "uiSession",
+      "viewBox": {
+        "width": 18,
+        "height": 18
+      },
+      "productRenderSizes": [
+        18
+      ],
+      "renderSize": 18,
+      "effectiveStrokeWidth": 1.6,
+      "colorToken": "--color-icon",
+      "dashTexture": null,
+      "notes": "A stored session, in the sessions drawer's rows \u2014 board 17. The twenty-seventh glyph, and read off row/session rather than off a specimen, the same route ui/plus and ui/chevron-down took. A rounded board with a line of working on it: the rect is the board and the four-point polyline is the ink. Drawn on an 18 viewBox and rendered at 18, so the scale is exactly 1.0 and design stroke and effective stroke are the same 1.6. Its colour is the call site's, not the glyph's: the drawer tints the open session's row --color-brand and every other row --color-ink-tertiary, the same way ui/selection-marker carries one case and two colour states. --color-icon is what the data binds, because a glyph that baked in either state would eventually be drawn in the wrong one.",
+      "designAnomaly": null,
+      "elements": [
+        {
+          "type": "rect",
+          "x": 2,
+          "y": 3.25,
+          "width": 14,
+          "height": 11.5,
+          "rx": 2.6,
+          "fill": "none",
+          "stroke": "var(--color-icon)",
+          "strokeWidth": 1.6,
+          "lineCap": null,
+          "lineJoin": null,
+          "dashArray": null
+        },
+        {
+          "type": "path",
+          "d": "M5.2 11.2 L7.6 8.2 L9.9 10.2 L12.8 6.6",
+          "fill": "none",
+          "stroke": "var(--color-icon)",
+          "strokeWidth": 1.6,
+          "lineCap": "round",
+          "lineJoin": "round",
           "dashArray": null
         }
       ]
@@ -1002,7 +1051,7 @@
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-icon",
       "dashTexture": null,
-      "notes": "The tutor looked at the board — the `view_board` row in the activity trail. A lens of two mirrored cubics meeting at 2.6 and 21.4, so the ink spans 18.8 of 24 (78%), the same share control/dock holds in the panel row. Control points at y 5.2 put the curve extremum near 6.9 and make the lens 10.2 tall against 18.8 wide. Pupil r3.3, and both numbers were set by the 16 render rather than by the 24: at 16 with the set's effective 2.0 the first draft (control points 6.6, pupil r2.7) closed the pupil to a blob — the same failure tool/lasso carries an exception for. Rather than take a second exception the glyph was redrawn to survive the rule, so trail/eye renders a real ring at 16 with nothing special-cased. tool/lasso and ui/selection-marker were both tried here first and both rejected: they mean the LEARNER marqueed a region, and borrowing either would have said the wrong thing quietly. Rendered at 16 in a trail row, where the 24 viewBox scales by 0.667 — so the authored 2.0 becomes 1.33 and the attribute is compensated to 3.0 at the call site to land the set's effective 2.0. tool/pen shares these rows off a 28 viewBox and needs 3.5 for the same result.",
+      "notes": "The tutor looked at the board \u2014 the `view_board` row in the activity trail. A lens of two mirrored cubics meeting at 2.6 and 21.4, so the ink spans 18.8 of 24 (78%), the same share control/dock holds in the panel row. Control points at y 5.2 put the curve extremum near 6.9 and make the lens 10.2 tall against 18.8 wide. Pupil r3.3, and both numbers were set by the 16 render rather than by the 24: at 16 with the set's effective 2.0 the first draft (control points 6.6, pupil r2.7) closed the pupil to a blob \u2014 the same failure tool/lasso carries an exception for. Rather than take a second exception the glyph was redrawn to survive the rule, so trail/eye renders a real ring at 16 with nothing special-cased. tool/lasso and ui/selection-marker were both tried here first and both rejected: they mean the LEARNER marqueed a region, and borrowing either would have said the wrong thing quietly. Rendered at 16 in a trail row, where the 24 viewBox scales by 0.667 \u2014 so the authored 2.0 becomes 1.33 and the attribute is compensated to 3.0 at the call site to land the set's effective 2.0. tool/pen shares these rows off a 28 viewBox and needs 3.5 for the same result.",
       "designAnomaly": null,
       "elements": [
         {
@@ -1043,7 +1092,7 @@
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-icon",
       "dashTexture": null,
-      "notes": "Memory was searched — the `search_memory` and `recent_sessions` rows, which share one glyph because the learner does not care which of the two the tutor reached for. Ring r7 at (10,10) with the handle leaving at the 45 degree point (14.95) and running to 21, so the ink spans 3.0 to 21.0 — 18 of 24, 75%. The handle is a separate path rather than part of the ring so the round cap lands only on the free end; a cap on both would thicken the join into the circle. Rendered at 16 in a trail row, where the 24 viewBox scales by 0.667 — so the authored 2.0 becomes 1.33 and the attribute is compensated to 3.0 at the call site to land the set's effective 2.0. tool/pen shares these rows off a 28 viewBox and needs 3.5 for the same result.",
+      "notes": "Memory was searched \u2014 the `search_memory` and `recent_sessions` rows, which share one glyph because the learner does not care which of the two the tutor reached for. Ring r7 at (10,10) with the handle leaving at the 45 degree point (14.95) and running to 21, so the ink spans 3.0 to 21.0 \u2014 18 of 24, 75%. The handle is a separate path rather than part of the ring so the round cap lands only on the free end; a cap on both would thicken the join into the circle. Rendered at 16 in a trail row, where the 24 viewBox scales by 0.667 \u2014 so the authored 2.0 becomes 1.33 and the attribute is compensated to 3.0 at the call site to land the set's effective 2.0. tool/pen shares these rows off a 28 viewBox and needs 3.5 for the same result.",
       "designAnomaly": null,
       "elements": [
         {
@@ -1084,7 +1133,7 @@
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-icon",
       "dashTexture": null,
-      "notes": "The plan and board exercise were replaced — the `set_workspace` row. Three rules at y 6.5/12/17.5 with a bullet each, spanning 2.45 to 21.6 (80%), the widest of the four and deliberately so: it is the only one of them whose meaning is carried by rhythm rather than by silhouette. The bullets are circles at r1.15 rather than filled dots, because the set is stroke-only everywhere — at a 2.0 stroke the inner radius closes to 0.15 and the ring reads as solid without ever becoming a fill. Rules are equal length; graduated lengths were tried and read as a paragraph of text rather than as a list. Rendered at 16 in a trail row, where the 24 viewBox scales by 0.667 — so the authored 2.0 becomes 1.33 and the attribute is compensated to 3.0 at the call site to land the set's effective 2.0. tool/pen shares these rows off a 28 viewBox and needs 3.5 for the same result.",
+      "notes": "The plan and board exercise were replaced \u2014 the `set_workspace` row. Three rules at y 6.5/12/17.5 with a bullet each, spanning 2.45 to 21.6 (80%), the widest of the four and deliberately so: it is the only one of them whose meaning is carried by rhythm rather than by silhouette. The bullets are circles at r1.15 rather than filled dots, because the set is stroke-only everywhere \u2014 at a 2.0 stroke the inner radius closes to 0.15 and the ring reads as solid without ever becoming a fill. Rules are equal length; graduated lengths were tried and read as a paragraph of text rather than as a list. Rendered at 16 in a trail row, where the 24 viewBox scales by 0.667 \u2014 so the authored 2.0 becomes 1.33 and the attribute is compensated to 3.0 at the call site to land the set's effective 2.0. tool/pen shares these rows off a 28 viewBox and needs 3.5 for the same result.",
       "designAnomaly": null,
       "elements": [
         {
@@ -1169,7 +1218,7 @@
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-icon",
       "dashTexture": null,
-      "notes": "Something was saved for a future session — the `remember` row. One closed polygon, 12.8 wide by 16.6 tall, whose notch rises to 15.1 and leaves the tails 5.2 units proud. It is the only glyph of the four that is taller than it is wide, and that is the point: proportion is what separates a bookmark from a shield at 16, not detail. Corners are rounded by stroke-linejoin rather than by geometry, the same economy control/settings uses for its teeth — the vertex list stays five points with nothing to re-derive if the size changes. Rendered at 16 in a trail row, where the 24 viewBox scales by 0.667 — so the authored 2.0 becomes 1.33 and the attribute is compensated to 3.0 at the call site to land the set's effective 2.0. tool/pen shares these rows off a 28 viewBox and needs 3.5 for the same result.",
+      "notes": "Something was saved for a future session \u2014 the `remember` row. One closed polygon, 12.8 wide by 16.6 tall, whose notch rises to 15.1 and leaves the tails 5.2 units proud. It is the only glyph of the four that is taller than it is wide, and that is the point: proportion is what separates a bookmark from a shield at 16, not detail. Corners are rounded by stroke-linejoin rather than by geometry, the same economy control/settings uses for its teeth \u2014 the vertex list stays five points with nothing to re-derive if the size changes. Rendered at 16 in a trail row, where the 24 viewBox scales by 0.667 \u2014 so the authored 2.0 becomes 1.33 and the attribute is compensated to 3.0 at the call site to land the set's effective 2.0. tool/pen shares these rows off a 28 viewBox and needs 3.5 for the same result.",
       "designAnomaly": null,
       "elements": [
         {

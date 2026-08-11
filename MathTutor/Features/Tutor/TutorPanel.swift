@@ -54,6 +54,9 @@ struct TutorPanel: View {
     /// makes, and a `@StateObject` here would be destroyed — taking a half-uploaded photo
     /// with it — the moment the panel docks, collapses or goes full-screen.
     @ObservedObject var attachments: ComposerAttachments
+    /// Whether the board has any ink to select — handed through to the composer's
+    /// `btn/select`, the same flag `BoardScreen` already hands the collapsed dock.
+    var canSelect = true
     let actions: TutorActions
 
     /// Board 16's menu, and which of the three pickers it asked for. Both are the *panel's*
@@ -61,6 +64,29 @@ struct TutorPanel: View {
     /// hanging over nothing, and the draft it would have added to is still there.
     @State private var isAttachMenuOpen = false
     @State private var pickerSource: AttachmentSource? = nil
+
+    /// The reveal gesture in progress, or `nil` between gestures — board 18.
+    ///
+    /// `@State` on the panel rather than on `UIState` for the reason
+    /// `BoardScreen.previewPanelWidth` is: this is written on every touch event, and
+    /// publishing an environment object at that rate invalidates every consumer of it and
+    /// makes the pane visibly stutter. `UIState` learns the answer once, on release.
+    ///
+    /// It is also what carries the intent lock: the axis is decided on the first frame and
+    /// stored here for the rest of the touch, so a drag that starts sideways and curls
+    /// downward keeps panning, and one that starts downward never pans at all.
+    @State private var drawerDrag: DrawerDrag?
+
+    /// One touch's committed answer. See `DrawerReveal.Axis`.
+    private struct DrawerDrag {
+        let axis: DrawerReveal.Axis
+        /// Where the drawer was when this touch landed — 0 or 1. Every frame resolves from
+        /// this plus the gesture's *total* translation, never from the previous frame, which
+        /// is the anchor rule `ResizeModel` is built on for the same reason: a per-frame sum
+        /// accumulates rounding and drifts away from the finger over a long drag.
+        let anchor: CGFloat
+        var progress: CGFloat
+    }
 
     /// `337 − 2 × 18` at the design's panel width, derived rather than read off the 301 token
     /// because board 02 says hard-coding it *"is a bug waiting for the first panel-width
@@ -70,60 +96,35 @@ struct TutorPanel: View {
     /// The composer and the band behind it, as one thing. See `ComposerSlotMetrics`.
     private var slot: ComposerSlotMetrics { .panel(surfaceWidth: layout.panelWidth) }
 
-    /// The panel, as the boards lay it out: bands stacked on one surface, in paint order.
+    /// The panel: the sessions drawer, and the chat that slides off it — boards 05, 08 and 17.
     ///
-    /// It was a `VStack` for as long as the thread stopped below the controls row. It cannot be
-    /// one now — board 03 runs the thread the panel's full height and passes it *behind* both
-    /// the controls and the composer, and the two fades that make that legible span the panel's
-    /// full width rather than its 301 column. Order here is the design's own, bottom of the
-    /// stack first: *"Thread · fade bottom · Composer · fade top · Panel controls"*.
+    /// The drawer is **revealed, not pushed in**. It sits still under the chat at the panel's
+    /// own leading edge and the chat travels; board 18 gives it 12 points of parallax and
+    /// nothing more, which is what makes it read as a layer underneath rather than as a second
+    /// pane arriving. Both are inside `TutorPanelSurface`, so the panel's radius clips the pair
+    /// and its elevation is cast once, by the panel — board 17 draws **no shadow at the seam**,
+    /// because there is no gap there for a shadow to fall into.
     var body: some View {
         // The one band in the app that gives way to the keyboard, and the reason
         // `ScreenLayout` keeps two: the composer is bottom-anchored in this
         // surface, so shortening it is what lifts the pill clear of the keys.
         // The board behind it keeps its own height — see `keyboardInset`.
         let size = CGSize(width: layout.panelWidth, height: layout.contentHeightAboveKeyboard)
+        let travel = layout.sessionsDrawerWidth
+        let progress = drawerProgress
 
         return TutorPanelSurface(size: size) {
-            ZStack(alignment: .top) {
-                fillBand(in: size)
-
-                // Fade and pill together, bottom-anchored: the slot owns the 18pt inset under
-                // the composer, so screen 08's pill bottom lands on the panel floor less that
-                // inset and screen 05's card grows upward from the same line.
-                ComposerSlot(metrics: slot) { composer }
-                    .frame(maxHeight: .infinity, alignment: .bottom)
-
-                ScrollFade(width: size.width, metrics: .top(for: .panel))
-
-                TutorControlsRow(
-                    width: contentWidth,
-                    // Every one of these takes the learner somewhere the menu
-                    // cannot follow — a dock, a full-screen column, a settings
-                    // window — so each puts it away first.
-                    onDock: { closeMenus(); uiState.collapseTutor() },
-                    onFullScreen: { closeMenus(); uiState.expandTutorToFullScreen() },
-                    onSettings: { closeMenus(); actions.openSettings() },
-                    sessionTitle: store.session.title,
-                    isSessionMenuOpen: uiState.isSessionMenuOpen,
-                    // The two menus are alternatives, not layers: one opening puts the
-                    // other away, the same way every control in this row already puts the
-                    // session menu away before it moves the learner somewhere.
-                    onToggleSessionMenu: {
-                        isAttachMenuOpen = false
-                        uiState.toggleSessionMenu()
-                    }
-                )
-                .padding(.top, TutorPanelMetrics.inset)
-
-                if uiState.isSessionMenuOpen {
-                    sessionMenu(in: size)
-                }
-
-                if isAttachMenuOpen {
-                    attachMenu(in: size)
-                }
+            ZStack(alignment: .topLeading) {
+                drawer(travel: travel, height: size.height, progress: progress)
+                chatPane(in: size, travel: travel, progress: progress)
             }
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
+            // The whole panel is the grab region — board 18: *"A right-swipe anywhere in the
+            // chat area drags the drawer."* Simultaneous rather than exclusive so the thread's
+            // own scroll still starts on a vertical drag; the exclusivity the note asks for is
+            // the intent lock instead, which suppresses whichever of the two lost. See
+            // `isThreadScrollLocked`.
+            .simultaneousGesture(drawerPan(travel: travel))
         }
         // Mounted on the panel rather than on the composer: a sheet presented from a view
         // inside a `ComposerSlot` is presented from a view the slot may stop drawing.
@@ -148,51 +149,199 @@ struct TutorPanel: View {
         .task(id: store.session.id) { dictation.sessionID = store.session.id }
     }
 
-    /// Board 15a's switcher, hanging off the controls row.
-    ///
-    /// Drawn inside the panel rather than as a popover: the panel clips to its
-    /// own radius, the menu is 301 wide in a 337 surface, and the design draws it
-    /// as part of the panel rather than as system chrome floating over the app.
-    ///
-    /// The transparent layer under it is what makes a tap anywhere else close the
-    /// menu, and it is mounted **only while the menu is open**. A view that
-    /// swallows every touch on the panel is not something to leave lying on it
-    /// the rest of the time — the same reasoning `BoardSelectionMarquee` is
-    /// mounted under.
-    @ViewBuilder
-    private func sessionMenu(in size: CGSize) -> some View {
-        Color.clear
-            .contentShape(.rect)
-            .frame(width: size.width, height: size.height)
-            .onTapGesture { uiState.closeSessionMenu() }
+    // MARK: - The two panes
 
-        SessionMenu(
+    /// Board 17's drawer, under the chat.
+    ///
+    /// It carries the white veil while it is the pane being covered, and loses it across the
+    /// crossfade band — see `DrawerReveal.drawerVeil(at:)`. The veil is an overlay rather than
+    /// an opacity on the drawer itself because it is a wash and not a fade: the surface colour
+    /// stays exactly what the panel's is, which is the whole reason the seam between the two
+    /// panes can be a rounded corner and nothing else.
+    private func drawer(travel: CGFloat, height: CGFloat, progress: CGFloat) -> some View {
+        SessionsDrawer(
             sessions: store.sessions,
             currentID: store.session.id,
-            width: contentWidth,
-            onNew: {
-                uiState.closeSessionMenu()
+            width: travel,
+            inset: SessionsDrawerMetrics.insetInline,
+            height: height,
+            onNewChat: {
+                closeDrawer()
                 store.startNewSession()
                 adoptSessionUI()
             },
             onOpen: { id in
-                uiState.closeSessionMenu()
+                closeDrawer()
                 store.openSession(id: id)
                 adoptSessionUI()
+            },
+            onSettings: {
+                closeDrawer()
+                actions.openSettings()
             }
         )
-        .padding(.top, Self.chromeTop + SessionSwitcherMetrics.menuTopGap)
+        .overlay(veil(DrawerReveal.drawerVeil(at: progress)))
+        .offset(x: DrawerReveal.drawerOffset(at: progress))
+        // Unreachable while it is fully covered, so a stray touch on the strip's own edge
+        // cannot land on a session row behind the chat.
+        .allowsHitTesting(progress > 0)
+        .accessibilityHidden(progress == 0)
+    }
+
+    /// Screens 05 and 08, as one opaque pane that travels.
+    ///
+    /// Opaque is load-bearing: it is the panel's own `--color-surface-panel`, and without it
+    /// the drawer would read straight through the thread. Board 17 gives the two the same
+    /// fill deliberately, so the boundary is carried by the pane's leading radius alone.
+    ///
+    /// The radius is 0 while the drawer is shut, which makes the closed state the panel
+    /// exactly as it shipped: the pane fills the surface and the surface's own 28 is the only
+    /// corner on screen.
+    private func chatPane(in size: CGSize, travel: CGFloat, progress: CGFloat) -> some View {
+        ZStack(alignment: .top) {
+            fillBand(in: size)
+
+            // Fade and pill together, bottom-anchored: the slot owns the 18pt inset under
+            // the composer, so screen 08's pill bottom lands on the panel floor less that
+            // inset and screen 05's card grows upward from the same line.
+            ComposerSlot(metrics: slot) { composer }
+                .frame(maxHeight: .infinity, alignment: .bottom)
+
+            ScrollFade(width: size.width, metrics: .top(for: .panel))
+
+            // Board 17's header, after: the session title and the gear are gone and only the
+            // layout pair is left, at the trailing end where it already sat. The drawer owns
+            // both of the controls that left — see `note/17 — header after`.
+            PanelControls(
+                onDock: { closeMenus(); uiState.collapseTutor() },
+                onFullScreen: { closeMenus(); uiState.expandTutorToFullScreen() },
+                alignment: .trailing
+            )
+            .frame(width: contentWidth, height: TutorPanelMetrics.controlsHeight, alignment: .trailing)
+            .padding(.top, TutorPanelMetrics.inset)
+
+            if isAttachMenuOpen {
+                attachMenu(in: size)
+            }
+        }
+        .frame(width: size.width, height: size.height, alignment: .top)
+        .background(DS.Color.surfacePanel)
+        .clipShape(
+            UnevenRoundedRectangle(
+                topLeadingRadius: progress > 0 ? SessionsDrawerMetrics.stripCornerRadius : 0,
+                bottomLeadingRadius: progress > 0 ? SessionsDrawerMetrics.stripCornerRadius : 0
+            )
+        )
+        .overlay(veil(DrawerReveal.chatVeil(at: progress)))
+        // Board 18: *"A tap on the chat strip, or a left-swipe from it, closes the drawer."*
+        // The layer is mounted only while the drawer is showing, for the reason the switcher's
+        // dismiss layer was: a view that swallows every touch on the chat is not something to
+        // leave lying on it the rest of the time.
+        .overlay {
+            if progress > 0 {
+                Color.clear
+                    .contentShape(.rect)
+                    .onTapGesture { withAnimation(DrawerReveal.settle(velocity: 0, travel: travel)) { closeDrawer() } }
+                    .accessibilityLabel("Close sessions")
+                    .accessibilityAddTraits(.isButton)
+            }
+        }
+        .offset(x: progress * travel)
+    }
+
+    /// The wash. White at an alpha, over content, with the surface colour untouched.
+    @ViewBuilder
+    private func veil(_ alpha: Double) -> some View {
+        if alpha > 0 {
+            DS.Color.surface.opacity(alpha)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+    }
+
+    // MARK: - The reveal gesture
+
+    /// Where the drawer is right now: the live drag if one has committed to the horizontal
+    /// axis, and the settled state otherwise.
+    private var drawerProgress: CGFloat {
+        if let drag = drawerDrag, drag.axis == .horizontal { return drag.progress }
+        return uiState.isSessionsDrawerOpen ? 1 : 0
+    }
+
+    /// Whether the thread must stop scrolling for this touch.
+    ///
+    /// This is the other half of the intent lock, and the half that makes it exclusive rather
+    /// than merely simultaneous. `DragGesture(minimumDistance:)` and a `ScrollView` both
+    /// recognise, so without this a diagonal drag pans the drawer *and* scrolls the
+    /// conversation behind it. The note: *"once the horizontal pan commits, vertical scroll is
+    /// suppressed until the finger lifts."*
+    ///
+    /// The mirror case needs no code: a touch locked to `.vertical` never writes `progress`,
+    /// so the drawer takes nothing from it.
+    private var isThreadScrollLocked: Bool { drawerDrag?.axis == .horizontal }
+
+    /// Board 18's pan.
+    ///
+    /// `minimumDistance` is the intent threshold itself, so the first frame this ever sees is
+    /// already far enough to have an axis and no travel is spent undecided. It is also what
+    /// keeps every button on the panel working: a tap does not move 12 points.
+    private func drawerPan(travel: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: DrawerReveal.intentThreshold, coordinateSpace: .local)
+            .onChanged { value in
+                let axis = drawerDrag?.axis ?? DrawerReveal.axis(for: value.translation)
+                let anchor = drawerDrag?.anchor ?? (uiState.isSessionsDrawerOpen ? 1 : 0)
+                guard axis == .horizontal else {
+                    drawerDrag = DrawerDrag(axis: axis, anchor: anchor, progress: anchor)
+                    return
+                }
+                // A drag that reaches for the drawer puts the attach menu away: the card
+                // hangs over the chat and the chat is about to leave.
+                if isAttachMenuOpen { isAttachMenuOpen = false }
+                drawerDrag = DrawerDrag(
+                    axis: .horizontal,
+                    anchor: anchor,
+                    progress: DrawerReveal.progress(
+                        from: anchor,
+                        translation: value.translation.width,
+                        travel: travel
+                    )
+                )
+            }
+            .onEnded { value in
+                guard let drag = drawerDrag else { return }
+                guard drag.axis == .horizontal else {
+                    drawerDrag = nil
+                    return
+                }
+                let opens = DrawerReveal.settlesOpen(
+                    progress: drag.progress,
+                    velocity: value.velocity.width
+                )
+                // Both writes inside the one transaction. Clearing the drag outside it would
+                // hand `drawerProgress` straight back to the settled value and the pane would
+                // jump to its destination instead of springing to it.
+                withAnimation(DrawerReveal.settle(velocity: value.velocity.width, travel: travel)) {
+                    drawerDrag = nil
+                    if opens { uiState.openSessionsDrawer() } else { uiState.closeSessionsDrawer() }
+                }
+            }
+    }
+
+    /// Put the drawer away, and forget any drag that is still notionally in flight.
+    private func closeDrawer() {
+        drawerDrag = nil
+        uiState.closeSessionsDrawer()
     }
 
     /// Board 16's three-row card, hanging **above** the composer.
     ///
     /// Above rather than below because the composer sits on the panel's floor and a menu
-    /// dropping from it would leave the surface. Everything else is `sessionMenu`'s
-    /// construction verbatim, which is what board 16 asks for — *"construction is inherited
-    /// from `menu/sessions` exactly"*: the same transparent dismiss layer mounted only while
-    /// the menu is open, the same 301pt card centred in the 337pt surface (which is what
-    /// puts its left edge on the panel's own 18pt inset), and drawn inside
-    /// `TutorPanelSurface` so the panel's radius clips it.
+    /// dropping from it would leave the surface. Its construction is board 15a's, which is
+    /// what board 16 asks for — *"construction is inherited from `menu/sessions` exactly"* —
+    /// and it is the last thing in the product still built that way now that the switcher
+    /// itself is gone: a transparent dismiss layer mounted only while the menu is open, a
+    /// card capped at 301 in the 337 surface, drawn inside `TutorPanelSurface` so the panel's
+    /// radius clips it. See `MenuCardMetrics`.
     ///
     /// The top padding is the anchor, and it is `ComposerSlotMetrics.attachMenuTop(in:over:)`
     /// rather than arithmetic spelled out here — because it is the same arithmetic the
@@ -210,11 +359,10 @@ struct TutorPanel: View {
             isAttachMenuOpen = false
             pickerSource = AttachmentSource(choice)
         }
-        // Pinned to the panel's own 18pt inset rather than left to the `ZStack`'s centring.
-        // `SessionMenu` can rely on centring because it is exactly `contentWidth` wide, so
-        // the two margins are equal by construction; this card is capped at 301 and stops
-        // being the content column the moment the student widens the panel — at which point
-        // a centred card would drift off board 16's `left: 18`.
+        // Pinned to the panel's own 18pt inset rather than left to the `ZStack`'s centring:
+        // the card is capped at 301 and stops being the content column the moment the student
+        // widens the panel — at which point a centred card would drift off board 16's
+        // `left: 18`.
         .padding(.leading, TutorPanelMetrics.inset)
         .frame(width: size.width, alignment: .leading)
         .padding(.top, slot.attachMenuTop(in: size.height, over: composerHeight))
@@ -227,10 +375,10 @@ struct TutorPanel: View {
         ComposerMetrics.for(.panel, width: contentWidth).height(showing: composer.card)
     }
 
-    /// Both of the panel's own menus, put away. Anything that takes the learner elsewhere —
+    /// Everything the panel has open, put away. Anything that takes the learner elsewhere —
     /// a dock, a full-screen column, a settings window — calls this first.
     private func closeMenus() {
-        uiState.closeSessionMenu()
+        closeDrawer()
         isAttachMenuOpen = false
     }
 
@@ -266,6 +414,8 @@ struct TutorPanel: View {
                 scale: .panel,
                 width: contentWidth,
                 clearing: slot.band,
+                // The other half of board 18's intent lock — see `isThreadScrollLocked`.
+                scrollDisabled: isThreadScrollLocked,
                 actions: actions
             )
             .frame(width: contentWidth, height: size.height)
@@ -346,7 +496,7 @@ struct TutorPanel: View {
             selection: composerSelection,
             onSend: actions.send,
             onAttach: {
-                uiState.closeSessionMenu()
+                closeDrawer()
                 isAttachMenuOpen = true
             },
             // `ComposerAttachments.add(...)` returns `Void` and does nothing at
@@ -373,6 +523,10 @@ struct TutorPanel: View {
             note: attachments.failureNote ?? store.composerNote ?? dictation.noteText,
             onDismissSelection: actions.dismissSelection,
             onToggleSelection: actions.toggleSelection,
+            // `toggleBoardSelection` guards on the board holding ink and silently
+            // returns, so without this the tap on an empty board's `btn/select`
+            // changes nothing on screen. See `Composer.canSelect`.
+            canSelect: canSelect,
             attachments: attachments.pending,
             // An explicit closure rather than the bound method: a
             // `@MainActor`-isolated method reference passed straight into a
@@ -394,74 +548,6 @@ struct TutorPanel: View {
     }
 }
 
-/// `Panel controls` in the expanded variant board 12 introduces: the same two layout
-/// buttons, plus `btn/settings` pushed to the far edge.
-///
-/// It is *"a new configuration, not a new component"* — the row's `justify-content` changes
-/// from `flex-start` to `space-between` — so this composes `PanelControls` rather than
-/// restating it.
-///
-/// **The docked panel only.** Board 13 used to draw the same row at 740 and no longer does:
-/// its two layout buttons are gone — the board peek is already the way back, and
-/// `btn/full-screen` was a control for the state you were already in — and its settings
-/// button moved out of the reading column to the screen's own corner. The panel is the one
-/// place this row still exists; the width stays a parameter because it is the panel's
-/// derived content column, never a stored 301.
-struct TutorControlsRow: View {
-    let width: CGFloat
-    let onDock: () -> Void
-    let onFullScreen: () -> Void
-    let onSettings: () -> Void
-    /// The switcher's title, and its control. Board 15a puts them in the lane the
-    /// row already had between its two icon groups — the row's
-    /// `justify-content: space-between` was drawn with that lane empty, and a
-    /// third child is what it was always going to hold.
-    let sessionTitle: String
-    let isSessionMenuOpen: Bool
-    let onToggleSessionMenu: () -> Void
-
-    var body: some View {
-        // The row mirrored with the shell: `btn/settings` leads and the layout pair sits at
-        // the trailing edge. The pair mirrored with it — full-screen, then dock.
-        PanelControls(onDock: onDock, onFullScreen: onFullScreen, alignment: .trailing)
-            .frame(width: width, height: TutorPanelMetrics.controlsHeight, alignment: .trailing)
-            // Placed from the leading edge, not centred — see
-            // `SessionSwitcherMetrics.titleLaneLeading`. The row's flanks are 32
-            // and 78, so centring would put the title's tap target back over
-            // the layout pair.
-            .overlay(alignment: .leading) {
-                SessionTitleButton(
-                    title: sessionTitle,
-                    isOpen: isSessionMenuOpen,
-                    maxWidth: SessionSwitcherMetrics.titleMaxWidth(for: width),
-                    action: onToggleSessionMenu
-                )
-                .padding(.leading, SessionSwitcherMetrics.titleLaneLeading)
-            }
-            .overlay(alignment: .leading) { SettingsButton(action: onSettings) }
-    }
-}
-
-/// `btn/settings` — the gear, on its own.
-///
-/// Its own type because the two surfaces that draw it no longer share a container: the panel
-/// puts it at the trailing edge of the controls row, and the full-screen column pins it to
-/// the screen's corner with no row at all. Both draw the same 32pt button and the same
-/// expanded hit area, which is exactly what would drift if each rebuilt it.
-struct SettingsButton: View {
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            IconView(.controlSettings)
-                .frame(width: TutorPanelMetrics.controlButton, height: TutorPanelMetrics.controlButton)
-                .expandedTapTarget(TutorPanelMetrics.controlTapTarget, over: TutorPanelMetrics.controlButton)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Tutor settings")
-    }
-}
-
 /// The message thread and its one trailing accessory, at either scale.
 ///
 /// Board 02 on why the plan, the failure and the thinking orb are children of the thread
@@ -480,6 +566,10 @@ struct TutorThreadView: View {
     /// thread runs behind it on both surfaces, so this is the clearance the newest message
     /// keeps from the pill.
     var clearing: CGFloat = 0
+    /// Board 18's intent lock, from the surface that owns the drawer pan: while a touch has
+    /// committed to dragging the drawer, the conversation behind it must hold still. Defaulted
+    /// off, so the full-screen column and every gallery specimen need not pass it.
+    var scrollDisabled = false
     let actions: TutorActions
 
     private var column: CGFloat { width ?? scale.contentWidth }
@@ -490,6 +580,7 @@ struct TutorThreadView: View {
             scale: scale,
             width: column,
             clearing: clearing,
+            scrollDisabled: scrollDisabled,
             // Read straight off `BoardCropStore` rather than through a bound method
             // reference, which crashes swift-frontend during IRGen on this toolchain when
             // handed straight to a one-argument closure parameter — see `Composer`'s own

@@ -28,17 +28,30 @@ struct TutorFullScreen: View {
     @ObservedObject var attachments: ComposerAttachments
     let actions: TutorActions
 
-    /// Board 16's menu and the picker it asked for. The reading column has no session menu
-    /// to be an alternative to, so these are the only two pieces of state this surface owns.
+    /// Board 16's menu and the picker it asked for.
     @State private var isAttachMenuOpen = false
     @State private var pickerSource: AttachmentSource? = nil
 
-    private var column: TutorColumnMetrics { TutorColumnMetrics(layout: layout) }
+    /// How much of the leading edge the sessions sidebar has taken — board 19's 372 while it
+    /// is open, nothing while it is not.
+    ///
+    /// The one number the whole of this surface reads off the drawer. It is the settled state
+    /// and never a live drag position, unlike the docked panel's: see `drawerPan(travel:)`.
+    private var sidebar: CGFloat {
+        uiState.isSessionsDrawerOpen ? layout.sessionsSidebarWidth : 0
+    }
+
+    private var column: TutorColumnMetrics {
+        TutorColumnMetrics(layout: layout, reserving: sidebar)
+    }
     /// The composer and the band behind it, as one thing. See `ComposerSlotMetrics`.
     private var slot: ComposerSlotMetrics { .fullScreen(columnWidth: column.width) }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
+            chatSurface
+            sessionsSidebar
+
             switch uiState.conversation {
             case .start: startColumn
             case .active: threadColumn
@@ -54,17 +67,15 @@ struct TutorFullScreen: View {
             // is attached: the card grows upward out of the band and the pill stays on 1004.
             ComposerSlot(metrics: slot, surfaceColor: DS.Color.surface) { composer }
                 .offset(x: column.x, y: column.bottom - slot.band)
-            // Outside the switch on purpose. Boards 07 and 13 draw the same gear in the same
-            // lane, and the two used to disagree — 13 had a controls row and 07 had no chrome
-            // at all, which left Settings unreachable from the greeting. Hanging it off the
-            // conversation phase is exactly how that comes back.
-            SettingsButton(action: actions.openSettings)
-                .offset(x: column.settingsX, y: column.top)
 
             if isAttachMenuOpen {
                 attachMenu
             }
         }
+        // The same right-swipe the docked panel takes — board 19: *"The same right-swipe still
+        // opens the sidebar, and a left-swipe closes it."* Simultaneous, and locked to an axis
+        // on the first frame, exactly as the panel's is.
+        .simultaneousGesture(drawerPan(travel: layout.sessionsSidebarWidth))
         .attachmentPickers(
             source: $pickerSource,
             onPicked: { data, filename, contentType in
@@ -85,6 +96,113 @@ struct TutorFullScreen: View {
         // `LearningSession.id`. `TutorPanel` carries the identical modifier for the docked
         // surface; whichever one is on screen is the one whose `.task` actually runs.
         .task(id: store.session.id) { dictation.sessionID = store.session.id }
+    }
+
+    // MARK: - The two panes (board 19)
+
+    /// The chat as a *surface*, which is what the sidebar makes it.
+    ///
+    /// Board 19 puts the full-screen ground on `--color-surface-screen` and the chat on white
+    /// with 28pt rounded leading corners, *"and that edge carries the boundary, so there is no
+    /// divider rule."* With the sidebar shut the pane runs the whole screen with no radius,
+    /// which is screen 07 exactly as it shipped — a full-bleed white ground — so the closed
+    /// state is unchanged rather than re-derived.
+    ///
+    /// It is a fill and not a card: no shadow, no veil, and it is not clipped to. Board 19
+    /// leaves both panes fully active at the same time, so nothing here dims or blocks
+    /// anything, and the column that draws over it is a sibling rather than a child.
+    private var chatSurface: some View {
+        UnevenRoundedRectangle(
+            topLeadingRadius: sidebar > 0 ? SessionsDrawerMetrics.chatCornerRadius : 0,
+            bottomLeadingRadius: sidebar > 0 ? SessionsDrawerMetrics.chatCornerRadius : 0
+        )
+        .fill(DS.Color.surface)
+        .frame(width: max(0, layout.screenWidth - sidebar), height: layout.screenHeight)
+        .offset(x: sidebar)
+        .accessibilityHidden(true)
+    }
+
+    /// Board 19's persistent sidebar, against the leading screen edge.
+    ///
+    /// **Persistent, not modal.** The chat neither moves nor dims for it — the column
+    /// re-centres in what is left, which is `TutorColumnMetrics(layout:reserving:)` — so both
+    /// panes are live at once and neither carries a veil. That is the whole difference from
+    /// the docked drawer, where the two share 337 points and one has to give way.
+    ///
+    /// It slides in from behind the leading edge on a spring rather than tracking the finger.
+    /// The docked drawer tracks because the pane over it tracks with it and the pair reads as
+    /// one sheet under a hand; here the chat is stationary and the reading column re-centres,
+    /// so a finger-tracked sidebar would drag 740 points of text sideways one frame at a time.
+    /// The settle is the same spring either way — see `DrawerReveal.settle(velocity:travel:)`.
+    @ViewBuilder
+    private var sessionsSidebar: some View {
+        if uiState.isSessionsDrawerOpen {
+            SessionsDrawer(
+                sessions: store.sessions,
+                currentID: store.session.id,
+                width: layout.sessionsSidebarWidth,
+                inset: SessionsDrawerMetrics.sidebarInset,
+                height: layout.screenHeight,
+                onNewChat: {
+                    closeSidebar()
+                    store.startNewSession()
+                    adoptSessionUI()
+                },
+                onOpen: { id in
+                    closeSidebar()
+                    store.openSession(id: id)
+                    adoptSessionUI()
+                },
+                onSettings: {
+                    closeSidebar()
+                    actions.openSettings()
+                }
+            )
+            .offset(x: layout.sessionsSidebarX)
+            .transition(.move(edge: .leading))
+        }
+    }
+
+    // MARK: - The reveal gesture
+
+    /// Board 19's swipe, arbitrated exactly as the panel's is.
+    ///
+    /// The intent lock is the same rule and the same threshold, so a vertical drag scrolls the
+    /// thread and a horizontal one reaches for the sidebar; the difference is that this one
+    /// commits on release rather than tracking, so there is no live progress to publish and no
+    /// scroll to suppress mid-touch — the thread never gives a frame up to a gesture that ends
+    /// up being the sidebar's.
+    ///
+    /// The 50%-of-travel rule has nothing to measure against here, so the direction decides:
+    /// a committed rightward pan opens and a leftward one closes, and either way a fling in
+    /// the opposite direction reverses it, which is `settlesOpen` with the progress pinned to
+    /// where the drawer already was.
+    private func drawerPan(travel: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: DrawerReveal.intentThreshold, coordinateSpace: .local)
+            .onEnded { value in
+                guard DrawerReveal.axis(for: value.translation) == .horizontal else { return }
+                let opens = DrawerReveal.settlesOpen(
+                    progress: value.translation.width > 0 ? 1 : 0,
+                    velocity: value.velocity.width
+                )
+                guard opens != uiState.isSessionsDrawerOpen else { return }
+                withAnimation(DrawerReveal.settle(velocity: value.velocity.width, travel: travel)) {
+                    if opens { uiState.openSessionsDrawer() } else { uiState.closeSessionsDrawer() }
+                }
+            }
+    }
+
+    private func closeSidebar() {
+        uiState.closeSessionsDrawer()
+    }
+
+    /// The screen's own axes, re-derived for the session that just opened — the same three
+    /// `TutorPanel.adoptSessionUI` re-derives, for the same reasons. Both surfaces can open a
+    /// session now, so both have to.
+    private func adoptSessionUI() {
+        uiState.clearBoardSelection()
+        attachments.clear()
+        uiState.showConversation(store.hasGoal ? .active : .start)
     }
 
     /// Screen 07: greeting at y 150, suggestion grid at y 592, composer bottom on 1004 —
@@ -109,15 +227,12 @@ struct TutorFullScreen: View {
     /// bleeds past the last one — so wrapping a column that fits would cost exactly the pixels
     /// this port is diffed on.
     ///
-    /// The block does not move for `btn/settings` at the width the board was drawn at: the
-    /// gear sits at `contentLeft`, 224 points clear of the column's left edge, so the
-    /// greeting keeps its 150. It *does* move on a narrow enough window, where `columnWidth`
-    /// stops centring 740 and starts fitting the region until the column reaches the gear —
-    /// every portrait iPad, in practice. `columnTop` is that decision, and the column gives up
-    /// the same 32pt band the thread already reserves rather than a number invented here.
+    /// The block no longer moves for `btn/settings` at any width: board 19 takes the gear off
+    /// this screen and gives it to the sessions drawer, so nothing is pinned in the corner for
+    /// the column to give way to. See `TutorColumnMetrics.columnTop`.
     ///
-    /// Board 07 draws no other chrome — the board peek is still the way back — so this stays a
-    /// column with a gear in the corner, not a column under a header.
+    /// Board 19 draws no other chrome either — the board peek is still the way back and the
+    /// sidebar is a lane rather than a header — so this stays a bare column.
     @ViewBuilder
     private var startColumn: some View {
         if column.startScrolls {
@@ -274,16 +389,11 @@ struct TutorColumnMetrics: Equatable, Sendable {
     /// which is where the eye already is."*
     static let suggestionsToComposer: CGFloat = 164
 
-    /// `ScreenLayout.columnX` — centred in what is left of the screen once the 68pt peek has
-    /// its place.
+    /// `ScreenLayout.columnX(reserving:)` — centred in what is left of the screen once the
+    /// 68pt peek and the sessions sidebar have their places.
     let x: CGFloat
     /// `min(740, region − 2 × edge)`.
     let width: CGFloat
-    /// Where the screen's content starts on the left — `--space-edge` in from the leading
-    /// safe area, the same lane the docked panel's left edge lands on. Boards 07 and 13 anchor
-    /// the gear here rather than to the reading column, which on the reference screen is the
-    /// difference between x 28 and x 284.
-    let contentLeft: CGFloat
     /// The content band's top and bottom, the same two lines every other screen is cut from.
     let top: CGFloat
     let bottom: CGFloat
@@ -304,20 +414,20 @@ struct TutorColumnMetrics: Equatable, Sendable {
     /// The resting pill — 68 in this column, at every width the scale is drawn at.
     var composerHeight: CGFloat { composer.height }
 
-    init(layout: ScreenLayout) {
-        x = layout.columnX
-        width = layout.columnWidth
-        contentLeft = layout.contentLeft
+    /// - Parameter reserving: How much of the leading edge the sessions sidebar has taken —
+    ///   board 19's 372 while it is open, and 0 otherwise, which is screen 07 unchanged.
+    init(layout: ScreenLayout, reserving sidebar: CGFloat = 0) {
+        x = layout.columnX(reserving: sidebar)
+        width = layout.columnWidth(reserving: sidebar)
         top = layout.contentTop
         // The composer is anchored to this line, so it is the keyboard-aware one:
         // the column is the other surface that has to stay typed into. Identical
         // to `contentBottom` whenever no keyboard is up, which is every screen the
         // boards were drawn for.
         bottom = layout.contentBottomAboveKeyboard
-        greetingHeight = GreetingMetrics.for(.fullScreen, width: layout.columnWidth).totalHeight
-        suggestionsHeight = SuggestionChipMetrics.for(.fullScreen, width: layout.columnWidth)
-            .containerHeight
-        composer = ComposerMetrics.for(.fullScreen, width: layout.columnWidth)
+        greetingHeight = GreetingMetrics.for(.fullScreen, width: width).totalHeight
+        suggestionsHeight = SuggestionChipMetrics.for(.fullScreen, width: width).containerHeight
+        composer = ComposerMetrics.for(.fullScreen, width: width)
     }
 
     /// Bottom-anchored on the content band, as both boards draw it. With something attached
@@ -361,29 +471,19 @@ struct TutorColumnMetrics: Equatable, Sendable {
     /// `150 + 268 + 174 = 592` on the reference screen.
     var suggestionsTop: CGFloat { greetingTop + greetingHeight + Self.greetingToSuggestions }
 
-    /// `btn/settings`, pinned to the screen's leading edge rather than the column's — `28` on
-    /// the reference screen. Clamped at the column's own right edge so a window too narrow to
-    /// hold both cannot push the gear out under the peek.
-    var settingsX: CGFloat { min(contentLeft, x + width - TutorPanelMetrics.controlButton) }
-
-    /// Whether the gear overlaps the reading column horizontally.
+    /// The top of the band the column's content may use — the content top, now, at every
+    /// width.
     ///
-    /// It does not at any width the boards were drawn for: the column is centred in what the
-    /// peek leaves and starts 224 points clear of the screen's edge at the reference. But
-    /// `columnWidth` is `min(740, region − 2 × edge)`, so a narrow enough window stops
-    /// centring a 740 column and starts fitting the region instead — and then the column's own
-    /// left edge reaches the gear. Around 700 points of window is where the two meet.
-    var settingsOverlapsColumn: Bool { settingsX + TutorPanelMetrics.controlButton > x }
-
-    /// The top of the band the column's content may use.
+    /// It used to give way by one 32pt control band on any window narrow enough for the
+    /// column to reach `btn/settings` in the screen's corner. There is no gear on this screen
+    /// any more: board 19 moves settings into the sessions drawer, which owns its own lane and
+    /// never overlaps the column at all. So the reservation goes with the control that needed
+    /// it, and the narrow-window column gets its 32 points back.
     ///
-    /// The content top wherever the gear is clear of the column, so the greeting keeps the
-    /// board's 150 and nothing moves for a control 224 points away from it. Where they do
-    /// overlap the column gives way by one 32pt control band — the same band the thread
-    /// already reserves, rather than a second number invented for this case.
-    var columnTop: CGFloat {
-        settingsOverlapsColumn ? top + TutorPanelMetrics.controlsHeight : top
-    }
+    /// Kept as a property rather than folded into `top` because it is a different claim — the
+    /// band the *content* may use, as against the band the screen leaves — and the next thing
+    /// pinned to this corner will need it back.
+    var columnTop: CGFloat { top }
 
     /// **The screen's own top, not the content band's.** The one lane in the product that does
     /// not start at `contentTop`, and it is the scroll view that makes it different.

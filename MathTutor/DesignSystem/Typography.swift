@@ -129,14 +129,19 @@ extension DS {
         }
     }
 
-    /// `--tracking-*`, in em — the unit the design states them in. `--tracking-wide`
-    /// (0.06em) is documentation-only and is deliberately absent.
+    /// `--tracking-*`, in em — the unit the design states them in.
     enum Tracking {
         /// `--tracking-tight` −0.01em. Applied to `--text-title` and `--text-display`
         /// only: *"Large type needs the air taken out of it."*
         static let tight: CGFloat = -0.01
         /// Everything else on the type scale sets no tracking at all.
         static let normal: CGFloat = 0
+        /// `--tracking-wide` 0.06em. It was documentation-only for as long as nothing in
+        /// the product set an all-caps label; board 17's `RECENT` is the first, and a
+        /// small-caps section head with no letter-spacing reads as a typo rather than as
+        /// a heading. Paired with `.textCase(.uppercase)` at the call site and used
+        /// nowhere else — see `SessionsDrawerMetrics.sectionLabel`.
+        static let wide: CGFloat = 0.06
     }
 }
 
