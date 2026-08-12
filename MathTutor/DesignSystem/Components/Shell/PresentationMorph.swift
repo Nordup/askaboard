@@ -104,7 +104,7 @@ struct PresentationMorph: Equatable, Sendable {
     /// arrives sooner and carries a hint of snap where the drawer's ratio (~0.84) glides.
     /// Judged against the dip: an ensemble that shrank on the way needs an arrival with
     /// some spring in it, or the snap-back reads as a fade back to size.
-    static let settleDamping: CGFloat = 26
+    static let settleDamping: CGFloat = 20
 
     /// The settle animation — `DrawerReveal.settle`, the shared construction, at this
     /// morph's own damping. Every path through the morph ends here: swipe releases and
@@ -301,12 +301,13 @@ struct PresentationMorph: Equatable, Sendable {
 
     // MARK: - The ensemble's dip
 
-    /// How much smaller the travelling ensemble reads at the middle of the flight — the
-    /// OS space-switcher's gesture language: surfaces lift and recede slightly while you
-    /// move between them, and settle back to full size as they land. `0.05` of scale at
-    /// the deepest point; judged in the simulator against 0.04 and 0.08 — 0.04 reads as
-    /// rendering noise, 0.08 as the content flinching from the finger.
-    static let flightDipDepth: CGFloat = 0.05
+    /// How much smaller the travelling scene reads at the middle of the flight — the
+    /// OS space-switcher's gesture language: the surface visibly zooms out while you move
+    /// between spaces and snaps back to size as it lands. `0.15` at the deepest point, on
+    /// the user's explicit call: 0.05 was imperceptible on device ("I wanted it to zoom
+    /// out"), so this is a felt recede, not a hint. The dip wraps the whole chat scene —
+    /// container surface included — not just the flight copies, for the same reason.
+    static let flightDipDepth: CGFloat = 0.15
 
     /// `scale(p) = 1 − depth · sin(π·p)`: **exactly 1 at both endpoints** — the pixel-parity
     /// contract survives the dip untouched — with the minimum at mid-flight. It rides the

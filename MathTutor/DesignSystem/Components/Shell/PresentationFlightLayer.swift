@@ -248,14 +248,28 @@ struct PresentationFlightLayer<
             // ever change.
             board.modifier(render(.board))
             rail
-            if model.isActive {
-                sidebar.modifier(render(.sidebar))
-                containerUnderlay
+            // The dip wraps the WHOLE chat scene — container surface, resting tutor
+            // contents and the flight copies — as one screen-framed stack about one
+            // anchor, so the surface itself visibly zooms out and snaps back (the
+            // user's space-switcher ask). The board and rail stay outside: they are
+            // the ground the surface lifts from. At rest the scale is exactly 1, so
+            // this wrapper is a no-op outside flights and decides no mounts.
+            ZStack(alignment: .topLeading) {
+                if model.isActive {
+                    sidebar.modifier(render(.sidebar))
+                    containerUnderlay
+                }
+                tutor
+                if model.isActive {
+                    flightElements
+                }
             }
-            tutor
-            if model.isActive {
-                flightElements
-            }
+            .frame(
+                width: morph.screenFrame.width,
+                height: morph.screenFrame.height,
+                alignment: .topLeading
+            )
+            .modifier(FlightDip(progress: progress, geometry: morph))
             floating.modifier(render(.peek))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -331,15 +345,15 @@ struct PresentationFlightLayer<
             )
             .modifier(render(.composer))
         }
-        // Framed to the screen so the dip's unit anchor lands on the container's centre in
-        // screen coordinates. The children are all `.offset`-placed, so the frame changes
-        // where nothing is drawn — it only gives the transform its coordinate space.
+        // Framed to the screen so every child's `.offset` placement stays in screen
+        // coordinates. The dip no longer rides here: the whole chat scene — container,
+        // resting tutor and these copies — takes one `FlightDip` in the layer body, so
+        // the surface zooms as a unit instead of the copies dipping over a still box.
         .frame(
             width: morph.screenFrame.width,
             height: morph.screenFrame.height,
             alignment: .topLeading
         )
-        .modifier(FlightDip(progress: progress, geometry: morph))
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
