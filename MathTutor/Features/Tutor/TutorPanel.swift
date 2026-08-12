@@ -440,7 +440,8 @@ struct TutorPanel: View {
             GreetingBlock(
                 scale: .panel,
                 width: contentWidth,
-                onSelectSuggestion: actions.selectSuggestion
+                onSelectSuggestion: actions.selectSuggestion,
+                hidesTextForFlight: isInPresentationFlight
             )
             .padding(.top, PanelStack.startTopMargin)
         }

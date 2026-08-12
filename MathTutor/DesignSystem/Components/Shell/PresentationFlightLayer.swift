@@ -34,6 +34,9 @@ struct PresentationFlightHandle {
 enum FlightRole {
     /// The tutor's face: a pure x translation on the lead curve, y and size fixed.
     case orb
+    /// The greeting title + subtitle: one 301-wide block, translated on the staggered lead —
+    /// glyphs never change size, the text simply walks to the middle of the screen.
+    case greeting
     /// The panel's own fill riding on the container while it is still mostly the panel —
     /// `--color-surface-panel` over the pane's white, gone per `panelFillOpacity`.
     case containerPanelFill
@@ -59,6 +62,8 @@ struct FlightRender: ViewModifier {
         switch role {
         case .orb:
             content.offset(x: flight.orbX(at: progress), y: flight.orbTop)
+        case .greeting:
+            content.offset(x: flight.greetingX(at: progress), y: flight.greetingTop)
         case .containerPanelFill:
             content.opacity(geometry.panelFillOpacity(at: progress))
         }
@@ -157,6 +162,8 @@ struct PresentationFlightLayer<Board: View, Rail: View, Tutor: View, Floating: V
             if conversation == .start {
                 Orb(.panel)
                     .modifier(render(.orb))
+                FlightGreeting(width: flight.dockedColumnWidth)
+                    .modifier(render(.greeting))
             }
         }
         .allowsHitTesting(false)
@@ -165,5 +172,34 @@ struct PresentationFlightLayer<Board: View, Rail: View, Tutor: View, Floating: V
 
     private func render(_ role: FlightRole) -> FlightRender {
         FlightRender(progress: progress, role: role, flight: flight, geometry: morph)
+    }
+}
+
+/// The greeting's flight copy: the title and subtitle exactly as `GreetingBlock` draws them
+/// at the panel treatment, laid out **once at the docked column's width** and only ever
+/// translated. The subtitle is capped at 277 at both ends and the title is one line, so the
+/// 301-wide block centred on the destination column's centre is pixel-identical to the
+/// destination's own — the honest, crisp, vector answer to "text taking shape".
+private struct FlightGreeting: View {
+    let width: CGFloat
+
+    var body: some View {
+        let metrics = GreetingMetrics.for(.panel, width: width)
+        VStack(spacing: 0) {
+            Text(verbatim: GreetingCopy.title)
+                .textStyle(metrics.titleStyle)
+                .foregroundStyle(DS.Color.ink)
+                .multilineTextAlignment(.center)
+                .frame(width: metrics.width, height: metrics.titleHeight)
+                .padding(.top, metrics.titleTopMargin)
+
+            Text(verbatim: GreetingCopy.subtitle)
+                .textStyle(metrics.subtitleStyle)
+                .foregroundStyle(DS.Color.inkSecondary)
+                .multilineTextAlignment(.center)
+                .frame(width: metrics.subtitleWidth, height: metrics.subtitleHeight)
+                .padding(.top, metrics.subtitleTopMargin)
+        }
+        .frame(width: width, alignment: .top)
     }
 }

@@ -507,7 +507,8 @@ struct TutorFullScreen: View {
             GreetingBlock(
                 scale: Self.scale,
                 width: column.width,
-                onSelectSuggestion: actions.selectSuggestion
+                onSelectSuggestion: actions.selectSuggestion,
+                hidesTextForFlight: isInPresentationFlight
             )
             .padding(.top, DS.Space.s10)
         }

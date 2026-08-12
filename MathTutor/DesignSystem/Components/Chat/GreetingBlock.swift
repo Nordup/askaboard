@@ -124,6 +124,10 @@ struct GreetingBlock<Orb: View>: View {
     /// The column the block fills and centres its children in.
     var width: CGFloat?
     var onSelectSuggestion: (Suggestion) -> Void = { _ in }
+    /// True while the docked ↔ full-screen flight is carrying the title and subtitle as its
+    /// own travelling copies — this block's pair holds its slots at opacity 0 so nothing
+    /// reflows and nothing is unmounted. See `PresentationFlightLayer`.
+    var hidesTextForFlight = false
     /// The hero orb's slot. The orb belongs to the shell, so the block reserves its
     /// 150 × 142 and leaves the drawing to whoever passes one in — the reservation is what
     /// keeps the block 268 tall either way.
@@ -142,6 +146,7 @@ struct GreetingBlock<Orb: View>: View {
                 .textStyle(metrics.titleStyle)
                 .foregroundStyle(DS.Color.ink)
                 .multilineTextAlignment(.center)
+                .opacity(hidesTextForFlight ? 0 : 1)
                 .frame(width: metrics.width, height: metrics.titleHeight)
                 .padding(.top, metrics.titleTopMargin)
 
@@ -149,6 +154,7 @@ struct GreetingBlock<Orb: View>: View {
                 .textStyle(metrics.subtitleStyle)
                 .foregroundStyle(DS.Color.inkSecondary)
                 .multilineTextAlignment(.center)
+                .opacity(hidesTextForFlight ? 0 : 1)
                 .frame(width: metrics.subtitleWidth, height: metrics.subtitleHeight)
                 .padding(.top, metrics.subtitleTopMargin)
 
@@ -166,8 +172,14 @@ extension GreetingBlock where Orb == EmptyView {
     init(
         scale: ChatScale = .panel,
         width: CGFloat? = nil,
-        onSelectSuggestion: @escaping (Suggestion) -> Void = { _ in }
+        onSelectSuggestion: @escaping (Suggestion) -> Void = { _ in },
+        hidesTextForFlight: Bool = false
     ) {
-        self.init(scale: scale, width: width, onSelectSuggestion: onSelectSuggestion) { EmptyView() }
+        self.init(
+            scale: scale,
+            width: width,
+            onSelectSuggestion: onSelectSuggestion,
+            hidesTextForFlight: hidesTextForFlight
+        ) { EmptyView() }
     }
 }

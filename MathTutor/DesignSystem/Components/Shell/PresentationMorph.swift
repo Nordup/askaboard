@@ -245,6 +245,13 @@ struct PresentationMorph: Equatable, Sendable {
         return 1 - (1 - p) * (1 - p)
     }
 
+    /// The lead curve, a beat behind the orb: `p` remapped to `[0.05, 1]` before easing, so
+    /// the greeting follows the tutor's face by a stagger of 5% of the travel rather than
+    /// moving as one welded plate with it.
+    static func leadStaggered(_ progress: CGFloat) -> CGFloat {
+        lead((progress - 0.05) / 0.95)
+    }
+
     // MARK: - Arithmetic
 
     private func unit(_ progress: CGFloat) -> CGFloat {
@@ -334,10 +341,43 @@ struct PresentationFlight: Equatable, Sendable {
     }
 
     /// The orb's leading edge along the travel: the docked position plus the column shift on
-    /// the lead curve, so the tutor's face arrives slightly before the box does. Whole
-    /// points, the same rule every rasterised travel in the shell follows.
+    /// the lead curve, so the tutor's face arrives slightly before the box does.
     func orbX(at progress: CGFloat) -> CGFloat {
-        DrawerReveal.wholePoints(dockedOrbX + PresentationMorph.lead(progress) * columnShift)
+        travelled(from: dockedOrbX, by: PresentationMorph.lead(progress) * columnShift, at: progress)
+    }
+
+    // MARK: - The greeting
+
+    /// The greeting block's top edge — identical at both ends for the reason the orb's is:
+    /// both surfaces hang the block `--spacing-10` under the same orb. 328 on the reference
+    /// screen.
+    var greetingTop: CGFloat { orbTop + Self.orbFrame.height + DS.Space.s10 }
+
+    /// The greeting text's leading edge along the travel. The block is laid out **once, at
+    /// the docked column's width**, and only translated: the title is one line and the
+    /// subtitle is capped at 277 at both ends, so a centred 301-wide block at the far
+    /// column's centre is pixel-identical to the destination's own — no re-typesetting, no
+    /// crossfade, the glyphs simply walk to the middle of the screen. It rides the
+    /// staggered lead, one beat behind the orb.
+    func greetingX(at progress: CGFloat) -> CGFloat {
+        travelled(
+            from: dockedColumnX,
+            by: PresentationMorph.leadStaggered(progress) * columnShift,
+            at: progress
+        )
+    }
+
+    // MARK: - Arithmetic
+
+    /// Whole points through the travel — every rasterised composite in the shell moves on
+    /// whole points, or its text resamples a fraction of a pixel differently every frame —
+    /// with the **exact** value at both endpoints, because the flight copy is swapped for
+    /// the surface's own copy at rest and a half-point column centre (491.5's fault) must
+    /// not round into a one-point jump at the handoff.
+    private func travelled(from start: CGFloat, by shift: CGFloat, at progress: CGFloat) -> CGFloat {
+        if progress <= 0 { return start }
+        if progress >= 1 { return start + shift }
+        return DrawerReveal.wholePoints(start + shift)
     }
 }
 

@@ -78,6 +78,50 @@ final class PresentationFlightTests: XCTestCase {
         }
     }
 
+    // MARK: - The greeting
+
+    /// One 301-wide block, translated only: leading edge 46 → 537.5, so its centre lands on
+    /// the destination column's own centre — pixel parity with the settled surface at both
+    /// ends, exact (never rounded) at the endpoints where the handoff happens.
+    func testGreetingTravelsAsOneBlock() {
+        let flight = closed
+        XCTAssertEqual(flight.greetingX(at: 0), flight.dockedColumnX)
+        XCTAssertEqual(flight.greetingX(at: 0), 46)
+        XCTAssertEqual(flight.greetingX(at: 1), flight.dockedColumnX + flight.columnShift)
+        XCTAssertEqual(flight.greetingX(at: 1), 537.5)
+        // Whole points through the interior of the travel.
+        let mid = flight.greetingX(at: 0.5)
+        XCTAssertEqual(mid, mid.rounded())
+    }
+
+    /// The block hangs `--spacing-10` under the orb on both surfaces — y never moves.
+    func testGreetingTopIsTheSharedChain() {
+        XCTAssertEqual(closed.greetingTop, closed.orbTop + PresentationFlight.orbFrame.height + DS.Space.s10)
+        XCTAssertEqual(closed.greetingTop, 328)
+    }
+
+    /// The greeting rides one stagger behind the orb: still at the anchor through the first
+    /// 5% of the travel, together with everything at both ends.
+    func testGreetingStaggersBehindTheOrb() {
+        XCTAssertEqual(PresentationMorph.leadStaggered(0), 0)
+        XCTAssertEqual(PresentationMorph.leadStaggered(0.05), 0)
+        XCTAssertEqual(PresentationMorph.leadStaggered(1), 1)
+        for step in stride(from: CGFloat(0.1), to: 1, by: 0.1) {
+            XCTAssertLessThanOrEqual(
+                PresentationMorph.leadStaggered(step),
+                PresentationMorph.lead(step) + 1e-9,
+                "the greeting must not outrun the orb at \(step)"
+            )
+        }
+    }
+
+    /// The orb's endpoints are exact too — the interior rounds, the ends never do.
+    func testFlightEndpointsAreExact() {
+        let flight = closed
+        XCTAssertEqual(flight.orbX(at: 0), flight.dockedOrbX)
+        XCTAssertEqual(flight.orbX(at: 1), flight.dockedOrbX + flight.columnShift)
+    }
+
     // MARK: - The lead curve
 
     /// `1 − (1 − p)²`: identity at both ends, ahead of the finger everywhere between —
