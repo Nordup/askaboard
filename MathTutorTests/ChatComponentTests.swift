@@ -185,24 +185,29 @@ final class ChatComponentTests: XCTestCase {
     func testTheThreadIsBottomAnchoredAndSlackLandsOnTop() {
         let thread = ThreadMetrics.panel
 
-        // Items sum 589 + nine 22pt gaps 198 = 787; + 18 padding = 805.
+        // Items sum 589 + nine 22pt gaps 198 = 787; + 18 bottom padding + the 80pt top-fade
+        // band above the first message = 885.
         XCTAssertEqual(Self.threadChildHeights.reduce(0, +), 589)
         XCTAssertEqual(thread.bottomPadding, 18)
-        XCTAssertEqual(thread.contentHeight(childHeights: Self.threadChildHeights), 805)
+        XCTAssertEqual(thread.topPadding, ScrollFadeMetrics.top(for: .panel).height)
+        XCTAssertEqual(thread.contentHeight(childHeights: Self.threadChildHeights), 885)
 
-        // Bottom-anchored inside 810, so the first child starts at 5 and every offset below
-        // is the one board 03 measured on the live thread.
+        // Bottom-anchored inside the panel the boards were drawn at (936): the slack and the
+        // top padding land above the first child, and every gap below is board 03's 22.
         XCTAssertEqual(
-            thread.offsets(childHeights: Self.threadChildHeights, in: 810),
-            [5, 77, 148, 220, 291, 363, 459, 556, 674, 746]
+            thread.offsets(childHeights: Self.threadChildHeights, in: 936),
+            [131, 203, 274, 346, 417, 489, 585, 682, 800, 872]
         )
     }
 
-    func testAThreadTallerThanItsColumnStartsAtTheTop() {
+    func testAThreadTallerThanItsColumnStartsAtItsOwnTopPadding() {
         // Slack clamps at 0 rather than going negative, which would pull the first message
-        // up off the top of the thread instead of letting it scroll.
-        let offsets = ThreadMetrics.panel.offsets(childHeights: Self.threadChildHeights, in: 400)
-        XCTAssertEqual(offsets.first, 0)
+        // up off the top of the thread instead of letting it scroll — and the first message
+        // keeps its air above, so scrolled all the way back it rests clear of the fade
+        // instead of half-washed inside it.
+        let thread = ThreadMetrics.panel
+        let offsets = thread.offsets(childHeights: Self.threadChildHeights, in: 400)
+        XCTAssertEqual(offsets.first, thread.topPadding)
     }
 
     func testTheFullScreenThreadTakesBoardThirteensNewSpec() {
@@ -225,6 +230,9 @@ final class ChatComponentTests: XCTestCase {
         XCTAssertEqual(thread.gap, ThreadMetrics.panel.gap)
         // `Thread · wide` carries no padding; the panel's 18 is there to clear its inset.
         XCTAssertEqual(thread.bottomPadding, 0)
+        // No fade over this thread's head, so the air above the first message is the content
+        // band's own 28 rather than the panel's 80pt fade band.
+        XCTAssertEqual(thread.topPadding, DS.Space.edge)
     }
 
     // MARK: - Failure & recovery
@@ -1157,9 +1165,13 @@ final class ChatComponentTests: XCTestCase {
                 XCTAssertEqual(thread.width, width, "\(scale.rawValue) at \(column.name)")
                 XCTAssertEqual(thread.gap, DS.Space.messageGap, "\(scale.rawValue) at \(column.name)")
 
-                let offsets = thread.offsets(childHeights: Self.threadChildHeights, in: 810)
+                let offsets = thread.offsets(childHeights: Self.threadChildHeights, in: 936)
                 XCTAssertEqual(offsets.count, Self.threadChildHeights.count, column.name)
-                XCTAssertGreaterThanOrEqual(offsets.first ?? -1, 0, "\(scale.rawValue) at \(column.name)")
+                XCTAssertGreaterThanOrEqual(
+                    offsets.first ?? -1,
+                    thread.topPadding,
+                    "\(scale.rawValue) at \(column.name)"
+                )
                 for index in 0 ..< offsets.count - 1 {
                     XCTAssertEqual(
                         offsets[index + 1] - (offsets[index] + Self.threadChildHeights[index]),
@@ -1170,13 +1182,13 @@ final class ChatComponentTests: XCTestCase {
                 // Bottom-anchored: the last child's bottom clears the padding and nothing
                 // else, at every width.
                 let last = (offsets.last ?? 0) + (Self.threadChildHeights.last ?? 0)
-                XCTAssertEqual(last + thread.bottomPadding, 810, accuracy: 0.001, column.name)
+                XCTAssertEqual(last + thread.bottomPadding, 936, accuracy: 0.001, column.name)
 
-                // A thread taller than its column starts at the top and scrolls rather than
-                // being pulled up off its own first message.
+                // A thread taller than its column starts at its own top padding and scrolls
+                // rather than being pulled up off its own first message.
                 XCTAssertEqual(
                     thread.offsets(childHeights: Self.threadChildHeights, in: 100).first,
-                    0,
+                    thread.topPadding,
                     "\(scale.rawValue) at \(column.name)"
                 )
             }
@@ -1205,82 +1217,99 @@ final class ChatComponentTests: XCTestCase {
         XCTAssertEqual(column.top, 28, "no status bar: the band starts at the screen's own edge inset")
         XCTAssertEqual(column.greetingHeight, 268)
         XCTAssertEqual(column.suggestionsHeight, 168)
-        XCTAssertEqual(column.greetingTop, 162)
-        XCTAssertEqual(column.suggestionsTop, 604)
-        XCTAssertEqual(column.suggestionsTop + column.suggestionsHeight, 772)
         XCTAssertEqual(column.composerTop(showing: .none), 936)
         XCTAssertEqual(column.bottom, 1004)
+        XCTAssertEqual(column.floor, 1032)
+        XCTAssertEqual(column.underhang, 28, "the screen's edge inset below the content band")
 
-        // The 134 is what the band has left after the block, and the sum is the check that the
-        // two kept gaps are the right two: 134 + 610 + 164 = 908 = 1004 − 28 − 68.
-        XCTAssertEqual(column.startSlack, 134)
+        // The reference band affords the design's air, so both gaps hold their drawn values.
+        XCTAssertEqual(column.startGapAboveSuggestions, 174)
+        XCTAssertEqual(column.startGapBelowSuggestions, 164)
+
+        // The block is bottom-anchored in the thread's own band and clears the composer, the
+        // underhang and the designed 164 — `68 + 28 + 164 = 260` — so its bottom lands on
+        // 772, the grid on 604, and the greeting on 162, with all the slack above it.
+        XCTAssertEqual(column.startClearing, 260)
+        XCTAssertEqual(column.floor - column.startClearing, 772)
         XCTAssertEqual(
-            column.startSlack + column.startContentHeight + TutorColumnMetrics.suggestionsToComposer,
-            column.bottom - column.top - ComposerMetrics.fullScreen.height
+            column.floor - column.startClearing - column.suggestionsHeight,
+            604
+        )
+        XCTAssertEqual(
+            column.floor - column.startClearing - column.startContentHeight,
+            162
         )
 
-        // Board 13's thread lane runs from the screen's own top, not the content band's: a
-        // scroll view clips to its frame, and a frame starting at `contentTop` cuts the text
-        // off at a hard white edge on its way out. See `TutorColumnMetrics.threadTop`.
+        // Board 13's thread lane runs the screen's own edges, not the content band's: a
+        // scroll view clips to its frame, so a frame starting at `contentTop` cut the text
+        // at a hard white edge on the way out, and one stopping at `contentBottom` cut it
+        // 28 points shy of the screen's foot. See `threadTop` and `threadHeight`.
         XCTAssertEqual(column.threadTop, 0)
-        XCTAssertEqual(column.threadHeight, column.bottom)
+        XCTAssertEqual(column.threadHeight, column.floor)
+        XCTAssertEqual(column.threadClearing, 120, "68 pill + 28 underhang + 24 gap")
     }
 
     /// The reason the constants had to go: the grid wraps to one chip a row below 740 and
     /// doubles in height, so a grid pinned at 592 ran 188 points into the composer.
-    func testTheReadingColumnStaysCorrectWhenTheGridWraps() {
+    func testTheReadingColumnStaysCorrectWhenTheGridWrapsOrTheScreenShortens() {
         for device in Column.all {
             let column = TutorColumnMetrics(layout: device.layout)
-            let composerTop = column.composerTop(showing: .none)
             let context = "\(device.name) · column \(column.width)"
 
-            // Nothing above the composer, and nothing above the band.
-            XCTAssertGreaterThanOrEqual(column.greetingTop, column.top, context)
-            XCTAssertGreaterThanOrEqual(
-                column.suggestionsTop,
-                column.greetingTop + column.greetingHeight,
-                context
-            )
-            XCTAssertLessThanOrEqual(column.suggestionsTop, composerTop, context)
-
-            // The two designed gaps are the block's own and never give: the greeting is 174
-            // above its chips wherever the block ends up.
+            // Bottom-anchored in the thread's band, the chips sit exactly the drawn gap
+            // above the resting composer at every width — the design's 164 where the band
+            // affords it, its compressed share where it does not, and never less than the
+            // 24pt floor.
             XCTAssertEqual(
-                column.suggestionsTop - (column.greetingTop + column.greetingHeight),
-                TutorColumnMetrics.greetingToSuggestions,
+                column.composerTop(showing: .none) - (column.floor - column.startClearing),
+                column.startGapBelowSuggestions,
                 accuracy: 0.001,
                 context
             )
-            // Where the band has room, the chips sit exactly 164 above the composer and the
-            // slack is all above the greeting — which is what reproduces the reference.
-            if column.startSlack > 0 {
+            XCTAssertLessThanOrEqual(
+                column.startGapBelowSuggestions,
+                TutorColumnMetrics.suggestionsToComposer,
+                context
+            )
+            XCTAssertGreaterThanOrEqual(
+                column.startGapBelowSuggestions,
+                TutorColumnMetrics.startGapFloor,
+                context
+            )
+            // Both gaps compress in one proportion, so the block keeps its shape: whenever
+            // one is compressed the ratio matches the design's 174 : 164 (until the floor
+            // catches the smaller one).
+            if column.startGapAboveSuggestions < TutorColumnMetrics.greetingToSuggestions,
+                column.startGapAboveSuggestions > TutorColumnMetrics.startGapFloor,
+                column.startGapBelowSuggestions > TutorColumnMetrics.startGapFloor {
                 XCTAssertEqual(
-                    composerTop - (column.suggestionsTop + column.suggestionsHeight),
-                    TutorColumnMetrics.suggestionsToComposer,
+                    column.startGapAboveSuggestions / column.startGapBelowSuggestions,
+                    TutorColumnMetrics.greetingToSuggestions
+                        / TutorColumnMetrics.suggestionsToComposer,
                     accuracy: 0.001,
                     context
                 )
-            } else {
-                // And where it does not, the block starts at the top of the band and scrolls
-                // rather than being pulled up off its own greeting. `columnTop` rather than
-                // `top`: a column narrow enough for the gear to overlap it gives way by one
-                // control band first, and that is the top the block actually starts from.
-                XCTAssertEqual(column.greetingTop, column.columnTop, context)
             }
+            // The drawn gap above the chips is the one inside the block's rigid run.
+            XCTAssertEqual(
+                column.startContentHeight,
+                column.greetingHeight + column.startGapAboveSuggestions
+                    + column.suggestionsHeight,
+                accuracy: 0.001,
+                context
+            )
 
-            XCTAssertGreaterThan(column.threadHeight, 0, context)
-            XCTAssertEqual(column.threadTop, column.top, context)
+            // The start state runs in the thread's own lane: screen top to screen floor.
+            XCTAssertEqual(column.threadTop, 0, context)
+            XCTAssertEqual(column.threadHeight, column.floor, context)
         }
 
-        // The wrapped case, spelled out. A 9.7-inch iPad in portrait gives a 644pt column, so
-        // the grid doubles to 356 and the block is 798 tall in a 684pt band: 188 points more
-        // than the design's 610 in a band that is 60 shorter. The old constants would have
-        // drawn the grid straight through the composer; here the block takes the whole band,
-        // the greeting starts at the top of it and the column scrolls, which is what
-        // `TutorFullScreen` wraps it in a scroll view for. The band is 716 rather than 704
-        // because the shorter pill in a narrow column hands 12 points back — and it is no
-        // longer 684: board 19 took `btn/settings` off this screen, so `columnTop` has nothing
-        // in the corner to give a 32pt control band up to. See `TutorColumnMetrics.columnTop`.
+        // The wrapped case, spelled out. A 9.7-inch iPad in portrait gives a 644pt column,
+        // so the grid doubles to 356 and the rigid run outgrows the design's air — and the
+        // air is what gives: the budget left once greeting, grid and pill have their heights
+        // is 268, shared 174 : 164, and the whole state fits the screen exactly. `top +
+        // content + clearing = floor`, which is `ChatScrollColumn`'s exact-fit case: no
+        // scroll, nothing clipped, orb on the content top.
         let portrait = TutorColumnMetrics(
             layout: ScreenLayout(
                 size: CGSize(width: 768, height: 1024),
@@ -1289,18 +1318,38 @@ final class ChatComponentTests: XCTestCase {
         )
         XCTAssertEqual(portrait.width, 644)
         XCTAssertEqual(portrait.suggestionsHeight, 356)
-        XCTAssertEqual(portrait.startContentHeight, 798)
-        XCTAssertEqual(portrait.startRegionHeight, 716)
-        XCTAssertEqual(portrait.startSlack, 0)
-        XCTAssertEqual(portrait.greetingTop, portrait.columnTop)
-        XCTAssertTrue(portrait.startScrolls, "this is the column that has to scroll")
-        // And the design's own screen is not: a scroll view there would clip the hero halo and
-        // the chips' shadows, which is the diff the reference screenshots are for.
-        XCTAssertFalse(TutorColumnMetrics(layout: .reference).startScrolls)
-        // Even scrolled, every chip is above the composer rather than under it.
+        XCTAssertLessThan(portrait.startGapAboveSuggestions, 174)
+        XCTAssertLessThan(portrait.startGapBelowSuggestions, 164)
+        XCTAssertEqual(
+            portrait.top + portrait.startContentHeight + portrait.startClearing,
+            portrait.floor,
+            accuracy: 0.001,
+            "compressed to an exact fit — this column no longer scrolls"
+        )
+        // The design's own screen still holds the full 174/164 with slack above.
+        let reference = TutorColumnMetrics(layout: .reference)
         XCTAssertLessThan(
-            portrait.suggestionsTop + portrait.suggestionsHeight,
-            portrait.composerTop(showing: .none)
+            reference.top + reference.startContentHeight + reference.startClearing,
+            reference.floor
+        )
+
+        // A band genuinely too short for even the floored gaps — a Split View window — is
+        // the one that still scrolls, greeting over the screen edge exactly as the thread's
+        // history goes, with `ChatScrollColumn` clipping at the screen edge and nowhere else.
+        let short = TutorColumnMetrics(
+            layout: ScreenLayout(size: CGSize(width: 900, height: 560), safeArea: EdgeInsets())
+        )
+        XCTAssertEqual(short.startGapAboveSuggestions, TutorColumnMetrics.startGapFloor)
+        XCTAssertEqual(short.startGapBelowSuggestions, TutorColumnMetrics.startGapFloor)
+        XCTAssertGreaterThan(
+            short.top + short.startContentHeight + short.startClearing,
+            short.floor,
+            "this is the column that has to scroll"
+        )
+        // Even then, every chip is above the composer rather than under it.
+        XCTAssertLessThan(
+            short.floor - short.startClearing,
+            short.composerTop(showing: .none)
         )
     }
 
@@ -1328,10 +1377,11 @@ final class ChatComponentTests: XCTestCase {
         )
         XCTAssertEqual(column.bottom - column.composerTop(showing: .label), 120)
         XCTAssertEqual(column.bottom - column.composerTop(showing: .chips), 132)
-        // Both lanes above are measured off the resting composer, so neither moves.
-        XCTAssertEqual(column.greetingTop, 162)
-        XCTAssertEqual(column.suggestionsTop, 604)
-        XCTAssertEqual(column.threadHeight, 976)
+        // Both lanes above are measured off the resting composer, so neither moves: the
+        // start block's clearance and the thread's band hold their resting numbers.
+        XCTAssertEqual(column.startClearing, 260)
+        XCTAssertEqual(column.floor - column.startClearing - column.startContentHeight, 162)
+        XCTAssertEqual(column.threadHeight, column.floor)
     }
 
     // MARK: - The attach menu's anchor
@@ -1372,17 +1422,23 @@ final class ChatComponentTests: XCTestCase {
         XCTAssertEqual(slot.attachMenuTop(in: 100, over: composer.height(showing: .chips)), 0)
     }
 
-    /// The reading column asks the same question of the same function, with the content
-    /// band's floor as its surface — it has no underhang, so the pill's bottom *is* that
-    /// floor.
+    /// The reading column asks the same question of the same function, with the **screen's**
+    /// floor as its surface: its underhang is the 28pt edge inset below the content band,
+    /// exactly as the panel's is its 18pt inset above the panel floor.
     func testTheReadingColumnsAttachMenuUsesTheSameAnchor() {
         let column = TutorColumnMetrics(layout: .reference)
-        let slot = ComposerSlotMetrics.fullScreen(columnWidth: column.width)
+        let slot = ComposerSlotMetrics.fullScreen(
+            columnWidth: column.width,
+            underhang: column.underhang
+        )
         let composer = ComposerMetrics.for(.fullScreen, width: column.width)
+
+        XCTAssertEqual(slot.underhang, 28)
+        XCTAssertEqual(slot.band, 96, "pill top to screen floor, fade and all")
 
         for card in ComposerCard.allCases {
             XCTAssertEqual(
-                slot.attachMenuTop(in: column.bottom, over: composer.height(showing: card))
+                slot.attachMenuTop(in: column.floor, over: composer.height(showing: card))
                     + AttachMenu.height + AttachMenu.gapAbovePill,
                 column.composerTop(showing: card),
                 "The menu's bottom edge is the composer's top, less the gap — \(card)"

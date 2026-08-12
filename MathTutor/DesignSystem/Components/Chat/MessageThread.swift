@@ -48,12 +48,23 @@ struct ThreadMetrics: Equatable, Sendable {
     /// What sits under the newest message: *"clears `--space-panel-inset`"*, plus whatever
     /// band the thread runs behind.
     ///
-    /// Leading, trailing and top are still 0 — the panel applies its own 18, and the top is
-    /// deliberately 0 because the thread starts at the panel's own edge and passes behind the
-    /// controls. The bottom is the one that grew: the thread now runs the panel's full height,
-    /// so this has to hold the newest message off the composer as well as off the floor, or
-    /// the message the student just sent lands behind the pill.
+    /// Leading and trailing are still 0 — the panel applies its own 18. The bottom is the one
+    /// that grew: the thread now runs the panel's full height, so this has to hold the newest
+    /// message off the composer as well as off the floor, or the message the student just
+    /// sent lands behind the pill.
     let bottomPadding: CGFloat
+    /// What sits above the **first** message when the thread is scrolled all the way back.
+    ///
+    /// The thread still starts at the surface's own edge and its history still dissolves
+    /// through the chrome on its way out — that is what the fades are for. But the fade is
+    /// for text *in motion*; the first message of the conversation is a rest state, and with
+    /// no padding it rested wherever the frame began: inside the panel's fade, half washed
+    /// out under the controls, and in the reading column jammed into the screen's top corner.
+    /// So the content carries air above its first child — the whole top fade's band in the
+    /// panel, so the message settles just clear of the dissolve, and the content band's 28 in
+    /// the reading column, where there is no fade and the band is the rule everything else
+    /// on the screen follows.
+    let topPadding: CGFloat
     /// How far the thread's *clip* sits outside its column, on each side.
     ///
     /// Zero everywhere the thread is only text: messages are laid out in the column and stop
@@ -72,20 +83,22 @@ struct ThreadMetrics: Equatable, Sendable {
     /// The box the thread clips to: its column plus the bleed on both sides.
     var clipWidth: CGFloat { width + 2 * bleed }
 
-    /// What the column occupies: every child, every gap between them, and the bottom
-    /// padding. On the board's ten children this is 589 + 198 + 18 = 805.
+    /// What the column occupies: the top padding, every child, every gap between them, and
+    /// the bottom padding. On the board's ten children in the panel this is
+    /// 80 + 589 + 198 + 18 = 885.
     func contentHeight(childHeights: [CGFloat]) -> CGFloat {
-        guard !childHeights.isEmpty else { return bottomPadding }
-        return childHeights.reduce(0, +) + gap * CGFloat(childHeights.count - 1) + bottomPadding
+        guard !childHeights.isEmpty else { return topPadding + bottomPadding }
+        return topPadding + childHeights.reduce(0, +)
+            + gap * CGFloat(childHeights.count - 1) + bottomPadding
     }
 
     /// Where each child lands in a thread of `height`, bottom-anchored.
     ///
     /// *"Because `justify-content: flex-end`, all slack lands at the top (5pt here)."*
-    /// Slack is clamped at 0 so an overflowing thread starts at the top and scrolls, rather
-    /// than being pulled up off its own first message.
+    /// Slack is clamped at 0 so an overflowing thread starts at its own top padding and
+    /// scrolls, rather than being pulled up off its own first message.
     func offsets(childHeights: [CGFloat], in height: CGFloat) -> [CGFloat] {
-        var y = max(0, height - contentHeight(childHeights: childHeights))
+        var y = topPadding + max(0, height - contentHeight(childHeights: childHeights))
         return childHeights.map { childHeight in
             defer { y += childHeight + gap }
             return y
@@ -119,6 +132,10 @@ extension ThreadMetrics {
                 width: max(0, width),
                 gap: DS.Space.messageGap,
                 bottomPadding: DS.Space.panelInset + max(0, band),
+                // The whole top fade — plateau and ramp — so a thread scrolled to its very
+                // beginning rests its first message just below the dissolve instead of
+                // half-washed inside it. See `topPadding`.
+                topPadding: ScrollFadeMetrics.top(for: .panel).height,
                 bleed: bleed
             )
         case .fullScreen:
@@ -126,6 +143,9 @@ extension ThreadMetrics {
                 width: max(0, width),
                 gap: DS.Space.messageGap,
                 bottomPadding: max(0, band),
+                // No fade over the head of this thread (boards 07 and 13), so the air is the
+                // content band's own 28 — the line everything else on the screen starts at.
+                topPadding: DS.Space.edge,
                 bleed: bleed
             )
         }
@@ -253,6 +273,7 @@ struct MessageThread<Accessory: View>: View {
                 }
                 accessory()
             }
+            .padding(.top, metrics.topPadding)
             .padding(.bottom, metrics.bottomPadding)
         }
         // No fade here, and that is the change: it used to be this view's last child. Board

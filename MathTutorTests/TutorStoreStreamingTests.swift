@@ -270,12 +270,16 @@ final class TutorStoreStreamingTests: XCTestCase {
             thumbnail: Data([0x01])
         )
 
-        XCTAssertTrue(await store.sendAndWait("   ", attachments: [uploaded]))
+        // Awaited outside the assertion — `XCTAssertTrue`'s autoclosure is synchronous, so an
+        // `await` inside it does not compile.
+        let filesOnlyTurnWasSent = await store.sendAndWait("   ", attachments: [uploaded])
+        XCTAssertTrue(filesOnlyTurnWasSent)
         XCTAssertEqual(recorded.withLock { $0 }.count, 1)
         XCTAssertEqual(store.session.messages.last(where: { $0.role == .learner })?.text, "")
 
         // And nothing at all is still nothing: no words, no files, no turn.
-        XCTAssertFalse(await store.sendAndWait("   "))
+        let emptyDraftWasSent = await store.sendAndWait("   ")
+        XCTAssertFalse(emptyDraftWasSent)
         XCTAssertEqual(recorded.withLock { $0 }.count, 1)
     }
 

@@ -339,11 +339,16 @@ struct ComposerSlotMetrics: Equatable, Sendable {
     }
 
     /// Boards 07 and 13, in the column the reading lane actually got.
-    static func fullScreen(columnWidth: CGFloat) -> Self {
+    ///
+    /// `underhang` is the screen's edge inset below the content band — the full-screen
+    /// surface is the screen, so its floor is the screen's, and the fade has to reach it the
+    /// same way the panel's reaches through the 18pt inset. Defaulted to 0 for the gallery
+    /// specimens, which have no screen below them.
+    static func fullScreen(columnWidth: CGFloat, underhang: CGFloat = 0) -> Self {
         Self(
             surfaceWidth: max(0, columnWidth),
             composerHeight: ComposerMetrics.for(.fullScreen, width: columnWidth).height,
-            underhang: 0
+            underhang: max(0, underhang)
         )
     }
 

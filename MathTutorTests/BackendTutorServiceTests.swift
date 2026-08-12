@@ -439,6 +439,10 @@ final class BackendTutorServiceTests: XCTestCase {
             } else {
                 XCTFail("Expected .network, got \(error)")
             }
+        } catch {
+            // The pattern above makes this catch non-exhaustive, and a non-throwing test
+            // function does not compile without the remainder handled.
+            XCTFail("Expected TutorServiceError, got \(error)")
         }
     }
 
@@ -457,6 +461,8 @@ final class BackendTutorServiceTests: XCTestCase {
             } else {
                 XCTFail("Expected .invalidResponse, got \(error)")
             }
+        } catch {
+            XCTFail("Expected TutorServiceError, got \(error)")
         }
     }
 

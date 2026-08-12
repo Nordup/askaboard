@@ -55,7 +55,12 @@ struct TutorFullScreen: View {
         TutorColumnMetrics(layout: layout, reserving: sidebar)
     }
     /// The composer and the band behind it, as one thing. See `ComposerSlotMetrics`.
-    private var slot: ComposerSlotMetrics { .fullScreen(columnWidth: column.width) }
+    /// The underhang is the screen's own edge inset below the content band — the fade has to
+    /// run to the surface's floor, and this surface's floor is the screen's. See
+    /// `TutorColumnMetrics.underhang` for what broke without it.
+    private var slot: ComposerSlotMetrics {
+        .fullScreen(columnWidth: column.width, underhang: column.underhang)
+    }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -78,8 +83,10 @@ struct TutorFullScreen: View {
             //
             // Bottom-anchored inside the slot, so nothing here has to know whether a selection
             // is attached: the card grows upward out of the band and the pill stays on 1004.
+            // The slot's band now runs pill-top to screen floor — the underhang keeps the
+            // pill itself on the content band's bottom, exactly as the panel's inset does.
             ComposerSlot(metrics: slot, surfaceColor: DS.Color.surface) { composer }
-                .offset(x: column.x, y: column.bottom - slot.band)
+                .offset(x: column.x, y: column.floor - slot.band)
 
             if isAttachMenuOpen {
                 attachMenu
@@ -266,6 +273,13 @@ struct TutorFullScreen: View {
     /// slack lands on top: at the reference that slack reproduces 150 and 592 to the point,
     /// and where the grid grows the block rides up instead of down.
     ///
+    /// **On a screen shorter than the board's, the gaps give before the block scrolls.** The
+    /// greeting, the grid and the pill are rigid, so the 174 and the 164 compress in
+    /// proportion until the whole hi state fits between the content top and the composer —
+    /// see `TutorColumnMetrics.startGap(_:)`. An 820pt iPad was cropping its own orb off the
+    /// top for the sake of air the design measured on a 1032pt screen. Scrolling remains,
+    /// floored gaps and all, for the bands that are genuinely too short — Split View.
+    ///
     /// **The block runs in the thread's own container, in the thread's own lane** — the same
     /// `ChatScrollColumn`, framed the same screen-top-to-content-floor band `threadColumn` is.
     /// It used to be its own pair of branches with its own scroll view, clipped to the start
@@ -284,16 +298,23 @@ struct TutorFullScreen: View {
     ///
     /// Board 19 draws no other chrome either — the board peek is still the way back and the
     /// sidebar is a lane rather than a header — so this stays a bare column.
+    ///
+    /// The top padding is `column.top`: on a screen the band cannot hold at design gaps, the
+    /// gaps compress until the block fits exactly between the content top and the composer —
+    /// see `TutorColumnMetrics.startGap(_:)` — and this padding is what puts the orb *on*
+    /// the content top rather than on the screen's raw edge. Where the block scrolls after
+    /// all, it also keeps the greeting 28 clear of the edge at full scroll.
     private var startColumn: some View {
         ChatScrollColumn(width: column.width) {
-            startBlock.padding(.bottom, column.startClearing)
+            startBlock
+                .padding(.top, column.top)
+                .padding(.bottom, column.startClearing)
         }
         .frame(width: column.width, height: column.threadHeight)
         .offset(x: column.x, y: column.threadTop)
     }
 
-    /// Greeting, the board's 174, grid — the one rigid run in the column, and the same view in
-    /// both branches so the two cannot drift apart.
+    /// Greeting, the drawn gap, grid — the one rigid run in the column.
     private var startBlock: some View {
         VStack(spacing: 0) {
             GreetingBlock(scale: .fullScreen, width: column.width) { Orb(.hero) }
@@ -303,7 +324,7 @@ struct TutorFullScreen: View {
                 width: column.width,
                 onSelect: actions.selectSuggestion
             )
-            .padding(.top, TutorColumnMetrics.greetingToSuggestions)
+            .padding(.top, column.startGapAboveSuggestions)
         }
         .frame(width: column.width, alignment: .top)
     }
@@ -365,8 +386,8 @@ struct TutorFullScreen: View {
     /// clear of the pill's top, on the composer's own leading edge.
     ///
     /// The same anchor the panel uses — `ComposerSlotMetrics.attachMenuTop(in:over:)` — with
-    /// the content band's floor as the surface, since that is the line the composer slot is
-    /// offset to and this surface has no underhang. Measured over the composer **with the
+    /// the screen's floor as the surface: the slot's underhang is measured from it, exactly
+    /// as the panel's is from the panel floor. Measured over the composer **with the
     /// card it is drawing**, or the menu lands on top of the chips.
     ///
     /// There is no surface radius to clip it here and no session menu to be an alternative
@@ -391,7 +412,7 @@ struct TutorFullScreen: View {
         .offset(
             x: column.x,
             y: slot.attachMenuTop(
-                in: column.bottom,
+                in: column.floor,
                 over: ComposerMetrics.for(.fullScreen, width: column.width)
                     .height(showing: composer.card)
             )
@@ -424,11 +445,17 @@ struct TutorFullScreen: View {
 struct TutorColumnMetrics: Equatable, Sendable {
     /// Screen 07's `418 → 592`. Inside the start block: the chips are the greeting's own
     /// openers, so this is a margin between two children and not air the layout may spend.
+    /// The **designed** gap — what the block actually draws is `startGapAboveSuggestions`,
+    /// which is this wherever the band can hold it.
     static let greetingToSuggestions: CGFloat = 174
     /// Screen 07's `760 → 924`. The block is anchored on this, the way the thread is anchored
     /// on `--space-gap`: *"the newest message is always the same distance from the input,
-    /// which is where the eye already is."*
+    /// which is where the eye already is."* Designed value; the drawn one is
+    /// `startGapBelowSuggestions`.
     static let suggestionsToComposer: CGFloat = 164
+    /// The least either gap compresses to before the column gives up and scrolls —
+    /// `--space-gap`, the smallest designed breathing room in the product.
+    static let startGapFloor: CGFloat = DS.Space.gap
 
     /// `ScreenLayout.columnX(reserving:)` — centred in what is left of the screen once the
     /// 68pt peek and the sessions sidebar have their places.
@@ -438,6 +465,9 @@ struct TutorColumnMetrics: Equatable, Sendable {
     /// The content band's top and bottom, the same two lines every other screen is cut from.
     let top: CGFloat
     let bottom: CGFloat
+    /// The screen's own floor. The full-screen chat surface is the screen, so this is the
+    /// line its fills run to — the panel's floor is the panel's, and this is the analogue.
+    let floor: CGFloat
     /// `GreetingMetrics.fullScreen` in this column — 268 at every width, since none of its
     /// parts is a function of the column.
     let greetingHeight: CGFloat
@@ -466,10 +496,19 @@ struct TutorColumnMetrics: Equatable, Sendable {
         // to `contentBottom` whenever no keyboard is up, which is every screen the
         // boards were drawn for.
         bottom = layout.contentBottomAboveKeyboard
+        floor = layout.screenHeight
         greetingHeight = GreetingMetrics.for(.fullScreen, width: width).totalHeight
         suggestionsHeight = SuggestionChipMetrics.for(.fullScreen, width: width).containerHeight
         composer = ComposerMetrics.for(.fullScreen, width: width)
     }
+
+    /// What sits under the pill inside the surface — the screen's edge inset below the
+    /// content band, 28 on every screen with no keyboard up. The full-screen counterpart of
+    /// the panel's 18pt underhang, and for the same reason: the composer's fade has to run
+    /// to the surface's floor, and this surface's floor is the screen's. Without it the
+    /// thread hard-clipped at the content band's bottom, a line 28 points above the screen
+    /// edge, and the strip below it stayed blank white where the panel grades its text out.
+    var underhang: CGFloat { max(0, floor - bottom) }
 
     /// Bottom-anchored on the content band, as both boards draw it. With something attached
     /// the block grows upward by that card's visible band, so the pill stays put — and the
@@ -478,24 +517,57 @@ struct TutorColumnMetrics: Equatable, Sendable {
         bottom - composer.height(showing: card)
     }
 
-    /// Greeting, the board's 174, grid. The one rigid run in the column.
-    var startContentHeight: CGFloat {
-        greetingHeight + Self.greetingToSuggestions + suggestionsHeight
+    /// What the band offers the block's two designed gaps once everything rigid has its
+    /// height — greeting, grid and composer taken out of the contentTop→composer band.
+    /// 472 on the reference screen, which is more than the design's 338, and the surplus is
+    /// the slack that lands above the greeting. On a shorter screen it is less, and the gaps
+    /// are what give: see `startGap(_:)`.
+    private var startGapBudget: CGFloat {
+        bottom - top - greetingHeight - suggestionsHeight - composerHeight
     }
 
-    /// What the start block clears at the bottom of the thread's band: the composer, and
-    /// screen 07's 164 above it. The analogue of `threadClearing`, with the designed gap in
-    /// place of `--space-gap` — and travelling as the block's own bottom padding, which is
-    /// what bottom-anchors the chips 164 above the pill at every width. `232` on the
-    /// reference screen, so the block's bottom lands on 772 and its slack reproduces the
-    /// board's 150/592 above it.
+    /// `174 + 164` — the vertical air screen 07 draws inside and under the block.
+    private static var designedStartGaps: CGFloat { greetingToSuggestions + suggestionsToComposer }
+
+    /// Screen 07's 174, on the screens that can afford it — and the block's compressed share
+    /// of a shorter band everywhere else, so the whole hi state fits one screen instead of
+    /// cropping its own orb. See `startGap(_:)`.
+    var startGapAboveSuggestions: CGFloat { startGap(Self.greetingToSuggestions) }
+
+    /// Screen 07's 164, compressed the same way and in the same proportion.
+    var startGapBelowSuggestions: CGFloat { startGap(Self.suggestionsToComposer) }
+
+    /// The designed gap, or its share of a band too short for the pair.
+    ///
+    /// The greeting, the grid and the composer are rigid — type leadings, chip heights, a
+    /// pill — so on a screen shorter than the board's 1032 the only thing the block *can*
+    /// give is its air, and it gives proportionally: both gaps shrink by the same factor, so
+    /// the block keeps its shape rather than losing one gap to the other. Floored at
+    /// `--space-gap` each; a band that cannot afford even that is genuinely too short for
+    /// the block, and the column scrolls it exactly as the thread scrolls its history.
+    private func startGap(_ designed: CGFloat) -> CGFloat {
+        guard startGapBudget < Self.designedStartGaps else { return designed }
+        return max(Self.startGapFloor, startGapBudget * designed / Self.designedStartGaps)
+    }
+
+    /// Greeting, the drawn gap, grid. The one rigid run in the column.
+    var startContentHeight: CGFloat {
+        greetingHeight + startGapAboveSuggestions + suggestionsHeight
+    }
+
+    /// What the start block clears at the bottom of the thread's band: the composer, the
+    /// screen's underhang below it, and screen 07's 164 above it. The analogue of
+    /// `threadClearing`, with the designed gap in place of `--space-gap` — and travelling as
+    /// the block's own bottom padding, which is what bottom-anchors the chips 164 above the
+    /// pill at every width. `260` on the reference screen, so the block's bottom lands on
+    /// 772 and its slack reproduces the board's 150/592 above it.
     ///
     /// Measured against the **resting** composer, not the attached one. Board 07 draws no card
     /// in the wide composer at all; where the app shows one anyway — a selection made on the
     /// board has to be visible before it is sent — the card grows into its own 38pt band and
     /// the column above it does not move. A greeting that jumped 38 points the moment a
     /// selection was attached would be the composer redrawing the screen behind it.
-    var startClearing: CGFloat { composerHeight + Self.suggestionsToComposer }
+    var startClearing: CGFloat { composerHeight + underhang + startGapBelowSuggestions }
 
     /// **The screen's own top, not the content band's.** The one lane in the product that does
     /// not start at `contentTop`, and it is the scroll view that makes it different.
@@ -512,17 +584,20 @@ struct TutorColumnMetrics: Equatable, Sendable {
     /// where the board draws it, and the band above only ever holds text on its way out.
     var threadTop: CGFloat { 0 }
 
-    /// Screen top to the content band's floor. The composer is painted over its foot rather
-    /// than sitting below it — see `threadClearing`, which is what holds the newest message off
-    /// the pill.
-    var threadHeight: CGFloat { max(0, bottom - threadTop) }
+    /// Screen top to the **screen's** floor, not the content band's. The surface's fills run
+    /// edge to edge for the same reason the panel's run to the panel floor: a scroll view
+    /// clips to its frame, and a frame stopping at the content band cut the text off at an
+    /// invisible line 28 points above the screen edge, with blank white below it. The
+    /// composer's fade covers the whole band from pill top to this floor — see `underhang` —
+    /// so what passes under the pill grades out and ends on the screen's own edge.
+    var threadHeight: CGFloat { max(0, floor - threadTop) }
 
-    /// What the thread has to clear at the bottom: the composer, and board 13's
-    /// `--space-gap` above it.
+    /// What the thread has to clear at the bottom: the composer, the underhang below it, and
+    /// board 13's `--space-gap` above it.
     ///
     /// Against the **resting** composer, for the same reason `startClearing` is: a
     /// selection card grows the composer upward, and a thread that reflowed the moment a
     /// selection was attached would be the composer redrawing the conversation behind it.
-    var threadClearing: CGFloat { composerHeight + DS.Space.gap }
+    var threadClearing: CGFloat { composerHeight + underhang + DS.Space.gap }
 
 }
