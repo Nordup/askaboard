@@ -421,11 +421,16 @@ struct BoardScreen: View {
                     height: layout.contentHeight
                 ),
                 isDocked: presentation == .docked,
+                // The one cell of the table the leading edge asks the panel about — see
+                // `HorizontalSwipeRouter.transition(...)`.
+                isDrawerOpen: uiState.isSessionsDrawerOpen,
                 drag: dockDrag,
                 // The way back in lands wherever the orb's tap lands, and for the same reason:
                 // on a window too narrow to dock, the tutor's only home is the full-screen
                 // column. See `openTutorFromDock`.
-                onSettle: { docked in if docked { openTutorFromDock() } }
+                onSettle: { docked in if docked { openTutorFromDock() } },
+                // Explicit, not the bound method — see `actions.returnToBoard`.
+                onEnterFullScreen: { enterFullScreenFromEdge(velocity: $0) }
             ) {
                 TutorPanel(
                     text: $composerText,
@@ -561,7 +566,11 @@ struct BoardScreen: View {
     @ViewBuilder
     private var floatingRegion: some View {
         if presentation == .fullScreen {
-            BoardPeek(height: layout.contentHeight, onTap: uiState.returnToBoard)
+            // The tap and the trailing-edge swipe are one path with one curve — see
+            // `returnToBoardFromPeek(velocity:)`. The tap used to write `UIState` directly and
+            // the column simply vanished, which is the fourth-behaviour-rather-than-fourth-
+            // control mistake `DockReveal.settle` was written to end.
+            BoardPeek(height: layout.contentHeight) { returnToBoardFromPeek(velocity: 0) }
                 .offset(x: layout.peekX, y: layout.contentTop)
         }
     }
@@ -578,7 +587,12 @@ struct BoardScreen: View {
             toggleSelection: toggleBoardSelection,
             startPlan: startPlan,
             retry: store.retryLastRequest,
-            openSettings: { isShowingSettings = true }
+            openSettings: { isShowingSettings = true },
+            // An explicit closure rather than the bound method, for the reason `resizeHandle`'s
+            // `set:` spells out: a `@MainActor`-isolated method reference passed straight into
+            // a one-argument closure parameter crashes swift-frontend during IRGen on this
+            // toolchain.
+            returnToBoard: { returnToBoardFromPeek(velocity: $0) }
         )
     }
 
@@ -602,6 +616,48 @@ struct BoardScreen: View {
     /// spring starts from rest. Everything else about the two is the same call.
     private func expandTutorFromDock() {
         dockDrag.settle(to: true, velocity: 0, travel: layout.dockTravel) { openTutorFromDock() }
+    }
+
+    /// The rung above docked: a right-swipe released in the leading edge zone while the panel
+    /// is docked. `DockRevealLayer.onEnterFullScreen`.
+    ///
+    /// **Commit-triggered, and settled on the shared spring rather than tracked.** There is no
+    /// travel to track: board 05 states the reading column as a different variant of the tutor
+    /// and not a wider panel — *"the type scale, chip layout, chip height, icon size, composer
+    /// height and the composer's contents all change"* — so the two surfaces have no
+    /// intermediate position a finger could hold them at, and the honest motion between them is
+    /// a crossfade rather than a drag. What the spring buys is that the panel does not simply
+    /// vanish: it is still mounted for the length of the settle (`DockRevealModel.isSettling`)
+    /// and leaves on the same curve every other presentation change in this file uses.
+    ///
+    /// The release velocity is carried into it, so a hard flick arrives faster than a slow
+    /// push — the one thing a commit-triggered transition can still take from the finger.
+    private func enterFullScreenFromEdge(velocity: CGFloat) {
+        // `to: true` — the panel is not leaving by the leading edge on this path; it is being
+        // replaced where it stands, and the column arrives over it.
+        dockDrag.settle(to: true, velocity: velocity, travel: layout.dockTravel) {
+            uiState.expandTutorToFullScreen()
+        }
+    }
+
+    /// The way back from the reading column: the peek's tap, and the left-swipe out of the
+    /// peek's own lane. One function, because they are one transition — see
+    /// `TutorFullScreen.peekEdgeZone` for the swipe and `BoardPeek` for the tap.
+    ///
+    /// Commit-triggered for the same reason `enterFullScreenFromEdge` is, and on the same
+    /// spring: the panel is inserted inside the settle transaction, so `DockRevealLayer`'s own
+    /// `.transition(.offset(x: -travel))` carries it in from off the leading edge exactly as the
+    /// dock orb's tap does, while the board fades up behind it and the column fades out.
+    ///
+    /// **The sidebar is untouched.** `returnToBoard` moves one axis, and
+    /// `UIState.isSessionsSidebarOpen` is deliberately not the docked drawer's flag: the
+    /// learner's full-screen layout is still there when they come back. The docked drawer is
+    /// closed by this screen's own `onChange(of: presentation)`, which is the other half of
+    /// that rule.
+    private func returnToBoardFromPeek(velocity: CGFloat) {
+        dockDrag.settle(to: true, velocity: velocity, travel: layout.dockTravel) {
+            uiState.returnToBoard()
+        }
     }
 
     /// Collapse from something that is not the dock gesture: the resize drag dragged past its

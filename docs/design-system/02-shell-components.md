@@ -860,8 +860,16 @@ is, one axis down: a swipe that starts left and curls back right keeps driving t
 committed to, clamped at its own end of the travel. Re-routing mid-gesture is what would turn
 two distinct gestures into one ambiguous one.
 
+**An edge moves the tutor; a surface moves what is inside it.** That is the whole shape of the
+table. The two edge zones are the presentation ladder — `collapsed → docked → full screen` going
+up, and back down again — and neither of them overlaps a surface the tutor draws, so no touch
+has to be arbitrated between the two meanings.
+
 | Presentation | Drawer / sidebar | Direction | Origin | Transition |
 |---|---|---|---|---|
+| docked | closed | right | **leading edge** | **`enterFullScreen`** |
+| docked | open | right | leading edge | `none` |
+| docked | — | left | leading edge | as surface |
 | docked | closed | right | surface | `openDrawer` |
 | docked | closed | **left** | surface | **`collapseDock`** |
 | docked | open | left | surface | `closeDrawer` |
@@ -869,17 +877,32 @@ two distinct gestures into one ambiguous one.
 | collapsed | — | right | **leading edge** | **`expandDock`** |
 | collapsed | — | right | surface | `none` |
 | collapsed | — | left | any | `none` |
-| full screen | closed | right | any | `openSidebar` |
-| full screen | open | left | any | `closeSidebar` |
-| full screen | closed | left | any | `none` |
-| full screen | open | right | any | `none` |
+| full screen | — | **left** | **trailing edge** | **`enterDocked`** |
+| full screen | — | right | trailing edge | `none` |
+| full screen | closed | right | surface / leading edge | `openSidebar` |
+| full screen | open | left | surface / leading edge | `closeSidebar` |
+| full screen | closed | left | surface / leading edge | `none` |
+| full screen | open | right | surface / leading edge | `none` |
 
 `none` is a real answer and not a failure: the pan still *committed*, so the presses it crossed
 were cancelled. That boundary case is why commitment rather than motion is the trigger.
 
+**The ladder, read off the two edge columns:** collapsed —edge-right→ docked —edge-right→ full
+screen going up; full screen —edge-left→ docked —surface-left→ collapsed coming down. The one
+asymmetry is deliberate: the rung down from docked is a swipe on the *panel* rather than on an
+edge, because the panel is the thing that leaves, and because the drawer has to have the first
+claim on a left-swipe made over it.
+
 **There is no collapse while the drawer is open.** The drawer is covering 78% of the panel, so
 the first left-swipe is unambiguously about the drawer and the collapse is the swipe after it —
-two gestures, never one.
+two gestures, never one. `enterFullScreen` answers to the same precedence from the other side:
+an open drawer refuses the leading edge's right-swipe too, so a presentation never changes
+underneath a drawer the learner has not finished with.
+
+**The sidebar is not the drawer, and the trailing edge does not consult it.** Board 19's sidebar
+covers nothing, re-centres the column beside it and survives a presentation change; it is a
+layout the learner chose rather than a detour they forgot to leave. A left-swipe 1300 points away
+from it is about the board.
 
 ### 15.1 The dock swipe (screens 05/08 ↔ screen 06)
 
@@ -924,8 +947,14 @@ would still be laid out and drawn on every frame the learner spends inking.
 
 ### 15.2 The leading-edge zone
 
-The collapsed screen has no tutor surface to swipe on, so the way back in is a **24 pt**
-(`--space-gap`) grab region against the screen's leading edge, right-swipe only.
+A **24 pt** (`--space-gap`) grab region against the screen's leading edge, mounted in the
+collapsed *and* the docked states — it is the up rung of the ladder, and it is the same strip of
+screen in both, so the learner keeps swiping right from one place and the tutor keeps growing.
+
+The collapsed screen has no tutor surface to swipe on at all, which is why the zone was written
+for it first. The docked state has one, and the zone still does not overlap it: the panel is
+pinned at `panelX` = `contentLeft` = `--space-edge`, so the zone stops **4 pt** short of the
+panel's own pan region. Nothing has to be arbitrated between them.
 
 Two facts keep it clear of the board, and the width is only the second:
 
@@ -943,11 +972,56 @@ recogniser ever enters `.possible`. In this app a pencil is always drawing and n
 and a pencil stroke that started near the edge must reach `PKCanvasView` intact rather than
 commit, cancel the canvas and leave a 12 pt orphan of a stroke behind.
 
-A left-swipe that starts in the zone commits and routes to nothing, which is correct: there is
-no state to the left of collapsed. It still cancelled whatever it crossed.
+A left-swipe that starts in the zone routes as the surface would: the collapse when the panel is
+docked, and nothing at all when it is already collapsed, since there is no state to the left of
+that. Either way it committed and cancelled whatever it crossed.
 
 **On a window too narrow to dock**, the edge swipe lands where the orb's tap lands — the
 full-screen column — because that is the tutor's only home at that size.
+
+**Tracked going one rung, commit-triggered going two.** `expandDock` tracks the finger, because
+the panel is a rigid surface with a measured travel and can be held anywhere along it.
+`enterFullScreen` cannot: board 05 states the reading column as *a different variant* of the
+tutor — type scale, chip layout, chip height, icon size, composer height and the composer's
+contents all change — so the two surfaces have no intermediate position for a finger to rest at,
+and the honest motion between them is a crossfade. It is settled on the same
+`DockRevealModel.settle(to:velocity:travel:_:)` spring all the same, seeded with the release
+velocity, so a hard flick arrives faster than a slow push and the panel is still mounted while it
+leaves. A release that flings *back* the way it came takes it back — `DrawerReveal`'s own 300 pt/s
+line, with the progress pinned at the destination.
+
+### 15.3 The trailing-edge zone (screen 07 → screens 05/08)
+
+The board peek's own lane, **45 pt** wide (`BoardPeekMetrics.width`, sourced from the component so
+the grab region and the silhouette cannot drift apart), against the screen's trailing edge and
+spanning the content band. Left-swipe only.
+
+It takes the whole lane rather than a 24 pt sliver because the lane is already reserved and
+already means "the board": `TutorFullScreen` cuts exactly this width out of the sidebar's pan
+region so the peek's tap can survive, and `ScreenLayout.columnWidth` reserves it on *both* sides
+so the centred reading column never reaches it. Taking the whole lane therefore costs nothing
+that was previously reachable, and it puts the swipe on the one piece of screen that already
+draws the destination.
+
+| Concern | Why it does not fight |
+|---|---|
+| The peek's **tap** | a tap never travels the 12 pt intent threshold, so the recogniser never commits and never cancels it; a swipe that does commit cancels the tap natively |
+| **Scroll** | the thread is a 740 pt column centred on the screen; nothing scrollable is under this lane |
+| The **sidebar** swipe | the sidebar's pan region is the screen less exactly this lane |
+| **Apple Pencil** | refused at touch-down, as in the leading zone — a pencil in this app is always drawing and never navigating |
+| **Paint order** | the peek is a sibling drawn later by `BoardScreen`, and a UIKit recogniser cannot see SwiftUI paint order, so the lane is stated as geometry instead |
+
+Commit-triggered, for the same reason `enterFullScreen` is and with the same fling-back rule.
+**The tap and the swipe are one path**: both call `BoardScreen.returnToBoardFromPeek(velocity:)`,
+which settles on the shared spring — the panel is inserted inside the settle transaction, so
+`DockRevealLayer`'s own `.transition(.offset(x: -travel))` carries it in from off the leading edge
+exactly as the dock orb's tap does, while the board fades up behind it and the column fades out.
+The tap used to write `UIState` bare and the column simply vanished, which is the
+fourth-behaviour-rather-than-fourth-control mistake the shared spring exists to end.
+
+**What a presentation change does to the two session lists is unchanged**: the docked drawer
+closes (`BoardScreen.onChange(of: presentation)`) and the full-screen sidebar is remembered. See
+§14.2.
 
 ---
 

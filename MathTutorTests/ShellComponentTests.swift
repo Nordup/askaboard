@@ -1220,6 +1220,161 @@ final class ShellComponentTests: XCTestCase {
         }
     }
 
+    // MARK: - The presentation ladder
+
+    /// The whole table again, this time with the origin varied rather than defaulted — the
+    /// four cells above are the surface's, and these are the edges'.
+    ///
+    /// Written out cell by cell for the reason the surface table is: a routing rule is only
+    /// regression-tested if a cell quietly changing meaning has something to fail against, and
+    /// "the edge zone started opening the drawer again" is exactly the kind of change that
+    /// leaves every other test passing.
+    func testTheRouterAnswersEveryEdgeOriginToo() {
+        func route(
+            _ presentation: TutorPresentation,
+            drawer: Bool = false,
+            sidebar: Bool = false,
+            _ direction: HorizontalSwipeRouter.Direction,
+            _ origin: HorizontalSwipeRouter.Origin
+        ) -> HorizontalSwipeRouter.Transition {
+            HorizontalSwipeRouter.transition(
+                presentation: presentation,
+                isDrawerOpen: drawer,
+                isSidebarOpen: sidebar,
+                direction: direction,
+                origin: origin
+            )
+        }
+
+        // Docked, from the leading edge: the one cell the edge takes off the surface.
+        XCTAssertEqual(route(.docked, drawer: false, .right, .leadingEdge), .enterFullScreen)
+        XCTAssertEqual(
+            route(.docked, drawer: true, .right, .leadingEdge), .none,
+            "an open drawer has the first claim, from the edge as well as from the panel"
+        )
+        XCTAssertEqual(
+            route(.docked, drawer: false, .left, .leadingEdge), .collapseDock,
+            "a left-swipe from the edge is the panel's own answer, unchanged"
+        )
+        XCTAssertEqual(route(.docked, drawer: true, .left, .leadingEdge), .closeDrawer)
+
+        // Collapsed, unchanged.
+        XCTAssertEqual(route(.collapsed, .right, .leadingEdge), .expandDock)
+        XCTAssertEqual(route(.collapsed, .left, .leadingEdge), .none)
+
+        // Full screen, from the peek's lane.
+        XCTAssertEqual(route(.fullScreen, .left, .trailingEdge), .enterDocked)
+        XCTAssertEqual(
+            route(.fullScreen, .right, .trailingEdge), .none,
+            "there is nothing to the right of the trailing edge"
+        )
+
+        // The leading edge is not a cell of the full-screen state: the sidebar answers the
+        // whole surface, its own lane included.
+        XCTAssertEqual(route(.fullScreen, sidebar: false, .right, .leadingEdge), .openSidebar)
+        XCTAssertEqual(route(.fullScreen, sidebar: true, .left, .leadingEdge), .closeSidebar)
+
+        // And the trailing edge is not a cell of either board state — nothing is mounted there
+        // but the board itself, whose touches are the board's.
+        for presentation in [TutorPresentation.docked, .collapsed] {
+            for direction in [HorizontalSwipeRouter.Direction.left, .right] {
+                XCTAssertEqual(
+                    route(presentation, direction, .trailingEdge),
+                    presentation == .docked && direction == .right ? .openDrawer
+                        : presentation == .docked ? .collapseDock : .none,
+                    "\(presentation) \(direction) falls through to the surface"
+                )
+            }
+        }
+    }
+
+    /// The ladder, as a sequence rather than as four separate cells: one edge takes the tutor
+    /// up a rung and the other brings it down.
+    func testTheLadderIsTheTwoEdgesReadInOrder() {
+        func edge(
+            _ presentation: TutorPresentation,
+            _ direction: HorizontalSwipeRouter.Direction,
+            _ origin: HorizontalSwipeRouter.Origin
+        ) -> HorizontalSwipeRouter.Transition {
+            HorizontalSwipeRouter.transition(
+                presentation: presentation,
+                isDrawerOpen: false,
+                isSidebarOpen: false,
+                direction: direction,
+                origin: origin
+            )
+        }
+
+        // Up, both rungs from the same edge in the same direction.
+        XCTAssertEqual(edge(.collapsed, .right, .leadingEdge), .expandDock)
+        XCTAssertEqual(edge(.docked, .right, .leadingEdge), .enterFullScreen)
+        // Down: the trailing edge from full screen, and the panel's own surface from docked.
+        XCTAssertEqual(edge(.fullScreen, .left, .trailingEdge), .enterDocked)
+        XCTAssertEqual(edge(.docked, .left, .surface), .collapseDock)
+    }
+
+    /// The sidebar is not consulted at the trailing edge, in either state — see the router's
+    /// own note on why this differs from the docked drawer.
+    func testTheTrailingEdgeMeansTheBoardWhateverTheSidebarIsDoing() {
+        for sidebar in [false, true] {
+            XCTAssertEqual(
+                HorizontalSwipeRouter.transition(
+                    presentation: .fullScreen,
+                    isDrawerOpen: false,
+                    isSidebarOpen: sidebar,
+                    direction: .left,
+                    origin: .trailingEdge
+                ),
+                .enterDocked,
+                "sidebar open: \(sidebar)"
+            )
+        }
+    }
+
+    /// The trailing zone **is** the peek's lane: one width, sourced from the component, so the
+    /// grab region and the silhouette cannot drift apart.
+    func testTheTrailingEdgeZoneIsTheBoardPeeksOwnLane() {
+        XCTAssertEqual(HorizontalSwipeRouter.trailingEdgeZoneWidth, BoardPeekMetrics.width)
+        XCTAssertEqual(HorizontalSwipeRouter.trailingEdgeZoneWidth, ScreenLayout.peekWidth)
+
+        for band in Band.all {
+            let layout = band.layout
+            XCTAssertEqual(
+                layout.peekX + HorizontalSwipeRouter.trailingEdgeZoneWidth,
+                layout.screenWidth - layout.safeAreaTrailing,
+                accuracy: 0.001,
+                "the zone ends on the screen's own trailing edge — \(band.name)"
+            )
+        }
+    }
+
+    /// Neither zone reaches anything the learner is reading or scrolling, at any device size.
+    /// That is the property that keeps the two swipes free: nothing has to be arbitrated,
+    /// because nothing overlaps.
+    func testNeitherEdgeZoneOverlapsASurfaceTheTutorDraws() {
+        for band in Band.all {
+            let layout = band.layout
+            // Leading: 24 points of screen grey that stop short of the docked panel's lane.
+            XCTAssertLessThanOrEqual(
+                layout.safeAreaLeading + HorizontalSwipeRouter.edgeZoneWidth,
+                layout.panelX,
+                "the zone stops before the docked panel on \(band.name)"
+            )
+            // Trailing: clear of the reading column, with the sidebar shut and open — the
+            // column reserves the peek's width on both sides, so this holds by construction
+            // rather than by luck.
+            for sidebar in [CGFloat(0), layout.sessionsSidebarWidth] {
+                let columnEnd = layout.columnX(reserving: sidebar)
+                    + layout.columnWidth(reserving: sidebar)
+                XCTAssertLessThanOrEqual(
+                    columnEnd,
+                    layout.peekX,
+                    "the column ends before the peek's lane on \(band.name), sidebar \(sidebar)"
+                )
+            }
+        }
+    }
+
     // MARK: - The dock's travel and settle
 
     func testTheDockTravelIsThePanelsTrailingEdge() {

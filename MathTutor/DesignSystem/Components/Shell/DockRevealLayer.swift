@@ -122,12 +122,29 @@ struct DockRevealLayer<Panel: View, Dock: View>: View {
     /// The settled state — what the screen has decided it is drawing, which is the student's
     /// axis reconciled with what fits. The *live* position is not here; see `drag`.
     let isDocked: Bool
+    /// Whether the panel's own sessions drawer is showing.
+    ///
+    /// Read for exactly one cell of the table — the leading edge's right-swipe, which an open
+    /// drawer refuses so that a presentation never changes underneath a drawer the learner has
+    /// not finished with. See `HorizontalSwipeRouter.transition(...)`.
+    var isDrawerOpen = false
     /// The gesture in progress, shared with the panel's own pan region. See `DockRevealModel`.
     @ObservedObject var drag: DockRevealModel
     /// Called inside the settle animation with where the dock landed. `true` is docked.
     let onSettle: (Bool) -> Void
+    /// A leading-edge right-swipe on the **docked** panel released, with its release velocity.
+    ///
+    /// A callback rather than a second `DockRevealModel` route, because nothing this layer owns
+    /// moves: the panel is not sliding anywhere, it is being replaced by a surface this layer
+    /// does not draw. The caller settles it on the shared spring — see `BoardScreen`.
+    var onEnterFullScreen: (CGFloat) -> Void = { _ in }
     @ViewBuilder let panel: Panel
     @ViewBuilder let dock: Dock
+
+    /// True from the leading edge's right-swipe committing on a docked panel until it is
+    /// released. There is no position to store: the transition is commit-triggered, so this is
+    /// the whole of the gesture's state.
+    @State private var isEnteringFullScreen = false
 
     /// Where the panel is right now: the live drag if one has committed, and the settled
     /// presentation otherwise.
@@ -205,14 +222,22 @@ struct DockRevealLayer<Panel: View, Dock: View>: View {
         }
     }
 
-    /// The way back in: a right-swipe from the screen's leading edge while the dock is
-    /// collapsed.
+    /// The rung up, from either state: a right-swipe from the screen's leading edge.
     ///
-    /// Mounted only in the collapsed state, for the reason every dismiss layer in this app is
-    /// conditional — a region that watches every touch is not something to leave lying on a
-    /// screen that has a live panel on it. It takes no touches of its own (`DrawerPanGesture`
-    /// hit-tests nothing; its frame is only the recogniser's geometry gate), so it costs the
-    /// board nothing until a finger actually starts inside those 24 points.
+    /// **One zone, two destinations, and that is the ladder.** Collapsed, it brings the panel
+    /// back — tracked, because the panel is a rigid surface with a measured travel and the
+    /// finger can hold it anywhere along it. Docked, it goes full-screen — commit-triggered,
+    /// because the thing on the other side is not the panel at a different offset: board 05
+    /// states the reading column as *a different variant*, with its own type scale, chip
+    /// layout, composer and lane, so there is no position between the two for a finger to rest
+    /// at. Both releases end on `DockReveal.settle`, so the two rungs feel like one gesture.
+    ///
+    /// It takes no touches of its own (`DrawerPanGesture` hit-tests nothing; its frame is only
+    /// the recogniser's geometry gate), so the region costs nothing until a finger actually
+    /// starts inside those 24 points — which is what makes it affordable to mount in both
+    /// states rather than in the collapsed one alone. It overlaps neither surface: the
+    /// collapsed board's canvas starts at `boardXCollapsed`, and the docked panel starts at
+    /// `panelX`, 4 points past the zone's own end.
     ///
     /// **It refuses Apple Pencil touches.** In this app a pencil is always drawing and never
     /// navigating, and the one thing the collapsed screen must not make harder is inking. The
@@ -220,42 +245,66 @@ struct DockRevealLayer<Panel: View, Dock: View>: View {
     /// `HorizontalSwipeRouter.edgeZoneWidth` — so this is the second of two guards rather than
     /// the only one, and it is the one that would still hold if the lanes ever moved.
     ///
-    /// A left-swipe that starts here commits and routes to nothing, which is correct: there is
-    /// no state to the left of collapsed. It still cancelled whatever it crossed, which is the
-    /// property `DrawerPanRecognizer` exists for.
-    @ViewBuilder
+    /// A left-swipe that starts here routes as the surface would: the collapse when the panel
+    /// is docked, and nothing at all when it is already collapsed, since there is no state to
+    /// the left of that. Either way it committed and cancelled whatever it crossed, which is
+    /// the property `DrawerPanRecognizer` exists for.
     private var edgeZoneRegion: some View {
-        if !isDocked {
-            DrawerPanGesture(
-                ignoresPencil: true,
-                onCommit: { translation in
-                    guard route(translation) == .expandDock else { return }
-                    drag.begin(from: false)
-                },
-                onChange: { translation in
-                    guard drag.isDragging else { return }
-                    drag.track(
-                        DockReveal.progress(from: 0, translation: translation, travel: travel)
-                    )
-                },
-                onEnd: { _, velocity in
-                    guard let progress = drag.progress else { return }
-                    let docked = DockReveal.settlesDocked(progress: progress, velocity: velocity)
-                    drag.settle(to: docked, velocity: velocity, travel: travel) {
-                        onSettle(docked)
-                    }
+        DrawerPanGesture(
+            ignoresPencil: true,
+            onCommit: { translation in
+                switch route(translation) {
+                // The two rungs this layer can drive itself, because the panel is the surface
+                // that moves for both: back in from the collapsed state, and out again from
+                // the docked one. The second is the panel's own left-swipe answered from four
+                // points outside it, so the strip beside the panel does not read as dead.
+                case .expandDock: drag.begin(from: false)
+                case .collapseDock: drag.begin(from: true)
+                case .enterFullScreen: isEnteringFullScreen = true
+                // `closeDrawer` is the remaining reachable cell, and it is deliberately not
+                // acted on here: the drawer is inside the panel and belongs to the panel's own
+                // pan region. The touch still committed and still cancelled what it crossed.
+                default: break
                 }
-            )
-            .frame(width: edgeZone.width, height: edgeZone.height)
-            .offset(x: edgeZone.minX, y: edgeZone.minY)
-        }
+            },
+            onChange: { translation in
+                guard drag.isDragging else { return }
+                drag.track(
+                    DockReveal.progress(
+                        from: isDocked ? 1 : 0,
+                        translation: translation,
+                        travel: travel
+                    )
+                )
+            },
+            onEnd: { _, velocity in
+                if isEnteringFullScreen {
+                    isEnteringFullScreen = false
+                    // The one thing a commit-triggered transition still owes the finger: a
+                    // release that flings *back* the way it came takes it back. The same
+                    // `DrawerReveal` rule the sidebar's own commit-triggered swipe uses, with
+                    // the progress pinned at the destination — a committed rightward pan is
+                    // already all the way there unless the release says otherwise.
+                    guard DrawerReveal.settlesOpen(progress: 1, velocity: velocity) else { return }
+                    onEnterFullScreen(velocity)
+                    return
+                }
+                guard let progress = drag.progress else { return }
+                let docked = DockReveal.settlesDocked(progress: progress, velocity: velocity)
+                drag.settle(to: docked, velocity: velocity, travel: travel) {
+                    onSettle(docked)
+                }
+            }
+        )
+        .frame(width: edgeZone.width, height: edgeZone.height)
+        .offset(x: edgeZone.minX, y: edgeZone.minY)
     }
 
     private func route(_ translation: CGFloat) -> HorizontalSwipeRouter.Transition {
         guard let direction = HorizontalSwipeRouter.Direction.of(translation) else { return .none }
         return HorizontalSwipeRouter.transition(
-            presentation: .collapsed,
-            isDrawerOpen: false,
+            presentation: isDocked ? .docked : .collapsed,
+            isDrawerOpen: isDrawerOpen,
             isSidebarOpen: false,
             direction: direction,
             origin: .leadingEdge

@@ -17,6 +17,16 @@ struct TutorActions {
     let startPlan: () -> Void
     let retry: () -> Void
     let openSettings: () -> Void
+    /// Put the reading column away and bring the board back — screen 07 → screens 05/08, with
+    /// the release velocity of the swipe that asked for it, or `0` from a tap.
+    ///
+    /// An action rather than a `UIState` call the surface makes for itself, because the *curve*
+    /// is the shell's: every arrival at and departure from the docked panel runs
+    /// `DockRevealModel.settle`, and that model is `BoardScreen`'s. A surface writing the axis
+    /// directly is what made the peek's tap the one presentation change in the app with no
+    /// animation at all. Only the full-screen surface has anywhere to call this from; the
+    /// panel is already there.
+    let returnToBoard: (CGFloat) -> Void
 }
 
 /// The vertical chain of the docked panel, exactly as the boards state it. The panel's own

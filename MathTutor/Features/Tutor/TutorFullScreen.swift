@@ -42,6 +42,14 @@ struct TutorFullScreen: View {
     /// What is left for this flag is the fingers that land *after* — see `inertToTouches(_:)`.
     @State private var isPanCommitted = false
 
+    /// True from a left-swipe committing inside the board peek's lane until it is released.
+    ///
+    /// A second flag beside `isPanCommitted` rather than a reuse of it, because the two answer
+    /// different questions: that one says a pan owns the touch — true for *any* commitment in
+    /// either region, including one that routes to nothing — and this one says which route was
+    /// chosen. Read once, at commitment, and never revisited; see `HorizontalSwipeRouter`.
+    @State private var isReturningToBoard = false
+
     /// How much of the leading edge the sessions sidebar has taken — board 19's 372 while it
     /// is open, nothing while it is not.
     ///
@@ -129,6 +137,11 @@ struct TutorFullScreen: View {
             drawerPanGesture(travel: layout.sessionsSidebarWidth)
                 .padding(.trailing, max(0, layout.screenWidth - layout.peekX))
         }
+        // The lane the modifier above cuts out, given its own meaning. Two regions rather than
+        // one with a branch, because the recogniser's geometry gate *is* the region: a single
+        // anchor spanning the screen could not tell the router which side the touch began on
+        // without re-deriving the hit test the gate already performs.
+        .background(alignment: .topLeading) { peekEdgeZone }
         .attachmentPickers(
             source: $pickerSource,
             onPicked: { data, filename, contentType in
@@ -305,6 +318,62 @@ struct TutorFullScreen: View {
                     if opens { uiState.openSessionsSidebar() } else { uiState.closeSessionsSidebar() }
                 }
             }
+        )
+    }
+
+    /// The way back to the board, as a push rather than as a tap: a left-swipe that starts in
+    /// the board peek's own lane.
+    ///
+    /// **The peek keeps its tap, and the two do not compete.** A tap never travels
+    /// `DrawerReveal.intentThreshold`, so the recogniser never commits and never cancels it; a
+    /// swipe that does commit cancels the peek's tap recogniser natively, which is the one
+    /// arbitration `DrawerPanRecognizer` exists to perform. Paint order does not enter into it —
+    /// the peek is a sibling drawn later by `BoardScreen`, and a UIKit recogniser cannot see
+    /// SwiftUI's paint order, which is exactly why the lane is stated as geometry here.
+    ///
+    /// **Commit-triggered, not tracked**, and settled by `TutorActions.returnToBoard` on the
+    /// dock's shared spring. Board 05 states the panel and the column as two variants rather
+    /// than one responsive view, so there is no position between them for a finger to hold; see
+    /// `BoardScreen.returnToBoardFromPeek(velocity:)` for the whole argument and for what the
+    /// spring is still worth.
+    ///
+    /// It refuses Apple Pencil touches at touch-down, exactly as the leading zone does: a
+    /// pencil in this app is always drawing and never navigating.
+    private var peekEdgeZone: some View {
+        DrawerPanGesture(
+            ignoresPencil: true,
+            onCommit: { translation in
+                isPanCommitted = true
+                isReturningToBoard = route(translation) == .enterDocked
+            },
+            onChange: { _ in },
+            onEnd: { _, velocity in
+                isPanCommitted = false
+                guard isReturningToBoard else { return }
+                isReturningToBoard = false
+                // A release that flings back the way it came takes it back — the same rule the
+                // sidebar's own commit-triggered swipe follows, with the progress pinned at the
+                // destination and the sign mirrored: this axis is travelled leftward, so a
+                // leftward velocity is a fling *toward* the board.
+                guard DrawerReveal.settlesOpen(progress: 1, velocity: -velocity) else { return }
+                actions.returnToBoard(velocity)
+            }
+        )
+        .frame(
+            width: HorizontalSwipeRouter.trailingEdgeZoneWidth,
+            height: layout.contentHeight
+        )
+        .offset(x: layout.peekX, y: layout.contentTop)
+    }
+
+    private func route(_ translation: CGFloat) -> HorizontalSwipeRouter.Transition {
+        guard let direction = HorizontalSwipeRouter.Direction.of(translation) else { return .none }
+        return HorizontalSwipeRouter.transition(
+            presentation: .fullScreen,
+            isDrawerOpen: false,
+            isSidebarOpen: uiState.isSessionsSidebarOpen,
+            direction: direction,
+            origin: .trailingEdge
         )
     }
 

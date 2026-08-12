@@ -12,7 +12,12 @@ import SwiftUI
 ///
 /// So the table is here, as arithmetic, for the reason `DrawerReveal`'s curves are: a routing
 /// rule that lives inside an `onCommit` closure cannot be regression-tested, and this one has
-/// eleven cells. The recogniser stays one implementation; this decides what it drives.
+/// fourteen cells. The recogniser stays one implementation; this decides what it drives.
+///
+/// The table has since grown the other two rungs of the presentation ladder — `enterFullScreen`
+/// from the leading edge and `enterDocked` from the trailing one — and they went in as two rows
+/// rather than as two more surfaces with an `if` in each, which is the whole argument above
+/// making its second payment.
 ///
 /// **Direction is read once, at commitment, and never revisited.** That is the same lock
 /// `DrawerReveal.axis(for:)` is, one axis down: a swipe that starts left and curls back right
@@ -37,15 +42,24 @@ enum HorizontalSwipeRouter {
         }
     }
 
-    /// Where the touch went down. Only two regions exist, and the distinction only bites in
-    /// the collapsed state — see `edgeZoneWidth`.
+    /// Where the touch went down. Three regions, and each edge is a *presentation* control
+    /// while the surface between them is a control of what the presentation contains.
+    ///
+    /// That split is the whole reason the origin exists. A swipe on a surface moves something
+    /// inside the tutor — the drawer, the sidebar — and a swipe from an edge moves the tutor
+    /// itself, up or down the ladder `collapsed → docked → fullScreen`. Neither edge zone
+    /// overlaps a surface the tutor draws, so no touch has to be arbitrated between the two
+    /// meanings: see `edgeZoneWidth` and `trailingEdgeZoneWidth`.
     enum Origin: Equatable, Sendable {
         /// Anywhere on a surface the tutor is already drawing: the docked panel, the
         /// full-screen column.
         case surface
-        /// The screen's own leading edge, in the collapsed state, where the tutor draws
-        /// nothing at all.
+        /// The screen's own leading edge, where the tutor draws nothing at all — 24 points of
+        /// screen grey outside the docked panel's lane, and outside the collapsed board's.
         case leadingEdge
+        /// The screen's own trailing edge in the full-screen state: the board peek's lane,
+        /// which the reading column and the sidebar's own pan region both stay clear of.
+        case trailingEdge
     }
 
     /// What a committed pan drives.
@@ -61,6 +75,15 @@ enum HorizontalSwipeRouter {
         case collapseDock
         /// Screen 06 → screens 05/08, from the leading edge.
         case expandDock
+        /// Screens 05/08 → screen 07: the docked panel is replaced by the reading column,
+        /// from the leading edge. One rung further up the ladder than `expandDock`, and
+        /// deliberately the same edge and the same direction — a learner who has learnt that
+        /// a right-swipe from the leading edge gives the tutor more room does not learn a
+        /// second gesture for the second half of that sentence.
+        case enterFullScreen
+        /// Screen 07 → screens 05/08: the reading column leaves and the board comes back,
+        /// from the trailing edge. The swipe form of the board peek's tap.
+        case enterDocked
         case openSidebar
         case closeSidebar
         case none
@@ -86,13 +109,39 @@ enum HorizontalSwipeRouter {
     ///
     /// `--space-gap` is the value rather than a number of its own: the zone is the air between
     /// the screen edge and the first lane, and that air is one gap wide.
+    ///
+    /// **The same 24 points serve the docked state**, where they are the air between the screen
+    /// edge and `panelX` — the panel is pinned at `contentLeft`, which is `--space-edge` in, so
+    /// the zone stops 4 points short of the panel and never overlaps the panel's own pan region.
+    /// One zone at one width in both states is also what makes the ladder legible: the learner
+    /// keeps swiping right from the same strip of screen and the tutor keeps growing.
     static let edgeZoneWidth: CGFloat = DS.Space.gap
 
-    /// The whole table. Eleven reachable cells, and every one of them is stated rather than
+    /// How wide the full-screen state's trailing-edge grab region is: **the board peek's own
+    /// lane**, and not a second number.
+    ///
+    /// The zone is wider than the leading one because the thing it is made of is different. The
+    /// leading zone is air the layout happens to leave; this one is a lane that is already
+    /// reserved and already means "the board" — `TutorFullScreen` cuts exactly this width out of
+    /// the sidebar's pan region so the peek's tap can survive, and `ScreenLayout.columnWidth`
+    /// reserves it on both sides so the reading column never reaches it. Taking the whole lane
+    /// therefore costs nothing that was previously reachable, and it puts the swipe on the one
+    /// piece of the screen that already draws the destination.
+    ///
+    /// It does not fight the peek's tap: a tap never travels `DrawerReveal.intentThreshold`, so
+    /// the recogniser never commits and never cancels it. It does not fight a scroll either —
+    /// the thread is 740 points wide and centred, so nothing scrollable is under this lane — and
+    /// it refuses Apple Pencil touches at touch-down for the reason the leading zone does.
+    static let trailingEdgeZoneWidth: CGFloat = BoardPeekMetrics.width
+
+    /// The whole table. Fourteen reachable cells, and every one of them is stated rather than
     /// falling out of a default.
     ///
     /// | presentation | drawer / sidebar | direction | origin | → |
     /// |---|---|---|---|---|
+    /// | docked | closed | right | leadingEdge | `enterFullScreen` |
+    /// | docked | open | right | leadingEdge | `none` |
+    /// | docked | — | left | leadingEdge | as `surface` |
     /// | docked | closed | right | surface | `openDrawer` |
     /// | docked | closed | left | surface | `collapseDock` |
     /// | docked | open | left | surface | `closeDrawer` |
@@ -100,16 +149,32 @@ enum HorizontalSwipeRouter {
     /// | collapsed | — | right | leadingEdge | `expandDock` |
     /// | collapsed | — | right | surface | `none` |
     /// | collapsed | — | left | any | `none` |
-    /// | fullScreen | closed | right | any | `openSidebar` |
-    /// | fullScreen | open | left | any | `closeSidebar` |
-    /// | fullScreen | closed | left | any | `none` |
-    /// | fullScreen | open | right | any | `none` |
+    /// | fullScreen | — | left | trailingEdge | `enterDocked` |
+    /// | fullScreen | — | right | trailingEdge | `none` |
+    /// | fullScreen | closed | right | surface / leadingEdge | `openSidebar` |
+    /// | fullScreen | open | left | surface / leadingEdge | `closeSidebar` |
+    /// | fullScreen | closed | left | surface / leadingEdge | `none` |
+    /// | fullScreen | open | right | surface / leadingEdge | `none` |
     ///
-    /// The two `docked` rows in the middle are the feature and the rest is what already
-    /// shipped, restated so that the whole of it is in one place. Note what the table does
-    /// **not** contain: a collapse from a docked panel with the drawer open. The drawer is
-    /// covering 78% of the panel, so the first left-swipe is unambiguously about the drawer,
-    /// and the collapse is the swipe after it.
+    /// **The ladder, read off the two edge columns:** collapsed —edge-right→ docked
+    /// —edge-right→ fullScreen going up, and fullScreen —edge-left→ docked —surface-left→
+    /// collapsed coming down. The one asymmetry is deliberate: the rung down from docked is a
+    /// swipe on the panel rather than on an edge, because the panel is what leaves, and because
+    /// the drawer has to have the first claim on a left-swipe made over it.
+    ///
+    /// Note what the table does **not** contain: a collapse from a docked panel with the drawer
+    /// open. The drawer is covering 78% of the panel, so the first left-swipe is unambiguously
+    /// about the drawer, and the collapse is the swipe after it. `enterFullScreen` answers to
+    /// the same precedence from the other side — an open drawer refuses the edge's right-swipe
+    /// too, so a presentation never changes underneath a drawer the learner has not finished
+    /// with. It is the one cell where the leading edge consults a state that lives inside the
+    /// panel it does not overlap, and it earns that by keeping one rule for the whole surface
+    /// rather than two.
+    ///
+    /// A **left**-swipe from the leading edge is not a cell of its own: it falls through to
+    /// whatever the surface would have answered, so it closes an open drawer and collapses the
+    /// dock exactly as the panel's own does. There is nothing to the left of the leading edge to
+    /// give it a second meaning, and the collapsed state answers `none` there for that reason.
     static func transition(
         presentation: TutorPresentation,
         isDrawerOpen: Bool,
@@ -119,6 +184,11 @@ enum HorizontalSwipeRouter {
     ) -> Transition {
         switch presentation {
         case .docked:
+            // The one cell the edge takes off the surface. Every other docked cell — including
+            // every left-swipe from the edge — is the panel's own answer, unchanged.
+            if origin == .leadingEdge, direction == .right {
+                return isDrawerOpen ? .none : .enterFullScreen
+            }
             switch (isDrawerOpen, direction) {
             case (false, .right): return .openDrawer
             case (false, .left): return .collapseDock
@@ -132,8 +202,23 @@ enum HorizontalSwipeRouter {
             guard origin == .leadingEdge, direction == .right else { return .none }
             return .expandDock
         case .fullScreen:
-            // Board 19, unchanged: the sidebar and nothing else. There is no collapse from
-            // here — the reading column's way back to the board is the peek.
+            // The peek's lane, which is the board's. A left-swipe out of it puts the column
+            // away and brings the board back — the same destination the peek's tap has, so the
+            // sliver of board on the trailing edge answers to a push as well as to a tap.
+            //
+            // **The sidebar is not consulted here, and that is the rule rather than an
+            // omission.** Board 19's sidebar is a lane of the leading edge that covers nothing
+            // and survives a presentation change (see `UIState.isSessionsSidebarOpen`), so it is
+            // not a thing the learner has to finish with before leaving — unlike the docked
+            // drawer, which is why the leading edge *does* consult that one. A left-swipe 1300
+            // points away from the sidebar is about the board.
+            if origin == .trailingEdge {
+                return direction == .left ? .enterDocked : .none
+            }
+            // Board 19, unchanged, on every other origin: the sidebar and nothing else. The
+            // leading edge is not a cell here — the sidebar already answers the whole surface
+            // including its own lane, and the state below docked is not reachable from a
+            // reading column.
             switch (isSidebarOpen, direction) {
             case (false, .right): return .openSidebar
             case (true, .left): return .closeSidebar
