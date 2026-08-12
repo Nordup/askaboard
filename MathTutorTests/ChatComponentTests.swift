@@ -1210,7 +1210,10 @@ final class ChatComponentTests: XCTestCase {
     /// content band starts at 28 rather than 68, and the pill came down 80 → 68, which hands
     /// the block twelve more points of slack.
     func testTheReadingColumnReproducesScreenSevenOnTheBoardsOwnScreen() {
-        let column = TutorColumnMetrics(layout: .reference)
+        // `.fullScreen` explicitly: the boards still state the big variant, and this test
+        // pins the design's arithmetic. The live surface currently draws the panel
+        // treatment instead — see `TutorFullScreen.scale` and the panel-treatment test.
+        let column = TutorColumnMetrics(layout: .reference, scale: .fullScreen)
 
         XCTAssertEqual(column.x, 352)
         XCTAssertEqual(column.width, 740)
@@ -1253,7 +1256,7 @@ final class ChatComponentTests: XCTestCase {
     /// doubles in height, so a grid pinned at 592 ran 188 points into the composer.
     func testTheReadingColumnStaysCorrectWhenTheGridWrapsOrTheScreenShortens() {
         for device in Column.all {
-            let column = TutorColumnMetrics(layout: device.layout)
+            let column = TutorColumnMetrics(layout: device.layout, scale: .fullScreen)
             let context = "\(device.name) · column \(column.width)"
 
             // Bottom-anchored in the thread's band, the chips sit exactly the drawn gap
@@ -1314,7 +1317,8 @@ final class ChatComponentTests: XCTestCase {
             layout: ScreenLayout(
                 size: CGSize(width: 768, height: 1024),
                 safeArea: EdgeInsets(top: 20, leading: 0, bottom: 0, trailing: 0)
-            )
+            ),
+            scale: .fullScreen
         )
         XCTAssertEqual(portrait.width, 644)
         XCTAssertEqual(portrait.suggestionsHeight, 356)
@@ -1338,7 +1342,7 @@ final class ChatComponentTests: XCTestCase {
             "all three airs compress in one proportion"
         )
         // The design's own screen still holds the full 174/164 with the full 134 above.
-        let reference = TutorColumnMetrics(layout: .reference)
+        let reference = TutorColumnMetrics(layout: .reference, scale: .fullScreen)
         XCTAssertEqual(
             reference.floor - reference.startClearing
                 - reference.startContentHeight - reference.top,
@@ -1349,7 +1353,8 @@ final class ChatComponentTests: XCTestCase {
         // the one that still scrolls, greeting over the screen edge exactly as the thread's
         // history goes, with `ChatScrollColumn` clipping at the screen edge and nowhere else.
         let short = TutorColumnMetrics(
-            layout: ScreenLayout(size: CGSize(width: 900, height: 560), safeArea: EdgeInsets())
+            layout: ScreenLayout(size: CGSize(width: 900, height: 560), safeArea: EdgeInsets()),
+            scale: .fullScreen
         )
         XCTAssertEqual(short.startGapAboveSuggestions, TutorColumnMetrics.startGapFloor)
         XCTAssertEqual(short.startGapBelowSuggestions, TutorColumnMetrics.startGapFloor)
@@ -1372,7 +1377,7 @@ final class ChatComponentTests: XCTestCase {
     /// 52pt band, and the greeting jumping 52 points the moment a selection is attached would
     /// be the composer redrawing the screen behind it.
     func testAnAttachedSelectionGrowsTheComposerWithoutMovingTheColumn() {
-        let column = TutorColumnMetrics(layout: .reference)
+        let column = TutorColumnMetrics(layout: .reference, scale: .fullScreen)
 
         XCTAssertEqual(
             column.composerTop(showing: .label),
@@ -1438,10 +1443,11 @@ final class ChatComponentTests: XCTestCase {
     /// floor as its surface: its underhang is the 28pt edge inset below the content band,
     /// exactly as the panel's is its 18pt inset above the panel floor.
     func testTheReadingColumnsAttachMenuUsesTheSameAnchor() {
-        let column = TutorColumnMetrics(layout: .reference)
+        let column = TutorColumnMetrics(layout: .reference, scale: .fullScreen)
         let slot = ComposerSlotMetrics.fullScreen(
             columnWidth: column.width,
-            underhang: column.underhang
+            underhang: column.underhang,
+            scale: .fullScreen
         )
         let composer = ComposerMetrics.for(.fullScreen, width: column.width)
 
@@ -1456,6 +1462,68 @@ final class ChatComponentTests: XCTestCase {
                 "The menu's bottom edge is the composer's top, less the gap — \(card)"
             )
         }
+    }
+
+    // MARK: - The panel treatment on the reading column
+
+    /// The experiment the live surface currently ships — see `TutorFullScreen.scale`: the
+    /// reading column drawn at the panel's own treatment, capped at a readable measure.
+    /// Everything here is relative to the panel metrics rather than re-typed, so the test
+    /// says "the column really is the panel treatment" and not a second copy of its numbers.
+    func testThePanelTreatmentCapsTheColumnAndTakesThePanelMetrics() {
+        // The live default is the experiment.
+        XCTAssertEqual(TutorColumnMetrics.liveScale, .panel)
+
+        let column = TutorColumnMetrics(layout: .reference, scale: .panel)
+
+        // The reference screen's 740 is capped to the readable measure, re-centred on the
+        // same region centre: `(1376 − 600) ÷ 2 = 388`.
+        XCTAssertEqual(column.width, TutorColumnMetrics.panelTreatmentColumnCap)
+        XCTAssertEqual(column.width, 600)
+        XCTAssertEqual(column.x, 388)
+
+        // Every treatment number is the panel's, measured in this column.
+        XCTAssertEqual(
+            column.greetingHeight,
+            GreetingMetrics.for(.panel, width: column.width).totalHeight
+        )
+        XCTAssertEqual(
+            column.suggestionsHeight,
+            SuggestionChipMetrics.for(.panel, width: column.width).containerHeight
+        )
+        XCTAssertEqual(
+            column.composerHeight,
+            ComposerMetrics.for(.panel, width: column.width).height
+        )
+        // The band and thread clearances follow the pill that is really drawn.
+        XCTAssertEqual(
+            column.composerTop(showing: .none),
+            column.bottom - column.composerHeight
+        )
+        XCTAssertEqual(
+            column.threadClearing,
+            column.composerHeight + column.underhang + DS.Space.gap
+        )
+
+        // A column the screen already squeezed below the cap keeps its measured width and
+        // its measured centre — the cap is a cap, not a size.
+        let squeezed = TutorColumnMetrics(
+            layout: ScreenLayout(size: CGSize(width: 700, height: 1024)),
+            scale: .panel
+        )
+        XCTAssertLessThan(squeezed.width, TutorColumnMetrics.panelTreatmentColumnCap)
+        XCTAssertEqual(
+            squeezed.width,
+            ScreenLayout(size: CGSize(width: 700, height: 1024)).columnWidth
+        )
+
+        // The slot measures the pill the surface actually draws.
+        let slot = ComposerSlotMetrics.fullScreen(
+            columnWidth: column.width,
+            underhang: column.underhang,
+            scale: .panel
+        )
+        XCTAssertEqual(slot.composerHeight, column.composerHeight)
     }
 
     /// **A question grows beside the photo it came with.**

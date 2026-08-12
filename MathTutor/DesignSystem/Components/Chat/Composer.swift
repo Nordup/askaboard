@@ -352,10 +352,16 @@ struct ComposerSlotMetrics: Equatable, Sendable {
     /// surface is the screen, so its floor is the screen's, and the fade has to reach it the
     /// same way the panel's reaches through the 18pt inset. Defaulted to 0 for the gallery
     /// specimens, which have no screen below them.
-    static func fullScreen(columnWidth: CGFloat, underhang: CGFloat = 0) -> Self {
+    /// `scale` is the treatment the surface actually draws its composer at — `.fullScreen`
+    /// by default, which is board 07 and every gallery specimen; the live reading column
+    /// currently passes `.panel` (see `TutorFullScreen`), and the band has to measure the
+    /// pill that is really there.
+    static func fullScreen(
+        columnWidth: CGFloat, underhang: CGFloat = 0, scale: ChatScale = .fullScreen
+    ) -> Self {
         Self(
             surfaceWidth: max(0, columnWidth) + 2 * ThreadMetrics.bleed,
-            composerHeight: ComposerMetrics.for(.fullScreen, width: columnWidth).height,
+            composerHeight: ComposerMetrics.for(scale, width: columnWidth).height,
             underhang: max(0, underhang)
         )
     }

@@ -76,8 +76,22 @@ struct TutorFullScreen: View {
     /// run to the surface's floor, and this surface's floor is the screen's. See
     /// `TutorColumnMetrics.underhang` for what broke without it.
     private var slot: ComposerSlotMetrics {
-        .fullScreen(columnWidth: column.width, underhang: column.underhang)
+        .fullScreen(columnWidth: column.width, underhang: column.underhang, scale: Self.scale)
     }
+
+    /// **The panel treatment, on the reading column — an experiment shipped for device
+    /// judgment.** The `.fullScreen` variant read oversized on the device: a 40pt display
+    /// title and an 80pt pill for the same conversation the docked panel tells at 17pt. So
+    /// this surface currently draws every component at `ChatScale.panel` — the docked type,
+    /// chips, icons and composer — in the measured reading column, capped at a readable
+    /// measure (`TutorColumnMetrics.panelTreatmentColumnCap`). The scale picks the treatment
+    /// and the column stays a separate parameter, which is exactly the split `ChatScale`
+    /// documents; the boards — and the gallery specimens — still draw the big variant until
+    /// the user confirms on device.
+    ///
+    /// The constant itself lives on `TutorColumnMetrics`, which is nonisolated and can
+    /// therefore serve as the metrics initialiser's default; this is the same value.
+    static let scale: ChatScale = TutorColumnMetrics.liveScale
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -392,7 +406,7 @@ struct TutorFullScreen: View {
     /// the content top rather than on the screen's raw edge. Where the block scrolls after
     /// all, it also keeps the greeting 28 clear of the edge at full scroll.
     private var startColumn: some View {
-        ChatScrollColumn(width: column.width) {
+        ChatScrollColumn(width: column.width, anchor: .top) {
             startBlock
                 .padding(.top, column.top)
                 .padding(.bottom, column.startClearing)
@@ -401,17 +415,29 @@ struct TutorFullScreen: View {
         .offset(x: column.x, y: column.threadTop)
     }
 
-    /// Greeting, the drawn gap, grid — the one rigid run in the column.
+    /// The panel's own start fill — `TutorPanel.startFill`'s chain, in the reading column:
+    /// the panel orb 120 below where the panel's chrome band would end, the greeting block
+    /// `--spacing-10` under it, chips inside the block. Top-anchored as the panel's is —
+    /// screen 05 measures the chain down from the top, so the slack lands below — which is
+    /// why `startColumn` anchors `.top` and the fullScreen bottom-anchored gap compression
+    /// is not consulted while this treatment stands. See `Self.scale`.
     private var startBlock: some View {
         VStack(spacing: 0) {
-            GreetingBlock(scale: .fullScreen, width: column.width) { Orb(.hero) }
-
-            SuggestionList(
-                scale: .fullScreen,
+            Orb(.panel)
+                // The panel's own `18 + 32 + 120` below its surface top. The block's own
+                // `column.top` padding puts its head on the content line the panel's surface
+                // sits on, so the orb lands on the same screen line it holds in the docked
+                // panel — the morph's two endpoints agree about where the tutor's face is.
+                .padding(
+                    .top,
+                    TutorPanelMetrics.inset + TutorPanelMetrics.controlsHeight + 120
+                )
+            GreetingBlock(
+                scale: Self.scale,
                 width: column.width,
-                onSelect: actions.selectSuggestion
+                onSelectSuggestion: actions.selectSuggestion
             )
-            .padding(.top, column.startGapAboveSuggestions)
+            .padding(.top, DS.Space.s10)
         }
         .frame(width: column.width, alignment: .top)
     }
@@ -428,7 +454,7 @@ struct TutorFullScreen: View {
         // bottom fade is untouched — it hangs off the composer in `body`, so the greeting state
         // gets the identical one.
         TutorThreadView(
-            scale: .fullScreen,
+            scale: Self.scale,
             width: column.width,
             clearing: column.threadClearing,
             actions: actions
@@ -451,7 +477,7 @@ struct TutorFullScreen: View {
     /// see `TutorPanel.composer`.
     private var composer: Composer {
         Composer(
-            scale: .fullScreen,
+            scale: Self.scale,
             width: column.width,
             text: $text,
             selection: uiState.isSelectionAttached ? .attached : .unavailable,
@@ -500,7 +526,7 @@ struct TutorFullScreen: View {
             x: column.x,
             y: slot.attachMenuTop(
                 in: column.floor,
-                over: ComposerMetrics.for(.fullScreen, width: column.width)
+                over: ComposerMetrics.for(Self.scale, width: column.width)
                     .height(showing: composer.card)
             )
         )
@@ -579,11 +605,41 @@ struct TutorColumnMetrics: Equatable, Sendable {
     /// The resting pill — 68 in this column, at every width the scale is drawn at.
     var composerHeight: CGFloat { composer.height }
 
-    /// - Parameter reserving: How much of the leading edge the sessions sidebar has taken —
-    ///   board 19's 372 while it is open, and 0 otherwise, which is screen 07 unchanged.
-    init(layout: ScreenLayout, reserving sidebar: CGFloat = 0) {
-        x = layout.columnX(reserving: sidebar)
-        width = layout.columnWidth(reserving: sidebar)
+    /// The widest column the panel treatment is drawn in — see `TutorFullScreen.scale`.
+    ///
+    /// The panel's 17pt body was measured against a 301pt column; at the reading lane's full
+    /// 740 the same type runs past ninety characters a line, which is not a measure anyone
+    /// set. 600 keeps the line in the readable band while still being visibly the wide
+    /// surface. It is a cap, not a size: a column the screen has already squeezed below it —
+    /// portrait, Split View, the sidebar open — keeps the measured width, exactly as before.
+    static let panelTreatmentColumnCap: CGFloat = 600
+
+    /// The treatment the live reading column is drawn at — the experiment
+    /// `TutorFullScreen.scale` documents. Here because this type is nonisolated, so the
+    /// initialiser below can name it as a default; flip it back to `.fullScreen` to restore
+    /// the boards' big variant everywhere at once.
+    static let liveScale: ChatScale = .panel
+
+    /// - Parameters:
+    ///   - reserving: How much of the leading edge the sessions sidebar has taken —
+    ///     board 19's 372 while it is open, and 0 otherwise, which is screen 07 unchanged.
+    ///   - scale: The treatment the column is measured for. Defaults to what the live
+    ///     surface draws (`TutorFullScreen.scale`); the tests that pin the boards' own
+    ///     screen-07 arithmetic pass `.fullScreen` explicitly, because the design still
+    ///     states the big variant — see `TutorFullScreen.scale` for the experiment.
+    init(
+        layout: ScreenLayout,
+        reserving sidebar: CGFloat = 0,
+        scale: ChatScale = TutorColumnMetrics.liveScale
+    ) {
+        let measured = layout.columnWidth(reserving: sidebar)
+        // The cap binds only under the panel treatment; the `.fullScreen` scale keeps the
+        // design's own `min(740, region − 2 × (peek + edge))` untouched.
+        width = scale == .panel ? min(Self.panelTreatmentColumnCap, measured) : measured
+        // The same centring rule `ScreenLayout.columnX(reserving:)` is, re-run with the
+        // capped width so the narrower column stays on the region's own centre.
+        x = layout.columnRegionX(reserving: sidebar)
+            + (layout.columnRegionWidth(reserving: sidebar) - width) / 2
         top = layout.contentTop
         // The composer is anchored to this line, so it is the keyboard-aware one:
         // the column is the other surface that has to stay typed into. Identical
@@ -591,9 +647,9 @@ struct TutorColumnMetrics: Equatable, Sendable {
         // boards were drawn for.
         bottom = layout.contentBottomAboveKeyboard
         floor = layout.screenHeight
-        greetingHeight = GreetingMetrics.for(.fullScreen, width: width).totalHeight
-        suggestionsHeight = SuggestionChipMetrics.for(.fullScreen, width: width).containerHeight
-        composer = ComposerMetrics.for(.fullScreen, width: width)
+        greetingHeight = GreetingMetrics.for(scale, width: width).totalHeight
+        suggestionsHeight = SuggestionChipMetrics.for(scale, width: width).containerHeight
+        composer = ComposerMetrics.for(scale, width: width)
     }
 
     /// What sits under the pill inside the surface — the screen's edge inset below the
