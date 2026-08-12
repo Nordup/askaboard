@@ -31,7 +31,7 @@ final class SessionSwitcherTests: XCTestCase {
 
     func testTheTutorsGreetingAloneDoesNotNameASession() {
         var session = LearningSession.empty
-        session.messages = [TutorMessage(role: .tutor, text: TutorStore.greeting)]
+        session.messages = [TutorMessage(role: .tutor, text: "Hi, what would you like to learn?")]
 
         XCTAssertEqual(
             session.title,
@@ -68,7 +68,7 @@ final class SessionSwitcherTests: XCTestCase {
     func testTheLearnersFirstWordsNameASessionWithNoPlanYet() {
         var session = LearningSession.empty
         session.messages = [
-            TutorMessage(role: .tutor, text: TutorStore.greeting),
+            TutorMessage(role: .tutor, text: "Hi, what would you like to learn?"),
             TutorMessage(role: .learner, text: "  help me with the quadratic formula  ")
         ]
 

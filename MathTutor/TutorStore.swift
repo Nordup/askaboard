@@ -151,17 +151,12 @@ final class TutorStore: ObservableObject {
         if shouldSeedE2E { E2ESeedFixture.seedSession(&restored) }
         if shouldSeedScene { E2ESeedFixture.seedScene(&restored) }
         #endif
-        let addedGreeting = restored.messages.isEmpty
-        if addedGreeting {
-            restored.messages = [TutorMessage(role: .tutor, text: Self.greeting)]
-        }
         self.session = restored
         // What is already on disk, so launching and quitting without touching
         // anything writes nothing and moves no clocks. `nil` whenever the
-        // session in hand is *not* what the file holds — nothing stored, a
-        // greeting added, or a seeded fixture — because then the first save has
-        // real work to do.
-        self.lastWritten = (stored != nil && !addedGreeting && !shouldSeedE2E && !shouldSeedScene)
+        // session in hand is *not* what the file holds — nothing stored, or a
+        // seeded fixture — because then the first save has real work to do.
+        self.lastWritten = (stored != nil && !shouldSeedE2E && !shouldSeedScene)
             ? restored
             : nil
         self.usesLiveTutor = configuration != nil
@@ -170,14 +165,6 @@ final class TutorStore: ObservableObject {
         if shouldSeedE2E || shouldSeedScene { persistence.save(restored) }
         refreshSessions()
     }
-
-    /// The tutor's opening line in a session nobody has said anything in yet.
-    ///
-    /// One constant because three call sites now mint an empty session — launch
-    /// with nothing stored, `startNewSession`, and `resetSession` — and a
-    /// greeting that differs between them is a difference no one would ever
-    /// look for.
-    static let greeting = "Hi, I’m your math tutor. What would you like to understand today? You can type a goal in your own words—fractions, algebra, a homework question, anything."
 
     /// Whether this session has started — the one question that decides between
     /// the greeting and the thread, at launch (`RootView`) and on every session
@@ -619,11 +606,10 @@ final class TutorStore: ObservableObject {
         adopt(restored, isStored: true)
     }
 
-    /// A new session with the tutor's opening line already in it.
+    /// A new empty session. The thread stays empty until the learner's first
+    /// turn — there is no seeded tutor opening line.
     private func freshSession() -> LearningSession {
-        var fresh = LearningSession.empty
-        fresh.messages = [TutorMessage(role: .tutor, text: Self.greeting)]
-        return fresh
+        LearningSession.empty
     }
 
     /// Stops everything the open session has in flight, and optionally writes it.
