@@ -132,6 +132,17 @@ enum SessionsDrawerMetrics {
     static let rowRadius = DS.Radius.sm
     static let rowPaddingInline = DS.Space.s3
 
+    /// The row's corner, as one shape both the resting fill and the context-menu lift are cut
+    /// from.
+    ///
+    /// **`.continuous`, not the default `.circular`.** The two are the same radius and a
+    /// visibly different curve, and until the lift existed it did not matter which this was —
+    /// a row's corner had nothing beside it to be compared against. It does now: the platter is
+    /// drawn by UIKit, which rounds with a continuous curve throughout, so a circular row
+    /// lifting into a continuous plate would shift shape as it rose. One shape, read by both,
+    /// is also what stops the two drifting apart the next time the radius is touched.
+    static let rowShape = RoundedRectangle(cornerRadius: rowRadius, style: .continuous)
+
     /// 17 / 22, semibold for the open session and medium for the rest — the same two weights
     /// the switcher's rows carried, so a learner who used the dropdown reads the drawer the
     /// same way.
@@ -371,6 +382,23 @@ struct SessionsDrawer: View {
         return rowLabel(summary, isCurrent: isCurrent)
             .simultaneousGesture(tapGesture(summary))
             .simultaneousGesture(menuDetector(summary))
+            // **This one line is what rounds the lift, and nothing inside the menu could do
+            // it.** The platter's shape is `UIPreviewParameters.visiblePath`, which UIKit reads
+            // off the *source* view before it lifts anything — so it is declared here, on the
+            // view the menu is attached to, after the background and before `.contextMenu`.
+            //
+            // A supplied `preview:` was tried first and could not work: SwiftUI hosts that
+            // closure in its own container and still derives the visible path from the source,
+            // so with no path declared the plate stayed the bounding rectangle. Clipping inside
+            // the closure only rounded the pixels drawn *within* a square plate, which is
+            // exactly what shipped and exactly what was reported. There is no custom preview
+            // now — UIKit lifts the row itself and clips it to the path below, which is also
+            // what stops a transparent row reading as grey, because the platter fills that path
+            // before it composites the snapshot into it.
+            //
+            // `.contextMenuPreview` is its own content-shape kind and does not touch
+            // `.interaction`, so the row's hit region and its gestures are unaffected.
+            .contentShape(.contextMenuPreview, SessionsDrawerMetrics.rowShape)
             // Board 17's delete, as the system's own menu. It draws the lift, the platter and
             // the destructive styling, and it is what a learner already expects a long press on
             // a list row to do.
@@ -381,19 +409,6 @@ struct SessionsDrawer: View {
                 } label: {
                     Label("Delete", systemImage: "trash")
                 }
-            } preview: {
-                // **The preview is supplied rather than left to the system, and both faults it
-                // was reported for are answered in this one view.** Left to itself the platter
-                // lifts a snapshot of the row as it sits in the tree: square, because the row's
-                // corners belong to a background whose radius the platter has no way to know,
-                // and greyed for any row that is not the current one, because those rows are
-                // transparent and the platter's own scrim shows straight through them.
-                //
-                // An opaque fill under the row answers the second; clipping to the row's own
-                // radius answers the first.
-                rowLabel(summary, isCurrent: isCurrent)
-                    .background(DS.Color.surface)
-                    .clipShape(RoundedRectangle(cornerRadius: SessionsDrawerMetrics.rowRadius))
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel(summary.title)
@@ -465,15 +480,17 @@ struct SessionsDrawer: View {
         .padding(.horizontal, SessionsDrawerMetrics.rowPaddingInline)
         .frame(width: contentWidth, height: SessionsDrawerMetrics.rowHeight, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: SessionsDrawerMetrics.rowRadius)
+            // The same shape the lift is cut from — see `SessionsDrawerMetrics.rowShape`. It
+            // has to be, or the row changes curve on its way up.
+            SessionsDrawerMetrics.rowShape
                 // `--color-brand-tint`, the strongest tint in the system and the one board
                 // 01 reserves for marking exactly one item at a time. That is what this row
                 // is: the drawer replaces a control that named the open session in words, so
                 // the mark has to carry the same fact on its own.
                 //
-                // Transparent otherwise, and the context-menu preview is where that costs
-                // something — see `row(_:)`, which puts an opaque fill under this one rather
-                // than letting the platter's scrim show through.
+                // Transparent otherwise, and it can stay transparent: the platter fills the
+                // declared path with its own background before compositing the row into it, so
+                // an untinted row lifts onto a plate rather than onto the dimmed backdrop.
                 .fill(isCurrent ? DS.Color.brandTint : Color.clear)
         )
         .contentShape(.rect)
