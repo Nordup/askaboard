@@ -46,16 +46,23 @@ enum SessionsDrawerMetrics {
 
     // MARK: - The full-screen sidebar (board 19)
 
-    /// Board 19's `372`, flush against the leading screen edge and the full height of the
-    /// screen — not the content band. It is a lane of the screen rather than a panel on it, so
-    /// it has no radius, no shadow and no edge inset of its own; the chat's rounded edge beside
-    /// it is the whole of the boundary.
+    /// Flush against the leading screen edge and the full height of the screen — not the
+    /// content band. It is a lane of the screen rather than a panel on it, so it has no radius,
+    /// no shadow and no edge inset of its own; the chat's rounded edge beside it is the whole of
+    /// the boundary.
     ///
-    /// `316 + 2 × 28`: the content column is what the design draws and the frame is that column
-    /// plus `--space-edge` either side, which is the rule every surface against a screen edge
-    /// follows.
+    /// **296, where board 19 draws 372.** The board's is 20% wider than it needs to be for what
+    /// it holds — a wordmark, a section label and a column of one-line titles — and on the
+    /// device that width reads as a sidebar that has taken a fifth of the screen to say very
+    /// little. 20% off 372 is 297.6; 296 is the nearest value that keeps the frame's own
+    /// arithmetic whole, because `--space-edge` is 28 either side and the content column has to
+    /// land on an even number: `240 + 2 × 28`.
+    ///
+    /// 240 is also the docked drawer's 239 to within a point, which is the useful part of the
+    /// coincidence: a session title that fits in one drawer fits in the other, so switching
+    /// between the two surfaces does not re-truncate the list.
     static let sidebarWidth: CGFloat = sidebarContentWidth + 2 * DS.Space.edge
-    static let sidebarContentWidth: CGFloat = 316
+    static let sidebarContentWidth: CGFloat = 240
     static let sidebarInset = DS.Space.edge
 
     /// The corner the full-screen chat turns toward the sidebar — board 19's `--radius-3xl`,
@@ -132,15 +139,6 @@ enum SessionsDrawerMetrics {
         TextStyle(size: DS.Size.body, leading: DS.Leading.control, weight: current ? .semibold : .medium)
     }
 
-    /// How far a held row rises, and how long it takes.
-    ///
-    /// Small on purpose: the row is 44 tall in a 239 column with two points between it and its
-    /// neighbours, so anything past a couple of percent overlaps the rows above and below. Two
-    /// percent is 4.8 points of width and just under one of height — enough to read as a lift
-    /// against the shadow that arrives with it, not enough to touch anything.
-    static let heldRowScale: CGFloat = 1.02
-    static let heldRowRise: Double = 0.18
-
     /// How far a finger may travel and still have been a tap on a row.
     ///
     /// The row proves for itself that a swipe was not a tap, rather than trusting anything
@@ -150,23 +148,26 @@ enum SessionsDrawerMetrics {
     /// that goes on to become a pan has already failed this by the time the pan commits.
     static let tapSlop: CGFloat = 10
 
-    /// How long a press on a row has to be held before it offers to delete it.
+    /// When the drawer decides a context menu is about to appear.
     ///
-    /// `UIContextMenuInteraction`'s own delay, matched deliberately: this replaced a
-    /// `.contextMenu` and a learner who had already found the gesture should not have to
-    /// re-learn its timing. `LongPressGesture` cancels itself past 10 points of travel, which
-    /// sits just under the drawer pan's own 12 — so a swipe never becomes a press, and a press
-    /// that turns into a swipe is cancelled by the pan before it commits.
-    static let deletePressDuration: Double = 0.5
+    /// **Deliberately shorter than `UIContextMenuInteraction`'s own ~0.5s commit, and the gap
+    /// is the whole point.** SwiftUI gives `.contextMenu` no callback for either edge, so the
+    /// drawer has to notice the menu for itself, and the only signal available is a press of
+    /// its own running against the same touch. Once the interaction takes the touch it cancels
+    /// every other recogniser on the view — so a detector set at or after the system's own
+    /// threshold would be cancelled *instead of* firing, on exactly the presses that matter.
+    ///
+    /// Firing early cannot miss a menu. It can raise a false alarm on a slow tap, and the cost
+    /// of one is a single swallowed tap afterwards — which is the right way round, because the
+    /// bug this exists to stop is cancelling the menu and landing in a different session.
+    static let menuDetectDuration: Double = 0.35
 
-    /// How long the rows stay inert after the delete prompt's binding clears.
+    /// How long the drawer keeps swallowing taps after the one that dismissed the menu.
     ///
-    /// The prompt is modal and consumes its own dismiss tap, so this is insurance rather than
-    /// the mechanism — but the binding clears when the dismissal *starts*, not when it ends,
-    /// and UIKit takes about a quarter second to animate a popover away. For that quarter
-    /// second the rows would be live again underneath a presentation the learner can still
-    /// see. See `SessionsDrawer.isDeletePromptShowing`.
-    static let deleteDismissGuard: Double = 0.35
+    /// The menu is still animating away for about a quarter second after the tap that ended
+    /// it, and a second tap inside that window is far more likely to be an impatient repeat of
+    /// the first than a considered choice of session. See `SessionsDrawer.isMenuGuarding`.
+    static let menuDismissGuard: Double = 0.35
 
     /// How many rows the drawer shows.
     ///
@@ -240,60 +241,31 @@ struct SessionsDrawer: View {
     let onDelete: (UUID) -> Void
     let onSettings: () -> Void
 
-    /// The row whose delete has been asked for, and the presentation's own binding.
+    /// The row a context menu has just been raised from, and the drawer's only knowledge that
+    /// one exists at all.
     ///
-    /// **This is the fix for the tap-through, and it is the binding that is the fix.** The
-    /// gesture used to raise a `.contextMenu`, which is presented and dismissed entirely by the
-    /// system: there is no callback for either edge, so there is no moment at which this view
-    /// could have made anything inert, and whether the dismiss tap was swallowed or passed
-    /// through to the row underneath was the platform's decision and not ours. On iPadOS 17 it
-    /// passed through, and cancelling the menu switched sessions.
+    /// **This is the fix for the tap-through, and the reason it has to be inferred.** SwiftUI's
+    /// `.contextMenu` is presented and dismissed entirely by the system: there is no callback
+    /// for either edge, so whether the tap that cancels it is swallowed or falls through to a
+    /// row underneath is the platform's decision. On iPadOS 17 it falls through, and cancelling
+    /// switched sessions.
     ///
-    /// A `confirmationDialog` driven by state we own is the same gesture and the same
-    /// destructive action with that decision taken back. It is a modal presentation, so the
-    /// tap that dismisses it is consumed by its own presentation controller and cannot reach a
-    /// row by construction — and because the binding is ours, the rows can also be held inert
-    /// across the dismissal, which the system menu gave us no way to do.
+    /// A `confirmationDialog` the drawer owned outright was tried and rejected: it closed the
+    /// leak by replacing the interaction, and the interaction was the part worth keeping. So
+    /// the menu is back and the drawer watches for it instead — a press of its own, running
+    /// early against the same touch, says a menu is coming (`menuDetectDuration`), and from
+    /// then until a tap arrives the drawer swallows taps rather than acting on them.
     ///
-    /// It also gains a confirmation the context menu never had, which a destructive action with
-    /// no undo should have wanted anyway.
-    @State private var pendingDelete: SessionSummary?
+    /// Every way this inference can be wrong costs exactly one swallowed tap — a menu that
+    /// never appeared, or one dismissed by something that is not a tap — and none of them can
+    /// switch a session, which is the failure that matters.
+    @State private var menuRow: UUID?
 
-    /// Which row is under a finger that is still holding — the press feedback, and the
-    /// replacement for the lift the system context menu used to draw.
-    ///
-    /// Losing `.contextMenu` lost its preview with it, and that preview was the only sign the
-    /// hold had registered: without one, a half-second press is half a second of nothing
-    /// followed by a dialog. It also arrived with two faults of its own — square corners on a
-    /// 10pt row, and a *dimmed* lift for any row that was not the current one, because the
-    /// system composites its preview over its own scrim and these rows have a transparent
-    /// background for it to show through.
-    ///
-    /// Drawing it here fixes both by construction: the lift is the row's own shape at its own
-    /// radius, and it is opaque, so nothing shows through it.
-    ///
-    /// `@GestureState` rather than `@State`, for the reason `ResizeHandle.anchor` is: SwiftUI
-    /// returns it to `nil` when the gesture ends *for any reason*, including a cancellation
-    /// this view is never told about — a system alert taking the touch, the pan committing and
-    /// withdrawing the whole pane from hit testing. A row left looking lifted under a finger
-    /// that is no longer there is exactly the state a plain `@State` would strand it in.
-    @GestureState private var heldRow: UUID?
+    /// True for a beat after the tap that dismissed the menu, while it animates away.
+    @State private var isDismissingMenu = false
 
-    /// The row whose hold has already fired, so the touch that ends it cannot also open it.
-    ///
-    /// Ordinary `@State` and not `@GestureState`, deliberately: it has to outlive the gesture
-    /// that set it by exactly one callback. `LongPressGesture` ends at half a second with the
-    /// finger still down, and the drag that is watching the same touch ends when the finger
-    /// lifts — so this is always written before it is read, and the reader clears it. That
-    /// ordering is the whole mechanism, and it is a property of the two gestures rather than of
-    /// anything SwiftUI promises about the order it calls things in.
-    @State private var longPressedRow: UUID?
-
-    /// True through the prompt's dismissal animation, after `pendingDelete` has already gone.
-    @State private var isDismissingDelete = false
-
-    /// Whether anything is on screen that the rows must not be reachable underneath.
-    private var isDeletePromptShowing: Bool { pendingDelete != nil || isDismissingDelete }
+    /// Whether the drawer is swallowing taps rather than acting on them.
+    private var isMenuGuarding: Bool { menuRow != nil || isDismissingMenu }
 
     private var contentWidth: CGFloat {
         SessionsDrawerMetrics.contentWidth(for: width, inset: inset)
@@ -327,32 +299,21 @@ struct SessionsDrawer: View {
         .padding(.horizontal, inset)
         .padding(.vertical, SessionsDrawerMetrics.inset)
         .frame(width: width, height: height, alignment: .top)
-        // Nothing in the drawer is reachable while the prompt is up or on its way out — the
-        // same one modifier the pan uses, for the same reason. See `isDeletePromptShowing`.
-        .inertToTouches(isDeletePromptShowing)
-        .confirmationDialog(
-            "Delete this session?",
-            isPresented: Binding(
-                get: { pendingDelete != nil },
-                set: { if !$0 { pendingDelete = nil } }
-            ),
-            titleVisibility: .visible,
-            presenting: pendingDelete
-        ) { summary in
-            Button("Delete", role: .destructive) { onDelete(summary.id) }
-            Button("Cancel", role: .cancel) {}
-        } message: { summary in
-            Text("\u{201C}\(summary.title)\u{201D} and the board that goes with it are deleted for good.")
-        }
-        // The binding clears when the dismissal begins; the presentation is still on screen
-        // for a moment after that. Holding the guard across it is what makes "cancel only
-        // cancels" true for the whole of the interaction rather than most of it.
-        .onChange(of: pendingDelete) { previous, current in
-            guard previous != nil, current == nil else { return }
-            isDismissingDelete = true
-            Task {
-                try? await Task.sleep(for: .seconds(SessionsDrawerMetrics.deleteDismissGuard))
-                isDismissingDelete = false
+        // The tap that cancels a context menu is caught here rather than by whatever it landed
+        // on. A transparent layer over the whole drawer, mounted only while a menu is believed
+        // to be up — for the reason every other dismiss layer in this app is mounted that way:
+        // a view that swallows every touch is not something to leave lying around.
+        //
+        // It covers the rows, the pill and the gear alike, because the stray tap can land on
+        // any of them; and it holds for a beat after the tap, because the menu is still
+        // animating away. If a future OS swallows the tap itself the guard simply waits for the
+        // next one, which costs a tap and never a session.
+        .overlay {
+            if isMenuGuarding {
+                Color.clear
+                    .contentShape(.rect)
+                    .onTapGesture { endMenuGuard() }
+                    .accessibilityHidden(true)
             }
         }
         .accessibilityElement(children: .contain)
@@ -408,31 +369,61 @@ struct SessionsDrawer: View {
     private func row(_ summary: SessionSummary) -> some View {
         let isCurrent = summary.id == currentID
         return rowLabel(summary, isCurrent: isCurrent)
-            .simultaneousGesture(holdGesture(summary))
             .simultaneousGesture(tapGesture(summary))
+            .simultaneousGesture(menuDetector(summary))
+            // Board 17's delete, as the system's own menu. It draws the lift, the platter and
+            // the destructive styling, and it is what a learner already expects a long press on
+            // a list row to do.
+            .contextMenu {
+                Button(role: .destructive) {
+                    endMenuGuard()
+                    onDelete(summary.id)
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+            } preview: {
+                // **The preview is supplied rather than left to the system, and both faults it
+                // was reported for are answered in this one view.** Left to itself the platter
+                // lifts a snapshot of the row as it sits in the tree: square, because the row's
+                // corners belong to a background whose radius the platter has no way to know,
+                // and greyed for any row that is not the current one, because those rows are
+                // transparent and the platter's own scrim shows straight through them.
+                //
+                // An opaque fill under the row answers the second; clipping to the row's own
+                // radius answers the first.
+                rowLabel(summary, isCurrent: isCurrent)
+                    .background(DS.Color.surface)
+                    .clipShape(RoundedRectangle(cornerRadius: SessionsDrawerMetrics.rowRadius))
+            }
             .accessibilityElement(children: .combine)
             .accessibilityLabel(summary.title)
             .accessibilityValue(isCurrent ? "Open" : SessionsDrawer.relativeAge(of: summary.lastSavedAt))
             .accessibilityAddTraits(isCurrent ? [.isButton, .isSelected] : .isButton)
             .accessibilityAction { onOpen(summary.id) }
-            // The hold is not a gesture VoiceOver can perform, so the destructive action is
-            // published as a named one instead — and it goes straight through rather than
-            // raising the prompt, because a rotor action is already deliberate.
+            // A long press is not a gesture VoiceOver performs, so the destructive action is
+            // published as a named one instead.
             .accessibilityAction(named: "Delete") { onDelete(summary.id) }
     }
 
-    /// The half-second hold that offers to delete, and the lift that says it is running.
-    private func holdGesture(_ summary: SessionSummary) -> some Gesture {
-        LongPressGesture(minimumDuration: SessionsDrawerMetrics.deletePressDuration)
-            // `true` while the finger is down and the clock is running. The lift is the hold's
-            // feedback and not the tap's, so a quick tap flashes nothing.
-            .updating($heldRow) { isPressing, state, _ in
-                if isPressing { state = summary.id }
-            }
-            .onEnded { _ in
-                longPressedRow = summary.id
-                pendingDelete = summary
-            }
+    /// The tap that dismissed the menu, spent — and the path a chosen `Delete` takes too, so
+    /// the guard is never left standing over a drawer whose menu closed by being used.
+    private func endMenuGuard() {
+        guard menuRow != nil else { return }
+        menuRow = nil
+        isDismissingMenu = true
+        Task {
+            try? await Task.sleep(for: .seconds(SessionsDrawerMetrics.menuDismissGuard))
+            isDismissingMenu = false
+        }
+    }
+
+    /// The press that tells the drawer a context menu is on its way — see `menuRow`.
+    ///
+    /// It raises nothing itself. The system's own interaction draws the menu; this exists only
+    /// so the drawer knows one is there, because SwiftUI will not tell it.
+    private func menuDetector(_ summary: SessionSummary) -> some Gesture {
+        LongPressGesture(minimumDuration: SessionsDrawerMetrics.menuDetectDuration)
+            .onEnded { _ in menuRow = summary.id }
     }
 
     /// The tap that opens the session — **and the proof that it was a tap.**
@@ -449,15 +440,13 @@ struct SessionsDrawer: View {
     /// takes the touch away in the ordinary way and this still ends, with a translation far
     /// past the slop, which is exactly the answer wanted.
     ///
-    /// The hold is checked first for the other half of the same rule: `LongPressGesture` ends
-    /// half a second in with the finger still down, so by the time this runs the flag is
-    /// already set and a lift after a hold cannot also open the session.
+    /// Lifting the finger after a menu has opened does not reach this at all: the context menu
+    /// interaction cancels every other recogniser on the row when it takes the touch, and a
+    /// cancelled `DragGesture` never ends. The tap that *dismisses* the menu is a separate
+    /// touch and never reaches the row either — the guard layer over the drawer has it.
     private func tapGesture(_ summary: SessionSummary) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onEnded { value in
-                let wasHold = longPressedRow == summary.id
-                longPressedRow = nil
-                guard !wasHold else { return }
                 let travelled = hypot(value.translation.width, value.translation.height)
                 guard travelled <= SessionsDrawerMetrics.tapSlop else { return }
                 onOpen(summary.id)
@@ -465,11 +454,6 @@ struct SessionsDrawer: View {
     }
 
     private func rowLabel(_ summary: SessionSummary, isCurrent: Bool) -> some View {
-        let isHeld = heldRow == summary.id
-        return rowContent(summary, isCurrent: isCurrent, isHeld: isHeld)
-    }
-
-    private func rowContent(_ summary: SessionSummary, isCurrent: Bool, isHeld: Bool) -> some View {
         HStack(spacing: 0) {
             Text(summary.title)
                 .textStyle(SessionsDrawerMetrics.rowTitle(current: isCurrent))
@@ -487,37 +471,12 @@ struct SessionsDrawer: View {
                 // is: the drawer replaces a control that named the open session in words, so
                 // the mark has to carry the same fact on its own.
                 //
-                // Held, a row that carries no tint takes `--color-surface` instead of staying
-                // transparent. Opaque is the point rather than the colour: a lifted row with
-                // nothing behind it shows the drawer through its own shadow and reads as
-                // greyed out, which is the fault the system's preview had.
-                .fill(rowFill(isCurrent: isCurrent, isHeld: isHeld))
+                // Transparent otherwise, and the context-menu preview is where that costs
+                // something — see `row(_:)`, which puts an opaque fill under this one rather
+                // than letting the platter's scrim show through.
+                .fill(isCurrent ? DS.Color.brandTint : Color.clear)
         )
-        // The lift, at the row's own radius. 03 · Control is the level the design gives a
-        // button, which is what a row under a finger is behaving as.
-        //
-        // The two layers are always mounted and their alpha is what moves, rather than the
-        // modifiers appearing when `isHeld` flips. A shadow that comes and goes is a change to
-        // the modifier tree, so SwiftUI has nothing to interpolate and the lift would pop; at a
-        // fixed structure it fades with the scale, which is the whole of the effect.
-        .shadow(
-            color: DS.Color.shadow.opacity(isHeld ? Elevation.controlLift.alpha : 0),
-            radius: Elevation.controlLift.shadowRadius,
-            y: Elevation.controlLift.y
-        )
-        .shadow(
-            color: DS.Color.shadow.opacity(isHeld ? Elevation.controlContact.alpha : 0),
-            radius: Elevation.controlContact.shadowRadius,
-            y: Elevation.controlContact.y
-        )
-        .scaleEffect(isHeld ? SessionsDrawerMetrics.heldRowScale : 1)
-        .animation(.easeOut(duration: SessionsDrawerMetrics.heldRowRise), value: isHeld)
         .contentShape(.rect)
-    }
-
-    private func rowFill(isCurrent: Bool, isHeld: Bool) -> Color {
-        if isCurrent { return DS.Color.brandTint }
-        return isHeld ? DS.Color.surface : .clear
     }
 
     private var bottomBar: some View {

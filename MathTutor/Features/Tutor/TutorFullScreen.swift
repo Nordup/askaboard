@@ -96,6 +96,22 @@ struct TutorFullScreen: View {
         // the container, the sidebar and the reading column both, the same way the docked
         // panel does it. See `View.inertToTouches(_:)`.
         .inertToTouches(isPanCommitted)
+        // **The pan surface is the whole screen, stated rather than inferred.**
+        //
+        // Every child here is placed by `.offset`, and an offset moves a view without telling
+        // its parent — so this `ZStack` was only ever as wide as its widest *laid-out* child.
+        // With the sidebar open that is the chat pane at `screenWidth − sidebar`, and the
+        // points it is offset by fall off the end: the stack stopped short of the trailing
+        // edge, the `contentShape` below it stopped there too, and a swipe that started right
+        // of that reached nothing at all. In the greeting state the widest child is the 740pt
+        // reading column, so the dead band was wider still — which is what was reported as the
+        // swipe only working on the left of the screen.
+        //
+        // Framing to the screen fixes it without moving anything, because absolute offsets do
+        // not care how large the box they sit in is. The board peek keeps its own tap: it is a
+        // sibling painted *after* the tutor in `BoardScreen`, so it hit-tests first and this
+        // surface never sees a touch that lands on it.
+        .frame(width: layout.screenWidth, height: layout.screenHeight, alignment: .topLeading)
         // The same right-swipe the docked panel takes — board 19: *"The same right-swipe still
         // opens the sidebar, and a left-swipe closes it."* Simultaneous, and locked to an axis
         // exactly as the panel's is.

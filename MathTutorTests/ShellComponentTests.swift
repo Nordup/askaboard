@@ -940,18 +940,38 @@ final class ShellComponentTests: XCTestCase {
         }
     }
 
-    /// Board 19's sidebar, and the column that re-centres around it.
-    func testTheFullScreenSidebarLeavesTheColumnWhereBoardNineteenDrawsIt() {
+    /// The sidebar, and the column that re-centres around it.
+    ///
+    /// **296, where board 19 draws 372.** The board's is 20% wider than its contents need; the
+    /// frame keeps its `--space-edge` either side, so the width follows the content column
+    /// rather than the other way round.
+    func testTheFullScreenSidebarLeavesTheColumnCentredInWhatItAndThePeekLeave() {
         let layout = ScreenLayout.reference
-        XCTAssertEqual(SessionsDrawerMetrics.sidebarWidth, 372, "316 + 2 × 28")
-        XCTAssertEqual(SessionsDrawerMetrics.sidebarContentWidth, 316)
+        XCTAssertEqual(SessionsDrawerMetrics.sidebarWidth, 296, "240 + 2 × 28")
+        XCTAssertEqual(SessionsDrawerMetrics.sidebarContentWidth, 240)
         XCTAssertEqual(layout.sessionsSidebarX, 0, "flush against the leading edge")
+        XCTAssertEqual(
+            SessionsDrawerMetrics.sidebarWidth,
+            (372 * 0.8).rounded(.down) - 1,
+            "20% off the board's 372, taken to the nearest whole content column"
+        )
+        // The two drawers agree about how long a title may be, so switching surfaces does not
+        // re-truncate the list.
+        XCTAssertEqual(
+            SessionsDrawerMetrics.sidebarContentWidth
+                - SessionsDrawerMetrics.contentWidth(
+                    for: SessionsDrawerMetrics.width(inPanel: TutorPanelMetrics.width),
+                    inset: SessionsDrawerMetrics.insetInline
+                ),
+            1,
+            "240 against the docked 239"
+        )
 
         let reserved = layout.sessionsSidebarWidth
-        XCTAssertEqual(layout.columnRegionWidth(reserving: reserved), 936, "1308 − 372")
-        XCTAssertEqual(layout.columnWidth(reserving: reserved), 740, "min(740, 936 − 56)")
-        XCTAssertEqual(layout.columnMargin(reserving: reserved), 98, "(936 − 740) ÷ 2")
-        XCTAssertEqual(layout.columnX(reserving: reserved), 470, "372 + 98 — board 19")
+        XCTAssertEqual(layout.columnRegionWidth(reserving: reserved), 1012, "1308 − 296")
+        XCTAssertEqual(layout.columnWidth(reserving: reserved), 740, "min(740, 1012 − 56)")
+        XCTAssertEqual(layout.columnMargin(reserving: reserved), 136, "(1012 − 740) ÷ 2")
+        XCTAssertEqual(layout.columnX(reserving: reserved), 432, "296 + 136")
 
         // Reserving nothing is screen 07 unchanged, which is what lets the closed sidebar be
         // the layout that shipped rather than a re-derivation of it.

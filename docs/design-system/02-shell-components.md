@@ -589,10 +589,10 @@ and the content column is derived from the frame the way the panel's 301 is deri
 
 | Property | Docked (board 17) | Full screen (board 19) |
 |---|---|---|
-| Frame | **263 × 976**, inside the panel at local `(0, 0)` | **372 × 1032**, against the leading screen edge |
-| Width rule | `panel × 0.78`, rounded — **derive it**, the panel resizes | `316 + 2 × 28` |
+| Frame | **263 × 976**, inside the panel at local `(0, 0)` | **296 × 1032**, against the leading screen edge |
+| Width rule | `panel × 0.78`, rounded — **derive it**, the panel resizes | `240 + 2 × 28`. Board 19 draws **372**; that is 20% wider than its contents need, and at that width the sidebar reads as having taken a fifth of the screen to say very little. The content column leads and the frame follows it. 240 is also the docked drawer's 239 to within a point, so a title that fits one fits the other and switching surfaces does not re-truncate the list. |
 | Padding | `block 18` (`--space-panel-inset`), `inline 12` | `28` (`--space-edge`) all round |
-| Content column | **239** | **316** |
+| Content column | **239** | **240** |
 | Background | `--color-surface-panel` — the panel's own, so the seam is a corner and not a colour change | the screen's `--color-surface-screen`; the drawer paints no fill |
 | Radius / shadow | none, either frame — the panel's own clip and elevation cover the docked case, and the full-screen sidebar is a lane rather than a surface |
 
@@ -606,21 +606,32 @@ and the content column is derived from the frame the way the panel's 301 is deri
 | `row/session` | `44` tall, `--radius-sm` 10, `padding-inline 12`. Title 17 / 22, weight 500, and **nothing else** — the 18pt board glyph that sat in a fixed slot before it is gone with the header's orb. With no slot and no gap the title starts on the row's own 12pt inset, which is where the wordmark starts, so the drawer reads down one left edge. |
 | `row/session` · held | Under a finger, a row lifts: 03 · Control shadow at the row's own 10pt radius, scaled 1.02 over 180ms. A row with no tint takes `--color-surface` while held rather than staying transparent — **opaque is the point, not the colour**: a lifted row with nothing behind it shows the drawer through its own shadow and reads as greyed out, which is the fault the system's own context-menu preview had. |
 | `row/session · current` | Same box, filled `--color-brand-tint` `#E6E3F9`; glyph and title both `--color-brand`, title weight 600. The drawer names the open session by marking it, since the title that used to say so in words is gone. |
-| `row/session` · long press | A half-second hold raises a **delete confirmation**, titled "Delete this session?" with a destructive **Delete** and a **Cancel**. Not a swipe action or an edit mode — those are `List` affordances and this is not a `List`. Deleting the open session falls back to the most recent one left, or to a fresh empty session when none are. |
+| `row/session` · long press | The **system context menu**, one destructive **Delete**, with the platter's own lift. Not a swipe action or an edit mode — those are `List` affordances and this is not a `List`. Deleting the open session falls back to the most recent one left, or to a fresh empty session when none are. |
 
-The hold and the tap are an *exclusive* pair, not two simultaneous gestures: the hold wins
-outright when it recognises, so lifting the finger after one cannot also open the session. The
-row is therefore a plain view with gestures rather than a `Button` — a `Button`'s action fires
-on touch-up whatever else happened, which is exactly the thing that must not happen here. Button
-semantics are restored in the accessibility layer, where the destructive action is published as
-a named action rather than a gesture VoiceOver cannot perform.
+**The preview is supplied, not left to the system.** Given nothing, the platter lifts a snapshot
+of the row as it sits in the tree: square, because the row's corners belong to a background
+whose radius the platter cannot know, and greyed for any row that is not the current one,
+because those rows are transparent and the scrim shows through them. Passing a `preview:` of the
+row over an opaque fill, clipped to its own 10 pt radius, answers both.
 
-It was a system `.contextMenu` first, and that is a presentation with no binding: nothing in the
-app is told when it opens or closes, so nothing can be made inert around it, and whether the
-tap that cancels it is swallowed or falls through to the row underneath is the platform's
-decision. On iPadOS 17 it fell through, and cancelling switched sessions. A confirmation dialog
-is modal and driven by state the drawer owns, so the dismiss tap is consumed by its own
-presentation controller and the rows are held inert until the dismissal has finished animating.
+**Cancelling the menu must not open a session, and that takes a guard.** `.contextMenu` is
+presented and dismissed entirely by the system, with no callback for either edge, so whether the
+tap that cancels it is swallowed or falls through to a row underneath is the platform's
+decision — and on iPadOS 17 it falls through. A confirmation dialog the drawer owned outright
+was tried and rejected: it closed the leak by replacing the interaction, and the interaction was
+the part worth keeping.
+
+So the drawer infers the menu instead. A long press of its own runs early against the same touch
+(0.35 s, deliberately inside `UIContextMenuInteraction`'s ~0.5 s commit, because the interaction
+cancels every other recogniser when it takes the touch — a detector on the system's own
+threshold would be cancelled instead of firing). From then until a tap arrives, a transparent
+layer over the whole drawer swallows taps rather than letting them act, and holds for a further
+0.35 s while the menu animates away. Every way the inference can be wrong costs one swallowed
+tap and none of them can switch a session.
+
+A row's tap is a `DragGesture` whose translation must be within 10 pt, not a `Button` — evidence
+the row holds itself, which nothing outside it has to notice in time. Lifting after a menu opens
+never reaches it, because the interaction cancels the drag and a cancelled drag never ends.
 | `Drawer bottom bar` | `44` tall, on the content column, `justify-content: space-between`, one inset up from the floor (docked `top 914`, full screen `top 960`). |
 | `btn/new-chat` | Bottom **left**. `44` tall pill, `--color-brand` fill, `--radius-full`, `gap 8`, `padding-left 16`, `padding-right 20`. Glyph `ui/plus` `20 × 20` white, label "New chat" 17 / 22 weight 600 white. Shadow `#6051DC33 0 4 12` + `#14143214 0 1 2`. |
 | `btn/settings` | Bottom **right**. `44 × 44` `--color-surface` circle, glyph `control/settings` at 24, elevation 03 · Control. Already at the tap-target minimum, so unlike the panel's 32pt controls it needs no expansion. **It leaves the drawer open**: Settings is a window over the whole screen and it is reached from here, so closing the thing you opened it from returns you somewhere you were not. Every other action in this drawer replaces what the chat is showing, which is why they all close it and this one does not. |
@@ -717,9 +728,15 @@ same time and neither carries a veil.
   `--radius-3xl` **28** on its leading corners. *"That edge carries the boundary, so there is
   no divider rule."*
 - The reading column re-centres in what the sidebar and the board peek leave:
-  region `1308 − 372 = 936`, column `min(740, 936 − 56) = 740`, margins `98`, so
-  `x = 372 + 98 = 470`. Same rule as screen 07, one more term —
+  region `1308 − 296 = 1012`, column `min(740, 1012 − 56) = 740`, margins `136`, so
+  `x = 296 + 136 = 432`. Same rule as screen 07, one more term —
   `ScreenLayout.columnX(reserving:)`.
+- **The pan surface is the whole screen**, stated with an explicit frame rather than inferred
+  from the children. Every child of this screen is placed by `.offset`, and an offset moves a
+  view without telling its parent — so the stack was only as wide as its widest *laid-out*
+  child (the chat pane, or in the greeting state the 740 pt column), and a swipe starting right
+  of that reached nothing. The board peek keeps its own tap: it is painted after the tutor in
+  `BoardScreen`, so it hit-tests first.
 - The board peek is untouched at `(1308, 28)`.
 - The same right-swipe opens it, and a left-swipe closes it — including one that starts inside
   the sidebar, on a session row. It springs rather than tracking the finger: the chat is
