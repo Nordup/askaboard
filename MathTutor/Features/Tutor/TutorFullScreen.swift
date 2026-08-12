@@ -28,18 +28,11 @@ struct TutorFullScreen: View {
     @ObservedObject var attachments: ComposerAttachments
     let actions: TutorActions
 
-    /// The presentation morph's gesture, when the screen runs the tracked container morph:
-    /// the peek lane's left-swipe drives the flight layer's progress from `1` downward.
-    /// `nil` keeps the commit-triggered spring — previews never pass one. Held as a plain
-    /// value that only ever writes; the one observer is `PresentationFlightLayer`.
-    var flight: PresentationFlightHandle? = nil
-
-    /// True while a docked ↔ full-screen flight is in progress. The shared elements are
-    /// single instances that travel in the flight layer, so this surface's own copies go
-    /// invisible — held at opacity 0, never unmounted, so the mount decision stays outside
-    /// the animated path — for exactly the flight's duration. Grows one element per step of
-    /// the rebuild; today it is the orb.
-    var isInPresentationFlight = false
+    /// True while a docked ↔ full-screen switch's spring is running. Both surfaces are
+    /// briefly on screen for the crossfade, and at most one live `TextField` may exist per
+    /// switch, so the composer renders chrome only until the settle's completion clears
+    /// this — see `BoardScreen.isPresentationSwitching` and `Composer.isInteractive`.
+    var isPresentationSwitching = false
 
     /// Board 16's menu and the picker it asked for.
     @State private var isAttachMenuOpen = false
@@ -123,10 +116,8 @@ struct TutorFullScreen: View {
             // Offset left by the thread's bleed: the slot's band is that much wider than the
             // column on each side (see `ComposerSlotMetrics.fullScreen`), and the pill
             // centres in it, so this is what keeps the pill itself on `column.x`.
-            // The pill goes invisible — never unmounted — while its flight copy is in the
-            // air; the fade band behind it is the surface's own and stays.
             ComposerSlot(metrics: slot, surfaceColor: DS.Color.surface) {
-                composer.opacity(isInPresentationFlight ? 0 : 1)
+                composer
             }
             .offset(x: column.x - ThreadMetrics.bleed, y: column.floor - slot.band)
 
@@ -216,10 +207,6 @@ struct TutorFullScreen: View {
         .fill(DS.Color.surface)
         .frame(width: max(0, layout.screenWidth - sidebar), height: layout.screenHeight)
         .offset(x: sidebar)
-        // Mid-flight the pane's white belongs to the morphing container, which is this
-        // exact fill at progress 1 — a full-bleed white popping over a half-grown container
-        // is what would break the morph at the handoff. Invisible, never unmounted.
-        .opacity(isInPresentationFlight ? 0 : 1)
         .accessibilityHidden(true)
     }
 
@@ -277,8 +264,6 @@ struct TutorFullScreen: View {
             )
             .offset(x: layout.sessionsSidebarX)
             .transition(.move(edge: .leading))
-            // The flight layer's folding copy is the one on screen mid-morph.
-            .opacity(isInPresentationFlight ? 0 : 1)
         }
     }
 
@@ -332,8 +317,6 @@ struct TutorFullScreen: View {
             alignment: .leading
         )
         .offset(x: layout.contentLeft + sidebar, y: layout.contentTop)
-        // The flight layer's travelling copy is the one on screen mid-morph.
-        .opacity(isInPresentationFlight ? 0 : 1)
     }
 
     // MARK: - The reveal gesture
@@ -379,14 +362,11 @@ struct TutorFullScreen: View {
     /// the peek is a sibling drawn later by `BoardScreen`, and a UIKit recogniser cannot see
     /// SwiftUI's paint order, which is exactly why the lane is stated as geometry here.
     ///
-    /// **Commit-triggered, not tracked**, and settled by `TutorActions.returnToBoard` on the
-    /// dock's shared spring. Board 05 states the panel and the column as two variants rather
-    /// than one responsive view, so there is no position between them for a finger to hold; see
-    /// `BoardScreen.returnToBoardFromPeek(velocity:)` for the whole argument and for what the
-    /// spring is still worth. (The tracked container morph — `PresentationMorph` — is wired
-    /// off for now: it froze the app on the iPadOS 17 device and the hang could not be
-    /// reproduced or sampled from here, so the commit-time spring ships while that is run
-    /// down. The arithmetic and its tests stay compiled.)
+    /// **Commit-triggered, not tracked**, and run by `TutorActions.returnToBoard` as the
+    /// animated presentation switch (`PresentationSwitch`). Board 05 states the panel and the
+    /// column as two variants rather than one responsive view, so there is no position between
+    /// them for a finger to hold; see `BoardScreen.returnToBoardFromPeek(velocity:)`. (A
+    /// tracked container morph was built and rejected on device — see §15.4 and git history.)
     ///
     /// It refuses Apple Pencil touches at touch-down, exactly as the leading zone does: a
     /// pencil in this app is always drawing and never navigating.
@@ -396,29 +376,12 @@ struct TutorFullScreen: View {
             onCommit: { translation in
                 isPanCommitted = true
                 isReturningToBoard = route(translation) == .enterDocked
-                // The tracked morph, where the screen runs one: anchor at full screen and
-                // let the flight layer render every frame from here to the release. A plain
-                // write from a UIKit callback — no transaction — so the flight mounts
-                // un-animated at its anchor.
-                if isReturningToBoard, let flight {
-                    flight.drag.begin(atFullScreen: true)
-                    flight.onBegin()
-                }
             },
-            onChange: { translation in
-                guard isReturningToBoard else { return }
-                flight?.track(anchor: 1, translation: translation)
-            },
+            onChange: { _ in },
             onEnd: { _, velocity in
                 isPanCommitted = false
                 guard isReturningToBoard else { return }
                 isReturningToBoard = false
-                // Tracked: the release rule needs the real position, and the settle is the
-                // shell's — it owns the mounts the spring has to hold open.
-                if let flight {
-                    flight.onRelease(velocity)
-                    return
-                }
                 // A release that flings back the way it came takes it back — the same rule the
                 // sidebar's own commit-triggered swipe follows, with the progress pinned at the
                 // destination and the sign mirrored: this axis is travelled leftward, so a
@@ -505,9 +468,6 @@ struct TutorFullScreen: View {
     private var startBlock: some View {
         VStack(spacing: 0) {
             Orb(.panel)
-                // The flight layer's copy is the one on screen mid-morph; this one holds
-                // its slot at opacity 0 so nothing reflows and nothing is unmounted.
-                .opacity(isInPresentationFlight ? 0 : 1)
                 // The panel's own `18 + 32 + 120` below its surface top. The block's own
                 // `column.top` padding puts its head on the content line the panel's surface
                 // sits on, so the orb lands on the same screen line it holds in the docked
@@ -519,8 +479,7 @@ struct TutorFullScreen: View {
             GreetingBlock(
                 scale: Self.scale,
                 width: column.width,
-                onSelectSuggestion: actions.selectSuggestion,
-                hidesContentForFlight: isInPresentationFlight
+                onSelectSuggestion: actions.selectSuggestion
             )
             .padding(.top, DS.Space.s10)
         }
@@ -546,8 +505,6 @@ struct TutorFullScreen: View {
         )
         .frame(width: column.width, height: column.threadHeight)
         .offset(x: column.x, y: column.threadTop)
-        // The flight layer's full-screen copy is the one on screen mid-morph.
-        .opacity(isInPresentationFlight ? 0 : 1)
     }
 
     /// Board 07 draws no marquee and no attachment card in the wide composer, so the resting
@@ -579,10 +536,11 @@ struct TutorFullScreen: View {
             onDismissSelection: actions.dismissSelection,
             attachments: attachments.pending,
             onRemoveAttachment: { attachments.remove($0) },
-            // One live field per flight — see `TutorPanel.composer`, the same rule's other
-            // half. This surface mounts mid-flight as chrome; its real field arrives in
-            // the settle's completion, outside every animation transaction.
-            isInteractive: !isInPresentationFlight
+            // One live field per switch — see `TutorPanel.composer`, the same rule's other
+            // half. This surface arrives as chrome while both surfaces share the screen;
+            // its real field arrives in the settle's completion, outside every animation
+            // transaction.
+            isInteractive: !isPresentationSwitching
         )
     }
 

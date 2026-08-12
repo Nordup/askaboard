@@ -988,12 +988,13 @@ that. Either way it committed and cancelled whatever it crossed.
 **On a window too narrow to dock**, the edge swipe lands where the orb's tap lands — the
 full-screen column — because that is the tutor's only home at that size.
 
-**Both rungs track now.** `expandDock` tracks the panel's own travel, and `enterFullScreen`
-tracks the presentation morph's (§15.4): board 05 still states the reading column as *a
-different variant* of the tutor whose contents have no interpolable intermediate — type scale,
-chip layout, composer all change — but the *container* interpolates at every point, and that
-is what the finger drags. The release settles on the shared spring by the same velocity-first
-rule as every tracked travel, position measured where the finger actually got to.
+**One rung tracks, one commits.** `expandDock` tracks the panel's own travel — a rigid
+surface with a measured lane. `enterFullScreen` is **commit-triggered**: board 05 states the
+reading column as *a different variant* of the tutor — type scale, chip layout, composer all
+change — so there is no position between the two for a finger to hold. The commit remembers
+the route; the release runs the animated presentation switch (§15.4), with a fling back the
+way the pan came cancelling it (`DrawerReveal.settlesOpen` with progress pinned at the
+destination) and the release velocity carried into the spring.
 
 ### 15.3 The trailing-edge zone (screen 07 → screens 05/08)
 
@@ -1016,83 +1017,45 @@ draws the destination.
 | **Apple Pencil** | refused at touch-down, as in the leading zone — a pencil in this app is always drawing and never navigating |
 | **Paint order** | the peek is a sibling drawn later by `BoardScreen`, and a UIKit recogniser cannot see SwiftUI paint order, so the lane is stated as geometry instead |
 
-Tracked, for the same reason `enterFullScreen` now is: the swipe drives the presentation morph
-(§15.4) from progress `1` downward, so the chat surface's trailing edge follows the finger while
-the board's card widens in behind it. **The tap and the swipe are one system**: the tap calls
-`BoardScreen.returnToBoardFromPeek(velocity:)`, which runs the identical morph from rest on the
-same spring through the same curves. The tap used to write `UIState` bare and the column simply
-vanished, which is the fourth-behaviour-rather-than-fourth-control mistake the shared model
-exists to end.
+Commit-triggered, for the same reason `enterFullScreen` is: the commit remembers the route and
+the release runs the animated presentation switch (§15.4), with the mirrored fling-back rule —
+this axis is travelled leftward, so a leftward velocity is a fling *toward* the board. **The
+tap and the swipe are one system**: the tap calls
+`BoardScreen.returnToBoardFromPeek(velocity:)`, the identical switch from rest on the same
+spring. The tap used to write `UIState` bare and the column simply vanished, which is the
+fourth-behaviour-rather-than-fourth-control mistake the shared settle exists to end.
 
 **What a presentation change does to the two session lists is unchanged**: the docked drawer
 closes (`BoardScreen.onChange(of: presentation)`) and the full-screen sidebar is remembered. See
 §14.2.
 
-### 15.4 The presentation morph (screens 05/08 ↔ screen 07)
+### 15.4 The presentation switch (screens 05/08 ↔ screen 07)
 
-> **Status: live.** The docked ↔ full-screen transition is a tracked **flight-layer morph**:
-> the container scrubs one-to-one with the finger while the shared elements — single
-> instances, never pairs that dissolve — travel their own measured paths inside it. The
-> first attempt (a whole-surface crossfade inside a morphing clip) was rejected on device
-> ("it just fades away without any morphism") and then froze the app; the rebuild is
-> engineered against the recorded freeze hypotheses: **mounts are decided only by state
-> written outside animation transactions** (gesture commitment, settle completion),
-> `animatableData` varies geometry alone, at most **one live `TextField`** exists per
-> flight (the other composer renders a chrome `Text` run — `Composer.isInteractive`), and
-> focus is resigned at commitment on a main-queue hop, never inside a render transaction.
+> **Status: simple animated switch.** The tracked flight morph — elements travelling
+> measured paths inside a finger-scrubbed container, the whole-scene dip — was built,
+> shipped to the device and **retired by user verdict** ("the whole thing, no travel at
+> all, scratch that"). Its design, arithmetic, tests and the freeze post-mortem live in git
+> history (commits `56d5765..3aff5ab` and the 2026-08-12 research brief) should a future
+> device make it worth revisiting.
 
-`PresentationMorph` is the container arithmetic, `PresentationFlight` the per-element paths,
-`PresentationMorphModel` the live position (the `DockRevealModel` shape one rung up, observed
-by exactly one view), and `PresentationFlightLayer` the region that hosts the board, the
-rail, the tutor and the peek — plus, in flight, the morphing container and the flight copies.
-
-The decisive measurement (2026-08-12 research brief): with the reading column at the panel
-treatment (`TutorColumnMetrics.liveScale == .panel`, capped at 600) the two endpoints draw
-the same components at the same type scale on the same baselines, so the hi state needs no
-crossfade, no scale and no snapshot — a translation of **+491.5** at the column's centre and
-a widening of the chips and the pill from **301 → 600**. Every glyph keeps its size; the
-block walks to the middle of the screen. The thread is the one element whose text re-wraps,
-and therefore the one genuine crossfade.
+What ships is the commit-triggered presentation switch with a small amount of polish, all
+of it in `PresentationSwitch`:
 
 | Track | Value |
 |---|---|
-| Progress | `0` docked … `1` full screen; pure functions of this one number, so a gesture that turns around retraces its own frames |
-| Travel | the container's trailing edge: `screenWidth − dockTravel`, **1011** on the reference screen |
-| Release | velocity first (**300 pt/s**), 50% line second — `DrawerReveal.settlesOpen`, delegated; live-finger frames are marked `Transaction.isContinuous`. The arrival spring is `DrawerReveal.settle`'s construction at **damping 20** (`PresentationMorph.settle` — the drawer keeps its 30): damping ratio ~0.56, so a scene that dipped 15% arrives with real snap |
-| Dip | the **whole screen scene** breathes: `scale(p) = 1 − 0.15·sin(π·p)` (`PresentationMorph.flightScale`), **exactly 1 at both endpoints** so pixel parity holds, minimum mid-flight. One `scaleEffect` at the flight layer's root wraps the board card, the rail, the chat surface, the flight copies and the arriving peek — the OS space-switcher read, on the user's explicit call after two rejected shallower versions (0.05 was imperceptible; a chat-only dip left the ground still: "board doesn't scale while moving"). The anchor is the **screen's centre, fixed** (`flightDipAnchor`) — the container's moving centre added a lateral drift against the board's own travel once the board joined the dip. The live `PKCanvasView` is never resized: a scale is a render transform on its existing tiles, the app-switcher's own mechanism. It rides gesture progress, so a scrub shows the dip under the finger and the settle spring carries the snap back |
-| Rail | the one other unmatched element beside the panel controls: it rides the **board's own shift** (`railShift == boardShift`) so the ground leaves as one plane, and fades over `0 … 0.35` (`railOpacity` — wider than the controls' 0.25; a bigger thing needs longer to leave). Pure in `p`, so the return leg fades it back in over the same band; mounted through flights exactly as the board is |
-| Container | frame lerps panel → chat pane (sidebar-aware), glued to the finger; corners finish **early** — `0 … 0.75` entering, `0.30 … 0.90` returning; fill dissolves over the first **30%**, with the panel's static-shaped shadow underlay |
-| Lead curve | shared elements run `1 − (1 − p)²` ahead of the finger-locked box (content settles before the container), as **one family with staggered departures** (`leadStaggered(_:by:)`): orb bare, greeting +5%, chips +8%, pill +10% — a flock, not a welded convoy. Every stagger is a remap of the interior, so all of them are exactly 0 and 1 at the ends. Widths stay linear on the finger |
-| Orb | one `Orb(.panel)`: pure x, 148.5 → 640, y fixed at 198, size fixed |
-| Greeting | one 301-wide title+subtitle block, translated only — subtitle capped 277 at both ends, so the centred block is pixel-identical to both settled surfaces |
-| Chips | leading 46 → 388 on the lead; **width 301 → 600 linear on the finger** — a real `.frame(width:)`, nothing re-wraps |
-| Composer | the chips' path and width; bottom edge 986 → 1004; flight copy is chrome only (no `TextField`); the wide pill's absent marquee is a folding 34pt slot, held open while a selection is attached |
-| Toggle | (46, 46) → (28 + sidebar, 28), linear, never fades |
-| Panel controls | the one unmatched element: opacity out over `0 … 0.25` with a 12pt trailing drift |
-| Thread | two copies, each laid out once; docked copy slides toward the destination centre, wide copy arrives from 60pt short of home; overlapping cross-fade `0.30…0.55 / 0.30…0.60` entering, `0.45…0.70 / 0.40…0.75` returning (one direction parameter). Each copy is rendered **scroll-free** (`MessageThread.isStatic` — the scroller's rest geometry as plain frames) and flattened with `.drawingGroup()` at the slot: a full text column at fractional opacity is an offscreen group-composite per frame, two of them stalled the A10 exactly where the bands opened and the gesture visibly stopped mid-travel. Flattened, each copy is one texture rasterised once at commitment, with free alpha. `drawingGroup` is safe on the copies alone — pure SwiftUI, no `TextField`, no scroller, never `PKCanvasView` |
-| Board | translated **`peekX − boardX` = 846**, never resized and never faded, so its leading edge lands exactly on the peek's line; the peek artwork crossfades over the last 15%. `BoardFlightMask` (rounded rect → `BoardPeekShape` over `0.55 … 1`) is compiled and tested but not attached: at these curves its cut edge never crosses the screen edge (`PresentationMorphTests` proves it), so the live canvas keeps PencilKit's unmasked fast path |
-| Sidebar | if open, a flight copy folds its own width off the leading edge; `isSessionsSidebarOpen` is untouched and the layout returns next visit |
-| Buttons | `btn/full-screen` and the peek's tap replay the same morph from rest: `begin` outside any transaction, settle on the next main-queue turn, so the animatable renders spring through the identical curves |
+| Trigger | commit-triggered, never tracked: the edge swipes commit at axis lock and run the switch **on release**, with a fling back the way the pan came cancelling it (`DrawerReveal.settlesOpen`, progress pinned at the destination). `btn/full-screen` and the peek's tap run the same switch from rest |
+| Spring | `PresentationSwitch.settle` — `DrawerReveal.settle`'s construction (stiffness 320, damping 30, ~0.35s), release velocity carried in, normalised by `dockTravel` exactly as every dock settle is. One definition |
+| Incoming surface | fades in over a short directional slide: `slideDistance` = **32 pt** from the direction of travel, spring-settled (`PresentationSwitch.fullScreenSurface` / `.dockedSurface`, applied as transitions on the two branches of `BoardScreen.tutor`) |
+| Outgoing surface | fades out with the matching 32 pt drift — the mirror of the same transition, so each surface's one symmetric transition states both legs |
+| Board card | never unmounts (the `PKCanvasView` ink contract); it **crossfades in place** via its `isTutorFullScreen` opacity, written inside the switch's animation. No slide, no scale |
+| Rail | unmounts at full screen inside the animation, taking the default opacity transition — a crossfade beside the board it serves |
+| Peek | mounts with the full-screen presentation; no special treatment |
+| Responder | at most **one live `TextField` per switch**: both surfaces briefly share the screen (the outgoing one lives out its removal transition), so `BoardScreen.isPresentationSwitching` — set before the animated write, cleared in the settle's completion, both outside every transaction — renders both composers chrome-only (`Composer.isInteractive`) for the duration, and focus is resigned at the switch's start on a main-queue hop, never inside a render transaction |
+| Re-entry | switches never overlap: every entry point guards on `isPresentationSwitching`, so a gesture landing inside the ~0.35s window commits (and cancels what it crossed) but starts nothing |
 
-Endpoint pixel-parity is arithmetic, not a rendering promise: every path is exact (never
-rounded) at `0` and `1`, whole points between, so the handoff between a flight copy and the
-settled surface's own element cannot jump. `PresentationMorphTests` and
-`PresentationFlightTests` pin the equalities, the bands, the dip, the staggers and the
-end-state opacities on both legs.
-
-Two lifecycle rules learned from the shipped morph's first device round:
-
-- **A stale settle completion is a no-op.** A gesture that grabs the morph while the
-  previous flight's spring is still settling starts a new flight; when the interrupted
-  spring's completion finally fires it must not clear `isSettling` or the screen's mount
-  flag under the live drag — or the surfaces' own copies come back at full opacity while
-  the flight copies are still in the air, and the screen shows both. `PresentationMorphModel`
-  keeps a generation counter; `finishSettle(of:)` releases only for the current flight.
-- **The panel's fade bands fly with the pill.** The docked composer slot's band and the
-  panel's top scroll fade are `--color-surface-panel` gradients: invisible over the panel's
-  own fill, a grey wash hanging at the panel's old position once the container has whitened
-  past 30% of the travel. Both go invisible — never unmounted — for the flight's duration,
-  which changes nothing at the docked handoff because there they sit on their own colour.
+Endpoint states are the settled screens themselves — the transitions only ever move a
+surface that is entering or leaving, so there is nothing to hand off and pixel parity at
+rest is structural.
 
 ---
 

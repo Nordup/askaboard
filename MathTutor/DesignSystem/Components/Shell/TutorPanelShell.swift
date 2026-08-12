@@ -98,16 +98,10 @@ struct TutorPanelShell<Content: View>: View {
 /// oldest message hard against the surface's rounded corners.
 struct TutorPanelSurface<Content: View>: View {
     private let size: CGSize
-    private let hidesChrome: Bool
     private let content: Content
 
-    /// `hidesChrome` is the docked ↔ full-screen flight's flag: for the flight's duration
-    /// the panel's fill and elevation belong to the morphing container — which is this
-    /// exact surface at progress 0 — so the panel draws its contents over a chrome that is
-    /// no longer its own. The clip stays: the contents still end at the panel's silhouette.
-    init(size: CGSize, hidesChrome: Bool = false, @ViewBuilder content: () -> Content) {
+    init(size: CGSize, @ViewBuilder content: () -> Content) {
         self.size = CGSize(width: max(0, size.width), height: max(0, size.height))
-        self.hidesChrome = hidesChrome
         self.content = content()
     }
 
@@ -134,13 +128,10 @@ struct TutorPanelSurface<Content: View>: View {
             .frame(width: size.width, height: size.height, alignment: .top)
             .clipShape(RoundedRectangle(cornerRadius: TutorPanelMetrics.cornerRadius))
             .background {
-                // Invisible rather than unmounted while the flight owns the chrome: the
-                // shape is static either way, and an opacity change costs nothing.
                 RoundedRectangle(cornerRadius: TutorPanelMetrics.cornerRadius)
                     .fill(DS.Color.surfacePanel)
                     .compositingGroup()
                     .elevation(.panel)
-                    .opacity(hidesChrome ? 0 : 1)
             }
     }
 }

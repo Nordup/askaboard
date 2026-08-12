@@ -84,11 +84,11 @@ struct TutorPanel: View {
     let dock: DockRevealModel
     let actions: TutorActions
 
-    /// True while a docked ↔ full-screen flight is in progress — see
-    /// `TutorFullScreen.isInPresentationFlight`, the same flag on the other surface. The
-    /// flight layer draws the travelling copy of each shared element; this surface's own
-    /// copy holds its slot at opacity 0 for the duration. Today: the orb.
-    var isInPresentationFlight = false
+    /// True while a docked ↔ full-screen switch's spring is running — see
+    /// `TutorFullScreen.isPresentationSwitching`, the same flag on the other surface, and
+    /// `BoardScreen.isPresentationSwitching` for the rule it serves: at most one live
+    /// `TextField` per switch, so the composer renders chrome only for the duration.
+    var isPresentationSwitching = false
 
     /// Board 16's menu, and which of the three pickers it asked for. Both are the *panel's*
     /// rather than the draft's: a menu open when the learner collapses the tutor is a card
@@ -119,7 +119,7 @@ struct TutorPanel: View {
         // The board behind it keeps its own height — see `keyboardInset`.
         let size = CGSize(width: layout.panelWidth, height: layout.contentHeightAboveKeyboard)
 
-        return TutorPanelSurface(size: size, hidesChrome: isInPresentationFlight) {
+        return TutorPanelSurface(size: size) {
             // The gesture, the travel and the veils all live in the layer, and so does the
             // only state a finger writes. Nothing here is a function of how far the drawer is
             // open — that is the rule the layer's own doc sets out, and it is what keeps a
@@ -224,25 +224,11 @@ struct TutorPanel: View {
             // Fade and pill together, bottom-anchored: the slot owns the 18pt inset under
             // the composer, so screen 08's pill bottom lands on the panel floor less that
             // inset and screen 05's card grows upward from the same line.
-            //
-            // The whole slot — the pill *and* the band behind it — goes invisible, never
-            // unmounted, while the flight copies are in the air. The band used to stay on
-            // the argument that it is the surface's own, and that was a leak the device
-            // showed: the band is a `--color-surface-panel` gradient, invisible over the
-            // panel's own fill at rest but a grey wash hanging at the panel's old position
-            // once the morphing container has whitened past 30% of the travel — an element
-            // that visibly did not disappear. At progress 0 the band sits on its own colour,
-            // so hiding it at commitment changes not one visible pixel at the handoff.
             ComposerSlot(metrics: slot) { composer }
                 .frame(maxHeight: .infinity, alignment: .bottom)
-                .opacity(isInPresentationFlight ? 0 : 1)
 
             Group {
-                // Hidden in flight with the slot's band, for the identical reason: a
-                // panel-grey gradient over the whitening container is a ghost, and over
-                // the panel's own fill it is invisible either way.
                 ScrollFade(width: size.width, metrics: .top(for: .panel))
-                    .opacity(isInPresentationFlight ? 0 : 1)
 
                 if isAttachMenuOpen {
                     attachMenu(in: size)
@@ -291,8 +277,6 @@ struct TutorPanel: View {
         .frame(width: contentWidth, height: TutorPanelMetrics.controlsHeight, alignment: .trailing)
         .frame(width: size.width, alignment: .center)
         .padding(.top, TutorPanelMetrics.inset)
-        // The flight layer's fading copy is the one on screen mid-morph.
-        .opacity(isInPresentationFlight ? 0 : 1)
     }
 
     /// Board 17's header, before — the leading slot the gear used to hold.
@@ -320,8 +304,6 @@ struct TutorPanel: View {
         .frame(width: contentWidth, height: TutorPanelMetrics.controlsHeight, alignment: .leading)
         .frame(width: size.width, alignment: .center)
         .padding(.top, TutorPanelMetrics.inset)
-        // The flight layer's travelling copy is the one on screen mid-morph.
-        .opacity(isInPresentationFlight ? 0 : 1)
     }
 
     /// What arriving at screen 06 costs the panel — the presentation change and the menus that
@@ -438,8 +420,6 @@ struct TutorPanel: View {
                 actions: actions
             )
             .frame(width: contentWidth, height: size.height)
-            // The flight layer's docked copy is the one on screen mid-morph.
-            .opacity(isInPresentationFlight ? 0 : 1)
         } else {
             ChatScrollColumn(width: contentWidth, anchor: .top) {
                 startFill.padding(.top, Self.chromeTop)
@@ -459,15 +439,11 @@ struct TutorPanel: View {
     private var startFill: some View {
         VStack(spacing: 0) {
             Orb(.panel)
-                // The flight layer's copy is the one on screen mid-morph; this one holds
-                // its slot at opacity 0 so nothing reflows and nothing is unmounted.
-                .opacity(isInPresentationFlight ? 0 : 1)
                 .padding(.top, PanelStack.orbTopMargin)
             GreetingBlock(
                 scale: .panel,
                 width: contentWidth,
-                onSelectSuggestion: actions.selectSuggestion,
-                hidesContentForFlight: isInPresentationFlight
+                onSelectSuggestion: actions.selectSuggestion
             )
             .padding(.top, PanelStack.startTopMargin)
         }
@@ -528,10 +504,10 @@ struct TutorPanel: View {
             // one-argument closure parameter crashes swift-frontend during
             // IRGen on this toolchain — see `BoardScreen.board`.
             onRemoveAttachment: { attachments.remove($0) },
-            // One live field per flight, and it is never this one mid-morph: the surface
-            // that mounts during a flight renders chrome, and the real field arrives in
-            // the settle's completion — outside every animation transaction.
-            isInteractive: !isInPresentationFlight
+            // One live field per switch, and while the two surfaces share the screen it is
+            // neither: the real field arrives in the settle's completion — outside every
+            // animation transaction.
+            isInteractive: !isPresentationSwitching
         )
     }
 
@@ -566,12 +542,6 @@ struct TutorThreadView: View {
     /// keeps from the pill.
     var clearing: CGFloat = 0
     let actions: TutorActions
-    /// A presentation-flight copy: rendered scroll-free (`MessageThread.isStatic`) so the
-    /// whole copy is safe under `.drawingGroup()` — the flattening that turns the flight's
-    /// two crossfading thread columns from two per-frame offscreen composites into two
-    /// textures with free alpha. The copy never scrolls and takes no touches, so the
-    /// scroller bought it nothing. See `BoardScreen.dockedThread`/`fullThread`.
-    var isFlightCopy: Bool = false
 
     private var column: CGFloat { width ?? scale.contentWidth }
 
@@ -585,8 +555,7 @@ struct TutorThreadView: View {
             // reference, which crashes swift-frontend during IRGen on this toolchain when
             // handed straight to a one-argument closure parameter — see `Composer`'s own
             // `onRemoveAttachment` for the precedent this follows.
-            crop: { id in store.boardCropStore.crop(for: id) },
-            isStatic: isFlightCopy
+            crop: { id in store.boardCropStore.crop(for: id) }
         ) { accessory }
     }
 

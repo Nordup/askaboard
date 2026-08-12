@@ -532,12 +532,13 @@ struct Composer: View {
     /// screen has drawn until now.
     var attachments: [PendingAttachment] = []
     var onRemoveAttachment: ((UUID) -> Void)?
-    /// False while this composer is the **non-live** half of a docked ↔ full-screen flight:
-    /// the pill draws all of its chrome, but the text lane is a plain `Text` run of the
-    /// same string at the same metrics rather than a mounted `TextField`. Exactly one
-    /// live field exists at a time across the two co-mounted surfaces — the origin's — and
-    /// the swap back happens in the settle's completion, outside every animation
-    /// transaction. See the responder plan in `PresentationFlightLayer`.
+    /// False while a docked ↔ full-screen presentation switch has both surfaces briefly on
+    /// screen: the pill draws all of its chrome, but the text lane is a plain `Text` run of
+    /// the same string at the same metrics rather than a mounted `TextField`. At most one
+    /// live field exists per switch — two fields trading first responder inside an
+    /// animation is the iPadOS 17 keyboard hazard `BoardCanvas.swift` documents — and the
+    /// settled surface's field arrives in the settle's completion, outside every animation
+    /// transaction. See `BoardScreen.isPresentationSwitching`.
     var isInteractive = true
 
     private var metrics: ComposerMetrics { .for(scale, width: width ?? scale.contentWidth) }

@@ -136,15 +136,9 @@ struct DockRevealLayer<Panel: View, Dock: View>: View {
     ///
     /// A callback rather than a second `DockRevealModel` route, because nothing this layer owns
     /// moves: the panel is not sliding anywhere, it is being replaced by a surface this layer
-    /// does not draw. The caller settles it on the shared spring — see `BoardScreen`.
-    ///
-    /// Reached only when no `flight` handle is supplied — the commit-triggered fallback.
+    /// does not draw. The caller runs the animated presentation switch — see
+    /// `BoardScreen.enterFullScreenFromEdge(velocity:)` and `PresentationSwitch`.
     var onEnterFullScreen: (CGFloat) -> Void = { _ in }
-    /// The presentation morph's gesture, when the screen runs the tracked container morph:
-    /// the same right-swipe, but every frame between commit and release drives the flight
-    /// layer's progress instead of waiting for the release. `nil` keeps the commit-triggered
-    /// spring — previews and specimens never pass one.
-    var flight: PresentationFlightHandle? = nil
     @ViewBuilder let panel: Panel
     @ViewBuilder let dock: Dock
 
@@ -267,17 +261,11 @@ struct DockRevealLayer<Panel: View, Dock: View>: View {
                 // points outside it, so the strip beside the panel does not read as dead.
                 case .expandDock: drag.begin(from: false)
                 case .collapseDock: drag.begin(from: true)
+                // Commit-triggered: nothing tracks between here and the release — board 05
+                // states the reading column as a different variant with no position between
+                // the two for a finger to hold — so committing only remembers the route.
                 case .enterFullScreen:
                     isEnteringFullScreen = true
-                    // The tracked morph, where the screen runs one: anchor at docked and
-                    // let the flight layer render every frame from here to the release.
-                    // `begin` is a plain write from a UIKit callback — no transaction, so
-                    // the flight mounts un-animated at its anchor, which is the same rule
-                    // `drag.begin` follows one rung down.
-                    if let flight {
-                        flight.drag.begin(atFullScreen: false)
-                        flight.onBegin()
-                    }
                 // `closeDrawer` is the remaining reachable cell, and it is deliberately not
                 // acted on here: the drawer is inside the panel and belongs to the panel's own
                 // pan region. The touch still committed and still cancelled what it crossed.
@@ -285,12 +273,6 @@ struct DockRevealLayer<Panel: View, Dock: View>: View {
                 }
             },
             onChange: { translation in
-                if isEnteringFullScreen {
-                    // The morph tracks the finger one-to-one against the container's
-                    // trailing edge — the first rule every tracked gesture in the shell has.
-                    flight?.track(anchor: 0, translation: translation)
-                    return
-                }
                 guard drag.isDragging else { return }
                 drag.track(
                     DockReveal.progress(
@@ -303,12 +285,6 @@ struct DockRevealLayer<Panel: View, Dock: View>: View {
             onEnd: { _, velocity in
                 if isEnteringFullScreen {
                     isEnteringFullScreen = false
-                    // Tracked: the release rule needs the real position, and the settle is
-                    // the caller's — it owns the mounts the spring has to hold open.
-                    if let flight {
-                        flight.onRelease(velocity)
-                        return
-                    }
                     // The one thing a commit-triggered transition still owes the finger: a
                     // release that flings *back* the way it came takes it back. The same
                     // `DrawerReveal` rule the sidebar's own commit-triggered swipe uses, with

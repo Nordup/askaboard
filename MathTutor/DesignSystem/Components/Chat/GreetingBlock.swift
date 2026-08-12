@@ -124,10 +124,6 @@ struct GreetingBlock<Orb: View>: View {
     /// The column the block fills and centres its children in.
     var width: CGFloat?
     var onSelectSuggestion: (Suggestion) -> Void = { _ in }
-    /// True while the docked ↔ full-screen flight is carrying the title, the subtitle and
-    /// the chip stack as its own travelling copies — this block's children hold their slots
-    /// at opacity 0 so nothing reflows and nothing is unmounted. See `PresentationFlightLayer`.
-    var hidesContentForFlight = false
     /// The hero orb's slot. The orb belongs to the shell, so the block reserves its
     /// 150 × 142 and leaves the drawing to whoever passes one in — the reservation is what
     /// keeps the block 268 tall either way.
@@ -146,7 +142,6 @@ struct GreetingBlock<Orb: View>: View {
                 .textStyle(metrics.titleStyle)
                 .foregroundStyle(DS.Color.ink)
                 .multilineTextAlignment(.center)
-                .opacity(hidesContentForFlight ? 0 : 1)
                 .frame(width: metrics.width, height: metrics.titleHeight)
                 .padding(.top, metrics.titleTopMargin)
 
@@ -154,13 +149,11 @@ struct GreetingBlock<Orb: View>: View {
                 .textStyle(metrics.subtitleStyle)
                 .foregroundStyle(DS.Color.inkSecondary)
                 .multilineTextAlignment(.center)
-                .opacity(hidesContentForFlight ? 0 : 1)
                 .frame(width: metrics.subtitleWidth, height: metrics.subtitleHeight)
                 .padding(.top, metrics.subtitleTopMargin)
 
             if let suggestionsTopMargin = metrics.suggestionsTopMargin {
                 SuggestionList(scale: scale, width: column, onSelect: onSelectSuggestion)
-                    .opacity(hidesContentForFlight ? 0 : 1)
                     .padding(.top, suggestionsTopMargin)
             }
         }
@@ -173,14 +166,12 @@ extension GreetingBlock where Orb == EmptyView {
     init(
         scale: ChatScale = .panel,
         width: CGFloat? = nil,
-        onSelectSuggestion: @escaping (Suggestion) -> Void = { _ in },
-        hidesContentForFlight: Bool = false
+        onSelectSuggestion: @escaping (Suggestion) -> Void = { _ in }
     ) {
         self.init(
             scale: scale,
             width: width,
-            onSelectSuggestion: onSelectSuggestion,
-            hidesContentForFlight: hidesContentForFlight
+            onSelectSuggestion: onSelectSuggestion
         ) { EmptyView() }
     }
 }

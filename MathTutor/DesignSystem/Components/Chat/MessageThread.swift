@@ -253,16 +253,6 @@ struct MessageThread<Accessory: View>: View {
     /// comment on why a crop's bytes never travel as data on the item). Defaulted so a
     /// gallery specimen or a preview thread, which draws no trail, needs no argument for it.
     var crop: (UUID) -> Data? = { _ in nil }
-    /// Renders the thread **without a scroller**: the same content, bottom-anchored in the
-    /// band and clipped at its top edge, exactly where `ChatScrollColumn` rests it — but as
-    /// plain layout, no `ScrollView`. For the presentation morph's flight copies, and for
-    /// them alone: a flight copy is non-interactive and never scrolls, and it must be safe
-    /// under `.drawingGroup()`, which renders UIKit-backed views — SwiftUI's scroller is
-    /// one — as a placeholder image. The rasterisation is the whole point: two full thread
-    /// columns at fractional opacity are two offscreen group-composites per frame on an
-    /// A10, and a flattened copy is one texture with free alpha. See
-    /// `BoardScreen.dockedThread`/`fullThread`.
-    var isStatic: Bool = false
     /// `btn/orb`, the thread's one non-message child. It belongs to the shell, so the
     /// thread reserves its place rather than drawing it — and the place matters: *"`btn/orb`
     /// is a normal flow child at the end of the message list, so it rides up and down with
@@ -274,23 +264,10 @@ struct MessageThread<Accessory: View>: View {
     private var metrics: ThreadMetrics { .for(scale, width: column, clearing: clearing) }
 
     var body: some View {
-        if isStatic {
-            // The scroller's own geometry, restated as plain frames: the column in the
-            // bled box, the box bottom-anchored in whatever band the caller frames, the
-            // band clipping the overflow off its top edge — the scroller's rest position,
-            // without the scroller.
+        // `justify-content: flex-end`, the bleed clip and the hidden indicators are all
+        // the container's — see `ChatScrollColumn`, which the start states run in too.
+        ChatScrollColumn(width: metrics.width, bleed: metrics.bleed) {
             threadContent
-                .frame(width: metrics.width, alignment: .leading)
-                .frame(width: metrics.width + 2 * metrics.bleed)
-                .frame(maxHeight: .infinity, alignment: .bottom)
-                .clipped()
-                .frame(width: metrics.width)
-        } else {
-            // `justify-content: flex-end`, the bleed clip and the hidden indicators are all
-            // the container's — see `ChatScrollColumn`, which the start states run in too.
-            ChatScrollColumn(width: metrics.width, bleed: metrics.bleed) {
-                threadContent
-            }
         }
         // No fade here, and that is the change: it used to be this view's last child. Board
         // 03 moves both fades out of the thread — *"absolute — both are children of Tutor
@@ -301,7 +278,7 @@ struct MessageThread<Accessory: View>: View {
         // whole reason there is anything to mask.
     }
 
-    /// The list itself — one layout, shared by the scroller and the static band.
+    /// The list itself.
     private var threadContent: some View {
         VStack(alignment: .leading, spacing: metrics.gap) {
             ForEach(items) { item in

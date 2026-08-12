@@ -1604,4 +1604,37 @@ final class ShellComponentTests: XCTestCase {
         XCTAssertGreaterThan(DockReveal.dockOpacity(at: fadeStart * 0.1, fadeStart: fadeStart), 0.97)
         XCTAssertLessThan(DockReveal.dockOpacity(at: fadeStart * 0.9, fadeStart: fadeStart), 0.03)
     }
+
+    // MARK: - The presentation switch (§15.4)
+
+    /// The switch's polish is a short directional drift, not a travel: the surfaces trade
+    /// on a fade over 32 points, which reads as a settle. The tracked flight morph — real
+    /// travel, measured paths — was retired by user verdict; see git history.
+    func testTheSwitchSlideIsShort() {
+        XCTAssertEqual(PresentationSwitch.slideDistance, 32)
+        // The band the polish was specified in: enough drift to have a direction, not
+        // enough to read as an element flying across the screen.
+        XCTAssertGreaterThanOrEqual(PresentationSwitch.slideDistance, 24)
+        XCTAssertLessThanOrEqual(PresentationSwitch.slideDistance, 40)
+    }
+
+    /// One spring for every settle in the shell: the switch's animation is the shared
+    /// construction, not a private curve — and the release velocity reaches it, so a hard
+    /// flick into full screen arrives faster than a tap.
+    func testTheSwitchSettlesOnTheSharedSpring() {
+        let travel = ScreenLayout.reference.dockTravel
+        XCTAssertEqual(
+            PresentationSwitch.settle(velocity: 0, travel: travel),
+            DrawerReveal.settle(velocity: 0, travel: travel)
+        )
+        XCTAssertEqual(
+            PresentationSwitch.settle(velocity: 1300, travel: travel),
+            DrawerReveal.settle(velocity: 1300, travel: travel)
+        )
+        XCTAssertNotEqual(
+            PresentationSwitch.settle(velocity: 1300, travel: travel),
+            PresentationSwitch.settle(velocity: 0, travel: travel),
+            "the release velocity reaches the spring"
+        )
+    }
 }
