@@ -132,26 +132,19 @@ struct DockRevealLayer<Panel: View, Dock: View>: View {
     @ObservedObject var drag: DockRevealModel
     /// Called inside the settle animation with where the dock landed. `true` is docked.
     let onSettle: (Bool) -> Void
-    /// The presentation morph one rung up — docked ↔ full screen — written by the leading
-    /// edge's right-swipe on a docked panel.
+    /// A leading-edge right-swipe on the **docked** panel released, with its release velocity.
     ///
-    /// A plain reference, never observed: this layer only *writes* it, exactly as
-    /// `DrawerRevealLayer` writes `dock` for the rung below. The one view that observes it is
-    /// `PresentationMorphLayer`, which is also what draws everything the value moves. `nil`
-    /// in the gallery and the previews, where there is no full-screen column to morph into.
-    var morph: PresentationMorphModel? = nil
-    /// How far the morph's container edge travels — `PresentationMorph.travel`.
-    var morphTravel: CGFloat = 0
-    /// Called inside the morph's settle animation, with `true` for full screen. The mirror of
-    /// `onSettle` for the rung above.
-    var onMorphSettle: (Bool) -> Void = { _ in }
+    /// A callback rather than a second `DockRevealModel` route, because nothing this layer owns
+    /// moves: the panel is not sliding anywhere, it is being replaced by a surface this layer
+    /// does not draw. The caller settles it on the shared spring — see `BoardScreen`.
+    var onEnterFullScreen: (CGFloat) -> Void = { _ in }
     @ViewBuilder let panel: Panel
     @ViewBuilder let dock: Dock
 
     /// True from the leading edge's right-swipe committing on a docked panel until it is
-    /// released — the touch is driving the morph rather than the dock, and the release has to
-    /// know which model to settle. The position itself is the morph's; see `morph`.
-    @State private var isMorphing = false
+    /// released. There is no position to store: the transition is commit-triggered, so this is
+    /// the whole of the gesture's state.
+    @State private var isEnteringFullScreen = false
 
     /// Where the panel is right now: the live drag if one has committed, and the settled
     /// presentation otherwise.
@@ -232,12 +225,12 @@ struct DockRevealLayer<Panel: View, Dock: View>: View {
     /// The rung up, from either state: a right-swipe from the screen's leading edge.
     ///
     /// **One zone, two destinations, and that is the ladder.** Collapsed, it brings the panel
-    /// back — tracked against the panel's own travel. Docked, it goes full-screen — tracked
-    /// too, now, against the morph's: board 05 still states the reading column as *a
-    /// different variant* whose contents have no interpolable intermediate, but the
-    /// *container* has one at every point, and that is what the finger drags — see
-    /// `PresentationMorph`. Both releases end on the same shared spring, so the two rungs
-    /// feel like one gesture.
+    /// back — tracked, because the panel is a rigid surface with a measured travel and the
+    /// finger can hold it anywhere along it. Docked, it goes full-screen — commit-triggered,
+    /// because the thing on the other side is not the panel at a different offset: board 05
+    /// states the reading column as *a different variant*, with its own type scale, chip
+    /// layout, composer and lane, so there is no position between the two for a finger to rest
+    /// at. Both releases end on `DockReveal.settle`, so the two rungs feel like one gesture.
     ///
     /// It takes no touches of its own (`DrawerPanGesture` hit-tests nothing; its frame is only
     /// the recogniser's geometry gate), so the region costs nothing until a finger actually
@@ -267,15 +260,7 @@ struct DockRevealLayer<Panel: View, Dock: View>: View {
                 // points outside it, so the strip beside the panel does not read as dead.
                 case .expandDock: drag.begin(from: false)
                 case .collapseDock: drag.begin(from: true)
-                case .enterFullScreen:
-                    // The rung above, tracked from the first committed point: the morph's
-                    // container edge follows the finger exactly as the panel follows it one
-                    // rung down. The position is written into the morph's own model — this
-                    // layer draws nothing that moves for it.
-                    if let morph, morphTravel > 0 {
-                        isMorphing = true
-                        morph.begin(atFullScreen: false)
-                    }
+                case .enterFullScreen: isEnteringFullScreen = true
                 // `closeDrawer` is the remaining reachable cell, and it is deliberately not
                 // acted on here: the drawer is inside the panel and belongs to the panel's own
                 // pan region. The touch still committed and still cancelled what it crossed.
@@ -283,16 +268,6 @@ struct DockRevealLayer<Panel: View, Dock: View>: View {
                 }
             },
             onChange: { translation in
-                if isMorphing, let morph {
-                    morph.track(
-                        PresentationMorph.progress(
-                            from: 0,
-                            translation: translation,
-                            travel: morphTravel
-                        )
-                    )
-                    return
-                }
                 guard drag.isDragging else { return }
                 drag.track(
                     DockReveal.progress(
@@ -303,18 +278,15 @@ struct DockRevealLayer<Panel: View, Dock: View>: View {
                 )
             },
             onEnd: { _, velocity in
-                if isMorphing, let morph {
-                    isMorphing = false
-                    // The same release rule as every tracked travel in the shell: velocity
-                    // first, the halfway line second — `DrawerReveal`'s own 300 pt/s, with
-                    // the position the finger actually reached rather than a pinned one.
-                    let fullScreen = PresentationMorph.settlesFullScreen(
-                        progress: morph.progress ?? 0,
-                        velocity: velocity
-                    )
-                    morph.settle(to: fullScreen, velocity: velocity, travel: morphTravel) {
-                        onMorphSettle(fullScreen)
-                    }
+                if isEnteringFullScreen {
+                    isEnteringFullScreen = false
+                    // The one thing a commit-triggered transition still owes the finger: a
+                    // release that flings *back* the way it came takes it back. The same
+                    // `DrawerReveal` rule the sidebar's own commit-triggered swipe uses, with
+                    // the progress pinned at the destination — a committed rightward pan is
+                    // already all the way there unless the release says otherwise.
+                    guard DrawerReveal.settlesOpen(progress: 1, velocity: velocity) else { return }
+                    onEnterFullScreen(velocity)
                     return
                 }
                 guard let progress = drag.progress else { return }

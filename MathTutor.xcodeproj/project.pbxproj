@@ -63,7 +63,6 @@
 		6039FB61DB7B9CE160407A2D /* BoardScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55F857C97BF30E507F4AFBA9 /* BoardScene.swift */; };
 		62D3D1170425BC618AE2CE4E /* SessionSwitcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1AD1D26A28E26E3C17AC894 /* SessionSwitcherTests.swift */; };
 		667FD9DC81E5660F25882C49 /* SettingRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5078C64A063E2312DE7B9A1D /* SettingRow.swift */; };
-		68E69C6C7C25DD476E00549F /* PresentationMorphLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EED82DCB933DCD261354384 /* PresentationMorphLayer.swift */; };
 		6938C21ECBCEE5D5D0A26299 /* BoardCanvas.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48F8A6727EE102FA0FCE0C77 /* BoardCanvas.swift */; };
 		6AA705D59A52E5C5968CB6AA /* Composer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B707E1CFA3F0C0117CDF5213 /* Composer.swift */; };
 		6B186AE00C2EA70C610A53EE /* PresentationMorph.swift in Sources */ = {isa = PBXBuildFile; fileRef = E839283652D220A9F0A6D64E /* PresentationMorph.swift */; };
@@ -183,7 +182,6 @@
 		2D557CC670C82D9747A86266 /* ResizeModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResizeModel.swift; sourceTree = "<group>"; };
 		2E4FD5CE583DC5D398AA6AFC /* SettingsPanes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPanes.swift; sourceTree = "<group>"; };
 		2EA4C8E6325776E542D8DA7B /* TutorPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TutorPanel.swift; sourceTree = "<group>"; };
-		2EED82DCB933DCD261354384 /* PresentationMorphLayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresentationMorphLayer.swift; sourceTree = "<group>"; };
 		3060534FE8CEE11D285FC7FF /* SettingsControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsControls.swift; sourceTree = "<group>"; };
 		363744A8B651DA004FC6F837 /* UIStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIStateTests.swift; sourceTree = "<group>"; };
 		3819B07BA533544E9FFF5372 /* SuggestionChip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuggestionChip.swift; sourceTree = "<group>"; };
@@ -486,7 +484,6 @@
 				451EF516B682FFDFDE3298AC /* Orb.swift */,
 				E954D06964D3CD29E7E328C4 /* OrbHalo.swift */,
 				E839283652D220A9F0A6D64E /* PresentationMorph.swift */,
-				2EED82DCB933DCD261354384 /* PresentationMorphLayer.swift */,
 				0DD4F32A96308B60DB93BAF4 /* SessionsDrawer.swift */,
 				8F1A6EED1920DEA8870E9A3D /* ShellGallery.swift */,
 				D947222D75F7A3F2ED55D0DD /* ToolRail.swift */,
@@ -857,7 +854,6 @@
 				EDEB51FDD8E17D13290CD0AF /* OrbHalo.swift in Sources */,
 				1F91F1A7DBDDCD73CCE8C348 /* PlanLane.swift in Sources */,
 				6B186AE00C2EA70C610A53EE /* PresentationMorph.swift in Sources */,
-				68E69C6C7C25DD476E00549F /* PresentationMorphLayer.swift in Sources */,
 				2F542EF31CD1FFD1F974B6CE /* ResizeGeometry.swift in Sources */,
 				1F0E5F049530F58524E7BE95 /* ResizeHandle.swift in Sources */,
 				D517AAA5757CDE87D2187E3D /* ResizeModel.swift in Sources */,

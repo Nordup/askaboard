@@ -1030,6 +1030,16 @@ closes (`BoardScreen.onChange(of: presentation)`) and the full-screen sidebar is
 
 ### 15.4 The presentation morph (screens 05/08 ↔ screen 07)
 
+> **Status: wired off.** The first device build with the morph wired in froze the app on the
+> iPadOS 17 iPad and the hang could not be reproduced on the iOS 26 simulator (every gesture
+> and button path runs clean there) or sampled over the device's flaky Wi-Fi link. Until the
+> hang is run down on-device, the docked ↔ full-screen transition ships as the
+> commit-triggered spring §15.2/§15.3 originally described: `enterFullScreen` and
+> `enterDocked` settle on the shared spring at release, contents crossfading, and the buttons
+> take the same path. `PresentationMorph` — the arithmetic below — and
+> `PresentationMorphTests` stay compiled and green; only the layer that rendered it was
+> removed. This section stands as the design of record for the re-attempt.
+
 The docked ↔ full-screen transition is an interactive **container morph**, tracked under the
 finger from the first committed point in both directions. It replaced the commit-triggered
 spring-with-crossfade this section used to describe. `PresentationMorph` is the arithmetic,

@@ -83,25 +83,17 @@ struct BoardScreen: View {
     /// for leaving it whichever control was used.
     @State private var dockDrag = DockRevealModel()
 
-    /// The live position of the tutor between screens 05/08 and screen 07 — the container
-    /// morph. `@State` and not `@StateObject` for exactly the reason `dockDrag` is: this
-    /// screen only writes it, and the one view that observes it per frame is
-    /// `PresentationMorphLayer`, whose whole job is to re-render modifiers around stored
-    /// content. It is also the single entry point for the transition: the edge swipes,
-    /// `btn/full-screen`, the peek's tap and the peek lane's swipe all end on its
-    /// `settle(to:velocity:travel:_:)`, so there is one curve for arriving at screen 07 and
-    /// one for leaving it, whichever control was used.
-    @State private var morphDrag = PresentationMorphModel()
-
     var body: some View {
         ZStack(alignment: .topLeading) {
             background
-            // The board, the rail, both tutor surfaces and the peek all live inside the one
-            // layer now, because the morph needs all of them mounted and moving at once —
-            // see `PresentationMorphLayer` for the order they paint in, which is this
-            // screen's old order unchanged.
+            board
+            toolRail
             tutor
-            if presentation == .docked { resizeHandle }
+            // The dock and the peek are the only regions that overlap anything, and both
+            // boards put them in front: screen 06's dock floats on the canvas card, and
+            // screen 07's peek is *"painted last, on top of everything"*. The rail and the
+            // canvas never overlap, so their order is not load-bearing.
+            floatingRegion
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .ignoresSafeArea()
@@ -355,11 +347,9 @@ struct BoardScreen: View {
                 )
             }
         }
-        // No offset, opacity or hit-testing here any more: the morph layer owns all three —
-        // the offset because the card slides with the container's edge mid-morph, the
-        // opacity because it is the docked half of the morph's crossfade, and hit testing
-        // because nothing under a morph takes new touches. At rest all three evaluate to
-        // exactly what used to be written here. The a11y facts stay with the content.
+        .offset(x: boardX, y: layout.contentTop)
+        .opacity(isTutorFullScreen ? 0 : 1)
+        .allowsHitTesting(!isTutorFullScreen)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("whiteboard")
         .accessibilityHidden(isTutorFullScreen)
@@ -387,158 +377,94 @@ struct BoardScreen: View {
         presentation == .collapsed ? layout.railXCollapsed : layout.railX
     }
 
-    /// Mounted by the layer — in every state but full screen, plus for the length of a morph
-    /// so the shrinking container has something real to reveal.
+    @ViewBuilder
     private var toolRail: some View {
-        ToolRail(
-            // A limit, not a size: the rail is `fit-content` at its own 627.5 wherever the
-            // band holds it, which is every full-screen iPad.
-            bandHeight: layout.contentHeight,
-            selectedTool: uiState.tool,
-            selectedColor: uiState.penColor,
-            thickness: uiState.thickness,
-            onSelectTool: { uiState.tool = $0 },
-            onSelectColor: { uiState.penColor = $0 },
-            onCentreOnWork: { capture.centerOnContent(animated: true) }
-        )
-        .offset(x: railX, y: layout.contentTop)
+        if !isTutorFullScreen {
+            ToolRail(
+                // A limit, not a size: the rail is `fit-content` at its own 627.5 wherever the
+                // band holds it, which is every full-screen iPad.
+                bandHeight: layout.contentHeight,
+                selectedTool: uiState.tool,
+                selectedColor: uiState.penColor,
+                thickness: uiState.thickness,
+                onSelectTool: { uiState.tool = $0 },
+                onSelectColor: { uiState.penColor = $0 },
+                onCentreOnWork: { capture.centerOnContent(animated: true) }
+            )
+            .offset(x: railX, y: layout.contentTop)
+        }
     }
 
-    /// Every presentation of the tutor, and the board with it, in one layer.
-    ///
-    /// **One region, not a `switch`, because the morph needs both ends alive at once.** The
-    /// docked pair and the reading column used to be two arms of a switch, which is fine for
-    /// states a button jumps between and wrong for states a finger drags between: a branch
-    /// that swapped at the presentation flip would remount a live thread and a focused
-    /// composer mid-spring. The layer owns the mounting window instead —
-    /// `PresentationMorphModel.isActive` — and still mounts each surface only in its own
-    /// presentation the rest of the time, so screen 06 still gives the board the screen to
-    /// itself and screen 07 still unmounts the panel.
-    ///
-    /// Screen 06 hides the tutor's contents rather than resetting them, which is what lets
-    /// the dock's orb return the student to screen 05 or 08 correctly.
+    @ViewBuilder
     private var tutor: some View {
-        PresentationMorphLayer(
-            geometry: morphGeometry,
-            presentation: presentation,
-            isSidebarOpen: uiState.isSessionsSidebarOpen,
-            boardOrigin: CGPoint(x: boardX, y: layout.contentTop),
-            sidebarOrigin: CGPoint(x: layout.sessionsSidebarX, y: 0),
-            dockTravel: layout.dockTravel,
-            panelOrigin: CGPoint(x: layout.panelX, y: layout.contentTop),
-            dockOrigin: CGPoint(x: layout.collapsedDockX, y: layout.collapsedDockY),
-            edgeZone: CGRect(
-                x: layout.safeAreaLeading,
-                y: layout.contentTop,
-                width: HorizontalSwipeRouter.edgeZoneWidth,
-                height: layout.contentHeight
-            ),
-            // The one cell of the table the leading edge asks the panel about — see
-            // `HorizontalSwipeRouter.transition(...)`.
-            isDrawerOpen: uiState.isSessionsDrawerOpen,
-            dockDrag: dockDrag,
-            // The way back in lands wherever the orb's tap lands, and for the same reason:
-            // on a window too narrow to dock, the tutor's only home is the full-screen
-            // column. See `openTutorFromDock`.
-            onDockSettle: { docked in if docked { openTutorFromDock() } },
-            morph: morphDrag,
-            // Explicit, not the bound method — see `actions.returnToBoard`.
-            onMorphSettle: { applyMorph(fullScreen: $0) }
-        ) {
-            board
-        } rail: {
-            toolRail
-        } panel: {
-            TutorPanel(
-                text: $composerText,
-                dictation: dictation,
-                attachments: attachments,
-                // The same flag the collapsed dock's `btn/select` takes, for the same
-                // control at the other presentation — an empty board has nothing to
-                // select, and `toggleBoardSelection` would swallow the tap.
-                canSelect: capture.hasInk,
-                dock: dockDrag,
-                // The layer casts the panel's elevation from a static-shaped underlay so
-                // the shadow can fade on the morph's own curve — see
-                // `PresentationMorph.shadowGoneBy`.
-                castsShadow: false,
-                actions: actions
-            )
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("tutor-panel")
-        } dock: {
-            CollapsedDock(
-                // Lit from the moment the marquee is armed, for the same reason the
-                // composer's glyph is: this button is the only thing on a collapsed
-                // screen that can report the tap landed.
-                isSelectionAttached: uiState.selection.capturesBoardDrags,
-                canSelect: capture.hasInk,
-                onSelect: toggleBoardSelection,
-                onOpenTutor: expandTutorFromDock
-            )
-        } fullScreenChat: {
+        switch presentation {
+        case .docked, .collapsed:
+            // **Screens 05/08 and screen 06 are one region now, because the swipe between them
+            // is one gesture.** They used to be two arms of this switch and a third entry in
+            // `floatingRegion`, which is fine for two states a button jumps between and wrong
+            // for two states a finger drags between: the panel has to be on screen while it is
+            // still leaving, and the dock has to be on screen before it has arrived. The layer
+            // is what owns that window — see `DockRevealLayer` — and it still mounts each
+            // surface only in its own presentation the rest of the time, so screen 06 still
+            // gives the board the screen to itself.
+            //
+            // Screen 06 hides the tutor's contents rather than resetting them, which is what
+            // lets the dock's orb return the student to screen 05 or 08 correctly.
+            DockRevealLayer(
+                travel: layout.dockTravel,
+                panelOrigin: CGPoint(x: layout.panelX, y: layout.contentTop),
+                dockOrigin: CGPoint(x: layout.collapsedDockX, y: layout.collapsedDockY),
+                edgeZone: CGRect(
+                    x: layout.safeAreaLeading,
+                    y: layout.contentTop,
+                    width: HorizontalSwipeRouter.edgeZoneWidth,
+                    height: layout.contentHeight
+                ),
+                isDocked: presentation == .docked,
+                // The one cell of the table the leading edge asks the panel about — see
+                // `HorizontalSwipeRouter.transition(...)`.
+                isDrawerOpen: uiState.isSessionsDrawerOpen,
+                drag: dockDrag,
+                // The way back in lands wherever the orb's tap lands, and for the same reason:
+                // on a window too narrow to dock, the tutor's only home is the full-screen
+                // column. See `openTutorFromDock`.
+                onSettle: { docked in if docked { openTutorFromDock() } },
+                // Explicit, not the bound method — see `actions.returnToBoard`.
+                onEnterFullScreen: { enterFullScreenFromEdge(velocity: $0) }
+            ) {
+                TutorPanel(
+                    text: $composerText,
+                    dictation: dictation,
+                    attachments: attachments,
+                    // The same flag the collapsed dock's `btn/select` takes, for the same
+                    // control at the other presentation — an empty board has nothing to
+                    // select, and `toggleBoardSelection` would swallow the tap.
+                    canSelect: capture.hasInk,
+                    dock: dockDrag,
+                    actions: actions
+                )
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("tutor-panel")
+            } dock: {
+                CollapsedDock(
+                    // Lit from the moment the marquee is armed, for the same reason the
+                    // composer's glyph is: this button is the only thing on a collapsed
+                    // screen that can report the tap landed.
+                    isSelectionAttached: uiState.selection.capturesBoardDrags,
+                    canSelect: capture.hasInk,
+                    onSelect: toggleBoardSelection,
+                    onOpenTutor: expandTutorFromDock
+                )
+            }
+            if presentation == .docked { resizeHandle }
+        case .fullScreen:
             TutorFullScreen(
                 text: $composerText,
                 dictation: dictation,
                 attachments: attachments,
-                morph: morphDrag,
-                onMorphSettle: { applyMorph(fullScreen: $0) },
                 actions: actions
             )
-        } sidebar: {
-            fullScreenSidebar
-        } peek: {
-            // The tap and the trailing-edge swipe are one path with one curve — see
-            // `returnToBoardFromPeek(velocity:)`. The tap used to write `UIState` directly
-            // and the column simply vanished, which is the fourth-behaviour-rather-than-
-            // fourth-control mistake `DockReveal.settle` was written to end.
-            BoardPeek(height: layout.contentHeight) { returnToBoardFromPeek(velocity: 0) }
-                .offset(x: layout.peekX, y: layout.contentTop)
         }
-    }
-
-    /// The morph's endpoints on this screen, at this width, with the sidebar where the
-    /// learner left it. Rebuilt on every layout pass; constant across a gesture's frames.
-    private var morphGeometry: PresentationMorph {
-        PresentationMorph(layout: layout, isSidebarOpen: uiState.isSessionsSidebarOpen)
-    }
-
-    /// Board 19's sidebar, in the morph layer's own slot so its fold rides the morph's
-    /// progress. Everything about its behaviour is unchanged from when `TutorFullScreen`
-    /// drew it: nothing in here closes it — it is a lane the learner chose, not a menu a
-    /// pick dismisses — and choosing a session re-derives the screen's own axes.
-    private var fullScreenSidebar: some View {
-        SessionsDrawer(
-            sessions: store.sessions,
-            currentID: store.session.id,
-            width: layout.sessionsSidebarWidth,
-            inset: SessionsDrawerMetrics.sidebarInset,
-            height: layout.screenHeight,
-            onNewChat: {
-                store.startNewSession()
-                adoptSessionUI()
-            },
-            onOpen: { id in
-                store.openSession(id: id)
-                adoptSessionUI()
-            },
-            onDelete: { id in
-                store.deleteSession(id: id)
-                adoptSessionUI()
-            },
-            // The row's menu lifecycle, straight from its `UIContextMenuInteraction` —
-            // see `SessionRowMenu` and `TutorPanel`'s identical wiring.
-            onMenuActivity: { uiState.setContextMenuActive($0) },
-            onSettings: { isShowingSettings = true }
-        )
-    }
-
-    /// The screen's own axes, re-derived for the session the sidebar just opened — the same
-    /// three `TutorPanel.adoptSessionUI` re-derives, for the same reasons.
-    private func adoptSessionUI() {
-        uiState.clearBoardSelection()
-        attachments.clear()
-        uiState.showConversation(store.hasGoal ? .active : .start)
     }
 
     /// The drag strip in the gutter between the panel and the tool rail.
@@ -630,6 +556,25 @@ struct BoardScreen: View {
         didChangePanelWidth = false
     }
 
+    /// What floats over the board. The peek, and nothing else now.
+    ///
+    /// The collapsed dock used to be the other case here, and it moved into `tutor` when the
+    /// swipe made it one surface with the panel: the two have to be on screen at the same time
+    /// while a finger is between them, and a dock drawn from a different branch of this file
+    /// could never be. It is still painted over the board — `tutor` comes after `board` in the
+    /// screen's stack — so screen 06's *"the dock floats on the canvas card"* is unchanged.
+    @ViewBuilder
+    private var floatingRegion: some View {
+        if presentation == .fullScreen {
+            // The tap and the trailing-edge swipe are one path with one curve — see
+            // `returnToBoardFromPeek(velocity:)`. The tap used to write `UIState` directly and
+            // the column simply vanished, which is the fourth-behaviour-rather-than-fourth-
+            // control mistake `DockReveal.settle` was written to end.
+            BoardPeek(height: layout.contentHeight) { returnToBoardFromPeek(velocity: 0) }
+                .offset(x: layout.peekX, y: layout.contentTop)
+        }
+    }
+
     private var isTutorFullScreen: Bool { presentation == .fullScreen }
 
     // MARK: - Behaviour
@@ -647,7 +592,6 @@ struct BoardScreen: View {
             // `set:` spells out: a `@MainActor`-isolated method reference passed straight into
             // a one-argument closure parameter crashes swift-frontend during IRGen on this
             // toolchain.
-            enterFullScreen: { enterFullScreenFromPanel() },
             returnToBoard: { returnToBoardFromPeek(velocity: $0) }
         )
     }
@@ -674,40 +618,45 @@ struct BoardScreen: View {
         dockDrag.settle(to: true, velocity: 0, travel: layout.dockTravel) { openTutorFromDock() }
     }
 
-    /// Where every morph ends: the presentation write both edge swipes and both buttons hand
-    /// to `PresentationMorphModel.settle`, made inside the spring's own transaction.
+    /// The rung above docked: a right-swipe released in the leading edge zone while the panel
+    /// is docked. `DockRevealLayer.onEnterFullScreen`.
     ///
-    /// **The sidebar flag is untouched in both directions.** The fold the learner watches is
-    /// `PresentationMorph.sidebarShift(at:)` — a position, not the choice: the layout they
-    /// picked is still there the next time the column is. The docked drawer is closed by this
-    /// screen's own `onChange(of: presentation)`, which is the other half of that rule.
-    private func applyMorph(fullScreen: Bool) {
-        if fullScreen {
+    /// **Commit-triggered, and settled on the shared spring rather than tracked.** There is no
+    /// travel to track: board 05 states the reading column as a different variant of the tutor
+    /// and not a wider panel — *"the type scale, chip layout, chip height, icon size, composer
+    /// height and the composer's contents all change"* — so the two surfaces have no
+    /// intermediate position a finger could hold them at, and the honest motion between them is
+    /// a crossfade rather than a drag. What the spring buys is that the panel does not simply
+    /// vanish: it is still mounted for the length of the settle (`DockRevealModel.isSettling`)
+    /// and leaves on the same curve every other presentation change in this file uses.
+    ///
+    /// The release velocity is carried into it, so a hard flick arrives faster than a slow
+    /// push — the one thing a commit-triggered transition can still take from the finger.
+    private func enterFullScreenFromEdge(velocity: CGFloat) {
+        // `to: true` — the panel is not leaving by the leading edge on this path; it is being
+        // replaced where it stands, and the column arrives over it.
+        dockDrag.settle(to: true, velocity: velocity, travel: layout.dockTravel) {
             uiState.expandTutorToFullScreen()
-        } else {
-            uiState.returnToBoard()
         }
     }
 
-    /// `btn/full-screen` in the panel's header: the same container morph the leading-edge
-    /// swipe drives, run from rest. A tap has no velocity, so the spring starts from rest —
-    /// the only difference between the two, which is `DockReveal.settle`'s rule one rung up.
-    private func enterFullScreenFromPanel() {
-        morphDrag.settle(to: true, velocity: 0, travel: morphGeometry.travel) {
-            applyMorph(fullScreen: true)
-        }
-    }
-
-    /// The way back from the reading column: the peek's tap, with the left-swipe out of the
-    /// peek's own lane settling through the identical model — see
+    /// The way back from the reading column: the peek's tap, and the left-swipe out of the
+    /// peek's own lane. One function, because they are one transition — see
     /// `TutorFullScreen.peekEdgeZone` for the swipe and `BoardPeek` for the tap.
     ///
-    /// The tap runs the morph from rest: the chat surface shrinks back onto the panel's
-    /// frame while the board's card slides in from the trailing edge — closing a door, which
-    /// is what board 02 always said this transition was.
+    /// Commit-triggered for the same reason `enterFullScreenFromEdge` is, and on the same
+    /// spring: the panel is inserted inside the settle transaction, so `DockRevealLayer`'s own
+    /// `.transition(.offset(x: -travel))` carries it in from off the leading edge exactly as the
+    /// dock orb's tap does, while the board fades up behind it and the column fades out.
+    ///
+    /// **The sidebar is untouched.** `returnToBoard` moves one axis, and
+    /// `UIState.isSessionsSidebarOpen` is deliberately not the docked drawer's flag: the
+    /// learner's full-screen layout is still there when they come back. The docked drawer is
+    /// closed by this screen's own `onChange(of: presentation)`, which is the other half of
+    /// that rule.
     private func returnToBoardFromPeek(velocity: CGFloat) {
-        morphDrag.settle(to: false, velocity: velocity, travel: morphGeometry.travel) {
-            applyMorph(fullScreen: false)
+        dockDrag.settle(to: true, velocity: velocity, travel: layout.dockTravel) {
+            uiState.returnToBoard()
         }
     }
 

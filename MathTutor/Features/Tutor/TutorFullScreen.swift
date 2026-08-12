@@ -26,15 +26,6 @@ struct TutorFullScreen: View {
     /// owned: a learner who attaches a photo in the panel and then expands to the reading
     /// column is looking at one message, not two.
     @ObservedObject var attachments: ComposerAttachments
-    /// The presentation morph, written by the peek lane's left-swipe and never observed —
-    /// the same plain-reference rule `TutorPanel.dock` follows, for the same reason: this
-    /// view only writes positions into it, and the one view that reads them per frame is
-    /// `PresentationMorphLayer`, which stores this surface and re-renders modifiers around
-    /// it.
-    let morph: PresentationMorphModel
-    /// Called inside the morph's settle animation with where it landed — `true` is full
-    /// screen. `BoardScreen` owns the presentation write, as it does for every rung.
-    let onMorphSettle: (Bool) -> Void
     let actions: TutorActions
 
     /// Board 16's menu and the picker it asked for.
@@ -96,11 +87,7 @@ struct TutorFullScreen: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             chatSurface
-            // The sessions sidebar is no longer drawn here: it folds in and out with the
-            // presentation morph, so it lives in a slot of `PresentationMorphLayer`, beneath
-            // this surface — see `BoardScreen.fullScreenSidebar`. The column still reserves
-            // its lane through `sidebar` above, which is the settled flag and not a live
-            // position.
+            sessionsSidebar
 
             // No pan-time `.disabled` on any of this any more: a swipe that commits cancels
             // its own in-flight presses at the UIKit level (`DrawerPanRecognizer`), composer
@@ -215,6 +202,72 @@ struct TutorFullScreen: View {
         .accessibilityHidden(true)
     }
 
+    /// Board 19's persistent sidebar, against the leading screen edge.
+    ///
+    /// **Persistent, not modal.** The chat neither moves nor dims for it — the column
+    /// re-centres in what is left, which is `TutorColumnMetrics(layout:reserving:)` — so both
+    /// panes are live at once and neither carries a veil. That is the whole difference from
+    /// the docked drawer, where the two share 337 points and one has to give way.
+    ///
+    /// It slides in from behind the leading edge on a spring rather than tracking the finger.
+    /// The docked drawer tracks because the pane over it tracks with it and the pair reads as
+    /// one sheet under a hand; here the chat is stationary and the reading column re-centres,
+    /// so a finger-tracked sidebar would drag 740 points of text sideways one frame at a time.
+    /// The settle is the same spring either way — see `DrawerReveal.settle(velocity:travel:)`.
+    @ViewBuilder
+    private var sessionsSidebar: some View {
+        if uiState.isSessionsSidebarOpen {
+            SessionsDrawer(
+                sessions: store.sessions,
+                currentID: store.session.id,
+                width: layout.sessionsSidebarWidth,
+                inset: SessionsDrawerMetrics.sidebarInset,
+                height: layout.screenHeight,
+                // **Nothing in here closes the sidebar**, and that is the whole difference
+                // between this surface and the docked one.
+                //
+                // The docked drawer covers 78% of the panel to show you the list, so choosing
+                // from it is finishing with it: it closes, and the chat you chose comes back.
+                // Board 19's sidebar covers nothing — it is a lane of the screen with both
+                // panes live at once — so choosing from it is not finishing with it, it is
+                // using it. Closing on a pick would make the learner re-open the sidebar to
+                // make a second comparison, which is exactly the case a persistent sidebar
+                // exists for.
+                //
+                // That applies to `New chat` for the same reason it applies to a row: both
+                // pick the session the chat pane shows, and the sidebar is not a menu that a
+                // pick dismisses. Settings never closed it either.
+                onNewChat: {
+                    store.startNewSession()
+                    adoptSessionUI()
+                },
+                onOpen: { id in
+                    store.openSession(id: id)
+                    adoptSessionUI()
+                },
+                onDelete: { id in
+                    store.deleteSession(id: id)
+                    adoptSessionUI()
+                },
+                // The row's menu lifecycle, straight from its `UIContextMenuInteraction` —
+                // see `SessionRowMenu` and `TutorPanel`'s identical wiring.
+                onMenuActivity: { uiState.setContextMenuActive($0) },
+                onSettings: actions.openSettings
+            )
+            .offset(x: layout.sessionsSidebarX)
+            .transition(.move(edge: .leading))
+        }
+    }
+
+    /// The screen's own axes, re-derived for the session that just opened — the same three
+    /// `TutorPanel.adoptSessionUI` re-derives, for the same reasons. Both surfaces can open a
+    /// session now, so both have to.
+    private func adoptSessionUI() {
+        uiState.clearBoardSelection()
+        attachments.clear()
+        uiState.showConversation(store.hasGoal ? .active : .start)
+    }
+
     /// Board 19's `btn/sidebar-toggle`, on the chat pane's own top-left corner.
     ///
     /// **It never fades here, and that is the one place this surface parts company with the
@@ -301,13 +354,14 @@ struct TutorFullScreen: View {
     /// the peek is a sibling drawn later by `BoardScreen`, and a UIKit recogniser cannot see
     /// SwiftUI's paint order, which is exactly why the lane is stated as geometry here.
     ///
-    /// **Tracked, not commit-triggered.** Board 05 still states the panel and the column as
-    /// two variants with no interpolable contents — but the *container* interpolates at every
-    /// point, and the finger drags that: the chat surface's trailing edge follows the swipe
-    /// one-to-one while the board's card widens in behind it, which is `PresentationMorph`'s
-    /// whole account. The release settles on the shared spring by the same velocity-first
-    /// rule as every tracked travel; the peek's tap runs the identical morph from rest — see
-    /// `BoardScreen.returnToBoardFromPeek(velocity:)`.
+    /// **Commit-triggered, not tracked**, and settled by `TutorActions.returnToBoard` on the
+    /// dock's shared spring. Board 05 states the panel and the column as two variants rather
+    /// than one responsive view, so there is no position between them for a finger to hold; see
+    /// `BoardScreen.returnToBoardFromPeek(velocity:)` for the whole argument and for what the
+    /// spring is still worth. (The tracked container morph — `PresentationMorph` — is wired
+    /// off for now: it froze the app on the iPadOS 17 device and the hang could not be
+    /// reproduced or sampled from here, so the commit-time spring ships while that is run
+    /// down. The arithmetic and its tests stay compiled.)
     ///
     /// It refuses Apple Pencil touches at touch-down, exactly as the leading zone does: a
     /// pencil in this app is always drawing and never navigating.
@@ -317,33 +371,18 @@ struct TutorFullScreen: View {
             onCommit: { translation in
                 isPanCommitted = true
                 isReturningToBoard = route(translation) == .enterDocked
-                if isReturningToBoard { morph.begin(atFullScreen: true) }
             },
-            onChange: { translation in
-                guard isReturningToBoard else { return }
-                morph.track(
-                    PresentationMorph.progress(
-                        from: 1,
-                        translation: translation,
-                        travel: PresentationMorph.travel(in: layout)
-                    )
-                )
-            },
+            onChange: { _ in },
             onEnd: { _, velocity in
                 isPanCommitted = false
                 guard isReturningToBoard else { return }
                 isReturningToBoard = false
-                let fullScreen = PresentationMorph.settlesFullScreen(
-                    progress: morph.progress ?? 1,
-                    velocity: velocity
-                )
-                morph.settle(
-                    to: fullScreen,
-                    velocity: velocity,
-                    travel: PresentationMorph.travel(in: layout)
-                ) {
-                    onMorphSettle(fullScreen)
-                }
+                // A release that flings back the way it came takes it back — the same rule the
+                // sidebar's own commit-triggered swipe follows, with the progress pinned at the
+                // destination and the sign mirrored: this axis is travelled leftward, so a
+                // leftward velocity is a fling *toward* the board.
+                guard DrawerReveal.settlesOpen(progress: 1, velocity: -velocity) else { return }
+                actions.returnToBoard(velocity)
             }
         )
         .frame(

@@ -17,14 +17,6 @@ struct TutorActions {
     let startPlan: () -> Void
     let retry: () -> Void
     let openSettings: () -> Void
-    /// `btn/full-screen` in the panel's header — screens 05/08 → screen 07, as the same
-    /// container morph the leading-edge swipe drives, run from rest.
-    ///
-    /// An action rather than a `UIState` call the panel makes for itself, for the reason
-    /// `returnToBoard` is one: the curve is the shell's. The button used to write the
-    /// presentation bare and the panel simply vanished — the fourth-behaviour-rather-than-
-    /// fourth-control mistake, at this rung of the ladder.
-    let enterFullScreen: () -> Void
     /// Put the reading column away and bring the board back — screen 07 → screens 05/08, with
     /// the release velocity of the swipe that asked for it, or `0` from a tap.
     ///
@@ -84,11 +76,6 @@ struct TutorPanel: View {
     /// inside the layer — and the one view that reads it is `DockRevealLayer`, which stores its
     /// content and re-renders an offset.
     let dock: DockRevealModel
-    /// Whether the panel's surface casts its own elevation. `false` from the live screen,
-    /// where `PresentationMorphLayer` casts it from a static-shaped underlay instead so the
-    /// shadow can fade on the morph's own curve — see `PresentationMorph.shadowGoneBy`. The
-    /// default keeps every preview and specimen exactly as drawn.
-    var castsShadow = true
     let actions: TutorActions
 
     /// Board 16's menu, and which of the three pickers it asked for. Both are the *panel's*
@@ -120,7 +107,7 @@ struct TutorPanel: View {
         // The board behind it keeps its own height — see `keyboardInset`.
         let size = CGSize(width: layout.panelWidth, height: layout.contentHeightAboveKeyboard)
 
-        return TutorPanelSurface(size: size, elevated: castsShadow) {
+        return TutorPanelSurface(size: size) {
             // The gesture, the travel and the veils all live in the layer, and so does the
             // only state a finger writes. Nothing here is a function of how far the drawer is
             // open — that is the rule the layer's own doc sets out, and it is what keeps a
@@ -272,9 +259,7 @@ struct TutorPanel: View {
             onDock: {
                 dock.settle(to: false, velocity: 0, travel: layout.dockTravel) { collapse() }
             },
-            // The morph the leading-edge swipe drives, run from rest — one curve for the
-            // gesture and the button, which is `DockReveal.settle`'s rule one rung up.
-            onFullScreen: { closeMenus(); actions.enterFullScreen() },
+            onFullScreen: { closeMenus(); uiState.expandTutorToFullScreen() },
             alignment: .trailing
         )
         .frame(width: contentWidth, height: TutorPanelMetrics.controlsHeight, alignment: .trailing)
