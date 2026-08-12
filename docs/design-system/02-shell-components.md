@@ -1058,9 +1058,10 @@ and therefore the one genuine crossfade.
 |---|---|
 | Progress | `0` docked … `1` full screen; pure functions of this one number, so a gesture that turns around retraces its own frames |
 | Travel | the container's trailing edge: `screenWidth − dockTravel`, **1011** on the reference screen |
-| Release | velocity first (**300 pt/s**), 50% line second — `DrawerReveal.settlesOpen`, delegated; live-finger frames are marked `Transaction.isContinuous` |
+| Release | velocity first (**300 pt/s**), 50% line second — `DrawerReveal.settlesOpen`, delegated; live-finger frames are marked `Transaction.isContinuous`. The arrival spring is `DrawerReveal.settle`'s construction at **damping 26** (`PresentationMorph.settle` — the drawer keeps its 30): damping ratio ~0.73, so the ensemble arrives with a hint of snap |
+| Dip | the travelling ensemble breathes: `scale(p) = 1 − 0.05·sin(π·p)` (`PresentationMorph.flightScale`), **exactly 1 at both endpoints** so pixel parity holds, minimum mid-flight. Applied to the flight copies as **one group about one shared anchor** — the container's centre (`flightDipAnchor`) — never per element, which would read as wobble. It rides gesture progress, so a scrub shows the dip under the finger and the settle spring carries the snap back. The **board card takes no counter-dip**: it must read as sliding planarly under the screen edge to become the hinge tab, and its landing on the peek's line is pixel-pinned — the surfaces lift, the ground stays put |
 | Container | frame lerps panel → chat pane (sidebar-aware), glued to the finger; corners finish **early** — `0 … 0.75` entering, `0.30 … 0.90` returning; fill dissolves over the first **30%**, with the panel's static-shaped shadow underlay |
-| Lead curve | shared elements run `1 − (1 − p)²` ahead of the finger-locked box (content settles before the container); the greeting and thread stagger 5% behind the orb |
+| Lead curve | shared elements run `1 − (1 − p)²` ahead of the finger-locked box (content settles before the container), as **one family with staggered departures** (`leadStaggered(_:by:)`): orb bare, greeting +5%, chips +8%, pill +10% — a flock, not a welded convoy. Every stagger is a remap of the interior, so all of them are exactly 0 and 1 at the ends. Widths stay linear on the finger |
 | Orb | one `Orb(.panel)`: pure x, 148.5 → 640, y fixed at 198, size fixed |
 | Greeting | one 301-wide title+subtitle block, translated only — subtitle capped 277 at both ends, so the centred block is pixel-identical to both settled surfaces |
 | Chips | leading 46 → 388 on the lead; **width 301 → 600 linear on the finger** — a real `.frame(width:)`, nothing re-wraps |
@@ -1075,7 +1076,22 @@ and therefore the one genuine crossfade.
 Endpoint pixel-parity is arithmetic, not a rendering promise: every path is exact (never
 rounded) at `0` and `1`, whole points between, so the handoff between a flight copy and the
 settled surface's own element cannot jump. `PresentationMorphTests` and
-`PresentationFlightTests` pin the equalities, the bands and the paths per element.
+`PresentationFlightTests` pin the equalities, the bands, the dip, the staggers and the
+end-state opacities on both legs.
+
+Two lifecycle rules learned from the shipped morph's first device round:
+
+- **A stale settle completion is a no-op.** A gesture that grabs the morph while the
+  previous flight's spring is still settling starts a new flight; when the interrupted
+  spring's completion finally fires it must not clear `isSettling` or the screen's mount
+  flag under the live drag — or the surfaces' own copies come back at full opacity while
+  the flight copies are still in the air, and the screen shows both. `PresentationMorphModel`
+  keeps a generation counter; `finishSettle(of:)` releases only for the current flight.
+- **The panel's fade bands fly with the pill.** The docked composer slot's band and the
+  panel's top scroll fade are `--color-surface-panel` gradients: invisible over the panel's
+  own fill, a grey wash hanging at the panel's old position once the container has whitened
+  past 30% of the travel. Both go invisible — never unmounted — for the flight's duration,
+  which changes nothing at the docked handoff because there they sit on their own colour.
 
 ---
 

@@ -275,4 +275,106 @@ final class PresentationFlightTests: XCTestCase {
             XCTAssertEqual(flight.orbX(at: step), DrawerReveal.wholePoints(expected))
         }
     }
+
+    // MARK: - The flock
+
+    /// One curve family, staggered departures: the orb leads bare, the greeting follows at
+    /// 5%, the chips at 8%, the pill at 10% — and every stagger still lands exactly at both
+    /// ends, because the remap only shifts the interior.
+    func testFlockDepartsInOrderAndArrivesTogether() {
+        XCTAssertEqual(PresentationMorph.greetingStagger, 0.05)
+        XCTAssertEqual(PresentationMorph.chipsStagger, 0.08)
+        XCTAssertEqual(PresentationMorph.composerStagger, 0.10)
+        for stagger in [PresentationMorph.greetingStagger,
+                        PresentationMorph.chipsStagger,
+                        PresentationMorph.composerStagger] {
+            XCTAssertEqual(PresentationMorph.leadStaggered(0, by: stagger), 0)
+            XCTAssertEqual(PresentationMorph.leadStaggered(stagger, by: stagger), 0)
+            XCTAssertEqual(PresentationMorph.leadStaggered(1, by: stagger), 1)
+        }
+        // Departure order holds through the interior: rear never outruns front.
+        for step in stride(from: CGFloat(0.05), to: 1, by: 0.05) {
+            let orb = PresentationMorph.lead(step)
+            let greeting = PresentationMorph.leadStaggered(step, by: PresentationMorph.greetingStagger)
+            let chips = PresentationMorph.leadStaggered(step, by: PresentationMorph.chipsStagger)
+            let pill = PresentationMorph.leadStaggered(step, by: PresentationMorph.composerStagger)
+            XCTAssertLessThanOrEqual(greeting, orb + 1e-9, "at \(step)")
+            XCTAssertLessThanOrEqual(chips, greeting + 1e-9, "at \(step)")
+            XCTAssertLessThanOrEqual(pill, chips + 1e-9, "at \(step)")
+        }
+    }
+
+    /// The pill rides its own beat now, no longer welded to the chips — but the two still
+    /// agree exactly at both ends.
+    func testComposerTrailsTheChipsThroughTheInterior() {
+        let flight = closed
+        XCTAssertEqual(flight.composerX(at: 0), flight.chipsX(at: 0))
+        XCTAssertEqual(flight.composerX(at: 1), flight.chipsX(at: 1))
+        XCTAssertLessThan(flight.composerX(at: 0.4), flight.chipsX(at: 0.4))
+    }
+
+    // MARK: - The dip
+
+    /// `scale(p) = 1 − depth·sin(π·p)`: exactly 1 at both endpoints — pixel parity is not
+    /// negotiable — minimum at mid-flight, symmetric, clamped outside the travel so an
+    /// overshooting settle spring renders the endpoint and never a magnified frame.
+    func testDipIsExactlyOneAtTheEndsAndBreathesBetween() {
+        XCTAssertEqual(PresentationMorph.flightScale(at: 0), 1)
+        XCTAssertEqual(PresentationMorph.flightScale(at: 1), 1)
+        XCTAssertEqual(
+            PresentationMorph.flightScale(at: 0.5),
+            1 - PresentationMorph.flightDipDepth,
+            accuracy: 1e-9
+        )
+        XCTAssertEqual(
+            PresentationMorph.flightScale(at: 0.25),
+            PresentationMorph.flightScale(at: 0.75),
+            accuracy: 1e-9
+        )
+        XCTAssertEqual(PresentationMorph.flightScale(at: -0.5), 1)
+        XCTAssertEqual(PresentationMorph.flightScale(at: 1.5), 1)
+        // The depth stays in the judged band.
+        XCTAssertGreaterThanOrEqual(PresentationMorph.flightDipDepth, 0.04)
+        XCTAssertLessThanOrEqual(PresentationMorph.flightDipDepth, 0.08)
+    }
+
+    /// One shared anchor, the container's centre — never a per-element anchor.
+    func testDipAnchorsOnTheContainersCentre() {
+        let morph = PresentationMorph(layout: layout, isSidebarOpen: false)
+        for step in stride(from: CGFloat(0), through: 1, by: 0.25) {
+            let frame = morph.containerFrame(at: step)
+            let anchor = morph.flightDipAnchor(at: step)
+            XCTAssertEqual(anchor.x, frame.midX / layout.screenWidth, accuracy: 1e-9)
+            XCTAssertEqual(anchor.y, frame.midY / layout.screenHeight, accuracy: 1e-9)
+        }
+    }
+
+    // MARK: - End states, both legs
+
+    /// Every fade and every mount-facing opacity at both endpoints, on both legs — the
+    /// frame the settled surface takes over from must be exactly the surface's own, and a
+    /// reversed gesture must retrace to exactly the frame it left.
+    func testEndStateOpacitiesArePinnedOnBothLegs() {
+        let morph = closed
+        for returnLeg in [false, true] {
+            // Docked end: panel chrome at full strength, nothing of the far end visible.
+            XCTAssertEqual(PresentationMorph.controlsOpacity(at: 0), 1)
+            XCTAssertEqual(morph.panelShadowOpacity(at: 0), 1)
+            XCTAssertEqual(morph.panelFillOpacity(at: 0), 1)
+            XCTAssertEqual(morph.peekOpacity(at: 0), 0)
+            XCTAssertEqual(PresentationMorph.dockedThreadOpacity(at: 0, returnLeg: returnLeg), 1)
+            XCTAssertEqual(PresentationMorph.fullThreadOpacity(at: 0, returnLeg: returnLeg), 0)
+            XCTAssertEqual(morph.boardShift(at: 0), 0)
+            XCTAssertEqual(PresentationMorph.flightScale(at: 0), 1)
+            // Full-screen end: the far end at full strength, the panel's chrome gone.
+            XCTAssertEqual(PresentationMorph.controlsOpacity(at: 1), 0)
+            XCTAssertEqual(morph.panelShadowOpacity(at: 1), 0)
+            XCTAssertEqual(morph.panelFillOpacity(at: 1), 0)
+            XCTAssertEqual(morph.peekOpacity(at: 1), 1)
+            XCTAssertEqual(PresentationMorph.dockedThreadOpacity(at: 1, returnLeg: returnLeg), 0)
+            XCTAssertEqual(PresentationMorph.fullThreadOpacity(at: 1, returnLeg: returnLeg), 1)
+            XCTAssertEqual(morph.boardShift(at: 1), morph.boardTravel)
+            XCTAssertEqual(PresentationMorph.flightScale(at: 1), 1)
+        }
+    }
 }

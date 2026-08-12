@@ -224,13 +224,25 @@ struct TutorPanel: View {
             // Fade and pill together, bottom-anchored: the slot owns the 18pt inset under
             // the composer, so screen 08's pill bottom lands on the panel floor less that
             // inset and screen 05's card grows upward from the same line.
-            // The pill goes invisible — never unmounted — while its flight copy is in the
-            // air; the fade band behind it is the surface's own and stays.
-            ComposerSlot(metrics: slot) { composer.opacity(isInPresentationFlight ? 0 : 1) }
+            //
+            // The whole slot — the pill *and* the band behind it — goes invisible, never
+            // unmounted, while the flight copies are in the air. The band used to stay on
+            // the argument that it is the surface's own, and that was a leak the device
+            // showed: the band is a `--color-surface-panel` gradient, invisible over the
+            // panel's own fill at rest but a grey wash hanging at the panel's old position
+            // once the morphing container has whitened past 30% of the travel — an element
+            // that visibly did not disappear. At progress 0 the band sits on its own colour,
+            // so hiding it at commitment changes not one visible pixel at the handoff.
+            ComposerSlot(metrics: slot) { composer }
                 .frame(maxHeight: .infinity, alignment: .bottom)
+                .opacity(isInPresentationFlight ? 0 : 1)
 
             Group {
+                // Hidden in flight with the slot's band, for the identical reason: a
+                // panel-grey gradient over the whitening container is a ghost, and over
+                // the panel's own fill it is invisible either way.
                 ScrollFade(width: size.width, metrics: .top(for: .panel))
+                    .opacity(isInPresentationFlight ? 0 : 1)
 
                 if isAttachMenuOpen {
                     attachMenu(in: size)

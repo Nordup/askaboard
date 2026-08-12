@@ -208,6 +208,44 @@ final class PresentationMorphTests: XCTestCase {
         XCTAssertEqual(morph.panelFillOpacity(at: 1), 0)
     }
 
+    // MARK: - The settle and its interruptions
+
+    /// The arrival spring derives from the drawer's shared construction, one notch
+    /// livelier. The constant is pinned; the construction itself is `DrawerReveal.settle`,
+    /// which is the sharing.
+    func testArrivalSpringIsTheSharedOneANotchLivelier() {
+        XCTAssertEqual(PresentationMorph.settleDamping, 26)
+        XCTAssertLessThan(PresentationMorph.settleDamping, 30, "livelier than the drawer's")
+    }
+
+    /// A gesture that catches the morph mid-settle must not have the mounts pulled out
+    /// from under it when the interrupted spring's completion finally fires: a stale
+    /// completion is a no-op, and only the current flight's own completion releases.
+    @MainActor
+    func testStaleSettleCompletionDoesNotReleaseTheMounts() {
+        let model = PresentationMorphModel()
+        // Enter flight, released: the spring is running.
+        model.begin(atFullScreen: false)
+        model.settle(to: true, velocity: 0, travel: 1011) {}
+        let interrupted = model.generation
+        XCTAssertTrue(model.isSettling)
+        // A new gesture grabs the morph before the spring finishes.
+        model.begin(atFullScreen: true)
+        XCTAssertTrue(model.isDragging)
+        // The old spring's completion arrives late — and does nothing.
+        model.finishSettle(of: interrupted) {
+            XCTFail("a stale completion must not run the caller's release")
+        }
+        XCTAssertTrue(model.isSettling, "the mounts stay held under the live drag")
+        XCTAssertTrue(model.isActive)
+        // The new flight settles; its own completion is the one that releases.
+        model.settle(to: false, velocity: 0, travel: 1011) {}
+        var released = false
+        model.finishSettle(of: model.generation) { released = true }
+        XCTAssertTrue(released)
+        XCTAssertFalse(model.isSettling)
+    }
+
     /// Out-of-range progress — a defensive caller, an overshooting spring — renders as the
     /// nearer endpoint rather than extrapolating a frame nothing designed.
     func testCurvesClampOutsideTheTravel() {

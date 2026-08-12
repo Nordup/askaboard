@@ -99,6 +99,20 @@ struct PresentationMorph: Equatable, Sendable {
         DrawerReveal.settlesOpen(progress: progress, velocity: velocity)
     }
 
+    /// The arrival spring's damping — the drawer's 30, one notch livelier. `26` puts the
+    /// damping ratio at ~0.73, the band iOS's own system springs live in: the settle
+    /// arrives sooner and carries a hint of snap where the drawer's ratio (~0.84) glides.
+    /// Judged against the dip: an ensemble that shrank on the way needs an arrival with
+    /// some spring in it, or the snap-back reads as a fade back to size.
+    static let settleDamping: CGFloat = 26
+
+    /// The settle animation — `DrawerReveal.settle`, the shared construction, at this
+    /// morph's own damping. Every path through the morph ends here: swipe releases and
+    /// button replays alike, which is what keeps the two one system.
+    static func settle(velocity: CGFloat, travel: CGFloat) -> Animation {
+        DrawerReveal.settle(velocity: velocity, travel: travel, damping: settleDamping)
+    }
+
     // MARK: - The container
 
     /// The visible container: the panel's frame at `0`, the chat pane's at `1`, every edge
@@ -256,11 +270,67 @@ struct PresentationMorph: Equatable, Sendable {
         return 1 - (1 - p) * (1 - p)
     }
 
-    /// The lead curve, a beat behind the orb: `p` remapped to `[0.05, 1]` before easing, so
-    /// the greeting follows the tutor's face by a stagger of 5% of the travel rather than
-    /// moving as one welded plate with it.
+    /// The lead curve, a beat late: `p` remapped to `[stagger, 1]` before easing, so an
+    /// element leaves after the one ahead of it and still arrives with everything at both
+    /// ends — the remap keeps the endpoints exact, only the interior shifts.
+    ///
+    /// One family, three beats (`greetingStagger`, `chipsStagger`, `composerStagger`): the
+    /// orb leads on the bare curve, the greeting follows the face, the chips follow the
+    /// greeting and the pill brings up the rear. The old arrangement ran the orb, the chips
+    /// and the pill on the identical curve — a welded convoy with one straggler — and this
+    /// is what makes the ensemble read as a flock instead: same path, staggered departures.
+    static func leadStaggered(_ progress: CGFloat, by stagger: CGFloat) -> CGFloat {
+        guard stagger > 0, stagger < 1 else { return lead(progress) }
+        return lead((progress - stagger) / (1 - stagger))
+    }
+
+    /// The greeting's beat behind the orb — 5% of the travel, as shipped.
+    static let greetingStagger: CGFloat = 0.05
+
+    /// The chips' beat, one step behind the greeting.
+    static let chipsStagger: CGFloat = 0.08
+
+    /// The pill's beat, at the rear of the flock. Its *width* stays linear on the finger —
+    /// the stretch tracks the box — only the departure is staggered.
+    static let composerStagger: CGFloat = 0.10
+
+    /// The greeting's curve, kept as the named spelling the flight paths read.
     static func leadStaggered(_ progress: CGFloat) -> CGFloat {
-        lead((progress - 0.05) / 0.95)
+        leadStaggered(progress, by: greetingStagger)
+    }
+
+    // MARK: - The ensemble's dip
+
+    /// How much smaller the travelling ensemble reads at the middle of the flight — the
+    /// OS space-switcher's gesture language: surfaces lift and recede slightly while you
+    /// move between them, and settle back to full size as they land. `0.05` of scale at
+    /// the deepest point; judged in the simulator against 0.04 and 0.08 — 0.04 reads as
+    /// rendering noise, 0.08 as the content flinching from the finger.
+    static let flightDipDepth: CGFloat = 0.05
+
+    /// `scale(p) = 1 − depth · sin(π·p)`: **exactly 1 at both endpoints** — the pixel-parity
+    /// contract survives the dip untouched — with the minimum at mid-flight. It rides the
+    /// same progress every other curve rides, so a scrub shows the dip under the finger and
+    /// the settle spring carries the snap back to size. Clamped like every curve here: an
+    /// overshooting spring renders the endpoint, never a magnified extrapolation.
+    static func flightScale(at progress: CGFloat) -> CGFloat {
+        let p = min(1, max(0, progress))
+        guard p > 0, p < 1 else { return 1 }
+        return 1 - Self.flightDipDepth * sin(.pi * p)
+    }
+
+    /// The one shared anchor the dip scales about — the container's own centre at that
+    /// point of the travel. One anchor for the whole ensemble, deliberately: per-element
+    /// anchors would shrink each element about itself, which reads as a wobble of parts;
+    /// one anchor moves every element fractionally toward the container's centre together,
+    /// which reads as the group breathing.
+    func flightDipAnchor(at progress: CGFloat) -> UnitPoint {
+        let frame = containerFrame(at: progress)
+        guard screenFrame.width > 0, screenFrame.height > 0 else { return .center }
+        return UnitPoint(
+            x: frame.midX / screenFrame.width,
+            y: frame.midY / screenFrame.height
+        )
     }
 
     // MARK: - The unmatched elements' fades
@@ -451,13 +521,15 @@ struct PresentationFlight: Equatable, Sendable {
             + (greeting.suggestionsTopMargin ?? 0)
     }
 
-    /// The chip stack's leading edge: 46 → 388 on the lead curve. The leading edge, not the
-    /// centre — the width below is interpolating at the same time, and the pair is what
-    /// carries the centre through the same +491.5 every other element travels.
+    /// The chip stack's leading edge: 46 → 388 on the lead curve, one flock-beat behind
+    /// the greeting (`chipsStagger`). The leading edge, not the centre — the width below is
+    /// interpolating at the same time, and the pair is what carries the centre through the
+    /// same +491.5 every other element travels.
     func chipsX(at progress: CGFloat) -> CGFloat {
         travelled(
             from: dockedColumnX,
-            by: PresentationMorph.lead(progress) * (fullColumnX - dockedColumnX),
+            by: PresentationMorph.leadStaggered(progress, by: PresentationMorph.chipsStagger)
+                * (fullColumnX - dockedColumnX),
             at: progress
         )
     }
@@ -476,9 +548,15 @@ struct PresentationFlight: Equatable, Sendable {
 
     // MARK: - The composer
 
-    /// The pill's leading edge: the chips' own path — 46 → 388 on the lead curve.
+    /// The pill's leading edge: the chips' path, one more beat behind (`composerStagger`) —
+    /// the rear of the flock. 46 → 388, exact at both ends like every path here.
     func composerX(at progress: CGFloat) -> CGFloat {
-        chipsX(at: progress)
+        travelled(
+            from: dockedColumnX,
+            by: PresentationMorph.leadStaggered(progress, by: PresentationMorph.composerStagger)
+                * (fullColumnX - dockedColumnX),
+            at: progress
+        )
     }
 
     /// The pill's width: the chips' own interpolation — 301 → 600, linear on the finger.
@@ -632,8 +710,22 @@ final class PresentationMorphModel: ObservableObject {
     /// Both presentations must stay mounted: a drag, or the spring after one.
     var isActive: Bool { progress != nil || isSettling }
 
-    /// The pan committed. The anchor is whichever end the tutor was resting at.
+    /// Which flight the model is on. Bumped by every `begin` and every `settle`, and read
+    /// by `finishSettle(of:onFinished:)`: a settle spring's completion is only allowed to
+    /// release the mounts if no newer flight has started under it. Without this, a gesture
+    /// that commits while the previous flight's spring is still running — grab the morph
+    /// back mid-settle — is later interrupted by the *old* spring's completion, which
+    /// clears the mount flag under the live drag: the surfaces' own copies come back at
+    /// full opacity while the flight copies are still in the air, and the screen shows
+    /// both. That is the "elements do not disappear" class of leak, closed here.
+    private(set) var generation = 0
+
+    /// The pan committed. The anchor is whichever end the tutor was resting at — which,
+    /// for a gesture that catches a settling flight, is the end the interrupted spring was
+    /// already heading for: the settled presentation flipped at the spring's start, so the
+    /// anchor and the screen agree by construction.
     func begin(atFullScreen: Bool) {
+        generation += 1
         isReturnLeg = atFullScreen
         progress = atFullScreen ? 1 : 0
     }
@@ -664,13 +756,24 @@ final class PresentationMorphModel: ObservableObject {
         _ apply: @escaping () -> Void
     ) {
         isSettling = true
-        withAnimation(DrawerReveal.settle(velocity: velocity, travel: travel)) {
+        generation += 1
+        let flight = generation
+        withAnimation(PresentationMorph.settle(velocity: velocity, travel: travel)) {
             progress = nil
             apply()
         } completion: { [weak self] in
-            self?.isSettling = false
-            onFinished?()
+            self?.finishSettle(of: flight, onFinished: onFinished)
         }
+    }
+
+    /// A settle spring's completion, gated by generation. Stale completions — the spring a
+    /// newer gesture already interrupted — do nothing at all: neither `isSettling` nor the
+    /// caller's mount flag may move under a live flight. Internal (not private) so the
+    /// gating is assertable without a running animation.
+    func finishSettle(of flight: Int, onFinished: (() -> Void)? = nil) {
+        guard flight == generation else { return }
+        isSettling = false
+        onFinished?()
     }
 
     /// A tracked frame, in a transaction marked continuous — the flag SwiftUI provides for

@@ -130,10 +130,14 @@ enum DrawerReveal {
     ///
     /// `travel` normalises the velocity: `interpolatingSpring` states initial velocity in
     /// fractions of the animated distance per second, and the caller's is in points per second.
-    static func settle(velocity: CGFloat, travel: CGFloat) -> Animation {
+    ///
+    /// `damping` defaults to the drawer's own 30 and exists for exactly one caller: the
+    /// presentation morph's arrival (`PresentationMorph.settle`), which runs the same spring
+    /// a notch livelier. One construction, so a stiffness change reaches every settle at once.
+    static func settle(velocity: CGFloat, travel: CGFloat, damping: CGFloat = 30) -> Animation {
         .interpolatingSpring(
             stiffness: 320,
-            damping: 30,
+            damping: damping,
             initialVelocity: travel > 0 ? Double(velocity / travel) : 0
         )
     }

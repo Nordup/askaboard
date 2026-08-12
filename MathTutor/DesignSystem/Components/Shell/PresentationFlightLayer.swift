@@ -148,6 +148,34 @@ extension FlightRender: @preconcurrency Animatable {
     }
 }
 
+/// The travelling ensemble's dip — the space-switcher breath, applied to the flight copies
+/// as **one group about one anchor**: `PresentationMorph.flightScale` about the container's
+/// centre. It wraps the whole `flightElements` stack (framed to the screen, so the unit
+/// anchor is the container's centre in screen coordinates) rather than riding inside each
+/// `FlightRender`, because per-element scaling about per-element centres reads as the parts
+/// wobbling; one transform moves the ensemble fractionally toward the shared centre and the
+/// group breathes together. Exactly 1 at both endpoints, so the pixel-parity handoff to the
+/// settled surfaces is untouched. Geometry only, like every animatable here — it decides
+/// nothing about what exists.
+struct FlightDip: ViewModifier {
+    var progress: CGFloat
+    let geometry: PresentationMorph
+
+    func body(content: Content) -> some View {
+        content.scaleEffect(
+            PresentationMorph.flightScale(at: progress),
+            anchor: geometry.flightDipAnchor(at: progress)
+        )
+    }
+}
+
+extension FlightDip: @preconcurrency Animatable {
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+}
+
 /// The region that hosts the board, the rail, the tutor and the floating peek — and, while
 /// a docked ↔ full-screen morph is in flight, the morphing container and the flight copies
 /// of the shared elements.
@@ -303,6 +331,15 @@ struct PresentationFlightLayer<
             )
             .modifier(render(.composer))
         }
+        // Framed to the screen so the dip's unit anchor lands on the container's centre in
+        // screen coordinates. The children are all `.offset`-placed, so the frame changes
+        // where nothing is drawn — it only gives the transform its coordinate space.
+        .frame(
+            width: morph.screenFrame.width,
+            height: morph.screenFrame.height,
+            alignment: .topLeading
+        )
+        .modifier(FlightDip(progress: progress, geometry: morph))
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
