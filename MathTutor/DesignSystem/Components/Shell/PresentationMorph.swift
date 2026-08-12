@@ -232,6 +232,19 @@ struct PresentationMorph: Equatable, Sendable {
         DrawerReveal.wholePoints(-(1 - unit(progress)) * sidebarWidth)
     }
 
+    // MARK: - The shared elements' lead
+
+    /// The slight ease-out the shared elements run ahead of the finger-locked container:
+    /// `1 − (1 − p)²`, clamped. The container is glued to the finger; the contents settle
+    /// slightly before it does, which is the one principle every production container
+    /// transform shares — Material runs its fade in the first quarter of the travel, the
+    /// App Store runs position on a spring while size runs linear. Without the lead the
+    /// transition reads as a box dragging its cargo.
+    static func lead(_ progress: CGFloat) -> CGFloat {
+        let p = min(1, max(0, progress))
+        return 1 - (1 - p) * (1 - p)
+    }
+
     // MARK: - Arithmetic
 
     private func unit(_ progress: CGFloat) -> CGFloat {
@@ -251,6 +264,80 @@ struct PresentationMorph: Equatable, Sendable {
         guard end > start else { return x >= end ? 1 : 0 }
         let t = min(1, max(0, (x - start) / (end - start)))
         return Double(t * t * (3 - 2 * t))
+    }
+}
+
+// MARK: - The shared elements' paths
+
+/// Where each shared element of the docked ↔ full-screen morph is, at every point of the
+/// travel — the per-element half of the arithmetic, beside `PresentationMorph`'s container
+/// half.
+///
+/// The decisive measurement (2026-08-12 research brief, §2): with the reading column drawn
+/// at the panel treatment (`TutorColumnMetrics.liveScale == .panel`, capped at 600), the two
+/// endpoints draw **the same components at the same type scale on the same baselines**. The
+/// docked start state and the full-screen start state differ in a horizontal translation of
+/// the content column — `+491.5` at its centre on the reference screen — and a widening of
+/// the chips and the pill from 301 to 600. Nothing scales, nothing re-typesets, nothing
+/// needs a snapshot. So the shared elements are **single instances that travel**, never
+/// pairs that dissolve, and this type is the path each one travels.
+///
+/// Every function is pure in `progress`, like the container's, so the return leg is the
+/// same code read backwards and a gesture that turns around retraces its own frames.
+struct PresentationFlight: Equatable, Sendable {
+
+    /// The docked content column: `panelX + --space-panel-inset`, `panelWidth − 2 × inset` —
+    /// x 46, width 301 on the reference screen.
+    let dockedColumnX: CGFloat
+    let dockedColumnWidth: CGFloat
+
+    /// The reading column the full-screen surface actually draws — `TutorColumnMetrics`,
+    /// sidebar-aware, capped at the panel treatment's 600. x 388, width 600 on the
+    /// reference screen with the sidebar shut.
+    let fullColumnX: CGFloat
+    let fullColumnWidth: CGFloat
+
+    /// The orb's top edge, identical at both ends by construction: both surfaces stack
+    /// `--space-panel-inset + controls row + 120` below the content top —
+    /// `TutorFullScreen.startBlock` mirrors `TutorPanel.startFill` exactly so *"the morph's
+    /// two endpoints agree about where the tutor's face is."* 198 on the reference screen.
+    let orbTop: CGFloat
+
+    /// `Orb(.panel)`'s layout frame — 96 × 90. The size is fixed through the whole travel;
+    /// the orb's path is a pure x translation.
+    static let orbFrame = OrbSize.panel.metrics.frame
+
+    init(layout: ScreenLayout, isSidebarOpen: Bool) {
+        dockedColumnX = layout.panelX + TutorPanelMetrics.inset
+        dockedColumnWidth = TutorPanelMetrics.contentWidth(for: layout.panelWidth)
+        let column = TutorColumnMetrics(
+            layout: layout,
+            reserving: isSidebarOpen ? layout.sessionsSidebarWidth : 0
+        )
+        fullColumnX = column.x
+        fullColumnWidth = column.width
+        orbTop = layout.contentTop
+            + TutorPanelMetrics.inset + TutorPanelMetrics.controlsHeight
+            + PanelStack.orbTopMargin
+    }
+
+    /// How far the content column's **centre** moves — `+491.5` on the reference screen.
+    /// The one number the hi state's whole translation is.
+    var columnShift: CGFloat {
+        (fullColumnX + fullColumnWidth / 2) - (dockedColumnX + dockedColumnWidth / 2)
+    }
+
+    /// The orb's leading edge at rest docked — centred in the 301 column, 148.5 on the
+    /// reference screen.
+    var dockedOrbX: CGFloat {
+        dockedColumnX + (dockedColumnWidth - Self.orbFrame.width) / 2
+    }
+
+    /// The orb's leading edge along the travel: the docked position plus the column shift on
+    /// the lead curve, so the tutor's face arrives slightly before the box does. Whole
+    /// points, the same rule every rasterised travel in the shell follows.
+    func orbX(at progress: CGFloat) -> CGFloat {
+        DrawerReveal.wholePoints(dockedOrbX + PresentationMorph.lead(progress) * columnShift)
     }
 }
 
@@ -298,10 +385,16 @@ final class PresentationMorphModel: ObservableObject {
     /// transaction that clears the drag — clearing it outside would hand the layer its
     /// settled position and everything would jump instead of springing. The completion is
     /// what releases the mounts, exactly as `DockRevealModel.settle`'s does.
+    /// `onFinished` runs in the spring's completion, after the mounts are released — it is
+    /// where a caller clears its own "a flight is in progress" state, and it is the one
+    /// place that is guaranteed to be **outside** every animation transaction. Mount
+    /// decisions belong there and nowhere animated — see the freeze post-mortem in the
+    /// 2026-08-12 research brief, §9.3.
     func settle(
         to fullScreen: Bool,
         velocity: CGFloat,
         travel: CGFloat,
+        onFinished: (() -> Void)? = nil,
         _ apply: @escaping () -> Void
     ) {
         isSettling = true
@@ -310,7 +403,16 @@ final class PresentationMorphModel: ObservableObject {
             apply()
         } completion: { [weak self] in
             self?.isSettling = false
+            onFinished?()
         }
+    }
+
+    /// A tracked frame, in a transaction marked continuous — the flag SwiftUI provides for
+    /// exactly this case: per-frame values written by a gesture rather than by an animation.
+    func trackContinuously(_ value: CGFloat) {
+        var transaction = Transaction()
+        transaction.isContinuous = true
+        withTransaction(transaction) { progress = value }
     }
 }
 

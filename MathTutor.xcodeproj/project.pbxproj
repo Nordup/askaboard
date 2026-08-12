@@ -86,6 +86,7 @@
 		8B9AC755A10DFAF39CA985CD /* SettingsWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CDCEE851D84DD0BD8B2DB86 /* SettingsWindow.swift */; };
 		8CFFCA8713A559A17AA2D839 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C742B8F4CF845931CCEFC3D /* KeychainStore.swift */; };
 		8EF8D1DBB69B35CD52FE47A8 /* TutorEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4D02DCD5A1B7D6CBA594BAF /* TutorEvent.swift */; };
+		909EF7E56052568AE9D49AFD /* PresentationFlightTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E16CB555EA54D0DF21AEC40C /* PresentationFlightTests.swift */; };
 		960BF188040438DC7F5C1D9B /* AttachmentUploader.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE21716456338270C146DD1F /* AttachmentUploader.swift */; };
 		9986C716988CA98C7B16DA42 /* IconPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CBDF79C9C7A38D6240F017F /* IconPaths.swift */; };
 		9EE208CFC286CC9901CDDBB6 /* ComposerButtons.swift in Sources */ = {isa = PBXBuildFile; fileRef = 268CDEEFE80CA5EDF78FB1EF /* ComposerButtons.swift */; };
@@ -102,6 +103,7 @@
 		B31E3D93CDC97207E80A325F /* IconTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EC6EB284F209A08B2D0E2A1 /* IconTests.swift */; };
 		B366553CEEF5B22C7E6E9FF0 /* SettingsSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F5E4A4B0992C23D2307164F /* SettingsSidebar.swift */; };
 		B5FD8AA551AF597A4904A241 /* AttachmentStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0E636CF98B8B5B2D40A95EA /* AttachmentStoreTests.swift */; };
+		B82F1991580E272D76286A7B /* PresentationFlightLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 595F4FD351F4D0749C033634 /* PresentationFlightLayer.swift */; };
 		B869A9B81CB70FA8EE40C4A3 /* Layout.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAB4A0EDD663149C6BE8D7CB /* Layout.swift */; };
 		B8C8402116B81B279E426A78 /* SessionSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8253C7910B50F4BAAB7D0BF0 /* SessionSummary.swift */; };
 		B911747BF2C09A7A7CF6DCA7 /* BoardScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA7BBCEDC1728230AF71647E /* BoardScreen.swift */; };
@@ -206,6 +208,7 @@
 		52D52C388DABD65744236C2D /* ToolRailParts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolRailParts.swift; sourceTree = "<group>"; };
 		55615CBEB6C020BA51B4B0F9 /* BoardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardView.swift; sourceTree = "<group>"; };
 		55F857C97BF30E507F4AFBA9 /* BoardScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardScene.swift; sourceTree = "<group>"; };
+		595F4FD351F4D0749C033634 /* PresentationFlightLayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresentationFlightLayer.swift; sourceTree = "<group>"; };
 		5DAA007B907FE56B1E8A66F7 /* BoardGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardGeometry.swift; sourceTree = "<group>"; };
 		5E71EAD98E5C0012B1C4D4B2 /* DictationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictationTests.swift; sourceTree = "<group>"; };
 		5E72D330830D55839603C239 /* DesignTokens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignTokens.swift; sourceTree = "<group>"; };
@@ -280,6 +283,7 @@
 		DE2F1C8A199C9377474DF7AA /* ResizeModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResizeModelTests.swift; sourceTree = "<group>"; };
 		DEB67774A3E9FFC188FF1D75 /* DemoTutorServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoTutorServiceTests.swift; sourceTree = "<group>"; };
 		E0042681934772C27C33B7D0 /* MessageThread.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageThread.swift; sourceTree = "<group>"; };
+		E16CB555EA54D0DF21AEC40C /* PresentationFlightTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresentationFlightTests.swift; sourceTree = "<group>"; };
 		E5350113098845186BFC0238 /* Elevation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Elevation.swift; sourceTree = "<group>"; };
 		E5536C323F707DE80AC54BD8 /* AttachmentPickers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentPickers.swift; sourceTree = "<group>"; };
 		E839283652D220A9F0A6D64E /* PresentationMorph.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresentationMorph.swift; sourceTree = "<group>"; };
@@ -428,6 +432,7 @@
 				5EC6EB284F209A08B2D0E2A1 /* IconTests.swift */,
 				255C26B763A5F36C69C477AD /* LayoutTests.swift */,
 				D6A6AC55DDB94015492D4C2A /* MathTutorTests.swift */,
+				E16CB555EA54D0DF21AEC40C /* PresentationFlightTests.swift */,
 				2BD48F42A41C08AD9B3F2FAC /* PresentationMorphTests.swift */,
 				AF203F43C82054D956C00D85 /* ResizeHandleTests.swift */,
 				DE2F1C8A199C9377474DF7AA /* ResizeModelTests.swift */,
@@ -483,6 +488,7 @@
 				4B072CAB2B50300D01AC544E /* MenuCardMetrics.swift */,
 				451EF516B682FFDFDE3298AC /* Orb.swift */,
 				E954D06964D3CD29E7E328C4 /* OrbHalo.swift */,
+				595F4FD351F4D0749C033634 /* PresentationFlightLayer.swift */,
 				E839283652D220A9F0A6D64E /* PresentationMorph.swift */,
 				0DD4F32A96308B60DB93BAF4 /* SessionsDrawer.swift */,
 				8F1A6EED1920DEA8870E9A3D /* ShellGallery.swift */,
@@ -773,6 +779,7 @@
 				B31E3D93CDC97207E80A325F /* IconTests.swift in Sources */,
 				AA43B884F9CF945EA312DEE2 /* LayoutTests.swift in Sources */,
 				E7AA3EADB2E34641D55A2A0A /* MathTutorTests.swift in Sources */,
+				909EF7E56052568AE9D49AFD /* PresentationFlightTests.swift in Sources */,
 				45F84D3431CAFB2AD3BFEB2A /* PresentationMorphTests.swift in Sources */,
 				08EF5D10480D0105D90EB2E9 /* ResizeHandleTests.swift in Sources */,
 				86FF5393AB87153348D04F74 /* ResizeModelTests.swift in Sources */,
@@ -853,6 +860,7 @@
 				5BDF38E6FA09E4774CE0D474 /* Orb.swift in Sources */,
 				EDEB51FDD8E17D13290CD0AF /* OrbHalo.swift in Sources */,
 				1F91F1A7DBDDCD73CCE8C348 /* PlanLane.swift in Sources */,
+				B82F1991580E272D76286A7B /* PresentationFlightLayer.swift in Sources */,
 				6B186AE00C2EA70C610A53EE /* PresentationMorph.swift in Sources */,
 				2F542EF31CD1FFD1F974B6CE /* ResizeGeometry.swift in Sources */,
 				1F0E5F049530F58524E7BE95 /* ResizeHandle.swift in Sources */,

@@ -32,7 +32,7 @@ struct TutorActions {
 /// The vertical chain of the docked panel, exactly as the boards state it. The panel's own
 /// 18pt top inset and 301pt content column come from `TutorPanelMetrics`; these are the
 /// margins the *screens* add between its children.
-private enum PanelStack {
+enum PanelStack {
     /// Screen 05: `Orb` carries `margin-top: 120`, putting it at panel-local y 170.
     static let orbTopMargin: CGFloat = 120
     /// Screen 05: `Start state` carries `margin-top: var(--spacing-10)`, so it starts at 300.
@@ -77,6 +77,12 @@ struct TutorPanel: View {
     /// content and re-renders an offset.
     let dock: DockRevealModel
     let actions: TutorActions
+
+    /// True while a docked ↔ full-screen flight is in progress — see
+    /// `TutorFullScreen.isInPresentationFlight`, the same flag on the other surface. The
+    /// flight layer draws the travelling copy of each shared element; this surface's own
+    /// copy holds its slot at opacity 0 for the duration. Today: the orb.
+    var isInPresentationFlight = false
 
     /// Board 16's menu, and which of the three pickers it asked for. Both are the *panel's*
     /// rather than the draft's: a menu open when the learner collapses the tutor is a card
@@ -427,6 +433,9 @@ struct TutorPanel: View {
     private var startFill: some View {
         VStack(spacing: 0) {
             Orb(.panel)
+                // The flight layer's copy is the one on screen mid-morph; this one holds
+                // its slot at opacity 0 so nothing reflows and nothing is unmounted.
+                .opacity(isInPresentationFlight ? 0 : 1)
                 .padding(.top, PanelStack.orbTopMargin)
             GreetingBlock(
                 scale: .panel,

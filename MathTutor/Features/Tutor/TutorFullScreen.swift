@@ -28,6 +28,19 @@ struct TutorFullScreen: View {
     @ObservedObject var attachments: ComposerAttachments
     let actions: TutorActions
 
+    /// The presentation morph's gesture, when the screen runs the tracked container morph:
+    /// the peek lane's left-swipe drives the flight layer's progress from `1` downward.
+    /// `nil` keeps the commit-triggered spring — previews never pass one. Held as a plain
+    /// value that only ever writes; the one observer is `PresentationFlightLayer`.
+    var flight: PresentationFlightHandle? = nil
+
+    /// True while a docked ↔ full-screen flight is in progress. The shared elements are
+    /// single instances that travel in the flight layer, so this surface's own copies go
+    /// invisible — held at opacity 0, never unmounted, so the mount decision stays outside
+    /// the animated path — for exactly the flight's duration. Grows one element per step of
+    /// the rebuild; today it is the orb.
+    var isInPresentationFlight = false
+
     /// Board 16's menu and the picker it asked for.
     @State private var isAttachMenuOpen = false
     @State private var pickerSource: AttachmentSource? = nil
@@ -371,12 +384,29 @@ struct TutorFullScreen: View {
             onCommit: { translation in
                 isPanCommitted = true
                 isReturningToBoard = route(translation) == .enterDocked
+                // The tracked morph, where the screen runs one: anchor at full screen and
+                // let the flight layer render every frame from here to the release. A plain
+                // write from a UIKit callback — no transaction — so the flight mounts
+                // un-animated at its anchor.
+                if isReturningToBoard, let flight {
+                    flight.drag.begin(atFullScreen: true)
+                    flight.onBegin()
+                }
             },
-            onChange: { _ in },
+            onChange: { translation in
+                guard isReturningToBoard else { return }
+                flight?.track(anchor: 1, translation: translation)
+            },
             onEnd: { _, velocity in
                 isPanCommitted = false
                 guard isReturningToBoard else { return }
                 isReturningToBoard = false
+                // Tracked: the release rule needs the real position, and the settle is the
+                // shell's — it owns the mounts the spring has to hold open.
+                if let flight {
+                    flight.onRelease(velocity)
+                    return
+                }
                 // A release that flings back the way it came takes it back — the same rule the
                 // sidebar's own commit-triggered swipe follows, with the progress pinned at the
                 // destination and the sign mirrored: this axis is travelled leftward, so a
@@ -463,13 +493,16 @@ struct TutorFullScreen: View {
     private var startBlock: some View {
         VStack(spacing: 0) {
             Orb(.panel)
+                // The flight layer's copy is the one on screen mid-morph; this one holds
+                // its slot at opacity 0 so nothing reflows and nothing is unmounted.
+                .opacity(isInPresentationFlight ? 0 : 1)
                 // The panel's own `18 + 32 + 120` below its surface top. The block's own
                 // `column.top` padding puts its head on the content line the panel's surface
                 // sits on, so the orb lands on the same screen line it holds in the docked
                 // panel — the morph's two endpoints agree about where the tutor's face is.
                 .padding(
                     .top,
-                    TutorPanelMetrics.inset + TutorPanelMetrics.controlsHeight + 120
+                    TutorPanelMetrics.inset + TutorPanelMetrics.controlsHeight + PanelStack.orbTopMargin
                 )
             GreetingBlock(
                 scale: Self.scale,

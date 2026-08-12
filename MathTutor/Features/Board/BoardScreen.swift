@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// The one shell all four screens are drawn in.
 ///
@@ -83,17 +84,47 @@ struct BoardScreen: View {
     /// for leaving it whichever control was used.
     @State private var dockDrag = DockRevealModel()
 
+    /// The live position of the docked ↔ full-screen morph — the rung above `dockDrag`, held
+    /// the same way and for the same reasons: `@State`, never `@StateObject`, because it
+    /// publishes per touch event and this screen only writes to it. The one observer is
+    /// `PresentationFlightLayer`.
+    @State private var presentationDrag = PresentationMorphModel()
+
+    /// True from a flight's commitment until its settle spring finishes. **The mount flag**,
+    /// and deliberately a plain `@State` written outside every animation transaction — at
+    /// commitment (a UIKit gesture callback) and in the settle's completion — so nothing a
+    /// spring animates ever decides what exists. See the 2026-08-12 research brief, §9.3.
+    @State private var isPresentationFlightActive = false
+
     var body: some View {
         ZStack(alignment: .topLeading) {
             background
-            board
-            toolRail
-            tutor
-            // The dock and the peek are the only regions that overlap anything, and both
-            // boards put them in front: screen 06's dock floats on the canvas card, and
-            // screen 07's peek is *"painted last, on top of everything"*. The rail and the
-            // canvas never overlap, so their order is not load-bearing.
-            floatingRegion
+            // The board, the rail, the tutor and the peek all live inside the flight layer
+            // now, because a docked ↔ full-screen morph reaches all four: the container
+            // grows over the rail, the shared elements fly over the tutor, and — further
+            // steps — the board card slides under the arriving peek. At rest the layer is
+            // four stored slots handed straight back; the dock and the peek keep their
+            // paint order (screen 06's dock floats on the canvas card, screen 07's peek is
+            // *"painted last, on top of everything"*).
+            PresentationFlightLayer(
+                morph: PresentationMorph(
+                    layout: layout, isSidebarOpen: uiState.isSessionsSidebarOpen
+                ),
+                flight: PresentationFlight(
+                    layout: layout, isSidebarOpen: uiState.isSessionsSidebarOpen
+                ),
+                isFullScreen: presentation == .fullScreen,
+                conversation: uiState.conversation,
+                model: presentationDrag
+            ) {
+                board
+            } rail: {
+                toolRail
+            } tutor: {
+                tutor
+            } floating: {
+                floatingRegion
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .ignoresSafeArea()
@@ -430,7 +461,10 @@ struct BoardScreen: View {
                 // column. See `openTutorFromDock`.
                 onSettle: { docked in if docked { openTutorFromDock() } },
                 // Explicit, not the bound method — see `actions.returnToBoard`.
-                onEnterFullScreen: { enterFullScreenFromEdge(velocity: $0) }
+                onEnterFullScreen: { enterFullScreenFromEdge(velocity: $0) },
+                // The tracked container morph: the same right-swipe, every frame of it
+                // driving the flight layer instead of waiting for the release.
+                flight: presentationFlight
             ) {
                 TutorPanel(
                     text: $composerText,
@@ -441,7 +475,8 @@ struct BoardScreen: View {
                     // select, and `toggleBoardSelection` would swallow the tap.
                     canSelect: capture.hasInk,
                     dock: dockDrag,
-                    actions: actions
+                    actions: actions,
+                    isInPresentationFlight: isPresentationFlightActive
                 )
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("tutor-panel")
@@ -462,8 +497,60 @@ struct BoardScreen: View {
                 text: $composerText,
                 dictation: dictation,
                 attachments: attachments,
-                actions: actions
+                actions: actions,
+                flight: presentationFlight,
+                isInPresentationFlight: isPresentationFlightActive
             )
+        }
+    }
+
+    // MARK: - The presentation flight
+
+    /// The morph gesture, bundled for its two owners — the leading edge zone inside
+    /// `DockRevealLayer` going up, the peek's lane inside `TutorFullScreen` coming down.
+    /// Both write the same model; this screen owns the settle and the mounts.
+    private var presentationFlight: PresentationFlightHandle {
+        PresentationFlightHandle(
+            drag: presentationDrag,
+            travel: PresentationMorph.travel(in: layout),
+            onBegin: beginPresentationFlight,
+            // Explicit, not the bound method — see `actions.returnToBoard`.
+            onRelease: { releasePresentationFlight(velocity: $0) }
+        )
+    }
+
+    /// A pan committed to the presentation axis. The mount flag flips here — a UIKit
+    /// gesture callback, no transaction — and the composer's focus is resigned on a
+    /// main-queue hop, never inside a render transaction: `BoardCanvas.swift` carries the
+    /// scar of the synchronous version deadlocking UIKit's keyboard machinery on iPadOS 17.
+    private func beginPresentationFlight() {
+        isPresentationFlightActive = true
+        DispatchQueue.main.async {
+            UIApplication.shared.sendAction(
+                #selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil
+            )
+        }
+    }
+
+    /// The committed pan released: the shared velocity-first rule against the real tracked
+    /// position, then the shared spring. The presentation flips inside the settle
+    /// transaction — that is what makes it spring rather than jump — while the mounts are
+    /// held by `isPresentationFlightActive`, which clears only in the completion.
+    private func releasePresentationFlight(velocity: CGFloat) {
+        let travel = PresentationMorph.travel(in: layout)
+        let progress = presentationDrag.progress ?? (presentation == .fullScreen ? 1 : 0)
+        let fullScreen = PresentationMorph.settlesFullScreen(progress: progress, velocity: velocity)
+        presentationDrag.settle(
+            to: fullScreen,
+            velocity: velocity,
+            travel: travel,
+            onFinished: { isPresentationFlightActive = false }
+        ) {
+            if fullScreen, uiState.presentation != .fullScreen {
+                uiState.expandTutorToFullScreen()
+            } else if !fullScreen, uiState.presentation == .fullScreen {
+                uiState.returnToBoard()
+            }
         }
     }
 
