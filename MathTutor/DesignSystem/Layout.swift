@@ -447,7 +447,32 @@ struct ScreenLayout: Equatable, Sendable {
     /// region by construction when it does. What it is checked against is `columnX(reserving:)`,
     /// which is where it actually bites.
     var sessionsSidebarX: CGFloat { safeAreaLeading }
-    var sessionsSidebarWidth: CGFloat { SessionsDrawerMetrics.sidebarWidth }
+
+    /// The sidebar's drawn width: the design's 296 on the reference screen, and its reference
+    /// **proportion** of a narrower one — `min(296, round(width × 296 ÷ 1376))`.
+    ///
+    /// A constant 296 was right on the board and wrong on the device the same way the panel's
+    /// absolute x was: on a 1024pt iPad it takes 29% of the screen where the board drew 21.5%,
+    /// and the element that pays is the reading column — the one lane on screen 07 whose room
+    /// is the point of screen 07. So the sidebar is the absorber on small screens, exactly as
+    /// the board is the absorber in the docked row: the column keeps its designed measure and
+    /// the list of one-line titles gives, because a title that truncates a little sooner costs
+    /// less than a column that loses its type's line length. The content column inside follows
+    /// for free — `SessionsDrawerMetrics.contentWidth(for:inset:)` derives from the frame.
+    ///
+    /// Floored at `sidebarMinimumWidth`, because the bottom bar is the one row that cannot
+    /// truncate: below `244` the New chat pill and the gear collide, so the proportional
+    /// shrink stops there — see `SessionsDrawerMetrics.sidebarMinimumWidth` for the
+    /// term-by-term account. On the reference screen the `min` picks 296 and every published
+    /// value is exactly what it was.
+    var sessionsSidebarWidth: CGFloat {
+        let proportional = (size.width * SessionsDrawerMetrics.sidebarWidth / DS.Container.screen)
+            .rounded()
+        return max(
+            SessionsDrawerMetrics.sidebarMinimumWidth,
+            min(SessionsDrawerMetrics.sidebarWidth, proportional)
+        )
+    }
 
     /// How far the docked chat pane slides to reveal the drawer beneath it — the drawer's own
     /// width, since the two are the same travel seen from either side. `337 × 0.78 = 263`.

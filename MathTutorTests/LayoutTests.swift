@@ -182,6 +182,40 @@ final class LayoutTests: XCTestCase {
         XCTAssertEqual(l.contentTop, DS.Space.edge, "0 + 28")
     }
 
+    // MARK: - The full-screen sidebar's lane
+
+    /// The sidebar keeps the board's proportion, not the board's number — see
+    /// `ScreenLayout.sessionsSidebarWidth`: `min(296, round(width × 296 ÷ 1376))`, floored
+    /// where the bottom bar would collide.
+    func testSidebarWidthKeepsItsReferenceProportionOnNarrowerScreens() {
+        // The reference screen is the design, to the point.
+        XCTAssertEqual(
+            ScreenLayout.reference.sessionsSidebarWidth,
+            SessionsDrawerMetrics.sidebarWidth
+        )
+
+        // A mid-width screen takes the proportion: `round(1194 × 296 ÷ 1376) = 257`.
+        let mid = ScreenLayout(size: CGSize(width: 1194, height: 834))
+        XCTAssertEqual(mid.sessionsSidebarWidth, 257)
+
+        // The iPad 6th generation's proportional 220 is under the bottom bar's floor, so the
+        // floor answers: the New chat pill and the gear are the one row that cannot truncate.
+        let narrow = ScreenLayout(size: CGSize(width: 1024, height: 768))
+        XCTAssertEqual(narrow.sessionsSidebarWidth, SessionsDrawerMetrics.sidebarMinimumWidth)
+        XCTAssertEqual(narrow.sessionsSidebarWidth, 244, "188 + 2 × 28")
+
+        // Never wider than the design's own lane, however wide the screen.
+        let wide = ScreenLayout(size: CGSize(width: 2000, height: 1200))
+        XCTAssertEqual(wide.sessionsSidebarWidth, SessionsDrawerMetrics.sidebarWidth)
+    }
+
+    /// The floor itself, term by term: the pill's measured 136, one gap, the 44pt gear,
+    /// and the frame's two insets.
+    func testSidebarMinimumWidthIsTheBottomBarsOwnArithmetic() {
+        XCTAssertEqual(SessionsDrawerMetrics.bottomBarMinimumContentWidth, 188, "136 + 8 + 44")
+        XCTAssertEqual(SessionsDrawerMetrics.sidebarMinimumWidth, 244, "188 + 2 × 28")
+    }
+
     // MARK: - Portrait, Split View, Stage Manager
 
     /// Portrait iPads and the multitasking widths. `project.yml` pins the app to landscape

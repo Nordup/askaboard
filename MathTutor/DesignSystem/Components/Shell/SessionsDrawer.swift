@@ -74,9 +74,30 @@ enum SessionsDrawerMetrics {
     /// the sidebar therefore truncates a little sooner in the drawer — as it already did at
     /// every panel width but 337, which is what makes a matched pair a coincidence rather than
     /// a rule.
+    /// **The design width, not the drawn width.** `ScreenLayout.sessionsSidebarWidth` is what
+    /// the sidebar is actually drawn at: this value on the reference screen, and its reference
+    /// *proportion* of a narrower one — the sidebar is the absorber on small screens, the way
+    /// the board is in the docked row, because the reading column is the element that must
+    /// keep its designed room. See that property for the arithmetic.
     static let sidebarWidth: CGFloat = sidebarContentWidth + 2 * DS.Space.edge
     static let sidebarContentWidth: CGFloat = 240
     static let sidebarInset = DS.Space.edge
+
+    /// The narrowest frame the sidebar may be drawn at: the bottom bar's own content, plus the
+    /// frame's two insets — `188 + 2 × 28 = 244`.
+    ///
+    /// The bar is the one row in the drawer that does not truncate: a session title ellipsises
+    /// and the bar's pill and gear do not. Its content is the pill — 16 leading, the 20pt
+    /// glyph, an 8pt gap, "New chat" at 17pt semibold (≈72), 20 trailing, ≈136 in all — a gap
+    /// the width of `newChatGap`, and the 44pt gear: **188**. Below that the two controls
+    /// collide, so the proportional shrink stops here and the reading column gives instead —
+    /// which it can, because it is the flexible lane by construction.
+    static let sidebarMinimumWidth: CGFloat = bottomBarMinimumContentWidth + 2 * DS.Space.edge
+
+    /// The pill, one gap, the gear — see `sidebarMinimumWidth` for the term-by-term account.
+    /// The 136 is a measurement of the pill at the design's own type, held as a constant
+    /// because a floor that re-measured text per frame would be layout, not arithmetic.
+    static let bottomBarMinimumContentWidth: CGFloat = 136 + newChatGap + settingsButton
 
     /// The corner the full-screen chat turns toward the sidebar — board 19's `--radius-3xl`,
     /// the panel's own radius. It is the panel's radius because the pane is now the same kind
