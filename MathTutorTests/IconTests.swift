@@ -557,6 +557,47 @@ final class IconTests: XCTestCase {
         XCTAssertTrue(glyph.elements.allSatisfy { $0.lineCap == .round })
     }
 
+    /// `control/full` is two opposite corner marks, and every part of that sentence is pinned:
+    /// two elements, each an L of a 9-unit run and a 7-unit rise, at opposite corners of the
+    /// same 21 × 17 box the dock control's rect occupies.
+    ///
+    /// The mark used to be that rect without a divider, which made the two controls in the
+    /// header pair one outline with and without a line in it. A bounding box cannot tell those
+    /// apart — the old glyph and the new one both measure 21 × 17 — so the corners are pinned
+    /// by their own vertices instead.
+    func testTheFullScreenControlIsTwoOppositeCornerMarks() {
+        let glyph = Icon.controlFull.glyph
+
+        XCTAssertEqual(glyph.elements.count, 2)
+        for (index, element) in glyph.elements.enumerated() {
+            let box = element.path.boundingRect
+            XCTAssertEqual(box.width, 9, accuracy: 0.01, "element \(index) run")
+            XCTAssertEqual(box.height, 7, accuracy: 0.01, "element \(index) rise")
+        }
+
+        // Top-right, then bottom-left: opposite corners of the 3.5…24.5 × 5.5…22.5 box.
+        XCTAssertEqual(glyph.elements[0].path.boundingRect.maxX, 24.5, accuracy: 0.01)
+        XCTAssertEqual(glyph.elements[0].path.boundingRect.minY, 5.5, accuracy: 0.01)
+        XCTAssertEqual(glyph.elements[1].path.boundingRect.minX, 3.5, accuracy: 0.01)
+        XCTAssertEqual(glyph.elements[1].path.boundingRect.maxY, 22.5, accuracy: 0.01)
+
+        // Three on-curve points each — a move, an H and a V. Two would be a dropped arm, and
+        // the bounding box of an L cannot see the difference between an L and its diagonal.
+        var counts: [Int] = []
+        for element in glyph.elements {
+            var count = 0
+            element.path.forEach { _ in count += 1 }
+            counts.append(count)
+        }
+        XCTAssertEqual(counts, [3, 3])
+
+        // **Miter, not round.** A round join eats the corner mass, which is the whole of what
+        // the mark is; the caps are round because the four ends are open.
+        XCTAssertTrue(glyph.elements.allSatisfy { $0.lineJoin == .miter }, "MITER joins")
+        XCTAssertTrue(glyph.elements.allSatisfy { $0.lineCap == .round })
+        XCTAssertTrue(glyph.elements.allSatisfy { $0.isStroked && !$0.isFilled })
+    }
+
     /// The bounding-box checks cannot see a dropped subpath in a mark whose two halves
     /// span the same box — lose one arm of `ui/cross` and it still measures 11.2 × 11.2.
     /// So the multi-subpath glyphs are counted, not measured.

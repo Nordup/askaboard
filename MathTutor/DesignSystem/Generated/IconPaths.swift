@@ -237,9 +237,11 @@ enum IconPaths {
 
     /// `control/dock` — renders 28 on a 28×28 viewBox, 2.0pt effective stroke, --color-icon.
     ///
-    /// control/dock and control/full are the same 21×17 rect at radius 5; dock adds the divider
-    /// at x=11.2. The board: 'draw them as one shape with a conditional second path — the rect
-    /// must not shift by even a subpixel when the state toggles.' The divider sits left of
+    /// control/dock is a 21×17 rect at radius 5 with a divider at x=11.2. The board: 'draw them
+    /// as one shape with a conditional second path — the rect must not shift by even a subpixel
+    /// when the state toggles.' That rule was written when control/full was this same rect
+    /// without the divider; control/full is two corner marks now, so what survives of it is the
+    /// rect holding still across the dock control's own states. The divider sits left of
     /// centre, mirrored from x=16.8 when the shell mirrored: the panel is on the left of the
     /// screen, so the glyph's small region has to be on the left too.
     static let controlDock = IconGlyph(
@@ -274,7 +276,13 @@ enum IconPaths {
 
     /// `control/full` — renders 28 on a 28×28 viewBox, 2.0pt effective stroke, --color-icon.
     ///
-    /// Byte-identical to control/dock minus the divider.
+    /// Two opposite corner marks, not a rectangle. It used to be control/dock's own 21×17 rect
+    /// minus the divider, which made the pair of controls one outline with and without a line
+    /// in it — at 28 the two read as the same glyph, and the one that means 'expand' has to
+    /// look like expanding. Each mark is a 9-unit run and a 7-unit rise sharing a vertex:
+    /// top-right at (24.5, 5.5), bottom-left at (3.5, 22.5), the diagonal between them the
+    /// frame's own. Round caps at the four open ends, and MITER joins at the two vertices — a
+    /// round join eats the corner mass, which is the whole of what the mark is.
     static let controlFull = IconGlyph(
         name: "control/full",
         viewBox: CGSize(width: 28, height: 28),
@@ -284,13 +292,22 @@ enum IconPaths {
         colorToken: "--color-icon",
         elements: [
             IconElement(
-                geometry: .rect(x: 3.5, y: 5.5, width: 21, height: 17, cornerRadius: 5),
+                geometry: .path("M15.5 5.5 H24.5 V12.5"),
                 isFilled: false,
                 isStroked: true,
-                lineCap: .butt,
+                lineCap: .round,
                 lineJoin: .miter,
                 dash: nil,
-                designStrokeWidth: 2.1
+                designStrokeWidth: 2
+            ),
+            IconElement(
+                geometry: .path("M12.5 22.5 H3.5 V15.5"),
+                isFilled: false,
+                isStroked: true,
+                lineCap: .round,
+                lineJoin: .miter,
+                dash: nil,
+                designStrokeWidth: 2
             ),
         ]
     )

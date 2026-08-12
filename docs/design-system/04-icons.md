@@ -60,7 +60,8 @@ Board's own summary rows:
 | `tool/highlighter` | vb28 · r28 · 2.2 renders 2.20 → set 2.0 |
 | `tool/eraser` | vb28 · r28 · 2.0 renders 2.00 → already correct |
 | `tool/center` | vb24 · r26 · 2.0 renders 2.17 → set 1.85 |
-| `control/dock` · `control/full` | vb28 · r28 · 2.1 renders 2.10 → set 2.0 |
+| `control/dock` | vb28 · r28 · 2.1 renders 2.10 → set 2.0 |
+| `control/full` | vb28 · r28 · 2 renders 2.00 — the redrawn corner marks are authored at the target |
 | `ui/selection-marker` | vb24 · r24 · 2.0 renders 2.00 → already correct |
 | `composer/voice` · full screen | vb24 · r26 · 1.9 renders 2.06 → set 1.85 |
 | `composer/voice` · in-conversation panel | vb24 · r20 · 2.4 renders 2.00 → already correct |
@@ -309,20 +310,32 @@ Five glyphs on a 28pt frame, each centred in a 54pt slot.
 | purpose | Tutor panel header, right control — expand the tutor panel to full screen. |
 | viewBox | `0 0 28 28` |
 | rendered size | 28 × 28 |
-| stroke width attribute | `2.1` |
-| **effective rendered stroke weight** | specimen: **2.1 × (28 ÷ 28) = 2.10** · product (inline `strokeWidth: '2'`): **2.00** |
+| stroke width attribute | `2` |
+| **effective rendered stroke weight** | **2.00** at the 28 render — scale is 1.0, so the attribute is the weight |
 | stroke colour | `var(--color-icon)` → `#55565A` |
-| fill | `none` |
-| linecap / linejoin | none declared (default `butt` / `miter`) |
+| fill | `none` on both |
+| linecap / linejoin | `round` / **`miter`** |
 | dash pattern | none |
 
 **Elements, in document order:**
 
 ```svg
-<rect x="3.5" y="5.5" width="21" height="17" rx="5" fill="none" stroke="var(--color-icon)" stroke-width="2.1" />
+<path d="M15.5 5.5 H24.5 V12.5" fill="none" stroke="var(--color-icon)" stroke-width="2" stroke-linecap="round" stroke-linejoin="miter" />
+<path d="M12.5 22.5 H3.5 V15.5" fill="none" stroke="var(--color-icon)" stroke-width="2" stroke-linecap="round" stroke-linejoin="miter" />
 ```
 
-Byte-identical to `control/dock` minus the divider path.
+**Two opposite corner marks, not a rectangle.** It was `control/dock`'s own 21 × 17 rect without
+the divider, and that made the header's pair of controls one outline with and without a line in
+it: at 28 they read as the same glyph, and the one that means *expand* has to look like
+expanding. Each mark is a 9-unit run and a 7-unit rise sharing a vertex — top-right at
+`(24.5, 5.5)`, bottom-left at `(3.5, 22.5)` — so the pair still occupies the dock control's box
+and the two controls stay the same optical size.
+
+**The joins are `miter` and they are load-bearing.** A round join eats the corner mass, which is
+the whole of what the mark is. The caps are `round` because the four ends are open, the same
+finish every other 2pt rule in the set has. A bounding box cannot tell the new glyph from the
+old one — both measure 21 × 17 — so `IconTests` pins the vertices and the joins rather than the
+box.
 
 ---
 
