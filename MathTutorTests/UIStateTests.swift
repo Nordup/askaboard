@@ -372,4 +372,40 @@ final class UIStateTests: XCTestCase {
         XCTAssertEqual(state.presentation, .docked, "presentation")
         XCTAssertEqual(state.conversation, .active, "conversation")
     }
+
+    // MARK: - The context-menu flag
+
+    func testAFreshStateHasNoContextMenu() {
+        XCTAssertFalse(UIState().isContextMenuActive)
+    }
+
+    func testTheMenuFlagFollowsTheDelegatesTwoEdges() {
+        let state = UIState()
+        state.setContextMenuActive(true)
+        XCTAssertTrue(state.isContextMenuActive)
+        state.setContextMenuActive(false)
+        XCTAssertFalse(state.isContextMenuActive)
+    }
+
+    /// `willEndFor` and `dismantleUIView` can both report the `false` edge — see
+    /// `SessionRowMenu` — so the setter has to be idempotent rather than trusting its
+    /// callers to fire once.
+    func testRepeatedEdgesAreIdempotent() {
+        let state = UIState()
+        state.setContextMenuActive(true)
+        state.setContextMenuActive(true)
+        XCTAssertTrue(state.isContextMenuActive)
+        state.setContextMenuActive(false)
+        state.setContextMenuActive(false)
+        XCTAssertFalse(state.isContextMenuActive)
+    }
+
+    func testTheMenuFlagDisturbsNoOtherAxis() {
+        let state = UIState()
+        state.openSessionsDrawer()
+        state.setContextMenuActive(true)
+        XCTAssertTrue(state.isSessionsDrawerOpen, "the drawer stays open under its own menu")
+        XCTAssertEqual(state.presentation, .docked)
+        XCTAssertEqual(state.conversation, .start)
+    }
 }

@@ -91,6 +91,26 @@ final class UIState: ObservableObject {
     /// stutters. This is written once, on release.
     @Published private(set) var isSessionsDrawerOpen = false
 
+    /// Whether a session row's context menu is on screen — ground truth, not a guess.
+    ///
+    /// Written by the row's own `UIContextMenuInteraction` delegate (see
+    /// `SessionsDrawer.SessionRowMenu`): true when the system reports the menu will display,
+    /// false only after the dismissal animation has finished. That makes it the one fact the
+    /// whole app can shield on — `BoardScreen` mounts a screen-wide layer over every surface
+    /// while this is true, and suspends the drawer pan through `isDrawerPanSuspended`, so a
+    /// tap that dismisses the menu can never also press whatever it landed on.
+    ///
+    /// Here rather than in `@State` on the drawer because the shield is the *screen's*: the
+    /// stray tap can land on the chat strip, the composer, the rail or the board, none of
+    /// which the drawer draws. It does not persist, like everything else on this type.
+    @Published private(set) var isContextMenuActive = false
+
+    /// The row's menu appeared or finished going away — see `isContextMenuActive`.
+    func setContextMenuActive(_ active: Bool) {
+        guard active != isContextMenuActive else { return }
+        isContextMenuActive = active
+    }
+
     /// The rail's three selections carry no invariant between them — any tool
     /// works with any colour and any width — so they are plain settable state
     /// rather than transitions.

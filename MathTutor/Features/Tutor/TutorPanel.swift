@@ -153,6 +153,11 @@ struct TutorPanel: View {
                 store.deleteSession(id: id)
                 adoptSessionUI()
             },
+            // The row's menu lifecycle, straight from its `UIContextMenuInteraction` — see
+            // `SessionRowMenu`. `UIState` holds it because the shield that reads it is the
+            // screen's (`BoardScreen`), not this panel's: the tap that dismisses the menu can
+            // land on the pushed-aside chat strip, which this drawer does not draw.
+            onMenuActivity: { uiState.setContextMenuActive($0) },
             // **The drawer stays open.** Settings is a window drawn over the whole screen and
             // it is reached *from here*; closing the thing you opened it from means coming back
             // to a panel that has forgotten where you were. Every other action in this drawer

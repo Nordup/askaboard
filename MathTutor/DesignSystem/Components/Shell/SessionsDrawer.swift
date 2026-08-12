@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// The sessions drawer's own numbers — boards 17 and 19.
 ///
@@ -159,27 +160,6 @@ enum SessionsDrawerMetrics {
     /// that goes on to become a pan has already failed this by the time the pan commits.
     static let tapSlop: CGFloat = 10
 
-    /// When the drawer decides a context menu is about to appear.
-    ///
-    /// **Deliberately shorter than `UIContextMenuInteraction`'s own ~0.5s commit, and the gap
-    /// is the whole point.** SwiftUI gives `.contextMenu` no callback for either edge, so the
-    /// drawer has to notice the menu for itself, and the only signal available is a press of
-    /// its own running against the same touch. Once the interaction takes the touch it cancels
-    /// every other recogniser on the view — so a detector set at or after the system's own
-    /// threshold would be cancelled *instead of* firing, on exactly the presses that matter.
-    ///
-    /// Firing early cannot miss a menu. It can raise a false alarm on a slow tap, and the cost
-    /// of one is a single swallowed tap afterwards — which is the right way round, because the
-    /// bug this exists to stop is cancelling the menu and landing in a different session.
-    static let menuDetectDuration: Double = 0.35
-
-    /// How long the drawer keeps swallowing taps after the one that dismissed the menu.
-    ///
-    /// The menu is still animating away for about a quarter second after the tap that ended
-    /// it, and a second tap inside that window is far more likely to be an impatient repeat of
-    /// the first than a considered choice of session. See `SessionsDrawer.isMenuGuarding`.
-    static let menuDismissGuard: Double = 0.35
-
     /// How many rows the drawer shows.
     ///
     /// Board 17 draws five in a list 228 tall, and the drawer's band is 976 — so unlike the
@@ -250,33 +230,17 @@ struct SessionsDrawer: View {
     /// *open* session has to decide what to open next, and that is the store's question rather
     /// than this view's — see `TutorStore.deleteSession(id:)`.
     let onDelete: (UUID) -> Void
+    /// A row's context menu appeared (`true`) or finished going away (`false`).
+    ///
+    /// This is *ground truth*, straight from the `UIContextMenuInteraction` delegate the row's
+    /// menu now runs on — see `SessionRowMenu`. The drawer used to infer the menu from a
+    /// parallel 0.35s long press of its own and swallow taps behind a drawer-local overlay;
+    /// both are gone. The caller wires this to `UIState.setContextMenuActive`, and
+    /// `BoardScreen` shields the whole screen on that one flag, because the tap that dismisses
+    /// a menu can land far outside this drawer — the pushed-aside chat strip, the composer,
+    /// the rail, the board.
+    let onMenuActivity: (Bool) -> Void
     let onSettings: () -> Void
-
-    /// The row a context menu has just been raised from, and the drawer's only knowledge that
-    /// one exists at all.
-    ///
-    /// **This is the fix for the tap-through, and the reason it has to be inferred.** SwiftUI's
-    /// `.contextMenu` is presented and dismissed entirely by the system: there is no callback
-    /// for either edge, so whether the tap that cancels it is swallowed or falls through to a
-    /// row underneath is the platform's decision. On iPadOS 17 it falls through, and cancelling
-    /// switched sessions.
-    ///
-    /// A `confirmationDialog` the drawer owned outright was tried and rejected: it closed the
-    /// leak by replacing the interaction, and the interaction was the part worth keeping. So
-    /// the menu is back and the drawer watches for it instead — a press of its own, running
-    /// early against the same touch, says a menu is coming (`menuDetectDuration`), and from
-    /// then until a tap arrives the drawer swallows taps rather than acting on them.
-    ///
-    /// Every way this inference can be wrong costs exactly one swallowed tap — a menu that
-    /// never appeared, or one dismissed by something that is not a tap — and none of them can
-    /// switch a session, which is the failure that matters.
-    @State private var menuRow: UUID?
-
-    /// True for a beat after the tap that dismissed the menu, while it animates away.
-    @State private var isDismissingMenu = false
-
-    /// Whether the drawer is swallowing taps rather than acting on them.
-    private var isMenuGuarding: Bool { menuRow != nil || isDismissingMenu }
 
     private var contentWidth: CGFloat {
         SessionsDrawerMetrics.contentWidth(for: width, inset: inset)
@@ -310,23 +274,10 @@ struct SessionsDrawer: View {
         .padding(.horizontal, inset)
         .padding(.vertical, SessionsDrawerMetrics.inset)
         .frame(width: width, height: height, alignment: .top)
-        // The tap that cancels a context menu is caught here rather than by whatever it landed
-        // on. A transparent layer over the whole drawer, mounted only while a menu is believed
-        // to be up — for the reason every other dismiss layer in this app is mounted that way:
-        // a view that swallows every touch is not something to leave lying around.
-        //
-        // It covers the rows, the pill and the gear alike, because the stray tap can land on
-        // any of them; and it holds for a beat after the tap, because the menu is still
-        // animating away. If a future OS swallows the tap itself the guard simply waits for the
-        // next one, which costs a tap and never a session.
-        .overlay {
-            if isMenuGuarding {
-                Color.clear
-                    .contentShape(.rect)
-                    .onTapGesture { endMenuGuard() }
-                    .accessibilityHidden(true)
-            }
-        }
+        // No tap-swallowing overlay here any more. The tap that dismisses a context menu is
+        // absorbed by the screen-wide shield in `BoardScreen`, mounted on the same
+        // `isContextMenuActive` flag this drawer's rows publish — one mechanism, one place,
+        // covering the chat strip and every other surface this drawer never could.
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Sessions")
     }
@@ -377,68 +328,37 @@ struct SessionsDrawer: View {
         }
     }
 
+    /// One session row: the label, the travel-evidence tap, and the menu — with the menu owned
+    /// in UIKit rather than declared to SwiftUI.
+    ///
+    /// `SessionRowMenu` hosts the row's content and attaches a `UIContextMenuInteraction` of
+    /// its own, which is what replaces the 0.35s inference this drawer used to run. SwiftUI's
+    /// `.contextMenu` reports neither edge of the menu's life; the interaction's delegate
+    /// reports both, so the app *knows* when a menu is up instead of guessing — and the guess's
+    /// two failure modes (a starved menu, a tap acting through a menu) go with it. The menu's
+    /// contents, the destructive styling and the rounded lift are unchanged: the delegate
+    /// mirrors board 17's Delete as a `UIAction` and cuts the platter from the same
+    /// `SessionsDrawerMetrics.rowShape` radius the resting fill uses.
     private func row(_ summary: SessionSummary) -> some View {
         let isCurrent = summary.id == currentID
-        return rowLabel(summary, isCurrent: isCurrent)
-            .simultaneousGesture(tapGesture(summary))
-            .simultaneousGesture(menuDetector(summary))
-            // **This one line is what rounds the lift, and nothing inside the menu could do
-            // it.** The platter's shape is `UIPreviewParameters.visiblePath`, which UIKit reads
-            // off the *source* view before it lifts anything — so it is declared here, on the
-            // view the menu is attached to, after the background and before `.contextMenu`.
-            //
-            // A supplied `preview:` was tried first and could not work: SwiftUI hosts that
-            // closure in its own container and still derives the visible path from the source,
-            // so with no path declared the plate stayed the bounding rectangle. Clipping inside
-            // the closure only rounded the pixels drawn *within* a square plate, which is
-            // exactly what shipped and exactly what was reported. There is no custom preview
-            // now — UIKit lifts the row itself and clips it to the path below, which is also
-            // what stops a transparent row reading as grey, because the platter fills that path
-            // before it composites the snapshot into it.
-            //
-            // `.contextMenuPreview` is its own content-shape kind and does not touch
-            // `.interaction`, so the row's hit region and its gestures are unaffected.
-            .contentShape(.contextMenuPreview, SessionsDrawerMetrics.rowShape)
-            // Board 17's delete, as the system's own menu. It draws the lift, the platter and
-            // the destructive styling, and it is what a learner already expects a long press on
-            // a list row to do.
-            .contextMenu {
-                Button(role: .destructive) {
-                    endMenuGuard()
-                    onDelete(summary.id)
-                } label: {
-                    Label("Delete", systemImage: "trash")
-                }
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(summary.title)
-            .accessibilityValue(isCurrent ? "Open" : SessionsDrawer.relativeAge(of: summary.lastSavedAt))
-            .accessibilityAddTraits(isCurrent ? [.isButton, .isSelected] : .isButton)
-            .accessibilityAction { onOpen(summary.id) }
-            // A long press is not a gesture VoiceOver performs, so the destructive action is
-            // published as a named one instead.
-            .accessibilityAction(named: "Delete") { onDelete(summary.id) }
-    }
-
-    /// The tap that dismissed the menu, spent — and the path a chosen `Delete` takes too, so
-    /// the guard is never left standing over a drawer whose menu closed by being used.
-    private func endMenuGuard() {
-        guard menuRow != nil else { return }
-        menuRow = nil
-        isDismissingMenu = true
-        Task {
-            try? await Task.sleep(for: .seconds(SessionsDrawerMetrics.menuDismissGuard))
-            isDismissingMenu = false
+        return SessionRowMenu(
+            onDelete: { onDelete(summary.id) },
+            onMenuActivity: onMenuActivity
+        ) {
+            rowLabel(summary, isCurrent: isCurrent)
+                .simultaneousGesture(tapGesture(summary))
         }
-    }
-
-    /// The press that tells the drawer a context menu is on its way — see `menuRow`.
-    ///
-    /// It raises nothing itself. The system's own interaction draws the menu; this exists only
-    /// so the drawer knows one is there, because SwiftUI will not tell it.
-    private func menuDetector(_ summary: SessionSummary) -> some Gesture {
-        LongPressGesture(minimumDuration: SessionsDrawerMetrics.menuDetectDuration)
-            .onEnded { _ in menuRow = summary.id }
+        .frame(width: contentWidth, height: SessionsDrawerMetrics.rowHeight)
+        // `.ignore` rather than `.combine`, because the children are a UIKit hierarchy now:
+        // every fact VoiceOver needs is stated here explicitly, exactly as it was before.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(summary.title)
+        .accessibilityValue(isCurrent ? "Open" : SessionsDrawer.relativeAge(of: summary.lastSavedAt))
+        .accessibilityAddTraits(isCurrent ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction { onOpen(summary.id) }
+        // A long press is not a gesture VoiceOver performs, so the destructive action is
+        // published as a named one instead.
+        .accessibilityAction(named: "Delete") { onDelete(summary.id) }
     }
 
     /// The tap that opens the session — **and the proof that it was a tap.**
@@ -458,7 +378,7 @@ struct SessionsDrawer: View {
     /// Lifting the finger after a menu has opened does not reach this at all: the context menu
     /// interaction cancels every other recogniser on the row when it takes the touch, and a
     /// cancelled `DragGesture` never ends. The tap that *dismisses* the menu is a separate
-    /// touch and never reaches the row either — the guard layer over the drawer has it.
+    /// touch and never reaches the row either — `BoardScreen`'s screen-wide shield has it.
     private func tapGesture(_ summary: SessionSummary) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onEnded { value in
@@ -574,6 +494,168 @@ struct SessionsDrawer: View {
     }
 }
 
+// MARK: - The row's menu, owned in UIKit
+
+/// A session row with board 17's context menu, run on a `UIContextMenuInteraction` this type
+/// owns — which is what turns "a menu is probably up" into "a menu is up".
+///
+/// **Why UIKit rather than `.contextMenu`.** SwiftUI's modifier presents and dismisses the
+/// menu entirely inside the system and reports neither edge. The drawer's answer to that was
+/// an inference — a parallel 0.35s `LongPressGesture` racing the system's ~0.5s commit — and
+/// the race was itself a bug: a second long-press recogniser analysing the same touch is one
+/// more thing the system interaction has to arbitrate against, and the loser was sometimes
+/// the menu. Owning the interaction gives the delegate's `willDisplayMenuFor` /
+/// `willEndFor(_:animator:)` as ground truth, and removes the competing recogniser in the
+/// same stroke.
+///
+/// **What a touch on a row now meets, exhaustively:** the interaction's own recognisers
+/// (the one long press left on the row), the hosted content's `DragGesture(minimumDistance: 0)`
+/// (the travel-evidence tap, which claims nothing and cancels nothing), and the ancestor
+/// `DrawerPanRecognizer` (simultaneous with everything, `.possible` under a still finger, and
+/// it cancels others only at a 12pt horizontal commit — which a still long press never
+/// reaches). Nothing in that set can starve the menu; only a real pan can cancel it, and a
+/// real pan should.
+///
+/// **The lift is the same shape it was.** The platter is `UIPreviewParameters.visiblePath`,
+/// cut from `SessionsDrawerMetrics.rowRadius` — the radius the resting fill and the old
+/// `.contentShape(.contextMenuPreview, ...)` used — and UIKit fills that path before
+/// compositing the row into it, so an untinted row still lifts onto a plate.
+///
+/// The content is embedded through a `UIHostingController` so the interaction's view *is* the
+/// rendered row: the default lift snapshot then shows the row itself, and the row's SwiftUI
+/// gesture still runs inside the hosted tree.
+private struct SessionRowMenu<Content: View>: UIViewRepresentable {
+    /// Board 17's destructive action, verbatim — the caller's semantics are untouched.
+    let onDelete: () -> Void
+    /// The menu's two edges, as the delegate reports them. `false` is sent only after the
+    /// dismissal animation has completed, so the shield mounted on this flag outlives the
+    /// animation tail without a timer.
+    let onMenuActivity: (Bool) -> Void
+    @ViewBuilder let content: Content
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> UIView {
+        let container = UIView()
+        container.backgroundColor = .clear
+        // `ignoresSafeArea` on the root, or the hosting controller keyboard-avoids a 44pt
+        // row that happens to sit near the composer's keyboard.
+        let host = UIHostingController(rootView: AnyView(content.ignoresSafeArea()))
+        host.view.backgroundColor = .clear
+        host.view.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(host.view)
+        NSLayoutConstraint.activate([
+            host.view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            host.view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            host.view.topAnchor.constraint(equalTo: container.topAnchor),
+            host.view.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+        context.coordinator.host = host
+        container.addInteraction(UIContextMenuInteraction(delegate: context.coordinator))
+        return container
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        context.coordinator.host?.rootView = AnyView(content.ignoresSafeArea())
+        context.coordinator.onDelete = onDelete
+        context.coordinator.onMenuActivity = onMenuActivity
+    }
+
+    /// A row can unmount with its menu still up — deleting the last visible session does
+    /// exactly that — and a flag left `true` then would shield the app forever. The system
+    /// still calls `willEndFor` in the ordinary cases; this is the backstop, and
+    /// `Coordinator.endMenu()` is idempotent so the two cannot double-fire.
+    static func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) {
+        coordinator.endMenu()
+    }
+
+    final class Coordinator: NSObject, UIContextMenuInteractionDelegate {
+        var host: UIHostingController<AnyView>?
+        var onDelete: () -> Void = {}
+        var onMenuActivity: (Bool) -> Void = { _ in }
+        private var isMenuActive = false
+
+        /// The `false` edge, sent at most once per menu — from `willEndFor`'s animation
+        /// completion in the ordinary case, and from `dismantleUIView` when the row leaves
+        /// the screen first.
+        func endMenu() {
+            guard isMenuActive else { return }
+            isMenuActive = false
+            onMenuActivity(false)
+        }
+
+        func contextMenuInteraction(
+            _ interaction: UIContextMenuInteraction,
+            configurationForMenuAtLocation location: CGPoint
+        ) -> UIContextMenuConfiguration? {
+            UIContextMenuConfiguration(actionProvider: { [weak self] _ in
+                UIMenu(children: [
+                    UIAction(
+                        title: "Delete",
+                        image: UIImage(systemName: "trash"),
+                        attributes: .destructive
+                    ) { _ in
+                        self?.onDelete()
+                    }
+                ])
+            })
+        }
+
+        func contextMenuInteraction(
+            _ interaction: UIContextMenuInteraction,
+            willDisplayMenuFor configuration: UIContextMenuConfiguration,
+            animator: UIContextMenuInteractionAnimating?
+        ) {
+            isMenuActive = true
+            onMenuActivity(true)
+        }
+
+        func contextMenuInteraction(
+            _ interaction: UIContextMenuInteraction,
+            willEndFor configuration: UIContextMenuConfiguration,
+            animator: UIContextMenuInteractionAnimating?
+        ) {
+            guard isMenuActive else { return }
+            isMenuActive = false
+            // The shield holds through the dismissal animation because *this* is where the
+            // flag drops — the animator's own completion, not a guessed quarter-second.
+            if let animator {
+                animator.addCompletion { [onMenuActivity] in onMenuActivity(false) }
+            } else {
+                onMenuActivity(false)
+            }
+        }
+
+        func contextMenuInteraction(
+            _ interaction: UIContextMenuInteraction,
+            previewForHighlightingMenuWithConfiguration configuration: UIContextMenuConfiguration
+        ) -> UITargetedPreview? {
+            targetedPreview(for: interaction)
+        }
+
+        func contextMenuInteraction(
+            _ interaction: UIContextMenuInteraction,
+            previewForDismissingMenuWithConfiguration configuration: UIContextMenuConfiguration
+        ) -> UITargetedPreview? {
+            targetedPreview(for: interaction)
+        }
+
+        /// The lift and the drop-back, cut from the row's own shape. `nil` when the view has
+        /// left the window — the delegate is asked during dismissal too, and a deleted row
+        /// has no window to be lifted in; `nil` hands UIKit its default rather than crashing
+        /// `UITargetedPreview` on a viewless target.
+        private func targetedPreview(for interaction: UIContextMenuInteraction) -> UITargetedPreview? {
+            guard let view = interaction.view, view.window != nil else { return nil }
+            let parameters = UIPreviewParameters()
+            parameters.visiblePath = UIBezierPath(
+                roundedRect: view.bounds,
+                cornerRadius: SessionsDrawerMetrics.rowRadius
+            )
+            return UITargetedPreview(view: view, parameters: parameters)
+        }
+    }
+}
+
 #if DEBUG
 #Preview("Sessions drawer · docked") {
     let current = UUID()
@@ -593,6 +675,7 @@ struct SessionsDrawer: View {
         onNewChat: {},
         onOpen: { _ in },
         onDelete: { _ in },
+        onMenuActivity: { _ in },
         onSettings: {}
     )
     .background(DS.Color.surfacePanel)

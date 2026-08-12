@@ -81,15 +81,42 @@ struct BoardScreen: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .ignoresSafeArea()
+        // **The context-menu shield: one mechanism, one place, every surface.** While a
+        // session row's menu is up — a fact, not a guess: the row's own
+        // `UIContextMenuInteraction` reports both edges through `UIState` — the entire screen
+        // goes inert behind the menu. On iPadOS 17 the tap that dismisses a context menu is
+        // *also* delivered to the app's window, and it used to act on whatever it landed on:
+        // tapping the pushed-aside chat strip closed the drawer and opened the chat. A shield
+        // scoped to the drawer could never cover that strip, the composer, the rail or the
+        // board; the screen's root covers all of them by construction, so no surface can be
+        // missed. The menu itself lives in its own window above this one and stays fully
+        // interactive.
+        //
+        // Mounted only while the flag holds — through the dismissal animation, because the
+        // flag drops in the dismissal animator's completion — for the reason every dismiss
+        // layer in this app is conditional: a view that swallows every touch is not something
+        // to leave lying around. `PKCanvasView` and the other UIKit descendants are covered
+        // too: an active SwiftUI hit target above a representable takes the hit test. The
+        // drawer pan cannot be hit-tested away, so it is suspended by the same flag below.
+        .overlay {
+            if uiState.isContextMenuActive {
+                Color.clear
+                    .contentShape(.rect)
+                    .ignoresSafeArea()
+                    .onTapGesture {}
+                    .accessibilityHidden(true)
+            }
+        }
         // The panel and the column read the same lanes this file does, and under `--ui-window`
         // that is not the window they were handed — so the screen publishes the layout it drew
         // itself in rather than letting its own children disagree with it.
         .environment(\.screenLayout, layout)
-        // The drawer's pan recogniser lives on a UIKit ancestor and cannot see SwiftUI paint
-        // order, so the one same-tree surface drawn *over* the pan region — the settings
-        // window below — has to be stated to it: a swipe inside settings must reach settings,
-        // not toggle a drawer behind the blur. See `EnvironmentValues.isDrawerPanSuspended`.
-        .environment(\.isDrawerPanSuspended, isShowingSettings)
+        // The drawer's pan recogniser lives on a UIKit ancestor and can see neither SwiftUI
+        // paint order nor the shield above, so both facts are stated to it: a swipe inside
+        // settings must reach settings, not toggle a drawer behind the blur, and a touch
+        // while a row's context menu is up must dismiss the menu, not drag the drawer under
+        // it. See `EnvironmentValues.isDrawerPanSuspended`.
+        .environment(\.isDrawerPanSuspended, isShowingSettings || uiState.isContextMenuActive)
         // Not a `fullScreenCover` any more, and it cannot be one: the redesigned settings is
         // a window *over* the board, and a cover would replace the very thing it blurs. The
         // modifier wraps the whole screen rather than adding a branch to the stack above,

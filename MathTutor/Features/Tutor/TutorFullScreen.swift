@@ -198,6 +198,9 @@ struct TutorFullScreen: View {
                     store.deleteSession(id: id)
                     adoptSessionUI()
                 },
+                // The row's menu lifecycle, straight from its `UIContextMenuInteraction` —
+                // see `SessionRowMenu` and `TutorPanel`'s identical wiring.
+                onMenuActivity: { uiState.setContextMenuActive($0) },
                 // **The sidebar stays open**, unlike every other action here — see
                 // `TutorPanel.drawer(width:height:)` for the argument.
                 onSettings: actions.openSettings

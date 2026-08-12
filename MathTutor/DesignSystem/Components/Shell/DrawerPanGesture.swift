@@ -157,13 +157,17 @@ private struct DrawerPanSuspendedKey: EnvironmentKey {
 
 extension EnvironmentValues {
     /// True while something is drawn *over* the pan surface in the same SwiftUI tree — the
-    /// settings window, today — and a swipe must reach that thing instead of the drawer.
+    /// settings window, or `BoardScreen`'s context-menu shield — and a touch must reach that
+    /// thing instead of the drawer.
     ///
     /// This exists because the recogniser is attached to a UIKit ancestor and gated by
     /// geometry, so unlike the old SwiftUI gesture it cannot see SwiftUI's paint order: a
     /// SwiftUI overlay is the same `UIView` as everything under it. Presented UIKit surfaces
-    /// — the photo picker, the camera, the file importer, a context menu — need no flag; they
-    /// live outside the hosting view and the recogniser never receives their touches.
+    /// — the photo picker, the camera, the file importer — need no flag; they live outside
+    /// the hosting view and the recogniser never receives their touches. A context menu is
+    /// the exception it looks like it isn't: the *menu* lives in its own window, but on
+    /// iPadOS 17 the tap that dismisses it is also delivered to this window, so the menu
+    /// suspends the pan through this flag for exactly that touch.
     var isDrawerPanSuspended: Bool {
         get { self[DrawerPanSuspendedKey.self] }
         set { self[DrawerPanSuspendedKey.self] = newValue }
