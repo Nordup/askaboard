@@ -1124,4 +1124,248 @@ final class ShellComponentTests: XCTestCase {
         XCTAssertEqual(DrawerReveal.wholePoints(0.4 * 263), 105, "0.4 × 263 = 105.2")
         XCTAssertEqual(DrawerReveal.wholePoints(263), 263, "and the ends are exact")
     }
+
+    // MARK: - The horizontal swipe router
+
+    /// The whole table, cell by cell. It is eleven lines because the router is eleven lines,
+    /// and the point of writing it out twice is that a cell quietly changing meaning — a
+    /// left-swipe on an open drawer starting to collapse the dock, say — has something to fail
+    /// against other than a device.
+    func testTheRouterAnswersEveryPresentationAndDirection() {
+        func route(
+            _ presentation: TutorPresentation,
+            drawer: Bool = false,
+            sidebar: Bool = false,
+            _ direction: HorizontalSwipeRouter.Direction,
+            _ origin: HorizontalSwipeRouter.Origin = .surface
+        ) -> HorizontalSwipeRouter.Transition {
+            HorizontalSwipeRouter.transition(
+                presentation: presentation,
+                isDrawerOpen: drawer,
+                isSidebarOpen: sidebar,
+                direction: direction,
+                origin: origin
+            )
+        }
+
+        // Docked — the four cells the feature is about.
+        XCTAssertEqual(route(.docked, drawer: false, .right), .openDrawer)
+        XCTAssertEqual(route(.docked, drawer: false, .left), .collapseDock)
+        XCTAssertEqual(route(.docked, drawer: true, .left), .closeDrawer)
+        XCTAssertEqual(
+            route(.docked, drawer: true, .right), .none,
+            "a right-swipe on an open drawer moves nothing — and still commits"
+        )
+
+        // Collapsed — the edge zone is the only origin that means anything.
+        XCTAssertEqual(route(.collapsed, .right, .leadingEdge), .expandDock)
+        XCTAssertEqual(
+            route(.collapsed, .right, .surface), .none,
+            "a right-swipe out on the board is the board's"
+        )
+        XCTAssertEqual(route(.collapsed, .left, .leadingEdge), .none)
+        XCTAssertEqual(route(.collapsed, .left, .surface), .none)
+
+        // Full screen — board 19, unchanged, and no collapse from here.
+        XCTAssertEqual(route(.fullScreen, sidebar: false, .right), .openSidebar)
+        XCTAssertEqual(route(.fullScreen, sidebar: true, .left), .closeSidebar)
+        XCTAssertEqual(route(.fullScreen, sidebar: false, .left), .none)
+        XCTAssertEqual(route(.fullScreen, sidebar: true, .right), .none)
+    }
+
+    /// The collapse is never reachable while the drawer is open, at either origin. Two
+    /// gestures, one after the other — see `HorizontalSwipeRouter`.
+    func testTheDrawerIsAlwaysClosedBeforeTheDockCollapses() {
+        for origin in [HorizontalSwipeRouter.Origin.surface, .leadingEdge] {
+            XCTAssertEqual(
+                HorizontalSwipeRouter.transition(
+                    presentation: .docked,
+                    isDrawerOpen: true,
+                    isSidebarOpen: false,
+                    direction: .left,
+                    origin: origin
+                ),
+                .closeDrawer,
+                "origin \(origin)"
+            )
+        }
+    }
+
+    func testDirectionIsTheSignOfTheCommittedTranslation() {
+        XCTAssertEqual(HorizontalSwipeRouter.Direction.of(12), .right)
+        XCTAssertEqual(HorizontalSwipeRouter.Direction.of(-12), .left)
+        XCTAssertEqual(HorizontalSwipeRouter.Direction.of(0.5), .right, "sign, not magnitude")
+        XCTAssertNil(
+            HorizontalSwipeRouter.Direction.of(0),
+            "a purely vertical commitment cannot happen inside the 38° cone, and is refused anyway"
+        )
+    }
+
+    /// The edge zone is narrow and, more importantly, nowhere near the canvas — at every
+    /// device size, which is the property that keeps inking natural.
+    func testTheEdgeZoneNeverReachesTheCollapsedBoard() {
+        XCTAssertEqual(HorizontalSwipeRouter.edgeZoneWidth, DS.Space.gap, "--space-gap, 24")
+        for layout in Band.all.map(\.layout) {
+            let zoneEnd = layout.safeAreaLeading + HorizontalSwipeRouter.edgeZoneWidth
+            XCTAssertLessThanOrEqual(
+                zoneEnd,
+                layout.railXCollapsed,
+                "the zone stops before the rail on \(layout.size)"
+            )
+            XCTAssertLessThan(
+                zoneEnd,
+                layout.boardXCollapsed,
+                "and nowhere near PKCanvasView on \(layout.size)"
+            )
+        }
+    }
+
+    // MARK: - The dock's travel and settle
+
+    func testTheDockTravelIsThePanelsTrailingEdge() {
+        let layout = ScreenLayout.reference
+        XCTAssertEqual(layout.dockTravel, 365, "28 + 337")
+        XCTAssertEqual(layout.dockTravel, layout.panelX + layout.panelWidth)
+        // A resized panel takes its travel with it, which is the whole reason this is a lane
+        // and not a constant.
+        let wide = ScreenLayout(size: layout.size, panelWidth: 500)
+        XCTAssertEqual(wide.dockTravel, 528, "28 + 500")
+    }
+
+    func testTheDockTracksTheFingerOneToOneInsideTheTravel() {
+        XCTAssertEqual(DockReveal.progress(from: 1, translation: 0, travel: 365), 1)
+        XCTAssertEqual(DockReveal.progress(from: 1, translation: -182.5, travel: 365), 0.5)
+        XCTAssertEqual(DockReveal.progress(from: 0, translation: 182.5, travel: 365), 0.5)
+        XCTAssertEqual(DockReveal.progress(from: 1, translation: -365, travel: 365), 0)
+        XCTAssertEqual(DockReveal.progress(from: 0.4, translation: 0, travel: 0), 0.4, "no travel, no move")
+
+        // One-to-one means exactly that: a point of finger is a point of panel, all the way
+        // across, so the panel cannot drift away from the thumb over the longest travel in
+        // the app.
+        for points in stride(from: CGFloat(0), through: 365, by: 5) {
+            XCTAssertEqual(
+                DockReveal.progress(from: 1, translation: -points, travel: 365) * 365,
+                365 - points,
+                accuracy: 0.0001,
+                "\(points) points of finger"
+            )
+        }
+    }
+
+    /// Past either end the finger still produces motion, and the motion asymptotes. Unlike the
+    /// drawer, which has nothing past either end to reveal and takes a hard clamp.
+    func testTheDockResistsRatherThanStopsPastEitherEnd() {
+        let far = DockReveal.progress(from: 1, translation: -2_000, travel: 365)
+        XCTAssertLessThan(far, 0, "it keeps moving")
+        XCTAssertGreaterThan(far, -DockReveal.overshoot, "and never reaches the limit")
+
+        let over = DockReveal.progress(from: 1, translation: 2_000, travel: 365)
+        XCTAssertGreaterThan(over, 1)
+        XCTAssertLessThan(over, 1 + DockReveal.overshoot)
+
+        // The band has no corner at the boundary: the first point past the end still tracks
+        // the finger, so the resistance arrives rather than switching on.
+        let inside = DockReveal.progress(from: 1, translation: -364, travel: 365)
+        let outside = DockReveal.progress(from: 1, translation: -366, travel: 365)
+        XCTAssertEqual(inside, 1.0 / 365.0, accuracy: 0.0001)
+        XCTAssertEqual(outside, -1.0 / 365.0, accuracy: 0.0002, "still ~1 point of panel")
+
+        // Monotone the whole way out: more finger is never less panel.
+        var previous = CGFloat.infinity
+        for points in stride(from: CGFloat(0), through: 900, by: 10) {
+            let p = DockReveal.progress(from: 1, translation: -points, travel: 365)
+            XCTAssertLessThan(p, previous, "at \(points)")
+            previous = p
+        }
+    }
+
+    /// The dock and the drawer are told apart by direction alone, so they must be judged by
+    /// the identical rule — see `DockReveal.settlesDocked(progress:velocity:)`.
+    func testTheDockSettlesOnTheDrawersOwnReleaseRule() {
+        XCTAssertTrue(DockReveal.settlesDocked(progress: 0.51, velocity: 0))
+        XCTAssertFalse(DockReveal.settlesDocked(progress: 0.49, velocity: 0), "past 50% collapses")
+        XCTAssertTrue(DockReveal.settlesDocked(progress: 0.5, velocity: 0), "the line itself docks")
+
+        // A fling overrides the halfway line in both directions, which is what makes the
+        // gesture reversible: a panel dragged almost all the way out can be thrown back.
+        XCTAssertFalse(DockReveal.settlesDocked(progress: 0.95, velocity: -1_400))
+        XCTAssertTrue(DockReveal.settlesDocked(progress: 0.05, velocity: 1_400))
+        XCTAssertFalse(DockReveal.settlesDocked(progress: 0.4, velocity: -320), "300 is the line")
+        XCTAssertFalse(DockReveal.settlesDocked(progress: 0.4, velocity: -120), "and 120 is not a fling")
+
+        for progress in stride(from: CGFloat(0), through: 1, by: 0.05) {
+            for velocity in stride(from: CGFloat(-1_500), through: 1_500, by: 100) {
+                XCTAssertEqual(
+                    DockReveal.settlesDocked(progress: progress, velocity: velocity),
+                    DrawerReveal.settlesOpen(progress: progress, velocity: velocity),
+                    "one release rule for both swipes — \(progress), \(velocity)"
+                )
+            }
+        }
+    }
+
+    func testThePanelLeavesByTheLeadingEdgeInWholePoints() {
+        XCTAssertEqual(DockReveal.panelOffset(at: 1, travel: 365), 0, "docked is the lane itself")
+        XCTAssertEqual(DockReveal.panelOffset(at: 0, travel: 365), -365, "and gone is the whole travel")
+        XCTAssertEqual(DockReveal.panelOffset(at: 0.5, travel: 365), -183, "0.5 × 365 = 182.5")
+        // Whole points, for the reason the drawer's panes are: a rasterised surface translated
+        // by a fraction resamples its glyphs differently every frame.
+        for progress in stride(from: CGFloat(0), through: 1, by: 0.01) {
+            let offset = DockReveal.panelOffset(at: progress, travel: 365)
+            XCTAssertEqual(offset, offset.rounded(), "whole points at \(progress)")
+            XCTAssertLessThanOrEqual(offset, 0, "the panel only ever leaves leading")
+        }
+    }
+
+    /// The dock cannot appear until the panel's own edge has passed it, and the threshold is
+    /// read off the two surfaces rather than chosen.
+    func testTheDockAppearsOnlyOnceThePanelHasClearedIt() {
+        let layout = ScreenLayout.reference
+        let fadeStart = DockReveal.dockFadeStart(
+            dockLeading: layout.collapsedDockX,
+            travel: layout.dockTravel
+        )
+        XCTAssertEqual(fadeStart, 148.0 / 365.0, accuracy: 0.0001, "148 ÷ 365")
+
+        // The whole point: at the frame the orb reaches zero opacity, the panel's trailing
+        // edge is exactly on the dock's leading edge — so the orb is never drawn over it.
+        XCTAssertEqual(fadeStart * layout.dockTravel, layout.collapsedDockX, accuracy: 0.0001)
+        XCTAssertEqual(DockReveal.dockOpacity(at: fadeStart, fadeStart: fadeStart), 0, accuracy: 0.0001)
+        XCTAssertEqual(DockReveal.dockOpacity(at: 1, fadeStart: fadeStart), 0, accuracy: 0.0001)
+        XCTAssertEqual(DockReveal.dockOpacity(at: 0, fadeStart: fadeStart), 1, accuracy: 0.0001)
+
+        // It follows the panel at every width the student can drag the seam to, which is what
+        // a derived threshold buys over a constant.
+        for width in [ScreenLayout.minimumPanelWidth, 337, 500, 800] as [CGFloat] {
+            let resized = ScreenLayout(size: layout.size, panelWidth: width)
+            let start = DockReveal.dockFadeStart(
+                dockLeading: resized.collapsedDockX,
+                travel: resized.dockTravel
+            )
+            XCTAssertEqual(
+                start * resized.dockTravel,
+                resized.collapsedDockX,
+                accuracy: 0.0001,
+                "panel at \(width)"
+            )
+        }
+    }
+
+    func testTheDockFadeAndSlideAreOneMovement() {
+        let fadeStart: CGFloat = 148.0 / 365.0
+        var previous = 1.0
+        for progress in stride(from: CGFloat(0), through: 1, by: 0.01) {
+            let opacity = DockReveal.dockOpacity(at: progress, fadeStart: fadeStart)
+            let slide = DockReveal.dockSlide(at: progress, fadeStart: fadeStart)
+            XCTAssertGreaterThanOrEqual(opacity, 0, "at \(progress)")
+            XCTAssertLessThanOrEqual(opacity, 1, "at \(progress)")
+            XCTAssertLessThanOrEqual(opacity, previous + 0.0001, "monotone at \(progress)")
+            XCTAssertEqual(Double(slide), 1 - opacity, accuracy: 0.0001, "one curve, not two")
+            previous = opacity
+        }
+        // Smoothstepped, so both ends are flat and the handover has no corner in it.
+        XCTAssertEqual(DockReveal.dockOpacity(at: fadeStart / 2, fadeStart: fadeStart), 0.5, accuracy: 0.0001)
+        XCTAssertGreaterThan(DockReveal.dockOpacity(at: fadeStart * 0.1, fadeStart: fadeStart), 0.97)
+        XCTAssertLessThan(DockReveal.dockOpacity(at: fadeStart * 0.9, fadeStart: fadeStart), 0.03)
+    }
 }

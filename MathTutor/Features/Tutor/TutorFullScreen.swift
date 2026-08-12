@@ -292,7 +292,7 @@ struct TutorFullScreen: View {
     /// not motion, is the trigger.
     private func drawerPanGesture(travel: CGFloat) -> DrawerPanGesture {
         DrawerPanGesture(
-            onCommit: { isPanCommitted = true },
+            onCommit: { _ in isPanCommitted = true },
             onChange: { _ in },
             onEnd: { translation, velocity in
                 isPanCommitted = false

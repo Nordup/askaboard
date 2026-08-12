@@ -186,9 +186,29 @@ extension EnvironmentValues {
 /// keeps presented pickers, sheets and the keyboard out of reach: they are siblings of the
 /// hosting hierarchy, not descendants.
 struct DrawerPanGesture: UIViewRepresentable {
-    /// The touch committed to the horizontal axis. Everything else it was pressing is
-    /// already cancelled by the time this runs.
-    var onCommit: () -> Void
+    /// Whether a touch from an Apple Pencil is refused outright, before the intent lock is
+    /// ever consulted.
+    ///
+    /// `false` everywhere the region is a tutor surface: a pencil resting on the chat and
+    /// swiping is a swipe, and there is nothing on that surface for it to be doing instead.
+    /// `true` for the collapsed state's leading-edge zone, which is 24 points of screen beside
+    /// a whiteboard: in this app a pencil is always drawing and never navigating, so a pencil
+    /// stroke that starts near the edge must reach `PKCanvasView` intact — not commit, cancel
+    /// the canvas's recognisers and leave a 12-point orphan of a stroke behind.
+    ///
+    /// Refused at `shouldReceive`, which is touch-*down*, so the recogniser never enters
+    /// `.possible` for that touch at all and there is no window in which it could cancel
+    /// anything.
+    var ignoresPencil = false
+    /// The touch committed to the horizontal axis, with the translation that decided it —
+    /// already past `DrawerReveal.intentThreshold` and inside its cone, so its sign is the
+    /// gesture's direction. Everything else the touch was pressing is already cancelled by the
+    /// time this runs.
+    ///
+    /// The direction is delivered *here*, at commitment, because that is when it is decided
+    /// and the routing table is read exactly once — see `HorizontalSwipeRouter`. A route
+    /// re-chosen on a later frame is what turns two distinct gestures into one ambiguous one.
+    var onCommit: (_ translation: CGFloat) -> Void
     /// The committed pan moved; the value is the touch's total horizontal travel from
     /// touch-down — the same total a `DragGesture.Value.translation.width` reports.
     var onChange: (CGFloat) -> Void
@@ -218,6 +238,7 @@ struct DrawerPanGesture: UIViewRepresentable {
         context.coordinator.onChange = onChange
         context.coordinator.onEnd = onEnd
         context.coordinator.isSuspended = isSuspended
+        context.coordinator.ignoresPencil = ignoresPencil
     }
 
     static func dismantleUIView(_ uiView: AnchorView, coordinator: Coordinator) {
@@ -256,14 +277,15 @@ struct DrawerPanGesture: UIViewRepresentable {
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         weak var anchor: AnchorView?
         var isSuspended = false
-        var onCommit: () -> Void = {}
+        var ignoresPencil = false
+        var onCommit: (CGFloat) -> Void = { _ in }
         var onChange: (CGFloat) -> Void = { _ in }
         var onEnd: (CGFloat, CGFloat) -> Void = { _, _ in }
 
         @objc func handlePan(_ recognizer: DrawerPanRecognizer) {
             switch recognizer.state {
             case .began:
-                onCommit()
+                onCommit(recognizer.translation.x)
                 // The first frame already carries the 12pt decision vector, so it is
                 // delivered rather than dropped — the same "no travel spent undecided"
                 // rule `DragGesture(minimumDistance:)` gave the old implementation.
@@ -287,6 +309,9 @@ struct DrawerPanGesture: UIViewRepresentable {
             _ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch
         ) -> Bool {
             guard !isSuspended, let anchor, anchor.window != nil else { return false }
+            // See `DrawerPanGesture.ignoresPencil`: refused here rather than at commitment, so
+            // the recogniser never analyses the touch and never cancels anything holding it.
+            if ignoresPencil, touch.type == .pencil { return false }
             return anchor.bounds.contains(touch.location(in: anchor))
         }
 

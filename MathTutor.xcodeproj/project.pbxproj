@@ -70,6 +70,7 @@
 		70946E272CA8B6D50169B267 /* BoardSelectionMarquee.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F4CB4E8BC1C345DC5B34973 /* BoardSelectionMarquee.swift */; };
 		726CD5E989CE7C3E79F44AAA /* TutorService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D3C08CEF2BB69842ABC9BBF /* TutorService.swift */; };
 		72CFCF787A756EB78403E0D7 /* UIStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 363744A8B651DA004FC6F837 /* UIStateTests.swift */; };
+		75F0E46167BEC31ACAB98C78 /* DockRevealLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BB3D9B659CE39C352007FB0 /* DockRevealLayer.swift */; };
 		787930E8CC449D11F3E55A66 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = A68B280F9DD61D293B8E9505 /* MarkdownUI */; };
 		7BED106A2DD67CADD9A9D121 /* AttachmentChipRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69B4EE6518C5723243900923 /* AttachmentChipRow.swift */; };
 		7D3C2F693CC25B87A39B9600 /* BackendTutorServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4321C972F3139C4C616C7600 /* BackendTutorServiceTests.swift */; };
@@ -113,6 +114,7 @@
 		CAEFE86F170D742B172E1EA7 /* SessionsDrawer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DD4F32A96308B60DB93BAF4 /* SessionsDrawer.swift */; };
 		CB77A0EAB9544BC656A90049 /* ChatStates.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC88EAC7DEACC326E1A76A63 /* ChatStates.swift */; };
 		CBE73D0B893D0BCCA2C5D090 /* TutorStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A75D7C233693DE7B2FFF3DF /* TutorStore.swift */; };
+		D06365D7D4E247E420E73476 /* HorizontalSwipeRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4075ED888C082DF18C7E98E4 /* HorizontalSwipeRouter.swift */; };
 		D4CC41F844141FE1C0733F8F /* TutorEventTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECEE59C2882DF49AE64DF05F /* TutorEventTests.swift */; };
 		D517AAA5757CDE87D2187E3D /* ResizeModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D557CC670C82D9747A86266 /* ResizeModel.swift */; };
 		D620B41620F9A2C4C9C26AD0 /* DictationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E71EAD98E5C0012B1C4D4B2 /* DictationTests.swift */; };
@@ -159,6 +161,7 @@
 		0729DC14BC3A737998304309 /* BoardPaperTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardPaperTests.swift; sourceTree = "<group>"; };
 		07822BFCEDA6CAC5E7B67D24 /* BoardInkTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardInkTests.swift; sourceTree = "<group>"; };
 		07DCCC70FA22423135C6251A /* TutorPromptPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TutorPromptPolicy.swift; sourceTree = "<group>"; };
+		0BB3D9B659CE39C352007FB0 /* DockRevealLayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DockRevealLayer.swift; sourceTree = "<group>"; };
 		0CB33A63FB0B69CC8663EC4C /* MathTutorUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = MathTutorUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		0CDCEE851D84DD0BD8B2DB86 /* SettingsWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindow.swift; sourceTree = "<group>"; };
 		0DD4F32A96308B60DB93BAF4 /* SessionsDrawer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsDrawer.swift; sourceTree = "<group>"; };
@@ -185,6 +188,7 @@
 		3CFED3B175C3922A5241AF7C /* SessionPlanView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionPlanView.swift; sourceTree = "<group>"; };
 		3DB98B59876AB7F23B67AB5E /* BoardTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardTool.swift; sourceTree = "<group>"; };
 		3DBEC75E12C26E686FF76BDF /* BoardInkPersistenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardInkPersistenceTests.swift; sourceTree = "<group>"; };
+		4075ED888C082DF18C7E98E4 /* HorizontalSwipeRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HorizontalSwipeRouter.swift; sourceTree = "<group>"; };
 		40CC8590077CACB91515D03B /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		4321C972F3139C4C616C7600 /* BackendTutorServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendTutorServiceTests.swift; sourceTree = "<group>"; };
 		437A816AC93664B09A7FEBB9 /* SVGPath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SVGPath.swift; sourceTree = "<group>"; };
@@ -466,9 +470,11 @@
 			children = (
 				1777E72E2503235081D9FDA7 /* BoardPeek.swift */,
 				FE9DB5B1FABF8AE2042CA456 /* CollapsedDock.swift */,
+				0BB3D9B659CE39C352007FB0 /* DockRevealLayer.swift */,
 				672CE70913268DF67AACC12B /* DrawerPanGesture.swift */,
 				C8A7B6F0848E8835429BD3DF /* DrawerReveal.swift */,
 				18525748C4B0E4A66289FAD0 /* DrawerRevealLayer.swift */,
+				4075ED888C082DF18C7E98E4 /* HorizontalSwipeRouter.swift */,
 				4B072CAB2B50300D01AC544E /* MenuCardMetrics.swift */,
 				451EF516B682FFDFDE3298AC /* Orb.swift */,
 				E954D06964D3CD29E7E328C4 /* OrbHalo.swift */,
@@ -817,12 +823,14 @@
 				BA51B8E621AFAE76A8E925FE /* DictationController.swift in Sources */,
 				B1B27D7DCCAEE88572D1FBD4 /* DictationPhase.swift in Sources */,
 				51C9078C7A31F977269DD7B1 /* DictationService.swift in Sources */,
+				75F0E46167BEC31ACAB98C78 /* DockRevealLayer.swift in Sources */,
 				AB4E3FE916BFF8FB2A6043BB /* DrawerPanGesture.swift in Sources */,
 				58850E0F2948D03BCE020AE4 /* DrawerReveal.swift in Sources */,
 				4250B2E071DC9D8F67852F79 /* DrawerRevealLayer.swift in Sources */,
 				531F009665ACB36BD4EAA770 /* E2ESeedFixture.swift in Sources */,
 				2DC01E6E2E4264C7D9EFC51C /* Elevation.swift in Sources */,
 				1A7DC8AA3FFB0BE378905526 /* GreetingBlock.swift in Sources */,
+				D06365D7D4E247E420E73476 /* HorizontalSwipeRouter.swift in Sources */,
 				E3926EFC9E73C2829B0E74F7 /* Icon.swift in Sources */,
 				9986C716988CA98C7B16DA42 /* IconPaths.swift in Sources */,
 				8CFFCA8713A559A17AA2D839 /* KeychainStore.swift in Sources */,

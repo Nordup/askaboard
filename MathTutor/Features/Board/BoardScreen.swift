@@ -67,6 +67,22 @@ struct BoardScreen: View {
     @State private var previewPanelWidth: CGFloat?
     @State private var didChangePanelWidth = false
 
+    /// The live position of the panel between screens 05/08 and screen 06.
+    ///
+    /// **`@State` and not `@StateObject`, deliberately.** `@StateObject` subscribes, and this
+    /// object publishes on every touch event of a collapse pan — this screen's body builds
+    /// `TutorPanel`, the board and the rail, so subscribing here would rebuild all of them
+    /// sixty times a second and hand `PKCanvasView` a fresh layout pass per frame. `@State`
+    /// holds the reference for the life of the screen without observing it, which is exactly
+    /// what a screen that only *writes* to it needs. The one view that observes it is
+    /// `DockRevealLayer`, whose whole job is to re-render two offsets against stored content.
+    ///
+    /// It is also the single entry point for the transition itself: the swipe, `btn/dock`, the
+    /// dock's orb, the resize-drag collapse and `Start on the board` all call
+    /// `settle(to:velocity:travel:_:)`, so there is one curve for arriving at screen 06 and one
+    /// for leaving it whichever control was used.
+    @State private var dockDrag = DockRevealModel()
+
     var body: some View {
         ZStack(alignment: .topLeading) {
             background
@@ -382,25 +398,60 @@ struct BoardScreen: View {
     @ViewBuilder
     private var tutor: some View {
         switch presentation {
-        case .docked:
-            TutorPanel(
-                text: $composerText,
-                dictation: dictation,
-                attachments: attachments,
-                // The same flag the collapsed dock's `btn/select` takes, for the same
-                // control at the other presentation — an empty board has nothing to
-                // select, and `toggleBoardSelection` would swallow the tap.
-                canSelect: capture.hasInk,
-                actions: actions
-            )
-                .offset(x: layout.panelX, y: layout.contentTop)
-                .accessibilityElement(children: .contain)
-                .accessibilityIdentifier("tutor-panel")
-            resizeHandle
-        case .collapsed:
+        case .docked, .collapsed:
+            // **Screens 05/08 and screen 06 are one region now, because the swipe between them
+            // is one gesture.** They used to be two arms of this switch and a third entry in
+            // `floatingRegion`, which is fine for two states a button jumps between and wrong
+            // for two states a finger drags between: the panel has to be on screen while it is
+            // still leaving, and the dock has to be on screen before it has arrived. The layer
+            // is what owns that window — see `DockRevealLayer` — and it still mounts each
+            // surface only in its own presentation the rest of the time, so screen 06 still
+            // gives the board the screen to itself.
+            //
             // Screen 06 hides the tutor's contents rather than resetting them, which is what
             // lets the dock's orb return the student to screen 05 or 08 correctly.
-            EmptyView()
+            DockRevealLayer(
+                travel: layout.dockTravel,
+                panelOrigin: CGPoint(x: layout.panelX, y: layout.contentTop),
+                dockOrigin: CGPoint(x: layout.collapsedDockX, y: layout.collapsedDockY),
+                edgeZone: CGRect(
+                    x: layout.safeAreaLeading,
+                    y: layout.contentTop,
+                    width: HorizontalSwipeRouter.edgeZoneWidth,
+                    height: layout.contentHeight
+                ),
+                isDocked: presentation == .docked,
+                drag: dockDrag,
+                // The way back in lands wherever the orb's tap lands, and for the same reason:
+                // on a window too narrow to dock, the tutor's only home is the full-screen
+                // column. See `openTutorFromDock`.
+                onSettle: { docked in if docked { openTutorFromDock() } }
+            ) {
+                TutorPanel(
+                    text: $composerText,
+                    dictation: dictation,
+                    attachments: attachments,
+                    // The same flag the collapsed dock's `btn/select` takes, for the same
+                    // control at the other presentation — an empty board has nothing to
+                    // select, and `toggleBoardSelection` would swallow the tap.
+                    canSelect: capture.hasInk,
+                    dock: dockDrag,
+                    actions: actions
+                )
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("tutor-panel")
+            } dock: {
+                CollapsedDock(
+                    // Lit from the moment the marquee is armed, for the same reason the
+                    // composer's glyph is: this button is the only thing on a collapsed
+                    // screen that can report the tap landed.
+                    isSelectionAttached: uiState.selection.capturesBoardDrags,
+                    canSelect: capture.hasInk,
+                    onSelect: toggleBoardSelection,
+                    onOpenTutor: expandTutorFromDock
+                )
+            }
+            if presentation == .docked { resizeHandle }
         case .fullScreen:
             TutorFullScreen(
                 text: $composerText,
@@ -461,7 +512,7 @@ struct BoardScreen: View {
                 ),
                 onBegin: beginPanelResize,
                 onEnd: finishPanelResize,
-                onCollapse: uiState.collapseTutor,
+                onCollapse: collapseTutor,
                 onReset: uiState.resetPanelWidth
             )
             .offset(x: layout.resizeStripX, y: layout.contentTop)
@@ -500,25 +551,18 @@ struct BoardScreen: View {
         didChangePanelWidth = false
     }
 
+    /// What floats over the board. The peek, and nothing else now.
+    ///
+    /// The collapsed dock used to be the other case here, and it moved into `tutor` when the
+    /// swipe made it one surface with the panel: the two have to be on screen at the same time
+    /// while a finger is between them, and a dock drawn from a different branch of this file
+    /// could never be. It is still painted over the board — `tutor` comes after `board` in the
+    /// screen's stack — so screen 06's *"the dock floats on the canvas card"* is unchanged.
     @ViewBuilder
     private var floatingRegion: some View {
-        switch presentation {
-        case .collapsed:
-            CollapsedDock(
-                // Lit from the moment the marquee is armed, for the same reason the
-                // composer's glyph is: this button is the only thing on a collapsed
-                // screen that can report the tap landed.
-                isSelectionAttached: uiState.selection.capturesBoardDrags,
-                canSelect: capture.hasInk,
-                onSelect: toggleBoardSelection,
-                onOpenTutor: openTutorFromDock
-            )
-            .offset(x: layout.collapsedDockX, y: layout.collapsedDockY)
-        case .fullScreen:
+        if presentation == .fullScreen {
             BoardPeek(height: layout.contentHeight, onTap: uiState.returnToBoard)
                 .offset(x: layout.peekX, y: layout.contentTop)
-        case .docked:
-            EmptyView()
         }
     }
 
@@ -548,6 +592,27 @@ struct BoardScreen: View {
             uiState.restoreTutorFromDock()
         } else {
             uiState.expandTutorToFullScreen()
+        }
+    }
+
+    /// `btn/orb` as the learner meets it: the same destination, on the same spring the
+    /// edge-swipe settles on.
+    ///
+    /// The tap and the swipe differ in one value — a tap has no release velocity, so the
+    /// spring starts from rest. Everything else about the two is the same call.
+    private func expandTutorFromDock() {
+        dockDrag.settle(to: true, velocity: 0, travel: layout.dockTravel) { openTutorFromDock() }
+    }
+
+    /// Collapse from something that is not the dock gesture: the resize drag dragged past its
+    /// floor, or `Start on the board`.
+    ///
+    /// Routed through the model rather than writing `UIState` directly, so the panel is still
+    /// mounted while it leaves and leaves on the one curve. Before this every path to screen 06
+    /// had its own behaviour, which is to say none of them had one.
+    private func collapseTutor() {
+        dockDrag.settle(to: false, velocity: 0, travel: layout.dockTravel) {
+            uiState.collapseTutor()
         }
     }
 
@@ -706,7 +771,7 @@ struct BoardScreen: View {
         store.startWorking()
         // Screen 06 is the design's own name for the board having the screen to itself, and
         // the only state that gives the board the width the label promises.
-        uiState.collapseTutor()
+        collapseTutor()
     }
 
     /// `btn/select` — the design's one control for attaching a region of the board to the

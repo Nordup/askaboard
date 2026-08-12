@@ -31,6 +31,25 @@ struct DrawerRevealLayer<Drawer: View, Chat: View, Toggle: View, Chrome: View>: 
     /// Called once, on release, with where the drawer settled. The caller wraps its own state
     /// write however it likes; the animation is already open around this call.
     let onSettle: (Bool) -> Void
+    /// The dock's own gesture, driven by the *same* pan region as the drawer's.
+    ///
+    /// **One recogniser, two destinations — see `HorizontalSwipeRouter`.** A left-swipe on this
+    /// panel means "close the drawer" while the drawer is open and "minimise the dock" while it
+    /// is shut, and those are two motions of two different surfaces. The panel is not this
+    /// type's to move — it is placed by `DockRevealLayer` one level out — so the collapse route
+    /// writes that layer's model instead of this view's own drag. The write invalidates only
+    /// that layer, which re-renders one offset; nothing here rebuilds, and neither pane knows
+    /// the gesture happened.
+    ///
+    /// `nil` in the gallery and the previews, where there is no dock to collapse to: the route
+    /// is then never taken and a left-swipe on a shut drawer does what it always did, which is
+    /// nothing.
+    var dock: DockRevealModel?
+    /// How far the panel travels to leave the screen — `ScreenLayout.dockTravel`.
+    var dockTravel: CGFloat = 0
+    /// Called inside the collapse animation, with `true` for docked. The mirror of `onSettle`
+    /// for the other axis.
+    var onDockSettle: (Bool) -> Void = { _ in }
     @ViewBuilder let drawer: Drawer
     @ViewBuilder let chat: Chat
     /// The chat header's `btn/sidebar-toggle` — the one thing that belongs to the chat pane and
@@ -73,6 +92,13 @@ struct DrawerRevealLayer<Drawer: View, Chat: View, Toggle: View, Chrome: View>: 
     /// store — a stored drag *is* the commitment.
     @State private var drag: Drag?
 
+    /// True while the committed touch is driving the **dock** rather than the drawer.
+    ///
+    /// A `Bool` and not a position: the position is `dock`'s, because the surface being moved
+    /// is. This is written twice per gesture and exists only so the panes go inert for the
+    /// fingers that land afterwards, exactly as they do for a drawer pan.
+    @State private var isCollapsing = false
+
     /// One committed touch's state.
     private struct Drag {
         /// Where the drawer was when this touch landed — 0 or 1. Every frame resolves from this
@@ -98,7 +124,7 @@ struct DrawerRevealLayer<Drawer: View, Chat: View, Toggle: View, Chrome: View>: 
     /// come *after*: `inertToTouches(_:)` keeps a second finger from picking up a control
     /// mid-pan, and `scrollDisabled` keeps that same second finger from scrolling a list the
     /// pan is sliding.
-    private var isPanCommitted: Bool { drag != nil }
+    private var isPanCommitted: Bool { drag != nil || isCollapsing }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -137,33 +163,9 @@ struct DrawerRevealLayer<Drawer: View, Chat: View, Toggle: View, Chrome: View>: 
         // the drawer pan would be cancelled by it.
         .background {
             DrawerPanGesture(
-                onCommit: {
-                    let anchor: CGFloat = isOpen ? 1 : 0
-                    drag = Drag(anchor: anchor, progress: anchor)
-                },
-                onChange: { translation in
-                    guard var drag else { return }
-                    drag.progress = DrawerReveal.progress(
-                        from: drag.anchor,
-                        translation: translation,
-                        travel: travel
-                    )
-                    self.drag = drag
-                },
-                onEnd: { _, velocity in
-                    guard let drag else { return }
-                    let opens = DrawerReveal.settlesOpen(
-                        progress: drag.progress,
-                        velocity: velocity
-                    )
-                    // Both writes inside the one transaction. Clearing the drag outside it
-                    // would hand `progress` straight back to the settled value and the pane
-                    // would jump to its destination instead of springing to it.
-                    withAnimation(DrawerReveal.settle(velocity: velocity, travel: travel)) {
-                        self.drag = nil
-                        onSettle(opens)
-                    }
-                }
+                onCommit: commit,
+                onChange: change,
+                onEnd: end
             )
             .padding(.trailing, TutorPanelMetrics.inset)
         }
@@ -174,6 +176,75 @@ struct DrawerRevealLayer<Drawer: View, Chat: View, Toggle: View, Chrome: View>: 
         // type is built on, since a parameter that changed while a finger was down would
         // rebuild the pane it was passed to.
         .scrollDisabled(isPanCommitted)
+    }
+
+    // MARK: - The gesture, routed
+
+    /// The touch committed to the horizontal axis. **The route is chosen here and nowhere
+    /// else** — see `HorizontalSwipeRouter` for the table and for why re-choosing it on a later
+    /// frame would be wrong.
+    ///
+    /// `.none` takes the drawer's own branch rather than doing nothing, and that is deliberate:
+    /// a right-swipe on an already-open drawer moves nothing, but the pan still has to *own*
+    /// the touch — the panes go inert, the scrollers stop, and the release settles by position
+    /// exactly as it did before this table existed. Nothing about the drawer's behaviour
+    /// changes; the table only added the branch above it.
+    private func commit(_ translation: CGFloat) {
+        let direction = HorizontalSwipeRouter.Direction.of(translation)
+        let transition = direction.map {
+            HorizontalSwipeRouter.transition(
+                presentation: .docked,
+                isDrawerOpen: isOpen,
+                isSidebarOpen: false,
+                direction: $0
+            )
+        }
+        if transition == .collapseDock, let dock, dockTravel > 0 {
+            isCollapsing = true
+            dock.begin(from: true)
+            return
+        }
+        let anchor: CGFloat = isOpen ? 1 : 0
+        drag = Drag(anchor: anchor, progress: anchor)
+    }
+
+    private func change(_ translation: CGFloat) {
+        if isCollapsing, let dock {
+            dock.track(
+                DockReveal.progress(from: 1, translation: translation, travel: dockTravel)
+            )
+            return
+        }
+        guard var drag else { return }
+        drag.progress = DrawerReveal.progress(
+            from: drag.anchor,
+            translation: translation,
+            travel: travel
+        )
+        self.drag = drag
+    }
+
+    private func end(_ translation: CGFloat, _ velocity: CGFloat) {
+        if isCollapsing, let dock {
+            isCollapsing = false
+            let docked = DockReveal.settlesDocked(
+                progress: dock.progress ?? 1,
+                velocity: velocity
+            )
+            dock.settle(to: docked, velocity: velocity, travel: dockTravel) {
+                onDockSettle(docked)
+            }
+            return
+        }
+        guard let drag else { return }
+        let opens = DrawerReveal.settlesOpen(progress: drag.progress, velocity: velocity)
+        // Both writes inside the one transaction. Clearing the drag outside it would hand
+        // `progress` straight back to the settled value and the pane would jump to its
+        // destination instead of springing to it.
+        withAnimation(DrawerReveal.settle(velocity: velocity, travel: travel)) {
+            self.drag = nil
+            onSettle(opens)
+        }
     }
 
     /// Board 17's drawer, under the chat.

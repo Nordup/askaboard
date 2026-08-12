@@ -394,6 +394,11 @@ drawer on the spring a fling opens it with, so the tap and the swipe end the sam
 
 Verified anchoring arithmetic: board right = `124 + 1224 = 1348`; `1348 − 1192 = 156 = 132 + 24` ✅. Board bottom = `28 + 976 = 1004`; `1004 − 916 = 88 = 64 + 24` ✅. Screen-edge reading = `28 (--space-edge) + 24 = 52` ✅.
 
+**The dock is one surface with the docked panel, not a separate region.** A left-swipe on the
+panel minimises to it and a right-swipe from the screen's leading edge brings the panel back,
+so both have to be on screen while a finger is between them — see §15.1. `btn/orb` runs the
+same spring the swipe settles on.
+
 ### `btn/select` (52 × 52)
 
 | Property | Value |
@@ -745,40 +750,52 @@ eased rather than linear so all three of the design's published frames are repro
 
 **Gesture.** A right-swipe anywhere in the chat area opens it; a left-swipe closes it, **and
 that one may start on either pane** — on the 74 pt chat strip, or on a session row inside the
-drawer itself. The pane tracks the finger one-to-one either way.
+drawer itself. The pane tracks the finger one-to-one either way, and a tap on the chat strip
+also closes it.
 
-The first **12 pt** of travel decide the axis: within **15°** of horizontal commits to the pan
-and suppresses the scroll of whichever list is under the finger — the conversation on the way
-open, the session rows on the way closed — until the finger lifts. Anything steeper scrolls
-that list and the drawer takes nothing from the touch. On release it settles by velocity
-first — a fling over **400 pt/s** decides the direction outright — and by the 50% line
-otherwise. A tap on the chat strip also closes it.
+The first **12 pt** of travel decide the axis, and a start within **38°** of horizontal commits
+to the pan. The angle is wider than board 18's stated 10–15°: a thumb swiping across a 337 pt
+panel on a two-handed iPad travels on an arc, and at 15° a 100 pt swipe was rejected for 27 pt
+of drift — less drift than the thumb's own pivot produces. 38° is dominant-axis (45°) with a
+modest bias kept for the scroller. The distance stayed at 12, because a slow swipe crosses 12 pt
+just as surely as a fast one and a shorter vector has no meaningful angle to measure. Anything
+steeper scrolls the list under the finger and the drawer takes nothing from the touch.
 
-**A swipe must not press what it crosses.** A `Button` fires on touch-*up* and cancels only
-when the finger leaves its bounds, which never happens here: a session row is 239 × 44 and a
-chip is 301 × 62, so a whole 100 pt swipe starts and ends inside one control. Without a guard,
-a left-swipe out of the drawer opened whichever session it crossed.
+On release it settles by velocity first — a fling over **300 pt/s** decides the direction
+outright — and by the 50% line otherwise. 300 rather than board 18's 400: an unhurried swipe
+that stopped 90 pt into the 263 while still moving at 350 sprang back, which reads as the
+gesture having been missed rather than judged.
 
-It takes **two mechanisms**, because they answer different halves and the first one alone was
-shipped and found wanting on device:
+**A swipe must not press what it crosses, and one mechanism does all of it.** A `Button` fires
+on touch-*up* and cancels only when the finger leaves its bounds, which never happens here: a
+session row is 239 × 44 and a chip is 301 × 62, so a whole 100 pt swipe starts and ends inside
+one control. Without a guard, a left-swipe out of the drawer opened whichever session it
+crossed.
 
-- A press that would *begin* during a pan — `allowsHitTesting(false)` on the whole pan surface.
-  Hit testing is consulted when a touch lands, so a finger already travelling cannot pick up a
-  new control on its way past. Safe over everything including the composer, because it changes
-  neither focus nor enablement.
-- A press that had *already begun* when the axis committed — `disabled`. On iPadOS 17 hit
-  testing does not reach this case at all: the target was resolved at touch-down and the
-  in-flight press keeps it, so the button still fires on touch-up. `disabled` reaches it
-  because it does not filter events, it removes the recogniser — `isEnabled` going false tears
-  the control's gesture out of the view, and a gesture that no longer exists cannot complete.
+Three generations of SwiftUI-side fixes could not close it — per-control `.disabled` lists
+missed controls, container `allowsHitTesting` cannot reach a press already in flight on
+iPadOS 17, and structural `.disabled` groups had to exempt the composer, because `.disabled`
+resigns a focused `TextField` and drops the keyboard. That exemption was the last hole.
 
-The second is attached to **subtrees that contain no text field**, and that is the whole of the
-keyboard exception: `disabled` resigns a focused field's first responder, so a swipe
-mid-sentence would drop the keyboard. The composer is a sibling of every disabled group, never
-a descendant — the exception is expressed by where the modifier hangs rather than by a list of
-controls to keep in step.
+The mechanism that replaced all of them is `DrawerPanRecognizer`, a `UIGestureRecognizer` that
+owns the whole horizontal axis and does what `UIScrollView` does: at the instant the touch
+commits, **every other recogniser analysing that touch is cancelled at the UIKit level**. That
+kills an in-flight SwiftUI press natively, composer included, without disabling anything — touch
+cancellation does not resign first responder, so the keyboard stays up mid-sentence. Because
+commitment is a property of the *touch* and not of the drawer, it fires just the same at a
+travel boundary where the pan produces no visible motion. A vertical start fails fast, so
+scrolling is exactly what it was, and a tap never travels 12 pt so it never meets the recogniser
+at all.
 
-**The session rows need neither.** They are a plain view with a `LongPressGesture` and a
+Two SwiftUI-side guards remain, and both are about the *other* fingers rather than the
+committing one: `allowsHitTesting(false)` over the panes stops a second finger picking up a
+control mid-pan, and `scrollDisabled` stops it scrolling a list the pan is sliding.
+
+**This recogniser is the single mechanism for horizontal gestures and press cancellation.**
+Extend it — add regions, add routes — and never add a rival SwiftUI gesture or re-add a
+SwiftUI-level press guard.
+
+**The session rows need neither guard.** They are a plain view with a `LongPressGesture` and a
 `DragGesture`, not a `Button`, so the row proves for itself that a swipe was not a tap: the
 drag's own translation has to be within 10 pt for the tap to count. Evidence the row already
 holds cannot be raced by anything that failed to switch it off in time. The hold is checked
@@ -829,6 +846,108 @@ same time and neither carries a veil.
   before 263 points of travel carry it into the dock's corner. Closed → tap opens; open → tap
   closes. It is the only exit besides the left-swipe, because nothing inside the sidebar closes
   it, and the swipe is the gesture on this surface a learner is least likely to find.
+
+---
+
+## 15. Horizontal swipe router — one recogniser, one table
+
+Every horizontal gesture in the shell is the same recogniser (§14.1). What a committed pan
+*drives* is decided in one place, `HorizontalSwipeRouter`, as arithmetic rather than as an `if`
+inside each surface's `onCommit`.
+
+**Direction is read once, at commitment, and never revisited.** That is the same lock the axis
+is, one axis down: a swipe that starts left and curls back right keeps driving the route it
+committed to, clamped at its own end of the travel. Re-routing mid-gesture is what would turn
+two distinct gestures into one ambiguous one.
+
+| Presentation | Drawer / sidebar | Direction | Origin | Transition |
+|---|---|---|---|---|
+| docked | closed | right | surface | `openDrawer` |
+| docked | closed | **left** | surface | **`collapseDock`** |
+| docked | open | left | surface | `closeDrawer` |
+| docked | open | right | surface | `none` |
+| collapsed | — | right | **leading edge** | **`expandDock`** |
+| collapsed | — | right | surface | `none` |
+| collapsed | — | left | any | `none` |
+| full screen | closed | right | any | `openSidebar` |
+| full screen | open | left | any | `closeSidebar` |
+| full screen | closed | left | any | `none` |
+| full screen | open | right | any | `none` |
+
+`none` is a real answer and not a failure: the pan still *committed*, so the presses it crossed
+were cancelled. That boundary case is why commitment rather than motion is the trigger.
+
+**There is no collapse while the drawer is open.** The drawer is covering 78% of the panel, so
+the first left-swipe is unambiguously about the drawer and the collapse is the swipe after it —
+two gestures, never one.
+
+### 15.1 The dock swipe (screens 05/08 ↔ screen 06)
+
+| Property | Value |
+|---|---|
+| Travel | `ScreenLayout.dockTravel` = `panelX + panelWidth`, **365** on the reference screen |
+| Direction | the panel leaves by the **leading** edge, the edge it is pinned to |
+| Tracking | one-to-one inside the travel, whole points |
+| Past either end | rubber-banded, asymptotic to **6%** of the travel |
+| Release | velocity first (**300 pt/s**), 50% line otherwise — `DrawerReveal`'s own rule |
+| Settle | `DrawerReveal.settle(velocity:travel:)`, seeded with the release velocity |
+| Dock fade | starts at `collapsedDockX ÷ dockTravel` = **0.405** on the reference screen |
+
+The rubber band is the one place this parts company with the drawer, which takes a hard clamp
+and says why: it lives inside the panel's clip and *"there is nothing past either end to
+reveal."* The dock is the opposite case at both ends — past collapsed the panel is being pushed
+further off an edge it has already left, past docked it would be pushed off the leading inset —
+so the finger keeps producing motion and the motion asymptotes. `x / (1 + x / limit)`, whose
+derivative is 1 at the boundary, so there is no corner where the resistance starts and no
+second hard stop further out.
+
+**The dock's fade threshold is derived, not chosen.** The panel's trailing edge sits at
+`progress × dockTravel` — the travel is measured from the screen's leading edge, so the two are
+the same number seen from either side — and the orb is anchored at `collapsedDockX`, *inside*
+the panel's lane. The orb is painted over the panel, so it may not fade up until the panel's own
+edge has passed it. A constant would be right at 337 pt of panel and wrong at every other width
+the student can drag the seam to. The fade is smoothstepped and the slide (one `--space-gap`,
+leading) is `1 − opacity`, so the two are one movement by construction.
+
+**Every path to screen 06 runs the same spring.** The swipe, `btn/dock`, the dock's orb, a
+resize drag past its floor and `Start on the board` all call
+`DockRevealModel.settle(to:velocity:travel:_:)`, which makes the presentation change *inside*
+the animation and holds the losing surface mounted until the spring has finished. Before this
+the buttons wrote the presentation bare and the panel simply vanished — a fourth behaviour
+rather than a fourth control. A tap differs from a release in one value: it has no velocity, so
+the spring starts from rest.
+
+The panel and the dock are each mounted only in their own presentation, plus for the duration of
+a gesture and the spring after it. Screen 06 gives the board the screen to itself, which is a
+performance promise as much as a layout: a message thread left mounted off the leading edge
+would still be laid out and drawn on every frame the learner spends inking.
+
+### 15.2 The leading-edge zone
+
+The collapsed screen has no tutor surface to swipe on, so the way back in is a **24 pt**
+(`--space-gap`) grab region against the screen's leading edge, right-swipe only.
+
+Two facts keep it clear of the board, and the width is only the second:
+
+1. In the collapsed lane arithmetic the canvas starts at `boardXCollapsed` — the leading inset,
+   the rail and a gap, **124** on the reference screen and never less on any device. The zone is
+   24 pt of empty screen grey and does not reach the rail at 28, let alone the canvas. **It does
+   not overlap `PKCanvasView` at all.**
+2. Where a future layout did put the canvas under it, the intent lock is still the arbitration:
+   a stroke that starts vertically fails the recogniser at 12 pt and the canvas keeps the touch,
+   and a horizontal commitment cancels the canvas's own recognisers exactly as it cancels a
+   button's.
+
+The zone additionally **refuses Apple Pencil touches outright**, at touch-down, before the
+recogniser ever enters `.possible`. In this app a pencil is always drawing and never navigating,
+and a pencil stroke that started near the edge must reach `PKCanvasView` intact rather than
+commit, cancel the canvas and leave a 12 pt orphan of a stroke behind.
+
+A left-swipe that starts in the zone commits and routes to nothing, which is correct: there is
+no state to the left of collapsed. It still cancelled whatever it crossed.
+
+**On a window too narrow to dock**, the edge swipe lands where the orb's tap lands — the
+full-screen column — because that is the tutor's only home at that size.
 
 ---
 

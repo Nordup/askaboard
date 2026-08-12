@@ -298,6 +298,20 @@ struct ScreenLayout: Equatable, Sendable {
     /// the hazard `ResizeHandleMetrics.hitBreadth` was written against.
     var resizeStripX: CGFloat { panelX + panelWidth - DS.Space.panelInset }
 
+    /// How far the docked panel has to travel to leave the screen: its own lane plus the
+    /// leading inset it is pinned at, `28 + 337 = 365` on the reference screen.
+    ///
+    /// It is the panel's *trailing* edge measured from the screen's leading one, which is why
+    /// this one number is both the travel and the reference the collapsed dock's fade is
+    /// derived against — at any point of the travel the panel's trailing edge sits at
+    /// `progress × dockTravel`. See `DockReveal.dockFadeStart(dockLeading:travel:)`.
+    ///
+    /// A lane, so it lives here: it follows a resized panel and a Split View window for free,
+    /// and neither the layer that animates the panel nor the tests that pin the curve have to
+    /// re-derive it. The panel leaves by the leading edge rather than fading, because that is
+    /// the edge it is pinned to and the one the collapsed dock arrives from.
+    var dockTravel: CGFloat { panelX + panelWidth }
+
     /// The width used by the design and restored by a resize-handle double tap.
     static let defaultPanelWidth: CGFloat = DS.Container.panel
 

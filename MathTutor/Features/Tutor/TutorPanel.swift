@@ -57,6 +57,15 @@ struct TutorPanel: View {
     /// Whether the board has any ink to select — handed through to the composer's
     /// `btn/select`, the same flag `BoardScreen` already hands the collapsed dock.
     var canSelect = true
+    /// The dock's gesture, held as a plain reference and never observed.
+    ///
+    /// **Not `@ObservedObject`, and that is load-bearing.** This object publishes on every
+    /// touch event of a collapse pan; observing it here would rebuild the thread, the composer
+    /// and the drawer sixty times a second, which is the whole cost `DrawerRevealLayer` exists
+    /// to avoid. This view only ever *writes* to it — `btn/dock` below, and the pan region
+    /// inside the layer — and the one view that reads it is `DockRevealLayer`, which stores its
+    /// content and re-renders an offset.
+    let dock: DockRevealModel
     let actions: TutorActions
 
     /// Board 16's menu, and which of the three pickers it asked for. Both are the *panel's*
@@ -99,7 +108,14 @@ struct TutorPanel: View {
                 isOpen: uiState.isSessionsDrawerOpen,
                 onSettle: { opens in
                     if opens { uiState.openSessionsDrawer() } else { uiState.closeSessionsDrawer() }
-                }
+                },
+                // The other half of the same recogniser: a left-swipe with the drawer shut
+                // minimises the panel instead of closing a drawer that is already closed. See
+                // `HorizontalSwipeRouter` for the table and `DrawerRevealLayer.dock` for why
+                // the position it writes is not this view's.
+                dock: dock,
+                dockTravel: layout.dockTravel,
+                onDockSettle: { docked in if !docked { collapse() } }
             ) {
                 drawer(width: layout.sessionsDrawerWidth, height: size.height)
             } chat: {
@@ -219,7 +235,20 @@ struct TutorPanel: View {
     /// column does not move; only the pane that usually fills it does.
     private func panelChrome(in size: CGSize) -> some View {
         PanelControls(
-            onDock: { closeMenus(); uiState.collapseTutor() },
+            // **The button and the swipe are one path.** `btn/dock` used to write the
+            // presentation bare and the panel simply vanished — a fourth behaviour rather than
+            // a fourth control. It now ends where a released left-swipe ends, on the same
+            // spring, with the same mount held open for it: see `DockRevealModel.settle`. A
+            // tap has no velocity, so the spring starts from rest, which is the only
+            // difference between the two.
+            //
+            // An explicit closure rather than the bound method, for the reason
+            // `BoardScreen.board` spells out at length: a `@MainActor`-isolated method
+            // reference handed straight to a closure parameter crashes swift-frontend during
+            // IRGen on this toolchain.
+            onDock: {
+                dock.settle(to: false, velocity: 0, travel: layout.dockTravel) { collapse() }
+            },
             onFullScreen: { closeMenus(); uiState.expandTutorToFullScreen() },
             alignment: .trailing
         )
@@ -253,6 +282,17 @@ struct TutorPanel: View {
         .frame(width: contentWidth, height: TutorPanelMetrics.controlsHeight, alignment: .leading)
         .frame(width: size.width, alignment: .center)
         .padding(.top, TutorPanelMetrics.inset)
+    }
+
+    /// What arriving at screen 06 costs the panel — the presentation change and the menus that
+    /// were open over it.
+    ///
+    /// Called *inside* the collapse animation, by `DockRevealModel.settle`, and never wrapped
+    /// in one of its own: the spring is already open around it, and a second `withAnimation`
+    /// here would give the same state change two curves to settle on.
+    private func collapse() {
+        closeMenus()
+        uiState.collapseTutor()
     }
 
     /// Put the drawer away. The layer clears its own drag on release, so there is nothing
