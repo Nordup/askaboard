@@ -185,6 +185,30 @@ final class PresentationMorphTests: XCTestCase {
         }
     }
 
+    /// The rail leaves as one plane with the board — the identical shift, whole points —
+    /// while fading over the first 35%: gone before the container has grown past it,
+    /// back over the same band on the return leg, exact at both ends.
+    func testRailRidesTheBoardAndFadesEarly() {
+        let morph = closed
+        for step in stride(from: CGFloat(0), through: 1, by: 0.1) {
+            XCTAssertEqual(morph.railShift(at: step), morph.boardShift(at: step), "at \(step)")
+        }
+        XCTAssertEqual(PresentationMorph.railOpacity(at: 0), 1)
+        XCTAssertEqual(PresentationMorph.railOpacity(at: PresentationMorph.railGoneBy), 0)
+        XCTAssertEqual(PresentationMorph.railOpacity(at: 1), 0)
+        // Wider than the controls' band — a bigger thing needs longer to leave — but
+        // still gone in the first half of the travel.
+        XCTAssertGreaterThan(PresentationMorph.railGoneBy, PresentationMorph.controlsGoneBy)
+        XCTAssertLessThanOrEqual(PresentationMorph.railGoneBy, 0.5)
+        // Monotonic out: the rail never flickers back on the way.
+        var last = 1.0
+        for step in stride(from: CGFloat(0), through: 1, by: 0.05) {
+            let opacity = PresentationMorph.railOpacity(at: step)
+            XCTAssertLessThanOrEqual(opacity, last + 1e-9, "at \(step)")
+            last = opacity
+        }
+    }
+
     func testSidebarFoldsItsOwnWidthAlongTheProgress() {
         let morph = open
         // At rest in full screen the sidebar is home.
@@ -210,11 +234,11 @@ final class PresentationMorphTests: XCTestCase {
 
     // MARK: - The settle and its interruptions
 
-    /// The arrival spring derives from the drawer's shared construction, one notch
-    /// livelier. The constant is pinned; the construction itself is `DrawerReveal.settle`,
-    /// which is the sharing.
+    /// The arrival spring derives from the drawer's shared construction, two notches
+    /// livelier — a scene that dipped 15% needs an arrival with real snap. The constant is
+    /// pinned; the construction itself is `DrawerReveal.settle`, which is the sharing.
     func testArrivalSpringIsTheSharedOneANotchLivelier() {
-        XCTAssertEqual(PresentationMorph.settleDamping, 26)
+        XCTAssertEqual(PresentationMorph.settleDamping, 20)
         XCTAssertLessThan(PresentationMorph.settleDamping, 30, "livelier than the drawer's")
     }
 

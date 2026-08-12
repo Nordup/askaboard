@@ -61,6 +61,10 @@ enum FlightRole {
     /// The live board card: translated toward the trailing edge by `boardShift` — never
     /// resized, never faded — so its leading edge lands exactly on the peek's own line.
     case board
+    /// The tool rail: the board's own shift, fading out over the first 35% — the ground
+    /// leaves as one plane, rail and card together, instead of the card sliding out from
+    /// beside a nailed-down toolbar. The one other unmatched element beside the controls.
+    case rail
     /// The peek silhouette: a distinct artwork crossfading over the arriving card's last
     /// 15% of travel.
     case peek
@@ -118,6 +122,10 @@ struct FlightRender: ViewModifier {
                 .opacity(PresentationMorph.fullThreadOpacity(at: progress, returnLeg: isReturnLeg))
         case .board:
             content.offset(x: geometry.boardShift(at: progress))
+        case .rail:
+            content
+                .offset(x: geometry.railShift(at: progress))
+                .opacity(PresentationMorph.railOpacity(at: progress))
         case .peek:
             content.opacity(geometry.peekOpacity(at: progress))
         case .panelShadow:
@@ -148,23 +156,26 @@ extension FlightRender: @preconcurrency Animatable {
     }
 }
 
-/// The travelling ensemble's dip — the space-switcher breath, applied to the flight copies
-/// as **one group about one anchor**: `PresentationMorph.flightScale` about the container's
-/// centre. It wraps the whole `flightElements` stack (framed to the screen, so the unit
-/// anchor is the container's centre in screen coordinates) rather than riding inside each
-/// `FlightRender`, because per-element scaling about per-element centres reads as the parts
-/// wobbling; one transform moves the ensemble fractionally toward the shared centre and the
-/// group breathes together. Exactly 1 at both endpoints, so the pixel-parity handoff to the
-/// settled surfaces is untouched. Geometry only, like every animatable here — it decides
-/// nothing about what exists.
+/// The travelling scene's dip — the space-switcher breath, applied to the **whole screen
+/// scene** as one group about one fixed anchor: `PresentationMorph.flightScale` about the
+/// screen's centre. It wraps the layer's entire stack — board card, rail, chat surface,
+/// flight copies and the arriving peek — because the user's read of the shipped chat-only
+/// dip was that the ground refused to move ("board doesn't scale while moving"); the OS
+/// space switcher this quotes zooms everything, and so does this. One `scaleEffect` is a
+/// render-tree transform: the live `PKCanvasView` is never resized or re-laid-out, its
+/// existing tiles are composited under one matrix, exactly as the OS app switcher treats
+/// a whole app's layer. Per-element scaling stays rejected — parts wobbling about
+/// themselves instead of one scene breathing. Exactly 1 at both endpoints, so the
+/// pixel-parity handoff to the settled surfaces is untouched, and at rest the modifier is
+/// an identity transform. Geometry only, like every animatable here — it decides nothing
+/// about what exists.
 struct FlightDip: ViewModifier {
     var progress: CGFloat
-    let geometry: PresentationMorph
 
     func body(content: Content) -> some View {
         content.scaleEffect(
             PresentationMorph.flightScale(at: progress),
-            anchor: geometry.flightDipAnchor(at: progress)
+            anchor: PresentationMorph.flightDipAnchor
         )
     }
 }
@@ -247,13 +258,11 @@ struct PresentationFlightLayer<
             // compiled and tested as the design of record for a device where the curves
             // ever change.
             board.modifier(render(.board))
-            rail
-            // The dip wraps the WHOLE chat scene — container surface, resting tutor
-            // contents and the flight copies — as one screen-framed stack about one
-            // anchor, so the surface itself visibly zooms out and snaps back (the
-            // user's space-switcher ask). The board and rail stay outside: they are
-            // the ground the surface lifts from. At rest the scale is exactly 1, so
-            // this wrapper is a no-op outside flights and decides no mounts.
+            // The rail rides the board's shift and fades over the first 35% — the ground
+            // leaves as one plane. Unconditional like the board's, for the same reason: a
+            // structural branch here would remount the rail at every commitment. At rest
+            // the shift is exactly 0 (docked) or the rail is unmounted (full screen).
+            rail.modifier(render(.rail))
             ZStack(alignment: .topLeading) {
                 if model.isActive {
                     sidebar.modifier(render(.sidebar))
@@ -269,9 +278,20 @@ struct PresentationFlightLayer<
                 height: morph.screenFrame.height,
                 alignment: .topLeading
             )
-            .modifier(FlightDip(progress: progress, geometry: morph))
             floating.modifier(render(.peek))
         }
+        // The dip wraps the WHOLE scene — board card, rail, chat surface, flight copies
+        // and the arriving peek — as one screen-framed stack about the screen's centre,
+        // so everything zooms out and snaps back together (the user's space-switcher
+        // ask; a chat-only dip over a still ground was rejected on device). At rest the
+        // scale is exactly 1, so this wrapper is an identity outside flights and decides
+        // no mounts.
+        .frame(
+            width: morph.screenFrame.width,
+            height: morph.screenFrame.height,
+            alignment: .topLeading
+        )
+        .modifier(FlightDip(progress: progress))
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
@@ -346,9 +366,10 @@ struct PresentationFlightLayer<
             .modifier(render(.composer))
         }
         // Framed to the screen so every child's `.offset` placement stays in screen
-        // coordinates. The dip no longer rides here: the whole chat scene — container,
-        // resting tutor and these copies — takes one `FlightDip` in the layer body, so
-        // the surface zooms as a unit instead of the copies dipping over a still box.
+        // coordinates. The dip no longer rides here: the whole screen scene — board,
+        // rail, container, resting tutor and these copies — takes one `FlightDip` at the
+        // layer's root, so everything zooms as a unit instead of the copies dipping over
+        // a still box.
         .frame(
             width: morph.screenFrame.width,
             height: morph.screenFrame.height,

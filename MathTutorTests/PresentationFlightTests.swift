@@ -333,20 +333,17 @@ final class PresentationFlightTests: XCTestCase {
         )
         XCTAssertEqual(PresentationMorph.flightScale(at: -0.5), 1)
         XCTAssertEqual(PresentationMorph.flightScale(at: 1.5), 1)
-        // The depth stays in the judged band.
-        XCTAssertGreaterThanOrEqual(PresentationMorph.flightDipDepth, 0.04)
-        XCTAssertLessThanOrEqual(PresentationMorph.flightDipDepth, 0.08)
+        // The depth is the user's judged call on device: 0.05 read as nothing, 0.15 is
+        // the felt recede. Pinned exactly — this number was argued for twice.
+        XCTAssertEqual(PresentationMorph.flightDipDepth, 0.15)
     }
 
-    /// One shared anchor, the container's centre — never a per-element anchor.
-    func testDipAnchorsOnTheContainersCentre() {
-        let morph = PresentationMorph(layout: layout, isSidebarOpen: false)
-        for step in stride(from: CGFloat(0), through: 1, by: 0.25) {
-            let frame = morph.containerFrame(at: step)
-            let anchor = morph.flightDipAnchor(at: step)
-            XCTAssertEqual(anchor.x, frame.midX / layout.screenWidth, accuracy: 1e-9)
-            XCTAssertEqual(anchor.y, frame.midY / layout.screenHeight, accuracy: 1e-9)
-        }
+    /// One shared anchor, the screen's own centre, fixed for the whole travel — never a
+    /// per-element anchor, and no longer the container's moving centre: with the whole
+    /// screen in the dip (board and rail included) a moving anchor added a lateral drift
+    /// against the board's own travel.
+    func testDipAnchorsOnTheScreensCentre() {
+        XCTAssertEqual(PresentationMorph.flightDipAnchor, .center)
     }
 
     // MARK: - End states, both legs

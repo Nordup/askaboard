@@ -99,11 +99,11 @@ struct PresentationMorph: Equatable, Sendable {
         DrawerReveal.settlesOpen(progress: progress, velocity: velocity)
     }
 
-    /// The arrival spring's damping — the drawer's 30, one notch livelier. `26` puts the
-    /// damping ratio at ~0.73, the band iOS's own system springs live in: the settle
-    /// arrives sooner and carries a hint of snap where the drawer's ratio (~0.84) glides.
-    /// Judged against the dip: an ensemble that shrank on the way needs an arrival with
-    /// some spring in it, or the snap-back reads as a fade back to size.
+    /// The arrival spring's damping — the drawer's 30, two notches livelier. `20` puts the
+    /// damping ratio at ~0.56: the settle arrives with a visible snap where the drawer's
+    /// ratio (~0.84) glides. Judged against the deepened dip: a scene that shrank 15% on
+    /// the way needs an arrival with real spring in it, or the snap-back to size reads as
+    /// a fade rather than a landing.
     static let settleDamping: CGFloat = 20
 
     /// The settle animation — `DrawerReveal.settle`, the shared construction, at this
@@ -244,6 +244,34 @@ struct PresentationMorph: Equatable, Sendable {
         min(1, max(0, (unit(progress) - Self.boardMaskFrom) / (1 - Self.boardMaskFrom)))
     }
 
+    // MARK: - The rail
+
+    /// Where the tool rail has fully gone, as a fraction of the travel.
+    ///
+    /// The rail is the one element of the ground with no counterpart at full screen — it
+    /// serves a canvas the reading column does not show — so, like the panel-controls
+    /// pair, it fades rather than arrives. But it does not *only* fade: it rides the
+    /// board's own shift (`railShift`) while it goes, so the ground leaves as one plane —
+    /// rail and card together, one flock — instead of the card sliding out from beside a
+    /// nailed-down toolbar, which was the shipped bug in a sentence ("toolbar doesn't
+    /// move at all"). The band is a little wider than the controls' 0.25: the rail is
+    /// bigger, and a big thing that vanishes in a quarter of the travel reads as popped.
+    /// Pure in `progress`, so the return leg fades it back in over the same band and a
+    /// reversed gesture retraces its own frames. Endpoints exact: opacity 1 at docked,
+    /// 0 from 35% on — and at rest in full screen the rail is unmounted anyway.
+    static let railGoneBy: CGFloat = 0.35
+
+    /// The rail's opacity: `1` at docked, `0` from `railGoneBy` on, smoothstepped.
+    static func railOpacity(at progress: CGFloat) -> Double {
+        1 - unitSmoothstep(progress, from: 0, to: railGoneBy)
+    }
+
+    /// The rail's translation: the board's own, exactly — the two are one ground plane
+    /// and must move as one. Whole points for the same rasterised-composite reason.
+    func railShift(at progress: CGFloat) -> CGFloat {
+        boardShift(at: progress)
+    }
+
     // MARK: - The sidebar
 
     /// How far the full-screen sidebar has folded out toward the leading edge — `0` at full
@@ -305,8 +333,15 @@ struct PresentationMorph: Equatable, Sendable {
     /// OS space-switcher's gesture language: the surface visibly zooms out while you move
     /// between spaces and snaps back to size as it lands. `0.15` at the deepest point, on
     /// the user's explicit call: 0.05 was imperceptible on device ("I wanted it to zoom
-    /// out"), so this is a felt recede, not a hint. The dip wraps the whole chat scene —
-    /// container surface included — not just the flight copies, for the same reason.
+    /// out"), so this is a felt recede, not a hint.
+    ///
+    /// The dip wraps the **whole screen scene** now — the board card, the rail and the
+    /// arriving peek included, not only the chat surface — on the user's second call: the
+    /// "chat lifts off a still ground" reading was rejected ("board doesn't scale while
+    /// moving"), and the space switcher it quotes zooms *everything*. One `scaleEffect`
+    /// on one screen-framed stack: the live `PKCanvasView` is never resized or re-laid-out
+    /// — a scale is a render-tree transform on its existing tiles, the same thing the OS
+    /// app switcher does to a whole app's layer — so the canvas contract survives intact.
     static let flightDipDepth: CGFloat = 0.15
 
     /// `scale(p) = 1 − depth · sin(π·p)`: **exactly 1 at both endpoints** — the pixel-parity
@@ -320,19 +355,16 @@ struct PresentationMorph: Equatable, Sendable {
         return 1 - Self.flightDipDepth * sin(.pi * p)
     }
 
-    /// The one shared anchor the dip scales about — the container's own centre at that
-    /// point of the travel. One anchor for the whole ensemble, deliberately: per-element
-    /// anchors would shrink each element about itself, which reads as a wobble of parts;
-    /// one anchor moves every element fractionally toward the container's centre together,
-    /// which reads as the group breathing.
-    func flightDipAnchor(at progress: CGFloat) -> UnitPoint {
-        let frame = containerFrame(at: progress)
-        guard screenFrame.width > 0, screenFrame.height > 0 else { return .center }
-        return UnitPoint(
-            x: frame.midX / screenFrame.width,
-            y: frame.midY / screenFrame.height
-        )
-    }
+    /// The one shared anchor the dip scales about — the **screen's own centre**, fixed for
+    /// the whole travel. It used to be the container's centre, recomputed per frame; with
+    /// the whole screen in the dip that anchor added a lateral drift (everything slid
+    /// toward wherever the container's centre was that frame — against the board's own
+    /// rightward travel at mid-flight) and it re-derived the transform every frame for no
+    /// visible gain. A fixed centre is the space switcher's own read — the screen recedes
+    /// in place — and one constant the render server never has to chase. Per-element
+    /// anchors stay rejected for the reason they always were: parts wobbling about
+    /// themselves instead of one scene breathing.
+    static let flightDipAnchor: UnitPoint = .center
 
     // MARK: - The unmatched elements' fades
 

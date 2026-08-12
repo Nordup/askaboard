@@ -130,19 +130,33 @@ struct BoardScreen: View {
             } dockedThread: {
                 // The docked half of the thread's crossfade — the panel's own thread,
                 // laid out once at the panel's column. Geometry mirrors `TutorPanel.fillBand`.
+                //
+                // `isFlightCopy` renders it scroll-free, and `.drawingGroup()` flattens it
+                // to one Metal texture at commitment. This is the midpoint-hitch fix: a
+                // full text column at fractional opacity is an offscreen group-composite
+                // *every frame* of the crossfade band, and the flight has two of them —
+                // the render server stalled exactly where the bands opened (~0.30) and the
+                // gesture visibly stopped mid-travel. A flattened copy pays one
+                // rasterisation at commitment and per-frame is a texture with free alpha.
+                // Safe here and only here: the copy is pure SwiftUI (no `TextField`, no
+                // scroller, no `PKCanvasView` — `drawingGroup` renders UIKit-backed views
+                // as placeholders) and nothing inside it changes for the flight's duration.
                 TutorThreadView(
                     scale: .panel,
                     width: TutorPanelMetrics.contentWidth(for: layout.panelWidth),
                     clearing: ComposerSlotMetrics.panel(surfaceWidth: layout.panelWidth).band,
-                    actions: actions
+                    actions: actions,
+                    isFlightCopy: true
                 )
                 .frame(
                     width: TutorPanelMetrics.contentWidth(for: layout.panelWidth),
                     height: layout.contentHeightAboveKeyboard
                 )
+                .drawingGroup()
             } fullThread: {
                 // The full-screen half — the reading column's thread, laid out once at its
-                // own measure. Geometry mirrors `TutorFullScreen.threadColumn`.
+                // own measure, flattened for the same reason as the docked half above.
+                // Geometry mirrors `TutorFullScreen.threadColumn`.
                 let column = TutorColumnMetrics(
                     layout: layout,
                     reserving: uiState.isSessionsSidebarOpen ? layout.sessionsSidebarWidth : 0
@@ -151,9 +165,11 @@ struct BoardScreen: View {
                     scale: TutorFullScreen.scale,
                     width: column.width,
                     clearing: column.threadClearing,
-                    actions: actions
+                    actions: actions,
+                    isFlightCopy: true
                 )
                 .frame(width: column.width, height: column.threadHeight)
+                .drawingGroup()
             } sidebar: {
                 // Board 19's sidebar, folding along the morph — a flight copy with the real
                 // sessions so the fold shows the learner's own list. Non-interactive by the

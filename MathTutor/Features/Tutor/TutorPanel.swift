@@ -566,6 +566,12 @@ struct TutorThreadView: View {
     /// keeps from the pill.
     var clearing: CGFloat = 0
     let actions: TutorActions
+    /// A presentation-flight copy: rendered scroll-free (`MessageThread.isStatic`) so the
+    /// whole copy is safe under `.drawingGroup()` — the flattening that turns the flight's
+    /// two crossfading thread columns from two per-frame offscreen composites into two
+    /// textures with free alpha. The copy never scrolls and takes no touches, so the
+    /// scroller bought it nothing. See `BoardScreen.dockedThread`/`fullThread`.
+    var isFlightCopy: Bool = false
 
     private var column: CGFloat { width ?? scale.contentWidth }
 
@@ -579,7 +585,8 @@ struct TutorThreadView: View {
             // reference, which crashes swift-frontend during IRGen on this toolchain when
             // handed straight to a one-argument closure parameter — see `Composer`'s own
             // `onRemoveAttachment` for the precedent this follows.
-            crop: { id in store.boardCropStore.crop(for: id) }
+            crop: { id in store.boardCropStore.crop(for: id) },
+            isStatic: isFlightCopy
         ) { accessory }
     }
 
