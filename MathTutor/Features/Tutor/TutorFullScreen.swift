@@ -123,8 +123,12 @@ struct TutorFullScreen: View {
             // Offset left by the thread's bleed: the slot's band is that much wider than the
             // column on each side (see `ComposerSlotMetrics.fullScreen`), and the pill
             // centres in it, so this is what keeps the pill itself on `column.x`.
-            ComposerSlot(metrics: slot, surfaceColor: DS.Color.surface) { composer }
-                .offset(x: column.x - ThreadMetrics.bleed, y: column.floor - slot.band)
+            // The pill goes invisible — never unmounted — while its flight copy is in the
+            // air; the fade band behind it is the surface's own and stays.
+            ComposerSlot(metrics: slot, surfaceColor: DS.Color.surface) {
+                composer.opacity(isInPresentationFlight ? 0 : 1)
+            }
+            .offset(x: column.x - ThreadMetrics.bleed, y: column.floor - slot.band)
 
             sidebarToggle
 
@@ -212,6 +216,10 @@ struct TutorFullScreen: View {
         .fill(DS.Color.surface)
         .frame(width: max(0, layout.screenWidth - sidebar), height: layout.screenHeight)
         .offset(x: sidebar)
+        // Mid-flight the pane's white belongs to the morphing container, which is this
+        // exact fill at progress 1 — a full-bleed white popping over a half-grown container
+        // is what would break the morph at the handoff. Invisible, never unmounted.
+        .opacity(isInPresentationFlight ? 0 : 1)
         .accessibilityHidden(true)
     }
 
@@ -564,7 +572,11 @@ struct TutorFullScreen: View {
             note: attachments.failureNote ?? store.composerNote ?? dictation.noteText,
             onDismissSelection: actions.dismissSelection,
             attachments: attachments.pending,
-            onRemoveAttachment: { attachments.remove($0) }
+            onRemoveAttachment: { attachments.remove($0) },
+            // One live field per flight — see `TutorPanel.composer`, the same rule's other
+            // half. This surface mounts mid-flight as chrome; its real field arrives in
+            // the settle's completion, outside every animation transaction.
+            isInteractive: !isInPresentationFlight
         )
     }
 

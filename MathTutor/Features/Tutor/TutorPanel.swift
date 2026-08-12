@@ -218,7 +218,9 @@ struct TutorPanel: View {
             // Fade and pill together, bottom-anchored: the slot owns the 18pt inset under
             // the composer, so screen 08's pill bottom lands on the panel floor less that
             // inset and screen 05's card grows upward from the same line.
-            ComposerSlot(metrics: slot) { composer }
+            // The pill goes invisible — never unmounted — while its flight copy is in the
+            // air; the fade band behind it is the surface's own and stays.
+            ComposerSlot(metrics: slot) { composer.opacity(isInPresentationFlight ? 0 : 1) }
                 .frame(maxHeight: .infinity, alignment: .bottom)
 
             Group {
@@ -501,7 +503,11 @@ struct TutorPanel: View {
             // `@MainActor`-isolated method reference passed straight into a
             // one-argument closure parameter crashes swift-frontend during
             // IRGen on this toolchain — see `BoardScreen.board`.
-            onRemoveAttachment: { attachments.remove($0) }
+            onRemoveAttachment: { attachments.remove($0) },
+            // One live field per flight, and it is never this one mid-morph: the surface
+            // that mounts during a flight renders chrome, and the real field arrives in
+            // the settle's completion — outside every animation transaction.
+            isInteractive: !isInPresentationFlight
         )
     }
 

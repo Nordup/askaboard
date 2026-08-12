@@ -157,6 +157,35 @@ final class PresentationFlightTests: XCTestCase {
         XCTAssertEqual(centreAtEnd, flight.fullColumnX + flight.fullColumnWidth / 2)
     }
 
+    // MARK: - The composer
+
+    /// The pill shares the chips' horizontal flight and adds the one vertical component:
+    /// its bottom edge runs 986 → 1004, linear on the finger.
+    func testComposerFliesWithTheColumnAndDropsToTheBand() {
+        let flight = closed
+        XCTAssertEqual(flight.composerX(at: 0), 46)
+        XCTAssertEqual(flight.composerX(at: 1), 388)
+        XCTAssertEqual(flight.composerWidth(at: 0), 301)
+        XCTAssertEqual(flight.composerWidth(at: 1), 600)
+        XCTAssertEqual(flight.composerBottom(at: 0), 986)
+        XCTAssertEqual(flight.composerBottom(at: 1), 1004)
+        XCTAssertEqual(flight.composerBottom(at: 0.5), DrawerReveal.wholePoints(995))
+    }
+
+    /// The marquee's slot — glyph + gap, 34 — folds to zero toward the wide pill, which
+    /// draws no marquee at rest; with a selection attached it holds at both ends, because
+    /// then the wide pill draws it too.
+    func testMarqueeSlotFoldsUnlessASelectionHolds()  {
+        let flight = closed
+        let slot = Icon.uiSelectionMarker.renderSize + ComposerMetrics.panel.gap
+        XCTAssertEqual(flight.composerMarqueeSlot(at: 0, isSelectionAttached: false), slot)
+        XCTAssertEqual(flight.composerMarqueeSlot(at: 1, isSelectionAttached: false), 0)
+        XCTAssertEqual(flight.composerMarqueeSlot(at: 0.5, isSelectionAttached: false), slot / 2)
+        for step in stride(from: CGFloat(0), through: 1, by: 0.25) {
+            XCTAssertEqual(flight.composerMarqueeSlot(at: step, isSelectionAttached: true), slot)
+        }
+    }
+
     // MARK: - The lead curve
 
     /// `1 − (1 − p)²`: identity at both ends, ahead of the finger everywhere between —

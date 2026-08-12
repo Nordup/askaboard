@@ -314,6 +314,13 @@ struct PresentationFlight: Equatable, Sendable {
     /// the orb's path is a pure x translation.
     static let orbFrame = OrbSize.panel.metrics.frame
 
+    /// The composer pill's bottom edge at each end. The docked pill sits the panel's 18pt
+    /// inset above the panel's floor (986 on the reference screen); the full-screen pill's
+    /// bottom **is** the content band's own bottom (1004). Both are keyboard-aware, so the
+    /// flight follows a raised pill exactly as it follows a resting one.
+    let dockedComposerBottom: CGFloat
+    let fullComposerBottom: CGFloat
+
     init(layout: ScreenLayout, isSidebarOpen: Bool) {
         dockedColumnX = layout.panelX + TutorPanelMetrics.inset
         dockedColumnWidth = TutorPanelMetrics.contentWidth(for: layout.panelWidth)
@@ -326,6 +333,9 @@ struct PresentationFlight: Equatable, Sendable {
         orbTop = layout.contentTop
             + TutorPanelMetrics.inset + TutorPanelMetrics.controlsHeight
             + PanelStack.orbTopMargin
+        dockedComposerBottom = layout.contentTop + layout.contentHeightAboveKeyboard
+            - TutorPanelMetrics.inset
+        fullComposerBottom = layout.contentBottomAboveKeyboard
     }
 
     /// How far the content column's **centre** moves — `+491.5` on the reference screen.
@@ -401,6 +411,44 @@ struct PresentationFlight: Equatable, Sendable {
             by: min(1, max(0, progress)) * (fullColumnWidth - dockedColumnWidth),
             at: progress
         )
+    }
+
+    // MARK: - The composer
+
+    /// The pill's leading edge: the chips' own path — 46 → 388 on the lead curve.
+    func composerX(at progress: CGFloat) -> CGFloat {
+        chipsX(at: progress)
+    }
+
+    /// The pill's width: the chips' own interpolation — 301 → 600, linear on the finger.
+    /// The row's children are fixed-size buttons anchored at both ends around one flexible
+    /// text lane, so the stretch re-wraps nothing.
+    func composerWidth(at progress: CGFloat) -> CGFloat {
+        chipsWidth(at: progress)
+    }
+
+    /// The pill's bottom edge: 986 → 1004 on the reference screen, linear on the finger —
+    /// the one shared element with a vertical component, +18 as the panel's floor inset
+    /// hands over to the content band's own bottom.
+    func composerBottom(at progress: CGFloat) -> CGFloat {
+        travelled(
+            from: dockedComposerBottom,
+            by: min(1, max(0, progress)) * (fullComposerBottom - dockedComposerBottom),
+            at: progress
+        )
+    }
+
+    /// The marquee glyph's slot in the flight pill — the glyph plus its gap, `24 + 10`.
+    ///
+    /// The one interior asymmetry between the two pills: the docked composer always draws
+    /// `btn/select`, the wide one only while a selection is attached (board 07 draws no
+    /// marquee in the wide pill). With a selection attached the slot holds at both ends;
+    /// without one it folds to zero, linear on the finger, so the text lane absorbs it
+    /// smoothly and the endpoint layouts match the settled surfaces exactly.
+    func composerMarqueeSlot(at progress: CGFloat, isSelectionAttached: Bool) -> CGFloat {
+        let slot = Icon.uiSelectionMarker.renderSize + ComposerMetrics.panel.gap
+        guard !isSelectionAttached else { return slot }
+        return slot * (1 - min(1, max(0, progress)))
     }
 
     // MARK: - Arithmetic

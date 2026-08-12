@@ -41,6 +41,11 @@ enum FlightRole {
     /// on the finger** — the hi state's one genuine width interpolation. Nothing inside a
     /// chip re-wraps, so the stretch is a real `.frame(width:)` and stays crisp.
     case chips
+    /// The composer pill: the chips' path and width interpolation, plus the one vertical
+    /// component in the hi state — its bottom edge drops the 18pt from the panel's floor
+    /// inset to the content band's own bottom. Bottom-anchored, so a pill grown by typed
+    /// lines keeps its bottom edge on the interpolated line exactly as it does at rest.
+    case composer
     /// The panel's own fill riding on the container while it is still mostly the panel —
     /// `--color-surface-panel` over the pane's white, gone per `panelFillOpacity`.
     case containerPanelFill
@@ -72,6 +77,11 @@ struct FlightRender: ViewModifier {
             content
                 .frame(width: flight.chipsWidth(at: progress))
                 .offset(x: flight.chipsX(at: progress), y: flight.chipsTop)
+        case .composer:
+            content
+                .frame(width: flight.composerWidth(at: progress))
+                .frame(height: flight.composerBottom(at: progress), alignment: .bottom)
+                .offset(x: flight.composerX(at: progress))
         case .containerPanelFill:
             content.opacity(geometry.panelFillOpacity(at: progress))
         }
@@ -116,6 +126,15 @@ struct PresentationFlightLayer<Board: View, Rail: View, Tutor: View, Floating: V
     /// Which fill the tutor is showing. The greeting's flight copies exist only in the
     /// start state; the thread state flies its own set.
     let conversation: ConversationPhase
+    /// What the composer's flight copy draws in its text lane — the learner's own draft, at
+    /// the same metrics the live field renders it.
+    let composerText: String
+    /// Whether the marquee glyph holds its slot at both ends (a selection is attached) or
+    /// folds away toward the wide pill, which draws no marquee at rest.
+    let isSelectionAttached: Bool
+    /// Whether the pill draws a mic — availability, not scale, decides it, exactly as it
+    /// decides for the live composer.
+    let showsVoice: Bool
     @ObservedObject var model: PresentationMorphModel
     @ViewBuilder let board: Board
     @ViewBuilder let rail: Rail
@@ -175,6 +194,14 @@ struct PresentationFlightLayer<Board: View, Rail: View, Tutor: View, Floating: V
                 FlightChips()
                     .modifier(render(.chips))
             }
+            FlightComposer(
+                progress: progress,
+                flight: flight,
+                text: composerText,
+                isSelectionAttached: isSelectionAttached,
+                showsVoice: showsVoice
+            )
+            .modifier(render(.composer))
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
@@ -190,6 +217,88 @@ struct PresentationFlightLayer<Board: View, Rail: View, Tutor: View, Floating: V
 /// translated. The subtitle is capped at 277 at both ends and the title is one line, so the
 /// 301-wide block centred on the destination column's centre is pixel-identical to the
 /// destination's own — the honest, crisp, vector answer to "text taking shape".
+/// The composer pill's flight copy: every fixed child of the row exactly as `Composer`
+/// draws it at the panel treatment, around a text lane that is a plain `Text` run of the
+/// draft — **no `TextField`**, so the whole first-responder hazard is off the animated path
+/// (the live field is the origin surface's, hidden and focus-resigned for the duration).
+///
+/// Width-flexible like the chips, so the outer flight modifier's `.frame(width:)` is the
+/// interpolation. The one interior track of its own is the marquee's slot, which folds to
+/// zero toward the wide pill (board 07 draws no marquee there) — which is why this view is
+/// itself `Animatable`: the fold must run through the settle spring, not jump at release.
+private struct FlightComposer: View {
+    var progress: CGFloat
+    let flight: PresentationFlight
+    let text: String
+    let isSelectionAttached: Bool
+    let showsVoice: Bool
+
+    var body: some View {
+        let metrics = ComposerMetrics.panel
+        HStack(alignment: .bottom, spacing: 0) {
+            IconView(.uiPlus, size: metrics.plusSize, tint: DS.Color.icon)
+                .frame(height: metrics.innerHeight)
+
+            // The marquee and the gap before it, as one folding slot — trailing-aligned so
+            // the glyph slides under the plus as the slot closes, clipped at the seam.
+            HStack(spacing: 0) {
+                IconView(
+                    .uiSelectionMarker,
+                    size: metrics.marqueeSize,
+                    tint: isSelectionAttached ? DS.Color.brand : DS.Color.icon
+                )
+                .frame(height: metrics.innerHeight)
+            }
+            .frame(
+                width: flight.composerMarqueeSlot(at: progress, isSelectionAttached: isSelectionAttached),
+                alignment: .trailing
+            )
+            .clipped()
+
+            ZStack(alignment: .leading) {
+                if text.isEmpty {
+                    Text(verbatim: metrics.placeholder)
+                        .textStyle(metrics.placeholderStyle)
+                        .foregroundStyle(DS.Color.inkTertiary)
+                } else {
+                    Text(verbatim: text)
+                        .textStyle(metrics.placeholderStyle)
+                        .foregroundStyle(DS.Color.ink)
+                        .lineLimit(ComposerMetrics.maxLines)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: metrics.innerHeight, alignment: .leading)
+            .padding(.leading, metrics.gap)
+
+            if showsVoice {
+                ComposerVoiceButton(metrics: metrics, action: {})
+                    .frame(height: metrics.innerHeight)
+                    .padding(.leading, metrics.gap)
+            }
+
+            ComposerSendButton(metrics: metrics, action: {})
+                .frame(height: metrics.innerHeight)
+                .padding(.leading, metrics.gap)
+        }
+        .padding(.leading, metrics.paddingLeading)
+        .padding(.trailing, metrics.paddingTrailing)
+        .padding(.vertical, metrics.paddingVertical)
+        .fixedSize(horizontal: false, vertical: true)
+        .background(
+            DS.Color.surface,
+            in: RoundedRectangle(cornerRadius: metrics.cornerRadius, style: .circular)
+        )
+        .elevation(.control)
+    }
+}
+
+extension FlightComposer: @preconcurrency Animatable {
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+}
+
 /// The chip stack's flight copy: the four openers exactly as `SuggestionChip` draws them at
 /// the panel treatment, with one difference — each chip is **width-flexible**, so the width
 /// the flight modifier interpolates outside reaches every row as one `.frame(width:)`. All

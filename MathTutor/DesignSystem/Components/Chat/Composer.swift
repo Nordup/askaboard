@@ -532,6 +532,13 @@ struct Composer: View {
     /// screen has drawn until now.
     var attachments: [PendingAttachment] = []
     var onRemoveAttachment: ((UUID) -> Void)?
+    /// False while this composer is the **non-live** half of a docked ↔ full-screen flight:
+    /// the pill draws all of its chrome, but the text lane is a plain `Text` run of the
+    /// same string at the same metrics rather than a mounted `TextField`. Exactly one
+    /// live field exists at a time across the two co-mounted surfaces — the origin's — and
+    /// the swap back happens in the settle's completion, outside every animation
+    /// transaction. See the responder plan in `PresentationFlightLayer`.
+    var isInteractive = true
 
     private var metrics: ComposerMetrics { .for(scale, width: width ?? scale.contentWidth) }
 
@@ -840,15 +847,24 @@ struct Composer: View {
                     .textStyle(metrics.placeholderStyle)
                     .foregroundStyle(DS.Color.inkTertiary)
             }
-            TextField("", text: $text, axis: .vertical)
-                .textFieldStyle(.plain)
-                .lineLimit(1 ... ComposerMetrics.maxLines)
-                .textStyle(metrics.placeholderStyle)
-                .foregroundStyle(DS.Color.ink)
-                .tint(DS.Color.brand)
-                .submitLabel(.send)
-                .onSubmit(send)
-                .accessibilityLabel(metrics.placeholder)
+            if isInteractive {
+                TextField("", text: $text, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .lineLimit(1 ... ComposerMetrics.maxLines)
+                    .textStyle(metrics.placeholderStyle)
+                    .foregroundStyle(DS.Color.ink)
+                    .tint(DS.Color.brand)
+                    .submitLabel(.send)
+                    .onSubmit(send)
+                    .accessibilityLabel(metrics.placeholder)
+            } else if !text.isEmpty {
+                // The same string at the same metrics, as chrome: no field, no responder,
+                // no keyboard machinery on the non-live surface.
+                Text(verbatim: text)
+                    .textStyle(metrics.placeholderStyle)
+                    .foregroundStyle(DS.Color.ink)
+                    .lineLimit(ComposerMetrics.maxLines)
+            }
         }
     }
 

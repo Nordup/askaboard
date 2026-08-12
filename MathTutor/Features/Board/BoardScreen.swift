@@ -115,6 +115,9 @@ struct BoardScreen: View {
                 ),
                 isFullScreen: presentation == .fullScreen,
                 conversation: uiState.conversation,
+                composerText: composerText,
+                isSelectionAttached: uiState.isSelectionAttached,
+                showsVoice: dictation.voiceHandler(text: $composerText) != nil,
                 model: presentationDrag
             ) {
                 board
@@ -379,8 +382,12 @@ struct BoardScreen: View {
             }
         }
         .offset(x: boardX, y: layout.contentTop)
-        .opacity(isTutorFullScreen ? 0 : 1)
-        .allowsHitTesting(!isTutorFullScreen)
+        // Visible for the whole of a presentation flight in either direction: the enter leg
+        // covers it with the growing container, and the return leg needs it already there
+        // as the container shrinks off it. It hides only at rest in full screen — a change
+        // made in the settle's completion, outside the animation.
+        .opacity(isTutorFullScreen && !isPresentationFlightActive ? 0 : 1)
+        .allowsHitTesting(!isTutorFullScreen && !isPresentationFlightActive)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("whiteboard")
         .accessibilityHidden(isTutorFullScreen)
@@ -410,7 +417,10 @@ struct BoardScreen: View {
 
     @ViewBuilder
     private var toolRail: some View {
-        if !isTutorFullScreen {
+        // Mounted through a flight for the reason the board stays visible: the container
+        // needs something real to cover going up and to uncover coming back. The mount
+        // flips only at commitment and completion — never inside an animated transaction.
+        if !isTutorFullScreen || isPresentationFlightActive {
             ToolRail(
                 // A limit, not a size: the rail is `fit-content` at its own 627.5 wherever the
                 // band holds it, which is every full-screen iPad.
