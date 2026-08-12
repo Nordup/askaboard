@@ -340,13 +340,21 @@ struct ComposerSlotMetrics: Equatable, Sendable {
 
     /// Boards 07 and 13, in the column the reading lane actually got.
     ///
+    /// **The band is wider than the column by the thread's bleed on each side.** The fade has
+    /// to cover everything the lane can draw, and the lane's clip is not the column: it is
+    /// the column plus `ThreadMetrics.bleed`, because `btn/orb`'s halo spills past the column
+    /// edge on both sides. A fade only as wide as the pill left that spill passing the
+    /// composer at full strength beside it. The panel has the same relation the other way
+    /// round — its fade runs the panel corner to corner and the *surface* clips the last
+    /// points of halo. The pill still centres on the column; the extra width is fade alone.
+    ///
     /// `underhang` is the screen's edge inset below the content band — the full-screen
     /// surface is the screen, so its floor is the screen's, and the fade has to reach it the
     /// same way the panel's reaches through the 18pt inset. Defaulted to 0 for the gallery
     /// specimens, which have no screen below them.
     static func fullScreen(columnWidth: CGFloat, underhang: CGFloat = 0) -> Self {
         Self(
-            surfaceWidth: max(0, columnWidth),
+            surfaceWidth: max(0, columnWidth) + 2 * ThreadMetrics.bleed,
             composerHeight: ComposerMetrics.for(.fullScreen, width: columnWidth).height,
             underhang: max(0, underhang)
         )

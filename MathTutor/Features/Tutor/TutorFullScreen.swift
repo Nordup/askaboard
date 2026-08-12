@@ -85,8 +85,11 @@ struct TutorFullScreen: View {
             // is attached: the card grows upward out of the band and the pill stays on 1004.
             // The slot's band now runs pill-top to screen floor — the underhang keeps the
             // pill itself on the content band's bottom, exactly as the panel's inset does.
+            // Offset left by the thread's bleed: the slot's band is that much wider than the
+            // column on each side (see `ComposerSlotMetrics.fullScreen`), and the pill
+            // centres in it, so this is what keeps the pill itself on `column.x`.
             ComposerSlot(metrics: slot, surfaceColor: DS.Color.surface) { composer }
-                .offset(x: column.x, y: column.floor - slot.band)
+                .offset(x: column.x - ThreadMetrics.bleed, y: column.floor - slot.band)
 
             if isAttachMenuOpen {
                 attachMenu
