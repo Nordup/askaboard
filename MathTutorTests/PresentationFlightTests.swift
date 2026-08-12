@@ -355,7 +355,7 @@ final class PresentationFlightTests: XCTestCase {
     /// frame the settled surface takes over from must be exactly the surface's own, and a
     /// reversed gesture must retrace to exactly the frame it left.
     func testEndStateOpacitiesArePinnedOnBothLegs() {
-        let morph = closed
+        let morph = PresentationMorph(layout: layout, isSidebarOpen: false)
         for returnLeg in [false, true] {
             // Docked end: panel chrome at full strength, nothing of the far end visible.
             XCTAssertEqual(PresentationMorph.controlsOpacity(at: 0), 1)
