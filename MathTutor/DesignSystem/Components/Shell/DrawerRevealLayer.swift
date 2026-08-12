@@ -20,7 +20,7 @@ import SwiftUI
 /// they cannot take an argument that changes while a finger is down — and nothing here needs
 /// them to. Everything the gesture has to do to them, it does from the outside: it moves them,
 /// veils them, and withdraws them from hit testing.
-struct DrawerRevealLayer<Drawer: View, Chat: View, Chrome: View>: View {
+struct DrawerRevealLayer<Drawer: View, Chat: View, Toggle: View, Chrome: View>: View {
     /// How far the chat travels — the drawer's own width. See `SessionsDrawerMetrics`.
     let travel: CGFloat
     /// The panel's own frame. Both panes are laid out against it.
@@ -33,6 +33,19 @@ struct DrawerRevealLayer<Drawer: View, Chat: View, Chrome: View>: View {
     let onSettle: (Bool) -> Void
     @ViewBuilder let drawer: Drawer
     @ViewBuilder let chat: Chat
+    /// The chat header's `btn/sidebar-toggle` — the one thing that belongs to the chat pane and
+    /// still cannot be a child of it.
+    ///
+    /// It has to **travel** with the chat, so it is not chrome; and it has to **fade** with the
+    /// travel, so it cannot be inside the pane either — this type's own rule is that nothing
+    /// progress-dependent may be passed into a stored pane, because a pane rebuilt on every
+    /// touch event is the whole cost the type exists to avoid. A third slot resolves both: the
+    /// view value is stored like the panes are, and the offset and the opacity are applied from
+    /// out here, where they cost two modifiers a frame and rebuild nothing.
+    ///
+    /// Laid out at the panel's own top-leading corner, so the caller gives it the padding the
+    /// header row has. Board 17 draws it on the same 32pt line as the layout pair.
+    @ViewBuilder let toggle: Toggle
     /// What belongs to the **dock** rather than to either pane: drawn last, at the panel's own
     /// coordinates, and never moved, veiled or clipped by the reveal.
     ///
@@ -91,6 +104,7 @@ struct DrawerRevealLayer<Drawer: View, Chat: View, Chrome: View>: View {
         ZStack(alignment: .topLeading) {
             drawerPane
             chatPane
+            togglePane
             // Last, so it paints over both panes, and outside `chatPane` so it takes none of
             // the pane's offset, radius or veil. See `chrome`.
             chrome
@@ -234,6 +248,26 @@ struct DrawerRevealLayer<Drawer: View, Chat: View, Chrome: View>: View {
             // raster by a fraction resamples every glyph in it a little differently on every
             // frame — which on an A10 at 2x reads as the contents shimmering rather than
             // sliding. The travel is 263 points, so rounding costs nothing anyone can see.
+            .offset(x: DrawerReveal.wholePoints(progress * travel))
+    }
+
+    /// Board 17's `btn/sidebar-toggle`, attached to the chat and going with it.
+    ///
+    /// The same `wholePoints` translation the chat takes, so the two never disagree by a
+    /// fraction mid-swipe, and the opacity `DrawerReveal` publishes beside its veils.
+    ///
+    /// **Hit testing follows the opacity and nothing else.** A control that is invisible and
+    /// still tappable is worse than one that is merely small, and the mid-swipe frames are
+    /// exactly where a stray thumb lands. `> 0` rather than a second threshold: the fade ends
+    /// at 35% of the travel and the reachable band ends with it, by construction.
+    ///
+    /// Painted over the chat rather than under it because the pane is opaque — it carries the
+    /// panel's own fill, which is what keeps the drawer from reading through the thread.
+    private var togglePane: some View {
+        toggle
+            .opacity(DrawerReveal.toggleOpacity(at: progress))
+            .allowsHitTesting(DrawerReveal.toggleOpacity(at: progress) > 0)
+            .accessibilityHidden(progress > 0)
             .offset(x: DrawerReveal.wholePoints(progress * travel))
     }
 

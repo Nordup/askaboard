@@ -91,6 +91,8 @@ struct TutorFullScreen: View {
             ComposerSlot(metrics: slot, surfaceColor: DS.Color.surface) { composer }
                 .offset(x: column.x - ThreadMetrics.bleed, y: column.floor - slot.band)
 
+            sidebarToggle
+
             if isAttachMenuOpen {
                 attachMenu
             }
@@ -228,6 +230,49 @@ struct TutorFullScreen: View {
             .offset(x: layout.sessionsSidebarX)
             .transition(.move(edge: .leading))
         }
+    }
+
+    /// Board 19's `btn/sidebar-toggle`, on the chat pane's own top-left corner.
+    ///
+    /// **It never fades here, and that is the one place this surface parts company with the
+    /// docked panel.** In the panel the toggle is on a pane that slides out from under the
+    /// drawer, so it has to leave before the two collide — 263 points of travel inside a 337pt
+    /// surface leaves no room for both. Board 19's sidebar covers nothing: the chat pane keeps
+    /// its whole header, moves right by the sidebar's width and stays fully live. A control that
+    /// dimmed on a pane that is not dimming would be the only faded thing on the screen.
+    ///
+    /// So it is a **true toggle** rather than an opener. Both panes are usable at once here,
+    /// which makes closing the sidebar an ordinary thing to want next — and the swipe that
+    /// closes it is the one gesture on this surface a learner is least likely to find. Every
+    /// other way out of the sidebar was deliberately removed: nothing inside it closes it (see
+    /// `sessionsSidebar`), so without this the only exit is a left-swipe.
+    ///
+    /// Placed at `contentLeft + sidebar`, which is board 19's `x: 28` inside a pane that starts
+    /// at the sidebar's trailing edge — the same `--space-edge` from the nearest obstruction
+    /// that `contentTop` is from the top, so it holds on a screen with a safe-area inset too.
+    /// The offset is the whole of the movement: the pane and the button read the same one
+    /// number, so they arrive together on the spring that carries the sidebar in.
+    private var sidebarToggle: some View {
+        SidebarToggleButton(
+            label: uiState.isSessionsSidebarOpen ? "Hide sessions" : "Show sessions"
+        ) {
+            isAttachMenuOpen = false
+            withAnimation(
+                DrawerReveal.settle(velocity: 0, travel: layout.sessionsSidebarWidth)
+            ) {
+                if uiState.isSessionsSidebarOpen {
+                    uiState.closeSessionsSidebar()
+                } else {
+                    uiState.openSessionsSidebar()
+                }
+            }
+        }
+        .frame(
+            width: TutorPanelMetrics.controlButton,
+            height: TutorPanelMetrics.controlsHeight,
+            alignment: .leading
+        )
+        .offset(x: layout.contentLeft + sidebar, y: layout.contentTop)
     }
 
     // MARK: - The reveal gesture

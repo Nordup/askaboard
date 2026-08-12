@@ -447,10 +447,13 @@ final class IconTests: XCTestCase {
     /// `ui/check`, `ui/cross` and `ui/retry` were read off boards 13 and 14, and
     /// `control/settings` off board 11. Board 04 is *"the original sixteen"*, not the set.
     /// `design/icons.json` is the source of truth and names the board each glyph came from.
-    func testTheSetIsTheTwentySixProductGlyphs() {
-        XCTAssertEqual(Icon.allCases.count, 26)
+    /// `ui/sidebar-toggle` is the twenty-seventh and arrived the same way: board 17 takes the
+    /// gear out of the chat header and puts this in the slot it leaves, and it is drawn inside
+    /// `btn/sidebar-toggle` rather than as a specimen.
+    func testTheSetIsTheTwentySevenProductGlyphs() {
+        XCTAssertEqual(Icon.allCases.count, 27)
         XCTAssertTrue(Icon.allCases.allSatisfy { !$0.rawValue.hasPrefix("os/") })
-        XCTAssertEqual(Set(Icon.allCases.map(\.rawValue)).count, 26)
+        XCTAssertEqual(Set(Icon.allCases.map(\.rawValue)).count, 27)
     }
 
     // MARK: - Transcription
@@ -512,8 +515,15 @@ final class IconTests: XCTestCase {
     /// Glyphs whose vertical extent is a property of the mark rather than a dropped subpath.
     /// Asserted rather than merely tolerated, exactly as `documentedOverflow` is: the floor is
     /// just under the real value, so a chevron that *did* lose an arm still fails.
+    ///
+    /// `ui/sidebar-toggle` is the second, and for the same kind of reason. It is two horizontal
+    /// rules 6.5 apart on a 28 box — 0.23 — because it is drawn on the 28 grid the two layout
+    /// controls beside it use, and it has to sit on their optical line rather than fill the
+    /// box. Spreading the two lines to two fifths of 28 would make it a hamburger menu, which
+    /// is a different control.
     static let documentedFlatness: [Icon: CGFloat] = [
-        .uiChevronDown: 0.2
+        .uiChevronDown: 0.2,
+        .uiSidebarToggle: 0.2,
     ]
 
     /// The allowance above is a real property of the design, so the shape it allows is pinned
@@ -524,6 +534,27 @@ final class IconTests: XCTestCase {
         XCTAssertEqual(bounds.width, 8, accuracy: 0.01)
         XCTAssertEqual(bounds.height, 4, accuracy: 0.01)
         XCTAssertEqual(bounds.midX, 8, accuracy: 0.01, "centred horizontally in the 16 box")
+    }
+
+    /// The same, for the toggle: two lines, the top one 13 and the bottom one 8, left-aligned
+    /// on x 4. The short second line is the whole mark — a pair of equal rules is a different
+    /// glyph — so it is pinned rather than left to the bounding box, which cannot see it.
+    func testTheSidebarToggleIsTwoLeftAlignedRulesWithAShortSecond() {
+        let glyph = Icon.uiSidebarToggle.glyph
+
+        XCTAssertEqual(glyph.elements.count, 2)
+        XCTAssertEqual(glyph.elements[0].path.boundingRect.width, 13, accuracy: 0.01)
+        XCTAssertEqual(glyph.elements[1].path.boundingRect.width, 8, accuracy: 0.01)
+        XCTAssertEqual(glyph.elements[0].path.boundingRect.minX, 4, accuracy: 0.01)
+        XCTAssertEqual(glyph.elements[1].path.boundingRect.minX, 4, accuracy: 0.01, "one left edge")
+
+        // Both are exactly horizontal — a rule with any rise is a transcription slip the
+        // bounding box of the pair would absorb.
+        XCTAssertEqual(glyph.elements[0].path.boundingRect.height, 0, accuracy: 0.01)
+        XCTAssertEqual(glyph.elements[1].path.boundingRect.height, 0, accuracy: 0.01)
+
+        // Round caps, and it is what gives a 2pt rule its finished ends at 28.
+        XCTAssertTrue(glyph.elements.allSatisfy { $0.lineCap == .round })
     }
 
     /// The bounding-box checks cannot see a dropped subpath in a mark whose two halves

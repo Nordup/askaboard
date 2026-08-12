@@ -142,8 +142,26 @@ struct ShellGallery: View {
                         }
                     }
                 }
-                Specimen("Panel controls", size: "301 × 32 · gap 14 · two 32 × 32, no fill") {
-                    PanelControls(onDock: {}, onFullScreen: {})
+                VStack(alignment: .leading, spacing: 44) {
+                    Specimen("Panel controls", size: "301 × 32 · gap 14 · two 32 × 32, no fill") {
+                        PanelControls(onDock: {}, onFullScreen: {})
+                    }
+                    // The header as it ships: the toggle owns one end of the 301 lane and the
+                    // layout pair the other. They are drawn together here and nowhere else,
+                    // because in the live panel they are not siblings at all — the pair is
+                    // chrome of the dock and the toggle is content of the chat pane, and the
+                    // drawer's reveal is what separates them. See `DrawerRevealLayer`.
+                    Specimen(
+                        "Chat header",
+                        size: "301 × 32 · btn/sidebar-toggle leading, layout pair trailing"
+                    ) {
+                        ZStack {
+                            SidebarToggleButton {}
+                                .frame(width: TutorPanelMetrics.contentWidth, alignment: .leading)
+                            PanelControls(onDock: {}, onFullScreen: {}, alignment: .trailing)
+                        }
+                        .frame(width: TutorPanelMetrics.contentWidth, height: TutorPanelMetrics.controlsHeight)
+                    }
                 }
             }
         }

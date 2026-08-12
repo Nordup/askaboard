@@ -1076,6 +1076,48 @@ final class ShellComponentTests: XCTestCase {
     /// Board 18's 12pt parallax is deliberately not implemented — the drawer and the panel
     /// share a fill, so a translation with no visible edge behind it reads as the drawer's
     /// margins changing. See `DrawerReveal.wholePoints(_:)`.
+    /// Board 18's note on the header's leading control: *"it is fully transparent by 30–40% of
+    /// the travel, well before it could reach the fixed minimize and full-screen pair in the
+    /// dock corner."*
+    func testTheSidebarToggleIsGoneByAThirdOfTheTravel() {
+        let tolerance = 0.001
+
+        // Full strength on the closed panel, nothing at the far end, and the constant is
+        // inside the band the note gives.
+        XCTAssertEqual(DrawerReveal.toggleOpacity(at: 0), 1, accuracy: tolerance)
+        XCTAssertEqual(DrawerReveal.toggleOpacity(at: DrawerReveal.toggleFadeEnd), 0, accuracy: tolerance)
+        XCTAssertEqual(DrawerReveal.toggleOpacity(at: 1), 0, accuracy: tolerance)
+        XCTAssertGreaterThanOrEqual(DrawerReveal.toggleFadeEnd, 0.30)
+        XCTAssertLessThanOrEqual(DrawerReveal.toggleFadeEnd, 0.40)
+
+        // *"Fading fast"* — half gone by a sixth of the travel, which is well inside the band
+        // where the drawer still carries the whole veil and nothing else has begun to change.
+        XCTAssertEqual(DrawerReveal.toggleOpacity(at: 0.175), 0.5, accuracy: tolerance)
+        XCTAssertLessThan(DrawerReveal.toggleOpacity(at: DrawerReveal.crossfadeStart), 0.5)
+
+        // It clears before the chat takes any of the veil, so the control is never a mark
+        // dimming inside a wash — the whole reason the two curves live in one type.
+        XCTAssertGreaterThan(
+            DrawerReveal.chatVeil(at: DrawerReveal.toggleFadeEnd),
+            0,
+            "the chat is already washing by the time the toggle has gone"
+        )
+        XCTAssertEqual(DrawerReveal.toggleOpacity(at: DrawerReveal.crossfadeEnd + 0.05), 0, accuracy: tolerance)
+
+        // Monotone, clamped, and never negative — the view reads this as a hit-testing flag as
+        // well as an opacity, so a value that dipped below zero and came back would make an
+        // invisible control tappable again.
+        var previous = 2.0
+        for step in 0...100 {
+            let p = CGFloat(step) / 100
+            let opacity = DrawerReveal.toggleOpacity(at: p)
+            XCTAssertLessThanOrEqual(opacity, previous + tolerance, "toggle opacity at \(p)")
+            XCTAssertGreaterThanOrEqual(opacity, 0, "toggle opacity at \(p)")
+            XCTAssertLessThanOrEqual(opacity, 1, "toggle opacity at \(p)")
+            previous = opacity
+        }
+    }
+
     func testThePanesTranslateByWholePointsOnly() {
         XCTAssertEqual(DrawerReveal.wholePoints(0), 0)
         XCTAssertEqual(DrawerReveal.wholePoints(131.5), 132)

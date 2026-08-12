@@ -104,6 +104,8 @@ struct TutorPanel: View {
                 drawer(width: layout.sessionsDrawerWidth, height: size.height)
             } chat: {
                 chatPane(in: size)
+            } toggle: {
+                sidebarToggle(in: size)
             } chrome: {
                 panelChrome(in: size)
             }
@@ -222,6 +224,33 @@ struct TutorPanel: View {
             alignment: .trailing
         )
         .frame(width: contentWidth, height: TutorPanelMetrics.controlsHeight, alignment: .trailing)
+        .frame(width: size.width, alignment: .center)
+        .padding(.top, TutorPanelMetrics.inset)
+    }
+
+    /// Board 17's header, before — the leading slot the gear used to hold.
+    ///
+    /// The other half of the header, and the opposite kind of thing from the pair beside it.
+    /// The pair belongs to the dock and never moves; this names the pane it is drawn on, so it
+    /// travels with the chat and fades out as the drawer arrives. `DrawerRevealLayer` does both
+    /// from its own `toggle` slot — nothing here is a function of the drag.
+    ///
+    /// Laid out in the same 301pt content column the pair is, aligned to the other end of it,
+    /// which is what puts it on the panel's 18pt leading inset at every panel width.
+    ///
+    /// The tap opens the drawer on the spring a fling opens it with, so a tap and a swipe end
+    /// the same way. `closeMenus()` is not called: the attach menu is anchored to the composer
+    /// on the pane that is about to slide out from under it.
+    private func sidebarToggle(in size: CGSize) -> some View {
+        SidebarToggleButton {
+            isAttachMenuOpen = false
+            withAnimation(
+                DrawerReveal.settle(velocity: 0, travel: layout.sessionsDrawerWidth)
+            ) {
+                uiState.openSessionsDrawer()
+            }
+        }
+        .frame(width: contentWidth, height: TutorPanelMetrics.controlsHeight, alignment: .leading)
         .frame(width: size.width, alignment: .center)
         .padding(.top, TutorPanelMetrics.inset)
     }

@@ -8,18 +8,20 @@
       "11 \u2014 First run \u00b7 no API key (3NQ-0) \u2014 control/settings as a panel control",
       "10 \u2014 Settings (3KT-0) \u2014 ui/chevron-down, drawn inside row/setting rather than as a specimen",
       "15a \u2014 Sessions \u00b7 header menu (530-0) \u2014 ui/plus, drawn inside row/new-session rather than as a specimen",
-      "04 \u2014 Icons (1IF-0) section 07 \u2014 the four added for the activity trail"
+      "04 \u2014 Icons (1IF-0) section 07 \u2014 the four added for the activity trail",
+      "note/17 \u2014 header crop (652-0), 07 \u2014 Tutor \u00b7 full screen (ZU-0) and 19 \u2014 Sessions drawer \u00b7 full screen (69J-0) \u2014 ui/sidebar-toggle, drawn inside btn/sidebar-toggle in the chat header rather than as a specimen"
     ],
     "readVia": "get_jsx, format inline-styles \u2014 never a screenshot",
     "prose": [
       "docs/design-system/04-icons.md",
-      "docs/design-system/06-states-and-settings.md"
+      "docs/design-system/06-states-and-settings.md",
+      "docs/design-system/02-shell-components.md"
     ],
     "generatedBy": "scripts/generate-icons.swift",
     "generates": "MathTutor/DesignSystem/Generated/IconPaths.swift"
   },
   "coverage": {
-    "productGlyphs": 26,
+    "productGlyphs": 27,
     "excluded": [
       {
         "name": "os/wifi",
@@ -1181,6 +1183,45 @@
           "dashArray": null,
           "type": "path",
           "d": "M5.6 3.7H18.4V20.3L12 15.1L5.6 20.3Z"
+        }
+      ]
+    },
+    {
+      "name": "ui/sidebar-toggle",
+      "swiftCase": "uiSidebarToggle",
+      "viewBox": {
+        "width": 28,
+        "height": 28
+      },
+      "productRenderSizes": [
+        28
+      ],
+      "renderSize": 28,
+      "effectiveStrokeWidth": 2.0,
+      "colorToken": "--color-icon",
+      "dashTexture": null,
+      "notes": "The control that opens the sessions drawer, and the discoverable alternative to the swipe. Two left-aligned horizontal lines, the top one 13 units long and the bottom one 8 \u2014 a list whose last line is short, which is the shape the drawer's own session rows make. Read off note/17 \u2014 header crop, where it is drawn inside btn/sidebar-toggle at the leading end of the 301pt controls row rather than as a specimen on board 04, the same route ui/chevron-down and ui/plus took. Authored on the 28 viewBox the two layout controls beside it use and rendered at 28 like them, so scale is exactly 1.0 and design stroke and effective stroke are both 2. Round cap, and no linejoin: the two subpaths are separate elements and neither turns a corner \u2014 unlike ui/plus, they are drawn as two paths rather than one with two M subpaths, because the design draws them as two. --color-icon, not --color-brand: it is chrome, and it sits in the same row as control/dock and control/full.",
+      "designAnomaly": null,
+      "elements": [
+        {
+          "type": "path",
+          "d": "M4 10.5 H17",
+          "fill": "none",
+          "stroke": "var(--color-icon)",
+          "strokeWidth": 2,
+          "lineCap": "round",
+          "lineJoin": null,
+          "dashArray": null
+        },
+        {
+          "type": "path",
+          "d": "M4 17 H12",
+          "fill": "none",
+          "stroke": "var(--color-icon)",
+          "strokeWidth": 2,
+          "lineCap": "round",
+          "lineJoin": null,
+          "dashArray": null
         }
       ]
     }

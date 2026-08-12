@@ -12,9 +12,13 @@
 //           15a — Sessions · header menu (530-0) — ui/plus, drawn inside row/new-session rather
 //           than as a specimen
 //           04 — Icons (1IF-0) section 07 — the four added for the activity trail
-// Glyphs:   26 product glyphs.
+//           note/17 — header crop (652-0), 07 — Tutor · full screen (ZU-0) and 19 — Sessions
+//           drawer · full screen (69J-0) — ui/sidebar-toggle, drawn inside btn/sidebar-toggle
+//           in the chat header rather than as a specimen
+// Glyphs:   27 product glyphs.
 // Prose:    docs/design-system/04-icons.md
 //           docs/design-system/06-states-and-settings.md
+//           docs/design-system/02-shell-components.md
 //
 // Not here:
 //   os/wifi
@@ -1066,6 +1070,51 @@ enum IconPaths {
     )
 
 
+    /// `ui/sidebar-toggle` — renders 28 on a 28×28 viewBox, 2.0pt effective stroke,
+    /// --color-icon.
+    ///
+    /// The control that opens the sessions drawer, and the discoverable alternative to the
+    /// swipe. Two left-aligned horizontal lines, the top one 13 units long and the bottom one 8
+    /// — a list whose last line is short, which is the shape the drawer's own session rows
+    /// make. Read off note/17 — header crop, where it is drawn inside btn/sidebar-toggle at the
+    /// leading end of the 301pt controls row rather than as a specimen on board 04, the same
+    /// route ui/chevron-down and ui/plus took. Authored on the 28 viewBox the two layout
+    /// controls beside it use and rendered at 28 like them, so scale is exactly 1.0 and design
+    /// stroke and effective stroke are both 2. Round cap, and no linejoin: the two subpaths are
+    /// separate elements and neither turns a corner — unlike ui/plus, they are drawn as two
+    /// paths rather than one with two M subpaths, because the design draws them as two.
+    /// --color-icon, not --color-brand: it is chrome, and it sits in the same row as
+    /// control/dock and control/full.
+    static let uiSidebarToggle = IconGlyph(
+        name: "ui/sidebar-toggle",
+        viewBox: CGSize(width: 28, height: 28),
+        renderSize: 28,
+        productRenderSizes: [28],
+        strokeWidth: 2,
+        colorToken: "--color-icon",
+        elements: [
+            IconElement(
+                geometry: .path("M4 10.5 H17"),
+                isFilled: false,
+                isStroked: true,
+                lineCap: .round,
+                lineJoin: .miter,
+                dash: nil,
+                designStrokeWidth: 2
+            ),
+            IconElement(
+                geometry: .path("M4 17 H12"),
+                isFilled: false,
+                isStroked: true,
+                lineCap: .round,
+                lineJoin: .miter,
+                dash: nil,
+                designStrokeWidth: 2
+            ),
+        ]
+    )
+
+
     /// Every glyph, by case.
     ///
     /// A switch and not a dictionary: adding a case to `Icon` without adding its
@@ -1098,6 +1147,7 @@ enum IconPaths {
         case .trailSearch: Self.trailSearch
         case .trailPlan: Self.trailPlan
         case .trailNote: Self.trailNote
+        case .uiSidebarToggle: Self.uiSidebarToggle
         }
     }
 }

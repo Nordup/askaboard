@@ -185,6 +185,39 @@ struct PanelControls: View {
     }
 }
 
+/// The chat header's leading control — the one that opens the sessions drawer.
+///
+/// Board 17's note on the header after the redesign, verbatim: *"A sidebar-toggle icon takes the
+/// leading slot the gear held — it opens the drawer, and it is the discoverable alternative to
+/// the swipe."* So it is the same 32pt button in the same 32pt row as the layout pair, and it
+/// takes the same expanded tap target: the row is one row, and a control on it that was 32
+/// points wide where its neighbours are 44 would be the harder of the two to hit.
+///
+/// **It belongs to the chat pane and not to the dock**, which is the whole difference from
+/// `PanelControls` beside it. The pair is chrome of the surface and holds the panel's own
+/// corner however far the drawer is open; this one names the pane it sits on, so it travels
+/// with that pane and goes with it — see `DrawerReveal.toggleOpacity(at:)` for the going.
+///
+/// It draws no pressed or selected background, for the reason the layout pair draws none: the
+/// design draws none on this row at all.
+struct SidebarToggleButton: View {
+    /// What the label says the tap does. The docked drawer only ever opens from here, so it
+    /// reads "Show sessions"; the full-screen sidebar is a true toggle and says which way it
+    /// is about to go.
+    var label: String = "Show sessions"
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            IconView(.uiSidebarToggle)
+                .frame(width: TutorPanelMetrics.controlButton, height: TutorPanelMetrics.controlButton)
+                .expandedTapTarget(TutorPanelMetrics.controlTapTarget, over: TutorPanelMetrics.controlButton)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+}
+
 #if DEBUG
 #Preview("Tutor panel shell") {
     TutorPanelShell(size: CGSize(width: TutorPanelMetrics.width, height: 600)) {

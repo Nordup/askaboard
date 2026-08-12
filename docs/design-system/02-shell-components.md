@@ -338,6 +338,44 @@ Glyphs (identical rect; the dock variant adds one divider stroke):
 
 **Tap target note:** the 32 × 32 button is smaller than the 44pt HIG minimum; the board does not state an expanded hit area. Flagged in Open questions.
 
+### 6.1 The header's leading slot — `btn/sidebar-toggle`
+
+Board 17 empties the chat header and refills it. The session-title dropdown and the settings
+gear both leave; the drawer owns both. What takes the gear's leading slot is a sidebar toggle.
+Verbatim, from `note/17 — header after`: *"A sidebar-toggle icon takes the leading slot the gear
+held — it opens the drawer, and it is the discoverable alternative to the swipe. The full-screen
+and minimize pair stays trailing, and it belongs to the dock: it holds this position while the
+drawer opens, above both panes. The toggle belongs to the chat pane, so it travels with the chat
+and fades out."*
+
+So the header row is one 301 × 32 lane with two ends and two owners: `btn/sidebar-toggle`
+leading, the layout pair trailing, and the same 32pt button, 28pt glyph slot and expanded 44pt
+tap target on all three. Read off `note/17 — header crop`.
+
+| Property | Value |
+|---|---|
+| Button size | **32 × 32**, at `left: 0` of the 301 row |
+| Icon slot | **28 × 28**, `viewBox 0 0 28 28`, `fill="none"`, `stroke: var(--color-icon)`, `stroke-width: 2` |
+| Effective stroke | **2.00** — authored at its render size, so the scale is 1.0 and nothing is re-derived |
+| Fill / radius / border / shadow | none, like everything else on this row |
+| Tap target | **44 × 44**, expanded the way the layout pair's is — one row, one target size |
+
+```svg
+<!-- ui/sidebar-toggle -->
+<path d="M4 10.5 H17" fill="none" stroke="var(--color-icon)" stroke-width="2" stroke-linecap="round"/>
+<path d="M4 17 H12"   fill="none" stroke="var(--color-icon)" stroke-width="2" stroke-linecap="round"/>
+```
+
+Two left-aligned lines, 13 units and 8 — a list whose last line is short, which is the shape the
+drawer's own session rows make. It is the twenty-seventh product glyph; `design/icons.json`
+carries it and `IconPaths.swift` is generated from that.
+
+**Docked, it travels and fades.** It is content of the chat pane, not chrome of the dock, so it
+takes the pane's whole translation and goes to nothing early — see §14.1. Tapping it opens the
+drawer on the spring a fling opens it with, so the tap and the swipe end the same way.
+
+**Full screen, it neither travels away nor fades — see §14.2.**
+
 ---
 
 ## 7. Collapsed dock — `Tutor dock · collapsed`
@@ -667,6 +705,23 @@ trailing inset — the column does not move, only the pane that usually fills it
 inside the reveal container rather than beside it, so a committed pan cancels a press on it like
 anything else.
 
+**The sidebar toggle does move, and it is gone before it gets anywhere.** Board 18: *"The
+sidebar-toggle icon belongs to the chat pane and travels with it, so it fades out quickly: it is
+fully transparent by 30–40% of the travel, well before it could reach the fixed minimize and
+full-screen pair in the dock corner."* The implementation takes **0.35**, the middle of that
+band, and keeps it in `DrawerReveal` beside the veil constants so the two curves are read
+together: at 0.35 the chat has just started taking the wash, so the toggle clears rather than
+dimming inside it. The ramp is linear where the veils are smoothstepped — one mark leaving is
+not a crossfade, and easing its start would hold it at nearly full strength through exactly the
+part of the swipe the note wants it already leaving. **Opacity is also the hit test**: nothing
+is tappable at zero, so there is one number and not two.
+
+It cannot be a child of the chat pane, even though it belongs to it. The pane is a stored view
+value that a drag must never rebuild — that is the rule `DrawerRevealLayer` exists to keep — and
+this control's opacity is a function of the drag. It gets its own slot in the layer instead: the
+view is stored like the panes are, and the offset and the opacity are applied from outside, at
+two modifiers a frame.
+
 **The parallax is deliberately not implemented.** It is a pure translation of the whole
 drawer — nothing inside it resizes — and on the artboard it reads as intended, a layer sliding
 up from underneath. On the device it does not, because board 17 gives the drawer and the panel
@@ -766,6 +821,14 @@ same time and neither carries a veil.
   the sidebar, on a session row. It springs rather than tracking the finger: the chat is
   stationary and the column re-centres, so a finger-tracked sidebar would drag 740 points of
   text sideways a frame at a time.
+- **`btn/sidebar-toggle` stays, and it is a true toggle here.** Board 19 draws it at `x: 28,
+  y: 28` *inside the chat pane*, so it sits at `contentLeft + sidebar` and rides the pane's
+  whole movement on the same spring. It never fades: the pane it is on is not dimming, covered
+  or clipped, so a control that dimmed would be the only faded thing on the screen — which is
+  the one place this surface parts company with the docked panel, where the toggle has to leave
+  before 263 points of travel carry it into the dock's corner. Closed → tap opens; open → tap
+  closes. It is the only exit besides the left-swipe, because nothing inside the sidebar closes
+  it, and the swipe is the gesture on this surface a learner is least likely to find.
 
 ---
 

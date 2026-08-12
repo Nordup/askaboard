@@ -187,6 +187,36 @@ enum DrawerReveal {
         return t * t * (3 - 2 * t)
     }
 
+    // MARK: - The sidebar toggle
+
+    /// Where the chat header's `btn/sidebar-toggle` has finished fading out, as a fraction of
+    /// the travel. Board 18's note: *"it is fully transparent by 30–40% of the travel, well
+    /// before it could reach the fixed minimize and full-screen pair in the dock corner."*
+    ///
+    /// **0.35, the middle of the band the note gives.** It lives here rather than in the view
+    /// for the reason the veil constants do: it is one more curve read off the same travel, and
+    /// the two have to be judged together — the toggle is on the pane the chat veil is washing,
+    /// so a toggle still visible past the crossover would be a control fading *into* a wash
+    /// instead of clearing before it. 0.35 puts the toggle at zero half a crossfade band after
+    /// the chat starts taking the veil, which reads as one movement rather than two.
+    ///
+    /// The arithmetic below is also the whole of what makes the control unreachable: nothing
+    /// hit-tests at zero opacity, so the view has one number to read and not two.
+    static let toggleFadeEnd: CGFloat = 0.35
+
+    /// The toggle's opacity, `1` closed and `0` from `toggleFadeEnd` on.
+    ///
+    /// Linear, and deliberately not smoothstepped like the veils. The veils are smoothed because
+    /// two of them change at once and a corner on each reads as a flicker; this is one mark
+    /// going away, and easing its start would keep it at nearly full strength through the first
+    /// tenth of the travel — which is exactly the part of the swipe where the note wants it
+    /// already leaving. *"Fades fast"* is the instruction, and a straight ramp is the fastest
+    /// honest reading of it.
+    static func toggleOpacity(at progress: CGFloat) -> Double {
+        guard toggleFadeEnd > 0 else { return progress > 0 ? 0 : 1 }
+        return Double(min(1, max(0, 1 - progress / toggleFadeEnd)))
+    }
+
     // MARK: - Parallax, and why there is none
 
     /// Board 18 gives the drawer *"a 12px parallax"* — it sits 12 points behind its open
