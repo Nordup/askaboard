@@ -98,10 +98,16 @@ struct TutorPanelShell<Content: View>: View {
 /// oldest message hard against the surface's rounded corners.
 struct TutorPanelSurface<Content: View>: View {
     private let size: CGSize
+    private let elevated: Bool
     private let content: Content
 
-    init(size: CGSize, @ViewBuilder content: () -> Content) {
+    /// `elevated: false` keeps the fill and the clip and drops only the shadow — for the one
+    /// host that has to own the elevation itself: `PresentationMorphLayer` casts it from a
+    /// static-shaped underlay so it can fade on the morph's own curve without a shadow ever
+    /// rasterising animating content. Everyone else takes the default and nothing changes.
+    init(size: CGSize, elevated: Bool = true, @ViewBuilder content: () -> Content) {
         self.size = CGSize(width: max(0, size.width), height: max(0, size.height))
+        self.elevated = elevated
         self.content = content()
     }
 
@@ -128,10 +134,15 @@ struct TutorPanelSurface<Content: View>: View {
             .frame(width: size.width, height: size.height, alignment: .top)
             .clipShape(RoundedRectangle(cornerRadius: TutorPanelMetrics.cornerRadius))
             .background {
-                RoundedRectangle(cornerRadius: TutorPanelMetrics.cornerRadius)
-                    .fill(DS.Color.surfacePanel)
-                    .compositingGroup()
-                    .elevation(.panel)
+                if elevated {
+                    RoundedRectangle(cornerRadius: TutorPanelMetrics.cornerRadius)
+                        .fill(DS.Color.surfacePanel)
+                        .compositingGroup()
+                        .elevation(.panel)
+                } else {
+                    RoundedRectangle(cornerRadius: TutorPanelMetrics.cornerRadius)
+                        .fill(DS.Color.surfacePanel)
+                }
             }
     }
 }

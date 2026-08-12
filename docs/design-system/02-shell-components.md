@@ -988,16 +988,12 @@ that. Either way it committed and cancelled whatever it crossed.
 **On a window too narrow to dock**, the edge swipe lands where the orb's tap lands — the
 full-screen column — because that is the tutor's only home at that size.
 
-**Tracked going one rung, commit-triggered going two.** `expandDock` tracks the finger, because
-the panel is a rigid surface with a measured travel and can be held anywhere along it.
-`enterFullScreen` cannot: board 05 states the reading column as *a different variant* of the
-tutor — type scale, chip layout, chip height, icon size, composer height and the composer's
-contents all change — so the two surfaces have no intermediate position for a finger to rest at,
-and the honest motion between them is a crossfade. It is settled on the same
-`DockRevealModel.settle(to:velocity:travel:_:)` spring all the same, seeded with the release
-velocity, so a hard flick arrives faster than a slow push and the panel is still mounted while it
-leaves. A release that flings *back* the way it came takes it back — `DrawerReveal`'s own 300 pt/s
-line, with the progress pinned at the destination.
+**Both rungs track now.** `expandDock` tracks the panel's own travel, and `enterFullScreen`
+tracks the presentation morph's (§15.4): board 05 still states the reading column as *a
+different variant* of the tutor whose contents have no interpolable intermediate — type scale,
+chip layout, composer all change — but the *container* interpolates at every point, and that
+is what the finger drags. The release settles on the shared spring by the same velocity-first
+rule as every tracked travel, position measured where the finger actually got to.
 
 ### 15.3 The trailing-edge zone (screen 07 → screens 05/08)
 
@@ -1020,17 +1016,45 @@ draws the destination.
 | **Apple Pencil** | refused at touch-down, as in the leading zone — a pencil in this app is always drawing and never navigating |
 | **Paint order** | the peek is a sibling drawn later by `BoardScreen`, and a UIKit recogniser cannot see SwiftUI paint order, so the lane is stated as geometry instead |
 
-Commit-triggered, for the same reason `enterFullScreen` is and with the same fling-back rule.
-**The tap and the swipe are one path**: both call `BoardScreen.returnToBoardFromPeek(velocity:)`,
-which settles on the shared spring — the panel is inserted inside the settle transaction, so
-`DockRevealLayer`'s own `.transition(.offset(x: -travel))` carries it in from off the leading edge
-exactly as the dock orb's tap does, while the board fades up behind it and the column fades out.
-The tap used to write `UIState` bare and the column simply vanished, which is the
-fourth-behaviour-rather-than-fourth-control mistake the shared spring exists to end.
+Tracked, for the same reason `enterFullScreen` now is: the swipe drives the presentation morph
+(§15.4) from progress `1` downward, so the chat surface's trailing edge follows the finger while
+the board's card widens in behind it. **The tap and the swipe are one system**: the tap calls
+`BoardScreen.returnToBoardFromPeek(velocity:)`, which runs the identical morph from rest on the
+same spring through the same curves. The tap used to write `UIState` bare and the column simply
+vanished, which is the fourth-behaviour-rather-than-fourth-control mistake the shared model
+exists to end.
 
 **What a presentation change does to the two session lists is unchanged**: the docked drawer
 closes (`BoardScreen.onChange(of: presentation)`) and the full-screen sidebar is remembered. See
 §14.2.
+
+### 15.4 The presentation morph (screens 05/08 ↔ screen 07)
+
+The docked ↔ full-screen transition is an interactive **container morph**, tracked under the
+finger from the first committed point in both directions. It replaced the commit-triggered
+spring-with-crossfade this section used to describe. `PresentationMorph` is the arithmetic,
+`PresentationMorphModel` the live position (the `DockRevealModel` shape one rung up), and
+`PresentationMorphLayer` the one region that hosts the tutor — and the board, the rail, the
+sidebar and the peek — in every presentation.
+
+| Property | Value |
+|---|---|
+| Progress | `0` docked … `1` full screen; pure functions of this one number, so the gesture is reversible mid-flight |
+| Travel | the container's trailing edge: `screenWidth − dockTravel`, **1011** on the reference screen |
+| Tracking | one-to-one with the container's trailing edge; clamped at both ends (the drawer's rule, not the dock's rubber band) |
+| Release | velocity first (**300 pt/s**), 50% line second — `DrawerReveal.settlesOpen`, delegated |
+| Settle | the shared spring, seeded with release velocity; presentation flips inside the settle transaction, mounts held until the spring finishes |
+| Container | frame lerps panel frame → chat pane (sidebar-aware); corners lerp 28-all-round → pane radii; fill dissolves `--color-surface-panel` → `--color-surface` linearly |
+| Contents | both mounted as stored views, laid out once each, **never re-laid-out mid-gesture**; outgoing holds opacity 1 to **60%** then smoothsteps out by **90%**; incoming smoothsteps in from **55%**, full by **85%** |
+| Panel shadow | extracted to a static-shaped underlay (never cast by the morphing container — a shadow re-rasterises its input per frame); fades out by **30%** of the travel |
+| Board | the live card is **translated, never resized** — it slides toward the trailing edge at the container's own speed, `PKCanvasView` takes no layout pass mid-gesture; the peek silhouette arrives on the incoming curve where the card leaves on the outgoing one |
+| Sidebar | if open, folds its own width off the leading edge over the same progress; `isSessionsSidebarOpen` is untouched and the layout returns next visit |
+| Buttons | `btn/full-screen` and the peek's tap run the same morph from rest through animatable renders, so the tap replays the swipe's curves rather than lerping its endpoints |
+
+Endpoint pixel-parity is arithmetic, not a rendering promise: at progress `0` every curve
+evaluates to the docked screen's own values (the panel's clip, full opacity, zero shift) and the
+full-screen slots are unmounted; at `1` the mirror holds. `PresentationMorphTests` pins the
+equalities.
 
 ---
 
