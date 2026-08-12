@@ -127,6 +127,33 @@ struct BoardScreen: View {
                 tutor
             } floating: {
                 floatingRegion
+            } dockedThread: {
+                // The docked half of the thread's crossfade — the panel's own thread,
+                // laid out once at the panel's column. Geometry mirrors `TutorPanel.fillBand`.
+                TutorThreadView(
+                    scale: .panel,
+                    width: TutorPanelMetrics.contentWidth(for: layout.panelWidth),
+                    clearing: ComposerSlotMetrics.panel(surfaceWidth: layout.panelWidth).band,
+                    actions: actions
+                )
+                .frame(
+                    width: TutorPanelMetrics.contentWidth(for: layout.panelWidth),
+                    height: layout.contentHeightAboveKeyboard
+                )
+            } fullThread: {
+                // The full-screen half — the reading column's thread, laid out once at its
+                // own measure. Geometry mirrors `TutorFullScreen.threadColumn`.
+                let column = TutorColumnMetrics(
+                    layout: layout,
+                    reserving: uiState.isSessionsSidebarOpen ? layout.sessionsSidebarWidth : 0
+                )
+                TutorThreadView(
+                    scale: TutorFullScreen.scale,
+                    width: column.width,
+                    clearing: column.threadClearing,
+                    actions: actions
+                )
+                .frame(width: column.width, height: column.threadHeight)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

@@ -186,6 +186,70 @@ final class PresentationFlightTests: XCTestCase {
         }
     }
 
+    // MARK: - The toggle and the controls
+
+    /// (46, 46) → (28, 28): 18 points in each axis, linear, exact at both ends — and it
+    /// never fades, because it exists at both ends.
+    func testToggleWalksItsEighteenPoints() {
+        let flight = closed
+        XCTAssertEqual(flight.toggleX(at: 0), 46)
+        XCTAssertEqual(flight.toggleY(at: 0), 46)
+        XCTAssertEqual(flight.toggleX(at: 1), layout.contentLeft)
+        XCTAssertEqual(flight.toggleY(at: 1), layout.contentTop)
+        // With the sidebar open the toggle lands on the chat pane's own corner.
+        XCTAssertEqual(open.toggleX(at: 1), layout.contentLeft + layout.sessionsSidebarWidth)
+    }
+
+    /// The unmatched pair fades over the first quarter with a 12pt trailing drift.
+    func testControlsFadeEarlyAndDriftTrailing() {
+        let flight = closed
+        XCTAssertEqual(flight.dockedControlsOrigin.x, 46 + 301 - PresentationFlight.controlsPairWidth)
+        XCTAssertEqual(PresentationMorph.controlsOpacity(at: 0), 1)
+        XCTAssertEqual(PresentationMorph.controlsOpacity(at: PresentationMorph.controlsGoneBy), 0)
+        XCTAssertEqual(PresentationMorph.controlsOpacity(at: 1), 0)
+        XCTAssertEqual(flight.controlsX(at: 0), flight.dockedControlsOrigin.x)
+        XCTAssertEqual(flight.controlsX(at: 1), flight.dockedControlsOrigin.x + 12)
+    }
+
+    // MARK: - The thread crossfade
+
+    /// Overlapping (`FADE_MODE_CROSS`), mid-travel on the enter leg: no frame is blank.
+    func testThreadTradesWithoutABlankFrame() {
+        for step in stride(from: CGFloat(0), through: 1, by: 0.01) {
+            for returnLeg in [false, true] {
+                let sum = PresentationMorph.dockedThreadOpacity(at: step, returnLeg: returnLeg)
+                    + PresentationMorph.fullThreadOpacity(at: step, returnLeg: returnLeg)
+                XCTAssertGreaterThanOrEqual(sum, 0.75, "near-blank frame at \(step), return \(returnLeg)")
+            }
+        }
+        // Exact at the ends, both legs.
+        for returnLeg in [false, true] {
+            XCTAssertEqual(PresentationMorph.dockedThreadOpacity(at: 0, returnLeg: returnLeg), 1)
+            XCTAssertEqual(PresentationMorph.fullThreadOpacity(at: 0, returnLeg: returnLeg), 0)
+            XCTAssertEqual(PresentationMorph.dockedThreadOpacity(at: 1, returnLeg: returnLeg), 0)
+            XCTAssertEqual(PresentationMorph.fullThreadOpacity(at: 1, returnLeg: returnLeg), 1)
+        }
+    }
+
+    /// The return leg commits late — Material's own asymmetry: its bands sit higher up the
+    /// travel than the enter leg's.
+    func testReturnLegTradesLater() {
+        // At 0.5 the enter leg has mostly traded; the return leg has barely started.
+        XCTAssertLessThan(
+            PresentationMorph.dockedThreadOpacity(at: 0.5, returnLeg: false),
+            PresentationMorph.dockedThreadOpacity(at: 0.5, returnLeg: true)
+        )
+    }
+
+    /// The incoming thread arrives rather than appears: from 60pt short of home, landing
+    /// exactly on the settled column.
+    func testFullThreadArrivesFromShortOfHome() {
+        let flight = closed
+        XCTAssertEqual(flight.fullThreadX(at: 0), flight.fullColumnX - 60)
+        XCTAssertEqual(flight.fullThreadX(at: 1), flight.fullColumnX)
+        XCTAssertEqual(flight.dockedThreadX(at: 0), 46)
+    }
+
     // MARK: - The lead curve
 
     /// `1 − (1 − p)²`: identity at both ends, ahead of the finger everywhere between —

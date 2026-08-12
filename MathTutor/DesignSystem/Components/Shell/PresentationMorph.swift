@@ -252,6 +252,47 @@ struct PresentationMorph: Equatable, Sendable {
         lead((progress - 0.05) / 0.95)
     }
 
+    // MARK: - The unmatched elements' fades
+
+    /// Where the panel-controls pair has fully gone — Material's `FADE_MODE_OUT` window,
+    /// the first quarter of the travel. It is the only element that should vanish early: it
+    /// is the control the learner just pressed.
+    static let controlsGoneBy: CGFloat = 0.25
+
+    /// The pair's opacity: `1` at docked, `0` from a quarter of the travel on.
+    static func controlsOpacity(at progress: CGFloat) -> Double {
+        1 - unitSmoothstep(progress, from: 0, to: controlsGoneBy)
+    }
+
+    // MARK: - The thread crossfade
+
+    /// The one genuine crossfade in the morph: the thread's bubbles re-wrap between the two
+    /// columns, so two copies — each laid out once, glyph sizes matching — trade places
+    /// mid-flight and read as text re-flowing rather than as a dissolve.
+    ///
+    /// The bands are Material's asymmetry: entering, the trade happens in the middle of the
+    /// travel (`0.30 … 0.55` out, `0.30 … 0.60` in, overlapping — `FADE_MODE_CROSS`, never
+    /// sequential, or the gap would show white); returning, the destination commits late
+    /// (`0.45 … 0.70` / `0.40 … 0.75`). One function with a direction parameter, not two
+    /// sets of functions.
+    static func dockedThreadOpacity(at progress: CGFloat, returnLeg: Bool) -> Double {
+        returnLeg
+            ? 1 - unitSmoothstep(progress, from: 0.40, to: 0.75)
+            : 1 - unitSmoothstep(progress, from: 0.30, to: 0.55)
+    }
+
+    static func fullThreadOpacity(at progress: CGFloat, returnLeg: Bool) -> Double {
+        returnLeg
+            ? unitSmoothstep(progress, from: 0.45, to: 0.70)
+            : unitSmoothstep(progress, from: 0.30, to: 0.60)
+    }
+
+    private static func unitSmoothstep(_ x: CGFloat, from start: CGFloat, to end: CGFloat) -> Double {
+        guard end > start else { return x >= end ? 1 : 0 }
+        let t = min(1, max(0, (x - start) / (end - start)))
+        return Double(t * t * (3 - 2 * t))
+    }
+
     // MARK: - Arithmetic
 
     private func unit(_ progress: CGFloat) -> CGFloat {
@@ -314,6 +355,10 @@ struct PresentationFlight: Equatable, Sendable {
     /// the orb's path is a pure x translation.
     static let orbFrame = OrbSize.panel.metrics.frame
 
+    /// The docked thread band's top — the panel's own content top. The full-screen thread's
+    /// is the screen's raw top (`0`): its text scrolls freely off the screen edge.
+    let dockedThreadTop: CGFloat
+
     /// The composer pill's bottom edge at each end. The docked pill sits the panel's 18pt
     /// inset above the panel's floor (986 on the reference screen); the full-screen pill's
     /// bottom **is** the content band's own bottom (1004). Both are keyboard-aware, so the
@@ -336,6 +381,11 @@ struct PresentationFlight: Equatable, Sendable {
         dockedComposerBottom = layout.contentTop + layout.contentHeightAboveKeyboard
             - TutorPanelMetrics.inset
         fullComposerBottom = layout.contentBottomAboveKeyboard
+        fullToggle = CGPoint(
+            x: layout.contentLeft + (isSidebarOpen ? layout.sessionsSidebarWidth : 0),
+            y: layout.contentTop
+        )
+        dockedThreadTop = layout.contentTop
     }
 
     /// How far the content column's **centre** moves — `+491.5` on the reference screen.
@@ -451,6 +501,80 @@ struct PresentationFlight: Equatable, Sendable {
         return slot * (1 - min(1, max(0, progress)))
     }
 
+    // MARK: - The sidebar toggle
+
+    /// The toggle's top-left at each end: the panel's chrome corner `(46, 46)` and the chat
+    /// pane's own `(28 + sidebar, 28)` — 18 points in each axis, nearly stationary. It must
+    /// **not** fade: it exists at both ends, and the eye is allowed to follow it.
+    var dockedToggle: CGPoint {
+        CGPoint(x: dockedColumnX, y: dockedToggleY)
+    }
+    let fullToggle: CGPoint
+    private var dockedToggleY: CGFloat {
+        fullToggle.y + TutorPanelMetrics.inset
+    }
+
+    /// Linear on the finger — 18 points needs no lead.
+    func toggleX(at progress: CGFloat) -> CGFloat {
+        travelled(
+            from: dockedToggle.x,
+            by: min(1, max(0, progress)) * (fullToggle.x - dockedToggle.x),
+            at: progress
+        )
+    }
+
+    func toggleY(at progress: CGFloat) -> CGFloat {
+        travelled(
+            from: dockedToggle.y,
+            by: min(1, max(0, progress)) * (fullToggle.y - dockedToggle.y),
+            at: progress
+        )
+    }
+
+    // MARK: - The panel controls
+
+    /// The layout pair's width — two 32pt buttons and their 14pt gap.
+    static var controlsPairWidth: CGFloat {
+        2 * TutorPanelMetrics.controlButton + TutorPanelMetrics.controlsGap
+    }
+
+    /// The pair's top-left at rest: trailing end of the docked content column, on the chrome
+    /// row. The one element with no counterpart at full screen — it fades, early, because it
+    /// is the control the learner just pressed and it leaving immediately is correct.
+    var dockedControlsOrigin: CGPoint {
+        CGPoint(
+            x: dockedColumnX + dockedColumnWidth - Self.controlsPairWidth,
+            y: dockedToggleY
+        )
+    }
+
+    /// A 12pt trailing drift over the fade band — motion out, not just a dissolve.
+    func controlsX(at progress: CGFloat) -> CGFloat {
+        let fade = min(1, max(0, progress / PresentationMorph.controlsGoneBy))
+        return travelled(from: dockedControlsOrigin.x, by: 12 * fade, at: progress)
+    }
+
+    // MARK: - The thread
+
+    /// How far short of its final position the incoming thread starts — it arrives rather
+    /// than appears.
+    static let threadArrivalCounterTravel: CGFloat = 60
+
+    /// The docked thread's band: the panel's own — x it shares with the greeting's path.
+    func dockedThreadX(at progress: CGFloat) -> CGFloat {
+        greetingX(at: progress)
+    }
+
+    /// The full-screen thread's leading edge: from 60pt short of home, closing on the lead
+    /// curve so it lands exactly on the settled column.
+    func fullThreadX(at progress: CGFloat) -> CGFloat {
+        travelled(
+            from: fullColumnX - Self.threadArrivalCounterTravel,
+            by: PresentationMorph.lead(progress) * Self.threadArrivalCounterTravel,
+            at: progress
+        )
+    }
+
     // MARK: - Arithmetic
 
     /// Whole points through the travel — every rasterised composite in the shell moves on
@@ -481,6 +605,12 @@ final class PresentationMorphModel: ObservableObject {
     /// gestures, when the settled presentation is the answer.
     @Published private(set) var progress: CGFloat?
 
+    /// Which leg the current flight is: `true` from full screen toward the board. Set at
+    /// `begin`, beside the published anchor, and read only by the flight layer's fade
+    /// curves — the return leg trades the thread later than the enter leg does. Not its own
+    /// publisher: it changes only when `progress` does.
+    private(set) var isReturnLeg = false
+
     /// True from a release (or a button's animated morph) until the spring has finished.
     /// Both contents stay mounted exactly this long — see `DockRevealModel.isSettling` for
     /// why a removal transition cannot do this job.
@@ -493,6 +623,7 @@ final class PresentationMorphModel: ObservableObject {
 
     /// The pan committed. The anchor is whichever end the tutor was resting at.
     func begin(atFullScreen: Bool) {
+        isReturnLeg = atFullScreen
         progress = atFullScreen ? 1 : 0
     }
 

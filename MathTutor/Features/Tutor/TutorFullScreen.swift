@@ -330,6 +330,8 @@ struct TutorFullScreen: View {
             alignment: .leading
         )
         .offset(x: layout.contentLeft + sidebar, y: layout.contentTop)
+        // The flight layer's travelling copy is the one on screen mid-morph.
+        .opacity(isInPresentationFlight ? 0 : 1)
     }
 
     // MARK: - The reveal gesture
@@ -542,6 +544,8 @@ struct TutorFullScreen: View {
         )
         .frame(width: column.width, height: column.threadHeight)
         .offset(x: column.x, y: column.threadTop)
+        // The flight layer's full-screen copy is the one on screen mid-morph.
+        .opacity(isInPresentationFlight ? 0 : 1)
     }
 
     /// Board 07 draws no marquee and no attachment card in the wide composer, so the resting

@@ -273,6 +273,8 @@ struct TutorPanel: View {
         .frame(width: contentWidth, height: TutorPanelMetrics.controlsHeight, alignment: .trailing)
         .frame(width: size.width, alignment: .center)
         .padding(.top, TutorPanelMetrics.inset)
+        // The flight layer's fading copy is the one on screen mid-morph.
+        .opacity(isInPresentationFlight ? 0 : 1)
     }
 
     /// Board 17's header, before — the leading slot the gear used to hold.
@@ -300,6 +302,8 @@ struct TutorPanel: View {
         .frame(width: contentWidth, height: TutorPanelMetrics.controlsHeight, alignment: .leading)
         .frame(width: size.width, alignment: .center)
         .padding(.top, TutorPanelMetrics.inset)
+        // The flight layer's travelling copy is the one on screen mid-morph.
+        .opacity(isInPresentationFlight ? 0 : 1)
     }
 
     /// What arriving at screen 06 costs the panel — the presentation change and the menus that
@@ -416,6 +420,8 @@ struct TutorPanel: View {
                 actions: actions
             )
             .frame(width: contentWidth, height: size.height)
+            // The flight layer's docked copy is the one on screen mid-morph.
+            .opacity(isInPresentationFlight ? 0 : 1)
         } else {
             ChatScrollColumn(width: contentWidth, anchor: .top) {
                 startFill.padding(.top, Self.chromeTop)

@@ -46,6 +46,18 @@ enum FlightRole {
     /// inset to the content band's own bottom. Bottom-anchored, so a pill grown by typed
     /// lines keeps its bottom edge on the interpolated line exactly as it does at rest.
     case composer
+    /// The sidebar toggle: 18 points in each axis, linear, never fading — it exists at both
+    /// ends and the eye is allowed to follow it.
+    case toggle
+    /// The panel-controls pair: the one unmatched element. Opacity out over the first
+    /// quarter of the travel with a 12pt trailing drift — Material's `FADE_MODE_OUT`.
+    case panelControls
+    /// The docked thread copy: laid out once at the panel's column, translated on the
+    /// staggered lead, traded on the crossfade band. Half of the morph's one real fade.
+    case dockedThread
+    /// The full-screen thread copy: laid out once at the reading column, arriving from
+    /// 60pt short of home on the lead curve. The other half of the fade.
+    case fullThread
     /// The panel's own fill riding on the container while it is still mostly the panel —
     /// `--color-surface-panel` over the pane's white, gone per `panelFillOpacity`.
     case containerPanelFill
@@ -65,6 +77,9 @@ struct FlightRender: ViewModifier {
     let role: FlightRole
     let flight: PresentationFlight
     let geometry: PresentationMorph
+    /// Which way this flight is going — the thread's fade bands are the one place the two
+    /// legs differ (see `PresentationMorph.dockedThreadOpacity`). Affects opacity only.
+    var isReturnLeg = false
 
     @ViewBuilder
     func body(content: Content) -> some View {
@@ -73,6 +88,20 @@ struct FlightRender: ViewModifier {
             content.offset(x: flight.orbX(at: progress), y: flight.orbTop)
         case .greeting:
             content.offset(x: flight.greetingX(at: progress), y: flight.greetingTop)
+        case .toggle:
+            content.offset(x: flight.toggleX(at: progress), y: flight.toggleY(at: progress))
+        case .panelControls:
+            content
+                .offset(x: flight.controlsX(at: progress), y: flight.dockedControlsOrigin.y)
+                .opacity(PresentationMorph.controlsOpacity(at: progress))
+        case .dockedThread:
+            content
+                .offset(x: flight.dockedThreadX(at: progress), y: flight.dockedThreadTop)
+                .opacity(PresentationMorph.dockedThreadOpacity(at: progress, returnLeg: isReturnLeg))
+        case .fullThread:
+            content
+                .offset(x: flight.fullThreadX(at: progress), y: 0)
+                .opacity(PresentationMorph.fullThreadOpacity(at: progress, returnLeg: isReturnLeg))
         case .chips:
             content
                 .frame(width: flight.chipsWidth(at: progress))
@@ -116,7 +145,10 @@ extension FlightRender: @preconcurrency Animatable {
 /// presentation still flips *inside* the settle transaction — that is the spring — but by
 /// then everything whose existence depends on the flight is already mounted and stays
 /// mounted until the completion releases it.
-struct PresentationFlightLayer<Board: View, Rail: View, Tutor: View, Floating: View>: View {
+struct PresentationFlightLayer<
+    Board: View, Rail: View, Tutor: View, Floating: View,
+    DockedThread: View, FullThread: View
+>: View {
     /// The container's arithmetic — endpoints, radii, fill and shadow curves.
     let morph: PresentationMorph
     /// The shared elements' paths.
@@ -140,6 +172,11 @@ struct PresentationFlightLayer<Board: View, Rail: View, Tutor: View, Floating: V
     @ViewBuilder let rail: Rail
     @ViewBuilder let tutor: Tutor
     @ViewBuilder let floating: Floating
+    /// The thread's two crossfade copies, built by the caller — which has the store and the
+    /// actions in reach — **as stored slots**: each is laid out once at its own column and
+    /// must not be rebuilt per frame. Mounted only in the thread state, only in flight.
+    @ViewBuilder let dockedThread: DockedThread
+    @ViewBuilder let fullThread: FullThread
 
     /// Where the morph is right now: the live drag, or the settled end.
     private var progress: CGFloat { model.progress ?? (isFullScreen ? 1 : 0) }
@@ -193,7 +230,19 @@ struct PresentationFlightLayer<Board: View, Rail: View, Tutor: View, Floating: V
                     .modifier(render(.greeting))
                 FlightChips()
                     .modifier(render(.chips))
+            } else {
+                // The one real crossfade: two copies of the thread, each laid out once at
+                // its own column, co-located mid-flight so the trade reads as the same
+                // text re-flowing into new line breaks. Both mounted for the whole flight.
+                dockedThread
+                    .modifier(render(.dockedThread))
+                fullThread
+                    .modifier(render(.fullThread))
             }
+            SidebarToggleButton(action: {})
+                .modifier(render(.toggle))
+            PanelControls(onDock: {}, onFullScreen: {}, alignment: .leading)
+                .modifier(render(.panelControls))
             FlightComposer(
                 progress: progress,
                 flight: flight,
@@ -208,7 +257,13 @@ struct PresentationFlightLayer<Board: View, Rail: View, Tutor: View, Floating: V
     }
 
     private func render(_ role: FlightRole) -> FlightRender {
-        FlightRender(progress: progress, role: role, flight: flight, geometry: morph)
+        FlightRender(
+            progress: progress,
+            role: role,
+            flight: flight,
+            geometry: morph,
+            isReturnLeg: model.isReturnLeg
+        )
     }
 }
 
