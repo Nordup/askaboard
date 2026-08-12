@@ -85,6 +85,11 @@ struct BoardScreen: View {
         // that is not the window they were handed — so the screen publishes the layout it drew
         // itself in rather than letting its own children disagree with it.
         .environment(\.screenLayout, layout)
+        // The drawer's pan recogniser lives on a UIKit ancestor and cannot see SwiftUI paint
+        // order, so the one same-tree surface drawn *over* the pan region — the settings
+        // window below — has to be stated to it: a swipe inside settings must reach settings,
+        // not toggle a drawer behind the blur. See `EnvironmentValues.isDrawerPanSuspended`.
+        .environment(\.isDrawerPanSuspended, isShowingSettings)
         // Not a `fullScreenCover` any more, and it cannot be one: the redesigned settings is
         // a window *over* the board, and a cover would replace the very thing it blurs. The
         // modifier wraps the whole screen rather than adding a branch to the stack above,

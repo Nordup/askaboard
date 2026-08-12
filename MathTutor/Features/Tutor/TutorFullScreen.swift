@@ -32,25 +32,21 @@ struct TutorFullScreen: View {
     @State private var isAttachMenuOpen = false
     @State private var pickerSource: AttachmentSource? = nil
 
-    /// This touch's committed axis — board 18's intent lock, on this surface too.
+    /// Whether a pan owns the touch in progress — board 18's intent lock, on this surface too.
     ///
-    /// The sidebar settles on release rather than tracking the finger, so for a while this
-    /// gesture had no `onChanged` at all and decided everything in `onEnded`. That was the bug
-    /// the drawer's rows showed: a `Button` fires on touch-*up*, so a swipe that crossed a
-    /// session row opened that session, and by the time `onEnded` ran the row had already
-    /// acted. The lock has to be taken **during** the drag for anything to be cancellable, so
-    /// the axis is committed on the first frame and read by `isPanCommitted`.
-    @State private var panAxis: DrawerReveal.Axis = .undecided
-
-    /// Whether this touch belongs to the pan — see `DrawerRevealLayer.isPanCommitted`, which
-    /// carries the whole argument for why the suppression is structural.
-    private var isPanCommitted: Bool { panAxis == .horizontal }
+    /// Set by `DrawerPanGesture` at the moment the touch commits to the horizontal axis, which
+    /// is also the moment the recogniser cancels every press that touch had in flight — see
+    /// `DrawerPanRecognizer`. The commitment is a property of the *touch*, not of the sidebar:
+    /// it fires just the same when the sidebar is already open and a further left-swipe moves
+    /// nothing, which was the boundary case the old `.disabled` groups still leaked presses in.
+    /// What is left for this flag is the fingers that land *after* — see `inertToTouches(_:)`.
+    @State private var isPanCommitted = false
 
     /// How much of the leading edge the sessions sidebar has taken — board 19's 372 while it
     /// is open, nothing while it is not.
     ///
     /// The one number the whole of this surface reads off the drawer. It is the settled state
-    /// and never a live drag position, unlike the docked panel's: see `drawerPan(travel:)`.
+    /// and never a live drag position, unlike the docked panel's: see `drawerPanGesture(travel:)`.
     private var sidebar: CGFloat {
         uiState.isSessionsDrawerOpen ? layout.sessionsSidebarWidth : 0
     }
@@ -66,16 +62,13 @@ struct TutorFullScreen: View {
             chatSurface
             sessionsSidebar
 
-            // Disabled as one subtree while a pan owns the touch, so a swipe cannot press a
-            // suggestion chip or a thread accessory on its way past. The composer below is a
-            // sibling and stays live — see `TutorPanel.chatPane(in:)` for the argument.
-            Group {
-                switch uiState.conversation {
-                case .start: startColumn
-                case .active: threadColumn
-                }
+            // No pan-time `.disabled` on any of this any more: a swipe that commits cancels
+            // its own in-flight presses at the UIKit level (`DrawerPanRecognizer`), composer
+            // and all, and `inertToTouches` below covers any finger that lands afterwards.
+            switch uiState.conversation {
+            case .start: startColumn
+            case .active: threadColumn
             }
-            .disabled(isPanCommitted)
 
             // Outside the switch, for the same reason the composer is: the slot belongs to the
             // input field, not to the conversation. The fade used to live inside `threadColumn`
@@ -89,12 +82,12 @@ struct TutorFullScreen: View {
                 .offset(x: column.x, y: column.bottom - slot.band)
 
             if isAttachMenuOpen {
-                attachMenu.disabled(isPanCommitted)
+                attachMenu
             }
         }
-        // Everything on this screen goes inert the moment the axis commits — one modifier at
-        // the container, the sidebar and the reading column both, the same way the docked
-        // panel does it. See `View.inertToTouches(_:)`.
+        // Later touches — a second finger, mid-pan — find nothing to press. The same one
+        // modifier the docked panel carries, for the same reason: the committing touch is
+        // already handled natively, and this covers the touches that have not landed yet.
         .inertToTouches(isPanCommitted)
         // **The pan surface is the whole screen, stated rather than inferred.**
         //
@@ -108,21 +101,22 @@ struct TutorFullScreen: View {
         // swipe only working on the left of the screen.
         //
         // Framing to the screen fixes it without moving anything, because absolute offsets do
-        // not care how large the box they sit in is. The board peek keeps its own tap: it is a
-        // sibling painted *after* the tutor in `BoardScreen`, so it hit-tests first and this
-        // surface never sees a touch that lands on it.
+        // not care how large the box they sit in is.
         .frame(width: layout.screenWidth, height: layout.screenHeight, alignment: .topLeading)
         // The same right-swipe the docked panel takes — board 19: *"The same right-swipe still
-        // opens the sidebar, and a left-swipe closes it."* Simultaneous, and locked to an axis
-        // exactly as the panel's is.
+        // opens the sidebar, and a left-swipe closes it."* The recogniser's region is the whole
+        // container, so the sidebar is swiped *from* as well as onto — a left-swipe that starts
+        // on a session row closes it — and its empty space is grabbable without a
+        // `contentShape`, because the region is the background view's frame and not a hit test.
         //
-        // On the container rather than on the chat, so the sidebar is swiped *from* as well as
-        // onto: a left-swipe that starts on a session row closes it. `contentShape` is what
-        // makes the sidebar's own empty space grabbable — the pane behind it is the screen
-        // ground and the board below that takes no touches at all in this state, so without it
-        // a swipe that misses a row would land on nothing.
-        .contentShape(.rect)
-        .simultaneousGesture(drawerPan(travel: layout.sessionsSidebarWidth))
+        // Less the board peek's lane: the peek is a sibling painted *after* the tutor in
+        // `BoardScreen`, and its tap used to win by paint order — a UIKit recogniser cannot see
+        // SwiftUI paint order, so the reservation is stated as geometry instead, and this
+        // surface still never takes a touch that lands on the peek.
+        .background {
+            drawerPanGesture(travel: layout.sessionsSidebarWidth)
+                .padding(.trailing, max(0, layout.screenWidth - layout.peekX))
+        }
         .attachmentPickers(
             source: $pickerSource,
             onPicked: { data, filename, contentType in
@@ -209,48 +203,41 @@ struct TutorFullScreen: View {
                 onSettings: actions.openSettings
             )
             .offset(x: layout.sessionsSidebarX)
-            .disabled(isPanCommitted)
             .transition(.move(edge: .leading))
         }
     }
 
     // MARK: - The reveal gesture
 
-    /// Board 19's swipe, arbitrated exactly as the panel's is.
-    ///
-    /// The intent lock is the same rule and the same threshold, so a vertical drag scrolls the
-    /// thread and a horizontal one reaches for the sidebar; the difference is that this one
-    /// commits on release rather than tracking, so there is no live progress to publish and no
-    /// scroll to suppress mid-touch — the thread never gives a frame up to a gesture that ends
-    /// up being the sidebar's.
+    /// Board 19's swipe, arbitrated exactly as the panel's is — the same `DrawerPanRecognizer`,
+    /// the same 12pt / 38° lock, so a vertical drag scrolls the thread and a horizontal one
+    /// reaches for the sidebar. The difference is that this one commits on release rather than
+    /// tracking, so the change callback drives nothing: the sidebar re-centres a 740pt reading
+    /// column, and a finger-tracked one would drag all of it sideways a frame at a time.
     ///
     /// The 50%-of-travel rule has nothing to measure against here, so the direction decides:
     /// a committed rightward pan opens and a leftward one closes, and either way a fling in
     /// the opposite direction reverses it, which is `settlesOpen` with the progress pinned to
-    /// where the drawer already was.
-    private func drawerPan(travel: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: DrawerReveal.intentThreshold, coordinateSpace: .local)
-            // Nothing here moves the sidebar — the axis is all this frame is for, and taking it
-            // now is what lets `isPanCommitted` cancel a press before the finger lifts. Written
-            // once per touch, on the transition out of `.undecided`, not on every frame.
-            .onChanged { value in
-                guard panAxis == .undecided else { return }
-                panAxis = DrawerReveal.axis(for: value.translation)
-            }
-            .onEnded { value in
-                // Cleared however this ends, so a touch that scrolled the sessions list leaves
-                // nothing behind for the next one to inherit.
-                defer { panAxis = .undecided }
-                guard panAxis == .horizontal else { return }
+    /// where the drawer already was. A pan that asks for the state the sidebar is already in —
+    /// a further left-swipe on a closed edge — settles as a no-op, but it *committed*, so the
+    /// presses it crossed were still cancelled: that boundary case is exactly why commitment,
+    /// not motion, is the trigger.
+    private func drawerPanGesture(travel: CGFloat) -> DrawerPanGesture {
+        DrawerPanGesture(
+            onCommit: { isPanCommitted = true },
+            onChange: { _ in },
+            onEnd: { translation, velocity in
+                isPanCommitted = false
                 let opens = DrawerReveal.settlesOpen(
-                    progress: value.translation.width > 0 ? 1 : 0,
-                    velocity: value.velocity.width
+                    progress: translation > 0 ? 1 : 0,
+                    velocity: velocity
                 )
                 guard opens != uiState.isSessionsDrawerOpen else { return }
-                withAnimation(DrawerReveal.settle(velocity: value.velocity.width, travel: travel)) {
+                withAnimation(DrawerReveal.settle(velocity: velocity, travel: travel)) {
                     if opens { uiState.openSessionsDrawer() } else { uiState.closeSessionsDrawer() }
                 }
             }
+        )
     }
 
     private func closeSidebar() {
@@ -273,43 +260,33 @@ struct TutorFullScreen: View {
     /// 740 and becomes 356 tall instead of 168, so a grid pinned at 592 would have run 188
     /// points into the composer. Here the greeting and the grid are one stack with the board's
     /// own 174 between them, bottom-anchored the designed 164 above the composer, and all the
-    /// slack lands on top: at the reference that slack is 82 and reproduces 150 and 592 to the
-    /// point, and where the grid grows the block rides up instead of down. `TutorColumnMetrics`
-    /// is that arithmetic.
+    /// slack lands on top: at the reference that slack reproduces 150 and 592 to the point,
+    /// and where the grid grows the block rides up instead of down.
     ///
-    /// It scrolls where the band cannot hold it — a landscape Split View window can be 190
-    /// points short of a wrapped grid — for the reason `ToolRail` scrolls: every designed value
-    /// survives, every chip stays reachable and legal to tap, and nothing new is drawn.
-    ///
-    /// **The scroll view exists only in that case**, and the switch is `ToolRailMetrics.Fit`'s:
-    /// the column knows both heights, so it can say which branch it is in rather than having a
-    /// container work it out. A scroll view clips to its bounds, and the block's outermost marks
-    /// are a hero halo that spills 77 points past the orb and a row of chips whose `shadow/card`
-    /// bleeds past the last one — so wrapping a column that fits would cost exactly the pixels
-    /// this port is diffed on.
+    /// **The block runs in the thread's own container, in the thread's own lane** — the same
+    /// `ChatScrollColumn`, framed the same screen-top-to-content-floor band `threadColumn` is.
+    /// It used to be its own pair of branches with its own scroll view, clipped to the start
+    /// region, and that was the bug: the region's top edge was a hard line partway down the
+    /// screen, so a column short enough to scroll cut the greeting off at it — where the
+    /// thread beside it scrolls its history clean off the screen's own edge. Now the two
+    /// fills share one answer. The composer's clearance travels as padding
+    /// (`TutorColumnMetrics.startClearing`, the analogue of `threadClearing`), the container's
+    /// bleed keeps the hero halo and the chips' `shadow/card` off the clip, and a band that
+    /// holds the block does not scroll at all — `ChatScrollColumn` bounces only past its size,
+    /// so the fitting case is pixel-identical to the boards.
     ///
     /// The block no longer moves for `btn/settings` at any width: board 19 takes the gear off
     /// this screen and gives it to the sessions drawer, so nothing is pinned in the corner for
-    /// the column to give way to. See `TutorColumnMetrics.columnTop`.
+    /// the column to give way to.
     ///
     /// Board 19 draws no other chrome either — the board peek is still the way back and the
     /// sidebar is a lane rather than a header — so this stays a bare column.
-    @ViewBuilder
     private var startColumn: some View {
-        if column.startScrolls {
-            ScrollView(.vertical, showsIndicators: false) {
-                // `justify-content: flex-end`, the rule the thread beside it is built on: the
-                // block sits on the bottom of the band, so the chips stay by the composer and
-                // it is the greeting that goes over the top edge.
-                startBlock.frame(minHeight: column.startRegionHeight, alignment: .bottom)
-            }
-            .frame(width: column.width, height: column.startRegionHeight)
-            .scrollBounceBehavior(.basedOnSize)
-            .defaultScrollAnchor(.bottom)
-            .offset(x: column.x, y: column.columnTop)
-        } else {
-            startBlock.offset(x: column.x, y: column.greetingTop)
+        ChatScrollColumn(width: column.width) {
+            startBlock.padding(.bottom, column.startClearing)
         }
+        .frame(width: column.width, height: column.threadHeight)
+        .offset(x: column.x, y: column.threadTop)
     }
 
     /// Greeting, the board's 174, grid — the one rigid run in the column, and the same view in
@@ -498,53 +475,24 @@ struct TutorColumnMetrics: Equatable, Sendable {
         bottom - composer.height(showing: card)
     }
 
-    /// The band the start block flows in: the content top down to the designed 164 above the
-    /// composer.
+    /// Greeting, the board's 174, grid. The one rigid run in the column.
+    var startContentHeight: CGFloat {
+        greetingHeight + Self.greetingToSuggestions + suggestionsHeight
+    }
+
+    /// What the start block clears at the bottom of the thread's band: the composer, and
+    /// screen 07's 164 above it. The analogue of `threadClearing`, with the designed gap in
+    /// place of `--space-gap` — and travelling as the block's own bottom padding, which is
+    /// what bottom-anchors the chips 164 above the pill at every width. `232` on the
+    /// reference screen, so the block's bottom lands on 772 and its slack reproduces the
+    /// board's 150/592 above it.
     ///
     /// Measured against the **resting** composer, not the attached one. Board 07 draws no card
     /// in the wide composer at all; where the app shows one anyway — a selection made on the
     /// board has to be visible before it is sent — the card grows into its own 38pt band and
     /// the column above it does not move. A greeting that jumped 38 points the moment a
     /// selection was attached would be the composer redrawing the screen behind it.
-    var startRegionHeight: CGFloat {
-        max(0, composerTop(showing: .none) - Self.suggestionsToComposer - columnTop)
-    }
-
-    /// Greeting, the board's 174, grid. The one rigid run in the column.
-    var startContentHeight: CGFloat {
-        greetingHeight + Self.greetingToSuggestions + suggestionsHeight
-    }
-
-    /// What the band has over the block — 82 on the reference screen, and 0 where the wrapped
-    /// grid has taken it all. Clamped, so an overflowing column starts at the top of the band
-    /// and scrolls rather than being pulled up off its own greeting; `ThreadMetrics.offsets`
-    /// clamps the same slack for the same reason.
-    var startSlack: CGFloat { max(0, startRegionHeight - startContentHeight) }
-
-    /// Whether the band can hold the block at all. The same question `ToolRailMetrics.fit`
-    /// asks, and the answer decides whether there is a scroll view in the tree — see
-    /// `TutorFullScreen.startColumn` for why that has to be a decision and not a default.
-    var startScrolls: Bool { startContentHeight > startRegionHeight }
-
-    /// `68 + 82 = 150` on the reference screen.
-    var greetingTop: CGFloat { columnTop + startSlack }
-
-    /// `150 + 268 + 174 = 592` on the reference screen.
-    var suggestionsTop: CGFloat { greetingTop + greetingHeight + Self.greetingToSuggestions }
-
-    /// The top of the band the column's content may use — the content top, now, at every
-    /// width.
-    ///
-    /// It used to give way by one 32pt control band on any window narrow enough for the
-    /// column to reach `btn/settings` in the screen's corner. There is no gear on this screen
-    /// any more: board 19 moves settings into the sessions drawer, which owns its own lane and
-    /// never overlaps the column at all. So the reservation goes with the control that needed
-    /// it, and the narrow-window column gets its 32 points back.
-    ///
-    /// Kept as a property rather than folded into `top` because it is a different claim — the
-    /// band the *content* may use, as against the band the screen leaves — and the next thing
-    /// pinned to this corner will need it back.
-    var columnTop: CGFloat { top }
+    var startClearing: CGFloat { composerHeight + Self.suggestionsToComposer }
 
     /// **The screen's own top, not the content band's.** The one lane in the product that does
     /// not start at `contentTop`, and it is the scroll view that makes it different.
@@ -569,7 +517,7 @@ struct TutorColumnMetrics: Equatable, Sendable {
     /// What the thread has to clear at the bottom: the composer, and board 13's
     /// `--space-gap` above it.
     ///
-    /// Against the **resting** composer, for the same reason `startRegionHeight` is: a
+    /// Against the **resting** composer, for the same reason `startClearing` is: a
     /// selection card grows the composer upward, and a thread that reflowed the moment a
     /// selection was attached would be the composer redrawing the conversation behind it.
     var threadClearing: CGFloat { composerHeight + DS.Space.gap }

@@ -138,6 +138,81 @@ extension ThreadMetrics {
     static func `for`(_ scale: ChatScale) -> Self { .for(scale, width: scale.contentWidth) }
 }
 
+// MARK: - The scroll container
+
+/// The one scroll container every chat fill runs in — the thread and both start states.
+///
+/// It exists so those fills cannot drift apart. The thread, the panel's start state and the
+/// reading column's start state are the same surface in three fills, and each used to carry
+/// its own scroller with its own defaults — which is how one of them grew a visible
+/// indicator and another clipped its content at a hard edge mid-screen. What they share is
+/// stated once here:
+///
+/// - **Indicators are never shown.** The fades are the scroll affordance on these surfaces.
+/// - **The clip is the column plus the bleed**, never the bare column. The orb halos and the
+///   chips' `shadow/card` are the content's visible bounds; the column is only its layout
+///   slot, and a container that clips to the slot cuts them off down a hard vertical line.
+///   See `ThreadMetrics.bleed`.
+/// - **Slack lands at the anchored end's far side** — `justify-content: flex-end` for the
+///   thread and the reading column's start block, whose content sits on the bottom of the
+///   band; the panel's start chain is measured from the controls row and anchors top.
+/// - **It bounces only when it scrolls.** A fill that fits its band is stationary, so a drag
+///   cannot pull it past its own clip and show the edge.
+/// - **No `scrollDisabled` of its own, deliberately.** Board 18's intent lock suspends this
+///   scroller while a drawer pan owns the touch, from `DrawerRevealLayer` through the
+///   environment — an explicit write here would override it and put the lock back.
+///
+/// The container is the *band*, full height, not the content's own region: whoever mounts it
+/// frames it from the surface's top edge to the content floor and lets the content carry its
+/// clearances as padding. That is what makes an overflowing fill scroll off the surface's own
+/// edge — under a fade or past the screen — instead of clipping at a line the eye can find.
+struct ChatScrollColumn<Content: View>: View {
+    /// Which end of the band the content is anchored on, and where the scroll rests.
+    enum Anchor {
+        case top
+        case bottom
+    }
+
+    /// The column the content is laid out in.
+    let width: CGFloat
+    /// How far the clip sits outside the column on each side. A bleed, not a wider column:
+    /// no content moves, and nothing but glow and shadow is drawn in it.
+    var bleed: CGFloat = ThreadMetrics.bleed
+    var anchor: Anchor = .bottom
+    @ViewBuilder var content: () -> Content
+
+    /// The box the scroller clips to: the column plus the bleed on both sides.
+    private var clipWidth: CGFloat { width + 2 * bleed }
+
+    var body: some View {
+        GeometryReader { proxy in
+            ScrollView(.vertical, showsIndicators: false) {
+                content()
+                    .frame(width: width, alignment: .leading)
+                    // The content is at least as tall as the band and sits at the anchored
+                    // end of it, so slack collects at the other end instead of beside the
+                    // anchor.
+                    .frame(
+                        minHeight: proxy.size.height,
+                        alignment: anchor == .bottom ? .bottom : .top
+                    )
+                    // Centres the column in the bled box, so the scroll content is exactly
+                    // as wide as the scroll view and nothing offers to scroll sideways.
+                    .frame(width: clipWidth)
+            }
+            .defaultScrollAnchor(anchor == .bottom ? .bottom : .top)
+            .scrollBounceBehavior(.basedOnSize)
+            // A scroll view clips to its bounds, and that is the whole reason this frame is
+            // here: clipping to the column would cut the halos and shadows down their edges.
+            .frame(width: clipWidth, height: proxy.size.height)
+            // Back to the column for layout. A frame does not clip, so the bleed hangs
+            // symmetrically outside this one and the content keeps the x it had.
+            .frame(width: proxy.size.width, height: proxy.size.height)
+        }
+        .frame(width: width)
+    }
+}
+
 // MARK: - The thread
 
 /// The scroll container, the message list, and the fade over the top of it.
@@ -169,38 +244,17 @@ struct MessageThread<Accessory: View>: View {
     private var metrics: ThreadMetrics { .for(scale, width: column, clearing: clearing) }
 
     var body: some View {
-        GeometryReader { proxy in
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(alignment: .leading, spacing: metrics.gap) {
-                    ForEach(items) { item in
-                        MessageRow(item: item, scale: scale, width: column, crop: crop)
-                    }
-                    accessory()
+        // `justify-content: flex-end`, the bleed clip and the hidden indicators are all the
+        // container's — see `ChatScrollColumn`, which the start states run in too.
+        ChatScrollColumn(width: metrics.width, bleed: metrics.bleed) {
+            VStack(alignment: .leading, spacing: metrics.gap) {
+                ForEach(items) { item in
+                    MessageRow(item: item, scale: scale, width: column, crop: crop)
                 }
-                .padding(.bottom, metrics.bottomPadding)
-                .frame(width: metrics.width, alignment: .leading)
-                // `justify-content: flex-end`, in a scroll view: the content is at least as
-                // tall as the viewport and sits at the bottom of it, so slack collects
-                // above the first message instead of below the last.
-                .frame(minHeight: proxy.size.height, alignment: .bottom)
-                // Centres the column in the bled box, so the scroll content is exactly as
-                // wide as the scroll view and nothing offers to scroll sideways.
-                .frame(width: metrics.clipWidth)
+                accessory()
             }
-            .defaultScrollAnchor(.bottom)
-            // No `scrollDisabled` of its own, deliberately. Board 18's intent lock suspends
-            // this scroller while a drawer pan owns the touch, and it does so from
-            // `DrawerRevealLayer` through the environment — a `.scrollDisabled(false)` here
-            // would be an explicit write that overrode it and put the lock back where it was.
-            // A scroll view clips to its bounds and that is the whole reason this is here:
-            // clipping to the column would cut `btn/orb`'s halo down the column's left edge.
-            // See `ThreadMetrics.bleed`.
-            .frame(width: metrics.clipWidth, height: proxy.size.height)
-            // Back to the column for layout. A frame does not clip, so the bleed hangs
-            // symmetrically outside this one and every message keeps the x it had.
-            .frame(width: proxy.size.width, height: proxy.size.height)
+            .padding(.bottom, metrics.bottomPadding)
         }
-        .frame(width: metrics.width)
         // No fade here, and that is the change: it used to be this view's last child. Board
         // 03 moves both fades out of the thread — *"absolute — both are children of Tutor
         // chat, not Thread"* — so that they can span the panel corner to corner instead of the

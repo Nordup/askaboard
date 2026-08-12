@@ -34,7 +34,7 @@ struct DrawerRevealLayer<Drawer: View, Chat: View>: View {
     @ViewBuilder let drawer: Drawer
     @ViewBuilder let chat: Chat
 
-    /// The reveal gesture in progress, or `nil` between gestures — board 18.
+    /// The committed pan in progress, or `nil` between gestures — board 18.
     ///
     /// `@State` here rather than on `UIState` for the reason `BoardScreen.previewPanelWidth` is
     /// local too: publishing an environment object on every touch event invalidates every
@@ -42,16 +42,13 @@ struct DrawerRevealLayer<Drawer: View, Chat: View>: View {
     /// drawer swipe must not ask `PKCanvasView` to lay itself out again. `UIState` learns the
     /// answer once, on release.
     ///
-    /// It also carries the intent lock: the axis is decided once and stored for the rest of the
-    /// touch, so a drag that starts sideways and curls downward keeps panning, and one that
-    /// starts downward never pans at all.
+    /// Only ever a *horizontal* pan. The intent lock lives in `DrawerPanRecognizer` now: a
+    /// vertical start fails there and never reaches this view at all, so there is no axis to
+    /// store — a stored drag *is* the commitment.
     @State private var drag: Drag?
 
-    /// One touch's committed answer.
+    /// One committed touch's state.
     private struct Drag {
-        /// Never `.undecided` — see `DrawerReveal.axis(for:)`. A drag is only stored once it
-        /// has an answer, and until then the question is asked again on the next frame.
-        let axis: DrawerReveal.Axis
         /// Where the drawer was when this touch landed — 0 or 1. Every frame resolves from this
         /// plus the gesture's *total* translation, never from the previous frame, which is the
         /// anchor rule `ResizeModel` is built on for the same reason: a per-frame sum
@@ -60,53 +57,22 @@ struct DrawerRevealLayer<Drawer: View, Chat: View>: View {
         var progress: CGFloat
     }
 
-    /// Where the drawer is right now: the live drag if one has committed to the horizontal
-    /// axis, and the settled state otherwise.
+    /// Where the drawer is right now: the live drag if one has committed, and the settled
+    /// state otherwise.
     private var progress: CGFloat {
-        if let drag, drag.axis == .horizontal { return drag.progress }
-        return isOpen ? 1 : 0
+        drag?.progress ?? (isOpen ? 1 : 0)
     }
 
-    /// Whether this touch now belongs to the pan, and nothing else may act on it.
+    /// Whether a pan owns the touch in progress.
     ///
-    /// This is the other half of the intent lock, and the half that makes it exclusive rather
-    /// than merely simultaneous. It suppresses two different things, for one reason.
-    ///
-    /// **The scrollers.** `DragGesture(minimumDistance:)` and a `ScrollView` both recognise, so
-    /// without this a diagonal drag pans the drawer *and* scrolls whatever is under the finger.
-    /// The note: *"once the horizontal pan commits, vertical scroll is suppressed until the
-    /// finger lifts."* Both lists, not just the thread — the gesture starts on either pane, so
-    /// either pane's scroller can be the one competing with it.
-    ///
-    /// **The buttons.** A `Button` fires on touch-*up*, and its own cancellation is
-    /// leave-the-bounds — which never triggers here, because a session row is 239 × 44 and a
-    /// suggestion chip is 301 × 62, so a whole 100pt horizontal swipe starts and ends inside
-    /// one control. A swipe across the drawer therefore opened whichever session it crossed.
-    /// Disabling is the mechanism rather than a guard inside each action closure, and that is
-    /// deliberate: it cancels a press that is already in flight, so the row stops looking
-    /// pressed the instant the axis commits and its action is never reached. A guard would have
-    /// to run *after* the gesture's own `onEnded` had already cleared the flag it read, which
-    /// is an ordering SwiftUI does not promise.
-    ///
-    /// **Two mechanisms, because one of them only covers half the problem.**
-    ///
-    /// A press that would *begin* during a pan is stopped by `inertToTouches(_:)` on the whole
-    /// container — hit testing is consulted when a touch lands, so a finger already sliding
-    /// cannot pick up a new control on its way past.
-    ///
-    /// A press that had *already begun* when the axis committed is a different question, and on
-    /// iPadOS 17 hit testing does not answer it: the target was resolved at touch-down and the
-    /// in-flight press keeps it, so the button still fires on touch-up. That one needs
-    /// `isEnabled`, which is what `inertDuringDrawerPan()` writes — disabling a control tears
-    /// down its gesture, and a gesture that no longer exists cannot complete. It is published
-    /// down the environment so the panes can read it without taking an argument that changes
-    /// while a finger is down, which is the rule this whole type is built on.
-    ///
-    /// Both are applied to subtrees rather than to controls: there is no list of buttons to
-    /// keep in step, and the one place the two differ — the composer, which must not be
-    /// disabled or a focused field resigns and the keyboard drops mid-sentence — is expressed
-    /// by where the modifier is attached, not by an exception inside it.
-    private var isPanCommitted: Bool { drag?.axis == .horizontal }
+    /// The heavy lifting — cancelling the presses and the scroll of the *committing* touch —
+    /// is UIKit's now: `DrawerPanRecognizer` cancels every other recogniser on that touch at
+    /// the instant the axis commits, which is what `UIScrollView` does and what no SwiftUI-side
+    /// mechanism could reach on iPadOS 17. What this flag still drives is the touches that
+    /// come *after*: `inertToTouches(_:)` keeps a second finger from picking up a control
+    /// mid-pan, and `scrollDisabled` keeps that same second finger from scrolling a list the
+    /// pan is sliding.
+    private var isPanCommitted: Bool { drag != nil }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -114,10 +80,11 @@ struct DrawerRevealLayer<Drawer: View, Chat: View>: View {
             chatPane
         }
         .frame(width: size.width, height: size.height, alignment: .topLeading)
-        // Everything under the finger goes inert the moment the axis commits — one modifier,
-        // both panes, every control in them. See `isPanCommitted` and `inertToTouches(_:)`.
-        // It sits *below* the gesture, so the pan itself keeps receiving: the hit region the
-        // recognizer uses is the `contentShape` on the outside of it.
+        // Later touches — a second finger, mid-pan — find nothing to press. The committing
+        // touch's own presses are cancelled at the UIKit level (see `DrawerPanRecognizer`),
+        // which hit testing could never do; this covers the touches that have not landed yet,
+        // which is the one thing hit testing does cover. Safe over the composer: it changes
+        // neither focus nor enablement, so the keyboard stays.
         .inertToTouches(isPanCommitted)
         // **The panel's own bounds, restated here.** `TutorPanelSurface` already clips to this
         // radius, but its clip sits *under* the elevation shadow, and a shadow renders its
@@ -130,20 +97,53 @@ struct DrawerRevealLayer<Drawer: View, Chat: View>: View {
         // half — *"A right-swipe anywhere in the chat area drags the drawer"* — and the closing
         // half has to hold on the other pane or the gesture is one-way: a left-swipe that starts
         // on a session row closes the drawer exactly as one that starts on the 74pt chat strip
-        // does. So the gesture is on the container rather than on either child, and
-        // `contentShape` makes the gaps between them grabbable too.
+        // does. So the recogniser's region is the whole container rather than either child —
+        // the background view's own frame is the grab region, gaps included.
         //
-        // Simultaneous rather than exclusive so a vertical drag still scrolls whichever list is
-        // under the finger; the exclusivity the note asks for is the intent lock instead.
-        .contentShape(.rect)
-        .simultaneousGesture(pan)
-        // A scroll already carrying momentum is stopped rather than left to coast under a pane
-        // that has started moving. It reaches every scroller below through the environment, so
-        // neither pane declares a parameter for it — which is the rule this type is built on,
-        // since a parameter that changed while a finger was down would rebuild the pane it was
-        // passed to. `isDrawerPanCommitted` travels the same way and for the same reason.
+        // Less the trailing panel inset: the resize handle's strip overlaps the panel's last
+        // 18 points (`ResizeHandle`'s `contentMargin`), and it used to win those touches by
+        // paint order — a UIKit recogniser cannot see SwiftUI paint order, so the overlap is
+        // stated as geometry instead. A resize drag is horizontal too, and one that committed
+        // the drawer pan would be cancelled by it.
+        .background {
+            DrawerPanGesture(
+                onCommit: {
+                    let anchor: CGFloat = isOpen ? 1 : 0
+                    drag = Drag(anchor: anchor, progress: anchor)
+                },
+                onChange: { translation in
+                    guard var drag else { return }
+                    drag.progress = DrawerReveal.progress(
+                        from: drag.anchor,
+                        translation: translation,
+                        travel: travel
+                    )
+                    self.drag = drag
+                },
+                onEnd: { _, velocity in
+                    guard let drag else { return }
+                    let opens = DrawerReveal.settlesOpen(
+                        progress: drag.progress,
+                        velocity: velocity
+                    )
+                    // Both writes inside the one transaction. Clearing the drag outside it
+                    // would hand `progress` straight back to the settled value and the pane
+                    // would jump to its destination instead of springing to it.
+                    withAnimation(DrawerReveal.settle(velocity: velocity, travel: travel)) {
+                        self.drag = nil
+                        onSettle(opens)
+                    }
+                }
+            )
+            .padding(.trailing, TutorPanelMetrics.inset)
+        }
+        // A scroll already carrying momentum on a *second* finger is stopped rather than left
+        // to coast under a pane that has started moving — the committing finger's own scroll
+        // is already cancelled by the recogniser. It reaches every scroller below through the
+        // environment, so neither pane declares a parameter for it — which is the rule this
+        // type is built on, since a parameter that changed while a finger was down would
+        // rebuild the pane it was passed to.
         .scrollDisabled(isPanCommitted)
-        .environment(\.isDrawerPanCommitted, isPanCommitted)
     }
 
     /// Board 17's drawer, under the chat.
@@ -234,130 +234,26 @@ struct DrawerRevealLayer<Drawer: View, Chat: View>: View {
             .accessibilityHidden(true)
     }
 
-    /// Board 18's pan.
-    ///
-    /// `minimumDistance` is the intent threshold itself, so the first frame this ever sees is
-    /// already far enough to have an axis and no travel is spent undecided. It is also what
-    /// keeps every button on the panel working: a tap does not move 12 points.
-    private var pan: some Gesture {
-        DragGesture(minimumDistance: DrawerReveal.intentThreshold, coordinateSpace: .local)
-            .onChanged { value in
-                // `.undecided` means "ask again", so it is never stored — the guard re-asks on
-                // the next frame instead of latching an answer the vector was too short to
-                // give. It cannot happen while `minimumDistance` and the threshold agree, and
-                // it is what stops that agreement being load-bearing.
-                let axis = drag?.axis ?? DrawerReveal.axis(for: value.translation)
-                guard axis != .undecided else { return }
-                let anchor = drag?.anchor ?? (isOpen ? 1 : 0)
-                guard axis == .horizontal else {
-                    drag = Drag(axis: axis, anchor: anchor, progress: anchor)
-                    return
-                }
-                drag = Drag(
-                    axis: .horizontal,
-                    anchor: anchor,
-                    progress: DrawerReveal.progress(
-                        from: anchor,
-                        translation: value.translation.width,
-                        travel: travel
-                    )
-                )
-            }
-            .onEnded { value in
-                guard let drag else { return }
-                guard drag.axis == .horizontal else {
-                    self.drag = nil
-                    return
-                }
-                let opens = DrawerReveal.settlesOpen(
-                    progress: drag.progress,
-                    velocity: value.velocity.width
-                )
-                // Both writes inside the one transaction. Clearing the drag outside it would
-                // hand `progress` straight back to the settled value and the pane would jump to
-                // its destination instead of springing to it.
-                withAnimation(DrawerReveal.settle(velocity: value.velocity.width, travel: travel)) {
-                    self.drag = nil
-                    onSettle(opens)
-                }
-            }
-    }
 }
 
 // MARK: - Going inert while a gesture owns the touch
 
-private struct DrawerPanCommittedKey: EnvironmentKey {
-    static let defaultValue = false
-}
-
-extension EnvironmentValues {
-    /// Whether a drawer pan has committed to the horizontal axis for the touch in progress.
-    ///
-    /// Published by `DrawerRevealLayer` and read by `inertDuringDrawerPan()`. An environment
-    /// value rather than an argument for two reasons: it reaches a control eight levels down
-    /// without every view in between declaring a parameter it does not use, and — the
-    /// load-bearing one — it changes twice per gesture rather than every frame, so the panes
-    /// can stay untouched view values while the pan is running.
-    var isDrawerPanCommitted: Bool {
-        get { self[DrawerPanCommittedKey.self] }
-        set { self[DrawerPanCommittedKey.self] = newValue }
-    }
-}
-
-private struct InertDuringDrawerPan: ViewModifier {
-    @Environment(\.isDrawerPanCommitted) private var isPanCommitted
-
-    func body(content: Content) -> some View {
-        content.disabled(isPanCommitted)
-    }
-}
-
 extension View {
-    /// Cancels any press in this subtree that is already under way when a drawer pan commits.
+    /// Stops this subtree responding to touches that have not landed yet, without changing
+    /// whether anything is *enabled*.
     ///
-    /// **This is the half `inertToTouches(_:)` cannot do.** Hit testing is consulted when a
-    /// touch lands: withdrawing a view from it stops a *new* touch finding a control, but a
-    /// press that began before the pan committed has already resolved its target and keeps it,
-    /// so on iPadOS 17 the button fires on touch-up regardless. A `Button` acts on touch-*up*
-    /// and cancels only when the finger leaves its bounds, which never happens here — a session
-    /// row is 239 × 44 and a suggestion chip is 301 × 62, so a whole 100pt swipe starts and
-    /// ends inside one control.
+    /// The one SwiftUI-side guard the drawer pan still needs, and it is for the *other*
+    /// fingers. The committing touch's own presses are cancelled natively —
+    /// `DrawerPanRecognizer` cancels every recogniser on that touch the instant the axis
+    /// commits, exactly as `UIScrollView` would, which is what finally reaches an in-flight
+    /// press on iPadOS 17. But a second finger landing mid-pan is a new touch, and hit
+    /// testing *is* consulted for those: withdrawing the subtree is what keeps that finger
+    /// from picking up a control while the panes are moving.
     ///
-    /// `disabled` reaches it because it does not filter events, it removes the recogniser:
-    /// `isEnabled` going false tears the control's gesture out of the view, and a gesture that
-    /// no longer exists cannot complete or fire its action. The pressed state clears with it.
-    ///
-    /// **Attach it to a subtree that contains no text field.** That is the whole of the
-    /// keyboard exception, and it is structural rather than a list: `disabled` resigns a focused
-    /// `TextField`'s first responder, so a swipe mid-sentence would drop the keyboard. The
-    /// composer is a sibling of everything this is applied to, never a descendant.
-    func inertDuringDrawerPan() -> some View {
-        modifier(InertDuringDrawerPan())
-    }
-
-    /// Stops this subtree responding to touches, without changing whether it is *enabled*.
-    ///
-    /// The one mechanism the drawer's gesture uses to keep a swipe from pressing what it
-    /// crosses, applied once at the pan surface rather than control by control. A `Button`
-    /// fires on touch-*up* and cancels only when the finger leaves its bounds — which never
-    /// happens here, because a session row is 239 × 44 and a suggestion chip is 301 × 62, so a
-    /// whole 100pt horizontal swipe starts and ends inside one control. Withdrawing the subtree
-    /// from hit testing ends the press that is already in flight, so the control stops looking
-    /// pressed at the instant the axis commits and its action is never reached.
-    ///
-    /// **It covers touches that have not landed yet, and only those.** Hit testing is consulted
-    /// when a touch begins, so this cannot reach a press that is already under way — that was
-    /// found the hard way on an iPadOS 17 device, where a swipe still pressed the button it
-    /// started on. `inertDuringDrawerPan()` is the other half and cancels those.
-    ///
-    /// It is worth keeping both rather than collapsing to the second: this one is safe to put
-    /// over *everything*, the composer included, because it changes neither focus nor
-    /// enablement — so a finger already travelling cannot pick up a new control on its way
-    /// past, including one inside the composer that `disabled` must never touch.
-    ///
-    /// Applied *inside* whatever carries the gesture. The recognizer's own hit region comes
-    /// from the `contentShape` outside this, so the pan keeps receiving while everything it is
-    /// panning over has stopped.
+    /// Safe to put over everything, the composer included, because it changes neither focus
+    /// nor enablement — no `TextField` resigns, and the keyboard stays up mid-sentence. That
+    /// property is why the old structural `.disabled` groups, and the composer-shaped hole
+    /// they had to leave, are gone.
     func inertToTouches(_ inert: Bool) -> some View {
         allowsHitTesting(!inert)
     }

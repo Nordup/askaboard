@@ -160,24 +160,19 @@ struct TutorPanel: View {
             // does not.
             onSettings: actions.openSettings
         )
-        // One modifier, whole subtree, and safe to disable outright: there is no text field in
-        // the drawer, so the keyboard exception does not reach here. See
-        // `View.inertDuringDrawerPan()`.
-        .inertDuringDrawerPan()
     }
 
     /// Screens 05 and 08 — the pane the layer slides. It draws no surface and no radius of its
     /// own; both belong to the layer, which is the only thing that knows how far it has moved.
     private func chatPane(in size: CGSize) -> some View {
-        // **The composer is a sibling of both disabled groups, never a descendant.** That is
-        // the whole of the keyboard exception, and stating it as structure rather than as a
-        // list is the point: `inertDuringDrawerPan` disables what it is attached to, and
-        // disabling a focused `TextField` resigns first responder — so a swipe mid-sentence
-        // would drop the keyboard. Everything a swipe can press is in one of the two groups;
-        // the pill is between them, in paint order, and stays live.
+        // No control here carries any pan-time guard of its own any more — not the composer,
+        // not the controls, not the menu. A swipe that commits to the drawer's axis cancels
+        // every in-flight press at the UIKit level (`DrawerPanRecognizer`), composer included,
+        // and without disabling anything, so a focused `TextField` keeps the keyboard. The
+        // structural `.disabled` groups this stack used to be split into, and the
+        // composer-shaped exemption between them, are gone with the mechanism they served.
         ZStack(alignment: .top) {
             fillBand(in: size)
-                .inertDuringDrawerPan()
 
             // Fade and pill together, bottom-anchored: the slot owns the 18pt inset under
             // the composer, so screen 08's pill bottom lands on the panel floor less that
@@ -203,7 +198,6 @@ struct TutorPanel: View {
                     attachMenu(in: size)
                 }
             }
-            .inertDuringDrawerPan()
         }
     }
 
@@ -283,13 +277,23 @@ struct TutorPanel: View {
 
     /// Where the panel's middle region sits.
     ///
-    /// The thread starts at the panel's own top edge — behind the controls, which is what the
-    /// top fade is for. The start state still begins below them: screen 05's orb hangs 120
-    /// under the controls row, a chain the design measures from the row rather than from the
-    /// panel's edge. Only the thread scrolls, so only the thread has anything to pass behind.
+    /// **Both fills run the panel's whole height, in the same container** — `ChatScrollColumn`,
+    /// which is the thread's own scroller. The start state used to be its own band below the
+    /// chrome, in its own `ViewThatFits`-wrapped scroll view, and each of that scroller's
+    /// defaults was a difference from the thread beside it: it showed an indicator the thread
+    /// never shows, and it clipped at the chrome's bottom edge — a hard line under the
+    /// controls — where the thread passes behind them into the top fade. Now the start chain
+    /// carries the chrome band as top padding and scrolls behind the controls exactly as the
+    /// thread's history does, and a chain that fits its band does not scroll at all.
     ///
-    /// Nothing here knows about the drawer's gesture; the pane it sits in disables this whole
-    /// band while a pan owns the touch — see `chatPane(in:)`.
+    /// The start fill anchors **top**: screen 05 measures the chain down from the controls
+    /// row, so slack belongs below it — unlike the thread, whose newest message holds the
+    /// composer's line. No extra bottom clearance either: the greeting's own 120pt bottom
+    /// padding is the design's *"lifts the block off the composer"*, and it is deeper than
+    /// the composer's band.
+    ///
+    /// Nothing here knows about the drawer's gesture; a pan that commits cancels this band's
+    /// in-flight presses at the UIKit level — see `DrawerPanRecognizer`.
     @ViewBuilder
     private func fillBand(in size: CGSize) -> some View {
         if case .active = uiState.conversation {
@@ -301,9 +305,10 @@ struct TutorPanel: View {
             )
             .frame(width: contentWidth, height: size.height)
         } else {
-            fill
-                .frame(width: contentWidth, height: max(0, size.height - Self.chromeTop), alignment: .top)
-                .padding(.top, Self.chromeTop)
+            ChatScrollColumn(width: contentWidth, anchor: .top) {
+                startFill.padding(.top, Self.chromeTop)
+            }
+            .frame(width: contentWidth, height: size.height)
         }
     }
 
@@ -311,37 +316,6 @@ struct TutorPanel: View {
     /// thread begins.
     private static var chromeTop: CGFloat {
         TutorPanelMetrics.inset + TutorPanelMetrics.controlsHeight
-    }
-
-    /// The panel's fill that is *not* the thread: screen 05's start state. A fixed chain
-    /// measured from the controls row, which does not scroll unless the band is too short to
-    /// hold it.
-    ///
-    /// The thread is not here. It is the one fill that takes the panel's whole height rather
-    /// than the band below the chrome, and the one that must not be wrapped in a second scroll
-    /// view — see `fillBand(in:)`.
-    private var fill: some View {
-        fitted { startFill }
-    }
-
-    /// The panel's fill, scrolled only where the band cannot hold it.
-    ///
-    /// Screen 05's start state is a 772pt chain — `120 + 90 + 40 + 522`. It fits the 810pt
-    /// column the design's 936pt panel leaves and does not fit the 604 a 768pt iPad does,
-    /// where the composer would be drawn over. Scrolling is the answer the rail already
-    /// establishes for a fixed chain in a band that is too short: every designed value stays,
-    /// every control stays reachable, and nothing new is drawn.
-    ///
-    /// `ViewThatFits` rather than a `ScrollView` around everything: the unscrolled candidate
-    /// is the design, unchanged, wherever it fits — which is every screen the boards were
-    /// drawn for.
-    private func fitted(@ViewBuilder _ content: () -> some View) -> some View {
-        let fill = content()
-        return ViewThatFits(in: .vertical) {
-            fill
-            ScrollView(.vertical) { fill }
-                .scrollBounceBehavior(.basedOnSize)
-        }
     }
 
     /// Screen 05. The orb is the panel's, not the greeting's — `GreetingMetrics.panel`

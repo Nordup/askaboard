@@ -75,11 +75,10 @@ enum DrawerReveal {
     /// still be a drawer pan.
     ///
     /// A translation shorter than `intentThreshold` is `.undecided` and asks again next frame.
-    /// That case does not arise from `DragGesture(minimumDistance: intentThreshold)`, which is
-    /// how the view drives it; it exists so a caller that drives this from raw touches — a
-    /// `UIPanGestureRecognizer`, a test — gets the same answer and not a coin toss on the
-    /// first pixel. A caller **must not store** an `.undecided` answer as this touch's axis;
-    /// it means "ask me again", and `DrawerRevealLayer` re-asks until it is told something.
+    /// That is the live case now: `DrawerPanRecognizer` drives this from raw touches and asks
+    /// on every move until the vector is long enough to answer. A caller **must not store** an
+    /// `.undecided` answer as this touch's axis; it means "ask me again", and the recogniser
+    /// stays `.possible` until it is told something.
     static func axis(for translation: CGSize) -> Axis {
         let dx = abs(translation.width)
         let dy = abs(translation.height)
