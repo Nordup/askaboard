@@ -48,7 +48,7 @@ struct TutorFullScreen: View {
     /// The one number the whole of this surface reads off the drawer. It is the settled state
     /// and never a live drag position, unlike the docked panel's: see `drawerPanGesture(travel:)`.
     private var sidebar: CGFloat {
-        uiState.isSessionsDrawerOpen ? layout.sessionsSidebarWidth : 0
+        uiState.isSessionsSidebarOpen ? layout.sessionsSidebarWidth : 0
     }
 
     private var column: TutorColumnMetrics {
@@ -184,20 +184,32 @@ struct TutorFullScreen: View {
     /// The settle is the same spring either way — see `DrawerReveal.settle(velocity:travel:)`.
     @ViewBuilder
     private var sessionsSidebar: some View {
-        if uiState.isSessionsDrawerOpen {
+        if uiState.isSessionsSidebarOpen {
             SessionsDrawer(
                 sessions: store.sessions,
                 currentID: store.session.id,
                 width: layout.sessionsSidebarWidth,
                 inset: SessionsDrawerMetrics.sidebarInset,
                 height: layout.screenHeight,
+                // **Nothing in here closes the sidebar**, and that is the whole difference
+                // between this surface and the docked one.
+                //
+                // The docked drawer covers 78% of the panel to show you the list, so choosing
+                // from it is finishing with it: it closes, and the chat you chose comes back.
+                // Board 19's sidebar covers nothing — it is a lane of the screen with both
+                // panes live at once — so choosing from it is not finishing with it, it is
+                // using it. Closing on a pick would make the learner re-open the sidebar to
+                // make a second comparison, which is exactly the case a persistent sidebar
+                // exists for.
+                //
+                // That applies to `New chat` for the same reason it applies to a row: both
+                // pick the session the chat pane shows, and the sidebar is not a menu that a
+                // pick dismisses. Settings never closed it either.
                 onNewChat: {
-                    closeSidebar()
                     store.startNewSession()
                     adoptSessionUI()
                 },
                 onOpen: { id in
-                    closeSidebar()
                     store.openSession(id: id)
                     adoptSessionUI()
                 },
@@ -208,8 +220,6 @@ struct TutorFullScreen: View {
                 // The row's menu lifecycle, straight from its `UIContextMenuInteraction` —
                 // see `SessionRowMenu` and `TutorPanel`'s identical wiring.
                 onMenuActivity: { uiState.setContextMenuActive($0) },
-                // **The sidebar stays open**, unlike every other action here — see
-                // `TutorPanel.drawer(width:height:)` for the argument.
                 onSettings: actions.openSettings
             )
             .offset(x: layout.sessionsSidebarX)
@@ -242,16 +252,12 @@ struct TutorFullScreen: View {
                     progress: translation > 0 ? 1 : 0,
                     velocity: velocity
                 )
-                guard opens != uiState.isSessionsDrawerOpen else { return }
+                guard opens != uiState.isSessionsSidebarOpen else { return }
                 withAnimation(DrawerReveal.settle(velocity: velocity, travel: travel)) {
-                    if opens { uiState.openSessionsDrawer() } else { uiState.closeSessionsDrawer() }
+                    if opens { uiState.openSessionsSidebar() } else { uiState.closeSessionsSidebar() }
                 }
             }
         )
-    }
-
-    private func closeSidebar() {
-        uiState.closeSessionsDrawer()
     }
 
     /// The screen's own axes, re-derived for the session that just opened — the same three

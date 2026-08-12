@@ -408,4 +408,73 @@ final class UIStateTests: XCTestCase {
         XCTAssertEqual(state.presentation, .docked)
         XCTAssertEqual(state.conversation, .start)
     }
+
+    // MARK: - The two sessions surfaces
+
+    /// The docked drawer and the full-screen sidebar are separate facts, and the whole point of
+    /// separating them is that one is remembered and the other is not. Neither may move the
+    /// other, or "remembered" would mean whatever the panel last did.
+    func testTheDrawerAndTheSidebarAreIndependent() {
+        let state = UIState()
+        XCTAssertFalse(state.isSessionsDrawerOpen)
+        XCTAssertFalse(state.isSessionsSidebarOpen)
+
+        state.openSessionsDrawer()
+        XCTAssertTrue(state.isSessionsDrawerOpen)
+        XCTAssertFalse(state.isSessionsSidebarOpen, "the panel's drawer is not the sidebar")
+
+        state.closeSessionsDrawer()
+        state.openSessionsSidebar()
+        XCTAssertTrue(state.isSessionsSidebarOpen)
+        XCTAssertFalse(state.isSessionsDrawerOpen)
+
+        state.closeSessionsSidebar()
+        XCTAssertFalse(state.isSessionsSidebarOpen)
+    }
+
+    /// **The sidebar survives the round trip and the drawer does not**, which is the behaviour
+    /// the split exists for.
+    ///
+    /// The closing is `BoardScreen`'s, on the presentation change — this asserts the half that
+    /// is `UIState`'s: that nothing in a presentation transition touches either flag, so the
+    /// sidebar's memory is a decision the screen makes once rather than a side effect of
+    /// walking the axis.
+    func testAPresentationChangeLeavesBothSessionsFlagsAlone() {
+        let state = UIState()
+        state.openSessionsDrawer()
+        state.openSessionsSidebar()
+
+        state.expandTutorToFullScreen()
+        XCTAssertTrue(state.isSessionsSidebarOpen, "no transition writes another axis")
+        XCTAssertTrue(state.isSessionsDrawerOpen)
+
+        state.returnToBoard()
+        state.collapseTutor()
+        state.restoreTutorFromDock()
+        XCTAssertTrue(state.isSessionsSidebarOpen)
+        XCTAssertTrue(state.isSessionsDrawerOpen)
+
+        // And the screen's own rule, which is the one a learner sees: docked always arrives on
+        // the full chat, full screen arrives where it was left.
+        state.closeSessionsDrawer()
+        XCTAssertFalse(state.isSessionsDrawerOpen)
+        XCTAssertTrue(state.isSessionsSidebarOpen, "only the docked one is forgotten")
+    }
+
+    /// Picking a session in full screen leaves the sidebar open — board 19 keeps both panes
+    /// live at once — while the docked drawer closes on the same act. Neither is a `UIState`
+    /// transition, so what is pinned here is that the two verbs stay separate and a caller
+    /// cannot close one by reaching for the other.
+    func testClosingOneSurfaceNeverClosesTheOther() {
+        let state = UIState()
+        state.openSessionsDrawer()
+        state.openSessionsSidebar()
+
+        state.closeSessionsDrawer()
+        XCTAssertTrue(state.isSessionsSidebarOpen)
+
+        state.openSessionsDrawer()
+        state.closeSessionsSidebar()
+        XCTAssertTrue(state.isSessionsDrawerOpen)
+    }
 }

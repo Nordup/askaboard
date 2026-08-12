@@ -131,10 +131,16 @@ struct BoardScreen: View {
         // threshold takes the composer off the screen without either axis moving.
         .onChange(of: presentation) { _, _ in
             dictation.stop()
-            // The drawer is drawn by whichever tutor surface is on screen, and the two draw it
-            // at different widths in different places. A drawer left open across the change
-            // would be reopened, mid-spring, as a different shape — and in the collapsed state
-            // it is left open behind nothing at all.
+            // **The docked drawer only.** It covers 78% of the panel, so arriving at the panel
+            // behind an open one is arriving with the conversation already hidden — and in the
+            // collapsed state it would be open behind nothing at all. Coming back docked always
+            // lands on the full chat.
+            //
+            // The full-screen sidebar is deliberately left alone and survives the round trip.
+            // It covers nothing and re-centres the column beside it, so it is a layout the
+            // learner chose rather than a detour they forgot to leave; making them re-open it
+            // after every glance at the board is the tax that closing it would impose. The two
+            // flags exist to tell those cases apart — see `UIState.isSessionsSidebarOpen`.
             uiState.closeSessionsDrawer()
         }
         .onChange(of: isShowingSettings) { _, isShowing in if isShowing { dictation.stop() } }

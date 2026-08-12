@@ -70,19 +70,13 @@ final class UIState: ObservableObject {
     /// It does not persist, like everything else on this type.
     @Published private(set) var panelWidth: CGFloat = ScreenLayout.defaultPanelWidth
 
-    /// Whether the sessions drawer is revealed — boards 17 and 19.
+    /// Whether the **docked** sessions drawer is revealed — boards 17 and 18.
     ///
     /// Here rather than in `@State` on the panel for the reason everything else
     /// on this type is: it is presentation, it must not persist, and it has to
     /// survive the panel's body being rebuilt by any of the publishers around it
     /// — a drawer that shut itself every time a tutor delta arrived would be
-    /// impossible to use mid-turn. It has to be here for a second reason board
-    /// 15a's dropdown did not: full-screen, the drawer is a lane of the *screen*
-    /// and the reading column re-centres around it, so two surfaces read it.
-    ///
-    /// It replaces `isSessionMenuOpen`, and it is the same kind of thing: not a
-    /// fifth axis, and no transition below preserves it. Every control that takes
-    /// the learner somewhere the drawer cannot follow closes it first.
+    /// impossible to use mid-turn.
     ///
     /// **The open/closed state only.** The live position of a drag is not here —
     /// it is `@State` on the surface being dragged, for the reason
@@ -90,6 +84,27 @@ final class UIState: ObservableObject {
     /// every touch event invalidates every consumer of it and the pane visibly
     /// stutters. This is written once, on release.
     @Published private(set) var isSessionsDrawerOpen = false
+
+    /// Whether the **full-screen** sessions sidebar is open — board 19.
+    ///
+    /// **A second flag rather than a shared one, because the two surfaces answer the question
+    /// differently and the difference is the point.** The docked drawer takes 78% of a 337pt
+    /// panel and leaves a 74pt strip of the conversation: it is a place you go, get what you
+    /// came for, and leave, so arriving at the panel behind an open drawer would be arriving
+    /// with the chat already covered. `BoardScreen` closes it on every presentation change for
+    /// exactly that reason, and coming back docked always lands on the full chat.
+    ///
+    /// The sidebar is not that. Board 19 makes it a lane of the screen with both panes live at
+    /// once — nothing is covered and nothing is waiting to be dismissed — so it is a layout the
+    /// learner has chosen rather than a detour, and being made to re-open it every time they
+    /// come back from the board is the tax that reading it as a detour imposes. So it is
+    /// remembered.
+    ///
+    /// Remembered *for the run*, and deliberately not written to `SessionPersistence`: this
+    /// whole type is presentation, none of it round-trips through the session JSON, and a
+    /// student who quit with the sidebar open should come back to their board — the same rule
+    /// `presentation` itself follows. See the type's own doc.
+    @Published private(set) var isSessionsSidebarOpen = false
 
     /// Whether a session row's context menu is on screen — ground truth, not a guess.
     ///
@@ -208,15 +223,30 @@ final class UIState: ObservableObject {
         selection = .none
     }
 
-    /// A right-swipe that settled open — see `DrawerReveal.settlesOpen(progress:velocity:)`.
+    /// A right-swipe on the docked panel that settled open — see
+    /// `DrawerReveal.settlesOpen(progress:velocity:)`.
     func openSessionsDrawer() {
         isSessionsDrawerOpen = true
     }
 
-    /// A left-swipe, a tap on the pushed-aside chat strip, picking a session, or
-    /// any transition that changes what the tutor is showing.
+    /// A left-swipe, a tap on the pushed-aside chat strip, picking a session, or any change of
+    /// presentation. The docked drawer is never restored: see `isSessionsSidebarOpen` for the
+    /// one that is.
     func closeSessionsDrawer() {
         isSessionsDrawerOpen = false
+    }
+
+    /// A right-swipe in full screen. Survives a trip to the board and back — see
+    /// `isSessionsSidebarOpen`.
+    func openSessionsSidebar() {
+        isSessionsSidebarOpen = true
+    }
+
+    /// A left-swipe in full screen. **Not** picking a session: board 19 keeps both panes live
+    /// at once, so the sidebar is a layout rather than a menu and choosing from it is not
+    /// finishing with it.
+    func closeSessionsSidebar() {
+        isSessionsSidebarOpen = false
     }
 
     /// The resize handle in the gutter between the board and the panel.

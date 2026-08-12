@@ -20,7 +20,7 @@ import SwiftUI
 /// they cannot take an argument that changes while a finger is down — and nothing here needs
 /// them to. Everything the gesture has to do to them, it does from the outside: it moves them,
 /// veils them, and withdraws them from hit testing.
-struct DrawerRevealLayer<Drawer: View, Chat: View>: View {
+struct DrawerRevealLayer<Drawer: View, Chat: View, Chrome: View>: View {
     /// How far the chat travels — the drawer's own width. See `SessionsDrawerMetrics`.
     let travel: CGFloat
     /// The panel's own frame. Both panes are laid out against it.
@@ -33,6 +33,19 @@ struct DrawerRevealLayer<Drawer: View, Chat: View>: View {
     let onSettle: (Bool) -> Void
     @ViewBuilder let drawer: Drawer
     @ViewBuilder let chat: Chat
+    /// What belongs to the **dock** rather than to either pane: drawn last, at the panel's own
+    /// coordinates, and never moved, veiled or clipped by the reveal.
+    ///
+    /// Boards 17 and 18 put the layout pair here. It was a child of the chat until it was drawn
+    /// against the device: the pair travelled with the pane, slid 263 points to the right and
+    /// then clipped in half at the pane's edge, so the one control that puts the panel away was
+    /// unreachable exactly while the drawer was open over it. It is chrome of the surface, not
+    /// content of a pane, and this slot is where that distinction is expressed.
+    ///
+    /// It is *inside* the container, deliberately, so it inherits everything the panes inherit
+    /// from it: `inertToTouches` cancels a press on it the moment the pan commits, the same as
+    /// anywhere else, and the pan can start on it.
+    @ViewBuilder let chrome: Chrome
 
     /// The committed pan in progress, or `nil` between gestures — board 18.
     ///
@@ -78,6 +91,9 @@ struct DrawerRevealLayer<Drawer: View, Chat: View>: View {
         ZStack(alignment: .topLeading) {
             drawerPane
             chatPane
+            // Last, so it paints over both panes, and outside `chatPane` so it takes none of
+            // the pane's offset, radius or veil. See `chrome`.
+            chrome
         }
         .frame(width: size.width, height: size.height, alignment: .topLeading)
         // Later touches — a second finger, mid-pan — find nothing to press. The committing

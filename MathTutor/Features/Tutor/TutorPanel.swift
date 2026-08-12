@@ -104,6 +104,8 @@ struct TutorPanel: View {
                 drawer(width: layout.sessionsDrawerWidth, height: size.height)
             } chat: {
                 chatPane(in: size)
+            } chrome: {
+                panelChrome(in: size)
             }
         }
         // Mounted on the panel rather than on the composer: a sheet presented from a view
@@ -188,22 +190,40 @@ struct TutorPanel: View {
             Group {
                 ScrollFade(width: size.width, metrics: .top(for: .panel))
 
-                // Board 17's header, after: the session title and the gear are gone and only
-                // the layout pair is left, at the trailing end where it already sat. The
-                // drawer owns both of the controls that left — see `note/17 — header after`.
-                PanelControls(
-                    onDock: { closeMenus(); uiState.collapseTutor() },
-                    onFullScreen: { closeMenus(); uiState.expandTutorToFullScreen() },
-                    alignment: .trailing
-                )
-                .frame(width: contentWidth, height: TutorPanelMetrics.controlsHeight, alignment: .trailing)
-                .padding(.top, TutorPanelMetrics.inset)
-
                 if isAttachMenuOpen {
                     attachMenu(in: size)
                 }
             }
         }
+    }
+
+    /// Board 17's header, after — and the one thing on the panel that belongs to the **dock**
+    /// rather than to either pane.
+    ///
+    /// The session title and the gear left the header; the drawer owns both (see
+    /// `note/17 — header after`). What stays is the layout pair, at the trailing end where it
+    /// already sat — and it stays *there*, at the panel's own coordinates, however far the
+    /// drawer is open.
+    ///
+    /// **It used to be a child of the chat, and that was wrong in a way only the device
+    /// showed.** The pair travelled with the pane: a swipe slid it 263 points right and then
+    /// clipped it in half at the pane's leading edge, so the one control that puts the panel
+    /// away was cut in two exactly while the drawer was open over it. Boards 17 and 18 draw it
+    /// unmoved in both frames. It is chrome of the surface, so it is passed to
+    /// `DrawerRevealLayer` as chrome and painted over both panes — see that type's `chrome`.
+    ///
+    /// It is still laid out in the chat's content column rather than the panel's full width,
+    /// because that column is what puts the pair on the panel's 18pt trailing inset. The
+    /// column does not move; only the pane that usually fills it does.
+    private func panelChrome(in size: CGSize) -> some View {
+        PanelControls(
+            onDock: { closeMenus(); uiState.collapseTutor() },
+            onFullScreen: { closeMenus(); uiState.expandTutorToFullScreen() },
+            alignment: .trailing
+        )
+        .frame(width: contentWidth, height: TutorPanelMetrics.controlsHeight, alignment: .trailing)
+        .frame(width: size.width, alignment: .center)
+        .padding(.top, TutorPanelMetrics.inset)
     }
 
     /// Put the drawer away. The layer clears its own drag on release, so there is nothing

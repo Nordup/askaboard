@@ -656,6 +656,17 @@ chat pane travels over it.
 | Shadow at the seam | **none** — the panel's outer elevation is unchanged and nothing is added between the panes |
 | Drawer parallax | Board 18 says **12**; **not implemented** — see below |
 
+**The layout pair does not move.** `btn/full-screen` and `btn/dock` stay at the panel's own
+top-right header position in every drawer state, painted over both panes — they are chrome of
+the dock, not content of the chat. They were a child of the chat pane until it was drawn against
+the device: the pair travelled with it, slid 263 pt right and then clipped in half at the pane's
+leading edge, so the one control that puts the panel away was cut in two exactly while the
+drawer was open over it. Boards 17 and 18 draw it unmoved in both frames. It still lays out in
+the chat's 301 pt content column, because that column is what puts the pair on the panel's 18 pt
+trailing inset — the column does not move, only the pane that usually fills it does. It sits
+inside the reveal container rather than beside it, so a committed pan cancels a press on it like
+anything else.
+
 **The parallax is deliberately not implemented.** It is a pure translation of the whole
 drawer — nothing inside it resizes — and on the artboard it reads as intended, a layer sliding
 up from underneath. On the device it does not, because board 17 gives the drawer and the panel
@@ -738,6 +749,19 @@ same time and neither carries a veil.
   of that reached nothing. The board peek keeps its own tap: it is painted after the tutor in
   `BoardScreen`, so it hit-tests first.
 - The board peek is untouched at `(1308, 28)`.
+- **It is remembered across presentation changes**, and the docked drawer is not. Coming back
+  to full screen restores the sidebar exactly as it was left; coming back to the docked panel
+  always lands on the full chat. The two are separate flags on `UIState`
+  (`isSessionsSidebarOpen` / `isSessionsDrawerOpen`) for that reason. The docked drawer covers
+  78% of the panel, so arriving behind an open one is arriving with the conversation already
+  hidden; the sidebar covers nothing and re-centres the column beside it, so it is a layout the
+  learner chose rather than a detour they forgot to leave. Remembered for the run only — like
+  every other axis on `UIState`, it never reaches the session JSON.
+- **Choosing from it does not close it.** Picking a session, or `New chat`, leaves the sidebar
+  open; only a left-swipe closes it. Board 19 keeps both panes live at once, so a pick is using
+  the sidebar rather than finishing with it, and closing would make the learner re-open it to
+  make a second comparison — the case a persistent sidebar exists for. The docked drawer is the
+  opposite and still closes on a pick, because there the list is covering the chat you picked.
 - The same right-swipe opens it, and a left-swipe closes it — including one that starts inside
   the sidebar, on a session row. It springs rather than tracking the finger: the chat is
   stationary and the column re-centres, so a finger-tracked sidebar would drag 740 points of
