@@ -999,6 +999,68 @@ final class ShellComponentTests: XCTestCase {
         XCTAssertEqual(layout.columnX, 284, "screen 07, untouched")
     }
 
+    /// **The drawer's inset is one value on all four sides, and it is the frame's own.**
+    ///
+    /// Both boards state it as a single padding: board 17 pads its 263 × 976 frame by 18 all
+    /// round, board 19 pads its 296 × 1032 frame by 28 all round. `SessionsDrawer` used to read
+    /// the horizontal from its `inset` parameter and the vertical from the *docked*
+    /// `SessionsDrawerMetrics.inset`, so the full-screen sidebar was correct across and 10
+    /// points out on both the top and the bottom — a header that started above the chat pane's
+    /// own `--space-edge` and a bottom bar that hung below it.
+    ///
+    /// Asserted through the two boards' bottom-bar positions, because that is where the
+    /// vertical inset is actually readable: each board pins the bar one inset up from its own
+    /// floor, and the two numbers disagree exactly when the vertical inset is wrong.
+    func testTheDrawerPadsEveryEdgeWithTheFrameSOwnInset() {
+        // Board 17 — `Drawer bottom bar` at y 914 in a 976 frame.
+        XCTAssertEqual(
+            976 - SessionsDrawerMetrics.insetInline - SessionsDrawerMetrics.bottomBarHeight,
+            914,
+            "976 − 18 − 44"
+        )
+        // Board 19 — the same bar at y 960 in a 1032 frame, on `--space-edge` rather than on
+        // the panel's inset.
+        XCTAssertEqual(
+            1032 - SessionsDrawerMetrics.sidebarInset - SessionsDrawerMetrics.bottomBarHeight,
+            960,
+            "1032 − 28 − 44"
+        )
+        // The header's first line lands on the same y the full-screen chat's content does,
+        // which is the whole point of the sidebar taking `--space-edge`.
+        XCTAssertEqual(SessionsDrawerMetrics.sidebarInset, ScreenLayout.reference.contentTop, "28")
+        // And the two frames genuinely differ, so a single stored inset cannot serve both.
+        XCTAssertNotEqual(SessionsDrawerMetrics.sidebarInset, SessionsDrawerMetrics.insetInline)
+    }
+
+    /// The `New chat` pill's two shadows, both of them exceptions.
+    ///
+    /// `#6051DC33 0 4 12` over `#14143214 0 1 2`. The glow was already carried here; the contact
+    /// edge was not — the code took 03 · Control's `#14143208`, which is the alpha every
+    /// neutral button in the file draws and 2.6× lighter than the one every `btn/new-chat`
+    /// draws. Geometry unchanged, alpha its own. See `SessionsDrawerMetrics.newChatContact`.
+    func testTheNewChatPillCarriesItsOwnGlowAndItsOwnContactEdge() {
+        XCTAssertEqual(SessionsDrawerMetrics.newChatGlowAlpha, 0.2, accuracy: 0.001, "0x33 ÷ 255")
+        XCTAssertEqual(SessionsDrawerMetrics.newChatGlowY, 4)
+        XCTAssertEqual(SessionsDrawerMetrics.newChatGlowBlur, 12)
+
+        XCTAssertEqual(
+            SessionsDrawerMetrics.newChatContact.alpha,
+            Double(0x14) / 255,
+            accuracy: 0.001,
+            "the pill's own, not 03 · Control's 0x08"
+        )
+        XCTAssertNotEqual(SessionsDrawerMetrics.newChatContact.alpha, Elevation.controlContact.alpha)
+        // Only the alpha is the exception: the layer sits exactly where the scale's does.
+        XCTAssertEqual(SessionsDrawerMetrics.newChatContact.y, Elevation.controlContact.y, "1")
+        XCTAssertEqual(SessionsDrawerMetrics.newChatContact.blur, Elevation.controlContact.blur, "2")
+        // CSS blur is the full Gaussian and SwiftUI's radius is half of it.
+        XCTAssertEqual(SessionsDrawerMetrics.newChatContact.shadowRadius, 1)
+
+        // The gear beside it stays on the scale — the exception is the fill, not the bar.
+        XCTAssertEqual(SessionsDrawerMetrics.settingsButton, 44, "already at the tap minimum")
+        XCTAssertEqual(SessionsDrawerMetrics.settingsGlyph, 24)
+    }
+
     /// Board 18's intent lock: the first 12 points and 38° decide the axis.
     func testTheIntentLockCommitsOnAngleAndNotOnDirection() {
         // Under the threshold nothing is decided, however sideways it looks — and `.undecided`

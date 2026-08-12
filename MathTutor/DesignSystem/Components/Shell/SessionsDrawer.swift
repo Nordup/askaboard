@@ -195,8 +195,8 @@ enum SessionsDrawerMetrics {
     static let newChatPaddingTrailing = DS.Space.s5
     static let newChatGlyph: CGFloat = 20
 
-    /// The pill's own glow — `#6051DC33 0 4 12`, plus the contact layer 03 · Control already
-    /// states.
+    /// The pill's own glow — `#6051DC33 0 4 12`, over a contact edge of its own
+    /// (`newChatContact`).
     ///
     /// **The one shadow in the product that is not `--color-shadow`**, which board 01 says
     /// there are none of. It is not an oversight in the board and not one here either: every
@@ -207,6 +207,22 @@ enum SessionsDrawerMetrics {
     static let newChatGlowAlpha: Double = 0.2
     static let newChatGlowBlur: CGFloat = 12
     static let newChatGlowY: CGFloat = 4
+
+    /// The pill's contact edge — `#14143214 0 1 2`.
+    ///
+    /// **03 · Control's geometry at 03 · Control's alpha × 2.6.** The code carried
+    /// `Elevation.controlContact` here on the reading that the pill is an ordinary control
+    /// with one extra glow. The boards say otherwise, and they say it four times: every
+    /// `btn/new-chat` in the file draws `0x14` where every neutral button beside it — the gear
+    /// 240 points away included — draws `0x08`. The alpha is the exception and the y and blur
+    /// are not, which is the shape of a deliberate value rather than of a stray fill: a 1pt
+    /// contact edge at 0.03 is invisible under a saturated violet, and the pill is the only
+    /// fill in the product that needs its contact edge to survive its own fill.
+    ///
+    /// Carried here beside the glow rather than added to `Elevation`, for the reason the glow
+    /// is: the scale keeps saying what Foundations says, and both exceptions stay visible at
+    /// the one place that takes them.
+    static let newChatContact = Elevation.Layer(alpha: 0.0784, y: 1, blur: 2)
 
     /// `btn/settings`: a 44pt white circle with a 24pt gear. Already at the tap-target
     /// minimum, so unlike the panel's 32pt controls it needs no expansion.
@@ -283,8 +299,15 @@ struct SessionsDrawer: View {
             bottomBar
         }
         .frame(width: contentWidth, alignment: .leading)
+        // **One inset, all four sides, and it is the frame's own.** Both boards state the
+        // drawer's padding as a single value: board 17 pads the 263 frame by 18 on every side,
+        // and board 19 pads the 296 frame by 28 on every side. The vertical used to read the
+        // *docked* `SessionsDrawerMetrics.inset` whatever frame it was in, so the full-screen
+        // sidebar started its header 10 points high and floated its bottom bar 10 points low
+        // against a chat pane whose own content sits on `--space-edge`. The parameter is the
+        // only value that is right in both frames.
         .padding(.horizontal, inset)
-        .padding(.vertical, SessionsDrawerMetrics.inset)
+        .padding(.vertical, inset)
         .frame(width: width, height: height, alignment: .top)
         // No tap-swallowing overlay here any more. The tap that dismisses a context menu is
         // absorbed by the screen-wide shield in `BoardScreen`, mounted on the same
@@ -459,10 +482,11 @@ struct SessionsDrawer: View {
             radius: SessionsDrawerMetrics.newChatGlowBlur / 2,
             y: SessionsDrawerMetrics.newChatGlowY
         )
+        // …and its own contact edge, heavier than the scale's — see `newChatContact`.
         .shadow(
-            color: Elevation.controlContact.color,
-            radius: Elevation.controlContact.shadowRadius,
-            y: Elevation.controlContact.y
+            color: SessionsDrawerMetrics.newChatContact.color,
+            radius: SessionsDrawerMetrics.newChatContact.shadowRadius,
+            y: SessionsDrawerMetrics.newChatContact.y
         )
         .accessibilityLabel("New chat")
     }
