@@ -557,29 +557,45 @@ final class IconTests: XCTestCase {
         XCTAssertTrue(glyph.elements.allSatisfy { $0.lineCap == .round })
     }
 
-    /// `control/full` is two opposite corner marks, and every part of that sentence is pinned:
-    /// two elements, each an L of a 9-unit run and a 7-unit rise, at opposite corners of the
-    /// same 21 × 17 box the dock control's rect occupies.
+    /// `control/full` is two opposite corner marks — variant C2 — and every part of that
+    /// sentence is pinned: two elements, each an L of a 6-unit run and a 5.5-unit rise, at
+    /// opposite corners of a 16 × 14 box centred in the 28 viewBox.
     ///
-    /// The mark used to be that rect without a divider, which made the two controls in the
-    /// header pair one outline with and without a line in it. A bounding box cannot tell those
-    /// apart — the old glyph and the new one both measure 21 × 17 — so the corners are pinned
-    /// by their own vertices instead.
+    /// The mark used to be the dock control's own 21 × 17 rect without a divider, which made the
+    /// two controls in the header pair one outline with and without a line in it. The first
+    /// redraw kept that box and read too big beside `ui/sidebar-toggle`; C2 pulls it in to
+    /// 16 × 14. A bounding box cannot tell any of these apart on its own — the rect and the
+    /// first redraw both measured 21 × 17 — so the corners are pinned by their own vertices.
     func testTheFullScreenControlIsTwoOppositeCornerMarks() {
         let glyph = Icon.controlFull.glyph
 
         XCTAssertEqual(glyph.elements.count, 2)
         for (index, element) in glyph.elements.enumerated() {
             let box = element.path.boundingRect
-            XCTAssertEqual(box.width, 9, accuracy: 0.01, "element \(index) run")
-            XCTAssertEqual(box.height, 7, accuracy: 0.01, "element \(index) rise")
+            XCTAssertEqual(box.width, 6, accuracy: 0.01, "element \(index) run")
+            XCTAssertEqual(box.height, 5.5, accuracy: 0.01, "element \(index) rise")
         }
 
-        // Top-right, then bottom-left: opposite corners of the 3.5…24.5 × 5.5…22.5 box.
-        XCTAssertEqual(glyph.elements[0].path.boundingRect.maxX, 24.5, accuracy: 0.01)
-        XCTAssertEqual(glyph.elements[0].path.boundingRect.minY, 5.5, accuracy: 0.01)
-        XCTAssertEqual(glyph.elements[1].path.boundingRect.minX, 3.5, accuracy: 0.01)
-        XCTAssertEqual(glyph.elements[1].path.boundingRect.maxY, 22.5, accuracy: 0.01)
+        // Top-right, then bottom-left: opposite corners of the 6…22 × 7…21 box.
+        XCTAssertEqual(glyph.elements[0].path.boundingRect.maxX, 22, accuracy: 0.01)
+        XCTAssertEqual(glyph.elements[0].path.boundingRect.minY, 7, accuracy: 0.01)
+        XCTAssertEqual(glyph.elements[1].path.boundingRect.minX, 6, accuracy: 0.01)
+        XCTAssertEqual(glyph.elements[1].path.boundingRect.maxY, 21, accuracy: 0.01)
+
+        // The box is centred in the 28 viewBox on both axes — `28 − 22 == 6` and `28 − 21 == 7`
+        // — so the mark is optically centred in its 32pt button without an offset.
+        XCTAssertEqual(
+            glyph.elements[0].path.boundingRect.maxX + glyph.elements[1].path.boundingRect.minX,
+            28,
+            accuracy: 0.01,
+            "centred horizontally"
+        )
+        XCTAssertEqual(
+            glyph.elements[0].path.boundingRect.minY + glyph.elements[1].path.boundingRect.maxY,
+            28,
+            accuracy: 0.01,
+            "centred vertically"
+        )
 
         // Three on-curve points each — a move, an H and a V. Two would be a dropped arm, and
         // the bounding box of an L cannot see the difference between an L and its diagonal.

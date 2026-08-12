@@ -276,12 +276,14 @@ enum IconPaths {
 
     /// `control/full` — renders 28 on a 28×28 viewBox, 2.0pt effective stroke, --color-icon.
     ///
-    /// Two opposite corner marks, not a rectangle. It used to be control/dock's own 21×17 rect
-    /// minus the divider, which made the pair of controls one outline with and without a line
-    /// in it — at 28 the two read as the same glyph, and the one that means 'expand' has to
-    /// look like expanding. Each mark is a 9-unit run and a 7-unit rise sharing a vertex:
-    /// top-right at (24.5, 5.5), bottom-left at (3.5, 22.5), the diagonal between them the
-    /// frame's own. Round caps at the four open ends, and MITER joins at the two vertices — a
+    /// Two opposite corner marks, not a rectangle — variant C2 from 'note/icon — full-screen
+    /// variants · round 2'. It used to be control/dock's own 21×17 rect minus the divider,
+    /// which made the pair of controls one outline with and without a line in it: at 28 the two
+    /// read as the same glyph, and the one that means 'expand' has to look like expanding. The
+    /// first pass drew the corners on the rect's own 21×17 box and that read too big beside
+    /// ui/sidebar-toggle, which is the third mark in the same row; C2 pulls the box in to 16×14
+    /// — x 6…22, y 7…21, still centred on 14 — with a 6-unit horizontal arm and a 5.5-unit
+    /// vertical one. Round caps at the four open ends, and MITER joins at the two vertices: a
     /// round join eats the corner mass, which is the whole of what the mark is.
     static let controlFull = IconGlyph(
         name: "control/full",
@@ -292,7 +294,7 @@ enum IconPaths {
         colorToken: "--color-icon",
         elements: [
             IconElement(
-                geometry: .path("M15.5 5.5 H24.5 V12.5"),
+                geometry: .path("M16 7 H22 V12.5"),
                 isFilled: false,
                 isStroked: true,
                 lineCap: .round,
@@ -301,7 +303,7 @@ enum IconPaths {
                 designStrokeWidth: 2
             ),
             IconElement(
-                geometry: .path("M12.5 22.5 H3.5 V15.5"),
+                geometry: .path("M12 21 H6 V15.5"),
                 isFilled: false,
                 isStroked: true,
                 lineCap: .round,

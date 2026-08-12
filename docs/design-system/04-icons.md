@@ -320,22 +320,25 @@ Five glyphs on a 28pt frame, each centred in a 54pt slot.
 **Elements, in document order:**
 
 ```svg
-<path d="M15.5 5.5 H24.5 V12.5" fill="none" stroke="var(--color-icon)" stroke-width="2" stroke-linecap="round" stroke-linejoin="miter" />
-<path d="M12.5 22.5 H3.5 V15.5" fill="none" stroke="var(--color-icon)" stroke-width="2" stroke-linecap="round" stroke-linejoin="miter" />
+<path d="M16 7 H22 V12.5" fill="none" stroke="var(--color-icon)" stroke-width="2" stroke-linecap="round" stroke-linejoin="miter" />
+<path d="M12 21 H6 V15.5" fill="none" stroke="var(--color-icon)" stroke-width="2" stroke-linecap="round" stroke-linejoin="miter" />
 ```
 
 **Two opposite corner marks, not a rectangle.** It was `control/dock`'s own 21 × 17 rect without
 the divider, and that made the header's pair of controls one outline with and without a line in
 it: at 28 they read as the same glyph, and the one that means *expand* has to look like
-expanding. Each mark is a 9-unit run and a 7-unit rise sharing a vertex — top-right at
-`(24.5, 5.5)`, bottom-left at `(3.5, 22.5)` — so the pair still occupies the dock control's box
-and the two controls stay the same optical size.
+expanding.
+
+**Variant C2**, from `note/icon — full-screen variants · round 2`. The first redraw drew the
+corners on the rect's own 21 × 17 box, and beside `ui/sidebar-toggle` — the third mark in the
+same header row — it read too big. C2 pulls the box in to **16 × 14**: `x 6…22`, `y 7…21`, still
+centred on 14 in both axes, with a **6**-unit horizontal arm and a **5.5**-unit vertical one.
 
 **The joins are `miter` and they are load-bearing.** A round join eats the corner mass, which is
 the whole of what the mark is. The caps are `round` because the four ends are open, the same
-finish every other 2pt rule in the set has. A bounding box cannot tell the new glyph from the
-old one — both measure 21 × 17 — so `IconTests` pins the vertices and the joins rather than the
-box.
+finish every other 2pt rule in the set has. A bounding box cannot tell these variants apart on
+its own — the rect and the first redraw both measure 21 × 17 — so `IconTests` pins the vertices,
+the arm lengths and the joins rather than the box.
 
 ---
 
