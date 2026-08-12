@@ -367,6 +367,42 @@ struct PresentationFlight: Equatable, Sendable {
         )
     }
 
+    // MARK: - The chips
+
+    /// The chip stack's top edge — the greeting's own chain, identical at both ends because
+    /// both surfaces draw `GreetingBlock` at the panel treatment: title, its margins, the
+    /// subtitle and `--spacing-8` down from the block's top. 452 on the reference screen.
+    var chipsTop: CGFloat {
+        let greeting = GreetingMetrics.for(.panel, width: dockedColumnWidth)
+        return greetingTop
+            + greeting.titleTopMargin + greeting.titleHeight
+            + greeting.subtitleTopMargin + greeting.subtitleHeight
+            + (greeting.suggestionsTopMargin ?? 0)
+    }
+
+    /// The chip stack's leading edge: 46 → 388 on the lead curve. The leading edge, not the
+    /// centre — the width below is interpolating at the same time, and the pair is what
+    /// carries the centre through the same +491.5 every other element travels.
+    func chipsX(at progress: CGFloat) -> CGFloat {
+        travelled(
+            from: dockedColumnX,
+            by: PresentationMorph.lead(progress) * (fullColumnX - dockedColumnX),
+            at: progress
+        )
+    }
+
+    /// The chip stack's width: **301 → 600, linear on the finger.** The one genuine width
+    /// interpolation in the hi state — nothing inside a chip re-wraps (an icon and one
+    /// `lineLimit(1)` label), so the stretch is a real `.frame(width:)` and stays crisp.
+    /// Linear, not led: the stretch tracks the box, which is glued to the finger.
+    func chipsWidth(at progress: CGFloat) -> CGFloat {
+        travelled(
+            from: dockedColumnWidth,
+            by: min(1, max(0, progress)) * (fullColumnWidth - dockedColumnWidth),
+            at: progress
+        )
+    }
+
     // MARK: - Arithmetic
 
     /// Whole points through the travel — every rasterised composite in the shell moves on

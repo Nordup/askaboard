@@ -441,7 +441,7 @@ struct TutorPanel: View {
                 scale: .panel,
                 width: contentWidth,
                 onSelectSuggestion: actions.selectSuggestion,
-                hidesTextForFlight: isInPresentationFlight
+                hidesContentForFlight: isInPresentationFlight
             )
             .padding(.top, PanelStack.startTopMargin)
         }

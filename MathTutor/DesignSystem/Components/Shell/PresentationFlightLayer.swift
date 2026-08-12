@@ -37,6 +37,10 @@ enum FlightRole {
     /// The greeting title + subtitle: one 301-wide block, translated on the staggered lead —
     /// glyphs never change size, the text simply walks to the middle of the screen.
     case greeting
+    /// The four suggestion chips: leading edge on the lead curve, **width 301 → 600 linear
+    /// on the finger** — the hi state's one genuine width interpolation. Nothing inside a
+    /// chip re-wraps, so the stretch is a real `.frame(width:)` and stays crisp.
+    case chips
     /// The panel's own fill riding on the container while it is still mostly the panel —
     /// `--color-surface-panel` over the pane's white, gone per `panelFillOpacity`.
     case containerPanelFill
@@ -64,6 +68,10 @@ struct FlightRender: ViewModifier {
             content.offset(x: flight.orbX(at: progress), y: flight.orbTop)
         case .greeting:
             content.offset(x: flight.greetingX(at: progress), y: flight.greetingTop)
+        case .chips:
+            content
+                .frame(width: flight.chipsWidth(at: progress))
+                .offset(x: flight.chipsX(at: progress), y: flight.chipsTop)
         case .containerPanelFill:
             content.opacity(geometry.panelFillOpacity(at: progress))
         }
@@ -164,6 +172,8 @@ struct PresentationFlightLayer<Board: View, Rail: View, Tutor: View, Floating: V
                     .modifier(render(.orb))
                 FlightGreeting(width: flight.dockedColumnWidth)
                     .modifier(render(.greeting))
+                FlightChips()
+                    .modifier(render(.chips))
             }
         }
         .allowsHitTesting(false)
@@ -180,6 +190,36 @@ struct PresentationFlightLayer<Board: View, Rail: View, Tutor: View, Floating: V
 /// translated. The subtitle is capped at 277 at both ends and the title is one line, so the
 /// 301-wide block centred on the destination column's centre is pixel-identical to the
 /// destination's own — the honest, crisp, vector answer to "text taking shape".
+/// The chip stack's flight copy: the four openers exactly as `SuggestionChip` draws them at
+/// the panel treatment, with one difference — each chip is **width-flexible**, so the width
+/// the flight modifier interpolates outside reaches every row as one `.frame(width:)`. All
+/// the fixed metrics (62pt rows, 10pt gaps, 18pt padding, 22pt icon, the un-scaled 14pt
+/// radius) are the panel treatment's own at both ends, so nothing but the width moves.
+private struct FlightChips: View {
+    var body: some View {
+        let metrics = SuggestionChipMetrics.for(.panel, width: DS.Container.panelContent)
+        VStack(spacing: metrics.listGap) {
+            ForEach(Suggestion.allCases) { suggestion in
+                HStack(spacing: metrics.gap) {
+                    IconView(suggestion.icon, size: metrics.iconSize, tint: DS.Color.brand)
+                    Text(verbatim: suggestion.label)
+                        .textStyle(metrics.labelStyle)
+                        .foregroundStyle(DS.Color.ink)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .padding(.leading, metrics.paddingLeading)
+                .frame(maxWidth: .infinity, minHeight: metrics.height, maxHeight: metrics.height, alignment: .leading)
+                .background(
+                    DS.Color.surface,
+                    in: RoundedRectangle(cornerRadius: metrics.radius, style: .circular)
+                )
+                .elevation(.control)
+            }
+        }
+    }
+}
+
 private struct FlightGreeting: View {
     let width: CGFloat
 

@@ -508,7 +508,7 @@ struct TutorFullScreen: View {
                 scale: Self.scale,
                 width: column.width,
                 onSelectSuggestion: actions.selectSuggestion,
-                hidesTextForFlight: isInPresentationFlight
+                hidesContentForFlight: isInPresentationFlight
             )
             .padding(.top, DS.Space.s10)
         }

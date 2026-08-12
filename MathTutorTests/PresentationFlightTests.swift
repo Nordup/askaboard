@@ -122,6 +122,41 @@ final class PresentationFlightTests: XCTestCase {
         XCTAssertEqual(flight.orbX(at: 1), flight.dockedOrbX + flight.columnShift)
     }
 
+    // MARK: - The chips
+
+    /// The one genuine width interpolation in the hi state: 301 → 600, linear on the finger,
+    /// while the leading edge travels 46 → 388 on the lead curve.
+    func testChipsStretchLinearlyWhileTravelling() {
+        let flight = closed
+        XCTAssertEqual(flight.chipsWidth(at: 0), 301)
+        XCTAssertEqual(flight.chipsWidth(at: 1), 600)
+        XCTAssertEqual(flight.chipsWidth(at: 0.5), DrawerReveal.wholePoints(450.5))
+        XCTAssertEqual(flight.chipsX(at: 0), 46)
+        XCTAssertEqual(flight.chipsX(at: 1), 388)
+        // The lead curve carries x ahead of the linear width.
+        XCTAssertGreaterThan(flight.chipsX(at: 0.5), 46 + 0.5 * 342)
+    }
+
+    /// The stack hangs off the greeting's own chain — `--spacing-8` under the subtitle,
+    /// identical at both ends because both surfaces draw the panel-treatment block.
+    func testChipsTopIsTheGreetingsChain() {
+        let greeting = GreetingMetrics.for(.panel, width: closed.dockedColumnWidth)
+        XCTAssertEqual(
+            closed.chipsTop,
+            closed.greetingTop + greeting.titleHeight + greeting.subtitleTopMargin
+                + greeting.subtitleHeight + (greeting.suggestionsTopMargin ?? 0)
+        )
+        XCTAssertEqual(closed.chipsTop, 452)
+    }
+
+    /// The chips' centre lands where every other element's does: the destination column's
+    /// own centre — leading edge plus half the width recovers the +491.5 at the far end.
+    func testChipsCentreArrivesWithTheColumn() {
+        let flight = closed
+        let centreAtEnd = flight.chipsX(at: 1) + flight.chipsWidth(at: 1) / 2
+        XCTAssertEqual(centreAtEnd, flight.fullColumnX + flight.fullColumnWidth / 2)
+    }
+
     // MARK: - The lead curve
 
     /// `1 − (1 − p)²`: identity at both ends, ahead of the finger everywhere between —
