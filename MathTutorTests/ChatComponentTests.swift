@@ -1320,17 +1320,29 @@ final class ChatComponentTests: XCTestCase {
         XCTAssertEqual(portrait.suggestionsHeight, 356)
         XCTAssertLessThan(portrait.startGapAboveSuggestions, 174)
         XCTAssertLessThan(portrait.startGapBelowSuggestions, 164)
-        XCTAssertEqual(
+        // The whole composition fits the screen — no scroll — but not by pressing the hero
+        // into the corner: the air above the greeting keeps its 134 : 174 share of the
+        // compression, so the block still hangs below the band's top.
+        XCTAssertLessThanOrEqual(
             portrait.top + portrait.startContentHeight + portrait.startClearing,
             portrait.floor,
-            accuracy: 0.001,
-            "compressed to an exact fit — this column no longer scrolls"
+            "this column no longer scrolls"
         )
-        // The design's own screen still holds the full 174/164 with slack above.
+        let portraitAir = portrait.floor - portrait.startClearing
+            - portrait.startContentHeight - portrait.top
+        XCTAssertGreaterThan(portraitAir, 0, "the hero keeps air above it")
+        XCTAssertEqual(
+            portraitAir / portrait.startGapAboveSuggestions,
+            TutorColumnMetrics.greetingTopAir / TutorColumnMetrics.greetingToSuggestions,
+            accuracy: 0.001,
+            "all three airs compress in one proportion"
+        )
+        // The design's own screen still holds the full 174/164 with the full 134 above.
         let reference = TutorColumnMetrics(layout: .reference)
-        XCTAssertLessThan(
-            reference.top + reference.startContentHeight + reference.startClearing,
-            reference.floor
+        XCTAssertEqual(
+            reference.floor - reference.startClearing
+                - reference.startContentHeight - reference.top,
+            TutorColumnMetrics.greetingTopAir
         )
 
         // A band genuinely too short for even the floored gaps — a Split View window — is

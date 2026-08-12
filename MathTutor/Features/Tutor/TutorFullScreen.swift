@@ -462,6 +462,13 @@ struct TutorColumnMetrics: Equatable, Sendable {
     /// which is where the eye already is."* Designed value; the drawn one is
     /// `startGapBelowSuggestions`.
     static let suggestionsToComposer: CGFloat = 164
+    /// The air the boards' own screen leaves **above** the greeting: `162 − 28`, the slack
+    /// screen 07's band has over its block. Not a margin anything draws — bottom-anchoring
+    /// produces it as leftover — but it is part of the composition all the same: the hero
+    /// hangs a third of the way down the band, not against its top edge. So it takes a
+    /// weight in the compression alongside the two gaps, or a short screen spent all of it
+    /// first and pressed the orb into the screen's corner. See `startGap(_:)`.
+    static let greetingTopAir: CGFloat = 134
     /// The least either gap compresses to before the column gives up and scrolls —
     /// `--space-gap`, the smallest designed breathing room in the product.
     static let startGapFloor: CGFloat = DS.Space.gap
@@ -526,17 +533,19 @@ struct TutorColumnMetrics: Equatable, Sendable {
         bottom - composer.height(showing: card)
     }
 
-    /// What the band offers the block's two designed gaps once everything rigid has its
-    /// height — greeting, grid and composer taken out of the contentTop→composer band.
-    /// 472 on the reference screen, which is more than the design's 338, and the surplus is
-    /// the slack that lands above the greeting. On a shorter screen it is less, and the gaps
-    /// are what give: see `startGap(_:)`.
+    /// What the band offers the block's air once everything rigid has its height —
+    /// greeting, grid and composer taken out of the contentTop→composer band. Exactly 472 on
+    /// the reference screen, which is the design's three airs to the point: 134 above the
+    /// greeting, 174 inside the block, 164 under the chips. On a shorter screen it is less,
+    /// and all three give together: see `startGap(_:)`.
     private var startGapBudget: CGFloat {
         bottom - top - greetingHeight - suggestionsHeight - composerHeight
     }
 
-    /// `174 + 164` — the vertical air screen 07 draws inside and under the block.
-    private static var designedStartGaps: CGFloat { greetingToSuggestions + suggestionsToComposer }
+    /// `134 + 174 + 164` — the whole of the vertical air screen 07 composes with.
+    private static var designedStartAir: CGFloat {
+        greetingTopAir + greetingToSuggestions + suggestionsToComposer
+    }
 
     /// Screen 07's 174, on the screens that can afford it — and the block's compressed share
     /// of a shorter band everywhere else, so the whole hi state fits one screen instead of
@@ -546,17 +555,23 @@ struct TutorColumnMetrics: Equatable, Sendable {
     /// Screen 07's 164, compressed the same way and in the same proportion.
     var startGapBelowSuggestions: CGFloat { startGap(Self.suggestionsToComposer) }
 
-    /// The designed gap, or its share of a band too short for the pair.
+    /// The designed gap, or its share of a band too short for the composition.
     ///
     /// The greeting, the grid and the composer are rigid — type leadings, chip heights, a
     /// pill — so on a screen shorter than the board's 1032 the only thing the block *can*
-    /// give is its air, and it gives proportionally: both gaps shrink by the same factor, so
-    /// the block keeps its shape rather than losing one gap to the other. Floored at
-    /// `--space-gap` each; a band that cannot afford even that is genuinely too short for
-    /// the block, and the column scrolls it exactly as the thread scrolls its history.
+    /// give is its air, and it gives proportionally **in all three bands at once**: the two
+    /// drawn gaps shrink by the budget's share of the designed 472, and what the gaps do not
+    /// take is what bottom-anchoring leaves above the greeting — the top air's own share,
+    /// shrunk by the same factor. Compressing only the gaps was tried first and read wrong:
+    /// the slack above went to zero before either gap gave a point, and the hero sat pressed
+    /// against the top of the screen while the block below it kept its full design air.
+    ///
+    /// Floored at `--space-gap` each; a band that cannot afford even that is genuinely too
+    /// short for the block, and the column scrolls it exactly as the thread scrolls its
+    /// history.
     private func startGap(_ designed: CGFloat) -> CGFloat {
-        guard startGapBudget < Self.designedStartGaps else { return designed }
-        return max(Self.startGapFloor, startGapBudget * designed / Self.designedStartGaps)
+        guard startGapBudget < Self.designedStartAir else { return designed }
+        return max(Self.startGapFloor, startGapBudget * designed / Self.designedStartAir)
     }
 
     /// Greeting, the drawn gap, grid. The one rigid run in the column.
