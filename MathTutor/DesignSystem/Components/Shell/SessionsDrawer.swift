@@ -246,9 +246,10 @@ enum SessionsDrawerMetrics {
 struct SessionsDrawer: View {
     let sessions: [SessionSummary]
     let currentID: UUID
-    /// The frame this drawer is drawn in — the panel-derived 263, or the screen's 372.
+    /// The frame this drawer is drawn in — the panel-derived 263, or the sidebar's 296.
     let width: CGFloat
-    /// The frame's own inset. 12 docked, `--space-edge` full-screen.
+    /// The frame's own inset, **on all four sides**: `--space-panel-inset` 18 docked,
+    /// `--space-edge` 28 full-screen. Nothing in this view holds a vertical inset of its own.
     let inset: CGFloat
     /// The band the drawer occupies — the panel's content height, or the screen's.
     let height: CGFloat
