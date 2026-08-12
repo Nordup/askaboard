@@ -58,6 +58,20 @@ enum FlightRole {
     /// The full-screen thread copy: laid out once at the reading column, arriving from
     /// 60pt short of home on the lead curve. The other half of the fade.
     case fullThread
+    /// The live board card: translated toward the trailing edge by `boardShift` — never
+    /// resized, never faded — so its leading edge lands exactly on the peek's own line.
+    case board
+    /// The peek silhouette: a distinct artwork crossfading over the arriving card's last
+    /// 15% of travel.
+    case peek
+    /// The panel's extracted elevation: a static-shaped underlay that only ever changes
+    /// opacity, gone by 30% — never a shadow on the morphing shape itself, which would
+    /// re-rasterise its input every frame.
+    case panelShadow
+    /// Board 19's sidebar, folding its own width off the leading edge along the same
+    /// progress. The *flag* is untouched — the fold is what the morph does to the sidebar's
+    /// position, not to the learner's choice.
+    case sidebar
     /// The panel's own fill riding on the container while it is still mostly the panel —
     /// `--color-surface-panel` over the pane's white, gone per `panelFillOpacity`.
     case containerPanelFill
@@ -102,6 +116,14 @@ struct FlightRender: ViewModifier {
             content
                 .offset(x: flight.fullThreadX(at: progress), y: 0)
                 .opacity(PresentationMorph.fullThreadOpacity(at: progress, returnLeg: isReturnLeg))
+        case .board:
+            content.offset(x: geometry.boardShift(at: progress))
+        case .peek:
+            content.opacity(geometry.peekOpacity(at: progress))
+        case .panelShadow:
+            content.opacity(geometry.panelShadowOpacity(at: progress))
+        case .sidebar:
+            content.offset(x: geometry.sidebarShift(at: progress))
         case .chips:
             content
                 .frame(width: flight.chipsWidth(at: progress))
@@ -147,7 +169,7 @@ extension FlightRender: @preconcurrency Animatable {
 /// mounted until the completion releases it.
 struct PresentationFlightLayer<
     Board: View, Rail: View, Tutor: View, Floating: View,
-    DockedThread: View, FullThread: View
+    DockedThread: View, FullThread: View, Sidebar: View
 >: View {
     /// The container's arithmetic — endpoints, radii, fill and shadow curves.
     let morph: PresentationMorph
@@ -177,22 +199,36 @@ struct PresentationFlightLayer<
     /// must not be rebuilt per frame. Mounted only in the thread state, only in flight.
     @ViewBuilder let dockedThread: DockedThread
     @ViewBuilder let fullThread: FullThread
+    /// The full-screen sessions sidebar's flight copy — mounted by the caller only while
+    /// the learner's sidebar flag is set. It folds its own width off the leading edge over
+    /// the same progress, drawn under the container so the growing sheet covers the seam.
+    @ViewBuilder let sidebar: Sidebar
 
     /// Where the morph is right now: the live drag, or the settled end.
     private var progress: CGFloat { model.progress ?? (isFullScreen ? 1 : 0) }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            board
+            // The card's flight modifier is attached unconditionally — a structural branch
+            // around this slot would remount `PKCanvasView` at every commitment and lose
+            // the ink contract. At rest the offset is exactly 0 (docked) or the settled
+            // 846 under an invisible card (full screen); no mask ever wraps the canvas,
+            // because at the shipped curves the mask's cut edge never crosses the screen
+            // edge (`PresentationFlightTests` proves it), so it would buy an offscreen
+            // pass on the live canvas for zero visible pixels. `BoardFlightMask` stays
+            // compiled and tested as the design of record for a device where the curves
+            // ever change.
+            board.modifier(render(.board))
             rail
             if model.isActive {
+                sidebar.modifier(render(.sidebar))
                 containerUnderlay
             }
             tutor
             if model.isActive {
                 flightElements
             }
-            floating
+            floating.modifier(render(.peek))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
@@ -206,9 +242,24 @@ struct PresentationFlightLayer<
     /// not"), and both are plain uneven rounded rectangles, never a custom-path clip.
     private var containerUnderlay: some View {
         ZStack(alignment: .topLeading) {
-            PresentationMorphContainerShape(progress: progress, geometry: morph)
+            // The panel's elevation, extracted to a static-shaped underlay: the shape never
+            // changes, so the shadow is rasterised once and only its opacity moves — gone
+            // by 30%, together with the panel's fill, so the panel reads as dissolving
+            // into the sheet rather than floating on it.
+            RoundedRectangle(cornerRadius: TutorPanelMetrics.cornerRadius)
+                .fill(DS.Color.surfacePanel)
+                .frame(width: morph.dockedFrame.width, height: morph.dockedFrame.height)
+                .compositingGroup()
+                .elevation(.panel)
+                .offset(x: morph.dockedFrame.minX, y: morph.dockedFrame.minY)
+                .modifier(render(.panelShadow))
+            PresentationMorphContainerShape(
+                progress: progress, geometry: morph, isReturnLeg: model.isReturnLeg
+            )
                 .fill(DS.Color.surface)
-            PresentationMorphContainerShape(progress: progress, geometry: morph)
+            PresentationMorphContainerShape(
+                progress: progress, geometry: morph, isReturnLeg: model.isReturnLeg
+            )
                 .fill(DS.Color.surfacePanel)
                 .modifier(render(.containerPanelFill))
         }

@@ -65,6 +65,7 @@ struct PresentationMorph: Equatable, Sendable {
         fullScreenLeadingRadius = isSidebarOpen ? SessionsDrawerMetrics.chatCornerRadius : 0
         sidebarWidth = layout.sessionsSidebarWidth
         screenFrame = CGRect(x: 0, y: 0, width: layout.screenWidth, height: layout.screenHeight)
+        boardTravel = max(0, layout.peekX - layout.boardX)
     }
 
     // MARK: - Travel
@@ -122,8 +123,16 @@ struct PresentationMorph: Equatable, Sendable {
 
     /// The container's corners: the panel's 28 all round at `0`; the pane's leading radius and
     /// square trailing corners at `1`.
-    func containerRadii(at progress: CGFloat) -> RectangleCornerRadii {
-        let t = unit(progress)
+    ///
+    /// **The corners finish early.** Material's shape-mask threshold: entering, the radius
+    /// completes by **75%** of the travel — a square-cornered box that is still growing
+    /// reads as "arrived" — and returning it runs **0.30 … 0.90**, so the panel's corners
+    /// are back before the box has finished shrinking onto them. One direction parameter,
+    /// not two functions.
+    func containerRadii(at progress: CGFloat, returnLeg: Bool = false) -> RectangleCornerRadii {
+        let t = returnLeg
+            ? CGFloat(Self.unitSmoothstep(progress, from: 0.30, to: 0.90))
+            : CGFloat(Self.unitSmoothstep(progress, from: 0, to: 0.75))
         let leading = dockedRadius + (fullScreenLeadingRadius - dockedRadius) * t
         let trailing = dockedRadius * (1 - t)
         return RectangleCornerRadii(
@@ -148,40 +157,25 @@ struct PresentationMorph: Equatable, Sendable {
     }
 
     /// How much of the panel's own fill the container still carries — `--color-surface-panel`
-    /// over the pane's white, gone linearly across the travel. The two colours are two points
-    /// apart in every channel, so the blend is imperceptible frame to frame and exact at both
-    /// ends, which is all it has to be.
+    /// over the pane's white, gone linearly over the **first 30%** of the travel. Two
+    /// colours two points apart in every channel do not need 1011 points to blend; the
+    /// dissolve finishes while the panel's shadow is going, and the pair reads as one event.
     func panelFillOpacity(at progress: CGFloat) -> Double {
-        Double(1 - unit(progress))
+        Double(1 - min(1, max(0, unit(progress) / Self.shadowGoneBy)))
     }
 
-    // MARK: - The content crossfade
+    // MARK: - The peek's arrival
 
-    /// Where the outgoing content is still untouched — it holds full opacity to 60% of the
-    /// travel, so the surface being left stays crisp for most of the drag.
-    static let outgoingHoldUntil: CGFloat = 0.60
-    /// Where the outgoing content has fully gone.
-    static let outgoingGoneBy: CGFloat = 0.90
-    /// Where the incoming content starts to arrive — just before the outgoing starts to
-    /// leave, so there is no frame with neither on it.
-    static let incomingFrom: CGFloat = 0.55
-    /// Where the incoming content is fully there.
-    static let incomingFullBy: CGFloat = 0.85
+    /// Where the peek silhouette starts to arrive over the clipped board card — the last
+    /// 15% of the travel, once the card's leading edge is already landing on the peek's own
+    /// line and the mask has nearly resolved to the silhouette. The card itself never
+    /// fades: the crossfade is between the masked live card and the distinct artwork that
+    /// stands in for it at rest.
+    static let peekArrivesFrom: CGFloat = 0.85
 
-    /// The docked side of the crossfade: the panel, and the board with it. `1` through the
-    /// first 60% of the travel, smoothstepped out by 90%.
-    ///
-    /// Smoothstepped for the reason the dock's handover is: both contents change at once in
-    /// the band, and a linear ramp puts a corner on each at both ends of it.
-    func dockedContentOpacity(at progress: CGFloat) -> Double {
-        1 - smoothstep(unit(progress), from: Self.outgoingHoldUntil, to: Self.outgoingGoneBy)
-    }
-
-    /// The full-screen side: the reading column, and the board peek with it. `0` through the
-    /// first 55%, fully in by 85% — it leads the outgoing fade by half a band, so the middle
-    /// of the crossfade reads as a trade rather than a blank.
-    func fullScreenContentOpacity(at progress: CGFloat) -> Double {
-        smoothstep(unit(progress), from: Self.incomingFrom, to: Self.incomingFullBy)
+    /// The peek artwork's opacity — `0` until the card is all but home, `1` at rest.
+    func peekOpacity(at progress: CGFloat) -> Double {
+        smoothstep(unit(progress), from: Self.peekArrivesFrom, to: 1)
     }
 
     // MARK: - The panel's shadow
@@ -203,20 +197,37 @@ struct PresentationMorph: Equatable, Sendable {
 
     // MARK: - The board
 
-    /// How far the board card has slid toward the trailing edge, in whole points.
-    ///
-    /// The same distance the container's trailing edge has travelled, so the gap between the
-    /// sheet's edge and the board's is constant through the whole drag: the pair reads as one
-    /// push. The board's **content is never re-laid-out** — this is a translation of the live
-    /// canvas, applied from outside, because a `PKCanvasView` handed a new size on every
-    /// touch event stutters where a transform does not. At `1` the card is fully off the
-    /// trailing edge and the peek silhouette — the artwork the design draws for exactly this
-    /// state — has taken over on the incoming curve.
+    /// How far the board card slides toward the trailing edge: **`peekX − boardX`** — 846
+    /// on the reference screen — so its leading edge lands *exactly on the peek's leading
+    /// edge* and the card reads as sliding under the screen's edge and becoming the hinge
+    /// tab. The old `+travel` (1011) carried the edge past the peek and off the screen
+    /// while a separate silhouette faded up where it should have stopped: two objects, one
+    /// crossfade, no continuity.
+    let boardTravel: CGFloat
+
+    /// The card's translation at `progress`, in whole points. The board's **content is
+    /// never re-laid-out** — this is a translation of the live canvas, applied from
+    /// outside, because a `PKCanvasView` handed a new size on every touch event stutters
+    /// where a transform does not. The card's opacity stays at 1 the whole way; the peek
+    /// artwork crossfades over the masked card's last 15% (`peekOpacity`).
     ///
     /// Whole points for the reason every rasterised travel in the shell is — see
     /// `DrawerReveal.wholePoints(_:)`.
     func boardShift(at progress: CGFloat) -> CGFloat {
-        DrawerReveal.wholePoints(unit(progress) * travel)
+        DrawerReveal.wholePoints(unit(progress) * boardTravel)
+    }
+
+    /// Where the mask over the sliding card starts resolving toward the peek silhouette —
+    /// the last 45% of the travel. Before it the card is clipped to its own rounded rect;
+    /// by `1` the visible sliver is the silhouette's own box. The ink translates with the
+    /// card (motion the eye can follow) while the shape resolves around it (shape the eye
+    /// can read); a mask edge sweeping a stationary canvas would read as a wipe, which was
+    /// the old bug in a sentence.
+    static let boardMaskFrom: CGFloat = 0.55
+
+    /// The mask's own 0…1, remapped from the travel's `boardMaskFrom … 1`.
+    func boardMaskProgress(at progress: CGFloat) -> CGFloat {
+        min(1, max(0, (unit(progress) - Self.boardMaskFrom) / (1 - Self.boardMaskFrom)))
     }
 
     // MARK: - The sidebar
@@ -671,85 +682,15 @@ final class PresentationMorphModel: ObservableObject {
     }
 }
 
-// MARK: - Rendering one role of the morph
-
-/// Which piece of the morph a view is.
-enum PresentationMorphRole {
-    /// The live board card: translated toward the trailing edge, fading on the docked curve.
-    case board
-    /// The docked panel's content: clipped to the morphing container, fading on the docked
-    /// curve. `origin` is the panel's own origin, since the clip is applied in panel-local
-    /// coordinates, inside `DockRevealLayer`'s offset.
-    case dockedChat
-    /// The panel's extracted elevation — a static-shaped underlay that only ever changes
-    /// opacity. See `PresentationMorph.shadowGoneBy`.
-    case panelShadow
-    /// The reading column and everything screen 07 draws with it: clipped to the morphing
-    /// container, fading on the full-screen curve.
-    case fullScreenChat
-    /// Board 19's sidebar, folding in and out along the same progress.
-    case sidebar
-    /// The board peek silhouette, arriving on the full-screen curve.
-    case peek
-}
-
-/// The per-frame rendering of one role, as an **animatable** modifier.
-///
-/// Animatable is the whole point: a gesture writes `progress` directly and the modifier
-/// renders it, while a settle — or a button's morph from rest — animates `animatableData`
-/// through the spring, so every intermediate frame still goes through the *curves* rather
-/// than lerping each modifier's end values. That is what makes the tap and the swipe one
-/// system instead of two that merely share a duration.
-struct PresentationMorphRender: ViewModifier {
-    var progress: CGFloat
-    let geometry: PresentationMorph
-    let role: PresentationMorphRole
-    var origin: CGPoint = .zero
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        switch role {
-        case .board:
-            content
-                .offset(x: origin.x + geometry.boardShift(at: progress), y: origin.y)
-                .opacity(geometry.dockedContentOpacity(at: progress))
-        case .dockedChat:
-            content
-                .clipShape(PresentationMorphClipShape(
-                    progress: progress, geometry: geometry, localOrigin: origin
-                ))
-                .opacity(geometry.dockedContentOpacity(at: progress))
-        case .panelShadow:
-            content
-                .opacity(geometry.panelShadowOpacity(at: progress))
-        case .fullScreenChat:
-            content
-                .clipShape(PresentationMorphClipShape(progress: progress, geometry: geometry))
-                .opacity(geometry.fullScreenContentOpacity(at: progress))
-        case .sidebar:
-            content
-                .offset(x: origin.x + geometry.sidebarShift(at: progress), y: origin.y)
-        case .peek:
-            content
-                .opacity(geometry.fullScreenContentOpacity(at: progress))
-        }
-    }
-}
-
-/// `@preconcurrency` because `ViewModifier` is main-actor-inferred in Swift 6 while
-/// `Animatable`'s requirements are nonisolated; SwiftUI evaluates `animatableData` on the
-/// main actor during rendering, so the conformance's runtime assertion always holds.
-extension PresentationMorphRender: @preconcurrency Animatable {
-    var animatableData: CGFloat {
-        get { progress }
-        set { progress = newValue }
-    }
-}
+// MARK: - The container's and the board's shapes
 
 /// The morphing container's silhouette — for the background fill.
 struct PresentationMorphContainerShape: Shape {
     var progress: CGFloat
     let geometry: PresentationMorph
+    /// The corner band runs `0 … 0.75` entering and `0.30 … 0.90` returning — see
+    /// `containerRadii(at:returnLeg:)`.
+    var isReturnLeg = false
 
     var animatableData: CGFloat {
         get { progress }
@@ -757,17 +698,28 @@ struct PresentationMorphContainerShape: Shape {
     }
 
     func path(in rect: CGRect) -> Path {
-        UnevenRoundedRectangle(cornerRadii: geometry.containerRadii(at: progress))
-            .path(in: geometry.containerFrame(at: progress))
+        UnevenRoundedRectangle(
+            cornerRadii: geometry.containerRadii(at: progress, returnLeg: isReturnLeg)
+        )
+        .path(in: geometry.containerFrame(at: progress))
     }
 }
 
-/// The clip the two contents ride inside — the looser cousin of the container shape; see
-/// `PresentationMorph.clipFrame(at:)` for why the two part company at the far end.
-struct PresentationMorphClipShape: Shape {
+/// The clip the flight rides inside is never a custom path — the container shape above is a
+/// plain uneven rounded rectangle, the cheapest silhouette the render server has. The one
+/// custom-path clip in the morph is the board's, below, because `BoardPeekShape` genuinely
+/// cannot be a rounded rect — and even it spends most of the travel as one.
+///
+/// The mask over the sliding board card: the card's own rounded rect until
+/// `PresentationMorph.boardMaskFrom`, then narrowing toward the peek silhouette's box — the
+/// leading corners easing from the card's 28 to the silhouette's 18 — and resolving to
+/// `BoardPeekShape` itself at the very end, under the peek artwork's crossfade.
+///
+/// In **card-local** coordinates: the mask's leading edge tracks the distance still to
+/// travel, so the visible window narrows exactly as the card slides under the screen edge.
+struct BoardFlightMask: Shape {
+    /// `PresentationMorph.boardMaskProgress(at:)` — 0 full card, 1 the peek's silhouette.
     var progress: CGFloat
-    let geometry: PresentationMorph
-    var localOrigin: CGPoint = .zero
 
     var animatableData: CGFloat {
         get { progress }
@@ -775,9 +727,30 @@ struct PresentationMorphClipShape: Shape {
     }
 
     func path(in rect: CGRect) -> Path {
-        let frame = geometry.clipFrame(at: progress)
-            .offsetBy(dx: -localOrigin.x, dy: -localOrigin.y)
-        return UnevenRoundedRectangle(cornerRadii: geometry.clipRadii(at: progress))
-            .path(in: frame)
+        let t = min(1, max(0, progress))
+        guard t > 0 else {
+            return RoundedRectangle(cornerRadius: WhiteboardMetrics.cornerRadius, style: .circular)
+                .path(in: rect)
+        }
+        guard t < 1 else {
+            return BoardPeekShape().path(
+                in: CGRect(x: 0, y: 0, width: BoardPeekMetrics.width, height: rect.height)
+            )
+        }
+        // Between the two: the card's silhouette narrowing onto the peek's box, leading
+        // radii easing 28 → 18, trailing square from the start of the band — the trailing
+        // corners are already off past the screen edge.
+        let width = rect.width + (BoardPeekMetrics.width - rect.width) * t
+        let leading = WhiteboardMetrics.cornerRadius
+            + (BoardPeekShape.bottomFillet - WhiteboardMetrics.cornerRadius) * t
+        return UnevenRoundedRectangle(
+            cornerRadii: RectangleCornerRadii(
+                topLeading: leading,
+                bottomLeading: leading,
+                bottomTrailing: 0,
+                topTrailing: 0
+            )
+        )
+        .path(in: CGRect(x: 0, y: 0, width: width, height: rect.height))
     }
 }

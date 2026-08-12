@@ -45,6 +45,30 @@ final class PresentationMorphTests: XCTestCase {
         )
     }
 
+    /// The corners finish early — Material's shape-mask threshold. Entering they complete
+    /// by 75% of the travel; returning they run 0.30 … 0.90, so the panel's corners are
+    /// back before the box has finished shrinking onto them.
+    func testCornersFinishEarlyOnBothLegs() {
+        // Enter: flat by 0.75, and still flat at 1.
+        XCTAssertEqual(closed.containerRadii(at: 0.75).topTrailing, 0)
+        XCTAssertEqual(closed.containerRadii(at: 0.75).topLeading, 0)
+        // Return: full radius held from 0.30 down, flat from 0.90 up.
+        XCTAssertEqual(
+            closed.containerRadii(at: 0.30, returnLeg: true).topLeading,
+            TutorPanelMetrics.cornerRadius
+        )
+        XCTAssertEqual(closed.containerRadii(at: 0.90, returnLeg: true).topTrailing, 0)
+        // Both legs agree exactly at the endpoints.
+        XCTAssertEqual(
+            closed.containerRadii(at: 0, returnLeg: true).topLeading,
+            closed.containerRadii(at: 0).topLeading
+        )
+        XCTAssertEqual(
+            closed.containerRadii(at: 1, returnLeg: true).topTrailing,
+            closed.containerRadii(at: 1).topTrailing
+        )
+    }
+
     func testCornersRunPanelRadiusToPaneRadius() {
         let start = closed.containerRadii(at: 0)
         XCTAssertEqual(start.topLeading, TutorPanelMetrics.cornerRadius)
@@ -112,86 +136,53 @@ final class PresentationMorphTests: XCTestCase {
         }
     }
 
-    // MARK: - The content crossfade
-
-    func testOutgoingContentHoldsThenLeaves() {
-        let morph = closed
-        // Crisp for most of the travel — the stated band.
-        XCTAssertEqual(morph.dockedContentOpacity(at: 0), 1)
-        XCTAssertEqual(morph.dockedContentOpacity(at: 0.60), 1)
-        // Gone by the band's end, and at the far endpoint exactly.
-        XCTAssertEqual(morph.dockedContentOpacity(at: 0.90), 0)
-        XCTAssertEqual(morph.dockedContentOpacity(at: 1), 0)
-        // Monotonic in between — a crossfade that backtracks reads as a flicker.
-        var last = 1.0
-        for step in stride(from: CGFloat(0), through: 1, by: 0.05) {
-            let value = morph.dockedContentOpacity(at: step)
-            XCTAssertLessThanOrEqual(value, last + 1e-9)
-            last = value
-        }
-    }
-
-    func testIncomingContentArrivesLate() {
-        let morph = closed
-        XCTAssertEqual(morph.fullScreenContentOpacity(at: 0), 0)
-        XCTAssertEqual(morph.fullScreenContentOpacity(at: 0.55), 0)
-        XCTAssertEqual(morph.fullScreenContentOpacity(at: 0.85), 1)
-        XCTAssertEqual(morph.fullScreenContentOpacity(at: 1), 1)
-        var last = 0.0
-        for step in stride(from: CGFloat(0), through: 1, by: 0.05) {
-            let value = morph.fullScreenContentOpacity(at: step)
-            XCTAssertGreaterThanOrEqual(value, last - 1e-9)
-            last = value
-        }
-    }
-
-    /// No blank moment and no full double exposure: across the crossfade band the two
-    /// opacities always sum to at least one side's full presence, and never to two.
-    func testCrossfadeTradesRatherThanBlanksOrDoubles() {
-        let morph = closed
-        for step in stride(from: CGFloat(0), through: 1, by: 0.01) {
-            let sum = morph.dockedContentOpacity(at: step) + morph.fullScreenContentOpacity(at: step)
-            XCTAssertGreaterThanOrEqual(sum, 0.99, "blank frame at \(step)")
-            XCTAssertLessThanOrEqual(sum, 1.75, "double exposure at \(step)")
-        }
-    }
-
-    // MARK: - Shadow, board, sidebar
+    // MARK: - Shadow, board, peek, sidebar
 
     func testShadowDissolvesEarly() {
         let morph = closed
         XCTAssertEqual(morph.panelShadowOpacity(at: 0), 1)
         XCTAssertEqual(morph.panelShadowOpacity(at: PresentationMorph.shadowGoneBy), 0)
         XCTAssertEqual(morph.panelShadowOpacity(at: 1), 0)
-        // Still leading the content fade by a wide margin: the panel must not float
-        // shadowless *and* faded at the same moment it is supposed to be crisp.
-        XCTAssertEqual(morph.dockedContentOpacity(at: PresentationMorph.shadowGoneBy), 1)
+        // The panel's fill dissolves over the same band — the two read as one event.
+        XCTAssertEqual(morph.panelFillOpacity(at: PresentationMorph.shadowGoneBy), 0)
     }
 
-    func testBoardRidesTheContainersEdge() {
+    /// The card slides `peekX − boardX` — 846 on the reference screen — so its leading edge
+    /// lands **exactly on the peek's leading edge** and the card becomes the hinge tab,
+    /// instead of exiting past it while a separate silhouette faded up in its place.
+    func testBoardLandsOnThePeeksOwnLine() {
         let morph = closed
-        // The board's shift is the container's own trailing-edge travel, so the gap between
-        // the sheet's edge and the card's is constant through the drag.
         XCTAssertEqual(morph.boardShift(at: 0), 0)
-        XCTAssertEqual(morph.boardShift(at: 1), morph.travel)
-        let mid = morph.boardShift(at: 0.5)
-        XCTAssertEqual(mid, DrawerReveal.wholePoints(morph.travel * 0.5))
+        XCTAssertEqual(morph.boardTravel, layout.peekX - layout.boardX)
+        XCTAssertEqual(morph.boardTravel, 846)
+        XCTAssertEqual(layout.boardX + morph.boardShift(at: 1), layout.peekX)
         // Whole points: the card is a rasterised composite, and fractional travel shimmers.
+        let mid = morph.boardShift(at: 0.5)
         XCTAssertEqual(mid, mid.rounded())
-        // At the far end the card has fully cleared the screen: its leading edge starts at
-        // `boardX` and lands past the screen's own trailing edge.
-        XCTAssertGreaterThanOrEqual(layout.boardX + morph.boardShift(at: 1), layout.screenWidth)
+        // The card never fades; the peek artwork crossfades over its last 15%.
+        XCTAssertEqual(morph.peekOpacity(at: 0), 0)
+        XCTAssertEqual(morph.peekOpacity(at: PresentationMorph.peekArrivesFrom), 0)
+        XCTAssertEqual(morph.peekOpacity(at: 1), 1)
     }
 
-    func testBoardAndPeekTradeOnTheContentCurves() {
+    /// The mask resolves over the last 45% of the travel — and, at these curves, its cut
+    /// edge stays at or past the screen's trailing edge for the whole flight. This is the
+    /// proof that lets the live canvas stay **unmasked** (PencilKit's fast stroke path)
+    /// with zero visible difference: `BoardFlightMask` is the design of record, held in
+    /// reserve for curves where the window would actually bite.
+    func testBoardMaskWindowNeverCutsOnScreen() {
         let morph = closed
-        // The card is the docked half of the crossfade and the peek the full-screen half,
-        // so the two ends are exactly today's two screens: card shown/peek absent at rest
-        // docked, card invisible/peek full at rest full screen.
-        XCTAssertEqual(morph.dockedContentOpacity(at: 0), 1)
-        XCTAssertEqual(morph.fullScreenContentOpacity(at: 0), 0)
-        XCTAssertEqual(morph.dockedContentOpacity(at: 1), 0)
-        XCTAssertEqual(morph.fullScreenContentOpacity(at: 1), 1)
+        XCTAssertEqual(morph.boardMaskProgress(at: PresentationMorph.boardMaskFrom), 0)
+        XCTAssertEqual(morph.boardMaskProgress(at: 1), 1)
+        let cardWidth = layout.boardWidthDocked
+        for step in stride(from: CGFloat(0), through: 1, by: 0.02) {
+            let leading = layout.boardX + morph.boardShift(at: step)
+            let window = cardWidth + (BoardPeekMetrics.width - cardWidth) * morph.boardMaskProgress(at: step)
+            XCTAssertGreaterThanOrEqual(
+                leading + window, layout.screenWidth - 0.5,
+                "the mask's cut edge would be visible at \(step)"
+            )
+        }
     }
 
     func testSidebarFoldsItsOwnWidthAlongTheProgress() {
@@ -207,11 +198,14 @@ final class PresentationMorphTests: XCTestCase {
         XCTAssertGreaterThan(mid, -layout.sessionsSidebarWidth)
     }
 
-    func testContainerFillCrossesFromPanelToSurface() {
+    /// The fill dissolve is compressed into the first 30% — two colours two points apart do
+    /// not need 1011 points to blend.
+    func testContainerFillCrossesEarly() {
         let morph = closed
         XCTAssertEqual(morph.panelFillOpacity(at: 0), 1)
+        XCTAssertEqual(morph.panelFillOpacity(at: 0.15), 0.5, accuracy: 1e-9)
+        XCTAssertEqual(morph.panelFillOpacity(at: 0.30), 0)
         XCTAssertEqual(morph.panelFillOpacity(at: 1), 0)
-        XCTAssertEqual(morph.panelFillOpacity(at: 0.5), 0.5, accuracy: 1e-9)
     }
 
     /// Out-of-range progress — a defensive caller, an overshooting spring — renders as the
@@ -220,9 +214,9 @@ final class PresentationMorphTests: XCTestCase {
         let morph = closed
         XCTAssertEqual(morph.containerFrame(at: -0.5), morph.containerFrame(at: 0))
         XCTAssertEqual(morph.containerFrame(at: 1.5), morph.containerFrame(at: 1))
-        XCTAssertEqual(morph.dockedContentOpacity(at: -1), 1)
-        XCTAssertEqual(morph.fullScreenContentOpacity(at: 2), 1)
-        XCTAssertEqual(morph.boardShift(at: 2), morph.travel)
+        XCTAssertEqual(morph.peekOpacity(at: -1), 0)
+        XCTAssertEqual(morph.peekOpacity(at: 2), 1)
+        XCTAssertEqual(morph.boardShift(at: 2), morph.boardTravel)
         XCTAssertEqual(morph.sidebarShift(at: -1), -layout.sessionsSidebarWidth)
     }
 }

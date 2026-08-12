@@ -1030,41 +1030,52 @@ closes (`BoardScreen.onChange(of: presentation)`) and the full-screen sidebar is
 
 ### 15.4 The presentation morph (screens 05/08 ↔ screen 07)
 
-> **Status: wired off.** The first device build with the morph wired in froze the app on the
-> iPadOS 17 iPad and the hang could not be reproduced on the iOS 26 simulator (every gesture
-> and button path runs clean there) or sampled over the device's flaky Wi-Fi link. Until the
-> hang is run down on-device, the docked ↔ full-screen transition ships as the
-> commit-triggered spring §15.2/§15.3 originally described: `enterFullScreen` and
-> `enterDocked` settle on the shared spring at release, contents crossfading, and the buttons
-> take the same path. `PresentationMorph` — the arithmetic below — and
-> `PresentationMorphTests` stay compiled and green; only the layer that rendered it was
-> removed. This section stands as the design of record for the re-attempt.
+> **Status: live.** The docked ↔ full-screen transition is a tracked **flight-layer morph**:
+> the container scrubs one-to-one with the finger while the shared elements — single
+> instances, never pairs that dissolve — travel their own measured paths inside it. The
+> first attempt (a whole-surface crossfade inside a morphing clip) was rejected on device
+> ("it just fades away without any morphism") and then froze the app; the rebuild is
+> engineered against the recorded freeze hypotheses: **mounts are decided only by state
+> written outside animation transactions** (gesture commitment, settle completion),
+> `animatableData` varies geometry alone, at most **one live `TextField`** exists per
+> flight (the other composer renders a chrome `Text` run — `Composer.isInteractive`), and
+> focus is resigned at commitment on a main-queue hop, never inside a render transaction.
 
-The docked ↔ full-screen transition is an interactive **container morph**, tracked under the
-finger from the first committed point in both directions. It replaced the commit-triggered
-spring-with-crossfade this section used to describe. `PresentationMorph` is the arithmetic,
-`PresentationMorphModel` the live position (the `DockRevealModel` shape one rung up), and
-`PresentationMorphLayer` the one region that hosts the tutor — and the board, the rail, the
-sidebar and the peek — in every presentation.
+`PresentationMorph` is the container arithmetic, `PresentationFlight` the per-element paths,
+`PresentationMorphModel` the live position (the `DockRevealModel` shape one rung up, observed
+by exactly one view), and `PresentationFlightLayer` the region that hosts the board, the
+rail, the tutor and the peek — plus, in flight, the morphing container and the flight copies.
 
-| Property | Value |
+The decisive measurement (2026-08-12 research brief): with the reading column at the panel
+treatment (`TutorColumnMetrics.liveScale == .panel`, capped at 600) the two endpoints draw
+the same components at the same type scale on the same baselines, so the hi state needs no
+crossfade, no scale and no snapshot — a translation of **+491.5** at the column's centre and
+a widening of the chips and the pill from **301 → 600**. Every glyph keeps its size; the
+block walks to the middle of the screen. The thread is the one element whose text re-wraps,
+and therefore the one genuine crossfade.
+
+| Track | Value |
 |---|---|
-| Progress | `0` docked … `1` full screen; pure functions of this one number, so the gesture is reversible mid-flight |
+| Progress | `0` docked … `1` full screen; pure functions of this one number, so a gesture that turns around retraces its own frames |
 | Travel | the container's trailing edge: `screenWidth − dockTravel`, **1011** on the reference screen |
-| Tracking | one-to-one with the container's trailing edge; clamped at both ends (the drawer's rule, not the dock's rubber band) |
-| Release | velocity first (**300 pt/s**), 50% line second — `DrawerReveal.settlesOpen`, delegated |
-| Settle | the shared spring, seeded with release velocity; presentation flips inside the settle transaction, mounts held until the spring finishes |
-| Container | frame lerps panel frame → chat pane (sidebar-aware); corners lerp 28-all-round → pane radii; fill dissolves `--color-surface-panel` → `--color-surface` linearly |
-| Contents | both mounted as stored views, laid out once each, **never re-laid-out mid-gesture**; outgoing holds opacity 1 to **60%** then smoothsteps out by **90%**; incoming smoothsteps in from **55%**, full by **85%** |
-| Panel shadow | extracted to a static-shaped underlay (never cast by the morphing container — a shadow re-rasterises its input per frame); fades out by **30%** of the travel |
-| Board | the live card is **translated, never resized** — it slides toward the trailing edge at the container's own speed, `PKCanvasView` takes no layout pass mid-gesture; the peek silhouette arrives on the incoming curve where the card leaves on the outgoing one |
-| Sidebar | if open, folds its own width off the leading edge over the same progress; `isSessionsSidebarOpen` is untouched and the layout returns next visit |
-| Buttons | `btn/full-screen` and the peek's tap run the same morph from rest through animatable renders, so the tap replays the swipe's curves rather than lerping its endpoints |
+| Release | velocity first (**300 pt/s**), 50% line second — `DrawerReveal.settlesOpen`, delegated; live-finger frames are marked `Transaction.isContinuous` |
+| Container | frame lerps panel → chat pane (sidebar-aware), glued to the finger; corners finish **early** — `0 … 0.75` entering, `0.30 … 0.90` returning; fill dissolves over the first **30%**, with the panel's static-shaped shadow underlay |
+| Lead curve | shared elements run `1 − (1 − p)²` ahead of the finger-locked box (content settles before the container); the greeting and thread stagger 5% behind the orb |
+| Orb | one `Orb(.panel)`: pure x, 148.5 → 640, y fixed at 198, size fixed |
+| Greeting | one 301-wide title+subtitle block, translated only — subtitle capped 277 at both ends, so the centred block is pixel-identical to both settled surfaces |
+| Chips | leading 46 → 388 on the lead; **width 301 → 600 linear on the finger** — a real `.frame(width:)`, nothing re-wraps |
+| Composer | the chips' path and width; bottom edge 986 → 1004; flight copy is chrome only (no `TextField`); the wide pill's absent marquee is a folding 34pt slot, held open while a selection is attached |
+| Toggle | (46, 46) → (28 + sidebar, 28), linear, never fades |
+| Panel controls | the one unmatched element: opacity out over `0 … 0.25` with a 12pt trailing drift |
+| Thread | two copies, each laid out once; docked copy slides toward the destination centre, wide copy arrives from 60pt short of home; overlapping cross-fade `0.30…0.55 / 0.30…0.60` entering, `0.45…0.70 / 0.40…0.75` returning (one direction parameter) |
+| Board | translated **`peekX − boardX` = 846**, never resized and never faded, so its leading edge lands exactly on the peek's line; the peek artwork crossfades over the last 15%. `BoardFlightMask` (rounded rect → `BoardPeekShape` over `0.55 … 1`) is compiled and tested but not attached: at these curves its cut edge never crosses the screen edge (`PresentationMorphTests` proves it), so the live canvas keeps PencilKit's unmasked fast path |
+| Sidebar | if open, a flight copy folds its own width off the leading edge; `isSessionsSidebarOpen` is untouched and the layout returns next visit |
+| Buttons | `btn/full-screen` and the peek's tap replay the same morph from rest: `begin` outside any transaction, settle on the next main-queue turn, so the animatable renders spring through the identical curves |
 
-Endpoint pixel-parity is arithmetic, not a rendering promise: at progress `0` every curve
-evaluates to the docked screen's own values (the panel's clip, full opacity, zero shift) and the
-full-screen slots are unmounted; at `1` the mirror holds. `PresentationMorphTests` pins the
-equalities.
+Endpoint pixel-parity is arithmetic, not a rendering promise: every path is exact (never
+rounded) at `0` and `1`, whole points between, so the handoff between a flight copy and the
+settled surface's own element cannot jump. `PresentationMorphTests` and
+`PresentationFlightTests` pin the equalities, the bands and the paths per element.
 
 ---
 

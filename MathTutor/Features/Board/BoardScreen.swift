@@ -154,6 +154,27 @@ struct BoardScreen: View {
                     actions: actions
                 )
                 .frame(width: column.width, height: column.threadHeight)
+            } sidebar: {
+                // Board 19's sidebar, folding along the morph — a flight copy with the real
+                // sessions so the fold shows the learner's own list. Non-interactive by the
+                // flight overlay's nature; the settled surface's own sidebar takes over at
+                // rest. Geometry mirrors `TutorFullScreen.sessionsSidebar`.
+                if uiState.isSessionsSidebarOpen {
+                    SessionsDrawer(
+                        sessions: store.sessions,
+                        currentID: store.session.id,
+                        width: layout.sessionsSidebarWidth,
+                        inset: SessionsDrawerMetrics.sidebarInset,
+                        height: layout.screenHeight,
+                        onNewChat: {},
+                        onOpen: { _ in },
+                        onDelete: { _ in },
+                        onMenuActivity: { _ in },
+                        onSettings: {}
+                    )
+                    .offset(x: layout.sessionsSidebarX)
+                    .allowsHitTesting(false)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -497,10 +518,10 @@ struct BoardScreen: View {
                 // on a window too narrow to dock, the tutor's only home is the full-screen
                 // column. See `openTutorFromDock`.
                 onSettle: { docked in if docked { openTutorFromDock() } },
-                // Explicit, not the bound method — see `actions.returnToBoard`.
-                onEnterFullScreen: { enterFullScreenFromEdge(velocity: $0) },
                 // The tracked container morph: the same right-swipe, every frame of it
-                // driving the flight layer instead of waiting for the release.
+                // driving the flight layer instead of waiting for the release. The old
+                // commit-triggered `onEnterFullScreen` spring is gone with the path it
+                // served; the layer's fallback remains only for hosts that pass no flight.
                 flight: presentationFlight
             ) {
                 TutorPanel(
@@ -570,17 +591,24 @@ struct BoardScreen: View {
     }
 
     /// The committed pan released: the shared velocity-first rule against the real tracked
-    /// position, then the shared spring. The presentation flips inside the settle
-    /// transaction — that is what makes it spring rather than jump — while the mounts are
-    /// held by `isPresentationFlightActive`, which clears only in the completion.
+    /// position, then the shared spring.
     private func releasePresentationFlight(velocity: CGFloat) {
-        let travel = PresentationMorph.travel(in: layout)
         let progress = presentationDrag.progress ?? (presentation == .fullScreen ? 1 : 0)
-        let fullScreen = PresentationMorph.settlesFullScreen(progress: progress, velocity: velocity)
+        settlePresentationFlight(
+            toFullScreen: PresentationMorph.settlesFullScreen(progress: progress, velocity: velocity),
+            velocity: velocity
+        )
+    }
+
+    /// The one settle every path shares — swipe releases and button replays alike. The
+    /// presentation flips inside the settle transaction — that is what makes it spring
+    /// rather than jump — while the mounts are held by `isPresentationFlightActive`, which
+    /// clears only in the completion.
+    private func settlePresentationFlight(toFullScreen fullScreen: Bool, velocity: CGFloat) {
         presentationDrag.settle(
             to: fullScreen,
             velocity: velocity,
-            travel: travel,
+            travel: PresentationMorph.travel(in: layout),
             onFinished: { isPresentationFlightActive = false }
         ) {
             if fullScreen, uiState.presentation != .fullScreen {
@@ -689,7 +717,10 @@ struct BoardScreen: View {
     /// screen's stack — so screen 06's *"the dock floats on the canvas card"* is unchanged.
     @ViewBuilder
     private var floatingRegion: some View {
-        if presentation == .fullScreen {
+        // Mounted through a flight too, at the flight layer's `peekOpacity` — it arrives
+        // over the sliding board card's last 15% of travel and leaves the same way. The
+        // mount flips only at commitment and completion, outside animated transactions.
+        if presentation == .fullScreen || isPresentationFlightActive {
             // The tap and the trailing-edge swipe are one path with one curve — see
             // `returnToBoardFromPeek(velocity:)`. The tap used to write `UIState` directly and
             // the column simply vanished, which is the fourth-behaviour-rather-than-fourth-
@@ -712,10 +743,11 @@ struct BoardScreen: View {
             startPlan: startPlan,
             retry: store.retryLastRequest,
             openSettings: { isShowingSettings = true },
-            // An explicit closure rather than the bound method, for the reason `resizeHandle`'s
+            // Explicit closures rather than the bound methods, for the reason `resizeHandle`'s
             // `set:` spells out: a `@MainActor`-isolated method reference passed straight into
             // a one-argument closure parameter crashes swift-frontend during IRGen on this
             // toolchain.
+            expandToFullScreen: { expandTutorViaFlight() },
             returnToBoard: { returnToBoardFromPeek(velocity: $0) }
         )
     }
@@ -742,36 +774,33 @@ struct BoardScreen: View {
         dockDrag.settle(to: true, velocity: 0, travel: layout.dockTravel) { openTutorFromDock() }
     }
 
-    /// The rung above docked: a right-swipe released in the leading edge zone while the panel
-    /// is docked. `DockRevealLayer.onEnterFullScreen`.
+    /// `btn/full-screen`, and the dock orb's landing on a window too narrow to dock: the
+    /// same flight-layer morph the edge swipe drives, replayed from rest.
     ///
-    /// **Commit-triggered, and settled on the shared spring rather than tracked.** There is no
-    /// travel to track: board 05 states the reading column as a different variant of the tutor
-    /// and not a wider panel — *"the type scale, chip layout, chip height, icon size, composer
-    /// height and the composer's contents all change"* — so the two surfaces have no
-    /// intermediate position a finger could hold them at, and the honest motion between them is
-    /// a crossfade rather than a drag. What the spring buys is that the panel does not simply
-    /// vanish: it is still mounted for the length of the settle (`DockRevealModel.isSettling`)
-    /// and leaves on the same curve every other presentation change in this file uses.
+    /// `begin` runs first, bare — the flight mounts un-animated at its anchor and commits a
+    /// frame — and the settle follows on the next main-queue turn, so the spring's
+    /// animatable renders have a real "from" to interpolate out of. That hop is the tap's
+    /// whole difference from a swipe; the curves are identical, which is what makes the two
+    /// one system rather than two that merely share a duration.
     ///
-    /// The release velocity is carried into it, so a hard flick arrives faster than a slow
-    /// push — the one thing a commit-triggered transition can still take from the finger.
-    private func enterFullScreenFromEdge(velocity: CGFloat) {
-        // `to: true` — the panel is not leaving by the leading edge on this path; it is being
-        // replaced where it stands, and the column arrives over it.
-        dockDrag.settle(to: true, velocity: velocity, travel: layout.dockTravel) {
+    /// On a window that cannot dock (the tutor was collapsed), there is no docked anchor
+    /// for a flight to leave from, so the presentation is written bare exactly as before.
+    private func expandTutorViaFlight() {
+        guard presentation == .docked, !presentationDrag.isActive else {
             uiState.expandTutorToFullScreen()
+            return
+        }
+        presentationDrag.begin(atFullScreen: false)
+        beginPresentationFlight()
+        DispatchQueue.main.async {
+            settlePresentationFlight(toFullScreen: true, velocity: 0)
         }
     }
 
     /// The way back from the reading column: the peek's tap, and the left-swipe out of the
-    /// peek's own lane. One function, because they are one transition — see
-    /// `TutorFullScreen.peekEdgeZone` for the swipe and `BoardPeek` for the tap.
-    ///
-    /// Commit-triggered for the same reason `enterFullScreenFromEdge` is, and on the same
-    /// spring: the panel is inserted inside the settle transaction, so `DockRevealLayer`'s own
-    /// `.transition(.offset(x: -travel))` carries it in from off the leading edge exactly as the
-    /// dock orb's tap does, while the board fades up behind it and the column fades out.
+    /// peek's own lane. One function, because they are one transition — the swipe tracks the
+    /// morph and this replays it from rest through the identical curves, with the release
+    /// velocity of the swipe that asked for it or `0` from the tap.
     ///
     /// **The sidebar is untouched.** `returnToBoard` moves one axis, and
     /// `UIState.isSessionsSidebarOpen` is deliberately not the docked drawer's flag: the
@@ -779,8 +808,11 @@ struct BoardScreen: View {
     /// closed by this screen's own `onChange(of: presentation)`, which is the other half of
     /// that rule.
     private func returnToBoardFromPeek(velocity: CGFloat) {
-        dockDrag.settle(to: true, velocity: velocity, travel: layout.dockTravel) {
-            uiState.returnToBoard()
+        guard presentation == .fullScreen, !presentationDrag.isActive else { return }
+        presentationDrag.begin(atFullScreen: true)
+        beginPresentationFlight()
+        DispatchQueue.main.async {
+            settlePresentationFlight(toFullScreen: false, velocity: velocity)
         }
     }
 

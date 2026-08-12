@@ -277,6 +277,8 @@ struct TutorFullScreen: View {
             )
             .offset(x: layout.sessionsSidebarX)
             .transition(.move(edge: .leading))
+            // The flight layer's folding copy is the one on screen mid-morph.
+            .opacity(isInPresentationFlight ? 0 : 1)
         }
     }
 

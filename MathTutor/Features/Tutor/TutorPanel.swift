@@ -17,6 +17,12 @@ struct TutorActions {
     let startPlan: () -> Void
     let retry: () -> Void
     let openSettings: () -> Void
+    /// `btn/full-screen` — screens 05/08 → screen 07, through the same flight-layer morph
+    /// the edge swipe drives, replayed from rest through the identical curves. An action
+    /// rather than a `UIState` call for the reason `returnToBoard` is: the curve is the
+    /// shell's, and a surface writing the axis bare is what made this transition the last
+    /// one in the app with no motion at all.
+    let expandToFullScreen: () -> Void
     /// Put the reading column away and bring the board back — screen 07 → screens 05/08, with
     /// the release velocity of the swipe that asked for it, or `0` from a tap.
     ///
@@ -113,7 +119,7 @@ struct TutorPanel: View {
         // The board behind it keeps its own height — see `keyboardInset`.
         let size = CGSize(width: layout.panelWidth, height: layout.contentHeightAboveKeyboard)
 
-        return TutorPanelSurface(size: size) {
+        return TutorPanelSurface(size: size, hidesChrome: isInPresentationFlight) {
             // The gesture, the travel and the veils all live in the layer, and so does the
             // only state a finger writes. Nothing here is a function of how far the drawer is
             // open — that is the rule the layer's own doc sets out, and it is what keeps a
@@ -267,7 +273,7 @@ struct TutorPanel: View {
             onDock: {
                 dock.settle(to: false, velocity: 0, travel: layout.dockTravel) { collapse() }
             },
-            onFullScreen: { closeMenus(); uiState.expandTutorToFullScreen() },
+            onFullScreen: { closeMenus(); actions.expandToFullScreen() },
             alignment: .trailing
         )
         .frame(width: contentWidth, height: TutorPanelMetrics.controlsHeight, alignment: .trailing)
