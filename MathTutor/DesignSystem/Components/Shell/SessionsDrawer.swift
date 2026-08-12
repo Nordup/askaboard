@@ -7,7 +7,7 @@ import UIKit
 /// full-screen sidebar is cut out of the screen, so the frame differs and nothing inside it
 /// does: both are a header, a section label, a list of rows and a bottom bar, in a content
 /// column derived from the frame exactly the way `TutorPanelMetrics.contentWidth(for:)` derives
-/// the panel's. Hard-coding 239 or 316 would be the same bug board 02 names for 301.
+/// the panel's. Hard-coding 227 or 240 would be the same bug board 02 names for 301.
 enum SessionsDrawerMetrics {
 
     // MARK: - The docked drawer, inside the panel (board 17)
@@ -30,14 +30,23 @@ enum SessionsDrawerMetrics {
         max(0, panelWidth - width(inPanel: panelWidth))
     }
 
-    /// The docked drawer's padding, board 17: `padding-block: 18; padding-inline: 12`.
+    /// The docked drawer's padding, board 17: `--space-panel-inset` on all four sides.
     ///
-    /// The block inset is the panel's own `--space-panel-inset`, so the drawer's header sits on
-    /// the same line as the controls row it replaced; the inline inset is 12, not 18, because
-    /// the rows carry their own 12 of padding and the design lets the two add up to the 24 a
-    /// row's text sits at rather than to 30.
+    /// **18 inline, where it was 12.** The inline inset used to be 12 on the argument that the
+    /// rows carry their own 12 and the pair should add up to the 24 a row's *text* sits at. That
+    /// reasoning measured the wrong edge: what the eye lands on is not the text but the row's
+    /// own box — the current session is filled `--color-brand-tint` and `New chat` is a pill —
+    /// and those boxes were sitting 12 from a surface whose corner is 28. A fill closer to the
+    /// corner than the corner's own radius reads as touching it.
+    ///
+    /// So both axes are now the panel's own `--space-panel-inset` — one inset for the drawer
+    /// rather than one for each edge of it, and the same inset everything else inside this
+    /// panel is placed on. The row's 12 stays where it is: it is padding *inside* the box, so
+    /// the title lands at 30 and the wordmark and the section label move out with it. The
+    /// drawer still reads down one left edge, six points further in, and the content column
+    /// follows: `263 − 2 × 18 = 227`.
     static let inset = DS.Space.panelInset
-    static let insetInline = DS.Space.s3
+    static let insetInline = DS.Space.panelInset
 
     /// The corner the pushed chat turns toward the drawer — board 17's `--radius-2xl` on the
     /// leading two corners only. Not the panel's own 28: the panel's radius is against the
@@ -59,9 +68,12 @@ enum SessionsDrawerMetrics {
     /// arithmetic whole, because `--space-edge` is 28 either side and the content column has to
     /// land on an even number: `240 + 2 × 28`.
     ///
-    /// 240 is also the docked drawer's 239 to within a point, which is the useful part of the
-    /// coincidence: a session title that fits in one drawer fits in the other, so switching
-    /// between the two surfaces does not re-truncate the list.
+    /// 240 is 13 more than the docked drawer's 227, and the two columns are deliberately not
+    /// reconciled: each is its own frame less its own inset, and the sidebar's frame is a lane
+    /// of the screen while the drawer's is a fraction of a resizable panel. A title that fills
+    /// the sidebar therefore truncates a little sooner in the drawer — as it already did at
+    /// every panel width but 337, which is what makes a matched pair a coincidence rather than
+    /// a rule.
     static let sidebarWidth: CGFloat = sidebarContentWidth + 2 * DS.Space.edge
     static let sidebarContentWidth: CGFloat = 240
     static let sidebarInset = DS.Space.edge
@@ -365,7 +377,7 @@ struct SessionsDrawer: View {
     ///
     /// A `DragGesture` measuring its own travel rather than a `TapGesture`, and that is the
     /// fix rather than a stylistic choice. A tap recogniser fires on touch-*up* whenever the
-    /// touch stayed inside the view, and these rows are 239 × 44, so a 100pt horizontal swipe
+    /// touch stayed inside the view, and these rows are 227 × 44, so a 100pt horizontal swipe
     /// starts and ends inside the same one and reads as a tap on it. Every way of switching
     /// that off from outside — hit testing, `isEnabled` — depends on something else having
     /// noticed in time; the translation is evidence the row already holds, so it needs no help

@@ -919,14 +919,21 @@ final class ShellComponentTests: XCTestCase {
     func testTheDockedDrawerIsSeventyEightPercentOfWhateverThePanelIs() {
         XCTAssertEqual(SessionsDrawerMetrics.width(inPanel: 337), 263, "337 × 0.78, rounded")
         XCTAssertEqual(SessionsDrawerMetrics.stripWidth(inPanel: 337), 74, "337 − 263")
+        // One inset for the drawer, both axes, and it is the panel's own. The inline value used
+        // to be 12, which put the current row's tint and the `New chat` pill 12 points from a
+        // surface whose corner radius is 28.
+        XCTAssertEqual(SessionsDrawerMetrics.insetInline, DS.Space.panelInset, "18, not 12")
+        XCTAssertEqual(SessionsDrawerMetrics.insetInline, SessionsDrawerMetrics.inset)
         XCTAssertEqual(
             SessionsDrawerMetrics.contentWidth(
                 for: 263,
                 inset: SessionsDrawerMetrics.insetInline
             ),
-            239,
-            "263 − 2 × 12"
+            227,
+            "263 − 2 × 18"
         )
+        // The row's own padding is unchanged — it is inside the box, so the title lands at 30.
+        XCTAssertEqual(SessionsDrawerMetrics.rowPaddingInline, DS.Space.s3, "12, inside the row")
 
         // The two are complements at every width the panel can be, with nothing left over.
         for panel in [ScreenLayout.minimumPanelWidth, 300, 337, 512, 1000] as [CGFloat] {
@@ -955,16 +962,28 @@ final class ShellComponentTests: XCTestCase {
             (372 * 0.8).rounded(.down) - 1,
             "20% off the board's 372, taken to the nearest whole content column"
         )
-        // The two drawers agree about how long a title may be, so switching surfaces does not
-        // re-truncate the list.
+        // **The sidebar is not the drawer, and the drawer's inset does not reach it.** Its own
+        // frame is `--space-edge` either side of a 240 column, and it stayed exactly that when
+        // the docked drawer's inline inset went 12 → 18.
+        XCTAssertEqual(SessionsDrawerMetrics.sidebarInset, DS.Space.edge, "28, all round")
+        XCTAssertEqual(
+            SessionsDrawerMetrics.contentWidth(
+                for: SessionsDrawerMetrics.sidebarWidth,
+                inset: SessionsDrawerMetrics.sidebarInset
+            ),
+            240,
+            "296 − 2 × 28, unmoved"
+        )
+        // The two columns are no longer a matched pair, and are not meant to be: each is its
+        // own frame less its own inset. See `SessionsDrawerMetrics.sidebarWidth`.
         XCTAssertEqual(
             SessionsDrawerMetrics.sidebarContentWidth
                 - SessionsDrawerMetrics.contentWidth(
                     for: SessionsDrawerMetrics.width(inPanel: TutorPanelMetrics.width),
                     inset: SessionsDrawerMetrics.insetInline
                 ),
-            1,
-            "240 against the docked 239"
+            13,
+            "240 against the docked 227"
         )
 
         let reserved = layout.sessionsSidebarWidth

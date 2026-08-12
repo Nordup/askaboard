@@ -7,7 +7,7 @@ import UIKit.UIGestureRecognizerSubclass
 ///
 /// The history, so it is not re-litigated: a swipe across either drawer surface kept pressing
 /// the controls it crossed, because a SwiftUI `Button` fires on touch-*up* and cancels only
-/// when the finger leaves its bounds — and a session row is 239 × 44, so a whole 100pt swipe
+/// when the finger leaves its bounds — and a session row is 227 × 44, so a whole 100pt swipe
 /// starts and ends inside one control. The fixes tried, in order: per-control `.disabled`
 /// lists (missed controls), container `allowsHitTesting` (cannot reach a press already in
 /// flight on iPadOS 17), and structural `.disabled` groups with the composer exempted as a

@@ -633,11 +633,20 @@ and the content column is derived from the frame the way the panel's 301 is deri
 | Property | Docked (board 17) | Full screen (board 19) |
 |---|---|---|
 | Frame | **263 × 976**, inside the panel at local `(0, 0)` | **296 × 1032**, against the leading screen edge |
-| Width rule | `panel × 0.78`, rounded — **derive it**, the panel resizes | `240 + 2 × 28`. Board 19 draws **372**; that is 20% wider than its contents need, and at that width the sidebar reads as having taken a fifth of the screen to say very little. The content column leads and the frame follows it. 240 is also the docked drawer's 239 to within a point, so a title that fits one fits the other and switching surfaces does not re-truncate the list. |
-| Padding | `block 18` (`--space-panel-inset`), `inline 12` | `28` (`--space-edge`) all round |
-| Content column | **239** | **240** |
+| Width rule | `panel × 0.78`, rounded — **derive it**, the panel resizes | `240 + 2 × 28`. Board 19 draws **372**; that is 20% wider than its contents need, and at that width the sidebar reads as having taken a fifth of the screen to say very little. The content column leads and the frame follows it. It is 13 more than the docked drawer's 227, and the two are deliberately not reconciled: each column is its own frame less its own inset, and one of those frames is a fraction of a resizable panel. |
+| Padding | **`18` all round** (`--space-panel-inset`) | `28` (`--space-edge`) all round |
+| Content column | **227** | **240** |
 | Background | `--color-surface-panel` — the panel's own, so the seam is a corner and not a colour change | the screen's `--color-surface-screen`; the drawer paints no fill |
 | Radius / shadow | none, either frame — the panel's own clip and elevation cover the docked case, and the full-screen sidebar is a lane rather than a surface |
+
+**The docked inline inset was 12 and is now 18.** The old value was argued from the text: the
+rows carry their own `12`, and `12 + 12` is the `24` a row's title sits at. That measured the
+wrong edge. What the eye lands on is the row's **box** — the current session is filled
+`--color-brand-tint`, and `New chat` is a pill — and those fills were sitting 12 from a surface
+whose corner radius is 28, which reads as touching the corner. Both axes are now
+`--space-panel-inset`, the inset everything else in the panel is placed on; the row's own 12 is
+unchanged, so titles land at 30 and the drawer still reads down one left edge. The full-screen
+sidebar is untouched: its inset is `--space-edge` and its column is still 240.
 
 **Contents**, top to bottom, in the content column:
 
@@ -768,7 +777,7 @@ gesture having been missed rather than judged.
 
 **A swipe must not press what it crosses, and one mechanism does all of it.** A `Button` fires
 on touch-*up* and cancels only when the finger leaves its bounds, which never happens here: a
-session row is 239 × 44 and a chip is 301 × 62, so a whole 100 pt swipe starts and ends inside
+session row is 227 × 44 and a chip is 301 × 62, so a whole 100 pt swipe starts and ends inside
 one control. Without a guard, a left-swipe out of the drawer opened whichever session it
 crossed.
 
