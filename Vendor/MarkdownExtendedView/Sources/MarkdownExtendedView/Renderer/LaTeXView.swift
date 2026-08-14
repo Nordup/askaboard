@@ -34,7 +34,7 @@ struct LaTeXView: View {
     @ViewBuilder
     private var mathView: some View {
         MathView(latex: latex)
-            .font(fontSize: isBlock ? 20 : 16)
+            .font(fontSize: isBlock ? 21 : 17)
             .labelMode(isBlock ? .display : .text)
             .foregroundColor(textColor)
     }
@@ -55,7 +55,7 @@ struct MathView {
 
     let latex: String
 
-    fileprivate var fontSize: CGFloat = 16
+    fileprivate var fontSize: CGFloat = 17
     fileprivate var textColor: MTColor = .black
     fileprivate var textAlignment: MTTextAlignment = .left
     fileprivate var mode: MTMathUILabelMode = .text
