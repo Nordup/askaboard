@@ -439,28 +439,125 @@ struct MarkdownRenderer: View {
     @ViewBuilder
     private func renderTextWithLaTeX(_ parent: any Markup) -> some View {
         let plainText = extractPlainText(from: parent)
-        let segments = LaTeXPreprocessor.extractSegments(from: plainText)
+        let fragments = Self.inlineLaTeXFragments(from: plainText)
 
-        // Use a flow layout to handle mixed text and LaTeX
-        FlowLayout(spacing: 0) {
-            ForEach(Array(segments.enumerated()), id: \.offset) { item in
-                renderSegment(item.element)
+        // Prose is broken into word-sized fragments so FlowLayout wraps mixed
+        // text and math at the same word boundaries as ordinary SwiftUI text,
+        // while every formula stays atomic.
+        FlowLayout(spacing: 0, breaks: fragments.map(\.forcesLineBreak)) {
+            ForEach(Array(fragments.enumerated()), id: \.offset) { item in
+                renderFragment(item.element)
             }
         }
     }
 
-    /// Renders a single LaTeX segment.
+    /// Renders a single LaTeX flow fragment.
     @ViewBuilder
-    private func renderSegment(_ segment: LaTeXPreprocessor.Segment) -> some View {
-        switch segment {
+    private func renderFragment(_ fragment: InlineLaTeXFragment) -> some View {
+        switch fragment {
         case .text(let text):
             SwiftUI.Text(text)
                 .font(theme.bodyFont)
                 .foregroundColor(theme.textColor)
 
+        case .breakLine:
+            // Zero-width, invisible item whose measured height gives FlowLayout
+            // the body line height needed for blank lines between hard breaks.
+            SwiftUI.Text(" ")
+                .font(theme.bodyFont)
+                .foregroundColor(theme.textColor)
+                .frame(width: 0)
+
         case .latex(let latex, let isBlock):
             LaTeXView(latex: latex, isBlock: isBlock, theme: theme)
         }
+    }
+
+    /// A word-, break-, or formula-sized item for LaTeX paragraph flow.
+    private enum InlineLaTeXFragment: Equatable {
+        case text(String)
+        case breakLine
+        case latex(String, isBlock: Bool)
+
+        /// Whether the fragment must start a new flow line.
+        var forcesLineBreak: Bool {
+            if case .breakLine = self { return true }
+            return false
+        }
+    }
+
+    /// Splits a paragraph's plain text into flow fragments.
+    ///
+    /// Text segments are expanded to word-sized items with their following
+    /// whitespace attached. A token can then wrap as a unit like a normal text
+    /// word, and a wrapped line never starts with a stray space. Explicit
+    /// newlines become break fragments so hard line breaks survive flow layout.
+    private static func inlineLaTeXFragments(from plainText: String) -> [InlineLaTeXFragment] {
+        var fragments: [InlineLaTeXFragment] = []
+        for segment in LaTeXPreprocessor.extractSegments(from: plainText) {
+            switch segment {
+            case .text(let text):
+                fragments.append(contentsOf: wordFragments(from: text))
+            case .latex(let latex, let isBlock):
+                fragments.append(.latex(latex, isBlock: isBlock))
+            }
+        }
+        return fragments
+    }
+
+    private static func wordFragments(from text: String) -> [InlineLaTeXFragment] {
+        var fragments: [InlineLaTeXFragment] = []
+        var scan = text.startIndex
+        while scan < text.endIndex {
+            if text[scan] == "\n" {
+                fragments.append(.breakLine)
+                scan = text.index(after: scan)
+                continue
+            }
+            let lineEnd = text[scan...].firstIndex(of: "\n") ?? text.endIndex
+            fragments.append(contentsOf: wordFragments(in: text[scan..<lineEnd]))
+            scan = lineEnd
+        }
+        return fragments
+    }
+
+    private static func wordFragments(in line: Substring) -> [InlineLaTeXFragment] {
+        guard !line.isEmpty else { return [] }
+        var fragments: [InlineLaTeXFragment] = []
+        var scan = line.startIndex
+
+        while scan < line.endIndex, line[scan].isWhitespace {
+            scan = line.index(after: scan)
+        }
+        let leadingWhitespace = line[..<scan]
+
+        if scan == line.endIndex {
+            // Whitespace-only run between formulas: keep it as an item so the
+            // spacing the author typed survives flow layout.
+            return [.text(String(line))]
+        }
+
+        while scan < line.endIndex {
+            let wordStart = scan
+            while scan < line.endIndex, !line[scan].isWhitespace {
+                scan = line.index(after: scan)
+            }
+            let wordEnd = scan
+            while scan < line.endIndex, line[scan].isWhitespace {
+                scan = line.index(after: scan)
+            }
+            guard wordStart < wordEnd else { break }
+
+            let trailingWhitespace = line[wordEnd..<scan]
+            if fragments.isEmpty {
+                let token = String(leadingWhitespace) + line[wordStart..<wordEnd] + trailingWhitespace
+                fragments.append(.text(token))
+            } else {
+                let token = String(line[wordStart..<wordEnd]) + trailingWhitespace
+                fragments.append(.text(token))
+            }
+        }
+        return fragments
     }
 
     /// Builds attributed text for inline content without LaTeX.
@@ -539,14 +636,38 @@ struct MarkdownRenderer: View {
 /// A simple flow layout for mixed text and views.
 struct FlowLayout: Layout {
     var spacing: CGFloat = 0
+    /// Per-subview flags marking explicit hard line breaks (e.g. markdown `\\`).
+    var breaks: [Bool] = []
 
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let result = computeLayout(proposal: proposal, subviews: subviews)
+    func makeCache(subviews: Subviews) -> Cache {
+        Cache()
+    }
+
+    func updateCache(_ cache: inout Cache, subviews: Subviews) {
+        // Content may have changed since the last pass (streaming text, edits),
+        // so refresh the measurement sweep up front — SwiftUI runs this before
+        // sizing and placement. Both methods below then reuse this pass's
+        // measurements instead of each measuring every segment again.
+        cache.measure(subviews: subviews)
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) -> CGSize {
+        let result = cache.layout(
+            proposalWidth: proposal.width,
+            subviews: subviews,
+            spacing: spacing,
+            breaks: breaks
+        )
         return result.size
     }
 
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let result = computeLayout(proposal: proposal, subviews: subviews)
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) {
+        let result = cache.layout(
+            proposalWidth: proposal.width,
+            subviews: subviews,
+            spacing: spacing,
+            breaks: breaks
+        )
 
         for (index, subview) in subviews.enumerated() {
             if index < result.positions.count {
@@ -556,51 +677,140 @@ struct FlowLayout: Layout {
         }
     }
 
-    private func computeLayout(proposal: ProposedViewSize, subviews: Subviews) -> (size: CGSize, positions: [CGPoint]) {
-        let maxWidth = proposal.width ?? .infinity
-        var positions: [CGPoint] = []
-        var sizes: [CGSize] = []
-        var lineIndexes: [Int] = []
-        var lineHeights: [CGFloat] = [0]
-        var currentX: CGFloat = 0
-        var currentY: CGFloat = 0
-        var lineHeight: CGFloat = 0
-        var lineIndex = 0
-        var totalHeight: CGFloat = 0
-        var totalWidth: CGFloat = 0
+    /// Measured geometry reused across `sizeThatFits` and `placeSubviews`.
+    ///
+    /// `Layout` keeps one cache per layout instance across passes. `updateCache`
+    /// refreshes the per-subview measurements whenever SwiftUI re-runs the
+    /// layout, so the cached layout cannot outlive changed content; within a
+    /// pass, both sizing and placement reuse the same measurements and the same
+    /// computed positions rather than measuring every segment twice.
+    struct Cache {
+        /// Measured size of each subview, in order.
+        private(set) var subviewSizes: [CGSize] = []
+        /// The proposal width the computed layout was built for.
+        private var computedProposalWidth: CGFloat?
+        /// The break flags the computed layout was built for.
+        private var computedBreaks: [Bool]?
+        /// Whether `computed` holds a real layout for `computedProposalWidth`.
+        ///
+        /// The proposal width may legitimately be `nil` (unbounded first
+        /// proposal), so the width alone cannot distinguish "computed for nil"
+        /// from "never computed". Without this flag a first unbounded layout
+        /// would return the placeholder `.zero` result instead of computing.
+        private var hasComputedLayout = false
+        /// The last computed layout.
+        private var computed: (size: CGSize, positions: [CGPoint]) = (.zero, [])
 
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
+        mutating func measure(subviews: Layout.Subviews) {
+            subviewSizes = subviews.map { $0.sizeThatFits(.unspecified) }
+            // The computed layout is rebuilt for the incoming proposal.
+            computedProposalWidth = nil
+            computedBreaks = nil
+            hasComputedLayout = false
+        }
 
-            if currentX + size.width > maxWidth && currentX > 0 {
-                // Move to next line
-                currentX = 0
-                currentY += lineHeight + spacing
-                lineHeight = 0
-                lineIndex += 1
-                lineHeights.append(0)
+        mutating func layout(
+            proposalWidth: CGFloat?,
+            subviews: Layout.Subviews,
+            spacing: CGFloat,
+            breaks: [Bool]
+        ) -> (size: CGSize, positions: [CGPoint]) {
+            // Defensive refresh for layout engines that do not call
+            // `updateCache` before the first pass.
+            if subviewSizes.count != subviews.count {
+                measure(subviews: subviews)
+            }
+            if hasComputedLayout, proposalWidth == computedProposalWidth, breaks == computedBreaks {
+                return computed
+            }
+            computedProposalWidth = proposalWidth
+            computedBreaks = breaks
+            hasComputedLayout = true
+            computed = Self.computeLayout(
+                proposalWidth: proposalWidth,
+                sizes: subviewSizes,
+                breaks: breaks,
+                spacing: spacing
+            )
+            return computed
+        }
+
+        private static func computeLayout(
+            proposalWidth: CGFloat?,
+            sizes: [CGSize],
+            breaks: [Bool],
+            spacing: CGFloat
+        ) -> (size: CGSize, positions: [CGPoint]) {
+            let maxWidth = proposalWidth ?? .infinity
+            var positions: [CGPoint] = []
+            var lineIndexes: [Int] = []
+            var lineHeights: [CGFloat] = [0]
+            var currentX: CGFloat = 0
+            var currentY: CGFloat = 0
+            var lineHeight: CGFloat = 0
+            var lineIndex = 0
+            var totalHeight: CGFloat = 0
+            var totalWidth: CGFloat = 0
+
+            for (index, size) in sizes.enumerated() {
+                let isBreak = breaks.indices.contains(index) && breaks[index]
+
+                if isBreak {
+                    if index == sizes.count - 1 {
+                        // A trailing hard break closes the line without adding
+                        // a blank line, matching Text's behavior for a trailing
+                        // newline.
+                        positions.append(CGPoint(x: currentX, y: currentY))
+                        lineIndexes.append(lineIndex)
+                        continue
+                    }
+
+                    if currentX == 0 {
+                        // Leading or consecutive break: size the empty line with
+                        // the break item's measured height.
+                        currentY += size.height + spacing
+                    } else {
+                        currentY += lineHeight + spacing
+                    }
+                    currentX = 0
+                    lineHeight = 0
+                    lineIndex += 1
+                    lineHeights.append(0)
+                    positions.append(CGPoint(x: 0, y: currentY))
+                    lineIndexes.append(lineIndex)
+                    continue
+                }
+
+                if currentX + size.width > maxWidth && currentX > 0 {
+                    // Move to next line
+                    currentX = 0
+                    currentY += lineHeight + spacing
+                    lineHeight = 0
+                    lineIndex += 1
+                    lineHeights.append(0)
+                }
+
+                positions.append(CGPoint(x: currentX, y: currentY))
+                lineIndexes.append(lineIndex)
+
+                currentX += size.width + spacing
+                lineHeight = max(lineHeight, size.height)
+                lineHeights[lineIndex] = lineHeight
+                totalWidth = max(totalWidth, currentX)
             }
 
-            positions.append(CGPoint(x: currentX, y: currentY))
-            sizes.append(size)
-            lineIndexes.append(lineIndex)
+            totalHeight = currentY + lineHeight
 
-            currentX += size.width + spacing
-            lineHeight = max(lineHeight, size.height)
-            lineHeights[lineIndex] = lineHeight
-            totalWidth = max(totalWidth, currentX)
+            // Text has a taller line box than most inline formulas. Center each
+            // segment inside its line instead of pinning formulas to the top edge.
+            // This closely follows the visual baseline without changing block math.
+            for index in positions.indices {
+                if breaks.indices.contains(index), breaks[index] { continue }
+                let itemLineHeight = lineHeights[lineIndexes[index]]
+                positions[index].y += (itemLineHeight - sizes[index].height) / 2
+            }
+
+            return (CGSize(width: totalWidth, height: totalHeight), positions)
         }
-
-        totalHeight = currentY + lineHeight
-
-        // Text has a taller line box than most inline formulas. Center each
-        // segment inside its line instead of pinning formulas to the top edge.
-        // This closely follows the visual baseline without changing block math.
-        for index in positions.indices {
-            let itemLineHeight = lineHeights[lineIndexes[index]]
-            positions[index].y += (itemLineHeight - sizes[index].height) / 2
-        }
-
-        return (CGSize(width: totalWidth, height: totalHeight), positions)
     }
 }
