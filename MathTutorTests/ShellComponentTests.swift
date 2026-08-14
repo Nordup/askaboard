@@ -1345,8 +1345,8 @@ final class ShellComponentTests: XCTestCase {
         // Docked, from the leading edge: the one cell the edge takes off the surface.
         XCTAssertEqual(route(.docked, drawer: false, .right, .leadingEdge), .enterFullScreen)
         XCTAssertEqual(
-            route(.docked, drawer: true, .right, .leadingEdge), .none,
-            "an open drawer has the first claim, from the edge as well as from the panel"
+            route(.docked, drawer: true, .right, .leadingEdge), .enterFullScreen,
+            "the edge is a presentation control, and an open drawer does not take it away"
         )
         XCTAssertEqual(
             route(.docked, drawer: false, .left, .leadingEdge), .collapseDock,

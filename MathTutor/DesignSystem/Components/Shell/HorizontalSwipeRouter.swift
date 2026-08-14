@@ -12,7 +12,7 @@ import SwiftUI
 ///
 /// So the table is here, as arithmetic, for the reason `DrawerReveal`'s curves are: a routing
 /// rule that lives inside an `onCommit` closure cannot be regression-tested, and this one has
-/// fourteen cells. The recogniser stays one implementation; this decides what it drives.
+/// thirteen cells. The recogniser stays one implementation; this decides what it drives.
 ///
 /// The table has since grown the other two rungs of the presentation ladder — `enterFullScreen`
 /// from the leading edge and `enterDocked` from the trailing one — and they went in as two rows
@@ -134,13 +134,12 @@ enum HorizontalSwipeRouter {
     /// it refuses Apple Pencil touches at touch-down for the reason the leading zone does.
     static let trailingEdgeZoneWidth: CGFloat = BoardPeekMetrics.width
 
-    /// The whole table. Fourteen reachable cells, and every one of them is stated rather than
+    /// The whole table. Thirteen reachable cells, and every one of them is stated rather than
     /// falling out of a default.
     ///
     /// | presentation | drawer / sidebar | direction | origin | → |
     /// |---|---|---|---|---|
-    /// | docked | closed | right | leadingEdge | `enterFullScreen` |
-    /// | docked | open | right | leadingEdge | `none` |
+    /// | docked | — | right | leadingEdge | `enterFullScreen` |
     /// | docked | — | left | leadingEdge | as `surface` |
     /// | docked | closed | right | surface | `openDrawer` |
     /// | docked | closed | left | surface | `collapseDock` |
@@ -164,12 +163,13 @@ enum HorizontalSwipeRouter {
     ///
     /// Note what the table does **not** contain: a collapse from a docked panel with the drawer
     /// open. The drawer is covering 78% of the panel, so the first left-swipe is unambiguously
-    /// about the drawer, and the collapse is the swipe after it. `enterFullScreen` answers to
-    /// the same precedence from the other side — an open drawer refuses the edge's right-swipe
-    /// too, so a presentation never changes underneath a drawer the learner has not finished
-    /// with. It is the one cell where the leading edge consults a state that lives inside the
-    /// panel it does not overlap, and it earns that by keeping one rule for the whole surface
-    /// rather than two.
+    /// about the drawer, and the collapse is the swipe after it. `enterFullScreen` deliberately
+    /// does **not** share that precedence: the edge's right-swipe is a presentation control, and
+    /// it answers the same whether the drawer is open or closed. The drawer loses nothing by
+    /// it — `BoardScreen` closes the docked drawer on every presentation change anyway, and the
+    /// full-screen state has its own sessions surface, the sidebar — so refusing the swipe
+    /// bought no safety and cost the learner a gesture that visibly did nothing. The drawer's
+    /// first claim is on the surface it covers, not on the edge beside it.
     ///
     /// A **left**-swipe from the leading edge is not a cell of its own: it falls through to
     /// whatever the surface would have answered, so it closes an open drawer and collapses the
@@ -187,7 +187,7 @@ enum HorizontalSwipeRouter {
             // The one cell the edge takes off the surface. Every other docked cell — including
             // every left-swipe from the edge — is the panel's own answer, unchanged.
             if origin == .leadingEdge, direction == .right {
-                return isDrawerOpen ? .none : .enterFullScreen
+                return .enterFullScreen
             }
             switch (isDrawerOpen, direction) {
             case (false, .right): return .openDrawer

@@ -444,7 +444,8 @@ struct BoardScreen: View {
                     height: layout.contentHeight
                 ),
                 isDocked: presentation == .docked,
-                // The one cell of the table the leading edge asks the panel about — see
+                // Read for the edge zone's left-swipe, which defers to an open drawer — the
+                // right-swipe goes full-screen regardless. See
                 // `HorizontalSwipeRouter.transition(...)`.
                 isDrawerOpen: uiState.isSessionsDrawerOpen,
                 drag: dockDrag,

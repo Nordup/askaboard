@@ -124,9 +124,11 @@ struct DockRevealLayer<Panel: View, Dock: View>: View {
     let isDocked: Bool
     /// Whether the panel's own sessions drawer is showing.
     ///
-    /// Read for exactly one cell of the table — the leading edge's right-swipe, which an open
-    /// drawer refuses so that a presentation never changes underneath a drawer the learner has
-    /// not finished with. See `HorizontalSwipeRouter.transition(...)`.
+    /// Read for the leading edge's **left**-swipe, which falls through to the surface's own
+    /// answer: with the drawer open it routes `closeDrawer` — the drawer's claim, not this
+    /// layer's — and only with it closed does it collapse the dock. The right-swipe no longer
+    /// consults it: the edge is a presentation control and goes full-screen either way. See
+    /// `HorizontalSwipeRouter.transition(...)`.
     var isDrawerOpen = false
     /// The gesture in progress, shared with the panel's own pan region. See `DockRevealModel`.
     @ObservedObject var drag: DockRevealModel
