@@ -531,7 +531,8 @@ struct TutorFullScreen: View {
             onVoice: dictation.voiceHandler(text: $text),
             dictation: dictation.composerDictation,
             // Same slot and the same fixed priority as the panel's — see `TutorPanel`.
-            note: attachments.failureNote ?? store.composerNote ?? dictation.noteText,
+            note: attachments.failureNote ?? store.composerNote ?? dictation.noteText
+                ?? store.editingNote,
             onDismissSelection: actions.dismissSelection,
             attachments: attachments.pending,
             onRemoveAttachment: { attachments.remove($0) },

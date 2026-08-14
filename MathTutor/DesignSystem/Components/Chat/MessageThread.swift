@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// One row of the thread.
 ///
@@ -253,6 +254,11 @@ struct MessageThread<Accessory: View>: View {
     /// comment on why a crop's bytes never travel as data on the item). Defaulted so a
     /// gallery specimen or a preview thread, which draws no trail, needs no argument for it.
     var crop: (UUID) -> Data? = { _ in nil }
+    /// The long-press menu's Edit on a learner bubble, handed the message's id. `nil` — the
+    /// default, and what every preview and gallery specimen takes — draws the menu with Copy
+    /// alone: Copy is the row's own business, but an edit rewrites the conversation, and only
+    /// a surface wired to the store can honour that.
+    var onEditMessage: ((UUID) -> Void)? = nil
     /// `btn/orb`, the thread's one non-message child. It belongs to the shell, so the
     /// thread reserves its place rather than drawing it — and the place matters: *"`btn/orb`
     /// is a normal flow child at the end of the message list, so it rides up and down with
@@ -282,7 +288,10 @@ struct MessageThread<Accessory: View>: View {
     private var threadContent: some View {
         VStack(alignment: .leading, spacing: metrics.gap) {
             ForEach(items) { item in
-                MessageRow(item: item, scale: scale, width: column, crop: crop)
+                MessageRow(
+                    item: item, scale: scale, width: column, crop: crop,
+                    onEditMessage: onEditMessage
+                )
             }
             accessory()
         }
@@ -310,6 +319,8 @@ struct MessageRow: View {
     /// from there, one closure rather than one resolved per row, because a closed trail
     /// never needs to read the store at all.
     var crop: (UUID) -> Data? = { _ in nil }
+    /// See `MessageThread`'s property of the same name — threaded straight through.
+    var onEditMessage: ((UUID) -> Void)? = nil
 
     private var metrics: MessageMetrics { .for(scale, width: width ?? scale.contentWidth) }
 
@@ -398,6 +409,9 @@ struct MessageRow: View {
                 // it. Not `SelectionMessageBubble` itself — that brings its own card, and
                 // the chips card is the one this turn draws.
                 StackedMessageBubble(text: item.message.text, metrics: metrics)
+                    // Copy only, for the selection bubble's reason: the files went
+                    // with these words, and words alone cannot resend the turn.
+                    .contextMenu { menuItems(canEdit: false) }
             }
         }
     }
@@ -437,10 +451,46 @@ struct MessageRow: View {
             HStack(spacing: 0) {
                 Spacer(minLength: 0)
                 if item.hasSelection {
+                    // Copy only: a turn that pointed at the board cannot be resent
+                    // faithfully as words alone, so Edit is not offered on it.
                     SelectionMessageBubble(text: item.message.text, metrics: metrics)
+                        .contextMenu { menuItems(canEdit: false) }
                 } else {
                     MessageBubble(text: item.message.text, metrics: metrics)
+                        // The lift takes the bubble's own rounded shape rather than
+                        // its bounding rect — without this the press shows square
+                        // corners around a rounded bubble.
+                        .contentShape(
+                            .contextMenuPreview,
+                            RoundedRectangle(cornerRadius: metrics.bubbleRadius, style: .circular)
+                        )
+                        .contextMenu { menuItems(canEdit: true) }
                 }
+            }
+        }
+    }
+
+    /// The long-press menu on the learner's own words — the one place in the thread the
+    /// student can act on something already sent.
+    ///
+    /// Copy is self-contained: the text is right here, and the pasteboard needs nothing
+    /// from the feature layer. Edit is the wired action — it rewrites the conversation, so
+    /// it exists only where a surface passed `onEditMessage`, and only on a plain text turn
+    /// (`canEdit`): a turn that carried files or a board region cannot be resent as words
+    /// alone, and offering an Edit that silently dropped the picture would be the kind of
+    /// quiet downgrade `BoardScreen.send` is built to refuse.
+    @ViewBuilder
+    private func menuItems(canEdit: Bool) -> some View {
+        Button {
+            UIPasteboard.general.string = item.message.text
+        } label: {
+            Label("Copy", systemImage: "doc.on.doc")
+        }
+        if canEdit, item.attachments.isEmpty, let onEditMessage {
+            Button {
+                onEditMessage(item.message.id)
+            } label: {
+                Label("Edit", systemImage: "pencil")
             }
         }
     }

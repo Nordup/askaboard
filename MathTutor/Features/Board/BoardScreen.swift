@@ -178,6 +178,13 @@ struct BoardScreen: View {
         // never remounted, so it fires on a real switch and never on an appearance — a
         // `task(id:)` on the panel would wipe the draft every time the tutor docked.
         .onChange(of: store.session.id) { _, _ in attachments.clear() }
+        // The armed edit's cancel gesture: the draft emptied by hand. The store
+        // cannot watch the field — the draft is this screen's state — so the
+        // screen reports the emptiness and the store disarms. A send's own
+        // clearing lands here too, harmlessly: the edit was consumed first.
+        .onChange(of: composerText) { _, newValue in
+            if newValue.isEmpty { store.cancelEditing() }
+        }
         // The one place the store, the network client and the live canvas meet.
         // Set here rather than passed per-send so no turn can be the one that
         // forgets the board — see `TutorStore.boardProvider`. `capture` is held
@@ -657,6 +664,7 @@ struct BoardScreen: View {
             toggleSelection: toggleBoardSelection,
             startPlan: startPlan,
             retry: store.retryLastRequest,
+            editMessage: { editMessage($0) },
             openSettings: { isShowingSettings = true },
             // Explicit closures rather than the bound methods, for the reason `resizeHandle`'s
             // `set:` spells out: a `@MainActor`-isolated method reference passed straight into
@@ -851,6 +859,18 @@ struct BoardScreen: View {
         coversAllInk
             ? "the whole board"
             : "the main working area of the board (some ink further out is not shown)"
+    }
+
+    /// The thread's long-press Edit: the sent words come back to the composer
+    /// and the store arms the rewrite. Nothing is cut here — the cut is the
+    /// send's act (`TutorStore.consumePendingEdit`), so a learner who backs
+    /// out has lost nothing. The words land in the field as they were sent,
+    /// replacing whatever draft was there; the note above the pill says the
+    /// state and both ways out of it.
+    private func editMessage(_ id: UUID) {
+        guard let message = store.session.messages.first(where: { $0.id == id }) else { return }
+        composerText = message.text
+        store.beginEditingMessage(id: id)
     }
 
     private func selectSuggestion(_ suggestion: Suggestion) {

@@ -75,6 +75,29 @@ final class TutorStore: ObservableObject {
     /// was never saved.
     @Published private(set) var selectionViews: [UUID: BoardView] = [:]
 
+    /// The learner message an armed Edit will rewrite — set by the thread's
+    /// long-press menu, shown as a note above the composer, and consumed by
+    /// the next send.
+    ///
+    /// Arming destroys nothing: the cut happens inside the send, in
+    /// `consumePendingEdit()`, so backing out costs nothing. Clearing the
+    /// composer is the cancel gesture — the natural way to abandon a
+    /// pre-filled draft — and `BoardScreen` watches its own field for it,
+    /// because the draft is the screen's state, not the store's.
+    @Published private(set) var editingMessageID: UUID?
+
+    /// What the server's transcript must become before the next turn goes
+    /// out — the thread as it stands after an edit's cut, snapshotted at the
+    /// moment of the cut.
+    ///
+    /// Held until a `replaceTranscript` call *succeeds*, not merely until one
+    /// is attempted: the sync and the turn fail together (same network), and
+    /// the retry chip re-runs `requestTutor`, which is where the debt is
+    /// paid. Not persisted — an app killed between a failed sync and its
+    /// retry leaves the stale tail on the server until the session's next
+    /// successful edit, which the design doc accepts as rare.
+    private var pendingTranscriptSync: [TutorMessage]?
+
     let tutorService: any TutorService
     let persistence: SessionPersistence
     /// Where a sent attachment's thumbnail goes. Injected for the reason
@@ -221,6 +244,7 @@ final class TutorStore: ObservableObject {
             return false
         }
         guard ensureTutorAvailable() else { return false }
+        consumePendingEdit()
         session.messages.append(
             TutorMessage(role: .learner, text: trimmed, attachments: attachments.map(\.attachment))
         )
@@ -445,6 +469,7 @@ final class TutorStore: ObservableObject {
         evaluationMessageID = nil
         errorMessage = nil
         composerNote = nil
+        consumePendingEdit()
         let asked = question?.trimmingCharacters(in: .whitespacesAndNewlines)
         let learnerTurn = TutorMessage(
             role: .learner,
@@ -497,6 +522,7 @@ final class TutorStore: ObservableObject {
 
     func sayIDontKnow() {
         guard !isLoading, ensureTutorAvailable() else { return }
+        consumePendingEdit()
         session.messages.append(TutorMessage(role: .learner, text: "I don’t know yet.", signal: .dontKnow))
         persist()
         requestTutor(signal: .dontKnow)
@@ -505,6 +531,64 @@ final class TutorStore: ObservableObject {
     func clearEvaluation() {
         evaluationText = nil
         evaluationMessageID = nil
+    }
+
+    // MARK: - Editing a sent message
+
+    /// The thread's long-press Edit: arm a rewrite of one of the learner's
+    /// own turns. The caller (`BoardScreen.editMessage`) puts the words back
+    /// in the composer; this records which message the next send replaces.
+    ///
+    /// Learner messages only — the menu offers Edit on nothing else, and the
+    /// guard keeps a stray id from arming a cut at a tutor row.
+    func beginEditingMessage(id: UUID) {
+        guard session.messages.contains(where: { $0.id == id && $0.role == .learner }) else {
+            return
+        }
+        editingMessageID = id
+    }
+
+    /// Disarm without cutting anything. The composer emptied to nothing is
+    /// the gesture that reaches here; a session switch disarms in `adopt`.
+    func cancelEditing() {
+        editingMessageID = nil
+    }
+
+    /// Board 15's register for the armed state: what is happening, and both
+    /// ways out of it.
+    static let editingAnEarlierMessage =
+        "You’re editing an earlier message. Sending replaces everything after it; clear the text to cancel."
+
+    /// The armed state as the composer's note slot reads it — `nil` the rest
+    /// of the time, so it sits on the chain's lowest rung and every event
+    /// note outranks it.
+    var editingNote: String? {
+        editingMessageID != nil ? Self.editingAnEarlierMessage : nil
+    }
+
+    /// The cut itself, run by whichever send consumes the armed edit.
+    ///
+    /// Everything from the edited message on is removed — the resent words
+    /// arrive as the appending caller's own new turn — and what each removed
+    /// row anchored goes with it: its `selectionViews` thumbnail, and the
+    /// evaluation card if the turn it pointed at is now gone. The surviving
+    /// prefix is snapshotted for the server, whose transcript must stop where
+    /// the learner's now does; `requestTutor` sends it before the turn
+    /// streams. No `persist()` here — every caller appends and persists as
+    /// its next act, and a cut without its resend is not a state to save.
+    private func consumePendingEdit() {
+        guard let id = editingMessageID else { return }
+        editingMessageID = nil
+        guard let index = session.messages.firstIndex(where: { $0.id == id }) else { return }
+        let removed = session.messages[index...]
+        for message in removed {
+            selectionViews[message.id] = nil
+        }
+        if let evaluationMessageID, removed.contains(where: { $0.id == evaluationMessageID }) {
+            clearEvaluation()
+        }
+        session.messages.removeSubrange(index...)
+        pendingTranscriptSync = Array(session.messages)
     }
 
     func clearDrawing() {
@@ -762,6 +846,11 @@ final class TutorStore: ObservableObject {
         // so the previous session's payload is not a thing this one may re-send.
         retryPayload = RetryPayload()
         selectionViews = [:]
+        // An armed edit and an unpaid transcript cut both name messages in
+        // the thread being put away; against `next` they would cut the wrong
+        // conversation.
+        editingMessageID = nil
+        pendingTranscriptSync = nil
         refreshSessions()
     }
 
@@ -911,6 +1000,27 @@ final class TutorStore: ObservableObject {
         let service = tutorService
         activeRequestTask = Task { [weak self] in
             guard let self else { return }
+            // An edit's cut is owed to the server before this turn may go
+            // out: context is assembled from the server's own rows, so a turn
+            // sent first would be answered from the tail the learner just
+            // removed. On a refusal the turn fails the thread's normal way —
+            // loudly, with the retry chip — and the debt is kept, so the
+            // retry pays it before trying again.
+            if let prefix = self.pendingTranscriptSync {
+                guard await service.replaceTranscript(
+                    sessionID: request.sessionID, messages: prefix
+                ) else {
+                    self.phase = nil
+                    self.isLoading = false
+                    self.isEvaluating = false
+                    self.errorMessage = "I couldn’t update the conversation on the tutor service just now."
+                    self.logger.error("""
+                        Transcript sync failed ahead of a turn; the turn was not sent.
+                        """)
+                    return
+                }
+                self.pendingTranscriptSync = nil
+            }
             var accumulatedText = ""
             var tutorMessageIndex: Int?
             // Measured on the device, not sent by the server: `ActivityTrail.duration`

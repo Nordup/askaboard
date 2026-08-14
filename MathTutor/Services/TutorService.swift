@@ -28,6 +28,19 @@ protocol TutorService: Sendable {
     /// callers — the two moments the learner destroys a session on the device
     /// and expects the tutor not to bring it up again.
     func deleteSession(id: UUID) async
+
+    /// Makes the server's transcript for `sessionID` exactly `messages`.
+    ///
+    /// Sent before the turn that follows an edit-and-resend, so the tutor's
+    /// context stops at the message the learner rewrote — the server builds
+    /// each turn's context from its own rows, never from the request, so a
+    /// device-side cut alone would leave the removed tail in play.
+    ///
+    /// Returns whether the server acknowledged it. The turn must not go out
+    /// on a `false`: it would be answered from a conversation the learner no
+    /// longer sees. `TutorStore.requestTutor` is the only caller and holds
+    /// the prefix until a call succeeds.
+    func replaceTranscript(sessionID: UUID, messages: [TutorMessage]) async -> Bool
 }
 
 extension TutorService {
@@ -38,6 +51,11 @@ extension TutorService {
 
     /// Nothing to forget, for the same reason there is nothing to close.
     func deleteSession(id: UUID) async {}
+
+    /// No transcript held anywhere else, so the device's cut is already the
+    /// whole truth. `true`, so an edit-and-resend against the demo tutor or a
+    /// test double proceeds instead of failing a sync it never needed.
+    func replaceTranscript(sessionID: UUID, messages: [TutorMessage]) async -> Bool { true }
 }
 
 struct TutorServiceRouter: TutorService, Sendable {
@@ -71,6 +89,15 @@ struct TutorServiceRouter: TutorService, Sendable {
     func deleteSession(id: UUID) async {
         guard let configuration = configurationReader() else { return }
         await BackendTutorService(configuration: configuration).deleteSession(id: id)
+    }
+
+    /// Same gate once more — and `true`, not `false`, without a
+    /// configuration: no backend means no second transcript to disagree
+    /// with, which is the protocol default's own reasoning.
+    func replaceTranscript(sessionID: UUID, messages: [TutorMessage]) async -> Bool {
+        guard let configuration = configurationReader() else { return true }
+        return await BackendTutorService(configuration: configuration)
+            .replaceTranscript(sessionID: sessionID, messages: messages)
     }
 }
 

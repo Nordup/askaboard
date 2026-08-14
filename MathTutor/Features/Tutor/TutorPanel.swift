@@ -16,6 +16,10 @@ struct TutorActions {
     let toggleSelection: () -> Void
     let startPlan: () -> Void
     let retry: () -> Void
+    /// The thread's long-press Edit on one of the learner's own turns: put
+    /// the words back in the composer and arm the rewrite. The cut itself
+    /// waits for the send — see `TutorStore.beginEditingMessage`.
+    let editMessage: (UUID) -> Void
     let openSettings: () -> Void
     /// `btn/full-screen` — screens 05/08 → screen 07, through the same flight-layer morph
     /// the edge swipe drives, replayed from rest through the identical curves. An action
@@ -491,7 +495,11 @@ struct TutorPanel: View {
             // large, try a photo of one page at a time"), and this is the lane
             // they are written for: the chip's own label is 84 points wide and
             // would show three words of it.
-            note: attachments.failureNote ?? store.composerNote ?? dictation.noteText,
+            // The editing note is the chain's one *state* — armed until the send
+            // or the cancel — so it takes the lowest rung, under all three
+            // event notes.
+            note: attachments.failureNote ?? store.composerNote ?? dictation.noteText
+                ?? store.editingNote,
             onDismissSelection: actions.dismissSelection,
             onToggleSelection: actions.toggleSelection,
             // `toggleBoardSelection` guards on the board holding ink and silently
@@ -555,7 +563,8 @@ struct TutorThreadView: View {
             // reference, which crashes swift-frontend during IRGen on this toolchain when
             // handed straight to a one-argument closure parameter — see `Composer`'s own
             // `onRemoveAttachment` for the precedent this follows.
-            crop: { id in store.boardCropStore.crop(for: id) }
+            crop: { id in store.boardCropStore.crop(for: id) },
+            onEditMessage: { actions.editMessage($0) }
         ) { accessory }
     }
 

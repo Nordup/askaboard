@@ -14,6 +14,7 @@ import re
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from pydantic import BaseModel, field_validator
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -165,6 +166,72 @@ async def get_session(session_id: uuid.UUID, db: AsyncSession = Depends(db_sessi
             _turn_summary(t) for t in sorted(session.turns, key=lambda t: t.started_at)
         ],
     }
+
+
+class TranscriptMessage(BaseModel):
+    role: str
+    text: str
+    signal: str | None = None
+
+    @field_validator("role")
+    @classmethod
+    def _known_role(cls, value: str) -> str:
+        if value not in {"learner", "tutor", "system"}:
+            raise ValueError("role must be learner, tutor, or system")
+        return value
+
+
+class TranscriptBody(BaseModel):
+    messages: list[TranscriptMessage]
+
+
+@router.put(
+    "/sessions/{session_id}/transcript", status_code=status.HTTP_204_NO_CONTENT
+)
+async def replace_transcript(
+    session_id: uuid.UUID,
+    body: TranscriptBody,
+    db: AsyncSession = Depends(db_session),
+):
+    """The device saying: the conversation is now exactly this.
+
+    Sent when the learner edits an earlier message and resends from it. The
+    device cuts its thread at that message; this call makes the server's
+    `messages` rows match, because `turn.py` assembles every turn's context
+    from these rows and not from the request — without this, the tutor would
+    keep answering from a tail the learner can no longer see.
+
+    A whole-transcript replace rather than a delete-from-seq, deliberately.
+    The two sides drift: a retried turn writes its learner row here twice, so
+    a seq or an ordinal computed on the device can point at the wrong row.
+    The device's thread is the conversation the learner is actually having,
+    so it is the authority, and replacing with it also heals any earlier
+    drift. Transcripts are text-only and small.
+
+    Idempotent by shape — a PUT of the same prefix lands the same rows — so
+    the device can retry one it is not sure about.
+
+    Only `messages` moves. Turns, attachments and episodes are records of
+    what actually happened and are not rewritten by an edit.
+
+    404 for a session that does not exist, for `close`'s reason: a device
+    with the wrong id should find out. A session the backend never saw has no
+    transcript to cut, and the device treats the 404 as exactly that.
+    """
+    if await db.get(Session, session_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown session.")
+    await db.execute(delete(Message).where(Message.session_id == session_id))
+    for seq, message in enumerate(body.messages):
+        db.add(
+            Message(
+                session_id=session_id,
+                seq=seq,
+                role=message.role,
+                text=message.text,
+                signal=message.signal,
+            )
+        )
+    await db.commit()
 
 
 @router.post("/sessions/{session_id}/close", status_code=status.HTTP_204_NO_CONTENT)

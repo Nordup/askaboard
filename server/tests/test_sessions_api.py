@@ -338,3 +338,108 @@ async def test_turn_and_blob_read_back_require_the_device_token(db_app):
 
     assert turn_response.status_code == 401
     assert blob_response.status_code == 401
+
+
+@requires_db
+async def test_replacing_the_transcript_makes_the_prefix_the_whole_story(db_app, db):
+    """`PUT /v1/sessions/{id}/transcript` after an edit-and-resend: the rows
+    become exactly the device's prefix, reseqed from 0, and the cut tail is
+    gone — including a retry's duplicate learner row, which is why this is a
+    replace and not a delete-from-seq.
+    """
+    session = Session(model="gpt-5.6-sol", reasoning_effort="medium")
+    db.add(session)
+    await db.flush()
+    for seq, (role, text) in enumerate([
+        ("learner", "first question"),
+        ("learner", "first question"),  # a retry's duplicate row
+        ("tutor", "first answer"),
+        ("learner", "second question"),
+        ("tutor", "second answer"),
+    ]):
+        db.add(Message(session_id=session.id, seq=seq, role=role, text=text))
+    await db.commit()
+
+    prefix = {
+        "messages": [
+            {"role": "learner", "text": "first question", "signal": "evaluate"},
+            {"role": "tutor", "text": "first answer"},
+        ]
+    }
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        response = await client.put(
+            f"/v1/sessions/{session.id}/transcript", json=prefix, headers=AUTH
+        )
+
+    assert response.status_code == 204
+    rows = (
+        await db.execute(
+            select(Message)
+            .where(Message.session_id == session.id)
+            .order_by(Message.seq)
+        )
+    ).scalars().all()
+    assert [(m.seq, m.role, m.text, m.signal) for m in rows] == [
+        (0, "learner", "first question", "evaluate"),
+        (1, "tutor", "first answer", None),
+    ]
+
+
+@requires_db
+async def test_replacing_with_an_empty_prefix_empties_the_transcript(db_app, db):
+    """An edit of the very first message cuts everything: the prefix is
+    empty, and so — after the PUT — is the transcript."""
+    session = Session(model="gpt-5.6-sol", reasoning_effort="medium")
+    db.add(session)
+    await db.flush()
+    db.add(Message(session_id=session.id, seq=0, role="learner", text="hello"))
+    await db.commit()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        response = await client.put(
+            f"/v1/sessions/{session.id}/transcript",
+            json={"messages": []},
+            headers=AUTH,
+        )
+
+    assert response.status_code == 204
+    remaining = (
+        await db.execute(
+            select(Message).where(Message.session_id == session.id)
+        )
+    ).scalars().all()
+    assert remaining == []
+
+
+@requires_db
+async def test_replacing_an_unknown_sessions_transcript_is_a_404(db_app):
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        response = await client.put(
+            f"/v1/sessions/{uuid.uuid4()}/transcript",
+            json={"messages": []},
+            headers=AUTH,
+        )
+    assert response.status_code == 404
+
+
+@requires_db
+async def test_a_transcript_with_an_unknown_role_is_rejected(db_app, db):
+    session = Session(model="gpt-5.6-sol", reasoning_effort="medium")
+    db.add(session)
+    await db.commit()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        response = await client.put(
+            f"/v1/sessions/{session.id}/transcript",
+            json={"messages": [{"role": "narrator", "text": "no"}]},
+            headers=AUTH,
+        )
+    assert response.status_code == 422

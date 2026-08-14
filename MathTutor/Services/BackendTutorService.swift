@@ -253,6 +253,38 @@ struct BackendTutorService: TutorService, Sendable {
         _ = try? await session.data(for: request)
     }
 
+    /// `PUT {baseURL}/v1/sessions/{id}/transcript` — the conversation is now
+    /// exactly `messages`. Sent ahead of an edit-and-resend's turn; see the
+    /// protocol's own doc for why the turn is gated on the answer.
+    ///
+    /// **Not** fire-and-forget, unlike its two neighbours: a close or a
+    /// delete that never lands degrades gracefully, but a turn sent over an
+    /// unsynced transcript is answered from history the learner just cut. A
+    /// 404 counts as success — the backend never saw this session, so there
+    /// is nothing to cut and the turn about to go out will create it.
+    func replaceTranscript(sessionID: UUID, messages: [TutorMessage]) async -> Bool {
+        let url = configuration.baseURL
+            .appendingPathComponent("v1/sessions/\(sessionID.uuidString)/transcript")
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        request.timeoutInterval = Self.closeTimeout
+        request.setValue("Bearer \(configuration.token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let rows: [[String: Any]] = messages.map { message in
+            var row: [String: Any] = ["role": message.role.rawValue, "text": message.text]
+            if let signal = message.signal { row["signal"] = signal.rawValue }
+            return row
+        }
+        guard let body = try? JSONSerialization.data(withJSONObject: ["messages": rows]) else {
+            return false
+        }
+        request.httpBody = body
+        guard let (_, response) = try? await session.data(for: request),
+              let http = response as? HTTPURLResponse
+        else { return false }
+        return (200..<300).contains(http.statusCode) || http.statusCode == 404
+    }
+
     static func urlRequest(
         for request: TutorRequest,
         turnID: String = UUID().uuidString,
