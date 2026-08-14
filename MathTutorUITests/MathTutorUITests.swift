@@ -77,34 +77,36 @@ final class MathTutorUITests: XCTestCase {
         // Board 07's own rhythm, on the board's own screen. The column's positions are derived
         // now — greeting and grid flow above a bottom-anchored composer instead of sitting at
         // two constants — so these are what says the derivation still lands on the drawing.
+        // The column is centred on the screen itself: `(1376 − 740) ÷ 2 = 318`.
         assertFrame(
             app.buttons["Explain this concept"],
-            CGRect(x: 352, y: 604, width: 360, height: 74),
-            "`Suggestion grid` at 352, 604, in a 2-up of 360 × 74"
+            CGRect(x: 318, y: 604, width: 360, height: 74),
+            "`Suggestion grid` at 318, 604, in a 2-up of 360 × 74"
         )
         assertFrame(
             app.buttons["Give me an example"],
-            CGRect(x: 732, y: 604, width: 360, height: 74),
+            CGRect(x: 698, y: 604, width: 360, height: 74),
             "the second chip is 360 + 20 along"
         )
         assertFrame(
             app.buttons["Create an exercise"],
-            CGRect(x: 352, y: 698, width: 360, height: 74),
+            CGRect(x: 318, y: 698, width: 360, height: 74),
             "the second row is 74 + 20 down"
         )
-        // The wide composer: a 740pt pill at x 352 whose bottom is the content band's 1004.
-        // At the stepped-down 68pt pill, `740 − 8 − 52 = 680` puts the send disc at 1032 and
-        // `(68 − 52) ÷ 2 = 8` at 944 — the disc keeps an even 8pt inset on all three sides.
+        // The wide composer: a 740pt pill at x 318 whose bottom is the content band's 1004.
+        // At the stepped-down 68pt pill, `318 + 740 − 8 − 52 = 998` puts the send disc there
+        // and `(68 − 52) ÷ 2 = 8` at 944 — the disc keeps an even 8pt inset on all three sides.
         assertFrame(
             app.buttons["Send message"],
-            CGRect(x: 1032, y: 944, width: 52, height: 52),
-            "`Composer · wide` is 740 wide at 352, not 740 wide somewhere else"
+            CGRect(x: 998, y: 944, width: 52, height: 52),
+            "`Composer · wide` is 740 wide at 318, not 740 wide somewhere else"
         )
-        // The peek is the full band, flush left — *"the one panel that touches a screen edge."*
+        // The peek is the full band, flush to the trailing edge — *"the one panel that touches
+        // a screen edge."* 45 wide now: `1376 − 45 = 1331`.
         assertFrame(
             app.buttons["Back to the board"],
-            CGRect(x: 0, y: 28, width: 68, height: 976),
-            "`Board peek` at 0, 28"
+            CGRect(x: 1331, y: 28, width: 45, height: 976),
+            "`Board peek` at 1331, 28"
         )
     }
 

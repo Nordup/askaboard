@@ -38,13 +38,13 @@ final class LayoutTests: XCTestCase {
         XCTAssertEqual(l.panelContentWidth, 301, "panelContentWidth")
         XCTAssertEqual(l.contentRight, 1348, "contentRight")
 
-        // Full-screen tutor · peek flush left, 740 column centred past it.
-        XCTAssertEqual(l.peekX, 0, "peekX")
-        XCTAssertEqual(l.peekWidth, 68, "peekWidth")
+        // Full-screen tutor · peek off the trailing edge, 740 column centred on the screen.
+        XCTAssertEqual(l.peekX, 1331, "peekX")
+        XCTAssertEqual(l.peekWidth, 45, "peekWidth")
         XCTAssertEqual(l.columnWidth, 740, "columnWidth")
-        XCTAssertEqual(l.columnMargin, 284, "columnMargin")
-        XCTAssertEqual(l.columnX, 352, "columnX")
-        XCTAssertEqual(l.columnX + l.columnWidth, 1092, "column right edge")
+        XCTAssertEqual(l.columnMargin, 318, "columnMargin")
+        XCTAssertEqual(l.columnX, 318, "columnX")
+        XCTAssertEqual(l.columnX + l.columnWidth, 1058, "column right edge")
 
         // Collapsed dock · 24 from the board's corner.
         XCTAssertEqual(l.collapsedDockWidth, 132, "collapsedDockWidth")
@@ -585,7 +585,11 @@ final class LayoutTests: XCTestCase {
         XCTAssertEqual(l.panelX + l.panelWidth, l.contentRight)
         XCTAssertEqual(l.contentBottom, 768 - 34 - 28)
         XCTAssertEqual(l.contentTop, 59 + 28)
-        XCTAssertEqual(l.peekX, 44, "flush to the edge it is allowed to touch, which is the safe one")
+        XCTAssertEqual(
+            l.peekX,
+            1024 - 44 - 45,
+            "flush to the trailing edge it is allowed to touch, which is the safe one"
+        )
 
         assertNothingIsNegative(l, "large insets")
         assertEverythingLandsInsideTheScreen(l, "large insets")
@@ -650,40 +654,41 @@ final class LayoutTests: XCTestCase {
         }
     }
 
-    /// *"Because the peek occupies the left 68, that column is centred in what remains rather
-    /// than on the screen."* Equal margins inside the region, and never the screen's centre.
-    func testTheReadingColumnCentresPastThePeekAtEverySize() {
+    /// The column centres on the screen itself — equal margins from the safe edges — and the
+    /// board peek never moves it. What the peek does instead is bound the column's width, so
+    /// the two never overlap at any size.
+    func testTheReadingColumnCentresOnTheScreenAtEverySize() {
         for device in Self.everySize {
             let l = device.layout
             guard l.columnWidth > 0 else { continue }
 
-            let leftMargin = l.columnX - (l.peekX + l.peekWidth)
+            let leftMargin = l.columnX - l.safeAreaLeading
             let rightMargin = (l.screenWidth - l.safeAreaTrailing) - (l.columnX + l.columnWidth)
             XCTAssertEqual(leftMargin, rightMargin, accuracy: 0.0001, device.name)
             XCTAssertEqual(leftMargin, l.columnMargin, accuracy: 0.0001, device.name)
             XCTAssertGreaterThanOrEqual(leftMargin, 0, device.name)
 
             XCTAssertLessThanOrEqual(l.columnWidth, DS.Container.column, "never wider than 740 — \(device.name)")
-            XCTAssertNotEqual(
-                l.columnX,
-                (l.screenWidth - l.columnWidth) / 2,
-                "centred in the region, not on the screen — \(device.name)"
+            XCTAssertLessThanOrEqual(
+                l.columnX + l.columnWidth,
+                l.peekX,
+                "the column stays clear of the peek — \(device.name)"
             )
         }
     }
 
-    /// Once the region drops below `740 + 2 × 28` the column stops being 740 and starts being
-    /// the region less one edge inset a side — which is the rule for anything against a screen
-    /// edge, so no new number appears.
-    func testTheColumnShrinksToTheEdgeInsetRatherThanOverflowing() {
+    /// Once the region drops below `740 + 2 × (45 + 28)` the column stops being 740 and
+    /// starts being the region less a peek-width and an edge inset a side — the reservation
+    /// is symmetric because the column stays centred.
+    func testTheColumnShrinksSymmetricallyRatherThanOverflowing() {
         let wide = ScreenLayout(size: CGSize(width: 1024, height: 768))
-        XCTAssertEqual(wide.columnWidth, DS.Container.column, "1024 − 68 − 56 = 900, so 740 still fits")
+        XCTAssertEqual(wide.columnWidth, DS.Container.column, "1024 − 2 × 73 = 878, so 740 still fits")
 
         let narrow = ScreenLayout(size: CGSize(width: 700, height: 1032))
-        XCTAssertEqual(narrow.columnWidth, 700 - 68 - 2 * DS.Space.edge, "576")
-        XCTAssertEqual(narrow.columnMargin, DS.Space.edge)
-        XCTAssertEqual(narrow.columnX, 68 + DS.Space.edge)
-        XCTAssertEqual(narrow.columnX + narrow.columnWidth, 700 - DS.Space.edge)
+        XCTAssertEqual(narrow.columnWidth, 700 - 2 * (45 + DS.Space.edge), "554")
+        XCTAssertEqual(narrow.columnMargin, 45 + DS.Space.edge)
+        XCTAssertEqual(narrow.columnX, 45 + DS.Space.edge)
+        XCTAssertEqual(narrow.columnX + narrow.columnWidth, 700 - 45 - DS.Space.edge)
     }
 
     /// The two lanes the design calls fixed stay fixed, whatever the window does.

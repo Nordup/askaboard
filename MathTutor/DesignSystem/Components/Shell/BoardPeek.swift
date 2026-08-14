@@ -1,21 +1,22 @@
 import SwiftUI
 
 enum BoardPeekMetrics {
-    /// **68 — no token.** Board 02 states the peek's size as "68 × 976 — no token", and only
-    /// the 976 was a screen number: the 68 is the silhouette's own tab width, drawn into the
-    /// path's arcs, and it does not vary with the window.
-    static let width: CGFloat = 68
+    /// The sliver the board keeps on screen — **45, two thirds of the authored 68**. The
+    /// silhouette is still authored at 68 (`authoredWidth`) and scaled in x when drawn, so
+    /// the tab reads the same shape, one third narrower.
+    static let width: CGFloat = 45
+    /// The width the design drew the path at. Every x in `BoardPeekShape.pathData` is in this
+    /// coordinate space; `path(in:)` scales it to whatever the caller frames.
+    static let authoredWidth: CGFloat = 68
     /// The height the design drew, kept as the shape's reference so a specimen and the
     /// pixel diff still have the authored silhouette to compare against. It is the safe band
     /// with nothing reserved at the top — `1032 − 28 − 28`.
     static let referenceHeight: CGFloat = 976
     /// `Board hinge icon`, absolute within the peek.
     ///
-    /// **Unchanged by the mirror, and that is the design's own number rather than an
-    /// oversight.** The glyph is 22 wide in a 68 tab, so `68 − 23 − 22 = 23`: the authored
-    /// offset is already symmetric, and the icon itself is not mirrored — a hinge reads the
-    /// same either way round.
-    static let hingeOrigin = CGPoint(x: 23, y: 22)
+    /// The glyph is 22 wide and stays 22 — icons do not scale with the tab. Centred in the
+    /// 45 tab: `(45 − 22) ÷ 2 = 11.5`. The y is the authored 22.
+    static let hingeOrigin = CGPoint(x: (width - 22) / 2, y: 22)
 
     // MARK: - Edge shadow
 
@@ -86,11 +87,11 @@ struct BoardPeekShape: Shape {
 
     func path(in rect: CGRect) -> Path {
         guard rect.width > 0, rect.height > 0 else { return Path() }
-        // Only the width is ever scaled, and only if a caller frames the peek at something
-        // other than its own 68: the height is built into the path above rather than scaled
-        // into it, which is what keeps the fillets circular at every band height.
+        // Only the width is ever scaled — from the authored 68 to whatever the caller frames,
+        // which is the metrics' 45 in the app. The height is built into the path above rather
+        // than scaled into it, which is what keeps the fillets round at every band height.
         let transform = CGAffineTransform(translationX: rect.minX, y: rect.minY)
-            .scaledBy(x: rect.width / BoardPeekMetrics.width, y: 1)
+            .scaledBy(x: rect.width / BoardPeekMetrics.authoredWidth, y: 1)
         return SVGPath.path(from: Self.pathData(height: rect.height)).applying(transform)
     }
 
@@ -100,11 +101,12 @@ struct BoardPeekShape: Shape {
     }
 }
 
-/// The 68pt sliver of board that stays on screen behind the full-screen tutor.
+/// The 45pt sliver of board that stays on screen behind the full-screen tutor.
 ///
 /// Board 02: *"In the full-screen tutor the board is not gone, it is hinged off-screen — a
-/// 68pt sliver keeps the board present so returning to it feels like closing a door, not
-/// loading a screen."*
+/// sliver keeps the board present so returning to it feels like closing a door, not
+/// loading a screen."* The design drew the sliver at 68; the app now shows two thirds of
+/// that — 45 — so the board peeps in a little less.
 ///
 /// The design's edge shadow is a blurred duplicate of the silhouette, because Paper drops
 /// `box-shadow` on SVG paths. Board 01 rule 17 says outright to *"port the board peek's
@@ -126,7 +128,7 @@ struct BoardPeek: View {
         BoardPeekShape()
             .fill(DS.Color.surfaceCanvas)
             // Sized before anything is layered on it, so the grid and the hinge icon are
-            // placed against the real 68 × band box rather than against whatever the parent
+            // placed against the real 45 × band box rather than against whatever the parent
             // happened to offer.
             .frame(width: BoardPeekMetrics.width, height: height)
             // The grid is drawn full-bleed and clipped to the silhouette, which is how the

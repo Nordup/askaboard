@@ -373,59 +373,62 @@ struct ScreenLayout: Equatable, Sendable {
     /// the safe area, which on the reference device is 0.
     ///
     /// The board hinges off the **trailing** edge now, which is the edge the board itself is on
-    /// in every other state. `1376 − 68 = 1308` on the reference screen.
+    /// in every other state. `1376 − 45 = 1331` on the reference screen.
     var peekX: CGFloat { max(safeAreaLeading, size.width - safeAreaTrailing - Self.peekWidth) }
 
-    /// Fixed by its own artwork: the peek is a board-edge SVG path with a hinge icon at local
-    /// (23, 22), not a lane cut out of the screen.
-    static let peekWidth: CGFloat = 68
+    /// Fixed by its own artwork: the peek is a board-edge SVG path with a hinge icon centred
+    /// in its tab, not a lane cut out of the screen. Sourced from the component so the lane
+    /// arithmetic and the silhouette cannot drift apart.
+    static let peekWidth: CGFloat = BoardPeekMetrics.width
     var peekWidth: CGFloat { Self.peekWidth }
 
-    /// Where the reading column is allowed to live: everything to the left of the peek.
-    /// *"because the peek occupies the trailing 68, that column is centred in what remains
-    /// rather than on the screen."*
+    /// Where the reading column is allowed to live: the whole safe width. The peek no longer
+    /// moves the column — it is a sliver the column stays clear of, not a lane the column is
+    /// centred against.
     var columnRegionX: CGFloat { columnRegionX(reserving: 0) }
     var columnRegionWidth: CGFloat { columnRegionWidth(reserving: 0) }
 
-    /// `--container-column`, or whatever fits — `min(740, region − 2 × 28)`.
+    /// `--container-column`, or whatever fits — `min(740, region − 2 × (peek + 28))`.
     ///
-    /// The subtraction is what stops the column butting into the screen edge once the region
-    /// drops below 740 + 2 × edge: at that point the margins stop being generous and become
-    /// exactly `--space-edge`, which is the rule for a panel against a screen edge anyway. On
-    /// the reference device `min(740, 1308 − 56) = 740`, so nothing changes.
+    /// The subtraction reserves the peek's own width plus `--space-edge` on **both** sides,
+    /// not just the trailing one: the column is centred, so whatever the peek takes on the
+    /// right the symmetry takes on the left. That keeps a narrow screen's column clear of the
+    /// peek without ever un-centring it. On the reference device
+    /// `min(740, 1376 − 2 × 73) = 740`, so nothing changes.
     var columnWidth: CGFloat { columnWidth(reserving: 0) }
 
-    /// `(1376 − 68 − 740) ÷ 2 = 284` — equal margins inside the region, not on the screen.
+    /// `(1376 − 740) ÷ 2 = 318` — equal margins on the screen itself.
     var columnMargin: CGFloat { columnMargin(reserving: 0) }
 
-    /// `0 + (1376 − 68 − 740) ÷ 2 = 284`. Margins 284 / 284.
+    /// `0 + (1376 − 740) ÷ 2 = 318`. Margins 318 / 318 — the screen's own centre.
     var columnX: CGFloat { columnX(reserving: 0) }
 
     /// The same four numbers, with a lane taken off the **leading** side of the region first.
     ///
     /// This is what the full-screen sessions sidebar needs, and it is deliberately the existing
-    /// rule with one more term rather than a second rule. Board 19: *"The chat column re-centers
-    /// in the width that is left of the sidebar and the board peek."* The peek already came off
-    /// the trailing side; the sidebar comes off the leading one; the column is still centred in
-    /// what is left, which is the sentence screen 07 was always written as.
+    /// rule with one more term rather than a second rule. The sidebar comes off the leading
+    /// side because it covers real width; the peek does not — the column centres in what the
+    /// sidebar leaves and ignores the sliver.
     ///
     /// `reserving: 0` is screen 07 exactly, which is why every property above delegates here
-    /// instead of the two spellings living side by side — the closed sidebar has to be
-    /// bit-for-bit the layout that shipped, not a re-derivation of it.
+    /// instead of the two spellings living side by side.
     ///
-    /// On the reference screen with board 19's 372 reserved: region `1308 − 372 = 936`, column
-    /// `min(740, 936 − 56) = 740`, margins `(936 − 740) ÷ 2 = 98`, and `372 + 98 = 470` — which
-    /// is where board 19 draws the greeting and the composer.
+    /// On the reference screen with the sidebar's 296 reserved: region `1376 − 296 = 1080`,
+    /// column `min(740, 1080 − 146) = 740`, margins `(1080 − 740) ÷ 2 = 170`, and
+    /// `296 + 170 = 466` — the centre of what the sidebar leaves.
     func columnRegionX(reserving leading: CGFloat) -> CGFloat {
         safeAreaLeading + max(0, leading)
     }
 
     func columnRegionWidth(reserving leading: CGFloat) -> CGFloat {
-        max(0, peekX - columnRegionX(reserving: leading))
+        max(0, size.width - safeAreaTrailing - columnRegionX(reserving: leading))
     }
 
     func columnWidth(reserving leading: CGFloat) -> CGFloat {
-        max(0, min(DS.Container.column, columnRegionWidth(reserving: leading) - 2 * DS.Space.edge))
+        max(0, min(
+            DS.Container.column,
+            columnRegionWidth(reserving: leading) - 2 * (Self.peekWidth + DS.Space.edge)
+        ))
     }
 
     func columnMargin(reserving leading: CGFloat) -> CGFloat {

@@ -211,12 +211,12 @@ struct ShellGallery: View {
     private var peekSection: some View {
         Section("Board peek") {
             HStack(alignment: .top, spacing: 44) {
-                Specimen("Board peek · as drawn", size: "68 × 936 at x 0 · real shadow, duplicate path deleted") {
+                Specimen("Board peek · as drawn", size: "45 × 936 · real shadow, duplicate path deleted") {
                     BoardPeek(height: BoardPeekMetrics.referenceHeight, onTap: {})
                 }
                 // The tab and both fillets have to come out identical to the specimen beside
                 // it: only the strip between them is allowed to shorten.
-                Specimen("Board peek · short band", size: "68 × \(Self.number(Self.shortBand)) · arcs unscaled") {
+                Specimen("Board peek · short band", size: "45 × \(Self.number(Self.shortBand)) · arcs unscaled") {
                     BoardPeek(height: Self.shortBand, onTap: {})
                 }
             }

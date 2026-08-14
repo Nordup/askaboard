@@ -420,12 +420,17 @@ final class ShellComponentTests: XCTestCase {
 
     // MARK: - Board peek
 
-    func testBoardPeekIsFlushLeftAndSpansTheContentBand() {
-        XCTAssertEqual(BoardPeekMetrics.width, 68, "The tab width is the silhouette's, not the screen's")
+    func testBoardPeekHangsOffTheTrailingEdgeAndSpansTheContentBand() {
+        XCTAssertEqual(BoardPeekMetrics.width, 45, "Two thirds of the authored 68 — the sliver, not the screen")
+        XCTAssertEqual(BoardPeekMetrics.authoredWidth, 68, "The silhouette is still authored at 68")
         XCTAssertEqual(BoardPeekMetrics.referenceHeight, 976)
         for band in Band.all {
             let layout = band.layout
-            XCTAssertEqual(layout.peekX, 0, "\(band.name): board 01 rule 14 — flush left with no 28 inset")
+            XCTAssertEqual(
+                layout.peekX,
+                layout.screenWidth - layout.safeAreaTrailing - BoardPeekMetrics.width,
+                "\(band.name): flush to the trailing safe edge, no 28 inset"
+            )
             XCTAssertEqual(layout.peekWidth, BoardPeekMetrics.width, band.name)
             XCTAssertGreaterThan(layout.contentHeight, BoardPeekShape.minimumHeight, band.name)
             // The peek is the board's edge, so it ends level with where the board ends.
@@ -439,52 +444,62 @@ final class ShellComponentTests: XCTestCase {
         XCTAssertEqual(BoardPeekMetrics.shadowRadius, 5)
         XCTAssertEqual(Elevation.canvasLift.shadowRadius, Elevation.canvasLift.blur / 2)
         XCTAssertEqual(BoardPeekMetrics.shadowOpacity, 0.11)
-        XCTAssertEqual(BoardPeekMetrics.shadowOffset, CGSize(width: 3, height: 2))
+        // The peek hangs off the trailing edge, so the shadow falls inward — the mirror of
+        // the old left-hand strip's `(3, 2)`.
+        XCTAssertEqual(BoardPeekMetrics.shadowOffset, CGSize(width: -3, height: 2))
     }
+
+    /// The x scale from the authored 68 to the drawn 45 — the one factor every horizontal
+    /// coordinate below goes through.
+    private var peekScale: CGFloat { BoardPeekMetrics.width / BoardPeekMetrics.authoredWidth }
 
     func testBoardPeekSilhouetteIsTheDesignsPathAndNotARoundedRectangle() {
         // Re-authoring the path at a height has to reproduce the board's `d` exactly at the
         // height the board drew it at, or the reference screenshot and the shape diverge.
+        // Mirrored in the authoring: the peek hinges off the trailing edge.
         XCTAssertEqual(
             BoardPeekShape.pathData,
-            "M0,0 H50 A18,18 0 0 1 68,18 V46 A18,18 0 0 1 50,64 H46 "
-                + "A18,18 0 0 0 28,82 V958 A18,18 0 0 1 10,976 H0 Z"
+            "M68,0 H18 A18,18 0 0 0 0,18 V46 A18,18 0 0 0 18,64 H22 "
+                + "A18,18 0 0 1 40,82 V958 A18,18 0 0 0 58,976 H68 Z"
         )
 
+        let s = peekScale
         let path = BoardPeekShape().path(
             in: CGRect(x: 0, y: 0, width: BoardPeekMetrics.width, height: BoardPeekMetrics.referenceHeight)
         )
         XCTAssertFalse(path.isEmpty)
-        XCTAssertEqual(path.boundingRect.width, 68, accuracy: 0.5)
+        XCTAssertEqual(path.boundingRect.width, 45, accuracy: 0.5)
         XCTAssertEqual(path.boundingRect.height, 976, accuracy: 0.5)
-        // The notch is the whole point: below the tab the strip is 28 wide, so a point at
-        // x 60 low down has to be outside the silhouette.
-        XCTAssertTrue(path.contains(CGPoint(x: 34, y: 30)), "Inside the 68-wide tab")
-        XCTAssertFalse(path.contains(CGPoint(x: 60, y: 500)), "Outside the 28-wide strip")
-        XCTAssertTrue(path.contains(CGPoint(x: 14, y: 500)), "Inside the 28-wide strip")
+        // The notch is the whole point: below the tab the strip hugs the trailing side, so a
+        // point on the leading side low down has to be outside the silhouette.
+        XCTAssertTrue(path.contains(CGPoint(x: 34 * s, y: 30)), "Inside the tab")
+        XCTAssertFalse(path.contains(CGPoint(x: 20 * s, y: 500)), "Outside the strip, leading side")
+        XCTAssertTrue(path.contains(CGPoint(x: 54 * s, y: 500)), "Inside the strip")
     }
 
     /// The hinge is the feature the board calls load-bearing, and a non-uniform scale to a
     /// shorter band is what would flatten it. Only the strip between the fillets may shorten.
     func testBoardPeekStretchesTheStripAndNeverTheFillets() {
+        let s = peekScale
         for band in Band.all {
             let height = band.layout.contentHeight
             let path = BoardPeekShape().path(
                 in: CGRect(x: 0, y: 0, width: BoardPeekMetrics.width, height: height)
             )
-            XCTAssertEqual(path.boundingRect.width, 68, accuracy: 0.5, band.name)
+            XCTAssertEqual(path.boundingRect.width, 45, accuracy: 0.5, band.name)
             XCTAssertEqual(path.boundingRect.height, height, accuracy: 0.5, band.name)
 
-            // The tab is authored, so these three hold at exactly the same coordinates at
-            // every height — which is the assertion a scaled path fails.
-            XCTAssertTrue(path.contains(CGPoint(x: 34, y: 30)), "\(band.name): inside the 68-wide tab")
-            XCTAssertFalse(path.contains(CGPoint(x: 60, y: 100)), "\(band.name): the tab still ends by y 64")
-            XCTAssertTrue(path.contains(CGPoint(x: 14, y: height / 2)), "\(band.name): inside the 28-wide strip")
-            XCTAssertFalse(path.contains(CGPoint(x: 60, y: height / 2)), "\(band.name): outside the 28-wide strip")
+            // The tab is authored, so these hold at exactly the same coordinates at every
+            // height — which is the assertion a vertically scaled path fails.
+            XCTAssertTrue(path.contains(CGPoint(x: 34 * s, y: 30)), "\(band.name): inside the tab")
+            XCTAssertFalse(path.contains(CGPoint(x: 8 * s, y: 100)), "\(band.name): the tab still ends by y 64")
+            XCTAssertTrue(path.contains(CGPoint(x: 54 * s, y: height / 2)), "\(band.name): inside the strip")
+            XCTAssertFalse(path.contains(CGPoint(x: 20 * s, y: height / 2)), "\(band.name): outside the strip")
 
-            // The bottom fillet keeps r = 18 rather than being squashed with the strip.
-            XCTAssertFalse(path.contains(CGPoint(x: 20, y: height - 2)), "\(band.name): outside the bottom fillet")
-            XCTAssertTrue(path.contains(CGPoint(x: 12, y: height - 6)), "\(band.name): inside the bottom fillet")
+            // The bottom fillet keeps its authored 18pt rise rather than stretching with
+            // the strip.
+            XCTAssertFalse(path.contains(CGPoint(x: 44 * s, y: height - 2)), "\(band.name): outside the bottom fillet")
+            XCTAssertTrue(path.contains(CGPoint(x: 56 * s, y: height - 6)), "\(band.name): inside the bottom fillet")
         }
     }
 
@@ -952,7 +967,7 @@ final class ShellComponentTests: XCTestCase {
     /// **296, where board 19 draws 372.** The board's is 20% wider than its contents need; the
     /// frame keeps its `--space-edge` either side, so the width follows the content column
     /// rather than the other way round.
-    func testTheFullScreenSidebarLeavesTheColumnCentredInWhatItAndThePeekLeave() {
+    func testTheFullScreenSidebarLeavesTheColumnCentredInWhatItLeaves() {
         let layout = ScreenLayout.reference
         XCTAssertEqual(SessionsDrawerMetrics.sidebarWidth, 296, "240 + 2 × 28")
         XCTAssertEqual(SessionsDrawerMetrics.sidebarContentWidth, 240)
@@ -987,16 +1002,16 @@ final class ShellComponentTests: XCTestCase {
         )
 
         let reserved = layout.sessionsSidebarWidth
-        XCTAssertEqual(layout.columnRegionWidth(reserving: reserved), 1012, "1308 − 296")
-        XCTAssertEqual(layout.columnWidth(reserving: reserved), 740, "min(740, 1012 − 56)")
-        XCTAssertEqual(layout.columnMargin(reserving: reserved), 136, "(1012 − 740) ÷ 2")
-        XCTAssertEqual(layout.columnX(reserving: reserved), 432, "296 + 136")
+        XCTAssertEqual(layout.columnRegionWidth(reserving: reserved), 1080, "1376 − 296")
+        XCTAssertEqual(layout.columnWidth(reserving: reserved), 740, "min(740, 1080 − 2 × 73)")
+        XCTAssertEqual(layout.columnMargin(reserving: reserved), 170, "(1080 − 740) ÷ 2")
+        XCTAssertEqual(layout.columnX(reserving: reserved), 466, "296 + 170")
 
         // Reserving nothing is screen 07 unchanged, which is what lets the closed sidebar be
         // the layout that shipped rather than a re-derivation of it.
         XCTAssertEqual(layout.columnX(reserving: 0), layout.columnX)
         XCTAssertEqual(layout.columnWidth(reserving: 0), layout.columnWidth)
-        XCTAssertEqual(layout.columnX, 284, "screen 07, untouched")
+        XCTAssertEqual(layout.columnX, 318, "screen 07 — the screen's own centre")
     }
 
     /// **The drawer's inset is one value on all four sides, and it is the frame's own.**

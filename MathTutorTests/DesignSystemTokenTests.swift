@@ -388,18 +388,27 @@ final class DesignSystemTokenTests: XCTestCase {
         )
     }
 
-    func testReadingColumnCentresPastThePeekNotOnTheScreen() {
-        XCTAssertEqual(ScreenLayout.peekX, 0, "The board peek is flush left, with no edge inset.")
+    func testReadingColumnCentresOnTheScreenRegardlessOfThePeek() {
+        XCTAssertEqual(
+            ScreenLayout.peekX,
+            ScreenLayout.screenWidth - ScreenLayout.peekWidth,
+            "The board peek hangs off the trailing edge, with no edge inset."
+        )
+        XCTAssertEqual(ScreenLayout.peekX, 1331)
 
-        let margin = (ScreenLayout.screenWidth - ScreenLayout.peekWidth - ScreenLayout.columnWidth) / 2
+        let margin = (ScreenLayout.screenWidth - ScreenLayout.columnWidth) / 2
         XCTAssertEqual(ScreenLayout.columnMargin, margin)
-        XCTAssertEqual(ScreenLayout.columnMargin, 284)
+        XCTAssertEqual(ScreenLayout.columnMargin, 318)
 
-        XCTAssertEqual(ScreenLayout.columnX, ScreenLayout.peekWidth + margin)
-        XCTAssertEqual(ScreenLayout.columnX, 352)
-        XCTAssertEqual(ScreenLayout.columnX + ScreenLayout.columnWidth, 1092)
+        XCTAssertEqual(ScreenLayout.columnX, margin, "the screen's own centre — the peek does not move it")
+        XCTAssertEqual(ScreenLayout.columnX, 318)
+        XCTAssertEqual(ScreenLayout.columnX + ScreenLayout.columnWidth, 1058)
 
-        XCTAssertNotEqual(ScreenLayout.columnX, (ScreenLayout.screenWidth - ScreenLayout.columnWidth) / 2)
+        XCTAssertLessThanOrEqual(
+            ScreenLayout.columnX + ScreenLayout.columnWidth,
+            ScreenLayout.peekX,
+            "the column stays clear of the peek"
+        )
     }
 
     // MARK: - Typography conversions

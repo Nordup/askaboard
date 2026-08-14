@@ -25,7 +25,7 @@ import CoreGraphics
 enum ChatScale: String, CaseIterable, Sendable {
     /// Screens 05 and 08 — the 301pt content column inside the 337pt tutor panel.
     case panel
-    /// Screen 07 — the reading column, centred past the board peek. 740 where there is room
+    /// Screen 07 — the reading column, centred on the screen. 740 where there is room
     /// for it.
     case fullScreen
 }

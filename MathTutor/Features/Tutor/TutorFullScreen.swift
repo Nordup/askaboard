@@ -8,12 +8,11 @@ import SwiftUI
 /// responsive view."* So this is its own view rather than the panel under a `GeometryReader`,
 /// and the two share only what the design says they share: `ChatScale`.
 ///
-/// The column's origin is a screen constant *"reserve the 68pt peek, centre a 740pt column in
-/// the remainder"* — which `ScreenLayout` now answers for the screen the app is actually on:
-/// x 284 of 1376, and a narrower column, still centred inside the peek, on anything smaller.
-/// The peek is on the trailing edge in the redesign, and the column is centred all the same —
-/// it is centred in *what the peek leaves*, which is a rule about a region and not about a
-/// side.
+/// The column's origin comes from `ScreenLayout`: a 740pt column centred on the screen
+/// itself — x 318 of 1376 — regardless of the board peek on the trailing edge. The peek is a
+/// sliver the column stays clear of, not a lane it is centred against; on a screen narrow
+/// enough for the two to meet, the column shrinks symmetrically instead of sliding off
+/// centre. With the sessions sidebar open the column re-centres in what the sidebar leaves.
 struct TutorFullScreen: View {
     @EnvironmentObject private var store: TutorStore
     @EnvironmentObject private var uiState: UIState
@@ -626,10 +625,10 @@ struct TutorColumnMetrics: Equatable, Sendable {
     /// `--space-gap`, the smallest designed breathing room in the product.
     static let startGapFloor: CGFloat = DS.Space.gap
 
-    /// `ScreenLayout.columnX(reserving:)` — centred in what is left of the screen once the
-    /// 68pt peek and the sessions sidebar have their places.
+    /// `ScreenLayout.columnX(reserving:)` — centred on the screen, or in what the sessions
+    /// sidebar leaves of it. The board peek does not move this line.
     let x: CGFloat
-    /// `min(740, region − 2 × edge)`.
+    /// `min(740, region − 2 × (peek + edge))`.
     let width: CGFloat
     /// The content band's top and bottom, the same two lines every other screen is cut from.
     let top: CGFloat
