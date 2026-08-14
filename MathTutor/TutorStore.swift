@@ -552,7 +552,8 @@ final class TutorStore: ObservableObject {
     /// everything" were the same act. They are not any more, and this is the
     /// narrower of the two — see `docs/TODO.md` on splitting the control.
     func resetSession() {
-        closeCurrentSession(saving: false)
+        closeCurrentSession(saving: false, notifyingServer: false)
+        discardSessionOnServer(id: session.id)
         persistence.delete(id: session.id)
         adopt(freshSession(), isStored: false)
         persist()
@@ -582,14 +583,24 @@ final class TutorStore: ObservableObject {
     /// Deleting a session that is not there is not an error to report — the
     /// index has drifted from the directory, so it is rebuilt and the list
     /// redrawn, exactly as `openSession(id:)` handles the same drift.
+    ///
+    /// The server is told to forget, never to remember. A delete used to leave
+    /// the backend alone (or worse, close the open session on the way out),
+    /// so the server froze the transcript into an episode and the deleted
+    /// session kept showing up in the tutor's RECENT SESSIONS context. Now
+    /// both paths send `deleteSession(id:)`, and the open-session path
+    /// suppresses the close that `closeCurrentSession` would otherwise send —
+    /// a close racing a delete is a coin flip over whether the session is
+    /// remembered.
     func deleteSession(id: UUID) {
+        discardSessionOnServer(id: id)
         guard id == session.id else {
             persistence.delete(id: id)
             refreshSessions()
             return
         }
 
-        closeCurrentSession(saving: false)
+        closeCurrentSession(saving: false, notifyingServer: false)
         persistence.delete(id: id)
 
         // Read *after* the delete, so the session being deleted cannot be the
@@ -622,7 +633,12 @@ final class TutorStore: ObservableObject {
     /// reply; not cancelling corrupts two sessions. See `docs/TODO.md` — letting
     /// the turn finish into its own session is the better answer and a larger
     /// change than this one.
-    private func closeCurrentSession(saving: Bool) {
+    /// `notifyingServer` exists for the two destructive callers: a delete or a
+    /// reset is about to ask the server to *forget* this session, and the
+    /// close this function would otherwise send asks it to *remember* — the
+    /// two requests race, detached, and either could land last. Every other
+    /// caller leaves it `true`.
+    private func closeCurrentSession(saving: Bool, notifyingServer: Bool = true) {
         // Read before the lines below clear them, and read from these two
         // rather than from `activeRequestTask`: that handle is only cleared
         // when a turn fails to start, so it stays non-nil holding a finished
@@ -644,7 +660,9 @@ final class TutorStore: ObservableObject {
         boardInkSaveTask?.cancel()
         boardInkSaveTask = nil
         boardInkSaveDeadline = nil
-        endSessionOnServer(turnWasInFlight: turnWasInFlight)
+        if notifyingServer {
+            endSessionOnServer(turnWasInFlight: turnWasInFlight)
+        }
     }
 
     /// Tells the backend the learner has left this session, so it can freeze
@@ -675,12 +693,9 @@ final class TutorStore: ObservableObject {
     /// finds out; filling its log with 404s for sessions that were never sent
     /// anywhere would spend that signal for nothing.
     ///
-    /// Reset closes too, though it deletes the session locally a moment later.
-    /// The server keeps its own transcript either way and the sweep would
-    /// extract it within the day regardless, so skipping the close would not
-    /// make a deleted session unremembered — it would only make it remembered
-    /// later. Genuinely forgetting one needs an endpoint that discards rather
-    /// than closes, and there isn't one.
+    /// Reset and delete do not reach here at all any more: they pass
+    /// `notifyingServer: false` and send `discardSessionOnServer(id:)`
+    /// instead, because a destroyed session must be forgotten, not filed.
     private func endSessionOnServer(turnWasInFlight: Bool) {
         guard !turnWasInFlight, usesLiveTutor, hasReachedTheBackend else { return }
         let service = tutorService
@@ -688,6 +703,25 @@ final class TutorStore: ObservableObject {
         // Detached, and its handle deliberately dropped: it has to outlive the
         // switch that triggered it, and nothing on screen is waiting for it.
         Task.detached { await service.closeSession(id: id) }
+    }
+
+    /// Tells the backend to forget a session the learner has destroyed — the
+    /// transcript, the frozen episode, its place in RECENT SESSIONS. The
+    /// learner's extracted memory survives; the server documents that split.
+    ///
+    /// Gated on `usesLiveTutor` alone, not `hasReachedTheBackend`: that guard
+    /// can only speak for the *open* session, and most deletes are of stored
+    /// rows whose history it knows nothing about. A delete for a session the
+    /// backend never saw answers 404, which the service ignores — cheaper
+    /// than being clever and wrong about which sessions have server rows.
+    ///
+    /// Fire-and-forget like `endSessionOnServer`, but note the asymmetry: a
+    /// close that never lands is repaired by the server's sweep, a delete
+    /// that never lands just leaves the session remembered.
+    private func discardSessionOnServer(id: UUID) {
+        guard usesLiveTutor else { return }
+        let service = tutorService
+        Task.detached { await service.deleteSession(id: id) }
     }
 
     /// Whether a turn has ever gone out for the open session.

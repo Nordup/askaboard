@@ -19,6 +19,15 @@ protocol TutorService: Sendable {
     /// backgrounding is not one of them — `TutorStore.closeCurrentSession` is
     /// the single caller and says why at length.
     func closeSession(id: UUID) async
+
+    /// Tells the backend to forget this session outright: the transcript, the
+    /// frozen episode behind the RECENT SESSIONS block, all of it. The
+    /// opposite of `closeSession(id:)`, which asks it to remember.
+    ///
+    /// `TutorStore.deleteSession` and `TutorStore.resetSession` are the only
+    /// callers — the two moments the learner destroys a session on the device
+    /// and expects the tutor not to bring it up again.
+    func deleteSession(id: UUID) async
 }
 
 extension TutorService {
@@ -26,6 +35,9 @@ extension TutorService {
     /// transcript, so the demo tutor and the test doubles inherit this instead
     /// of each writing the same empty body.
     func closeSession(id: UUID) async {}
+
+    /// Nothing to forget, for the same reason there is nothing to close.
+    func deleteSession(id: UUID) async {}
 }
 
 struct TutorServiceRouter: TutorService, Sendable {
@@ -53,6 +65,12 @@ struct TutorServiceRouter: TutorService, Sendable {
     func closeSession(id: UUID) async {
         guard let configuration = configurationReader() else { return }
         await BackendTutorService(configuration: configuration).closeSession(id: id)
+    }
+
+    /// Same gate again: no configuration means no backend row to delete.
+    func deleteSession(id: UUID) async {
+        guard let configuration = configurationReader() else { return }
+        await BackendTutorService(configuration: configuration).deleteSession(id: id)
     }
 }
 

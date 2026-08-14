@@ -1,9 +1,14 @@
 import uuid
+from datetime import datetime, timezone
 
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 
 from app.store.blobs import LocalBlobStore
-from app.store.models import Attachment, LLMCall, Message, Session, ToolCall, Turn
+from app.store.models import (
+    KC, Attachment, Episode, Learner, LLMCall, MemoryAtom, Message, Observation,
+    Session, ToolCall, Turn,
+)
 from tests.conftest import requires_db
 
 AUTH = {"Authorization": "Bearer test-token"}
@@ -56,6 +61,121 @@ async def test_read_back_requires_the_device_token(db_app):
         transport=ASGITransport(app=db_app), base_url="http://test"
     ) as client:
         assert (await client.get("/v1/sessions")).status_code == 401
+
+
+@requires_db
+async def test_deleting_a_session_forgets_it_but_keeps_the_learner(db_app, db):
+    """The whole point of `DELETE /v1/sessions/{id}`: the episode behind the
+    RECENT SESSIONS block goes, the session's own rows go (so the sweep
+    cannot quietly re-record it from the surviving messages), and the
+    learner's extracted memory and measured evidence stay.
+    """
+    learner = Learner(display_name="Test learner")
+    kc = KC(code=f"T.{uuid.uuid4().hex[:8]}", title="t", description="t", grade="8")
+    db.add_all([learner, kc])
+    await db.flush()
+
+    session = Session(model="gpt-5.6-sol", reasoning_effort="medium")
+    db.add(session)
+    await db.flush()
+    db.add(Message(session_id=session.id, seq=0, role="learner", text="hi"))
+
+    turn = Turn(
+        id=uuid.uuid4(), session_id=session.id, status="ok",
+        model="gpt-5.6-sol", reasoning_effort="medium",
+    )
+    db.add(turn)
+    await db.flush()
+    call = LLMCall(turn_id=turn.id, seq=0, model="gpt-5.6-sol", request={})
+    db.add(call)
+    await db.flush()
+    db.add(ToolCall(turn_id=turn.id, llm_call_id=call.id, name="remember"))
+    db.add(Attachment(
+        turn_id=turn.id, kind="board_full", blob_key="sha256:" + "0" * 64,
+        sha256="0" * 64, bytes=1, content_type="image/png",
+    ))
+    db.add(Episode(
+        learner_id=learner.id, session_id=session.id, transcript="learner: hi",
+        digest="Said hi.", message_count=1, started_at=session.started_at,
+    ))
+    atom = MemoryAtom(
+        learner_id=learner.id, text="Likes teal.", category="preference",
+        source_session_id=session.id,
+    )
+    observation = Observation(
+        learner_id=learner.id, turn_id=turn.id, kc_id=kc.id,
+        weight=1.0, outcome=1.0, reliability=0.9, kind="worked_problem",
+    )
+    db.add_all([atom, observation])
+    await db.commit()
+    # Plain values, read while the instances are live: `expire_all` below
+    # turns every later attribute access into a lazy refresh, and refreshing
+    # a deleted row from an async session raises MissingGreenlet.
+    session_id = session.id
+
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        response = await client.delete(f"/v1/sessions/{session_id}", headers=AUTH)
+
+    assert response.status_code == 204
+    # The delete ran through the app's own session; without this, the reads
+    # below serve this session's identity-map copies (expire_on_commit=False)
+    # and the nulled `Observation.turn_id` looks unchanged.
+    db.expire_all()
+    for model in (Session, Message, Turn, LLMCall, ToolCall, Attachment, Episode):
+        assert (await db.execute(select(model))).scalars().first() is None, model
+
+    kept_atom = (await db.execute(select(MemoryAtom))).scalar_one()
+    assert kept_atom.text == "Likes teal."
+    assert kept_atom.source_session_id == session_id
+    kept_observation = (await db.execute(select(Observation))).scalar_one()
+    assert kept_observation.turn_id is None
+
+
+@requires_db
+async def test_deleting_an_unknown_session_is_a_404(db_app):
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        response = await client.delete(f"/v1/sessions/{uuid.uuid4()}", headers=AUTH)
+    assert response.status_code == 404
+
+
+@requires_db
+async def test_deleting_a_purged_sessions_leftover_episode(db_app, db):
+    """An episode deliberately outlives its session (`Episode.session_id` is
+    not a foreign key), so a delete that arrives after the session rows are
+    gone must still remove the episode — that row alone is what keeps the
+    session in RECENT SESSIONS.
+    """
+    learner = Learner(display_name="Test learner")
+    db.add(learner)
+    await db.flush()
+    session_id = uuid.uuid4()
+    db.add(Episode(
+        learner_id=learner.id, session_id=session_id, transcript="learner: hi",
+        digest="Said hi.", message_count=1,
+        started_at=datetime.now(timezone.utc),
+    ))
+    await db.commit()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        response = await client.delete(f"/v1/sessions/{session_id}", headers=AUTH)
+
+    assert response.status_code == 204
+    assert (await db.execute(select(Episode))).scalars().first() is None
+
+
+@requires_db
+async def test_deleting_a_session_requires_the_device_token(db_app):
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        response = await client.delete(f"/v1/sessions/{uuid.uuid4()}")
+    assert response.status_code == 401
 
 
 @requires_db

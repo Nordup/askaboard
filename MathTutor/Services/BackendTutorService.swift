@@ -229,6 +229,30 @@ struct BackendTutorService: TutorService, Sendable {
         _ = try? await session.data(for: request)
     }
 
+    /// `DELETE {baseURL}/v1/sessions/{id}` — the device saying this session
+    /// should be forgotten, not remembered.
+    ///
+    /// Fire-and-forget for the same reasons as `closeSession(id:)`, with one
+    /// asymmetry worth naming: there is no sweep behind this one. A close that
+    /// never arrives is repaired by `jobs.sweep_abandoned_sessions`; a delete
+    /// that never arrives simply leaves the session remembered, which is the
+    /// state the learner was already in before they deleted it. A 404 is the
+    /// common case for a session that never reached the backend at all, and is
+    /// deliberately ignored.
+    ///
+    /// See `server/app/api/sessions.py:delete_session` for exactly what is
+    /// removed (the episode and the session's rows) and what is kept (the
+    /// learner's extracted memory).
+    func deleteSession(id: UUID) async {
+        let url = configuration.baseURL
+            .appendingPathComponent("v1/sessions/\(id.uuidString)")
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.timeoutInterval = Self.closeTimeout
+        request.setValue("Bearer \(configuration.token)", forHTTPHeaderField: "Authorization")
+        _ = try? await session.data(for: request)
+    }
+
     static func urlRequest(
         for request: TutorRequest,
         turnID: String = UUID().uuidString,

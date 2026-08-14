@@ -14,7 +14,7 @@ import re
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -23,7 +23,9 @@ from app.config import get_settings
 from app.memory.jobs import schedule_session_close
 from app.store.blobs import LocalBlobStore
 from app.store.db import db_session
-from app.store.models import Attachment, LLMCall, Message, Session, ToolCall, Turn
+from app.store.models import (
+    Attachment, Episode, LLMCall, Message, Observation, Session, ToolCall, Turn,
+)
 
 router = APIRouter(prefix="/v1", dependencies=[Depends(require_device_token)])
 
@@ -198,6 +200,75 @@ async def close_session(
     if await db.get(Session, session_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown session.")
     await schedule_session_close(session_id)
+
+
+@router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_session(
+    session_id: uuid.UUID, db: AsyncSession = Depends(db_session)
+):
+    """The device saying this session should be forgotten, not remembered.
+
+    `close` freezes a session into an `Episode`; this is the opposite act, and
+    it exists because deleting a session on the device used to do nothing
+    here — the server closed it anyway (or the sweep did), and the deleted
+    session kept appearing in the RECENT SESSIONS block of every later turn.
+
+    What it removes, in one transaction so a retry can never see half of it:
+
+    - the `Episode`, which is the row `retrieve.recent_episodes` renders into
+      RECENT SESSIONS — this is the visible fix;
+    - the session's own rows (`messages`, `turns`, `llm_calls`, `tool_calls`,
+      `attachments`, and the `sessions` row itself). Removing the messages is
+      load-bearing, not tidiness: `sweep_abandoned_sessions` selects sessions
+      that have messages and no episode, so an episode deleted alone would be
+      quietly re-recorded within the hour.
+
+    What it deliberately keeps: `memory_atoms`, the learner profile, and
+    `observations`. Extracted facts and measured mastery are about the
+    learner, not the session, and the schema already says a purge costs the
+    citation and never the fact (`MemoryAtom.source_session_id` is not a
+    foreign key for exactly this reason). Observations lose only their
+    `turn_id` back-reference, which is nullable by design. Blobs stay too:
+    the store is content-addressed and shared across sessions, so unreferenced
+    bytes are a cleanup job's problem, not this request's.
+
+    404 when nothing exists under this id — neither a session nor a leftover
+    episode — for the same reason `close` answers 404: a device with the
+    wrong id should find out. The device treats delete as fire-and-forget, so
+    a 404 for a session that never reached the backend costs a log line and
+    nothing else.
+    """
+    session = await db.get(Session, session_id)
+    episode_exists = (await db.execute(
+        select(Episode.id).where(Episode.session_id == session_id).limit(1)
+    )).scalar_one_or_none() is not None
+    if session is None and not episode_exists:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown session.")
+
+    turn_ids = (await db.execute(
+        select(Turn.id).where(Turn.session_id == session_id)
+    )).scalars().all()
+
+    if turn_ids:
+        await db.execute(
+            update(Observation)
+            .where(Observation.turn_id.in_(turn_ids))
+            .values(turn_id=None)
+        )
+        await db.execute(delete(ToolCall).where(ToolCall.turn_id.in_(turn_ids)))
+        await db.execute(delete(LLMCall).where(LLMCall.turn_id.in_(turn_ids)))
+        await db.execute(
+            delete(Attachment).where(Attachment.turn_id.in_(turn_ids))
+        )
+    await db.execute(
+        delete(Attachment).where(Attachment.session_id == session_id)
+    )
+    await db.execute(delete(Message).where(Message.session_id == session_id))
+    await db.execute(delete(Turn).where(Turn.session_id == session_id))
+    await db.execute(delete(Episode).where(Episode.session_id == session_id))
+    if session is not None:
+        await db.delete(session)
+    await db.commit()
 
 
 @router.get("/turns/{turn_id}")
