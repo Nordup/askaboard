@@ -174,9 +174,12 @@ extension ThreadMetrics {
 ///   chips' `shadow/card` are the content's visible bounds; the column is only its layout
 ///   slot, and a container that clips to the slot cuts them off down a hard vertical line.
 ///   See `ThreadMetrics.bleed`.
-/// - **Slack lands at the anchored end's far side** — `justify-content: flex-end` for the
-///   thread and the reading column's start block, whose content sits on the bottom of the
-///   band; the panel's start chain is measured from the controls row and anchors top.
+/// - **The rest position is offset zero, in both modes.** The panel's start chain anchors
+///   top and rests on its own head. The thread reads bottom-anchored — `justify-content:
+///   flex-end`, the newest message on the composer — but gets there by inversion rather
+///   than by a bottom anchor: see `Anchor.newestFirst`. There is deliberately no
+///   `defaultScrollAnchor` here any more; an anchored rest position over lazily estimated
+///   content is a search, and the search is what used to come up empty.
 /// - **It bounces only when it scrolls.** A fill that fits its band is stationary, so a drag
 ///   cannot pull it past its own clip and show the edge.
 /// - **No `scrollDisabled` of its own, deliberately.** Board 18's intent lock suspends this
@@ -188,10 +191,30 @@ extension ThreadMetrics {
 /// clearances as padding. That is what makes an overflowing fill scroll off the surface's own
 /// edge — under a fade or past the screen — instead of clipping at a line the eye can find.
 struct ChatScrollColumn<Content: View>: View {
-    /// Which end of the band the content is anchored on, and where the scroll rests.
+    /// Which way the band reads, and what offset zero means in it.
     enum Anchor {
+        /// Content anchored on the band's head; the rest position shows it. The start fills.
         case top
-        case bottom
+        /// The inverted chat scroller. The scroll view is flipped vertically, so the
+        /// content's layout top renders at the visual bottom: the caller lays its children
+        /// **newest-first** and counter-flips each one back upright. Offset zero — a
+        /// scroller's natural rest, no anchor needed — *is* the newest content, and the rows
+        /// a lazy stack builds first are exactly the rows that rest position shows.
+        ///
+        /// This replaced a `.bottom` cell that anchored an upright, oldest-first thread with
+        /// `defaultScrollAnchor(.bottom)`. That rest position is a *search*: the scroller
+        /// has to find the content's bottom across heights a lazy stack has only estimated,
+        /// and on iOS 17 the anchored window could land on rows the stack never built — a
+        /// mounted thread showing nothing at all until a drag forced realization, which is
+        /// the intermittent white chat this type is documented against. Inversion removes
+        /// the search rather than winning the race: nothing about offset zero depends on an
+        /// estimate.
+        ///
+        /// The flip wraps the SwiftUI scroll view from outside, so everything mechanical —
+        /// offsets, insets, laziness windows, the frames a test reads — stays in plain
+        /// unflipped layout space. Only the rendering and the touch mapping are mirrored,
+        /// and the caller's counter-flip squares the rendering.
+        case newestFirst
     }
 
     /// The column the content is laid out in.
@@ -199,7 +222,9 @@ struct ChatScrollColumn<Content: View>: View {
     /// How far the clip sits outside the column on each side. A bleed, not a wider column:
     /// no content moves, and nothing but glow and shadow is drawn in it.
     var bleed: CGFloat = ThreadMetrics.bleed
-    var anchor: Anchor = .bottom
+    /// Stated by every caller. A default hid the last architecture's `.bottom` in plain
+    /// sight; which way a band reads is the one thing its owner must say.
+    let anchor: Anchor
     @ViewBuilder var content: () -> Content
 
     /// The box the scroller clips to: the column plus the bleed on both sides.
@@ -210,19 +235,21 @@ struct ChatScrollColumn<Content: View>: View {
             ScrollView(.vertical, showsIndicators: false) {
                 content()
                     .frame(width: width, alignment: .leading)
-                    // The content is at least as tall as the band and sits at the anchored
-                    // end of it, so slack collects at the other end instead of beside the
-                    // anchor.
-                    .frame(
-                        minHeight: proxy.size.height,
-                        alignment: anchor == .bottom ? .bottom : .top
-                    )
+                    // The content is at least as tall as the band and sits at its layout
+                    // top. For `.top` that is the anchored end itself. For `.newestFirst`
+                    // the flip renders layout-top at the visual bottom, so a short thread
+                    // still sits on the composer and slack still collects at the visual
+                    // top — `justify-content: flex-end` as a consequence of the flip, not
+                    // of an anchor.
+                    .frame(minHeight: proxy.size.height, alignment: .top)
                     // Centres the column in the bled box, so the scroll content is exactly
                     // as wide as the scroll view and nothing offers to scroll sideways.
                     .frame(width: clipWidth)
             }
-            .defaultScrollAnchor(anchor == .bottom ? .bottom : .top)
             .scrollBounceBehavior(.basedOnSize)
+            // The inversion itself — see `Anchor.newestFirst`. Applied to the scroll view,
+            // not inside it, so the scroller's own machinery never sees the flip.
+            .scaleEffect(x: 1, y: anchor == .newestFirst ? -1 : 1)
             // A scroll view clips to its bounds, and that is the whole reason this frame is
             // here: clipping to the column would cut the halos and shadows down their edges.
             .frame(width: clipWidth, height: proxy.size.height)
@@ -272,7 +299,9 @@ struct MessageThread<Accessory: View>: View {
     var body: some View {
         // `justify-content: flex-end`, the bleed clip and the hidden indicators are all
         // the container's — see `ChatScrollColumn`, which the start states run in too.
-        ChatScrollColumn(width: metrics.width, bleed: metrics.bleed) {
+        // `.newestFirst` is the inverted chat scroller; everything below builds its
+        // content newest-first and counter-flipped, which is that mode's contract.
+        ChatScrollColumn(width: metrics.width, bleed: metrics.bleed, anchor: .newestFirst) {
             threadContent
         }
         // No fade here, and that is the change: it used to be this view's last child. Board
@@ -284,19 +313,64 @@ struct MessageThread<Accessory: View>: View {
         // whole reason there is anything to mask.
     }
 
-    /// The list itself.
+    /// The list itself — laid out newest-first inside the inverted scroller.
+    ///
+    /// The scroller is flipped (`ChatScrollColumn.Anchor.newestFirst`), so layout-top is the
+    /// visual bottom: the newest message is the first row, the rest position — offset zero,
+    /// no anchor, no estimate — shows it, and the lazy stack realizes from the newest
+    /// *backwards*. History is built only when the learner scrolls for it, which is what
+    /// keeps a long session scrolling on an iPad: every row here carries a SwiftUI hosting
+    /// bridge per formula, and a stack that materializes them all keeps every formula-backed
+    /// `MTMathUILabel` alive and re-measured on layout passes while offscreen. It is also
+    /// what makes the white mount structurally impossible — the rows the lazy stack builds
+    /// first are the rows the rest position shows, on every mount, whatever the history's
+    /// heights turn out to be.
+    ///
+    /// Each row is counter-flipped individually. It must be the row and not a group: a row
+    /// has to stay a direct child of the lazy stack to be lazily realized, and a single flip
+    /// per direct child is what puts every glyph upright while the reversed `ForEach` sets
+    /// the reading order.
     private var threadContent: some View {
-        VStack(alignment: .leading, spacing: metrics.gap) {
-            ForEach(items) { item in
+        LazyVStack(alignment: .leading, spacing: metrics.gap) {
+            accessoryBlock
+            ForEach(items.reversed()) { item in
                 MessageRow(
                     item: item, scale: scale, width: column, crop: crop,
                     onEditMessage: onEditMessage
                 )
+                .scaleEffect(x: 1, y: -1)
             }
-            accessory()
         }
-        .padding(.top, metrics.topPadding)
-        .padding(.bottom, metrics.bottomPadding)
+        // The metrics keep their visual meaning; the flip decides which layout edge carries
+        // them. `bottomPadding` clears the composer at the visual bottom — layout top here —
+        // and `topPadding` is the air above the oldest message at the visual top, which is
+        // the layout bottom.
+        .padding(.top, metrics.bottomPadding)
+        .padding(.bottom, metrics.topPadding)
+    }
+
+    /// The accessory, counter-flipped as one block.
+    ///
+    /// One flip for the group rather than one per child: a group flipped once inside a
+    /// flipped scroller is mirrored twice, so its children keep exactly the order and
+    /// orientation the design states — plan, then failure, then the thinking line, the orb
+    /// at the tail — while the block as a whole sits at layout top, which is the visual
+    /// bottom, where the tail of the conversation lives. Flipping each child instead would
+    /// read them back to the learner in reverse.
+    ///
+    /// The `EmptyView` gate keeps a specimen thread's geometry honest. A wrapped-empty
+    /// accessory would still be a zero-height child of the lazy stack, and the stack would
+    /// spend a message gap on each side of it — 22 stray points between the newest message
+    /// and the composer clearance. The app itself never takes the gate: its accessory always
+    /// ends in the thread orb, which is presence, never absent.
+    @ViewBuilder
+    private var accessoryBlock: some View {
+        if Accessory.self != EmptyView.self {
+            VStack(alignment: .leading, spacing: metrics.gap) {
+                accessory()
+            }
+            .scaleEffect(x: 1, y: -1)
+        }
     }
 }
 
