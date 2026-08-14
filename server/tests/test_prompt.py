@@ -1,48 +1,44 @@
+import hashlib
+
 from app.attachments.parts import UploadPart
 from app.tutor.prompt import SYSTEM_PROMPT, compose_user_prompt
 
 
-def test_system_prompt_no_longer_mentions_the_json_envelope():
-    assert "strict JSON schema" not in SYSTEM_PROMPT
-    assert "`reply`" not in SYSTEM_PROMPT
+def test_system_prompt_is_the_unchanged_experimental_draft():
+    assert hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest() == (
+        "26dbae9e59c2e35e55a0b8825234475b988951b23493d2218b3d3053e171dfa0"
+    )
 
 
-def test_system_prompt_directs_the_workspace_through_the_tool():
-    assert "set_workspace" in SYSTEM_PROMPT
+def test_system_prompt_requests_chatgpt_style_math_delimiters():
+    assert "Write replies as polished Markdown" in SYSTEM_PROMPT
+    assert "inline math inside `\\( ... \\)`" in SYSTEM_PROMPT
+    assert "display math inside `\\[ ... \\]`" in SYSTEM_PROMPT
+    assert "instead of showing raw source" in SYSTEM_PROMPT
 
 
-def test_system_prompt_requires_a_look_before_correcting_but_allows_standalone_diagrams():
-    assert "before grading, correcting, or placing content relative to the learner’s writing" in SYSTEM_PROMPT
-    assert "a requested standalone exercise or diagram may be drawn directly on an empty board" in SYSTEM_PROMPT
-    assert "fit a new standalone visual inside it with a clear margin" in SYSTEM_PROMPT
-    assert "Always inspect the board with `view_board` before correcting" not in SYSTEM_PROMPT
+def test_system_prompt_contains_every_draft_section_and_tool():
+    for heading in (
+        "# ABOUT",
+        "## UNDERSTAND THE USER",
+        "## GOAL",
+        "## KINDS OF OBJECTIVES",
+        "## BOARD",
+        "## RESEARCH",
+        "## TOOLS",
+    ):
+        assert heading in SYSTEM_PROMPT
 
-
-def test_system_prompt_describes_the_compact_exercise_layout_contract():
-    assert "recommended_tutor_rect" in SYSTEM_PROMPT
-    assert "reserved_learner_work_rect" in SYSTEM_PROMPT
-    assert "placement budget" in SYSTEM_PROMPT
-    assert "35–50% of visible width" in SYSTEM_PROMPT
-    assert "leave `reserved_learner_work_rect` completely clear" in SYSTEM_PROMPT
-
-
-def test_system_prompt_describes_paper_style_raw_svg_behavior():
-    assert "For simple editable diagrams use ordinary primitives" in SYSTEM_PROMPT
-    assert "complex multi-part illustrations use the raw SVG element" in SYSTEM_PROMPT
-    assert "complete SVG document" in SYSTEM_PROMPT
-    assert "paths, gradients, masks, filters" in SYSTEM_PROMPT
-    assert "Keep each SVG document compact" in SYSTEM_PROMPT
-    assert "revise it by replacing that same id" in SYSTEM_PROMPT
-    assert "exact string and interpreted locally" in SYSTEM_PROMPT
-    assert "sanitize" not in SYSTEM_PROMPT
-
-
-def test_system_prompt_keeps_the_checking_work_rule():
-    assert "Checking work is not the same as being asked for the answer." in SYSTEM_PROMPT
-
-
-def test_system_prompt_keeps_the_plain_text_math_rule():
-    assert "avoid LaTeX dollar-sign delimiters" in SYSTEM_PROMPT
+    for tool in (
+        "set_workspace",
+        "view_board",
+        "update_board",
+        "remember",
+        "search_memory",
+        "recent_sessions",
+        "record_evidence",
+    ):
+        assert tool in SYSTEM_PROMPT
 
 
 def test_user_prompt_marks_the_transcript_as_data():
@@ -75,45 +71,6 @@ def test_dont_know_signal_adds_its_section():
         image_region=None, has_image=False, signal="dontKnow",
     )
     assert "I don’t know" in prompt
-
-
-def test_system_prompt_pins_the_curly_quotes_around_how_is_this_so_far():
-    # Paragraph 5 ("Checking work is not the same...") quotes three learner
-    # phrases with curly double quotes (U+201C/U+201D), not straight ones.
-    assert "“how is this so far”" in SYSTEM_PROMPT
-
-
-def test_system_prompt_pins_the_maths_notation():
-    # Paragraph 3's plain-text-math example must survive with the real
-    # superscript-two and radical characters, not ASCII "^2" / "sqrt".
-    assert "x² + y² = z²" in SYSTEM_PROMPT
-    assert "√2" in SYSTEM_PROMPT
-
-
-def test_system_prompt_has_no_ascii_normalised_lookalikes():
-    # No straight apostrophe, straight double quote, or "--" stand-in should
-    # ever creep in — every curly apostrophe/quote and every em-dash in the
-    # prompt is a deliberate typographic choice, not an ASCII fallback.
-    assert SYSTEM_PROMPT.count("'") == 0
-    assert SYSTEM_PROMPT.count('"') == 0
-    assert SYSTEM_PROMPT.count("--") == 0
-
-
-def test_system_prompt_pins_the_em_dash_count():
-    # One em-dash in the teaching paragraph ("...not a delay — it is how the
-    # teaching gets calibrated."), one in the answer policy ("...plainly and
-    # completely — the prohibition..."), one in paragraph 3 ("...ordinary prose
-    # — it is streamed..."), two in the board paragraph ("...any region of it —
-    # give x, y, width and height...", "...the tool will tell you so — say
-    # that plainly..."), one in the memory paragraph ("...narrate a lookup —
-    # just teach someone you already know."), and two in the checking-work
-    # paragraph ("...they have already done — “how is this so far”...",
-    # "...simply sent you — they are asking..."). The count is pinned to catch
-    # ASCII normalisation, not to forbid new prose, so it moves with deliberate
-    # additions.
-    #
-    assert "—" in SYSTEM_PROMPT
-    assert SYSTEM_PROMPT.count("—") == 8
 
 
 def _prompt(**overrides):

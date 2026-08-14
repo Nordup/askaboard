@@ -95,6 +95,8 @@ network cannot — it needs the Mac's actual LAN address, which only resolves
 if the server is listening on every interface. Don't "fix" this to
 `127.0.0.1`; that quietly breaks the physical-device path described next.
 
+**The tutor prompt ships from the backend, not from the app.** The production system prompt is [`app/tutor/prompt.py`](app/tutor/prompt.py); installing or rebuilding the iPad app does not update it. `scripts/run-server.sh` starts uvicorn with `--reload`, so a process started that way picks up `prompt.py` edits automatically. Any backend process started without `--reload` (for example the tailnet host) must be restarted before a prompt change takes effect. Verify against a real trace, not by reading code: run one `POST /v1/turn`, then `GET /v1/turns/{id}` with the same `DEVICE_TOKEN` and inspect `llm_calls[].request` — that endpoint records the exact request JSON the provider received.
+
 ### Reaching the service
 
 - **iOS Simulator**: `http://localhost:8080`. Simulator and Mac share a

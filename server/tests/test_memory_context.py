@@ -1,8 +1,13 @@
 import pytest
 
 from app.tutor.context import assemble_context
-from app.tutor.prompt import SYSTEM_PROMPT, compose_user_prompt
-from app.tutor.tools import RECENT_SESSIONS_TOOL
+from app.tutor.prompt import compose_user_prompt
+from app.tutor.tools import (
+    RECENT_SESSIONS_TOOL,
+    RECORD_EVIDENCE_TOOL,
+    REMEMBER_TOOL,
+    SEARCH_MEMORY_TOOL,
+)
 
 
 def _compose(**kwargs):
@@ -112,18 +117,12 @@ def test_assemble_context_threads_the_recalled_blocks_into_the_user_text():
     assert "2026-06-01: fractions" in text
 
 
-def test_system_prompt_forbids_narrating_the_lookup():
-    assert "You remember this learner between sessions." in SYSTEM_PROMPT
-    assert "without announcing that you are using it" in SYSTEM_PROMPT
-    assert "“based on what I remember”" in SYSTEM_PROMPT
-
-
-def test_system_prompt_routes_a_gap_to_the_tool_that_fits_its_shape():
-    assert "`search_memory`" in SYSTEM_PROMPT
-    assert "`recent_sessions`" in SYSTEM_PROMPT
-    # The sequence-not-a-fact framing lives on the tool now, where a model
-    # deciding whether to call it is already reading.
+def test_memory_tool_descriptions_route_each_memory_operation():
+    assert "previous sessions" in SEARCH_MEMORY_TOOL["description"]
+    assert "self-contained" in SEARCH_MEMORY_TOOL["description"]
     assert "sequence" in RECENT_SESSIONS_TOOL["description"]
+    assert "future sessions" in REMEMBER_TOOL["description"]
+    assert "tracked across sessions" in RECORD_EVIDENCE_TOOL["description"]
 
 
 def test_the_recent_sessions_block_is_read_rather_than_re_fetched():
@@ -134,23 +133,12 @@ def test_the_recent_sessions_block_is_read_rather_than_re_fetched():
     fetching twelve lines already sitting in its prompt. Both places now say
     the block is there and the tool is for reaching past it.
     """
-    assert "already in your context" in SYSTEM_PROMPT
-    assert "rather than calling the tool to fetch what you can already read" \
-        in SYSTEM_PROMPT
-
     description = RECENT_SESSIONS_TOOL["description"]
     assert "already in your context" in description
     assert "older than" in description
 
 
-def test_system_prompt_covers_a_learner_with_no_recalled_blocks():
-    assert "you have not met this learner before" in SYSTEM_PROMPT
-
-
-def test_system_prompt_names_the_phrases_that_promise_a_write():
-    # Naming the tell, as the lookup rule does, rather than stating the
-    # ordering abstractly. These are the three `REMEMBER_TOOL` also names.
-    assert "before the sentence that promises it" in SYSTEM_PROMPT
-    for tell in ("“noted”", "“got it”", "“I’ll remember that”"):
-        assert tell in SYSTEM_PROMPT
-    assert "`record_evidence`" in SYSTEM_PROMPT
+def test_remember_tool_names_the_phrases_that_promise_a_write():
+    description = REMEMBER_TOOL["description"]
+    for tell in ("'noted'", "'got it'", "'I'll remember that'"):
+        assert tell in description

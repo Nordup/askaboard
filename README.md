@@ -48,6 +48,8 @@ xcrun devicectl device install app --device <UDID> \
 xcrun devicectl device process launch --device <UDID> com.nordup.MathTutor
 ```
 
+**Installing the app does not deploy the tutor prompt.** The production system prompt is backend code at [`server/app/tutor/prompt.py`](server/app/tutor/prompt.py), supplied by the server on every turn. Rebuilding or reinstalling the iPad app has no effect on it; to change the tutor's behavior, edit that file and restart the backend — see [`server/README.md`](server/README.md).
+
 **Unlock the iPad first.** A locked device fails the install with `Could not get service com.apple.remote.installcoordination_proxy`, error 83. That message does not name the lock, and the build is not at fault. Developer Mode must also be on, at Settings > Privacy & Security > Developer Mode.
 
 **Attach a cable if you can.** With no cable the transport is `localNetwork`, and that link drops the device services. `devicectl device info processes` then fails with "Couldn't get the message from the device", and an install can fail once and succeed on the next attempt. Retry before you look for a cause in the build. A launch that reports success is not proof the app stayed alive, because the process listing is the part that fails — look at the iPad.
@@ -103,7 +105,7 @@ Because the recording is transcribed after it ends rather than as the student sp
 
 **The audio leaves the iPad**, to the backend and then to OpenAI's transcription endpoint. What the backend keeps of it is [`server/README.md`](server/README.md)'s to state. A provider error is never forwarded to the UI: its text can quote what was heard. Whisper-family models fabricate on near-silent audio, so a short boilerplate result ("Thank you.", " you") is treated as silence and never written into the composer as if the student had said it; the transcript always lands in the editable field and is never auto-sent. Without a usable device token there is no dictation at all and the composer draws no mic, because a control that can only raise a notice is the disabled control this design does not have. Recording stops by itself at 60 seconds — about 1.9 MB, well under the endpoint's 25 MB file limit — and transcribes what was said instead of failing the upload.
 
-Assistant replies render through the pinned `MarkdownUI` 2.4.0 Swift package (`Markdown`) with selectable GitHub-Flavored Markdown headings, lists, quotes, tables, code, links, and visible single-newline breaks. Math is requested and displayed as readable Unicode/plain text because the renderer does not render LaTeX math delimiters. Learner messages stay literal text so their punctuation, whitespace, and line breaks are preserved exactly.
+Assistant replies render through the pinned `MarkdownExtendedView` 1.2.4 Swift package with selectable GitHub-Flavored Markdown headings, lists, quotes, tables, code, links, visible single-newline breaks, and native typeset LaTeX. The tutor emits inline math in `\\( ... \\)` and display math in `\\[ ... \\]`; the display boundary adapts only those delimiters while preserving the original TeX and leaving code spans and fences literal. Learner messages stay literal text so their punctuation, whitespace, and line breaks are preserved exactly.
 
 ### Attachments
 

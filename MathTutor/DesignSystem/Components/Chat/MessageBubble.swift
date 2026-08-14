@@ -1,4 +1,4 @@
-import MarkdownUI
+import MarkdownExtendedView
 import SwiftUI
 
 /// Board 03: *"The asymmetry is the point. The tutor is unboxed text sitting directly on
@@ -117,8 +117,8 @@ extension MessageMetrics {
 /// Bare text on the panel — no frame, no fill, no padding, no elevation.
 ///
 /// Tutor copy is Markdown and stays Markdown: `TutorStructuredText` is the app's one
-/// assistant renderer. The design's type is pushed into it through MarkdownUI's theme
-/// rather than by wrapping, because MarkdownUI resolves its own font from the theme and
+/// assistant renderer. The design's type is pushed into it through the Markdown theme
+/// rather than by wrapping, because the renderer resolves its own font from the theme and
 /// would otherwise draw the system face at 17pt — the right size in the wrong typeface,
 /// which is the kind of near-miss nobody notices until the visual diff.
 struct TutorMessageText: View {
@@ -127,17 +127,36 @@ struct TutorMessageText: View {
 
     var body: some View {
         TutorStructuredText(markdown)
-            .markdownTextStyle(\.text) {
-                FontFamily(.custom(DS.Font.postScriptName(for: metrics.textStyle.weight)))
-                FontSize(metrics.textStyle.size)
-                ForegroundColor(DS.Color.ink)
-            }
-            .markdownBlockStyle(\.paragraph) { configuration in
-                configuration.label
-                    .lineSpacing(metrics.textStyle.lineSpacing)
-                    .markdownMargin(top: metrics.paragraphGap)
-            }
+            .markdownTheme(tutorMarkdownTheme)
             .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var tutorMarkdownTheme: MarkdownTheme {
+        let body = metrics.textStyle.font
+        let semibold = DS.Font.postScriptName(for: .semibold)
+
+        return MarkdownTheme(
+            bodyFont: body,
+            heading1Font: .custom(semibold, fixedSize: metrics.textStyle.size * 1.55),
+            heading2Font: .custom(semibold, fixedSize: metrics.textStyle.size * 1.35),
+            heading3Font: .custom(semibold, fixedSize: metrics.textStyle.size * 1.2),
+            heading4Font: .custom(semibold, fixedSize: metrics.textStyle.size * 1.1),
+            heading5Font: .custom(semibold, fixedSize: metrics.textStyle.size),
+            heading6Font: .custom(semibold, fixedSize: metrics.textStyle.size),
+            codeFont: .system(size: metrics.textStyle.size * 0.94, design: .monospaced),
+            codeBlockFont: .system(size: metrics.textStyle.size * 0.9, design: .monospaced),
+            textColor: DS.Color.ink,
+            secondaryTextColor: DS.Color.ink.opacity(0.72),
+            linkColor: DS.Color.brand,
+            codeBackgroundColor: DS.Color.surfaceBubble,
+            blockQuoteBorderColor: DS.Color.ink.opacity(0.22),
+            tableBorderColor: DS.Color.ink.opacity(0.18),
+            tableHeaderBackgroundColor: DS.Color.surfaceBubble,
+            paragraphSpacing: metrics.paragraphGap,
+            listItemSpacing: DS.Space.s1,
+            indentation: DS.Space.s5,
+            codeBlockPadding: DS.Space.s3
+        )
     }
 }
 
