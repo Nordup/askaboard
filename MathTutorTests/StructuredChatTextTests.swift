@@ -68,6 +68,25 @@ final class StructuredChatTextTests: XCTestCase {
         XCTAssertEqual(TutorMathMarkdownAdapter.renderableMarkdown(input), input)
     }
 
+    func testMathCutOnTheCloserBackslashDuringStreamingStaysLiteral() {
+        // A streamed chunk can end on the backslash of a closer whose
+        // bracket has not arrived yet.
+        let input = #"Energy is \(\frac{3}{2}k_BT\"#
+
+        XCTAssertEqual(TutorMathMarkdownAdapter.renderableMarkdown(input), input)
+    }
+
+    func testEveryStreamingPrefixRendersWithoutTrapping() {
+        // Deltas can cut a reply at any character, and the adapter runs on
+        // every delta. Every prefix must render, not only the whole reply.
+        let reply = "**Mean energy.** Inline \\(\\overline{E_k}=\\frac{3}{2}k_BT\\), display\n\\[v=\\sqrt{\\frac{3k_BT}{m}}\\\\ \\text{per mole}\\]\nkeep `\\(k_B\\)` literal, fence\n```latex\n\\[x\\]\n```\nand close \\(T+1\\)."
+
+        for end in reply.indices {
+            _ = TutorMathMarkdownAdapter.renderableMarkdown(String(reply[..<end]))
+        }
+        _ = TutorMathMarkdownAdapter.renderableMarkdown(reply)
+    }
+
     func testIncompleteCodeDuringStreamingRemainsLiteral() {
         let input = #"Example: `\(k_B\) then \(T\)"#
 
@@ -119,6 +138,29 @@ final class StructuredChatTextTests: XCTestCase {
                 "Inline \(label.latex ?? "formula") must not reflow taller than its clipping label"
             )
         }
+    }
+
+    @MainActor
+    func testInlineMathParagraphReflowsWhenAvailableWidthShrinks() {
+        let markdown = #"The average translational kinetic energy per molecule depends on \(k_B\), the Boltzmann constant, and the absolute temperature of the gas."#
+
+        func fittingSize(width: CGFloat) -> CGSize {
+            let host = UIHostingController(
+                rootView: TutorMessageText(markdown: markdown)
+                    .fixedSize(horizontal: false, vertical: true)
+            )
+            return host.sizeThatFits(in: CGSize(width: width, height: 1_000))
+        }
+
+        let wide = fittingSize(width: 360)
+        let narrow = fittingSize(width: 220)
+
+        XCTAssertLessThanOrEqual(narrow.width, 220.5)
+        XCTAssertGreaterThan(
+            narrow.height,
+            wide.height,
+            "Mixed prose and inline math must create more wrapped lines as the dock narrows"
+        )
     }
 
     @MainActor

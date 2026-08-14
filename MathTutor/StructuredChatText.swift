@@ -108,6 +108,10 @@ enum TutorMathMarkdownAdapter {
         math.replacingOccurrences(of: "\\,", with: "\\text{ }")
     }
 
+    /// Finds the first `\<closer>` pair at or after `start`. A backslash
+    /// always consumes the character after it, so the parenthesis inside
+    /// `\\)` never closes a span. Streamed text can end on a backslash
+    /// whose partner has not arrived yet; that prefix holds no closer.
     private static func mathCloser(
         in text: Substring,
         after start: Substring.Index,
@@ -115,15 +119,16 @@ enum TutorMathMarkdownAdapter {
     ) -> (start: Substring.Index, end: Substring.Index)? {
         var index = start
         while index < text.endIndex {
-            if text[index] == "\\" {
-                let next = text.index(after: index)
-                if next < text.endIndex, text[next] == closer {
-                    return (index, text.index(after: next))
-                }
-                index = text.index(after: next)
-            } else {
+            guard text[index] == "\\" else {
                 index = text.index(after: index)
+                continue
             }
+            let escaped = text.index(after: index)
+            guard escaped < text.endIndex else { return nil }
+            if text[escaped] == closer {
+                return (index, text.index(after: escaped))
+            }
+            index = text.index(after: escaped)
         }
         return nil
     }
