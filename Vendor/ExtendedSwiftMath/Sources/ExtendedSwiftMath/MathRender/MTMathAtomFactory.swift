@@ -1389,8 +1389,10 @@ public class MTMathAtomFactory {
      @note The reason this function returns a `MTMathAtom` and not a `MTMathTable` is because some
      matrix environments are have builtin delimiters added to the table and hence are returned as inner atoms.
      */
-    public static func table(withEnvironment env: String?, alignment: MTColumnAlignment? = nil, columnAlignments: [MTColumnAlignment]? = nil, rows: [[MTMathList]], error:inout NSError?) -> MTMathAtom? {
+    public static func table(withEnvironment env: String?, alignment: MTColumnAlignment? = nil, columnAlignments: [MTColumnAlignment]? = nil, verticalRulePositions: [Int] = [], horizontalRules: [(row: Int, dashed: Bool)] = [], rows: [[MTMathList]], error:inout NSError?) -> MTMathAtom? {
         let table = MTMathTable(environment: env)
+        table.verticalRulePositions = verticalRulePositions
+        table.horizontalRules = horizontalRules
 
         for i in 0..<rows.count {
             let row = rows[i]

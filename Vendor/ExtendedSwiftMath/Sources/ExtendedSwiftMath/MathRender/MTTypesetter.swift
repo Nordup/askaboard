@@ -3266,9 +3266,88 @@ class MTTypesetter {
 
         // Position all the rows
         self.positionRows(rowDisplays, forTable:table)
-        let tableDisplay = MTMathListDisplay(withDisplays: rowDisplays, range: table!.indexRange)
+        var allDisplays = rowDisplays
+        if let ruleDisplay = self.makeTableRules(table!, rowDisplays: rowDisplays, columnWidths: columnWidths) {
+            allDisplays.append(ruleDisplay)
+        }
+        let tableDisplay = MTMathListDisplay(withDisplays: allDisplays, range: table!.indexRange)
         tableDisplay.position = currentPosition;
         return tableDisplay;
+    }
+
+    // Build the display holding the array '|' column rules and the
+    // \hline/\hdashline row rules. Returns nil when the table has no rules.
+    // As a side effect shifts the rows right when a leading '|' rule adds
+    // padding before the first column.
+    func makeTableRules(_ table: MTMathTable, rowDisplays: [MTDisplay], columnWidths: [CGFloat]) -> MTDisplay? {
+        let numColumns = table.numColumns
+        let numRows = table.numRows
+        let verticalPositions = table.verticalRulePositions.filter { $0 >= 0 && $0 <= numColumns }
+        let horizontalRules = table.horizontalRules.filter { $0.row >= 0 && $0.row <= numRows }
+        if verticalPositions.isEmpty && horizontalRules.isEmpty {
+            return nil
+        }
+
+        let gap = table.interColumnSpacing * styleFont.mathTable!.muUnit
+        let edgePadding = gap / 2
+        let thickness = styleFont.mathTable!.fractionRuleThickness
+
+        // Padding between an edge rule and the outermost column.
+        let leftPad = verticalPositions.contains(0) ? edgePadding : 0
+        if leftPad > 0 {
+            for row in rowDisplays {
+                row.position = CGPointMake(row.position.x + leftPad, row.position.y)
+            }
+        }
+        let contentWidth = columnWidths.reduce(0, +) + gap * CGFloat(numColumns - 1)
+        let rightPad = verticalPositions.contains(numColumns) ? edgePadding : 0
+        let totalWidth = leftPad + contentWidth + rightPad
+
+        // The vertical extent the column rules span, with a little padding
+        // above and below the outermost rows.
+        var topY = -CGFloat.greatestFiniteMagnitude
+        var bottomY = CGFloat.greatestFiniteMagnitude
+        for row in rowDisplays {
+            topY = max(topY, row.position.y + row.ascent)
+            bottomY = min(bottomY, row.position.y - row.descent)
+        }
+        let verticalPad = 0.5 * kJotMultiplier * styleFont.fontSize
+        topY += verticalPad
+        bottomY -= verticalPad
+
+        var lines = [MTTableRuleDisplay.Line]()
+        for position in verticalPositions {
+            let x: CGFloat
+            if position == 0 {
+                x = thickness / 2
+            } else if position == numColumns {
+                x = totalWidth - thickness / 2
+            } else {
+                // The midpoint of the gap between columns position-1 and position.
+                let columnStart = leftPad + columnWidths[0..<position].reduce(0, +) + gap * CGFloat(position)
+                x = columnStart - gap / 2
+            }
+            lines.append(MTTableRuleDisplay.Line(start: CGPointMake(x, bottomY), end: CGPointMake(x, topY), dashed: false))
+        }
+        for rule in horizontalRules {
+            let y: CGFloat
+            if rule.row == 0 {
+                y = topY
+            } else if rule.row == numRows {
+                y = bottomY
+            } else {
+                // The midpoint of the gap between rows rule.row-1 and rule.row.
+                let above = rowDisplays[rule.row - 1]
+                let below = rowDisplays[rule.row]
+                y = 0.5 * ((above.position.y - above.descent) + (below.position.y + below.ascent))
+            }
+            lines.append(MTTableRuleDisplay.Line(start: CGPointMake(0, y), end: CGPointMake(totalWidth, y), dashed: rule.dashed))
+        }
+
+        let ruleDisplay = MTTableRuleDisplay(withLines: lines, range: table.indexRange)
+        ruleDisplay.lineThickness = thickness
+        ruleDisplay.dashLengths = [0.15 * styleFont.fontSize, 0.1 * styleFont.fontSize]
+        return ruleDisplay
     }
     
     // Typeset every cell in the table. As a side-effect calculate the max column width of each column.
@@ -3328,7 +3407,7 @@ class MTTypesetter {
         var prevRowDescent = CGFloat(0)
         var ascent = CGFloat(0)
         var first = true
-        for row in rows {
+        for (i, row) in rows.enumerated() {
             if first {
                 row.position = CGPointZero;
                 ascent += row.ascent;
@@ -3338,6 +3417,10 @@ class MTTypesetter {
                 if (skip - (prevRowDescent + row.ascent) < lineSkipLimit) {
                     // rows are too close to each other. Space them apart further
                     skip = prevRowDescent + row.ascent + lineSkip;
+                }
+                // Leave room for a horizontal rule drawn between these rows.
+                if table!.horizontalRules.contains(where: { $0.row == i }) {
+                    skip += kJotMultiplier * styleFont.fontSize;
                 }
                 // We are going down so we decrease the y value.
                 currPos -= skip;

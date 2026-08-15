@@ -199,4 +199,108 @@ final class KatexCoverageTests: XCTestCase {
         XCTAssertGreaterThan(render("\\Bra{\\phi}\\Ket{\\psi}").width, 0)
         XCTAssertGreaterThan(render("\\Set{x | x > 0}").width, 0)
     }
+
+    // MARK: - Stretchy over/under annotations (third pass)
+
+    func testUnderOverAnnotations() {
+        // Under-annotations add descent below the base; over-annotations add
+        // ascent above it. All stretch to at least the base's width.
+        let base = render("x+y")
+        for command in ["\\underrightarrow", "\\underleftarrow",
+                        "\\underleftrightarrow", "\\undergroup", "\\utilde",
+                        "\\underlinesegment"] {
+            let annotated = render("\(command){x+y}")
+            XCTAssertGreaterThan(annotated.descent, base.descent, command)
+            XCTAssertGreaterThanOrEqual(annotated.width, base.width - 0.5, command)
+        }
+        for command in ["\\Overrightarrow", "\\overlinesegment"] {
+            let annotated = render("\(command){x+y}")
+            XCTAssertGreaterThan(annotated.ascent, base.ascent, command)
+            XCTAssertGreaterThanOrEqual(annotated.width, base.width - 0.5, command)
+        }
+    }
+
+    func testUnderOverAnnotationsRoundTrip() {
+        for latex in ["\\underrightarrow{x+y}", "\\Overrightarrow{AB}",
+                      "\\undergroup{x}", "\\utilde{a}",
+                      "\\overlinesegment{AB}", "\\underlinesegment{AB}"] {
+            XCTAssertEqual(MTMathListBuilder.mathListToString(build(latex)), latex)
+        }
+    }
+
+    // MARK: - Table rules (third pass)
+
+    func testArrayColumnSpecReachesTheTable() {
+        // The column spec must be consumed as a spec, not leak into cell 1.
+        let list = build("\\begin{array}{lr} 1 & 2 \\\\ 3 & 4 \\end{array}")
+        let table = list.atoms[0] as! MTMathTable
+        XCTAssertEqual(table.numColumns, 2)
+        XCTAssertEqual(table.get(alignmentForColumn: 0), .left)
+        XCTAssertEqual(table.get(alignmentForColumn: 1), .right)
+        XCTAssertEqual(MTMathListBuilder.mathListToString(list),
+                       "\\begin{array}{lr}1&2\\\\ 3&4\\end{array}")
+    }
+
+    func testArrayVerticalRules() {
+        let list = build("\\begin{array}{|l|c|r|} a & b & c \\end{array}")
+        let table = list.atoms[0] as! MTMathTable
+        XCTAssertEqual(table.verticalRulePositions, [0, 1, 2, 3])
+        // '||' collapses to one rule.
+        let doubled = build("\\begin{array}{c||c} a & b \\end{array}").atoms[0] as! MTMathTable
+        XCTAssertEqual(doubled.verticalRulePositions, [1])
+        // Edge rules pad the table on both sides, so it renders wider.
+        let ruled = render("\\begin{array}{|c|c|} 1 & 2 \\end{array}")
+        let plain = render("\\begin{array}{cc} 1 & 2 \\end{array}")
+        XCTAssertGreaterThan(ruled.width, plain.width)
+    }
+
+    func testHlineAndHdashline() {
+        let list = build("\\begin{array}{c|c} 1 & 2 \\\\ \\hline 3 & 4 \\end{array}")
+        let table = list.atoms[0] as! MTMathTable
+        XCTAssertEqual(table.horizontalRules.count, 1)
+        XCTAssertEqual(table.horizontalRules[0].row, 1)
+        XCTAssertFalse(table.horizontalRules[0].dashed)
+
+        let dashed = build("\\begin{array}{c} a \\\\ \\hdashline b \\end{array}").atoms[0] as! MTMathTable
+        XCTAssertTrue(dashed.horizontalRules[0].dashed)
+
+        // Top and bottom rules, including the trailing \\ \hline form; the
+        // trailing empty row LaTeX would ignore must not survive the parse.
+        let framed = build("\\begin{array}{c} x \\\\ \\hline y \\\\ \\hline \\end{array}").atoms[0] as! MTMathTable
+        XCTAssertEqual(framed.numRows, 2)
+        XCTAssertEqual(framed.horizontalRules.map { $0.row }, [1, 2])
+
+        // \hline in a matrix environment renders too.
+        XCTAssertGreaterThan(render("\\begin{pmatrix} 1 & 2 \\\\ \\hline 3 & 4 \\end{pmatrix}").width, 0)
+
+        // A ruled table is taller than the same table without the rule.
+        let ruled = render("\\begin{array}{c} 1 \\\\ \\hline 2 \\end{array}")
+        let plain = render("\\begin{array}{c} 1 \\\\ 2 \\end{array}")
+        XCTAssertGreaterThan(ruled.ascent + ruled.descent, plain.ascent + plain.descent)
+
+        // \hline outside a table environment is an error.
+        var error: NSError? = nil
+        _ = MTMathListBuilder.build(fromString: "a \\hline b", error: &error)
+        XCTAssertNotNil(error)
+    }
+
+    func testTableRulesRoundTrip() {
+        for latex in ["\\begin{array}{c|c}1&2\\\\ \\hline 3&4\\end{array}",
+                      "\\begin{array}{|l|c|r|}\\hline a&b&c\\\\ \\hline d&e&f\\\\ \\hline \\end{array}",
+                      "\\begin{array}{c}a\\\\ \\hdashline b\\end{array}"] {
+            let once = MTMathListBuilder.mathListToString(build(latex))
+            XCTAssertEqual(once, latex)
+            // Stable across a second parse/serialize cycle.
+            XCTAssertEqual(MTMathListBuilder.mathListToString(build(once)), latex)
+        }
+    }
+
+    func testStarredMatrixAlignmentReachesTheTable() {
+        // pmatrix*[r]'s optional alignment goes through the live \begin path.
+        let list = build("\\begin{pmatrix*}[r] -1 & 2 \\\\ 3 & -4 \\end{pmatrix*}")
+        let inner = list.atoms[0] as! MTInner
+        let table = inner.innerList!.atoms[0] as! MTMathTable
+        XCTAssertEqual(table.get(alignmentForColumn: 0), .right)
+        XCTAssertEqual(table.get(alignmentForColumn: 1), .right)
+    }
 }

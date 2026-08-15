@@ -17,13 +17,17 @@ struct MTEnvProperties {
     var numRows: Int
     var alignment: MTColumnAlignment?  // Optional alignment for starred matrix environments
     var columnAlignments: [MTColumnAlignment]?  // Per-column alignments (array environment)
+    var verticalRulePositions: [Int]  // Column boundaries with a '|' rule (array environment)
+    var horizontalRules: [(row: Int, dashed: Bool)]  // \hline/\hdashline rules recorded during the parse
 
-    init(name: String?, alignment: MTColumnAlignment? = nil, columnAlignments: [MTColumnAlignment]? = nil) {
+    init(name: String?, alignment: MTColumnAlignment? = nil, columnAlignments: [MTColumnAlignment]? = nil, verticalRulePositions: [Int] = []) {
         self.envName = name
         self.numRows = 0
         self.ended = false
         self.alignment = alignment
         self.columnAlignments = columnAlignments
+        self.verticalRulePositions = verticalRulePositions
+        self.horizontalRules = []
     }
 }
 
@@ -479,6 +483,17 @@ public struct MTMathListBuilder {
                     prevAtom = nil
                     continue
                 }
+                if command == "hline" || command == "hdashline" {
+                    // A horizontal rule above the row currently being built
+                    // (numRows == the index of that row). Recorded on the
+                    // environment and drawn by the typesetter; produces no atom.
+                    guard self.currentEnv != nil else {
+                        self.setError(.invalidEnv, message: "\\\(command) is only valid inside a table environment")
+                        return nil
+                    }
+                    self.currentEnv!.horizontalRules.append((row: self.currentEnv!.numRows, dashed: command == "hdashline"))
+                    continue
+                }
                 let done = stopCommand(command, list:list, stopChar:stop)
                 if done != nil {
                     return done
@@ -687,13 +702,41 @@ public struct MTMathListBuilder {
                     if let table = atom as? MTMathTable {
                         if !table.environment.isEmpty {
                             str += "\\begin{\(table.environment)}"
+                            if table.environment == "array" {
+                                // Re-emit the mandatory column spec, including
+                                // '|' rules at their recorded positions.
+                                var spec = ""
+                                for col in 0..<table.numColumns {
+                                    if table.verticalRulePositions.contains(col) {
+                                        spec += "|"
+                                    }
+                                    switch table.get(alignmentForColumn: col) {
+                                    case .left:   spec += "l"
+                                    case .right:  spec += "r"
+                                    case .center: spec += "c"
+                                    }
+                                }
+                                if table.verticalRulePositions.contains(table.numColumns) {
+                                    spec += "|"
+                                }
+                                str += "{\(spec)}"
+                            }
                         }
-                        
+
+                        func horizontalRuleString(above row: Int) -> String {
+                            var rules = ""
+                            for rule in table.horizontalRules where rule.row == row {
+                                rules += rule.dashed ? "\\hdashline " : "\\hline "
+                            }
+                            return rules
+                        }
+
                         for i in 0..<table.numRows {
+                            str += horizontalRuleString(above: i)
                             let row = table.cells[i]
                             for j in 0..<row.count {
                                 let cell = row[j]
-                                if table.environment == "matrix" {
+                                if table.environment == "matrix" || table.environment == "array" {
                                     if cell.atoms.count >= 1 && cell.atoms[0].type == .style {
                                         // remove first atom
                                         cell.atoms.removeFirst()
@@ -713,6 +756,12 @@ public struct MTMathListBuilder {
                             if i < table.numRows - 1 {
                                 str += "\\\\ "
                             }
+                        }
+                        // A rule below the last row re-emits as a trailing
+                        // "\\ \hline" (the row separator LaTeX requires there).
+                        let bottomRules = horizontalRuleString(above: table.numRows)
+                        if !bottomRules.isEmpty {
+                            str += "\\\\ \(bottomRules)"
                         }
                         if !table.environment.isEmpty {
                             str += "\\end{\(table.environment)}"
@@ -1324,25 +1373,16 @@ public struct MTMathListBuilder {
             }
             arrow.overScript = self.buildInternal(true)
             return arrow
-        } else if command == "overbrace" || command == "underbrace" ||
-                  command == "overbracket" || command == "underbracket" {
-            // Brace annotations. The brace glyph is a non-stretchy character
-            // annotation; a following script folds into the limit position at
-            // layout time (see MTTypesetter, braceCommand).
+        } else if let stretchy = MTMathListBuilder.stretchyOverUnderCommands[command] {
+            // Brace/bracket/arrow/line annotations. The annotation glyph is
+            // stretched to the base's width at layout time; a following script
+            // folds into the limit position (see MTTypesetter, braceCommand).
             let ou = MTOverUnder()
             ou.braceCommand = command
             ou.base = self.buildInternal(true)
-            let isOver = command.hasPrefix("over")
-            let glyph: String
-            switch command {
-            case "overbrace":     glyph = "\u{23DE}" // ⏞
-            case "underbrace":    glyph = "\u{23DF}" // ⏟
-            case "overbracket":   glyph = "\u{23B4}" // ⎴
-            default:              glyph = "\u{23B5}" // ⎵
-            }
             let annotation = MTMathList()
-            annotation.add(MTMathAtom(type: .ordinary, value: glyph))
-            if isOver {
+            annotation.add(MTMathAtom(type: .ordinary, value: stretchy.glyph))
+            if stretchy.over {
                 ou.over = annotation
             } else {
                 ou.under = annotation
@@ -1425,7 +1465,45 @@ public struct MTMathListBuilder {
             if env == nil {
                 return nil;
             }
-            let table = self.buildTable(env: env, firstList:nil, isRow:false)
+
+            // Starred matrix environments carry an optional [l|c|r] alignment.
+            var alignment: MTColumnAlignment? = nil
+            if env!.hasSuffix("*") {
+                alignment = self.readOptionalAlignment()
+                if self.error != nil {
+                    return nil
+                }
+            }
+
+            // The array environment carries a mandatory {column spec}:
+            // l/c/r per column, with '|' drawing a vertical rule at the
+            // column boundary it sits on (other spec characters are
+            // ignored). alignedat's {n} pair count is read and discarded.
+            var columnAlignments: [MTColumnAlignment]? = nil
+            var verticalRulePositions = [Int]()
+            if env == "array" || env == "subarray" {
+                guard let spec = self.readBracedText() else { return nil }
+                var alignments = [MTColumnAlignment]()
+                for ch in spec {
+                    switch ch {
+                    case "l": alignments.append(.left)
+                    case "c": alignments.append(.center)
+                    case "r": alignments.append(.right)
+                    case "|":
+                        // '||' collapses to a single rule.
+                        if verticalRulePositions.last != alignments.count {
+                            verticalRulePositions.append(alignments.count)
+                        }
+                    default: break
+                    }
+                }
+                columnAlignments = alignments
+            } else if env == "alignedat" {
+                _ = self.readBracedText()
+                if self.error != nil { return nil }
+            }
+
+            let table = self.buildTable(env: env, alignment: alignment, columnAlignments: columnAlignments, verticalRulePositions: verticalRulePositions, firstList: nil, isRow: false)
             return table
         } else if command == "color" {
             // A color command has 2 arguments
@@ -1582,6 +1660,25 @@ public struct MTMathListBuilder {
         "xtwoheadleftarrow":   "\u{219E}", // ↞
         "xtwoheadrightarrow":  "\u{21A0}", // ↠
         "xtofrom":             "\u{21C4}", // ⇄
+    ]
+
+    /// Stretchy over/under annotation commands (\overbrace family, KaTeX
+    /// under-arrows, \Overrightarrow, \undergroup, \utilde, line segments):
+    /// command name to the glyph placed above (over == true) or below the
+    /// base and stretched to the base's width at layout time.
+    static let stretchyOverUnderCommands: [String: (glyph: String, over: Bool)] = [
+        "overbrace":           ("\u{23DE}", true),  // ⏞
+        "underbrace":          ("\u{23DF}", false), // ⏟
+        "overbracket":         ("\u{23B4}", true),  // ⎴
+        "underbracket":        ("\u{23B5}", false), // ⎵
+        "underrightarrow":     ("\u{2192}", false), // →
+        "underleftarrow":      ("\u{2190}", false), // ←
+        "underleftrightarrow": ("\u{2194}", false), // ↔
+        "Overrightarrow":      ("\u{21D2}", true),  // ⇒
+        "undergroup":          ("\u{23E1}", false), // ⏡ bottom tortoise-shell bracket
+        "utilde":              ("\u{0330}", false), // combining tilde below (8 width variants)
+        "overlinesegment":     ("\u{23B4}", true),  // ⎴ (same shape as \overbracket)
+        "underlinesegment":    ("\u{23B5}", false), // ⎵ (same shape as \underbracket)
     ]
 
     /// Flattens a math list to its plain text when every atom is a simple
@@ -1802,217 +1899,6 @@ public struct MTMathListBuilder {
         }
     }
     
-    mutating func atom(forCommand command: String) -> MTMathAtom? {
-        if let atom = MTMathAtomFactory.atom(forLatexSymbol: command) {
-            return atom
-        }
-        if let accent = MTMathAtomFactory.accent(withName: command) {
-            accent.innerList = self.buildInternal(true)
-            return accent
-        } else if command == "frac" {
-            let frac = MTFraction()
-            frac.numerator = self.buildInternal(true)
-            frac.denominator = self.buildInternal(true)
-            return frac
-        } else if command == "cfrac" {
-            let frac = MTFraction()
-            frac.isContinuedFraction = true
-
-            // Parse optional alignment parameter [l], [r], [c]
-            skipSpaces()
-            if hasCharacters && string[currentCharIndex] == "[" {
-                _ = getNextCharacter() // consume '['
-                let alignmentChar = getNextCharacter()
-                if alignmentChar == "l" || alignmentChar == "r" || alignmentChar == "c" {
-                    frac.alignment = String(alignmentChar)
-                }
-                // Consume closing ']'
-                if hasCharacters && string[currentCharIndex] == "]" {
-                    _ = getNextCharacter()
-                }
-            }
-
-            frac.numerator = self.buildInternal(true)
-            frac.denominator = self.buildInternal(true)
-            return frac
-        } else if command == "dfrac" {
-            // Display-style fraction command has 2 arguments
-            let frac = MTFraction()
-            let numerator = self.buildInternal(true)
-            let denominator = self.buildInternal(true)
-
-            // Prepend \displaystyle to force display mode rendering
-            let displayStyle = MTMathStyle(style: .display)
-            numerator?.insert(displayStyle, at: 0)
-            denominator?.insert(displayStyle, at: 0)
-
-            frac.numerator = numerator
-            frac.denominator = denominator
-            return frac
-        } else if command == "tfrac" {
-            // Text-style fraction command has 2 arguments
-            let frac = MTFraction()
-            let numerator = self.buildInternal(true)
-            let denominator = self.buildInternal(true)
-
-            // Prepend \textstyle to force text mode rendering
-            let textStyle = MTMathStyle(style: .text)
-            numerator?.insert(textStyle, at: 0)
-            denominator?.insert(textStyle, at: 0)
-
-            frac.numerator = numerator
-            frac.denominator = denominator
-            return frac
-        } else if command == "binom" {
-            let frac = MTFraction(hasRule: false)
-            frac.numerator = self.buildInternal(true)
-            frac.denominator = self.buildInternal(true)
-            frac.leftDelimiter = "("
-            frac.rightDelimiter = ")"
-            return frac
-        } else if command == "bra" {
-            // Dirac bra notation: \bra{psi} -> ⟨psi|
-            let inner = MTInner()
-            inner.leftBoundary = MTMathAtomFactory.boundary(forDelimiter: "langle")
-            inner.rightBoundary = MTMathAtomFactory.boundary(forDelimiter: "|")
-            inner.innerList = self.buildInternal(true)
-            return inner
-        } else if command == "ket" {
-            // Dirac ket notation: \ket{psi} -> |psi⟩
-            let inner = MTInner()
-            inner.leftBoundary = MTMathAtomFactory.boundary(forDelimiter: "|")
-            inner.rightBoundary = MTMathAtomFactory.boundary(forDelimiter: "rangle")
-            inner.innerList = self.buildInternal(true)
-            return inner
-        } else if command == "braket" {
-            // Dirac braket notation: \braket{phi}{psi} -> ⟨phi|psi⟩
-            let inner = MTInner()
-            inner.leftBoundary = MTMathAtomFactory.boundary(forDelimiter: "langle")
-            inner.rightBoundary = MTMathAtomFactory.boundary(forDelimiter: "rangle")
-            let phi = self.buildInternal(true)
-            let psi = self.buildInternal(true)
-            let content = MTMathList()
-            if let phiList = phi {
-                for atom in phiList.atoms {
-                    content.add(atom)
-                }
-            }
-            content.add(MTMathAtom(type: .ordinary, value: "|"))
-            if let psiList = psi {
-                for atom in psiList.atoms {
-                    content.add(atom)
-                }
-            }
-            inner.innerList = content
-            return inner
-        } else if command == "operatorname" || command == "operatorname*" {
-            // \operatorname{name} creates a custom operator with proper spacing
-            // \operatorname*{name} creates an operator with limits above/below
-            let hasLimits = command.hasSuffix("*")
-
-            let content = self.buildInternal(true)
-            var operatorName = ""
-            if let atoms = content?.atoms {
-                for atom in atoms {
-                    operatorName += atom.nucleus
-                }
-            }
-            if operatorName.isEmpty {
-                self.setError(.invalidCommand, message: "Missing operator name for \\operatorname")
-                return nil
-            }
-            return MTLargeOperator(value: operatorName, limits: hasLimits)
-        } else if command == "sqrt" {
-            let rad = MTRadical()
-            let char = self.getNextCharacter()
-            if char == "[" {
-                rad.degree = self.buildInternal(false, stopChar: "]")
-                rad.radicand = self.buildInternal(true)
-            } else {
-                self.unlookCharacter()
-                rad.radicand = self.buildInternal(true)
-            }
-            return rad
-        } else if command == "left" {
-            let oldInner = self.currentInnerAtom
-            self.currentInnerAtom = MTInner()
-            self.currentInnerAtom?.leftBoundary = self.getBoundaryAtom("left")
-            if self.currentInnerAtom?.leftBoundary == nil {
-                return nil
-            }
-            self.currentInnerAtom!.innerList = self.buildInternal(false)
-            if self.currentInnerAtom?.rightBoundary == nil {
-                self.setError(.missingRight, message: "Missing \\right")
-                return nil
-            }
-            let newInner = self.currentInnerAtom
-            currentInnerAtom = oldInner
-            return newInner
-        } else if command == "overline" {
-            let over = MTOverLine()
-            over.innerList = self.buildInternal(true)
-            
-            return over
-        } else if command == "underline" {
-            let under = MTUnderLine()
-            under.innerList = self.buildInternal(true)
-            
-            return under
-        } else if command == "begin" {
-            if let env = self.readEnvironment() {
-                // Check if this is a starred matrix environment and read optional alignment
-                var alignment: MTColumnAlignment? = nil
-                if env.hasSuffix("*") {
-                    alignment = self.readOptionalAlignment()
-                    if self.error != nil {
-                        return nil
-                    }
-                }
-
-                // The array environment carries a mandatory {column spec}:
-                // l/c/r per column ('|' rules and other spec characters are
-                // ignored). alignedat's {n} pair count is read and discarded.
-                var columnAlignments: [MTColumnAlignment]? = nil
-                if env == "array" || env == "subarray" {
-                    guard let spec = self.readBracedText() else { return nil }
-                    var alignments = [MTColumnAlignment]()
-                    for ch in spec {
-                        switch ch {
-                        case "l": alignments.append(.left)
-                        case "c": alignments.append(.center)
-                        case "r": alignments.append(.right)
-                        default: break
-                        }
-                    }
-                    columnAlignments = alignments
-                } else if env == "alignedat" {
-                    _ = self.readBracedText()
-                    if self.error != nil { return nil }
-                }
-
-                let table = self.buildTable(env: env, alignment: alignment, columnAlignments: columnAlignments, firstList: nil, isRow: false)
-                return table
-            } else {
-                return nil
-            }
-        } else if command == "color" {
-            // A color command has 2 arguments
-            let mathColor = MTMathColor()
-            mathColor.colorString = self.readColor()!
-            mathColor.innerList = self.buildInternal(true)
-            return mathColor
-        } else if command == "colorbox" {
-            // A color command has 2 arguments
-            let mathColorbox = MTMathColorbox()
-            mathColorbox.colorString = self.readColor()!
-            mathColorbox.innerList = self.buildInternal(true)
-            return mathColorbox
-        } else {
-            self.setError(.invalidCommand, message: "Invalid command \\\(command)")
-            return nil
-        }
-    }
-    
     mutating func readEnvironment() -> String? {
         if !self.expectCharacter("{") {
             // We didn't find an opening brace, so no env found.
@@ -2077,11 +1963,11 @@ public struct MTMathListBuilder {
         assert(ch >= "\u{21}" && ch <= "\u{7E}", "Expected non-space character \(ch)")
     }
     
-    mutating func buildTable(env: String?, alignment: MTColumnAlignment? = nil, columnAlignments: [MTColumnAlignment]? = nil, firstList: MTMathList?, isRow: Bool) -> MTMathAtom? {
+    mutating func buildTable(env: String?, alignment: MTColumnAlignment? = nil, columnAlignments: [MTColumnAlignment]? = nil, verticalRulePositions: [Int] = [], firstList: MTMathList?, isRow: Bool) -> MTMathAtom? {
         // Save the current env till an new one gets built.
         let oldEnv = self.currentEnv
 
-        currentEnv = MTEnvProperties(name: env, alignment: alignment, columnAlignments: columnAlignments)
+        currentEnv = MTEnvProperties(name: env, alignment: alignment, columnAlignments: columnAlignments, verticalRulePositions: verticalRulePositions)
         
         var currentRow = 0
         var currentCol = 0
@@ -2117,9 +2003,15 @@ public struct MTMathListBuilder {
             self.setError(.missingEnd, message: "Missing \\end")
             return nil
         }
-        
+
+        // A trailing \\ before \end (common with a bottom \hline) leaves a
+        // last row holding a single empty list. LaTeX ignores it; drop it.
+        if rows.count > 1, let last = rows.last, last.count == 1, last[0].atoms.isEmpty {
+            rows.removeLast()
+        }
+
         var error:NSError? = self.error
-        let table = MTMathAtomFactory.table(withEnvironment: currentEnv?.envName, alignment: currentEnv?.alignment, columnAlignments: currentEnv?.columnAlignments, rows: rows, error: &error)
+        let table = MTMathAtomFactory.table(withEnvironment: currentEnv?.envName, alignment: currentEnv?.alignment, columnAlignments: currentEnv?.columnAlignments, verticalRulePositions: currentEnv?.verticalRulePositions ?? [], horizontalRules: currentEnv?.horizontalRules ?? [], rows: rows, error: &error)
         if table == nil && self.error == nil {
             self.error = error
             return nil

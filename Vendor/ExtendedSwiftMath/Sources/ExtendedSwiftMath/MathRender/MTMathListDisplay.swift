@@ -974,6 +974,61 @@ class MTBoxedDisplay : MTDisplay {
     }
 }
 
+// MARK: - MTTableRuleDisplay
+
+/// Rendering of table rules: the array environment's '|' column separators
+/// and the \hline/\hdashline row rules. The display holds line segments in
+/// the coordinate space of the enclosing table display and strokes them with
+/// the text color.
+class MTTableRuleDisplay : MTDisplay {
+
+    struct Line {
+        var start: CGPoint
+        var end: CGPoint
+        var dashed: Bool
+    }
+
+    /// The line segments, relative to this display's position.
+    var lines = [Line]()
+    /// Stroke width of every rule.
+    var lineThickness: CGFloat = 0
+    /// Dash pattern (on, off) for dashed rules.
+    var dashLengths: [CGFloat] = [4, 3]
+
+    init(withLines lines: [Line], range: NSRange) {
+        super.init()
+        self.lines = lines
+        self.range = range
+        var maxX = CGFloat(0), maxY = CGFloat(0), minY = CGFloat(0)
+        for line in lines {
+            maxX = max(maxX, line.start.x, line.end.x)
+            maxY = max(maxY, line.start.y, line.end.y)
+            minY = min(minY, line.start.y, line.end.y)
+        }
+        self.width = maxX
+        self.ascent = max(0, maxY)
+        self.descent = max(0, -minY)
+    }
+
+    override func draw(_ context: CGContext) {
+        super.draw(context)
+        context.saveGState()
+
+        if let color = self.textColor {
+            context.setStrokeColor(color.cgColor)
+        }
+        context.setLineWidth(self.lineThickness)
+        for line in self.lines {
+            context.setLineDash(phase: 0, lengths: line.dashed ? self.dashLengths : [])
+            context.move(to: CGPointMake(self.position.x + line.start.x, self.position.y + line.start.y))
+            context.addLine(to: CGPointMake(self.position.x + line.end.x, self.position.y + line.end.y))
+            context.strokePath()
+        }
+
+        context.restoreGState()
+    }
+}
+
 // MARK: - MTOverlapDisplay
 
 /// Rendering of a zero-width overlap box (\mathllap, \mathrlap, \mathclap).

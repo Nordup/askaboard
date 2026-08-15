@@ -32,6 +32,26 @@ on the upstream package. Local changes on top of 2.1.3:
   uses the real Mathematical Italic Capital codepoints, and `\ngeqq`/`\nleqq`
   use exact combining forms (base + U+0338). Tests in
   `Tests/ExtendedSwiftMathTests/KatexCoverageTests.swift`.
+- Typesetting pass (2026-08-15): stretchy under/over annotations
+  (`\underrightarrow`, `\underleftarrow`, `\underleftrightarrow`,
+  `\undergroup`, `\utilde`, `\Overrightarrow`, `\overlinesegment`,
+  `\underlinesegment`) via the `\overbrace` glyph-stretching mechanism; table
+  rules — the `array` environment's `|` column separators draw real vertical
+  rules and `\hline`/`\hdashline` draw horizontal rules in `array`/matrix
+  environments (new `MTTableRuleDisplay`, rule metadata on `MTMathTable`).
+  The `\begin` handling in the live `atomForCommand(_:)` dispatcher now reads
+  starred-matrix `[l|c|r]` alignments and the `array` column spec — these were
+  previously only handled in the never-called legacy `atom(forCommand:)` copy,
+  so specs leaked into the first cell. Array serialization now re-emits the
+  column spec (with `|`), `\hline`/`\hdashline`, and no longer accumulates
+  `\textstyle` atoms across parse/serialize cycles; a trailing `\\` before
+  `\end` no longer creates a phantom empty row. Tests in
+  `Tests/ExtendedSwiftMathTests/KatexCoverageTests.swift`.
+- Dead code removal (2026-08-15): deleted the never-called legacy
+  `atom(forCommand:)` dispatcher from `MTMathListBuilder.swift`. It duplicated
+  the live `atomForCommand(_:)` (an upstream duplication) and twice absorbed
+  feature work that silently did nothing. All its helper functions have live
+  callers and stay.
 
 # ExtendedSwiftMath
 

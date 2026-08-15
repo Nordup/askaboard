@@ -34,7 +34,7 @@ still worth doing as insurance.
 | Probe | Before | After |
 | --- | --- | --- |
 | Formulas ever emitted by the tutor (recorder DB) | 52 of 53 parsed (`\boxed` failed) | 53 of 53 |
-| KaTeX command names (926 probed) | 529 failed | 91 fail (`\not` moved to supported in a follow-up pass) |
+| KaTeX command names (926 probed) | 529 failed | 82 fail (`\not` and, in the third pass, the under/over annotation family and `\hdashline` moved to supported) |
 | Common display environments (23 probed) | 10 parsed | 22 parse (all but `CD`) |
 
 Regression suites: `BoxedTests.swift`, `KatexCoverageTests.swift` in
@@ -79,8 +79,9 @@ builds.
   with `^`/`_` labels folded into the limit position above/below the brace.
 - **Accents** — `\mathring`, `\widecheck`, `\dddot`, `\ddddot`,
   `\overleftharpoon`, `\overrightharpoon`, `\overgroup`.
-- **Environments** — `array`/`subarray` with `{l|cr}` column specs (`|` rules
-  ignored), `align`/`align*`/`alignedat{n}` (as `aligned`), `gather*`/
+- **Environments** — `array`/`subarray` with `{l|cr}` column specs (`|`
+  draws real vertical rules since the third pass),
+  `align`/`align*`/`alignedat{n}` (as `aligned`), `gather*`/
   `gathered`/`equation`/`equation*` (single column, centered), `dcases`
   (display-style cells), `rcases` (right brace). Already supported upstream:
   matrix family, `cases`, `aligned`, `split`, `gather`, `eqnarray` (3-col).
@@ -100,6 +101,32 @@ builds.
   All eleven glyphs verified present in Latin Modern by render probe.
 - **`\ngeqq`, `\nleqq`** (second pass) — exact combining forms ≧̸ / ≦̸
   (U+2267/U+2266 + U+0338), verified to draw as a true strike-through.
+- **Stretchy under/over annotations** (third pass) — `\underrightarrow` (→),
+  `\underleftarrow` (←), `\underleftrightarrow` (↔), `\Overrightarrow` (⇒
+  above), `\undergroup` (U+23E1 bottom tortoise-shell bracket, 8 width
+  variants), `\utilde` (U+0330 combining tilde below, 8 width variants),
+  `\overlinesegment`/`\underlinesegment` (U+23B4/U+23B5 — the same shape as
+  `\overbracket`/`\underbracket`, which matches KaTeX's tick-ended line
+  closely). All reuse the `\overbrace` mechanism (glyph variants, then
+  horizontal scaling to the base width) and were verified by render probe.
+  Scripts fold into the limit position like the brace family.
+- **Table rules** (third pass) — the `array` environment's `|` column
+  separators now draw real vertical rules (`{|l|c|r|}` frames the table;
+  `||` collapses to a single rule), and `\hline`/`\hdashline` draw solid/
+  dashed horizontal rules in `array` and matrix environments, including
+  top rules and trailing `\\ \hline` bottom rules. Rules use
+  `fractionRuleThickness` and stroke with the text color (new
+  `MTTableRuleDisplay`). Serialization round-trips the column spec and
+  re-emits `\hline`/`\hdashline` stably. The earlier claim that `\hline` was
+  a probe artifact "actually supported in tables" was wrong — it was an
+  error; it now parses and draws.
+- **`\begin` argument handling moved to the live parser path** (third pass) —
+  starred-matrix `[l|c|r]` alignments, the `array`/`subarray` column spec and
+  `alignedat{n}` were being read in a never-called legacy dispatcher
+  (`atom(forCommand:)`), so the spec text leaked into the first cell as
+  formula content. The live `atomForCommand(_:)` branch now handles them; a
+  trailing `\\` before `\end` no longer creates a phantom empty row, and
+  array serialization no longer accumulates `\textstyle` atoms per cycle.
 
 ## Known degradations (parse fine, render approximately)
 
@@ -114,8 +141,10 @@ builds.
 - Text-size switches (`\small` … `\Huge`) and `\mathstrut` are no-ops.
 - `\mathop{...}` with a complex (non-plain-text) argument falls back to
   ordinary spacing.
-- `array` column separators (`|`) do not draw rules.
 - `\eqcolon` uses ∹ (U+2239); KaTeX draws −: as a ligature.
+- `\overlinesegment`/`\underlinesegment` draw the bracket glyphs
+  (U+23B4/U+23B5), so they are indistinguishable from
+  `\overbracket`/`\underbracket`; KaTeX's segment ticks are slightly shorter.
 
 ## Still missing, by design
 
@@ -123,20 +152,19 @@ builds.
 
 - **Probe artifacts (actually supported)** — `\left`/`\right`/`\middle`,
   `\big` family, `\begin`/`\end`, `\limits`/`\nolimits`, `\genfrac`,
-  `\kern`-family (the probe passes `{x}` instead of a dimension), `\hline` in
-  tables, `\pod`. No action needed.
+  `\kern`-family (the probe passes `{x}` instead of a dimension), `\hline`
+  and `\hdashline` (only valid inside a table environment), `\pod`. No
+  action needed. (Earlier revisions of this list claimed `\hline` worked;
+  it did not — it errored outside AND inside tables until the third pass.)
 - **TeX macro system** — `\def`, `\newcommand`, `\let`, `\global`, `\edef`,
   `\expandafter`, `\relax`, … Real work to support; models emit these in
   chat math roughly never. If one appears, the formula blanks — the raw-TeX
   fallback task is the mitigation, not implementation.
 - **HTML/graphics embeds** — `\href`, `\url`, `\includegraphics`,
   `\htmlClass` family, `\verb`. Not meaningful in the app; deliberately out.
-- **Table internals** — `\cline`, `\multicolumn`, `\hdashline`,
-  `\arraystretch`, `\newline`. Rare in model output; revisit only if the
-  recorder shows them.
-- **Niche typography** — `\Overrightarrow`,
-  under-arrows (`\underrightarrow`, `\undergroup`, `\utilde`,
-  `\overlinesegment`), `\phase`, `\textcircled`, actuarial `\angl`,
+- **Table internals** — `\cline`, `\multicolumn`, `\arraystretch`,
+  `\newline`. Rare in model output; revisit only if the recorder shows them.
+- **Niche typography** — `\phase`, `\textcircled`, actuarial `\angl`,
   `\raisebox`, `\rule`, `\hbox`, `\vcenter`, `\mathchoice`, logos
   (`\KaTeX`, `\LaTeX`, `\TeX`), `CD` environment. Low value per effort;
   most have supported spellings the model prefers (`\neq`, `\vec`).
