@@ -26,6 +26,12 @@ on the upstream package. Local changes on top of 2.1.3:
   `align`/`align*`/`alignedat{n}` (as `aligned`), `gather*`/`gathered`/
   `equation`/`equation*`, `dcases`, `rcases`. Full audit and remaining gaps:
   `docs/math-rendering-coverage.md` at the repo root.
+- Parser/symbol fixes (2026-08-15): `\not` (combining negation of the next
+  atom, precomposed codepoints for common relations), `\tag{...}`/`\tag*{...}`
+  render the label right of the formula (new `MTTag` atom), `\varGamma` family
+  uses the real Mathematical Italic Capital codepoints, and `\ngeqq`/`\nleqq`
+  use exact combining forms (base + U+0338). Tests in
+  `Tests/ExtendedSwiftMathTests/KatexCoverageTests.swift`.
 
 # ExtendedSwiftMath
 

@@ -62,6 +62,8 @@ public enum MTMathAtomType: Int, CustomStringConvertible, Comparable {
     /// A horizontally extensible arrow with optional over/under labels,
     /// e.g. \xrightarrow, \xleftarrow.
     case extensibleArrow
+    /// An equation tag rendered right of the formula, e.g. \tag{1}.
+    case tag
 
     // Atoms after this point do not support subscripts or superscripts
     
@@ -123,6 +125,7 @@ public enum MTMathAtomType: Int, CustomStringConvertible, Comparable {
             case .phantom:        return "Phantom"
             case .overlap:        return "Overlap"
             case .extensibleArrow: return "ExtensibleArrow"
+            case .tag:            return "Tag"
             case .boundary:       return "Boundary"
             case .space:          return "Space"
             case .style:          return "Style"
@@ -265,6 +268,8 @@ public class MTMathAtom: NSObject {
                 return MTOverlap(self as? MTOverlap)
             case .extensibleArrow:
                 return MTExtensibleArrow(self as? MTExtensibleArrow)
+            case .tag:
+                return MTTag(self as? MTTag)
             case .space:
                 return MTMathSpace(self as? MTMathSpace)
             case .color:
@@ -841,6 +846,38 @@ public class MTOverlap: MTMathAtom {
         newOverlap.innerList = newOverlap.innerList?.finalized
         newOverlap.overlapType = self.overlapType
         return newOverlap
+    }
+}
+
+// MARK: - MTTag
+
+/** An equation tag. Backs the amsmath `\tag{...}` and `\tag*{...}` commands.
+ The label renders right of the formula: a \qquad of separation, then the
+ label in text style, parenthesized unless the command was starred. There is
+ no right-margin gutter in this renderer, so the tag flows inline after the
+ formula (the KaTeX-in-chat spirit rather than full display-mode layout). */
+public class MTTag: MTMathAtom {
+    /// The tag label.
+    public var innerList: MTMathList?
+    /// Whether the command was \tag* (no parentheses around the label).
+    public var starred: Bool = false
+
+    init(_ tag: MTTag?) {
+        super.init(tag)
+        self.type = .tag
+        self.innerList = MTMathList(tag?.innerList)
+        self.starred = tag?.starred ?? false
+    }
+
+    override init() {
+        super.init()
+        self.type = .tag
+    }
+
+    override public var finalized: MTMathAtom {
+        let newTag = super.finalized as! MTTag
+        newTag.innerList = newTag.innerList?.finalized
+        return newTag
     }
 }
 

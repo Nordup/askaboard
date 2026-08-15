@@ -85,7 +85,7 @@ func getInterElementSpaceArrayIndexForType(_ type:MTMathAtomType, row:Bool) -> I
         // Over/under annotations, cancelled content, framed content and zero-width
         // overlap boxes are treated as ordinary. \stackrel passes a relation type
         // at layout time.
-        case .overUnder, .cancel, .boxed, .phantom, .overlap:
+        case .overUnder, .cancel, .boxed, .phantom, .overlap, .tag:
             return 0
         // Extensible arrows are relations (like ->) for spacing purposes.
         case .extensibleArrow:
@@ -1383,6 +1383,18 @@ class MTTypesetter {
                     if atom.subScript != nil || atom.superScript != nil {
                         self.makeScripts(atom, display: boxedDisplay, index: UInt(boxedAtom.indexRange.location), delta: 0)
                     }
+
+                case .tag:
+                    if currentLine.length > 0 {
+                        self.addDisplayLine()
+                    }
+                    self.addInterElementSpace(prevNode, currentType: .ordinary)
+                    atom.type = .ordinary
+                    let tagAtom = atom as! MTTag
+                    let tagDisplay = self.makeTag(tagAtom)
+                    tagDisplay.position = currentPosition
+                    displayAtoms.append(tagDisplay)
+                    currentPosition.x += tagDisplay.width
 
                 case .overUnder:
                     if currentLine.length > 0 {
@@ -2697,6 +2709,29 @@ class MTTypesetter {
         boxedDisplay.descent = innerDisplay.descent + padding + rule
         boxedDisplay.width = innerDisplay.width + 2 * (padding + rule)
         return boxedDisplay
+    }
+
+    // MARK: - Tag
+
+    func makeTag(_ tag: MTTag) -> MTDisplay {
+        // Compose "\qquad (label)" — a 2em separation, then the label in text
+        // style, parenthesized unless the command was starred.
+        let composed = MTMathList()
+        composed.add(MTMathSpace(space: 36)) // \qquad
+        composed.add(MTMathStyle(style: .text))
+        if !tag.starred {
+            composed.add(MTMathAtom(type: .open, value: "("))
+        }
+        if let label = tag.innerList {
+            for atom in label.atoms {
+                composed.add(atom.copy())
+            }
+        }
+        if !tag.starred {
+            composed.add(MTMathAtom(type: .close, value: ")"))
+        }
+        let display = MTTypesetter.createLineForMathList(composed.finalized, font: font, style: style, cramped: cramped)!
+        return display
     }
 
     // MARK: - Cancel

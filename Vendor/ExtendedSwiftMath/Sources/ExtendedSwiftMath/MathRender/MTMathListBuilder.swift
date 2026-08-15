@@ -759,6 +759,10 @@ public struct MTMathListBuilder {
                     if let boxed = atom as? MTBoxed {
                         str += "\\boxed{\(mathListToString(boxed.innerList))}"
                     }
+                } else if atom.type == .tag {
+                    if let tag = atom as? MTTag {
+                        str += "\\tag\(tag.starred ? "*" : ""){\(mathListToString(tag.innerList))}"
+                    }
                 } else if atom.type == .phantom {
                     if let phantom = atom as? MTPhantom {
                         str += "\\\(phantom.command){\(mathListToString(phantom.innerList))}"
@@ -1219,14 +1223,53 @@ public struct MTMathListBuilder {
             phantom.draws = command == "smash"
             phantom.innerList = self.buildInternal(true)
             return phantom
-        } else if command == "tag" {
-            // Equation tags have no anchor in this renderer; parse and drop.
-            self.skipSpaces()
-            if self.hasCharacters && self.string[self.currentCharIndex] == "*" {
-                _ = self.getNextCharacter()
+        } else if command == "tag" || command == "tag*" {
+            // \tag{label} / \tag*{label}: the label renders right of the
+            // formula, in text style, parenthesized unless starred. The
+            // command reader consumes the star as part of the command name.
+            let tag = MTTag()
+            tag.starred = command.hasSuffix("*")
+            tag.innerList = self.buildInternal(true)
+            return tag
+        } else if command == "not" {
+            // \not negates the next atom. Well-known relations map to their
+            // precomposed negated codepoints; anything else gets U+0338
+            // (combining long solidus overlay) appended to its nucleus.
+            let negations: [String: String] = [
+                "=" : "\u{2260}",        // ≠
+                "\u{2208}" : "\u{2209}", // \in -> ∉
+                "<" : "\u{226E}",        // ≮
+                ">" : "\u{226F}",        // ≯
+                "\u{2261}" : "\u{2262}", // \equiv -> ≢
+                "\u{2282}" : "\u{2284}", // \subset -> ⊄
+                "\u{2283}" : "\u{2285}", // \supset -> ⊅
+                "\u{2203}" : "\u{2204}", // \exists -> ∄
+                "\u{223C}" : "\u{2241}", // \sim -> ≁
+                "\u{2248}" : "\u{2249}", // \approx -> ≉
+                "\u{2245}" : "\u{2247}", // \cong -> ≇
+                "\u{2225}" : "\u{2226}", // \parallel -> ∦
+                "\u{2223}" : "\u{2224}", // \mid -> ∤
+                "\u{2264}" : "\u{2270}", // \leq -> ≰
+                "\u{2265}" : "\u{2271}", // \geq -> ≱
+                "\u{2286}" : "\u{2288}", // \subseteq -> ⊈
+                "\u{2287}" : "\u{2289}", // \supseteq -> ⊉
+            ]
+            guard let list = self.buildInternal(true), let first = list.atoms.first else {
+                // \not with nothing to negate: the standalone overlay slash.
+                return MTMathAtom(type: .relation, value: "\u{0338}")
             }
-            _ = self.readBracedText()
-            return MTMathSpace(space: 0)
+            if let precomposed = negations[first.nucleus] {
+                first.nucleus = precomposed
+            } else if !first.nucleus.isEmpty {
+                first.nucleus += "\u{0338}"
+            }
+            if list.atoms.count == 1 {
+                return first
+            }
+            // A braced multi-atom argument: negate the first atom, keep the rest.
+            let inner = MTInner()
+            inner.innerList = list
+            return inner
         } else if command == "notag" || command == "nonumber" ||
                   command == "tiny" || command == "scriptsize" || command == "footnotesize" ||
                   command == "small" || command == "normalsize" || command == "large" ||

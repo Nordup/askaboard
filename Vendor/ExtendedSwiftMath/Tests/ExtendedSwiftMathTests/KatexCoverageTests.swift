@@ -86,9 +86,70 @@ final class KatexCoverageTests: XCTestCase {
         XCTAssertEqual(MTMathListBuilder.mathListToString(build("\\smash{y}")), "\\smash{y}")
     }
 
-    func testTagAndSizeSwitchesAreNoOps() {
-        XCTAssertGreaterThan(render("x^2 \\tag{1}").width, 0)
+    func testSizeSwitchesAreNoOps() {
         XCTAssertGreaterThan(render("\\small x + \\Huge y \\notag").width, 0)
+    }
+
+    func testTagRendersLabel() {
+        // The tag renders right of the formula: \qquad then "(label)".
+        let tagged = render("x \\tag{1}")
+        let plain = render("x")
+        XCTAssertGreaterThan(tagged.width, plain.width)
+        // Starred form omits the parentheses, so it is narrower.
+        let starred = render("x \\tag*{1}")
+        XCTAssertGreaterThan(starred.width, plain.width)
+        XCTAssertLessThan(starred.width, tagged.width)
+
+        // Structure and round-trip serialization.
+        let list = build("x \\tag{12}")
+        let tag = list.atoms[1] as! MTTag
+        XCTAssertFalse(tag.starred)
+        XCTAssertEqual(MTMathListBuilder.mathListToString(list), "x\\tag{12}")
+        XCTAssertEqual(MTMathListBuilder.mathListToString(build("x \\tag*{A}")), "x\\tag*{A}")
+    }
+
+    func testNotNegatesNextAtom() {
+        // Well-known pairs map to precomposed negated codepoints.
+        let cases: [(String, String)] = [
+            ("a \\not= b", "\u{2260}"),        // ≠
+            ("a \\not\\in b", "\u{2209}"),     // ∉
+            ("a \\not< b", "\u{226E}"),        // ≮
+            ("a \\not> b", "\u{226F}"),        // ≯
+            ("a \\not\\equiv b", "\u{2262}"),  // ≢
+            ("A \\not\\subset B", "\u{2284}"), // ⊄
+            ("a \\not\\leq b", "\u{2270}"),    // ≰
+            ("A \\not\\subseteq B", "\u{2288}"), // ⊈
+        ]
+        for (latex, negated) in cases {
+            let list = build(latex)
+            XCTAssertEqual(list.atoms[1].nucleus, negated, latex)
+            XCTAssertGreaterThan(render(latex).width, 0, latex)
+        }
+        // Unknown relations fall back to appending U+0338.
+        let fallback = build("a \\not\\perp b")
+        XCTAssertEqual(fallback.atoms[1].nucleus, "\u{27C2}\u{0338}")
+        XCTAssertGreaterThan(render("a \\not\\perp b").width, 0)
+    }
+
+    func testVarGreekItalicCapitals() {
+        // \varGamma family maps to Mathematical Italic Capital codepoints.
+        let list = build("\\varGamma")
+        XCTAssertEqual(list.atoms[0].nucleus, "\u{0001D6E4}")
+        for name in ["varGamma", "varDelta", "varTheta", "varLambda", "varXi",
+                     "varPi", "varSigma", "varUpsilon", "varPhi", "varPsi",
+                     "varOmega"] {
+            XCTAssertGreaterThan(render("\\" + name).width, 0, name)
+        }
+    }
+
+    func testExactNegatedRelations() {
+        // \ngeqq / \nleqq carry the exact combining form (base + U+0338).
+        XCTAssertEqual(build("\\ngeqq").atoms[0].nucleus, "\u{2267}\u{0338}")
+        XCTAssertEqual(build("\\nleqq").atoms[0].nucleus, "\u{2266}\u{0338}")
+        for latex in ["a \\ngeqq b", "a \\nleqq b",
+                      "A \\nsubseteqq B", "A \\nsupseteqq B"] {
+            XCTAssertGreaterThan(render(latex).width, 0, latex)
+        }
     }
 
     func testKernFamily() {

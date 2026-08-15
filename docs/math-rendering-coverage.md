@@ -34,7 +34,7 @@ still worth doing as insurance.
 | Probe | Before | After |
 | --- | --- | --- |
 | Formulas ever emitted by the tutor (recorder DB) | 52 of 53 parsed (`\boxed` failed) | 53 of 53 |
-| KaTeX command names (926 probed) | 529 failed | 92 fail |
+| KaTeX command names (926 probed) | 529 failed | 91 fail (`\not` moved to supported in a follow-up pass) |
 | Common display environments (23 probed) | 10 parsed | 22 parse (all but `CD`) |
 
 Regression suites: `BoxedTests.swift`, `KatexCoverageTests.swift` in
@@ -57,7 +57,7 @@ builds.
   European trig names (`\tg`, `\ctg`, `\sh`, `\ch`, `\cosec`, …), `\intop`,
   `\smallint`, `\oiint`, `\oiiint`.
 - **~60 aliases** — `\dots` family, `\isin`, `\larr`/`\rArr` arrow shorthands,
-  `\infin`, `\plusmn`, `\varGamma` → `\Gamma`, `\varliminf` → `\liminf`,
+  `\infin`, `\plusmn`, `\varliminf` → `\liminf`,
   `\impliedby`, suit shorthands, `\weierp`, `\real`, `\image`.
 - **Font styles** — `\bold`, `\pmb`, `\Bbb`, `\it`, `\sf`, `\tt`, `\emph`,
   `\mathscr` (mapped to calligraphic), `\textnormal`/`\textmd`/`\textup`.
@@ -67,7 +67,7 @@ builds.
 - **Structural** — `\dbinom`/`\tbinom`; `\sout` (horizontal strike, a new
   `MTCancel` case); `\phantom`/`\hphantom`/`\vphantom`/`\smash` (new
   `MTPhantom` atom: reserve space without drawing, or draw without height);
-  `\tag`, `\notag`, `\nonumber` and text-size switches as safe no-ops;
+  `\notag`, `\nonumber` and text-size switches as safe no-ops;
   `\mathop`/`\mathbin`/`\mathrel`/… spacing reclassification; `\Bra`/`\Ket`/
   `\Braket`/`\set`/`\Set`; `\fcolorbox` (border color dropped);
   `\operatornamewithlimits`; `\llap`/`\rlap`/`\clap`; `\underbar`.
@@ -84,14 +84,33 @@ builds.
   `gathered`/`equation`/`equation*` (single column, centered), `dcases`
   (display-style cells), `rcases` (right brace). Already supported upstream:
   matrix family, `cases`, `aligned`, `split`, `gather`, `eqnarray` (3-col).
+- **`\not`** (second pass) — negates the next atom. Well-known relations map
+  to their precomposed negated codepoints (`\not=` → ≠, `\not\in` → ∉,
+  `\not\subset` → ⊄, `\not\leq` → ≰, ...); anything else gets U+0338
+  (combining long solidus overlay) appended, which Latin Modern draws as a
+  proper strike (verified by render probe on `\not\perp`, `\not\rightarrow`).
+- **`\tag{...}` / `\tag*{...}`** (second pass) — new `MTTag` atom. The label
+  renders right of the formula: a `\qquad` of separation, then the label in
+  text style, parenthesized unless starred. Serializes back to
+  `\tag{...}`/`\tag*{...}`. There is still no right-margin gutter — the tag
+  flows inline after the formula (KaTeX-in-chat spirit, not full
+  display-mode layout).
+- **`\varGamma` family** (second pass) — real Mathematical Italic Capital
+  codepoints (U+1D6E4–U+1D6FA), no longer aliased to the upright capitals.
+  All eleven glyphs verified present in Latin Modern by render probe.
+- **`\ngeqq`, `\nleqq`** (second pass) — exact combining forms ≧̸ / ≦̸
+  (U+2267/U+2266 + U+0338), verified to draw as a true strike-through.
 
 ## Known degradations (parse fine, render approximately)
 
-- `\varGamma`-style italic capitals render upright (aliased to `\Gamma`).
-- `\ngeqq`, `\nleqq`, `\nsubseteqq`, `\nsupseteqq`, `\gvertneqq`, `\lvertneqq`
-  use the closest single codepoint, not the exact combining form.
+- `\nsubseteqq`, `\nsupseteqq` use the closest single codepoint (⊈/⊉): the
+  exact combining forms (U+2AC5/U+2AC6 + U+0338) render as a detached slash
+  beside the glyph in the bundled fonts (render-probe evidence), so the
+  approximation looks better. `\gvertneqq`/`\lvertneqq` stay ≩/≨ (no vertical
+  stroke variant in the fonts).
 - Rare colon ligatures (`\Colonapprox` …) are composed character sequences.
-- `\tag{...}` labels are parsed and dropped (no equation-number gutter).
+- `\tag{...}` renders inline right of the formula, not in a right-margin
+  equation-number gutter.
 - Text-size switches (`\small` … `\Huge`) and `\mathstrut` are no-ops.
 - `\mathop{...}` with a complex (non-plain-text) argument falls back to
   ordinary spacing.
@@ -100,7 +119,7 @@ builds.
 
 ## Still missing, by design
 
-92 of 926 probe names still fail. Categories, with assessment:
+91 of 926 probe names still fail. Categories, with assessment:
 
 - **Probe artifacts (actually supported)** — `\left`/`\right`/`\middle`,
   `\big` family, `\begin`/`\end`, `\limits`/`\nolimits`, `\genfrac`,
@@ -115,7 +134,7 @@ builds.
 - **Table internals** — `\cline`, `\multicolumn`, `\hdashline`,
   `\arraystretch`, `\newline`. Rare in model output; revisit only if the
   recorder shows them.
-- **Niche typography** — `\not` (combining negation), `\Overrightarrow`,
+- **Niche typography** — `\Overrightarrow`,
   under-arrows (`\underrightarrow`, `\undergroup`, `\utilde`,
   `\overlinesegment`), `\phase`, `\textcircled`, actuarial `\angl`,
   `\raisebox`, `\rule`, `\hbox`, `\vcenter`, `\mathchoice`, logos

@@ -76,18 +76,7 @@ public class MTMathAtomFactory {
         "varliminf" : "liminf",
         "varlimsup" : "limsup",
         "varinjlim" : "injlim",
-        "varprojlim" : "projlim",
-        "varGamma" : "Gamma",
-        "varDelta" : "Delta",
-        "varTheta" : "Theta",
-        "varLambda" : "Lambda",
-        "varXi" : "Xi",
-        "varPi" : "Pi",
-        "varSigma" : "Sigma",
-        "varUpsilon" : "Upsilon",
-        "varPhi" : "Phi",
-        "varPsi" : "Psi",
-        "varOmega" : "Omega"
+        "varprojlim" : "projlim"
     ]
     
     public static let delimiters = [
@@ -270,6 +259,22 @@ public class MTMathAtomFactory {
         "Phi" : MTMathAtom(type: .variable, value: "\u{03A6}"),
         "Psi" : MTMathAtom(type: .variable, value: "\u{03A8}"),
         "Omega" : MTMathAtom(type: .variable, value: "\u{03A9}"),
+
+        // Italic capital greek characters (\varGamma family). These use the
+        // Mathematical Italic Capital codepoints directly so they stay italic
+        // regardless of font style transforms (which only cover the basic
+        // Greek block).
+        "varGamma" : MTMathAtom(type: .ordinary, value: "\u{0001D6E4}"),
+        "varDelta" : MTMathAtom(type: .ordinary, value: "\u{0001D6E5}"),
+        "varTheta" : MTMathAtom(type: .ordinary, value: "\u{0001D6E9}"),
+        "varLambda" : MTMathAtom(type: .ordinary, value: "\u{0001D6EC}"),
+        "varXi" : MTMathAtom(type: .ordinary, value: "\u{0001D6EF}"),
+        "varPi" : MTMathAtom(type: .ordinary, value: "\u{0001D6F1}"),
+        "varSigma" : MTMathAtom(type: .ordinary, value: "\u{0001D6F4}"),
+        "varUpsilon" : MTMathAtom(type: .ordinary, value: "\u{0001D6F6}"),
+        "varPhi" : MTMathAtom(type: .ordinary, value: "\u{0001D6F7}"),
+        "varPsi" : MTMathAtom(type: .ordinary, value: "\u{0001D6F9}"),
+        "varOmega" : MTMathAtom(type: .ordinary, value: "\u{0001D6FA}"),
 
         // Open
         "lceil" : MTMathAtom(type: .open, value: "\u{2308}"),
@@ -882,9 +887,14 @@ public class MTMathAtomFactory {
         "simcolon" : MTMathAtom(type: .relation, value: "\u{223C}:"),
         "simcoloncolon" : MTMathAtom(type: .relation, value: "\u{223C}\u{2237}"),
 
-        // Negated relations without single codepoints (closest forms)
-        "ngeqq" : MTMathAtom(type: .relation, value: "\u{2271}"),
-        "nleqq" : MTMathAtom(type: .relation, value: "\u{2270}"),
+        // Negated relations without single codepoints. \ngeqq and \nleqq use
+        // the exact combining form (base + U+0338 combining long solidus
+        // overlay), which Latin Modern draws as a proper strike-through.
+        // U+2AC5/U+2AC6 + U+0338 render as a detached slash beside the glyph
+        // in the bundled fonts (verified by render probe), so \nsubseteqq and
+        // \nsupseteqq keep the closest single codepoints.
+        "ngeqq" : MTMathAtom(type: .relation, value: "\u{2267}\u{0338}"),
+        "nleqq" : MTMathAtom(type: .relation, value: "\u{2266}\u{0338}"),
         "nsubseteqq" : MTMathAtom(type: .relation, value: "\u{2288}"),
         "nsupseteqq" : MTMathAtom(type: .relation, value: "\u{2289}"),
         "gvertneqq" : MTMathAtom(type: .relation, value: "\u{2269}"),
