@@ -8,7 +8,7 @@ import Foundation
 /// Domain state: no UIKit, no SwiftUI, and no renderer. Coordinates are logical
 /// board points with (0,0) at `PencilCanvasConfiguration.boardOrigin`,
 /// +x right and +y down.
-struct BoardScene: Codable, Equatable, Sendable {
+struct BoardScene: Codable, Hashable, Sendable {
     var elements: [BoardElement]
 
     static var empty: BoardScene { BoardScene(elements: []) }
@@ -136,7 +136,7 @@ enum BoardElementKind: String, Codable, Sendable, CaseIterable {
 }
 
 /// Style fields shared by every primitive; all are present on the wire.
-struct BoardStyle: Codable, Equatable, Sendable {
+struct BoardStyle: Codable, Hashable, Sendable {
     var role: BoardRole = .content
     var stroke: String = "#0A0A0A"
     var fill: String = "transparent"
@@ -157,7 +157,7 @@ struct BoardStyle: Codable, Equatable, Sendable {
     }
 }
 
-struct TextElement: Codable, Equatable, Sendable {
+struct TextElement: Codable, Hashable, Sendable {
     var id: String
     var kind: BoardElementKind = .text
     var x: CGFloat
@@ -175,7 +175,7 @@ struct TextElement: Codable, Equatable, Sendable {
     }
 }
 
-struct LineElement: Codable, Equatable, Sendable {
+struct LineElement: Codable, Hashable, Sendable {
     var id: String
     var kind: BoardElementKind = .line
     var x1: CGFloat
@@ -185,7 +185,7 @@ struct LineElement: Codable, Equatable, Sendable {
     var style: BoardStyle = BoardStyle()
 }
 
-struct ArrowElement: Codable, Equatable, Sendable {
+struct ArrowElement: Codable, Hashable, Sendable {
     var id: String
     var kind: BoardElementKind = .arrow
     var x1: CGFloat
@@ -201,7 +201,7 @@ struct ArrowElement: Codable, Equatable, Sendable {
     }
 }
 
-struct RectangleElement: Codable, Equatable, Sendable {
+struct RectangleElement: Codable, Hashable, Sendable {
     var id: String
     var kind: BoardElementKind = .rectangle
     var x: CGFloat
@@ -211,7 +211,7 @@ struct RectangleElement: Codable, Equatable, Sendable {
     var style: BoardStyle = BoardStyle()
 }
 
-struct EllipseElement: Codable, Equatable, Sendable {
+struct EllipseElement: Codable, Hashable, Sendable {
     var id: String
     var kind: BoardElementKind = .ellipse
     var x: CGFloat
@@ -221,7 +221,7 @@ struct EllipseElement: Codable, Equatable, Sendable {
     var style: BoardStyle = BoardStyle()
 }
 
-struct CircleElement: Codable, Equatable, Sendable {
+struct CircleElement: Codable, Hashable, Sendable {
     var id: String
     var kind: BoardElementKind = .circle
     var cx: CGFloat
@@ -230,21 +230,21 @@ struct CircleElement: Codable, Equatable, Sendable {
     var style: BoardStyle = BoardStyle()
 }
 
-struct PolygonElement: Codable, Equatable, Sendable {
+struct PolygonElement: Codable, Hashable, Sendable {
     var id: String
     var kind: BoardElementKind = .polygon
     var points: [BoardPoint]
     var style: BoardStyle = BoardStyle()
 }
 
-struct PolylineElement: Codable, Equatable, Sendable {
+struct PolylineElement: Codable, Hashable, Sendable {
     var id: String
     var kind: BoardElementKind = .polyline
     var points: [BoardPoint]
     var style: BoardStyle = BoardStyle()
 }
 
-struct FreehandElement: Codable, Equatable, Sendable {
+struct FreehandElement: Codable, Hashable, Sendable {
     var id: String
     var kind: BoardElementKind = .freehand
     var points: [BoardPoint]
@@ -252,7 +252,7 @@ struct FreehandElement: Codable, Equatable, Sendable {
 }
 
 /// A logical board point encoded as `[x, y]`, matching the wire contract.
-struct BoardPoint: Codable, Equatable, Sendable {
+struct BoardPoint: Codable, Hashable, Sendable {
     var x: CGFloat
     var y: CGFloat
 
@@ -274,7 +274,7 @@ struct BoardPoint: Codable, Equatable, Sendable {
     }
 }
 
-struct ArcElement: Codable, Equatable, Sendable {
+struct ArcElement: Codable, Hashable, Sendable {
     var id: String
     var kind: BoardElementKind = .arc
     var cx: CGFloat
@@ -291,7 +291,7 @@ struct ArcElement: Codable, Equatable, Sendable {
     }
 }
 
-struct AngleMarkerElement: Codable, Equatable, Sendable {
+struct AngleMarkerElement: Codable, Hashable, Sendable {
     var id: String
     var kind: BoardElementKind = .angleMarker
     var vertexX: CGFloat
@@ -320,7 +320,7 @@ struct AngleMarkerElement: Codable, Equatable, Sendable {
 /// locally by WebKit on the iPad. The frame (`x`, `y`, `width`, `height`)
 /// places it in board coordinates; the SVG owns its internal styling, while
 /// the shared `BoardStyle` still carries scene-level opacity and rotation.
-struct SVGElement: Codable, Equatable, Sendable {
+struct SVGElement: Codable, Hashable, Sendable {
     var id: String
     var kind: BoardElementKind = .svg
     var x: CGFloat
@@ -332,7 +332,7 @@ struct SVGElement: Codable, Equatable, Sendable {
 }
 
 /// The discriminated primitive union, encoded exactly as the server sends it.
-enum BoardElement: Codable, Equatable, Sendable {
+enum BoardElement: Codable, Hashable, Sendable {
     case text(TextElement)
     case line(LineElement)
     case arrow(ArrowElement)
