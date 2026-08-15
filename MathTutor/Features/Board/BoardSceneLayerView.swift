@@ -31,14 +31,15 @@ final class BoardSceneLayerView: UIView {
     var scene: BoardScene = .empty {
         didSet {
             guard scene != oldValue else { return }
-            // Scheduling every `svg` element's render is this view's own duty,
-            // not its container's: `raster(for:bounds:)` reads the artifact and
-            // draws nothing until it lands, so a scene installed without this
-            // call would leave every svg layer empty forever. Restored scenes
-            // and scene replacements all reach the board through the canvas's
-            // `boardScene`, which forwards here, so this is the one place a
-            // scene's local renders are scheduled.
+            // Scheduling every `svg` and `math_text` element's render is this
+            // view's own duty, not its container's: `raster(for:bounds:)` reads
+            // the artifact and draws nothing until it lands, so a scene
+            // installed without these calls would leave every such layer empty
+            // forever. Restored scenes and scene replacements all reach the
+            // board through the canvas's `boardScene`, which forwards here, so
+            // this is the one place a scene's local renders are scheduled.
             BoardSVGCache.shared.prepare(scene: scene)
+            BoardMathStore.shared.prepare(scene: scene)
             reconcile()
         }
     }
@@ -115,6 +116,12 @@ final class BoardSceneLayerView: UIView {
             self,
             selector: #selector(artifactDidBecomeReady),
             name: .boardSVGCacheDidRender,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(artifactDidBecomeReady),
+            name: .boardSceneArtifactReady,
             object: nil
         )
         NotificationCenter.default.addObserver(
@@ -310,6 +317,13 @@ final class BoardSceneLayerView: UIView {
         // would be served for the rest of the session. Draw nothing, cache
         // nothing, and wait for `.boardSVGCacheDidRender` to reconcile.
         if case .svg(let value) = element, BoardSVGCache.shared.artifact(for: value) == nil {
+            return nil
+        }
+        // `math_text` carries the same hazard and one more guard against it:
+        // its bounds are `.zero` until the typeset lands, so `apply` unmounts
+        // it rather than reaching here at all. This keeps the cache honest if
+        // that ever changes.
+        if case .mathText(let value) = element, BoardMathStore.shared.artifact(for: value) == nil {
             return nil
         }
         let key = RasterKey(element: element, bucket: currentBucket)

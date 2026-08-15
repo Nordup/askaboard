@@ -15,6 +15,12 @@ settings:
 packages:
   markdownExtendedView:
     path: Vendor/MarkdownExtendedView
+  # The LaTeX typesetter, already in the graph under MarkdownExtendedView and
+  # named here so the app target can link it directly. The board typesets its
+  # `math_text` elements with the same engine chat uses (BoardMathStore), so
+  # notation on the board and notation in a message match glyph for glyph.
+  extendedSwiftMath:
+    path: Vendor/ExtendedSwiftMath
   # Google WebRTC as the stasel binary distribution — the transport for live
   # voice chat (Services/Realtime). The same package the sleep app pinned;
   # see docs/research/voice-mode/sleep-app-voice-stack.md §1.
@@ -38,6 +44,8 @@ targets:
     dependencies:
       - package: markdownExtendedView
         product: MarkdownExtendedView
+      - package: extendedSwiftMath
+        product: ExtendedSwiftMath
       - package: webRTC
         product: WebRTC
       - package: swiftDraw

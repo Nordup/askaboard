@@ -151,6 +151,7 @@ enum BoardElementKind: String, Codable, Sendable, CaseIterable {
     case arc
     case angleMarker = "angle_marker"
     case path
+    case mathText = "math_text"
     case svg
 }
 
@@ -361,6 +362,34 @@ struct PathElement: Codable, Hashable, Sendable {
     }
 }
 
+/// Mathematical notation, carried as LaTeX and typeset on the device.
+///
+/// This is the only element that puts notation on the board: notation spelled
+/// out as plain text, or assembled from lines and glyphs, is unreadable and
+/// cannot be revised by id. The server holds no opinion on the dialect and
+/// passes `latex` through byte for byte, so what arrives here is whatever the
+/// model wrote — including the `$…$` padding it adds despite instructions.
+/// `BoardMathStore` is what strips that and typesets the rest.
+///
+/// `fontSize` is the notation's size in board points. The raster behind it is
+/// taken at twice that, so a pinch to full zoom finds a bitmap that still has
+/// pixels to show; `(x, y)` is the top-left of the typeset result at the
+/// requested size, exactly as it is for `text`.
+struct MathTextElement: Codable, Hashable, Sendable {
+    var id: String
+    var kind: BoardElementKind = .mathText
+    var x: CGFloat
+    var y: CGFloat
+    var latex: String
+    var fontSize: CGFloat
+    var style: BoardStyle = BoardStyle()
+
+    enum CodingKeys: String, CodingKey {
+        case id, kind, x, y, latex, style
+        case fontSize = "font_size"
+    }
+}
+
 /// A complete raw SVG document, preserved byte-for-byte and rendered
 /// locally by WebKit on the iPad. The frame (`x`, `y`, `width`, `height`)
 /// places it in board coordinates; the SVG owns its internal styling, while
@@ -390,6 +419,7 @@ enum BoardElement: Codable, Hashable, Sendable {
     case arc(ArcElement)
     case angleMarker(AngleMarkerElement)
     case path(PathElement)
+    case mathText(MathTextElement)
     case svg(SVGElement)
 
     var id: String {
@@ -406,6 +436,7 @@ enum BoardElement: Codable, Hashable, Sendable {
         case .arc(let value): value.id
         case .angleMarker(let value): value.id
         case .path(let value): value.id
+        case .mathText(let value): value.id
         case .svg(let value): value.id
         }
     }
@@ -424,6 +455,7 @@ enum BoardElement: Codable, Hashable, Sendable {
         case .arc: .arc
         case .angleMarker: .angleMarker
         case .path: .path
+        case .mathText: .mathText
         case .svg: .svg
         }
     }
@@ -442,6 +474,7 @@ enum BoardElement: Codable, Hashable, Sendable {
         case .arc(let value): value.style
         case .angleMarker(let value): value.style
         case .path(let value): value.style
+        case .mathText(let value): value.style
         case .svg(let value): value.style
         }
     }
@@ -567,6 +600,16 @@ enum BoardElement: Codable, Hashable, Sendable {
                 fillRule: wire.fillRule ?? .nonzero,
                 style: wire.style
             ))
+        case .mathText:
+            self = .mathText(MathTextElement(
+                id: wire.id,
+                kind: .mathText,
+                x: wire.x ?? 0,
+                y: wire.y ?? 0,
+                latex: wire.latex ?? "",
+                fontSize: wire.fontSize ?? 24,
+                style: wire.style
+            ))
         case .svg:
             self = .svg(SVGElement(
                 id: wire.id,
@@ -663,8 +706,10 @@ private struct WireElement: Codable {
     var d: String?
     var fillRule: PathFillRule?
 
+    var latex: String?
+
     enum CodingKeys: String, CodingKey {
-        case id, kind, x, y, text, width, height, points, svg, d
+        case id, kind, x, y, text, width, height, points, svg, d, latex
         case x1, y1, x2, y2, cx, cy, radius
         case role, stroke, fill, opacity, dash, rotation
         case fillRule = "fill_rule"
@@ -718,6 +763,9 @@ private struct WireElement: Codable {
             radius = value.radius; rightAngle = value.rightAngle
         case .path(let value):
             d = value.d; fillRule = value.fillRule
+        case .mathText(let value):
+            x = value.x; y = value.y
+            latex = value.latex; fontSize = value.fontSize
         case .svg(let value):
             x = value.x; y = value.y; width = value.width; height = value.height
             svg = value.svg
@@ -765,6 +813,7 @@ private struct WireElement: Codable {
         svg = try container.decodeIfPresent(String.self, forKey: .svg)
         d = try container.decodeIfPresent(String.self, forKey: .d)
         fillRule = try container.decodeIfPresent(PathFillRule.self, forKey: .fillRule)
+        latex = try container.decodeIfPresent(String.self, forKey: .latex)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -806,5 +855,6 @@ private struct WireElement: Codable {
         if let svg { try container.encode(svg, forKey: .svg) }
         if let d { try container.encode(d, forKey: .d) }
         if let fillRule { try container.encode(fillRule, forKey: .fillRule) }
+        if let latex { try container.encode(latex, forKey: .latex) }
     }
 }

@@ -69,7 +69,7 @@
 		5D1E63A5E7895DE958C6A55B /* SuggestionChip.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3819B07BA533544E9FFF5372 /* SuggestionChip.swift */; };
 		6039FB61DB7B9CE160407A2D /* BoardScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55F857C97BF30E507F4AFBA9 /* BoardScene.swift */; };
 		610EDB986EBF9EC36EAC13CF /* SwiftDrawProbeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3D368DED69760CC8C9E9471 /* SwiftDrawProbeTests.swift */; };
-		626E0C4AFB03801DA73159D5 /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = 8BFA867D54B3C458183127B2 /* WebRTC */; };
+		626E0C4AFB03801DA73159D5 /* ExtendedSwiftMath in Frameworks */ = {isa = PBXBuildFile; productRef = 1A56D193512A5799B1B32BB0 /* ExtendedSwiftMath */; };
 		62D3D1170425BC618AE2CE4E /* SessionSwitcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1AD1D26A28E26E3C17AC894 /* SessionSwitcherTests.swift */; };
 		667FD9DC81E5660F25882C49 /* SettingRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5078C64A063E2312DE7B9A1D /* SettingRow.swift */; };
 		6938C21ECBCEE5D5D0A26299 /* BoardCanvas.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48F8A6727EE102FA0FCE0C77 /* BoardCanvas.swift */; };
@@ -89,21 +89,24 @@
 		7D3C2F693CC25B87A39B9600 /* BackendTutorServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4321C972F3139C4C616C7600 /* BackendTutorServiceTests.swift */; };
 		7D8BA1B4D404997FC01F08D2 /* BoardPathElementTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4EFAF2B54BDC215F7D0F023 /* BoardPathElementTests.swift */; };
 		7D96576C2631E4C14D389E1C /* BoardPeek.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1777E72E2503235081D9FDA7 /* BoardPeek.swift */; };
+		7E2765B10BCA37C9B5B6C632 /* SwiftDraw in Frameworks */ = {isa = PBXBuildFile; productRef = 46088361BC711A7116DB85DE /* SwiftDraw */; };
 		8248D79E5256A68437A743ED /* ChatComponentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 784BDCC853A7787B6EE7BFFD /* ChatComponentTests.swift */; };
 		82A69FF1ECE0871BCD2AB457 /* LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = F5A6F66827D10068E0AA3FD4 /* LICENSE.txt */; };
+		83FC851463C4603DBA4A2FB7 /* BoardMathElementTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 974F32F35EEA5AF0F4A6C691 /* BoardMathElementTests.swift */; };
 		841979CF9E16DB5EAF79F766 /* BoardSceneTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCB633BBC8749E0FCA3A8A55 /* BoardSceneTests.swift */; };
 		86FF5393AB87153348D04F74 /* ResizeModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE2F1C8A199C9377474DF7AA /* ResizeModelTests.swift */; };
 		882764C4645E540FA3B4D6F8 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0E7C06258FD823C2E5B4C5D /* RootView.swift */; };
 		8AE059865F261B9D671ECFF2 /* SessionPlanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CFED3B175C3922A5241AF7C /* SessionPlanView.swift */; };
 		8B9AC755A10DFAF39CA985CD /* SettingsWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CDCEE851D84DD0BD8B2DB86 /* SettingsWindow.swift */; };
 		8CFFCA8713A559A17AA2D839 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C742B8F4CF845931CCEFC3D /* KeychainStore.swift */; };
-		8DEAFEDDA17ED87FF53F9AE6 /* SwiftDraw in Frameworks */ = {isa = PBXBuildFile; productRef = 46088361BC711A7116DB85DE /* SwiftDraw */; };
+		8DEAFEDDA17ED87FF53F9AE6 /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = 8BFA867D54B3C458183127B2 /* WebRTC */; };
 		8EF8D1DBB69B35CD52FE47A8 /* TutorEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4D02DCD5A1B7D6CBA594BAF /* TutorEvent.swift */; };
 		902636F164A70DBA8E9FCFF0 /* RealtimeConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 008918BCF5D56C68A38FDFF1 /* RealtimeConnection.swift */; };
 		906FFC4E68C91A9A417F061F /* MessageEditingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFAF225BBA2FEB4C84A98324 /* MessageEditingTests.swift */; };
 		956D897888A091891B2DD64D /* MascotMotion.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1C3C9D42C49D91BF86FADD2 /* MascotMotion.swift */; };
 		960BF188040438DC7F5C1D9B /* AttachmentUploader.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE21716456338270C146DD1F /* AttachmentUploader.swift */; };
 		9986C716988CA98C7B16DA42 /* IconPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CBDF79C9C7A38D6240F017F /* IconPaths.swift */; };
+		9BECD813945BC49DCABBB537 /* UIColor+BoardHex.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0371EC550259B10EAB21C916 /* UIColor+BoardHex.swift */; };
 		9EE208CFC286CC9901CDDBB6 /* ComposerButtons.swift in Sources */ = {isa = PBXBuildFile; fileRef = 268CDEEFE80CA5EDF78FB1EF /* ComposerButtons.swift */; };
 		A295938FFD57678AF0A64E2F /* TutorPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EA4C8E6325776E542D8DA7B /* TutorPanel.swift */; };
 		A4FCE68D0B000E7A694E4C5E /* BoardCropStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8754B88D455D657A48558DE2 /* BoardCropStore.swift */; };
@@ -129,6 +132,7 @@
 		BCF8A9D1007481F9057DE623 /* StructuredChatTextTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A14830CB2CFA326710F5956B /* StructuredChatTextTests.swift */; };
 		BD918876901E75AD4723D8A0 /* TutorPromptPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07DCCC70FA22423135C6251A /* TutorPromptPolicy.swift */; };
 		BF03F14EA21C27A4E7686D8B /* TutorStoreStreamingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01208D8AB95D85FECBBFB486 /* TutorStoreStreamingTests.swift */; };
+		C096F7A2A268DD9484AAFD4A /* BoardMathStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0730AD2FC75614FC96E8605A /* BoardMathStore.swift */; };
 		C2807F151AAAB8AB732AA4A5 /* SettingsPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 893D3B3086BA9C4D9374718B /* SettingsPresentation.swift */; };
 		C2F1BFE90BA785204C92E595 /* ShellComponentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61070F61E8510619F84F5D97 /* ShellComponentTests.swift */; };
 		C572458EC96D83FFEF72CF89 /* MathTutorApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE113B7E3E62FDCFA7413776 /* MathTutorApp.swift */; };
@@ -189,7 +193,9 @@
 /* Begin PBXFileReference section */
 		008918BCF5D56C68A38FDFF1 /* RealtimeConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeConnection.swift; sourceTree = "<group>"; };
 		01208D8AB95D85FECBBFB486 /* TutorStoreStreamingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TutorStoreStreamingTests.swift; sourceTree = "<group>"; };
+		0371EC550259B10EAB21C916 /* UIColor+BoardHex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "UIColor+BoardHex.swift"; sourceTree = "<group>"; };
 		0729DC14BC3A737998304309 /* BoardPaperTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardPaperTests.swift; sourceTree = "<group>"; };
+		0730AD2FC75614FC96E8605A /* BoardMathStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardMathStore.swift; sourceTree = "<group>"; };
 		07822BFCEDA6CAC5E7B67D24 /* BoardInkTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardInkTests.swift; sourceTree = "<group>"; };
 		07DCCC70FA22423135C6251A /* TutorPromptPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TutorPromptPolicy.swift; sourceTree = "<group>"; };
 		0923A519200B6C94C328211E /* BoardSceneLayerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardSceneLayerTests.swift; sourceTree = "<group>"; };
@@ -283,10 +289,12 @@
 		8F1A6EED1920DEA8870E9A3D /* ShellGallery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShellGallery.swift; sourceTree = "<group>"; };
 		8F3B35EED7A1DD1AF7C7145F /* TutorPanelShell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TutorPanelShell.swift; sourceTree = "<group>"; };
 		9013A7C0B8561D4DADA9553C /* DictationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictationService.swift; sourceTree = "<group>"; };
+		90945E8853281DE85253D3A4 /* ExtendedSwiftMath */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ExtendedSwiftMath; path = Vendor/ExtendedSwiftMath; sourceTree = SOURCE_ROOT; };
 		90D781B92879DD6D65B71FAB /* SettingsPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPane.swift; sourceTree = "<group>"; };
 		919545338C6C3B19C28E11E7 /* RealtimeEvents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeEvents.swift; sourceTree = "<group>"; };
 		95328C09291FF057FF5EC160 /* DesignSystemTokenTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystemTokenTests.swift; sourceTree = "<group>"; };
 		973B26F01543AD9BFE27B4C2 /* MarkdownExtendedView */ = {isa = PBXFileReference; lastKnownFileType = folder; name = MarkdownExtendedView; path = Vendor/MarkdownExtendedView; sourceTree = SOURCE_ROOT; };
+		974F32F35EEA5AF0F4A6C691 /* BoardMathElementTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardMathElementTests.swift; sourceTree = "<group>"; };
 		9B0E027F5827A16DC5016AA6 /* ResizeHandle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResizeHandle.swift; sourceTree = "<group>"; };
 		9D3C08CEF2BB69842ABC9BBF /* TutorService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TutorService.swift; sourceTree = "<group>"; };
 		9D97B15C0A56161A1EB12CCB /* AttachMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachMenu.swift; sourceTree = "<group>"; };
@@ -359,8 +367,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				787930E8CC449D11F3E55A66 /* MarkdownExtendedView in Frameworks */,
-				626E0C4AFB03801DA73159D5 /* WebRTC in Frameworks */,
-				8DEAFEDDA17ED87FF53F9AE6 /* SwiftDraw in Frameworks */,
+				626E0C4AFB03801DA73159D5 /* ExtendedSwiftMath in Frameworks */,
+				8DEAFEDDA17ED87FF53F9AE6 /* WebRTC in Frameworks */,
+				7E2765B10BCA37C9B5B6C632 /* SwiftDraw in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -474,6 +483,7 @@
 				6CF47EA2AF089BE1CEF29278 /* BoardElementBoundsTests.swift */,
 				3DBEC75E12C26E686FF76BDF /* BoardInkPersistenceTests.swift */,
 				07822BFCEDA6CAC5E7B67D24 /* BoardInkTests.swift */,
+				974F32F35EEA5AF0F4A6C691 /* BoardMathElementTests.swift */,
 				0729DC14BC3A737998304309 /* BoardPaperTests.swift */,
 				F4EFAF2B54BDC215F7D0F023 /* BoardPathElementTests.swift */,
 				40E70DAF8AFBE063011AEC82 /* BoardRasterCacheTests.swift */,
@@ -630,6 +640,7 @@
 				CAB4A0EDD663149C6BE8D7CB /* Layout.swift */,
 				437A816AC93664B09A7FEBB9 /* SVGPath.swift */,
 				6C3BD7AF8ABF8A0911D1890A /* Typography.swift */,
+				0371EC550259B10EAB21C916 /* UIColor+BoardHex.swift */,
 			);
 			path = DesignSystem;
 			sourceTree = "<group>";
@@ -710,6 +721,7 @@
 		E3581A314B7B3BFAC53A63CA /* Packages */ = {
 			isa = PBXGroup;
 			children = (
+				90945E8853281DE85253D3A4 /* ExtendedSwiftMath */,
 				973B26F01543AD9BFE27B4C2 /* MarkdownExtendedView */,
 			);
 			name = Packages;
@@ -723,6 +735,7 @@
 				EB608BD6660FBD1ACAD2D15B /* BoardDiagnostics.swift */,
 				5DAA007B907FE56B1E8A66F7 /* BoardGeometry.swift */,
 				CDC29B5C0EE22B4B88E0C16D /* BoardInk.swift */,
+				0730AD2FC75614FC96E8605A /* BoardMathStore.swift */,
 				6DFEE113835CD09C48AEFCD3 /* BoardPaper.swift */,
 				39DA22664B80DABB57EF9533 /* BoardRasterCache.swift */,
 				AC154861ACA4FB4515726434 /* BoardSceneLayerView.swift */,
@@ -781,6 +794,7 @@
 			name = MathTutor;
 			packageProductDependencies = (
 				984F4BB41CFF4D6E7163C0BD /* MarkdownExtendedView */,
+				1A56D193512A5799B1B32BB0 /* ExtendedSwiftMath */,
 				8BFA867D54B3C458183127B2 /* WebRTC */,
 				46088361BC711A7116DB85DE /* SwiftDraw */,
 			);
@@ -842,6 +856,7 @@
 			packageReferences = (
 				31A1778C8171CDA2E777BA4C /* XCRemoteSwiftPackageReference "SwiftDraw" */,
 				FBE8CDC45A95E8F3D3454F25 /* XCRemoteSwiftPackageReference "WebRTC" */,
+				03CF994325FE4870C90B5F77 /* XCLocalSwiftPackageReference "Vendor/ExtendedSwiftMath" */,
 				27BFCD6963659A91FA5E15AB /* XCLocalSwiftPackageReference "Vendor/MarkdownExtendedView" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -888,6 +903,7 @@
 				F0AB368ED3252A73E037C11F /* BoardElementBoundsTests.swift in Sources */,
 				E6DD21C7A93C00ECA613EE84 /* BoardInkPersistenceTests.swift in Sources */,
 				3FEAD4CABE221C77708EAE56 /* BoardInkTests.swift in Sources */,
+				83FC851463C4603DBA4A2FB7 /* BoardMathElementTests.swift in Sources */,
 				4C037A180CB8B10BE7334D25 /* BoardPaperTests.swift in Sources */,
 				7D8BA1B4D404997FC01F08D2 /* BoardPathElementTests.swift in Sources */,
 				AD38E8454A6799851034B76F /* BoardRasterCacheTests.swift in Sources */,
@@ -946,6 +962,7 @@
 				1728A9F9E59638F9AE239EA1 /* BoardDiagnostics.swift in Sources */,
 				29CCD36CA6350F76004148CA /* BoardGeometry.swift in Sources */,
 				F04349D3E6E4B1597D648774 /* BoardInk.swift in Sources */,
+				C096F7A2A268DD9484AAFD4A /* BoardMathStore.swift in Sources */,
 				5C531420164586EEF2878DBA /* BoardPaper.swift in Sources */,
 				7D96576C2631E4C14D389E1C /* BoardPeek.swift in Sources */,
 				55521F232C26320208A14157 /* BoardRasterCache.swift in Sources */,
@@ -1034,6 +1051,7 @@
 				726CD5E989CE7C3E79F44AAA /* TutorService.swift in Sources */,
 				CBE73D0B893D0BCCA2C5D090 /* TutorStore.swift in Sources */,
 				D7C2680C9127BD5115FE8BA8 /* Typography.swift in Sources */,
+				9BECD813945BC49DCABBB537 /* UIColor+BoardHex.swift in Sources */,
 				B91A7B1535574BC638E29FF6 /* UIState.swift in Sources */,
 				2AB6F98E30A667B56F432BAE /* VoiceAudioSessionController.swift in Sources */,
 				49937F693DD3AE0B3C46C9AC /* VoiceBar.swift in Sources */,
@@ -1332,6 +1350,10 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
+		03CF994325FE4870C90B5F77 /* XCLocalSwiftPackageReference "Vendor/ExtendedSwiftMath" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Vendor/ExtendedSwiftMath;
+		};
 		27BFCD6963659A91FA5E15AB /* XCLocalSwiftPackageReference "Vendor/MarkdownExtendedView" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Vendor/MarkdownExtendedView;
@@ -1358,6 +1380,10 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		1A56D193512A5799B1B32BB0 /* ExtendedSwiftMath */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = ExtendedSwiftMath;
+		};
 		46088361BC711A7116DB85DE /* SwiftDraw */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 31A1778C8171CDA2E777BA4C /* XCRemoteSwiftPackageReference "SwiftDraw" */;

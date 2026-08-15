@@ -171,6 +171,13 @@ enum E2ESeedFixture {
                     strokeWidth: 4, opacity: 1, dash: [], rotation: 0
                 )
             )),
+            .mathText(MathTextElement(
+                id: "acceleration",
+                x: 296, y: 30,
+                latex: #"a=\frac{F}{m}"#,
+                fontSize: 20,
+                style: labelStyle
+            )),
             .polyline(PolylineElement(
                 id: "components",
                 points: [

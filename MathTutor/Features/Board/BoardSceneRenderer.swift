@@ -200,6 +200,17 @@ enum BoardSceneRenderer {
                 context.addPath(cgPath)
                 context.strokePath()
             }
+        case .mathText(let value):
+            // Nothing is drawn until the typesetter has produced a bitmap; the
+            // bounds arm reports nothing for the same element, so no layer is
+            // mounted meanwhile. Whether the context is y-flipped is read here,
+            // before `withRotation` touches the CTM.
+            guard let artifact = BoardMathStore.shared.artifact(for: value) else { break }
+            let rect = CGRect(origin: CGPoint(x: value.x, y: value.y), size: artifact.drawSize)
+            let isFlipped = context.ctm.d < 0
+            withRotation(style.rotation, around: rect, in: context) {
+                artifact.draw(in: rect, into: context, isFlipped: isFlipped)
+            }
         case .svg(let value):
             let rect = CGRect(x: value.x, y: value.y, width: value.width, height: value.height)
             withRotation(style.rotation, around: rect, in: context) {
@@ -516,6 +527,22 @@ enum BoardSceneRenderer {
             rect = isDrawable(box)
                 ? box.offsetBy(dx: originX, dy: originY).insetBy(dx: -inset, dy: -inset)
                 : .zero
+        case .mathText(let value):
+            // Notation has no frame of its own: the typesetter decides how big
+            // the fragment is, so until the artifact lands there is no
+            // rectangle to report. `.zero` is what the scene union and
+            // `BoardSceneLayerView.isMountable` both already drop, and it is
+            // what an unparseable `path` reports for the same reason. No
+            // stroke inset: `stroke` is the colour the glyphs are drawn in
+            // here, not a pen the notation is outlined with.
+            if let artifact = BoardMathStore.shared.artifact(for: value) {
+                rect = CGRect(
+                    origin: CGPoint(x: value.x + originX, y: value.y + originY),
+                    size: artifact.drawSize
+                )
+            } else {
+                rect = .zero
+            }
         case .svg(let value):
             rect = CGRect(
                 x: value.x + originX,
@@ -587,20 +614,5 @@ enum BoardSceneRenderer {
             return UIColor.clear.cgColor
         }
         return UIColor(hex: hex)?.cgColor ?? UIColor.clear.cgColor
-    }
-}
-
-private extension UIColor {
-    convenience init?(hex: String) {
-        let value = hex.trimmingCharacters(in: .whitespaces)
-        guard value.hasPrefix("#"), value.count == 7,
-              let digits = UInt32(value.dropFirst(), radix: 16)
-        else { return nil }
-        self.init(
-            red: CGFloat((digits >> 16) & 0xFF) / 255,
-            green: CGFloat((digits >> 8) & 0xFF) / 255,
-            blue: CGFloat(digits & 0xFF) / 255,
-            alpha: 1
-        )
     }
 }
