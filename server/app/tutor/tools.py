@@ -432,6 +432,33 @@ UPDATE_BOARD_TOOL: dict = {
     },
 }
 
+FETCH_IMAGE_TOOL: dict = {
+    "type": "function",
+    "name": "fetch_image",
+    "description": (
+        "Download one picture from the web so you can see it and put it on the "
+        "learner's board — a diagram they linked, or an image you found. The "
+        "answer carries a blob_id, which is what the `image` element in "
+        "update_board takes, and the picture itself arrives in your context: "
+        "look at it before you place it, and never describe one you have not "
+        "seen. Give the direct https address of the image file itself — .png, "
+        ".jpg, .webp or .gif — not of the page it sits on. Anything refused "
+        "answers with an error you can read and retry from with another URL."
+    ),
+    "strict": True,
+    "parameters": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "url": {
+                "type": "string",
+                "description": "The direct https URL of one image file.",
+            },
+        },
+        "required": ["url"],
+    },
+}
+
 REMEMBER_TOOL: dict = {
     "type": "function",
     "name": "remember",
@@ -825,6 +852,6 @@ MEMORY_TOOLS: frozenset[str] = frozenset(
 # on the next re-bills the entire prompt prefix every time the set changes.
 # `loop._answer` is where a tool the turn cannot serve is turned down.
 TOOL_DEFINITIONS: list[dict] = [
-    SET_WORKSPACE_TOOL, VIEW_BOARD_TOOL, UPDATE_BOARD_TOOL,
+    SET_WORKSPACE_TOOL, VIEW_BOARD_TOOL, UPDATE_BOARD_TOOL, FETCH_IMAGE_TOOL,
     *MEMORY_TOOL_DEFINITIONS,
 ]

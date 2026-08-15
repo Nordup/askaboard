@@ -281,3 +281,69 @@ BOARD_UPDATE_FOLLOW_UP = (
         },
     },
 )
+
+
+FETCH_IMAGE_ARGUMENTS = {"url": "https://example.com/parabola.png"}
+
+
+FETCH_IMAGE_TURN = (
+    {"type": "response.created", "sequence_number": 0, "response": {"id": "resp_fetch"}},
+    {
+        "type": "response.output_item.added",
+        "sequence_number": 1,
+        "output_index": 0,
+        "item": {
+            "type": "function_call",
+            "id": "fc_fetch",
+            "call_id": "call_fetch",
+            "name": "fetch_image",
+            "arguments": "",
+        },
+    },
+    {
+        "type": "response.function_call_arguments.done",
+        "sequence_number": 2,
+        "output_index": 0,
+        "item_id": "fc_fetch",
+        "name": "fetch_image",
+        "arguments": json.dumps(FETCH_IMAGE_ARGUMENTS),
+    },
+    {
+        "type": "response.completed",
+        "sequence_number": 3,
+        "response": {
+            "id": "resp_fetch",
+            "usage": {"input_tokens": 70, "output_tokens": 14},
+            "output": [
+                {"type": "reasoning", "id": "rs_fetch", "summary": []},
+                {
+                    "type": "function_call",
+                    "id": "fc_fetch",
+                    "call_id": "call_fetch",
+                    "name": "fetch_image",
+                    "arguments": json.dumps(FETCH_IMAGE_ARGUMENTS),
+                    "status": "completed",
+                },
+            ],
+        },
+    },
+)
+
+
+FETCH_IMAGE_FOLLOW_UP = (
+    {"type": "response.created", "sequence_number": 0, "response": {"id": "resp_fetch_2"}},
+    {"type": "response.output_text.delta", "sequence_number": 1, "delta": "Here is the parabola."},
+    {"type": "response.output_text.done", "sequence_number": 2, "text": "Here is the parabola."},
+    {
+        "type": "response.completed",
+        "sequence_number": 3,
+        "response": {
+            "id": "resp_fetch_2",
+            "usage": {"input_tokens": 95, "output_tokens": 11},
+            "output": [
+                {"type": "message", "id": "msg_fetch", "role": "assistant",
+                 "content": [{"type": "output_text", "text": "Here is the parabola."}]},
+            ],
+        },
+    },
+)

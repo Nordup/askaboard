@@ -1,3 +1,5 @@
+import asyncio
+import base64
 import json
 
 import pytest
@@ -13,16 +15,20 @@ from app.tutor.events import (
 )
 from app.tutor.retry import RETRY_LIMIT
 from app.tutor.loop import (
+    FETCH_TIMEOUT_ACK,
     MALFORMED_BOARD_ACK,
     MAX_TOOL_ROUNDS,
     UNSUPPORTED_TOOL_ACK,
     UPDATE_BOARD_ACK,
+    FetchedImage,
     _answer,
     run_turn,
 )
 from tests.fixtures.sse import (
     BOARD_UPDATE_FOLLOW_UP,
     BOARD_UPDATE_TURN,
+    FETCH_IMAGE_FOLLOW_UP,
+    FETCH_IMAGE_TURN,
     REASONING_TURN,
     TEXT_ONLY_TURN,
     TOOL_CALL_FOLLOW_UP,
@@ -107,7 +113,7 @@ async def test_the_request_body_carries_every_tool_and_stores_the_response():
     # Every tool, on a turn wired for none of the memory ones. The set is fixed
     # for the whole session on purpose — see the comment on TOOL_DEFINITIONS.
     assert [tool["name"] for tool in body["tools"]] == [
-        "set_workspace", "view_board", "update_board",
+        "set_workspace", "view_board", "update_board", "fetch_image",
         "remember", "forget", "search_memory", "search_sessions",
         "search_history", "get_session", "list_sessions", "record_evidence",
     ]
@@ -632,3 +638,186 @@ async def test_a_retryable_failure_gives_up_after_the_limit():
             pass
 
     assert route.call_count == RETRY_LIMIT + 1
+
+
+def test_fetch_image_is_turned_down_when_no_fetcher_is_wired():
+    """The tool is in `TOOL_DEFINITIONS` on every request, whether or not the
+    caller passed a fetcher, so the model can always call it. Answering it with
+    the unsupported ack is what keeps `run_turn` from calling `None`."""
+    answer = _answer(
+        {"call_id": "c", "name": "fetch_image",
+         "arguments": '{"url": "https://example.com/cat.png"}'},
+        has_board=True,
+    )
+    assert answer.fetch is None
+    assert answer.items[0]["output"] == UNSUPPORTED_TOOL_ACK
+
+
+def test_a_wired_fetch_image_call_comes_back_as_the_url_to_fetch():
+    answer = _answer(
+        {"call_id": "c", "name": "fetch_image",
+         "arguments": '{"url": "https://example.com/cat.png"}'},
+        has_board=False, has_image=True,
+    )
+    assert answer.fetch == "https://example.com/cat.png"
+    assert answer.items is None
+
+
+@pytest.mark.parametrize("arguments", [
+    "{}", '{"url": 7}', '{"url": ""}', "not json", "[1, 2]", '{"url": null}',
+])
+def test_a_fetch_image_call_with_no_usable_url_is_refused_without_fetching(arguments):
+    answer = _answer(
+        {"call_id": "c", "name": "fetch_image", "arguments": arguments},
+        has_board=False, has_image=True,
+    )
+    assert answer.fetch is None
+    assert json.loads(answer.items[0]["output"])["error"]
+
+
+@respx.mock
+async def test_a_fetch_image_call_hands_back_the_blob_and_shows_the_picture():
+    """The round trip. The output carries the `blob_id` the model needs to place
+    an `image` element, and the picture itself follows as a user item — without
+    it the model would be placing something it has never seen."""
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*FETCH_IMAGE_TURN)),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*FETCH_IMAGE_FOLLOW_UP)),
+        ]
+    )
+    client = AsyncOpenAI(api_key="sk-test")
+    bundle = ContextBundle(system="s", input=[{"role": "user", "content": "find one"}])
+    key = "sha256:" + "a" * 64
+    seen = []
+
+    async def fetch_image(url: str) -> FetchedImage:
+        seen.append(url)
+        return FetchedImage(
+            output=json.dumps({"blob_id": key, "width": 640, "height": 480}),
+            image=b"\x89PNG-ish",
+            content_type="image/png",
+        )
+
+    result = None
+    async for _event, running in run_turn(
+        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle,
+        fetch_image=fetch_image,
+    ):
+        result = running
+
+    assert seen == ["https://example.com/parabola.png"]
+    assert route.call_count == 2, "the call has to be answered, not left hanging"
+    assert result.text == "Here is the parabola."
+
+    second = json.loads(route.calls[1].request.content)
+    assert second["previous_response_id"] == "resp_fetch"
+    # The output first, then the picture: an output is what answers the call,
+    # and a user item between two outputs would break the run of them.
+    output, attachment = second["input"]
+    assert output["type"] == "function_call_output"
+    assert output["call_id"] == "call_fetch"
+    assert json.loads(output["output"]) == {"blob_id": key, "width": 640, "height": 480}
+
+    assert attachment["role"] == "user"
+    text, picture = attachment["content"]
+    assert text["type"] == "input_text"
+    assert picture["type"] == "input_image"
+    assert picture["detail"] == "high", "a diagram is unreadable at low detail"
+    assert picture["image_url"].startswith("data:image/png;base64,")
+    assert base64.b64decode(picture["image_url"].split(",", 1)[1]) == b"\x89PNG-ish"
+
+
+@respx.mock
+async def test_a_fetched_image_is_recorded_as_the_call_that_was_made():
+    respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*FETCH_IMAGE_TURN)),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*FETCH_IMAGE_FOLLOW_UP)),
+        ]
+    )
+    client = AsyncOpenAI(api_key="sk-test")
+    bundle = ContextBundle(system="s", input=[{"role": "user", "content": "find one"}])
+
+    async def fetch_image(url: str) -> FetchedImage:
+        return FetchedImage(output=json.dumps({"error": "that is not an image"}))
+
+    result = None
+    async for _event, running in run_turn(
+        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle,
+        fetch_image=fetch_image,
+    ):
+        result = running
+
+    assert result.tool_calls == [{
+        "name": "fetch_image",
+        "arguments": {"url": "https://example.com/parabola.png"},
+        "result": json.dumps({"error": "that is not an image"}),
+    }]
+
+
+@respx.mock
+async def test_a_fetch_that_never_answers_is_abandoned_and_the_turn_carries_on(
+    monkeypatch,
+):
+    """The one wait in this branch that no provider event passes through. Left
+    unbounded it is silence the heartbeat cannot cover, and the client gives up
+    long before the fetch does."""
+    monkeypatch.setattr("app.tutor.loop.IMAGE_FETCH_TIMEOUT_SECONDS", 0.05)
+    respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*FETCH_IMAGE_TURN)),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*FETCH_IMAGE_FOLLOW_UP)),
+        ]
+    )
+    client = AsyncOpenAI(api_key="sk-test")
+    bundle = ContextBundle(system="s", input=[{"role": "user", "content": "find one"}])
+
+    async def never(url: str) -> FetchedImage:
+        await asyncio.sleep(30)
+        raise AssertionError("unreachable")
+
+    result = None
+    async for _event, running in run_turn(
+        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle,
+        fetch_image=never,
+    ):
+        result = running
+
+    assert result.text == "Here is the parabola.", "the turn survives the timeout"
+    assert result.tool_calls[0]["result"] == FETCH_TIMEOUT_ACK
+    assert json.loads(FETCH_TIMEOUT_ACK) == {"error": "fetch timed out"}
+
+
+@respx.mock
+async def test_a_fetch_announces_itself_before_it_blocks():
+    """`searching` goes out before the wait, for the reason the memory tools'
+    does: nothing else puts a byte on the wire until the fetch ends."""
+    respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*FETCH_IMAGE_TURN)),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*FETCH_IMAGE_FOLLOW_UP)),
+        ]
+    )
+    client = AsyncOpenAI(api_key="sk-test")
+    bundle = ContextBundle(system="s", input=[{"role": "user", "content": "find one"}])
+    events = []
+
+    async def fetch_image(url: str) -> FetchedImage:
+        # Everything already sent, at the moment the silence would begin.
+        assert StatusEvent(phase="searching") in events
+        return FetchedImage(output=json.dumps({"error": "no"}))
+
+    async for event, _running in run_turn(
+        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle,
+        fetch_image=fetch_image,
+    ):
+        events.append(event)

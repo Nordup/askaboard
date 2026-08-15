@@ -2,6 +2,7 @@ import json
 
 from app.tutor.board_scene import MAX_LATEX_CHARS, MAX_PATH_CHARS, MAX_SVG_CHARS
 from app.tutor.tools import (
+    FETCH_IMAGE_TOOL,
     MEMORY_TOOL_DEFINITIONS,
     SET_WORKSPACE_TOOL,
     TOOL_DEFINITIONS,
@@ -12,7 +13,7 @@ from app.tutor.tools import (
 
 def test_the_registry_exposes_the_board_tools_then_the_memory_ones():
     assert TOOL_DEFINITIONS == [
-        SET_WORKSPACE_TOOL, VIEW_BOARD_TOOL, UPDATE_BOARD_TOOL,
+        SET_WORKSPACE_TOOL, VIEW_BOARD_TOOL, UPDATE_BOARD_TOOL, FETCH_IMAGE_TOOL,
         *MEMORY_TOOL_DEFINITIONS,
     ]
 
@@ -246,8 +247,35 @@ def test_the_tool_surface_stays_inside_its_budget():
     # The `image` arm (task 12) cost 1,249 characters — five fields, of which
     # `blob_id` carries the rule that a key is copied from a tool result and
     # never invented — and took the surface to 29,362. That left 638 under
-    # 30,000, less than one description edit, so the bound moves to 30,400:
+    # 30,000, less than one description edit, so the bound moved to 30,400:
     # about a thousand characters of room, which is under the ~1,100 that the
     # cheapest of this plan's new arms cost. A rewritten description fits; a
     # fifteenth primitive does not, and trips this line.
-    assert len(json.dumps(TOOL_DEFINITIONS)) < 30_400
+    #
+    # `fetch_image` (task 13) cost 820 — one string property, and a description
+    # carrying the two things the model cannot see for itself: that the answer
+    # is a `blob_id` for `update_board`, and that a page URL is not an image
+    # URL. That took the surface to 30,184 and left 216 under 30,400, which is
+    # less than one sentence and would have made the *next* commit trip this
+    # line for no reason of its own. So the bound moves to 31,200 on the same
+    # reasoning the last raise used: about a thousand characters of room, which
+    # is still under what any new tool in this plan costs.
+    assert len(json.dumps(TOOL_DEFINITIONS)) < 31_200
+
+
+def test_fetch_image_is_strict_closed_and_takes_one_url():
+    assert FETCH_IMAGE_TOOL["strict"] is True
+    params = FETCH_IMAGE_TOOL["parameters"]
+    assert params["additionalProperties"] is False
+    assert set(params["properties"]) == {"url"}
+    assert params["required"] == ["url"]
+    assert params["properties"]["url"]["type"] == "string"
+
+
+def test_fetch_image_says_what_comes_back_and_what_will_be_refused():
+    """The model cannot see the guards, so the description is the only place it
+    learns that an `http://` link or a page URL is a wasted round."""
+    description = FETCH_IMAGE_TOOL["description"]
+    assert "https" in description
+    assert "blob_id" in description
+    assert "update_board" in description

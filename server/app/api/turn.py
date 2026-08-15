@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import logging
 import time
 import uuid
@@ -40,7 +41,8 @@ from app.tutor.context import assemble_context
 from app.tutor.events import DoneEvent, ErrorEvent, StatusEvent
 from app.tutor.board_scene import MAX_SCENE_CHARS
 from app.tutor import rendezvous
-from app.tutor.loop import TurnResult, run_turn
+from app.tutor.fetch_image import ImageFetchError, fetch_image
+from app.tutor.loop import FetchedImage, TurnResult, run_turn
 from app.tutor.rendezvous import BoardRegion
 from app.tutor.retry import classify
 
@@ -57,6 +59,16 @@ router = APIRouter(prefix="/v1", dependencies=[Depends(require_device_token)])
 # shared kind would have a selection sent between two identical boards read as
 # the board having changed twice. Fits `Attachment.kind`'s String(16).
 BOARD_KIND = "board_full"
+
+# `Attachment.kind` for a picture the tutor downloaded from the web.
+#
+# Its own kind rather than sharing one with the two above, because its
+# provenance is different in the way that matters: these bytes came from an
+# address a *model* chose, not from the learner's device. Anyone reading a
+# turn's attachments — or deciding one day that fetched pictures expire and
+# board captures do not — needs to be able to tell them apart, and the row is
+# the only place that fact is written down. Fits `Attachment.kind`'s String(16).
+FETCHED_IMAGE_KIND = "fetched_image"
 
 #: How long the close-out in `stream`'s `finally` may take before it is
 #: abandoned.
@@ -577,6 +589,50 @@ async def create_turn(
                 future, turn_id=body.turn_id, call_id=call_id
             )
 
+        async def fetch_and_record_image(url: str) -> FetchedImage:
+            """Download one picture the model asked for, and keep the bytes.
+
+            Two halves, and the second is not optional. `app.tutor.fetch_image`
+            is the guarded download and holds every rule about where a
+            model-chosen URL may point. This is what makes the result *usable*:
+            the bytes have to live somewhere the iPad can GET them, because what
+            the model does with this answer is place an `image` element carrying
+            the `blob_id`, and the device then loads it from
+            `/v1/blobs/{key}`. The attachment row is also where that endpoint
+            recovers the content type — the blob store itself only knows bytes.
+
+            A refusal comes back as `{"error": ...}` rather than raising. Every
+            way this can fail is a URL that did not work out, and a model told
+            so can look for another picture; a raise here would end a turn over
+            a dead link.
+            """
+            try:
+                fetched = await fetch_image(url)
+            except ImageFetchError as error:
+                return FetchedImage(output=json.dumps({"error": error.reason}))
+
+            ref = await recorder.record_attachment(
+                turn_id=body.turn_id, kind=FETCHED_IMAGE_KIND,
+                data=fetched.data, content_type=fetched.content_type,
+            )
+            logger.info(
+                "image fetched | turn_id=%s bytes=%d type=%s size=%dx%d",
+                body.turn_id, len(fetched.data), fetched.content_type,
+                fetched.width, fetched.height,
+            )
+            return FetchedImage(
+                output=json.dumps({
+                    "blob_id": ref.key,
+                    "width": fetched.width,
+                    "height": fetched.height,
+                }),
+                # The same bytes the blob now holds, handed back so `run_turn`
+                # can show them to the model. It is about to place this picture
+                # by id and then tell the learner what it shows.
+                image=fetched.data,
+                content_type=fetched.content_type,
+            )
+
         # Everything that can strand a turn at status="running" — the image
         # write, assembling the prompt, the model call, and persisting the
         # result — lives inside this one try, and the matching `finally`
@@ -635,6 +691,7 @@ async def create_turn(
             async for event, running in run_turn(
                 client=client, model=body.model, effort=body.reasoning_effort,
                 bundle=bundle, request_body=request_body, fetch_board=fetch_board,
+                fetch_image=fetch_and_record_image,
                 # Every turn of one session shares the longest prompt prefix
                 # there is, so they should all reach the same cache. The
                 # session id is what says "these belong together".

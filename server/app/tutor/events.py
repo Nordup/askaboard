@@ -183,6 +183,10 @@ TOOL_PHASES: dict[str, PhaseName] = {
     "update_board": "drawing",
     "view_board": "looking",
     "set_workspace": "thinking",
+    # Here for the same second reason the memory tools are: the download is
+    # awaited inside the tool round, and for its whole length no provider event
+    # reaches this translator, so the heartbeat below cannot fire.
+    "fetch_image": "searching",
     "search_memory": "searching",
     "search_sessions": "searching",
     "search_history": "searching",
@@ -203,10 +207,15 @@ TOOL_PHASES: dict[str, PhaseName] = {
 #:
 #: `remember` and `record_evidence` stay coarse on purpose. Their arguments are
 #: what the tutor concluded about the learner, and the learner reads this.
+#: `fetch_image` stays coarse for a different reason: its one argument is a URL
+#: the model copied off a web page somebody else wrote, and `_refined_label`
+#: gives it no case, so nothing from that page can be printed on the learner's
+#: screen through this row.
 TOOL_STEP_LABELS: dict[str, str] = {
     "update_board": "Drawing on the board",
     "view_board": "Looking at the board",
     "set_workspace": "Making a plan",
+    "fetch_image": "Fetching image",
     "search_memory": "Searching memory",
     "search_sessions": "Searching past sessions",
     "search_history": "Searching past conversations",

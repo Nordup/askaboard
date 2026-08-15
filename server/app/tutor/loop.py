@@ -88,6 +88,17 @@ MEMORY_TIMEOUT_SECONDS = 20.0
 # 120s alongside the model streaming that has to fit there too.
 MEMORY_BUDGET_SECONDS = 40.0
 
+# How long one `fetch_image` call may take before the turn gives up on it.
+#
+# The third eventless wait in this loop, alongside the board render and the
+# memory tools, and bounded for the same reason: `EventTranslator.translate`
+# emits keep-alives on incoming provider events, and there are none while this
+# is awaited. `app.tutor.fetch_image` has its own 10s deadline over the whole
+# download, so in normal operation that one fires first and this never does —
+# this is the bound on everything *else* the fetcher does, above all the blob
+# write and the attachment row the turn's fetcher closure adds after it.
+IMAGE_FETCH_TIMEOUT_SECONDS = 15.0
+
 # What the tool call is answered with. `set_workspace` has no server-side
 # effect to report: the plan and exercise ride out on the WorkspaceEvent and
 # the device applies them. The model still needs *something* back before it
@@ -188,6 +199,22 @@ MEMORY_TIMEOUT_ACK = (
     "on without it."
 )
 
+# What a `fetch_image` call is answered with when it ran past
+# `IMAGE_FETCH_TIMEOUT_SECONDS`.
+#
+# The same `{"error": ...}` shape every refused fetch uses, so the model has
+# one thing to read rather than two: whatever went wrong, there is no picture,
+# and another URL is the way forward.
+FETCH_TIMEOUT_ACK = json.dumps({"error": "fetch timed out"})
+
+# What a `fetch_image` call with no usable `url` is answered with. Nothing was
+# fetched and nothing was opened; the model is told what was missing so the
+# next call can carry it.
+MALFORMED_FETCH_ACK = json.dumps({
+    "error": "That call carried no `url` string, so nothing was fetched. Call "
+             "fetch_image again with the full https address of one image.",
+})
+
 
 async def _open_round(client: AsyncOpenAI, payload: dict):
     """Open one round's stream, retrying a retryable failure silently.
@@ -240,6 +267,38 @@ BoardFetcher = Callable[[str, BoardRegion], Awaitable[bytes]]
 #: says the rest.
 MemoryHandler = Callable[[str, dict], Awaitable[str]]
 
+@dataclass(frozen=True)
+class FetchedImage:
+    """What one `fetch_image` call came back with.
+
+    Two things rather than one, because the answer is two things. `output` is
+    the string the tool call is answered with — the blob id and the size, or an
+    `{"error": ...}` the model can retry from. `image` is the picture itself,
+    which has to be *shown* to the model: it is about to place that image on a
+    learner's board by id, and a model that has never seen what it is placing
+    describes it from the URL it read somewhere, which is a guess.
+
+    `image` is None for every refusal, and that is the only signal the loop
+    needs — there is nothing to attach, so nothing is attached.
+    """
+
+    output: str
+    image: bytes | None = None
+    #: What `image` actually is, as `app.tutor.fetch_image` determined from the
+    #: bytes. It names the media type in the data URL, so a JPEG sent as
+    #: `data:image/png` would be a picture the provider is handed under a false
+    #: description.
+    content_type: str | None = None
+
+
+#: How `run_turn` fetches a picture from a URL the model chose. Injected for the
+#: reason the two above are, and for a third: the guarded download is only half
+#: of it — the bytes then have to be written to the blob store and given an
+#: attachment row, because a `blob_id` the model cannot place is not an answer.
+#: `app.api.turn` binds the two halves together; `app.tutor.fetch_image` holds
+#: every guard on where the URL may point.
+ImageFetcher = Callable[[str], Awaitable[FetchedImage]]
+
 #: What the learner's status line says while a memory tool runs.
 #:
 #: Not in `events.TOOL_PHASES`: that maps a call to a phase as its *arguments*
@@ -261,19 +320,25 @@ MEMORY_PHASES: dict[str, str] = {
 class ToolAnswer:
     """What answering one tool call produces, before anything is awaited.
 
-    Three shapes, and exactly one of them is set. `items` is a reply the server
+    Four shapes, and exactly one of them is set. `items` is a reply the server
     can write on its own — `set_workspace`, an empty board, a malformed call.
     `ask` is a `view_board` that needs the device: the caller has to emit it,
     wait for the render, and only then build the items. `run` is a memory tool,
-    which needs a database session `_answer` has not got. Splitting it this way
-    is what lets the awaiting live in `run_turn` — the only place that can
-    *yield* the board request down the stream the device is listening to, and
-    the only place holding the injected handlers.
+    which needs a database session `_answer` has not got. `fetch` is a URL to
+    download, which needs the network and the recorder, and neither is here
+    either. Splitting it this way is what lets the awaiting live in `run_turn` —
+    the only place that can *yield* the board request down the stream the device
+    is listening to, and the only place holding the injected handlers.
     """
 
     items: list[dict] | None = None
     ask: tuple[BoardRequestEvent, BoardRegion] | None = None
     run: tuple[str, dict] | None = None
+    #: The URL `fetch_image` was called with, once it is known to be a string.
+    #: Nothing else about it is checked here — every guard on where it points
+    #: lives in `app.tutor.fetch_image`, which is the only place that should
+    #: hold them.
+    fetch: str | None = None
 
 
 def _region_from(arguments: dict) -> BoardRegion:
@@ -330,14 +395,18 @@ def _svg_warnings(update: BoardSceneUpdate) -> list[str]:
     ))
 
 
-def _answer(call: dict, *, has_board: bool, has_memory: bool = False) -> ToolAnswer:
+def _answer(
+    call: dict, *, has_board: bool, has_memory: bool = False,
+    has_image: bool = False,
+) -> ToolAnswer:
     """Plan one tool call's reply.
 
-    Two calls cannot be answered here. `view_board` needs the iPad, because the
-    only thing that can render a region of a `PKDrawing` is the device holding
-    it. The memory tools need a database session, which this function has no
-    way to be given — it is synchronous and is called per tool call from inside
-    the stream. Both come back as an intent for `run_turn` to carry out.
+    Three calls cannot be answered here. `view_board` needs the iPad, because
+    the only thing that can render a region of a `PKDrawing` is the device
+    holding it. The memory tools need a database session, which this function
+    has no way to be given — it is synchronous and is called per tool call from
+    inside the stream. `fetch_image` needs the network and the blob store. All
+    three come back as an intent for `run_turn` to carry out.
     """
     call_id = call["call_id"]
 
@@ -363,6 +432,30 @@ def _answer(call: dict, *, has_board: bool, has_memory: bool = False) -> ToolAns
         return ToolAnswer(items=[
             {"type": "function_call_output", "call_id": call_id, "output": output}
         ])
+
+    if name == "fetch_image":
+        # Turned down rather than attempted when no fetcher was wired: the tool
+        # is in `TOOL_DEFINITIONS` on every request whether or not this caller
+        # can serve it — varying the set would invalidate the cached prompt
+        # prefix — so the model can always call it, and `UNSUPPORTED_TOOL_ACK`
+        # says exactly what is true, that it is not available in this session.
+        if not has_image:
+            return ToolAnswer(items=[
+                {"type": "function_call_output", "call_id": call_id,
+                 "output": UNSUPPORTED_TOOL_ACK}
+            ])
+        arguments = _arguments(call) or {}
+        url = arguments.get("url")
+        # Type-checked, not content-checked. Whether the URL is fetchable is
+        # `app.tutor.fetch_image`'s question and is answered against the address
+        # it resolves to, not against how it looks; the only thing that matters
+        # here is that there is a string to hand it.
+        if not isinstance(url, str) or not url.strip():
+            return ToolAnswer(items=[
+                {"type": "function_call_output", "call_id": call_id,
+                 "output": MALFORMED_FETCH_ACK}
+            ])
+        return ToolAnswer(fetch=url.strip())
 
     if name in MEMORY_TOOLS:
         arguments = _arguments(call)
@@ -401,37 +494,49 @@ def _answer(call: dict, *, has_board: bool, has_memory: bool = False) -> ToolAns
     ))
 
 
+def _image_item(image: bytes, text: str, media_type: str = "image/png") -> dict:
+    """One user-role item that puts a picture in front of the model.
+
+    A `function_call_output` is a string, and both tools that produce a picture
+    have to hand back a **picture**. This is the documented shape for doing that
+    through a text-only tool channel: the output answers the call, and the image
+    follows as its own user message, so the next thing in the model's context
+    after it asked to see something is that something.
+
+    `detail: "high"` for both callers, and it is not a preference. What comes
+    back is a region of a learner's handwriting or a diagram with labels on it,
+    and the low-detail path downsamples until neither can be read — which is
+    indistinguishable, to a model, from a page with nothing written on it.
+    """
+    encoded = base64.b64encode(image).decode()
+    return {
+        "role": "user",
+        "content": [
+            {"type": "input_text", "text": text},
+            {
+                "type": "input_image",
+                "image_url": f"data:{media_type};base64,{encoded}",
+                "detail": "high",
+            },
+        ],
+    }
+
+
 def _rendered_items(call_id: str, image: bytes, detail: str) -> list[dict]:
     """The device's render, as the items that put it in front of the model.
 
-    Two items rather than one because a `function_call_output` is a string and
-    this answer is a **picture**. The output announces it and the picture follows
-    as a user message, so the next thing in the model's context after it asked to
-    look at something is that something. This is the documented shape for handing
-    an image back through a text-only tool channel, and it leaves the
-    call/output pairing the API requires exactly intact.
+    Two items rather than one, for the reason `_image_item` gives. The pairing
+    the API requires — one output per call — is left exactly intact.
     """
-    encoded = base64.b64encode(image).decode()
     return [
         {
             "type": "function_call_output",
             "call_id": call_id,
             "output": json.dumps({"status": "ok", "detail": detail}),
         },
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "input_text",
-                    "text": f"Here is the region of the board you asked for. {detail}",
-                },
-                {
-                    "type": "input_image",
-                    "image_url": f"data:image/png;base64,{encoded}",
-                    "detail": "high",
-                },
-            ],
-        },
+        _image_item(
+            image, f"Here is the region of the board you asked for. {detail}"
+        ),
     ]
 
 
@@ -480,6 +585,7 @@ async def run_turn(
     request_body: dict | None = None,
     translator: EventTranslator | None = None,
     fetch_board: BoardFetcher | None = None,
+    fetch_image: ImageFetcher | None = None,
     handle_memory: MemoryHandler | None = None,
     cache_key: str | None = None,
 ) -> AsyncIterator[tuple[ClientEvent, TurnResult]]:
@@ -621,11 +727,50 @@ async def run_turn(
                 call,
                 has_board=bundle.has_board and fetch_board is not None,
                 has_memory=handle_memory is not None,
+                has_image=fetch_image is not None,
             )
 
             if answer.items is not None:
                 outputs.append(answer.items[0])
                 attachments.extend(answer.items[1:])
+                continue
+
+            if answer.fetch is not None:
+                # Announced before the wait, for the reason the memory branch
+                # below and the `board_request` further down both are: this is
+                # an eventless stretch, nothing else will put anything on the
+                # wire until it ends, and a status is what stops the gap being
+                # read as a dead connection. The phase matches
+                # `events.TOOL_PHASES["fetch_image"]`, so the status the
+                # arguments streamed under does not change under the learner.
+                yield StatusEvent(phase="searching", detail=None), result
+                try:
+                    async with asyncio.timeout(IMAGE_FETCH_TIMEOUT_SECONDS):
+                        fetched = await fetch_image(answer.fetch)
+                except TimeoutError:
+                    # The fetcher refuses in-band — every guard comes back as
+                    # `{"error": ...}` — so a raise here is the deadline and
+                    # nothing else. The turn carries on without the picture.
+                    logger.warning(
+                        "image fetch timed out after %.0fs",
+                        IMAGE_FETCH_TIMEOUT_SECONDS,
+                    )
+                    fetched = FetchedImage(output=FETCH_TIMEOUT_ACK)
+                outputs.append({
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": fetched.output,
+                })
+                if fetched.image is not None:
+                    # Shown, not just referenced. The model is about to place
+                    # this on a learner's board by id and then talk about it;
+                    # without the picture it would be describing a URL.
+                    attachments.append(_image_item(
+                        fetched.image,
+                        "Here is the image you fetched. It is on the server "
+                        "under the blob id in the tool result above.",
+                        fetched.content_type or "image/png",
+                    ))
                 continue
 
             if answer.run is not None:

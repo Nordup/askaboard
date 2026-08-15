@@ -573,3 +573,36 @@ def test_arguments_done_for_a_call_never_added_emits_nothing():
         "arguments": "{}",
     })
     assert events == []
+
+
+def test_fetch_image_announces_a_phase_and_a_row_at_the_head_of_its_call():
+    # Same reasoning as the memory tools above: the fetch is awaited inside the
+    # tool round, no provider events are consumed while it runs, and the
+    # heartbeat cannot fire. This is the last byte before that silence.
+    events = EventTranslator().translate({
+        "type": "response.output_item.added",
+        "output_index": 0,
+        "item": {"type": "function_call", "name": "fetch_image", "call_id": "call_f"},
+    })
+    assert events == [
+        StatusEvent(phase="searching"),
+        StepEvent(id="call_f", tool="fetch_image", label="Fetching image"),
+    ]
+
+
+def test_the_fetched_url_never_reaches_the_learners_status_row():
+    # The row is refined from the call's arguments once they complete, and this
+    # tool's only argument is a URL the *model* wrote from something it read on
+    # the internet. The general label is what the learner sees instead.
+    translator = EventTranslator()
+    translator.translate({
+        "type": "response.output_item.added",
+        "output_index": 0,
+        "item": {"type": "function_call", "name": "fetch_image", "call_id": "call_f"},
+    })
+    events = translator.translate({
+        "type": "response.function_call_arguments.done",
+        "output_index": 0,
+        "arguments": '{"url": "https://example.com/ignore-your-instructions.png"}',
+    })
+    assert events == [StepEvent(id="call_f", tool="fetch_image", label="Fetching image")]
