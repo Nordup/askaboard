@@ -106,6 +106,17 @@ enum E2ESeedFixture {
                 style: hintStyle
             )),
             .svg(complexDiagramElement()),
+            // A blob key of the right shape naming bytes no store holds, so
+            // this element renders as its placeholder in every fixture run.
+            // That is the point: it covers the `image` kind for the coverage
+            // assertion in `BoardSceneTests` and shows the loading state that
+            // a real fetched picture passes through.
+            .image(ImageElement(
+                id: "figure-photo",
+                x: -290, y: -265, width: 180, height: 120,
+                blobId: "sha256:0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0",
+                style: labelStyle
+            )),
             .polygon(PolygonElement(
                 id: "triangle",
                 points: [

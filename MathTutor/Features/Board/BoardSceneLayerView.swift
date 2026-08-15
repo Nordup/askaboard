@@ -31,15 +31,17 @@ final class BoardSceneLayerView: UIView {
     var scene: BoardScene = .empty {
         didSet {
             guard scene != oldValue else { return }
-            // Scheduling every `svg` and `math_text` element's render is this
-            // view's own duty, not its container's: `raster(for:bounds:)` reads
-            // the artifact and draws nothing until it lands, so a scene
-            // installed without these calls would leave every such layer empty
-            // forever. Restored scenes and scene replacements all reach the
-            // board through the canvas's `boardScene`, which forwards here, so
-            // this is the one place a scene's local renders are scheduled.
+            // Scheduling every `svg`, `math_text` and `image` element's render
+            // is this view's own duty, not its container's:
+            // `raster(for:bounds:)` reads the artifact and draws nothing (or a
+            // placeholder) until it lands, so a scene installed without these
+            // calls would leave every such layer empty forever. Restored scenes
+            // and scene replacements all reach the board through the canvas's
+            // `boardScene`, which forwards here, so this is the one place a
+            // scene's local renders are scheduled.
             BoardSVGCache.shared.prepare(scene: scene)
             BoardMathStore.shared.prepare(scene: scene)
+            BoardImageStore.shared.prepare(scene: scene)
             reconcile()
         }
     }
@@ -326,6 +328,19 @@ final class BoardSceneLayerView: UIView {
         if case .mathText(let value) = element, BoardMathStore.shared.artifact(for: value) == nil {
             return nil
         }
+        // `image` carries the same hazard and answers it differently, because
+        // it is the one kind that has something to draw before its artifact
+        // lands: the model's frame is the layout, so the placeholder has to
+        // appear or the figure around it reads as broken. It is drawn on every
+        // reconcile and stored on none — a placeholder in the cache would be
+        // served for the rest of the session, since the element value that
+        // keys it is identical before and after the bytes arrive. Only a
+        // bitmap that is the real picture is ever cached, and
+        // `.boardSceneArtifactReady` is what says one now exists.
+        var isCacheable = true
+        if case .image(let value) = element, BoardImageStore.shared.artifact(for: value) == nil {
+            isCacheable = false
+        }
         let key = RasterKey(element: element, bucket: currentBucket)
         if let cached = rasterCache.image(for: key) { return cached }
         // Two branches, by the element's size in board points. An absurd
@@ -374,7 +389,9 @@ final class BoardSceneLayerView: UIView {
         // Only whole bitmaps from this renderer pass are ever stored: the
         // cache prices an entry as `bytesPerRow * height`, which a cropped or
         // otherwise derived image would under-report.
-        rasterCache.store(cgImage, for: key)
+        if isCacheable {
+            rasterCache.store(cgImage, for: key)
+        }
         return cgImage
     }
 

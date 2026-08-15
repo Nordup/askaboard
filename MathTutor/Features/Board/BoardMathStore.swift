@@ -8,10 +8,11 @@ extension Notification.Name {
     /// so the layer view can reconcile without owning any render pipeline.
     ///
     /// One name for every kind that draws from a bitmap it does not have yet.
-    /// `math_text` posts it today; the older `.boardSVGCacheDidRender` says the
-    /// same thing for `svg` and is folded into this one when the SVG renderer
-    /// is replaced. The payload is deliberately empty: the observer re-derives
-    /// what it can now draw rather than trusting a name in a notification.
+    /// `math_text` and `image` post it; the older `.boardSVGCacheDidRender`
+    /// says the same thing for `svg` and is folded into this one when the SVG
+    /// renderer is replaced. The payload is deliberately empty: the observer
+    /// re-derives what it can now draw rather than trusting a name in a
+    /// notification.
     static let boardSceneArtifactReady = Notification.Name("boardSceneArtifactReady")
 }
 

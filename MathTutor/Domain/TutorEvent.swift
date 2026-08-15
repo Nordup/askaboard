@@ -12,6 +12,15 @@ enum TutorPhase: String, Sendable {
     /// arguments are still streaming. The longest phase of a drawing turn by
     /// far, and until it existed it was indistinguishable from `thinking`.
     case drawing
+    /// A machine somewhere else is running a script the tutor wrote — the
+    /// hosted code interpreter. The same argument `drawing` makes: it is one of
+    /// the longest stretches of a turn, and without a name of its own it looks
+    /// exactly like `thinking`, which is to say like nothing happening at all.
+    ///
+    /// A phase this build did not know is dropped by `TutorPhase(rawValue:)`
+    /// below and the device keeps its previous phase, so the server adding one
+    /// is additive on the wire — which is why this case can arrive late.
+    case computing
 }
 
 /// The client's streaming vocabulary for a tutor turn. This is a direct

@@ -694,6 +694,9 @@ private extension TutorPhase {
         case .looking: "Reading your board"
         case .searching: "Looking something up"
         case .drawing: "Drawing on the board"
+        // Not "Running a script": the learner is a child, and what they are
+        // waiting for is an answer being worked out, not a subsystem running.
+        case .computing: "Working it out"
         // Never shown today — the thread hides the indicator once the reply is streaming —
         // but a phase with no copy would be a trap for whoever changes that.
         case .writing: "Writing"

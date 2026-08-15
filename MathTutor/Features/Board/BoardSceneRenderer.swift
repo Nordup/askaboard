@@ -211,6 +211,22 @@ enum BoardSceneRenderer {
             withRotation(style.rotation, around: rect, in: context) {
                 artifact.draw(in: rect, into: context, isFlipped: isFlipped)
             }
+        case .image(let value):
+            // The one element that draws something while it is still loading.
+            // Its frame is the model's layout decision rather than the
+            // picture's own size, so the rectangle is known from the moment the
+            // element arrives and the surrounding figure has to be readable
+            // while the bytes are on their way. Whether the context is
+            // y-flipped is read here, before `withRotation` touches the CTM.
+            let rect = CGRect(x: value.x, y: value.y, width: value.width, height: value.height)
+            let isFlipped = context.ctm.d < 0
+            withRotation(style.rotation, around: rect, in: context) {
+                if let bitmap = BoardImageStore.shared.artifact(for: value) {
+                    draw(bitmap: bitmap, in: rect, into: context, isFlipped: isFlipped)
+                } else {
+                    drawPlaceholder(in: rect, into: context)
+                }
+            }
         case .svg(let value):
             let rect = CGRect(x: value.x, y: value.y, width: value.width, height: value.height)
             withRotation(style.rotation, around: rect, in: context) {
@@ -219,6 +235,53 @@ enum BoardSceneRenderer {
                 }
             }
         }
+        context.restoreGState()
+    }
+
+    /// A downloaded blob, into the frame the model placed it in.
+    ///
+    /// The same flip `MathArtifact.draw` performs, and for the same reason: a
+    /// `CGImage` draws y-up while UIKit drawing contexts are y-down, so the
+    /// bitmap lands upside down without it. `isFlipped` is decided by the
+    /// caller before any rotation touches the CTM — a rotated CTM no longer
+    /// reports it.
+    private static func draw(
+        bitmap: CGImage,
+        in rect: CGRect,
+        into context: CGContext,
+        isFlipped: Bool
+    ) {
+        guard rect.width > 0, rect.height > 0 else { return }
+        context.saveGState()
+        context.interpolationQuality = .high
+        if isFlipped {
+            context.translateBy(x: 0, y: rect.midY)
+            context.scaleBy(x: 1, y: -1)
+            context.translateBy(x: 0, y: -rect.midY)
+        }
+        context.draw(bitmap, in: rect)
+        context.restoreGState()
+    }
+
+    /// What an `image` shows until its blob lands: the frame, filled.
+    ///
+    /// The picture is part of a figure, and a figure with a hole in it reads as
+    /// a broken board rather than a slow one. `secondarySystemFill` is the
+    /// system's own "something belongs here" grey, so the placeholder is
+    /// visibly not ink — nothing about it can be mistaken for content the tutor
+    /// drew.
+    private static func drawPlaceholder(in rect: CGRect, into context: CGContext) {
+        guard rect.width > 0, rect.height > 0 else { return }
+        context.saveGState()
+        let radius = min(12, min(rect.width, rect.height) / 4)
+        context.addPath(CGPath(
+            roundedRect: rect,
+            cornerWidth: radius,
+            cornerHeight: radius,
+            transform: nil
+        ))
+        context.setFillColor(UIColor.secondarySystemFill.cgColor)
+        context.fillPath()
         context.restoreGState()
     }
 
@@ -543,6 +606,18 @@ enum BoardSceneRenderer {
             } else {
                 rect = .zero
             }
+        case .image(let value):
+            // The frame, exactly, and from the moment the element arrives —
+            // the placeholder fills the same rectangle the bitmap will, so
+            // unlike `math_text` there is never a pass where an `image` has no
+            // bounds. No stroke inset either: `stroke` is not a pen a picture
+            // is outlined with, and nothing here draws one.
+            rect = CGRect(
+                x: value.x + originX,
+                y: value.y + originY,
+                width: value.width,
+                height: value.height
+            )
         case .svg(let value):
             rect = CGRect(
                 x: value.x + originX,

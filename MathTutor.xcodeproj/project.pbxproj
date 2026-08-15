@@ -143,6 +143,7 @@
 		CFF3C231072A5F3662F031A8 /* RealtimeEvents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 919545338C6C3B19C28E11E7 /* RealtimeEvents.swift */; };
 		D06365D7D4E247E420E73476 /* HorizontalSwipeRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4075ED888C082DF18C7E98E4 /* HorizontalSwipeRouter.swift */; };
 		D1101370A9F951738474EC73 /* MascotMotionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4EA2B107414EF9093D12A65 /* MascotMotionTests.swift */; };
+		D23C48EA3A631FB87554E42F /* BoardImageElementTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B28899D27056431F29C6807 /* BoardImageElementTests.swift */; };
 		D4B0F84539AF17E5B2F7DB27 /* MascotGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADC630D3363CD0135FF63212 /* MascotGeometry.swift */; };
 		D4CC41F844141FE1C0733F8F /* TutorEventTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECEE59C2882DF49AE64DF05F /* TutorEventTests.swift */; };
 		D517AAA5757CDE87D2187E3D /* ResizeModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D557CC670C82D9747A86266 /* ResizeModel.swift */; };
@@ -169,6 +170,7 @@
 		F0AB368ED3252A73E037C11F /* BoardElementBoundsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CF47EA2AF089BE1CEF29278 /* BoardElementBoundsTests.swift */; };
 		F1DFB7BCEA5833AA08AF2487 /* AttachMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D97B15C0A56161A1EB12CCB /* AttachMenu.swift */; };
 		F41397690D69C8D2F528A80D /* ComposerAttachmentsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B11E1EAAEC87BB250A9A9797 /* ComposerAttachmentsTests.swift */; };
+		FBA76E568071FE9A786FEF9C /* BoardImageStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A43D9312FAAF40F3EFD627E /* BoardImageStore.swift */; };
 		FCAB37D9BB091699455CE680 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40CC8590077CACB91515D03B /* Models.swift */; };
 		FDA22C3107D235DA9260A7DC /* VoiceMascotView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4A1E827F2C77A0B4A0498E4 /* VoiceMascotView.swift */; };
 /* End PBXBuildFile section */
@@ -259,6 +261,7 @@
 		69B4EE6518C5723243900923 /* AttachmentChipRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentChipRow.swift; sourceTree = "<group>"; };
 		6A8932D22AB94BA80F44B1B8 /* Icon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Icon.swift; sourceTree = "<group>"; };
 		6B190574F83F26DD21FA3CE7 /* DictationPhase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictationPhase.swift; sourceTree = "<group>"; };
+		6B28899D27056431F29C6807 /* BoardImageElementTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardImageElementTests.swift; sourceTree = "<group>"; };
 		6C3BD7AF8ABF8A0911D1890A /* Typography.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Typography.swift; sourceTree = "<group>"; };
 		6C40D818D42C36ADE7FAFDF9 /* BoardSVGTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardSVGTests.swift; sourceTree = "<group>"; };
 		6CB5370FB9D167F1C763CBE5 /* VoiceContracts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceContracts.swift; sourceTree = "<group>"; };
@@ -273,6 +276,7 @@
 		77A01E280787A9D796C47A84 /* SettingsOptions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsOptions.swift; sourceTree = "<group>"; };
 		77A7DD39D721ACCC0D62826F /* BoardToolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardToolTests.swift; sourceTree = "<group>"; };
 		784BDCC853A7787B6EE7BFFD /* ChatComponentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatComponentTests.swift; sourceTree = "<group>"; };
+		7A43D9312FAAF40F3EFD627E /* BoardImageStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardImageStore.swift; sourceTree = "<group>"; };
 		7A75D7C233693DE7B2FFF3DF /* TutorStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TutorStore.swift; sourceTree = "<group>"; };
 		7B2EAA96D5D01DB1432106F3 /* AttachmentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentStore.swift; sourceTree = "<group>"; };
 		7B4837CE04C13B9963DC4754 /* SelectionAttachment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionAttachment.swift; sourceTree = "<group>"; };
@@ -481,6 +485,7 @@
 				C0E636CF98B8B5B2D40A95EA /* AttachmentStoreTests.swift */,
 				4321C972F3139C4C616C7600 /* BackendTutorServiceTests.swift */,
 				6CF47EA2AF089BE1CEF29278 /* BoardElementBoundsTests.swift */,
+				6B28899D27056431F29C6807 /* BoardImageElementTests.swift */,
 				3DBEC75E12C26E686FF76BDF /* BoardInkPersistenceTests.swift */,
 				07822BFCEDA6CAC5E7B67D24 /* BoardInkTests.swift */,
 				974F32F35EEA5AF0F4A6C691 /* BoardMathElementTests.swift */,
@@ -734,6 +739,7 @@
 				DA6C29612083E1C37169C92B /* BoardCapture.swift */,
 				EB608BD6660FBD1ACAD2D15B /* BoardDiagnostics.swift */,
 				5DAA007B907FE56B1E8A66F7 /* BoardGeometry.swift */,
+				7A43D9312FAAF40F3EFD627E /* BoardImageStore.swift */,
 				CDC29B5C0EE22B4B88E0C16D /* BoardInk.swift */,
 				0730AD2FC75614FC96E8605A /* BoardMathStore.swift */,
 				6DFEE113835CD09C48AEFCD3 /* BoardPaper.swift */,
@@ -901,6 +907,7 @@
 				B5FD8AA551AF597A4904A241 /* AttachmentStoreTests.swift in Sources */,
 				7D3C2F693CC25B87A39B9600 /* BackendTutorServiceTests.swift in Sources */,
 				F0AB368ED3252A73E037C11F /* BoardElementBoundsTests.swift in Sources */,
+				D23C48EA3A631FB87554E42F /* BoardImageElementTests.swift in Sources */,
 				E6DD21C7A93C00ECA613EE84 /* BoardInkPersistenceTests.swift in Sources */,
 				3FEAD4CABE221C77708EAE56 /* BoardInkTests.swift in Sources */,
 				83FC851463C4603DBA4A2FB7 /* BoardMathElementTests.swift in Sources */,
@@ -961,6 +968,7 @@
 				A4FCE68D0B000E7A694E4C5E /* BoardCropStore.swift in Sources */,
 				1728A9F9E59638F9AE239EA1 /* BoardDiagnostics.swift in Sources */,
 				29CCD36CA6350F76004148CA /* BoardGeometry.swift in Sources */,
+				FBA76E568071FE9A786FEF9C /* BoardImageStore.swift in Sources */,
 				F04349D3E6E4B1597D648774 /* BoardInk.swift in Sources */,
 				C096F7A2A268DD9484AAFD4A /* BoardMathStore.swift in Sources */,
 				5C531420164586EEF2878DBA /* BoardPaper.swift in Sources */,

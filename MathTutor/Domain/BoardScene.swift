@@ -152,6 +152,7 @@ enum BoardElementKind: String, Codable, Sendable, CaseIterable {
     case angleMarker = "angle_marker"
     case path
     case mathText = "math_text"
+    case image
     case svg
 }
 
@@ -390,6 +391,42 @@ struct MathTextElement: Codable, Hashable, Sendable {
     }
 }
 
+/// A picture the server already holds, placed on the board by its key.
+///
+/// The bytes never travel in the scene. `blobId` names a blob a tool put in the
+/// store — a photograph `fetch_image` downloaded, a chart the code interpreter
+/// drew — and the device fetches it once from `GET /v1/blobs/{key}` and keeps
+/// it on disk. That is what lets one picture sit in a scene the model rewrites
+/// every turn without paying for it again, and it is why this element is a
+/// string rather than a payload: the same scene is round-tripped into the
+/// model's context on every turn.
+///
+/// The frame is the layout, not the picture's own pixel size: the bitmap is
+/// drawn into `(x, y, width, height)` whatever shape it arrives in, and until
+/// it arrives that rectangle is filled with a placeholder. So the frame is the
+/// element's bounds from the moment the model places it, unlike `math_text`,
+/// whose size only the typesetter knows. `BoardImageStore` is what turns the
+/// key into the bitmap.
+struct ImageElement: Codable, Hashable, Sendable {
+    var id: String
+    var kind: BoardElementKind = .image
+    var x: CGFloat
+    var y: CGFloat
+    var width: CGFloat
+    var height: CGFloat
+    /// `sha256:` and 64 lowercase hexadecimal characters — the shape both
+    /// `server/app/tutor/board_scene.py` and `GET /v1/blobs/{key}` insist on.
+    /// Nothing here checks it; `BoardImageStore` does, before the string is
+    /// ever allowed to name a file or a URL.
+    var blobId: String
+    var style: BoardStyle = BoardStyle()
+
+    enum CodingKeys: String, CodingKey {
+        case id, kind, x, y, width, height, style
+        case blobId = "blob_id"
+    }
+}
+
 /// A complete raw SVG document, preserved byte-for-byte and rendered
 /// locally by WebKit on the iPad. The frame (`x`, `y`, `width`, `height`)
 /// places it in board coordinates; the SVG owns its internal styling, while
@@ -420,6 +457,7 @@ enum BoardElement: Codable, Hashable, Sendable {
     case angleMarker(AngleMarkerElement)
     case path(PathElement)
     case mathText(MathTextElement)
+    case image(ImageElement)
     case svg(SVGElement)
 
     var id: String {
@@ -437,6 +475,7 @@ enum BoardElement: Codable, Hashable, Sendable {
         case .angleMarker(let value): value.id
         case .path(let value): value.id
         case .mathText(let value): value.id
+        case .image(let value): value.id
         case .svg(let value): value.id
         }
     }
@@ -456,6 +495,7 @@ enum BoardElement: Codable, Hashable, Sendable {
         case .angleMarker: .angleMarker
         case .path: .path
         case .mathText: .mathText
+        case .image: .image
         case .svg: .svg
         }
     }
@@ -475,6 +515,7 @@ enum BoardElement: Codable, Hashable, Sendable {
         case .angleMarker(let value): value.style
         case .path(let value): value.style
         case .mathText(let value): value.style
+        case .image(let value): value.style
         case .svg(let value): value.style
         }
     }
@@ -610,6 +651,17 @@ enum BoardElement: Codable, Hashable, Sendable {
                 fontSize: wire.fontSize ?? 24,
                 style: wire.style
             ))
+        case .image:
+            self = .image(ImageElement(
+                id: wire.id,
+                kind: .image,
+                x: wire.x ?? 0,
+                y: wire.y ?? 0,
+                width: wire.width ?? 0,
+                height: wire.height ?? 0,
+                blobId: wire.blobId ?? "",
+                style: wire.style
+            ))
         case .svg:
             self = .svg(SVGElement(
                 id: wire.id,
@@ -708,11 +760,14 @@ private struct WireElement: Codable {
 
     var latex: String?
 
+    var blobId: String?
+
     enum CodingKeys: String, CodingKey {
         case id, kind, x, y, text, width, height, points, svg, d, latex
         case x1, y1, x2, y2, cx, cy, radius
         case role, stroke, fill, opacity, dash, rotation
         case fillRule = "fill_rule"
+        case blobId = "blob_id"
         case fontSize = "font_size"
         case alignment
         case headSize = "head_size"
@@ -766,6 +821,9 @@ private struct WireElement: Codable {
         case .mathText(let value):
             x = value.x; y = value.y
             latex = value.latex; fontSize = value.fontSize
+        case .image(let value):
+            x = value.x; y = value.y; width = value.width; height = value.height
+            blobId = value.blobId
         case .svg(let value):
             x = value.x; y = value.y; width = value.width; height = value.height
             svg = value.svg
@@ -814,6 +872,7 @@ private struct WireElement: Codable {
         d = try container.decodeIfPresent(String.self, forKey: .d)
         fillRule = try container.decodeIfPresent(PathFillRule.self, forKey: .fillRule)
         latex = try container.decodeIfPresent(String.self, forKey: .latex)
+        blobId = try container.decodeIfPresent(String.self, forKey: .blobId)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -856,5 +915,6 @@ private struct WireElement: Codable {
         if let d { try container.encode(d, forKey: .d) }
         if let fillRule { try container.encode(fillRule, forKey: .fillRule) }
         if let latex { try container.encode(latex, forKey: .latex) }
+        if let blobId { try container.encode(blobId, forKey: .blobId) }
     }
 }
