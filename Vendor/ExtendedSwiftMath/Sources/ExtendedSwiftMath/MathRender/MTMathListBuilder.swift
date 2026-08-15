@@ -732,7 +732,9 @@ public struct MTMathListBuilder {
                     }
                 } else if atom.type == .overUnder {
                     if let overUnder = atom as? MTOverUnder {
-                        if overUnder.isStackrel {
+                        if let brace = overUnder.braceCommand {
+                            str += "\\\(brace){\(mathListToString(overUnder.base))}"
+                        } else if overUnder.isStackrel {
                             str += "\\stackrel{\(mathListToString(overUnder.over))}{\(mathListToString(overUnder.base))}"
                         } else if overUnder.over != nil {
                             str += "\\overset{\(mathListToString(overUnder.over))}{\(mathListToString(overUnder.base))}"
@@ -744,15 +746,20 @@ public struct MTMathListBuilder {
                     if let cancel = atom as? MTCancel {
                         let command: String
                         switch cancel.cancelType {
-                        case .forward:  command = "cancel"
-                        case .backward: command = "bcancel"
-                        case .cross:    command = "xcancel"
+                        case .forward:    command = "cancel"
+                        case .backward:   command = "bcancel"
+                        case .cross:      command = "xcancel"
+                        case .horizontal: command = "sout"
                         }
                         str += "\\\(command){\(mathListToString(cancel.innerList))}"
                     }
                 } else if atom.type == .boxed {
                     if let boxed = atom as? MTBoxed {
                         str += "\\boxed{\(mathListToString(boxed.innerList))}"
+                    }
+                } else if atom.type == .phantom {
+                    if let phantom = atom as? MTPhantom {
+                        str += "\\\(phantom.command){\(mathListToString(phantom.innerList))}"
                     }
                 } else if atom.type == .overlap {
                     if let overlap = atom as? MTOverlap {
@@ -767,10 +774,14 @@ public struct MTMathListBuilder {
                 } else if atom.type == .extensibleArrow {
                     if let arrow = atom as? MTExtensibleArrow {
                         let command: String
-                        switch arrow.direction {
-                        case .right:     command = "xrightarrow"
-                        case .left:      command = "xleftarrow"
-                        case .leftRight: command = "xleftrightarrow"
+                        if let custom = arrow.commandName {
+                            command = custom
+                        } else {
+                            switch arrow.direction {
+                            case .right:     command = "xrightarrow"
+                            case .left:      command = "xleftarrow"
+                            case .leftRight: command = "xleftrightarrow"
+                            }
                         }
                         str += "\\\(command)"
                         if let under = arrow.underScript {
@@ -1151,6 +1162,147 @@ public struct MTMathListBuilder {
             overlap.overlapType = .center
             overlap.innerList = self.buildInternal(true)
             return overlap
+        } else if command == "dbinom" || command == "tbinom" {
+            // \binom with forced display/text style, mirroring \dfrac / \tfrac.
+            let frac = MTFraction(hasRule: false)
+            let numerator = self.buildInternal(true)
+            let denominator = self.buildInternal(true)
+            let style = MTMathStyle(style: command == "dbinom" ? .display : .text)
+            numerator?.insert(style, at: 0)
+            denominator?.insert(style, at: 0)
+            frac.numerator = numerator
+            frac.denominator = denominator
+            frac.leftDelimiter = "("
+            frac.rightDelimiter = ")"
+            return frac
+        } else if command == "Bra" {
+            return self.atomForCommand("bra")
+        } else if command == "Ket" {
+            return self.atomForCommand("ket")
+        } else if command == "Braket" {
+            return self.atomForCommand("braket")
+        } else if command == "set" || command == "Set" {
+            // Braket-package set notation: \set{x} -> {x}
+            let inner = MTInner()
+            inner.leftBoundary = MTMathAtomFactory.boundary(forDelimiter: "{")
+            inner.rightBoundary = MTMathAtomFactory.boundary(forDelimiter: "}")
+            inner.innerList = self.buildInternal(true)
+            return inner
+        } else if command == "operatornamewithlimits" {
+            return self.atomForCommand("operatorname*")
+        } else if command == "llap" {
+            return self.atomForCommand("mathllap")
+        } else if command == "rlap" {
+            return self.atomForCommand("mathrlap")
+        } else if command == "clap" {
+            return self.atomForCommand("mathclap")
+        } else if command == "underbar" {
+            return self.atomForCommand("underline")
+        } else if command == "fcolorbox" {
+            // \fcolorbox{border}{background}{content}: the border color is
+            // dropped and the rest behaves like \colorbox.
+            _ = self.readColor()
+            return self.atomForCommand("colorbox")
+        } else if command == "sout" {
+            // \sout{x} strikes through horizontally.
+            let cancel = MTCancel()
+            cancel.cancelType = .horizontal
+            cancel.innerList = self.buildInternal(true)
+            return cancel
+        } else if command == "phantom" || command == "hphantom" || command == "vphantom" || command == "smash" {
+            let phantom = MTPhantom()
+            phantom.command = command
+            phantom.keepsWidth = command != "vphantom"
+            phantom.keepsHeight = command == "phantom" || command == "vphantom"
+            phantom.draws = command == "smash"
+            phantom.innerList = self.buildInternal(true)
+            return phantom
+        } else if command == "tag" {
+            // Equation tags have no anchor in this renderer; parse and drop.
+            self.skipSpaces()
+            if self.hasCharacters && self.string[self.currentCharIndex] == "*" {
+                _ = self.getNextCharacter()
+            }
+            _ = self.readBracedText()
+            return MTMathSpace(space: 0)
+        } else if command == "notag" || command == "nonumber" ||
+                  command == "tiny" || command == "scriptsize" || command == "footnotesize" ||
+                  command == "small" || command == "normalsize" || command == "large" ||
+                  command == "Large" || command == "LARGE" || command == "huge" || command == "Huge" {
+            // Tag suppression and text-size switches: no-ops in this renderer.
+            return MTMathSpace(space: 0)
+        } else if command == "hspace" || command == "hskip" || command == "kern" ||
+                  command == "mkern" || command == "mskip" {
+            guard let mu = self.readDimensionInMu() else {
+                self.setError(.invalidCommand, message: "Invalid dimension for \\\(command)")
+                return nil
+            }
+            return MTMathSpace(space: mu)
+        } else if command == "mathop" || command == "mathbin" || command == "mathrel" ||
+                  command == "mathord" || command == "mathopen" || command == "mathclose" ||
+                  command == "mathpunct" || command == "mathinner" {
+            // Reclassify the argument's spacing class. When the argument is plain
+            // text (the common \mathop{argsup} case) it becomes a single atom of
+            // the requested class; otherwise the content renders with ordinary
+            // spacing inside an inner atom.
+            let list = self.buildInternal(true)
+            let flattened = list.flatMap { MTMathListBuilder.flattenToText($0) }
+            if command == "mathop" {
+                if let text = flattened {
+                    return MTMathAtomFactory.operatorWithName(text, limits: false)
+                }
+            } else if let text = flattened {
+                let type: MTMathAtomType
+                switch command {
+                case "mathbin":   type = .binaryOperator
+                case "mathrel":   type = .relation
+                case "mathopen":  type = .open
+                case "mathclose": type = .close
+                case "mathpunct": type = .punctuation
+                default:          type = .ordinary
+                }
+                return MTMathAtom(type: type, value: text)
+            }
+            let inner = MTInner()
+            inner.innerList = list
+            return inner
+        } else if let arrowCharacter = MTMathListBuilder.extendedArrowCommands[command] {
+            // The KaTeX x-arrow family: a stretchy glyph with an optional
+            // [under] label and a required {over} label.
+            let arrow = MTExtensibleArrow()
+            arrow.commandName = command
+            arrow.customArrowCharacter = arrowCharacter
+            self.skipSpaces()
+            if self.hasCharacters && self.string[self.currentCharIndex] == "[" {
+                _ = self.getNextCharacter() // consume '['
+                arrow.underScript = self.buildInternal(false, stopChar: "]")
+            }
+            arrow.overScript = self.buildInternal(true)
+            return arrow
+        } else if command == "overbrace" || command == "underbrace" ||
+                  command == "overbracket" || command == "underbracket" {
+            // Brace annotations. The brace glyph is a non-stretchy character
+            // annotation; a following script folds into the limit position at
+            // layout time (see MTTypesetter, braceCommand).
+            let ou = MTOverUnder()
+            ou.braceCommand = command
+            ou.base = self.buildInternal(true)
+            let isOver = command.hasPrefix("over")
+            let glyph: String
+            switch command {
+            case "overbrace":     glyph = "\u{23DE}" // ⏞
+            case "underbrace":    glyph = "\u{23DF}" // ⏟
+            case "overbracket":   glyph = "\u{23B4}" // ⎴
+            default:              glyph = "\u{23B5}" // ⎵
+            }
+            let annotation = MTMathList()
+            annotation.add(MTMathAtom(type: .ordinary, value: glyph))
+            if isOver {
+                ou.over = annotation
+            } else {
+                ou.under = annotation
+            }
+            return ou
         } else if command == "boxed" {
             // \boxed{x} frames x with a rectangle.
             let boxed = MTBoxed()
@@ -1364,6 +1516,84 @@ public struct MTMathListBuilder {
         }
         self.setError(.mismatchBraces, message: "Missing }")
         return nil
+    }
+
+    /// The KaTeX extended arrow family: command name to the glyph that is
+    /// stretched over the labels. Parsed like \xrightarrow ([under]{over}).
+    static let extendedArrowCommands: [String: String] = [
+        "xRightarrow":         "\u{21D2}", // ⇒
+        "xLeftarrow":          "\u{21D0}", // ⇐
+        "xLeftrightarrow":     "\u{21D4}", // ⇔
+        "xhookleftarrow":      "\u{21A9}", // ↩
+        "xhookrightarrow":     "\u{21AA}", // ↪
+        "xmapsto":             "\u{21A6}", // ↦
+        "xlongequal":          "=",
+        "xleftharpoonup":      "\u{21BC}", // ↼
+        "xrightharpoonup":     "\u{21C0}", // ⇀
+        "xleftharpoondown":    "\u{21BD}", // ↽
+        "xrightharpoondown":   "\u{21C1}", // ⇁
+        "xleftrightharpoons":  "\u{21CB}", // ⇋
+        "xrightleftharpoons":  "\u{21CC}", // ⇌
+        "xtwoheadleftarrow":   "\u{219E}", // ↞
+        "xtwoheadrightarrow":  "\u{21A0}", // ↠
+        "xtofrom":             "\u{21C4}", // ⇄
+    ]
+
+    /// Flattens a math list to its plain text when every atom is a simple
+    /// character atom without scripts (used by \mathop and friends).
+    static func flattenToText(_ list: MTMathList) -> String? {
+        var text = ""
+        for atom in list.atoms {
+            switch atom.type {
+            case .ordinary, .variable, .number, .binaryOperator, .relation,
+                 .open, .close, .punctuation:
+                guard atom.subScript == nil, atom.superScript == nil else { return nil }
+                text += atom.nucleus
+            default:
+                return nil
+            }
+        }
+        return text.isEmpty ? nil : text
+    }
+
+    /// Reads a dimension for \kern-family commands, either braced ("{5pt}") or
+    /// bare ("5pt" / "18mu"), and converts it to mu (1em = 18mu, 1pt = 1.8mu).
+    mutating func readDimensionInMu() -> CGFloat? {
+        self.skipSpaces()
+        var raw: String
+        if self.hasCharacters && self.string[self.currentCharIndex] == "{" {
+            _ = self.getNextCharacter() // consume '{'
+            var content = ""
+            while self.hasCharacters && self.string[self.currentCharIndex] != "}" {
+                content.append(self.getNextCharacter())
+            }
+            guard self.hasCharacters else { return nil }
+            _ = self.getNextCharacter() // consume '}'
+            raw = content
+        } else {
+            raw = ""
+            while self.hasCharacters {
+                let ch = self.string[self.currentCharIndex]
+                if ch.isNumber || ch == "." || ch == "-" || ch == "+"
+                    || ch == "e" || ch == "m" || ch == "u" || ch == "p"
+                    || ch == "t" || ch == "x" {
+                    raw.append(self.getNextCharacter())
+                } else {
+                    break
+                }
+            }
+        }
+        let s = raw.trimmingCharacters(in: .whitespaces)
+        let units: [(String, CGFloat)] = [("mu", 1), ("pt", 1.8), ("em", 18), ("ex", 8), ("px", 1.8)]
+        for (unit, muPerUnit) in units {
+            if s.hasSuffix(unit) {
+                let number = String(s.dropLast(unit.count)).trimmingCharacters(in: .whitespaces)
+                guard let value = Double(number) else { return nil }
+                return CGFloat(value) * muPerUnit
+            }
+        }
+        guard let value = Double(s) else { return nil }
+        return CGFloat(value) // unitless: treat as mu
     }
 
     /// Parses a TeX length such as "2pt", "0pt", "1.5pt" or a bare number into points.

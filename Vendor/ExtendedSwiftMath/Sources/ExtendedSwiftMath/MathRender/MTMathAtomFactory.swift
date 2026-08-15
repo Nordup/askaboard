@@ -25,7 +25,69 @@ public class MTMathAtomFactory {
         "to" : "rightarrow",
         "iff" : "Longleftrightarrow",
         "AA" : "angstrom",
-        "bmod" : "mod"
+        "bmod" : "mod",
+        "impliedby" : "Longleftarrow",
+        "larr" : "leftarrow",
+        "rarr" : "rightarrow",
+        "harr" : "leftrightarrow",
+        "lrarr" : "leftrightarrow",
+        "lArr" : "Leftarrow",
+        "rArr" : "Rightarrow",
+        "hArr" : "Leftrightarrow",
+        "lrArr" : "Leftrightarrow",
+        "Larr" : "Leftarrow",
+        "Rarr" : "Rightarrow",
+        "Harr" : "Leftrightarrow",
+        "Lrarr" : "Leftrightarrow",
+        "uarr" : "uparrow",
+        "uArr" : "Uparrow",
+        "Uarr" : "Uparrow",
+        "darr" : "downarrow",
+        "dArr" : "Downarrow",
+        "Darr" : "Downarrow",
+        "isin" : "in",
+        "sub" : "subset",
+        "sube" : "subseteq",
+        "supe" : "supseteq",
+        "empty" : "emptyset",
+        "exist" : "exists",
+        "infin" : "infty",
+        "alef" : "aleph",
+        "alefsym" : "aleph",
+        "sdot" : "cdot",
+        "plusmn" : "pm",
+        "thetasym" : "vartheta",
+        "weierp" : "wp",
+        "real" : "Re",
+        "image" : "Im",
+        "Dagger" : "ddagger",
+        "hearts" : "heartsuit",
+        "diamonds" : "diamondsuit",
+        "clubs" : "clubsuit",
+        "spades" : "spadesuit",
+        "dots" : "ldots",
+        "dotsc" : "ldots",
+        "dotso" : "ldots",
+        "dotsb" : "cdots",
+        "dotsi" : "cdots",
+        "dotsm" : "cdots",
+        "lang" : "langle",
+        "rang" : "rangle",
+        "varliminf" : "liminf",
+        "varlimsup" : "limsup",
+        "varinjlim" : "injlim",
+        "varprojlim" : "projlim",
+        "varGamma" : "Gamma",
+        "varDelta" : "Delta",
+        "varTheta" : "Theta",
+        "varLambda" : "Lambda",
+        "varXi" : "Xi",
+        "varPi" : "Pi",
+        "varSigma" : "Sigma",
+        "varUpsilon" : "Upsilon",
+        "varPhi" : "Phi",
+        "varPsi" : "Psi",
+        "varOmega" : "Omega"
     ]
     
     public static let delimiters = [
@@ -110,6 +172,13 @@ public class MTMathAtomFactory {
         "check" :  "\u{030C}",
         "vec" :  "\u{20D7}",
         "widehat" :  "\u{0302}",
+        "mathring" :  "\u{030A}",
+        "widecheck" :  "\u{030C}",
+        "dddot" :  "\u{20DB}",
+        "ddddot" :  "\u{20DC}",
+        "overleftharpoon" :  "\u{20D0}",
+        "overrightharpoon" :  "\u{20D1}",
+        "overgroup" :  "\u{0311}",
         "widetilde" :  "\u{0303}",
         "overleftarrow" :  "\u{20D6}",      // Combining left arrow above
         "overrightarrow" :  "\u{20D7}",     // Combining right arrow above (same as vec)
@@ -539,6 +608,310 @@ public class MTMathAtomFactory {
         "upquote" : MTMathAtom(type: .ordinary, value: "\u{0027}"),
         "partial" : MTMathAtom(type: .ordinary, value: "\u{0001D715}"),
 
+        // ---- KaTeX coverage batch (generated from KaTeX symbols.ts) ----
+        "And" : MTMathAtom(type: .binaryOperator, value: "\u{0026}"),  // &
+        "Cap" : MTMathAtom(type: .binaryOperator, value: "\u{22D2}"),  // ⋒
+        "Cup" : MTMathAtom(type: .binaryOperator, value: "\u{22D3}"),  // ⋓
+        "bigcirc" : MTMathAtom(type: .binaryOperator, value: "\u{25EF}"),  // ◯
+        "bigtriangledown" : MTMathAtom(type: .binaryOperator, value: "\u{25BD}"),  // ▽
+        "bigtriangleup" : MTMathAtom(type: .binaryOperator, value: "\u{25B3}"),  // △
+        "doublecap" : MTMathAtom(type: .binaryOperator, value: "\u{22D2}"),  // ⋒
+        "doublecup" : MTMathAtom(type: .binaryOperator, value: "\u{22D3}"),  // ⋓
+        "gtrdot" : MTMathAtom(type: .binaryOperator, value: "\u{22D7}"),  // ⋗
+        "leftthreetimes" : MTMathAtom(type: .binaryOperator, value: "\u{22CB}"),  // ⋋
+        "lessdot" : MTMathAtom(type: .binaryOperator, value: "\u{22D6}"),  // ⋖
+        "rightthreetimes" : MTMathAtom(type: .binaryOperator, value: "\u{22CC}"),  // ⋌
+        "smallsetminus" : MTMathAtom(type: .binaryOperator, value: "\u{2216}"),  // ∖
+        "triangleleft" : MTMathAtom(type: .binaryOperator, value: "\u{25C3}"),  // ◃
+        "triangleright" : MTMathAtom(type: .binaryOperator, value: "\u{25B9}"),  // ▹
+        "rVert" : MTMathAtom(type: .close, value: "\u{2225}"),  // ∥
+        "rbrack" : MTMathAtom(type: .close, value: "\u{005D}"),  // ]
+        "rmoustache" : MTMathAtom(type: .close, value: "\u{23B1}"),  // ⎱
+        "rparen" : MTMathAtom(type: .close, value: "\u{0029}"),  // )
+        "rvert" : MTMathAtom(type: .close, value: "\u{2223}"),  // ∣
+        "mathellipsis" : MTMathAtom(type: .ordinary, value: "\u{2026}"),  // …
+        "textellipsis" : MTMathAtom(type: .ordinary, value: "\u{2026}"),  // …
+        "lVert" : MTMathAtom(type: .open, value: "\u{2225}"),  // ∥
+        "lbrack" : MTMathAtom(type: .open, value: "\u{005B}"),  // [
+        "lmoustache" : MTMathAtom(type: .open, value: "\u{23B0}"),  // ⎰
+        "lparen" : MTMathAtom(type: .open, value: "\u{0028}"),  // (
+        "lvert" : MTMathAtom(type: .open, value: "\u{2223}"),  // ∣
+        "ldotp" : MTMathAtom(type: .punctuation, value: "\u{002E}"),  // .
+        "Bumpeq" : MTMathAtom(type: .relation, value: "\u{224E}"),  // ≎
+        "Doteq" : MTMathAtom(type: .relation, value: "\u{2251}"),  // ≑
+        "Join" : MTMathAtom(type: .relation, value: "\u{22C8}"),  // ⋈
+        "Lleftarrow" : MTMathAtom(type: .relation, value: "\u{21DA}"),  // ⇚
+        "Lsh" : MTMathAtom(type: .relation, value: "\u{21B0}"),  // ↰
+        "Rrightarrow" : MTMathAtom(type: .relation, value: "\u{21DB}"),  // ⇛
+        "Rsh" : MTMathAtom(type: .relation, value: "\u{21B1}"),  // ↱
+        "Subset" : MTMathAtom(type: .relation, value: "\u{22D0}"),  // ⋐
+        "Supset" : MTMathAtom(type: .relation, value: "\u{22D1}"),  // ⋑
+        "Vdash" : MTMathAtom(type: .relation, value: "\u{22A9}"),  // ⊩
+        "Vvdash" : MTMathAtom(type: .relation, value: "\u{22AA}"),  // ⊪
+        "approxeq" : MTMathAtom(type: .relation, value: "\u{224A}"),  // ≊
+        "backepsilon" : MTMathAtom(type: .relation, value: "\u{220D}"),  // ∍
+        "backsim" : MTMathAtom(type: .relation, value: "\u{223D}"),  // ∽
+        "backsimeq" : MTMathAtom(type: .relation, value: "\u{22CD}"),  // ⋍
+        "because" : MTMathAtom(type: .relation, value: "\u{2235}"),  // ∵
+        "between" : MTMathAtom(type: .relation, value: "\u{226C}"),  // ≬
+        "blacktriangleleft" : MTMathAtom(type: .relation, value: "\u{25C0}"),  // ◀
+        "blacktriangleright" : MTMathAtom(type: .relation, value: "\u{25B6}"),  // ▶
+        "bumpeq" : MTMathAtom(type: .relation, value: "\u{224F}"),  // ≏
+        "circeq" : MTMathAtom(type: .relation, value: "\u{2257}"),  // ≗
+        "circlearrowleft" : MTMathAtom(type: .relation, value: "\u{21BA}"),  // ↺
+        "circlearrowright" : MTMathAtom(type: .relation, value: "\u{21BB}"),  // ↻
+        "curlyeqprec" : MTMathAtom(type: .relation, value: "\u{22DE}"),  // ⋞
+        "curlyeqsucc" : MTMathAtom(type: .relation, value: "\u{22DF}"),  // ⋟
+        "curvearrowleft" : MTMathAtom(type: .relation, value: "\u{21B6}"),  // ↶
+        "curvearrowright" : MTMathAtom(type: .relation, value: "\u{21B7}"),  // ↷
+        "dashleftarrow" : MTMathAtom(type: .relation, value: "\u{21E0}"),  // ⇠
+        "dashrightarrow" : MTMathAtom(type: .relation, value: "\u{21E2}"),  // ⇢
+        "doteqdot" : MTMathAtom(type: .relation, value: "\u{2251}"),  // ≑
+        "downdownarrows" : MTMathAtom(type: .relation, value: "\u{21CA}"),  // ⇊
+        "downharpoonleft" : MTMathAtom(type: .relation, value: "\u{21C3}"),  // ⇃
+        "downharpoonright" : MTMathAtom(type: .relation, value: "\u{21C2}"),  // ⇂
+        "eqcirc" : MTMathAtom(type: .relation, value: "\u{2256}"),  // ≖
+        "eqsim" : MTMathAtom(type: .relation, value: "\u{2242}"),  // ≂
+        "eqslantgtr" : MTMathAtom(type: .relation, value: "\u{2A96}"),  // ⪖
+        "eqslantless" : MTMathAtom(type: .relation, value: "\u{2A95}"),  // ⪕
+        "fallingdotseq" : MTMathAtom(type: .relation, value: "\u{2252}"),  // ≒
+        "frown" : MTMathAtom(type: .relation, value: "\u{2322}"),  // ⌢
+        "geqq" : MTMathAtom(type: .relation, value: "\u{2267}"),  // ≧
+        "ggg" : MTMathAtom(type: .relation, value: "\u{22D9}"),  // ⋙
+        "gggtr" : MTMathAtom(type: .relation, value: "\u{22D9}"),  // ⋙
+        "gt" : MTMathAtom(type: .relation, value: "\u{003E}"),  // >
+        "gtrapprox" : MTMathAtom(type: .relation, value: "\u{2A86}"),  // ⪆
+        "gtreqless" : MTMathAtom(type: .relation, value: "\u{22DB}"),  // ⋛
+        "gtreqqless" : MTMathAtom(type: .relation, value: "\u{2A8C}"),  // ⪌
+        "gtrless" : MTMathAtom(type: .relation, value: "\u{2277}"),  // ≷
+        "gtrsim" : MTMathAtom(type: .relation, value: "\u{2273}"),  // ≳
+        "imageof" : MTMathAtom(type: .relation, value: "\u{22B7}"),  // ⊷
+        "leadsto" : MTMathAtom(type: .relation, value: "\u{21DD}"),  // ⇝
+        "leftarrowtail" : MTMathAtom(type: .relation, value: "\u{21A2}"),  // ↢
+        "leftharpoondown" : MTMathAtom(type: .relation, value: "\u{21BD}"),  // ↽
+        "leftharpoonup" : MTMathAtom(type: .relation, value: "\u{21BC}"),  // ↼
+        "leftleftarrows" : MTMathAtom(type: .relation, value: "\u{21C7}"),  // ⇇
+        "leftrightarrows" : MTMathAtom(type: .relation, value: "\u{21C6}"),  // ⇆
+        "leftrightharpoons" : MTMathAtom(type: .relation, value: "\u{21CB}"),  // ⇋
+        "leftrightsquigarrow" : MTMathAtom(type: .relation, value: "\u{21AD}"),  // ↭
+        "leqq" : MTMathAtom(type: .relation, value: "\u{2266}"),  // ≦
+        "lessapprox" : MTMathAtom(type: .relation, value: "\u{2A85}"),  // ⪅
+        "lesseqgtr" : MTMathAtom(type: .relation, value: "\u{22DA}"),  // ⋚
+        "lesseqqgtr" : MTMathAtom(type: .relation, value: "\u{2A8B}"),  // ⪋
+        "lessgtr" : MTMathAtom(type: .relation, value: "\u{2276}"),  // ≶
+        "lesssim" : MTMathAtom(type: .relation, value: "\u{2272}"),  // ≲
+        "lll" : MTMathAtom(type: .relation, value: "\u{22D8}"),  // ⋘
+        "llless" : MTMathAtom(type: .relation, value: "\u{22D8}"),  // ⋘
+        "looparrowleft" : MTMathAtom(type: .relation, value: "\u{21AB}"),  // ↫
+        "looparrowright" : MTMathAtom(type: .relation, value: "\u{21AC}"),  // ↬
+        "lt" : MTMathAtom(type: .relation, value: "\u{003C}"),  // <
+        "multimap" : MTMathAtom(type: .relation, value: "\u{22B8}"),  // ⊸
+        "nLeftarrow" : MTMathAtom(type: .relation, value: "\u{21CD}"),  // ⇍
+        "nLeftrightarrow" : MTMathAtom(type: .relation, value: "\u{21CE}"),  // ⇎
+        "nRightarrow" : MTMathAtom(type: .relation, value: "\u{21CF}"),  // ⇏
+        "nleftarrow" : MTMathAtom(type: .relation, value: "\u{219A}"),  // ↚
+        "nleftrightarrow" : MTMathAtom(type: .relation, value: "\u{21AE}"),  // ↮
+        "nrightarrow" : MTMathAtom(type: .relation, value: "\u{219B}"),  // ↛
+        "origof" : MTMathAtom(type: .relation, value: "\u{22B6}"),  // ⊶
+        "owns" : MTMathAtom(type: .relation, value: "\u{220B}"),  // ∋
+        "pitchfork" : MTMathAtom(type: .relation, value: "\u{22D4}"),  // ⋔
+        "precapprox" : MTMathAtom(type: .relation, value: "\u{2AB7}"),  // ⪷
+        "preccurlyeq" : MTMathAtom(type: .relation, value: "\u{227C}"),  // ≼
+        "precsim" : MTMathAtom(type: .relation, value: "\u{227E}"),  // ≾
+        "restriction" : MTMathAtom(type: .relation, value: "\u{21BE}"),  // ↾
+        "rightarrowtail" : MTMathAtom(type: .relation, value: "\u{21A3}"),  // ↣
+        "rightharpoondown" : MTMathAtom(type: .relation, value: "\u{21C1}"),  // ⇁
+        "rightharpoonup" : MTMathAtom(type: .relation, value: "\u{21C0}"),  // ⇀
+        "rightleftarrows" : MTMathAtom(type: .relation, value: "\u{21C4}"),  // ⇄
+        "rightleftharpoons" : MTMathAtom(type: .relation, value: "\u{21CC}"),  // ⇌
+        "rightrightarrows" : MTMathAtom(type: .relation, value: "\u{21C9}"),  // ⇉
+        "rightsquigarrow" : MTMathAtom(type: .relation, value: "\u{21DD}"),  // ⇝
+        "risingdotseq" : MTMathAtom(type: .relation, value: "\u{2253}"),  // ≓
+        "shortmid" : MTMathAtom(type: .relation, value: "\u{2223}"),  // ∣
+        "shortparallel" : MTMathAtom(type: .relation, value: "\u{2225}"),  // ∥
+        "smallfrown" : MTMathAtom(type: .relation, value: "\u{2322}"),  // ⌢
+        "smallsmile" : MTMathAtom(type: .relation, value: "\u{2323}"),  // ⌣
+        "smile" : MTMathAtom(type: .relation, value: "\u{2323}"),  // ⌣
+        "subseteqq" : MTMathAtom(type: .relation, value: "\u{2AC5}"),  // ⫅
+        "succapprox" : MTMathAtom(type: .relation, value: "\u{2AB8}"),  // ⪸
+        "succcurlyeq" : MTMathAtom(type: .relation, value: "\u{227D}"),  // ≽
+        "succsim" : MTMathAtom(type: .relation, value: "\u{227F}"),  // ≿
+        "supseteqq" : MTMathAtom(type: .relation, value: "\u{2AC6}"),  // ⫆
+        "therefore" : MTMathAtom(type: .relation, value: "\u{2234}"),  // ∴
+        "thickapprox" : MTMathAtom(type: .relation, value: "\u{2248}"),  // ≈
+        "thicksim" : MTMathAtom(type: .relation, value: "\u{223C}"),  // ∼
+        "trianglelefteq" : MTMathAtom(type: .relation, value: "\u{22B4}"),  // ⊴
+        "triangleq" : MTMathAtom(type: .relation, value: "\u{225C}"),  // ≜
+        "trianglerighteq" : MTMathAtom(type: .relation, value: "\u{22B5}"),  // ⊵
+        "twoheadleftarrow" : MTMathAtom(type: .relation, value: "\u{219E}"),  // ↞
+        "twoheadrightarrow" : MTMathAtom(type: .relation, value: "\u{21A0}"),  // ↠
+        "upharpoonleft" : MTMathAtom(type: .relation, value: "\u{21BF}"),  // ↿
+        "upharpoonright" : MTMathAtom(type: .relation, value: "\u{21BE}"),  // ↾
+        "upuparrows" : MTMathAtom(type: .relation, value: "\u{21C8}"),  // ⇈
+        "vDash" : MTMathAtom(type: .relation, value: "\u{22A8}"),  // ⊨
+        "varpropto" : MTMathAtom(type: .relation, value: "\u{221D}"),  // ∝
+        "vartriangle" : MTMathAtom(type: .relation, value: "\u{25B3}"),  // △
+        "vartriangleleft" : MTMathAtom(type: .relation, value: "\u{22B2}"),  // ⊲
+        "vartriangleright" : MTMathAtom(type: .relation, value: "\u{22B3}"),  // ⊳
+        "Diamond" : MTMathAtom(type: .ordinary, value: "\u{25CA}"),  // ◊
+        "Finv" : MTMathAtom(type: .ordinary, value: "\u{2132}"),  // Ⅎ
+        "Game" : MTMathAtom(type: .ordinary, value: "\u{2141}"),  // ⅁
+        "backprime" : MTMathAtom(type: .ordinary, value: "\u{2035}"),  // ‵
+        "bigstar" : MTMathAtom(type: .ordinary, value: "\u{2605}"),  // ★
+        "blacklozenge" : MTMathAtom(type: .ordinary, value: "\u{29EB}"),  // ⧫
+        "blacksquare" : MTMathAtom(type: .ordinary, value: "\u{25A0}"),  // ■
+        "blacktriangle" : MTMathAtom(type: .ordinary, value: "\u{25B2}"),  // ▲
+        "blacktriangledown" : MTMathAtom(type: .ordinary, value: "\u{25BC}"),  // ▼
+        "checkmark" : MTMathAtom(type: .ordinary, value: "\u{2713}"),  // ✓
+        "circledR" : MTMathAtom(type: .ordinary, value: "\u{00AE}"),  // ®
+        "circledS" : MTMathAtom(type: .ordinary, value: "\u{24C8}"),  // Ⓢ
+        "clubsuit" : MTMathAtom(type: .ordinary, value: "\u{2663}"),  // ♣
+        "complement" : MTMathAtom(type: .ordinary, value: "\u{2201}"),  // ∁
+        "dag" : MTMathAtom(type: .ordinary, value: "\u{2020}"),  // †
+        "ddag" : MTMathAtom(type: .ordinary, value: "\u{2021}"),  // ‡
+        "diagdown" : MTMathAtom(type: .ordinary, value: "\u{2572}"),  // ╲
+        "diagup" : MTMathAtom(type: .ordinary, value: "\u{2571}"),  // ╱
+        "diamondsuit" : MTMathAtom(type: .ordinary, value: "\u{2662}"),  // ♢
+        "digamma" : MTMathAtom(type: .ordinary, value: "\u{03DD}"),  // ϝ
+        "eth" : MTMathAtom(type: .ordinary, value: "\u{00F0}"),  // ð
+        "flat" : MTMathAtom(type: .ordinary, value: "\u{266D}"),  // ♭
+        "heartsuit" : MTMathAtom(type: .ordinary, value: "\u{2661}"),  // ♡
+        "hslash" : MTMathAtom(type: .ordinary, value: "\u{210F}"),  // ℏ
+        "lozenge" : MTMathAtom(type: .ordinary, value: "\u{25CA}"),  // ◊
+        "maltese" : MTMathAtom(type: .ordinary, value: "\u{2720}"),  // ✠
+        "mathsterling" : MTMathAtom(type: .ordinary, value: "\u{00A3}"),  // £
+        "natural" : MTMathAtom(type: .ordinary, value: "\u{266E}"),  // ♮
+        "pounds" : MTMathAtom(type: .ordinary, value: "\u{00A3}"),  // £
+        "sharp" : MTMathAtom(type: .ordinary, value: "\u{266F}"),  // ♯
+        "spadesuit" : MTMathAtom(type: .ordinary, value: "\u{2660}"),  // ♠
+        "sphericalangle" : MTMathAtom(type: .ordinary, value: "\u{2222}"),  // ∢
+        "surd" : MTMathAtom(type: .ordinary, value: "\u{221A}"),  // √
+        "textasciicircum" : MTMathAtom(type: .ordinary, value: "\u{005E}"),  // ^
+        "textasciitilde" : MTMathAtom(type: .ordinary, value: "\u{007E}"),  // ~
+        "textbackslash" : MTMathAtom(type: .ordinary, value: "\u{005C}"),  // \
+        "textbar" : MTMathAtom(type: .ordinary, value: "\u{007C}"),  // |
+        "textbardbl" : MTMathAtom(type: .ordinary, value: "\u{2225}"),  // ∥
+        "textbraceleft" : MTMathAtom(type: .ordinary, value: "\u{007B}"),  // {
+        "textbraceright" : MTMathAtom(type: .ordinary, value: "\u{007D}"),  // }
+        "textdagger" : MTMathAtom(type: .ordinary, value: "\u{2020}"),  // †
+        "textdaggerdbl" : MTMathAtom(type: .ordinary, value: "\u{2021}"),  // ‡
+        "textdegree" : MTMathAtom(type: .ordinary, value: "\u{00B0}"),  // °
+        "textdollar" : MTMathAtom(type: .ordinary, value: "\u{0024}"),  // $
+        "textemdash" : MTMathAtom(type: .ordinary, value: "\u{2014}"),  // —
+        "textendash" : MTMathAtom(type: .ordinary, value: "\u{2013}"),  // –
+        "textgreater" : MTMathAtom(type: .ordinary, value: "\u{003E}"),  // >
+        "textless" : MTMathAtom(type: .ordinary, value: "\u{003C}"),  // <
+        "textquotedblleft" : MTMathAtom(type: .ordinary, value: "\u{201C}"),  // “
+        "textquotedblright" : MTMathAtom(type: .ordinary, value: "\u{201D}"),  // ”
+        "textquoteleft" : MTMathAtom(type: .ordinary, value: "\u{2018}"),  // ‘
+        "textquoteright" : MTMathAtom(type: .ordinary, value: "\u{2019}"),  // ’
+        "textsterling" : MTMathAtom(type: .ordinary, value: "\u{00A3}"),  // £
+        "textunderscore" : MTMathAtom(type: .ordinary, value: "\u{005F}"),  // _
+        "triangledown" : MTMathAtom(type: .ordinary, value: "\u{25BD}"),  // ▽
+        "yen" : MTMathAtom(type: .ordinary, value: "\u{00A5}"),  // ¥
+
+        // Capital Greek letters that share glyphs with Latin (KaTeX defines these)
+        "Alpha" : MTMathAtom(type: .variable, value: "A"),
+        "Beta" : MTMathAtom(type: .variable, value: "B"),
+        "Epsilon" : MTMathAtom(type: .variable, value: "E"),
+        "Zeta" : MTMathAtom(type: .variable, value: "Z"),
+        "Eta" : MTMathAtom(type: .variable, value: "H"),
+        "Iota" : MTMathAtom(type: .variable, value: "I"),
+        "Kappa" : MTMathAtom(type: .variable, value: "K"),
+        "Mu" : MTMathAtom(type: .variable, value: "M"),
+        "Nu" : MTMathAtom(type: .variable, value: "N"),
+        "Omicron" : MTMathAtom(type: .variable, value: "O"),
+        "Rho" : MTMathAtom(type: .variable, value: "P"),
+        "Tau" : MTMathAtom(type: .variable, value: "T"),
+        "Chi" : MTMathAtom(type: .variable, value: "X"),
+
+        // Number-set shorthands (KaTeX)
+        "Reals" : MTMathAtom(type: .ordinary, value: "\u{211D}"),
+        "reals" : MTMathAtom(type: .ordinary, value: "\u{211D}"),
+        "Complex" : MTMathAtom(type: .ordinary, value: "\u{2102}"),
+        "cnums" : MTMathAtom(type: .ordinary, value: "\u{2102}"),
+        "natnums" : MTMathAtom(type: .ordinary, value: "\u{2115}"),
+        "Bbbk" : MTMathAtom(type: .ordinary, value: "\u{0001D55C}"),
+
+        // Misc ordinary symbols
+        "sect" : MTMathAtom(type: .ordinary, value: "\u{00A7}"),
+        "copyright" : MTMathAtom(type: .ordinary, value: "\u{00A9}"),
+        "textregistered" : MTMathAtom(type: .ordinary, value: "\u{00AE}"),
+        "VERT" : MTMathAtom(type: .ordinary, value: "\u{2016}"),
+        "lBrace" : MTMathAtom(type: .open, value: "\u{2983}"),
+        "rBrace" : MTMathAtom(type: .close, value: "\u{2984}"),
+        "llbracket" : MTMathAtom(type: .open, value: "\u{27E6}"),
+        "rrbracket" : MTMathAtom(type: .close, value: "\u{27E7}"),
+        "llcorner" : MTMathAtom(type: .open, value: "\u{231E}"),
+        "lrcorner" : MTMathAtom(type: .close, value: "\u{231F}"),
+        "ulcorner" : MTMathAtom(type: .open, value: "\u{231C}"),
+        "urcorner" : MTMathAtom(type: .close, value: "\u{231D}"),
+        "lq" : MTMathAtom(type: .ordinary, value: "\u{2018}"),
+        "rq" : MTMathAtom(type: .ordinary, value: "\u{2019}"),
+        "minuso" : MTMathAtom(type: .binaryOperator, value: "\u{29B5}"),
+
+        // Colon-equals family (unicode equivalents of the mathtools ligatures)
+        "vcentcolon" : MTMathAtom(type: .relation, value: ":"),
+        "ratio" : MTMathAtom(type: .relation, value: ":"),
+        "dblcolon" : MTMathAtom(type: .relation, value: "\u{2237}"),
+        "coloncolon" : MTMathAtom(type: .relation, value: "\u{2237}"),
+        "coloneqq" : MTMathAtom(type: .relation, value: "\u{2254}"),
+        "coloneq" : MTMathAtom(type: .relation, value: "\u{2254}"),
+        "colonequals" : MTMathAtom(type: .relation, value: "\u{2254}"),
+        "Coloneqq" : MTMathAtom(type: .relation, value: "\u{2A74}"),
+        "coloncolonequals" : MTMathAtom(type: .relation, value: "\u{2A74}"),
+        "eqqcolon" : MTMathAtom(type: .relation, value: "\u{2255}"),
+        "equalscolon" : MTMathAtom(type: .relation, value: "\u{2255}"),
+        "eqcolon" : MTMathAtom(type: .relation, value: "\u{2239}"),
+        "colonminus" : MTMathAtom(type: .relation, value: ":\u{2212}"),
+        "minuscolon" : MTMathAtom(type: .relation, value: "\u{2212}:"),
+        "coloncolonminus" : MTMathAtom(type: .relation, value: "\u{2237}\u{2212}"),
+        "minuscoloncolon" : MTMathAtom(type: .relation, value: "\u{2212}\u{2237}"),
+        "Coloneq" : MTMathAtom(type: .relation, value: "\u{2237}\u{2212}"),
+        "Eqcolon" : MTMathAtom(type: .relation, value: "\u{2212}\u{2237}"),
+        "Eqqcolon" : MTMathAtom(type: .relation, value: "=\u{2237}"),
+        "equalscoloncolon" : MTMathAtom(type: .relation, value: "=\u{2237}"),
+        "colonapprox" : MTMathAtom(type: .relation, value: ":\u{2248}"),
+        "Colonapprox" : MTMathAtom(type: .relation, value: "\u{2237}\u{2248}"),
+        "approxcolon" : MTMathAtom(type: .relation, value: "\u{2248}:"),
+        "approxcoloncolon" : MTMathAtom(type: .relation, value: "\u{2248}\u{2237}"),
+        "coloncolonapprox" : MTMathAtom(type: .relation, value: "\u{2237}\u{2248}"),
+        "colonsim" : MTMathAtom(type: .relation, value: ":\u{223C}"),
+        "Colonsim" : MTMathAtom(type: .relation, value: "\u{2237}\u{223C}"),
+        "coloncolonsim" : MTMathAtom(type: .relation, value: "\u{2237}\u{223C}"),
+        "simcolon" : MTMathAtom(type: .relation, value: "\u{223C}:"),
+        "simcoloncolon" : MTMathAtom(type: .relation, value: "\u{223C}\u{2237}"),
+
+        // Negated relations without single codepoints (closest forms)
+        "ngeqq" : MTMathAtom(type: .relation, value: "\u{2271}"),
+        "nleqq" : MTMathAtom(type: .relation, value: "\u{2270}"),
+        "nsubseteqq" : MTMathAtom(type: .relation, value: "\u{2288}"),
+        "nsupseteqq" : MTMathAtom(type: .relation, value: "\u{2289}"),
+        "gvertneqq" : MTMathAtom(type: .relation, value: "\u{2269}"),
+        "lvertneqq" : MTMathAtom(type: .relation, value: "\u{2268}"),
+
+        // Operators (KaTeX names)
+        "intop" : MTLargeOperator(value: "\u{222B}", limits: true),
+        "smallint" : MTLargeOperator(value: "\u{222B}", limits: false),
+        "oiint" : MTLargeOperator(value: "\u{222F}", limits: false),
+        "oiiint" : MTLargeOperator(value: "\u{2230}", limits: false),
+        "arcctg" : MTMathAtomFactory.operatorWithName("arcctg", limits: false),
+        "arctg" : MTMathAtomFactory.operatorWithName("arctg", limits: false),
+        "ch" : MTMathAtomFactory.operatorWithName("ch", limits: false),
+        "cosec" : MTMathAtomFactory.operatorWithName("cosec", limits: false),
+        "cotg" : MTMathAtomFactory.operatorWithName("cotg", limits: false),
+        "ctg" : MTMathAtomFactory.operatorWithName("ctg", limits: false),
+        "cth" : MTMathAtomFactory.operatorWithName("cth", limits: false),
+        "sh" : MTMathAtomFactory.operatorWithName("sh", limits: false),
+        "tg" : MTMathAtomFactory.operatorWithName("tg", limits: false),
+        "th" : MTMathAtomFactory.operatorWithName("th", limits: false),
+        "argmax" : MTMathAtomFactory.operatorWithName("arg max", limits: true),
+        "argmin" : MTMathAtomFactory.operatorWithName("arg min", limits: true),
+        "plim" : MTMathAtomFactory.operatorWithName("plim", limits: true),
+        "injlim" : MTMathAtomFactory.operatorWithName("inj lim", limits: true),
+        "projlim" : MTMathAtomFactory.operatorWithName("proj lim", limits: true),
+
+
         // Spacing
         "," : MTMathSpace(space: 3),
         ">" : MTMathSpace(space: 4),
@@ -547,6 +920,18 @@ public class MTMathAtomFactory {
         "!" : MTMathSpace(space: -3),
         "quad" : MTMathSpace(space: 18),  // quad = 1em = 18mu
         "qquad" : MTMathSpace(space: 36), // qquad = 2em
+        "thinspace" : MTMathSpace(space: 3),
+        "medspace" : MTMathSpace(space: 4),
+        "thickspace" : MTMathSpace(space: 5),
+        "negthinspace" : MTMathSpace(space: -3),
+        "negmedspace" : MTMathSpace(space: -4),
+        "negthickspace" : MTMathSpace(space: -5),
+        "enspace" : MTMathSpace(space: 9),   // 0.5em
+        "space" : MTMathSpace(space: 6),
+        "nobreakspace" : MTMathSpace(space: 6),
+        "allowbreak" : MTMathSpace(space: 0),
+        "nobreak" : MTMathSpace(space: 0),
+        "mathstrut" : MTMathSpace(space: 0), // degraded: no height strut
 
         // Style
         "displaystyle" : MTMathStyle(style: .display),
@@ -598,6 +983,18 @@ public class MTMathAtomFactory {
 	]
     
     private static let textToLatexLock = NSLock()
+    /// Commands that must never win the nucleus-to-command reverse mapping:
+    /// their nuclei are ordinary source characters that serialize as themselves.
+    static let excludedFromReverseMapping: Set<String> = [
+        "Alpha", "Beta", "Epsilon", "Zeta", "Eta", "Iota", "Kappa", "Mu",
+        "Nu", "Omicron", "Rho", "Tau", "Chi",
+        "lt", "gt", "And", "vcentcolon", "ratio",
+        "lparen", "rparen", "lbrack", "rbrack", "lq", "rq", "ldotp",
+        "textasciicircum", "textasciitilde", "textbackslash", "textbar",
+        "textbraceleft", "textbraceright", "textdollar", "textgreater",
+        "textless", "textunderscore",
+    ]
+
     static var _textToLatexSymbolName: [String: String]? = nil
     public static var textToLatexSymbolName: [String: String] {
         get {
@@ -605,6 +1002,14 @@ public class MTMathAtomFactory {
                 var output = [String: String]()
                 for (key, atom) in Self.supportedLatexSymbols {
                     if atom.nucleus.count == 0 {
+                        continue
+                    }
+                    // Commands whose nucleus is a plain source character (the
+                    // KaTeX batch's Latin-lookalike Greek capitals, \lt, \And,
+                    // \lparen, the text* escapes, ...). Mapping them backwards
+                    // would serialize ordinary characters as commands, e.g.
+                    // "A" as "\Alpha".
+                    if Self.excludedFromReverseMapping.contains(key) {
                         continue
                     }
                     if let existingText = output[atom.nucleus] {
@@ -663,6 +1068,18 @@ public class MTMathAtomFactory {
         "bm": .boldItalic,
         "boldsymbol": .boldItalic,
         "text": .roman,
+        "bold": .bold,
+        "pmb": .bold,
+        "Bbb": .blackboard,
+        "it": .italic,
+        "emph": .italic,
+        "sf": .sansSerif,
+        "tt": .typewriter,
+        "mathscr": .caligraphic,
+        "mathsfit": .sansSerif,
+        "textnormal": .roman,
+        "textmd": .roman,
+        "textup": .roman,
         // Note: operatorname is handled specially in MTMathListBuilder to create proper operators
     ]
     

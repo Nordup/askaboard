@@ -54,6 +54,9 @@ public enum MTMathAtomType: Int, CustomStringConvertible, Comparable {
     case cancel
     /// An atom whose content is framed with a rectangle - \boxed in amsmath.
     case boxed
+    /// An atom that reserves its content's space without drawing it (\phantom,
+    /// \hphantom, \vphantom) or draws it without reserving height (\smash).
+    case phantom
     /// A zero-width overlap box, e.g. \mathllap, \mathrlap, \mathclap.
     case overlap
     /// A horizontally extensible arrow with optional over/under labels,
@@ -117,6 +120,7 @@ public enum MTMathAtomType: Int, CustomStringConvertible, Comparable {
             case .overUnder:      return "OverUnder"
             case .cancel:         return "Cancel"
             case .boxed:          return "Boxed"
+            case .phantom:        return "Phantom"
             case .overlap:        return "Overlap"
             case .extensibleArrow: return "ExtensibleArrow"
             case .boundary:       return "Boundary"
@@ -255,6 +259,8 @@ public class MTMathAtom: NSObject {
                 return MTCancel(self as? MTCancel)
             case .boxed:
                 return MTBoxed(self as? MTBoxed)
+            case .phantom:
+                return MTPhantom(self as? MTPhantom)
             case .overlap:
                 return MTOverlap(self as? MTOverlap)
             case .extensibleArrow:
@@ -658,6 +664,10 @@ public class MTOverUnder: MTMathAtom {
     /// When true the resulting atom is treated as a relation for inter-element spacing
     /// (used by `\stackrel`). Otherwise it is treated as ordinary.
     public var isStackrel: Bool = false
+    /// Set for brace-family commands (\overbrace, \underbrace, \overbracket,
+    /// \underbracket): the source command, used for serialization and to fold
+    /// scripts into limit positions at layout time.
+    public var braceCommand: String?
 
     init(_ overUnder: MTOverUnder?) {
         super.init(overUnder)
@@ -666,6 +676,7 @@ public class MTOverUnder: MTMathAtom {
         self.over = MTMathList(overUnder?.over)
         self.under = MTMathList(overUnder?.under)
         self.isStackrel = overUnder?.isStackrel ?? false
+        self.braceCommand = overUnder?.braceCommand
     }
 
     override init() {
@@ -697,6 +708,8 @@ public class MTCancel: MTMathAtom {
         case backward
         /// Both diagonals forming an X (\xcancel).
         case cross
+        /// Horizontal strike-through (\sout).
+        case horizontal
     }
 
     /// The content being cancelled.
@@ -747,6 +760,46 @@ public class MTBoxed: MTMathAtom {
         let newBoxed = super.finalized as! MTBoxed
         newBoxed.innerList = newBoxed.innerList?.finalized
         return newBoxed
+    }
+}
+
+// MARK: - MTPhantom
+
+/** An atom that reserves layout space for its content without drawing it, or
+ draws content without reserving vertical space. Backs `\phantom` (invisible,
+ full size), `\hphantom` (invisible, width only), `\vphantom` (invisible,
+ height only) and `\smash` (visible, zero height). */
+public class MTPhantom: MTMathAtom {
+    /// The content being measured (and, for \smash, drawn).
+    public var innerList: MTMathList?
+    /// Whether the atom advances by the content's width.
+    public var keepsWidth: Bool = true
+    /// Whether the atom reports the content's ascent and descent.
+    public var keepsHeight: Bool = true
+    /// Whether the content is actually drawn (\smash draws, phantoms do not).
+    public var draws: Bool = false
+    /// The source command, for serialization.
+    public var command: String = "phantom"
+
+    init(_ phantom: MTPhantom?) {
+        super.init(phantom)
+        self.type = .phantom
+        self.innerList = MTMathList(phantom?.innerList)
+        self.keepsWidth = phantom?.keepsWidth ?? true
+        self.keepsHeight = phantom?.keepsHeight ?? true
+        self.draws = phantom?.draws ?? false
+        self.command = phantom?.command ?? "phantom"
+    }
+
+    override init() {
+        super.init()
+        self.type = .phantom
+    }
+
+    override public var finalized: MTMathAtom {
+        let newPhantom = super.finalized as! MTPhantom
+        newPhantom.innerList = newPhantom.innerList?.finalized
+        return newPhantom
     }
 }
 
@@ -811,9 +864,14 @@ public class MTExtensibleArrow: MTMathAtom {
     public var underScript: MTMathList?
     /// The arrow direction.
     public var direction: ArrowDirection = .right
+    /// For the extended KaTeX arrow family (\xmapsto, \xhookrightarrow, ...):
+    /// the source command and the glyph to stretch, overriding `direction`.
+    public var commandName: String?
+    public var customArrowCharacter: String?
 
     /// The Unicode arrow character for this direction.
     public var arrowCharacter: String {
+        if let custom = customArrowCharacter { return custom }
         switch direction {
         case .right:     return "\u{2192}" // →
         case .left:      return "\u{2190}" // ←
@@ -827,6 +885,8 @@ public class MTExtensibleArrow: MTMathAtom {
         self.overScript = MTMathList(arrow?.overScript)
         self.underScript = MTMathList(arrow?.underScript)
         self.direction = arrow?.direction ?? .right
+        self.commandName = arrow?.commandName
+        self.customArrowCharacter = arrow?.customArrowCharacter
     }
 
     override init() {

@@ -85,7 +85,7 @@ func getInterElementSpaceArrayIndexForType(_ type:MTMathAtomType, row:Bool) -> I
         // Over/under annotations, cancelled content, framed content and zero-width
         // overlap boxes are treated as ordinary. \stackrel passes a relation type
         // at layout time.
-        case .overUnder, .cancel, .boxed, .overlap:
+        case .overUnder, .cancel, .boxed, .phantom, .overlap:
             return 0
         // Extensible arrows are relations (like ->) for spacing purposes.
         case .extensibleArrow:
@@ -1354,6 +1354,21 @@ class MTTypesetter {
                         self.makeScripts(atom, display: cancelDisplay, index: UInt(cancelAtom.indexRange.location), delta: 0)
                     }
 
+                case .phantom:
+                    if currentLine.length > 0 {
+                        self.addDisplayLine()
+                    }
+                    self.addInterElementSpace(prevNode, currentType: .ordinary)
+                    atom.type = .ordinary
+                    let phantomAtom = atom as! MTPhantom
+                    let phantomDisplay = self.makePhantom(phantomAtom)
+                    phantomDisplay.position = currentPosition
+                    displayAtoms.append(phantomDisplay)
+                    currentPosition.x += phantomDisplay.width
+                    if atom.subScript != nil || atom.superScript != nil {
+                        self.makeScripts(atom, display: phantomDisplay, index: UInt(phantomAtom.indexRange.location), delta: 0)
+                    }
+
                 case .boxed:
                     if currentLine.length > 0 {
                         self.addDisplayLine()
@@ -1378,7 +1393,33 @@ class MTTypesetter {
                     let ouSpacingType: MTMathAtomType = overUnder.isStackrel ? .relation : .ordinary
                     self.addInterElementSpace(prevNode, currentType: ouSpacingType)
                     atom.type = ouSpacingType
-                    let ouDisplay = self.makeOverUnder(overUnder)
+                    var ouDisplay = self.makeOverUnder(overUnder)
+                    // \overbrace^{label} and \underbrace_{label} put the script
+                    // above/below the brace, not beside it. Fold the script into
+                    // a second limits layer around the brace display.
+                    if overUnder.braceCommand != nil,
+                       atom.superScript != nil || atom.subScript != nil {
+                        let nucleus = MTMathListDisplay(withDisplays: [ouDisplay], range: overUnder.indexRange)
+                        var upper: MTMathListDisplay? = nil
+                        var lower: MTMathListDisplay? = nil
+                        if let sup = atom.superScript {
+                            upper = MTTypesetter.createLineForMathList(sup, font: font, style: self.scriptStyle(), cramped: self.superScriptCramped())
+                            atom.superScript = nil
+                        }
+                        if let sub = atom.subScript {
+                            lower = MTTypesetter.createLineForMathList(sub, font: font, style: self.scriptStyle(), cramped: self.subscriptCramped())
+                            atom.subScript = nil
+                        }
+                        let limits = MTLargeOpLimitsDisplay(withNucleus: nucleus, upperLimit: upper, lowerLimit: lower, limitShift: 0, extraPadding: 0)
+                        if let upper {
+                            limits.upperLimitGap = max(styleFont.mathTable!.upperLimitGapMin, styleFont.mathTable!.upperLimitBaselineRiseMin - upper.descent)
+                        }
+                        if let lower {
+                            limits.lowerLimitGap = max(styleFont.mathTable!.lowerLimitGapMin, styleFont.mathTable!.lowerLimitBaselineDropMin - lower.ascent)
+                        }
+                        limits.range = overUnder.indexRange
+                        ouDisplay = limits
+                    }
                     ouDisplay.position = currentPosition
                     displayAtoms.append(ouDisplay)
                     currentPosition.x += ouDisplay.width
@@ -2585,11 +2626,38 @@ class MTTypesetter {
 
         var upperDisplay: MTMathListDisplay? = nil
         var lowerDisplay: MTMathListDisplay? = nil
-        if let over = overUnder.over {
-            upperDisplay = MTTypesetter.createLineForMathList(over, font: font, style: annotationStyle, cramped: cramped)
-        }
-        if let under = overUnder.under {
-            lowerDisplay = MTTypesetter.createLineForMathList(under, font: font, style: annotationStyle, cramped: true)
+        if overUnder.braceCommand != nil {
+            // Brace-family annotation: stretch the brace glyph to the base's
+            // width (glyph variants first, then horizontal scaling — the same
+            // approach as extensible arrows).
+            let annotation = overUnder.over ?? overUnder.under
+            if let braceChar = annotation?.atoms.first?.nucleus, !braceChar.isEmpty {
+                let baseGlyph = self.findGlyphForCharacterAtIndex(braceChar.startIndex, inString: braceChar)
+                var glyphAscent = CGFloat(0), glyphDescent = CGFloat(0), glyphWidth = CGFloat(0), glyphMinY = CGFloat(0)
+                let variantGlyph = self.findVariantGlyph(baseGlyph, withMaxWidth: baseDisplay.width, maxWidth: &glyphAscent, glyphDescent: &glyphDescent, glyphWidth: &glyphWidth, glyphMinY: &glyphMinY)
+                let glyphDisplay = MTGlyphDisplay(withGlpyh: variantGlyph, range: overUnder.indexRange, font: styleFont)
+                glyphDisplay.ascent = glyphAscent
+                glyphDisplay.descent = glyphDescent
+                if glyphWidth > 0 && glyphWidth < baseDisplay.width {
+                    glyphDisplay.scaleX = baseDisplay.width / glyphWidth
+                    glyphDisplay.width = baseDisplay.width
+                } else {
+                    glyphDisplay.width = glyphWidth
+                }
+                let wrapped = MTMathListDisplay(withDisplays: [glyphDisplay], range: overUnder.indexRange)
+                if overUnder.over != nil {
+                    upperDisplay = wrapped
+                } else {
+                    lowerDisplay = wrapped
+                }
+            }
+        } else {
+            if let over = overUnder.over {
+                upperDisplay = MTTypesetter.createLineForMathList(over, font: font, style: annotationStyle, cramped: cramped)
+            }
+            if let under = overUnder.under {
+                lowerDisplay = MTTypesetter.createLineForMathList(under, font: font, style: annotationStyle, cramped: true)
+            }
         }
 
         let opsDisplay = MTLargeOpLimitsDisplay(withNucleus: baseDisplay, upperLimit: upperDisplay, lowerLimit: lowerDisplay, limitShift: 0, extraPadding: 0)
@@ -2601,6 +2669,17 @@ class MTTypesetter {
         }
         opsDisplay.range = overUnder.indexRange
         return opsDisplay
+    }
+
+    // MARK: - Phantom
+
+    func makePhantom(_ phantom: MTPhantom) -> MTDisplay {
+        let innerDisplay = MTTypesetter.createLineForMathList(phantom.innerList, font: font, style: style, cramped: cramped)!
+        let phantomDisplay = MTPhantomDisplay(withInner: innerDisplay, draws: phantom.draws, range: phantom.indexRange)
+        phantomDisplay.width = phantom.keepsWidth ? innerDisplay.width : 0
+        phantomDisplay.ascent = phantom.keepsHeight ? innerDisplay.ascent : 0
+        phantomDisplay.descent = phantom.keepsHeight ? innerDisplay.descent : 0
+        return phantomDisplay
     }
 
     // MARK: - Boxed

@@ -850,10 +850,59 @@ class MTCancelDisplay : MTDisplay {
             path.addLine(to: CGPointMake(maxX, maxY))
             path.move(to: CGPointMake(minX, maxY))
             path.addLine(to: CGPointMake(maxX, minY))
+        case .horizontal:
+            // straight strike through the vertical middle (\sout)
+            let midY = self.position.y + (self.ascent - self.descent) / 2
+            path.move(to: CGPointMake(minX, midY))
+            path.addLine(to: CGPointMake(maxX, midY))
         }
         path.stroke()
 
         context.restoreGState()
+    }
+}
+
+// MARK: - MTPhantomDisplay
+
+/// Rendering of \phantom / \hphantom / \vphantom (reserve space, draw nothing)
+/// and \smash (draw, reserve no height). The reported metrics are set by the
+/// typesetter; this class only controls whether the inner content is drawn.
+class MTPhantomDisplay : MTDisplay {
+
+    /** A display representing the measured inner list. Its position is relative
+     to the parent and is not treated as a sub-display.
+     */
+    var inner: MTMathListDisplay?
+    var drawsInner: Bool = false
+
+    init(withInner inner: MTMathListDisplay?, draws: Bool, range: NSRange) {
+        super.init()
+        self.inner = inner
+        self.drawsInner = draws
+        self.range = range
+    }
+
+    override var textColor: MTColor? {
+        set {
+            super.textColor = newValue
+            inner?.textColor = newValue
+        }
+        get { super.textColor }
+    }
+
+    override var position: CGPoint {
+        set {
+            super.position = newValue
+            self.inner?.position = CGPointMake(newValue.x, newValue.y)
+        }
+        get { super.position }
+    }
+
+    override func draw(_ context: CGContext) {
+        super.draw(context)
+        if drawsInner {
+            self.inner?.draw(context)
+        }
     }
 }
 

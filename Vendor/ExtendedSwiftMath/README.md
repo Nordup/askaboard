@@ -8,6 +8,20 @@ on the upstream package. Local changes on top of 2.1.3:
   parse/serialize support, and `Tests/ExtendedSwiftMathTests/BoxedTests.swift`.
   Added 2026-08-15 because the tutor model emits `\boxed` around final answers
   and an unsupported command made the whole formula render as blank space.
+- KaTeX coverage batch (2026-08-15): the command set was diffed against KaTeX's
+  supported-functions table (the de facto spec for what ChatGPT-style models
+  emit) and the gap was closed from 529 to ~92 probe failures — the remainder
+  is macro definitions, HTML embeds, and table internals, all deliberately out
+  of scope. Adds ~200 symbol entries generated from KaTeX `symbols.ts`, Greek
+  capital lookalikes, colon-assignment relations (`\coloneqq` ...), `\argmax`
+  family operators, spacing commands (`\thinspace`, `\kern`, `\hspace` ...),
+  `\dbinom`/`\tbinom`, `\sout`, the `\phantom` family and `\smash` (new
+  `MTPhantom` atom), `\tag`/size switches as no-ops, the KaTeX x-arrow family
+  (`\xmapsto` ...), `\overbrace`/`\underbrace` with stretched glyphs and
+  limit-position labels, and accents (`\mathring`, `\widecheck`, `\dddot`).
+  Tests: `Tests/ExtendedSwiftMathTests/KatexCoverageTests.swift`. Commands
+  whose glyph is a plain source character are excluded from the reverse
+  (nucleus → command) mapping so "A" never serializes as `\Alpha`.
 
 # ExtendedSwiftMath
 
