@@ -70,6 +70,25 @@ MAX_IMAGE_BYTES = 10 * 1024 * 1024
 #: allows this call before it gives up on it.
 FETCH_TIMEOUT_SECONDS = 10.0
 
+#: The most pixels a fetched image may declare.
+#:
+#: A second ceiling because `MAX_IMAGE_BYTES` is not the same bound and does
+#: not imply this one. Compressed formats decouple the two: a 10 MB PNG can
+#: legally declare 13,000 x 13,000, which is 169 megapixels and roughly 676 MB
+#: of RGBA once something decodes it. The server never does — `Image.open`
+#: reads the header and stops — so the whole cost lands on the iPad, at the
+#: moment the model places the picture, which is the worst place for it.
+#:
+#: Pillow's own bomb check does not cover this range. It *warns* above
+#: `Image.MAX_IMAGE_PIXELS` (~89 Mpx) and only raises above twice that, so a
+#: file between those two passes `Image.open` silently and would be recorded
+#: and placed. That gap is what this closes.
+#:
+#: 32 megapixels is far past anything a board can use — a picture is drawn
+#: inside a frame a few hundred points across — so this is a ceiling on the
+#: damage, not a quality setting.
+MAX_IMAGE_PIXELS_TOTAL = 32_000_000
+
 #: What the server may say it is sending. Nothing else is downloaded.
 #:
 #: `image/svg+xml` is missing on purpose and must stay missing: SVG is markup
@@ -217,10 +236,10 @@ def _measured(data: bytes) -> FetchedBytes:
 
     `Image.open` reads the header and stops, so nothing here decodes a pixel:
     the width and height come out of the file's own metadata. That is what
-    makes it safe to run on bytes a stranger sent, and it is also why
-    `DecompressionBombError` is caught rather than avoided — Pillow raises it
-    from `open` on a file *claiming* an absurd number of pixels, which is
-    precisely the file to refuse before the device tries to draw it.
+    makes it safe to run on bytes a stranger sent — and it is also why the
+    pixel ceiling below is this module's job rather than Pillow's. Not
+    decoding means not paying, so nothing here would ever notice a picture that
+    only the *device* cannot afford.
 
     The format is then checked against the allowlist a second time. The header
     said one thing; this is what the bytes say, and it is the answer recorded
@@ -247,6 +266,16 @@ def _measured(data: bytes) -> FetchedBytes:
         raise ImageFetchError(
             "That image is in a format that cannot be used. Look for a PNG, "
             "JPEG, WebP or GIF instead."
+        )
+    # Checked against the *declared* size, which is the number that matters:
+    # the header is what the device's decoder will believe and allocate for,
+    # and this file is never decoded here. See `MAX_IMAGE_PIXELS_TOTAL` for why
+    # a byte cap does not already cover this.
+    if width * height > MAX_IMAGE_PIXELS_TOTAL:
+        raise ImageFetchError(
+            f"That image is {width}x{height}, which is too many pixels to put "
+            "on the board — it would take hundreds of megabytes to draw. Look "
+            "for a smaller version of it."
         )
     return FetchedBytes(
         data=data, content_type=content_type, width=width, height=height,

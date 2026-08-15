@@ -7,6 +7,9 @@ prove the refusals are not simply refusing everything.
 
 import io
 import socket
+import struct
+import warnings
+import zlib
 
 import httpx
 import pytest
@@ -15,7 +18,9 @@ from httpx import Response
 from PIL import Image
 
 from app.tutor import fetch_image as module
-from app.tutor.fetch_image import MAX_IMAGE_BYTES, ImageFetchError, fetch_image
+from app.tutor.fetch_image import (
+    MAX_IMAGE_BYTES, MAX_IMAGE_PIXELS_TOTAL, ImageFetchError, fetch_image,
+)
 
 
 URL = "https://example.com/cat.png"
@@ -478,3 +483,93 @@ async def test_a_url_that_will_not_even_parse_is_refused_not_raised(public_dns, 
     both do it before any guard below them has run."""
     with pytest.raises(ImageFetchError):
         await fetch_image(url)
+
+
+def _png_declaring(width: int, height: int) -> bytes:
+    """A valid PNG header claiming a size no file this small could hold.
+
+    Only IHDR and IEND, which is all `Image.open` reads: it takes `.size`
+    straight out of the header and stops, so a 70-byte file can announce 169
+    megapixels. That asymmetry is the whole point — the server never decodes
+    this, the iPad does.
+    """
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data)) + kind + data
+            + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+        )
+
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IEND", b"")
+
+
+def test_the_crafted_header_really_does_declare_what_it_claims():
+    """Guards the guard: if `Image.open` refused this file outright, the two
+    tests below would pass for the wrong reason — on "not an image" rather
+    than on the pixel ceiling."""
+    with Image.open(io.BytesIO(_png_declaring(8000, 8000))) as image:
+        assert image.size == (8000, 8000)
+        assert image.format == "PNG"
+    assert len(_png_declaring(8000, 8000)) < 100, "a tiny file, a vast picture"
+
+
+@respx.mock
+async def test_an_image_declaring_more_pixels_than_the_board_can_draw_is_refused(
+    public_dns,
+):
+    """64 megapixels in a 70-byte file, and **Pillow does not object**: its
+    own bomb check does not even warn until ~89 Mpx and does not raise until
+    twice that. Nothing upstream catches this — the byte cap sees a tiny file
+    — so without this ceiling the blob is recorded, the model places it, and
+    the iPad allocates about 256 MB to draw it."""
+    respx.get(URL).mock(return_value=Response(
+        200, headers={"Content-Type": "image/png"},
+        content=_png_declaring(8000, 8000),
+    ))
+
+    with pytest.raises(ImageFetchError) as caught:
+        await fetch_image(URL)
+
+    assert "8000x8000" in str(caught.value)
+    assert "pixels" in str(caught.value)
+
+
+@respx.mock
+async def test_the_gap_above_pillows_warning_and_below_its_error_is_closed(
+    public_dns,
+):
+    """13,000 x 13,000 is 169 Mpx: past `Image.MAX_IMAGE_PIXELS` (~89 Mpx), so
+    Pillow warns, and under twice it, so Pillow does **not** raise. A warning
+    stops nothing — it is recorded and the file sails on. This is the exact
+    band the ceiling exists for, so the warning is asserted rather than
+    silenced: it is the proof that nothing else was going to refuse this.
+    """
+    respx.get(URL).mock(return_value=Response(
+        200, headers={"Content-Type": "image/png"},
+        content=_png_declaring(13_000, 13_000),
+    ))
+
+    with warnings.catch_warnings(record=True) as raised:
+        warnings.simplefilter("always")
+        with pytest.raises(ImageFetchError) as caught:
+            await fetch_image(URL)
+
+    assert "13000x13000" in str(caught.value)
+    assert any(
+        issubclass(w.category, Image.DecompressionBombWarning) for w in raised
+    ), "Pillow only warns in this band — that is why the ceiling is needed"
+
+
+@respx.mock
+async def test_an_image_just_inside_the_pixel_ceiling_is_still_fetched(public_dns):
+    """The ceiling refuses what the board cannot draw, not what it can."""
+    width, height = 5_000, 6_000
+    assert width * height < MAX_IMAGE_PIXELS_TOTAL
+    respx.get(URL).mock(return_value=Response(
+        200, headers={"Content-Type": "image/png"},
+        content=_png_declaring(width, height),
+    ))
+
+    fetched = await fetch_image(URL)
+
+    assert (fetched.width, fetched.height) == (width, height)
