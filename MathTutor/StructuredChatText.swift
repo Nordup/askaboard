@@ -164,9 +164,15 @@ enum TutorMathMarkdownAdapter {
     /// `$$` block re-enters CommonMark parsing, where a bare `=` line turns
     /// the line above it into a setext heading and splits the block — the
     /// message then shows raw source instead of math (seen 2026-08-15).
+    /// Padding is trimmed for the same reason newlines collapse: the tutor
+    /// writes `\( \mathrm{J} \)` and the emitted `$ \mathrm{J} $` fails the
+    /// renderer's currency guard (an inline span must not start or end with
+    /// whitespace), showing raw source. Every span type flows through here,
+    /// so \(...\), \[...\], $$...$$ and $...$ all emit flush delimiters.
     private static func rendererCompatibleMath(_ math: String) -> String {
         math
             .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespaces)
             .replacingOccurrences(of: "\\,", with: "\\text{ }")
     }
 

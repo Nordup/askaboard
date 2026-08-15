@@ -69,9 +69,21 @@ final class StructuredChatTextTests: XCTestCase {
         // a setext-heading underline, splits the block, and the app shows raw
         // LaTeX source instead of math.
         let input = "### Your first calculation\n\n\\[\nm_{\\mathrm{O_2}}\n=\n\\frac{0.03200}{6.022\\times10^{23}}\\ \\mathrm{kg}.\n\\]\n\nCalculate that value first."
-        let expected = "### Your first calculation\n\n$$ m_{\\mathrm{O_2}} = \\frac{0.03200}{6.022\\times10^{23}}\\ \\mathrm{kg}. $$\n\nCalculate that value first."
+        let expected = "### Your first calculation\n\n$$m_{\\mathrm{O_2}} = \\frac{0.03200}{6.022\\times10^{23}}\\ \\mathrm{kg}.$$\n\nCalculate that value first."
 
         XCTAssertEqual(TutorMathMarkdownAdapter.renderableMarkdown(input), expected)
+    }
+
+    func testPaddedBackslashParenSpanEmitsFlushDelimiters() {
+        // The actual stored text of the 2026-08-15 joule message: the padding
+        // came through \( \) — not through $ input — and the emitted
+        // "$ \mathrm{J} $" failed the renderer's currency guard.
+        let input = #"A **joule**, symbol \( \mathrm{J} \), measures **energy**."#
+
+        XCTAssertEqual(
+            TutorMathMarkdownAdapter.renderableMarkdown(input),
+            #"A **joule**, symbol $\mathrm{J}$, measures **energy**."#
+        )
     }
 
     func testPaddedInlineDollarSpanIsTrimmedForTheRenderer() {
@@ -113,7 +125,7 @@ final class StructuredChatTextTests: XCTestCase {
         // the TeX on its own lines. Newlines inside must not become hard
         // breaks, or the block splits into paragraphs and shows raw source.
         let input = "Your first calculation\n\n$$\nm_{\\mathrm{O_2}} = \\frac{0.03200}{6.022\\times10^{23}}\\ \\mathrm{kg}.\n$$\n\nCalculate that value first."
-        let expected = "Your first calculation\n\n$$ m_{\\mathrm{O_2}} = \\frac{0.03200}{6.022\\times10^{23}}\\ \\mathrm{kg}. $$\n\nCalculate that value first."
+        let expected = "Your first calculation\n\n$$m_{\\mathrm{O_2}} = \\frac{0.03200}{6.022\\times10^{23}}\\ \\mathrm{kg}.$$\n\nCalculate that value first."
 
         XCTAssertEqual(TutorMathMarkdownAdapter.renderableMarkdown(input), expected)
     }
