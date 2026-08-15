@@ -530,7 +530,23 @@ class MTTypesetter {
             kCTFontAttributeName as NSAttributedString.Key: styleFont.ctFont as Any
         ])
         let ctLine = CTLineCreateWithAttributedString(atomString as CFAttributedString)
-        let atomWidth = CGFloat(CTLineGetTypographicBounds(ctLine, nil, nil, nil))
+        var atomWidth = CGFloat(CTLineGetTypographicBounds(ctLine, nil, nil, nil))
+
+        // Scripts extend the atom's advance. Without them the break check
+        // undersizes atoms like 10^{23} (projected as just "10"), lets the
+        // line cross maxWidth, and the overflow is clipped by the label.
+        if atom.subScript != nil || atom.superScript != nil {
+            var scriptWidth = CGFloat(0)
+            if let sup = atom.superScript,
+               let supDisplay = MTTypesetter.createLineForMathList(sup, font: font, style: self.scriptStyle(), cramped: self.superScriptCramped()) {
+                scriptWidth = max(scriptWidth, supDisplay.width)
+            }
+            if let sub = atom.subScript,
+               let subDisplay = MTTypesetter.createLineForMathList(sub, font: font, style: self.scriptStyle(), cramped: self.subscriptCramped()) {
+                scriptWidth = max(scriptWidth, subDisplay.width)
+            }
+            atomWidth += scriptWidth
+        }
 
         return interElementSpace + atomWidth
     }
@@ -600,33 +616,57 @@ class MTTypesetter {
         let visualLineWidth = currentPosition.x + currentLineWidth
         let atomWidth = calculateAtomWidth(atom, prevNode: prevNode)
         let projectedWidth = visualLineWidth + atomWidth
-        print("BRKDBG atom=\(atom.nucleus) x=\(currentPosition.x) lw=\(currentLineWidth) proj=\(projectedWidth) fits=\(remainingContentFits)")
 
         // If we're well within the limit, no need to break
         if projectedWidth <= maxWidth {
-            // Performance optimization: if we have plenty of space left and limited atoms remaining,
-            // we can skip all future line breaking checks for this line
+            // Performance optimization: skip future checks once the estimated
+            // width of everything still to come fits inside the limit. Only
+            // the width estimate decides — an atom-count threshold looked
+            // cheap but four remaining atoms can be 100pt of scripts, and a
+            // wrong "fits" here disables breaking for the rest of the line.
             if !remainingContentFits && !nextAtoms.isEmpty {
-                // Conservative estimate: if we're using less than 60% of available width
-                // and have only a few atoms left, assume remaining content will fit
-                let usageRatio = projectedWidth / maxWidth
-                if usageRatio < 0.6 && nextAtoms.count <= 5 {
+                let estimatedRemainingWidth = estimateRemainingAtomsWidth(nextAtoms)
+                if projectedWidth + estimatedRemainingWidth <= maxWidth {
                     remainingContentFits = true
-                } else if usageRatio < 0.75 {
-                    // For moderate usage, estimate remaining content width
-                    let estimatedRemainingWidth = estimateRemainingAtomsWidth(nextAtoms)
-                    if projectedWidth + estimatedRemainingWidth <= maxWidth {
-                        remainingContentFits = true
-                    }
                 }
             }
             return false
         }
 
-        // We've exceeded the width. Now use break quality scoring to find the best break point.
-
-        // If we're far over the limit (>20% excess), break immediately regardless of quality
-        if projectedWidth > maxWidth * 1.2 {
+        // We've exceeded the width. MTMathUILabel clamps its reported width to
+        // preferredMaxLayoutWidth, so anything drawn past maxWidth is clipped,
+        // not shown wider — an overshoot "grace" would trade a visible clip
+        // for aesthetics. Break at or before the limit instead: when breaking
+        // right here is a poor spot (e.g. just after an open bracket), move
+        // the last atom of the current text run down with us, which is the
+        // backward-looking version of the old look-ahead.
+        if projectedWidth > maxWidth {
+            let breakHerePenalty = calculateBreakPenalty(afterAtom: prevNode, beforeAtom: atom)
+            if breakHerePenalty > 0,
+               currentAtoms.count >= 2,
+               let movedAtom = currentAtoms.last,
+               !movedAtom.nucleus.isEmpty,
+               currentLine.length >= movedAtom.nucleus.utf16.count,
+               movedAtom.subScript == nil, movedAtom.superScript == nil {
+                let earlierPenalty = calculateBreakPenalty(
+                    afterAtom: currentAtoms[currentAtoms.count - 2],
+                    beforeAtom: movedAtom
+                )
+                if earlierPenalty < breakHerePenalty {
+                    // NSAttributedString ranges are UTF-16 units; math-italic
+                    // letters are surrogate pairs, so Character counts would
+                    // cut a pair in half.
+                    let movedLength = movedAtom.nucleus.utf16.count
+                    currentLine.deleteCharacters(
+                        in: NSMakeRange(currentLine.length - movedLength, movedLength))
+                    currentAtoms.removeLast()
+                    performInteratomLineBreak()
+                    currentLine.append(NSAttributedString(string: movedAtom.nucleus))
+                    currentAtoms.append(movedAtom)
+                    currentLineIndexRange = movedAtom.indexRange
+                    return true
+                }
+            }
             performInteratomLineBreak()
             return true
         }
@@ -738,8 +778,10 @@ class MTTypesetter {
         // No breaking if no width constraint
         guard maxWidth > 0 else { return false }
 
-        // No breaking if line is empty
-        guard currentLine.length > 0 else { return false }
+        // No breaking at the start of a visual line. As in the interatom
+        // check, the text run alone is the wrong signal: scripts and spaces
+        // flush the run while the visual line keeps going.
+        guard currentLine.length > 0 || currentPosition.x > 0 else { return false }
 
         // Calculate spacing between current content and new display
         var interElementSpace: CGFloat = 0
@@ -747,8 +789,10 @@ class MTTypesetter {
             interElementSpace = getInterElementSpace(prevNode!.type, right: displayType)
         }
 
-        // Calculate projected width
-        let currentWidth = getCurrentLineWidth()
+        // Calculate projected width from the visual position: currentLine only
+        // measures the current text segment, which is empty after scripts,
+        // spaces, or a preceding display atom.
+        let currentWidth = currentPosition.x + getCurrentLineWidth()
         let projectedWidth = currentWidth + interElementSpace + display.width
 
         // Break only if it would exceed max width
