@@ -74,6 +74,16 @@ struct TutorPanel: View {
     /// makes, and a `@StateObject` here would be destroyed — taking a half-uploaded photo
     /// with it — the moment the panel docks, collapses or goes full-screen.
     @ObservedObject var attachments: ComposerAttachments
+    /// The live voice call as the composer draws it — `nil` whenever no call
+    /// is up, which returns the bar to the ordinary pill. Built by
+    /// `BoardScreen`, which owns the engine; this panel only draws it.
+    var voiceCall: ComposerVoiceCall?
+    /// The live call as the thread draws it: the mascot on the tail and the
+    /// live-transcript tint. `nil` outside a call. See `VoiceThreadState`.
+    var voiceThread: VoiceThreadState?
+    /// Board 27's disc: start a live voice chat. `nil` keeps the send disc
+    /// permanent, which is every build without the engine.
+    var onStartVoiceChat: (() -> Void)?
     /// Whether the board has any ink to select — handed through to the composer's
     /// `btn/select`, the same flag `BoardScreen` already hands the collapsed dock.
     var canSelect = true
@@ -421,6 +431,7 @@ struct TutorPanel: View {
                 scale: .panel,
                 width: contentWidth,
                 clearing: slot.band,
+                voice: voiceThread,
                 actions: actions
             )
             .frame(width: contentWidth, height: size.height)
@@ -479,8 +490,13 @@ struct TutorPanel: View {
             // so without this the learner picking a sixth gets no chip, no
             // sentence and no clue. See `Composer.canAttach`.
             canAttach: !attachments.isFull && !attachments.isSending,
-            onVoice: dictation.voiceHandler(text: $text),
+            // Dictation and a live call never hold the microphone together:
+            // the bar hides the dictation mic while the call is up, and the
+            // handler is withheld too so no path can reach it.
+            onVoice: voiceCall == nil ? dictation.voiceHandler(text: $text) : nil,
             dictation: dictation.composerDictation,
+            voice: voiceCall,
+            onVoiceChat: onStartVoiceChat,
             // One slot, three writers, **fixed priority — not recency.** A failed
             // attachment is first because it is the only one of the three that
             // names something still sitting in the composer and still fixable:
@@ -549,6 +565,11 @@ struct TutorThreadView: View {
     /// thread runs behind it on both surfaces, so this is the clearance the newest message
     /// keeps from the pill.
     var clearing: CGFloat = 0
+    /// The live voice call, as the thread draws it: the mascot on the tail in
+    /// the orb's place, and board 28's live tint on the bubble whose words the
+    /// call just streamed. `nil` — every thread outside a call — draws exactly
+    /// what this view always drew.
+    var voice: VoiceThreadState? = nil
     let actions: TutorActions
 
     private var column: CGFloat { width ?? scale.contentWidth }
@@ -566,6 +587,10 @@ struct TutorThreadView: View {
             crop: { id in store.boardCropStore.crop(for: id) },
             onEditMessage: { actions.editMessage($0) }
         ) { accessory }
+        // Board 28's live treatment reaches the one bubble drawing the words —
+        // through the environment because `MessageRow` is not this feature's
+        // seam to widen. See `EnvironmentValues.liveVoiceTranscript`.
+        .environment(\.liveVoiceTranscript, voice != nil ? store.liveVoiceUtteranceText : nil)
     }
 
     private var items: [ChatThreadItem] {
@@ -643,7 +668,15 @@ struct TutorThreadView: View {
         // orb above the start state, the dock's button when collapsed, and this 46pt mark at
         // the tail once there is a conversation — never absent. A working state, if one is
         // ever designed, is `state/thinking`'s dots (board 14), which is a different mark.
-        Orb(.thread)
+        //
+        // During a live call the mascot IS the presence — board 28 floats it
+        // above the composer where the orb sat — so the plain orb yields to it
+        // for exactly the length of the call rather than doubling it.
+        if let voice {
+            VoiceMascotStage(state: voice, width: column)
+        } else {
+            Orb(.thread)
+        }
     }
 }
 

@@ -114,3 +114,118 @@ struct ComposerCancelButton: View {
         .accessibilityLabel("Cancel dictation")
     }
 }
+
+// MARK: - Voice chat (boards 27 and 28)
+
+/// Board 27's four-bar waveform, drawn in `composer/send`'s own 24-unit space:
+/// bars at x 5.2 / 9.7 / 14.3 / 18.8 spanning 10–14, 7.4–16.6, 5.6–18.4 and
+/// 9.2–14.8, stroke 2.4 with round caps — white on the brand disc, exactly as
+/// the send arrow is. The stroke scales with the render size the way the icon
+/// set's do: design width × (render ÷ viewBox).
+struct VoiceWaveformGlyph: View {
+    let size: CGFloat
+
+    private static let bars: [(x: CGFloat, top: CGFloat, bottom: CGFloat)] = [
+        (5.2, 10.0, 14.0), (9.7, 7.4, 16.6), (14.3, 5.6, 18.4), (18.8, 9.2, 14.8)
+    ]
+
+    var body: some View {
+        let scale = size / 24
+        Path { path in
+            for bar in Self.bars {
+                path.move(to: CGPoint(x: bar.x * scale, y: bar.top * scale))
+                path.addLine(to: CGPoint(x: bar.x * scale, y: bar.bottom * scale))
+            }
+        }
+        .stroke(DS.Color.surface, style: StrokeStyle(lineWidth: 2.4 * scale, lineCap: .round))
+        .frame(width: size, height: size)
+    }
+}
+
+/// Board 27: the voice-chat disc in the send slot — the same brand disc at the
+/// same metrics, carrying the white waveform instead of the arrow. It appears
+/// only while there is nothing to send (`Composer.showsVoiceChatDisc`), so the
+/// slot is one disc with two meanings and the row's arithmetic never moves.
+struct ComposerVoiceChatButton: View {
+    let metrics: ComposerMetrics
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) { disc }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Voice chat")
+            // The dictation mic's reasoning, verbatim: without the trait
+            // VoiceOver speaks its own announcement into the call this button
+            // just opened.
+            .accessibilityAddTraits(.startsMediaSession)
+    }
+
+    @ViewBuilder
+    private var disc: some View {
+        let shape = VoiceWaveformGlyph(size: metrics.sendGlyphSize)
+            .frame(width: metrics.sendButtonSize, height: metrics.sendButtonSize)
+            .background(DS.Color.brand, in: Circle())
+
+        // The raised full-screen disc is the send button's own rule; this disc
+        // occupies the same slot, so it casts the same shadow there and none
+        // in the panel.
+        if metrics.sendIsRaised {
+            shape.elevation(.control)
+        } else {
+            shape
+        }
+    }
+}
+
+/// The voice bar's mic — board 28's control in the dictation mic's box, with a
+/// different job: it mutes the call's uplink rather than opening a recorder.
+/// Same glyph, same geometry, so nothing on the pill moves when a call starts.
+///
+/// The muted state is undrawn on the boards, so it borrows the composer's one
+/// state vocabulary — violet means lit — and a muted mic reads the way an
+/// armed marquee does. Label and value follow Apple's model exactly as the
+/// dictation mic's do: the label is the control's identity, the value its
+/// state.
+struct ComposerVoiceMuteButton: View {
+    let metrics: ComposerMetrics
+    let isMuted: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            IconView(
+                .composerVoice,
+                size: metrics.voiceGlyphSize,
+                tint: isMuted ? DS.Color.brand : DS.Color.icon
+            )
+            .frame(width: metrics.voiceButtonSize, height: metrics.voiceButtonSize)
+            .expandedTapTarget(
+                max(ComposerMetrics.minimumTapTarget, metrics.voiceButtonSize),
+                over: metrics.voiceButtonSize
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Microphone")
+        .accessibilityValue(isMuted ? "Muted" : "On")
+        .accessibilityAddTraits(.isToggle)
+    }
+}
+
+/// Board 28's end disc: the send disc's geometry filled `--color-ink`, with
+/// the white cross at the cancel glyph's own size. Dark ink rather than a red
+/// hang-up, because ending is ordinary here — the session stays open and
+/// voice is a mode within it, not a session of its own.
+struct ComposerVoiceEndButton: View {
+    let metrics: ComposerMetrics
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            IconView(.uiCross, size: metrics.sendGlyphSize, tint: DS.Color.surface)
+                .frame(width: metrics.sendButtonSize, height: metrics.sendButtonSize)
+                .background(DS.Color.ink, in: Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("End voice chat")
+    }
+}

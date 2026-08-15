@@ -493,10 +493,11 @@ final class TutorStore: ObservableObject {
             signal: .evaluate,
             imageData: imageData,
             regionDescription: regionDescription,
-            attachmentIDs: attachments.map(\.attachment.id)
-        ) { [weak self] text in
-            self?.evaluationText = text
-        }
+            attachmentIDs: attachments.map(\.attachment.id),
+            onDone: { [weak self] text in
+                self?.evaluationText = text
+            }
+        )
         return true
     }
 
@@ -531,6 +532,142 @@ final class TutorStore: ObservableObject {
     func clearEvaluation() {
         evaluationText = nil
         evaluationMessageID = nil
+    }
+
+    // MARK: - Voice mode
+
+    /// The learner utterance the live voice call streamed most recently — the
+    /// bubble board 28 tints and marks with the small waveform. Set by
+    /// `appendVoiceUtterance`, cleared when the exchange it opened finishes
+    /// (`finishVoiceAssistantResponse`), when the call ends, and on every
+    /// session switch. `nil` the whole rest of the time, which is every bubble
+    /// drawn plain.
+    @Published private(set) var liveVoiceUtteranceID: UUID?
+
+    /// Voice-marked tutor messages keyed by realtime item id, so a transcript
+    /// delta always finds the message it belongs to and a delegated response
+    /// can take its spoken rephrase back out of the thread. Not persisted:
+    /// item ids are a property of the live call, and a relaunch has no call.
+    private var voiceMessageIDsByItem: [String: UUID] = [:]
+
+    /// True between `voiceCallBegan()` and `voiceCallEnded()`. The transcript
+    /// hooks guard on it so a delta from an engine already told to close
+    /// cannot append a ghost message to a thread the call has left. A
+    /// delegated turn already in flight is deliberately *not* guarded — the
+    /// worker's message is canonical and finishes on the normal pipeline.
+    private var isVoiceCallActive = false
+
+    /// The screen is starting a call. Called before the engine's `start`, so
+    /// no hook can arrive first.
+    func voiceCallBegan() {
+        isVoiceCallActive = true
+    }
+
+    /// What the live-transcript bubble is currently saying — resolved by text
+    /// because `MessageBubble` only ever sees the words. See
+    /// `EnvironmentValues.liveVoiceTranscript`.
+    var liveVoiceUtteranceText: String? {
+        guard let id = liveVoiceUtteranceID else { return nil }
+        return session.messages.first(where: { $0.id == id })?.text
+    }
+
+    /// A completed learner utterance from the live call — hooks'
+    /// `appendUserUtterance`.
+    ///
+    /// The worker reads the server's own rows, so the utterance reaches them
+    /// the way an edit's cut does: the `replaceTranscript` debt, paid at the
+    /// head of the next turn — which for a delegated utterance is the very
+    /// turn it prompted.
+    func appendVoiceUtterance(_ text: String) {
+        guard isVoiceCallActive else { return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let message = TutorMessage(role: .learner, text: trimmed, isVoice: true)
+        session.messages.append(message)
+        liveVoiceUtteranceID = message.id
+        session.lastSavedAt = .now
+        persist()
+        pendingTranscriptSync = Array(session.messages)
+    }
+
+    /// An assistant spoken-transcript delta — hooks' `streamAssistantText`.
+    /// The message is created lazily by the first delta of its item, exactly
+    /// as `messageIndex()` creates the streaming turn's message, and grows in
+    /// place. No `persist()` per delta, for `requestTutor`'s reason.
+    func streamVoiceAssistantText(itemID: String, delta: String) {
+        guard isVoiceCallActive else { return }
+        let index = voiceMessageIndex(for: itemID)
+        session.messages[index].text += delta
+    }
+
+    private func voiceMessageIndex(for itemID: String) -> Int {
+        if let id = voiceMessageIDsByItem[itemID],
+           let index = session.messages.firstIndex(where: { $0.id == id }) {
+            return index
+        }
+        let message = TutorMessage(role: .tutor, text: "", isVoice: true)
+        session.messages.append(message)
+        voiceMessageIDsByItem[itemID] = message.id
+        return session.messages.count - 1
+    }
+
+    /// The assistant response for `itemID` finished — hooks'
+    /// `assistantResponseFinished`.
+    ///
+    /// The dedup rule: a response that called `send_to_tutor` spoke a rephrase
+    /// of the worker's answer, and the worker's own streamed message is the
+    /// canonical thread content — so the spoken transcript is removed. Voice
+    /// small talk (no delegation) stays, and joins the transcript debt so the
+    /// worker sees it on the next turn.
+    func finishVoiceAssistantResponse(itemID: String, delegated: Bool) {
+        liveVoiceUtteranceID = nil
+        guard let id = voiceMessageIDsByItem.removeValue(forKey: itemID) else { return }
+        if delegated {
+            session.messages.removeAll { $0.id == id }
+        } else {
+            session.lastSavedAt = .now
+            pendingTranscriptSync = Array(session.messages)
+        }
+        persist()
+    }
+
+    /// The call ended. Nothing is live any more, and a stray item stream from
+    /// a closed engine must not write into the thread — the guard above and
+    /// the emptied map are the two halves of that promise.
+    func voiceCallEnded() {
+        isVoiceCallActive = false
+        liveVoiceUtteranceID = nil
+        voiceMessageIDsByItem = [:]
+    }
+
+    /// A delegated voice turn the store declined to start.
+    enum VoiceTurnRefusal: LocalizedError {
+        /// A turn is already streaming. The voice model hears `{"error": …}`
+        /// and can say so; the single-flight rule proper lives in the engine.
+        case busy
+
+        var errorDescription: String? {
+            switch self {
+            case .busy: "The tutor is still answering the previous request."
+            }
+        }
+    }
+
+    /// One delegated voice turn — hooks' `runTutorTurn`: the whole normal
+    /// pipeline (board snapshot, step chips, board updates, memory,
+    /// recording) with the voice model's `request` as the turn text and
+    /// **no learner message appended** — the learner's own spoken words are
+    /// already in the thread, and the request is a paraphrase they did not
+    /// say. Resolves with the worker's final text for the voice model to
+    /// rephrase aloud.
+    func runVoiceTurn(request: String) async -> Result<String, Error> {
+        guard !isLoading, !isEvaluating else { return .failure(VoiceTurnRefusal.busy) }
+        guard ensureTutorAvailable() else { return .failure(TutorServiceError.notConfigured) }
+        return await withCheckedContinuation { continuation in
+            requestTutor(signal: .voice, voiceRequest: request, onFinish: { result in
+                continuation.resume(returning: result)
+            })
+        }
     }
 
     // MARK: - Editing a sent message
@@ -851,6 +988,12 @@ final class TutorStore: ObservableObject {
         // conversation.
         editingMessageID = nil
         pendingTranscriptSync = nil
+        // A live call's transcripts name the thread being put away too. The
+        // screen ends the call itself on a session switch; this is the same
+        // fact from the store's side.
+        isVoiceCallActive = false
+        liveVoiceUtteranceID = nil
+        voiceMessageIDsByItem = [:]
         refreshSessions()
     }
 
@@ -951,12 +1094,20 @@ final class TutorStore: ObservableObject {
         imageData: Data? = nil,
         regionDescription: String? = nil,
         attachmentIDs: [UUID] = [],
-        onDone: ((String) -> Void)? = nil
+        voiceRequest: String? = nil,
+        onDone: ((String) -> Void)? = nil,
+        onFinish: ((Result<String, Error>) -> Void)? = nil
     ) {
+        // A delegated voice turn: the failure register is the call, not the
+        // thread. The voice model receives the error as `function_call_output`
+        // and apologises aloud; a retry chip beside that apology would offer
+        // to resend a paraphrase the learner never typed.
+        let isVoiceTurn = voiceRequest != nil
         guard ensureTutorAvailable() else {
             isLoading = false
             isEvaluating = false
             activeRequestTask = nil
+            onFinish?(.failure(TutorServiceError.notConfigured))
             return
         }
         isLoading = true
@@ -969,8 +1120,16 @@ final class TutorStore: ObservableObject {
             regionDescription: regionDescription,
             attachmentIDs: attachmentIDs
         )
+        // A delegated voice turn rides the wire as its own learner line — the
+        // body's `text` is the last message's — without ever entering the
+        // thread: the learner's spoken words are already there, and the voice
+        // model's paraphrase is not something they said.
+        var turnMessages = session.messages
+        if let voiceRequest {
+            turnMessages.append(TutorMessage(role: .learner, text: voiceRequest, signal: .voice))
+        }
         let request = TutorRequest(
-            messages: session.messages,
+            messages: turnMessages,
             // The first thing they *said*. A selection sent on its own carries no
             // words at all now, so "first learner turn" and "first learner turn
             // with something in it" have stopped being the same message — and a
@@ -1006,6 +1165,17 @@ final class TutorStore: ObservableObject {
             // removed. On a refusal the turn fails the thread's normal way —
             // loudly, with the retry chip — and the debt is kept, so the
             // retry pays it before trying again.
+            /// The turn's one completion for `onFinish`, on whichever path
+            /// ends it — `.done`, `.failure`, a thrown error, or a stream
+            /// that simply stopped. Idempotent so no path has to prove it is
+            /// the only one that ran; a voice turn's continuation must resume
+            /// exactly once or the engine's single-flight jams forever.
+            var pendingFinish = onFinish
+            func finish(_ result: Result<String, Error>) {
+                pendingFinish?(result)
+                pendingFinish = nil
+            }
+
             if let prefix = self.pendingTranscriptSync {
                 guard await service.replaceTranscript(
                     sessionID: request.sessionID, messages: prefix
@@ -1013,16 +1183,21 @@ final class TutorStore: ObservableObject {
                     self.phase = nil
                     self.isLoading = false
                     self.isEvaluating = false
-                    self.errorMessage = "I couldn’t update the conversation on the tutor service just now."
+                    if !isVoiceTurn {
+                        self.errorMessage = "I couldn’t update the conversation on the tutor service just now."
+                    }
                     self.logger.error("""
                         Transcript sync failed ahead of a turn; the turn was not sent.
                         """)
+                    finish(.failure(TutorServiceError.network(
+                        "The conversation could not be updated on the tutor service."
+                    )))
                     return
                 }
                 self.pendingTranscriptSync = nil
             }
             var accumulatedText = ""
-            var tutorMessageIndex: Int?
+            var tutorMessageID: UUID?
             // Measured on the device, not sent by the server: `ActivityTrail.duration`
             // claims to be the wait as the learner experienced it, and that includes
             // the network. Started here rather than at `requestTutor`'s first line so
@@ -1043,13 +1218,23 @@ final class TutorStore: ObservableObject {
             /// isolation of the closure holding it, the way the closure itself
             /// inherits it from `TutorStore`. Without it this reads and mutates
             /// `session` from a nonisolated context, which Swift 6 rejects.
+            ///
+            /// Remembered by **id, not index**: a delegated voice response can
+            /// remove its spoken transcript from the thread while this turn is
+            /// still open (`finishVoiceAssistantResponse`), and a cached index
+            /// into a list something else may shorten is a write into the
+            /// wrong message.
             @MainActor
             func messageIndex() -> Int {
-                if let tutorMessageIndex { return tutorMessageIndex }
-                self.session.messages.append(TutorMessage(role: .tutor, text: ""))
+                if let id = tutorMessageID,
+                   let index = self.session.messages.firstIndex(where: { $0.id == id }) {
+                    return index
+                }
+                let message = TutorMessage(role: .tutor, text: "")
+                self.session.messages.append(message)
                 let index = self.session.messages.count - 1
                 self.session.messages[index].activity = ActivityTrail()
-                tutorMessageIndex = index
+                tutorMessageID = message.id
                 return index
             }
 
@@ -1109,19 +1294,21 @@ final class TutorStore: ObservableObject {
                         self.session.boardScene = self.session.boardScene.applying(update)
                         self.persist()
                     case .done:
-                        if let tutorMessageIndex {
-                            self.session.messages[tutorMessageIndex].activity?.duration =
+                        if let id = tutorMessageID,
+                           let index = self.session.messages.firstIndex(where: { $0.id == id }) {
+                            self.session.messages[index].activity?.duration =
                                 Date.now.timeIntervalSince(startedAt)
                         }
                         self.phase = nil
                         self.isLoading = false
                         self.isEvaluating = false
-                        if signal == .evaluate, let tutorMessageIndex {
-                            self.evaluationMessageID = self.session.messages[tutorMessageIndex].id
+                        if signal == .evaluate, let tutorMessageID {
+                            self.evaluationMessageID = tutorMessageID
                         }
                         self.session.lastSavedAt = .now
                         self.persist()
                         onDone?(accumulatedText)
+                        finish(.success(accumulatedText))
                     case .failure(let message, _):
                         // `activity?.duration` is deliberately left untouched here
                         // — it stays `nil` unless a message was never even
@@ -1130,14 +1317,24 @@ final class TutorStore: ObservableObject {
                         self.phase = nil
                         self.isLoading = false
                         self.isEvaluating = false
-                        self.errorMessage = message
+                        if !isVoiceTurn {
+                            self.errorMessage = message
+                        }
+                        finish(.failure(TutorServiceError.network(message)))
                     }
                 }
+                // A stream that stopped without `.done` or `.failure` still
+                // has to resolve the turn's completion — a voice continuation
+                // left hanging jams the engine's single-flight forever.
+                finish(.failure(TutorServiceError.invalidResponse))
             } catch {
                 self.phase = nil
                 self.isLoading = false
                 self.isEvaluating = false
-                self.errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                if !isVoiceTurn {
+                    self.errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                }
+                finish(.failure(error))
                 // `localizedDescription` alone is what made a real failure
                 // undiagnosable: "The request timed out." and "I couldn't reach
                 // the tutor service just now." are the same sentence to anyone

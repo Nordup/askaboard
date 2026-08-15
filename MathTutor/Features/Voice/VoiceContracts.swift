@@ -47,8 +47,20 @@ struct VoiceSessionHooks {
     var streamAssistantText: (_ itemID: String, _ delta: String) -> Void
     /// The assistant response for `itemID` finished. `delegated` is true when
     /// it called send_to_tutor — then its spoken transcript must be dropped
-    /// from the thread (the worker's message is the canonical content).
+    /// from the thread (the worker's message is the canonical content). The
+    /// engine also marks the response that *relays* a successful tutor_reply
+    /// as delegated: both the action line and the rephrase are voice glue
+    /// around the worker's canonical message.
     var assistantResponseFinished: (_ itemID: String, _ delegated: Bool) -> Void
+    /// Whether composer dictation is capturing right now. [Package K
+    /// amendment] The engine refuses to start while it is — dictation's
+    /// AVAudioEngine and WebRTC's audio device module must never share the
+    /// microphone. The reverse gate is the UI's: hide/stop dictation while
+    /// `VoiceSessionControlling.isActive` (or
+    /// `VoiceAudioSessionController.isVoiceSessionActive`). Defaulted so
+    /// existing hook sites keep compiling; wire it to the dictation
+    /// controller's live state.
+    var isDictationActive: () -> Bool = { false }
 }
 
 /// The engine as the UI sees it.

@@ -109,6 +109,11 @@ struct TutorMessage: Identifiable, Codable, Sendable, Equatable {
     /// message, and on every tutor message written before the trail existed —
     /// which is what the decoder below defaults.
     var activity: ActivityTrail?
+    /// Whether this message arrived through a live voice call — a spoken
+    /// learner utterance's transcript, or the voice model's own kept small
+    /// talk. Defaults off, and decodes off for every session written before
+    /// voice existed — the same migration `attachments` and `activity` carry.
+    var isVoice: Bool = false
 
     init(
         id: UUID = UUID(),
@@ -117,7 +122,8 @@ struct TutorMessage: Identifiable, Codable, Sendable, Equatable {
         createdAt: Date = .now,
         signal: LearningSignal? = nil,
         attachments: [MessageAttachment] = [],
-        activity: ActivityTrail? = nil
+        activity: ActivityTrail? = nil,
+        isVoice: Bool = false
     ) {
         self.id = id
         self.role = role
@@ -126,10 +132,11 @@ struct TutorMessage: Identifiable, Codable, Sendable, Equatable {
         self.signal = signal
         self.attachments = attachments
         self.activity = activity
+        self.isVoice = isVoice
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, role, text, createdAt, signal, attachments, activity
+        case id, role, text, createdAt, signal, attachments, activity, isVoice
     }
 
     /// Written out for two lines of it: `attachments` and `activity`.
@@ -151,12 +158,18 @@ struct TutorMessage: Identifiable, Codable, Sendable, Equatable {
         signal = try container.decodeIfPresent(LearningSignal.self, forKey: .signal)
         attachments = try container.decodeIfPresent([MessageAttachment].self, forKey: .attachments) ?? []
         activity = try container.decodeIfPresent(ActivityTrail.self, forKey: .activity)
+        isVoice = try container.decodeIfPresent(Bool.self, forKey: .isVoice) ?? false
     }
 }
 
 enum LearningSignal: String, Codable, Sendable {
     case dontKnow
     case evaluate
+    /// A tutor turn delegated by the live voice model — `send_to_tutor`'s
+    /// request riding the normal pipeline. Carried on the wire (`signal:
+    /// "voice"`) and on the synthetic request message only; the learner's own
+    /// spoken turns are marked with `TutorMessage.isVoice` instead.
+    case voice
 }
 
 struct SessionPlan: Codable, Sendable, Equatable {

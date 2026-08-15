@@ -70,6 +70,22 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     openai_api_key: str
+    #: Upstream origin for the one provider call made with raw httpx rather
+    #: than the SDK: the realtime SDP proxy (`api/realtime.py`). Env
+    #: `OPENAI_BASE_URL` repoints it for a test or a relay; the SDK clients
+    #: keep their own default and are not affected.
+    openai_base_url: str = "https://api.openai.com/v1"
+    #: The live-voice model, env `OPENAI_REALTIME_MODEL`. Always the full
+    #: model, NEVER a mini variant as the default — founder decision
+    #: (voice-mode design, 2026-08-15): the mini is weakest exactly where
+    #: voice leans hardest, reliably calling `send_to_tutor` instead of
+    #: ad-libbing an answer. Like EXTRACTION_MODEL this is server-chosen and
+    #: never arrives from a request, so it is deliberately not in
+    #: MODEL_ALLOWLIST — that gates what the *device* may ask for on a turn.
+    openai_realtime_model: str = "gpt-realtime-2.1"
+    #: The realtime voice, env `OPENAI_REALTIME_VOICE`. Locked once the model
+    #: has produced audio, so it is chosen here, at session creation, only.
+    openai_realtime_voice: str = "marin"
     database_url: str
     device_token: str
     blob_dir: Path = Path("./blobs")

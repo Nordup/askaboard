@@ -15,6 +15,12 @@ settings:
 packages:
   markdownExtendedView:
     path: Vendor/MarkdownExtendedView
+  # Google WebRTC as the stasel binary distribution — the transport for live
+  # voice chat (Services/Realtime). The same package the sleep app pinned;
+  # see docs/research/voice-mode/sleep-app-voice-stack.md §1.
+  webRTC:
+    url: https://github.com/stasel/WebRTC
+    from: 150.0.0
 targets:
   MathTutor:
     type: application
@@ -24,6 +30,8 @@ targets:
     dependencies:
       - package: markdownExtendedView
         product: MarkdownExtendedView
+      - package: webRTC
+        product: WebRTC
     # The device's bearer token, compiled in rather than injected at launch —
     # a build the user taps has no launching process to take it from. The
     # committed file holds no secret; see MathTutor/Config/Backend.xcconfig.
@@ -41,6 +49,10 @@ targets:
         UIApplicationSupportsIndirectInputEvents: true
         UILaunchScreen: {}
         UIRequiredDeviceCapabilities: [arm64]
+        # A live voice call survives a brief app switch instead of dying the
+        # moment the learner glances elsewhere (sleep lesson 9). Audio is the
+        # only background mode voice mode needs.
+        UIBackgroundModes: [audio]
         # The design is one fixed 1376x1032 landscape layout — "no breakpoints and
         # no responsive reflow". Portrait would need a second design, not a reflow
         # of this one, so the app is landscape-only.

@@ -7,6 +7,7 @@ from fastapi import FastAPI
 
 from app.api.attachments import router as attachments_router
 from app.api.dictation import router as dictation_router
+from app.api.realtime import router as realtime_router
 from app.api.sessions import router as sessions_router
 from app.api.turn import router as turn_router
 from app.config import get_settings
@@ -62,6 +63,7 @@ def create_app() -> FastAPI:
     app.include_router(dictation_router)
     app.include_router(sessions_router)
     app.include_router(attachments_router)
+    app.include_router(realtime_router)
 
     return app
 

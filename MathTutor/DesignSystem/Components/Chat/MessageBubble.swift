@@ -160,6 +160,54 @@ struct TutorMessageText: View {
     }
 }
 
+// MARK: - Voice marks (board 28)
+
+/// The text of the learner utterance a live voice call streamed most
+/// recently, or `nil` when none is. Set on the thread by its owner
+/// (`TutorThreadView`) so the one bubble drawing those words takes board 28's
+/// live treatment, and every other bubble ignores it.
+///
+/// Matched by text rather than by id because `MessageRow` hands `MessageBubble`
+/// the words alone and this file may not widen that seam. An identical older
+/// bubble would briefly share the tint — accepted: the state lasts one
+/// exchange, and the tint is a register, not a control.
+private struct LiveVoiceTranscriptKey: EnvironmentKey {
+    static let defaultValue: String? = nil
+}
+
+extension EnvironmentValues {
+    var liveVoiceTranscript: String? {
+        get { self[LiveVoiceTranscriptKey.self] }
+        set { self[LiveVoiceTranscriptKey.self] = newValue }
+    }
+}
+
+/// Board 28's small waveform beside a live transcript: three brand bars in a
+/// 14-unit box — x 2.4 / 7 / 11.6 spanning 5.6–8.4, 3.4–10.6 and 5–9, stroke
+/// 1.8 with round caps. Static on purpose: the words arriving are the motion.
+struct VoiceTranscriptMark: View {
+    static let size: CGFloat = 14
+    /// Board 28's `gap: 9px` between the words and the mark — a
+    /// component-internal value, like the thinking dots' 6.
+    static let gap: CGFloat = 9
+
+    private static let bars: [(x: CGFloat, top: CGFloat, bottom: CGFloat)] = [
+        (2.4, 5.6, 8.4), (7.0, 3.4, 10.6), (11.6, 5.0, 9.0)
+    ]
+
+    var body: some View {
+        Path { path in
+            for bar in Self.bars {
+                path.move(to: CGPoint(x: bar.x, y: bar.top))
+                path.addLine(to: CGPoint(x: bar.x, y: bar.bottom))
+            }
+        }
+        .stroke(DS.Color.brand, style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
+        .frame(width: Self.size, height: Self.size)
+        .accessibilityHidden(true)
+    }
+}
+
 // MARK: - Student
 
 /// The student's own words, boxed and pinned right.
@@ -169,8 +217,38 @@ struct TutorMessageText: View {
 struct MessageBubble: View {
     let text: String
     var metrics: MessageMetrics = .panel
+    @Environment(\.liveVoiceTranscript) private var liveVoiceTranscript
+
+    /// Board 28's live-transcript treatment: the bubble whose words the call
+    /// is speaking right now takes `--color-brand-tint-soft`, secondary ink
+    /// and the small waveform, and settles into the plain grey bubble the
+    /// moment the exchange finishes — the settled voice bubble on the same
+    /// board is drawn plain.
+    private var isLiveVoiceTranscript: Bool {
+        liveVoiceTranscript != nil && liveVoiceTranscript == text
+    }
 
     var body: some View {
+        if isLiveVoiceTranscript {
+            HStack(spacing: VoiceTranscriptMark.gap) {
+                LearnerLiteralText(text)
+                    .textStyle(metrics.textStyle)
+                    .foregroundStyle(DS.Color.inkSecondary)
+                VoiceTranscriptMark()
+            }
+            .padding(.vertical, metrics.bubblePaddingBlock)
+            .padding(.horizontal, metrics.bubblePaddingInline)
+            .frame(maxWidth: metrics.bubbleMaxWidth, alignment: .leading)
+            .background(
+                DS.Color.brandTintSoft,
+                in: RoundedRectangle(cornerRadius: metrics.bubbleRadius, style: .circular)
+            )
+        } else {
+            resting
+        }
+    }
+
+    private var resting: some View {
         LearnerLiteralText(text)
             .textStyle(metrics.textStyle)
             .foregroundStyle(DS.Color.ink)

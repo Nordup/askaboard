@@ -25,6 +25,15 @@ struct TutorFullScreen: View {
     /// owned: a learner who attaches a photo in the panel and then expands to the reading
     /// column is looking at one message, not two.
     @ObservedObject var attachments: ComposerAttachments
+    /// The live voice call as the composer draws it — the same value the
+    /// docked panel takes, because the call survives the presentation switch:
+    /// the engine is `BoardScreen`'s, and both surfaces only draw it.
+    var voiceCall: ComposerVoiceCall?
+    /// The live call as the thread draws it — board 29's 120pt face on its
+    /// 200pt stage. `nil` outside a call.
+    var voiceThread: VoiceThreadState?
+    /// Board 27's disc: start a live voice chat.
+    var onStartVoiceChat: (() -> Void)?
     let actions: TutorActions
 
     /// True while a docked ↔ full-screen switch's spring is running. Both surfaces are
@@ -500,6 +509,7 @@ struct TutorFullScreen: View {
             scale: Self.scale,
             width: column.width,
             clearing: column.threadClearing,
+            voice: voiceThread,
             actions: actions
         )
         .frame(width: column.width, height: column.threadHeight)
@@ -528,8 +538,12 @@ struct TutorFullScreen: View {
             onAttach: { isAttachMenuOpen = true },
             // See `TutorPanel.composer` — the refusal is silent without it.
             canAttach: !attachments.isFull && !attachments.isSending,
-            onVoice: dictation.voiceHandler(text: $text),
+            // Withheld during a call for `TutorPanel.composer`'s reason: the
+            // two can never hold the microphone together.
+            onVoice: voiceCall == nil ? dictation.voiceHandler(text: $text) : nil,
             dictation: dictation.composerDictation,
+            voice: voiceCall,
+            onVoiceChat: onStartVoiceChat,
             // Same slot and the same fixed priority as the panel's — see `TutorPanel`.
             note: attachments.failureNote ?? store.composerNote ?? dictation.noteText
                 ?? store.editingNote,

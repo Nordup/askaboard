@@ -465,6 +465,27 @@ struct ComposerDictation {
     }
 }
 
+/// A live voice call, as much of it as the composer needs to draw the bar —
+/// board 28: `+`, the field, the mic-mute, the dark-ink end disc.
+///
+/// A value rather than a reference to the engine, for `ComposerDictation`'s
+/// reason: the design-system layer keeps knowing nothing about the app. The
+/// screen that owns the engine builds one of these per render and the taps
+/// call back out.
+struct ComposerVoiceCall {
+    /// Whether the microphone track is muted. The call stays up either way —
+    /// mute is a state of the call, never an end of it.
+    let isMuted: Bool
+    let onToggleMute: () -> Void
+    /// The X disc. No confirmation: the session stays open — voice is a mode
+    /// within it — so ending costs nothing that starting again does not repay.
+    let onEnd: () -> Void
+    /// Return in the field during a call: the words go into the realtime
+    /// conversation, not down the tutor pipeline. The composer clears the
+    /// field itself, exactly as an ordinary send does.
+    let onSendTyped: (String) -> Void
+}
+
 // MARK: - The composer
 
 /// The one control that floats free of the panel edge, which is why it is a capsule:
@@ -508,6 +529,18 @@ struct Composer: View {
     var onVoice: (() -> Void)?
     /// The dictation session running right now, or `nil` when none is. Board 15.
     var dictation: ComposerDictation?
+    /// The live voice call this composer is the bar for — board 28 — or `nil`,
+    /// which is every composer drawn before voice existed. While set: no
+    /// marquee, no dictation mic, no send disc; the trailing pair is the
+    /// mic-mute and the dark-ink X, and return sends into the call. Dictation
+    /// and a call are mutually exclusive by construction — the screen stops
+    /// one before starting the other — so the two optionals never both hold.
+    var voice: ComposerVoiceCall?
+    /// Start a live voice chat — board 27's disc in the send slot, shown only
+    /// when there is nothing to send. `nil` (every specimen, and any build
+    /// without the engine) keeps the send disc permanent, which is the
+    /// composer every screen drew until now.
+    var onVoiceChat: (() -> Void)?
     /// One line above the pill: nothing came back, or it failed. Board 15 §02.
     var note: String?
     var onDismissSelection: (() -> Void)?
@@ -668,16 +701,26 @@ struct Composer: View {
             field
                 .frame(maxWidth: .infinity, minHeight: metrics.innerHeight, alignment: .leading)
 
-            // The mic is the stop control while capturing, and gone while transcribing: the
-            // microphone has already closed, so a button that offered to close it would be
-            // describing something that has happened. Cancel is the leading cross.
-            if let onVoice, dictation?.phase != .transcribing {
-                ComposerVoiceButton(metrics: metrics, dictation: dictation?.phase, action: onVoice)
+            if let voice {
+                // Board 28's trailing pair: the mute in the dictation mic's box
+                // and the end disc in the send's, so nothing on the pill moves
+                // when a call starts. The dictation mic itself is gone — the
+                // two can never hold the microphone together.
+                ComposerVoiceMuteButton(metrics: metrics, isMuted: voice.isMuted, action: voice.onToggleMute)
                     .frame(height: metrics.innerHeight)
-            }
+                ComposerVoiceEndButton(metrics: metrics, action: voice.onEnd)
+                    .frame(height: metrics.innerHeight)
+            } else {
+                // The mic is the stop control while capturing, and gone while transcribing: the
+                // microphone has already closed, so a button that offered to close it would be
+                // describing something that has happened. Cancel is the leading cross.
+                if let onVoice, dictation?.phase != .transcribing {
+                    ComposerVoiceButton(metrics: metrics, dictation: dictation?.phase, action: onVoice)
+                        .frame(height: metrics.innerHeight)
+                }
 
-            ComposerSendButton(metrics: metrics, action: send)
-                .frame(height: metrics.innerHeight)
+                trailingDisc
+            }
         }
         .padding(.leading, metrics.paddingLeading)
         .padding(.trailing, metrics.paddingTrailing)
@@ -694,6 +737,37 @@ struct Composer: View {
         // corners, and the card tucked behind this shape is sized off that exact curve.
         .background(DS.Color.surface, in: RoundedRectangle(cornerRadius: metrics.cornerRadius, style: .circular))
         .elevation(.control)
+    }
+
+    /// Which disc holds the trailing slot: board 27's voice-chat disc when
+    /// there is nothing to send, the send disc the moment there is. `canSend`
+    /// is exactly the design's condition — text trimmed-empty, no attachments,
+    /// no attached selection — and dictation keeps the send disc because a
+    /// recording is on its way to being something to send.
+    var showsVoiceChatDisc: Bool {
+        onVoiceChat != nil && !canSend && dictation == nil
+    }
+
+    /// The 150–200 ms morph between the two discs: a crossfade with a small
+    /// scale dip, on the one slot, so the swap reads as the disc changing its
+    /// mind rather than one control replacing another. Simple on purpose —
+    /// both discs share the box, so nothing else moves.
+    static let discMorph: AnyTransition = .opacity.combined(with: .scale(scale: 0.8))
+    static let discMorphDuration: TimeInterval = 0.18
+
+    @ViewBuilder
+    private var trailingDisc: some View {
+        ZStack {
+            if showsVoiceChatDisc {
+                ComposerVoiceChatButton(metrics: metrics, action: { onVoiceChat?() })
+                    .transition(Self.discMorph)
+            } else {
+                ComposerSendButton(metrics: metrics, action: send)
+                    .transition(Self.discMorph)
+            }
+        }
+        .animation(.easeInOut(duration: Self.discMorphDuration), value: showsVoiceChatDisc)
+        .frame(height: metrics.innerHeight)
     }
 
     /// `ui/plus` at its one published render size, in `--color-icon` rather than the
@@ -749,7 +823,11 @@ struct Composer: View {
         if let dictation {
             ComposerCancelButton(metrics: metrics, action: dictation.onCancel)
                 .frame(height: metrics.innerHeight)
-        } else if selection != .unavailable {
+        } else if voice == nil, selection != .unavailable {
+            // Board 28 draws no marquee in the voice bar: a lasso attachment
+            // rides the tutor pipeline, and during a call the return key does
+            // not reach it. The glyph goes rather than greying, exactly as the
+            // wide composer already drops it.
             marqueeControl
                 .frame(height: metrics.innerHeight)
         }
@@ -911,7 +989,20 @@ struct Composer: View {
 
     /// See `canSend` — the condition grew a third term when the draft learned to hold
     /// files, and it lives on the property so the tests can read it.
+    ///
+    /// During a live call the return key belongs to the call: the words become
+    /// a user text item in the realtime conversation (`ComposerVoiceCall
+    /// .onSendTyped`) and the field clears, exactly as a send clears it. The
+    /// draft's files stay — a typed voice line carries no attachments, and
+    /// clearing chips it did not send would be the silent-downgrade bug again.
     private func send() {
+        if let voice {
+            let typed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !typed.isEmpty else { return }
+            voice.onSendTyped(typed)
+            text = ""
+            return
+        }
         guard canSend else { return }
         onSend()
     }

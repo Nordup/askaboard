@@ -42,6 +42,19 @@ struct BoardScreen: View {
     /// change the tutor makes.
     @StateObject private var dictation = DictationController()
 
+    /// The live voice engine, owned at screen level so a call survives every
+    /// presentation switch — the spec's one placement rule for it. The host
+    /// publishes only the rare facts (live, muted); the 10 Hz levels stay on
+    /// the engine's own `VoiceDisplayProvider`, which this screen never
+    /// observes. See `VoiceSessionHost` for the engine's one construction site.
+    @StateObject private var voice = VoiceSessionHost()
+
+    /// The one `MascotMotion` both surfaces' mascots share, injected through
+    /// the environment so the breathing envelopes and half-finished crossfades
+    /// survive the docked ↔ full-screen swap — `VoiceMascotView`'s own
+    /// instruction to whoever mounts it at screen level.
+    @State private var mascotMotion = MascotMotion()
+
     /// The files on the message being written, owned here for the same reason `composerText`
     /// and `dictation` are: the draft is the *learner's*, and it has to survive every
     /// presentation change the tutor makes. A `@StateObject` inside `TutorPanel` would be
@@ -143,6 +156,10 @@ struct BoardScreen: View {
         // while a row's context menu is up must dismiss the menu, not drag the drawer under
         // it. See `EnvironmentValues.isDrawerPanSuspended`.
         .environment(\.isDrawerPanSuspended, isShowingSettings || uiState.isContextMenuActive)
+        // One motion integrator for every mascot this screen mounts, so the
+        // halo's envelopes ride through the docked ↔ full-screen swap instead
+        // of restarting — `VoiceMascotView`'s own mounting instruction.
+        .environment(\.mascotMotion, mascotMotion)
         // Not a `fullScreenCover` any more, and it cannot be one: the redesigned settings is
         // a window *over* the board, and a cover would replace the very thing it blurs. The
         // modifier wraps the whole screen rather than adding a branch to the stack above,
@@ -170,6 +187,12 @@ struct BoardScreen: View {
             uiState.closeSessionsDrawer()
         }
         .onChange(of: isShowingSettings) { _, isShowing in if isShowing { dictation.stop() } }
+        // The one place the store learns a call is over, however it ended —
+        // the X disc, a session switch, or a start that could not bring the
+        // call up and folded itself away. Idempotent on the store's side.
+        .onChange(of: voice.isLive) { _, isLive in
+            if !isLive { store.voiceCallEnded() }
+        }
         // The backstop for the one session change that does not go through
         // `TutorPanel.adoptSessionUI` — Settings' "Reset this session", which calls the
         // store directly with no surface in between. An attachment was uploaded *against a
@@ -177,7 +200,14 @@ struct BoardScreen: View {
         // session's turn has no claim on. `onChange` rather than `task(id:)`: this screen is
         // never remounted, so it fires on a real switch and never on an appearance — a
         // `task(id:)` on the panel would wipe the draft every time the tutor docked.
-        .onChange(of: store.session.id) { _, _ in attachments.clear() }
+        .onChange(of: store.session.id) { _, _ in
+            attachments.clear()
+            // A live call streams its transcripts into the session it was
+            // started in; carried across a switch it would write them into
+            // the next one. Ending is the only honest option the engine
+            // offers, and the store clears its own live state in `adopt`.
+            endVoiceChat()
+        }
         // The armed edit's cancel gesture: the draft emptied by hand. The store
         // cannot watch the field — the draft is this screen's state — so the
         // screen reports the emptiness and the store disarms. A send's own
@@ -460,6 +490,9 @@ struct BoardScreen: View {
                     text: $composerText,
                     dictation: dictation,
                     attachments: attachments,
+                    voiceCall: composerVoiceCall,
+                    voiceThread: voice.isLive ? .panel(display: voice.display) : nil,
+                    onStartVoiceChat: startVoiceChatAction,
                     // The same flag the collapsed dock's `btn/select` takes, for the same
                     // control at the other presentation — an empty board has nothing to
                     // select, and `toggleBoardSelection` would swallow the tap.
@@ -492,6 +525,9 @@ struct BoardScreen: View {
                 text: $composerText,
                 dictation: dictation,
                 attachments: attachments,
+                voiceCall: composerVoiceCall,
+                voiceThread: voice.isLive ? .fullScreen(display: voice.display) : nil,
+                onStartVoiceChat: startVoiceChatAction,
                 actions: actions,
                 isPresentationSwitching: isPresentationSwitching
             )
@@ -673,6 +709,93 @@ struct BoardScreen: View {
             // toolchain.
             expandToFullScreen: { expandTutorToFullScreen() },
             returnToBoard: { returnToBoardFromPeek(velocity: $0) }
+        )
+    }
+
+    // MARK: - Voice chat
+
+    /// The live call as the composer draws it — built fresh per render, like
+    /// `actions`, so the surfaces hold values and never the engine.
+    private var composerVoiceCall: ComposerVoiceCall? {
+        guard voice.isLive else { return nil }
+        return ComposerVoiceCall(
+            isMuted: voice.isMuted,
+            onToggleMute: { voice.toggleMuted() },
+            onEnd: { endVoiceChat() },
+            onSendTyped: { voice.sendTyped($0) }
+        )
+    }
+
+    /// Board 27's disc, or nothing at all: a build with no backend has no call
+    /// to start, and the composer keeps its permanent send disc — the same
+    /// availability-decides rule the dictation mic already follows.
+    private var startVoiceChatAction: (() -> Void)? {
+        guard voice.isAvailable else { return nil }
+        return { startVoiceChat() }
+    }
+
+    /// Board 27's disc. Dictation is stopped first — the two must never hold
+    /// the microphone together, and stopping before the engine touches the
+    /// audio session is this screen's half of that rule (the engine's audio
+    /// controller refuses the other direction).
+    ///
+    /// `beginConversation()` because the mascot and the transcripts live in
+    /// the thread: a call started from the greeting needs the conversation
+    /// fill on screen to be seen at all.
+    private func startVoiceChat() {
+        guard !voice.isLive, voice.isAvailable else { return }
+        dictation.stop()
+        store.clearComposerNote()
+        // Before the engine starts, so no hook can arrive at a store that
+        // still thinks there is no call.
+        store.voiceCallBegan()
+        // `stop()` is asynchronous at its tail — the dictation session's own
+        // task clears `isListening` as it unwinds — and the engine refuses to
+        // start while dictation still claims the microphone
+        // (`VoiceSessionHooks.isDictationActive`). Waiting the session out
+        // costs nothing on the common path: no session, no wait.
+        let unwinding = dictation.session
+        let sessionID = store.session.id
+        Task {
+            await unwinding?.value
+            voice.begin(sessionID: sessionID, hooks: voiceHooks)
+        }
+        uiState.beginConversation()
+    }
+
+    /// The X disc, and every forced ending (a session switch). The engine
+    /// plays its own ~1 s ending state inside `end()`; the store learns the
+    /// call is over through the `onChange(of: voice.isLive)` above, which is
+    /// the same door every other ending walks through.
+    private func endVoiceChat() {
+        guard voice.isLive else { return }
+        Task { await voice.finish() }
+    }
+
+    /// How the engine reaches the rest of the app — installed next to the
+    /// board providers because they are the same kind of hole: the store
+    /// deliberately knows nothing about the engine, and this is where the
+    /// two meet.
+    private var voiceHooks: VoiceSessionHooks {
+        VoiceSessionHooks(
+            runTutorTurn: { [weak store] request in
+                guard let store else { return .failure(TutorServiceError.notConfigured) }
+                return await store.runVoiceTurn(request: request)
+            },
+            appendUserUtterance: { [weak store] text in
+                store?.appendVoiceUtterance(text)
+            },
+            streamAssistantText: { [weak store] itemID, delta in
+                store?.streamVoiceAssistantText(itemID: itemID, delta: delta)
+            },
+            assistantResponseFinished: { [weak store] itemID, delegated in
+                store?.finishVoiceAssistantResponse(itemID: itemID, delegated: delegated)
+            },
+            // The engine's own half of the one-microphone rule: it refuses to
+            // start while this reads true. `startVoiceChat` stops dictation
+            // and waits its session out first, so on our paths this is already
+            // false by the time the engine asks.
+            isDictationActive: { [weak dictation] in dictation?.isListening ?? false }
         )
     }
 
