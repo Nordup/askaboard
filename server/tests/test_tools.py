@@ -142,6 +142,23 @@ def test_update_board_svg_arm_asks_for_a_viewbox_and_no_frame():
         assert "viewBox" in svg["properties"][axis]["description"]
 
 
+def test_update_board_svg_arm_states_the_subset_the_renderer_was_measured_on():
+    """`SwiftDrawProbeTests` draws each feature and reads the pixels back, and
+    this sentence is the only place the model learns the result. It advertised
+    animation and filters before the probe ran, which is how a figure comes
+    back missing the half the model was counting on."""
+    arms = UPDATE_BOARD_TOOL["parameters"]["properties"]["elements"]["items"]["anyOf"]
+    svg = next(arm for arm in arms if arm["properties"]["kind"]["const"] == "svg")
+    document = svg["properties"]["svg"]["description"]
+
+    for supported in ("paths", "gradients", "defs/use", "masks", "`<style>`", "text"):
+        assert supported in document, supported
+    assert "`<filter>` effects are dropped" in document
+    for ignored in ("animation", "scripts", "`<foreignObject>`", "external references"):
+        assert ignored in document, ignored
+    assert "draw nothing" in document
+
+
 def test_update_board_path_arm_speaks_in_board_points():
     arms = UPDATE_BOARD_TOOL["parameters"]["properties"]["elements"]["items"]["anyOf"]
     path = next(arm for arm in arms if arm["properties"]["kind"]["const"] == "path")
@@ -192,13 +209,49 @@ def test_update_board_image_arm_places_a_blob_the_server_already_holds():
         assert image["properties"][axis]["maximum"] == 50000
 
 
-def test_update_board_description_prefers_raw_svg_for_complex_visuals():
+def test_update_board_description_names_an_element_kind_for_every_job():
+    """The model picks a kind before it reads a single arm, so the choice is
+    made here or it is made by guessing. Each clause routes one job: geometry,
+    curves, notation, a multi-part figure, a picture it did not draw itself."""
     description = UPDATE_BOARD_TOOL["description"]
-    assert "raw SVG" in description
-    assert "complex multi-part illustrations" in description
-    assert "passed through unchanged" in description
-    assert "interpreted locally" in description
-    assert "complete raw SVG document" in description
+
+    assert "ordinary primitives" in description
+    assert "`path` for curves and freeform shapes" in description
+    assert "`math_text` for every piece of mathematical notation" in description
+    assert "never plain `text`, never SVG `<text>`" in description
+    assert "never symbols built out of primitives" in description
+    assert "`svg` for any figure made of several parts" in description
+    assert "`width` and `height` sent as 0" in description
+    assert "one user unit to one board point" in description
+    assert "`image` for a photograph fetched with fetch_image" in description
+    assert "a chart a script produced" in description
+    assert "blob_id" in description
+
+
+def test_update_board_description_makes_no_claim_the_renderer_disproved():
+    """`SwiftDrawProbeTests` measured the renderer feature by feature. This
+    description used to recommend raw SVG *for* masks and filters, and used to
+    read as though SVG were only for complex work; both were wrong, and a wrong
+    claim here is read on every request of every turn."""
+    description = UPDATE_BOARD_TOOL["description"]
+
+    assert "filters" not in description
+    assert "complex multi-part illustrations" not in description
+    # The document contract belongs to the arm that carries the markup, and is
+    # asserted there. Saying it twice spends the bytes on every request.
+    assert "passed through unchanged" not in description
+    assert "second" not in description, "no time budget was ever true here"
+
+
+def test_update_board_description_keeps_the_rules_that_protect_learner_work():
+    """The drawing guidance was rewritten around these; they were not."""
+    description = UPDATE_BOARD_TOOL["description"]
+
+    assert "never touches the learner's own PencilKit ink" in description
+    assert "Do not cover or erase learner ink" in description
+    assert "Inspect the board with view_board before grading" in description
+    assert "do not draw gratuitously" in description
+    assert "reuse ids to revise existing content" in description
     assert "recommended_tutor_rect" in description
     assert "reserved_learner_work_rect" in description
 
@@ -282,7 +335,7 @@ def test_every_primitive_still_demands_the_whole_style_block():
 
 
 def test_the_tool_surface_stays_inside_its_budget():
-    """Every request carries all eleven tools, in every round of every turn.
+    """Every request carries the whole registry, in every round of every turn.
 
     Constant, so it caches — but it is also read by the model on each of those
     requests, and it is the floor under every prompt the service sends. The
@@ -339,7 +392,19 @@ def test_the_tool_surface_stays_inside_its_budget():
     # 622 under the bound: still room for a sentence, so the bound does not
     # move. The next task to trip this line raises it having read what the
     # bytes bought, which is the whole point of the number.
-    assert len(json.dumps(TOOL_DEFINITIONS)) < 31_200
+    #
+    # The prompt flip (task 17) cost 503. About 330 of those are the sentence
+    # naming which element kind does which job — the one thing no arm can say,
+    # because an arm only ever describes itself, and the model picks the kind
+    # before it reads one. The rest is the corrected account of what the
+    # renderer draws. Both replace claims that were false: the description
+    # recommended raw SVG for "masks, filters", and the arm advertised
+    # animation. The surface is 31,081, which leaves 119 — less than one clause
+    # — so the bound moves to 32,000 on the reasoning every raise here has
+    # used: about a thousand characters of room, still under the ~1,100 the
+    # cheapest function tool in this plan cost. A rewritten sentence fits; a
+    # sixteenth primitive does not, and trips this line.
+    assert len(json.dumps(TOOL_DEFINITIONS)) < 32_000
 
 
 def test_fetch_image_is_strict_closed_and_takes_one_url():

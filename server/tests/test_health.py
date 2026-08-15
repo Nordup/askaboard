@@ -29,5 +29,6 @@ async def test_health_survives_an_unreadable_backlog():
         "memory": {
             "unextracted_episodes": None,
             "oldest_unextracted_age_seconds": None,
+            "quarantined_episodes": None,
         },
     }

@@ -396,11 +396,10 @@ async def create_turn(
     if await db.get(Turn, body.turn_id) is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, "This turn was already handled.")
 
-    # INERT today: spend_today() sums turns.cost_usd, and nothing in this
-    # service ever writes that column, so it is always 0.0 and this check
-    # can never trip (see server/README.md, Known limitations). Left in
-    # place because the owner accepted that gap knowingly, not because it
-    # does anything — MODEL_ALLOWLIST above is today's only real ceiling.
+    # Today's recorded dollars — turns and voice both, each priced at record
+    # time from config's price tables. Checked before the session row or any
+    # provider call exists, so a capped day is one clean 402 rather than a
+    # turn that dies mid-stream.
     if await recorder.spend_today() >= settings.daily_spend_cap_usd:
         raise HTTPException(
             status.HTTP_402_PAYMENT_REQUIRED, "Daily spend cap reached."

@@ -16,11 +16,12 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, field_validator
 from sqlalchemy import delete, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.auth import require_device_token
-from app.config import get_settings
+from app.config import DEFAULT_MODEL, DEFAULT_REASONING_EFFORT, get_settings
 from app.memory.jobs import schedule_session_close
 from app.store.blobs import LocalBlobStore
 from app.store.db import db_session
@@ -214,12 +215,34 @@ async def replace_transcript(
     Only `messages` moves. Turns, attachments and episodes are records of
     what actually happened and are not rewritten by an edit.
 
-    404 for a session that does not exist, for `close`'s reason: a device
-    with the wrong id should find out. A session the backend never saw has no
-    transcript to cut, and the device treats the 404 as exactly that.
+    Created on demand, not 404'd — the same rule `/v1/dictation` and
+    `/v1/attachments` follow, and for the same reason: the device mints a
+    session id locally, so an id the backend has not seen is a new session and
+    not a wrong id. This used to 404, and live voice is what exposed it. A
+    voice session syncs its transcript as the learner talks, and nothing in
+    that loop calls `/v1/turn` — so until the learner typed something, every
+    sync 404'd and the spoken conversation existed only on the device. A call
+    that ended there took the whole transcript with it.
+
+    The body carries no model or effort, hence the defaults; the next turn
+    overwrites both with what the device actually has selected.
     """
     if await db.get(Session, session_id) is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown session.")
+        db.add(Session(
+            id=session_id,
+            model=DEFAULT_MODEL,
+            reasoning_effort=DEFAULT_REASONING_EFFORT,
+        ))
+        try:
+            await db.commit()
+        except IntegrityError:
+            # Two syncs racing on the same brand-new session id — voice sends
+            # these on a timer, so the second can start before the first has
+            # landed. Whichever loses adopts the row the other wrote. Committed
+            # on its own, ahead of the replace below, so this rollback can
+            # never undo the message rows.
+            await db.rollback()
+
     await db.execute(delete(Message).where(Message.session_id == session_id))
     for seq, message in enumerate(body.messages):
         db.add(

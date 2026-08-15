@@ -45,6 +45,26 @@ SEND_TO_TUTOR_TOOL = {
 }
 
 
+# Same discipline as SEND_TO_TUTOR_TOOL: the description is the propensity
+# lever. It names the trigger signals, the say-a-line-first rule, and the fact
+# that waking is a tap — while resting the mic is off, so a model that
+# promises "call me when you're ready" promises something it cannot deliver.
+STEP_BACK_TOOL = {
+    "type": "function",
+    "name": "step_back",
+    "description": (
+        "Go quiet so the learner can work alone. Call it when they say they "
+        "will try it themselves, when they ask for quiet, or when they take "
+        "an exercise and stop talking to you. Say one short warm line FIRST "
+        "— like 'Take your time — tap me when you're ready' — then call. "
+        "While you rest your microphone is off and you hear nothing; the "
+        "learner taps you to wake you, so never say you will listen for "
+        "them. Do not call it mid-explanation or while send_to_tutor runs."
+    ),
+    "parameters": {"type": "object", "properties": {}},
+}
+
+
 # Appended to SYSTEM_PROMPT rather than replacing it: the founder's decision is
 # one tutor system prompt family for both models, with a delegation section on
 # top. Written in the same voice as the rest of the prompt — the user talking
@@ -72,6 +92,10 @@ Before EVERY send_to_tutor call, say one short line describing what you're doing
 When tutor_reply comes back, don't read it out. The full written reply is already on my screen, typeset and complete. Your job is the spoken version: a short opener, the gist in a sentence or two, and at most three concrete details worth hearing.
 
 Never read LaTeX, code, or formulas symbol by symbol. Say them the way a person would — "x squared over two", never "backslash frac x squared two". The precise notation is on my screen; your voice carries the meaning.
+
+## STEPPING BACK
+
+When I want to work alone — I say I'll try it, I ask for quiet, or I take an exercise and stop talking to you — say one short warm line ("Take your time — tap me when you're ready") and call step_back. Don't ask my permission and don't keep narrating. While you rest you can't hear me at all: never promise to listen, never say "call me" — I will tap you when I want you back.
 
 ## HOW TO SPEAK
 

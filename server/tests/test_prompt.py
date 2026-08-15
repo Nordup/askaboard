@@ -5,11 +5,30 @@ from app.tutor.prompt import SYSTEM_PROMPT, compose_user_prompt
 
 
 def test_system_prompt_is_the_unchanged_experimental_draft():
-    # Re-pinned for the memory rework (2026-08-15): the draft gained the
-    # ## MEMORY section and the tool list swapped `recent_sessions` for the
-    # archive tools. Any *other* edit still has to show up here.
+    # Re-pinned for the 2026-08-15 draft merge plus the learner-led section
+    # move after KINDS OF OBJECTIVES, and again for the board rework's prompt
+    # flip: the TOOLS list gained fetch_image, web_search, and
+    # code_interpreter, and RESEARCH gained the compute-a-chart /
+    # draw-a-diagram split. Any *other* edit still has to show up here.
     assert hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest() == (
-        "038cd1502f2589b9000391797cb0e0d504715489dda0ba6e66d5be89e400ebd0"
+        "d40ef2a3a0f038e585a65d3e95a4ddd68a81900b6069dd6d802d53d34804d8bc"
+    )
+
+
+def test_system_prompt_keeps_the_three_draft_merge_additions():
+    assert (
+        "And provide materials for me to read and learn from in a way that "
+        "it's easy to read/see/understand from my level of knowledge and "
+        "personal preferences" in SYSTEM_PROMPT
+    )
+    assert (
+        "And use board to visualize concepts, structure the material."
+        in SYSTEM_PROMPT
+    )
+    assert (
+        "Mb even I would incentivize you to use board more often to "
+        "draw/visualize, make an experience memorable by incorporating sense "
+        "of art and design." in SYSTEM_PROMPT
     )
 
 
@@ -24,6 +43,7 @@ def test_system_prompt_contains_every_draft_section_and_tool():
     for heading in (
         "# ABOUT",
         "## UNDERSTAND THE USER",
+        "## LEARNER-LED MODE",
         "## GOAL",
         "## KINDS OF OBJECTIVES",
         "## BOARD",
@@ -45,9 +65,49 @@ def test_system_prompt_contains_every_draft_section_and_tool():
         "get_session",
         "list_sessions",
         "record_evidence",
+        # The board rework's three additions. A tool the model is offered on
+        # every request and never told about in the prompt is a tool it reaches
+        # for by accident or not at all.
+        "fetch_image",
+        "web_search",
+        "code_interpreter",
     ):
         assert tool in SYSTEM_PROMPT
     assert "recent_sessions" not in SYSTEM_PROMPT
+
+
+def test_system_prompt_splits_computed_charts_from_drawn_diagrams():
+    """The one routing rule the tools cannot state for themselves: a figure
+    whose shape is a result gets computed and placed as an image, and a figure
+    whose shape is a decision gets drawn natively and stays revisable."""
+    research = SYSTEM_PROMPT[SYSTEM_PROMPT.index("## RESEARCH"):]
+    research = research[:research.index("## MEMORY")]
+
+    assert "compute with a script" in research
+    assert "the image the script produced" in research
+    assert "draw natively" in research
+    assert "math_text" in research
+
+
+def test_system_prompt_enforces_the_learner_led_invariant():
+    assert (
+        "When the learner is solving or deriving something themselves, do not "
+        "advance beyond their current step. Give at most one question, check, "
+        "or requested hint per reply. Do not reveal the next step, derivation, "
+        "or final answer unless they explicitly ask to leave learner-led mode."
+        in SYSTEM_PROMPT
+    )
+
+
+def test_system_prompt_orders_learner_led_after_objectives_before_board():
+    objectives = SYSTEM_PROMPT.index("## KINDS OF OBJECTIVES")
+    learner_led = SYSTEM_PROMPT.index("## LEARNER-LED MODE")
+    board = SYSTEM_PROMPT.index("## BOARD")
+    objectives_tail = SYSTEM_PROMPT.index(
+        "There might be other scenarios, try do identify them and figure out my intent."
+    )
+    assert objectives < learner_led < board
+    assert objectives_tail < learner_led
 
 
 def test_user_prompt_marks_the_transcript_as_data():
@@ -144,3 +204,23 @@ def test_the_visible_attempt_guidance_still_belongs_to_the_board_image():
 
 def test_no_attachments_adds_nothing():
     assert _prompt(uploads=[]) == _prompt()
+
+
+def test_step_back_tool_shape():
+    from app.tutor.voice_prompt import STEP_BACK_TOOL
+
+    assert STEP_BACK_TOOL["name"] == "step_back"
+    assert STEP_BACK_TOOL["type"] == "function"
+    assert STEP_BACK_TOOL["parameters"] == {"type": "object", "properties": {}}
+    # The description is the propensity lever: it must drill the two rules —
+    # say one short line first, and waking is a tap because the mic is off.
+    desc = STEP_BACK_TOOL["description"]
+    assert "one short" in desc
+    assert "tap" in desc
+
+
+def test_voice_prompt_has_stepping_back_section():
+    from app.tutor.voice_prompt import VOICE_SYSTEM_PROMPT
+
+    assert "## STEPPING BACK" in VOICE_SYSTEM_PROMPT
+    assert "step_back" in VOICE_SYSTEM_PROMPT

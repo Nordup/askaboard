@@ -6,7 +6,9 @@ from sqlalchemy import select
 from app.attachments.convert import Converted
 from app.attachments.kinds import Kind
 from app.store.blobs import LocalBlobStore
-from app.store.models import Attachment, LLMCall, Message, Session, ToolCall, Turn
+from app.store.models import (
+    Attachment, LLMCall, Message, RealtimeUsage, Session, ToolCall, Turn,
+)
 from app.store.recorder import (
     ORIGINAL_CONTENT_TYPE, REPLY_LOST_TEXT, Recorder, cache_tokens, redact_images,
 )
@@ -396,6 +398,201 @@ async def test_fail_turn_without_a_result_still_records_the_error(db, db_factory
         assert (message.seq, message.role, message.text) == (
             0, "tutor", REPLY_LOST_TEXT,
         )
+
+
+@requires_db
+async def test_finish_turn_prices_the_turn_into_cost_usd(db, db_factory, tmp_path):
+    """The column `spend_today()` sums. Nothing wrote it before this — the
+    daily cap read 0.0 forever and could never trip."""
+    session = Session(model="gpt-5.6-luna", reasoning_effort="high")
+    db.add(session)
+    await db.flush()
+    turn_id = uuid.uuid4()
+    db.add(Turn(
+        id=turn_id, session_id=session.id, status="running",
+        model="gpt-5.6-luna", reasoning_effort="high",
+    ))
+    await db.commit()
+
+    recorder = Recorder(db_factory, LocalBlobStore(tmp_path))
+    from app.tutor.loop import TurnResult
+    result = TurnResult(
+        raw_events=[], text="ok",
+        usage={
+            "input_tokens": 1_000_000,
+            "output_tokens": 1_000_000,
+            "input_tokens_details": {"cached_tokens": 500_000},
+        },
+    )
+    await recorder.finish_turn(
+        turn_id=turn_id, session_id=session.id, next_seq=1,
+        result=result, request_body={"model": "gpt-5.6-luna"},
+        ttft_ms=1, latency_ms=1,
+    )
+
+    async with db_factory() as fresh:
+        stored = (await fresh.execute(select(Turn))).scalar_one()
+        # 500k uncached in at $0.20/1M + 500k cached at $0.02/1M + 1M out at $1.20/1M.
+        assert stored.cost_usd == pytest.approx(0.10 + 0.01 + 1.20)
+    assert await recorder.spend_today() == pytest.approx(1.31)
+
+
+@requires_db
+async def test_fail_turn_prices_the_tokens_it_records(db, db_factory, tmp_path):
+    """A turn that died after the provider billed for output was still paid
+    for — its dollars must count against the cap like anyone else's."""
+    session = Session(model="gpt-5.6-sol", reasoning_effort="high")
+    db.add(session)
+    await db.flush()
+    turn_id = uuid.uuid4()
+    db.add(Turn(
+        id=turn_id, session_id=session.id, status="running",
+        model="gpt-5.6-sol", reasoning_effort="high",
+    ))
+    await db.commit()
+
+    recorder = Recorder(db_factory, LocalBlobStore(tmp_path))
+    from app.tutor.loop import TurnResult
+    result = TurnResult(
+        raw_events=[], text="",
+        usage={"input_tokens": 24_294, "output_tokens": 4_314,
+               "output_tokens_details": {"reasoning_tokens": 467}},
+    )
+    await recorder.fail_turn(
+        turn_id=turn_id, message="connection reset", retryable=True,
+        result=result, request_body={"model": "gpt-5.6-sol"},
+    )
+
+    async with db_factory() as fresh:
+        stored = (await fresh.execute(select(Turn))).scalar_one()
+        assert stored.cost_usd == pytest.approx(
+            (24_294 * 5.00 + 4_314 * 30.00) / 1_000_000
+        )
+
+
+@requires_db
+async def test_a_turn_with_no_usage_leaves_cost_usd_null(db, db_factory, tmp_path):
+    """No usage means nothing was measured; NULL is the truth, and it keeps
+    `spend_today()`'s sum honest rather than quietly adding zeros."""
+    session = Session(model="gpt-5.6-luna", reasoning_effort="high")
+    db.add(session)
+    await db.flush()
+    turn_id = uuid.uuid4()
+    db.add(Turn(
+        id=turn_id, session_id=session.id, status="running",
+        model="gpt-5.6-luna", reasoning_effort="high",
+    ))
+    await db.commit()
+
+    recorder = Recorder(db_factory, LocalBlobStore(tmp_path))
+    from app.tutor.loop import TurnResult
+    result = TurnResult(raw_events=[], usage={}, text="ok")
+    await recorder.finish_turn(
+        turn_id=turn_id, session_id=session.id, next_seq=1,
+        result=result, request_body={"model": "gpt-5.6-luna"},
+        ttft_ms=1, latency_ms=1,
+    )
+
+    async with db_factory() as fresh:
+        stored = (await fresh.execute(select(Turn))).scalar_one()
+        assert stored.cost_usd is None
+
+
+@requires_db
+async def test_record_realtime_usage_prices_and_stores_the_row(db_factory, tmp_path):
+    """One voice response's token bill, priced and written. `session_id` is a
+    plain uuid on purpose — a voice call can start before any turn has created
+    the session row, and the report must still land."""
+    recorder = Recorder(db_factory, LocalBlobStore(tmp_path))
+    session_id = uuid.uuid4()
+
+    await recorder.record_realtime_usage(
+        report_id=uuid.uuid4(), session_id=session_id, response_id="resp_1",
+        model="gpt-realtime-2.1",
+        audio_input_tokens=100_000, cached_audio_input_tokens=40_000,
+        audio_output_tokens=50_000,
+        text_input_tokens=10_000, cached_text_input_tokens=5_000,
+        text_output_tokens=2_000,
+    )
+
+    async with db_factory() as fresh:
+        row = (await fresh.execute(select(RealtimeUsage))).scalar_one()
+        assert row.session_id == session_id
+        assert row.model == "gpt-realtime-2.1"
+        assert row.audio_input_tokens == 100_000
+        assert row.cost_usd == pytest.approx(
+            (60_000 * 32.00 + 40_000 * 0.40 + 50_000 * 64.00
+             + 5_000 * 4.00 + 5_000 * 0.40 + 2_000 * 24.00) / 1_000_000
+        )
+
+
+@requires_db
+async def test_record_realtime_usage_is_idempotent_on_the_report_id(
+    db_factory, tmp_path
+):
+    """The device may retry a report it never got an answer for. The same
+    report id twice must bill once — same pattern as `Turn.id`."""
+    recorder = Recorder(db_factory, LocalBlobStore(tmp_path))
+    report_id = uuid.uuid4()
+    for _ in range(2):
+        await recorder.record_realtime_usage(
+            report_id=report_id, session_id=None, response_id="resp_1",
+            model="gpt-realtime-2.1",
+            audio_input_tokens=1_000, cached_audio_input_tokens=0,
+            audio_output_tokens=1_000,
+            text_input_tokens=0, cached_text_input_tokens=0,
+            text_output_tokens=0,
+        )
+
+    async with db_factory() as fresh:
+        rows = (await fresh.execute(select(RealtimeUsage))).scalars().all()
+        assert len(rows) == 1
+
+
+@requires_db
+async def test_spend_today_sums_turn_and_voice_spend(db, db_factory, tmp_path):
+    """The cap covers voice: a day's spend is turns plus realtime rows. On
+    2026-08-15 voice was ~$4.70 of a $7 day and none of it was counted."""
+    session = Session(model="gpt-5.6-luna", reasoning_effort="high")
+    db.add(session)
+    await db.flush()
+    db.add(Turn(
+        id=uuid.uuid4(), session_id=session.id, status="ok",
+        model="gpt-5.6-luna", reasoning_effort="high", cost_usd=1.25,
+    ))
+    await db.commit()
+
+    recorder = Recorder(db_factory, LocalBlobStore(tmp_path))
+    await recorder.record_realtime_usage(
+        report_id=uuid.uuid4(), session_id=session.id, response_id=None,
+        model="gpt-realtime-2.1",
+        audio_input_tokens=0, cached_audio_input_tokens=0,
+        audio_output_tokens=50_000,  # 50k audio out at $64/1M = $3.20
+        text_input_tokens=0, cached_text_input_tokens=0,
+        text_output_tokens=0,
+    )
+
+    assert await recorder.spend_today() == pytest.approx(1.25 + 3.20)
+
+
+@requires_db
+async def test_spend_today_ignores_yesterdays_voice_rows(db, db_factory, tmp_path):
+    """It is a *daily* cap; only rows since UTC midnight count."""
+    from datetime import datetime, timedelta, timezone
+    db.add(RealtimeUsage(
+        id=uuid.uuid4(), session_id=None, response_id=None,
+        model="gpt-realtime-2.1",
+        audio_input_tokens=0, cached_audio_input_tokens=0,
+        audio_output_tokens=1_000_000,
+        text_input_tokens=0, cached_text_input_tokens=0,
+        text_output_tokens=0,
+        cost_usd=64.0,
+        created_at=datetime.now(timezone.utc) - timedelta(days=1),
+    ))
+    await db.commit()
+
+    recorder = Recorder(db_factory, LocalBlobStore(tmp_path))
+    assert await recorder.spend_today() == 0.0
 
 
 @requires_db

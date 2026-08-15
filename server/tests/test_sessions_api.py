@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
+from app.config import DEFAULT_MODEL, DEFAULT_REASONING_EFFORT
 from app.store.blobs import LocalBlobStore
 from app.store.models import (
     KC, Attachment, Episode, Learner, LLMCall, MemoryAtom, Message, Observation,
@@ -416,16 +417,44 @@ async def test_replacing_with_an_empty_prefix_empties_the_transcript(db_app, db)
 
 
 @requires_db
-async def test_replacing_an_unknown_sessions_transcript_is_a_404(db_app):
+async def test_replacing_an_unknown_sessions_transcript_creates_the_session(
+    db_app, db
+):
+    """A live-voice session syncs its transcript before anything calls
+    `/v1/turn`, so the first sync arrives for a session id the backend has
+    never seen. This used to 404 and the spoken conversation stayed on the
+    device; now the row is created with the defaults and the messages land.
+    """
+    session_id = uuid.uuid4()
+    body = {
+        "messages": [
+            {"role": "learner", "text": "what is a fraction"},
+            {"role": "tutor", "text": "a part of a whole"},
+        ]
+    }
     async with AsyncClient(
         transport=ASGITransport(app=db_app), base_url="http://test"
     ) as client:
         response = await client.put(
-            f"/v1/sessions/{uuid.uuid4()}/transcript",
-            json={"messages": []},
-            headers=AUTH,
+            f"/v1/sessions/{session_id}/transcript", json=body, headers=AUTH
         )
-    assert response.status_code == 404
+
+    assert response.status_code == 204
+    created = await db.get(Session, session_id)
+    assert created is not None
+    assert created.model == DEFAULT_MODEL
+    assert created.reasoning_effort == DEFAULT_REASONING_EFFORT
+    rows = (
+        await db.execute(
+            select(Message)
+            .where(Message.session_id == session_id)
+            .order_by(Message.seq)
+        )
+    ).scalars().all()
+    assert [(m.seq, m.role, m.text) for m in rows] == [
+        (0, "learner", "what is a fraction"),
+        (1, "tutor", "a part of a whole"),
+    ]
 
 
 @requires_db

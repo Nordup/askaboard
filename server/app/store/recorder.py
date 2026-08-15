@@ -7,11 +7,15 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.attachments.convert import Converted
+from app.pricing import realtime_cost_usd, turn_cost_usd
 from app.store.blobs import BlobRef, BlobStore
-from app.store.models import Attachment, LLMCall, Message, Session, ToolCall, Turn
+from app.store.models import (
+    Attachment, LLMCall, Message, RealtimeUsage, Session, ToolCall, Turn,
+)
 
 #: What an uploaded file's *original* bytes are recorded as, in the blob store
 #: and in the row that names them — one constant so the two cannot drift. See
@@ -79,12 +83,18 @@ def cache_tokens(usage: dict) -> tuple[int | None, int | None]:
 
 
 def _apply_usage(turn: Turn, usage: dict) -> None:
-    """Copy one turn's token counts onto its row.
+    """Copy one turn's token counts onto its row, and price them.
 
     Shared by the success and the failure path, which have to record the same
     five numbers: a turn that spent money and then died is exactly the turn
     whose usage matters most. `loop._merge_usage` has already summed the nested
     detail dicts across every round, so these are per-turn totals.
+
+    `cost_usd` is written here because this is the one place both paths pass
+    through with the usage in hand — it is the column `spend_today()` sums,
+    and pricing it anywhere later would reopen the always-0.0 gap the daily
+    cap sat behind. Priced from `turn.model`, the model this turn actually
+    ran, not from anything in the request body.
     """
     turn.input_tokens = usage.get("input_tokens")
     turn.output_tokens = usage.get("output_tokens")
@@ -92,6 +102,7 @@ def _apply_usage(turn: Turn, usage: dict) -> None:
         "reasoning_tokens"
     )
     turn.cached_tokens, turn.cache_write_tokens = cache_tokens(usage)
+    turn.cost_usd = turn_cost_usd(turn.model, usage)
 
 
 class Recorder:
@@ -443,14 +454,75 @@ class Recorder:
         """Read a stored blob back. The store is the same one `put` writes to."""
         return await self._blobs.get(key)
 
+    async def record_realtime_usage(
+        self,
+        *,
+        report_id: uuid.UUID,
+        session_id: uuid.UUID | None,
+        response_id: str | None,
+        model: str,
+        audio_input_tokens: int,
+        cached_audio_input_tokens: int,
+        audio_output_tokens: int,
+        text_input_tokens: int,
+        cached_text_input_tokens: int,
+        text_output_tokens: int,
+    ) -> None:
+        """One voice response's token counts, priced and written.
+
+        `report_id` is minted on the device, which is what makes a blind
+        retry safe: the second INSERT of the same id hits the primary key and
+        is swallowed here, so the response bills once — the same idempotency
+        `Turn.id` gives `/v1/turn`, without asking the device to remember
+        whether its last report landed.
+        """
+        row = RealtimeUsage(
+            id=report_id, session_id=session_id, response_id=response_id,
+            model=model,
+            audio_input_tokens=audio_input_tokens,
+            cached_audio_input_tokens=cached_audio_input_tokens,
+            audio_output_tokens=audio_output_tokens,
+            text_input_tokens=text_input_tokens,
+            cached_text_input_tokens=cached_text_input_tokens,
+            text_output_tokens=text_output_tokens,
+            cost_usd=realtime_cost_usd(
+                model,
+                audio_input_tokens=audio_input_tokens,
+                cached_audio_input_tokens=cached_audio_input_tokens,
+                audio_output_tokens=audio_output_tokens,
+                text_input_tokens=text_input_tokens,
+                cached_text_input_tokens=cached_text_input_tokens,
+                text_output_tokens=text_output_tokens,
+            ),
+        )
+        async with self._sessionmaker() as session:
+            session.add(row)
+            try:
+                await session.commit()
+            except IntegrityError:
+                # The same report already landed. Nothing to reconcile: the
+                # row's values are a function of the same usage event.
+                await session.rollback()
+
     async def spend_today(self) -> float:
+        """Today's recorded dollars: turns plus voice, since UTC midnight.
+
+        Two sums, one connection. Voice rows joined in because the realtime
+        path used to record nothing at all — the day this fix was written,
+        voice was ~$4.70 of a $7 day and `DAILY_SPEND_CAP_USD` saw none of it.
+        """
         midnight = datetime.now(timezone.utc).replace(
             hour=0, minute=0, second=0, microsecond=0
         )
         async with self._sessionmaker() as session:
-            total = await session.scalar(
+            turns = await session.scalar(
                 select(func.coalesce(func.sum(Turn.cost_usd), 0.0)).where(
                     Turn.started_at >= midnight
                 )
             )
-        return float(total or 0.0)
+            voice = await session.scalar(
+                select(func.coalesce(func.sum(RealtimeUsage.cost_usd), 0.0)).where(
+                    RealtimeUsage.created_at >= midnight
+                )
+            )
+        return float(turns or 0.0) + float(voice or 0.0)

@@ -64,7 +64,7 @@ failed one logs why and the service still comes up.
 | `DEVICE_TOKEN` | The bearer token the iPad app presents. Generate with `python -c "import secrets; print(secrets.token_urlsafe(32))"`. |
 | `BLOB_DIR` | *Optional*, defaults to `./blobs`. Local directory for the blob store (board PNGs, ink, dictation audio, raw event logs). |
 | `LOG_DIR` | *Optional*, defaults to `./logs`. Where the rotating `server.log` is written. See [When a turn goes wrong](#when-a-turn-goes-wrong). |
-| `DAILY_SPEND_CAP_USD` | *Optional*, defaults to `5.0`. Turns are refused with `402` once today's recorded spend reaches this. See [Known limitations](#known-limitations) — today this never trips. |
+| `DAILY_SPEND_CAP_USD` | *Optional*, defaults to `5.0`. Turns are refused with `402` once today's recorded spend — turns plus reported voice usage, priced from the tables in [`app/config.py`](app/config.py) — reaches this. See [Known limitations](#known-limitations) for what the sum still misses. |
 | `PERSIST_DICTATION_AUDIO` | *Optional*, defaults to **`true`**. Whether dictation recordings are written to the blob store. Leaving this unset does not mean recordings are skipped — it means they're kept, same as if you'd set it to `true` explicitly. Retention below applies whenever this is `true`. |
 | `TEST_DATABASE_URL` | A **separate** database the test suite runs against. See the warning immediately below — do not skip it. |
 
@@ -469,23 +469,29 @@ event) or is handled purely server-side.
 
 ## Known limitations
 
-**The daily spend cap never trips.** `DAILY_SPEND_CAP_USD` is compared
-against `Recorder.spend_today()`, which sums `turns.cost_usd` — but nothing
-in this service ever writes a value into `turns.cost_usd`. It stays `NULL`
-on every turn, `spend_today()` sums to `0.0`, and `0.0` never reaches any
-cap. This is a real gap, not a subtle one: as shipped, the spend cap
-provides no protection at all. Fixing it needs a per-model pricing table
-(input/output/reasoning token cost by model) so a dollar figure can be
-computed from `usage` and written when a turn finishes or fails.
+**The daily spend cap covers turns and voice, not everything.** Every turn
+is priced when it finishes or fails — `turns.cost_usd`, computed from the
+recorded token counts and the per-model price table in
+[`app/config.py`](app/config.py) (`MODEL_PRICES_PER_1M`), so a price change
+is a one-line edit there. The realtime voice path bills through the same
+cap: the device reports each voice response's token counts to
+`POST /v1/realtime/usage` (the call runs WebRTC device↔OpenAI, so the
+device is the only party that sees the usage events), the row is priced
+from `REALTIME_PRICES_PER_1M`, and `Recorder.spend_today()` sums both
+tables. What the sum still misses: server-side memory jobs (extraction,
+embedding, summarization) create no turn and are not priced; a voice
+response whose report never leaves the device (app killed mid-call) is not
+counted; and the `402` refusal itself applies to `POST /v1/turn` only — an
+over-cap day does not refuse new *voice calls*, it refuses the turns around
+them.
 
-**The daily spend cap's only real backstop is the model allowlist.**
+**The model allowlist is still the other half of the ceiling.**
 `MODEL_ALLOWLIST` in [`app/config.py`](app/config.py) rejects any
 `model` outside `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` with a `422`
-before any provider call — that's a real ceiling today, independent of the
-non-functional spend cap above. It bounds *which* models can be called, not
-*how much* they cost to run, so it doesn't substitute for a real pricing
-table; it just closes the "any model at any price" gap the missing spend
-cap otherwise leaves wide open.
+before any provider call. It bounds *which* models can be called; the spend
+cap bounds *how much* a day of them may cost. Config refuses to boot if an
+allowlisted model has no price row, so the two lists cannot drift apart
+silently.
 
 **Database tests can now run concurrently.** Each test *run* (one `pytest`
 process) creates its own Postgres schema (`test_<uuid>`) on

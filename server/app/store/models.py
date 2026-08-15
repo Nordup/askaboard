@@ -172,6 +172,55 @@ class Attachment(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
 
+class RealtimeUsage(Base):
+    """One voice response's token bill, as reported by the device.
+
+    The realtime call runs WebRTC device↔OpenAI; the server is only the SDP
+    proxy and never sees the data channel, so the only party holding the
+    `response.done` usage events is the iPad. It reports each response's
+    counts to `POST /v1/realtime/usage`, and this row is what makes voice
+    spend visible to `spend_today()` — before it, a day that was ~$4.70 of
+    voice counted as $0.00 against the daily cap.
+
+    Input counts are per modality (audio and text bill an order of magnitude
+    apart), and each cached count is a subset of its input total, the same
+    relationship `Turn.cached_tokens` has to `Turn.input_tokens`.
+    """
+
+    __tablename__ = "realtime_usage"
+
+    #: Client-generated, which is what makes a retried report idempotent —
+    #: the same pattern, for the same reason, as `Turn.id`.
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    #: The learning session the call belonged to. Deliberately *not* a foreign
+    #: key: sessions are created lazily by the first turn, and a voice call
+    #: can start — and bill — before any turn exists. A report must never be
+    #: refused because the session row is not there yet.
+    session_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
+    #: The provider's response id, for tracing a row back to the transcript.
+    #: Diagnostic only — idempotency rides on `id`.
+    response_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: Which price sheet the row was billed against — the model the call
+    #: actually ran on, as the device reported it, checked against
+    #: REALTIME_MODEL_ALLOWLIST. It falls back to `Settings.openai_realtime_model`
+    #: when a report names none. Was server-chosen outright until the `Voice
+    #: model` setting shipped (2026-08-16); the invariant that survives is the
+    #: one that mattered — the device names a model from a priced menu, never a
+    #: price, and every allowlisted model must carry a row in
+    #: REALTIME_PRICES_PER_1M or the server refuses to boot.
+    model: Mapped[str] = mapped_column(String(64))
+    audio_input_tokens: Mapped[int] = mapped_column(Integer)
+    cached_audio_input_tokens: Mapped[int] = mapped_column(Integer)
+    audio_output_tokens: Mapped[int] = mapped_column(Integer)
+    text_input_tokens: Mapped[int] = mapped_column(Integer)
+    cached_text_input_tokens: Mapped[int] = mapped_column(Integer)
+    text_output_tokens: Mapped[int] = mapped_column(Integer)
+    #: Priced at write time from `config.REALTIME_PRICES_PER_1M`; NULL when
+    #: the model has no price row, which is a visible gap, not a zero.
+    cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
 class Learner(Base):
     """The person the memory is about.
 

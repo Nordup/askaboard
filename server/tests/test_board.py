@@ -54,13 +54,17 @@ RAW_SVG_DOCUMENT = (
     "</svg>"
 )
 
-#: The same figure written in the subset the device actually draws: paths,
-#: shapes, groups, transforms, gradients, and text. Nothing here is a warning.
+#: The same figure written in the subset the device actually draws, as
+#: `SwiftDrawProbeTests` measured it feature by feature: paths, shapes, groups,
+#: transforms, gradients, defs/use, text, CSS `<style>` blocks, and masks.
+#: Nothing here is a warning.
 CLEAN_SVG_DOCUMENT = (
     '<svg viewBox="0 0 200 100" xmlns="http://www.w3.org/2000/svg">'
-    '<defs><linearGradient id="g"><stop offset="0" stop-color="#0155FB"/></linearGradient></defs>'
-    '<g transform="translate(10 10)">'
-    '<path d="M0 0 L80 40" stroke="#0A0A0A"/>'
+    '<style>.axis { stroke: #0A0A0A; stroke-width: 2 }</style>'
+    '<defs><linearGradient id="g"><stop offset="0" stop-color="#0155FB"/></linearGradient>'
+    '<mask id="m"><rect x="0" y="0" width="200" height="100" fill="white"/></mask></defs>'
+    '<g transform="translate(10 10)" mask="url(#m)">'
+    '<path class="axis" d="M0 0 L80 40"/>'
     '<circle cx="40" cy="20" r="8" fill="url(#g)"/>'
     "</g><text x=\"0\" y=\"90\">area</text></svg>"
 )
@@ -684,16 +688,32 @@ def test_lint_names_every_feature_the_device_cannot_draw():
     warnings = lint_svg(RAW_SVG_DOCUMENT)
 
     assert any("<filter>" in warning for warning in warnings)
-    assert any("<mask>" in warning for warning in warnings)
     assert any("<foreignObject>" in warning for warning in warnings)
     assert any("<animate>" in warning for warning in warnings)
-    assert all("unsupported" in warning for warning in warnings)
+
+
+def test_lint_says_a_filter_drops_its_effect_and_not_its_element():
+    """`SwiftDrawProbeTests` draws a filtered shape and reads the pixels back:
+    the shape is there, the blur is not. The warning used to say the element
+    was unsupported, which would send the model back with the whole figure
+    redrawn to avoid a filter it never needed to remove."""
+    warning = next(w for w in lint_svg(RAW_SVG_DOCUMENT) if "<filter>" in w)
+
+    assert "still draws" in warning
+    assert "unsupported" not in warning
+
+
+def test_lint_stays_silent_about_masks_the_renderer_actually_draws():
+    """Measured, not assumed: the probe renders a masked shape correctly. A
+    warning here would teach the model out of markup that works."""
+    assert not any("mask" in warning for warning in lint_svg(RAW_SVG_DOCUMENT))
 
 
 def test_lint_passes_a_document_written_in_the_supported_subset():
-    """Paths, shapes, groups, transforms, gradients, and text draw natively.
-    Warning about those would train the model out of the markup it should be
-    writing — and `xmlns="http...` is not an external reference."""
+    """Paths, shapes, groups, transforms, gradients, text, CSS `<style>`
+    blocks, and masks all draw natively. Warning about those would train the
+    model out of the markup it should be writing — and `xmlns="http...` is not
+    an external reference."""
     assert lint_svg(CLEAN_SVG_DOCUMENT) == []
 
 

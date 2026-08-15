@@ -187,11 +187,17 @@ UPDATE_BOARD_TOOL: dict = {
         "learner's whiteboard. Use it when the learner explicitly asks for a visual, "
         "exercise, or diagram, and when a small visual correction materially helps "
         "(for example placing a correction beside their work). Tutor objects are "
-        "structured text and geometry, never simulated handwriting. Use ordinary "
-        "primitives for simple editable diagrams and raw SVG for complex "
-        "multi-part illustrations such as rich paths, gradients, masks, filters, "
-        "or elaborate figures; provide a complete raw SVG document, passed through unchanged and "
-        "interpreted locally on the learner's device. This tool never touches the "
+        "structured text and geometry, never simulated handwriting. Choose the "
+        "element for the job: ordinary primitives — lines, arrows, shapes, arcs, "
+        "angle markers, plain text labels — for simple geometry and quick "
+        "annotations; `path` for curves and freeform shapes; `math_text` for every "
+        "piece of mathematical notation, never plain `text`, never SVG `<text>`, "
+        "and never symbols built out of primitives; `svg` for any figure made of "
+        "several parts, which is what most real illustrations are — one document "
+        "with a viewBox, `width` and `height` sent as 0, drawn one user unit to one "
+        "board point; `image` for a photograph fetched with fetch_image or a chart "
+        "a script produced, placed by the blob_id that tool answered with. "
+        "This tool never touches the "
         "learner's own PencilKit ink. Each object has a stable id: "
         "reuse ids to revise existing content and list ids in delete_ids to remove "
         "it. Pass elements=[] to only delete, delete_ids=[] to only upsert, or "
@@ -419,7 +425,7 @@ UPDATE_BOARD_TOOL: dict = {
                                     "type": "string",
                                     "minLength": 1,
                                     "maxLength": MAX_SVG_CHARS,
-                                    "description": "A complete raw SVG document, passed through unchanged and interpreted locally on the learner's device. Give it a viewBox: one user unit is drawn as one board point, and the viewBox's top-left corner sits at (x, y), so size the figure in the same units as every other element and size it only once. Accepts full declarative SVG markup including paths, gradients, masks, filters, clips, markers, symbols, text, and animation.",
+                                    "description": "A complete raw SVG document, passed through unchanged and interpreted locally on the learner's device. Give it a viewBox: one user unit is drawn as one board point, and the viewBox's top-left corner sits at (x, y), so size the figure in the same units as every other element and size it only once. The device draws paths, shapes, groups, transforms, linear and radial gradients, defs/use, masks, CSS `<style>` blocks, and text; `<filter>` effects are dropped, and animation, scripts, `<foreignObject>`, and external references draw nothing.",
                                 },
                             },
                             required=["x", "y", "width", "height", "svg"],

@@ -7,9 +7,13 @@ permanent key, and OpenAI's SDP answer is handed straight back. A port of the
 sleep app's `apps/server/src/routes/realtime-session.ts` to FastAPI/httpx
 (`docs/research/voice-mode/sleep-app-voice-stack.md` §2-3).
 
-Stateless on purpose: no database, no session row. Rendezvous stays
-in-process elsewhere, so this route can live in the same worker as the turn
-stream without caring which worker that is.
+The call proxy is stateless on purpose: no database, no session row.
+Rendezvous stays in-process elsewhere, so it can live in the same worker as
+the turn stream without caring which worker that is. The one route here that
+does write is `POST /v1/realtime/usage` — the device reporting what a voice
+response cost, which is the only way voice spend can exist server-side at
+all: the call itself runs WebRTC device↔OpenAI, and the usage events ride a
+data channel this server never sees.
 """
 
 from __future__ import annotations
@@ -22,13 +26,23 @@ import uuid
 from functools import lru_cache
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response
+from pydantic import BaseModel, Field, field_validator
 
 from app.auth import require_device_token
-from app.config import get_settings
+from app.config import REALTIME_MODEL_ALLOWLIST, get_settings
+# The turn endpoint's own wiring, not a copy: dependency overrides are keyed
+# by function object, so a second `get_recorder` here would dodge the test
+# fixtures' override and write straight to DATABASE_URL under pytest.
+from app.api.turn import get_recorder
+from app.store.recorder import Recorder
 from app.tutor.vocabulary import DICTATION_PROMPT, KEYWORDS, sanitize
-from app.tutor.voice_prompt import SEND_TO_TUTOR_TOOL, VOICE_SYSTEM_PROMPT
+from app.tutor.voice_prompt import (
+    SEND_TO_TUTOR_TOOL,
+    STEP_BACK_TOOL,
+    VOICE_SYSTEM_PROMPT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -89,8 +103,8 @@ TRANSCRIPTION_PROMPT = sanitize(
 )
 
 
-def build_realtime_session(mode: str = "semantic_vad") -> dict:
-    """The whole session configuration, server-owned.
+def build_realtime_session(mode: str = "semantic_vad", model: str | None = None) -> dict:
+    """The whole session configuration, server-owned bar the model.
 
     Built here rather than on the device so there is not a second copy of
     these values to drift — and so the device never re-encodes an
@@ -98,11 +112,15 @@ def build_realtime_session(mode: str = "semantic_vad") -> dict:
     transcription pinned to English with the maths vocabulary, because
     semantic VAD reads the words to decide when a turn ended and a
     hallucinated language breaks turn-taking, not just the transcript.
+
+    `model` is the one value the caller supplies, already checked against
+    REALTIME_MODEL_ALLOWLIST by the route. `None` falls back to the setting,
+    which is what a client that names no model gets.
     """
     settings = get_settings()
     return {
         "type": "realtime",
-        "model": settings.openai_realtime_model,
+        "model": model or settings.openai_realtime_model,
         "instructions": VOICE_SYSTEM_PROMPT,
         "output_modalities": ["audio"],
         "audio": {
@@ -123,7 +141,7 @@ def build_realtime_session(mode: str = "semantic_vad") -> dict:
                 "voice": settings.openai_realtime_voice,
             },
         },
-        "tools": [SEND_TO_TUTOR_TOOL],
+        "tools": [SEND_TO_TUTOR_TOOL, STEP_BACK_TOOL],
         "tool_choice": "auto",
     }
 
@@ -165,10 +183,89 @@ def _client() -> httpx.AsyncClient:
     return httpx.AsyncClient(timeout=httpx.Timeout(UPSTREAM_TIMEOUT_SECONDS))
 
 
+class RealtimeUsageBody(BaseModel):
+    """One `response.done`'s token counts, as the device read them.
+
+    The counts are per modality because audio and text bill an order of
+    magnitude apart; each cached count is a subset of its input total.
+
+    `model` names which price sheet the row is billed against, and is checked
+    against REALTIME_MODEL_ALLOWLIST. This field used to be absent on the
+    grounds that "what a row bills as is server-chosen" — true while the model
+    was. Now that the learner picks it in the settings window, pricing every
+    row from the server's setting would bill Mini minutes at Full rates and
+    hide the saving the setting exists to produce. The invariant that mattered
+    survives untouched: the device names a model from a priced menu, never a
+    price. Absent means the client did not choose, and the setting answers.
+    """
+
+    #: Minted on the device, one per usage event — the idempotency key that
+    #: makes a blind retry safe. Same pattern as `TurnRequest.turn_id`.
+    report_id: uuid.UUID
+    session_id: uuid.UUID | None = None
+    response_id: str | None = None
+    model: str | None = None
+    audio_input_tokens: int = Field(0, ge=0)
+    cached_audio_input_tokens: int = Field(0, ge=0)
+    audio_output_tokens: int = Field(0, ge=0)
+    text_input_tokens: int = Field(0, ge=0)
+    cached_text_input_tokens: int = Field(0, ge=0)
+    text_output_tokens: int = Field(0, ge=0)
+
+    @field_validator("model")
+    @classmethod
+    def _model_must_be_allowed(cls, value: str | None) -> str | None:
+        # Same check `TurnRequest.model` carries, against the realtime sheet.
+        # A 422 here loses one usage row rather than writing a row priced from
+        # a table that has no entry for what the device named.
+        if value is not None and value not in REALTIME_MODEL_ALLOWLIST:
+            raise ValueError(
+                f"Unknown realtime model {value!r}. "
+                f"Allowed: {sorted(REALTIME_MODEL_ALLOWLIST)}"
+            )
+        return value
+
+
+@router.post("/realtime/usage")
+async def record_realtime_usage(
+    body: RealtimeUsageBody,
+    recorder: Recorder = Depends(get_recorder),
+):
+    """Record what one voice response cost, into the sum the daily cap reads.
+
+    The one realtime route that touches the database. Reported by the device
+    per `response.done` rather than per call, so a call that dies mid-session
+    has still billed every response it finished — the same "money spent, no
+    row saying how much" failure `fail_turn` closes for turns.
+
+    Always 200 on a well-formed report, including a retried one: the device
+    fires and forgets, and the only honest answers are "recorded" and "was
+    already recorded", which the caller cannot and need not tell apart.
+    """
+    settings = get_settings()
+    await recorder.record_realtime_usage(
+        report_id=body.report_id,
+        session_id=body.session_id,
+        # Clipped to the column, never refused over it: `response_id` is a
+        # diagnostic back-reference, and a 422 here would drop a money row
+        # because a trace id grew a longer prefix.
+        response_id=body.response_id[:64] if body.response_id else None,
+        model=body.model or settings.openai_realtime_model,
+        audio_input_tokens=body.audio_input_tokens,
+        cached_audio_input_tokens=body.cached_audio_input_tokens,
+        audio_output_tokens=body.audio_output_tokens,
+        text_input_tokens=body.text_input_tokens,
+        cached_text_input_tokens=body.cached_text_input_tokens,
+        text_output_tokens=body.text_output_tokens,
+    )
+    return {"status": "ok"}
+
+
 @router.post("/realtime/calls")
 async def create_realtime_call(
     request: Request,
     session_id: uuid.UUID | None = None,
+    model: str | None = Query(default=None),
 ) -> Response:
     """Forward an SDP offer to OpenAI and return the SDP answer.
 
@@ -176,8 +273,23 @@ async def create_realtime_call(
     expected, carried for the log line only: the route itself is stateless
     and the voice model learns about the session through `send_to_tutor`
     turns, not through this parameter.
+
+    `model` is the learner's `Voice model` setting. Absent falls back to
+    `Settings.openai_realtime_model`; anything off REALTIME_MODEL_ALLOWLIST is
+    a 422 before the upstream is touched, so a client cannot open a call on a
+    model this server has no price for.
     """
     settings = get_settings()
+
+    if model is not None and model not in REALTIME_MODEL_ALLOWLIST:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Unknown realtime model {model!r}. "
+                f"Allowed: {sorted(REALTIME_MODEL_ALLOWLIST)}"
+            ),
+        )
+    call_model = model or settings.openai_realtime_model
 
     content_type = request.headers.get("content-type", "")
     if "application/sdp" not in content_type and "text/plain" not in content_type:
@@ -209,7 +321,10 @@ async def create_realtime_call(
             headers={"Authorization": f"Bearer {settings.openai_api_key}"},
             files={
                 "sdp": (None, offer.encode("utf-8")),
-                "session": (None, json.dumps(build_realtime_session(mode)).encode("utf-8")),
+                "session": (
+                    None,
+                    json.dumps(build_realtime_session(mode, call_model)).encode("utf-8"),
+                ),
             },
         )
 
@@ -227,7 +342,7 @@ async def create_realtime_call(
         # this path goes through redaction before the log.
         logger.error(
             "realtime.calls upstream request failed | model=%s reason=%s",
-            settings.openai_realtime_model,
+            call_model,
             redact_api_key(f"{type(error).__name__}: {error}", settings.openai_api_key),
         )
         raise could_not_reach from error
@@ -242,7 +357,7 @@ async def create_realtime_call(
     if not upstream.is_success and _TURN_DETECTION_REJECTION.search(detail):
         logger.error(
             "realtime.calls semantic_vad rejected | model=%s status=%s detail=%s — retrying with server_vad",
-            settings.openai_realtime_model, upstream.status_code, detail,
+            call_model, upstream.status_code, detail,
         )
         mode = "server_vad"
         try:
@@ -250,7 +365,7 @@ async def create_realtime_call(
         except httpx.HTTPError as error:
             logger.error(
                 "realtime.calls upstream request failed | model=%s reason=%s",
-                settings.openai_realtime_model,
+                call_model,
                 redact_api_key(f"{type(error).__name__}: {error}", settings.openai_api_key),
             )
             raise could_not_reach from error
@@ -261,7 +376,7 @@ async def create_realtime_call(
     if not upstream.is_success:
         logger.error(
             "realtime.calls upstream error | model=%s turn_detection=%s status=%s duration_ms=%s detail=%s",
-            settings.openai_realtime_model, mode, upstream.status_code, duration_ms, detail,
+            call_model, mode, upstream.status_code, duration_ms, detail,
         )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -271,7 +386,7 @@ async def create_realtime_call(
     answer = upstream.text
     logger.info(
         "realtime.calls ok | session_id=%s model=%s voice=%s turn_detection=%s duration_ms=%s answer_bytes=%s",
-        session_id, settings.openai_realtime_model, settings.openai_realtime_voice,
+        session_id, call_model, settings.openai_realtime_voice,
         mode, duration_ms, len(answer),
     )
 

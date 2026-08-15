@@ -15,6 +15,70 @@ MODEL_ALLOWLIST: frozenset[str] = frozenset({
     "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
 })
 
+# USD per 1M tokens, by model — what makes DAILY_SPEND_CAP_USD real. The
+# recorder prices every turn from this table (`app/pricing.py`) and writes the
+# dollar figure into `turns.cost_usd`, which `spend_today()` sums; a price cut
+# is a one-line edit here. `cached_input` is the provider's discounted rate for
+# prompt-cache hits, 10% of the input price across this family. There is no
+# `reasoning` entry on purpose: the provider reports reasoning *inside*
+# `output_tokens` and bills it at the output rate, so a separate rate would
+# double-charge. Verified against the published rates on 2026-08-15 (these
+# already include the July 30 Terra/Luna cuts).
+MODEL_PRICES_PER_1M: dict[str, dict[str, float]] = {
+    "gpt-5.6-sol":   {"input": 5.00, "cached_input": 0.50, "output": 30.00},
+    "gpt-5.6-terra": {"input": 2.00, "cached_input": 0.20, "output": 12.00},
+    "gpt-5.6-luna":  {"input": 0.20, "cached_input": 0.02, "output": 1.20},
+}
+
+# A model the device may name must have a price, or its spend goes back to
+# being invisible — the exact gap the table closes. Checked at import for the
+# reason `sanitize` runs at import in api/realtime.py: an allowlist edit that
+# forgets the price row should fail the boot, not the month's bill.
+_unpriced = MODEL_ALLOWLIST - set(MODEL_PRICES_PER_1M)
+if _unpriced:
+    raise ValueError(f"MODEL_PRICES_PER_1M is missing {sorted(_unpriced)}")
+
+# USD per 1M tokens for the realtime voice models, priced per modality: the
+# usage a voice response reports splits input and output into audio and text,
+# and audio bills at a different order of magnitude. The device reports each
+# response's counts to `POST /v1/realtime/usage` (the server never sees the
+# data channel), and the recorder prices the row from this table. The cached
+# rate is $0.40 for both modalities — 10% of text input, and the provider's
+# own flat cache rate for audio.
+REALTIME_PRICES_PER_1M: dict[str, dict[str, float]] = {
+    "gpt-realtime-2.1": {
+        "audio_input": 32.00, "cached_audio_input": 0.40, "audio_output": 64.00,
+        "text_input": 4.00, "cached_text_input": 0.40, "text_output": 24.00,
+    },
+    # Verified against the published rates on 2026-08-16. Roughly a third of
+    # the full model's audio, which is the whole reason the `Voice model`
+    # setting exists.
+    "gpt-realtime-2.1-mini": {
+        "audio_input": 10.00, "cached_audio_input": 0.30, "audio_output": 20.00,
+        "text_input": 0.60, "cached_text_input": 0.06, "text_output": 2.40,
+    },
+}
+
+# The only realtime models the device may open a call on, and the only ones it
+# may report usage against. Its own allowlist rather than MODEL_ALLOWLIST:
+# these are a different provider family on a different price sheet, and a turn
+# must never be able to name one.
+#
+# This is the narrow reversal of "the realtime model is server-chosen". The
+# invariant was never "the device cannot name a model" — `TurnRequest.model`
+# has always let it — but "the device cannot name a *price*". An allowlist
+# every entry of which must be priced keeps that intact, and it is what lets
+# `Voice model` in the settings window mean anything.
+REALTIME_MODEL_ALLOWLIST: frozenset[str] = frozenset({
+    "gpt-realtime-2.1", "gpt-realtime-2.1-mini",
+})
+
+# Same guard as MODEL_ALLOWLIST's, for the same reason: an allowlist edit that
+# forgets the price row should fail the boot, not the month's bill.
+_unpriced_realtime = REALTIME_MODEL_ALLOWLIST - set(REALTIME_PRICES_PER_1M)
+if _unpriced_realtime:
+    raise ValueError(f"REALTIME_PRICES_PER_1M is missing {sorted(_unpriced_realtime)}")
+
 # The only reasoning efforts a turn may name, for the reason MODEL_ALLOWLIST
 # exists — and it is the same reason, applied to the other half of the lever.
 # `TurnRequest.reasoning_effort` arrives unvalidated from the device, and effort
@@ -117,17 +181,22 @@ class Settings(BaseSettings):
     #: `OPENAI_BASE_URL` repoints it for a test or a relay; the SDK clients
     #: keep their own default and are not affected.
     openai_base_url: str = "https://api.openai.com/v1"
-    #: The live-voice model, env `OPENAI_REALTIME_MODEL`. Always the full
-    #: model, NEVER a mini variant as the default — founder decision
-    #: (voice-mode design, 2026-08-15): the mini is weakest exactly where
-    #: voice leans hardest, reliably calling `send_to_tutor` instead of
-    #: ad-libbing an answer. Like EXTRACTION_MODEL this is server-chosen and
-    #: never arrives from a request, so it is deliberately not in
-    #: MODEL_ALLOWLIST — that gates what the *device* may ask for on a turn.
-    openai_realtime_model: str = "gpt-realtime-2.1"
+    #: The live-voice model a call falls back to, env `OPENAI_REALTIME_MODEL`.
+    #: Only consulted when a call names no model of its own — the device names
+    #: one from REALTIME_MODEL_ALLOWLIST on every call it opens.
+    #:
+    #: The mini, since 2026-08-16. This reverses the voice-mode design's founder
+    #: decision (2026-08-15) that the default is always the full model, because
+    #: the mini is weakest exactly where voice leans hardest — reliably calling
+    #: `send_to_tutor` instead of ad-libbing an answer. Cost won: audio bills at
+    #: $32/$64 per million on the full model against $10/$20 here. Matched to
+    #: the client's own default so both sides of a call agree about what a
+    #: session opens on.
+    openai_realtime_model: str = "gpt-realtime-2.1-mini"
     #: The realtime voice, env `OPENAI_REALTIME_VOICE`. Locked once the model
     #: has produced audio, so it is chosen here, at session creation, only.
-    openai_realtime_voice: str = "marin"
+    #: `cedar` is the sleep app's own default, carried over on 2026-08-16.
+    openai_realtime_voice: str = "cedar"
     database_url: str
     device_token: str
     blob_dir: Path = Path("./blobs")

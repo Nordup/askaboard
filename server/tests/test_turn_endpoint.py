@@ -498,11 +498,11 @@ async def test_a_turn_that_sets_the_workspace_persists_plan_and_exercise(
 @respx.mock
 async def test_an_unallowed_model_is_rejected_before_any_provider_call(db_app):
     """I7: the model is unvalidated device input straight to the provider —
-    MODEL_ALLOWLIST + a 422 is today's only real ceiling, since the spend
-    cap is inert (see the comment at the check in app/api/turn.py). The
-    route is mocked but never expected to be hit — if validation regressed
-    and the code called the provider anyway, respx (not a live request)
-    would be what answered."""
+    MODEL_ALLOWLIST + a 422 is the ceiling on *which* models can be named at
+    all; the spend cap prices what they run (config refuses to boot if an
+    allowlisted model has no price row). The route is mocked but never
+    expected to be hit — if validation regressed and the code called the
+    provider anyway, respx (not a live request) would be what answered."""
     route = respx.post("https://api.openai.com/v1/responses").mock(
         return_value=Response(
             200, headers={"Content-Type": "text/event-stream"},

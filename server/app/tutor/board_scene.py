@@ -551,24 +551,28 @@ def update_payload(update: BoardSceneUpdate) -> BoardUpdatePayload:
 
 
 #: What the device's renderer does not draw, and what the model is told about
-#: each. One sentence per feature: what it is, that it is unsupported, and the
+#: each. One sentence per feature: what it is, what happens to it, and the
 #: supported thing to reach for instead — a warning that only says "no" gets
 #: the same document back with the same feature in it. None of them ends in a
 #: full stop, because they are joined with "; " into one line on the ack.
+#:
+#: Every line here is what the renderer was measured doing, not what its
+#: documentation claims: `SwiftDrawProbeTests` draws each feature and reads the
+#: pixels back. That probe is why `<mask>` is absent — masks render correctly,
+#: and warning about one would have taught the model out of markup that works —
+#: and why `<filter>` says the effect is dropped rather than the element: the
+#: filtered shape still draws, unfiltered.
 #:
 #: `<animate` covers `<animateTransform` and `<animateMotion` as well. The
 #: element spellings are the ones valid SVG uses, so the scan is case
 #: sensitive: `<Filter` is not a filter, it is markup the device drops anyway.
 _UNSUPPORTED_SVG_FEATURES: tuple[tuple[str, str], ...] = (
     ("<filter",
-     "`<filter>` is unsupported and is not drawn: bake the effect into the "
-     "artwork, or leave it out"),
+     "`<filter>` effects are ignored: the shape still draws, without the "
+     "filter, so bake the effect into the artwork or leave it out"),
     ("<animate",
      "`<animate>` is unsupported and is not drawn: the board holds one still "
      "figure, so draw the end state"),
-    ("<mask",
-     "`<mask>` is unsupported and is not drawn: use a clip path, or draw only "
-     "the shapes that should be visible"),
     ("<foreignObject",
      "`<foreignObject>` is unsupported and is not drawn: use SVG text, or a "
      "`math_text` element for notation"),
