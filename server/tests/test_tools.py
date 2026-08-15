@@ -19,17 +19,36 @@ def test_the_registry_exposes_the_function_tools_then_the_hosted_ones():
         SET_WORKSPACE_TOOL, VIEW_BOARD_TOOL, UPDATE_BOARD_TOOL, FETCH_IMAGE_TOOL,
         *MEMORY_TOOL_DEFINITIONS,
         {"type": "web_search"},
+        {"type": "code_interpreter", "container": {"type": "auto"}},
     ]
 
 
 def test_a_hosted_tool_carries_no_function_schema():
-    """`web_search` runs on the provider, so it has no name, no description and
-    no parameters of ours. Anything walking the registry for those must say
-    which entries it means — see `_function_tools` in the memory tests."""
+    """A hosted tool runs on the provider, so it has no name, no description
+    and no parameters of ours. Anything walking the registry for those must say
+    which entries it means — see `_function_tools` in the memory tests.
+
+    `code_interpreter` carries a `container` and is still hosted: that key is
+    configuration for the provider's sandbox, not a schema this service serves.
+    The assertion is therefore about the *function* keys being absent, not
+    about the entry being a lone `type`."""
     hosted = [tool for tool in TOOL_DEFINITIONS if tool.get("type") != "function"]
-    assert hosted == [{"type": "web_search"}]
+    assert hosted == [
+        {"type": "web_search"},
+        {"type": "code_interpreter", "container": {"type": "auto"}},
+    ]
     for tool in hosted:
-        assert set(tool) == {"type"}
+        assert not {"name", "description", "parameters", "strict"} & set(tool)
+
+
+def test_the_code_interpreter_container_is_provider_managed():
+    """`{"type": "auto"}` is what makes the provider create and own the sandbox
+    per response. Naming a container id here instead would pin every learner in
+    the deployment to one machine and one filesystem."""
+    interpreter = next(
+        tool for tool in TOOL_DEFINITIONS if tool.get("type") == "code_interpreter"
+    )
+    assert interpreter["container"] == {"type": "auto"}
 
 
 def test_the_tool_is_strict_and_closed():
@@ -281,6 +300,14 @@ def test_the_tool_surface_stays_inside_its_budget():
     # so the bound does not move. That is what a hosted tool is worth here: the
     # ability to look something up, for a rounding error against the ~1,100 the
     # cheapest function tool in this plan costs.
+    #
+    # `code_interpreter` (task 16) cost 61 — its type plus `{"container":
+    # {"type": "auto"}}`, which is the whole of what this service gets to say
+    # about a sandbox the provider creates and runs. The surface is now 30,269,
+    # leaving 931 under the bound: the same band `web_search` left it in, and
+    # still under what the cheapest function tool in this plan costs, so the
+    # bound does not move. The next task to trip this line raises it having read
+    # what the bytes bought, which is the whole point of the number.
     assert len(json.dumps(TOOL_DEFINITIONS)) < 31_200
 
 

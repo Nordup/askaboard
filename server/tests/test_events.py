@@ -1,8 +1,8 @@
 import json
 
 from app.tutor.events import (
-    BoardUpdateEvent, EventTranslator, ReasoningDeltaEvent, StatusEvent,
-    StepEvent, TextDeltaEvent, WorkspaceEvent, region_label,
+    TOOL_STEP_LABELS, BoardUpdateEvent, EventTranslator, ReasoningDeltaEvent,
+    StatusEvent, StepEvent, TextDeltaEvent, WorkspaceEvent, region_label,
 )
 from app.tutor.tools import MEMORY_TOOLS
 
@@ -256,6 +256,63 @@ def test_web_search_emits_searching_status():
     ):
         events = EventTranslator().translate({"type": kind})
         assert events == [StatusEvent(phase="searching")], kind
+
+
+def test_code_interpreter_emits_computing_status():
+    """The hosted code interpreter produces no `function_call` item either, so
+    like `web_search` its phase can only come from its own event prefix. It
+    earns a phase of its own rather than borrowing `thinking`: this is the one
+    stretch of a turn where a machine somewhere else is running the learner's
+    numbers, and it is long enough that saying so is the whole point."""
+    for kind in (
+        "response.code_interpreter_call.in_progress",
+        "response.code_interpreter_call.interpreting",
+        "response.code_interpreter_call.completed",
+    ):
+        events = EventTranslator().translate({"type": kind})
+        assert events == [StatusEvent(phase="computing")], kind
+
+
+def test_streaming_code_does_not_emit_a_status_per_delta():
+    """`response.code_interpreter_call_code.delta` fires once per token of the
+    script. Matching it as a status would put hundreds of identical events on a
+    wire that carries five for a whole web search. It falls through to the
+    heartbeat instead, which repeats the phase `in_progress` already set."""
+    translator = EventTranslator()
+    assert translator.translate(
+        {"type": "response.code_interpreter_call.in_progress"}
+    ) == [StatusEvent(phase="computing")]
+
+    for _ in range(20):
+        assert translator.translate({
+            "type": "response.code_interpreter_call_code.delta",
+            "output_index": 0, "delta": "x = 1\n",
+        }) == []
+
+
+def test_a_code_interpreter_call_opens_a_step_row():
+    """The trail row for the slowest thing a turn can do. A hosted call arrives
+    as its own output item, not a `function_call`, so the id is the item's own —
+    which is what the device keys the row on."""
+    events = EventTranslator().translate({
+        "type": "response.output_item.added",
+        "output_index": 0,
+        "item": {"type": "code_interpreter_call", "id": "ci_9",
+                 "status": "in_progress", "container_id": "cntr_9"},
+    })
+    assert events == [StepEvent(id="ci_9", tool="code_interpreter",
+                                label=TOOL_STEP_LABELS["code_interpreter"])]
+
+
+def test_a_code_interpreter_item_with_no_id_opens_no_row():
+    """The row's id is what a later event would replace it by. Without one the
+    device would key a row on the empty string and let the next call overwrite
+    it, so no row is better than a row."""
+    assert EventTranslator().translate({
+        "type": "response.output_item.added",
+        "output_index": 0,
+        "item": {"type": "code_interpreter_call", "status": "in_progress"},
+    }) == []
 
 
 def test_unknown_events_are_ignored():

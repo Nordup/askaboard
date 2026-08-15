@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import logging
+import mimetypes
 import time
 import uuid
 from dataclasses import dataclass
@@ -13,7 +14,7 @@ from functools import lru_cache
 import anyio
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
-from openai import APIConnectionError, APIStatusError, AsyncOpenAI
+from openai import APIConnectionError, APIError, APIStatusError, AsyncOpenAI
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -42,7 +43,7 @@ from app.tutor.events import DoneEvent, ErrorEvent, StatusEvent
 from app.tutor.board_scene import MAX_SCENE_CHARS
 from app.tutor import rendezvous
 from app.tutor.fetch_image import ImageFetchError, fetch_image
-from app.tutor.loop import FetchedImage, TurnResult, run_turn
+from app.tutor.loop import FetchedImage, RelayedFile, TurnResult, run_turn
 from app.tutor.rendezvous import BoardRegion
 from app.tutor.retry import classify
 
@@ -69,6 +70,27 @@ BOARD_KIND = "board_full"
 # board captures do not — needs to be able to tell them apart, and the row is
 # the only place that fact is written down. Fits `Attachment.kind`'s String(16).
 FETCHED_IMAGE_KIND = "fetched_image"
+
+# `Attachment.kind` for a file the hosted code interpreter's script wrote.
+#
+# Its own kind for the reason `FETCHED_IMAGE_KIND` is one: the provenance is
+# different again. These bytes were computed, on the provider's machine, from
+# whatever the script was given — so they are neither the learner's board nor
+# something copied off a web page, and a row is the only place that is written
+# down. It also matters for what a turn *costs*: this is the one attachment kind
+# that exists because a model decided to run a program. Fits `Attachment.kind`'s
+# String(16) with three characters to spare.
+SCRIPT_OUTPUT_KIND = "script_output"
+
+# What a relayed container file is recorded as when its name says nothing.
+#
+# `mimetypes.guess_type` is the whole of the type detection here, and unlike
+# `app.tutor.fetch_image` there is no sniffing of the bytes to correct it: this
+# is not a stranger's download but the output of a script the model wrote, and
+# nothing on this path decodes it. `GET /v1/blobs/{key}` serves what the row
+# says, so an unrecognised extension has to serve as bytes rather than as a
+# guess — which is exactly what this type means.
+DEFAULT_SCRIPT_OUTPUT_TYPE = "application/octet-stream"
 
 #: How long the close-out in `stream`'s `finally` may take before it is
 #: abandoned.
@@ -633,6 +655,68 @@ async def create_turn(
                 content_type=fetched.content_type,
             )
 
+        async def relay_container_file(
+            container_id: str, file_id: str, filename: str
+        ) -> RelayedFile:
+            """Copy one file a script wrote out of the provider's container.
+
+            The reason this exists at all is that the container is temporary.
+            A `code_interpreter` sandbox lives for the response that created it,
+            and the chart its script drew lives in the sandbox — so bytes not
+            taken now are bytes nobody can ever see. This is the only window.
+
+            Three steps, and the middle one is what makes the result usable.
+            The download is the SDK call verified against openai 2.53.0:
+            `containers.files.content.retrieve(file_id, container_id=...)` GETs
+            `/containers/{container_id}/files/{file_id}/content` and returns
+            binary content, whose `.content` is the raw bytes. The blob write is
+            what gives them a name the iPad can GET, because what the model does
+            next is place an `image` element carrying that `blob_id`. The
+            attachment row is where `GET /v1/blobs/{key}` recovers the content
+            type — the blob store itself only knows bytes.
+
+            A failure comes back as `RelayedFile(error=...)` rather than raising,
+            for the reason `fetch_and_record_image` refuses in band: a provider
+            hiccup over one chart must not end a learner's turn, and a model
+            told the file did not save can say so instead of describing a
+            picture that is not there.
+            """
+            try:
+                downloaded = await client.containers.files.content.retrieve(
+                    file_id, container_id=container_id
+                )
+                data = downloaded.content
+            except APIError as error:
+                logger.warning(
+                    "container file relay failed | turn_id=%s file=%s error=%s",
+                    body.turn_id, filename, error,
+                )
+                return RelayedFile(error="the file could not be read back")
+
+            # From the name and nothing else. Unlike a fetched picture — whose
+            # bytes are sniffed because a stranger chose both the URL and what
+            # it claims to be — this file was written by a script the model
+            # wrote, and its extension is the only description there is.
+            content_type = (
+                mimetypes.guess_type(filename)[0] or DEFAULT_SCRIPT_OUTPUT_TYPE
+            )
+            ref = await recorder.record_attachment(
+                turn_id=body.turn_id, kind=SCRIPT_OUTPUT_KIND,
+                data=data, content_type=content_type,
+            )
+            logger.info(
+                "container file relayed | turn_id=%s file=%s bytes=%d type=%s",
+                body.turn_id, filename, len(data), content_type,
+            )
+            return RelayedFile(
+                blob_id=ref.key,
+                # Always the bytes, whatever they are. `loop._relay_item` shows
+                # the pictures and lists the rest, and `TURN_DOWNLOAD_BYTE_LIMIT`
+                # is counted in the length of every file either way.
+                data=data,
+                content_type=content_type,
+            )
+
         # Everything that can strand a turn at status="running" — the image
         # write, assembling the prompt, the model call, and persisting the
         # result — lives inside this one try, and the matching `finally`
@@ -692,6 +776,11 @@ async def create_turn(
                 client=client, model=body.model, effort=body.reasoning_effort,
                 bundle=bundle, request_body=request_body, fetch_board=fetch_board,
                 fetch_image=fetch_and_record_image,
+                # Without this the hosted code interpreter can still run — it is
+                # in `TOOL_DEFINITIONS` unconditionally — but every file its
+                # script writes dies with the container it was written in, and
+                # the model is never told a blob id it could place.
+                relay_file=relay_container_file,
                 # Every turn of one session shares the longest prompt prefix
                 # there is, so they should all reach the same cache. The
                 # session id is what says "these belong together".

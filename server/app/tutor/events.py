@@ -32,11 +32,21 @@ class ExerciseModel(BaseModel):
 
 #: What a turn can be doing, as the device is told it.
 #:
-#: `drawing` is the newest and the reason the others were not enough: a
-#: diagram's SVG is thousands of tokens of tool-call arguments, and until it
-#: existed that whole stretch looked identical to `thinking` — which is to say,
-#: it looked like nothing at all.
-PhaseName = Literal["thinking", "looking", "searching", "writing", "drawing"]
+#: `drawing` was the newest for a while, and the reason the others were not
+#: enough: a diagram's SVG is thousands of tokens of tool-call arguments, and
+#: until it existed that whole stretch looked identical to `thinking` — which is
+#: to say, it looked like nothing at all.
+#:
+#: `computing` is the same argument for the hosted code interpreter. That is the
+#: one stretch of a turn where a machine somewhere else is running a script the
+#: tutor wrote, and it is long enough that the learner deserves to be told which
+#: kind of waiting this is. A device that does not know the name drops the
+#: status and keeps its previous phase (`TutorEvent.swift` decodes the phase
+#: through `TutorPhase.init(rawValue:)` and returns nil on an unknown one), so
+#: adding a name here is additive on the wire.
+PhaseName = Literal[
+    "thinking", "looking", "searching", "writing", "drawing", "computing",
+]
 
 
 class StatusEvent(BaseModel):
@@ -179,6 +189,14 @@ HEARTBEAT_SECONDS = 5.0
 #: embedding and the query take. Announcing the phase at the head of the call
 #: is what puts a byte on the wire immediately before that gap, so the gap
 #: starts from zero rather than on top of whatever quiet came before it.
+#: What the provider calls its hosted code interpreter, in the one place both
+#: the step label and the item-type branch below can read it from. Not in
+#: `TOOL_PHASES`: that map is keyed by `function_call` names and read through
+#: `_tool_names`, which only a `function_call` ever fills, so an entry there
+#: would be a line nothing could reach. The phase comes from the tool's own
+#: event prefix instead — see `_translate`.
+CODE_INTERPRETER = "code_interpreter"
+
 TOOL_PHASES: dict[str, PhaseName] = {
     "update_board": "drawing",
     "view_board": "looking",
@@ -211,6 +229,11 @@ TOOL_PHASES: dict[str, PhaseName] = {
 #: the model copied off a web page somebody else wrote, and `_refined_label`
 #: gives it no case, so nothing from that page can be printed on the learner's
 #: screen through this row.
+#:
+#: `code_interpreter` is the one hosted tool with a row, and stays coarse for a
+#: third reason: what it would otherwise say is a line of Python. It earns the
+#: row because it is the longest single thing a turn can do, and a trail that
+#: skipped it would show a learner a gap where the work was.
 TOOL_STEP_LABELS: dict[str, str] = {
     "update_board": "Drawing on the board",
     "view_board": "Looking at the board",
@@ -224,6 +247,7 @@ TOOL_STEP_LABELS: dict[str, str] = {
     "remember": "Saving a note",
     "forget": "Removing a note",
     "record_evidence": "Recording progress",
+    CODE_INTERPRETER: "Running a calculation",
 }
 
 
@@ -390,6 +414,22 @@ class EventTranslator:
                     self._call_ids[output_index] = call_id
                     produced.append(StepEvent(id=call_id, tool=name, label=label))
                 return produced
+
+            # A hosted call is its own output item rather than a
+            # `function_call`, so it has no `call_id` and never reaches the
+            # branch above. Its `id` is what the device keys the row on, and
+            # without one there is nothing to key: a row filed under the empty
+            # string is one the next call silently overwrites, which is worse
+            # than no row. Sent once, at the head of the call — the arguments
+            # this row could be refined from are the provider's, not ours.
+            #
+            # No status here: `response.code_interpreter_call.in_progress`
+            # follows immediately and is where `computing` comes from.
+            if item.get("type") == "code_interpreter_call":
+                item_id = item.get("id")
+                label = TOOL_STEP_LABELS.get(CODE_INTERPRETER)
+                if item_id and label is not None:
+                    return [StepEvent(id=item_id, tool=CODE_INTERPRETER, label=label)]
             return []
 
         if kind == "response.function_call_arguments.done":
@@ -411,9 +451,34 @@ class EventTranslator:
         if kind.startswith("response.file_search_call.") or kind.startswith(
             "response.web_search_call."
         ):
-            return [StatusEvent(phase="searching")]
+            return self._hosted_status("searching")
+
+        # The trailing dot is doing work. This family is `in_progress`,
+        # `interpreting` and `completed` — a handful of events per call. The
+        # *code* streams under `response.code_interpreter_call_code.delta`, one
+        # event per token of the script, and matching that too would put
+        # hundreds of identical statuses on a wire that carries five for a whole
+        # web search. Those fall through to `_heartbeat` instead, which repeats
+        # the phase `in_progress` has already set — the same answer, at the
+        # keep-alive's rate rather than the model's.
+        if kind.startswith("response.code_interpreter_call."):
+            return self._hosted_status("computing")
 
         return []
+
+    def _hosted_status(self, phase: PhaseName) -> list[ClientEvent]:
+        """The phase a hosted tool announces, with the writing latch cleared.
+
+        Clearing it is what lets prose *after* the hosted call announce
+        `writing` again. `_writing_announced` latches on the first text delta of
+        a turn, so a turn that writes, then searches or computes, then writes
+        again would otherwise leave the learner's status line on the tool for
+        everything that followed — the same defect the `function_call` branch
+        clears it for, arrived at through a tool that has no `function_call`
+        item to clear it in.
+        """
+        self._writing_announced = False
+        return [StatusEvent(phase=phase)]
 
     def _workspace_from(self, raw_arguments: str) -> list[ClientEvent]:
         # A half-parsed workspace must never reach the board. Dropping it leaves

@@ -347,3 +347,125 @@ FETCH_IMAGE_FOLLOW_UP = (
         },
     },
 )
+
+
+CONTAINER_ID = "cntr_1"
+SCRIPT_FILE_ID = "cfile_1"
+SCRIPT_FILENAME = "chart.png"
+
+
+# A hosted `code_interpreter` round, as the provider actually streams one.
+#
+# The two shapes that matter are both here and neither exists anywhere else in
+# these fixtures. First, a hosted tool call is *not* a `function_call`: it comes
+# back as its own `code_interpreter_call` output item, the provider runs it, and
+# the model carries straight on in the same response — so this turn ends with a
+# message and no function call at all. Second, the file the script wrote is
+# named only by a `container_file_citation` annotation hanging off that
+# message's text, which is the one place `loop._container_citations` can find
+# it. A fixture that omitted either would let a relay that never runs pass.
+CODE_INTERPRETER_TURN = (
+    {"type": "response.created", "sequence_number": 0, "response": {"id": "resp_ci"}},
+    {
+        "type": "response.output_item.added",
+        "sequence_number": 1,
+        "output_index": 0,
+        "item": {
+            "type": "code_interpreter_call",
+            "id": "ci_1",
+            "status": "in_progress",
+            "container_id": CONTAINER_ID,
+            "code": None,
+        },
+    },
+    {
+        "type": "response.code_interpreter_call.in_progress",
+        "sequence_number": 2,
+        "output_index": 0,
+        "item_id": "ci_1",
+    },
+    {
+        "type": "response.code_interpreter_call_code.delta",
+        "sequence_number": 3,
+        "output_index": 0,
+        "item_id": "ci_1",
+        "delta": "import matplotlib",
+    },
+    {
+        "type": "response.code_interpreter_call_code.done",
+        "sequence_number": 4,
+        "output_index": 0,
+        "item_id": "ci_1",
+        "code": "import matplotlib",
+    },
+    {
+        "type": "response.code_interpreter_call.interpreting",
+        "sequence_number": 5,
+        "output_index": 0,
+        "item_id": "ci_1",
+    },
+    {
+        "type": "response.code_interpreter_call.completed",
+        "sequence_number": 6,
+        "output_index": 0,
+        "item_id": "ci_1",
+    },
+    {"type": "response.output_text.delta", "sequence_number": 7, "delta": "I plotted it."},
+    {"type": "response.output_text.done", "sequence_number": 8, "text": "I plotted it."},
+    {
+        "type": "response.completed",
+        "sequence_number": 9,
+        "response": {
+            "id": "resp_ci",
+            "usage": {"input_tokens": 80, "output_tokens": 20},
+            "output": [
+                {"type": "reasoning", "id": "rs_ci", "summary": []},
+                {
+                    "type": "code_interpreter_call",
+                    "id": "ci_1",
+                    "status": "completed",
+                    "container_id": CONTAINER_ID,
+                    "code": "import matplotlib",
+                },
+                {
+                    "type": "message",
+                    "id": "msg_ci",
+                    "role": "assistant",
+                    "content": [{
+                        "type": "output_text",
+                        "text": "I plotted it.",
+                        "annotations": [{
+                            "type": "container_file_citation",
+                            "container_id": CONTAINER_ID,
+                            "file_id": SCRIPT_FILE_ID,
+                            "filename": SCRIPT_FILENAME,
+                            "start_index": 0,
+                            "end_index": 13,
+                        }],
+                    }],
+                },
+            ],
+        },
+    },
+)
+
+
+# What the model writes once it has been shown the relayed file and its blob
+# id. No tool call and no citation, so this round ends the turn.
+CODE_INTERPRETER_FOLLOW_UP = (
+    {"type": "response.created", "sequence_number": 0, "response": {"id": "resp_ci_2"}},
+    {"type": "response.output_text.delta", "sequence_number": 1, "delta": " It is on your board."},
+    {"type": "response.output_text.done", "sequence_number": 2, "text": " It is on your board."},
+    {
+        "type": "response.completed",
+        "sequence_number": 3,
+        "response": {
+            "id": "resp_ci_2",
+            "usage": {"input_tokens": 110, "output_tokens": 9},
+            "output": [
+                {"type": "message", "id": "msg_ci_2", "role": "assistant",
+                 "content": [{"type": "output_text", "text": " It is on your board."}]},
+            ],
+        },
+    },
+)

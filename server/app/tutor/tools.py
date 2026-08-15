@@ -852,14 +852,27 @@ MEMORY_TOOLS: frozenset[str] = frozenset(
 # on the next re-bills the entire prompt prefix every time the set changes.
 # `loop._answer` is where a tool the turn cannot serve is turned down.
 #
-# A hosted tool is a type and nothing else: the provider owns its name, its
-# schema and its execution, so no call of it ever reaches `loop._answer` and
+# A hosted tool is a type and nothing else of ours: the provider owns its name,
+# its schema and its execution, so no call of it ever reaches `loop._answer` and
 # nothing here describes it. `web_search` reports itself through
 # `response.web_search_call.*`, which `events` already reads as the searching
 # phase. Anything walking this list for a `name` or a `description` must first
 # say it means the function tools — the entries carrying `"type": "function"`.
+#
+# `code_interpreter` carries one key beyond its type, and it is configuration
+# rather than schema. `{"type": "auto"}` tells the provider to create and own a
+# sandbox per response; the alternative is naming a container id, which would
+# pin every learner in the deployment to one machine and one filesystem and let
+# one turn's scratch files be read by the next learner's script.
+#
+# It differs from every other tool here in what it leaves behind. A script that
+# draws a chart writes a *file*, and that file lives in the provider's container
+# and expires with it — so a turn that does not fetch the bytes before it ends
+# has produced a picture nobody can ever see. `loop._container_citations` is
+# what finds those files, and `loop.FileRelay` is what keeps them.
 TOOL_DEFINITIONS: list[dict] = [
     SET_WORKSPACE_TOOL, VIEW_BOARD_TOOL, UPDATE_BOARD_TOOL, FETCH_IMAGE_TOOL,
     *MEMORY_TOOL_DEFINITIONS,
     {"type": "web_search"},
+    {"type": "code_interpreter", "container": {"type": "auto"}},
 ]
