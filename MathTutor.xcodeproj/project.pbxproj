@@ -109,6 +109,7 @@
 		AA43B884F9CF945EA312DEE2 /* LayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 255C26B763A5F36C69C477AD /* LayoutTests.swift */; };
 		AB4E3FE916BFF8FB2A6043BB /* DrawerPanGesture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 672CE70913268DF67AACC12B /* DrawerPanGesture.swift */; };
 		AD38E8454A6799851034B76F /* BoardRasterCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40E70DAF8AFBE063011AEC82 /* BoardRasterCacheTests.swift */; };
+		AED900A68189F16F94706C01 /* BoardSceneLayerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0923A519200B6C94C328211E /* BoardSceneLayerTests.swift */; };
 		B106DCAFBA605E2FF0CCA1E9 /* TutorPanelShell.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F3B35EED7A1DD1AF7C7145F /* TutorPanelShell.swift */; };
 		B1B27D7DCCAEE88572D1FBD4 /* DictationPhase.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B190574F83F26DD21FA3CE7 /* DictationPhase.swift */; };
 		B2C3B44CCB81C8DA82112AB9 /* SourceSans3-Medium.otf in Resources */ = {isa = PBXBuildFile; fileRef = F40FACD7F7FC0F59B684FF39 /* SourceSans3-Medium.otf */; };
@@ -144,6 +145,7 @@
 		D7C2680C9127BD5115FE8BA8 /* Typography.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C3BD7AF8ABF8A0911D1890A /* Typography.swift */; };
 		D8466190844AC49389731BA9 /* VoiceContracts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CB5370FB9D167F1C763CBE5 /* VoiceContracts.swift */; };
 		D9AFB98F70E6111806F9508B /* BoardSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BBA848D742151999F767084 /* BoardSelection.swift */; };
+		DB477FEA54C7E5F2E0D080D1 /* BoardSceneLayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC154861ACA4FB4515726434 /* BoardSceneLayerView.swift */; };
 		DC5AFD891640960B9E77D1D6 /* BackendConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE8BA11A166196B847324B4D /* BackendConfiguration.swift */; };
 		DCDF9215D42DA64D4C5E2544 /* ActivityTrail.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BB8EF492F893F2E3B3E9DC6 /* ActivityTrail.swift */; };
 		DF4177DBB1F1937F618B9294 /* BoardCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA6C29612083E1C37169C92B /* BoardCapture.swift */; };
@@ -187,6 +189,7 @@
 		0729DC14BC3A737998304309 /* BoardPaperTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardPaperTests.swift; sourceTree = "<group>"; };
 		07822BFCEDA6CAC5E7B67D24 /* BoardInkTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardInkTests.swift; sourceTree = "<group>"; };
 		07DCCC70FA22423135C6251A /* TutorPromptPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TutorPromptPolicy.swift; sourceTree = "<group>"; };
+		0923A519200B6C94C328211E /* BoardSceneLayerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardSceneLayerTests.swift; sourceTree = "<group>"; };
 		09C389E6C599DDFDC461B6C2 /* CallbackDeadline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallbackDeadline.swift; sourceTree = "<group>"; };
 		0B4A8F49C9D2250F777C04A0 /* VoiceBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceBar.swift; sourceTree = "<group>"; };
 		0BB3D9B659CE39C352007FB0 /* DockRevealLayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DockRevealLayer.swift; sourceTree = "<group>"; };
@@ -287,6 +290,7 @@
 		A14830CB2CFA326710F5956B /* StructuredChatTextTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StructuredChatTextTests.swift; sourceTree = "<group>"; };
 		A1F88476F614A427A0D4A7BE /* ComposerAttachments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerAttachments.swift; sourceTree = "<group>"; };
 		A6C3A3607F71F2C99C586DB2 /* SessionPersistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionPersistence.swift; sourceTree = "<group>"; };
+		AC154861ACA4FB4515726434 /* BoardSceneLayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardSceneLayerView.swift; sourceTree = "<group>"; };
 		ADC630D3363CD0135FF63212 /* MascotGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MascotGeometry.swift; sourceTree = "<group>"; };
 		AF203F43C82054D956C00D85 /* ResizeHandleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResizeHandleTests.swift; sourceTree = "<group>"; };
 		AFCCD95B7E728A12D36C3E74 /* BoardSelectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardSelectionTests.swift; sourceTree = "<group>"; };
@@ -467,6 +471,7 @@
 				0729DC14BC3A737998304309 /* BoardPaperTests.swift */,
 				40E70DAF8AFBE063011AEC82 /* BoardRasterCacheTests.swift */,
 				D72F7D127584C65A5F19FCFE /* BoardSceneHashTests.swift */,
+				0923A519200B6C94C328211E /* BoardSceneLayerTests.swift */,
 				ED7FDD72E49425CDA75ED766 /* BoardSceneRendererTests.swift */,
 				DCB633BBC8749E0FCA3A8A55 /* BoardSceneTests.swift */,
 				AFCCD95B7E728A12D36C3E74 /* BoardSelectionTests.swift */,
@@ -712,6 +717,7 @@
 				CDC29B5C0EE22B4B88E0C16D /* BoardInk.swift */,
 				6DFEE113835CD09C48AEFCD3 /* BoardPaper.swift */,
 				39DA22664B80DABB57EF9533 /* BoardRasterCache.swift */,
+				AC154861ACA4FB4515726434 /* BoardSceneLayerView.swift */,
 				5F822D5D74F540ECCEBDFA11 /* BoardSceneRenderer.swift */,
 				DA7BBCEDC1728230AF71647E /* BoardScreen.swift */,
 				4F4CB4E8BC1C345DC5B34973 /* BoardSelectionMarquee.swift */,
@@ -876,6 +882,7 @@
 				AD38E8454A6799851034B76F /* BoardRasterCacheTests.swift in Sources */,
 				ECDE1F2D62E2F5C2B5413B7C /* BoardSVGTests.swift in Sources */,
 				790C29A021A041C3CE67F0BC /* BoardSceneHashTests.swift in Sources */,
+				AED900A68189F16F94706C01 /* BoardSceneLayerTests.swift in Sources */,
 				42A90FCA38591E34983FDF54 /* BoardSceneRendererTests.swift in Sources */,
 				841979CF9E16DB5EAF79F766 /* BoardSceneTests.swift in Sources */,
 				5CBB424BA32ED023B20F5A96 /* BoardSelectionTests.swift in Sources */,
@@ -932,6 +939,7 @@
 				55521F232C26320208A14157 /* BoardRasterCache.swift in Sources */,
 				09EB62BB947A97E5442AE3CA /* BoardSVGCache.swift in Sources */,
 				6039FB61DB7B9CE160407A2D /* BoardScene.swift in Sources */,
+				DB477FEA54C7E5F2E0D080D1 /* BoardSceneLayerView.swift in Sources */,
 				1BB66E01F6F28377EC72BDEE /* BoardSceneRenderer.swift in Sources */,
 				B911747BF2C09A7A7CF6DCA7 /* BoardScreen.swift in Sources */,
 				D9AFB98F70E6111806F9508B /* BoardSelection.swift in Sources */,

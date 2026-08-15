@@ -47,6 +47,19 @@ final class BoardRasterCacheTests: XCTestCase {
         XCTAssertNotNil(cache.image(for: first))
     }
 
+    /// The memory-warning path. Every bitmap can be redrawn from the scene, so
+    /// under pressure the cache drops all of them — entries and bytes both,
+    /// or the byte total would keep evicting a cache that is already empty.
+    func testRemoveAllDropsEveryEntryAndItsBytes() {
+        let cache = BoardRasterCache()
+        let key = makeKey(id: "l1", x: 0)
+        cache.store(makeImage(side: 16), for: key)
+        cache.store(makeImage(side: 16), for: makeKey(id: "l2", x: 100))
+        cache.removeAll()
+        XCTAssertNil(cache.image(for: key))
+        XCTAssertEqual(cache.totalBytes, 0)
+    }
+
     func testZoomBucketsClampToPowersOfTwo() {
         XCTAssertEqual(ZoomBucket.bucket(forZoom: 1.0), 0)
         XCTAssertEqual(ZoomBucket.bucket(forZoom: 2.0), 1)

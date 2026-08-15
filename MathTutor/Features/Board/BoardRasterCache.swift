@@ -83,6 +83,15 @@ final class BoardRasterCache {
         }
     }
 
+    /// Drops every bitmap. The caller is the memory-warning path: each entry
+    /// can be redrawn from the scene, so under pressure the whole cache is
+    /// cheaper to lose than to keep.
+    func removeAll() {
+        images.removeAll()
+        order.removeAll()
+        totalBytes = 0
+    }
+
     private func touch(_ key: RasterKey) {
         if let index = order.firstIndex(of: key) { order.remove(at: index) }
         order.append(key)
