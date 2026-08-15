@@ -200,6 +200,41 @@ account above is the faster one to reach for: a client that times out now shows
 up as an errored turn with a large `max_silence_ms`, without touching the iPad
 at all.
 
+### "I couldn't load the selected board area"
+
+This sentence comes from the server, not from the device. When `view_board`
+gets no render within 20 s, the turn answers the model with `UNAVAILABLE_ACK`
+([`app/tutor/loop.py`](app/tutor/loop.py)), and that ack instructs the model
+to say it could not see the board and to ask the learner to try again.
+
+The known cause is a dev-server reload during a live turn. `uvicorn --reload`
+restarts the app on every file save. The graceful shutdown keeps the open SSE
+stream alive, so the turn continues — but the dying process refuses new
+connections, so the iPad cannot POST its render to `/v1/turn/{id}/board`. The
+20 s rendezvous wait times out. The late POST then reaches the fresh process
+and gets a 404, because the rendezvous futures live in-process — see
+[`app/tutor/rendezvous.py`](app/tutor/rendezvous.py).
+
+The signature in `logs/server.log`, observed on 2026-08-15, turn `98ec5c4f…`:
+
+```
+turn started | turn_id=98ec5c4f…
+Shutting down                                    ← reload, 4 s into the turn
+turn ok      | … max_silence_ms=21285            ← the 20 s view_board wait
+Application startup complete.
+"POST /v1/turn/98EC5C4F…/board HTTP/1.1" 404     ← 10 ms after startup
+```
+
+A `max_silence_ms` a little over 20 000, together with a restart inside the
+turn window, is this failure — not a slow iPad and not a network drop. The
+device's POST landed the instant a listener came back; before that it had
+nowhere to connect.
+
+The rule: do not save server files while a learner turn streams, or point
+development work at a second server instance. The tutor's reply is the
+designed fallback — it says it cannot see rather than describe a board it
+never received. The learner only has to send the turn again.
+
 ### Keeping the stream alive
 
 **`status` is not edge-triggered, and a client must not treat a repeat as a
