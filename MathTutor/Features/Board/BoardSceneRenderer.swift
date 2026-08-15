@@ -22,10 +22,20 @@ enum BoardSceneRenderer {
 
     /// Conservative content bounds in drawing coordinates, including stroke,
     /// arrowhead, text, and rotation extents.
+    ///
+    /// An element with nothing to draw is left out of the union entirely. Its
+    /// per-element rectangle is a degenerate one at the drawing origin, and the
+    /// board origin is 25,000 points away from there, so unioning even a
+    /// zero-area rectangle would stretch the scene's bounds across that whole
+    /// span — and `CanvasCapture` sizes the learner's captures from this, so
+    /// one unparseable path would shrink the real work to a few pixels in every
+    /// capture that followed. The single element is dropped instead, which is
+    /// already what the layer view does with the same rectangle.
     static func bounds(of scene: BoardScene, boardOrigin: CGPoint) -> CGRect? {
         var union: CGRect?
         for element in scene.elements {
             let rect = bounds(of: element, boardOrigin: boardOrigin)
+            guard rect.width > 0, rect.height > 0 else { continue }
             union = union?.union(rect) ?? rect
         }
         return union
@@ -179,7 +189,10 @@ enum BoardSceneRenderer {
         case .path(let value):
             let cgPath = SVGPath.path(from: value.d).cgPath
             let box = cgPath.boundingBoxOfPath
-            withRotation(style.rotation, around: isDrawable(box) ? box : .null, in: context) {
+            // A malformed `d` parses to an empty path: nothing to fill,
+            // nothing to stroke, and no rectangle to rotate around.
+            guard isDrawable(box) else { break }
+            withRotation(style.rotation, around: box, in: context) {
                 if value.style.fill != "transparent" {
                     context.addPath(cgPath)
                     context.fillPath(using: value.fillRule == .evenodd ? .evenOdd : .winding)
@@ -530,8 +543,16 @@ enum BoardSceneRenderer {
             && box.width.isFinite && box.height.isFinite
     }
 
+    /// The box around a point set, or a null rectangle when there are no
+    /// points.
+    ///
+    /// Null rather than zero, because the callers inset this by the stroke
+    /// before anyone sees it: a zero rectangle comes back out as a small box at
+    /// the drawing origin, 25,000 points from the board, while a null one stays
+    /// null through both `insetBy` and `union`. `withRotation` skips a null
+    /// rectangle too, exactly as it skipped the zero one.
     private static func bounds(of points: [BoardPoint], origin: CGPoint) -> CGRect {
-        guard let first = points.first else { return .zero }
+        guard let first = points.first else { return .null }
         var minX = first.x
         var minY = first.y
         var maxX = first.x

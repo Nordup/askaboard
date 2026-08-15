@@ -162,6 +162,15 @@ enum E2ESeedFixture {
                     strokeWidth: 5, opacity: 1, dash: [9, 5], rotation: 0
                 )
             )),
+            .path(PathElement(
+                id: "trajectory",
+                d: "M150 186 C 190 122, 236 94, 300 78",
+                fillRule: .nonzero,
+                style: BoardStyle(
+                    role: .content, stroke: "#0155FB", fill: "transparent",
+                    strokeWidth: 4, opacity: 1, dash: [], rotation: 0
+                )
+            )),
             .polyline(PolylineElement(
                 id: "components",
                 points: [

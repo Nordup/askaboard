@@ -113,6 +113,31 @@ final class BoardPathElementTests: XCTestCase {
         XCTAssertTrue(bounds.width.isFinite && bounds.height.isFinite, "\(bounds)")
     }
 
+    func testADegenerateElementNeverStretchesTheSceneBounds() {
+        // A degenerate element's own rectangle sits at the drawing origin, and
+        // the board origin is 25,000 points away from there. Unioning even a
+        // zero-area one would size `CanvasCapture` to that whole span and
+        // shrink the learner's real work to a few pixels.
+        let origin = PencilCanvasConfiguration.boardOrigin
+        let line = BoardElement.line(LineElement(id: "l", x1: 0, y1: 0, x2: 100, y2: 40))
+        let alone = BoardSceneRenderer.bounds(
+            of: BoardScene(elements: [line]),
+            boardOrigin: origin
+        )
+
+        let crowded = BoardSceneRenderer.bounds(
+            of: BoardScene(elements: [
+                line,
+                .path(PathElement(id: "unparseable", d: "garbage")),
+                .polygon(PolygonElement(id: "pointless", points: [])),
+            ]),
+            boardOrigin: origin
+        )
+
+        XCTAssertNotNil(alone)
+        XCTAssertEqual(crowded, alone, "nothing to draw must contribute nothing to the bounds")
+    }
+
     // MARK: - Drawing
 
     func testTheFillRuleDecidesWhetherAnInnerSubpathIsAHole() throws {
