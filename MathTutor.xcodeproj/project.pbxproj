@@ -71,6 +71,7 @@
 		610EDB986EBF9EC36EAC13CF /* SwiftDrawProbeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3D368DED69760CC8C9E9471 /* SwiftDrawProbeTests.swift */; };
 		626E0C4AFB03801DA73159D5 /* ExtendedSwiftMath in Frameworks */ = {isa = PBXBuildFile; productRef = 1A56D193512A5799B1B32BB0 /* ExtendedSwiftMath */; };
 		62D3D1170425BC618AE2CE4E /* SessionSwitcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1AD1D26A28E26E3C17AC894 /* SessionSwitcherTests.swift */; };
+		62F67110AB1DF33BC2487EB5 /* BoardSVGStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF8D24EF32D14ACF9CE6B9F2 /* BoardSVGStore.swift */; };
 		667FD9DC81E5660F25882C49 /* SettingRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5078C64A063E2312DE7B9A1D /* SettingRow.swift */; };
 		6938C21ECBCEE5D5D0A26299 /* BoardCanvas.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48F8A6727EE102FA0FCE0C77 /* BoardCanvas.swift */; };
 		69B554CD79B03998413A22D4 /* CallbackDeadline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09C389E6C599DDFDC461B6C2 /* CallbackDeadline.swift */; };
@@ -170,6 +171,7 @@
 		F0AB368ED3252A73E037C11F /* BoardElementBoundsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CF47EA2AF089BE1CEF29278 /* BoardElementBoundsTests.swift */; };
 		F1DFB7BCEA5833AA08AF2487 /* AttachMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D97B15C0A56161A1EB12CCB /* AttachMenu.swift */; };
 		F41397690D69C8D2F528A80D /* ComposerAttachmentsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B11E1EAAEC87BB250A9A9797 /* ComposerAttachmentsTests.swift */; };
+		FA3BBDCE02510C65E5CC323E /* BoardSVGStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 858ABF338D55EC3FE011EB00 /* BoardSVGStoreTests.swift */; };
 		FBA76E568071FE9A786FEF9C /* BoardImageStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A43D9312FAAF40F3EFD627E /* BoardImageStore.swift */; };
 		FCAB37D9BB091699455CE680 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40CC8590077CACB91515D03B /* Models.swift */; };
 		FDA22C3107D235DA9260A7DC /* VoiceMascotView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4A1E827F2C77A0B4A0498E4 /* VoiceMascotView.swift */; };
@@ -284,6 +286,7 @@
 		8217EBB13B758B525C439539 /* SourceSans3-Regular.otf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "SourceSans3-Regular.otf"; sourceTree = "<group>"; };
 		8253C7910B50F4BAAB7D0BF0 /* SessionSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSummary.swift; sourceTree = "<group>"; };
 		852BE969A52E6AFB9A061619 /* ActivityTrailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityTrailView.swift; sourceTree = "<group>"; };
+		858ABF338D55EC3FE011EB00 /* BoardSVGStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardSVGStoreTests.swift; sourceTree = "<group>"; };
 		87415DD3800DFEE8AF03DDC3 /* SessionCloseTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionCloseTests.swift; sourceTree = "<group>"; };
 		8754B88D455D657A48558DE2 /* BoardCropStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardCropStore.swift; sourceTree = "<group>"; };
 		8809C49CCC126B75ED2651B4 /* SourceSans3-Semibold.otf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "SourceSans3-Semibold.otf"; sourceTree = "<group>"; };
@@ -352,6 +355,7 @@
 		ECEE59C2882DF49AE64DF05F /* TutorEventTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TutorEventTests.swift; sourceTree = "<group>"; };
 		ED7FDD72E49425CDA75ED766 /* BoardSceneRendererTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardSceneRendererTests.swift; sourceTree = "<group>"; };
 		EE5DD8927CD5344E4BB7A676 /* SettingsBackendTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsBackendTests.swift; sourceTree = "<group>"; };
+		EF8D24EF32D14ACF9CE6B9F2 /* BoardSVGStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardSVGStore.swift; sourceTree = "<group>"; };
 		F0F817C625E6FB0323E6FE4F /* MascotPainter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MascotPainter.swift; sourceTree = "<group>"; };
 		F1AD1D26A28E26E3C17AC894 /* SessionSwitcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSwitcherTests.swift; sourceTree = "<group>"; };
 		F25CD95322B357DE7DB2BA6C /* MathTutor.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = MathTutor.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -497,6 +501,7 @@
 				ED7FDD72E49425CDA75ED766 /* BoardSceneRendererTests.swift */,
 				DCB633BBC8749E0FCA3A8A55 /* BoardSceneTests.swift */,
 				AFCCD95B7E728A12D36C3E74 /* BoardSelectionTests.swift */,
+				858ABF338D55EC3FE011EB00 /* BoardSVGStoreTests.swift */,
 				6C40D818D42C36ADE7FAFDF9 /* BoardSVGTests.swift */,
 				77A7DD39D721ACCC0D62826F /* BoardToolTests.swift */,
 				784BDCC853A7787B6EE7BFFD /* ChatComponentTests.swift */,
@@ -749,6 +754,7 @@
 				DA7BBCEDC1728230AF71647E /* BoardScreen.swift */,
 				4F4CB4E8BC1C345DC5B34973 /* BoardSelectionMarquee.swift */,
 				3B9320F41DE3BD94B154DA88 /* BoardSVGCache.swift */,
+				EF8D24EF32D14ACF9CE6B9F2 /* BoardSVGStore.swift */,
 				2BBBD05225BE422A782124B7 /* E2ESeedFixture.swift */,
 			);
 			path = Board;
@@ -914,6 +920,7 @@
 				4C037A180CB8B10BE7334D25 /* BoardPaperTests.swift in Sources */,
 				7D8BA1B4D404997FC01F08D2 /* BoardPathElementTests.swift in Sources */,
 				AD38E8454A6799851034B76F /* BoardRasterCacheTests.swift in Sources */,
+				FA3BBDCE02510C65E5CC323E /* BoardSVGStoreTests.swift in Sources */,
 				ECDE1F2D62E2F5C2B5413B7C /* BoardSVGTests.swift in Sources */,
 				790C29A021A041C3CE67F0BC /* BoardSceneHashTests.swift in Sources */,
 				AED900A68189F16F94706C01 /* BoardSceneLayerTests.swift in Sources */,
@@ -975,6 +982,7 @@
 				7D96576C2631E4C14D389E1C /* BoardPeek.swift in Sources */,
 				55521F232C26320208A14157 /* BoardRasterCache.swift in Sources */,
 				09EB62BB947A97E5442AE3CA /* BoardSVGCache.swift in Sources */,
+				62F67110AB1DF33BC2487EB5 /* BoardSVGStore.swift in Sources */,
 				6039FB61DB7B9CE160407A2D /* BoardScene.swift in Sources */,
 				DB477FEA54C7E5F2E0D080D1 /* BoardSceneLayerView.swift in Sources */,
 				1BB66E01F6F28377EC72BDEE /* BoardSceneRenderer.swift in Sources */,
