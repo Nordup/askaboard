@@ -75,9 +75,9 @@ argument for not covering the screen.
 
 | Property | Value |
 | --- | --- |
-| Size | **760 × 520** — both free values, sized to content |
-| Position | **(308, 256)** = `(1376 − 760) ÷ 2` and `28 + (976 − 520) ÷ 2`. Centred in the safe width and in the content band; a port derives these rather than transcribing them |
-| Radius | `var(--radius-3xl)` 28 — the two big surfaces' radius, and at 760 × 520 this is larger than either |
+| Size | **760 × 560** — both free values, sized to content. Was 520 while the Tutor pane held two rows; the third one needs `32 × 2 + 116 + 120 × 3 = 540`, and 560 leaves the last row a little slack rather than ending flush against the curve |
+| Position | **(308, 236)** = `(1376 − 760) ÷ 2` and `28 + (976 − 560) ÷ 2`. Centred in the safe width and in the content band; a port derives these rather than transcribing them |
+| Radius | `var(--radius-3xl)` 28 — the two big surfaces' radius, and at 760 × 560 this is larger than either |
 | Fill | `var(--color-surface)` `#FFFFFF` |
 | Elevation | **04 · Modal** — `#14143216 0 16 40 + #1414320E 0 4 12`. New level; see `01-foundations.md §5.1a` |
 | Layout | `display: flex`, `overflow: clip` |
@@ -234,6 +234,9 @@ Luna
 Reasoning effort
 How long it thinks before replying
 High
+Voice model
+Which voice answers out loud
+Mini
 Session
 Resetting clears the conversation and the goal it was working towards. It does not touch your board or its ink.
 Reset this session
@@ -244,14 +247,18 @@ Six strings were removed with the API key pane on 2026-08-08: the nav item and h
 the masked literal `sk-proj-••••••••••••••••••••••••7Q4F`, `Replace`, and `Remove API key`.
 Nothing replaced them — the pane is gone rather than reworded.
 
-The model and effort names (Sol / Terra / Luna, None → Max) and their captions still exist in
-`SettingsOption`; they now appear in the picker rather than on the board.
+The model, effort and voice-model names (Sol / Terra / Luna, None → Max, Full / Mini) and their
+captions still exist in `SettingsOption`; they now appear in the picker rather than on the board.
+
+`Voice model` was added on 2026-08-16 and took the third row rather than a pane of its own: the
+pane's existing lede already promises it — *"How the tutor thinks **and speaks**"* — and the two
+rows that decide how the tutor thinks stay adjacent above it.
 
 There is **no designer prose written on board 10** — it is a pure screen board, like 05–08.
 
 ## Board 10b — Settings · Session pane
 
-A companion artboard holding the **Session** pane at the same 760 × 520, so the destructive
+A companion artboard holding the **Session** pane at the same 760 × 560, so the destructive
 button stays specified. Not a screen; it has no backdrop. It held the **API key** pane as well
 until that pane was deleted, which is why its name lost the plural.
 
@@ -1162,7 +1169,7 @@ Type: `--font-sans` 15 / **23** · 400 · `var(--color-ink-secondary)`.
 | **`btn/destructive`** | 10 (Session pane only, since the API key pane was deleted) | **hug × 44**, `padding-inline: 20` | **Yes**, and it now has two contexts. `--color-surface` fill, `var(--radius-lg)` 14, **elevation 03**, label 15 / 18 · 600 · `--color-ink`. Still carries **no danger colour** — but the flat-and-unlifted shape that used to *be* the danger signal is gone; see the board 10 section. |
 | ~~**`select/option`**~~ | — | — | **Retired with the old board 10** and deleted from the port rather than left unused. Its selection rule survives in `nav/item`: same `--radius-lg` 14, same `--color-brand-tint`. |
 | **`nav/item`** | 10 (sidebar ×3) | **184 × 44**, `padding-inline: 12` | **Yes.** Radius 14; selected = `--color-brand-tint` + label 15 / 18 · 600 · `--color-ink`; default = no fill + 15 / 18 · 500 · `--color-ink-secondary`. Unlike `select/option`, the label changes with the state. |
-| **`row/setting`** | 10 (Tutor pane ×2) | **measure × 120**, rule on the top edge | **Yes.** Label 17 / 22 · 600 over caption 15 / 18 · 400; trailing value 17 / 22 · 500 plus `ui/chevron-down` 16 in a **fixed 20pt slot**. The slot is what keeps the marks in one lane. |
+| **`row/setting`** | 10 (Tutor pane ×3) | **measure × 120**, rule on the top edge | **Yes.** Label 17 / 22 · 600 over caption 15 / 18 · 400; trailing value 17 / 22 · 500 plus `ui/chevron-down` 16 in a **fixed 20pt slot**. The slot is what keeps the marks in one lane. |
 | **Numbered lane** (`plan/step` · `plan/outcome` · evaluation finding) | 12 · 13 · 14 | Panel: **22 slot + 14 gap + 265 text = 301**, slot height 25 · Full screen: **24 slot + 16 gap + 700 text = 740**, slot height 24 | **Yes — explicitly.** Board 14: *"identical to plan/outcome, so the two align."* One primitive, leading slot parameterised (digit `Text` or 22/24 px glyph). |
 | **`state/thinking`** | 14 | Height **25** (one body line box), width auto; dots **6 × 6**, gap 8; optional status line 15 / 18 · 600 with 4 pt gap | **Yes** — one component, two variants (bare / with status line). |
 | **`state/streaming`** | 14 | Caret **2 × 22**, gap **2** after the last glyph; the text itself is `msg/tutor` unchanged | **Yes** — caret is a decoration on `msg/tutor`, not a wrapper. |
