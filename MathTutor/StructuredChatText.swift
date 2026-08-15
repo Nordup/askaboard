@@ -66,7 +66,6 @@ enum TutorMathMarkdownAdapter {
                 if let close = remaining[contentStart...].range(of: "$$") {
                     let math = rendererCompatibleMath(
                         String(remaining[contentStart..<close.lowerBound])
-                            .replacingOccurrences(of: "\n", with: " ")
                     )
                     result += "$$"
                     result += math
@@ -130,8 +129,16 @@ enum TutorMathMarkdownAdapter {
     /// ExtendedSwiftMath 2.1.3 parses TeX's thin-space `\,` inconsistently in
     /// inline text. A one-space `\text{ }` group remains typographic
     /// whitespace, so normalize only at the display boundary.
+    ///
+    /// Newlines inside a math span collapse to spaces: the tutor writes
+    /// display TeX across several lines, and any line kept inside the emitted
+    /// `$$` block re-enters CommonMark parsing, where a bare `=` line turns
+    /// the line above it into a setext heading and splits the block — the
+    /// message then shows raw source instead of math (seen 2026-08-15).
     private static func rendererCompatibleMath(_ math: String) -> String {
-        math.replacingOccurrences(of: "\\,", with: "\\text{ }")
+        math
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\\,", with: "\\text{ }")
     }
 
     /// Finds the first `\<closer>` pair at or after `start`. A backslash

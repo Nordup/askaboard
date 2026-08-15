@@ -62,6 +62,18 @@ final class StructuredChatTextTests: XCTestCase {
         XCTAssertEqual(TutorMathMarkdownAdapter.renderableMarkdown(input), expected)
     }
 
+    func testBracketDisplayBlockWithSetextEqualsLineStaysOneMathSpan() {
+        // The failing message of 2026-08-15 (turn 792b04a0...): \[ \] content
+        // across several lines with a bare "=" line. If interior newlines
+        // survive into the emitted $$ block, CommonMark reads the "=" line as
+        // a setext-heading underline, splits the block, and the app shows raw
+        // LaTeX source instead of math.
+        let input = "### Your first calculation\n\n\\[\nm_{\\mathrm{O_2}}\n=\n\\frac{0.03200}{6.022\\times10^{23}}\\ \\mathrm{kg}.\n\\]\n\nCalculate that value first."
+        let expected = "### Your first calculation\n\n$$ m_{\\mathrm{O_2}} = \\frac{0.03200}{6.022\\times10^{23}}\\ \\mathrm{kg}. $$\n\nCalculate that value first."
+
+        XCTAssertEqual(TutorMathMarkdownAdapter.renderableMarkdown(input), expected)
+    }
+
     func testDollarDisplayBlockSurvivesItsOwnNewlines() {
         // The failing message of 2026-08-15: the tutor emitted a $$ block with
         // the TeX on its own lines. Newlines inside must not become hard
