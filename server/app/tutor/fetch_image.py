@@ -342,21 +342,28 @@ async def fetch_image(
     depend on how it was built: `follow_redirects` and the timeout are passed
     per request.
     """
-    parsed = urlsplit(url)
-    if parsed.scheme != "https":
+    try:
+        parsed = urlsplit(url)
+        scheme, host = parsed.scheme, parsed.hostname
+        # `.port` parses lazily, so it is read here rather than where it is
+        # used: it raises on a non-numeric port and on one out of range.
+        port = parsed.port or 443
+    except ValueError:
+        # `urlsplit` is not total. `https://[::1` — an unclosed IPv6 literal —
+        # raises `ValueError` *out of the parse itself*, before any guard below
+        # has run, and a model assembling a URL from something it read produces
+        # exactly that. Uncaught it is not a refused picture, it is a lost turn.
+        raise ImageFetchError(
+            "That URL could not be read. Check it, or use a different image."
+        ) from None
+
+    if scheme != "https":
         raise ImageFetchError(
             "Only https URLs can be fetched. Find an https link to the same "
             "image."
         )
-    host = parsed.hostname
     if not host:
         raise ImageFetchError("That URL has no host in it, so it was not fetched.")
-    try:
-        port = parsed.port or 443
-    except ValueError:
-        # `.port` parses lazily and raises on a non-numeric port, which is a
-        # malformed URL rather than a fetchable one.
-        raise ImageFetchError("That URL is malformed, so it was not fetched.") from None
 
     try:
         # The deadline covers the lookup as well as the transfer: a resolver

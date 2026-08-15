@@ -463,3 +463,18 @@ async def test_no_transport_failure_escapes_as_anything_but_a_refusal(
 
     with pytest.raises(ImageFetchError):
         await fetch_image(URL)
+
+
+@pytest.mark.parametrize("url", [
+    "https://[::1",             # unclosed IPv6 literal: `urlsplit` itself raises
+    "https://[not-an-address]/",
+    "https://example.com:99999/cat.png",
+    "https://example.com:port/cat.png",
+    "",
+])
+async def test_a_url_that_will_not_even_parse_is_refused_not_raised(public_dns, url):
+    """`urlsplit` is not total, and neither is `.port`. Both raise `ValueError`
+    on input a model assembling a URL from a web page produces routinely — and
+    both do it before any guard below them has run."""
+    with pytest.raises(ImageFetchError):
+        await fetch_image(url)
