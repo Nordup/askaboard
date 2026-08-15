@@ -196,6 +196,21 @@ enum MascotSpec {
     static let ringStrokeWidth: CGFloat = 1.5
     static let ringOpacity: Double = 56.0 / 255.0
 
+    // MARK: Resting ring (work mode)
+
+    /// Board 31's `state/resting`: **one** thin ring where every other state has a halo —
+    /// Ø116 over the 72pt docked face, 1.5pt stroke, brand violet at 30 %, no fill and no
+    /// glow. Both numbers are divided back into the 48pt reference face here (× 48/72), so
+    /// `stateScale` reproduces the board exactly at 72 and carries the same proportion to
+    /// the 120pt hero and the 44pt dock. note/27's own tile draws it at Ø76 on the
+    /// reference face, a point and a half off the live board's Ø77.3; where the two
+    /// disagree the live board wins, as it does for every other measured state.
+    static let restingRingDiameter: CGFloat = 116 * referenceFaceWidth / 72
+    static let restingRingStrokeWidth: CGFloat = 1.5 * referenceFaceWidth / 72
+    /// `rgba(96,81,220,0.30)` — the brand at 30 %, dimmer than the thinking ring's 22 %
+    /// *looks* because nothing else is lit behind it.
+    static let restingRingOpacity: Double = 0.30
+
     /// The orbiting dot: Ø5, solid brand, drawn at (140.5, 26.5) against the face centre
     /// (106, 65) — radius √(34.5² + 38.5²) ≈ 51.70 at the angle the note froze it at.
     static let dotDiameter: CGFloat = 5
@@ -275,6 +290,27 @@ enum MascotSpec {
                 eyeSize: CGSize(width: 6, height: 10),
                 eyeOffset: CGVector(dx: 0, dy: -1),
                 eyeCentreDistance: 21
+            )
+        case .resting:
+            // Work mode, board 31. No halo at all — the layer opacity is zero, and the one
+            // thin ring (`restingRing*` above, drawn by `MascotMotion`) is the whole mark.
+            // The halo's *scale* still carries idle's value so the crossfade out of
+            // listening shrinks as it fades rather than dissolving at full size.
+            //
+            // The eyes are the state: note/27's slits, Ø7 wide by 3 tall on the reference
+            // face — the docked 10 × 4 the board draws, divided by the same 1.5. They close
+            // over `restingTransitionSeconds`, which is the only reason that constant is
+            // shorter than every other crossfade.
+            return MascotStateTargets(
+                haloScale: 104.0 / 130.0,
+                haloOpacity: 0,
+                warm: OrbBloomAlphas(start: 0.75, mid: 0.34),
+                cool: OrbBloomAlphas(start: 0.70, mid: 0.30),
+                coreOpacity: 0,
+                coreScale: 1,
+                eyeSize: CGSize(width: 7, height: 3),
+                eyeOffset: CGVector(dx: 0, dy: 0),
+                eyeCentreDistance: 22
             )
         case .ending:
             // Halo 96×91 at 0.5 — dimmer and smaller than idle, so the settle back to

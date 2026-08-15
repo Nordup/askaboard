@@ -96,7 +96,12 @@ final class TutorStore: ObservableObject {
     /// paid. Not persisted — an app killed between a failed sync and its
     /// retry leaves the stale tail on the server until the session's next
     /// successful edit, which the design doc accepts as rare.
-    private var pendingTranscriptSync: [TutorMessage]?
+    ///
+    /// **Keyed by session.** It used to be one slot and was cleared on every
+    /// switch, which was correct while only the visible session could accrue a
+    /// debt. A live call writes into its own session from anywhere now, so each
+    /// session's unpaid cut waits for that session's own next turn.
+    private var pendingTranscriptSync: [UUID: [TutorMessage]] = [:]
 
     let tutorService: any TutorService
     let persistence: SessionPersistence
@@ -239,7 +244,10 @@ final class TutorStore: ObservableObject {
     func send(_ text: String, attachments: [UploadedAttachment] = []) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !attachments.isEmpty else { return false }
-        guard !isLoading else {
+        // `isBusy`, not `isLoading`: a call in another session can have a
+        // delegated turn running that this thread cannot see. One turn at a
+        // time is a property of the pipeline, not of what is on screen.
+        guard !isBusy else {
             composerNote = Self.tutorIsStillAnswering
             return false
         }
@@ -459,7 +467,7 @@ final class TutorStore: ObservableObject {
         question: String? = nil,
         attachments: [UploadedAttachment] = []
     ) -> Bool {
-        guard !isEvaluating else {
+        guard !isEvaluating, !awayTurnIsRunning else {
             composerNote = Self.tutorIsStillAnswering
             return false
         }
@@ -522,7 +530,7 @@ final class TutorStore: ObservableObject {
     static let boardCaptureFailed = "I couldn't capture that part of the board. Try sending it again."
 
     func sayIDontKnow() {
-        guard !isLoading, ensureTutorAvailable() else { return }
+        guard !isBusy, ensureTutorAvailable() else { return }
         consumePendingEdit()
         session.messages.append(TutorMessage(role: .learner, text: "I don’t know yet.", signal: .dontKnow))
         persist()
@@ -568,10 +576,28 @@ final class TutorStore: ObservableObject {
     /// worker's message is canonical and finishes on the normal pipeline.
     private var isVoiceCallActive = false
 
+    /// The session the live call belongs to, for as long as it runs.
+    ///
+    /// A call binds to the session it was started in and keeps it whichever
+    /// session the learner then looks at: the transcripts, the delegated turns
+    /// and the board updates all name this id, never `session.id`. `nil`
+    /// whenever no call is live.
+    private(set) var callSessionID: UUID?
+
+    /// The server close a switch away from the call session could not send —
+    /// see `DeferredSessionClose`.
+    private var deferredClose = DeferredSessionClose()
+
     /// The screen is starting a call. Called before the engine's `start`, so
     /// no hook can arrive first.
-    func voiceCallBegan() {
+    /// - Parameter sessionID: The session the call is being started in. Passed
+    ///   explicitly because the screen reads it at the tap and the call can
+    ///   only begin once dictation has unwound — by which time `session` is
+    ///   whatever the learner has since opened. Defaults to the open session
+    ///   for callers with nothing in between.
+    func voiceCallBegan(sessionID: UUID? = nil) {
         isVoiceCallActive = true
+        callSessionID = sessionID ?? session.id
     }
 
     /// What the live-transcript bubble is currently saying — resolved by text
@@ -595,12 +621,15 @@ final class TutorStore: ObservableObject {
         guard isVoiceCallActive else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        let target = voiceSessionID
         let message = TutorMessage(role: .learner, text: trimmed, isVoice: true)
-        session.messages.append(message)
+        guard mutateSession(target, { stored in
+            stored.messages.append(message)
+            stored.lastSavedAt = .now
+        }) else { return }
         liveVoiceUtteranceID = message.id
-        session.lastSavedAt = .now
-        persist()
-        pendingTranscriptSync = finalizedThreadSnapshot()
+        persistSession(target)
+        pendingTranscriptSync[target] = finalizedThreadSnapshot(of: target)
     }
 
     /// A learner input-transcription delta from the live call — hooks'
@@ -613,9 +642,13 @@ final class TutorStore: ObservableObject {
     /// `finalizeVoiceUserUtterance` says so.
     func streamVoiceUserTranscript(itemID: String, delta: String) {
         guard isVoiceCallActive else { return }
+        let target = voiceSessionID
         if let id = voiceLearnerMessageIDsByItem[itemID],
-           let index = session.messages.firstIndex(where: { $0.id == id }) {
-            session.messages[index].text += delta
+           sessionValue(target)?.messages.contains(where: { $0.id == id }) == true {
+            mutateSession(target) { stored in
+                guard let index = stored.messages.firstIndex(where: { $0.id == id }) else { return }
+                stored.messages[index].text += delta
+            }
             liveVoiceUtteranceID = id
             return
         }
@@ -624,7 +657,7 @@ final class TutorStore: ObservableObject {
         let opening = String(delta.drop(while: \.isWhitespace))
         guard !opening.isEmpty else { return }
         let message = TutorMessage(role: .learner, text: opening, isVoice: true)
-        session.messages.append(message)
+        guard mutateSession(target, { $0.messages.append(message) }) else { return }
         voiceLearnerMessageIDsByItem[itemID] = message.id
         liveVoiceUtteranceID = message.id
     }
@@ -645,26 +678,35 @@ final class TutorStore: ObservableObject {
         }
         let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
+        let target = voiceSessionID
         guard !trimmed.isEmpty else {
             guard let liveID else { return }
-            session.messages.removeAll { $0.id == liveID }
-            persist()
+            mutateSession(target) { $0.messages.removeAll { $0.id == liveID } }
+            persistSession(target)
             return
         }
-        if let liveID, let index = session.messages.firstIndex(where: { $0.id == liveID }) {
-            session.messages[index].text = trimmed
+        let held = liveID.map { id in
+            sessionValue(target)?.messages.contains { $0.id == id } == true
+        } ?? false
+        if held, let liveID {
+            mutateSession(target) { stored in
+                guard let index = stored.messages.firstIndex(where: { $0.id == liveID }) else { return }
+                stored.messages[index].text = trimmed
+            }
         } else if isVoiceCallActive {
             // Completed without any delta first — a transcriber quick enough
             // to skip streaming, or deltas lost on the wire. Same outcome as
             // the legacy append; the guard keeps a stray finalize from an
             // engine already told to close out of a thread the call has left.
-            session.messages.append(TutorMessage(role: .learner, text: trimmed, isVoice: true))
+            mutateSession(target) {
+                $0.messages.append(TutorMessage(role: .learner, text: trimmed, isVoice: true))
+            }
         } else {
             return
         }
-        session.lastSavedAt = .now
-        persist()
-        pendingTranscriptSync = finalizedThreadSnapshot()
+        mutateSession(target) { $0.lastSavedAt = .now }
+        persistSession(target)
+        pendingTranscriptSync[target] = finalizedThreadSnapshot(of: target)
     }
 
     /// An assistant spoken-transcript delta — hooks' `streamAssistantText`.
@@ -673,19 +715,25 @@ final class TutorStore: ObservableObject {
     /// place. No `persist()` per delta, for `requestTutor`'s reason.
     func streamVoiceAssistantText(itemID: String, delta: String) {
         guard isVoiceCallActive else { return }
-        let index = voiceMessageIndex(for: itemID)
-        session.messages[index].text += delta
+        let target = voiceSessionID
+        guard let id = voiceMessageID(for: itemID, in: target) else { return }
+        mutateSession(target) { stored in
+            guard let index = stored.messages.firstIndex(where: { $0.id == id }) else { return }
+            stored.messages[index].text += delta
+        }
     }
 
-    private func voiceMessageIndex(for itemID: String) -> Int {
+    /// The voice-marked tutor message for `itemID`, created on the item's first
+    /// delta. `nil` only when the call session has gone away entirely (deleted).
+    private func voiceMessageID(for itemID: String, in target: UUID) -> UUID? {
         if let id = voiceMessageIDsByItem[itemID],
-           let index = session.messages.firstIndex(where: { $0.id == id }) {
-            return index
+           sessionValue(target)?.messages.contains(where: { $0.id == id }) == true {
+            return id
         }
         let message = TutorMessage(role: .tutor, text: "", isVoice: true)
-        session.messages.append(message)
+        guard mutateSession(target, { $0.messages.append(message) }) else { return nil }
         voiceMessageIDsByItem[itemID] = message.id
-        return session.messages.count - 1
+        return message.id
     }
 
     /// The assistant response for `itemID` finished — hooks'
@@ -704,13 +752,14 @@ final class TutorStore: ObservableObject {
             liveVoiceUtteranceID = nil
         }
         guard let id = voiceMessageIDsByItem.removeValue(forKey: itemID) else { return }
+        let target = voiceSessionID
         if delegated {
-            session.messages.removeAll { $0.id == id }
+            mutateSession(target) { $0.messages.removeAll { $0.id == id } }
         } else {
-            session.lastSavedAt = .now
-            pendingTranscriptSync = finalizedThreadSnapshot()
+            mutateSession(target) { $0.lastSavedAt = .now }
+            pendingTranscriptSync[target] = finalizedThreadSnapshot(of: target)
         }
-        persist()
+        persistSession(target)
     }
 
     /// The thread with every in-progress voice message left out — the only
@@ -718,11 +767,12 @@ final class TutorStore: ObservableObject {
     /// through it the worker's context, holds finalized utterances only: a
     /// partial the learner is still speaking, or a spoken rephrase the dedup
     /// rule may yet remove, is not conversation history.
-    private func finalizedThreadSnapshot() -> [TutorMessage] {
+    private func finalizedThreadSnapshot(of target: UUID) -> [TutorMessage] {
+        guard let messages = sessionValue(target)?.messages else { return [] }
         let liveIDs = Set(voiceLearnerMessageIDsByItem.values)
             .union(voiceMessageIDsByItem.values)
-        guard !liveIDs.isEmpty else { return Array(session.messages) }
-        return session.messages.filter { !liveIDs.contains($0.id) }
+        guard !liveIDs.isEmpty else { return Array(messages) }
+        return messages.filter { !liveIDs.contains($0.id) }
     }
 
     /// The call ended. Nothing is live any more, and a stray item stream from
@@ -730,32 +780,54 @@ final class TutorStore: ObservableObject {
     /// the emptied maps are the halves of that promise. An utterance caught
     /// mid-stream settles with the words it got — they are real speech the
     /// learner watched arrive — and one still empty vanishes.
-    func voiceCallEnded() {
+    ///
+    /// And, if the learner walked out of the call session
+    /// while it was still running, this is the moment its server close was
+    /// waiting for. See `DeferredSessionClose`: closing on the switch would
+    /// have frozen the episode mid-conversation, and closing now closes it
+    /// whole. A call that ended with the learner back inside its own session
+    /// sends nothing at all; the next switch away does that, normally.
+    /// - Parameter sessionID: The session the call that ended belonged to. An
+    ///   ending reported for a call the host has already replaced — the voice
+    ///   disc tapped in another session — names a session this store has moved
+    ///   on from, and settling against it would tear down the *new* call.
+    func voiceCallEnded(sessionID: UUID) {
+        guard sessionID == callSessionID else { return }
+        let target = sessionID
         isVoiceCallActive = false
         liveVoiceUtteranceID = nil
         voiceMessageIDsByItem = [:]
-        settleInFlightLearnerUtterances()
+        settleInFlightLearnerUtterances(in: target)
+        callSessionID = nil
+        if let id = deferredClose.callEnded(inSession: target, visibleSessionID: session.id) {
+            endSessionOnServer(id: id, turnWasInFlight: turnSessionID == id)
+        }
+        // Nothing writes into the away copy any more; a later switch back
+        // reads the session from disk, where every voice write already went.
+        if target != session.id, turnSessionID != target { awaySessions[target] = nil }
     }
 
-    private func settleInFlightLearnerUtterances() {
+    private func settleInFlightLearnerUtterances(in target: UUID) {
         guard !voiceLearnerMessageIDsByItem.isEmpty else { return }
         let liveIDs = Set(voiceLearnerMessageIDsByItem.values)
         voiceLearnerMessageIDsByItem = [:]
         var kept = false
-        session.messages.removeAll { message in
-            guard liveIDs.contains(message.id) else { return false }
-            return message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
-        for index in session.messages.indices where liveIDs.contains(session.messages[index].id) {
-            session.messages[index].text = session.messages[index].text
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            kept = true
+        mutateSession(target) { stored in
+            stored.messages.removeAll { message in
+                guard liveIDs.contains(message.id) else { return false }
+                return message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+            for index in stored.messages.indices where liveIDs.contains(stored.messages[index].id) {
+                stored.messages[index].text = stored.messages[index].text
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                kept = true
+            }
+            if kept { stored.lastSavedAt = .now }
         }
         if kept {
-            session.lastSavedAt = .now
-            pendingTranscriptSync = finalizedThreadSnapshot()
+            pendingTranscriptSync[target] = finalizedThreadSnapshot(of: target)
         }
-        persist()
+        persistSession(target)
     }
 
     /// A delegated voice turn the store declined to start.
@@ -779,7 +851,7 @@ final class TutorStore: ObservableObject {
     /// say. Resolves with the worker's final text for the voice model to
     /// rephrase aloud.
     func runVoiceTurn(request: String) async -> Result<String, Error> {
-        guard !isLoading, !isEvaluating else { return .failure(VoiceTurnRefusal.busy) }
+        guard !isBusy else { return .failure(VoiceTurnRefusal.busy) }
         guard ensureTutorAvailable() else { return .failure(TutorServiceError.notConfigured) }
         return await withCheckedContinuation { continuation in
             requestTutor(signal: .voice, voiceRequest: request, onFinish: { result in
@@ -843,7 +915,7 @@ final class TutorStore: ObservableObject {
             clearEvaluation()
         }
         session.messages.removeSubrange(index...)
-        pendingTranscriptSync = finalizedThreadSnapshot()
+        pendingTranscriptSync[session.id] = finalizedThreadSnapshot(of: session.id)
     }
 
     func clearDrawing() {
@@ -984,9 +1056,27 @@ final class TutorStore: ObservableObject {
         // task for the whole life of any session that has ever run one. These
         // two are set as a turn begins and cleared on every way it can end,
         // which is the actual question `endSessionOnServer` is asking.
-        let turnWasInFlight = isLoading || isEvaluating
-        activeRequestTask?.cancel()
-        activeRequestTask = nil
+        let outgoing = session.id
+        let turnWasInFlight = isBusy
+        // **The one turn the switch may not cancel.** A delegated turn for a
+        // live call belongs to the call, not to what is on screen: the learner
+        // asked for it out loud and is still in the call while they browse. It
+        // keeps running, into the away copy of its own session — see
+        // `mutateSession`. Every other in-flight turn is cancelled exactly as
+        // before.
+        let turnSurvives = turnSessionID != nil && turnSessionID == callSessionID
+        if turnSurvives {
+            // The away copy starts from what is on screen right now, so the
+            // turn does not have to reach disk for the thread it is writing.
+            awaySessions[outgoing] = snapshotWithBoardInk()
+            // The visible thread must not carry the away turn's chrome, so the
+            // published flags go quiet; `awayTurnIsRunning` keeps the pipeline's
+            // one-turn-at-a-time rule (see `isBusy`).
+            awayTurnIsRunning = true
+        } else {
+            activeRequestTask?.cancel()
+            activeRequestTask = nil
+        }
         isLoading = false
         isEvaluating = false
         phase = nil
@@ -1000,8 +1090,21 @@ final class TutorStore: ObservableObject {
         boardInkSaveTask = nil
         boardInkSaveDeadline = nil
         if notifyingServer {
-            endSessionOnServer(turnWasInFlight: turnWasInFlight)
+            // A live call in the outgoing session defers the close until the
+            // call ends; every other switch sends it here, as before.
+            if deferredClose.switchingAway(from: outgoing, callSessionID: callSessionID) {
+                endSessionOnServer(id: outgoing, turnWasInFlight: turnWasInFlight)
+            }
         }
+    }
+
+    /// The open session with the pen's unsaved ink folded in — what `persist()`
+    /// writes, as a value.
+    private func snapshotWithBoardInk() -> LearningSession {
+        foldPendingBoardInk()
+        var snapshot = session
+        if let boardInkData { snapshot.drawingData = boardInkData }
+        return snapshot
     }
 
     /// Tells the backend the learner has left this session, so it can freeze
@@ -1035,10 +1138,16 @@ final class TutorStore: ObservableObject {
     /// Reset and delete do not reach here at all any more: they pass
     /// `notifyingServer: false` and send `discardSessionOnServer(id:)`
     /// instead, because a destroyed session must be forgotten, not filed.
-    private func endSessionOnServer(turnWasInFlight: Bool) {
-        guard !turnWasInFlight, usesLiveTutor, hasReachedTheBackend else { return }
+    /// **A deferred close.** A call that outlived the switch defers this call
+    /// rather than dropping it (`DeferredSessionClose`), and the deferred one
+    /// lands from `voiceCallEnded()` with the session named explicitly — which
+    /// is why the id is a parameter now instead of being read off `session`.
+    /// That composes with the in-flight rule above rather than fighting it: a
+    /// close that arrives after the call has finished speaking is exactly the
+    /// "later and whole" the sweep would otherwise have had to provide.
+    private func endSessionOnServer(id: UUID, turnWasInFlight: Bool) {
+        guard !turnWasInFlight, usesLiveTutor, hasReachedTheBackend(id) else { return }
         let service = tutorService
-        let id = session.id
         // Detached, and its handle deliberately dropped: it has to outlive the
         // switch that triggered it, and nothing on screen is waiting for it.
         Task.detached { await service.closeSession(id: id) }
@@ -1058,20 +1167,31 @@ final class TutorStore: ObservableObject {
     /// close that never lands is repaired by the server's sweep, a delete
     /// that never lands just leaves the session remembered.
     private func discardSessionOnServer(id: UUID) {
+        // A destroyed session is told to be forgotten, never to be closed, so
+        // any close waiting on a call in it is dropped — and a call bound to it
+        // has nothing left to write into. The screen ends that call itself; the
+        // store simply stops routing to a session that is gone.
+        deferredClose.forget(id)
+        if callSessionID == id { callSessionID = nil }
+        awaySessions[id] = nil
+        pendingTranscriptSync[id] = nil
         guard usesLiveTutor else { return }
         let service = tutorService
         Task.detached { await service.deleteSession(id: id) }
     }
 
-    /// Whether a turn has ever gone out for the open session.
+    /// Whether a turn has ever gone out for the session with this id.
     ///
     /// Every path that starts one appends a learner message first — `send`,
     /// `sayIDontKnow` and `evaluate` — and a turn is the only thing that
     /// creates the session server-side, so this is the same question as "does
     /// the backend have a row for this id", short of a turn that never reached
-    /// the network at all.
-    private var hasReachedTheBackend: Bool {
-        session.messages.contains {
+    /// the network at all. A live call's own spoken utterances count too: they
+    /// are learner messages, and the delegated turn they prompted created the
+    /// server's row.
+    private func hasReachedTheBackend(_ id: UUID) -> Bool {
+        guard let messages = sessionValue(id)?.messages else { return false }
+        return messages.contains {
             $0.role == .learner
                 && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
@@ -1090,6 +1210,17 @@ final class TutorStore: ObservableObject {
     ///   written, and saying so is what lets the very next `persist()` create it
     ///   instead of deciding nothing has changed.
     private func adopt(_ next: LearningSession, isStored: Bool) {
+        var next = next
+        var isStored = isStored
+        // Coming back to a session a call has been writing into: the away copy
+        // is newer than the file whenever a delta has not reached disk yet, so
+        // it is what the learner returns to. It stops being an away copy at the
+        // same moment — from here the call writes into `session` again, because
+        // `mutateSession` routes by id and this id is now the visible one.
+        if let live = awaySessions.removeValue(forKey: next.id) {
+            next = live
+            isStored = false
+        }
         discardBoardInk()
         lastWritten = isStored ? next : nil
         session = next
@@ -1101,18 +1232,104 @@ final class TutorStore: ObservableObject {
         // so the previous session's payload is not a thing this one may re-send.
         retryPayload = RetryPayload()
         selectionViews = [:]
-        // An armed edit and an unpaid transcript cut both name messages in
-        // the thread being put away; against `next` they would cut the wrong
-        // conversation.
+        // An armed edit names a message in the thread being put away; against
+        // `next` it would cut the wrong conversation. The transcript debt is
+        // *not* cleared with it any more: it is keyed by session now, so each
+        // session's unpaid cut waits for that session's own next turn — which
+        // is what lets a call keep syncing its own thread from another session.
         editingMessageID = nil
-        pendingTranscriptSync = nil
-        // A live call's transcripts name the thread being put away too. The
-        // screen ends the call itself on a session switch; this is the same
-        // fact from the store's side.
-        isVoiceCallActive = false
-        liveVoiceUtteranceID = nil
-        voiceMessageIDsByItem = [:]
-        voiceLearnerMessageIDsByItem = [:]
+        // A call that is still running keeps every one of its maps: they name
+        // messages in the call session, which the switch does not leave. Only
+        // a switch with no call live clears them.
+        if callSessionID == nil {
+            isVoiceCallActive = false
+            liveVoiceUtteranceID = nil
+            voiceMessageIDsByItem = [:]
+            voiceLearnerMessageIDsByItem = [:]
+        } else if callSessionID != next.id {
+            // Away from the call: the live tint belongs to the call session's
+            // thread, which is not the one on screen.
+            liveVoiceUtteranceID = nil
+        }
+        refreshSessions()
+    }
+
+    // MARK: - The session a call keeps writing into
+
+    /// Sessions that are not on screen but are still being written to — today
+    /// exactly one: the session a live call is bound to while the learner
+    /// browses elsewhere.
+    ///
+    /// Held as whole values rather than as a second store: every write goes
+    /// through `mutateSession`, which routes by id, so one code path serves the
+    /// visible session and the away one and no caller has to know which it has.
+    /// An entry is seeded at the switch (from what was on screen), read back on
+    /// return in `adopt`, and dropped when the call ends.
+    private var awaySessions: [UUID: LearningSession] = [:]
+
+    /// The session a running turn belongs to. `nil` between turns.
+    private var turnSessionID: UUID?
+
+    /// True while a turn is running into a session that is not on screen. The
+    /// published `isLoading` cannot say this — it draws the *visible* thread's
+    /// thinking indicator — so the pipeline's one-turn-at-a-time rule reads
+    /// `isBusy` instead.
+    private var awayTurnIsRunning = false
+
+    /// Whether the pipeline already has a turn, wherever it is landing.
+    var isBusy: Bool { isLoading || isEvaluating || awayTurnIsRunning }
+
+    /// The session every voice hook writes into: the call's own, for the whole
+    /// life of the call, whichever session is on screen.
+    private var voiceSessionID: UUID { callSessionID ?? session.id }
+
+    /// Whether the live canvas is the board of the turn that is running — what
+    /// `view_board` must be gated on, so a tutor working for a call in another
+    /// session is never shown the board the learner is looking at now.
+    var turnSeesTheVisibleBoard: Bool {
+        guard let turnSessionID else { return true }
+        return turnSessionID == session.id
+    }
+
+    /// A read of the session with `id`, wherever it lives. Loads it from disk
+    /// once if it is neither on screen nor already held away.
+    private func sessionValue(_ id: UUID) -> LearningSession? {
+        if session.id == id { return session }
+        if let away = awaySessions[id] { return away }
+        guard let stored = persistence.load(id: id) else { return nil }
+        awaySessions[id] = stored
+        return stored
+    }
+
+    /// Applies `change` to the session with `id` — the visible one, or the away
+    /// copy. Returns whether the session could be found at all: a session
+    /// deleted out from under a call cannot be written to, and a write that
+    /// silently landed in the visible session instead is exactly the corruption
+    /// this routing exists to prevent.
+    @discardableResult
+    private func mutateSession(_ id: UUID, _ change: (inout LearningSession) -> Void) -> Bool {
+        if session.id == id {
+            change(&session)
+            return true
+        }
+        guard var away = sessionValue(id) else { return false }
+        change(&away)
+        awaySessions[id] = away
+        return true
+    }
+
+    /// Writes the session with `id` to disk — `persist()` for the visible one,
+    /// a direct save for an away copy (there is no ink to fold: nothing is
+    /// drawing on a board that is not on screen).
+    private func persistSession(_ id: UUID) {
+        if session.id == id {
+            persist()
+            return
+        }
+        guard var away = awaySessions[id] else { return }
+        away.lastSavedAt = .now
+        awaySessions[id] = away
+        persistence.save(away)
         refreshSessions()
     }
 
@@ -1155,6 +1372,13 @@ final class TutorStore: ObservableObject {
         persist()
     }
 
+    /// Takes effect on the next call, never the live one: the realtime model is
+    /// locked once the session has produced audio, the same way the voice is.
+    func setVoiceModel(_ voiceModel: VoiceModelChoice) {
+        session.selectedVoiceModel = voiceModel
+        persist()
+    }
+
     /// What the last turn carried besides its transcript, so a retry can carry
     /// it again.
     ///
@@ -1179,7 +1403,7 @@ final class TutorStore: ObservableObject {
     private var retryPayload = RetryPayload()
 
     func retryLastRequest() {
-        guard !isLoading, ensureTutorAvailable() else { return }
+        guard !isBusy, ensureTutorAvailable() else { return }
         requestTutor(
             signal: nil,
             imageData: retryPayload.imageData,
@@ -1229,7 +1453,21 @@ final class TutorStore: ObservableObject {
             onFinish?(.failure(TutorServiceError.notConfigured))
             return
         }
-        isLoading = true
+        // **The session this turn belongs to, decided once, here.** A delegated
+        // voice turn belongs to the call's session however the learner then
+        // wanders; every other turn belongs to what is on screen. Everything
+        // below reads and writes through this id rather than through `session`,
+        // which is what keeps a voice turn out of the thread the learner is
+        // browsing — see `mutateSession`.
+        let turnSession = (isVoiceTurn ? callSessionID : nil) ?? session.id
+        guard let base = sessionValue(turnSession) else {
+            onFinish?(.failure(TutorServiceError.notConfigured))
+            return
+        }
+        let isVisibleTurn = turnSession == session.id
+        turnSessionID = turnSession
+        awayTurnIsRunning = !isVisibleTurn
+        isLoading = isVisibleTurn
         errorMessage = nil
         phase = nil
         // Recorded before the turn goes out, so a retry re-sends what this one
@@ -1243,7 +1481,7 @@ final class TutorStore: ObservableObject {
         // body's `text` is the last message's — without ever entering the
         // thread: the learner's spoken words are already there, and the voice
         // model's paraphrase is not something they said.
-        var turnMessages = session.messages
+        var turnMessages = base.messages
         if let voiceRequest {
             turnMessages.append(TutorMessage(role: .learner, text: voiceRequest, signal: .voice))
         }
@@ -1254,26 +1492,35 @@ final class TutorStore: ObservableObject {
             // with something in it" have stopped being the same message — and a
             // session that opened with a picture would otherwise report its goal
             // as the empty string.
-            goal: session.messages.first { $0.role == .learner && !$0.text.isEmpty }?.text,
-            exercise: session.exercise,
-            plan: session.plan,
+            goal: base.messages.first { $0.role == .learner && !$0.text.isEmpty }?.text,
+            exercise: base.exercise,
+            plan: base.plan,
             imageData: imageData,
             imageRegionDescription: regionDescription,
             // Every turn, not just the ones that attach a selection — see
             // `boardProvider`. Rendering is not free (a 3,000px PNG of the
             // student's work), but it happens once per send, on the same tap
             // that is about to open a network connection anyway.
-            boardOverview: boardProvider?(),
-            boardManifest: boardManifestProvider?(),
-            boardScene: boardSceneProvider?(),
+            //
+            // **The three providers read the live canvas, so they answer for
+            // the visible board and only for it.** A turn pinned to a session
+            // the learner has walked out of must never be handed the board they
+            // are looking at now: nothing is drawing on the call session's
+            // board while they are away, so the tutor works from its stored
+            // scene instead — the exact scene it drew there, carried on
+            // `boardSceneStored` — and no picture at all. `view_board` is gated
+            // the same way; see `turnSeesTheVisibleBoard`.
+            boardOverview: isVisibleTurn ? boardProvider?() : nil,
+            boardManifest: isVisibleTurn ? boardManifestProvider?() : nil,
+            boardScene: isVisibleTurn ? boardSceneProvider?() : Self.storedSceneContext(base.boardScene),
             // The ids the composer's uploads came back with. Nothing here has
             // bytes: the server already holds the file and this turn only names
             // it — see `TutorRequest.attachmentIDs`.
             attachmentIDs: attachmentIDs,
             signal: signal,
-            sessionID: session.id,
-            model: session.selectedModel,
-            reasoningEffort: session.reasoningEffort
+            sessionID: turnSession,
+            model: base.selectedModel,
+            reasoningEffort: base.reasoningEffort
         )
         let service = tutorService
         activeRequestTask = Task { [weak self] in
@@ -1295,13 +1542,29 @@ final class TutorStore: ObservableObject {
                 pendingFinish = nil
             }
 
-            if let prefix = self.pendingTranscriptSync {
+            /// Everything a finished turn puts back, wherever the turn landed.
+            /// `phase` and `isLoading` describe the *visible* thread, so an
+            /// away turn clears only the pipeline's own busy flag.
+            /// Once per turn: the next turn may already have started by the
+            /// time this turn's stream actually closes, and clearing its flags
+            /// would leave the pipeline claiming to be idle mid-reply.
+            var didSettle = false
+            @MainActor
+            func settleTurnFlags() {
+                guard !didSettle else { return }
+                didSettle = true
+                self.phase = nil
+                self.isLoading = false
+                self.isEvaluating = false
+                self.awayTurnIsRunning = false
+                if self.turnSessionID == turnSession { self.turnSessionID = nil }
+            }
+
+            if let prefix = self.pendingTranscriptSync[turnSession] {
                 guard await service.replaceTranscript(
                     sessionID: request.sessionID, messages: prefix
                 ) else {
-                    self.phase = nil
-                    self.isLoading = false
-                    self.isEvaluating = false
+                    settleTurnFlags()
                     if !isVoiceTurn {
                         self.errorMessage = "I couldn’t update the conversation on the tutor service just now."
                     }
@@ -1313,7 +1576,7 @@ final class TutorStore: ObservableObject {
                     )))
                     return
                 }
-                self.pendingTranscriptSync = nil
+                self.pendingTranscriptSync[turnSession] = nil
             }
             var accumulatedText = ""
             var tutorMessageID: UUID?
@@ -1343,18 +1606,26 @@ final class TutorStore: ObservableObject {
             /// still open (`finishVoiceAssistantResponse`), and a cached index
             /// into a list something else may shorten is a write into the
             /// wrong message.
+            ///
+            /// Addressed by **session id as well as message id** now: a
+            /// delegated voice turn writes into the call's session, which may
+            /// not be the one on screen — see `mutateSession`.
             @MainActor
-            func messageIndex() -> Int {
-                if let id = tutorMessageID,
-                   let index = self.session.messages.firstIndex(where: { $0.id == id }) {
-                    return index
+            func withMessage(_ change: (inout TutorMessage) -> Void) {
+                if tutorMessageID == nil {
+                    var message = TutorMessage(role: .tutor, text: "")
+                    message.activity = ActivityTrail()
+                    guard self.mutateSession(turnSession, { $0.messages.append(message) })
+                    else { return }
+                    tutorMessageID = message.id
                 }
-                let message = TutorMessage(role: .tutor, text: "")
-                self.session.messages.append(message)
-                let index = self.session.messages.count - 1
-                self.session.messages[index].activity = ActivityTrail()
-                tutorMessageID = message.id
-                return index
+                guard let id = tutorMessageID else { return }
+                self.mutateSession(turnSession) { stored in
+                    guard let index = stored.messages.firstIndex(where: { $0.id == id }) else {
+                        return
+                    }
+                    change(&stored.messages[index])
+                }
             }
 
             /// Reads the turn's trail out of the message, lets `change` mutate it,
@@ -1368,25 +1639,28 @@ final class TutorStore: ObservableObject {
             /// `@MainActor` for the reason `messageIndex` above carries it.
             @MainActor
             func withTrail(_ change: (inout ActivityTrail) -> Void) {
-                let index = messageIndex()
-                var trail = self.session.messages[index].activity ?? ActivityTrail()
-                change(&trail)
-                self.session.messages[index].activity = trail
+                withMessage { message in
+                    var trail = message.activity ?? ActivityTrail()
+                    change(&trail)
+                    message.activity = trail
+                }
             }
 
             do {
                 for try await event in service.stream(request) {
                     switch event {
                     case .status(let newPhase, _):
-                        self.phase = newPhase
+                        // The status line belongs to the thread on screen. An
+                        // away turn's stages would be drawn against a
+                        // conversation they have nothing to do with.
+                        if self.session.id == turnSession { self.phase = newPhase }
                     case .reasoningDelta(let chunk):
                         withTrail { $0.appendReasoning(chunk) }
                     case .step(let id, let tool, let label):
                         withTrail { $0.upsert(TrailStep(id: id, tool: tool, label: label)) }
                     case .textDelta(let chunk):
                         accumulatedText += chunk
-                        let index = messageIndex()
-                        self.session.messages[index].text = accumulatedText
+                        withMessage { $0.text = accumulatedText }
                     case .boardViewed(let callID, let imageData, _):
                         // Written to `boardCropStore`, not into the message: a
                         // `TutorMessage` is `Codable` and goes into the session
@@ -1395,37 +1669,47 @@ final class TutorStore: ObservableObject {
                         // session. The trail holds only the id `crop(for:)` reads
                         // back by.
                         let imageID = UUID()
-                        self.boardCropStore.save(imageData, for: imageID, in: self.session.id)
+                        self.boardCropStore.save(imageData, for: imageID, in: turnSession)
                         withTrail { $0.setImage(imageID, forStep: callID) }
                     case .boardRequest:
                         // Answered inside the service, which owns the network and
                         // the renderer. It reaches here only as `.boardViewed`.
                         break
                     case .workspace(let plan, let exercise):
-                        self.session.plan = plan
-                        self.session.exercise = exercise
-                        self.isWorkspace = true
+                        self.mutateSession(turnSession) {
+                            $0.plan = plan
+                            $0.exercise = exercise
+                        }
+                        // The axis is the screen's, so it only moves for the
+                        // session on screen; the pair itself is stored either
+                        // way, and `adopt` reads it back on return.
+                        if self.session.id == turnSession { self.isWorkspace = true }
                     case .boardUpdate(let update):
                         // A board update is a coarse, user-visible mutation,
                         // not a token delta. Apply and persist it immediately:
                         // if the prose stream fails afterward, the diagram the
                         // learner can already see must still survive a relaunch.
-                        self.session.boardScene = self.session.boardScene.applying(update)
-                        self.persist()
-                    case .done:
-                        if let id = tutorMessageID,
-                           let index = self.session.messages.firstIndex(where: { $0.id == id }) {
-                            self.session.messages[index].activity?.duration =
-                                Date.now.timeIntervalSince(startedAt)
+                        // It lands on the *turn's* board — the call session's
+                        // scene while the learner is elsewhere, which the
+                        // canvas picks up when they come back (the canvas is
+                        // keyed on the session id and remounts on the switch).
+                        self.mutateSession(turnSession) {
+                            $0.boardScene = $0.boardScene.applying(update)
                         }
-                        self.phase = nil
-                        self.isLoading = false
-                        self.isEvaluating = false
-                        if signal == .evaluate, let tutorMessageID {
+                        self.persistSession(turnSession)
+                    case .done:
+                        if tutorMessageID != nil {
+                            withMessage {
+                                $0.activity?.duration = Date.now.timeIntervalSince(startedAt)
+                            }
+                        }
+                        settleTurnFlags()
+                        if signal == .evaluate, let tutorMessageID,
+                           self.session.id == turnSession {
                             self.evaluationMessageID = tutorMessageID
                         }
-                        self.session.lastSavedAt = .now
-                        self.persist()
+                        self.mutateSession(turnSession) { $0.lastSavedAt = .now }
+                        self.persistSession(turnSession)
                         onDone?(accumulatedText)
                         finish(.success(accumulatedText))
                     case .failure(let message, _):
@@ -1433,9 +1717,7 @@ final class TutorStore: ObservableObject {
                         // — it stays `nil` unless a message was never even
                         // created. A trail that never finished must not claim a
                         // time.
-                        self.phase = nil
-                        self.isLoading = false
-                        self.isEvaluating = false
+                        settleTurnFlags()
                         if !isVoiceTurn {
                             self.errorMessage = message
                         }
@@ -1444,12 +1726,12 @@ final class TutorStore: ObservableObject {
                 }
                 // A stream that stopped without `.done` or `.failure` still
                 // has to resolve the turn's completion — a voice continuation
-                // left hanging jams the engine's single-flight forever.
+                // left hanging jams the engine's single-flight forever, and a
+                // busy flag left standing jams the pipeline the same way.
+                settleTurnFlags()
                 finish(.failure(TutorServiceError.invalidResponse))
             } catch {
-                self.phase = nil
-                self.isLoading = false
-                self.isEvaluating = false
+                settleTurnFlags()
                 if !isVoiceTurn {
                     self.errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
                 }
@@ -1467,6 +1749,55 @@ final class TutorStore: ObservableObject {
                     """)
             }
         }
+    }
+
+    /// The board context for a turn whose session is not on screen — a
+    /// delegated voice turn while the learner browses somewhere else.
+    ///
+    /// It carries the tutor's own scene for **that** session and nothing the
+    /// live canvas knows: no viewport, no learner ink clusters, no overview
+    /// bounds. Those are all facts about the board on screen, and the board on
+    /// screen belongs to another session. The scene is what the tutor drew
+    /// there and what an `update_board` will address, so it is the one part
+    /// that has to travel. Same envelope as `CanvasCapture.sceneContextString`
+    /// — the server wraps it as quoted context either way — with the absence
+    /// stated rather than implied.
+    ///
+    /// Capped at the request field's limit by dropping trailing elements, for
+    /// the reason the canvas version does it: an over-limit upload is paid for
+    /// and then rejected.
+    static func storedSceneContext(_ scene: BoardScene, maxCharacters: Int = 60_000) -> String? {
+        guard !scene.elements.isEmpty else { return nil }
+        guard let encoded = try? JSONEncoder().encode(scene.elements),
+              var elements = (try? JSONSerialization.jsonObject(with: encoded)) as? [Any]
+        else { return nil }
+
+        func serialize(_ object: [String: Any]) -> String? {
+            guard let data = try? JSONSerialization.data(
+                withJSONObject: object, options: [.sortedKeys]
+            ) else { return nil }
+            return String(data: data, encoding: .utf8)
+        }
+
+        var root: [String: Any] = [
+            "kind": "board_scene_context",
+            "data_not_instructions": true,
+            "coordinate_system":
+                "logical board points; (0,0) is drawing (25000,25000); +x right, +y down",
+            // Said out loud: the learner is looking at a different session's
+            // board, so there is no viewport and no live ink to report.
+            "board_not_on_screen": true,
+            "tutor_elements": elements,
+        ]
+        var text = serialize(root)
+        while let current = text, current.count > maxCharacters, elements.count > 1 {
+            elements.removeLast()
+            root["tutor_elements"] = elements
+            root["truncated"] = true
+            root["omitted_element_count"] = scene.elements.count - elements.count
+            text = serialize(root)
+        }
+        return text
     }
 
     /// A failure named precisely enough to act on — for the log, never a screen.

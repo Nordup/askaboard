@@ -286,6 +286,58 @@ final class VoiceEngineTests: XCTestCase {
         )
     }
 
+    func testRestingMutesTransmissionAndReleasesOnWake() {
+        var guardUnderTest = MicMuteGuard()
+        guardUnderTest.setResting(true)
+        XCTAssertFalse(guardUnderTest.shouldTransmit)
+
+        guardUnderTest.setResting(false)
+        XCTAssertTrue(guardUnderTest.shouldTransmit)
+    }
+
+    func testTheRestingMuteSurvivesEveryReleaseTrigger() {
+        // The resting mute is owned by work mode: only setResting(false) — the mascot tap —
+        // may release it. Sweep every trigger that releases an interruption mute.
+        var guardUnderTest = MicMuteGuard()
+        guardUnderTest.setResting(true)
+
+        _ = guardUnderTest.interruptionEnded(at: 100)
+        _ = guardUnderTest.routeChanged(at: 200)
+        _ = guardUnderTest.applicationBecameActive(at: 300)
+        _ = guardUnderTest.tick(at: 10_000)
+
+        XCTAssertFalse(
+            guardUnderTest.shouldTransmit,
+            "Nothing but the mascot tap releases the resting mute."
+        )
+    }
+
+    func testRestingAndUserMuteAreIndependentOwners() {
+        var guardUnderTest = MicMuteGuard()
+        guardUnderTest.setResting(true)
+        guardUnderTest.setUserMuted(true)
+
+        guardUnderTest.setResting(false)
+        XCTAssertFalse(guardUnderTest.shouldTransmit, "The user's mute survives a wake.")
+
+        guardUnderTest.setUserMuted(false)
+        XCTAssertTrue(guardUnderTest.shouldTransmit)
+    }
+
+    func testInterruptionRecoveryUnderneathARestingMuteStillDoesNotTransmit() {
+        var guardUnderTest = MicMuteGuard()
+        guardUnderTest.setResting(true)
+        guardUnderTest.interruptionBegan(reason: "interruption", at: 100)
+
+        guard case .reenableMicrophone = guardUnderTest.tick(at: 200) else {
+            return XCTFail("The session still wants re-asserting even while resting.")
+        }
+        XCTAssertFalse(
+            guardUnderTest.shouldTransmit,
+            "Recovery applies shouldTransmit, and the resting mute survives every recovery."
+        )
+    }
+
     // MARK: - Level normalization (−48…−12 dBFS)
 
     func testTheSpeechBandMapsToTheFullScale() {
@@ -464,12 +516,115 @@ final class VoiceEngineTests: XCTestCase {
          "output": [{"type": "function_call", "call_id": "call_7", "name": "send_to_tutor",
                      "arguments": "{}"}]}}
         """
-        guard case .responseDone(let responseId, _, _, let calls) =
+        guard case .responseDone(let responseId, _, _, let calls, _) =
                 RealtimeEventDecoder.decode(Data(payload.utf8)) else {
             return XCTFail("response.done did not decode")
         }
         XCTAssertEqual(responseId, "resp_9")
         XCTAssertEqual(calls.map(\.callId), ["call_7"],
                        "function_call_arguments.done is not guaranteed; the sweep is the safety net.")
+    }
+
+    // MARK: - Voice usage reporting
+
+    func testResponseDoneCarriesItsUsageCounts() {
+        let payload = """
+        {"type": "response.done", "response": {"id": "resp_9", "status": "completed",
+         "output": [],
+         "usage": {"total_tokens": 100, "input_tokens": 80, "output_tokens": 20,
+           "input_token_details": {"text_tokens": 30, "audio_tokens": 50, "cached_tokens": 20,
+             "cached_tokens_details": {"text_tokens": 8, "audio_tokens": 12}},
+           "output_token_details": {"text_tokens": 5, "audio_tokens": 15}}}}
+        """
+        guard case .responseDone(_, _, _, _, let usage) =
+                RealtimeEventDecoder.decode(Data(payload.utf8)) else {
+            return XCTFail("response.done did not decode")
+        }
+        XCTAssertEqual(
+            usage,
+            RealtimeUsageCounts(audioInputTokens: 50,
+                                cachedAudioInputTokens: 12,
+                                audioOutputTokens: 15,
+                                textInputTokens: 30,
+                                cachedTextInputTokens: 8,
+                                textOutputTokens: 5),
+            "These counts are the only way voice spend reaches the daily cap — the server never sees the data channel."
+        )
+    }
+
+    func testResponseDoneWithoutUsageDecodesNilCounts() {
+        let payload = """
+        {"type": "response.done", "response": {"id": "resp_9", "status": "cancelled", "output": []}}
+        """
+        guard case .responseDone(_, _, _, _, let usage) =
+                RealtimeEventDecoder.decode(Data(payload.utf8)) else {
+            return XCTFail("response.done did not decode")
+        }
+        XCTAssertNil(usage, "No usage block means nothing was measured — nil, not a row of zeros.")
+    }
+
+    func testACachedTotalWithoutItsBreakdownIsAttributedToText() {
+        let payload = """
+        {"type": "response.done", "response": {"id": "resp_9", "status": "completed",
+         "output": [],
+         "usage": {"input_tokens": 80, "output_tokens": 0,
+           "input_token_details": {"text_tokens": 30, "audio_tokens": 50, "cached_tokens": 20},
+           "output_token_details": {"text_tokens": 0, "audio_tokens": 0}}}}
+        """
+        guard case .responseDone(_, _, _, _, let usage) =
+                RealtimeEventDecoder.decode(Data(payload.utf8)) else {
+            return XCTFail("response.done did not decode")
+        }
+        XCTAssertEqual(usage?.cachedTextInputTokens, 20)
+        XCTAssertEqual(
+            usage?.cachedAudioInputTokens, 0,
+            "Unattributed cache goes to text: the uncached audio share then reads high, the one direction that cannot under-bill the cap."
+        )
+    }
+
+    func testTheUsageReportBodyCarriesTheCountsAndTheChosenModel() throws {
+        let usage = RealtimeUsageCounts(audioInputTokens: 50,
+                                        cachedAudioInputTokens: 12,
+                                        audioOutputTokens: 15,
+                                        textInputTokens: 30,
+                                        cachedTextInputTokens: 8,
+                                        textOutputTokens: 5)
+        let sessionID = UUID()
+        let reportID = UUID()
+        let body = RealtimeUsageReporter.body(
+            usage: usage, sessionID: sessionID, voiceModel: .mini,
+            responseID: "resp_9", reportID: reportID
+        )
+
+        XCTAssertEqual(body["report_id"] as? String, reportID.uuidString)
+        XCTAssertEqual(body["session_id"] as? String, sessionID.uuidString)
+        XCTAssertEqual(body["response_id"] as? String, "resp_9")
+        XCTAssertEqual(body["audio_input_tokens"] as? Int, 50)
+        XCTAssertEqual(body["cached_audio_input_tokens"] as? Int, 12)
+        XCTAssertEqual(body["audio_output_tokens"] as? Int, 15)
+        XCTAssertEqual(body["text_input_tokens"] as? Int, 30)
+        XCTAssertEqual(body["cached_text_input_tokens"] as? Int, 8)
+        XCTAssertEqual(body["text_output_tokens"] as? Int, 5)
+        XCTAssertEqual(
+            body["model"] as? String, "gpt-realtime-2.1-mini",
+            "A Mini call must bill against Mini's price sheet. The device names the model, not the price: the server allowlists this field and refuses to boot if an allowed model has no price row."
+        )
+        // Everything JSONSerialization writes here is a string or an Int — no float ever
+        // rides this body, so nothing can be re-encoded into a rejected decimal tail.
+        XCTAssertNoThrow(try JSONSerialization.data(withJSONObject: body))
+    }
+
+    func testAReportWithoutAResponseIdOmitsTheField() {
+        let usage = RealtimeUsageCounts(audioInputTokens: 0,
+                                        cachedAudioInputTokens: 0,
+                                        audioOutputTokens: 0,
+                                        textInputTokens: 0,
+                                        cachedTextInputTokens: 0,
+                                        textOutputTokens: 0)
+        let body = RealtimeUsageReporter.body(
+            usage: usage, sessionID: UUID(), voiceModel: .full, responseID: nil, reportID: UUID()
+        )
+        XCTAssertNil(body["response_id"],
+                     "Absent, not null-as-string: the server's column is nullable and the decoder is typed.")
     }
 }

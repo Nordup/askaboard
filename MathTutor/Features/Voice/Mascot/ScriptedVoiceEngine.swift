@@ -27,6 +27,10 @@ final class ScriptedVoiceEngine: VoiceSessionControlling {
         /// streamed word by word through `streamAssistantText`, then
         /// `assistantResponseFinished(itemID, delegated)`.
         case assistantSpeaks(String, itemID: String, seconds: TimeInterval, delegated: Bool)
+        /// Work mode: `.resting`, levels silent, until `wake()` — the mascot's tap — or
+        /// `maximum` seconds, whichever comes first. The timeout is what keeps a preview
+        /// nobody taps looping instead of stopping on a resting face forever.
+        case rests(maximum: TimeInterval)
     }
 
     let display = VoiceDisplayProvider()
@@ -40,6 +44,10 @@ final class ScriptedVoiceEngine: VoiceSessionControlling {
     private var pending: [Cue] = []
     private var isMuted = false
     private var typedCount = 0
+    /// Set by `wake()`, consumed by the `.rests` beat. The real engine ends work mode by
+    /// releasing a mute owner; the script has no mute to release, so the tap is a flag the
+    /// resting loop reads on its next 10 Hz tick.
+    private var wakeRequested = false
 
     /// The display tick — the contract's "~10 Hz".
     private static let tickSeconds: TimeInterval = 0.1
@@ -52,7 +60,11 @@ final class ScriptedVoiceEngine: VoiceSessionControlling {
     }
 
     /// A call worth watching: listen → learner asks → delegated think → spoken answer →
-    /// listen again.
+    /// the learner takes it from here → the tutor steps back → rest until the tap.
+    ///
+    /// The work-mode tail is the only coverage `.resting` gets outside the device: voice
+    /// cannot run in the simulator, so a preview and a UI test see the resting mascot, the
+    /// chip and the wake tap exclusively through this script.
     static let demoScript: [Cue] = [
         .hold(.listening, seconds: 1.2),
         .userSpeaks("How do I find the hypotenuse here?", seconds: 2.2),
@@ -63,6 +75,17 @@ final class ScriptedVoiceEngine: VoiceSessionControlling {
             seconds: 3.4,
             delegated: true
         ),
+        .hold(.listening, seconds: 1.2),
+        .userSpeaks("Wait — I want to try the next one myself.", seconds: 2.0),
+        // The warm line the prompt asks for, spoken *before* the tool call — which is why
+        // the rest follows the talking beat rather than replacing it.
+        .assistantSpeaks(
+            "Good idea — take your time. I'll be right here.",
+            itemID: "scripted-item-2",
+            seconds: 2.2,
+            delegated: false
+        ),
+        .rests(maximum: 8),
         .hold(.listening, seconds: 2.0),
     ]
 
@@ -78,7 +101,9 @@ final class ScriptedVoiceEngine: VoiceSessionControlling {
 
     // MARK: - VoiceSessionControlling
 
-    func start(sessionID: UUID, hooks: VoiceSessionHooks) async {
+    // `voiceModel` is accepted and ignored: the scripted engine plays phases without a
+    // network, so which realtime model a real call would open on has nothing to change here.
+    func start(sessionID: UUID, voiceModel: VoiceModelChoice, hooks: VoiceSessionHooks) async {
         guard !isActive else { return }
         isActive = true
         self.hooks = hooks
@@ -95,6 +120,7 @@ final class ScriptedVoiceEngine: VoiceSessionControlling {
         setDisplay(phase: .idle, userLevel: 0, assistantLevel: 0)
         isActive = false
         pending = []
+        wakeRequested = false
     }
 
     func setMuted(_ muted: Bool) {
@@ -103,6 +129,13 @@ final class ScriptedVoiceEngine: VoiceSessionControlling {
         state.isMuted = muted
         if muted { state.userLevel = 0 }
         display.state = state
+    }
+
+    /// The mascot's tap. Only a resting script answers it, exactly as the real engine only
+    /// answers it from `.resting`.
+    func wake() {
+        guard isActive, display.state.phase == .resting else { return }
+        wakeRequested = true
     }
 
     func sendTyped(_ text: String) {
@@ -191,6 +224,22 @@ final class ScriptedVoiceEngine: VoiceSessionControlling {
             }
             hooks?.assistantResponseFinished(itemID, delegated)
             return true
+
+        case .rests(let maximum):
+            wakeRequested = false
+            var elapsed: TimeInterval = 0
+            while elapsed < maximum, !wakeRequested {
+                if Task.isCancelled { return false }
+                setDisplay(phase: .resting, userLevel: 0, assistantLevel: 0)
+                do {
+                    try await Task.sleep(nanoseconds: UInt64(Self.tickSeconds * 1_000_000_000))
+                } catch {
+                    return false
+                }
+                elapsed += Self.tickSeconds
+            }
+            wakeRequested = false
+            return !Task.isCancelled
         }
     }
 

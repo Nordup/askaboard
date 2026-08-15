@@ -484,6 +484,14 @@ struct ComposerVoiceCall {
     /// conversation, not down the tutor pipeline. The composer clears the
     /// field itself, exactly as an ordinary send does.
     let onSendTyped: (String) -> Void
+    /// Work mode — the tutor has stepped back and the microphone is off.
+    ///
+    /// Two things change on the pill. The mic button dims and stops answering
+    /// taps: the mute is not the learner's to release, and the mascot is the
+    /// wake affordance. And the return key goes back to being an ordinary
+    /// send — a learner who chose quiet and then typed a question deserves a
+    /// typed answer, not a voice that starts talking again.
+    var isResting: Bool = false
 }
 
 // MARK: - The composer
@@ -706,8 +714,13 @@ struct Composer: View {
                 // and the end disc in the send's, so nothing on the pill moves
                 // when a call starts. The dictation mic itself is gone — the
                 // two can never hold the microphone together.
-                ComposerVoiceMuteButton(metrics: metrics, isMuted: voice.isMuted, action: voice.onToggleMute)
-                    .frame(height: metrics.innerHeight)
+                ComposerVoiceMuteButton(
+                    metrics: metrics,
+                    isMuted: voice.isMuted,
+                    isResting: voice.isResting,
+                    action: voice.onToggleMute
+                )
+                .frame(height: metrics.innerHeight)
                 ComposerVoiceEndButton(metrics: metrics, action: voice.onEnd)
                     .frame(height: metrics.innerHeight)
             } else {
@@ -996,7 +1009,11 @@ struct Composer: View {
     /// draft's files stay — a typed voice line carries no attachments, and
     /// clearing chips it did not send would be the silent-downgrade bug again.
     private func send() {
-        if let voice {
+        // `!voice.isResting`: while the tutor rests the call does not take typed text at
+        // all. It falls through to the ordinary send below — the normal tutor pipeline,
+        // with the draft's files and the store's own "nothing is consumed until the turn
+        // is taken" rule intact. See `ComposerVoiceCall.isResting`.
+        if let voice, !voice.isResting {
             let typed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !typed.isEmpty else { return }
             voice.onSendTyped(typed)

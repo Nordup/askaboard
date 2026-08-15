@@ -117,6 +117,10 @@ struct BoardScreen: View {
             // everything"*, and screen 06's dock — inside `tutor` — floats on the canvas
             // card, which the peek and the canvas never overlap.
             floatingRegion
+            // Last of all: a call running somewhere else is the one thing on
+            // this screen that is not about the session on screen, and it has
+            // to be findable over every surface.
+            callPill
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .ignoresSafeArea()
@@ -187,12 +191,6 @@ struct BoardScreen: View {
             uiState.closeSessionsDrawer()
         }
         .onChange(of: isShowingSettings) { _, isShowing in if isShowing { dictation.stop() } }
-        // The one place the store learns a call is over, however it ended —
-        // the X disc, a session switch, or a start that could not bring the
-        // call up and folded itself away. Idempotent on the store's side.
-        .onChange(of: voice.isLive) { _, isLive in
-            if !isLive { store.voiceCallEnded() }
-        }
         // The backstop for the one session change that does not go through
         // `TutorPanel.adoptSessionUI` — Settings' "Reset this session", which calls the
         // store directly with no surface in between. An attachment was uploaded *against a
@@ -202,11 +200,22 @@ struct BoardScreen: View {
         // `task(id:)` on the panel would wipe the draft every time the tutor docked.
         .onChange(of: store.session.id) { _, _ in
             attachments.clear()
-            // A live call streams its transcripts into the session it was
-            // started in; carried across a switch it would write them into
-            // the next one. Ending is the only honest option the engine
-            // offers, and the store clears its own live state in `adopt`.
-            endVoiceChat()
+            // **A switch no longer ends the call.** It used to: a call streams
+            // its transcripts into the session it was started in, and the store
+            // wrote them into whatever was on screen. The store pins them to
+            // the call session now (`TutorStore.callSessionID`), so the call
+            // keeps running while the learner browses — the pill marks where it
+            // is — and the deferred close keeps the server from freezing that
+            // session's episode mid-conversation.
+            //
+            // The one ending left here: a call whose session no longer exists.
+            // Settings' reset and a delete of the call session destroy the
+            // thread the call writes into, and a call with nowhere to speak is
+            // not a call.
+            if let callID = voice.callSessionID,
+               !store.sessions.contains(where: { $0.id == callID }) {
+                endVoiceChat()
+            }
         }
         // The armed edit's cancel gesture: the draft emptied by hand. The store
         // cannot watch the field — the draft is this screen's state — so the
@@ -222,14 +231,29 @@ struct BoardScreen: View {
         // gone away should read as "no board" rather than keep a torn-down
         // canvas alive.
         .task {
+            // The one place the store learns a call is over, however it ended —
+            // the X disc, a call replaced by one started in another session, or
+            // a start that could not bring the call up and folded itself away.
+            // A callback rather than `onChange(of: voice.isLive)`: it carries
+            // the session the call belonged to and it fires before any next
+            // call can begin. See `VoiceSessionHost.onCallEnded`.
+            voice.onCallEnded = { [weak store] sessionID in
+                store?.voiceCallEnded(sessionID: sessionID)
+            }
             store.boardProvider = { [weak capture] in capture?.overviewData() }
             store.boardManifestProvider = { [weak capture] in capture?.manifest() }
             store.boardSceneProvider = { [weak capture] in capture?.sceneContextString() }
             // The service answers `view_board` straight from the canvas: the
             // tutor asks for a rectangle mid-turn and this renders it from the
             // vectors, at a resolution a thumbnail upload could never carry.
-            BackendTutorService.boardRenderer = { [weak capture] percent in
-                capture?.renderRegion(percent: percent)
+            // It answers for the board on screen, so it answers only for a turn
+            // whose session *is* the one on screen. A delegated turn running for
+            // a call the learner has walked away from must never be handed this
+            // canvas: `nil` reaches the model as "I could not see the board",
+            // which is true — see `TutorStore.turnSeesTheVisibleBoard`.
+            BackendTutorService.boardRenderer = { [weak capture, weak store] percent in
+                guard store?.turnSeesTheVisibleBoard ?? false else { return nil }
+                return capture?.renderRegion(percent: percent)
             }
         }
     }
@@ -491,7 +515,13 @@ struct BoardScreen: View {
                     dictation: dictation,
                     attachments: attachments,
                     voiceCall: composerVoiceCall,
-                    voiceThread: voice.isLive ? .panel(display: voice.display) : nil,
+                    voiceThread: isCallInVisibleSession
+                        ? .panel(
+                            display: voice.display,
+                            isResting: voice.isResting,
+                            onWake: { voice.wake() }
+                        )
+                        : nil,
                     onStartVoiceChat: startVoiceChatAction,
                     // The same flag the collapsed dock's `btn/select` takes, for the same
                     // control at the other presentation — an empty board has nothing to
@@ -519,7 +549,7 @@ struct BoardScreen: View {
                     // swap like every other presentation switch. The dock's tap is
                     // untouched (it opens the chat); mute and end live in the voice bar
                     // there, deliberately not here.
-                    liveFace: voice.isLive
+                    liveFace: isCallInVisibleSession
                         ? VoiceMascotView(display: voice.display, variant: .dock)
                         : nil
                 )
@@ -536,7 +566,13 @@ struct BoardScreen: View {
                 dictation: dictation,
                 attachments: attachments,
                 voiceCall: composerVoiceCall,
-                voiceThread: voice.isLive ? .fullScreen(display: voice.display) : nil,
+                voiceThread: isCallInVisibleSession
+                    ? .fullScreen(
+                        display: voice.display,
+                        isResting: voice.isResting,
+                        onWake: { voice.wake() }
+                    )
+                    : nil,
                 onStartVoiceChat: startVoiceChatAction,
                 actions: actions,
                 isPresentationSwitching: isPresentationSwitching
@@ -699,6 +735,63 @@ struct BoardScreen: View {
         }
     }
 
+    /// Board 32's pill: a live call in a session that is **not** the one on
+    /// screen, floating top-centre over the canvas area at y = 36 — the board's
+    /// own 28pt content top plus 8.
+    ///
+    /// Mounted only while that is true, like every other layer this screen puts
+    /// over the board: the condition flips the moment the tap lands the learner
+    /// back in the call session, so the pill takes itself away. The container is
+    /// `Color.clear`, which takes no hit test of its own, so nothing outside the
+    /// capsule is intercepted — the board keeps every touch the pill does not.
+    @ViewBuilder
+    private var callPill: some View {
+        if let callID = voice.callSessionID,
+           CallPill.isVisible(
+               isLive: voice.isLive,
+               callSessionID: callID,
+               visibleSessionID: store.session.id
+           ) {
+            Color.clear
+                .frame(width: pillLaneWidth, height: layout.contentHeight)
+                .overlay(alignment: .top) {
+                    CallPill(
+                        display: voice.display,
+                        // The live row, so a session named by its first turn
+                        // stops saying "New session" under the pill too; the
+                        // host's own copy is the fallback for a session the
+                        // index has not caught up with.
+                        sessionTitle: store.sessions.first { $0.id == callID }?.title
+                            ?? voice.callSessionTitle,
+                        onReturn: { returnToCall(callID) }
+                    )
+                    .padding(.top, DS.Space.s2)
+                }
+                .offset(x: pillLaneX, y: layout.contentTop)
+        }
+    }
+
+    /// The lane the pill centres itself in: the canvas, or the whole window
+    /// when the tutor has the screen and there is no canvas to sit over.
+    private var pillLaneWidth: CGFloat {
+        isTutorFullScreen ? layout.size.width : boardWidth
+    }
+
+    private var pillLaneX: CGFloat {
+        isTutorFullScreen ? 0 : boardX
+    }
+
+    /// The pill's tap: the sessions drawer's own switch, so every piece of the
+    /// switch's bookkeeping runs exactly as it does from a row — the store
+    /// saves and swaps the session, and this screen's own `onChange` clears the
+    /// draft's files behind it.
+    private func returnToCall(_ sessionID: UUID) {
+        guard sessionID != store.session.id else { return }
+        store.openSession(id: sessionID)
+        uiState.clearBoardSelection()
+        uiState.showConversation(store.hasGoal ? .active : .start)
+    }
+
     private var isTutorFullScreen: Bool { presentation == .fullScreen }
 
     // MARK: - Behaviour
@@ -724,15 +817,32 @@ struct BoardScreen: View {
 
     // MARK: - Voice chat
 
+    /// **Whether this screen draws the call at all**, as opposed to marking it
+    /// with the pill: a call is live *and* it belongs to the session on screen.
+    ///
+    /// Every voice surface on this screen branches on this and never on
+    /// `voice.isLive` — the mascot on the thread's tail, the dock orb's live
+    /// face, the composer's voice mode, and through `VoiceThreadState` board
+    /// 31's resting chip. A call the learner has walked away from keeps running
+    /// and keeps speaking into its own session; the session they are reading
+    /// gets its ordinary thread and its ordinary composer, whose typed words go
+    /// to the tutor of the session on screen. See `CallPill.isVisible` — the two
+    /// are complements, so a live call is drawn in exactly one place.
+    private var isCallInVisibleSession: Bool { voice.isCallHere(in: store.session.id) }
+
     /// The live call as the composer draws it — built fresh per render, like
     /// `actions`, so the surfaces hold values and never the engine.
     private var composerVoiceCall: ComposerVoiceCall? {
-        guard voice.isLive else { return nil }
+        guard isCallInVisibleSession else { return nil }
         return ComposerVoiceCall(
             isMuted: voice.isMuted,
             onToggleMute: { voice.toggleMuted() },
             onEnd: { endVoiceChat() },
-            onSendTyped: { voice.sendTyped($0) }
+            onSendTyped: { voice.sendTyped($0) },
+            // Work mode changes what the pill does with the return key and how the mic
+            // button draws — see `Composer.send()` and `ComposerVoiceMuteButton`. A rare
+            // fact, mirrored off the display, so this value moves on the transition only.
+            isResting: voice.isResting
         )
     }
 
@@ -753,12 +863,16 @@ struct BoardScreen: View {
     /// the thread: a call started from the greeting needs the conversation
     /// fill on screen to be seen at all.
     private func startVoiceChat() {
-        guard !voice.isLive, voice.isAvailable else { return }
+        guard voice.isAvailable else { return }
+        // **One call at a time, app-wide.** A call live in another session is
+        // ended first, on the normal teardown path — usage reported,
+        // transcripts settled, and the old call session's deferred close fired
+        // by `voiceCallEnded`. No confirmation: the tap is unambiguous, and the
+        // pill the learner tapped past says where the old call was.
+        let replacing = voice.isCallElsewhere(than: store.session.id)
+        guard !voice.isLive || replacing else { return }
         dictation.stop()
         store.clearComposerNote()
-        // Before the engine starts, so no hook can arrive at a store that
-        // still thinks there is no call.
-        store.voiceCallBegan()
         // `stop()` is asynchronous at its tail — the dictation session's own
         // task clears `isListening` as it unwinds — and the engine refuses to
         // start while dictation still claims the microphone
@@ -766,9 +880,27 @@ struct BoardScreen: View {
         // costs nothing on the common path: no session, no wait.
         let unwinding = dictation.session
         let sessionID = store.session.id
+        let sessionTitle = store.session.title
+        // Read here rather than inside the task: the call opens on what the
+        // learner had selected when they tapped, not on whatever the settings
+        // window holds by the time dictation finishes unwinding.
+        let voiceModel = store.session.selectedVoiceModel
         Task {
+            // The old call's whole teardown runs first, and `finish()` reports
+            // it through `onCallEnded` before anything binds the host to this
+            // session — which is what keeps the old call's deferred close
+            // pointed at the old call's session.
+            if replacing { await voice.finish() }
             await unwinding?.value
-            voice.begin(sessionID: sessionID, hooks: voiceHooks)
+            // Only now, and always before the engine starts, so no hook can
+            // arrive at a store that still thinks there is no call.
+            store.voiceCallBegan(sessionID: sessionID)
+            voice.begin(
+                sessionID: sessionID,
+                sessionTitle: sessionTitle,
+                voiceModel: voiceModel,
+                hooks: voiceHooks
+            )
         }
         uiState.beginConversation()
     }

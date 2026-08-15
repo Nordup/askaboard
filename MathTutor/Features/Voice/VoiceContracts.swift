@@ -16,6 +16,10 @@ enum VoicePhase: Equatable {
     case thinking
     /// Assistant audio is playing.
     case talking
+    /// Work mode: the tutor called step_back, the mic is off, the mascot
+    /// rests. Only the mascot tap (`wake()`) leaves this state — the mic is
+    /// off, so speech cannot.
+    case resting
     case ending
 }
 
@@ -32,7 +36,20 @@ struct VoiceDisplayState: Equatable {
 /// Dedicated publisher so per-frame levels never re-render the thread.
 @MainActor
 final class VoiceDisplayProvider: ObservableObject {
-    @Published var state = VoiceDisplayState()
+    @Published var state = VoiceDisplayState() {
+        didSet {
+            guard state.phase != oldValue.phase else { return }
+            onPhaseChange?(state.phase)
+        }
+    }
+
+    /// The rare-fact side channel, for the one thing above the mascot that has to know a
+    /// phase: work mode. `VoiceSessionHost` republishes `.resting` as a plain `@Published`
+    /// flag, so the chip, the mic button and the composer's typed routing re-render on the
+    /// transition and never on a level — which is the whole reason this publisher is
+    /// separate from the store's. Called on the main actor, only when the phase actually
+    /// changes.
+    var onPhaseChange: ((VoicePhase) -> Void)?
 }
 
 /// How the engine reaches the rest of the app. Installed by BoardScreen.
@@ -84,10 +101,18 @@ struct VoiceSessionHooks {
 protocol VoiceSessionControlling: AnyObject {
     var display: VoiceDisplayProvider { get }
     var isActive: Bool { get }
-    func start(sessionID: UUID, hooks: VoiceSessionHooks) async
+    /// `voiceModel` is read here and never again: the realtime model, like the
+    /// voice, locks once the call has produced audio, so changing the setting
+    /// mid-call takes effect on the next one. Passed rather than defaulted —
+    /// a protocol requirement cannot carry a default, and a shim that supplied
+    /// one would let a call site forget the learner's choice and still compile.
+    func start(sessionID: UUID, voiceModel: VoiceModelChoice, hooks: VoiceSessionHooks) async
     func end() async
     func setMuted(_ muted: Bool)
     /// Typed text during a live call: becomes a user text item in the realtime
     /// conversation plus a response.create.
     func sendTyped(_ text: String)
+    /// Leave `.resting` (the mascot tap). The mic returns to `shouldTransmit`
+    /// and the phase to `.listening`. A no-op in every other phase.
+    func wake()
 }

@@ -34,6 +34,10 @@ final class MascotMotion: @unchecked Sendable {
     struct Ring: Equatable {
         var diameter: CGFloat
         var opacity: Double
+        /// In the same reference units as `diameter` — the thinking ring and the resting
+        /// ring are drawn at different weights (1.5 and 1.0 on the 48pt face), so the
+        /// weight travels with the ring rather than sitting in the painter.
+        var strokeWidth: CGFloat = MascotSpec.ringStrokeWidth
     }
 
     struct Dot: Equatable {
@@ -82,6 +86,10 @@ final class MascotMotion: @unchecked Sendable {
     /// The talking bob's clock. Frozen while the assistant is silent (the sleep orb's
     /// `rimTime` rule): the face resumes where it left off, it does not jump.
     private var bobPhase: Double = 0
+    /// The resting ring's breath. Its own clock rather than the listening breath's,
+    /// because it runs at a sixth of the rate and must not inherit that one's position
+    /// when the tutor steps back mid-sentence.
+    private var restPhase: Double = 0
     /// Talking ripples as unit progress 0…1; diameter and fade are derived.
     private var rippleProgress: [Double] = []
     private var nextRippleIn: Double = 0
@@ -108,6 +116,10 @@ final class MascotMotion: @unchecked Sendable {
     /// ramp, plus the one-shot swell below.
     private static let transitionSeconds: Double = 0.35
     private static let endingTransitionSeconds: Double = 0.90
+    /// Work mode's own, shorter crossfade: board 31 closes the eyes to slits in ~250 ms.
+    /// Waking takes the ordinary 350 ms — the phase being ramped toward is `.listening`
+    /// then, and it is the target phase that picks the duration.
+    private static let restingTransitionSeconds: Double = 0.25
     /// The exhale: a half-sine swell over the ending's first 450 ms — the halo fills
     /// before it empties.
     private static let endingSwellSeconds: Double = 0.45
@@ -124,6 +136,12 @@ final class MascotMotion: @unchecked Sendable {
     /// Connecting borrows idle's card with a faint breath — the mascot arriving, not yet
     /// carrying anything.
     private static let connectingBreathAmplitude: Double = 0.015
+
+    /// The resting ring breathes ±2 % on a ~6 s sine — slow enough to read as alive
+    /// rather than as a state doing something. Integrated in `dt` like every other clock
+    /// here; nothing in this file samples `f(t)`.
+    private static let restPeriodSeconds: Double = 6.0
+    private static let restBreathAmplitude: Double = 0.02
 
     private static let pulsePeriodSeconds: Double = 2.8
     private static let pulseHaloAmplitude: Double = 0.02
@@ -146,7 +164,7 @@ final class MascotMotion: @unchecked Sendable {
     private static let rippleSpawnFloor: Double = 0.05
 
     private static let phases: [VoicePhase] = [
-        .idle, .connecting, .listening, .thinking, .talking, .ending,
+        .idle, .connecting, .listening, .thinking, .talking, .resting, .ending,
     ]
 
     // MARK: - Frame
@@ -196,6 +214,7 @@ final class MascotMotion: @unchecked Sendable {
         let connecting = weight(.connecting)
         let thinking = weight(.thinking)
         let talking = weight(.talking)
+        let resting = weight(.resting)
         let ending = weight(.ending)
         let userDepth = Self.depth(ofEnvelope: userEnvelope)
         let assistantDepth = Self.depth(ofEnvelope: assistantEnvelope)
@@ -221,10 +240,22 @@ final class MascotMotion: @unchecked Sendable {
         let warm = OrbBloomAlphas(start: min(warmStart + boost, 1), mid: min(warmMid + boost, 1))
         let cool = OrbBloomAlphas(start: min(coolStart + boost, 1), mid: min(coolMid + boost, 1))
 
-        // Thinking accents.
+        // Thinking accents, and work mode's single ring.
+        //
+        // One ring field, and the heavier weight takes it. The two states never really
+        // overlap: `step_back` arrives on a response the tutor is speaking, and a call
+        // that is thinking has a worker turn open — which the tool gate answers `busy`.
         var ring: Ring?
         var dot: Dot?
-        if thinking > 0.003 {
+        if resting > 0.003, resting >= thinking {
+            let breath = reduceMotion ? 0 : sin(restPhase)
+            ring = Ring(
+                diameter: MascotSpec.restingRingDiameter
+                    * CGFloat(1 + Self.restBreathAmplitude * breath),
+                opacity: MascotSpec.restingRingOpacity * resting,
+                strokeWidth: MascotSpec.restingRingStrokeWidth
+            )
+        } else if thinking > 0.003 {
             let pulse = reduceMotion ? 0 : sin(pulsePhase)
             ring = Ring(
                 diameter: MascotSpec.ringDiameter * CGFloat(1 + 0.03 * pulse),
@@ -282,7 +313,11 @@ final class MascotMotion: @unchecked Sendable {
         assistantEnvelope = Self.stepEnvelope(assistantEnvelope, toward: Self.squelched(inputs.state.assistantLevel), dt: dt)
 
         // Phase weights: linear ramps toward the active phase, eased where read.
-        let duration = phase == .ending ? Self.endingTransitionSeconds : Self.transitionSeconds
+        let duration = switch phase {
+        case .ending: Self.endingTransitionSeconds
+        case .resting: Self.restingTransitionSeconds
+        default: Self.transitionSeconds
+        }
         let step = dt / duration
         for (index, candidate) in Self.phases.enumerated() {
             let target: Double = candidate == phase ? 1 : 0
@@ -303,9 +338,12 @@ final class MascotMotion: @unchecked Sendable {
         let connectingW = rawWeight(.connecting)
         let thinkingW = rawWeight(.thinking)
         let talkingW = rawWeight(.talking)
+        let restingW = rawWeight(.resting)
 
         breathPhase += 2 * .pi * dt * max(listeningW, connectingW) / Self.breathPeriodSeconds
         if breathPhase > 4 * .pi { breathPhase -= 4 * .pi }
+        restPhase += 2 * .pi * dt * restingW / Self.restPeriodSeconds
+        if restPhase > 4 * .pi { restPhase -= 4 * .pi }
         pulsePhase += 2 * .pi * dt * thinkingW / Self.pulsePeriodSeconds
         if pulsePhase > 4 * .pi { pulsePhase -= 4 * .pi }
         if !inputs.reduceMotion {

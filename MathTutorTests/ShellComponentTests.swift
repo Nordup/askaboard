@@ -1652,4 +1652,87 @@ final class ShellComponentTests: XCTestCase {
             "the release velocity reaches the spring"
         )
     }
+
+    // MARK: - The pan always ends
+
+    /// The ordinary release: one commit, one end.
+    func testAReleasedPanDeliversItsEndOnce() {
+        var latch = PanEndLatch()
+        latch.commit()
+        XCTAssertTrue(latch.end())
+    }
+
+    /// **The bug this latch exists for.** A committed pan can be stopped by UIKit with no state
+    /// transition at all — a sibling `DrawerPanRecognizer` flipping `isEnabled` on it during
+    /// `cancelOtherRecognizers(for:)`, or `removeGestureRecognizer` from
+    /// `AnchorView.didMoveToWindow`. Neither sends an action message, so `.ended` and
+    /// `.cancelled` never arrive and the only report is the one `reset()` makes.
+    ///
+    /// That report has to settle the gesture. Without it the owner's flag stays set, and every
+    /// flag a pan sets withdraws a surface from hit testing: the docked panel drew normally and
+    /// answered no touch, so a session row could not be pressed.
+    func testAPanStoppedWithNoStateTransitionStillDeliversItsEnd() {
+        var latch = PanEndLatch()
+        latch.commit()
+        XCTAssertTrue(latch.end(), "reset() is the only report this gesture ever makes")
+    }
+
+    /// The other half: a released pan reports twice — once from `.ended`, once from the
+    /// `reset()` that follows it — and the second report must move nothing. A surface settled
+    /// twice would answer the release with the wrong velocity and re-run its spring.
+    func testTheResetAfterAReleaseIsANoOp() {
+        var latch = PanEndLatch()
+        latch.commit()
+        XCTAssertTrue(latch.end())
+        XCTAssertFalse(latch.end(), "the reset that follows a released pan settles nothing")
+    }
+
+    /// `reset()` runs after *every* touch sequence, and most sequences never commit: a tap on a
+    /// session row, a vertical scroll of the thread. None of them may settle a drawer.
+    func testASequenceThatNeverCommittedEndsNothing() {
+        var latch = PanEndLatch()
+        XCTAssertFalse(latch.end(), "a tap is not a pan release")
+    }
+
+    /// The invariant, swept over every order the two reports can arrive in: **the number of
+    /// ends delivered always equals the number of commits made, and no flag is ever left set.**
+    ///
+    /// A sweep rather than four cases, because the failure this replaces was a path nobody had
+    /// enumerated — the fix is only worth having if it holds for the paths not yet found.
+    func testEveryCommitIsFollowedByExactlyOneEndInEveryOrder() {
+        // true = commit, false = an end report, from either the state transition or reset().
+        let reports: [[Bool]] = [
+            [true, false],
+            [true, false, false],
+            [true, false, false, false],
+            [false],
+            [false, false],
+            [true, false, true, false],
+            [true, true, false],
+            [false, true, false, false, true, false],
+        ]
+        for sequence in reports {
+            var latch = PanEndLatch()
+            var commits = 0
+            var ends = 0
+            for report in sequence {
+                if report {
+                    // A second commit with no end between is the same open gesture, not a new
+                    // one — `.began` cannot fire twice for one touch.
+                    if !latch.isCommitted { commits += 1 }
+                    latch.commit()
+                } else if latch.end() {
+                    ends += 1
+                }
+            }
+            XCTAssertEqual(
+                ends, commits,
+                "every commit settles exactly once in \(sequence)"
+            )
+            XCTAssertFalse(
+                latch.isCommitted,
+                "no surface is left withdrawn from hit testing in \(sequence)"
+            )
+        }
+    }
 }

@@ -20,6 +20,9 @@ import os
 final class VoiceSessionCoordinator: VoiceSessionControlling {
 
     static let sendToTutorToolName = "send_to_tutor"
+    /// Work mode's tool: the model has said its warm line and wants to go quiet. Answered
+    /// on the device, silently — no worker turn, no server state.
+    static let stepBackToolName = "step_back"
 
     /// Keepalive cadence, from the sleep app: after 40 s without a server event, a no-op
     /// `session.update` draws the `session.updated` that proves the far end is alive; never
@@ -39,6 +42,9 @@ final class VoiceSessionCoordinator: VoiceSessionControlling {
 
     private var connection: RealtimeConnection?
     private var hooks: VoiceSessionHooks?
+    /// Reports each `response.done`'s token counts to the backend — the server never sees the
+    /// data channel, so without this a voice call bills invisibly to the daily spend cap.
+    private var usageReporter: RealtimeUsageReporter?
 
     // The pure logic, one instance each, reset wholesale at teardown.
     private var bargeIn = VoiceBargeIn()
@@ -86,7 +92,7 @@ final class VoiceSessionCoordinator: VoiceSessionControlling {
 
     // MARK: - VoiceSessionControlling
 
-    func start(sessionID: UUID, hooks: VoiceSessionHooks) async {
+    func start(sessionID: UUID, voiceModel: VoiceModelChoice, hooks: VoiceSessionHooks) async {
         guard lifecycle == .idle else { return }
         // One microphone. Dictation's AVAudioEngine and WebRTC's audio device module must
         // never run together (sleep lesson 3) — the reverse gate is the UI hiding the
@@ -112,7 +118,15 @@ final class VoiceSessionCoordinator: VoiceSessionControlling {
             return
         }
 
-        let signaling = RealtimeSignalingClient(configuration: configuration, sessionID: sessionID)
+        let signaling = RealtimeSignalingClient(
+            configuration: configuration, sessionID: sessionID, voiceModel: voiceModel
+        )
+        // The same model on both: the reporter prices what the call actually ran on, and a
+        // reporter that disagreed with the signaling client would bill Mini minutes at Full
+        // rates — which is exactly the saving the setting exists to produce.
+        usageReporter = RealtimeUsageReporter(
+            configuration: configuration, sessionID: sessionID, voiceModel: voiceModel
+        )
         let connection = RealtimeConnection(signaling: signaling)
         self.connection = connection
         wire(connection)
@@ -174,6 +188,28 @@ final class VoiceSessionCoordinator: VoiceSessionControlling {
         guard !trimmed.isEmpty, lifecycle == .live else { return }
         send({ try RealtimeEventEncoder.userTextItem(text: trimmed) }, "user text item")
         send({ try RealtimeEventEncoder.responseCreate() }, "response.create (typed)")
+    }
+
+    /// The mascot's tap — the only way out of work mode.
+    ///
+    /// The mic is off while the tutor rests, so speech cannot end it and neither can the
+    /// mute button (the bar dims it). A no-op everywhere else: a tap on a mascot that is
+    /// listening or talking must change nothing.
+    func wake() {
+        guard lifecycle == .live, muteGuard.isResting else { return }
+        muteGuard.setResting(false)
+        connection?.setMicrophoneEnabled(muteGuard.shouldTransmit)
+        publishDisplay()
+    }
+
+    /// Work mode, entered by the model's own judgment: the microphone goes off under a
+    /// third owner (`MicMuteGuard.isResting`) and the display carries `.resting` to the
+    /// mascot, the chip and the voice bar. Nothing server-side knows — the rest lives
+    /// inside the call and dies with it, because teardown rebuilds the guard.
+    private func enterRest() {
+        muteGuard.setResting(true)
+        connection?.setMicrophoneEnabled(muteGuard.shouldTransmit)
+        publishDisplay()
     }
 
     // MARK: - Transport wiring
@@ -290,7 +326,7 @@ final class VoiceSessionCoordinator: VoiceSessionControlling {
         case .functionCallArgumentsDone(let call, let responseId):
             handleToolCall(call, responseID: responseId)
 
-        case .responseDone(let responseId, _, let failure, let calls):
+        case .responseDone(let responseId, _, let failure, let calls, let usage):
             let responseID = responseId ?? "current"
             // Swept calls first: a call that only ever appears in `response.done` must mark
             // this response delegated *before* the ledger closes it.
@@ -306,6 +342,11 @@ final class VoiceSessionCoordinator: VoiceSessionControlling {
             }
             for item in ledger.finish(responseID: responseID) {
                 hooks?.assistantResponseFinished(item.itemID, item.delegated)
+            }
+            if let usage, let reporter = usageReporter {
+                // Fire and forget, captured by value on purpose: the final response's report
+                // races `end()`'s teardown, and money already spent must still land server-side.
+                Task { await reporter.report(usage, responseID: responseId) }
             }
 
         case .outputAudioStarted:
@@ -370,6 +411,18 @@ final class VoiceSessionCoordinator: VoiceSessionControlling {
             break
         }
 
+        // Work mode. Answered here and nowhere else: no worker turn, no thread entry, and
+        // deliberately NOT marked delegated in the ledger — the warm line this response
+        // spoke ("Take your time — tap me when you're ready") is voice-only content and
+        // belongs in the thread, which is where board 31 draws it.
+        if call.name == Self.stepBackToolName {
+            toolGate.finished(callID: call.callId)
+            sendToolResult(callID: call.callId, output: ["ok": "resting"], createResponse: false)
+            enterRest()
+            publishDisplay()
+            return
+        }
+
         guard call.name == Self.sendToTutorToolName else {
             toolGate.finished(callID: call.callId)
             sendToolResult(callID: call.callId, output: ["error": "unknown tool \(call.name)"])
@@ -421,10 +474,18 @@ final class VoiceSessionCoordinator: VoiceSessionControlling {
         return request
     }
 
-    private func sendToolResult(callID: String, output: [String: String]) {
+    /// `createResponse: false` answers a tool without asking the model to speak again.
+    ///
+    /// `step_back` is the one caller that wants it: the model already said its warm line in
+    /// the response that carried the call, and a second `response.create` would bill the
+    /// whole context to produce a second goodbye — on a mascot that is at that moment going
+    /// quiet.
+    private func sendToolResult(callID: String, output: [String: String], createResponse: Bool = true) {
         send({ try RealtimeEventEncoder.functionCallOutput(callId: callID, output: output) },
              "function_call_output")
-        send({ try RealtimeEventEncoder.responseCreate() }, "response.create (tool result)")
+        if createResponse {
+            send({ try RealtimeEventEncoder.responseCreate() }, "response.create (tool result)")
+        }
     }
 
     /// The one funnel every outbound event passes through. Drops silently when the channel is
@@ -564,7 +625,10 @@ final class VoiceSessionCoordinator: VoiceSessionControlling {
         case .connecting: return .connecting
         case .ending: return .ending
         case .live:
+            // `talking` stays first: the goodbye line is still playing when `step_back`'s
+            // arguments arrive, and the mascot must finish saying it before it rests.
             if assistantAudible { return .talking }
+            if muteGuard.isResting { return .resting }
             if delegatedTurnsRunning > 0 { return .thinking }
             return .listening
         }
@@ -586,6 +650,7 @@ final class VoiceSessionCoordinator: VoiceSessionControlling {
         audioSession.onEvent = nil
         audioSession.deactivate()
 
+        usageReporter = nil
         hooks = nil
         isActive = false
         bargeIn = VoiceBargeIn()

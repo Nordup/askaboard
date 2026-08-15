@@ -654,6 +654,17 @@ struct TutorThreadView: View {
             // gap between the send and the first `status` event, which is a real few seconds
             // — the connection, the board upload and the prompt all happen in it.
             ThinkingIndicator(status: (store.phase ?? .thinking).statusLine, scale: scale)
+        } else if let voice, voice.isResting {
+            // Board 31's `chip/resting`, in the step chip's own slot — one line above the
+            // mascot, and never beside the activity line: two marks about what the tutor
+            // is doing would contradict each other.
+            //
+            // The running turn wins the slot, which the board could not have anticipated:
+            // it drew work mode as the absence of activity, and typing while the tutor
+            // rests now runs an ordinary typed turn (`Composer.send()`). A learner who
+            // asked a question in writing must see it being worked on; the chip comes
+            // back when the turn lands, and the tutor is still resting either way.
+            VoiceRestingChip(onWake: voice.onWake)
         }
 
         // Screen 08's tenth thread child — **unconditional**, and that is a decision the

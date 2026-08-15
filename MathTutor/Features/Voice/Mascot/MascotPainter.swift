@@ -139,7 +139,9 @@ enum MascotPainter {
             context.stroke(
                 Path(ellipseIn: CGRect(centre: faceCentre, size: CGSize(width: diameter, height: diameter))),
                 with: .color(DS.Color.brand.opacity(ring.opacity)),
-                lineWidth: MascotSpec.ringStrokeWidth * s
+                // The ring carries its own weight: the thinking pulse is 1.5 on the
+                // reference face, work mode's is 1.0 (board 31's 1.5pt at the 72pt face).
+                lineWidth: ring.strokeWidth * s
             )
         }
 

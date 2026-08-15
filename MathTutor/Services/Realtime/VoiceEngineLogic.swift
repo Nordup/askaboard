@@ -340,6 +340,9 @@ struct VoiceToolCallGate: Equatable {
 /// - **An interruption's mute** is owned by this guard. The interruption ending, a route
 ///   change, the app returning to the foreground, or the watchdog running out — whichever comes
 ///   first — asks for the microphone back.
+/// - **The resting mute** is owned by work mode. No watchdog: the state is user-visible (the
+///   mascot rests, the chip says so), and only the mascot tap — or the call ending, which
+///   discards this guard with the rest of the call — releases it.
 struct MicMuteGuard: Equatable {
     /// How long an interruption's mute may stand with no `.ended` before the guard takes the
     /// microphone back on its own.
@@ -352,15 +355,20 @@ struct MicMuteGuard: Equatable {
     }
 
     private(set) var isUserMuted = false
+    private(set) var isResting = false
     private var interruptionMutedSince: TimeInterval?
     private var interruptionReason: String?
 
     /// Whether the microphone track should be transmitting right now. The coordinator applies
     /// this after every event the guard answers, so the track can never disagree with the guard.
-    var shouldTransmit: Bool { !isUserMuted && interruptionMutedSince == nil }
+    var shouldTransmit: Bool { !isUserMuted && !isResting && interruptionMutedSince == nil }
 
     mutating func setUserMuted(_ muted: Bool) {
         isUserMuted = muted
+    }
+
+    mutating func setResting(_ resting: Bool) {
+        isResting = resting
     }
 
     mutating func interruptionBegan(reason: String, at now: TimeInterval) {

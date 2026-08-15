@@ -189,10 +189,23 @@ struct ComposerVoiceChatButton: View {
 struct ComposerVoiceMuteButton: View {
     let metrics: ComposerMetrics
     let isMuted: Bool
+    /// Board 31's work mode: `opacity: 0.45`, and the tap does nothing.
+    ///
+    /// The microphone is already off under an owner the learner does not hold — the tutor
+    /// stepped back — so a control that toggled it here would either lie or wake the call
+    /// from the wrong place. The mascot is the one wake affordance. Dimmed rather than
+    /// removed so nothing on the pill moves when the tutor rests, which is the same rule
+    /// the `+` follows when a draft is full.
+    var isResting: Bool = false
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
+        Button {
+            // Guarded in the action rather than by `hitTesting`/`disabled`: this pill hosts
+            // a focused `TextField`, and this codebase has a scar from both.
+            guard !isResting else { return }
+            action()
+        } label: {
             IconView(
                 .composerVoice,
                 size: metrics.voiceGlyphSize,
@@ -205,10 +218,14 @@ struct ComposerVoiceMuteButton: View {
             )
         }
         .buttonStyle(.plain)
+        .opacity(isResting ? Self.restingOpacity : 1)
         .accessibilityLabel("Microphone")
-        .accessibilityValue(isMuted ? "Muted" : "On")
+        .accessibilityValue(isResting ? "Resting" : (isMuted ? "Muted" : "On"))
         .accessibilityAddTraits(.isToggle)
     }
+
+    /// Board 31's `btn/mic-mute` while the tutor rests.
+    static let restingOpacity: Double = 0.45
 }
 
 /// Board 28's end disc: the send disc's geometry filled `--color-ink`, with

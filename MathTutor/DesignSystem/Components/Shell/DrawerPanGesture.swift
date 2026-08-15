@@ -47,6 +47,12 @@ final class DrawerPanRecognizer: UIGestureRecognizer {
     private var lastPoint: CGPoint = .zero
     private var lastTimestamp: TimeInterval = 0
 
+    /// The touch sequence is over, whatever ended it — see `reset()`.
+    ///
+    /// The argument is the last translation this recogniser measured, because `reset()` clears
+    /// it and a stranded gesture still has to settle *somewhere*.
+    var onTerminate: ((CGFloat) -> Void)?
+
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
         super.touchesBegan(touches, with: event)
         if trackedTouch == nil, let touch = touches.first {
@@ -114,11 +120,31 @@ final class DrawerPanRecognizer: UIGestureRecognizer {
         state = state == .possible ? .failed : .cancelled
     }
 
+    /// **The one exit every touch sequence takes, and the reason the commit can be trusted to
+    /// end.**
+    ///
+    /// `.ended` and `.cancelled` are not the whole of how a recogniser stops. UIKit also ends
+    /// one by flipping `isEnabled` off — which is what `cancelOtherRecognizers(for:)` does to
+    /// every recogniser on a committing touch, this class's siblings included — and by
+    /// `removeGestureRecognizer`, which `AnchorView.didMoveToWindow` and `dismantleUIView` both
+    /// call. **Neither of those sends an action message**, so a pan that had already committed
+    /// left its owner's flag set with nothing left to clear it: the panel kept
+    /// `inertToTouches`, or `DockRevealModel.isActive` stayed true, and the surface went on
+    /// drawing perfectly while refusing every touch. `DockRevealModel` is `BoardScreen`'s, so
+    /// that one survived until the app was relaunched.
+    ///
+    /// `reset()` is called after all four — the two states and the two silent cancellations —
+    /// so the end is delivered from here and the coordinator's `PanEndLatch` makes it exactly
+    /// once. Guarding the known silent paths one at a time would leave the next one.
     override func reset() {
+        // Before `super`, and before the fields below are cleared: a stranded gesture still has
+        // to settle at wherever the finger actually left it.
+        let finalTranslation = translation.x
         super.reset()
         trackedTouch = nil
         translation = .zero
         velocity = .zero
+        onTerminate?(finalTranslation)
     }
 
     /// The whole point of this class: on commitment, every other recogniser still analysing
@@ -146,6 +172,37 @@ final class DrawerPanRecognizer: UIGestureRecognizer {
             other.isEnabled = false
             other.isEnabled = true
         }
+    }
+}
+
+// MARK: - Exactly one end per commit
+
+/// Whether the pan that committed has been settled yet.
+///
+/// Every surface the pan drives sets a flag in `onCommit` and clears it in `onEnd` — the docked
+/// panel's `drag` and `isCollapsing`, `DockRevealModel.progress`, the full-screen surface's
+/// `isPanCommitted` — and each of those flags withdraws a whole surface from hit testing while
+/// it holds. So a missed `onEnd` is not a dropped frame; it is a surface that draws normally and
+/// answers no touch until it unmounts.
+///
+/// The recogniser now reports its end from up to two places — the state transition and
+/// `reset()` — and a released pan legitimately hits both. This is what makes the second one a
+/// no-op: a value type, because the whole of the state is one flag and the coordinator is the
+/// only thing that owns one.
+struct PanEndLatch {
+    private(set) var isCommitted = false
+
+    /// The pan committed to the axis. Idempotent: a second commit without an end in between is
+    /// the same open gesture.
+    mutating func commit() { isCommitted = true }
+
+    /// Whether *this* is the end to deliver. True once per commit, and false for every report
+    /// that arrives after it — or for one that arrives with no commit behind it at all, which
+    /// is every `reset()` of a tap or a vertical scroll.
+    mutating func end() -> Bool {
+        guard isCommitted else { return false }
+        isCommitted = false
+        return true
     }
 }
 
@@ -228,6 +285,12 @@ struct DrawerPanGesture: UIViewRepresentable {
         let recognizer = DrawerPanRecognizer()
         recognizer.delegate = context.coordinator
         recognizer.addTarget(context.coordinator, action: #selector(Coordinator.handlePan(_:)))
+        // The backstop for every way UIKit can stop a committed pan without an action message —
+        // see `DrawerPanRecognizer.reset()`. Weak because the recogniser outlives this
+        // representable: it is owned by the ancestor it is attached to, not by the anchor.
+        recognizer.onTerminate = { [weak coordinator = context.coordinator] translation in
+            coordinator?.terminate(translation)
+        }
         view.recognizer = recognizer
         context.coordinator.anchor = view
         return view
@@ -282,9 +345,13 @@ struct DrawerPanGesture: UIViewRepresentable {
         var onChange: (CGFloat) -> Void = { _ in }
         var onEnd: (CGFloat, CGFloat) -> Void = { _, _ in }
 
+        /// Whether the committed pan still owes its owner an `onEnd` — see `PanEndLatch`.
+        private var latch = PanEndLatch()
+
         @objc func handlePan(_ recognizer: DrawerPanRecognizer) {
             switch recognizer.state {
             case .began:
+                latch.commit()
                 onCommit(recognizer.translation.x)
                 // The first frame already carries the 12pt decision vector, so it is
                 // delivered rather than dropped — the same "no travel spent undecided"
@@ -293,11 +360,38 @@ struct DrawerPanGesture: UIViewRepresentable {
             case .changed:
                 onChange(recognizer.translation.x)
             case .ended:
-                onEnd(recognizer.translation.x, recognizer.velocity.x)
+                if latch.end() { onEnd(recognizer.translation.x, recognizer.velocity.x) }
             case .cancelled:
-                onEnd(recognizer.translation.x, 0)
+                if latch.end() { onEnd(recognizer.translation.x, 0) }
             default:
                 break
+            }
+        }
+
+        /// The touch sequence is over and no state transition reported it — a sibling
+        /// recogniser disabled this one mid-pan, or the anchor left its window. See
+        /// `DrawerPanRecognizer.reset()`.
+        ///
+        /// Velocity 0, which is the same answer `.cancelled` already gives: a gesture nobody
+        /// released has no fling, so the surface settles by position. Called after *every*
+        /// sequence, released ones included, and the latch is what makes those a no-op.
+        func terminate(_ translation: CGFloat) {
+            // Claimed synchronously, delivered later: the latch has to close now, or a report
+            // arriving in between would settle the same gesture twice.
+            guard latch.end() else { return }
+            // **Out of the current transaction.** `reset()` is reachable from
+            // `dismantleUIView`, which SwiftUI runs inside an update, and `onEnd` writes the
+            // state of the very surface being torn down — the hazard `BoardCanvas.swift`
+            // carries the scar of. One runloop turn later the tree has settled and the write is
+            // an ordinary one. The delay costs nothing anyone can see: this path only runs when
+            // the gesture had already been stopped without telling us, and a frame is what it
+            // saves against a surface that stays inert until it unmounts.
+            //
+            // The callback is read *inside* the hop rather than captured, the rule
+            // `BoardCanvas.updateFirstResponder` already follows: `updateUIView` may have handed
+            // this coordinator a newer one, and the newer one owns the flag that needs clearing.
+            DispatchQueue.main.async { [weak self] in
+                self?.onEnd(translation, 0)
             }
         }
 

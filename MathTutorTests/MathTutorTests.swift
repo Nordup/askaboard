@@ -846,6 +846,10 @@ final class MathTutorTests: XCTestCase {
     func testNewSessionsDefaultToLuna() {
         XCTAssertEqual(LearningSession.empty.selectedModel, .luna)
         XCTAssertEqual(LearningSession.empty.reasoningEffort, .high)
+        // The mini since 2026-08-16, reversing the decision voice mode shipped
+        // on: voice audio is the product's largest cost line and the mini is a
+        // third of it.
+        XCTAssertEqual(LearningSession.empty.selectedVoiceModel, .mini)
     }
 
     func testReasoningEffortRoundTripsAndUnknownValuesUseHighDefault() throws {
@@ -900,10 +904,12 @@ final class MathTutorTests: XCTestCase {
         for heading in [
             "# ABOUT",
             "## UNDERSTAND THE USER",
+            "## LEARNER-LED MODE",
             "## GOAL",
             "## KINDS OF OBJECTIVES",
             "## BOARD",
             "## RESEARCH",
+            "## MEMORY",
             "## TOOLS",
         ] {
             XCTAssertTrue(policy.contains(heading), "Missing draft section: \(heading)")
@@ -917,12 +923,52 @@ final class MathTutorTests: XCTestCase {
             "view_board",
             "update_board",
             "remember",
+            "forget",
             "search_memory",
-            "recent_sessions",
+            "search_sessions",
+            "search_history",
+            "get_session",
+            "list_sessions",
             "record_evidence",
         ] {
             XCTAssertTrue(policy.contains(tool), "Missing draft tool: \(tool)")
         }
+        XCTAssertFalse(policy.contains("recent_sessions"), "`recent_sessions` was replaced by `list_sessions`")
+    }
+
+    func testTutorPromptPolicyEnforcesTheLearnerLedInvariant() {
+        let policy = TutorPromptPolicy.system
+        XCTAssertTrue(policy.contains("## LEARNER-LED MODE"))
+        XCTAssertTrue(policy.contains(
+            "When the learner is solving or deriving something themselves, do not advance beyond their current step. Give at most one question, check, or requested hint per reply. Do not reveal the next step, derivation, or final answer unless they explicitly ask to leave learner-led mode."
+        ))
+    }
+
+    func testTutorPromptPolicyOrdersLearnerLedAfterObjectivesBeforeBoard() throws {
+        let policy = TutorPromptPolicy.system
+        let objectives = try XCTUnwrap(policy.range(of: "## KINDS OF OBJECTIVES"))
+        let learnerLed = try XCTUnwrap(policy.range(of: "## LEARNER-LED MODE"))
+        let board = try XCTUnwrap(policy.range(of: "## BOARD"))
+        XCTAssertLessThan(objectives.lowerBound, learnerLed.lowerBound)
+        XCTAssertLessThan(learnerLed.lowerBound, board.lowerBound)
+
+        let objectivesTail = try XCTUnwrap(
+            policy.range(of: "There might be other scenarios, try do identify them and figure out my intent.")
+        )
+        XCTAssertLessThan(objectivesTail.lowerBound, learnerLed.lowerBound)
+    }
+
+    func testTutorPromptPolicyKeepsTheThreeDraftMergeAdditions() {
+        let policy = TutorPromptPolicy.system
+        XCTAssertTrue(policy.contains(
+            "And provide materials for me to read and learn from in a way that it's easy to read/see/understand from my level of knowledge and personal preferences"
+        ))
+        XCTAssertTrue(policy.contains(
+            "And use board to visualize concepts, structure the material."
+        ))
+        XCTAssertTrue(policy.contains(
+            "Mb even I would incentivize you to use board more often to draw/visualize, make an experience memorable by incorporating sense of art and design."
+        ))
     }
 
     func testTutorPromptPolicyRequestsTypesetMathDelimiters() {

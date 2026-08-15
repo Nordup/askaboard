@@ -16,14 +16,14 @@ final class SettingsAndPlanTests: XCTestCase {
 
     /// The design's two free numbers, and the two centrings that place them.
     ///
-    /// 308 and 256 are not typed in as constants anywhere in the app — they are
-    /// `(1376 − 760) ÷ 2` and `28 + (976 − 520) ÷ 2`, run on the screen the app is actually
+    /// 308 and 236 are not typed in as constants anywhere in the app — they are
+    /// `(1376 − 760) ÷ 2` and `28 + (976 − 560) ÷ 2`, run on the screen the app is actually
     /// on. Asserting them here is what proves the arithmetic reproduces the board rather than
     /// that someone transcribed two offsets.
     func testTheWindowIsTheDesignsSizeCentredOnTheReferenceScreen() {
         let window = SettingsWindowMetrics.reference
-        XCTAssertEqual(window.size, CGSize(width: 760, height: 520))
-        XCTAssertEqual(window.origin, CGPoint(x: 308, y: 256))
+        XCTAssertEqual(window.size, CGSize(width: 760, height: 560))
+        XCTAssertEqual(window.origin, CGPoint(x: 308, y: 236))
         XCTAssertEqual(window.size, SettingsWindowMetrics.designSize, "nothing clamps at 1376 × 1032")
 
         XCTAssertEqual(window.origin.x, (ScreenLayout.screenWidth - window.size.width) / 2)
@@ -60,8 +60,8 @@ final class SettingsAndPlanTests: XCTestCase {
     }
 
     /// A 768pt-tall iPad is 456 short of the 894pt chain the old screen carried, and had to
-    /// scroll. The window is 520 and simply fits, which is the redesign's one unambiguous win
-    /// on small screens.
+    /// scroll. The window is 560 and simply fits — a 692pt band there holds it with room to
+    /// spare — which is the redesign's one unambiguous win on small screens.
     func testTheShortestSupportedBandHoldsTheWholeWindow() {
         let short = SettingsWindowMetrics(
             layout: ScreenLayout(
@@ -70,6 +70,18 @@ final class SettingsAndPlanTests: XCTestCase {
             )
         )
         XCTAssertEqual(short.size, SettingsWindowMetrics.designSize, "no clamping at 1024 × 768")
+    }
+
+    /// The window is tall enough for the Tutor pane's three rows, and would not be for four.
+    ///
+    /// The window clips its overflow, so a pane that outgrows it loses its last row in
+    /// silence — nothing throws, nothing scrolls, and the setting is simply not there. This is
+    /// the arithmetic `designSize.height` was chosen from, asserted so a fourth row is a red
+    /// test rather than a missing row someone notices on a device.
+    func testTheWindowHoldsTheTutorPanesThreeRowsAndNotAFourth() {
+        let window = SettingsWindowMetrics.reference
+        XCTAssertTrue(window.paneFits(rows: 3), "32 × 2 + 116 + 120 × 3 = 540 ≤ 560")
+        XCTAssertFalse(window.paneFits(rows: 4), "a fourth row needs 660 and must resize the window")
     }
 
     func testThePaneMeasureIsWhatIsLeftAfterTheSidebar() {
@@ -305,12 +317,32 @@ final class SettingsAndPlanTests: XCTestCase {
         XCTAssertEqual(options.filter(\.isSelected).map(\.value), [.high])
     }
 
+    func testVoiceModelOptionsAreTheBoardsTwoModelsInOrder() {
+        let options = SettingsOption.voiceModels(selected: .full)
+        XCTAssertEqual(options.map(\.title), ["Full", "Mini"])
+        XCTAssertEqual(options.map(\.caption), ["Best tool use", "Cheaper, less reliable"])
+        XCTAssertEqual(options.filter(\.isSelected).map(\.value), [.full])
+    }
+
+    /// The raw values are the wire contract, not display strings: they go out as `?model=` on
+    /// the SDP proxy and as `model` in the usage body, and the server's
+    /// `REALTIME_MODEL_ALLOWLIST` holds these two literals. A rename here is a 422 there.
+    func testVoiceModelRawValuesAreTheProvidersOwnModelIds() {
+        XCTAssertEqual(VoiceModelChoice.full.rawValue, "gpt-realtime-2.1")
+        XCTAssertEqual(VoiceModelChoice.mini.rawValue, "gpt-realtime-2.1-mini")
+    }
+
     func testExactlyOneOptionIsSelectedAtEveryValue() {
         for model in ModelChoice.allCases {
             XCTAssertEqual(SettingsOption.models(selected: model).filter(\.isSelected).count, 1)
         }
         for effort in ReasoningEffort.allCases {
             XCTAssertEqual(SettingsOption.efforts(selected: effort).filter(\.isSelected).count, 1)
+        }
+        for voiceModel in VoiceModelChoice.allCases {
+            XCTAssertEqual(
+                SettingsOption.voiceModels(selected: voiceModel).filter(\.isSelected).count, 1
+            )
         }
     }
 
@@ -347,6 +379,50 @@ final class SettingsAndPlanTests: XCTestCase {
             SettingsOption.efforts(selected: store.session.reasoningEffort).filter(\.isSelected).map(\.value),
             [ReasoningEffort.none]
         )
+    }
+
+    @MainActor
+    func testPickingAVoiceModelMovesTheSelectedFillAndPersistsToTheStore() {
+        let store = TutorStore(service: DemoTutorService())
+        store.resetSession()
+        // Mini, and a reset returns to Mini: Full is the deliberate upgrade.
+        XCTAssertEqual(store.session.selectedVoiceModel, .mini)
+
+        store.setVoiceModel(.full)
+
+        let options = SettingsOption.voiceModels(selected: store.session.selectedVoiceModel)
+        XCTAssertEqual(store.session.selectedVoiceModel, .full)
+        XCTAssertEqual(options.filter(\.isSelected).map(\.value), [.full])
+        XCTAssertEqual(options.first(where: \.isSelected)?.title, VoiceModelChoice.full.displayName)
+
+        store.resetSession()
+        XCTAssertEqual(store.session.selectedVoiceModel, .mini, "a reset returns to the default")
+    }
+
+    /// A session file written before voice was selectable must still open.
+    ///
+    /// The same fallback `reasoningEffort` carries, and the same reason: a learner who has
+    /// used the app for a month has session files with none of these keys, and a decoder that
+    /// insisted on them would lose that work rather than default it.
+    func testASessionFileWithoutAVoiceModelDecodesToTheDefault() throws {
+        let session = LearningSession(
+            messages: [], plan: nil, exercise: nil, drawingData: nil,
+            // Deliberately the non-default, so the round trip proves the file
+            // carries the choice rather than landing on the default by luck.
+            selectedModel: .luna, reasoningEffort: .high, selectedVoiceModel: .full,
+            startedAt: .now, lastSavedAt: .now
+        )
+        let encoded = try JSONEncoder().encode(session)
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        XCTAssertEqual(object["selectedVoiceModel"] as? String, "gpt-realtime-2.1",
+                       "the choice rides the session file")
+
+        object.removeValue(forKey: "selectedVoiceModel")
+        let older = try JSONSerialization.data(withJSONObject: object)
+        let decoded = try JSONDecoder().decode(LearningSession.self, from: older)
+        XCTAssertEqual(decoded.selectedVoiceModel, .mini)
     }
 
     // MARK: - The panel's bottom slot

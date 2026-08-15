@@ -62,6 +62,10 @@ enum SettingsCopy {
     static let modelCaption = "Which route answers you"
     static let effortLabel = "Reasoning effort"
     static let effortCaption = "How long it thinks before replying"
+    static let voiceModelLabel = "Voice model"
+    /// The row belongs in the Tutor pane because the pane's own lede already
+    /// promises it — "How the tutor thinks **and speaks**".
+    static let voiceModelCaption = "Which voice answers out loud"
 
     static let resetSession = "Reset this session"
 

@@ -228,6 +228,76 @@ final class MascotMotionTests: XCTestCase {
         XCTAssertEqual(silent.faceBobFraction, 0, "The drained envelope stills the face exactly")
     }
 
+    // MARK: - Work mode (board 31)
+
+    func testRestingIsOneThinRingAndNothingElse() throws {
+        var harness = Harness()
+        // Entered from a live call, the way `step_back` enters it: the tutor has just
+        // finished speaking.
+        harness.run(0.5, state: state(.talking, assistant: 0.7))
+        let frame = harness.run(1.0, state: state(.resting))
+
+        XCTAssertEqual(frame.haloOpacity, 0, accuracy: 0.0001, "Work mode draws no halo at all")
+        XCTAssertEqual(frame.coreOpacity, 0, accuracy: 0.0001)
+        XCTAssertTrue(frame.ripples.isEmpty, "The talking ripples must not survive the step back")
+        XCTAssertNil(frame.orbitDot)
+
+        let ring = try XCTUnwrap(frame.ring)
+        XCTAssertEqual(ring.strokeWidth, MascotSpec.restingRingStrokeWidth, accuracy: 0.0001)
+        XCTAssertEqual(ring.opacity, MascotSpec.restingRingOpacity, accuracy: 0.005)
+        // The breath is ±2 % of the board's Ø, so the ring is never anywhere else.
+        XCTAssertEqual(
+            ring.diameter,
+            MascotSpec.restingRingDiameter,
+            accuracy: MascotSpec.restingRingDiameter * 0.02 + 0.0001
+        )
+    }
+
+    func testTheEyesCloseToSlitsAndOpenAgainOnWake() {
+        var harness = Harness()
+        let listening = harness.run(1.0, state: state(.listening))
+        XCTAssertEqual(listening.eyeSize.width, 7, accuracy: 0.01)
+        XCTAssertEqual(listening.eyeSize.height, 7, accuracy: 0.01)
+
+        // note/27's slits, reached inside board 31's ~250 ms.
+        let rested = harness.run(0.30, state: state(.resting))
+        XCTAssertEqual(rested.eyeSize.width, 7, accuracy: 0.01)
+        XCTAssertEqual(rested.eyeSize.height, 3, accuracy: 0.01)
+
+        // The tap: back to the listening card, ring retired with it.
+        let awake = harness.run(0.40, state: state(.listening))
+        XCTAssertEqual(awake.eyeSize.height, 7, accuracy: 0.01)
+        XCTAssertEqual(awake.haloOpacity, 1, accuracy: 0.01)
+        XCTAssertNil(awake.ring)
+    }
+
+    func testTheRestingRingBreathesAndItsClockStopsWithTheState() throws {
+        var harness = Harness()
+        harness.run(0.5, state: state(.resting))
+
+        var smallest = CGFloat.greatestFiniteMagnitude
+        var largest: CGFloat = 0
+        harness.run(6.0, state: state(.resting)) { frame in
+            if let ring = frame.ring {
+                smallest = min(smallest, ring.diameter)
+                largest = max(largest, ring.diameter)
+            }
+        }
+        let base = MascotSpec.restingRingDiameter
+        XCTAssertGreaterThan(largest, base * 1.015, "One ~6 s sine must reach its crest")
+        XCTAssertLessThan(smallest, base * 0.985, "…and its trough")
+        XCTAssertLessThanOrEqual(largest, base * 1.0201)
+        XCTAssertGreaterThanOrEqual(smallest, base * 0.9799)
+
+        // Reduce Motion holds it exactly on the board's own diameter.
+        var still = Harness()
+        still.run(0.5, state: state(.resting), reduceMotion: true)
+        let a = try XCTUnwrap(still.run(1.0, state: state(.resting), reduceMotion: true).ring)
+        let b = try XCTUnwrap(still.run(2.0, state: state(.resting), reduceMotion: true).ring)
+        XCTAssertEqual(a.diameter, base, accuracy: 0.0001)
+        XCTAssertEqual(b.diameter, base, accuracy: 0.0001)
+    }
+
     // MARK: - Reduce Motion
 
     func testReduceMotionStillsTheAccessories() throws {

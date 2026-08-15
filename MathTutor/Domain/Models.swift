@@ -228,6 +228,11 @@ struct LearningSession: Codable, Sendable, Equatable {
     var boardScene: BoardScene = .empty
     var selectedModel: ModelChoice
     var reasoningEffort: ReasoningEffort
+    /// Which realtime model the next voice call opens on. Sits beside
+    /// `selectedModel` rather than in a preference store because it is the same
+    /// kind of choice with the same lifecycle: it rides the session file and a
+    /// reset returns it to the default.
+    var selectedVoiceModel: VoiceModelChoice
     var startedAt: Date
     var lastSavedAt: Date
 
@@ -240,6 +245,7 @@ struct LearningSession: Codable, Sendable, Equatable {
         boardScene: BoardScene = .empty,
         selectedModel: ModelChoice,
         reasoningEffort: ReasoningEffort = .defaultValue,
+        selectedVoiceModel: VoiceModelChoice = .mini,
         startedAt: Date,
         lastSavedAt: Date
     ) {
@@ -251,6 +257,7 @@ struct LearningSession: Codable, Sendable, Equatable {
         self.boardScene = boardScene
         self.selectedModel = selectedModel
         self.reasoningEffort = reasoningEffort
+        self.selectedVoiceModel = selectedVoiceModel
         self.startedAt = startedAt
         self.lastSavedAt = lastSavedAt
     }
@@ -264,6 +271,7 @@ struct LearningSession: Codable, Sendable, Equatable {
         case boardScene
         case selectedModel
         case reasoningEffort
+        case selectedVoiceModel
         case startedAt
         case lastSavedAt
     }
@@ -285,6 +293,11 @@ struct LearningSession: Codable, Sendable, Equatable {
         // Older session files do not have this key. Keep those sessions intact
         // and opt them into the same default used for a new session.
         reasoningEffort = (try? container.decode(ReasoningEffort.self, forKey: .reasoningEffort)) ?? .defaultValue
+        // Same fallback, same reason: a session file written before voice was
+        // selectable opens on the default rather than failing to load. Those
+        // files predate the setting, so they carry no preference to respect —
+        // they take today's default, which is Mini.
+        selectedVoiceModel = (try? container.decode(VoiceModelChoice.self, forKey: .selectedVoiceModel)) ?? .mini
         startedAt = try container.decode(Date.self, forKey: .startedAt)
         lastSavedAt = try container.decode(Date.self, forKey: .lastSavedAt)
     }
@@ -302,6 +315,7 @@ struct LearningSession: Codable, Sendable, Equatable {
             drawingData: nil,
             selectedModel: .luna,
             reasoningEffort: .defaultValue,
+            selectedVoiceModel: .mini,
             startedAt: .now,
             lastSavedAt: .now
         )
@@ -336,6 +350,47 @@ enum ModelChoice: String, Codable, CaseIterable, Sendable, Identifiable {
         case .sol: return "\(effort) route"
         case .terra: return "Balanced route · \(effort)"
         case .luna: return "Vision route · \(effort)"
+        }
+    }
+}
+
+/// Which realtime model holds a live voice call.
+///
+/// The other half of `ModelChoice`, and the reason it is a separate type: these
+/// are a different provider family on a different price sheet, and the two
+/// choices are independent — a learner can think on Sol and speak on Mini.
+///
+/// **Mini is the default since 2026-08-16, reversing the founder decision that
+/// shipped with voice mode.** That decision — never a mini variant as the
+/// default, because the mini is weakest exactly where voice leans hardest,
+/// reliably calling `send_to_tutor` rather than ad-libbing an answer out loud —
+/// lost to cost. Voice audio bills at $32/$64 per million on Full against
+/// $10/$20 on Mini, and voice was 80% of the last session's spend *on the mini*.
+///
+/// So the trade now runs the other way: Mini is what a session opens on, and
+/// Full is the deliberate upgrade when the tutor starts answering instead of
+/// delegating. If that failure shows up in practice, this default is the first
+/// thing to reconsider.
+enum VoiceModelChoice: String, Codable, CaseIterable, Sendable, Identifiable {
+    case full = "gpt-realtime-2.1"
+    case mini = "gpt-realtime-2.1-mini"
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .full: return "Full"
+        case .mini: return "Mini"
+        }
+    }
+
+    /// The honest trade, not a sales line: the reason to stay on Full is that it
+    /// hands work to the tutor when it should, and the reason to pick Mini is
+    /// that it costs roughly a third as much per minute.
+    var caption: String {
+        switch self {
+        case .full: return "Best tool use"
+        case .mini: return "Cheaper, less reliable"
         }
     }
 }

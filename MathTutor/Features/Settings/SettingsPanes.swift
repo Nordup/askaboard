@@ -57,7 +57,7 @@ struct SettingsPaneContent: View {
 
 // MARK: - Tutor
 
-/// Two rows, and the whole of what the old screen spent nine cards on.
+/// Three rows, and the whole of what the old screen spent nine cards on.
 struct TutorPane: View {
     @EnvironmentObject private var store: TutorStore
     let width: CGFloat
@@ -80,6 +80,18 @@ struct TutorPane: View {
                 width: width,
                 identifierPrefix: "effort-option",
                 select: store.setReasoningEffort
+            )
+
+            // Last of the three, so the two rows that decide how the tutor
+            // *thinks* stay adjacent and the one that decides how it *speaks*
+            // sits under them — the order the pane's lede reads in.
+            SettingPickerRow(
+                label: SettingsCopy.voiceModelLabel,
+                caption: SettingsCopy.voiceModelCaption,
+                options: SettingsOption.voiceModels(selected: store.session.selectedVoiceModel),
+                width: width,
+                identifierPrefix: "voice-model-option",
+                select: store.setVoiceModel
             )
         }
     }

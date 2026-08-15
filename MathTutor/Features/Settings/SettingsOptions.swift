@@ -25,6 +25,15 @@ extension SettingsOption where Value == ModelChoice {
     }
 }
 
+extension SettingsOption where Value == VoiceModelChoice {
+    /// Board 10's `Voice model` row: Full / Mini, in `allCases` order.
+    static func voiceModels(selected: VoiceModelChoice) -> [Self] {
+        VoiceModelChoice.allCases.map {
+            Self(value: $0, title: $0.displayName, caption: $0.caption, isSelected: $0 == selected)
+        }
+    }
+}
+
 extension SettingsOption where Value == ReasoningEffort {
     /// Board 10's `Reasoning effort` grid: None / Low / Medium · High / X-High / Max.
     static func efforts(selected: ReasoningEffort) -> [Self] {

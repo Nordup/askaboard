@@ -13,9 +13,14 @@ import SwiftUI
 /// fraction of the screen: the window is a fixed size that gets clamped when the screen is
 /// too small for it, which is the same shape of answer the tool rail gives.
 struct SettingsWindowMetrics: Equatable, Sendable {
-    /// 760 × 520 on the board. Both are free values — the window is sized to its content,
+    /// 760 × 560 on the board. Both are free values — the window is sized to its content,
     /// not derived from a lane — so they are stated rather than computed.
-    static let designSize = CGSize(width: 760, height: 520)
+    ///
+    /// The height was 520 while the Tutor pane held two rows. The third one — `Voice model`
+    /// — needs 360 of rows under a 116 header inside 32 of padding top and bottom, which is
+    /// 540; 520 clipped it. 560 rather than 540 so the pane keeps a little slack under its
+    /// last row instead of ending flush against the window's curve. See `paneFits(rows:)`.
+    static let designSize = CGSize(width: 760, height: 560)
 
     /// `--radius-3xl`, the radius the whiteboard and the tutor panel take. Foundations:
     /// *"Radius is chosen by how big the surface is, not by taste"*, and at 760 × 520 this
@@ -137,6 +142,19 @@ struct SettingsWindowMetrics: Equatable, Sendable {
 
     /// `216 − 16 × 2 = 184`.
     var navItemWidth: CGFloat { max(0, Self.sidebarWidth - 2 * Self.sidebarPaddingInline) }
+
+    /// Whether a pane of `count` rows fits: `32 × 2 + 116 + 120 × count ≤ height`.
+    ///
+    /// This is the arithmetic `designSize.height` came from, written down rather than left
+    /// in a comment. The window clips its overflow, so a pane that outgrows it loses its
+    /// last row silently — nothing throws and nothing scrolls. Asserting this in a test is
+    /// what turns "we added a fourth row" from a bug you notice on a device into a failure.
+    func paneFits(rows count: Int) -> Bool {
+        let needed = 2 * Self.panePadding
+            + Self.headerHeight
+            + SettingRowMetrics.height * CGFloat(count)
+        return needed <= size.height
+    }
 }
 
 /// The settings window: a sidebar, a rule, and one pane.

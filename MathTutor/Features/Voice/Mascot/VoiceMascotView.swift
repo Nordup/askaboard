@@ -119,6 +119,17 @@ private struct MascotStateRow: View {
     MascotStateRow(variant: .dock)
 }
 
+/// Work mode (board 31): one thin ring, no halo, eyes closed to slits. Pinned, so the
+/// ±2 % breath is the only thing moving.
+#Preview("Panel 72 — resting") {
+    HStack(spacing: 160) {
+        VoiceMascotView(display: pinnedDisplay(.listening), variant: .panel)
+        VoiceMascotView(display: pinnedDisplay(.resting), variant: .panel)
+    }
+    .padding(160)
+    .background(DS.Color.surfacePanel)
+}
+
 #Preview("Panel 72 — connecting") {
     VoiceMascotView(display: pinnedDisplay(.connecting), variant: .panel)
         .padding(160)
@@ -147,7 +158,9 @@ private struct ScriptedMascotPreview: View {
             guard engine == nil else { return }
             let started = ScriptedVoiceEngine()
             engine = started
-            await started.start(sessionID: UUID(), hooks: ScriptedVoiceEngine.noopHooks())
+            await started.start(
+                sessionID: UUID(), voiceModel: .mini, hooks: ScriptedVoiceEngine.noopHooks()
+            )
         }
     }
 }

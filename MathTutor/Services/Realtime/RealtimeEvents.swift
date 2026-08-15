@@ -26,6 +26,20 @@ struct RealtimeErrorPayload: Equatable, Sendable {
     let param: String?
 }
 
+/// The token bill of one completed response, as `response.done`'s `usage` block reports it.
+/// Split by modality because audio and text bill an order of magnitude apart; each cached count
+/// is a subset of its input total. These numbers are what the coordinator reports to the
+/// backend (`POST /v1/realtime/usage`) — the server is only the SDP proxy and never sees the
+/// data channel, so a count that is not read here is a dollar the daily spend cap never sees.
+struct RealtimeUsageCounts: Equatable, Sendable {
+    let audioInputTokens: Int
+    let cachedAudioInputTokens: Int
+    let audioOutputTokens: Int
+    let textInputTokens: Int
+    let cachedTextInputTokens: Int
+    let textOutputTokens: Int
+}
+
 /// Whether a completed transcription actually carried words, and if not, *how* it did not.
 ///
 /// "The model listened and heard nothing" and "the transcription request came back malformed"
@@ -64,10 +78,12 @@ enum RealtimeServerEvent: Equatable, Sendable {
     /// `failure` carries `response.status_details.error` — the only account the API gives of a
     /// response that failed. `functionCalls` are the calls swept out of `response.output`,
     /// because `response.function_call_arguments.done` is not guaranteed to have arrived.
+    /// `usage` is the response's token bill, nil when the event carried none.
     case responseDone(responseId: String?,
                       status: String?,
                       failure: String?,
-                      functionCalls: [RealtimeFunctionCall])
+                      functionCalls: [RealtimeFunctionCall],
+                      usage: RealtimeUsageCounts?)
     /// The assistant's audio actually started leaving the loudspeaker buffer. May never arrive
     /// on this transport (sleep lesson 10) — nothing load-bearing may depend on it alone.
     case outputAudioStarted
@@ -189,7 +205,8 @@ enum RealtimeEventDecoder {
                 responseId: response?["id"] as? String,
                 status: response?["status"] as? String,
                 failure: failure.isEmpty ? nil : failure,
-                functionCalls: calls
+                functionCalls: calls,
+                usage: usageCounts(from: response?["usage"] as? [String: Any])
             )
 
         case "output_audio_buffer.started":
@@ -213,6 +230,38 @@ enum RealtimeEventDecoder {
         default:
             return .unhandled(type: type)
         }
+    }
+
+    /// Reads the usage block as loosely as everything else here: missing counts are zero, an
+    /// absent block is nil. When `cached_tokens_details` is missing but a total `cached_tokens`
+    /// is present, the whole cached count is attributed to *text* on purpose: both modalities
+    /// share the same cached rate, so the cached side prices identically either way, and
+    /// misattributing cached audio to text makes the uncached audio share — the expensive one —
+    /// read high. The error lands on the side that cannot under-bill the daily cap.
+    private static func usageCounts(from usage: [String: Any]?) -> RealtimeUsageCounts? {
+        guard let usage else { return nil }
+        let input = usage["input_token_details"] as? [String: Any] ?? [:]
+        let output = usage["output_token_details"] as? [String: Any] ?? [:]
+        let cachedDetails = input["cached_tokens_details"] as? [String: Any]
+
+        let cachedAudio = cachedDetails?["audio_tokens"] as? Int ?? 0
+        let cachedText: Int
+        if let text = cachedDetails?["text_tokens"] as? Int {
+            cachedText = text
+        } else if let cached = input["cached_tokens"] as? Int {
+            cachedText = max(0, cached - cachedAudio)
+        } else {
+            cachedText = 0
+        }
+
+        return RealtimeUsageCounts(
+            audioInputTokens: input["audio_tokens"] as? Int ?? 0,
+            cachedAudioInputTokens: cachedAudio,
+            audioOutputTokens: output["audio_tokens"] as? Int ?? 0,
+            textInputTokens: input["text_tokens"] as? Int ?? 0,
+            cachedTextInputTokens: cachedText,
+            textOutputTokens: output["text_tokens"] as? Int ?? 0
+        )
     }
 }
 
