@@ -18,8 +18,10 @@ let package = Package(
     dependencies: [
         // Apple's official Markdown parser (CommonMark + GFM extensions)
         .package(url: "https://github.com/apple/swift-markdown.git", from: "0.4.0"),
-        // Extended LaTeX rendering for SwiftUI (fork of SwiftMath with additional symbol coverage)
-        .package(url: "https://github.com/ChrisGVE/ExtendedSwiftMath.git", exact: "2.1.3"),
+        // Extended LaTeX rendering for SwiftUI (fork of SwiftMath with additional symbol
+        // coverage). Vendored from the 2.1.3 tag so the tutor can carry its own commands
+        // on top — \boxed lives only in this copy, not upstream.
+        .package(path: "../ExtendedSwiftMath"),
     ],
     targets: [
         .target(

@@ -1,15 +1,6 @@
 {
   "pins" : [
     {
-      "identity" : "extendedswiftmath",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/ChrisGVE/ExtendedSwiftMath.git",
-      "state" : {
-        "revision" : "f8ad0c48a83b175f8987715687456dca50f8f927",
-        "version" : "2.1.3"
-      }
-    },
-    {
       "identity" : "swift-cmark",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/swiftlang/swift-cmark.git",
