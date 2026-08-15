@@ -68,6 +68,7 @@
 		5CBB424BA32ED023B20F5A96 /* BoardSelectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFCCD95B7E728A12D36C3E74 /* BoardSelectionTests.swift */; };
 		5D1E63A5E7895DE958C6A55B /* SuggestionChip.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3819B07BA533544E9FFF5372 /* SuggestionChip.swift */; };
 		6039FB61DB7B9CE160407A2D /* BoardScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55F857C97BF30E507F4AFBA9 /* BoardScene.swift */; };
+		610EDB986EBF9EC36EAC13CF /* SwiftDrawProbeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3D368DED69760CC8C9E9471 /* SwiftDrawProbeTests.swift */; };
 		626E0C4AFB03801DA73159D5 /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = 8BFA867D54B3C458183127B2 /* WebRTC */; };
 		62D3D1170425BC618AE2CE4E /* SessionSwitcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1AD1D26A28E26E3C17AC894 /* SessionSwitcherTests.swift */; };
 		667FD9DC81E5660F25882C49 /* SettingRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5078C64A063E2312DE7B9A1D /* SettingRow.swift */; };
@@ -95,6 +96,7 @@
 		8AE059865F261B9D671ECFF2 /* SessionPlanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CFED3B175C3922A5241AF7C /* SessionPlanView.swift */; };
 		8B9AC755A10DFAF39CA985CD /* SettingsWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CDCEE851D84DD0BD8B2DB86 /* SettingsWindow.swift */; };
 		8CFFCA8713A559A17AA2D839 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C742B8F4CF845931CCEFC3D /* KeychainStore.swift */; };
+		8DEAFEDDA17ED87FF53F9AE6 /* SwiftDraw in Frameworks */ = {isa = PBXBuildFile; productRef = 46088361BC711A7116DB85DE /* SwiftDraw */; };
 		8EF8D1DBB69B35CD52FE47A8 /* TutorEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4D02DCD5A1B7D6CBA594BAF /* TutorEvent.swift */; };
 		902636F164A70DBA8E9FCFF0 /* RealtimeConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 008918BCF5D56C68A38FDFF1 /* RealtimeConnection.swift */; };
 		906FFC4E68C91A9A417F061F /* MessageEditingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFAF225BBA2FEB4C84A98324 /* MessageEditingTests.swift */; };
@@ -312,6 +314,7 @@
 		D0E7C06258FD823C2E5B4C5D /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		D135C65ED372E4E69447A476 /* RealtimeSignalingClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeSignalingClient.swift; sourceTree = "<group>"; };
 		D207D577F59A94A0666E7CB3 /* GreetingBlock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GreetingBlock.swift; sourceTree = "<group>"; };
+		D3D368DED69760CC8C9E9471 /* SwiftDrawProbeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftDrawProbeTests.swift; sourceTree = "<group>"; };
 		D511827ABE54595D7F8366E1 /* MessageThreadLazinessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageThreadLazinessTests.swift; sourceTree = "<group>"; };
 		D6A6AC55DDB94015492D4C2A /* MathTutorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MathTutorTests.swift; sourceTree = "<group>"; };
 		D72F7D127584C65A5F19FCFE /* BoardSceneHashTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardSceneHashTests.swift; sourceTree = "<group>"; };
@@ -355,6 +358,7 @@
 			files = (
 				787930E8CC449D11F3E55A66 /* MarkdownExtendedView in Frameworks */,
 				626E0C4AFB03801DA73159D5 /* WebRTC in Frameworks */,
+				8DEAFEDDA17ED87FF53F9AE6 /* SwiftDraw in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -497,6 +501,7 @@
 				61070F61E8510619F84F5D97 /* ShellComponentTests.swift */,
 				A14830CB2CFA326710F5956B /* StructuredChatTextTests.swift */,
 				FCA9CA61147AAAE5C1519199 /* SVGPathTests.swift */,
+				D3D368DED69760CC8C9E9471 /* SwiftDrawProbeTests.swift */,
 				ECEE59C2882DF49AE64DF05F /* TutorEventTests.swift */,
 				01208D8AB95D85FECBBFB486 /* TutorStoreStreamingTests.swift */,
 				363744A8B651DA004FC6F837 /* UIStateTests.swift */,
@@ -774,6 +779,7 @@
 			packageProductDependencies = (
 				984F4BB41CFF4D6E7163C0BD /* MarkdownExtendedView */,
 				8BFA867D54B3C458183127B2 /* WebRTC */,
+				46088361BC711A7116DB85DE /* SwiftDraw */,
 			);
 			productName = MathTutor;
 			productReference = F25CD95322B357DE7DB2BA6C /* MathTutor.app */;
@@ -831,6 +837,7 @@
 			mainGroup = 0C4D00B681F867CF430B0CAF;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				31A1778C8171CDA2E777BA4C /* XCRemoteSwiftPackageReference "SwiftDraw" */,
 				FBE8CDC45A95E8F3D3454F25 /* XCRemoteSwiftPackageReference "WebRTC" */,
 				27BFCD6963659A91FA5E15AB /* XCLocalSwiftPackageReference "Vendor/MarkdownExtendedView" */,
 			);
@@ -907,6 +914,7 @@
 				6D8407FD79D89CEB5292F2E1 /* SettingsBackendTests.swift in Sources */,
 				C2F1BFE90BA785204C92E595 /* ShellComponentTests.swift in Sources */,
 				BCF8A9D1007481F9057DE623 /* StructuredChatTextTests.swift in Sources */,
+				610EDB986EBF9EC36EAC13CF /* SwiftDrawProbeTests.swift in Sources */,
 				D4CC41F844141FE1C0733F8F /* TutorEventTests.swift in Sources */,
 				BF03F14EA21C27A4E7686D8B /* TutorStoreStreamingTests.swift in Sources */,
 				72CFCF787A756EB78403E0D7 /* UIStateTests.swift in Sources */,
@@ -1327,6 +1335,14 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		31A1778C8171CDA2E777BA4C /* XCRemoteSwiftPackageReference "SwiftDraw" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/swhitty/SwiftDraw";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.29.0;
+			};
+		};
 		FBE8CDC45A95E8F3D3454F25 /* XCRemoteSwiftPackageReference "WebRTC" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/stasel/WebRTC";
@@ -1338,6 +1354,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		46088361BC711A7116DB85DE /* SwiftDraw */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 31A1778C8171CDA2E777BA4C /* XCRemoteSwiftPackageReference "SwiftDraw" */;
+			productName = SwiftDraw;
+		};
 		8BFA867D54B3C458183127B2 /* WebRTC */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = FBE8CDC45A95E8F3D3454F25 /* XCRemoteSwiftPackageReference "WebRTC" */;

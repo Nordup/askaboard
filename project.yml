@@ -21,6 +21,14 @@ packages:
   webRTC:
     url: https://github.com/stasel/WebRTC
     from: 150.0.0
+  # SwiftDraw parses an SVG document into Core Graphics draw commands, so the
+  # board can raster a figure without a web view. 0.29.0 is the current release;
+  # `from` allows a later 0.x, and Package.resolved holds the version a build
+  # actually took. See MathTutorTests/SwiftDrawProbeTests.swift, which records
+  # what this release does and does not draw.
+  swiftDraw:
+    url: https://github.com/swhitty/SwiftDraw
+    from: 0.29.0
 targets:
   MathTutor:
     type: application
@@ -32,6 +40,8 @@ targets:
         product: MarkdownExtendedView
       - package: webRTC
         product: WebRTC
+      - package: swiftDraw
+        product: SwiftDraw
     # The device's bearer token, compiled in rather than injected at launch —
     # a build the user taps has no launching process to take it from. The
     # committed file holds no secret; see MathTutor/Config/Backend.xcconfig.
