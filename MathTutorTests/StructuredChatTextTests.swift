@@ -62,6 +62,40 @@ final class StructuredChatTextTests: XCTestCase {
         XCTAssertEqual(TutorMathMarkdownAdapter.renderableMarkdown(input), expected)
     }
 
+    func testDollarDisplayBlockSurvivesItsOwnNewlines() {
+        // The failing message of 2026-08-15: the tutor emitted a $$ block with
+        // the TeX on its own lines. Newlines inside must not become hard
+        // breaks, or the block splits into paragraphs and shows raw source.
+        let input = "Your first calculation\n\n$$\nm_{\\mathrm{O_2}} = \\frac{0.03200}{6.022\\times10^{23}}\\ \\mathrm{kg}.\n$$\n\nCalculate that value first."
+        let expected = "Your first calculation\n\n$$ m_{\\mathrm{O_2}} = \\frac{0.03200}{6.022\\times10^{23}}\\ \\mathrm{kg}. $$\n\nCalculate that value first."
+
+        XCTAssertEqual(TutorMathMarkdownAdapter.renderableMarkdown(input), expected)
+    }
+
+    func testSingleLineDollarBlockPassesThroughUnchanged() {
+        let input = #"$$E = mc^2$$ done."#
+
+        XCTAssertEqual(TutorMathMarkdownAdapter.renderableMarkdown(input), input)
+    }
+
+    func testDollarBlockThinSpaceIsNormalizedLikeBracketMath() {
+        let input = "$$1\\,\\mathrm{K}$$"
+
+        XCTAssertEqual(
+            TutorMathMarkdownAdapter.renderableMarkdown(input),
+            "$$1\\text{ }\\mathrm{K}$$"
+        )
+    }
+
+    func testIncompleteDollarBlockDuringStreamingStaysLiteral() {
+        let input = "Value:\n\n$$\nm = \\frac{M}{N_A}"
+
+        XCTAssertEqual(
+            TutorMathMarkdownAdapter.renderableMarkdown(input),
+            "Value:\n\n$$\nm = \\frac{M}{N_A}"
+        )
+    }
+
     func testIncompleteMathDuringStreamingIsNotHalfConverted() {
         let input = #"Energy is \(\frac{3}{2}"#
 

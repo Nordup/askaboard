@@ -56,6 +56,32 @@ enum TutorMathMarkdownAdapter {
         var previousWasNewline = false
 
         while !remaining.isEmpty {
+            if remaining.hasPrefix("$$") {
+                // The tutor sometimes emits dollar-delimited display math
+                // directly, often with the TeX on its own lines. Newlines
+                // inside the span must not become hard breaks — that splits
+                // the block into paragraphs and the renderer then shows raw
+                // source — so the span is re-emitted on one line.
+                let contentStart = remaining.index(remaining.startIndex, offsetBy: 2)
+                if let close = remaining[contentStart...].range(of: "$$") {
+                    let math = rendererCompatibleMath(
+                        String(remaining[contentStart..<close.lowerBound])
+                            .replacingOccurrences(of: "\n", with: " ")
+                    )
+                    result += "$$"
+                    result += math
+                    result += "$$"
+                    remaining = remaining[close.upperBound...]
+                    previousWasNewline = false
+                    continue
+                }
+
+                // Streaming can cut the block before its closing $$; keep the
+                // unfinished tail literal rather than mangling its newlines.
+                result += remaining
+                break
+            }
+
             if remaining.hasPrefix("\\(") || remaining.hasPrefix("\\[") {
                 let isDisplay = remaining.hasPrefix("\\[")
                 let contentStart = remaining.index(remaining.startIndex, offsetBy: 2)
