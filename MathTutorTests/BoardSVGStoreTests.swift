@@ -23,8 +23,11 @@ import XCTest
 ///    on the next scene install either, so it is refused once and for good. A
 ///    raster that does not come back says nothing about the markup, so it is
 ///    not recorded at all — `BoardSVGCache`'s rule, kept.
-/// 4. **An evicted figure is not a lost figure.** The markup is in the element,
-///    so a miss re-renders rather than leaving a hole on the board.
+/// 4. **A budget that is too small degrades; it never thrashes.** An evicted
+///    figure is re-rendered on the next explicit ask or scene install, but not
+///    by a draw — a draw that schedules work is a draw the completion's own
+///    notification can make schedule it again. Four bytes a pixel, so that the
+///    budget prices what it thinks it prices.
 /// 5. **Up is up.** A `CGImage` draws y-up into a y-down UIKit context, so the
 ///    one composite path has to flip, and a figure that arrives upside down on
 ///    a child's iPad is a silent, total failure of the feature.
@@ -173,11 +176,32 @@ final class BoardSVGStoreTests: XCTestCase {
     /// document parsed, so the markup is good, and the next ask must be free to
     /// try again. This is the rule `BoardSVGCache` had to learn about WebKit
     /// timeouts, kept for the reasons that survive the renderer swap.
+    ///
+    /// The retry is an *explicit* ask. A draw must not start one: the failed
+    /// render posts `.boardSceneArtifactReady`, the layer view reconciles on it
+    /// and draws again, so a self-scheduling draw would spin for as long as the
+    /// element stayed on the board.
     func testARasterFailureDoesNotPoisonTheKey() async throws {
         let store = BoardSVGStore()
         store.failsRasterForTesting = true
         let failed = await store.render(element: element(Self.triangle))
         XCTAssertNil(failed)
+        XCTAssertEqual(store.renderPassesForTesting, 1)
+
+        // Two reconcile passes' worth of draws. Work scheduled by one of them
+        // would announce itself when it finished, which is the notification
+        // that brings the layer view back for the next pass — so an inverted
+        // expectation on it is the loop's own trigger, asserted absent.
+        let quiet = expectation(forNotification: .boardSceneArtifactReady, object: nil)
+        quiet.isInverted = true
+        for _ in 0..<2 {
+            XCTAssertNil(store.document(for: element(Self.triangle)))
+            await Task.yield()
+        }
+        await fulfillment(of: [quiet], timeout: 0.5)
+        XCTAssertEqual(
+            store.renderPassesForTesting, 1, "a draw must never retry a failed raster"
+        )
 
         store.failsRasterForTesting = false
         let retried = await store.render(element: element(Self.triangle))
@@ -234,9 +258,33 @@ final class BoardSVGStoreTests: XCTestCase {
 
     // MARK: - Residency
 
-    /// A figure pushed out under the byte cap comes back on the next read: the
-    /// markup that made it is in the element, so re-rendering it is free and
-    /// certain, and a hole in the board is not.
+    /// Every bitmap is four bytes a pixel, whatever the screen can show.
+    ///
+    /// SwiftDraw rasterizes through `UIGraphicsImageRendererFormat.preferred()`
+    /// at `preferredRange = .automatic`, which on a wide-gamut iPad is an
+    /// extended-range buffer at eight bytes a pixel. Left alone, one 2048-pixel
+    /// figure would be 33 MB and the byte cap would be counting half of what
+    /// the store holds.
+    func testTheRasterIsFlattenedToFourBytesPerPixel() async throws {
+        let store = BoardSVGStore()
+        let rendered = await store.render(element: element(Self.triangle))
+        let parsed = try XCTUnwrap(rendered)
+
+        XCTAssertEqual(parsed.image.bitsPerPixel, 32)
+        XCTAssertEqual(parsed.image.bitsPerComponent, 8)
+        XCTAssertEqual(
+            store.totalBytesForTesting, parsed.image.bytesPerRow * parsed.image.height,
+            "the budget is priced in the bytes the bitmap actually holds"
+        )
+        XCTAssertLessThan(
+            store.totalBytesForTesting, parsed.image.width * parsed.image.height * 8,
+            "an extended-range bitmap would be twice this"
+        )
+    }
+
+    /// A figure pushed out under the byte cap is not lost: the markup that made
+    /// it is in the element, so an explicit ask renders it again. What must not
+    /// ask is a draw — see the test below for why.
     func testAnEvictedFigureIsRenderedAgainRatherThanLost() async throws {
         let store = BoardSVGStore(byteLimit: 1)
         let first = element(Self.triangle, id: "a")
@@ -249,6 +297,42 @@ final class BoardSVGStoreTests: XCTestCase {
         XCTAssertNil(store.document(for: first), "the older figure gave up its bytes")
         let reRendered = await store.render(element: first)
         XCTAssertNotNil(reRendered)
+        XCTAssertEqual(store.renderPassesForTesting, 3)
+    }
+
+    /// Two figures that cannot both fit must not take turns evicting each other.
+    ///
+    /// Every completed render posts `.boardSceneArtifactReady`, the layer view
+    /// reconciles on it, and reconciling draws — so a draw that re-rendered an
+    /// evicted figure would drive its own next round for as long as the board
+    /// showed both. The tile cache does not damp it either: the layer view
+    /// consults this store before its own cache. So the board degrades — one of
+    /// the two draws as nothing — and the scene install is what re-decides.
+    func testAWorkingSetOverTheBudgetDoesNotThrash() async throws {
+        let store = BoardSVGStore(byteLimit: 1)
+        let first = element(Self.triangle, id: "a")
+        let second = element(Self.square, id: "b")
+        let firstDocument = await store.render(element: first)
+        let secondDocument = await store.render(element: second)
+        _ = try XCTUnwrap(firstDocument)
+        _ = try XCTUnwrap(secondDocument)
+        XCTAssertEqual(store.renderPassesForTesting, 2)
+
+        // Twenty reconcile passes: each one draws both elements, and each
+        // suspension lets anything that was scheduled run and be counted.
+        for _ in 0..<20 {
+            _ = store.document(for: first)
+            _ = store.document(for: second)
+            await Task.yield()
+        }
+        XCTAssertEqual(
+            store.renderPassesForTesting, 2, "draws alone must not schedule a single render"
+        )
+
+        // The scene install is the retry point, and it costs one pass.
+        store.prepare(scene: BoardScene(elements: [.svg(first)]))
+        let back = await store.render(element: first)
+        XCTAssertNotNil(back)
         XCTAssertEqual(store.renderPassesForTesting, 3)
     }
 

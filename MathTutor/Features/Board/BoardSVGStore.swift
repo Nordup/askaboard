@@ -72,10 +72,19 @@ struct ParsedSVG {
 /// any `viewBox` it likes, and a board element may span 25,000 points, so the
 /// raster is capped on its long side. Under the cap it is *oversampled*
 /// instead, because the board zooms and a 1:1 bitmap goes soft under a pinch.
-/// What survives is held under a byte cap: a session where the model draws a
-/// new figure every turn must degrade into re-rendering, never into memory
-/// pressure. An evicted figure is not lost — the markup that made it is in the
-/// element, so the next read schedules the render again.
+/// Every bitmap is then flattened to 8-bit sRGB, so a pixel is four bytes on
+/// every device and the byte cap below prices what it says it prices. What
+/// survives is held under that cap: a session where the model draws a new
+/// figure every turn must degrade into re-rendering, never into memory
+/// pressure.
+///
+/// **A working set larger than the budget degrades, it does not thrash.** An
+/// evicted figure is not lost — the markup that made it is in the element — but
+/// a *draw* is not allowed to start the re-render. If it were, two figures that
+/// cannot both fit would evict each other forever: draw → render → evict →
+/// notify → reconcile → draw. So the retry point is a scene install, which
+/// costs at most one render per figure, and until then the element draws as
+/// nothing. The same rule covers a raster that failed, for the same reason.
 @MainActor
 final class BoardSVGStore {
     static let shared = BoardSVGStore()
@@ -103,9 +112,9 @@ final class BoardSVGStore {
 
     /// The resident budget for figure bitmaps, in bytes.
     ///
-    /// Half of `BoardImageStore`'s and a quarter of `BoardRasterCache`'s,
-    /// because re-making one of these costs neither a request nor a disk read:
-    /// the markup is in the scene, so an eviction is paid back in CPU alone.
+    /// `BoardImageStore`'s budget, and priced the same way: every bitmap here
+    /// is flattened to four bytes per pixel, so `cost(of:)` is the truth rather
+    /// than an estimate that a wide-gamut device doubles behind its back.
     private let byteLimit: Int
 
     private var documents: [String: ParsedSVG] = [:]
@@ -114,14 +123,20 @@ final class BoardSVGStore {
     private var totalBytes = 0
     /// Keys whose markup does not parse. Nothing is ever retried for these.
     private var refused: Set<String> = []
-    /// Keys whose last raster did not come back, since the last scene install.
+    /// Keys a *draw* must not schedule work for until the next scene install.
     ///
-    /// This is not a refusal — it says nothing about the markup — but it does
-    /// stop a *draw* from re-scheduling the work. Without it, a figure that
-    /// fails to rasterize would go draw → schedule → fail → notify → draw for
-    /// as long as it stayed on the board. A scene install clears the set, which
-    /// is the retry point.
-    private var failedRaster: Set<String> = []
+    /// Two things land here, and neither is a refusal. A raster that did not
+    /// come back: the document parsed, so the markup is good, but a draw that
+    /// re-scheduled it would go draw → schedule → fail → notify → draw for as
+    /// long as the element stayed on the board. And a figure evicted under the
+    /// byte cap: if a draw re-rendered it, two figures that cannot both fit
+    /// would take turns evicting each other, and every eviction notifies, which
+    /// makes the loop drive itself.
+    ///
+    /// Both cost the same thing — the element draws as nothing until the next
+    /// scene install — and both are worth it. `prepare(scene:)` clears the set;
+    /// `render(element:)` ignores it, because an explicit ask is not a draw.
+    private var deferred: Set<String> = []
     private var inFlight: [String: Task<ParsedSVG?, Never>] = [:]
 
     /// How many times the parse-and-raster step has actually run. Tests read it
@@ -138,7 +153,10 @@ final class BoardSVGStore {
     /// with a failed raster without changing what the store does at all.
     var failsRasterForTesting = false
 
-    init(byteLimit: Int = 32 * 1024 * 1024) {
+    /// What the resident figures cost right now, for the tests that price them.
+    var totalBytesForTesting: Int { totalBytes }
+
+    init(byteLimit: Int = 64 * 1024 * 1024) {
         self.byteLimit = byteLimit
     }
 
@@ -152,7 +170,7 @@ final class BoardSVGStore {
     /// when a scene is installed, including restored scenes on relaunch. This
     /// is also the retry point for a figure whose last raster did not come back.
     func prepare(scene: BoardScene) {
-        failedRaster.removeAll()
+        deferred.removeAll()
         for element in scene.elements {
             if case .svg(let svg) = element {
                 prepare(svgElement: svg)
@@ -168,18 +186,19 @@ final class BoardSVGStore {
 
     /// The synchronous read the renderer draws from.
     ///
-    /// A miss also *schedules*, unless the markup was refused or its last raster
-    /// failed. That is what makes an eviction self-healing: a figure pushed out
-    /// under the byte cap would otherwise show nothing until the model next
-    /// touched the board, and re-rendering it needs only the markup in the
-    /// element that just asked.
+    /// A miss also *schedules* — the first sight of a figure is usually a draw,
+    /// and the markup it needs is in the element that just asked — but only for
+    /// a key the store has nothing recorded against. A refusal, a raster that
+    /// failed, and a figure evicted under the byte cap all wait for the next
+    /// scene install instead, because a draw that schedules work is a draw that
+    /// can be made to schedule it again by the notification its own work posts.
     func document(for element: SVGElement) -> ParsedSVG? {
         let key = Self.cacheKey(for: element)
         if let document = documents[key] {
             touch(key)
             return document
         }
-        if !refused.contains(key), !failedRaster.contains(key) {
+        if !refused.contains(key), !deferred.contains(key) {
             prepare(svgElement: element)
         }
         return nil
@@ -217,14 +236,14 @@ final class BoardSVGStore {
             switch outcome {
             case .ready(let image, let size):
                 let parsed = ParsedSVG(image: image, size: size)
-                self.failedRaster.remove(key)
+                self.deferred.remove(key)
                 self.remember(parsed, for: key)
                 document = parsed
             case .unparseable:
                 // Fail closed, and stay closed. `document(for:)` keeps
                 // answering nil, so the element stays blank rather than
                 // re-parsing the same broken markup on every scene install.
-                // Nothing clears `failedRaster` here: a refusal outranks it in
+                // Nothing clears `deferred` here: a refusal outranks it in
                 // every read, and a document that parsed once parses again.
                 self.refused.insert(key)
                 document = nil
@@ -232,7 +251,7 @@ final class BoardSVGStore {
                 // Nothing is recorded against the key beyond "not from a draw":
                 // the document parsed, so the markup is good, and the next
                 // scene install must be free to try it again.
-                self.failedRaster.insert(key)
+                self.deferred.insert(key)
                 document = nil
             }
             NotificationCenter.default.post(name: .boardSceneArtifactReady, object: nil)
@@ -257,6 +276,11 @@ final class BoardSVGStore {
             if let evicted = documents.removeValue(forKey: victim) {
                 totalBytes -= Self.cost(of: evicted.image)
             }
+            // The figure that was just dropped is exactly the one a draw is
+            // about to ask for again, and re-rendering it would drop this one
+            // in its place. The next scene install decides which of them the
+            // board still needs.
+            deferred.insert(victim)
         }
     }
 
@@ -298,9 +322,11 @@ final class BoardSVGStore {
     /// The whole of the SwiftDraw contact.
     ///
     /// The scale is passed explicitly on every call. SwiftDraw's default of `0`
-    /// means "read `UIScreen.main.scale`", which it does through
-    /// `DispatchQueue.main.sync` — from this task, with the main actor waiting
-    /// on it, that is a deadlock rather than a wrong number.
+    /// means "read `UIScreen.main.scale`" (`SVG.defaultScale`), which off the
+    /// main thread it reaches through `DispatchQueue.main.sync`: a hop onto the
+    /// main thread inside every render, and — because every device this ships
+    /// on is 2x — twice the pixels this function asked for, which is the ceiling
+    /// above silently doubled.
     ///
     /// `rasterize(size:scale:)` rather than `rasterize(scale:)` for one reason:
     /// a document over the ceiling needs a scale below 1, and asking
@@ -325,17 +351,42 @@ final class BoardSVGStore {
             width: max(1, (size.width * scale).rounded()),
             height: max(1, (size.height * scale).rounded())
         )
-        guard let bitmap = svg.rasterize(size: box, scale: 1).cgImage,
+        guard let bitmap = flattened(svg.rasterize(size: box, scale: 1), size: box),
               bitmap.width > 0, bitmap.height > 0
         else { return .noRaster }
         return .ready(bitmap, size)
     }
 
+    /// The same drawing, in 8-bit sRGB, at one pixel per point.
+    ///
+    /// SwiftDraw rasterizes through `UIGraphicsImageRendererFormat.preferred()`
+    /// with `preferredRange = .automatic`, and on a wide-gamut iPad that is an
+    /// extended-range buffer: eight bytes per pixel, not four. A 2048 x 2048
+    /// figure would then be 33 MB rather than 16, and `cost(of:)` — which the
+    /// byte cap is priced in — would be reporting half of what the store
+    /// actually holds. Board colours are sRGB hex, so the wider range buys
+    /// nothing to pay for that with.
+    ///
+    /// `BoardSceneLayerView.rasterize` pins its tiles the same way, for the
+    /// same reason. `opaque` stays false: a figure is drawn over the board, and
+    /// everything the document did not paint has to stay clear.
+    private nonisolated static func flattened(_ image: UIImage, size: CGSize) -> CGImage? {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = false
+        format.preferredRange = .standard
+        let standardRange = UIGraphicsImageRenderer(size: size, format: format).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: size))
+        }
+        return standardRange.cgImage
+    }
+
     /// Pixels per board point for one document: the oversample, until the long
     /// side would pass the ceiling, and then whatever fits under it.
+    ///
+    /// The only caller has already refused a document under one point on either
+    /// axis, so the division has a divisor of at least 1.
     private nonisolated static func rasterScale(forDocumentSize size: CGSize) -> CGFloat {
-        let longest = max(size.width, size.height)
-        guard longest > 0 else { return rasterOversample }
-        return min(rasterOversample, maximumRasterSide / longest)
+        min(rasterOversample, maximumRasterSide / max(size.width, size.height))
     }
 }
