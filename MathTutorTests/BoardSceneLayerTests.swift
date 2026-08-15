@@ -202,9 +202,9 @@ final class BoardSceneLayerTests: XCTestCase {
         XCTAssertEqual(view.rasterCacheBytesForTesting, 0)
     }
 
-    /// An `svg` element whose WebKit artifact has not landed draws nothing.
+    /// An `svg` element whose document has not been parsed draws nothing.
     /// The cache key is the element value and that value does not change when
-    /// the artifact arrives, so caching the empty bitmap now would serve an
+    /// the figure arrives, so caching the empty bitmap now would serve an
     /// empty picture for the rest of the session.
     func testIncompleteSVGIsNeverCached() {
         // A unique document guarantees a cache miss even when another test in

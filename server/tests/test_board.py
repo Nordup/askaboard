@@ -436,6 +436,33 @@ def test_raw_svg_over_the_document_limit_is_rejected():
     assert str(MAX_SVG_CHARS) in (error or "")
 
 
+def test_svg_without_a_frame_is_drawn_at_its_natural_size():
+    """0 means "the document's own size", which is the shape the model writes.
+
+    The device draws the `viewBox` one user unit to one board point with its
+    top-left corner at `(x, y)`, so a figure needs no frame at all. `None` is
+    how that reaches the device: the frame keys stay in the strict schema, and
+    the model puts a 0 in them.
+    """
+    update, error = _parse_with_svg(width=0, height=0)
+
+    assert update is not None, error
+    svg = update_payload(update).upserts[0]
+    assert svg.width is None
+    assert svg.height is None
+
+
+def test_svg_keeps_a_frame_the_model_asked_for():
+    """The other half of the same rule, and the migration for old scenes: a
+    positive frame is carried through, and the device fits the figure into it.
+    """
+    update, error = _parse_with_svg(width=500, height=320)
+
+    assert update is not None, error
+    svg = update_payload(update).upserts[0]
+    assert (svg.width, svg.height) == (500.0, 320.0)
+
+
 def test_svg_frame_geometry_is_clamped_to_the_logical_board():
     update, error = _parse_with_svg(
         x=-100_000, y=100_000, width=100_000, height=-50_000,
@@ -443,8 +470,11 @@ def test_svg_frame_geometry_is_clamped_to_the_logical_board():
 
     assert update is not None, error
     svg = update_payload(update).upserts[0]
+    # The height clamps to 0, and 0 is "natural size" rather than a frame with
+    # no area: an element the device would have drawn as nothing now draws the
+    # document.
     assert (svg.x, svg.y, svg.width, svg.height) == (
-        -25_000.0, 25_000.0, 50_000.0, 0.0,
+        -25_000.0, 25_000.0, 50_000.0, None,
     )
 
 

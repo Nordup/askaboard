@@ -118,6 +118,30 @@ def test_update_board_svg_arm_is_an_opaque_raw_document():
     assert "interpreted locally" in description
 
 
+def test_update_board_svg_arm_asks_for_a_viewbox_and_no_frame():
+    """The frameless contract, which the model can only learn here.
+
+    The device draws the document's `viewBox` one user unit to one board point
+    with its top-left corner at `(x, y)`. A frame is the legacy path — it
+    scales the whole figure — so the description has to say what 0 means, or
+    the model keeps sizing figures twice and the two sizes fight.
+    """
+    arms = UPDATE_BOARD_TOOL["parameters"]["properties"]["elements"]["items"]["anyOf"]
+    svg = next(arm for arm in arms if arm["properties"]["kind"]["const"] == "svg")
+
+    document = svg["properties"]["svg"]["description"]
+    assert "viewBox" in document
+    assert "board point" in document
+
+    for axis in ("width", "height"):
+        frame = svg["properties"][axis]["description"]
+        assert "0" in frame, f"{axis} must say what 0 means"
+        assert svg["properties"][axis]["minimum"] == 0
+
+    for axis in ("x", "y"):
+        assert "viewBox" in svg["properties"][axis]["description"]
+
+
 def test_update_board_path_arm_speaks_in_board_points():
     arms = UPDATE_BOARD_TOOL["parameters"]["properties"]["elements"]["items"]["anyOf"]
     path = next(arm for arm in arms if arm["properties"]["kind"]["const"] == "path")
@@ -306,8 +330,15 @@ def test_the_tool_surface_stays_inside_its_budget():
     # about a sandbox the provider creates and runs. The surface is now 30,269,
     # leaving 931 under the bound: the same band `web_search` left it in, and
     # still under what the cheapest function tool in this plan costs, so the
-    # bound does not move. The next task to trip this line raises it having read
-    # what the bytes bought, which is the whole point of the number.
+    # bound does not move.
+    #
+    # The frameless `svg` contract (task 8) cost 309 — the `viewBox` sentence
+    # in the document description, and what 0 means in `width` and `height`.
+    # Those bytes stop the model sizing every figure twice, once in the viewBox
+    # and once in a frame that then fought it. The surface is 30,578, leaving
+    # 622 under the bound: still room for a sentence, so the bound does not
+    # move. The next task to trip this line raises it having read what the
+    # bytes bought, which is the whole point of the number.
     assert len(json.dumps(TOOL_DEFINITIONS)) < 31_200
 
 

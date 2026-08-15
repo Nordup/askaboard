@@ -178,12 +178,16 @@ letting the tutor map an inspected crop back to precise coordinates. See
 
 For rich multi-part material, the same scene accepts a complete raw SVG
 document as one stable object. The SVG string is transported and persisted
-unchanged; the iPad interprets it locally with WebKit, caches a PDF/image for
-the live overlay and board captures, and re-renders it after relaunch. This
-supports WebKit's full declarative SVG feature set—paths, text, gradients,
-masks, filters, clipping, markers, symbols, transforms, and animation—without
-a server-side SVG parser or tag allowlist. JavaScript and external resource
-loads remain disabled in the local renderer.
+unchanged; the iPad parses it locally with SwiftDraw, keeps one bitmap per
+distinct document for the live overlay and board captures, and parses it again
+after relaunch. The document needs no frame: its `viewBox` is drawn one user
+unit to one board point, with the top-left corner at the element's `(x, y)`,
+so a figure is sized once and sits in the same space as every other element.
+This supports declarative SVG—paths, text, gradients, clipping, markers,
+symbols, and transforms—without a server-side SVG parser or tag allowlist.
+There is no web view, no script engine, and no network in the figure path at
+all; what the parser cannot draw (`<filter>`, `<mask>`, `<foreignObject>`,
+`<animate>`) is named back to the tutor as a warning rather than refused.
 
 **Typography.** Source Sans 3 is the design's only typeface and iOS does not ship it, so the 400/500/600 weights are bundled. Two conversions in `Typography.swift` are easy to get wrong and are unit-tested: CSS `line-height` is a total line box while SwiftUI's `lineSpacing` is the gap *between* lines, and the design's tracking is in `em` while `.tracking()` takes points.
 

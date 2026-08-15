@@ -437,14 +437,41 @@ class SVGElement(_Identified):
     cap chosen to fit the scene limit. What the device cannot draw is named by
     `lint_svg` at the bottom of this module — as warnings the model reads on
     the tool's ack, never as a refusal that would leave the board blank.
+
+    A figure normally has no frame. The device draws the document's `viewBox`
+    one user unit to one board point, with its top-left corner at `(x, y)`, so
+    the figure is authored in the same space as every other element and is
+    sized exactly once. `width` and `height` stay in the strict schema — every
+    property there is required, and the model cannot omit a key — so 0 is how
+    "no frame" is written on the wire, and it arrives here as `None`.
+
+    A positive frame is the legacy path, and the migration for scenes already
+    on a device: the device scales the whole document to fit that box.
     """
 
     kind: Literal["svg"] = "svg"
     x: float
     y: float
-    width: float
-    height: float
+    #: The frame the figure is scaled into, or `None` for the document's own
+    #: size. See the class docstring for why 0 rather than an omitted key.
+    width: float | None = None
+    height: float | None = None
     svg: str
+
+    @field_validator("width", "height")
+    @classmethod
+    def _frame(cls, value: float | None) -> float | None:
+        """0, or anything that clamped down to it, means "natural size".
+
+        `_clamp_geometry` has already pinned the value into 0...MAX_DIMENSION,
+        so a negative frame arrives here as 0. A box with no area is not a
+        frame the device could draw into — it would show nothing at all — and
+        the document's own size is what the model wanted in every case that
+        reaches this line.
+        """
+        if value is None or not _finite(value) or value <= 0:
+            return None
+        return value
 
     @field_validator("svg")
     @classmethod

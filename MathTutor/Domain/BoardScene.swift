@@ -427,19 +427,40 @@ struct ImageElement: Codable, Hashable, Sendable {
     }
 }
 
-/// A complete raw SVG document, preserved byte-for-byte and rendered
-/// locally by WebKit on the iPad. The frame (`x`, `y`, `width`, `height`)
-/// places it in board coordinates; the SVG owns its internal styling, while
-/// the shared `BoardStyle` still carries scene-level opacity and rotation.
+/// A complete raw SVG document, preserved byte-for-byte and parsed locally on
+/// the iPad by `BoardSVGStore`.
+///
+/// A figure normally has no frame. The document's `viewBox` is drawn one user
+/// unit to one board point with its top-left corner at `(x, y)`, so the model
+/// sizes the figure exactly once, in the markup, and it sits in the same space
+/// as every other element. The SVG owns its internal styling, while the shared
+/// `BoardStyle` still carries scene-level opacity and rotation.
 struct SVGElement: Codable, Hashable, Sendable {
     var id: String
     var kind: BoardElementKind = .svg
     var x: CGFloat
     var y: CGFloat
-    var width: CGFloat
-    var height: CGFloat
+    /// The box the whole document is scaled into, or `nil` for its own size.
+    ///
+    /// The legacy path, and the reason it survives: every scene persisted
+    /// before the frameless contract carries one, and a restored board has to
+    /// look the way the learner left it. See `frame`.
+    var width: CGFloat?
+    var height: CGFloat?
     var svg: String
     var style: BoardStyle = BoardStyle()
+
+    /// The rectangle the whole document is scaled to fit inside, in board
+    /// points, when the model asked for one.
+    ///
+    /// Both axes or neither. A length of 0 reaches this type as `nil` (see
+    /// `WireElement`), so an element carrying one number is a half-frame the
+    /// device could not fit anything into — the document's own size is the
+    /// only sane reading of it, and that is what `nil` here produces.
+    var frame: CGRect? {
+        guard let width, let height, width > 0, height > 0 else { return nil }
+        return CGRect(x: x, y: y, width: width, height: height)
+    }
 }
 
 /// The discriminated primitive union, encoded exactly as the server sends it.
@@ -668,8 +689,8 @@ enum BoardElement: Codable, Hashable, Sendable {
                 kind: .svg,
                 x: wire.x ?? 0,
                 y: wire.y ?? 0,
-                width: wire.width ?? 0,
-                height: wire.height ?? 0,
+                width: naturalWhenZero(wire.width),
+                height: naturalWhenZero(wire.height),
                 svg: wire.svg ?? "",
                 style: wire.style
             ))
@@ -713,6 +734,19 @@ private struct LenientElement: Decodable {
 private extension Array where Element == LenientElement {
     /// The elements this build understands, in wire order.
     var known: [BoardElement] { compactMap(\.element) }
+}
+
+/// The wire's "no frame" convention, read as one length.
+///
+/// The server's `svg` schema is strict, so every property in it is required
+/// and the model cannot leave a frame out; 0 is what it writes for "draw the
+/// document at the size its own `viewBox` gives it". `SVGElement` says that as
+/// `nil`, and this is the one place the two spellings meet. A missing key
+/// reads the same way, which is what a scene written by a build older than the
+/// frame produces.
+private func naturalWhenZero(_ value: CGFloat?) -> CGFloat? {
+    guard let value, value > 0 else { return nil }
+    return value
 }
 
 /// The flat wire shape every element arrives as: primitive geometry plus the
@@ -825,7 +859,12 @@ private struct WireElement: Codable {
             x = value.x; y = value.y; width = value.width; height = value.height
             blobId = value.blobId
         case .svg(let value):
-            x = value.x; y = value.y; width = value.width; height = value.height
+            x = value.x; y = value.y
+            // 0 rather than an absent key. The server's `svg` schema is
+            // strict, which means every property is required, and a scene this
+            // device sends back has to survive being read by it. Nothing is
+            // lost: 0 decodes to `nil` again on the way in.
+            width = value.width ?? 0; height = value.height ?? 0
             svg = value.svg
         }
     }

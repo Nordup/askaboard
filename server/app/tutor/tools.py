@@ -411,15 +411,15 @@ UPDATE_BOARD_TOOL: dict = {
                         _board_element(
                             kind="svg",
                             fields={
-                                "x": {"type": "number", "description": "Left edge of the SVG frame, board points."},
-                                "y": {"type": "number", "description": "Top edge of the SVG frame, board points."},
-                                "width": {"type": "number", "minimum": 0, "maximum": 50000, "description": "SVG frame width in board points."},
-                                "height": {"type": "number", "minimum": 0, "maximum": 50000, "description": "SVG frame height in board points."},
+                                "x": {"type": "number", "description": "Where the viewBox's top-left corner lands, board points."},
+                                "y": {"type": "number", "description": "Where the viewBox's top-left corner lands, board points."},
+                                "width": {"type": "number", "minimum": 0, "maximum": 50000, "description": "Send 0: the figure is drawn at the size its viewBox gives it. A positive value scales the whole document into that box instead."},
+                                "height": {"type": "number", "minimum": 0, "maximum": 50000, "description": "Send 0, as for width."},
                                 "svg": {
                                     "type": "string",
                                     "minLength": 1,
                                     "maxLength": MAX_SVG_CHARS,
-                                    "description": "A complete raw SVG document, passed through unchanged and interpreted locally on the learner's device. Accepts full declarative SVG markup including paths, gradients, masks, filters, clips, markers, symbols, text, and animation.",
+                                    "description": "A complete raw SVG document, passed through unchanged and interpreted locally on the learner's device. Give it a viewBox: one user unit is drawn as one board point, and the viewBox's top-left corner sits at (x, y), so size the figure in the same units as every other element and size it only once. Accepts full declarative SVG markup including paths, gradients, masks, filters, clips, markers, symbols, text, and animation.",
                                 },
                             },
                             required=["x", "y", "width", "height", "svg"],

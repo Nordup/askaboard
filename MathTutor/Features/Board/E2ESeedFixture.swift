@@ -233,6 +233,12 @@ enum E2ESeedFixture {
     /// marker arrowhead, text, groups/transforms, multiple paths, and a
     /// `foreignObject` label. Kept in the upper tutor band so the learner's
     /// workspace below stays clear.
+    ///
+    /// It keeps a frame, and a frame whose shape is not the document's, on
+    /// purpose: figures the model authors now carry none, so this is the one
+    /// place the seeded board exercises the legacy path every scene persisted
+    /// before the frameless contract still takes — the document scaled to fit
+    /// and centred, never stretched.
     private static func complexDiagramElement() -> SVGElement {
         SVGElement(
             id: "complex-diagram",

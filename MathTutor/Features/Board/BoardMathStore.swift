@@ -7,12 +7,10 @@ extension Notification.Name {
     /// Posted on the main actor after a board element's local artifact lands,
     /// so the layer view can reconcile without owning any render pipeline.
     ///
-    /// One name for every kind that draws from a bitmap it does not have yet.
-    /// `math_text` and `image` post it; the older `.boardSVGCacheDidRender`
-    /// says the same thing for `svg` and is folded into this one when the SVG
-    /// renderer is replaced. The payload is deliberately empty: the observer
-    /// re-derives what it can now draw rather than trusting a name in a
-    /// notification.
+    /// One name for every kind that draws from a bitmap it does not have yet:
+    /// `math_text`, `image`, and `svg` all post it. The payload is
+    /// deliberately empty: the observer re-derives what it can now draw rather
+    /// than trusting a name in a notification.
     static let boardSceneArtifactReady = Notification.Name("boardSceneArtifactReady")
 }
 
@@ -57,12 +55,12 @@ struct MathArtifact {
 /// In-memory cache of typeset notation, keyed by the LaTeX, the font size, and
 /// the colour it is drawn in, with one asynchronous pipeline per entry.
 ///
-/// The shape mirrors `BoardSVGCache`: `BoardSceneRenderer` reads a ready
-/// artifact synchronously, the layer view schedules the missing ones whenever a
-/// scene is installed, and `.boardSceneArtifactReady` tells it when one lands.
-/// There is no web view here — ExtendedSwiftMath typesets in-process, the same
-/// engine the chat transcript renders with, so board notation and chat notation
-/// are the same glyphs.
+/// The shape is `BoardSVGStore`'s and `BoardImageStore`'s: `BoardSceneRenderer`
+/// reads a ready artifact synchronously, the layer view schedules the missing
+/// ones whenever a scene is installed, and `.boardSceneArtifactReady` tells it
+/// when one lands. ExtendedSwiftMath typesets in-process, the same engine the
+/// chat transcript renders with, so board notation and chat notation are the
+/// same glyphs.
 @MainActor
 final class BoardMathStore {
     static let shared = BoardMathStore()
@@ -160,7 +158,10 @@ final class BoardMathStore {
                 color: UIColor(hex: element.style.stroke) ?? .black
             )
             self.inFlight[key] = nil
-            // A failure is recorded as completed too, unlike `BoardSVGCache`'s.
+            // A failure is recorded as completed too. That is what
+            // `BoardSVGStore` does with markup that does not parse, and here it
+            // covers every failure there is, because there is no transport and
+            // no allocation between the fragment and the glyphs.
             // Typesetting is local and deterministic: LaTeX that does not parse
             // now will not parse on the next scene install either, and every
             // install would otherwise re-typeset the same broken fragment.

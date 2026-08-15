@@ -39,7 +39,7 @@ final class BoardSceneLayerView: UIView {
             // and scene replacements all reach the board through the canvas's
             // `boardScene`, which forwards here, so this is the one place a
             // scene's local renders are scheduled.
-            BoardSVGCache.shared.prepare(scene: scene)
+            BoardSVGStore.shared.prepare(scene: scene)
             BoardMathStore.shared.prepare(scene: scene)
             BoardImageStore.shared.prepare(scene: scene)
             reconcile()
@@ -114,12 +114,6 @@ final class BoardSceneLayerView: UIView {
         accessibilityIdentifier = "tutor-scene-overlay"
         isAccessibilityElement = false
         accessibilityElementsHidden = true
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(artifactDidBecomeReady),
-            name: .boardSVGCacheDidRender,
-            object: nil
-        )
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(artifactDidBecomeReady),
@@ -313,12 +307,12 @@ final class BoardSceneLayerView: UIView {
     /// is why the bitmap — and therefore `RasterKey` — does not depend on
     /// `boardOrigin`.
     private func raster(for element: BoardElement, bounds: CGRect) -> CGImage? {
-        // An `svg` element whose WebKit artifact has not landed yet draws
+        // An `svg` element whose document has not been parsed yet draws
         // nothing. `RasterKey` holds the element value, and that value does
-        // not change when the artifact arrives, so an empty bitmap stored now
+        // not change when the figure arrives, so an empty bitmap stored now
         // would be served for the rest of the session. Draw nothing, cache
-        // nothing, and wait for `.boardSVGCacheDidRender` to reconcile.
-        if case .svg(let value) = element, BoardSVGCache.shared.artifact(for: value) == nil {
+        // nothing, and wait for `.boardSceneArtifactReady` to reconcile.
+        if case .svg(let value) = element, BoardSVGStore.shared.document(for: value) == nil {
             return nil
         }
         // `math_text` carries the same hazard and one more guard against it:
@@ -402,8 +396,9 @@ final class BoardSceneLayerView: UIView {
         return scale > 0 ? scale : 2
     }
 
-    /// `svg` elements draw empty until WebKit finishes, and nothing was cached
-    /// for them, so one reconcile fills them in.
+    /// A figure, a typeset fragment, or a downloaded picture draws empty until
+    /// its bitmap lands, and nothing was cached for it, so one reconcile fills
+    /// them in.
     @objc private func artifactDidBecomeReady() {
         reconcile()
     }

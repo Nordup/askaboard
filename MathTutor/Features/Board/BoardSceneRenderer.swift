@@ -228,14 +228,64 @@ enum BoardSceneRenderer {
                 }
             }
         case .svg(let value):
-            let rect = CGRect(x: value.x, y: value.y, width: value.width, height: value.height)
+            // Nothing is drawn until the document has been parsed and
+            // rasterized. A frameless figure reports no bounds until then
+            // either, so no layer is mounted meanwhile; a framed one reports
+            // its frame and mounts an empty tile, which is what it did while
+            // WebKit was still loading. Whether the context is y-flipped is
+            // read here, before `withRotation` touches the CTM.
+            guard let parsed = BoardSVGStore.shared.document(for: value) else { break }
+            let rect = figureRect(for: value, documentSize: parsed.size)
+            let isFlipped = context.ctm.d < 0
             withRotation(style.rotation, around: rect, in: context) {
-                if let artifact = BoardSVGCache.shared.artifact(for: value) {
-                    artifact.draw(in: rect, into: context)
-                }
+                parsed.draw(in: rect, into: context, isFlipped: isFlipped)
             }
         }
         context.restoreGState()
+    }
+
+    /// Where one figure is drawn, in board points.
+    ///
+    /// Two rules, and the element's frame decides which. Without one — the
+    /// contract the model writes to now — the document is drawn at its own
+    /// size with its top-left corner at `(x, y)`: one user unit is one board
+    /// point, the figure is sized once in the `viewBox`, and nothing scales it
+    /// again.
+    ///
+    /// With a frame, the whole document is scaled to fit inside it and
+    /// centred, keeping its aspect ratio. That is what the WebKit renderer
+    /// produced — it laid the document out in a viewport of the frame's shape,
+    /// where a `viewBox` letterboxes itself under SVG's default
+    /// `preserveAspectRatio` — so every scene already on a device keeps the
+    /// proportions the learner last saw. Stretching to the frame instead would
+    /// silently distort every restored figure whose frame was not the
+    /// document's shape.
+    static func figureRect(for element: SVGElement, documentSize: CGSize) -> CGRect {
+        guard let frame = element.frame else {
+            return CGRect(
+                origin: CGPoint(x: element.x, y: element.y),
+                size: documentSize
+            )
+        }
+        // A document with no measurable side cannot be fitted into anything.
+        // `BoardSVGStore` refuses those before they become a `ParsedSVG`, so
+        // this is the belt to that braces: the frame is the honest answer, and
+        // it is the rectangle the bounds arm already reported.
+        guard documentSize.width > 0, documentSize.height > 0 else { return frame }
+        let scale = min(
+            frame.width / documentSize.width,
+            frame.height / documentSize.height
+        )
+        let size = CGSize(
+            width: documentSize.width * scale,
+            height: documentSize.height * scale
+        )
+        return CGRect(
+            x: frame.midX - size.width / 2,
+            y: frame.midY - size.height / 2,
+            width: size.width,
+            height: size.height
+        )
     }
 
     /// A downloaded blob, into the frame the model placed it in.
@@ -619,12 +669,29 @@ enum BoardSceneRenderer {
                 height: value.height
             )
         case .svg(let value):
-            rect = CGRect(
-                x: value.x + originX,
-                y: value.y + originY,
-                width: value.width,
-                height: value.height
-            ).insetBy(dx: -inset, dy: -inset)
+            // The frame, when the model asked for one: the figure is scaled to
+            // fit inside it, so the rectangle is known from the moment the
+            // element arrives and a restored scene mounts its figures on the
+            // first pass, before anything has been parsed.
+            //
+            // Without a frame the document's own size is the layout, and there
+            // is nothing to report until it has been parsed. `.zero` is what
+            // the scene union and `BoardSceneLayerView.isMountable` both drop,
+            // and it is what `math_text` reports for the same reason;
+            // `.boardSceneArtifactReady` brings the layer view back when the
+            // document lands. No stroke inset in either case, for `image`'s
+            // reason: `stroke` is not a pen a figure is outlined with, and
+            // nothing here draws one.
+            if let frame = value.frame {
+                rect = frame.offsetBy(dx: originX, dy: originY)
+            } else if let parsed = BoardSVGStore.shared.document(for: value) {
+                rect = CGRect(
+                    origin: CGPoint(x: value.x + originX, y: value.y + originY),
+                    size: parsed.size
+                )
+            } else {
+                rect = .zero
+            }
         }
         return rect
     }
