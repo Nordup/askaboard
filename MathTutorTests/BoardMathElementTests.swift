@@ -10,11 +10,14 @@ import XCTest
 /// `font_size` sit beside `x` and `y` on the element rather than under a
 /// `style` object, and `font_size` is snake_case; camel-casing it would decode
 /// to a silent default and put notation on the board at the wrong size with
-/// nothing failing anywhere to say so. Typesetting fails closed: a fragment the
-/// engine cannot parse produces no artifact rather than a blank tile that the
-/// model reads back as drawn. And the fragment is delimited or not by the
-/// model's whim — the server passes `latex` through untouched — so a padded
-/// `$…$` has to typeset exactly as the bare body does.
+/// nothing failing anywhere to say so. Typesetting fails closed on what the
+/// builder rejects — an unterminated group or an unknown command produces no
+/// artifact rather than a blank tile the model reads back as drawn — and that
+/// is the whole of the guarantee: a *missing argument* is not a rejection, so
+/// `\frac{1}` typesets as a fraction bar over an empty denominator and draws.
+/// And the fragment is delimited or not by the model's whim — the server passes
+/// `latex` through untouched — so a padded `$…$` has to typeset exactly as the
+/// bare body does.
 @MainActor
 final class BoardMathElementTests: XCTestCase {
 
@@ -95,13 +98,31 @@ final class BoardMathElementTests: XCTestCase {
         XCTAssertGreaterThan(artifact?.size.width ?? 0, 0)
     }
 
-    func testMalformedLatexFailsClosed() async {
-        let element = MathTextElement(id: "m2", x: 0, y: 0, latex: #"\frac{1}"#, fontSize: 24)
+    func testLatexTheBuilderRejectsFailsClosed() async {
+        // The two rejections in the builder's own error table that a tutor can
+        // plausibly write: an unterminated group (`mismatchBraces`, "Missing
+        // closing brace") and a command that does not exist (`invalidCommand`).
+        for (id, latex) in [("m2", #"\frac{1"#), ("m3", #"\notacommand"#)] {
+            let element = MathTextElement(id: id, x: 0, y: 0, latex: latex, fontSize: 24)
+
+            let artifact = await BoardMathStore.shared.render(element: element)
+
+            XCTAssertNil(artifact, "\(latex) must produce no artifact at all")
+            XCTAssertNil(BoardMathStore.shared.artifact(for: element))
+        }
+    }
+
+    func testAMissingArgumentIsNotARejectionAndStillTypesets() async {
+        // The boundary of "fails closed", pinned so the claim stays honest.
+        // The builder has no missing-argument error kind: `\frac{1}` round-trips
+        // as `\frac{1}{}` and typesets as a fraction bar over an empty
+        // denominator. It draws — badly — rather than failing. If this ever
+        // goes red, the engine grew a rejection and the boundary moved.
+        let element = MathTextElement(id: "m-halffrac", x: 0, y: 0, latex: #"\frac{1}"#, fontSize: 24)
 
         let artifact = await BoardMathStore.shared.render(element: element)
 
-        XCTAssertNil(artifact, "an unparseable fragment must produce no artifact at all")
-        XCTAssertNil(BoardMathStore.shared.artifact(for: element))
+        XCTAssertNotNil(artifact, "a missing argument is not something the builder rejects")
     }
 
     func testAReadyArtifactAnnouncesItself() async {

@@ -176,9 +176,18 @@ final class BoardMathStore {
         return task
     }
 
-    /// The whole of the engine contact. Fails closed: a fragment the builder
-    /// rejects, or one that typesets to nothing, produces no artifact at all
-    /// rather than an empty tile the model would read back as drawn.
+    /// The whole of the engine contact.
+    ///
+    /// Fails closed on what the builder *rejects* — an unterminated group
+    /// (`mismatchBraces`) or an unknown command (`invalidCommand`) — and on a
+    /// fragment that typesets to nothing: no artifact at all, rather than an
+    /// empty tile the model would read back as drawn.
+    ///
+    /// That is the whole of the guarantee, and it is narrower than "malformed
+    /// LaTeX". The builder has no missing-argument error kind, so `\frac{1}`
+    /// parses as `\frac{1}{}` and typesets a fraction bar over an empty
+    /// denominator. Notation that is merely wrong still reaches the board; only
+    /// notation the parser refuses is held back.
     private static func typeset(latex: String, fontSize: CGFloat, color: UIColor) -> MathArtifact? {
         let body = typesettableLatex(latex)
         guard !body.isEmpty else { return nil }
