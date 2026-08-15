@@ -23,8 +23,8 @@ import respx
 from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy import select
 
-from app.api.turn import RECENT_SESSION_COUNT, _memory_sections
-from app.config import EMBEDDING_DIMS, SOLE_LEARNER_ID
+from app.api.turn import _memory_sections
+from app.config import EMBEDDING_DIMS, RECENT_SESSION_COUNT, SOLE_LEARNER_ID
 from app.store.models import (
     KC,
     Episode,
@@ -85,6 +85,9 @@ def _prompt_of(call) -> str:
 class _FakeEpisode:
     closed_at: datetime
     digest: str | None
+    title: str | None = None
+    narrative: str | None = None
+    next_steps: list | None = None
 
 
 def _stub_sources(monkeypatch, *, profile, state, episodes, seen=None):
@@ -100,18 +103,28 @@ def _stub_sources(monkeypatch, *, profile, state, episodes, seen=None):
             seen["learner_id"] = learner_id
         return episodes
 
+    async def _tail(db, learner_id, *, exclude_session=None):
+        return None
+
+    async def _notes(db, learner_id):
+        return []
+
     monkeypatch.setattr("app.api.turn.current_profile", _profile)
     monkeypatch.setattr("app.api.turn.snapshot", _snapshot)
     monkeypatch.setattr("app.api.turn.recent_episodes", _episodes)
+    monkeypatch.setattr("app.api.turn.backstop_tail", _tail)
+    monkeypatch.setattr("app.api.turn.explicit_notes", _notes)
 
 
-async def test_the_digest_is_dated_and_asked_for_by_the_dozen(monkeypatch):
+async def test_the_sessions_are_dated_and_asked_for_by_the_half_dozen(monkeypatch):
     """Deliberately claims nothing about ordering.
 
     The stub hands back whatever order the test wrote, so an assertion here
     would only be reading its own input. `recent_episodes` is what orders these
     and `test_memory_retrieve` is where that is pinned; what this covers is the
-    limit, the learner, and the line format.
+    limit, the learner, and the card format — an ISO date opening each card,
+    the relative label beside it, the title (here the compatibility digest)
+    closing the line.
     """
     seen: dict = {}
     _stub_sources(
@@ -124,7 +137,9 @@ async def test_the_digest_is_dated_and_asked_for_by_the_dozen(monkeypatch):
 
     sections = await _memory_sections(None)
 
-    assert sections["recent_digest"] == "2026-06-03: ratios\n2026-05-28: fractions"
+    lines = sections["recent_sessions"].splitlines()
+    assert lines[0].startswith("2026-06-03 (") and lines[0].endswith("— ratios")
+    assert lines[1].startswith("2026-05-28 (") and lines[1].endswith("— fractions")
     assert seen["limit"] == RECENT_SESSION_COUNT
     assert seen["learner_id"] == SOLE_LEARNER_ID
 
@@ -144,7 +159,9 @@ async def test_a_block_with_nothing_to_say_is_none_and_not_an_empty_string(
     sections = await _memory_sections(None)
 
     assert sections == {"profile": None, "learner_state": None,
-                        "recent_digest": None}
+                        "recent_sessions": None, "saved_notes": None,
+                        "today": datetime.now(timezone.utc).date(),
+                        "first_turn": False}
 
 
 # ---------------------------------------------------------------------------
@@ -193,12 +210,15 @@ async def test_memory_sections_reads_the_three_blocks_out_of_the_real_store(db):
     assert sections["learner_state"] == (
         f"WHAT THIS LEARNER KNOWS:\n- Unit rate ({RATIO}): mastered"
     )
-    # Newest first, dated, both lines — the ordering the stubbed test above
+    # Newest first, dated, both cards — the ordering the stubbed test above
     # cannot assert, because here `recent_episodes` is the thing producing it.
-    assert sections["recent_digest"] == (
-        "2026-06-03: Worked through unit rates.\n"
-        "2026-05-28: Simplified fractions."
-    )
+    # These episodes predate the rich summary, so the compatibility digest
+    # stands in as each card's title.
+    lines = sections["recent_sessions"].splitlines()
+    assert lines[0].startswith("2026-06-03 (")
+    assert lines[0].endswith("— Worked through unit rates.")
+    assert lines[1].startswith("2026-05-28 (")
+    assert lines[1].endswith("— Simplified fractions.")
 
 
 @respx.mock
@@ -232,7 +252,8 @@ async def test_a_turns_memory_reaches_the_model_and_not_just_the_dictionary(
     prompt = _prompt_of(route.calls[0])
     assert PROFILE in prompt
     assert f"- Unit rate ({RATIO}): mastered" in prompt
-    assert "2026-06-03: Worked through unit rates." in prompt
+    assert "2026-06-03" in prompt
+    assert "Worked through unit rates." in prompt
     # The headings come from `compose_user_prompt`; asserting them here is what
     # says the blocks arrived as the sections they are rather than as prose
     # smuggled into the transcript.
@@ -334,6 +355,8 @@ async def test_a_memory_tool_call_in_a_live_turn_reaches_a_real_handler(
         assert stored.text == REMEMBER_ARGUMENTS["text"]
         assert stored.category == "goal"
         assert stored.embedding is not None
+        # What `remember` means now: the atom is pinned into SAVED NOTES.
+        assert stored.explicit is True
         # Provenance is why the handler is bound per turn rather than once per
         # process: an atom has to say which turn of which session produced it.
         assert stored.source_session_id == uuid.UUID(payload["session_id"])

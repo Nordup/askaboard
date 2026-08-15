@@ -238,20 +238,23 @@ async def replace_transcript(
 async def close_session(
     session_id: uuid.UUID, db: AsyncSession = Depends(db_session)
 ):
-    """The device saying it has left this session for good.
+    """The device saying it has left this session, for now or for good.
 
-    Call it on a session switch and on an explicit end. **Never on
-    backgrounding.** A close freezes the transcript into an `Episode`, and
-    `uq_episodes_session` makes that the only one this session will ever
-    get — so a close sent while the learner is coming back drops every turn
-    after it, permanently and with nothing recording that it happened. An iPad
-    backgrounds constantly and says nothing about whether the learner is done.
-    `jobs.sweep_abandoned_sessions` is what covers the sessions that are never
-    explicitly left; it needs no help from the device.
+    Call it on a session switch and on an explicit end. **Still never on
+    backgrounding.** A close freezes the messages the last episode did not
+    cover into the session's next `Episode` window — no longer the only one
+    the session will ever get, so a close sent while the learner is coming
+    back now costs a window split rather than every later turn. But an iPad
+    backgrounds constantly and says nothing about whether the learner is
+    done, and a close per backgrounding would shred sessions into
+    single-exchange windows for nothing. `jobs.sweep_abandoned_sessions` is
+    what covers the stretches that are never explicitly left; it needs no
+    help from the device.
 
     Safe to send twice — `run_session_close` is idempotent, so a device can
     retry a close it is not sure landed rather than tracking whether it
-    already sent one.
+    already sent one: a fully covered session yields an empty window and no
+    new episode.
 
     Returns before any of the work starts, and deliberately reports nothing
     about it. Extraction is five provider calls; the answer to "did the memory
@@ -282,13 +285,13 @@ async def delete_session(
 
     What it removes, in one transaction so a retry can never see half of it:
 
-    - the `Episode`, which is the row `retrieve.recent_episodes` renders into
-      RECENT SESSIONS — this is the visible fix;
+    - every `Episode` window this session produced, which are the rows the
+      RECENT SESSIONS block is rendered from — this is the visible fix;
     - the session's own rows (`messages`, `turns`, `llm_calls`, `tool_calls`,
       `attachments`, and the `sessions` row itself). Removing the messages is
       load-bearing, not tidiness: `sweep_abandoned_sessions` selects sessions
-      that have messages and no episode, so an episode deleted alone would be
-      quietly re-recorded within the hour.
+      with messages beyond their episodes' coverage, so episodes deleted
+      alone would be quietly re-recorded within the half hour.
 
     What it deliberately keeps: `memory_atoms`, the learner profile, and
     `observations`. Extracted facts and measured mastery are about the

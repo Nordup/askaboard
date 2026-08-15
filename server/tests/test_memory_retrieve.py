@@ -85,7 +85,14 @@ async def test_an_exact_token_is_found_though_the_vectors_point_elsewhere(db, mo
     `3/4` is a single token to the tsvector and a smear to an embedding model,
     so the query vector here is set to *another* atom's exactly: dense retrieval
     does not merely fail to help, it confidently ranks the wrong row first.
-    Fusion still has to put the atom containing the token on top of it.
+    Fusion still has to bring the atom containing the token in beside it.
+
+    A set over `limit=2` rather than an order over `limit=1`, since the
+    relevance floor landed: the needle sits past `SEARCH_FLOOR_DISTANCE`, so
+    the dense arm no longer ranks it at all and its sparse rank 1 exactly
+    ties the dense arm's own best row — which of the two leads is the id
+    tiebreak's business, and what matters is that the needle is present at
+    all while the third atom clears neither bar.
     """
     _install(monkeypatch, _axis(3))  # the geometry atom's own vector
     await _learner(db)
@@ -96,9 +103,10 @@ async def test_an_exact_token_is_found_though_the_vectors_point_elsewhere(db, mo
     ])
     await db.commit()
 
-    hits = await search_atoms(db, SOLE_LEARNER_ID, "3/4", limit=1)
+    hits = await search_atoms(db, SOLE_LEARNER_ID, "3/4", limit=2)
 
-    assert [hit.text for hit in hits] == ["Reads 3/4 as three minus four."]
+    assert {hit.text for hit in hits} == {"Reads 3/4 as three minus four.",
+                                          "Enjoys geometry proofs."}
 
 
 @requires_db
@@ -158,7 +166,12 @@ async def test_a_query_with_no_searchable_words_falls_back_to_dense(db, monkeypa
     """Every one of these reduces to an empty tsquery — including the lone
     quote, which is the sort of thing `to_tsquery` raises on and a model writing
     the query will eventually send. The fallback is `search_atoms`' documented
-    decision; this pins that it returns the whole dense ranking and not nothing.
+    decision; this pins that it returns the dense ranking and not nothing.
+
+    The dense ranking, not the whole store: the arm keeps its relevance floor
+    on this path too, so the orthogonal atom — past `SEARCH_FLOOR_DISTANCE`,
+    with no sparse arm left to rescue it — stays out. A stopword query must
+    degrade to "what the embedding still says", never to "everything".
     """
     _install(monkeypatch, _axis(3))
     await _learner(db)
@@ -170,8 +183,7 @@ async def test_a_query_with_no_searchable_words_falls_back_to_dense(db, monkeypa
 
     hits = await search_atoms(db, SOLE_LEARNER_ID, query)
 
-    assert [hit.text for hit in hits] == ["Enjoys geometry proofs.",
-                                          "Studies on Tuesday evenings."]
+    assert [hit.text for hit in hits] == ["Enjoys geometry proofs."]
 
 
 @requires_db

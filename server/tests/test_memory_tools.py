@@ -61,13 +61,17 @@ def _named(name: str) -> dict:
     return next(tool for tool in TOOL_DEFINITIONS if tool["name"] == name)
 
 
-def test_all_four_tools_are_offered():
+def test_all_eight_memory_tools_are_offered():
     names = {tool["name"] for tool in TOOL_DEFINITIONS}
-    assert {"remember", "search_memory", "recent_sessions",
+    assert {"remember", "forget", "search_memory", "search_sessions",
+            "search_history", "get_session", "list_sessions",
             "record_evidence"} <= names
+    # Replaced outright by `list_sessions` (memory rework, 2026-08-15); a dead
+    # name kept alive would re-bill its tokens on every turn.
+    assert "recent_sessions" not in names
 
 
-def test_the_router_and_the_registry_name_the_same_four():
+def test_the_router_and_the_registry_name_the_same_tools():
     """A tool offered but not routed is a whole round spent being refused."""
     assert MEMORY_TOOLS == {tool["name"] for tool in MEMORY_TOOL_DEFINITIONS}
     assert MEMORY_TOOLS <= {tool["name"] for tool in TOOL_DEFINITIONS}
@@ -98,18 +102,21 @@ def test_remember_forbids_claiming_a_save_before_making_one():
     assert "call this tool first" in description
 
 
-def test_remember_does_not_offer_itself_as_a_way_to_forget():
-    """There is no delete path. Sending the model here to handle "forget my old
-    exam date" would add an atom and hand back a licence to say it was done."""
+def test_remember_hands_deletion_to_forget_rather_than_refusing_it():
+    """`forget` is the delete path now. The old description told the model
+    there was no way to forget; a note must instead say it lives until
+    `forget` closes it, so "forget my old exam date" is routed there and not
+    answered by writing a second atom."""
     description = _named("remember")["description"]
-    assert "remember or forget" not in description
-    assert "no way to make you forget anything yet" in description
+    assert "no way to make you forget" not in description
+    assert "`forget`" in description
+    assert "confirm only after the tool answers" in _named("forget")["description"]
 
 
 def test_remember_asks_who_the_fact_came_from():
-    """`stated` is not a label. An unstated fact outside STATED_EXEMPT is
-    dropped on both write paths, so the model has to be asked the question the
-    offline extractor is asked."""
+    """`stated` is provenance now, not a gate — an unstated `remember` still
+    saves — but the flag is stored verbatim forever, so the model has to be
+    asked exactly the question the offline extractor is asked."""
     params = _named("remember")["parameters"]
     assert "stated" in params["required"]
     assert params["properties"]["stated"]["type"] == "boolean"
@@ -534,7 +541,10 @@ async def test_remember_writes_a_fact_that_can_be_found_by_meaning(db, monkeypat
         db, SOLE_LEARNER_ID, "search_memory",
         {"query": "zzz unrelated wording entirely"}, turn_id=None,
     )
-    assert found == "- [goal] Sits the higher tier paper in June."
+    # Dated, categorised, and marked as the saved note `remember` now makes it.
+    today = datetime.now(timezone.utc).date()
+    assert found == (f"- [{today:%Y-%m-%d}] [goal] Sits the higher tier paper "
+                     "in June. (a saved note)")
 
     # Saying it again stores it once. Nothing downstream would catch this:
     # `consolidate` rules on the atoms handed to it, and a row already in the
@@ -582,14 +592,19 @@ async def test_an_embedding_failure_saves_nothing_and_says_so(db, monkeypatch):
 
 
 @requires_db
-async def test_an_inference_is_refused_rather_than_stored_as_the_learners_words(
+async def test_an_inference_is_saved_but_never_relabelled_as_the_learners_words(
     db, monkeypatch
 ):
-    """`stated` decides whether the row is written at all, not how it is
-    labelled — the same rule `extract._parse` applies, because it is the same
-    column and provenance cannot be reconstructed afterwards. `_explode` is
-    installed so a refusal that still embedded would be visible."""
-    monkeypatch.setattr("app.memory.dispatch.embed_texts", _explode)
+    """The `stated` gate is deliberately gone from this write path (W14).
+
+    A `remember` call is the learner-visible act of saving: refusing it over
+    the flag while the reply said "noted" was a lie told to the learner. The
+    offline extractor still drops unstated inferences — that rule lives on in
+    `extract._parse` — but here the flag is provenance, stored verbatim, so a
+    search result can say whose words the fact was. Relabelling it True would
+    give a tutor's guess a learner statement's authority; the assertion on
+    `stated is False` is what pins that."""
+    monkeypatch.setattr("app.memory.dispatch.embed_texts", _Embedder(_axis(2)))
     await _learner(db)
     await db.commit()
 
@@ -599,16 +614,14 @@ async def test_an_inference_is_refused_rather_than_stored_as_the_learners_words(
          "category": "skill_state", "stated": False},
         turn_id=None,
     )
-    assert "your own inference" in guessed
-    assert "Do not tell them you have remembered it." in guessed
+    assert guessed.startswith("Saved.")
     db.expire_all()
-    assert (await db.execute(select(MemoryAtom))).scalars().all() == []
+    stored = (await db.execute(select(MemoryAtom))).scalar_one()
+    assert stored.stated is False
+    assert stored.explicit is True
 
-    # `episode_ref` is exempt: it records what a session covered, which is a
-    # fact about the session and the tutor's to state. It must survive unstated
-    # and keep `stated=False` — relabelling it True would give a tutor's
-    # summary a learner statement's authority.
-    monkeypatch.setattr("app.memory.dispatch.embed_texts", _Embedder(_axis(2)))
+    # `episode_ref` was the one category the old gate exempted; the point of
+    # keeping the case is that its provenance survives unchanged too.
     kept = await handle_memory_tool(
         db, SOLE_LEARNER_ID, "remember",
         {"text": "Covered adding unlike fractions on 2026-06-01.",
@@ -617,10 +630,10 @@ async def test_an_inference_is_refused_rather_than_stored_as_the_learners_words(
     )
     assert kept.startswith("Saved.")
     db.expire_all()
-    stored = (await db.execute(select(MemoryAtom))).scalar_one()
-    assert stored.category == "episode_ref"
-    assert stored.stated is False
-    assert MemoryCategory(stored.category) in STATED_EXEMPT
+    rows = (await db.execute(select(MemoryAtom))).scalars().all()
+    reference = next(row for row in rows if row.category == "episode_ref")
+    assert reference.stated is False
+    assert MemoryCategory(reference.category) in STATED_EXEMPT
 
 
 @requires_db
@@ -637,7 +650,8 @@ async def test_an_empty_store_answers_without_claiming_anything(db, monkeypatch)
         turn_id=None,
     ) == "Nothing on file about that."
     assert await handle_memory_tool(
-        db, SOLE_LEARNER_ID, "recent_sessions", {"limit": 5}, turn_id=None,
+        db, SOLE_LEARNER_ID, "list_sessions",
+        {"limit": 5, "before_date": None}, turn_id=None,
     ) == "No previous sessions on file."
     # An empty query never reaches the store, and saying so is what gets the
     # model to write a real one rather than conclude memory is empty.
@@ -647,7 +661,7 @@ async def test_an_empty_store_answers_without_claiming_anything(db, monkeypatch)
 
 
 @requires_db
-async def test_recent_sessions_lists_digests_newest_first_within_the_cap(db):
+async def test_list_sessions_lists_newest_first_within_the_cap(db):
     await _learner(db)
     start = datetime(2026, 6, 1, tzinfo=timezone.utc)
     for day in range(3):
@@ -660,17 +674,33 @@ async def test_recent_sessions_lists_digests_newest_first_within_the_cap(db):
     await db.commit()
 
     # 99 is out of the tool's stated range; clamped rather than refused,
-    # because a slipped bound should cost the model nothing.
+    # because a slipped bound should cost the model nothing. Each line opens
+    # with the ISO date (the relative label beside it is the clock's business,
+    # not this test's) and closes with the title — here the compatibility
+    # digest, for rows the backfill has not re-summarized.
     listed = await handle_memory_tool(
-        db, SOLE_LEARNER_ID, "recent_sessions", {"limit": 99}, turn_id=None,
+        db, SOLE_LEARNER_ID, "list_sessions", {"limit": 99, "before_date": None},
+        turn_id=None,
     )
-    assert listed.splitlines() == [
-        "2026-06-03: day 2", "2026-06-02: day 1", "2026-06-01: day 0",
+    lines = listed.splitlines()
+    assert [line.split(" (")[0] for line in lines] == [
+        "- 2026-06-03", "- 2026-06-02", "- 2026-06-01",
+    ]
+    assert [line.rsplit(": ", 1)[1] for line in lines] == [
+        "day 2", "day 1", "day 0",
     ]
 
-    assert await handle_memory_tool(
-        db, SOLE_LEARNER_ID, "recent_sessions", {"limit": 1}, turn_id=None,
-    ) == "2026-06-03: day 2"
+    # A short page says older sessions exist and how to reach them — the
+    # pagination `recent_sessions` never had, and the reason it was replaced.
+    one = await handle_memory_tool(
+        db, SOLE_LEARNER_ID, "list_sessions", {"limit": 1, "before_date": None},
+        turn_id=None,
+    )
+    first, hint = one.splitlines()
+    assert first.startswith("- 2026-06-03 (")
+    assert first.endswith(": day 2")
+    assert hint == ('(older sessions exist; call again with '
+                    'before_date="2026-06-03")')
 
 
 @requires_db

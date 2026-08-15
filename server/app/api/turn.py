@@ -6,6 +6,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from functools import lru_cache
 
 import anyio
@@ -21,12 +22,15 @@ from app.attachments.parts import UploadPart
 from app.auth import require_device_token
 from app.config import (
     MAX_ATTACHMENTS_PER_TURN, MODEL_ALLOWLIST, REASONING_EFFORT_ALLOWLIST,
-    SOLE_LEARNER_ID, get_settings,
+    RECENT_SESSION_COUNT, SOLE_LEARNER_ID, get_settings,
 )
 from app.learner.mastery import snapshot
 from app.memory.dispatch import memory_handler
 from app.memory.profile import current_profile
-from app.memory.retrieve import recent_episodes, render_digests
+from app.memory.retrieve import (
+    backstop_tail, explicit_notes, recent_episodes, render_notes,
+    render_sessions,
+)
 from app.sse import SSE_HEADERS, format_sse
 from app.store.db import db_session, session_factory
 from app.store.blobs import LocalBlobStore
@@ -64,11 +68,6 @@ BOARD_KIND = "board_full"
 CLEANUP_TIMEOUT_SECONDS = 10.0
 
 
-#: How many past sessions ride along in every prompt. Enough for "what did we
-#: do last week" without paying for a year of history on every turn.
-RECENT_SESSION_COUNT = 12
-
-
 @lru_cache
 def _client() -> AsyncOpenAI:
     """The one provider client, built on first use and then kept.
@@ -88,12 +87,25 @@ def _client() -> AsyncOpenAI:
     return AsyncOpenAI(api_key=get_settings().openai_api_key, max_retries=0)
 
 
-async def _memory_sections(db: AsyncSession) -> dict[str, str | None]:
-    """Everything memory contributes to one turn's context.
+async def _memory_sections(
+    db: AsyncSession,
+    *,
+    session_id: uuid.UUID | None = None,
+    first_turn: bool = False,
+) -> dict:
+    """Everything memory contributes to one turn's context — the standing
+    block of the memory redesign, deterministic and fresh on every turn.
 
-    Three blocks, already rendered by the modules that own them, in the shape
-    `assemble_context` takes them — see its docstring for where each one sits
-    in the prompt and why.
+    Four rendered blocks plus two bare facts, in the shape `assemble_context`
+    takes them — see `prompt._sections` for where each sits relative to the
+    cache boundary and why. The blocks are rendered by the module that owns
+    the rows, so the tools cannot answer with the same sessions written a
+    second way inside the same prompt.
+
+    `session_id` is this turn's own session: `backstop_tail` must not stand
+    the current conversation in for a "previous window" — the transcript
+    already carries it. `first_turn` is the caller's claim, made where the
+    messages were already in hand.
 
     `None` rather than `""` for a block with nothing in it, and the difference
     is not cosmetic: `compose_user_prompt` omits a falsy section, so an empty
@@ -102,16 +114,23 @@ async def _memory_sections(db: AsyncSession) -> dict[str, str | None]:
     for a learner nothing has been measured about yet, which is a learner we
     have no reading on, not one who knows nothing.
     """
+    today = datetime.now(timezone.utc).date()
     episodes = await recent_episodes(db, SOLE_LEARNER_ID,
                                      limit=RECENT_SESSION_COUNT)
-    # Rendered by the module that owns the rows, so the `recent_sessions` tool
-    # cannot answer with the same sessions written a second way inside the same
-    # prompt as this block.
-    digest = render_digests(episodes) or None
+    # The backstop: when the latest quiet window has no summary yet —
+    # extraction pending, failed, or quarantined — its raw transcript tail
+    # stands in as the newest card, so recall never depends on a background
+    # job having run.
+    tail = await backstop_tail(db, SOLE_LEARNER_ID, exclude_session=session_id)
+    notes = await explicit_notes(db, SOLE_LEARNER_ID)
     return {
         "profile": await current_profile(db, SOLE_LEARNER_ID),
         "learner_state": (await snapshot(db, SOLE_LEARNER_ID)) or None,
-        "recent_digest": digest,
+        "recent_sessions": render_sessions(episodes, today=today,
+                                           backstop=tail) or None,
+        "saved_notes": render_notes(notes) or None,
+        "today": today,
+        "first_turn": first_turn,
     }
 
 
@@ -440,6 +459,12 @@ async def create_turn(
         )
     ).scalars().all()
 
+    # First turn of a new session = no tutor message in it yet. Computed off
+    # the rows already in hand, before this turn's own message is added: a
+    # learner message that never got its reply still leaves the session on
+    # its first turn.
+    first_turn = not any(m.role == "tutor" for m in existing_messages)
+
     seq = len(existing_messages)
     db.add(Message(session_id=session.id, seq=seq, role="learner", text=body.text,
                    signal=body.signal))
@@ -589,11 +614,14 @@ async def create_turn(
                 )
 
             # Read inside the guard, not before the stream opens. These are
-            # three round trips to Neon, and a failure in any of them has to
-            # fail the turn visibly rather than raise past `create_turn` and
-            # leave the row at status="running" forever — the same hole
-            # `assemble_context` itself was moved in here to close.
-            sections = await _memory_sections(db)
+            # a handful of round trips to Neon, and a failure in any of them
+            # has to fail the turn visibly rather than raise past
+            # `create_turn` and leave the row at status="running" forever —
+            # the same hole `assemble_context` itself was moved in here to
+            # close.
+            sections = await _memory_sections(
+                db, session_id=session.id, first_turn=first_turn,
+            )
 
             bundle = assemble_context(
                 session=session, messages=messages, image_data=image,

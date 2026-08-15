@@ -1,4 +1,5 @@
 import uuid
+from datetime import timedelta
 from functools import lru_cache
 from pathlib import Path
 
@@ -50,6 +51,47 @@ SOLE_LEARNER_ID = uuid.UUID("00000000-0000-4000-8000-000000000001")
 EXTRACTION_MODEL = "gpt-5.6-luna"
 EMBEDDING_MODEL = "text-embedding-3-small"
 EMBEDDING_DIMS = 1024
+
+# How many past sessions ride along in every prompt's RECENT SESSIONS block.
+# Six, per the memory redesign: enough that "what did we do last week" answers
+# from context without a tool call, small enough that the standing block stays
+# a block and not an archive — the archive is what the search tools are for.
+RECENT_SESSION_COUNT = 6
+
+# Ceiling on the SAVED NOTES block, in characters — roughly a thousand tokens
+# at four characters each. Notes are injected wholesale, never
+# similarity-gated, so this is the one thing that stops a learner who saves
+# fifty notes from paying for all of them on every turn: the oldest fall out
+# of the block (an overflow line says how many), and `search_memory` still
+# reaches them.
+SAVED_NOTES_CHAR_CAP = 4_000
+
+# The dense arm's relevance floor, as a maximum cosine distance. Rank-based
+# fusion cannot say "nothing is relevant" on its own — with one atom on file
+# there is always a rank 1 — so each arm carries its own bar: the sparse arm's
+# is matching the query at all, and this is the dense arm's. A query nothing
+# clears answers "Nothing on file about that.", which used to be unreachable
+# once eight atoms existed. 0.7 sits between related pairs (~0.4–0.6 on this
+# embedding model) and unrelated ones (~0.8 and up).
+SEARCH_FLOOR_DISTANCE = 0.7
+
+# How long a window of messages must sit silent before the standing block's
+# backstop treats it as over. Only consulted when no current session is known
+# to exclude (a turn always knows its own): a window the learner has switched
+# away from is quiet the moment they leave it. Mirrors the write path's sweep
+# threshold, so the two sides agree on when a window has closed.
+WINDOW_QUIET_AFTER = timedelta(minutes=30)
+
+# Ceiling on the raw-transcript tail the backstop injects when the latest
+# window has no summary yet. Tail-biased — the end of a session is where "where
+# did we stop" lives — and bounded because the block rides in every prompt
+# until the summary lands.
+BACKSTOP_TAIL_CHARS = 4_000
+
+# One page of a stored transcript, as `get_session` serves it. Characters
+# rather than tokens for the reason MAX_TRANSCRIPT_CHARS is: this runs on the
+# request path and a token count is a round trip.
+SESSION_PAGE_CHARS = 6_000
 
 # What a learner may attach to a turn. Each of these is a refusal with a
 # sentence the composer shows, never a silent truncation — a worksheet quietly

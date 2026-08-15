@@ -8,10 +8,11 @@ from sqlalchemy import func as sa_func, select
 
 from app.config import EMBEDDING_DIMS, SOLE_LEARNER_ID
 from app.memory.jobs import (
-    STALE_AFTER, SWEEP_INTERVAL, TURN_ASSUMED_DEAD_AFTER, _TASKS, _extract_episode,
-    backlog_status, run_extraction_backlog, run_periodic_sweep, run_session_close,
-    run_startup_drain, schedule_periodic_sweep, schedule_session_close,
-    schedule_startup_drain, sweep_abandoned_sessions,
+    _PENDING_CLOSES, STALE_AFTER, SWEEP_INTERVAL, TURN_ASSUMED_DEAD_AFTER,
+    _TASKS, _extract_episode, backlog_status, run_extraction_backlog,
+    run_periodic_sweep, run_session_close, run_startup_drain,
+    schedule_periodic_sweep, schedule_session_close, schedule_startup_drain,
+    sweep_abandoned_sessions, Summary,
 )
 from app.memory.schema import ExtractedAtom, MemoryCategory
 from app.store.models import Episode, Learner, MemoryAtom, Message, Session, Turn
@@ -31,11 +32,13 @@ JUNE = datetime(2026, 6, 1, 9, 30, tzinfo=timezone.utc)
 VECTOR = [0.1] * EMBEDDING_DIMS
 
 
-class _Digest:
-    """Stands in for `_digest`, recording the transcripts it was handed.
+class _Summarize:
+    """Stands in for `_summarize`, recording the transcripts it was handed.
 
     The order of that list is the order episodes were processed, which is what
-    the backlog test reads it for.
+    the backlog test reads it for. The narrative is a single sentence on
+    purpose: the compatibility `digest` column is the narrative's first two
+    sentences, so the tests can keep asserting on `digest` directly.
     """
 
     def __init__(self, body: str = "Worked on fractions.", *, fails: bool = False):
@@ -43,11 +46,12 @@ class _Digest:
         self._body = body
         self.fails = fails
 
-    async def __call__(self, transcript: str) -> str:
+    async def __call__(self, transcript: str) -> Summary:
         self.calls.append(transcript)
         if self.fails:
             raise RuntimeError("the provider fell over")
-        return self._body
+        return Summary(title="Fractions", narrative=self._body,
+                       next_steps=[], topics=[])
 
 
 class _Extract:
@@ -114,18 +118,34 @@ class _Rebuild:
         return ""
 
 
-def _install(monkeypatch, *, digest=None, extract=None, consolidate=None,
+async def _embed(texts: list[str]) -> list[list[float]]:
+    """Stands in for `embed_texts`: `_extract_episode` embeds the summary."""
+    return [VECTOR for _ in texts]
+
+
+def _install(monkeypatch, *, summarize=None, extract=None, consolidate=None,
              rebuild=None):
     """Point the pipeline at stubs. Returns the four, in that order."""
-    digest = digest or _Digest()
+    summarize = summarize or _Summarize()
     extract = extract or _Extract()
     consolidate = consolidate or _Consolidate()
     rebuild = rebuild or _Rebuild()
-    monkeypatch.setattr("app.memory.jobs._digest", digest)
+    monkeypatch.setattr("app.memory.jobs._summarize", summarize)
     monkeypatch.setattr("app.memory.jobs.extract_atoms", extract)
     monkeypatch.setattr("app.memory.jobs.consolidate", consolidate)
     monkeypatch.setattr("app.memory.jobs.rebuild_profile", rebuild)
-    return digest, extract, consolidate, rebuild
+    monkeypatch.setattr("app.memory.jobs.embed_texts", _embed)
+    return summarize, extract, consolidate, rebuild
+
+
+@pytest.fixture(autouse=True)
+def _no_pending_closes():
+    """`_PENDING_CLOSES` is module state; a test must neither inherit nor
+    leak one — the mid-turn decline test below parks its session there, and a
+    later test's sweep should not have to reason about the leftover."""
+    _PENDING_CLOSES.clear()
+    yield
+    _PENDING_CLOSES.clear()
 
 
 async def _session_with(db_factory, turns: list[tuple[str, str]], *,
@@ -206,9 +226,10 @@ async def test_close_writes_an_episode_and_marks_it_extracted(db_factory, monkey
 async def test_close_is_idempotent(db_factory, monkeypatch):
     """A double-schedule must not double a session's contribution to memory.
 
-    Both halves are asserted, because they fail separately: `uq_episodes_session`
-    stops the second episode, and the `extracted_at` check stops the second
-    extraction of the first one.
+    Both halves are asserted, because they fail separately: the second close
+    finds an empty window — everything is covered up to `seq_to` — and writes
+    nothing, and the `extracted_at` check stops the second extraction of the
+    first episode.
     """
     atom = ExtractedAtom(text="Sits Edexcel higher tier in May 2027.",
                          category=MemoryCategory.context, stated=True)
@@ -234,13 +255,13 @@ async def test_close_is_idempotent(db_factory, monkeypatch):
 @requires_db
 async def test_a_session_with_nothing_said_is_not_recorded(db_factory, monkeypatch):
     """An episode with an empty transcript would be a permanent backlog entry."""
-    digest, _, _, _ = _install(monkeypatch)
+    summarize, _, _, _ = _install(monkeypatch)
     session_id = await _session_with(db_factory, [])
 
     await run_session_close(session_id, db_factory=db_factory)
 
     assert await _episodes(db_factory, session_id) == []
-    assert digest.calls == []
+    assert summarize.calls == []
 
 
 @requires_db
@@ -251,7 +272,7 @@ async def test_a_failed_extraction_leaves_the_episode_retryable(db_factory, monk
     failure after it is a findable row rather than nothing, and the second half
     of this test is the proof that "findable" means "picked up next time".
     """
-    digest, _, _, _ = _install(monkeypatch, digest=_Digest(fails=True))
+    summarize, _, _, _ = _install(monkeypatch, summarize=_Summarize(fails=True))
     session_id = await _session_with(db_factory, [("learner", "help with fractions")])
 
     with pytest.raises(RuntimeError):
@@ -262,7 +283,7 @@ async def test_a_failed_extraction_leaves_the_episode_retryable(db_factory, monk
     assert episodes[0].extracted_at is None
     assert episodes[0].digest is None
 
-    digest.fails = False
+    summarize.fails = False
     assert await run_extraction_backlog(db_factory=db_factory) == 1
 
     episodes = await _episodes(db_factory, session_id)
@@ -272,19 +293,24 @@ async def test_a_failed_extraction_leaves_the_episode_retryable(db_factory, monk
 
 
 @requires_db
-async def test_facts_are_dated_by_the_session_not_by_the_pass(db_factory, monkeypatch):
-    """A backlog retry can run months after the session it is reading.
+async def test_facts_are_dated_by_the_window_not_by_the_pass(db_factory, monkeypatch):
+    """A backlog retry can run months after the window it is reading.
 
     Both axes, because they are dated separately and only one of them is
     visible in the fact's words: `session_date` reaches the extractor's prompt,
     `valid_from` is the column the bi-temporal store answers "when was this
     true" from — and the one consolidation's own ordering backstop reads.
+
+    The date is the window's own first *message*, not the session row's
+    `started_at`: a window recorded on day three of a reopened session is a
+    day-three memory, so the messages here are what carry MARCH.
     """
     atom = ExtractedAtom(text="Sits Edexcel higher tier in May 2027.",
                          category=MemoryCategory.context, stated=True)
     _, extract, consolidate, _ = _install(monkeypatch, extract=_Extract([atom]))
     session_id = await _session_with(
         db_factory, [("learner", "help with fractions")], started_at=MARCH,
+        last_message_at=MARCH,
     )
 
     await run_session_close(session_id, db_factory=db_factory)
@@ -299,14 +325,14 @@ async def test_facts_are_dated_by_the_session_not_by_the_pass(db_factory, monkey
 @requires_db
 async def test_the_backlog_runs_oldest_first(db_factory, monkeypatch):
     """Out of order, a March session gets to supersede a June one's facts."""
-    digest, _, _, _ = _install(monkeypatch)
+    summarize, _, _, _ = _install(monkeypatch)
     # Written newest first, so passing cannot be an accident of insertion
     # order — `closed_at` has to be what the drain reads.
     await _backlog(db_factory, [(JUNE, "june"), (MARCH, "march")])
 
     assert await run_extraction_backlog(db_factory=db_factory) == 2
 
-    assert digest.calls == ["march", "june"]
+    assert summarize.calls == ["march", "june"]
 
 
 @requires_db
@@ -314,13 +340,13 @@ async def test_a_failure_stops_the_drain_rather_than_stepping_over_it(
     db_factory, monkeypatch,
 ):
     """The episode behind a failed one must stay unread, not jump the queue."""
-    digest, _, _, _ = _install(monkeypatch, digest=_Digest(fails=True))
+    summarize, _, _, _ = _install(monkeypatch, summarize=_Summarize(fails=True))
     await _backlog(db_factory, [(MARCH, "march"), (JUNE, "june")])
 
     with pytest.raises(RuntimeError):
         await run_extraction_backlog(db_factory=db_factory)
 
-    assert digest.calls == ["march"]
+    assert summarize.calls == ["march"]
     async with db_factory() as db:
         unread = (await db.execute(
             select(sa_func.count()).select_from(Episode)
@@ -337,7 +363,7 @@ async def test_close_reads_the_session_only_once(db_factory, monkeypatch):
     afterwards must leave the memory that was derived from them intact and
     still extractable.
     """
-    digest, _, _, _ = _install(monkeypatch, digest=_Digest(fails=True))
+    summarize, _, _, _ = _install(monkeypatch, summarize=_Summarize(fails=True))
     session_id = await _session_with(db_factory, [("learner", "help with fractions")])
     with pytest.raises(RuntimeError):
         await run_session_close(session_id, db_factory=db_factory)
@@ -350,20 +376,22 @@ async def test_close_reads_the_session_only_once(db_factory, monkeypatch):
         await db.delete(await db.get(Session, session_id))
         await db.commit()
 
-    digest.fails = False
+    summarize.fails = False
     assert await run_extraction_backlog(db_factory=db_factory) == 1
-    assert digest.calls == ["learner: help with fractions"] * 2
+    assert summarize.calls == ["learner: help with fractions"] * 2
 
 
 @requires_db
 async def test_two_closes_of_one_session_cannot_both_record_it(
     db_factory, monkeypatch,
 ):
-    """The `uq_episodes_session` branch, which a sequential retry never reaches.
+    """The `uq_episodes_session_window` branch, which a sequential retry never
+    reaches.
 
     Two closes landing together — a session switch and the app going away
-    behind it — both see no episode and both insert. One of them has to lose
-    on the constraint and stand down rather than going on to extract.
+    behind it — both compute the same `seq_from` and both insert. One of them
+    has to lose on the constraint and stand down rather than going on to
+    extract.
     """
     atom = ExtractedAtom(text="Sits Edexcel higher tier in May 2027.",
                          category=MemoryCategory.context, stated=True)
@@ -392,7 +420,7 @@ async def test_two_passes_cannot_extract_the_same_episode(db_factory, monkeypatc
     `_extract_episode` directly rather than through `run_session_close`, which
     serialises drains in-process and would keep the two from ever contending —
     the lock is the cross-process backstop and this is the only way to reach
-    it. The second pass has already done its own digest and extraction by the
+    it. The second pass has already done its own summary and extraction by the
     time it arrives, so what is under test is that it still writes nothing.
     """
     atom = ExtractedAtom(text="Sits Edexcel higher tier in May 2027.",
@@ -470,24 +498,28 @@ async def test_the_sweep_closes_a_session_nobody_came_back_to(
 
 @requires_db
 async def test_the_sweep_leaves_a_session_still_in_use_alone(db_factory, monkeypatch):
-    """The failure this whole threshold exists for: freezing a live session.
+    """The failure this whole threshold exists for: freezing a live exchange.
 
-    An episode written now is the only one this session will ever get, so
-    everything the learner does after coming back would be dropped.
+    An early sweep now costs a window split rather than the rest of the
+    session, but it still summarizes a question before its answer exists —
+    so a session inside the threshold stays untouched.
     """
     _install(monkeypatch)
     session_id = await _session_with(
         db_factory, [("learner", "help with fractions")],
-        last_message_at=datetime.now(timezone.utc) - STALE_AFTER + timedelta(hours=1),
+        last_message_at=datetime.now(timezone.utc) - STALE_AFTER
+        + timedelta(minutes=1),
     )
 
     assert await sweep_abandoned_sessions(db_factory=db_factory) == 0
     assert await _episodes(db_factory, session_id) == []
 
 
-def test_stale_after_is_one_hour():
-    """Abandonment must not wait a working day before memory appears."""
-    assert STALE_AFTER == timedelta(hours=1)
+def test_stale_after_is_thirty_minutes():
+    """Down from one hour: sweeping early now costs a window split rather
+    than freezing the session, so promptness wins the trade — and memory
+    must not wait a working day to appear."""
+    assert STALE_AFTER == timedelta(minutes=30)
 
 
 @requires_db
@@ -553,6 +585,7 @@ async def test_backlog_status_counts_what_is_waiting(db_factory, monkeypatch):
     assert await run_extraction_backlog(db_factory=db_factory) == 2
     assert await backlog_status(db_factory=db_factory) == {
         "unextracted_episodes": 0, "oldest_unextracted_age_seconds": None,
+        "quarantined_episodes": 0,
     }
 
 
@@ -583,8 +616,8 @@ async def test_the_startup_drain_remembers_a_session_no_client_ever_closed(
     The periodic sweep makes abandonment independent of a restart; this boot
     pass runs the same sweep-and-drain work immediately, so a session that
     went quiet while the service was down does not wait for the first
-    five-minute tick. `STALE_AFTER` is one hour, so a restart catches every
-    session that is genuinely over.
+    five-minute tick. `STALE_AFTER` is thirty minutes, so a restart catches
+    every session that is genuinely over.
 
     Sweep then drain, in that order: an episode the sweep writes after the
     drain has finished waits for the next pass.
@@ -603,6 +636,7 @@ async def test_the_startup_drain_remembers_a_session_no_client_ever_closed(
     assert episodes[0].extracted_at is not None
     assert await backlog_status(db_factory=db_factory) == {
         "unextracted_episodes": 0, "oldest_unextracted_age_seconds": None,
+        "quarantined_episodes": 0,
     }
 
 
@@ -616,7 +650,7 @@ async def test_the_startup_drain_retries_an_extraction_that_failed(
     over it, deliberately — so a provider blip leaves an episode unread until
     the next close, boot, or periodic sweep comes along.
     """
-    _install(monkeypatch, digest=_Digest(fails=True))
+    _install(monkeypatch, summarize=_Summarize(fails=True))
     await _backlog(db_factory, [(MARCH, "march")])
 
     with pytest.raises(RuntimeError):
@@ -662,6 +696,7 @@ async def test_the_periodic_sweep_runs_until_cancelled(monkeypatch):
     """
     sweeps = []
     extracts = []
+    backfills = []
 
     async def fake_sweep(*, db_factory=None):
         sweeps.append("sweep")
@@ -671,8 +706,13 @@ async def test_the_periodic_sweep_runs_until_cancelled(monkeypatch):
         extracts.append("extract")
         return 0
 
+    async def fake_backfill(*, db_factory=None, limit=None):
+        backfills.append("backfill")
+        return 0
+
     monkeypatch.setattr("app.memory.jobs.sweep_abandoned_sessions", fake_sweep)
     monkeypatch.setattr("app.memory.jobs.run_extraction_backlog", fake_extract)
+    monkeypatch.setattr("app.memory.jobs.run_summary_backfill", fake_backfill)
 
     sleeps = []
 
@@ -688,6 +728,8 @@ async def test_the_periodic_sweep_runs_until_cancelled(monkeypatch):
 
     assert sweeps == ["sweep", "sweep"]
     assert extracts == ["extract", "extract"]
+    # The backfill rides the same tick, after the fresh work.
+    assert backfills == ["backfill", "backfill"]
 
 
 async def test_the_periodic_sweep_survives_a_failed_iteration(monkeypatch, caplog):
@@ -709,8 +751,12 @@ async def test_the_periodic_sweep_survives_a_failed_iteration(monkeypatch, caplo
     async def fake_extract(*, db_factory=None):
         return 2
 
+    async def fake_backfill(*, db_factory=None, limit=None):
+        return 0
+
     monkeypatch.setattr("app.memory.jobs.sweep_abandoned_sessions", flaky_sweep)
     monkeypatch.setattr("app.memory.jobs.run_extraction_backlog", fake_extract)
+    monkeypatch.setattr("app.memory.jobs.run_summary_backfill", fake_backfill)
 
     async def fake_sleep(_seconds):
         if len(sweeps) >= 2:
@@ -761,13 +807,12 @@ async def _add_turn(db_factory, session_id: uuid.UUID, *, status: str,
 
 @requires_db
 async def test_a_close_landing_mid_turn_records_nothing(db_factory, monkeypatch):
-    """The permanent one.
+    """A window frozen mid-turn is a question summarized before its answer.
 
-    `uq_episodes_session` gives a session exactly one episode ever, so an
-    episode written while the reply is still being appended is a transcript
-    frozen short — and every turn after it goes unremembered with nothing
-    anywhere saying so. Declining leaves the session eligible; the sweep takes
-    it whole once the turn is over.
+    The tear is no longer permanent — the reply would land in the next
+    window — but it still splits one exchange across two episodes, so a
+    running turn declines the close. Declining is a reschedule: the session
+    is parked and the sweep takes the window whole once the turn is over.
     """
     _install(monkeypatch)
     session_id = await _session_with(db_factory, [("learner", "help with fractions")])

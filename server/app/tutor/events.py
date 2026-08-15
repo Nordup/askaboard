@@ -184,8 +184,12 @@ TOOL_PHASES: dict[str, PhaseName] = {
     "view_board": "looking",
     "set_workspace": "thinking",
     "search_memory": "searching",
-    "recent_sessions": "searching",
+    "search_sessions": "searching",
+    "search_history": "searching",
+    "get_session": "searching",
+    "list_sessions": "searching",
     "remember": "thinking",
+    "forget": "thinking",
     "record_evidence": "thinking",
 }
 
@@ -204,8 +208,12 @@ TOOL_STEP_LABELS: dict[str, str] = {
     "view_board": "Looking at the board",
     "set_workspace": "Making a plan",
     "search_memory": "Searching memory",
-    "recent_sessions": "Searching memory",
+    "search_sessions": "Searching past sessions",
+    "search_history": "Searching past conversations",
+    "get_session": "Reading a past session",
+    "list_sessions": "Listing past sessions",
     "remember": "Saving a note",
+    "forget": "Removing a note",
     "record_evidence": "Recording progress",
 }
 

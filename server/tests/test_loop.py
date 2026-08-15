@@ -108,7 +108,8 @@ async def test_the_request_body_carries_every_tool_and_stores_the_response():
     # for the whole session on purpose — see the comment on TOOL_DEFINITIONS.
     assert [tool["name"] for tool in body["tools"]] == [
         "set_workspace", "view_board", "update_board",
-        "remember", "search_memory", "recent_sessions", "record_evidence",
+        "remember", "forget", "search_memory", "search_sessions",
+        "search_history", "get_session", "list_sessions", "record_evidence",
     ]
 
 

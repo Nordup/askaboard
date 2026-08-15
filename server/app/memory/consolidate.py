@@ -317,6 +317,17 @@ async def _candidates(
     also the most formulaic in the store ("Covered adding fractions on
     2026-08-09"), so at `FLOOR = 0.35` two of them are exactly the pairs that
     now clear the floor and reach the adjudicator — dormant at 0.75, live now.
+
+    Explicit atoms — the learner's own saved notes, `explicit = true` — are
+    never offered either, for a different reason with the same shape. A note
+    the learner dictated is not the adjudicator's to close: it was saved by an
+    explicit act and is only closed by one (the `forget` tool). The failure
+    this clause prevents was observed, not imagined — a later session's
+    extraction yielding a sentence near a saved note, the adjudicator ruling
+    SUPERSEDE, and the one thing the learner asked to keep silently dropping
+    out of the SAVED NOTES block that injects every live note wholesale. Held
+    back here, the worst a colliding extraction can produce is a duplicate
+    fact beside the note — visible, and recoverable.
     """
     pooled: list[MemoryAtom] = []
     seen: set[uuid.UUID] = set()
@@ -328,6 +339,7 @@ async def _candidates(
                 MemoryAtom.learner_id == learner_id,
                 MemoryAtom.valid_to.is_(None),
                 MemoryAtom.category != MemoryCategory.episode_ref.value,
+                MemoryAtom.explicit.is_(False),
                 distance <= 1 - FLOOR,
             )
             .order_by(distance)

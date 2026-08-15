@@ -5,8 +5,11 @@ from app.tutor.prompt import SYSTEM_PROMPT, compose_user_prompt
 
 
 def test_system_prompt_is_the_unchanged_experimental_draft():
+    # Re-pinned for the memory rework (2026-08-15): the draft gained the
+    # ## MEMORY section and the tool list swapped `recent_sessions` for the
+    # archive tools. Any *other* edit still has to show up here.
     assert hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest() == (
-        "26dbae9e59c2e35e55a0b8825234475b988951b23493d2218b3d3053e171dfa0"
+        "038cd1502f2589b9000391797cb0e0d504715489dda0ba6e66d5be89e400ebd0"
     )
 
 
@@ -25,6 +28,7 @@ def test_system_prompt_contains_every_draft_section_and_tool():
         "## KINDS OF OBJECTIVES",
         "## BOARD",
         "## RESEARCH",
+        "## MEMORY",
         "## TOOLS",
     ):
         assert heading in SYSTEM_PROMPT
@@ -34,11 +38,16 @@ def test_system_prompt_contains_every_draft_section_and_tool():
         "view_board",
         "update_board",
         "remember",
+        "forget",
         "search_memory",
-        "recent_sessions",
+        "search_sessions",
+        "search_history",
+        "get_session",
+        "list_sessions",
         "record_evidence",
     ):
         assert tool in SYSTEM_PROMPT
+    assert "recent_sessions" not in SYSTEM_PROMPT
 
 
 def test_user_prompt_marks_the_transcript_as_data():

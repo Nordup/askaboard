@@ -8,7 +8,7 @@ from app.attachments.kinds import Kind
 from app.store.blobs import LocalBlobStore
 from app.store.models import Attachment, LLMCall, Message, Session, ToolCall, Turn
 from app.store.recorder import (
-    ORIGINAL_CONTENT_TYPE, Recorder, cache_tokens, redact_images,
+    ORIGINAL_CONTENT_TYPE, REPLY_LOST_TEXT, Recorder, cache_tokens, redact_images,
 )
 from tests.conftest import requires_db
 
@@ -310,6 +310,13 @@ async def test_fail_turn_persists_the_partial_output_alongside_the_error(
         assert call.response["text"] == "Nice wo"
         assert call.raw_events_blob is not None
 
+        # The transcript gets the `[reply lost]` marker, never the partial
+        # text: the partial was never delivered as a reply, and recording it
+        # as one would put words in the tutor's mouth that the next turn's
+        # context then treats as said. The partial stays in `llm_calls` above.
+        message = (await fresh.execute(select(Message))).scalar_one()
+        assert (message.role, message.text) == ("tutor", REPLY_LOST_TEXT)
+
     raw = await blob_store.get(call.raw_events_blob)
     assert b"response.created" in raw
     assert b"Nice wo" in raw
@@ -382,6 +389,13 @@ async def test_fail_turn_without_a_result_still_records_the_error(db, db_factory
         stored_turn = (await fresh.execute(select(Turn))).scalar_one()
         assert stored_turn.status == "error"
         assert (await fresh.execute(select(LLMCall))).first() is None
+        # Even with no TurnResult, the failed turn leaves the `[reply lost]`
+        # tutor line, so the window an episode later freezes over this session
+        # reads as what happened rather than as a learner talking to silence.
+        message = (await fresh.execute(select(Message))).scalar_one()
+        assert (message.seq, message.role, message.text) == (
+            0, "tutor", REPLY_LOST_TEXT,
+        )
 
 
 @requires_db

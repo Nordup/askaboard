@@ -385,16 +385,16 @@ REMEMBER_TOOL: dict = {
     "type": "function",
     "name": "remember",
     "description": (
-        "Save something about this learner for future sessions. Call this when "
+        "Save a note about this learner for future sessions. Call this when "
         "they ask you to remember something, and when they tell you something "
         "that will still matter next time — a preference, a goal, a deadline, "
         "how they like to work. Write the fact so it stands alone with no "
-        "surrounding conversation: resolve every pronoun and reference. Before "
-        "you write any message containing 'noted', 'got it', or 'I'll remember "
-        "that', call this tool first — otherwise you have told them something "
-        "untrue. Saving is all this does: there is no way to make you forget "
-        "anything yet, so if they ask you to forget something, tell them "
-        "plainly that you cannot do that yet rather than calling this."
+        "surrounding conversation: resolve every pronoun and reference. A "
+        "saved note appears, dated, in your SAVED NOTES block from the next "
+        "turn on, every turn, until `forget` removes it. Before you write any "
+        "message containing 'noted', 'got it', or 'I'll remember that', call "
+        "this tool first and wait for its answer — otherwise you have told "
+        "them something untrue."
     ),
     "strict": True,
     "parameters": {
@@ -405,11 +405,11 @@ REMEMBER_TOOL: dict = {
                 "type": "string",
                 "description": "The fact, self-contained, 10-30 words.",
             },
-            # The same question `EXTRACTION_SCHEMA` asks the offline extractor,
-            # asked here because this path writes the column directly. It is
-            # not a label: an unstated fact outside `STATED_EXEMPT` is dropped
-            # rather than written, on both paths, so answering it wrongly is
-            # how an inference about the learner acquires their own authority.
+            # The same question `EXTRACTION_SCHEMA` asks the offline extractor.
+            # No longer a gate — an explicit save is the learner-visible act,
+            # and refusing it over this flag was how "noted" became a lie
+            # (W14) — but still provenance: the flag is stored verbatim and
+            # search results say which facts were their words.
             "stated": {
                 "type": "boolean",
                 "description": (
@@ -431,18 +431,50 @@ REMEMBER_TOOL: dict = {
     },
 }
 
+FORGET_TOOL: dict = {
+    "type": "function",
+    "name": "forget",
+    "description": (
+        "Close one saved note or remembered fact, so it stops appearing and "
+        "stops being found. Call this when the learner asks you to forget "
+        "something, and confirm only after the tool answers that it was "
+        "closed. Pass the note's text word for word as SAVED NOTES or a "
+        "search result shows it — or a phrase distinctive enough to match "
+        "exactly one note; if several match, the answer lists them so you can "
+        "call again with the exact one."
+    ),
+    "strict": True,
+    "parameters": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "text": {
+                "type": "string",
+                "description": (
+                    "The note to forget, word for word, or a distinctive "
+                    "phrase from it."
+                ),
+            },
+        },
+        "required": ["text"],
+    },
+}
+
 SEARCH_MEMORY_TOOL: dict = {
     "type": "function",
     "name": "search_memory",
     "description": (
-        "Search everything you know about this learner from previous sessions. "
-        "Use it whenever answering depends on something they told you before — "
-        "what they were working on, what they found hard, what they asked for. "
-        "This tool has NO access to the current conversation, so your query "
-        "must be entirely self-contained: write 'what has this learner said "
-        "about preparing for their June exam', never 'what did they mean by "
-        "that'. Never tell the learner you cannot remember something without "
-        "searching here first."
+        "Search the individual facts on file about this learner — "
+        "preferences, goals, struggles, saved notes. Every result is dated "
+        "and says where it came from. Use it whenever answering depends on "
+        "something they told you before. This tool has NO access to the "
+        "current conversation, so your query must be entirely self-contained: "
+        "write 'what has this learner said about preparing for their June "
+        "exam', never 'what did they mean by that'. Never tell the learner "
+        "you cannot remember something without searching here first — and "
+        "when it answers that nothing is on file, that is the truth to pass "
+        "on. For whole sessions use `search_sessions`; for the exact words of "
+        "a past conversation use `search_history`."
     ),
     "strict": True,
     "parameters": {
@@ -458,17 +490,158 @@ SEARCH_MEMORY_TOOL: dict = {
     },
 }
 
-RECENT_SESSIONS_TOOL: dict = {
+SEARCH_SESSIONS_TOOL: dict = {
     "type": "function",
-    "name": "recent_sessions",
+    "name": "search_sessions",
     "description": (
-        "Reach further back through the session history than the RECENT "
-        "SESSIONS block already in your context. That block holds the most "
-        "recent sessions and says how many; answer from it directly when it "
-        "covers the question, and call this only to see sessions older than "
-        "the ones listed there. Returns short summaries, most recent first — "
-        "the sequence, which is what a continuity question wants and what a "
-        "search is the wrong shape for."
+        "Find past sessions by what they were about — topic, problem, "
+        "formula, anything the work touched. Searches every session summary, "
+        "by meaning as well as by keyword, and answers with dated cards: "
+        "when, a title, and the session's narrative, plus how many sessions "
+        "matched in total. The RECENT SESSIONS block already in your context "
+        "covers the newest few — search when the session you want is older or "
+        "you only know the topic. The query must be self-contained; this tool "
+        "cannot see the current conversation. Follow up with `get_session` "
+        "when you need a session's exact words."
+    ),
+    "strict": True,
+    "parameters": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": (
+                    "A self-contained description of the session you want — "
+                    "topic, problem, or phrasing from it."
+                ),
+            },
+            "date_from": {
+                "type": ["string", "null"],
+                "description": (
+                    "Earliest session date to include, as YYYY-MM-DD, or null "
+                    "for no lower bound."
+                ),
+            },
+            "date_to": {
+                "type": ["string", "null"],
+                "description": (
+                    "Latest session date to include (that whole day counts), "
+                    "as YYYY-MM-DD, or null for no upper bound."
+                ),
+            },
+            "limit": {
+                "type": "integer",
+                "description": "How many sessions to return, 1 to 5.",
+            },
+        },
+        "required": ["query", "date_from", "date_to", "limit"],
+    },
+}
+
+SEARCH_HISTORY_TOOL: dict = {
+    "type": "function",
+    "name": "search_history",
+    "description": (
+        "Find the exact place something was said, in any session ever. "
+        "Full-text search over every stored message of the entire history — "
+        "nothing ages out of it — answering with dated excerpts: who said it, "
+        "when, the matched words marked, and the line spoken just before. Use "
+        "it when the question is about specific words, numbers, formulas, or "
+        "claims — 'where did I say X', 'what exactly did you tell me about "
+        "Y' — then `get_session` with that date to read the full context. "
+        "Keyword search: it finds the words you give it, so quote distinctive "
+        "ones rather than describing the topic (that is `search_sessions`)."
+    ),
+    "strict": True,
+    "parameters": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": (
+                    "The words to find — distinctive terms, not a topic "
+                    "description."
+                ),
+            },
+            "date_from": {
+                "type": ["string", "null"],
+                "description": (
+                    "Earliest message date to include, as YYYY-MM-DD, or null "
+                    "for no lower bound."
+                ),
+            },
+            "date_to": {
+                "type": ["string", "null"],
+                "description": (
+                    "Latest message date to include (that whole day counts), "
+                    "as YYYY-MM-DD, or null for no upper bound."
+                ),
+            },
+            "limit": {
+                "type": "integer",
+                "description": "How many excerpts to return, 1 to 8.",
+            },
+        },
+        "required": ["query", "date_from", "date_to", "limit"],
+    },
+}
+
+GET_SESSION_TOOL: dict = {
+    "type": "function",
+    "name": "get_session",
+    "description": (
+        "Read one past session — its summary, or its full stored transcript, "
+        "page by page. This is the detail path: a summary says what happened, "
+        "the transcript says what exactly was said, and for any question "
+        "about the details of a past session you read here BEFORE answering "
+        "rather than reciting a summary from memory. Name the session by its "
+        "date (YYYY-MM-DD, all of that day's windows) or by an offset "
+        "counting back through RECENT SESSIONS ('0' is the newest, '1' the "
+        "one before). Long transcripts come paged; the answer says how many "
+        "pages there are."
+    ),
+    "strict": True,
+    "parameters": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "date_or_offset": {
+                "type": "string",
+                "description": (
+                    "A date like 2026-08-14, or an offset like 0 (newest), 1, "
+                    "2 counting back."
+                ),
+            },
+            "part": {
+                "type": "string",
+                "enum": ["summary", "transcript"],
+                "description": (
+                    "summary for what happened; transcript for the exact "
+                    "words."
+                ),
+            },
+            "page": {
+                "type": "integer",
+                "description": "Which transcript page, from 1. Use 1 first.",
+            },
+        },
+        "required": ["date_or_offset", "part", "page"],
+    },
+}
+
+LIST_SESSIONS_TOOL: dict = {
+    "type": "function",
+    "name": "list_sessions",
+    "description": (
+        "Browse the session history in order, most recent first: one dated "
+        "line per session with its title. The RECENT SESSIONS block in your "
+        "context already shows the newest few in more detail — call this to "
+        "see past its end, and page further back by passing before_date = "
+        "the oldest date the previous call showed. The sequence, which is "
+        "what a continuity question wants and what a search is the wrong "
+        "shape for."
     ),
     "strict": True,
     "parameters": {
@@ -479,8 +652,15 @@ RECENT_SESSIONS_TOOL: dict = {
                 "type": "integer",
                 "description": "How many sessions to list, 1 to 20.",
             },
+            "before_date": {
+                "type": ["string", "null"],
+                "description": (
+                    "Only sessions before this date (YYYY-MM-DD), or null to "
+                    "start from the most recent."
+                ),
+            },
         },
-        "required": ["limit"],
+        "required": ["limit", "before_date"],
     },
 }
 
@@ -565,12 +745,21 @@ RECORD_EVIDENCE_TOOL: dict = {
     },
 }
 
-#: The four that need a database session to answer, kept together so the
+#: The tools that need a database session to answer, kept together so the
 #: router and the registry cannot disagree about which those are. A name in one
 #: and not the other is a tool the model is offered and then told is
 #: unsupported — a whole turn spent on a dead round.
+#:
+#: `list_sessions` REPLACED `recent_sessions` outright (memory rework,
+#: 2026-08-15) rather than leaving the old name answering a redirect: the set
+#: is a module constant, identical on every request of a deployment, so the
+#: cache-prefix rule — tool definitions never vary per request — holds either
+#: way, and a dead name kept alive re-bills its tokens on every turn for the
+#: privilege of telling the model to call something else.
 MEMORY_TOOL_DEFINITIONS: list[dict] = [
-    REMEMBER_TOOL, SEARCH_MEMORY_TOOL, RECENT_SESSIONS_TOOL, RECORD_EVIDENCE_TOOL,
+    REMEMBER_TOOL, FORGET_TOOL, SEARCH_MEMORY_TOOL, SEARCH_SESSIONS_TOOL,
+    SEARCH_HISTORY_TOOL, GET_SESSION_TOOL, LIST_SESSIONS_TOOL,
+    RECORD_EVIDENCE_TOOL,
 ]
 MEMORY_TOOLS: frozenset[str] = frozenset(
     tool["name"] for tool in MEMORY_TOOL_DEFINITIONS

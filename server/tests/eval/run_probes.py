@@ -76,16 +76,16 @@ from openai.resources.responses import AsyncResponses  # noqa: E402
 from sqlalchemy import select, text as sa_text  # noqa: E402
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
 
-from app.api.turn import RECENT_SESSION_COUNT, _memory_sections  # noqa: E402
+from app.api.turn import _memory_sections  # noqa: E402
 from app.config import (  # noqa: E402
-    DEFAULT_MODEL, DEFAULT_REASONING_EFFORT, EXTRACTION_MODEL, SOLE_LEARNER_ID,
-    get_settings,
+    DEFAULT_MODEL, DEFAULT_REASONING_EFFORT, EXTRACTION_MODEL,
+    RECENT_SESSION_COUNT, SOLE_LEARNER_ID, get_settings,
 )
 from app.memory.dispatch import memory_handler  # noqa: E402
 from app.memory.extract import MIN_TRANSCRIPT_CHARS  # noqa: E402
 from app.memory.jobs import run_session_close  # noqa: E402
 from app.memory.profile import current_profile  # noqa: E402
-from app.memory.retrieve import recent_episodes, render_digests  # noqa: E402
+from app.memory.retrieve import recent_episodes, render_sessions  # noqa: E402
 from app.store.models import (  # noqa: E402
     Base, Episode, Learner, MemoryAtom, Message, Session,
 )
@@ -519,9 +519,9 @@ async def replay(store: Store, spec: dict, *, now: datetime) -> None:
     session's own clock is set before the close and carries everything that
     matters to the facts — `session_date` for the extractor, `valid_from` for
     the atoms — but `closed_at` is stamped `now()` by the insert, and it is what
-    `render_digests` prints and orders by. Left alone, six sessions spanning two
-    months would all be dated today and "what did we do last time" would be a
-    coin flip between them.
+    `render_sessions` prints and orders by. Left alone, six sessions spanning
+    two months would all be dated today and "what did we do last time" would be
+    a coin flip between them.
     """
     when = now - timedelta(days=int(spec["days_ago"]))
     session_id = uuid.uuid4()
@@ -567,8 +567,9 @@ async def snapshot(store: Store) -> Snapshot:
                 .order_by(MemoryAtom.valid_from, MemoryAtom.id)
             )).scalars().all()
         ]
-        digests = render_digests(
-            await recent_episodes(db, SOLE_LEARNER_ID, limit=RECENT_SESSION_COUNT)
+        digests = render_sessions(
+            await recent_episodes(db, SOLE_LEARNER_ID, limit=RECENT_SESSION_COUNT),
+            today=datetime.now(timezone.utc).date(),
         )
     return Snapshot(profile=profile, live=live, superseded=superseded,
                     digests=digests)

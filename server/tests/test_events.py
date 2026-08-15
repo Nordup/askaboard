@@ -4,6 +4,7 @@ from app.tutor.events import (
     BoardUpdateEvent, EventTranslator, ReasoningDeltaEvent, StatusEvent,
     StepEvent, TextDeltaEvent, WorkspaceEvent, region_label,
 )
+from app.tutor.tools import MEMORY_TOOLS
 
 WORKSPACE_ARGS = {
     "plan": {
@@ -413,9 +414,10 @@ def test_a_memory_tool_puts_something_on_the_wire_before_it_blocks():
 
 def test_every_memory_tool_announces_a_phase():
     # A tool missing from TOOL_PHASES is silent by design, which is right for a
-    # tool that returns instantly and wrong for these four: each one is a
-    # database round trip, and `search_memory` an embedding call on top.
-    for name in ("remember", "search_memory", "recent_sessions", "record_evidence"):
+    # tool that returns instantly and wrong for every one of these: each is a
+    # database round trip, and the searching ones an embedding call on top.
+    # Derived from the registry, so a ninth memory tool cannot arrive silent.
+    for name in sorted(MEMORY_TOOLS):
         events = EventTranslator().translate({
             "type": "response.output_item.added",
             "output_index": 0,

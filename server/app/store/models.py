@@ -6,7 +6,7 @@ from datetime import datetime
 from pgvector.sqlalchemy import HALFVEC
 from sqlalchemy import (
     Boolean, CheckConstraint, Computed, DateTime, Float, ForeignKey, Index, Integer,
-    String, Text, UniqueConstraint, func, text as sa_text, true,
+    String, Text, UniqueConstraint, false, func, text as sa_text, true,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR, UUID as PGUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -47,8 +47,21 @@ class Message(Base):
     text: Mapped[str] = mapped_column(Text)
     signal: Mapped[str | None] = mapped_column(String(16), nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    #: Generated rather than maintained by the application, for the reason
+    #: `MemoryAtom.fts` gives: `search_history` needs a tsvector on every row,
+    #: and a GENERATED column cannot drift out of sync with `text` the way a
+    #: trigger or an application write can. This is what makes the founder
+    #: principle — nothing in the history is unreachable — a query rather than
+    #: an aspiration: every stored utterance is full-text searchable forever.
+    fts: Mapped[str] = mapped_column(
+        TSVECTOR, Computed("to_tsvector('english', text)", persisted=True)
+    )
 
     session: Mapped[Session] = relationship(back_populates="messages")
+
+    __table_args__ = (
+        Index("ix_messages_fts", "fts", postgresql_using="gin"),
+    )
 
 
 class Turn(Base):
@@ -176,12 +189,28 @@ class Learner(Base):
 
 
 class Episode(Base):
-    """One closed session, as raw material. Ground truth for every derived row.
+    """One recorded window of a session. Ground truth for every derived row.
+
+    A window, not a whole session, because the device reopens the same session
+    across days: one-episode-per-session froze the transcript at the first
+    close and silently dropped everything after it, forever. An episode now
+    covers the message range `seq_from..seq_to`, and the next close or sweep
+    records the *next* range as its own episode. A mid-session close therefore
+    costs nothing — it freezes only its window, and later activity forms the
+    next one.
+
+    `seq_from`/`seq_to` are 1-based message ordinals, not `messages.seq`
+    values. `messages.seq` is 0-based and dense (both write paths count from
+    zero), so an episode covers the messages whose `seq` lies in
+    `[seq_from - 1, seq_to - 1]`, and a full-session episode reads
+    `seq_from=1, seq_to=message_count` — which is exactly how migration 0007
+    backfilled the episodes recorded under the old one-per-session rule.
 
     Atoms, the profile and the learner model are all rebuildable from this
-    plus `observations` alone. Nothing here is ever rewritten, which is what
-    makes a bad extraction prompt a recoverable mistake: delete the atoms,
-    clear `extracted_at`, run the new prompt over the same transcripts.
+    plus `observations` alone. Nothing here is ever rewritten except the
+    summary columns, which are derived from `transcript` and safe to
+    regenerate: a bad summarization prompt is a recoverable mistake — clear
+    `narrative`, let the backfill pass re-summarize the same transcripts.
 
     `transcript` is denormalised out of `messages` on purpose. It is the exact
     text the extractor was shown, frozen at close time, so a later change to
@@ -201,8 +230,34 @@ class Episode(Base):
     #: back-reference, not the episode and every atom derived from it. Same
     #: reasoning as MemoryAtom.source_session_id, with more at stake.
     session_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    #: The window this episode covers, in 1-based message ordinals — see the
+    #: class docstring for the mapping onto `messages.seq`. The defaults
+    #: (`1, 0`) describe an empty window and are never what a recorded row
+    #: carries; `jobs._record_episode` always sets both explicitly.
+    seq_from: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    seq_to: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     transcript: Mapped[str] = mapped_column(Text)
+    #: The first two sentences of `narrative`, kept for compatibility until the
+    #: backfill pass has re-summarized every pre-window episode — readers that
+    #: paste short dated lines still have something short to paste.
     digest: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: The rich summary, written together by one structured summarization call.
+    #: `narrative` is the load-bearing one: 150-300 tokens, required to carry
+    #: exact details — problem statements, numbers, formulas reached, mistakes
+    #: made, what was resolved — because "gist right, details wrong" is the
+    #: failure a two-sentence digest was measured producing.
+    title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    narrative: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Open loops, as a JSONB list of strings ("agreed: derive from collisions
+    #: step by step next time") — what the next session should pick up.
+    next_steps: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    topics: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
+    #: Embedding of title + narrative, the dense arm of `search_sessions` and
+    #: nothing else — atoms keep their own. 1024 for the reason
+    #: `MemoryAtom.embedding` spells out.
+    narrative_embedding: Mapped[list[float] | None] = mapped_column(
+        HALFVEC(1024), nullable=True
+    )
     message_count: Mapped[int] = mapped_column(Integer)
     started_at: Mapped[datetime]
     closed_at: Mapped[datetime] = mapped_column(server_default=func.now(), index=True)
@@ -210,12 +265,24 @@ class Episode(Base):
     #: queue because the queue would be a second thing to keep consistent with
     #: this table, and a crashed extraction has to be safe to simply re-run.
     extracted_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    #: How many times extraction (or backfill re-summarization) has failed on
+    #: this row. At `jobs.QUARANTINE_AFTER` the row is quarantined —
+    #: `quarantined_at` set, the drain continues past it — because one poison
+    #: episode used to halt the whole backlog permanently, and the only symptom
+    #: was the tutor going vague. `/health` reports the quarantined count.
+    extraction_attempts: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0"
+    )
+    quarantined_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     __table_args__ = (
-        # One episode per closed session. `extracted_at` is per-episode, so a
+        # One episode per message window. `extracted_at` is per-episode, so a
         # duplicate row would be extracted a second time and double every atom
-        # derived from it; this is what lets the close path be a plain retry.
-        UniqueConstraint("session_id", name="uq_episodes_session"),
+        # derived from it; two closes racing over the same window compute the
+        # same `seq_from` and the loser hits this, which is what lets the close
+        # path be a plain retry. Distinct windows of one session share the
+        # session_id and differ on seq_from, so they all fit.
+        UniqueConstraint("session_id", "seq_from", name="uq_episodes_session_window"),
     )
 
 
@@ -283,6 +350,17 @@ class MemoryAtom(Base):
     #: default is True in both Python and the database so that an atom which
     #: arrives without an opinion is never quietly demoted to a guess.
     stated: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    #: True for a note the learner explicitly asked to have remembered — the
+    #: `remember` tool's writes. Explicit notes are injected wholesale into the
+    #: SAVED NOTES block rather than similarity-gated, and consolidation never
+    #: offers them as supersession targets (`consolidate._candidates`): a later
+    #: extraction quietly closing a note the learner dictated is the one
+    #: failure that saved note must be structurally incapable of. Only the
+    #: `forget` tool closes one. Default False in both Python and the database
+    #: so every extraction-path atom stays an ordinary, supersedable fact.
+    explicit: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
     #: Generated rather than maintained by the application: hybrid retrieval
     #: needs a tsvector on every row, and a GENERATED column cannot drift out
     #: of sync with `text` the way a trigger or an application write can.

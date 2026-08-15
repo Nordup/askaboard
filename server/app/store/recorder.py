@@ -18,6 +18,10 @@ from app.store.models import Attachment, LLMCall, Message, Session, ToolCall, Tu
 #: `Recorder.record_upload` for why it is deliberately not more specific.
 ORIGINAL_CONTENT_TYPE = "application/octet-stream"
 
+#: The tutor line a failed turn leaves in `messages`. See `Recorder.fail_turn`
+#: for why a failed turn leaves one at all.
+REPLY_LOST_TEXT = "[reply lost]"
+
 
 def _redact_part(part: object, blob_key: str) -> object:
     if isinstance(part, dict) and part.get("type") == "input_image":
@@ -265,6 +269,23 @@ class Recorder:
         record none of them, which is precisely the shape of the failure this
         service exists to make visible: money spent, nothing to show for it,
         and no row saying how much.
+
+        A `REPLY_LOST_TEXT` tutor `Message` is written too, in the same
+        transaction. The learner's side of a failed turn is already in
+        `messages` — the request handler commits it with the turn row before
+        any model call — so a failed turn used to leave a one-sided
+        transcript: a question with no answer and nothing saying why, which
+        every episode window recorded over it then presented to the
+        summarizer as the learner talking to silence. The placeholder makes
+        the window read as what happened. It is deliberately a marker and not
+        the partial text the model may have produced — the partial is in this
+        turn's `llm_calls` row for anyone diagnosing, but it was never
+        delivered as a reply and recording it as one would put words in the
+        tutor's mouth that the next turn's context then treats as said.
+
+        The turn row is where `session_id` and the next `seq` come from, read
+        rather than passed so the signature — and every call site in the
+        request handler's exception paths — stays as it was.
         """
         call = None
         usage: dict = {}
@@ -289,6 +310,17 @@ class Recorder:
             }
             _apply_usage(turn, usage)
             turn.finished_at = datetime.now(timezone.utc)
+
+            last_seq = (await session.execute(
+                select(func.max(Message.seq))
+                .where(Message.session_id == turn.session_id)
+            )).scalar_one()
+            session.add(Message(
+                session_id=turn.session_id,
+                seq=(last_seq if last_seq is not None else -1) + 1,
+                role="tutor",
+                text=REPLY_LOST_TEXT,
+            ))
             await session.commit()
 
     async def record_attachment(

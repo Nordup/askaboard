@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass
+from datetime import date
 from typing import Any
 
 from app.attachments.parts import UploadPart, content_part
@@ -80,7 +81,8 @@ def transcript(messages: list[Any]) -> tuple[str, str | None]:
     note = (
         f"The first {dropped} messages of this session are not shown; it has "
         "run long. Say so if the learner asks about something from earlier "
-        "than the transcript below, and use `search_memory` rather than "
+        "than the transcript below, and use `search_history` — every stored "
+        "message is searchable, including the dropped ones — rather than "
         "guessing at what was said"
     )
     return kept, note
@@ -150,15 +152,20 @@ def assemble_context(
     board_changed: bool | None = None,
     profile: str | None = None,
     learner_state: str | None = None,
-    recent_digest: str | None = None,
+    recent_sessions: str | None = None,
+    saved_notes: str | None = None,
+    today: date | None = None,
+    first_turn: bool = False,
     uploads: list[UploadPart] | None = None,
 ) -> ContextBundle:
     """SEAM: everything the model is told, assembled in one place.
 
-    Memory arrives as three blocks its own modules have already rendered —
-    `profile`, `learner_state`, `recent_digest` — and passes straight through.
-    Where they sit relative to the transcript, and why, belongs to
-    `compose_user_prompt`; a caller that has none of them changes nothing.
+    Memory arrives as four blocks its own modules have already rendered —
+    `profile`, `learner_state`, `recent_sessions`, `saved_notes` — plus the
+    two facts only the caller knows, `today` and `first_turn`, and passes
+    straight through. Where each sits relative to the transcript and the
+    cache boundary, and why, belongs to `compose_user_prompt`; a caller that
+    has none of them changes nothing.
 
     There are two separate ways the board reaches this function, and they mean
     different things. `image_data` is a region the learner *chose* and sent — an
@@ -198,7 +205,10 @@ def assemble_context(
         board_note=board_note,
         profile=profile,
         learner_state=learner_state,
-        recent_digest=recent_digest,
+        recent_sessions=recent_sessions,
+        saved_notes=saved_notes,
+        today=today,
+        first_turn=first_turn,
         uploads=uploads or [],
         transcript_note=transcript_note,
     )

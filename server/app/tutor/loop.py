@@ -246,8 +246,12 @@ MemoryHandler = Callable[[str, dict], Awaitable[str]]
 #: back to "thinking", which is true of any tool, so this cannot drift into
 #: telling the learner a tool does not exist — it can only be less specific.
 MEMORY_PHASES: dict[str, str] = {
+    "forget": "thinking",
     "search_memory": "searching",
-    "recent_sessions": "searching",
+    "search_sessions": "searching",
+    "search_history": "searching",
+    "get_session": "searching",
+    "list_sessions": "searching",
 }
 
 
