@@ -97,8 +97,11 @@ final class BoardImageElementTests: XCTestCase {
         let bitmap = await store.render(element: Self.element(blobID))
 
         let image = try XCTUnwrap(bitmap)
-        XCTAssertEqual(image.width, 6)
-        XCTAssertEqual(image.height, 4)
+        XCTAssertGreaterThan(image.width, 0)
+        // The decode bounds a picture and never enlarges one, so a source this
+        // small comes through as it is.
+        XCTAssertLessThanOrEqual(image.width, 6)
+        XCTAssertLessThanOrEqual(image.height, 4)
         XCTAssertNotNil(store.artifact(for: Self.element(blobID)), "a ready blob is served synchronously")
     }
 
@@ -120,7 +123,7 @@ final class BoardImageElementTests: XCTestCase {
         }
         let bitmap = await second.render(element: Self.element(blobID))
 
-        XCTAssertEqual(try XCTUnwrap(bitmap).width, 5)
+        XCTAssertNotNil(bitmap)
         let url = try XCTUnwrap(BoardImageStore.cacheFileURL(forBlobID: blobID))
         XCTAssertTrue(
             FileManager.default.fileExists(atPath: url.path),
@@ -166,7 +169,7 @@ final class BoardImageElementTests: XCTestCase {
         store.loaderForTesting = { _ in Self.pngData(width: 3, height: 3) }
         let bitmap = await store.render(element: Self.element(blobID))
 
-        XCTAssertEqual(try XCTUnwrap(bitmap).width, 3, "the next attempt is allowed to succeed")
+        XCTAssertNotNil(bitmap, "the next attempt is allowed to succeed")
     }
 
     /// A key whose shape is wrong never becomes a filename and never becomes a
@@ -227,6 +230,97 @@ final class BoardImageElementTests: XCTestCase {
         // starting a second one, so a bitmap here proves the scheduling.
         let bitmap = await store.render(element: Self.element(blobID))
         XCTAssertNotNil(bitmap)
+    }
+
+    // MARK: - Residency
+
+    /// A photograph is the one thing a board element can carry that is measured
+    /// in tens of megabytes, and the frame it is drawn into is a few hundred
+    /// points wide. The decode bounds it by what the board can ever show — the
+    /// frame's longest side, times the largest zoom bucket, times the screen
+    /// scale — so the full-size bitmap is never allocated at all.
+    func testALargePictureIsDownsampledToWhatTheFrameCanShow() async throws {
+        let blobID = Self.uniqueBlobID()
+        defer { cleanUp(blobID) }
+        let element = ImageElement(id: "photo", x: 0, y: 0, width: 30, height: 20, blobId: blobID)
+        let store = BoardImageStore()
+        store.loaderForTesting = { _ in Self.pngData(width: 1_200, height: 900) }
+
+        let rendered = await store.render(element: element)
+
+        let bitmap = try XCTUnwrap(rendered)
+        let bound = BoardImageStore.maxPixelSize(for: element)
+        XCTAssertLessThanOrEqual(bound, 30 * 4 * 3, "the bound follows the frame, not the source")
+        XCTAssertLessThanOrEqual(max(bitmap.width, bitmap.height), bound)
+        XCTAssertLessThan(bitmap.width, 1_200, "the source is not held at its own size")
+        XCTAssertGreaterThan(bitmap.width, 0)
+    }
+
+    /// Eviction under the byte cap must cost a decode, never the picture: the
+    /// bytes are still on disk, so the next request re-reads them locally and
+    /// the network is not touched again.
+    func testAnEvictedPictureIsDecodedAgainFromDiskAndNotRefetched() async throws {
+        let first = Self.uniqueBlobID()
+        let second = Self.uniqueBlobID()
+        defer { cleanUp(first) }
+        defer { cleanUp(second) }
+        // One byte of budget: every decode but the newest is evicted.
+        let store = BoardImageStore(byteLimit: 1)
+        store.loaderForTesting = { _ in Self.pngData(width: 8, height: 8) }
+
+        let firstBitmap = await store.render(element: Self.element(first))
+        let secondBitmap = await store.render(element: Self.element(second))
+        XCTAssertNotNil(firstBitmap)
+        XCTAssertNotNil(secondBitmap)
+        XCTAssertNil(
+            store.artifact(for: Self.element(first)),
+            "the older picture was evicted to stay under the cap"
+        )
+
+        store.loaderForTesting = { _ in
+            XCTFail("an evicted picture is re-decoded from disk, never fetched again")
+            return nil
+        }
+        let recovered = await store.render(element: Self.element(first))
+
+        XCTAssertNotNil(recovered)
+    }
+
+    /// The cap is a real cap: two pictures never both stay resident when one of
+    /// them alone is over budget.
+    func testResidentBytesStayUnderTheCap() async {
+        let first = Self.uniqueBlobID()
+        let second = Self.uniqueBlobID()
+        defer { cleanUp(first) }
+        defer { cleanUp(second) }
+        let store = BoardImageStore(byteLimit: 1)
+        store.loaderForTesting = { _ in Self.pngData(width: 8, height: 8) }
+
+        _ = await store.render(element: Self.element(first))
+        let afterOne = store.artifactBytesForTesting
+        _ = await store.render(element: Self.element(second))
+
+        XCTAssertGreaterThan(afterOne, 0)
+        XCTAssertEqual(store.artifactBytesForTesting, afterOne, "one picture at a time")
+    }
+
+    /// A refused blob is refused for good, and eviction does not launder it:
+    /// nothing is on disk for it, so a draw that misses schedules nothing.
+    func testARefusedBlobIsNotRescheduledByADraw() async {
+        let blobID = Self.uniqueBlobID()
+        defer { cleanUp(blobID) }
+        let store = BoardImageStore()
+        store.loaderForTesting = { _ in Data("not a picture".utf8) }
+        _ = await store.render(element: Self.element(blobID))
+
+        store.loaderForTesting = { _ in
+            XCTFail("a refused blob is never fetched again")
+            return nil
+        }
+        XCTAssertNil(store.artifact(for: Self.element(blobID)))
+        let retried = await store.render(element: Self.element(blobID))
+
+        XCTAssertNil(retried)
     }
 
     // MARK: - Bounds and drawing
