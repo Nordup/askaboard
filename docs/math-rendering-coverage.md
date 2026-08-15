@@ -22,12 +22,15 @@ upstream 2.1.3 tag; `Vendor/MarkdownExtendedView` depends on it by path).
 
 ## Why a gap matters
 
-A parse failure does not degrade — it erases. `MTMathUILabel` sets its math
-list to nil, the SwiftUI wrapper's size guard returns nil, and the formula
-displays as an empty band (`MTMathUILabel.swift` error path,
-`LaTeXView.swift` `sizeThatFits`). One unknown command blanks the whole
-formula. A visible raw-TeX fallback is proposed as a separate task and is
-still worth doing as insurance.
+~~A parse failure does not degrade — it erases.~~ **Fixed 2026-08-15**: a
+formula the parser rejects now renders as its raw TeX source in monospaced
+secondary text instead of a blank band. `LaTeXView` asks
+`LaTeXRenderability.isRenderable` (a cached parse check) before it mounts the
+math label, so the unparseable case never reaches the zero-size collapse in
+`MTMathUILabel`. The commands listed under "Still missing" below therefore
+degrade legibly — the learner sees the source — rather than silently erasing
+content. Tests:
+`Vendor/MarkdownExtendedView/Tests/MarkdownExtendedViewTests/LaTeXRenderabilityTests.swift`.
 
 ## Results
 

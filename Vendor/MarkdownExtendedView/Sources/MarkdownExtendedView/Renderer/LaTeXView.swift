@@ -8,6 +8,23 @@ import SwiftUI
 import ExtendedSwiftMath
 import ObjectiveC
 
+/// Answers whether SwiftMath can parse a LaTeX string, with a cache: the
+/// check runs from view bodies, which SwiftUI re-evaluates on layout passes.
+enum LaTeXRenderability {
+    private static let cache = NSCache<NSString, NSNumber>()
+
+    static func isRenderable(_ latex: String) -> Bool {
+        if let cached = cache.object(forKey: latex as NSString) {
+            return cached.boolValue
+        }
+        var error: NSError? = nil
+        _ = MTMathListBuilder.build(fromString: latex, error: &error)
+        let renderable = error == nil
+        cache.setObject(NSNumber(value: renderable), forKey: latex as NSString)
+        return renderable
+    }
+}
+
 /// A view that renders LaTeX equations using SwiftMath.
 struct LaTeXView: View {
 
@@ -18,7 +35,18 @@ struct LaTeXView: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        if isBlock {
+        if !LaTeXRenderability.isRenderable(latex) {
+            // A formula the math parser rejects must degrade to its visible
+            // source, never to blank space: MTMathUILabel reports no size for
+            // an unparseable list, and the collapsed view would swallow the
+            // formula entirely (an unsupported command erased a whole reply
+            // block on 2026-08-15 before this fallback existed).
+            Text(latex)
+                .font(.system(size: isBlock ? 15 : 14, design: .monospaced))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.leading)
+                .padding(.vertical, isBlock ? 8 : 0)
+        } else if isBlock {
             // Display/block math - centered, larger
             HStack {
                 Spacer()
