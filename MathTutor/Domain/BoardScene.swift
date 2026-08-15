@@ -13,6 +13,24 @@ struct BoardScene: Codable, Hashable, Sendable {
 
     static var empty: BoardScene { BoardScene(elements: []) }
 
+    init(elements: [BoardElement]) {
+        self.elements = elements
+    }
+
+    /// Decoding skips an element whose kind this build does not know, exactly
+    /// as `BoardSceneUpdate` does. A scene persisted by a later build then
+    /// restores everything this one can still draw, instead of restoring as
+    /// nothing — and the session store reads it with `try?`, so "nothing" is
+    /// what a single strange element would otherwise cost the whole board.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        elements = try container.decode([LenientElement].self, forKey: .elements).known
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case elements
+    }
+
     /// Deterministic application of one batched update.
     ///
     /// Order is `replace-all` (if requested), deletes, then idempotent upserts.
@@ -83,7 +101,7 @@ struct BoardSceneUpdate: Codable, Equatable, Sendable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         if container.contains(.upserts) || container.contains(.deletes) || container.contains(.replaceAll) {
-            upserts = try container.decodeIfPresent([BoardElement].self, forKey: .upserts) ?? []
+            upserts = (try container.decodeIfPresent([LenientElement].self, forKey: .upserts) ?? []).known
             deletes = try container.decodeIfPresent([String].self, forKey: .deletes) ?? []
             replaceAll = try container.decodeIfPresent(Bool.self, forKey: .replaceAll) ?? false
             return
@@ -101,7 +119,7 @@ struct BoardSceneUpdate: Codable, Equatable, Sendable {
             return try legacy.decodeIfPresent(T.self, forKey: codingKey)
         }
         let mode = try decode(String.self, "mode") ?? "upsert"
-        upserts = try decode([BoardElement].self, "elements") ?? []
+        upserts = (try decode([LenientElement].self, "elements") ?? []).known
         deletes = try decode([String].self, "delete_ids") ?? []
         replaceAll = mode == "replace_all"
     }
@@ -132,6 +150,7 @@ enum BoardElementKind: String, Codable, Sendable, CaseIterable {
     case freehand
     case arc
     case angleMarker = "angle_marker"
+    case path
     case svg
 }
 
@@ -316,6 +335,32 @@ struct AngleMarkerElement: Codable, Hashable, Sendable {
     }
 }
 
+/// How a path's overlapping subpaths fill, as SVG's `fill-rule` spells it.
+enum PathFillRule: String, Codable, Sendable {
+    case nonzero
+    case evenodd
+}
+
+/// One SVG path: the curve and freeform primitive, still editable by id.
+///
+/// `d` carries absolute board points rather than a local viewbox, so a path
+/// needs no frame and sits in the same space as every other element. That also
+/// makes it the one geometry the server does not clamp — the numbers are
+/// inside a string it never parses — so the renderer, not the schema, is what
+/// keeps an unparseable or unbounded `d` from reaching a layer.
+struct PathElement: Codable, Hashable, Sendable {
+    var id: String
+    var kind: BoardElementKind = .path
+    var d: String
+    var fillRule: PathFillRule = .nonzero
+    var style: BoardStyle = BoardStyle()
+
+    enum CodingKeys: String, CodingKey {
+        case id, kind, d, style
+        case fillRule = "fill_rule"
+    }
+}
+
 /// A complete raw SVG document, preserved byte-for-byte and rendered
 /// locally by WebKit on the iPad. The frame (`x`, `y`, `width`, `height`)
 /// places it in board coordinates; the SVG owns its internal styling, while
@@ -344,6 +389,7 @@ enum BoardElement: Codable, Hashable, Sendable {
     case freehand(FreehandElement)
     case arc(ArcElement)
     case angleMarker(AngleMarkerElement)
+    case path(PathElement)
     case svg(SVGElement)
 
     var id: String {
@@ -359,6 +405,7 @@ enum BoardElement: Codable, Hashable, Sendable {
         case .freehand(let value): value.id
         case .arc(let value): value.id
         case .angleMarker(let value): value.id
+        case .path(let value): value.id
         case .svg(let value): value.id
         }
     }
@@ -376,6 +423,7 @@ enum BoardElement: Codable, Hashable, Sendable {
         case .freehand: .freehand
         case .arc: .arc
         case .angleMarker: .angleMarker
+        case .path: .path
         case .svg: .svg
         }
     }
@@ -393,6 +441,7 @@ enum BoardElement: Codable, Hashable, Sendable {
         case .freehand(let value): value.style
         case .arc(let value): value.style
         case .angleMarker(let value): value.style
+        case .path(let value): value.style
         case .svg(let value): value.style
         }
     }
@@ -510,6 +559,14 @@ enum BoardElement: Codable, Hashable, Sendable {
                 rightAngle: wire.rightAngle ?? false,
                 style: wire.style
             ))
+        case .path:
+            self = .path(PathElement(
+                id: wire.id,
+                kind: .path,
+                d: wire.d ?? "",
+                fillRule: wire.fillRule ?? .nonzero,
+                style: wire.style
+            ))
         case .svg:
             self = .svg(SVGElement(
                 id: wire.id,
@@ -527,6 +584,40 @@ enum BoardElement: Codable, Hashable, Sendable {
     func encode(to encoder: Encoder) throws {
         try WireElement(element: self).encode(to: encoder)
     }
+}
+
+/// One element as it decodes inside an array, tolerating a kind this build
+/// does not know.
+///
+/// The server can add a primitive at any time, and a build already on a device
+/// cannot be updated to match it. Throwing here would fail the whole array, so
+/// one unrecognised element would take every element beside it with it — and
+/// `TutorEvent.decode(from:)` reads the `board_update` envelope with `try?`,
+/// which turns that into a board that silently stops changing. Skipping the
+/// one element costs exactly what this build cannot draw, and is the same rule
+/// that event already applies to whole event types it does not recognise.
+///
+/// Only an unknown `kind` is tolerated. A known kind carrying a malformed
+/// field is a broken contract rather than version skew, and still throws.
+private struct LenientElement: Decodable {
+    let element: BoardElement?
+
+    private enum CodingKeys: String, CodingKey { case kind }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let kind = try container.decode(String.self, forKey: .kind)
+        guard BoardElementKind(rawValue: kind) != nil else {
+            element = nil
+            return
+        }
+        element = try BoardElement(from: decoder)
+    }
+}
+
+private extension Array where Element == LenientElement {
+    /// The elements this build understands, in wire order.
+    var known: [BoardElement] { compactMap(\.element) }
 }
 
 /// The flat wire shape every element arrives as: primitive geometry plus the
@@ -569,10 +660,14 @@ private struct WireElement: Codable {
     var rightAngle: Bool?
     var svg: String?
 
+    var d: String?
+    var fillRule: PathFillRule?
+
     enum CodingKeys: String, CodingKey {
-        case id, kind, x, y, text, width, height, points, svg
+        case id, kind, x, y, text, width, height, points, svg, d
         case x1, y1, x2, y2, cx, cy, radius
         case role, stroke, fill, opacity, dash, rotation
+        case fillRule = "fill_rule"
         case fontSize = "font_size"
         case alignment
         case headSize = "head_size"
@@ -621,6 +716,8 @@ private struct WireElement: Codable {
             ray1X = value.ray1X; ray1Y = value.ray1Y
             ray2X = value.ray2X; ray2Y = value.ray2Y
             radius = value.radius; rightAngle = value.rightAngle
+        case .path(let value):
+            d = value.d; fillRule = value.fillRule
         case .svg(let value):
             x = value.x; y = value.y; width = value.width; height = value.height
             svg = value.svg
@@ -666,6 +763,8 @@ private struct WireElement: Codable {
         ray2Y = try container.decodeIfPresent(CGFloat.self, forKey: .ray2Y)
         rightAngle = try container.decodeIfPresent(Bool.self, forKey: .rightAngle)
         svg = try container.decodeIfPresent(String.self, forKey: .svg)
+        d = try container.decodeIfPresent(String.self, forKey: .d)
+        fillRule = try container.decodeIfPresent(PathFillRule.self, forKey: .fillRule)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -705,5 +804,7 @@ private struct WireElement: Codable {
         if let ray2Y { try container.encode(ray2Y, forKey: .ray2Y) }
         if let rightAngle { try container.encode(rightAngle, forKey: .rightAngle) }
         if let svg { try container.encode(svg, forKey: .svg) }
+        if let d { try container.encode(d, forKey: .d) }
+        if let fillRule { try container.encode(fillRule, forKey: .fillRule) }
     }
 }

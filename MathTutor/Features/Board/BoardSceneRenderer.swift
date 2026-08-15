@@ -1,4 +1,5 @@
 import CoreGraphics
+import SwiftUI
 import UIKit
 
 /// Precise Core Graphics drawing for the tutor's semantic scene.
@@ -174,6 +175,17 @@ enum BoardSceneRenderer {
             let bounds = elementBounds(.angleMarker(value), boardOrigin: .zero)
             withRotation(style.rotation, around: bounds, in: context) {
                 draw(angleMarker: value, in: context)
+            }
+        case .path(let value):
+            let cgPath = SVGPath.path(from: value.d).cgPath
+            let box = cgPath.boundingBoxOfPath
+            withRotation(style.rotation, around: isDrawable(box) ? box : .null, in: context) {
+                if value.style.fill != "transparent" {
+                    context.addPath(cgPath)
+                    context.fillPath(using: value.fillRule == .evenodd ? .evenOdd : .winding)
+                }
+                context.addPath(cgPath)
+                context.strokePath()
             }
         case .svg(let value):
             let rect = CGRect(x: value.x, y: value.y, width: value.width, height: value.height)
@@ -486,6 +498,11 @@ enum BoardSceneRenderer {
                     height: radius * 2
                 )
             }
+        case .path(let value):
+            let box = SVGPath.path(from: value.d).cgPath.boundingBoxOfPath
+            rect = isDrawable(box)
+                ? box.offsetBy(dx: originX, dy: originY).insetBy(dx: -inset, dy: -inset)
+                : .zero
         case .svg(let value):
             rect = CGRect(
                 x: value.x + originX,
@@ -495,6 +512,22 @@ enum BoardSceneRenderer {
             ).insetBy(dx: -inset, dy: -inset)
         }
         return rect
+    }
+
+    /// Whether a path's bounding box describes something that can be drawn.
+    ///
+    /// A path's `d` is the one geometry the server does not clamp — the
+    /// numbers sit inside a string it never parses — and a malformed `d`
+    /// parses to an empty path here rather than to an error. An empty path's
+    /// box is `.null`, and a coordinate that overflows a `Double` gives an
+    /// infinite one; offsetting or insetting either yields more of the same,
+    /// and rotating one produces `nan`, which Core Animation traps on. Neither
+    /// is drawable, so the arms above report zero bounds and skip the
+    /// rotation, and the cull drops the element from there.
+    private static func isDrawable(_ box: CGRect) -> Bool {
+        !box.isNull && !box.isInfinite
+            && box.minX.isFinite && box.minY.isFinite
+            && box.width.isFinite && box.height.isFinite
     }
 
     private static func bounds(of points: [BoardPoint], origin: CGPoint) -> CGRect {

@@ -607,8 +607,12 @@ async def test_a_client_disconnect_mid_stream_leaves_the_turn_not_running(
     regardless of what triggered it — and checks the one thing the finding
     actually requires: the turn does not stay "running"."""
 
+    # `**_` for the same reason as `_hanging_run_turn` below: without it, every
+    # keyword the endpoint learns to pass makes the call raise TypeError before
+    # the body runs, and the turn reaches "error" through the generic path
+    # instead of the CancelledError path this test is about.
     async def _cancelled_run_turn(*, client, model, effort, bundle, fetch_board,
-                                  handle_memory):
+                                  handle_memory, **_):
         result = TurnResult()
         yield StatusEvent(phase="thinking"), result
         raise asyncio.CancelledError()
