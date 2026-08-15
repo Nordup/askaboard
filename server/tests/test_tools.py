@@ -204,10 +204,22 @@ def test_every_primitive_still_demands_the_whole_style_block():
 
 
 def test_the_tool_surface_stays_inside_its_budget():
-    """Every request carries all seven tools, in every round of every turn.
+    """Every request carries all eleven tools, in every round of every turn.
 
     Constant, so it caches — but it is also read by the model on each of those
     requests, and it is the floor under every prompt the service sends. The
     bound is generous; it is here to catch a schema that quietly doubles.
+
+    The bound was 24,000 when the registry held seven tools. The memory rework
+    added four more and took the surface past it without moving the number, so
+    the guard sat red and guarded nothing; `path` and `math_text` then added
+    two arms. 30,000 re-baselines it against the surface that actually exists
+    — about 28,100 characters — with room to spare and none to waste.
     """
-    assert len(json.dumps(TOOL_DEFINITIONS)) < 24_000
+    # The board rework (docs/superpowers/plans/2026-08-15-board-rework.md)
+    # grows this further: an `image` arm, `fetch_image`, `web_search`, and the
+    # code interpreter each add to the surface, and the prompt flip rewrites
+    # the descriptions. Every task that pushes past this number raises it in
+    # its own commit, having read what the extra bytes bought — never blindly,
+    # because a bound nobody looks at is the state this line just came out of.
+    assert len(json.dumps(TOOL_DEFINITIONS)) < 30_000

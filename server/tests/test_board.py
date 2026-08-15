@@ -512,3 +512,38 @@ def test_an_empty_document_string_is_rejected(kind, fields):
 
     assert update is None
     assert "empty" in (error or "")
+
+
+def test_the_new_kinds_reach_the_device_as_one_flat_element():
+    """The Swift-side contract, pinned here because only this side can break it.
+
+    `WireElement` in `MathTutor/Domain/BoardScene.swift` decodes one flat
+    object: `role`, `stroke`, `fill`, `stroke_width`, `opacity`, `dash`, and
+    `rotation` are its own coding keys, beside the geometry, and the field
+    names are snake_case. Nesting the style under a `style` object, or
+    camel-casing `fill_rule` or `font_size`, would decode to silent defaults on
+    the device — a path drawn in the wrong colour, or notation at the wrong
+    size, with nothing failing anywhere to say so.
+    """
+    update, error = parse_board_update(json.dumps({
+        "mode": "upsert",
+        "delete_ids": [],
+        "elements": [
+            {"id": "p1", "kind": "path", "d": "M0 0 L30 30",
+             "fill_rule": "evenodd", **_STYLE},
+            {"id": "m1", "kind": "math_text", "x": 10, "y": 20,
+             "latex": r"\frac{a}{b}", "font_size": 24, **_STYLE},
+        ],
+    }))
+    assert update is not None, error
+
+    wire = json.loads(update_payload(update).model_dump_json())
+    path, math_text = wire["upserts"]
+
+    style_keys = {"role", "stroke", "fill", "stroke_width", "opacity", "dash", "rotation"}
+    assert set(path) == {"id", "kind", "d", "fill_rule"} | style_keys
+    assert set(math_text) == {"id", "kind", "x", "y", "latex", "font_size"} | style_keys
+    assert "style" not in path and "style" not in math_text
+    assert path["fill_rule"] == "evenodd"
+    assert math_text["font_size"] == 24
+    assert path["stroke"] == "#0A0A0A", "style rides beside the geometry, not under it"
