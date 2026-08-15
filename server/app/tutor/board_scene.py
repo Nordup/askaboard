@@ -429,14 +429,15 @@ class ImageElement(_Identified):
 
 
 class SVGElement(_Identified):
-    """Opaque raw SVG transport for complex multi-part illustrations.
+    """Opaque raw SVG transport for any figure made of several parts.
 
     The server deliberately does not parse, whitelist, rewrite, or sanitize the
     document; the device interprets it locally. The only checks are practical
-    bounds: a finite clamped frame, a non-empty document, and a generous length
-    cap chosen to fit the scene limit. What the device cannot draw is named by
-    `lint_svg` at the bottom of this module — as warnings the model reads on
-    the tool's ack, never as a refusal that would leave the board blank.
+    bounds: a clamped anchor and frame, a non-empty document, and a generous
+    length cap chosen to fit the scene limit. What the device cannot draw, and
+    what it draws while dropping the effect asked for, is named by `lint_svg`
+    at the bottom of this module — as warnings the model reads on the tool's
+    ack, never as a refusal that would leave the board blank.
 
     A figure normally has no frame. The device draws the document's `viewBox`
     one user unit to one board point, with its top-left corner at `(x, y)`, so

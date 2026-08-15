@@ -286,7 +286,8 @@ the server. What the tutor draws is a separate structured scene exposed through
 the strict `update_board` function tool in
 [`app/tutor/tools.py`](app/tutor/tools.py). The tool takes a discriminated
 union of primitives — `text`, `line`, `arrow`, `rectangle`, `ellipse`,
-`circle`, `polygon`, `polyline`, `freehand`, `arc`, `angle_marker`, and a raw
+`circle`, `polygon`, `polyline`, `freehand`, `arc`, `angle_marker`, `path`,
+`math_text`, `image`, and a raw
 `svg` element — each with a stable id, exact board coordinates, and shared
 style fields (role, stroke/fill colors, width, opacity, dash, rotation where
 meaningful).
@@ -298,7 +299,11 @@ all clamped server-side for ordinary primitives, malformed JSON is dropped,
 and the translator emits a typed `board_update` event carrying only the
 validated payload. The `svg` element is deliberately opaque transport: the
 server checks only that the complete raw SVG document is non-empty, at most
-40,000 characters, and placed in a finite clamped frame. It never parses,
+40,000 characters, and anchored at a clamped board point. The figure normally
+carries no frame at all: `width` and `height` of 0 mean the document's own
+`viewBox` is drawn one user unit to one board point with its top-left corner
+at `(x, y)`, so a figure is sized once; a positive frame is the legacy path,
+and scales the whole document into that box. It never parses,
 whitelists, rewrites, or sanitizes the exact string; all interpretation happens
 locally on the iPad. The tool loop answers `update_board` with its own
 `applied` ack (or `rejected` for malformed arguments), never with the
