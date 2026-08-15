@@ -74,6 +74,40 @@ final class StructuredChatTextTests: XCTestCase {
         XCTAssertEqual(TutorMathMarkdownAdapter.renderableMarkdown(input), expected)
     }
 
+    func testPaddedInlineDollarSpanIsTrimmedForTheRenderer() {
+        // The failing message of 2026-08-15: "$ \mathrm{J} $" with padding.
+        // The renderer's currency guard rejects spans that start or end with
+        // whitespace, so the padded span showed as raw source.
+        let input = #"A joule, symbol $ \mathrm{J} $, measures energy."#
+
+        XCTAssertEqual(
+            TutorMathMarkdownAdapter.renderableMarkdown(input),
+            #"A joule, symbol $\mathrm{J}$, measures energy."#
+        )
+    }
+
+    func testUnpaddedInlineDollarSpanPassesThroughUnchanged() {
+        let input = #"Energy $E_k$ grows."#
+
+        XCTAssertEqual(TutorMathMarkdownAdapter.renderableMarkdown(input), input)
+    }
+
+    func testCurrencyStaysProse() {
+        for input in [
+            "It costs $5 and $8 total.",
+            "Save $ 20 on the bundle price today.",
+            "A lone $ sign stays.",
+        ] {
+            XCTAssertEqual(TutorMathMarkdownAdapter.renderableMarkdown(input), input)
+        }
+    }
+
+    func testPaddedDollarSpanCutByStreamingStaysLiteral() {
+        let input = #"symbol $ \mathrm{J"#
+
+        XCTAssertEqual(TutorMathMarkdownAdapter.renderableMarkdown(input), input)
+    }
+
     func testDollarDisplayBlockSurvivesItsOwnNewlines() {
         // The failing message of 2026-08-15: the tutor emitted a $$ block with
         // the TeX on its own lines. Newlines inside must not become hard

@@ -81,6 +81,35 @@ enum TutorMathMarkdownAdapter {
                 break
             }
 
+            if remaining.first == "$" {
+                // Single-dollar inline math. The renderer follows the standard
+                // rule that a span must not start or end with whitespace (the
+                // currency guard), but the tutor writes "$ \mathrm{J} $" with
+                // padding, which then shows as raw source. Trim the padding —
+                // only for spans that plausibly are math, so "$5 and $8" stays
+                // prose. Spans that need no trim pass through untouched.
+                let contentStart = remaining.index(after: remaining.startIndex)
+                if let close = inlineDollarCloser(in: remaining, after: contentStart) {
+                    let inner = String(remaining[contentStart..<close])
+                    let trimmed = inner.trimmingCharacters(in: .whitespaces)
+                    let needsTrim = trimmed != inner
+                    let looksLikeMath = !trimmed.isEmpty &&
+                        (!trimmed.contains(" ") || trimmed.contains(where: { "\\^_{}=".contains($0) }))
+                    if needsTrim && looksLikeMath {
+                        result += "$"
+                        result += rendererCompatibleMath(trimmed)
+                        result += "$"
+                        remaining = remaining[remaining.index(after: close)...]
+                        previousWasNewline = false
+                        continue
+                    }
+                }
+
+                result.append(remaining.removeFirst())
+                previousWasNewline = false
+                continue
+            }
+
             if remaining.hasPrefix("\\(") || remaining.hasPrefix("\\[") {
                 let isDisplay = remaining.hasPrefix("\\[")
                 let contentStart = remaining.index(remaining.startIndex, offsetBy: 2)
@@ -139,6 +168,33 @@ enum TutorMathMarkdownAdapter {
         math
             .replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "\\,", with: "\\text{ }")
+    }
+
+    /// Finds the closing `$` of a single-dollar span on the same line, or nil.
+    /// An escaped `\$` does not close, a `$$` is display math (not ours), and
+    /// a newline ends the search — inline math never spans lines, which also
+    /// keeps a lone currency "$" from swallowing the rest of the message.
+    private static func inlineDollarCloser(
+        in text: Substring,
+        after start: Substring.Index
+    ) -> Substring.Index? {
+        var index = start
+        while index < text.endIndex {
+            let ch = text[index]
+            if ch == "\n" { return nil }
+            if ch == "\\" {
+                index = text.index(after: index)
+                if index < text.endIndex { index = text.index(after: index) }
+                continue
+            }
+            if ch == "$" {
+                let next = text.index(after: index)
+                if next < text.endIndex, text[next] == "$" { return nil }
+                return index
+            }
+            index = text.index(after: index)
+        }
+        return nil
     }
 
     /// Finds the first `\<closer>` pair at or after `start`. A backslash
