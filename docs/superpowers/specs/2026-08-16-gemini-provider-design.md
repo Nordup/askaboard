@@ -426,20 +426,22 @@ Tests are written as part of the work and run by the repository owner.
 
 ## Coordination
 
-A separate session is fixing a client/server mismatch on reasoning effort: the
-settings pane offers a `None` effort that `REASONING_EFFORT_ALLOWLIST` rejects,
-so selecting it 422s the turn.
+**Resolved on 2026-08-16.** A separate session fixed the client/server mismatch
+on reasoning effort while this design was being written. The settings pane had
+offered a `None` effort that `REASONING_EFFORT_ALLOWLIST` rejects, so selecting
+it 422'd every following turn.
 
-That work touches `REASONING_EFFORT_ALLOWLIST` in `app/config.py`,
-`ReasoningEffort` in `Domain/Models.swift`, and
-`SettingsOptions.efforts(selected:)` — which is exactly what the Device and
-Server sections above change.
+That session removed the `.none` case from `ReasoningEffort` rather than adding
+`"none"` to the server allowlist. So client and server now agree at five levels:
+`low`, `medium`, `high`, `xhigh`, `max`.
 
-Whichever lands first, the second one rebases onto it. If the effort fix lands
-first, `EFFORTS_FOR_MODEL` must carry `none` forward for the `gpt-5.6` models
-rather than dropping it. If this design lands first, the effort fix decides
-`none` per model instead of globally, and Gemini's `minimal` becomes the obvious
-home for it.
+The consequence for this design is that **`EFFORTS_FOR_MODEL` does not need to
+carry `none`** for any model. The `_OPENAI_EFFORTS` set is exactly the five above
+and `_GEMINI_EFFORTS` is the first three.
+
+Gemini's `minimal` thinking level therefore has no client case to map onto, which
+is why it stays out of scope rather than becoming the obvious home for `none`.
+Adding it later means adding a client case first.
 
 ## Out of scope
 
