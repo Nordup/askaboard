@@ -62,6 +62,12 @@ final class VoiceSessionCoordinator: VoiceSessionControlling {
     private var delegatedTurnsRunning = 0
     private var lastServerEventAt: TimeInterval = 0
     private var lastKeepaliveAt: TimeInterval = 0
+    /// Input-transcription deltas accumulated per item id while the learner
+    /// speaks. The `completed` transcript is authoritative and replaces this
+    /// wholesale; what the accumulation is *for* is the failure path — a
+    /// transcription that fails after its deltas streamed still has to settle
+    /// the live bubble with something honest.
+    private var userTranscriptAccumulation: [String: String] = [:]
 
     /// Incremented at every start and teardown. A delegated turn that outlives the call it
     /// belongs to (deliberate — the worker's message must still land in the thread) compares
@@ -234,17 +240,33 @@ final class VoiceSessionCoordinator: VoiceSessionControlling {
             // closed, so the tutor cannot be left permanently at a tenth volume.
             connection?.setRemoteAudioDucked(false)
 
-        case .inputTranscriptionDelta:
-            break
+        case .inputTranscriptionDelta(let itemId, let delta):
+            guard !delta.isEmpty else { return }
+            userTranscriptAccumulation[itemId, default: ""] += delta
+            hooks?.streamUserTranscript?(itemId, delta)
 
-        case .inputTranscriptionCompleted(_, let transcript, let presence):
-            // Words, not merely a committed turn: a cough or the room can close a turn with an
-            // empty transcript, and that is not something to put in the thread.
-            guard presence == .words else { return }
-            hooks?.appendUserUtterance(transcript)
+        case .inputTranscriptionCompleted(let itemId, let transcript, let presence):
+            // Words settle the live bubble as a normal learner message; anything
+            // else — a cough or the room closing a turn with an empty transcript —
+            // finalizes with nil, which removes the bubble rather than putting
+            // silence in the thread.
+            finalizeUserUtterance(itemID: itemId, with: presence == .words ? transcript : nil)
 
-        case .inputTranscriptionFailed(_, let message):
+        case .inputTranscriptionFailed(let itemId, let message):
             log.error("input transcription failed: \(message, privacy: .public)")
+            // At a wired site deltas may already be on screen, so a failed
+            // transcription must still settle the live bubble: keep what
+            // streamed (it is the transcriber's own words, and the learner
+            // watched them arrive), or remove a bubble that never got any. At
+            // an unwired site nothing streamed and nothing appends — the
+            // legacy behavior, log only.
+            if let itemId, hooks?.finalizeUserUtterance != nil {
+                let streamed = userTranscriptAccumulation[itemId] ?? ""
+                let hasWords = !streamed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                finalizeUserUtterance(itemID: itemId, with: hasWords ? streamed : nil)
+            } else if let itemId {
+                userTranscriptAccumulation[itemId] = nil
+            }
 
         case .responseCreated(let responseId):
             bargeIn.responseCreated()
@@ -298,6 +320,22 @@ final class VoiceSessionCoordinator: VoiceSessionControlling {
 
         case .unhandled:
             break
+        }
+    }
+
+    // MARK: - Learner transcript
+
+    /// Closes a learner item: hands the thread the authoritative transcript,
+    /// nil meaning silence — remove the live bubble. A site that has not
+    /// wired the streaming pair gets the legacy behavior instead: words
+    /// append on completion through `appendUserUtterance`, silence appends
+    /// nothing.
+    private func finalizeUserUtterance(itemID: String, with text: String?) {
+        userTranscriptAccumulation[itemID] = nil
+        if let finalize = hooks?.finalizeUserUtterance {
+            finalize(itemID, text)
+        } else if let text {
+            hooks?.appendUserUtterance(text)
         }
     }
 
@@ -556,6 +594,7 @@ final class VoiceSessionCoordinator: VoiceSessionControlling {
         muteGuard = MicMuteGuard()
         speechProxy = AssistantSpeechProxy()
         captureReducer = CaptureLevelReducer()
+        userTranscriptAccumulation = [:]
         delegatedTurnsRunning = 0
         latestMicLevel = 0
         latestMicLevelAt = 0

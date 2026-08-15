@@ -33,7 +33,15 @@ enum CollapsedDockMetrics {
 /// encode a fourth shadow that exists only as a drift, this uses `.control`; the difference
 /// is 2/255 and 2/255 of alpha on a `#141432` shadow over white, which is below what the
 /// display resolves.
-struct CollapsedDock: View {
+///
+/// **During a live voice call the orb slot shows the animated mascot instead of the
+/// orb.** It arrives as `liveFace`, built by the screen, because the mascot is a voice
+/// feature's view and this component is shell — no Shell component names a feature type,
+/// and the dock is not where that changes. The slot box, the circular tap shape and the
+/// label stay exactly the orb's: the face is visual only, the whole dock remains the tap
+/// target that opens the chat, and the call's controls (mute, end) live in the voice bar
+/// there. No extra discs here — that is the decision, not an omission.
+struct CollapsedDock<LiveFace: View>: View {
     /// Whether the board is currently attached to the composer. This is the state
     /// `btn/select` draws — see `selectButton`.
     var isSelectionAttached: Bool = false
@@ -42,6 +50,9 @@ struct CollapsedDock: View {
     var canSelect: Bool = true
     let onSelect: () -> Void
     let onOpenTutor: () -> Void
+    /// The orb slot's live-call face, `nil` whenever no call is live — and then the slot
+    /// is the plain orb, pixel for pixel what it was before voice existed.
+    var liveFace: LiveFace? = nil
 
     /// Orb first, then the selection button. The dock anchors to the board's bottom-**left**
     /// corner now, so the orb takes the outer side — the side the reach comes from — and the
@@ -101,13 +112,45 @@ struct CollapsedDock: View {
         .accessibilityAddTraits(isSelectionAttached ? .isSelected : [])
     }
 
+    /// The slot is framed here rather than by its occupant: `Orb(.dock)` sizes itself to
+    /// the same 64pt box, but the mascot's layout box is only its 44×34 face — the dock
+    /// orb's own body, which is where `MascotVariant.dock` centres it — so the explicit
+    /// frame is what keeps the row's geometry and the circular tap shape identical in
+    /// both states. Either occupant's glow overdraws the slot freely; neither hit-tests.
     private var orbButton: some View {
         Button(action: onOpenTutor) {
-            Orb(.dock)
-                .contentShape(Circle())
+            Group {
+                if let liveFace {
+                    liveFace
+                } else {
+                    Orb(.dock)
+                }
+            }
+            .frame(width: CollapsedDockMetrics.orb, height: CollapsedDockMetrics.height)
+            .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Open the tutor")
+    }
+}
+
+/// The dock with nothing live in the orb slot — every pre-voice call site, unchanged.
+/// (The memberwise initializer cannot infer `LiveFace` from an omitted argument, so the
+/// default is stated once here rather than at each site.)
+extension CollapsedDock where LiveFace == EmptyView {
+    init(
+        isSelectionAttached: Bool = false,
+        canSelect: Bool = true,
+        onSelect: @escaping () -> Void,
+        onOpenTutor: @escaping () -> Void
+    ) {
+        self.init(
+            isSelectionAttached: isSelectionAttached,
+            canSelect: canSelect,
+            onSelect: onSelect,
+            onOpenTutor: onOpenTutor,
+            liveFace: nil
+        )
     }
 }
 

@@ -3,7 +3,8 @@ import SwiftUI
 /// The live-voice mascot: the app's orb come alive for the duration of a call.
 ///
 /// A single `Canvas` under a `TimelineView` at 30 fps — the sleep orb's architecture. The
-/// layout slot is exactly the face box (72×56 docked, 120×94 full screen); the Canvas is a
+/// layout slot is exactly the face box (72×56 docked, 120×94 full screen, 44×34 in the
+/// collapsed dock's orb slot); the Canvas is a
 /// larger square drawn as a `background`, because the halo and the talking ripples overflow
 /// the slot on every side and a Canvas clips to its own bounds. Whoever places this against
 /// a clipping edge needs the same care `Orb` asks for: the face box is the layout slot, the
@@ -89,7 +90,11 @@ private struct MascotStateRow: View {
     let variant: MascotVariant
 
     var body: some View {
-        let spacing: CGFloat = variant == .panel ? 120 : 200
+        let spacing: CGFloat = switch variant {
+        case .dock: 110
+        case .panel: 120
+        case .fullScreen: 200
+        }
         HStack(spacing: spacing) {
             VoiceMascotView(display: pinnedDisplay(.idle), variant: variant)
             VoiceMascotView(display: pinnedDisplay(.listening, userLevel: 0.55), variant: variant)
@@ -108,6 +113,10 @@ private struct MascotStateRow: View {
 
 #Preview("Full screen 120 — five states") {
     MascotStateRow(variant: .fullScreen)
+}
+
+#Preview("Dock 44 — five states") {
+    MascotStateRow(variant: .dock)
 }
 
 #Preview("Panel 72 — connecting") {

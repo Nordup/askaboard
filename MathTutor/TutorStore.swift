@@ -536,12 +536,16 @@ final class TutorStore: ObservableObject {
 
     // MARK: - Voice mode
 
-    /// The learner utterance the live voice call streamed most recently — the
-    /// bubble board 28 tints and marks with the small waveform. Set by
-    /// `appendVoiceUtterance`, cleared when the exchange it opened finishes
-    /// (`finishVoiceAssistantResponse`), when the call ends, and on every
-    /// session switch. `nil` the whole rest of the time, which is every bubble
-    /// drawn plain.
+    /// The learner utterance the live voice call is streaming right now — the
+    /// bubble board 28 tints and marks with the small waveform. Set by the
+    /// first delta of `streamVoiceUserTranscript` and cleared when
+    /// `finalizeVoiceUserUtterance` settles the utterance, so the bubble is
+    /// live exactly while the learner speaks and detaches as a plain message
+    /// the moment the utterance ends. The legacy completed-only path
+    /// (`appendVoiceUtterance`) still sets it and clears it at
+    /// `finishVoiceAssistantResponse`, its original lifetime. Cleared too when
+    /// the call ends and on every session switch. `nil` the whole rest of the
+    /// time, which is every bubble drawn plain.
     @Published private(set) var liveVoiceUtteranceID: UUID?
 
     /// Voice-marked tutor messages keyed by realtime item id, so a transcript
@@ -549,6 +553,13 @@ final class TutorStore: ObservableObject {
     /// can take its spoken rephrase back out of the thread. Not persisted:
     /// item ids are a property of the live call, and a relaunch has no call.
     private var voiceMessageIDsByItem: [String: UUID] = [:]
+
+    /// The learner-side twin: in-progress learner utterances keyed by realtime
+    /// item id, held only from first delta to finalization. Keyed by item id
+    /// rather than a single "current utterance" slot because transcription
+    /// runs behind the microphone — a barge-in can start item B's deltas
+    /// before item A's completed transcript lands.
+    private var voiceLearnerMessageIDsByItem: [String: UUID] = [:]
 
     /// True between `voiceCallBegan()` and `voiceCallEnded()`. The transcript
     /// hooks guard on it so a delta from an engine already told to close
@@ -572,7 +583,9 @@ final class TutorStore: ObservableObject {
     }
 
     /// A completed learner utterance from the live call — hooks'
-    /// `appendUserUtterance`.
+    /// `appendUserUtterance`, the *legacy* path: sites that wire the
+    /// streaming pair (`streamUserTranscript` / `finalizeUserUtterance`)
+    /// never reach it, and the scripted engine still does.
     ///
     /// The worker reads the server's own rows, so the utterance reaches them
     /// the way an edit's cut does: the `replaceTranscript` debt, paid at the
@@ -587,7 +600,71 @@ final class TutorStore: ObservableObject {
         liveVoiceUtteranceID = message.id
         session.lastSavedAt = .now
         persist()
-        pendingTranscriptSync = Array(session.messages)
+        pendingTranscriptSync = finalizedThreadSnapshot()
+    }
+
+    /// A learner input-transcription delta from the live call — hooks'
+    /// `streamUserTranscript`. The live bubble is created by the item's first
+    /// delta — voice-marked, taking board 28's live treatment through
+    /// `liveVoiceUtteranceID` — and grows in place while the learner speaks,
+    /// the same lazily-created streaming pattern as
+    /// `streamVoiceAssistantText`. No `persist()` per delta, for
+    /// `requestTutor`'s reason; the words are not final until
+    /// `finalizeVoiceUserUtterance` says so.
+    func streamVoiceUserTranscript(itemID: String, delta: String) {
+        guard isVoiceCallActive else { return }
+        if let id = voiceLearnerMessageIDsByItem[itemID],
+           let index = session.messages.firstIndex(where: { $0.id == id }) {
+            session.messages[index].text += delta
+            liveVoiceUtteranceID = id
+            return
+        }
+        // A bubble must open with words: a leading-whitespace delta is held
+        // back until one arrives, or the thread grows an empty tinted pill.
+        let opening = String(delta.drop(while: \.isWhitespace))
+        guard !opening.isEmpty else { return }
+        let message = TutorMessage(role: .learner, text: opening, isVoice: true)
+        session.messages.append(message)
+        voiceLearnerMessageIDsByItem[itemID] = message.id
+        liveVoiceUtteranceID = message.id
+    }
+
+    /// The learner's utterance for `itemID` ended — hooks'
+    /// `finalizeUserUtterance`.
+    ///
+    /// Words replace whatever streamed — the completed transcript is
+    /// authoritative and can differ from its own deltas — the live tint
+    /// clears, and the settled message joins the transcript debt, which is
+    /// the first moment the server may see it: in-progress text never syncs.
+    /// nil or blank is silence — a cough, the room — and removes the live
+    /// bubble; silence is not something to put in the thread.
+    func finalizeVoiceUserUtterance(itemID: String, text: String?) {
+        let liveID = voiceLearnerMessageIDsByItem.removeValue(forKey: itemID)
+        if let liveID, liveVoiceUtteranceID == liveID {
+            liveVoiceUtteranceID = nil
+        }
+        let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        guard !trimmed.isEmpty else {
+            guard let liveID else { return }
+            session.messages.removeAll { $0.id == liveID }
+            persist()
+            return
+        }
+        if let liveID, let index = session.messages.firstIndex(where: { $0.id == liveID }) {
+            session.messages[index].text = trimmed
+        } else if isVoiceCallActive {
+            // Completed without any delta first — a transcriber quick enough
+            // to skip streaming, or deltas lost on the wire. Same outcome as
+            // the legacy append; the guard keeps a stray finalize from an
+            // engine already told to close out of a thread the call has left.
+            session.messages.append(TutorMessage(role: .learner, text: trimmed, isVoice: true))
+        } else {
+            return
+        }
+        session.lastSavedAt = .now
+        persist()
+        pendingTranscriptSync = finalizedThreadSnapshot()
     }
 
     /// An assistant spoken-transcript delta — hooks' `streamAssistantText`.
@@ -620,24 +697,65 @@ final class TutorStore: ObservableObject {
     /// small talk (no delegation) stays, and joins the transcript debt so the
     /// worker sees it on the next turn.
     func finishVoiceAssistantResponse(itemID: String, delegated: Bool) {
-        liveVoiceUtteranceID = nil
+        // The legacy live tint ends with the exchange — but never a learner
+        // bubble that is still streaming: a barge-in finishes the interrupted
+        // response exactly while the learner's next utterance is mid-flight.
+        if let id = liveVoiceUtteranceID, !voiceLearnerMessageIDsByItem.values.contains(id) {
+            liveVoiceUtteranceID = nil
+        }
         guard let id = voiceMessageIDsByItem.removeValue(forKey: itemID) else { return }
         if delegated {
             session.messages.removeAll { $0.id == id }
         } else {
             session.lastSavedAt = .now
-            pendingTranscriptSync = Array(session.messages)
+            pendingTranscriptSync = finalizedThreadSnapshot()
         }
         persist()
     }
 
+    /// The thread with every in-progress voice message left out — the only
+    /// thing `pendingTranscriptSync` may carry. The server's transcript, and
+    /// through it the worker's context, holds finalized utterances only: a
+    /// partial the learner is still speaking, or a spoken rephrase the dedup
+    /// rule may yet remove, is not conversation history.
+    private func finalizedThreadSnapshot() -> [TutorMessage] {
+        let liveIDs = Set(voiceLearnerMessageIDsByItem.values)
+            .union(voiceMessageIDsByItem.values)
+        guard !liveIDs.isEmpty else { return Array(session.messages) }
+        return session.messages.filter { !liveIDs.contains($0.id) }
+    }
+
     /// The call ended. Nothing is live any more, and a stray item stream from
     /// a closed engine must not write into the thread — the guard above and
-    /// the emptied map are the two halves of that promise.
+    /// the emptied maps are the halves of that promise. An utterance caught
+    /// mid-stream settles with the words it got — they are real speech the
+    /// learner watched arrive — and one still empty vanishes.
     func voiceCallEnded() {
         isVoiceCallActive = false
         liveVoiceUtteranceID = nil
         voiceMessageIDsByItem = [:]
+        settleInFlightLearnerUtterances()
+    }
+
+    private func settleInFlightLearnerUtterances() {
+        guard !voiceLearnerMessageIDsByItem.isEmpty else { return }
+        let liveIDs = Set(voiceLearnerMessageIDsByItem.values)
+        voiceLearnerMessageIDsByItem = [:]
+        var kept = false
+        session.messages.removeAll { message in
+            guard liveIDs.contains(message.id) else { return false }
+            return message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        for index in session.messages.indices where liveIDs.contains(session.messages[index].id) {
+            session.messages[index].text = session.messages[index].text
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            kept = true
+        }
+        if kept {
+            session.lastSavedAt = .now
+            pendingTranscriptSync = finalizedThreadSnapshot()
+        }
+        persist()
     }
 
     /// A delegated voice turn the store declined to start.
@@ -725,7 +843,7 @@ final class TutorStore: ObservableObject {
             clearEvaluation()
         }
         session.messages.removeSubrange(index...)
-        pendingTranscriptSync = Array(session.messages)
+        pendingTranscriptSync = finalizedThreadSnapshot()
     }
 
     func clearDrawing() {
@@ -994,6 +1112,7 @@ final class TutorStore: ObservableObject {
         isVoiceCallActive = false
         liveVoiceUtteranceID = nil
         voiceMessageIDsByItem = [:]
+        voiceLearnerMessageIDsByItem = [:]
         refreshSessions()
     }
 

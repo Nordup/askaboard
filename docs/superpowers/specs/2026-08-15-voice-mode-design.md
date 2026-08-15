@@ -58,7 +58,7 @@ Execution (client, `VoiceSessionCoordinator`): on `send_to_tutor` → run a **no
 
 ### Transcripts and the thread
 
-- User utterance: `conversation.item.input_audio_transcription.completed` → append a learner message (voice-marked) to the thread + transcript sync (existing `PUT /v1/sessions/{id}/transcript`).
+- User utterance: `conversation.item.input_audio_transcription.delta` → stream into a live learner bubble (voice-marked, board 28's live treatment) *while the learner speaks*; `…transcription.completed` settles it — the completed transcript is authoritative and replaces the streamed deltas — into a plain learner message + transcript sync (existing `PUT /v1/sessions/{id}/transcript`). An empty or absent completed transcript (silence — a cough, the room) removes the live bubble instead. The transcript sync only ever carries finalized utterances, never in-progress text.
 - Assistant speech: `response.output_audio_transcript.delta` → stream into a tutor message in the thread.
 - **De-duplication rule**: when a voice response called `send_to_tutor`, the worker's streamed message is the canonical thread content — suppress that voice response's own spoken transcript from the thread (it is a rephrase). Voice-only small talk (no delegation) appears in the thread.
 - The worker therefore always sees the full conversation, voice included, through the existing `assemble_context`.

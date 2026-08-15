@@ -19,6 +19,11 @@ enum MascotVariant: String, CaseIterable, Sendable {
     case panel
     /// Board 29: full screen, 120pt face.
     case fullScreen
+    /// The collapsed dock's orb slot during a live call. No board draws this one — the
+    /// decision is "the live mascot at the dock's existing orb size, nothing else" — so
+    /// every number is `OrbSize.dock`'s own, promoted into the mascot's registration
+    /// system rather than scaled off a board. See `metrics` for the derivations.
+    case dock
 }
 
 /// Which stop list the core (the opaque lavender centre) uses. The two live boards draw it
@@ -111,6 +116,42 @@ extension MascotVariant {
                     paintsAboveBlooms: false
                 ),
                 canvasSide: 560
+            )
+        case .dock:
+            // The mascot replaces the orb inside the orb's own 64pt slot, so the face is
+            // the dock orb's 44×34 body and the eye row is the orb's: 4 + (34 − 4 − 5.5)/2
+            // + 5.5/2 = 19 (`OrbSize.dock`). The reference sheet lands exactly on the orb
+            // here — the resting eye is note/27's Ø6 × the 44/48 state scale = 5.5, the
+            // orb's own — and only the eye spread differs: 22 × 44/48 ≈ 20.2 against the
+            // orb's 19.5, a third of a point per eye.
+            //
+            // The bloom box: note/27 rests the halo at 104/130 of the listening box, and
+            // the resting mascot must sit where the resting orb sits, so the box is the
+            // orb's halo × 130/104: 130×128 → 162.5×160. Board 28 validates the rule:
+            // 240×228 × 104/130 = 192×182.4 against the panel orb's 190×180 halo. The
+            // dock orb's halo is centred on its frame (−33 + 65 − 32 = 0), so the
+            // registration is (0, 0).
+            //
+            // The core is the orb's own third gradient, stacked as `OrbHalo` stacks it:
+            // riding in the bloom box, ellipse 29% × 28% at (50%, 47%), hero stops,
+            // under the blooms.
+            MascotMetrics(
+                face: CGSize(width: 44, height: 34),
+                eyeCentreY: 19,
+                bloomBox: CGSize(width: 162.5, height: 160),
+                bloomCentreOffset: .zero,
+                core: MascotCoreSpec(
+                    box: CGSize(width: 162.5, height: 160),
+                    centreOffset: .zero,
+                    radiusFraction: CGSize(width: 0.29, height: 0.28),
+                    centreFraction: CGPoint(x: 0.50, y: 0.47),
+                    stops: .hero,
+                    paintsAboveBlooms: false
+                ),
+                // The two boards' own proportion (320/240 and 560/422, both ≈ 4/3):
+                // contains the talking halo (162.5 × ~1.19 ≈ 194) and the widest ripple
+                // (Ø148.1 × 44/48 ≈ 136).
+                canvasSide: 216
             )
         }
     }

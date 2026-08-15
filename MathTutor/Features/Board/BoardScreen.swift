@@ -511,7 +511,17 @@ struct BoardScreen: View {
                     isSelectionAttached: uiState.selection.capturesBoardDrags,
                     canSelect: capture.hasInk,
                     onSelect: toggleBoardSelection,
-                    onOpenTutor: expandTutorFromDock
+                    onOpenTutor: expandTutorFromDock,
+                    // A call on a collapsed chat shows in the dock's orb slot: the live
+                    // mascot at the dock's own orb size, driven by the same 10 Hz display
+                    // the panel and full-screen stages observe, on the screen's shared
+                    // `\.mascotMotion` — so the envelopes ride the docked ↔ collapsed
+                    // swap like every other presentation switch. The dock's tap is
+                    // untouched (it opens the chat); mute and end live in the voice bar
+                    // there, deliberately not here.
+                    liveFace: voice.isLive
+                        ? VoiceMascotView(display: voice.display, variant: .dock)
+                        : nil
                 )
             }
             // The switch's directional polish, on the whole docked/collapsed surface: it
@@ -795,7 +805,13 @@ struct BoardScreen: View {
             // start while this reads true. `startVoiceChat` stops dictation
             // and waits its session out first, so on our paths this is already
             // false by the time the engine asks.
-            isDictationActive: { [weak dictation] in dictation?.isListening ?? false }
+            isDictationActive: { [weak dictation] in dictation?.isListening ?? false },
+            streamUserTranscript: { [weak store] itemID, delta in
+                store?.streamVoiceUserTranscript(itemID: itemID, delta: delta)
+            },
+            finalizeUserUtterance: { [weak store] itemID, text in
+                store?.finalizeVoiceUserUtterance(itemID: itemID, text: text)
+            }
         )
     }
 

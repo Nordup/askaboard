@@ -41,7 +41,9 @@ struct VoiceSessionHooks {
     /// tutor's final message text. Side effects (thread streaming, board
     /// updates, step chips, recording) happen inside the normal pipeline.
     var runTutorTurn: (_ request: String) async -> Result<String, Error>
-    /// A completed learner utterance transcript arrived.
+    /// A completed learner utterance transcript arrived. [Streaming-transcript
+    /// amendment] Now the *legacy* finalize path: an engine calls it only at a
+    /// site that has not wired `finalizeUserUtterance`, and only with words.
     var appendUserUtterance: (_ text: String) -> Void
     /// Assistant spoken-transcript delta for the item with this id.
     var streamAssistantText: (_ itemID: String, _ delta: String) -> Void
@@ -61,6 +63,20 @@ struct VoiceSessionHooks {
     /// existing hook sites keep compiling; wire it to the dictation
     /// controller's live state.
     var isDictationActive: () -> Bool = { false }
+    /// [Streaming-transcript amendment, 2026-08-15] The learner's spoken words
+    /// stream into the thread *while* they speak, not after the utterance
+    /// closes. `streamUserTranscript` carries one input-transcription delta
+    /// for the realtime item with this id — the thread grows a live learner
+    /// bubble from them. `finalizeUserUtterance` closes that item: non-nil
+    /// text is the authoritative final transcript and *replaces* everything
+    /// streamed (the completed transcript can differ from its own deltas);
+    /// nil is silence — a cough, the room — and removes the live bubble.
+    /// Optional with nil defaults so every existing construction site keeps
+    /// compiling unchanged; an engine facing a site that wired neither falls
+    /// back to `appendUserUtterance` on completion — the pre-streaming
+    /// behavior, exactly.
+    var streamUserTranscript: ((_ itemID: String, _ delta: String) -> Void)? = nil
+    var finalizeUserUtterance: ((_ itemID: String, _ text: String?) -> Void)? = nil
 }
 
 /// The engine as the UI sees it.
