@@ -554,8 +554,12 @@ class MTTypesetter {
         // Only perform interatom breaking when maxWidth is set
         guard maxWidth > 0 else { return false }
 
-        // Don't break if current line is empty
-        guard currentLine.length > 0 else { return false }
+        // Don't break at the start of a visual line. The text run alone is the
+        // wrong signal: fractions, scripts and spaces flush the run while the
+        // visual line keeps going (currentPosition.x > 0), and gating on the
+        // run skipped the width check for almost every atom of a script-heavy
+        // formula — it then overflowed and clipped instead of wrapping.
+        guard currentLine.length > 0 || currentPosition.x > 0 else { return false }
 
         // Performance optimization: if we've determined remaining content fits, skip breaking checks
         if remainingContentFits {
@@ -596,6 +600,7 @@ class MTTypesetter {
         let visualLineWidth = currentPosition.x + currentLineWidth
         let atomWidth = calculateAtomWidth(atom, prevNode: prevNode)
         let projectedWidth = visualLineWidth + atomWidth
+        print("BRKDBG atom=\(atom.nucleus) x=\(currentPosition.x) lw=\(currentLineWidth) proj=\(projectedWidth) fits=\(remainingContentFits)")
 
         // If we're well within the limit, no need to break
         if projectedWidth <= maxWidth {
@@ -677,8 +682,13 @@ class MTTypesetter {
     /// Estimate the approximate width of remaining atoms
     /// Returns a conservative (upper bound) estimate
     private func estimateRemainingAtomsWidth(_ atoms: [MTMathAtom]) -> CGFloat {
-        // Use a simple heuristic: average character width * character count
-        let avgCharWidth = styleFont.mathTable?.muUnit ?? (styleFont.fontSize / 18.0)
+        // Use a simple heuristic: average character width * character count.
+        // The average must be a plausible glyph advance (~half an em). The
+        // previous value was muUnit (1/18 em ≈ 1pt): a 9x underestimate that
+        // routinely set remainingContentFits on formulas whose tail did NOT
+        // fit, permanently disabling line breaking, so the formula overflowed
+        // and clipped instead of wrapping.
+        let avgCharWidth = styleFont.fontSize * 0.5
         var totalChars = 0
 
         for atom in atoms {
@@ -936,7 +946,13 @@ class MTTypesetter {
         var lastType:MTMathAtomType!
         for (index, atom) in preprocessed.enumerated() {
             // Get next atoms for look-ahead (up to 3 atoms ahead)
-            let nextAtoms = Array(preprocessed.suffix(from: min(index + 1, preprocessed.count)).prefix(3))
+            // The full remainder, not a 3-atom window: the remaining-content-fits
+            // shortcut in checkAndPerformInteratomLineBreak sizes up everything
+            // that is still to come, and a trimmed window made it conclude
+            // "little content left" on every call (count was always <= 3), which
+            // switched line breaking off for the rest of the formula. The break
+            // look-ahead itself still uses only the first three of these.
+            let nextAtoms = Array(preprocessed.suffix(from: min(index + 1, preprocessed.count)))
             switch atom.type {
                 case .number, .variable,. unaryOperator:
                     // These should never appear as they should have been removed by preprocessing

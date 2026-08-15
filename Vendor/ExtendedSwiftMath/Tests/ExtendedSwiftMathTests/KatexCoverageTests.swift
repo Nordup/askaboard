@@ -195,6 +195,18 @@ final class KatexCoverageTests: XCTestCase {
         XCTAssertGreaterThan(render("\\begin{equation} E = mc^2 \\end{equation}").width, 0)
     }
 
+    func testScriptHeavyDisplayFormulaWrapsUnderMaxWidth() {
+        // 2026-08-15 on-device clip: fractions/scripts/spaces flush the text
+        // run, and the break check used to be skipped for nearly every atom
+        // (and a 3-atom lookahead window disabled it outright), so this
+        // formula overflowed a 300pt ceiling at 363pt instead of wrapping.
+        let latex = "m=\\frac{M}{N_{\\mathrm A}}, \\qquad N_{\\mathrm A}=6.022\\times10^{23}\\ \\mathrm{mol^{-1}}."
+        let font = MTFontManager.fontManager.defaultFont?.copy(withSize: 21)
+        let display = MTTypesetter.createLineForMathList(build(latex), font: font, style: .display, maxWidth: 300)
+        XCTAssertNotNil(display)
+        XCTAssertLessThanOrEqual(display!.width, 300)
+    }
+
     func testBraketSetFamily() {
         XCTAssertGreaterThan(render("\\Bra{\\phi}\\Ket{\\psi}").width, 0)
         XCTAssertGreaterThan(render("\\Set{x | x > 0}").width, 0)
