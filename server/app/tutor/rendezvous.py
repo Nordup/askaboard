@@ -19,6 +19,17 @@ than one worker, the POST has to be routed to the worker holding the stream —
 sticky routing, or a shared broker in place of this dict. There is no third
 option, and a plain multi-worker deploy would fail intermittently and look like
 a device timeout, so it is written down here rather than discovered.
+
+**A dev reload produces the same failure, one turn at a time.** `uvicorn
+--reload` restarts the process on every file save. The graceful shutdown
+drains the open SSE stream, so the turn keeps streaming — but the dying
+process accepts no new connections, so the device's render POST has nowhere to
+land until the new process is up, and the new process holds no future to
+resolve. Observed on 2026-08-15, turn `98ec5c4f`: a save four seconds into the
+turn; the POST arrived 10 ms after the next startup completed and got a 404,
+long after the turn had answered `view_board` with "unavailable". A mid-turn
+save is a guaranteed miss, not bad luck. See "I couldn't load the selected
+board area" in the server README for the log signature.
 """
 
 from __future__ import annotations
