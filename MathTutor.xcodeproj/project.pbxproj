@@ -157,6 +157,7 @@
 		EDEB51FDD8E17D13290CD0AF /* OrbHalo.swift in Sources */ = {isa = PBXBuildFile; fileRef = E954D06964D3CD29E7E328C4 /* OrbHalo.swift */; };
 		EFA499781E9199548F353D2C /* SourceSans3-Regular.otf in Resources */ = {isa = PBXBuildFile; fileRef = 8217EBB13B758B525C439539 /* SourceSans3-Regular.otf */; };
 		F04349D3E6E4B1597D648774 /* BoardInk.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDC29B5C0EE22B4B88E0C16D /* BoardInk.swift */; };
+		F0AB368ED3252A73E037C11F /* BoardElementBoundsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CF47EA2AF089BE1CEF29278 /* BoardElementBoundsTests.swift */; };
 		F1DFB7BCEA5833AA08AF2487 /* AttachMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D97B15C0A56161A1EB12CCB /* AttachMenu.swift */; };
 		F41397690D69C8D2F528A80D /* ComposerAttachmentsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B11E1EAAEC87BB250A9A9797 /* ComposerAttachmentsTests.swift */; };
 		FCAB37D9BB091699455CE680 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40CC8590077CACB91515D03B /* Models.swift */; };
@@ -249,6 +250,7 @@
 		6C3BD7AF8ABF8A0911D1890A /* Typography.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Typography.swift; sourceTree = "<group>"; };
 		6C40D818D42C36ADE7FAFDF9 /* BoardSVGTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardSVGTests.swift; sourceTree = "<group>"; };
 		6CB5370FB9D167F1C763CBE5 /* VoiceContracts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceContracts.swift; sourceTree = "<group>"; };
+		6CF47EA2AF089BE1CEF29278 /* BoardElementBoundsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardElementBoundsTests.swift; sourceTree = "<group>"; };
 		6DB381E12515DD46A27989D6 /* ChatScale.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatScale.swift; sourceTree = "<group>"; };
 		6DFEE113835CD09C48AEFCD3 /* BoardPaper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardPaper.swift; sourceTree = "<group>"; };
 		716037229AF2C95F4FE13C78 /* VoiceEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceEngineTests.swift; sourceTree = "<group>"; };
@@ -459,6 +461,7 @@
 			children = (
 				C0E636CF98B8B5B2D40A95EA /* AttachmentStoreTests.swift */,
 				4321C972F3139C4C616C7600 /* BackendTutorServiceTests.swift */,
+				6CF47EA2AF089BE1CEF29278 /* BoardElementBoundsTests.swift */,
 				3DBEC75E12C26E686FF76BDF /* BoardInkPersistenceTests.swift */,
 				07822BFCEDA6CAC5E7B67D24 /* BoardInkTests.swift */,
 				0729DC14BC3A737998304309 /* BoardPaperTests.swift */,
@@ -866,6 +869,7 @@
 			files = (
 				B5FD8AA551AF597A4904A241 /* AttachmentStoreTests.swift in Sources */,
 				7D3C2F693CC25B87A39B9600 /* BackendTutorServiceTests.swift in Sources */,
+				F0AB368ED3252A73E037C11F /* BoardElementBoundsTests.swift in Sources */,
 				E6DD21C7A93C00ECA613EE84 /* BoardInkPersistenceTests.swift in Sources */,
 				3FEAD4CABE221C77708EAE56 /* BoardInkTests.swift in Sources */,
 				4C037A180CB8B10BE7334D25 /* BoardPaperTests.swift in Sources */,

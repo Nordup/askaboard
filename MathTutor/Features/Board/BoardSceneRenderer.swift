@@ -14,7 +14,7 @@ enum BoardSceneRenderer {
         context.saveGState()
         context.translateBy(x: boardOrigin.x, y: boardOrigin.y)
         for element in scene.elements {
-            draw(element, in: context)
+            draw(element: element, in: context)
         }
         context.restoreGState()
     }
@@ -24,13 +24,26 @@ enum BoardSceneRenderer {
     static func bounds(of scene: BoardScene, boardOrigin: CGPoint) -> CGRect? {
         var union: CGRect?
         for element in scene.elements {
-            var rect = elementBounds(element, boardOrigin: boardOrigin)
-            if element.style.rotation != 0 {
-                rect = rotatedBounds(of: rect, degrees: element.style.rotation)
-            }
+            let rect = bounds(of: element, boardOrigin: boardOrigin)
             union = union?.union(rect) ?? rect
         }
         return union
+    }
+
+    /// Conservative bounds for one element in drawing coordinates.
+    ///
+    /// This is the single place that expands a primitive's geometry: first by
+    /// the stroke inset and the kind's own extras (arrowhead, text
+    /// measurement), then, when the style rotates the element, by the sweep of
+    /// that rotation. The scene bounds above are a union of these, and the
+    /// raster cache sizes one element's tile from the same rectangle, so a
+    /// cached tile and the live drawing agree by construction.
+    static func bounds(of element: BoardElement, boardOrigin: CGPoint) -> CGRect {
+        var rect = elementBounds(element, boardOrigin: boardOrigin)
+        if element.style.rotation != 0 {
+            rect = rotatedBounds(of: rect, degrees: element.style.rotation)
+        }
+        return rect
     }
 
     static func renderPNG(
@@ -60,7 +73,13 @@ enum BoardSceneRenderer {
 
     // MARK: - Primitives
 
-    private static func draw(_ element: BoardElement, in context: CGContext) {
+    /// Draws one element into the current transform of `context`.
+    ///
+    /// The caller owns the coordinate system: the scene loop above translates
+    /// to the board origin first, while the raster cache draws a single
+    /// element into a tile of its own. The element's own rotation and style
+    /// are applied here and are undone before the call returns.
+    static func draw(element: BoardElement, in context: CGContext) {
         let style = element.style
         context.saveGState()
         context.setAlpha(max(0, min(1, style.opacity)))
