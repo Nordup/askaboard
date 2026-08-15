@@ -140,6 +140,68 @@ final class BoardSceneLayerTests: XCTestCase {
         XCTAssertGreaterThan(view.rasterCacheBytesForTesting, atBucketZero)
     }
 
+    /// A figure large enough to blow the pixel cap at high zoom is drawn whole
+    /// at a reduced scale, not dropped. A 1,200-point square asks for 9,600
+    /// pixels a side at bucket 2 (4x bucket, 2x display) — 92 million pixels,
+    /// past the 64 million cap — and a normal pinch reaches that bucket, so
+    /// refusing on pixels alone would make ordinary figures vanish at maximum
+    /// zoom.
+    func testLargeElementIsRasterizedSofterRatherThanDropped() {
+        let view = makeView()
+        // The bucket is set before the scene so the element is rasterized once.
+        view.setViewport(contentOffset: .zero, zoomScale: 4)
+        view.scene = scene([
+            .rectangle(RectangleElement(
+                id: "big",
+                x: 0,
+                y: 0,
+                width: 1_200,
+                height: 1_200,
+                style: BoardStyle(strokeWidth: 0)
+            ))
+        ])
+        guard let raster = view.mountedRasterForTesting(id: "big") else {
+            return XCTFail("a large but legitimate figure must still be drawn")
+        }
+        XCTAssertLessThanOrEqual(raster.width * raster.height, 64_000_000)
+        XCTAssertLessThan(raster.width, 9_600, "the scale must have been reduced")
+        XCTAssertGreaterThan(raster.width, 1_200, "and still be finer than one pixel per point")
+    }
+
+    /// Area alone does not bound a bitmap's longest side: a rule across the
+    /// board is 20,000 points long and a few points tall, so its area is tiny
+    /// while its width at bucket scale is past any GPU's texture limit. Core
+    /// Animation would drop such a texture, so it is rasterized coarser.
+    func testBoardWidthLineStaysInsideTheTextureLimit() {
+        let view = makeView()
+        view.scene = scene([.line(LineElement(id: "rule", x1: 0, y1: 100, x2: 20_000, y2: 100))])
+        guard let raster = view.mountedRasterForTesting(id: "rule") else {
+            return XCTFail("a board-width line must still be drawn")
+        }
+        XCTAssertLessThanOrEqual(raster.width, 16_384)
+        XCTAssertGreaterThanOrEqual(raster.height, 1)
+    }
+
+    /// The other branch. An element whose board-point area is absurd is one
+    /// whose coordinates the server never clamped, and it is refused: no
+    /// bitmap, and nothing stored under a key that would serve it again.
+    func testAbsurdlyLargeElementIsRefusedWithoutCaching() {
+        let view = makeView()
+        view.scene = scene([
+            .rectangle(RectangleElement(
+                id: "huge",
+                x: 0,
+                y: 0,
+                width: 10_000,
+                height: 10_000,
+                style: BoardStyle(strokeWidth: 0)
+            ))
+        ])
+        XCTAssertEqual(view.mountedElementIdsForTesting, ["huge"])
+        XCTAssertNil(view.mountedRasterForTesting(id: "huge"))
+        XCTAssertEqual(view.rasterCacheBytesForTesting, 0)
+    }
+
     /// An `svg` element whose WebKit artifact has not landed draws nothing.
     /// The cache key is the element value and that value does not change when
     /// the artifact arrives, so caching the empty bitmap now would serve an

@@ -31,17 +31,43 @@ final class BoardSceneLayerView: UIView {
     var scene: BoardScene = .empty {
         didSet {
             guard scene != oldValue else { return }
+            // Scheduling every `svg` element's render is this view's own duty,
+            // not its container's: `raster(for:bounds:)` reads the artifact and
+            // draws nothing until it lands, so a scene installed without this
+            // call would leave every svg layer empty forever. The canvas calls
+            // `prepare` too; the cache skips a key that is already rendered or
+            // in flight, so the second call costs one dictionary lookup.
+            BoardSVGCache.shared.prepare(scene: scene)
             reconcile()
         }
     }
 
-    /// The widest bitmap this view will ever allocate, in pixels.
+    /// The largest bitmap this view will ever allocate, in total pixels.
     ///
-    /// An element may carry coordinates the server never clamped (an `svg`
-    /// path's `d` string is not parsed there), and its bounds then ask for a
-    /// bitmap of unbounded size. Drawing nothing is the cheap failure: the
-    /// element is culled or blank, and the app keeps its memory.
+    /// A large figure is drawn at a reduced scale rather than dropped (see
+    /// `raster(for:bounds:)`), so this bounds the allocation, not the set of
+    /// elements that appear. At four bytes per pixel the worst case is 256 MB
+    /// for one bitmap, which is the budget the plan chose; lowering it costs
+    /// sharpness on huge figures at maximum zoom, never visibility.
     private static let maximumRasterPixels: CGFloat = 64_000_000
+
+    /// The largest element this view will draw at all, in square board points.
+    ///
+    /// 2,000 x 2,000 points is half the span `BoardGeometry.maximumEvaluationSpan`
+    /// allows for a whole solution region, so a single element past it is not a
+    /// figure — it is one whose coordinates the server never clamped (an `svg`
+    /// path's `d` string is not parsed there). Those are refused outright: the
+    /// element stays blank and the app keeps its memory. A figure that is
+    /// merely large is drawn whole, softer.
+    private static let maximumElementArea: CGFloat = 4_000_000
+
+    /// The longest side a bitmap may have, in pixels: the largest 2D texture
+    /// the GPUs this ships on can hold. Core Animation cannot display a
+    /// `contents` image longer than this, and area alone does not bound a
+    /// side — a line across the whole board is a legal element with bounds of
+    /// 50,000 x 4 points, whose area is tiny. Such an element is rasterized
+    /// coarser rather than into a texture the compositor would drop.
+    private static let maximumRasterSide: CGFloat = 16_384
 
     private let contentLayer = CALayer()
     private var elementLayers: [String: CALayer] = [:]
@@ -55,6 +81,18 @@ final class BoardSceneLayerView: UIView {
 
     var mountedElementIdsForTesting: Set<String> { mountedElementIds }
     var rasterCacheBytesForTesting: Int { rasterCache.totalBytes }
+
+    /// The bitmap a mounted element is showing, so a test can see what the
+    /// raster path produced. `nil` means the element drew nothing. Read from
+    /// the cache rather than cast back out of `layer.contents`: `apply`
+    /// assigns exactly this image, and a stored bitmap is the same object.
+    func mountedRasterForTesting(id: String) -> CGImage? {
+        guard elementLayers[id] != nil,
+              let element = scene.elements.first(where: { $0.id == id })
+        else { return nil }
+        return rasterCache.image(for: RasterKey(element: element, bucket: currentBucket))
+    }
+
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -275,17 +313,44 @@ final class BoardSceneLayerView: UIView {
         }
         let key = RasterKey(element: element, bucket: currentBucket)
         if let cached = rasterCache.image(for: key) { return cached }
-        let scale = ZoomBucket.scale(forBucket: currentBucket) * displayScale
-        let pixelSize = CGSize(width: bounds.width * scale, height: bounds.height * scale)
+        // Two branches, by the element's size in board points. An absurd
+        // element is refused; a merely large one is drawn whole at whatever
+        // scale fits the pixel cap. A 1,000 x 1,000-point figure asks for
+        // 64 million pixels at bucket 2 (4x bucket, 2x display), and a pinch
+        // reaches that bucket, so refusing on pixels alone would make ordinary
+        // figures vanish at high zoom. Soft beats invisible.
+        let boardArea = bounds.width * bounds.height
+        guard boardArea > 0, boardArea <= Self.maximumElementArea else { return nil }
+        // The reduction depends only on the element's bounds and the bucket,
+        // both of which `RasterKey` already identifies, so one key still means
+        // exactly one bitmap.
+        let scale = min(
+            ZoomBucket.scale(forBucket: currentBucket) * displayScale,
+            (Self.maximumRasterPixels / boardArea).squareRoot(),
+            Self.maximumRasterSide / max(bounds.width, bounds.height)
+        )
+        // Flooring keeps the bitmap a whole number of pixels, which is what
+        // makes the cap hold exactly rather than after a rounding-up. The
+        // context is then scaled to the size that survived, so the element
+        // still maps onto the whole tile instead of overflowing its last
+        // fractional pixel.
+        let pixelSize = CGSize(
+            width: (bounds.width * scale).rounded(.down),
+            height: (bounds.height * scale).rounded(.down)
+        )
         guard pixelSize.width >= 1, pixelSize.height >= 1,
-              pixelSize.width * pixelSize.height < Self.maximumRasterPixels
+              pixelSize.width * pixelSize.height <= Self.maximumRasterPixels
         else { return nil }
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         format.opaque = false
+        // Board colours are sRGB hex. Extended range would buy nothing and
+        // double every bitmap's bytes, which the cache's byte cap and the
+        // pixel cap above are both priced in four bytes per pixel.
+        format.preferredRange = .standard
         let image = UIGraphicsImageRenderer(size: pixelSize, format: format).image { context in
             let cg = context.cgContext
-            cg.scaleBy(x: scale, y: scale)
+            cg.scaleBy(x: pixelSize.width / bounds.width, y: pixelSize.height / bounds.height)
             cg.translateBy(x: -bounds.minX, y: -bounds.minY)
             cg.translateBy(x: boardOrigin.x, y: boardOrigin.y)
             BoardSceneRenderer.draw(element: element, in: cg)
