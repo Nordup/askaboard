@@ -57,12 +57,19 @@ from tests.fixtures.sse import TEXT_ONLY_TURN, sse_stream
 # ---------------------------------------------------------------------------
 
 
+def _function_tools() -> list[dict]:
+    """The registry also carries hosted tools such as `{"type": "web_search"}`,
+    which the provider owns entirely: no name, no description, no schema of
+    ours. Every assertion below is about the function tools only."""
+    return [tool for tool in TOOL_DEFINITIONS if tool.get("type") == "function"]
+
+
 def _named(name: str) -> dict:
-    return next(tool for tool in TOOL_DEFINITIONS if tool["name"] == name)
+    return next(tool for tool in _function_tools() if tool["name"] == name)
 
 
 def test_all_eight_memory_tools_are_offered():
-    names = {tool["name"] for tool in TOOL_DEFINITIONS}
+    names = {tool["name"] for tool in _function_tools()}
     assert {"remember", "forget", "search_memory", "search_sessions",
             "search_history", "get_session", "list_sessions",
             "record_evidence"} <= names
@@ -74,7 +81,7 @@ def test_all_eight_memory_tools_are_offered():
 def test_the_router_and_the_registry_name_the_same_tools():
     """A tool offered but not routed is a whole round spent being refused."""
     assert MEMORY_TOOLS == {tool["name"] for tool in MEMORY_TOOL_DEFINITIONS}
-    assert MEMORY_TOOLS <= {tool["name"] for tool in TOOL_DEFINITIONS}
+    assert MEMORY_TOOLS <= {tool["name"] for tool in _function_tools()}
 
 
 def test_every_offered_memory_tool_has_a_handler():
@@ -166,7 +173,7 @@ def test_every_offered_kind_is_a_channel_with_a_reliability():
 
 
 def test_every_tool_is_strict_and_closed():
-    for tool in TOOL_DEFINITIONS:
+    for tool in _function_tools():
         assert tool.get("strict") is True, tool["name"]
         assert tool["parameters"]["additionalProperties"] is False, tool["name"]
 

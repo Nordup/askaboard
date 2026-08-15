@@ -36,11 +36,18 @@ TODAY = date(2026, 8, 15)
 # ---------------------------------------------------------------------------
 
 
+def _function_tools() -> list[dict]:
+    """The registry also carries hosted tools such as `{"type": "web_search"}`,
+    which the provider owns entirely: no name, no description, no schema of
+    ours. Every assertion about wording applies to the function tools only."""
+    return [tool for tool in TOOL_DEFINITIONS if tool.get("type") == "function"]
+
+
 def test_the_tool_list_is_the_redesigns_eight():
     """`recent_sessions` is gone — replaced outright by `list_sessions`, per
     the rework's decision — and the archive tools exist. The list is a module
     constant, so it is identical on every request: the cache-prefix rule."""
-    names = [tool["name"] for tool in TOOL_DEFINITIONS]
+    names = [tool["name"] for tool in _function_tools()]
     assert {"remember", "forget", "search_memory", "search_sessions",
             "search_history", "get_session", "list_sessions",
             "record_evidence"} <= set(names)
@@ -71,15 +78,15 @@ def test_the_digest_era_answer_from_it_directly_wording_is_gone():
     the sentence that let a confident wrong digest suppress the lookup that
     would have refuted it. No tool may carry it, and the detail tool must say
     the opposite — look before answering."""
-    for tool in TOOL_DEFINITIONS:
+    for tool in _function_tools():
         assert "answer from it directly" not in tool["description"], tool["name"]
-    get_session = next(t for t in TOOL_DEFINITIONS if t["name"] == "get_session")
+    get_session = next(t for t in _function_tools() if t["name"] == "get_session")
     assert "BEFORE answering" in get_session["description"]
 
 
 def test_remember_no_longer_threatens_that_it_cannot_forget():
     """`forget` exists now; the old description told the model to refuse."""
-    remember = next(t for t in TOOL_DEFINITIONS if t["name"] == "remember")
+    remember = next(t for t in _function_tools() if t["name"] == "remember")
     assert "no way to make you forget" not in remember["description"]
     assert "SAVED NOTES" in remember["description"]
 

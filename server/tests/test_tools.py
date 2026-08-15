@@ -11,11 +11,25 @@ from app.tutor.tools import (
 )
 
 
-def test_the_registry_exposes_the_board_tools_then_the_memory_ones():
+def test_the_registry_exposes_the_function_tools_then_the_hosted_ones():
+    """Order is the whole assertion: the hosted tools come last, after every
+    function tool, because the list is one cache prefix and a tool inserted in
+    the middle of it re-bills every prompt this service sends."""
     assert TOOL_DEFINITIONS == [
         SET_WORKSPACE_TOOL, VIEW_BOARD_TOOL, UPDATE_BOARD_TOOL, FETCH_IMAGE_TOOL,
         *MEMORY_TOOL_DEFINITIONS,
+        {"type": "web_search"},
     ]
+
+
+def test_a_hosted_tool_carries_no_function_schema():
+    """`web_search` runs on the provider, so it has no name, no description and
+    no parameters of ours. Anything walking the registry for those must say
+    which entries it means — see `_function_tools` in the memory tests."""
+    hosted = [tool for tool in TOOL_DEFINITIONS if tool.get("type") != "function"]
+    assert hosted == [{"type": "web_search"}]
+    for tool in hosted:
+        assert set(tool) == {"type"}
 
 
 def test_the_tool_is_strict_and_closed():
@@ -260,6 +274,13 @@ def test_the_tool_surface_stays_inside_its_budget():
     # line for no reason of its own. So the bound moves to 31,200 on the same
     # reasoning the last raise used: about a thousand characters of room, which
     # is still under what any new tool in this plan costs.
+    #
+    # `web_search` (task 15) cost 24 — the whole tool is `{"type":
+    # "web_search"}`, because the provider owns its schema and its execution.
+    # The surface went to 30,208, absorbed inside the room the last raise left,
+    # so the bound does not move. That is what a hosted tool is worth here: the
+    # ability to look something up, for a rounding error against the ~1,100 the
+    # cheapest function tool in this plan costs.
     assert len(json.dumps(TOOL_DEFINITIONS)) < 31_200
 
 

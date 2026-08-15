@@ -843,15 +843,23 @@ MEMORY_TOOLS: frozenset[str] = frozenset(
     tool["name"] for tool in MEMORY_TOOL_DEFINITIONS
 )
 
-# SEAM: later work appends here. Web search is {"type": "web_search"};
-# file search is {"type": "file_search", "vector_store_ids": [...]}.
+# SEAM: later work appends hosted tools here, after every function tool.
+# File search is {"type": "file_search", "vector_store_ids": [...]}.
 #
 # Every tool a session can ever use is here, whether or not this turn could
 # answer it. Tool definitions sit at the top of the provider's
 # cache-invalidation hierarchy, so offering three tools on one turn and seven
 # on the next re-bills the entire prompt prefix every time the set changes.
 # `loop._answer` is where a tool the turn cannot serve is turned down.
+#
+# A hosted tool is a type and nothing else: the provider owns its name, its
+# schema and its execution, so no call of it ever reaches `loop._answer` and
+# nothing here describes it. `web_search` reports itself through
+# `response.web_search_call.*`, which `events` already reads as the searching
+# phase. Anything walking this list for a `name` or a `description` must first
+# say it means the function tools — the entries carrying `"type": "function"`.
 TOOL_DEFINITIONS: list[dict] = [
     SET_WORKSPACE_TOOL, VIEW_BOARD_TOOL, UPDATE_BOARD_TOOL, FETCH_IMAGE_TOOL,
     *MEMORY_TOOL_DEFINITIONS,
+    {"type": "web_search"},
 ]

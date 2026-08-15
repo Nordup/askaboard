@@ -244,6 +244,20 @@ def test_file_search_emits_searching_status():
     assert events == [StatusEvent(phase="searching")]
 
 
+def test_web_search_emits_searching_status():
+    """A hosted search produces no `function_call` item, so the phase can only
+    come from its own event prefix. Without this the device shows the previous
+    phase — usually `writing` — for the whole of a search the learner waits on.
+    """
+    for kind in (
+        "response.web_search_call.in_progress",
+        "response.web_search_call.searching",
+        "response.web_search_call.completed",
+    ):
+        events = EventTranslator().translate({"type": kind})
+        assert events == [StatusEvent(phase="searching")], kind
+
+
 def test_unknown_events_are_ignored():
     assert EventTranslator().translate({"type": "response.content_part.added"}) == []
 

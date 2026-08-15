@@ -114,11 +114,15 @@ async def test_the_request_body_carries_every_tool_and_stores_the_response():
     assert body["reasoning"] == {"effort": "high", "summary": "auto"}
     # Every tool, on a turn wired for none of the memory ones. The set is fixed
     # for the whole session on purpose — see the comment on TOOL_DEFINITIONS.
-    assert [tool["name"] for tool in body["tools"]] == [
+    # A hosted tool has no name of ours — the provider owns its schema and runs
+    # it — so it is identified on the wire by its type alone.
+    assert [tool.get("name", tool.get("type")) for tool in body["tools"]] == [
         "set_workspace", "view_board", "update_board", "fetch_image",
         "remember", "forget", "search_memory", "search_sessions",
         "search_history", "get_session", "list_sessions", "record_evidence",
+        "web_search",
     ]
+    assert body["tools"][-1] == {"type": "web_search"}
 
 
 @respx.mock
