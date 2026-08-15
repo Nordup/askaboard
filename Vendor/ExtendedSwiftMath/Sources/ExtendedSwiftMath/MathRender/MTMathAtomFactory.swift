@@ -1379,7 +1379,7 @@ public class MTMathAtomFactory {
      @note The reason this function returns a `MTMathAtom` and not a `MTMathTable` is because some
      matrix environments are have builtin delimiters added to the table and hence are returned as inner atoms.
      */
-    public static func table(withEnvironment env: String?, alignment: MTColumnAlignment? = nil, rows: [[MTMathList]], error:inout NSError?) -> MTMathAtom? {
+    public static func table(withEnvironment env: String?, alignment: MTColumnAlignment? = nil, columnAlignments: [MTColumnAlignment]? = nil, rows: [[MTMathList]], error:inout NSError?) -> MTMathAtom? {
         let table = MTMathTable(environment: env)
 
         for i in 0..<rows.count {
@@ -1430,7 +1430,43 @@ public class MTMathAtomFactory {
                 } else {
                     return table
                 }
-            } else if env == "eqalign" || env == "split" || env == "aligned" {
+            } else if env == "array" || env == "subarray" {
+                // Bare table with a per-column l/c/r spec ('|' rules ignored).
+                table.environment = "array"
+                table.interRowAdditionalSpacing = 0
+                table.interColumnSpacing = env == "subarray" ? 6 : 18
+                let style = MTMathStyle(style: env == "subarray" ? .script : .text)
+                for i in 0..<table.cells.count {
+                    for j in 0..<table.cells[i].count {
+                        table.cells[i][j].insert(style, at: 0)
+                    }
+                }
+                for col in 0..<table.numColumns {
+                    if let alignments = columnAlignments, col < alignments.count {
+                        table.set(alignment: alignments[col], forColumn: col)
+                    } else {
+                        table.set(alignment: .center, forColumn: col)
+                    }
+                }
+                return table
+            } else if env == "gather*" || env == "gathered" ||
+                      env == "equation" || env == "equation*" {
+                // Single-column, centered rows — same layout as the plain
+                // gather/displaylines branch below, keeping the env name so
+                // serialization round-trips.
+                if table.numColumns != 1 {
+                    let message = "\(env) environment can only have 1 column"
+                    if error == nil {
+                        error = NSError(domain: MTParseError, code: MTParseErrors.invalidNumColumns.rawValue, userInfo: [NSLocalizedDescriptionKey:message])
+                    }
+                    return nil
+                }
+                table.interRowAdditionalSpacing = 1
+                table.interColumnSpacing = 0
+                table.set(alignment: .center, forColumn: 0)
+                return table
+            } else if env == "eqalign" || env == "split" || env == "aligned" ||
+                      env == "align" || env == "align*" || env == "alignedat" {
                 if table.numColumns != 2 {
                     let message = "\(env) environment can only have 2 columns"
                     if error == nil {
@@ -1486,7 +1522,7 @@ public class MTMathAtomFactory {
                 table.set(alignment: .left, forColumn: 2)
                 
                 return table
-            } else if env == "cases" {
+            } else if env == "cases" || env == "dcases" || env == "rcases" {
                 if table.numColumns != 1 && table.numColumns != 2 {
                     let message = "cases environment can have 1 or 2 columns"
                     if error == nil {
@@ -1503,20 +1539,22 @@ public class MTMathAtomFactory {
                     table.set(alignment: .left, forColumn: 1)
                 }
                 
-                let style = MTMathStyle(style: .text)
+                // dcases keeps display style in the cells; rcases puts the
+                // brace on the right instead of the left.
+                let style = MTMathStyle(style: env == "dcases" ? .display : .text)
                 for i in 0..<table.cells.count {
                     for j in 0..<table.cells[i].count {
                         table.cells[i][j].insert(style, at: 0)
                     }
                 }
-                
+
                 let inner = MTInner()
-                inner.leftBoundary = Self.boundary(forDelimiter: "{")
-                inner.rightBoundary = Self.boundary(forDelimiter: ".")
+                inner.leftBoundary = Self.boundary(forDelimiter: env == "rcases" ? "." : "{")
+                inner.rightBoundary = Self.boundary(forDelimiter: env == "rcases" ? "}" : ".")
                 let space = Self.atom(forLatexSymbol: ",")!
-                
+
                 inner.innerList = MTMathList(atoms: [space, table])
-                
+
                 return inner
             } else {
                 let message = "Unknown environment \(env)"

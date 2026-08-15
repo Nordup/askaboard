@@ -123,6 +123,17 @@ final class KatexCoverageTests: XCTestCase {
         XCTAssertGreaterThan(render("\\dddot{x}").width, 0)
     }
 
+    func testEnvironments() {
+        XCTAssertGreaterThan(render("\\begin{array}{c|r} 1 & 22 \\\\ 333 & 4 \\end{array}").width, 0)
+        XCTAssertGreaterThan(render("\\begin{align} a &= b \\\\ c &= d \\end{align}").width, 0)
+        XCTAssertGreaterThan(render("\\begin{align*} a &= b \\end{align*}").width, 0)
+        XCTAssertGreaterThan(render("\\begin{alignedat}{2} a &= b \\\\ c &= d \\end{alignedat}").width, 0)
+        XCTAssertGreaterThan(render("\\begin{gather} a+b \\\\ c+d \\end{gather}").width, 0)
+        XCTAssertGreaterThan(render("\\begin{dcases} \\frac{1}{2} & x>0 \\\\ 0 & x\\le 0 \\end{dcases}").width, 0)
+        XCTAssertGreaterThan(render("\\begin{rcases} a & x \\\\ b & y \\end{rcases}").width, 0)
+        XCTAssertGreaterThan(render("\\begin{equation} E = mc^2 \\end{equation}").width, 0)
+    }
+
     func testBraketSetFamily() {
         XCTAssertGreaterThan(render("\\Bra{\\phi}\\Ket{\\psi}").width, 0)
         XCTAssertGreaterThan(render("\\Set{x | x > 0}").width, 0)

@@ -16,12 +16,14 @@ struct MTEnvProperties {
     var ended: Bool
     var numRows: Int
     var alignment: MTColumnAlignment?  // Optional alignment for starred matrix environments
+    var columnAlignments: [MTColumnAlignment]?  // Per-column alignments (array environment)
 
-    init(name: String?, alignment: MTColumnAlignment? = nil) {
+    init(name: String?, alignment: MTColumnAlignment? = nil, columnAlignments: [MTColumnAlignment]? = nil) {
         self.envName = name
         self.numRows = 0
         self.ended = false
         self.alignment = alignment
+        self.columnAlignments = columnAlignments
     }
 }
 
@@ -1924,7 +1926,28 @@ public struct MTMathListBuilder {
                     }
                 }
 
-                let table = self.buildTable(env: env, alignment: alignment, firstList: nil, isRow: false)
+                // The array environment carries a mandatory {column spec}:
+                // l/c/r per column ('|' rules and other spec characters are
+                // ignored). alignedat's {n} pair count is read and discarded.
+                var columnAlignments: [MTColumnAlignment]? = nil
+                if env == "array" || env == "subarray" {
+                    guard let spec = self.readBracedText() else { return nil }
+                    var alignments = [MTColumnAlignment]()
+                    for ch in spec {
+                        switch ch {
+                        case "l": alignments.append(.left)
+                        case "c": alignments.append(.center)
+                        case "r": alignments.append(.right)
+                        default: break
+                        }
+                    }
+                    columnAlignments = alignments
+                } else if env == "alignedat" {
+                    _ = self.readBracedText()
+                    if self.error != nil { return nil }
+                }
+
+                let table = self.buildTable(env: env, alignment: alignment, columnAlignments: columnAlignments, firstList: nil, isRow: false)
                 return table
             } else {
                 return nil
@@ -2011,11 +2034,11 @@ public struct MTMathListBuilder {
         assert(ch >= "\u{21}" && ch <= "\u{7E}", "Expected non-space character \(ch)")
     }
     
-    mutating func buildTable(env: String?, alignment: MTColumnAlignment? = nil, firstList: MTMathList?, isRow: Bool) -> MTMathAtom? {
+    mutating func buildTable(env: String?, alignment: MTColumnAlignment? = nil, columnAlignments: [MTColumnAlignment]? = nil, firstList: MTMathList?, isRow: Bool) -> MTMathAtom? {
         // Save the current env till an new one gets built.
         let oldEnv = self.currentEnv
 
-        currentEnv = MTEnvProperties(name: env, alignment: alignment)
+        currentEnv = MTEnvProperties(name: env, alignment: alignment, columnAlignments: columnAlignments)
         
         var currentRow = 0
         var currentCol = 0
@@ -2053,7 +2076,7 @@ public struct MTMathListBuilder {
         }
         
         var error:NSError? = self.error
-        let table = MTMathAtomFactory.table(withEnvironment: currentEnv?.envName, alignment: currentEnv?.alignment, rows: rows, error: &error)
+        let table = MTMathAtomFactory.table(withEnvironment: currentEnv?.envName, alignment: currentEnv?.alignment, columnAlignments: currentEnv?.columnAlignments, rows: rows, error: &error)
         if table == nil && self.error == nil {
             self.error = error
             return nil

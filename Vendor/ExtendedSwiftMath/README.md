@@ -22,6 +22,10 @@ on the upstream package. Local changes on top of 2.1.3:
   Tests: `Tests/ExtendedSwiftMathTests/KatexCoverageTests.swift`. Commands
   whose glyph is a plain source character are excluded from the reverse
   (nucleus → command) mapping so "A" never serializes as `\Alpha`.
+- Environments (2026-08-15): `array`/`subarray` with `{l|cr}` column specs,
+  `align`/`align*`/`alignedat{n}` (as `aligned`), `gather*`/`gathered`/
+  `equation`/`equation*`, `dcases`, `rcases`. Full audit and remaining gaps:
+  `docs/math-rendering-coverage.md` at the repo root.
 
 # ExtendedSwiftMath
 
