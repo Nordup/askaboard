@@ -3,11 +3,11 @@ import UIKit
 
 /// Precise Core Graphics drawing for the tutor's semantic scene.
 ///
-/// The same routines serve two paths: the live transparent overlay above
-/// `PKCanvasView` (drawn in drawing coordinates through the scroll transform)
-/// and `CanvasCapture`'s white-backed PNGs (drawn in a requested drawing
-/// rectangle). Everything here is main-actor UIKit work; the Domain scene
-/// itself stays UI-free.
+/// The same routines serve two paths: `BoardSceneLayerView` above
+/// `PKCanvasView` (one element at a time, into that element's own bitmap tile)
+/// and `CanvasCapture`'s white-backed PNGs (the whole scene, in a requested
+/// drawing rectangle). Everything here is main-actor UIKit work; the Domain
+/// scene itself stays UI-free.
 @MainActor
 enum BoardSceneRenderer {
     static func draw(scene: BoardScene, in context: CGContext, boardOrigin: CGPoint) {
@@ -533,72 +533,6 @@ enum BoardSceneRenderer {
             return UIColor.clear.cgColor
         }
         return UIColor(hex: hex)?.cgColor ?? UIColor.clear.cgColor
-    }
-}
-
-/// The transparent viewport-pinned overlay that keeps tutor geometry in
-/// lockstep with the `PKCanvasView` scroll and zoom transform.
-final class BoardSceneOverlayView: UIView {
-    var scene: BoardScene = .empty {
-        didSet {
-            guard scene != oldValue else { return }
-            setNeedsDisplay()
-        }
-    }
-
-    var contentOffset: CGPoint = .zero {
-        didSet { setNeedsDisplay() }
-    }
-
-    var zoomScale: CGFloat = 1 {
-        didSet { setNeedsDisplay() }
-    }
-
-    var boardOrigin: CGPoint = PencilCanvasConfiguration.boardOrigin
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        isUserInteractionEnabled = false
-        isOpaque = false
-        backgroundColor = .clear
-        contentMode = .redraw
-        isAccessibilityElement = false
-        accessibilityElementsHidden = true
-        accessibilityIdentifier = "tutor-scene-overlay"
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(svgCacheDidRender),
-            name: .boardSVGCacheDidRender,
-            object: nil
-        )
-    }
-
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-    }
-
-    @objc private func svgCacheDidRender() {
-        setNeedsDisplay()
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("BoardSceneOverlayView is created in code only")
-    }
-
-    override func draw(_ rect: CGRect) {
-        guard !scene.elements.isEmpty, let context = UIGraphicsGetCurrentContext() else { return }
-        context.saveGState()
-        context.concatenate(CGAffineTransform(
-            a: zoomScale,
-            b: 0,
-            c: 0,
-            d: zoomScale,
-            tx: -contentOffset.x,
-            ty: -contentOffset.y
-        ))
-        BoardSceneRenderer.draw(scene: scene, in: context, boardOrigin: boardOrigin)
-        context.restoreGState()
     }
 }
 

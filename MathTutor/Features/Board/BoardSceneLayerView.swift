@@ -34,9 +34,10 @@ final class BoardSceneLayerView: UIView {
             // Scheduling every `svg` element's render is this view's own duty,
             // not its container's: `raster(for:bounds:)` reads the artifact and
             // draws nothing until it lands, so a scene installed without this
-            // call would leave every svg layer empty forever. The canvas calls
-            // `prepare` too; the cache skips a key that is already rendered or
-            // in flight, so the second call costs one dictionary lookup.
+            // call would leave every svg layer empty forever. Restored scenes
+            // and scene replacements all reach the board through the canvas's
+            // `boardScene`, which forwards here, so this is the one place a
+            // scene's local renders are scheduled.
             BoardSVGCache.shared.prepare(scene: scene)
             reconcile()
         }

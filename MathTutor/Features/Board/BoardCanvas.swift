@@ -17,25 +17,28 @@ final class BoardCanvasView: PKCanvasView {
 
     private var reportedViewport: CGSize?
 
-    /// The tutor's semantic scene, drawn by a transparent viewport-pinned
-    /// overlay. `PKCanvasView` keeps its own drawing path completely untouched.
+    /// The tutor's semantic scene, composited by a transparent viewport-pinned
+    /// layer view. `PKCanvasView` keeps its own drawing path completely
+    /// untouched.
     var boardScene: BoardScene = .empty {
         didSet {
             guard boardScene != oldValue else { return }
+            // Everything that follows from a new scene belongs to the layer
+            // view: it schedules each `svg` element's local render and
+            // reconciles its own element layers. The canvas hands the value
+            // over and asks for a layout pass, which re-pins the frame and the
+            // viewport.
             sceneOverlay.scene = boardScene
-            // Restored scenes and scene replacements go through this property,
-            // so this is the one place every SVG element's local render is
-            // scheduled. The overlay redraws when each cache entry completes.
-            BoardSVGCache.shared.prepare(scene: boardScene)
             setNeedsLayout()
         }
     }
 
-    private let sceneOverlay = BoardSceneOverlayView()
+    private let sceneOverlay = BoardSceneLayerView()
 
-    /// Keeps the overlay frame pinned to the viewport and its drawing transform
-    /// in sync with the current pan/zoom. Called on layout passes and from the
-    /// scroll delegate so a pan or pinch never leaves tutor geometry behind.
+    /// Keeps the layer view's frame pinned to the viewport and its content
+    /// transform in sync with the current pan/zoom. Called on layout passes and
+    /// from the scroll delegate so a pan or pinch never leaves tutor geometry
+    /// behind.
     func updateSceneOverlay() {
         if sceneOverlay.superview != self {
             addSubview(sceneOverlay)
@@ -44,10 +47,11 @@ final class BoardCanvasView: PKCanvasView {
         // sublayers/views between updates, so the semantic layer must be
         // re-fronted every time rather than only when first attached.
         bringSubviewToFront(sceneOverlay)
+        // Frame first, viewport second: `setViewport` culls against
+        // `bounds.size`, so the size of this pass has to be in place before it
+        // decides what the viewport can see.
         sceneOverlay.frame = bounds
-        sceneOverlay.contentOffset = contentOffset
-        sceneOverlay.zoomScale = zoomScale
-        sceneOverlay.setNeedsDisplay()
+        sceneOverlay.setViewport(contentOffset: contentOffset, zoomScale: zoomScale)
     }
 
     override func layoutSubviews() {
