@@ -47,26 +47,24 @@ targets:
         UISupportedInterfaceOrientations~ipad:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-        # The composer's mic. The string names what is captured, what is done with it, and
-        # where it goes, because the speaker is a child thinking out loud: a vague purpose
-        # string is a review risk and, more to the point, the only explanation a parent
-        # reading the permission alert ever gets.
+        # The mic — composer dictation and live voice chat. The string names what is
+        # captured, what is done with it, and where it goes, because the speaker is a child
+        # thinking out loud: a vague purpose string is a review risk and, more to the point,
+        # the only explanation a parent reading the permission alert ever gets.
         #
-        # It says the recording leaves the iPad, because it does — dictation is OpenAI's
-        # transcription endpoint. It says OpenAI does not train on it, because that is their
-        # stated API policy and it is the thing a parent most wants to know. And it says the
-        # recording can be held for up to 30 days for abuse monitoring, because that is the
-        # default for API data. Zero Data Retention exists but is an application-gated option
-        # for qualifying business accounts, so this must not be written as though it applied.
+        # It says the recording leaves the iPad, because it does — dictation and voice chat
+        # both run through OpenAI. It says a copy can stay with the session history, because
+        # the server records sessions; a promise of deletion the app cannot keep must not be
+        # made here. It says OpenAI does not train on it, because that is their stated API
+        # policy and it is the thing a parent most wants to know.
         # There is no NSSpeechRecognitionUsageDescription any more: Apple's recogniser is gone,
         # and a permission the app requests but never uses is one a parent is asked for
         # nothing.
         NSMicrophoneUsageDescription: >-
-          Math Tutor records your voice only while you have tapped the microphone in the
-          tutor's message box. When you tap it again the recording is sent to OpenAI, which
-          turns it into text you can read and edit before sending. OpenAI does not use it to
-          train its models, but can keep it for up to 30 days to check for misuse before
-          deleting it.
+          Math Tutor records your voice while you dictate a message, and during a live
+          voice chat for as long as the chat is running. Recordings go to our server and
+          to OpenAI to power the tutor, and a copy can stay with your session history.
+          OpenAI does not use your voice to train its models.
         # The composer's camera, for photographing a worksheet or a page of a textbook.
         # Written the way the microphone string above is, and for the same reason: it names
         # what is captured, what happens to it and where it goes, because the person reading
