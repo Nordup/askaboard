@@ -1,12 +1,15 @@
 import asyncio
 import base64
 import json
+import mimetypes
 
 import pytest
 import respx
 from httpx import Response
 from openai import APIStatusError, AsyncOpenAI
 from openai._streaming import SSEDecoder
+
+from app.tutor.fetch_image import ALLOWED_CONTENT_TYPES, MAX_IMAGE_BYTES
 
 from app.tutor.context import ContextBundle
 from app.tutor.events import (
@@ -15,6 +18,7 @@ from app.tutor.events import (
 )
 from app.tutor.retry import RETRY_LIMIT
 from app.tutor.loop import (
+    DEFAULT_SCRIPT_OUTPUT_TYPE,
     FETCH_BUDGET_ACK,
     FETCH_TIMEOUT_ACK,
     FETCHED_IMAGE_CAPTION,
@@ -23,12 +27,15 @@ from app.tutor.loop import (
     RELAYED_FILES_CAPTION,
     UNSUPPORTED_TOOL_ACK,
     UPDATE_BOARD_ACK,
+    ContainerFileTooLarge,
     FetchedImage,
     RelayedFile,
     _answer,
     _container_citations,
     _relay_item,
     _rendered_items,
+    download_container_file,
+    relayed_content_type,
     run_turn,
 )
 from tests.fixtures.sse import (
@@ -1276,3 +1283,148 @@ async def test_a_file_cited_again_in_a_later_round_is_not_relayed_again():
 
     assert seen == [SCRIPT_FILE_ID], "the second citation names a file already kept"
     assert route.call_count == 2, "and so buys no round of its own"
+
+
+# --- what a relayed file may claim to be -------------------------------------
+
+
+def test_an_svg_is_recorded_as_bytes_not_as_an_image():
+    """`plt.savefig("chart.svg")` is an ordinary thing for a model to write, and
+    `mimetypes` calls the result `image/svg+xml`. Recording that claim would put
+    it in the attachment row, and `GET /v1/blobs/{key}` serves the row's type
+    verbatim to the device — walking straight past the allowlist whose comment
+    in `fetch_image` says SVG "must stay missing" because it is markup with
+    scripts and external references in it, rendered by whatever is given it."""
+    assert relayed_content_type("chart.svg") == DEFAULT_SCRIPT_OUTPUT_TYPE
+    assert relayed_content_type("diagram.SVG") == DEFAULT_SCRIPT_OUTPUT_TYPE
+    # An image type on the allowlist keeps its name; so does a plain data file,
+    # which was never going to be rendered as a picture.
+    assert relayed_content_type("chart.png") == "image/png"
+    assert relayed_content_type("photo.jpg") == "image/jpeg"
+    assert relayed_content_type("out.csv") == "text/csv"
+    # Nothing recognisable, and nothing invented.
+    assert relayed_content_type("scratch") == DEFAULT_SCRIPT_OUTPUT_TYPE
+    assert relayed_content_type("model.bin") == DEFAULT_SCRIPT_OUTPUT_TYPE
+
+
+def test_every_type_the_relay_may_show_is_one_the_fetcher_would_have_allowed():
+    """One allowlist, not two. A format the guarded downloader refuses is not a
+    format this path may hand the provider just because a script produced it.
+
+    Asserted over the allowlist itself rather than over a list of extensions
+    written out here, so adding a format in `fetch_image` cannot leave the two
+    paths disagreeing. `mimetypes` is only used to find *an* extension for each
+    type — which one it picks does not matter, and platforms differ."""
+    for content_type in ALLOWED_CONTENT_TYPES:
+        extension = mimetypes.guess_extension(content_type)
+        assert extension, f"no extension known for {content_type}"
+        assert relayed_content_type(f"chart{extension}") == content_type
+
+    # The one that must never be on it, named so the reason survives a refactor.
+    assert "image/svg+xml" not in ALLOWED_CONTENT_TYPES
+    assert relayed_content_type("chart.svg") not in ALLOWED_CONTENT_TYPES
+
+
+def test_an_image_type_off_the_allowlist_is_listed_but_never_shown():
+    """Defence in depth: `relayed_content_type` should already have stopped this
+    from ever being labelled an image, and `_relay_item` refuses it again.
+
+    The consequence of getting this wrong is not cosmetic. The documented vision
+    formats are png, jpeg, webp and gif; an `input_image` data URL carrying
+    `image/svg+xml` is a 400 on the next round, which fails the whole turn."""
+    item = _relay_item([
+        ("chart.svg", RelayedFile(blob_id=BLOB, data=b"<svg/>",
+                                  content_type="image/svg+xml")),
+    ])
+    assert len(item["content"]) == 1, "listed in the text, never as a picture"
+    text = item["content"][0]["text"]
+    assert f"chart.svg → {BLOB}" in text
+
+
+def test_the_pictures_shown_are_exactly_the_allowlisted_ones():
+    item = _relay_item([
+        ("a.png", RelayedFile(blob_id=BLOB, data=b"P", content_type="image/png")),
+        ("b.svg", RelayedFile(blob_id=BLOB, data=b"S", content_type="image/svg+xml")),
+        ("c.gif", RelayedFile(blob_id=BLOB, data=b"G", content_type="image/gif")),
+        ("d.csv", RelayedFile(blob_id=BLOB, data=b"C", content_type="text/csv")),
+    ])
+    pictures = [part for part in item["content"] if part["type"] == "input_image"]
+    assert [p["image_url"].split(";")[0] for p in pictures] == [
+        "data:image/png", "data:image/gif",
+    ]
+
+
+# --- the relay download's own ceiling ----------------------------------------
+
+
+@respx.mock
+async def test_a_container_file_is_streamed_and_refused_over_the_ceiling():
+    """The turn's 40 MB budget is checked *before* a download, so without a
+    per-file ceiling one file's overshoot is unbounded — a script that writes
+    half a gigabyte is half a gigabyte read into memory and written to a blob.
+    Streamed and counted as it arrives, so a body larger than the ceiling is
+    abandoned partway rather than after it has all landed."""
+    body = b"x" * (MAX_IMAGE_BYTES + 1024 * 1024)
+    route = respx.get(
+        f"https://api.openai.com/v1/containers/{CONTAINER_ID}"
+        f"/files/{SCRIPT_FILE_ID}/content"
+    ).mock(return_value=Response(200, content=body))
+    client = AsyncOpenAI(api_key="sk-test")
+
+    with pytest.raises(ContainerFileTooLarge):
+        await download_container_file(client, CONTAINER_ID, SCRIPT_FILE_ID)
+
+    assert route.call_count == 1
+
+
+@respx.mock
+async def test_a_container_file_inside_the_ceiling_comes_back_whole():
+    body = b"y" * (MAX_IMAGE_BYTES - 1)
+    respx.get(
+        f"https://api.openai.com/v1/containers/{CONTAINER_ID}"
+        f"/files/{SCRIPT_FILE_ID}/content"
+    ).mock(return_value=Response(200, content=body))
+    client = AsyncOpenAI(api_key="sk-test")
+
+    assert await download_container_file(
+        client, CONTAINER_ID, SCRIPT_FILE_ID
+    ) == body
+
+
+@respx.mock
+async def test_a_container_file_exactly_at_the_ceiling_is_kept():
+    """The bound is what may be read, not what may not — an off-by-one here
+    refuses a file that is precisely the documented maximum."""
+    body = b"z" * MAX_IMAGE_BYTES
+    respx.get(
+        f"https://api.openai.com/v1/containers/{CONTAINER_ID}"
+        f"/files/{SCRIPT_FILE_ID}/content"
+    ).mock(return_value=Response(200, content=body))
+    client = AsyncOpenAI(api_key="sk-test")
+
+    assert len(await download_container_file(
+        client, CONTAINER_ID, SCRIPT_FILE_ID
+    )) == MAX_IMAGE_BYTES
+
+
+@respx.mock
+async def test_an_oversized_file_reaches_the_model_as_a_failure_not_a_picture():
+    """What the turn does with the refusal: the file is listed as not saved, no
+    picture is attached, and because nothing was kept the round is not bought."""
+    route = _two_rounds(CODE_INTERPRETER_TURN, CODE_INTERPRETER_FOLLOW_UP)
+    client = AsyncOpenAI(api_key="sk-test")
+    bundle = ContextBundle(system="s", input=[{"role": "user", "content": "plot it"}])
+
+    async def relay(container_id: str, file_id: str, filename: str) -> RelayedFile:
+        # What `turn.py`'s closure returns once the download refuses.
+        return RelayedFile(error="the file was too large to keep")
+
+    result = None
+    async for _event, running in run_turn(
+        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle,
+        relay_file=relay,
+    ):
+        result = running
+
+    assert route.call_count == 1
+    assert result.text == "I plotted it."

@@ -4,7 +4,6 @@ import base64
 import hashlib
 import json
 import logging
-import mimetypes
 import time
 import uuid
 from dataclasses import dataclass
@@ -43,7 +42,15 @@ from app.tutor.events import DoneEvent, ErrorEvent, StatusEvent
 from app.tutor.board_scene import MAX_SCENE_CHARS
 from app.tutor import rendezvous
 from app.tutor.fetch_image import ImageFetchError, fetch_image
-from app.tutor.loop import FetchedImage, RelayedFile, TurnResult, run_turn
+from app.tutor.loop import (
+    ContainerFileTooLarge,
+    FetchedImage,
+    RelayedFile,
+    TurnResult,
+    download_container_file,
+    relayed_content_type,
+    run_turn,
+)
 from app.tutor.rendezvous import BoardRegion
 from app.tutor.retry import classify
 
@@ -81,16 +88,6 @@ FETCHED_IMAGE_KIND = "fetched_image"
 # that exists because a model decided to run a program. Fits `Attachment.kind`'s
 # String(16) with three characters to spare.
 SCRIPT_OUTPUT_KIND = "script_output"
-
-# What a relayed container file is recorded as when its name says nothing.
-#
-# `mimetypes.guess_type` is the whole of the type detection here, and unlike
-# `app.tutor.fetch_image` there is no sniffing of the bytes to correct it: this
-# is not a stranger's download but the output of a script the model wrote, and
-# nothing on this path decodes it. `GET /v1/blobs/{key}` serves what the row
-# says, so an unrecognised extension has to serve as bytes rather than as a
-# guess — which is exactly what this type means.
-DEFAULT_SCRIPT_OUTPUT_TYPE = "application/octet-stream"
 
 #: How long the close-out in `stream`'s `finally` may take before it is
 #: abandoned.
@@ -666,14 +663,14 @@ async def create_turn(
             taken now are bytes nobody can ever see. This is the only window.
 
             Three steps, and the middle one is what makes the result usable.
-            The download is the SDK call verified against openai 2.53.0:
-            `containers.files.content.retrieve(file_id, container_id=...)` GETs
-            `/containers/{container_id}/files/{file_id}/content` and returns
-            binary content, whose `.content` is the raw bytes. The blob write is
-            what gives them a name the iPad can GET, because what the model does
-            next is place an `image` element carrying that `blob_id`. The
-            attachment row is where `GET /v1/blobs/{key}` recovers the content
-            type — the blob store itself only knows bytes.
+            `download_container_file` is the guarded read — the SDK call
+            verified against openai 2.53.0, streamed and capped, holding every
+            rule about how much of a file this service will take. The blob write
+            is what gives the bytes a name the iPad can GET, because what the
+            model does next is place an `image` element carrying that `blob_id`.
+            The attachment row is where `GET /v1/blobs/{key}` recovers the
+            content type — the blob store itself only knows bytes, and
+            `relayed_content_type` is what decides which claim the row may make.
 
             A failure comes back as `RelayedFile(error=...)` rather than raising,
             for the reason `fetch_and_record_image` refuses in band: a provider
@@ -682,10 +679,13 @@ async def create_turn(
             picture that is not there.
             """
             try:
-                downloaded = await client.containers.files.content.retrieve(
-                    file_id, container_id=container_id
+                data = await download_container_file(client, container_id, file_id)
+            except ContainerFileTooLarge as error:
+                logger.warning(
+                    "container file too large | turn_id=%s file=%s error=%s",
+                    body.turn_id, filename, error,
                 )
-                data = downloaded.content
+                return RelayedFile(error="the file was too large to keep")
             except APIError as error:
                 logger.warning(
                     "container file relay failed | turn_id=%s file=%s error=%s",
@@ -693,13 +693,7 @@ async def create_turn(
                 )
                 return RelayedFile(error="the file could not be read back")
 
-            # From the name and nothing else. Unlike a fetched picture — whose
-            # bytes are sniffed because a stranger chose both the URL and what
-            # it claims to be — this file was written by a script the model
-            # wrote, and its extension is the only description there is.
-            content_type = (
-                mimetypes.guess_type(filename)[0] or DEFAULT_SCRIPT_OUTPUT_TYPE
-            )
+            content_type = relayed_content_type(filename)
             ref = await recorder.record_attachment(
                 turn_id=body.turn_id, kind=SCRIPT_OUTPUT_KIND,
                 data=data, content_type=content_type,

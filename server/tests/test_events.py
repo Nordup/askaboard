@@ -315,6 +315,44 @@ def test_a_code_interpreter_item_with_no_id_opens_no_row():
     }) == []
 
 
+def test_prose_after_a_hosted_call_announces_writing_again():
+    """The regression the four tests above do not catch: they all pass against
+    the code that had this bug.
+
+    `_writing_announced` latches on the first text delta of a turn and is only
+    ever cleared where a `function_call` announces its phase. A hosted tool has
+    no `function_call` item, so a turn that writes, searches (or computes), then
+    writes again used to leave the learner's status line reading `searching` for
+    the whole of the reply that followed — the phase never came back.
+    """
+    translator = EventTranslator()
+    assert translator.translate(
+        {"type": "response.output_text.delta", "delta": "Let me look."}
+    ) == [StatusEvent(phase="writing"), TextDeltaEvent(text="Let me look.")]
+
+    assert translator.translate(
+        {"type": "response.web_search_call.completed"}
+    ) == [StatusEvent(phase="searching")]
+
+    assert translator.translate(
+        {"type": "response.output_text.delta", "delta": "Here is what I found."}
+    ) == [
+        StatusEvent(phase="writing"),
+        TextDeltaEvent(text="Here is what I found."),
+    ]
+
+
+def test_prose_after_the_code_interpreter_announces_writing_again():
+    """The same latch, reached through the tool this task added."""
+    translator = EventTranslator()
+    translator.translate({"type": "response.output_text.delta", "delta": "Plotting."})
+    translator.translate({"type": "response.code_interpreter_call.completed"})
+
+    assert translator.translate(
+        {"type": "response.output_text.delta", "delta": "Done."}
+    ) == [StatusEvent(phase="writing"), TextDeltaEvent(text="Done.")]
+
+
 def test_unknown_events_are_ignored():
     assert EventTranslator().translate({"type": "response.content_part.added"}) == []
 

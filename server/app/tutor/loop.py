@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import logging
+import mimetypes
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
@@ -17,6 +18,7 @@ from app.tutor.context import ContextBundle
 from app.tutor.events import (
     BoardRequestEvent, ClientEvent, EventTranslator, StatusEvent, WorkspaceEvent,
 )
+from app.tutor.fetch_image import ALLOWED_CONTENT_TYPES, MAX_IMAGE_BYTES
 from app.tutor.rendezvous import BoardRegion, BoardUnavailable
 from app.tutor.retry import RETRY_LIMIT, classify, retry_delay
 from app.tutor.tools import MEMORY_TOOLS, TOOL_DEFINITIONS
@@ -127,12 +129,13 @@ TURN_DOWNLOAD_LIMIT = 8
 # How many bytes one turn may bring in, fetched and relayed added together.
 #
 # The second cap, because the first does not imply it: eight downloads of a
-# megabyte each is a different bill from eight of a kilobyte, and only one of
-# the two downloaders has a size limit of its own (`fetch_image.MAX_IMAGE_BYTES`
-# is 10 MB; a container file has no such ceiling — a script can write whatever
-# it likes). Checked before each download rather than during, so a single file
-# may carry the turn past the line; that is the most a check without a
-# Content-Length can promise, and 40 MB with one overshoot is still bounded.
+# megabyte each is a different bill from eight of a kilobyte. Checked before
+# each download rather than during, so a single file can carry the turn past the
+# line — but only by that file's own ceiling, because both downloaders have one.
+# `fetch_image.MAX_IMAGE_BYTES` bounds a fetched picture at 10 MB, and
+# `download_container_file` below bounds a relayed file at the same 10 MB
+# against bytes actually read. So the worst case here is 40 MB plus one file:
+# bounded at both ends, which is what makes this number mean something.
 TURN_DOWNLOAD_BYTE_LIMIT = 40 * 1024 * 1024
 
 # What the tool call is answered with. `set_workspace` has no server-side
@@ -442,6 +445,90 @@ class RelayedFile:
 #: attachment row; `app.api.turn` is that binding.
 FileRelay = Callable[[str, str, str], Awaitable[RelayedFile]]
 
+
+# What a relayed file is recorded and served as when its name says nothing, and
+# when its name says something this service will not repeat.
+#
+# `GET /v1/blobs/{key}` serves the content type off the attachment row, so the
+# row's claim is what the device is eventually handed. "These are bytes" is the
+# one claim that is always safe to make.
+DEFAULT_SCRIPT_OUTPUT_TYPE = "application/octet-stream"
+
+
+class ContainerFileTooLarge(Exception):
+    """A container file was still arriving after `MAX_IMAGE_BYTES`."""
+
+
+def relayed_content_type(filename: str) -> str:
+    """What a file a script wrote may be recorded and served as.
+
+    The name is the only description there is. Unlike a fetched picture — whose
+    bytes are sniffed with Pillow because a stranger chose both the URL and what
+    it claims to be — nothing on this path decodes the file, so `mimetypes` on
+    the extension is the whole of the detection.
+
+    **An image type the fetcher would have refused is downgraded to bytes.**
+    `plt.savefig("chart.svg")` is an ordinary thing for a model to write, and
+    `mimetypes` calls the result `image/svg+xml`. Recording that claim would
+    write it into the attachment row, and `GET /v1/blobs/{key}` serves the row's
+    type verbatim to a device that renders what it is given — which is the exact
+    door `fetch_image.ALLOWED_CONTENT_TYPES` was built to keep shut, with a
+    comment saying SVG "must stay missing" because it is markup carrying scripts
+    and external references. A guarded download refusing a format is not a
+    licence for this path to accept it because a script produced it, so the
+    allowlist is imported rather than restated: one list, two callers.
+
+    Non-image types are left alone. `text/csv` was never going to be rendered as
+    a picture, and calling it bytes would only make the row less true.
+    """
+    guessed = mimetypes.guess_type(filename)[0]
+    if guessed is None:
+        return DEFAULT_SCRIPT_OUTPUT_TYPE
+    if guessed.startswith("image/") and guessed not in ALLOWED_CONTENT_TYPES:
+        return DEFAULT_SCRIPT_OUTPUT_TYPE
+    return guessed
+
+
+async def download_container_file(
+    client: AsyncOpenAI, container_id: str, file_id: str
+) -> bytes:
+    """Read one container file out of the provider, refusing an oversized one.
+
+    Streamed rather than read whole, and that is the entire point. The turn's
+    `TURN_DOWNLOAD_BYTE_LIMIT` is checked *before* a download starts, because
+    nothing knows a file's size until it arrives — so without a per-file ceiling
+    the overshoot past 40 MB is whatever one script chose to write, read into
+    memory and then written to a blob before anything noticed. Counting bytes as
+    they arrive and abandoning the body partway is what bounds it.
+
+    `MAX_IMAGE_BYTES` is imported rather than given a number of its own: it is
+    already this service's answer to "the most one downloaded file may weigh",
+    and a relayed chart is the same kind of thing as a fetched one. Enforced
+    against bytes actually read, so a lying `Content-Length` is not a way past
+    it — the same reason `fetch_image` enforces it that way.
+
+    Lives here, beside `FileRelay`, rather than inside `app.api.turn`'s closure:
+    this is the half of a relay that has rules, and rules that only exist inside
+    a nested function in a route handler are rules no test can reach. `run_turn`
+    does not call it — the loop still only ever awaits the injected relay.
+    """
+    total = 0
+    chunks: list[bytes] = []
+    async with client.containers.files.content.with_streaming_response.retrieve(
+        file_id, container_id=container_id
+    ) as response:
+        async for chunk in response.iter_bytes():
+            total += len(chunk)
+            if total > MAX_IMAGE_BYTES:
+                # Raised inside the `async with`, so the context manager closes
+                # the response and the rest of the body is never pulled off the
+                # socket.
+                raise ContainerFileTooLarge(
+                    f"the file passed {MAX_IMAGE_BYTES} bytes and was abandoned"
+                )
+            chunks.append(chunk)
+    return b"".join(chunks)
+
 #: What the learner's status line says while a memory tool runs.
 #:
 #: Not in `events.TOOL_PHASES`: that maps a call to a phase as its *arguments*
@@ -746,9 +833,18 @@ def _relay_item(relayed: list[tuple[str, RelayedFile]]) -> dict:
             lines.append(f"{filename} → {file.blob_id}")
         else:
             lines.append(f"{filename} → not saved ({file.error or 'unknown'})")
-        # Shown only when there is something to look at. A CSV has a blob id and
-        # no picture, and `input_image` is not a channel for arbitrary bytes.
-        if file.data and (file.content_type or "").startswith("image/"):
+        # Shown only when there is something to look at, and only in a format
+        # the provider documents as an image. A CSV has a blob id and no
+        # picture; `input_image` is not a channel for arbitrary bytes.
+        #
+        # The allowlist rather than `startswith("image/")`, and it is not
+        # belt-and-braces with `relayed_content_type` — it is the half that
+        # protects the *turn*. The documented vision formats are png, jpeg,
+        # webp and gif, so a data URL announcing `image/svg+xml` is a 400 on
+        # the next round, which fails the whole turn rather than losing one
+        # picture. See `relayed_content_type` for the half that protects the
+        # device.
+        if file.data and file.content_type in ALLOWED_CONTENT_TYPES:
             pictures.append(_image_part(file.data, file.content_type))
     return {
         "role": "user",
