@@ -14,6 +14,9 @@ import pytest
 
 from app.tutor import board
 from app.tutor.board_scene import (
+    MAX_FONT_SIZE,
+    MAX_LATEX_CHARS,
+    MAX_PATH_CHARS,
     MAX_SCENE_CHARS,
     MAX_SVG_CHARS,
     parse_board_update,
@@ -51,6 +54,19 @@ RAW_SVG_DOCUMENT = (
 )
 
 
+#: The style block every strict arm demands, so each fixture below states only
+#: the fields its own primitive carries.
+_STYLE = {
+    "role": "content",
+    "stroke": "#0A0A0A",
+    "fill": "transparent",
+    "stroke_width": 4,
+    "opacity": 1,
+    "dash": [],
+    "rotation": 0,
+}
+
+
 def _svg_element(**overrides):
     element = {
         "id": "diagram",
@@ -60,13 +76,7 @@ def _svg_element(**overrides):
         "width": 500,
         "height": 320,
         "svg": RAW_SVG_DOCUMENT,
-        "role": "content",
-        "stroke": "#0A0A0A",
-        "fill": "transparent",
-        "stroke_width": 4,
-        "opacity": 1,
-        "dash": [],
-        "rotation": 0,
+        **_STYLE,
     }
     element.update(overrides)
     return element
@@ -78,6 +88,13 @@ def _parse_with_svg(**overrides):
         "delete_ids": [],
         "elements": [_svg_element(**overrides)],
     }))
+
+
+def _update_json(*, kind: str, id: str, **fields) -> str:
+    """One styled element in one upsert, as the tool call's raw arguments."""
+    element = {"id": id, "kind": kind, **_STYLE}
+    element.update(fields)
+    return json.dumps({"mode": "upsert", "delete_ids": [], "elements": [element]})
 
 
 # MARK: - Aiming
@@ -420,3 +437,78 @@ def test_non_finite_svg_frame_geometry_is_rejected():
 
     assert update is None
     assert error is not None
+
+
+# MARK: - Paths and mathematical notation
+
+
+def test_path_element_parses_with_default_fill_rule():
+    """A path needs no frame: `d` already speaks in board points."""
+    update, error = parse_board_update(_update_json(
+        kind="path", id="p1", d="M0 0 C10 0 20 10 30 10",
+    ))
+
+    assert error is None
+    assert update.elements[0].fill_rule == "nonzero"
+
+
+def test_path_keeps_an_evenodd_fill_rule():
+    update, error = parse_board_update(_update_json(
+        kind="path", id="p1", d="M0 0 L30 0 L30 30 Z", fill_rule="evenodd",
+    ))
+
+    assert error is None
+    assert update.elements[0].fill_rule == "evenodd"
+
+
+def test_path_rejects_oversized_d():
+    _, error = parse_board_update(_update_json(
+        kind="path", id="p1", d="M0 0 " + "L1 1 " * 4000,
+    ))
+
+    assert error is not None
+    assert str(MAX_PATH_CHARS) in error
+
+
+def test_math_text_parses():
+    update, error = parse_board_update(_update_json(
+        kind="math_text", id="m1", x=10, y=20, latex=r"\frac{a}{b}", font_size=24,
+    ))
+
+    assert error is None
+    notation = update.elements[0]
+    assert (notation.x, notation.y, notation.font_size) == (10.0, 20.0, 24.0)
+    assert notation.latex == r"\frac{a}{b}", "LaTeX reaches the device untouched"
+
+
+def test_math_text_rejects_oversized_latex():
+    """Truncating LaTeX would hand the device an unclosed expression, which
+    renders as nothing at all. Refusing it lets the model write a shorter one."""
+    _, error = parse_board_update(_update_json(
+        kind="math_text", id="m1", x=0, y=0,
+        latex="x" * (MAX_LATEX_CHARS + 1), font_size=24,
+    ))
+
+    assert error is not None
+    assert str(MAX_LATEX_CHARS) in error
+
+
+def test_math_text_font_size_is_clamped_to_the_readable_range():
+    update, error = parse_board_update(_update_json(
+        kind="math_text", id="m1", x=0, y=0, latex="x", font_size=9_000,
+    ))
+
+    assert update is not None, error
+    assert update.elements[0].font_size == MAX_FONT_SIZE
+
+
+@pytest.mark.parametrize("kind, fields", [
+    ("path", {"d": ""}),
+    ("math_text", {"x": 0, "y": 0, "latex": "", "font_size": 24}),
+])
+def test_an_empty_document_string_is_rejected(kind, fields):
+    """An element the device cannot draw still costs an id and a slot."""
+    update, error = parse_board_update(_update_json(kind=kind, id="e1", **fields))
+
+    assert update is None
+    assert "empty" in (error or "")

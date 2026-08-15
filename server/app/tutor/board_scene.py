@@ -32,6 +32,13 @@ MAX_SCENE_CHARS = 60_000
 #: complex illustration plus ids and surrounding elements still fits in the
 #: 60,000-character scene string the device sends back on every turn.
 MAX_SVG_CHARS = 40_000
+#: Maximum length of one path's `d` string. A path is a single shape rather
+#: than a whole document, so it needs far less room than raw SVG, and a runaway
+#: curve list is the cheapest way for one element to fill the scene budget.
+MAX_PATH_CHARS = 20_000
+#: Maximum length of one LaTeX fragment. Notation is short: 2,000 characters is
+#: already a very long expression, and the same figure caps plain text.
+MAX_LATEX_CHARS = 2_000
 
 #: The logical board is 50,000 points on a side centred on the drawing-space
 #: origin (25,000, 25,000), so the valid logical range is -25,000...25,000 on
@@ -62,6 +69,32 @@ def _clamp(value: float, low: float, high: float) -> float:
 
 def _finite(value: float) -> bool:
     return isinstance(value, (int, float)) and math.isfinite(value)
+
+
+def _validated_document(value: str, *, name: str, limit: int) -> str:
+    """One model-authored document the device parses and the server does not.
+
+    `svg`, `d`, and `latex` are all markup rather than values this side
+    understands, so the checks are the same three: a string, something to draw,
+    and a length the scene budget can carry. An over-long one is refused with
+    its cap named instead of truncated, because half a path or half an
+    expression is markup the device cannot parse — it would render as nothing,
+    with no error anywhere. Refusing it tells the model to write a shorter one.
+    """
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be a string")
+    if not value:
+        raise ValueError(f"{name} must not be empty")
+    if len(value) > limit:
+        raise ValueError(f"{name} must be at most {limit} characters; got {len(value)}")
+    return value
+
+
+def _validated_font_size(value: float) -> float:
+    """Shared by every element that sets type, so one range governs all of it."""
+    if not _finite(value):
+        raise ValueError("font_size must be a finite number")
+    return _clamp(value, MIN_FONT_SIZE, MAX_FONT_SIZE)
 
 
 class BoardStyle(BaseModel):
@@ -171,9 +204,7 @@ class TextElement(_Identified):
     @field_validator("font_size")
     @classmethod
     def _font_size(cls, value: float) -> float:
-        if not _finite(value):
-            raise ValueError("font_size must be a finite number")
-        return _clamp(value, MIN_FONT_SIZE, MAX_FONT_SIZE)
+        return _validated_font_size(value)
 
 
 class LineElement(_Identified):
@@ -297,6 +328,53 @@ class AngleMarkerElement(_Identified):
         return _clamp(value, 4.0, MAX_ARC_RADIUS)
 
 
+class PathElement(_Identified):
+    """One SVG path: the curve and freeform primitive, still editable by id.
+
+    `d` carries absolute board points rather than a local viewbox, so a path
+    needs no frame and sits in the same space as every other element. That also
+    means its coordinates are the one geometry here the server does not clamp:
+    the numbers are inside a string it does not parse, and the device culls
+    whatever falls outside the board.
+    """
+
+    kind: Literal["path"] = "path"
+    d: str
+    fill_rule: Literal["nonzero", "evenodd"] = "nonzero"
+
+    @field_validator("d")
+    @classmethod
+    def _path_data(cls, value: str) -> str:
+        return _validated_document(value, name="d", limit=MAX_PATH_CHARS)
+
+
+class MathTextElement(_Identified):
+    """Mathematical notation, typeset from LaTeX on the device.
+
+    This is the only element that puts notation on the board. Notation spelled
+    out as plain text, or assembled from lines and glyphs, is unreadable and
+    cannot be revised. The server does not typeset the fragment and holds no
+    opinion on the dialect; the device renders it with the engine chat already
+    uses, so board notation and chat notation match.
+    """
+
+    kind: Literal["math_text"] = "math_text"
+    x: float
+    y: float
+    latex: str
+    font_size: float
+
+    @field_validator("latex")
+    @classmethod
+    def _latex(cls, value: str) -> str:
+        return _validated_document(value, name="latex", limit=MAX_LATEX_CHARS)
+
+    @field_validator("font_size")
+    @classmethod
+    def _font_size(cls, value: float) -> float:
+        return _validated_font_size(value)
+
+
 class SVGElement(_Identified):
     """Opaque raw SVG transport for complex multi-part illustrations.
 
@@ -316,21 +394,13 @@ class SVGElement(_Identified):
     @field_validator("svg")
     @classmethod
     def _svg(cls, value: str) -> str:
-        if not isinstance(value, str):
-            raise ValueError("svg must be a string")
-        if not value:
-            raise ValueError("svg must not be empty")
-        if len(value) > MAX_SVG_CHARS:
-            raise ValueError(
-                f"svg must be at most {MAX_SVG_CHARS} characters; got {len(value)}"
-            )
-        return value
+        return _validated_document(value, name="svg", limit=MAX_SVG_CHARS)
 
 
 BoardElement = Annotated[
     TextElement | LineElement | ArrowElement | RectangleElement | EllipseElement
     | CircleElement | PolygonElement | PolylineElement | FreehandElement
-    | ArcElement | AngleMarkerElement | SVGElement,
+    | ArcElement | AngleMarkerElement | PathElement | MathTextElement | SVGElement,
     Field(discriminator="kind"),
 ]
 

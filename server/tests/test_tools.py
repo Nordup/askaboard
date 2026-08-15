@@ -1,6 +1,6 @@
 import json
 
-from app.tutor.board_scene import MAX_SVG_CHARS
+from app.tutor.board_scene import MAX_LATEX_CHARS, MAX_PATH_CHARS, MAX_SVG_CHARS
 from app.tutor.tools import (
     MEMORY_TOOL_DEFINITIONS,
     SET_WORKSPACE_TOOL,
@@ -65,7 +65,8 @@ def test_update_board_primitives_are_a_discriminated_union():
 
     assert set(kinds) == {
         "text", "line", "arrow", "rectangle", "ellipse", "circle",
-        "polygon", "polyline", "freehand", "arc", "angle_marker", "svg",
+        "polygon", "polyline", "freehand", "arc", "angle_marker", "path",
+        "math_text", "svg",
     }
 
 
@@ -81,6 +82,36 @@ def test_update_board_svg_arm_is_an_opaque_raw_document():
     description = svg["properties"]["svg"]["description"]
     assert "complete raw SVG document" in description
     assert "interpreted locally" in description
+
+
+def test_update_board_path_arm_speaks_in_board_points():
+    arms = UPDATE_BOARD_TOOL["parameters"]["properties"]["elements"]["items"]["anyOf"]
+    path = next(arm for arm in arms if arm["properties"]["kind"]["const"] == "path")
+
+    assert {"id", "kind", "d", "fill_rule"}.issubset(set(path["required"]))
+    assert path["properties"]["d"]["minLength"] == 1
+    assert path["properties"]["d"]["maxLength"] == MAX_PATH_CHARS
+    assert "absolute board points" in path["properties"]["d"]["description"]
+    assert path["properties"]["fill_rule"]["enum"] == ["nonzero", "evenodd"]
+
+
+def test_update_board_math_text_arm_claims_all_notation():
+    """A model that reaches for `text` or SVG `<text>` writes unreadable maths."""
+    arms = UPDATE_BOARD_TOOL["parameters"]["properties"]["elements"]["items"]["anyOf"]
+    math_text = next(
+        arm for arm in arms if arm["properties"]["kind"]["const"] == "math_text"
+    )
+
+    assert {"id", "kind", "x", "y", "latex", "font_size"}.issubset(
+        set(math_text["required"])
+    )
+    assert math_text["properties"]["latex"]["minLength"] == 1
+    assert math_text["properties"]["latex"]["maxLength"] == MAX_LATEX_CHARS
+    assert math_text["properties"]["font_size"]["minimum"] == 8
+    assert math_text["properties"]["font_size"]["maximum"] == 256
+    description = math_text["properties"]["latex"]["description"]
+    assert "only correct way" in description
+    assert "notation on the board" in description
 
 
 def test_update_board_description_prefers_raw_svg_for_complex_visuals():

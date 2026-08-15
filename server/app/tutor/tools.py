@@ -1,6 +1,6 @@
 from app.learner.mastery import RELIABILITY
 from app.memory.schema import MemoryCategory
-from app.tutor.board_scene import MAX_SVG_CHARS
+from app.tutor.board_scene import MAX_LATEX_CHARS, MAX_PATH_CHARS, MAX_SVG_CHARS
 
 
 SET_WORKSPACE_TOOL: dict = {
@@ -356,6 +356,38 @@ UPDATE_BOARD_TOOL: dict = {
                                 "vertex_x", "vertex_y", "ray1_x", "ray1_y",
                                 "ray2_x", "ray2_y", "radius", "right_angle",
                             ],
+                        ),
+                        _board_element(
+                            kind="path",
+                            fields={
+                                "d": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": MAX_PATH_CHARS,
+                                    "description": "One SVG path string — M, L, H, V, C, S, Q, T, A, Z. Every coordinate is in absolute board points, the same space as every other element, so the path needs no frame and no viewbox. Use this for curves and freeform shapes.",
+                                },
+                                "fill_rule": {
+                                    "type": "string",
+                                    "enum": ["nonzero", "evenodd"],
+                                    "description": "How overlapping subpaths fill; nonzero unless the shape needs holes.",
+                                },
+                            },
+                            required=["d", "fill_rule"],
+                        ),
+                        _board_element(
+                            kind="math_text",
+                            fields={
+                                "x": {"type": "number", "description": "Left edge of the notation, board points."},
+                                "y": {"type": "number", "description": "Top edge of the notation, board points."},
+                                "latex": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": MAX_LATEX_CHARS,
+                                    "description": "The expression as LaTeX, with no surrounding $ or $$ delimiters, typeset on the learner's device. This is the only correct way to put mathematical notation on the board: never spell an equation out with text and never build one from lines, arcs, or SVG glyphs.",
+                                },
+                                "font_size": {"type": "number", "minimum": 8, "maximum": 256, "description": "Font size in board points."},
+                            },
+                            required=["x", "y", "latex", "font_size"],
                         ),
                         _board_element(
                             kind="svg",
