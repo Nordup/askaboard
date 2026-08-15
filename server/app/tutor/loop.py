@@ -10,7 +10,9 @@ from dataclasses import dataclass, field
 
 from openai import APIStatusError, AsyncOpenAI
 
-from app.tutor.board_scene import parse_board_update
+from app.tutor.board_scene import (
+    BoardSceneUpdate, SVGElement, lint_svg, parse_board_update,
+)
 from app.tutor.context import ContextBundle
 from app.tutor.events import (
     BoardRequestEvent, ClientEvent, EventTranslator, StatusEvent, WorkspaceEvent,
@@ -312,6 +314,22 @@ def _arguments(call: dict) -> dict | None:
     return arguments if isinstance(arguments, dict) else None
 
 
+def _svg_warnings(update: BoardSceneUpdate) -> list[str]:
+    """Every distinct lint warning one batch of elements earns, in one list.
+
+    Distinct: a model that sends six animated figures has made one mistake,
+    and six copies of one sentence is an ack that teaches it nothing, at
+    length. `dict.fromkeys` keeps the order the documents were written in, so
+    two different problems still read as two.
+    """
+    return list(dict.fromkeys(
+        warning
+        for element in update.elements
+        if isinstance(element, SVGElement)
+        for warning in lint_svg(element.svg)
+    ))
+
+
 def _answer(call: dict, *, has_board: bool, has_memory: bool = False) -> ToolAnswer:
     """Plan one tool call's reply.
 
@@ -331,7 +349,17 @@ def _answer(call: dict, *, has_board: bool, has_memory: bool = False) -> ToolAns
 
     if name == "update_board":
         update, _ = parse_board_update(call.get("arguments") or "{}")
-        output = UPDATE_BOARD_ACK if update is not None else MALFORMED_BOARD_ACK
+        if update is None:
+            output = MALFORMED_BOARD_ACK
+        else:
+            # Appended to the applied ack rather than replacing it: the event
+            # has gone out and the elements are on the board, minus the parts
+            # the device cannot draw. Told it was rejected, the model would
+            # redraw a figure the learner is already looking at.
+            warnings = _svg_warnings(update)
+            output = UPDATE_BOARD_ACK
+            if warnings:
+                output = UPDATE_BOARD_ACK + " Warnings: " + "; ".join(warnings)
         return ToolAnswer(items=[
             {"type": "function_call_output", "call_id": call_id, "output": output}
         ])

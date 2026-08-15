@@ -479,6 +479,56 @@ def test_update_board_accepts_raw_svg_and_acknowledges_it():
     assert answer.items[0]["output"] == UPDATE_BOARD_ACK
 
 
+def _svg_update(*markup: str) -> str:
+    """One `update_board` call carrying one styled `svg` element per document."""
+    template = SVG_UPDATE_ARGUMENTS["elements"][0]
+    return json.dumps({
+        "mode": "upsert",
+        "delete_ids": [],
+        "elements": [
+            {**template, "id": f"figure{index}", "svg": document}
+            for index, document in enumerate(markup)
+        ],
+    })
+
+
+ANIMATED_SVG = (
+    '<svg viewBox="0 0 400 320"><circle cx="10" cy="10" r="5"/>'
+    '<animate attributeName="opacity" from="0" to="1" dur="2s"/></svg>'
+)
+
+
+def test_unsupported_svg_features_come_back_as_warnings_on_the_applied_ack():
+    """The element is stored and drawn either way — three-quarters of a figure
+    on the board beats a refused call — so the lint rides on the applied ack
+    rather than turning into a rejection the learner sees as a blank board."""
+    answer = _answer(
+        {"call_id": "c", "name": "update_board", "arguments": _svg_update(ANIMATED_SVG)},
+        has_board=True,
+    )
+
+    output = answer.items[0]["output"]
+    assert output.startswith(UPDATE_BOARD_ACK), "the update still applied"
+    assert " Warnings: " in output
+    assert "unsupported" in output
+    assert "<animate>" in output
+
+
+def test_one_warning_is_reported_once_however_many_elements_earn_it():
+    """A model that sends six animated figures needs to be told once. Six
+    copies of one sentence is the ack teaching it nothing, at length."""
+    answer = _answer(
+        {
+            "call_id": "c",
+            "name": "update_board",
+            "arguments": _svg_update(ANIMATED_SVG, ANIMATED_SVG, ANIMATED_SVG),
+        },
+        has_board=True,
+    )
+
+    assert answer.items[0]["output"].count("<animate>") == 1
+
+
 @respx.mock
 async def test_an_svg_update_board_turn_streams_the_raw_document_unchanged():
     respx.post("https://api.openai.com/v1/responses").mock(

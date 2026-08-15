@@ -19,6 +19,7 @@ from app.tutor.board_scene import (
     MAX_PATH_CHARS,
     MAX_SCENE_CHARS,
     MAX_SVG_CHARS,
+    lint_svg,
     parse_board_update,
     update_payload,
 )
@@ -52,6 +53,21 @@ RAW_SVG_DOCUMENT = (
     '<animate attributeName="opacity" from="0" to="1" dur="2s"/>'
     "</svg>"
 )
+
+#: The same figure written in the subset the device actually draws: paths,
+#: shapes, groups, transforms, gradients, and text. Nothing here is a warning.
+CLEAN_SVG_DOCUMENT = (
+    '<svg viewBox="0 0 200 100" xmlns="http://www.w3.org/2000/svg">'
+    '<defs><linearGradient id="g"><stop offset="0" stop-color="#0155FB"/></linearGradient></defs>'
+    '<g transform="translate(10 10)">'
+    '<path d="M0 0 L80 40" stroke="#0A0A0A"/>'
+    '<circle cx="40" cy="20" r="8" fill="url(#g)"/>'
+    "</g><text x=\"0\" y=\"90\">area</text></svg>"
+)
+
+#: One blob key of the shape `store/blobs.py` writes and `GET /v1/blobs/{key}`
+#: serves: `sha256:` and 64 lowercase hex characters.
+BLOB_ID = "sha256:" + "ab12" * 16
 
 
 #: The style block every strict arm demands, so each fixture below states only
@@ -547,3 +563,138 @@ def test_the_new_kinds_reach_the_device_as_one_flat_element():
     assert path["fill_rule"] == "evenodd"
     assert math_text["font_size"] == 24
     assert path["stroke"] == "#0A0A0A", "style rides beside the geometry, not under it"
+
+
+# MARK: - Images
+
+
+def test_image_element_parses():
+    update, error = parse_board_update(_update_json(
+        kind="image", id="photo", x=-100, y=-80, width=400, height=300,
+        blob_id=BLOB_ID,
+    ))
+
+    assert error is None
+    image = update.elements[0]
+    assert (image.x, image.y, image.width, image.height) == (-100.0, -80.0, 400.0, 300.0)
+    assert image.blob_id == BLOB_ID
+
+
+@pytest.mark.parametrize("blob_id", [
+    "sha256:" + "AB12" * 16,        # upper-case hex is a different key
+    "sha256:" + "ab12" * 15,        # too short
+    "sha256:" + "ab12" * 16 + "0",  # too long
+    "sha1:" + "ab12" * 16,          # a digest the store does not write
+    "ab12" * 16,                    # no algorithm
+    "sha256:../../../etc/passwd",
+    "",
+])
+def test_image_rejects_anything_that_is_not_a_blob_key(blob_id):
+    """The device downloads this string from `GET /v1/blobs/{key}`, which
+    builds a filesystem path out of it and gates the same shape. A key of any
+    other shape can only ever 400, so the model is told here instead."""
+    update, error = parse_board_update(_update_json(
+        kind="image", id="photo", x=0, y=0, width=10, height=10, blob_id=blob_id,
+    ))
+
+    assert update is None
+    assert error is not None
+
+
+@pytest.mark.parametrize("width, height", [(0, 300), (400, 0), (-5, 300)])
+def test_image_needs_a_frame_it_can_draw(width, height):
+    """An image is placed by its frame, not by its own pixel size, and a
+    missing blob renders a placeholder inside that frame. A zero-size one draws
+    neither, while the model reads an applied ack and believes it placed a
+    picture — so it is refused rather than clamped."""
+    update, error = parse_board_update(_update_json(
+        kind="image", id="photo", x=0, y=0,
+        width=width, height=height, blob_id=BLOB_ID,
+    ))
+
+    assert update is None
+    assert error is not None
+
+
+def test_image_geometry_is_clamped_to_the_logical_board():
+    update, error = parse_board_update(_update_json(
+        kind="image", id="photo", x=-100_000, y=100_000,
+        width=100_000, height=300, blob_id=BLOB_ID,
+    ))
+
+    assert update is not None, error
+    image = update.elements[0]
+    assert (image.x, image.y, image.width) == (-25_000.0, 25_000.0, 50_000.0)
+
+
+def test_an_image_reaches_the_device_as_one_flat_element():
+    """`blob_id` is the only thing that names the picture. Camel-cased to
+    `blobId` it would decode to nothing on the device, which draws a
+    placeholder frame forever and reports no error to anyone."""
+    update, error = parse_board_update(_update_json(
+        kind="image", id="photo", x=10, y=20, width=400, height=300,
+        blob_id=BLOB_ID,
+    ))
+    assert update is not None, error
+
+    wire = json.loads(update_payload(update).model_dump_json())
+    image = wire["upserts"][0]
+
+    assert set(image) == {
+        "id", "kind", "x", "y", "width", "height", "blob_id",
+    } | set(_STYLE)
+    assert image["blob_id"] == BLOB_ID
+    assert image["kind"] == "image"
+
+
+# MARK: - SVG lint
+
+
+def test_lint_names_every_feature_the_device_cannot_draw():
+    warnings = lint_svg(RAW_SVG_DOCUMENT)
+
+    assert any("<filter>" in warning for warning in warnings)
+    assert any("<mask>" in warning for warning in warnings)
+    assert any("<foreignObject>" in warning for warning in warnings)
+    assert any("<animate>" in warning for warning in warnings)
+    assert all("unsupported" in warning for warning in warnings)
+
+
+def test_lint_passes_a_document_written_in_the_supported_subset():
+    """Paths, shapes, groups, transforms, gradients, and text draw natively.
+    Warning about those would train the model out of the markup it should be
+    writing — and `xmlns="http...` is not an external reference."""
+    assert lint_svg(CLEAN_SVG_DOCUMENT) == []
+
+
+def test_lint_flags_a_script_that_would_never_run():
+    warnings = lint_svg('<svg><script>alert(1)</script><path d="M0 0 L1 1"/></svg>')
+
+    assert len(warnings) == 1
+    assert "<script>" in warnings[0]
+
+
+@pytest.mark.parametrize("markup", [
+    '<svg><image href="https://example.com/a.png" width="10" height="10"/></svg>',
+    '<svg><image xlink:href="http://example.com/a.png" width="10" height="10"/></svg>',
+])
+def test_lint_flags_an_external_reference_however_it_is_spelled(markup):
+    """The device fetches nothing while rendering, so an external reference is
+    a blank hole in the figure. Both spellings are the same problem and are
+    reported once, not twice."""
+    warnings = lint_svg(markup)
+
+    assert len(warnings) == 1
+    assert "external" in warnings[0]
+    assert "unsupported" in warnings[0]
+
+
+def test_lint_still_reads_markup_that_is_not_well_formed():
+    """Well-formedness is not this function's job: the device parses the
+    markup and the server does not. The scan is textual, so an unclosed
+    document still has its unsupported features named instead of swallowing
+    the lint behind a parse error nobody asked for."""
+    warnings = lint_svg('<svg><filter id="b"><feGaussianBlur stdDeviation="2"')
+
+    assert len(warnings) == 1
+    assert "<filter>" in warnings[0]

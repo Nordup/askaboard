@@ -66,7 +66,7 @@ def test_update_board_primitives_are_a_discriminated_union():
     assert set(kinds) == {
         "text", "line", "arrow", "rectangle", "ellipse", "circle",
         "polygon", "polyline", "freehand", "arc", "angle_marker", "path",
-        "math_text", "svg",
+        "math_text", "image", "svg",
     }
 
 
@@ -112,6 +112,26 @@ def test_update_board_math_text_arm_claims_all_notation():
     description = math_text["properties"]["latex"]["description"]
     assert "only correct way" in description
     assert "notation on the board" in description
+
+
+def test_update_board_image_arm_places_a_blob_the_server_already_holds():
+    """A model that invents a key places a picture nobody has. The pattern is
+    the one `GET /v1/blobs/{key}` gates, so a made-up id cannot even be sent."""
+    arms = UPDATE_BOARD_TOOL["parameters"]["properties"]["elements"]["items"]["anyOf"]
+    image = next(arm for arm in arms if arm["properties"]["kind"]["const"] == "image")
+
+    assert {"id", "kind", "x", "y", "width", "height", "blob_id"}.issubset(
+        set(image["required"])
+    )
+    assert image["properties"]["blob_id"]["pattern"] == r"^sha256:[0-9a-f]{64}$"
+    description = image["properties"]["blob_id"]["description"]
+    assert "tool result" in description
+    assert "never invent" in description.lower()
+    # Schema-legal sizes are all sizes the scene model accepts: it refuses a
+    # frame of zero, and nothing useful is drawn in under a board point.
+    for axis in ("width", "height"):
+        assert image["properties"][axis]["minimum"] == 1
+        assert image["properties"][axis]["maximum"] == 50000
 
 
 def test_update_board_description_prefers_raw_svg_for_complex_visuals():
@@ -213,8 +233,8 @@ def test_the_tool_surface_stays_inside_its_budget():
     The bound was 24,000 when the registry held seven tools. The memory rework
     added four more and took the surface past it without moving the number, so
     the guard sat red and guarded nothing; `path` and `math_text` then added
-    two arms. 30,000 re-baselines it against the surface that actually exists
-    — about 28,100 characters — with room to spare and none to waste.
+    two arms. 30,000 re-baselined it against the surface that then existed —
+    about 28,100 characters — with room to spare and none to waste.
     """
     # The board rework (docs/superpowers/plans/2026-08-15-board-rework.md)
     # grows this further: an `image` arm, `fetch_image`, `web_search`, and the
@@ -222,4 +242,12 @@ def test_the_tool_surface_stays_inside_its_budget():
     # the descriptions. Every task that pushes past this number raises it in
     # its own commit, having read what the extra bytes bought — never blindly,
     # because a bound nobody looks at is the state this line just came out of.
-    assert len(json.dumps(TOOL_DEFINITIONS)) < 30_000
+    #
+    # The `image` arm (task 12) cost 1,249 characters — five fields, of which
+    # `blob_id` carries the rule that a key is copied from a tool result and
+    # never invented — and took the surface to 29,362. That left 638 under
+    # 30,000, less than one description edit, so the bound moves to 30,400:
+    # about a thousand characters of room, which is under the ~1,100 that the
+    # cheapest of this plan's new arms cost. A rewritten description fits; a
+    # fifteenth primitive does not, and trips this line.
+    assert len(json.dumps(TOOL_DEFINITIONS)) < 30_400

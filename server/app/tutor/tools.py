@@ -390,6 +390,25 @@ UPDATE_BOARD_TOOL: dict = {
                             required=["x", "y", "latex", "font_size"],
                         ),
                         _board_element(
+                            kind="image",
+                            fields={
+                                "x": {"type": "number", "description": "Left edge of the picture, board points."},
+                                "y": {"type": "number", "description": "Top edge of the picture, board points."},
+                                # Every size this schema allows is a size the
+                                # scene model accepts: it refuses a frame with
+                                # no area, and nothing is legible under a
+                                # board point.
+                                "width": {"type": "number", "minimum": 1, "maximum": 50000, "description": "Frame width in board points; the picture is drawn inside this frame."},
+                                "height": {"type": "number", "minimum": 1, "maximum": 50000, "description": "Frame height in board points."},
+                                "blob_id": {
+                                    "type": "string",
+                                    "pattern": "^sha256:[0-9a-f]{64}$",
+                                    "description": "The key of a picture already on the server, copied from a tool result word for word. Never invent one: a key names bytes the server holds, and a made-up key draws an empty frame.",
+                                },
+                            },
+                            required=["x", "y", "width", "height", "blob_id"],
+                        ),
+                        _board_element(
                             kind="svg",
                             fields={
                                 "x": {"type": "number", "description": "Left edge of the SVG frame, board points."},

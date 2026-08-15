@@ -57,6 +57,11 @@ MAX_HEAD_SIZE = 120.0
 
 _COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 _ID_RE = re.compile(r"^[A-Za-z0-9._:+-]{1,128}$")
+#: The shape of every key the blob store writes, and the one shape
+#: `GET /v1/blobs/{key}` serves — `app/api/sessions.py` gates the same pattern
+#: before it builds a filesystem path out of the string. Restated rather than
+#: imported: this module is the wire contract and holds no API import.
+_BLOB_ID_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 BoardRole = Literal["content", "hint", "correction", "emphasis"]
 TextAlignment = Literal["left", "center", "right"]
@@ -375,13 +380,63 @@ class MathTextElement(_Identified):
         return _validated_font_size(value)
 
 
+class ImageElement(_Identified):
+    """A picture the server already holds, placed on the board by its key.
+
+    The bytes never travel in the scene: `blob_id` names a blob a tool put in
+    the store, and the device downloads it from `GET /v1/blobs/{key}` and
+    caches it. That is what lets one photograph or one computed chart sit in a
+    scene the model rewrites every turn without paying for it again.
+
+    Whether the blob *exists* is not checked here. Parsing a tool call touches
+    no database — this whole module is pure — and a lookup would buy little:
+    the id comes from a tool result the model was handed, and a key that names
+    nothing renders a placeholder frame rather than failing the update.
+
+    The frame must be a real rectangle. An image is placed by its frame rather
+    than by its own pixel size, and a missing blob draws its placeholder inside
+    that frame, so a zero-size one draws nothing at all — while the model reads
+    an applied ack and believes a picture is on the board. Refused, not
+    clamped, for the reason an empty document string is.
+    """
+
+    kind: Literal["image"] = "image"
+    x: float
+    y: float
+    width: float
+    height: float
+    blob_id: str
+
+    @field_validator("blob_id")
+    @classmethod
+    def _blob_id(cls, value: str) -> str:
+        if not isinstance(value, str) or _BLOB_ID_RE.fullmatch(value) is None:
+            raise ValueError(
+                "blob_id must be a blob key from a tool result: 'sha256:' and "
+                "64 lowercase hexadecimal characters"
+            )
+        return value
+
+    @field_validator("width", "height")
+    @classmethod
+    def _extent(cls, value: float) -> float:
+        # `_Identified._clamp_geometry` has already pulled the value into
+        # 0...MAX_DIMENSION, so the only thing left to refuse is a frame with
+        # no area — which is what a negative size arrives here as.
+        if not _finite(value) or value <= 0:
+            raise ValueError("image width and height must be greater than 0")
+        return value
+
+
 class SVGElement(_Identified):
     """Opaque raw SVG transport for complex multi-part illustrations.
 
     The server deliberately does not parse, whitelist, rewrite, or sanitize the
     document; the device interprets it locally. The only checks are practical
     bounds: a finite clamped frame, a non-empty document, and a generous length
-    cap chosen to fit the scene limit.
+    cap chosen to fit the scene limit. What the device cannot draw is named by
+    `lint_svg` at the bottom of this module — as warnings the model reads on
+    the tool's ack, never as a refusal that would leave the board blank.
     """
 
     kind: Literal["svg"] = "svg"
@@ -400,7 +455,8 @@ class SVGElement(_Identified):
 BoardElement = Annotated[
     TextElement | LineElement | ArrowElement | RectangleElement | EllipseElement
     | CircleElement | PolygonElement | PolylineElement | FreehandElement
-    | ArcElement | AngleMarkerElement | PathElement | MathTextElement | SVGElement,
+    | ArcElement | AngleMarkerElement | PathElement | MathTextElement
+    | ImageElement | SVGElement,
     Field(discriminator="kind"),
 ]
 
@@ -465,3 +521,64 @@ def update_payload(update: BoardSceneUpdate) -> BoardUpdatePayload:
         deletes=[] if replace_all else update.delete_ids,
         replace_all=replace_all,
     )
+
+
+#: What the device's renderer does not draw, and what the model is told about
+#: each. One sentence per feature: what it is, that it is unsupported, and the
+#: supported thing to reach for instead — a warning that only says "no" gets
+#: the same document back with the same feature in it. None of them ends in a
+#: full stop, because they are joined with "; " into one line on the ack.
+#:
+#: `<animate` covers `<animateTransform` and `<animateMotion` as well. The
+#: element spellings are the ones valid SVG uses, so the scan is case
+#: sensitive: `<Filter` is not a filter, it is markup the device drops anyway.
+_UNSUPPORTED_SVG_FEATURES: tuple[tuple[str, str], ...] = (
+    ("<filter",
+     "`<filter>` is unsupported and is not drawn: bake the effect into the "
+     "artwork, or leave it out"),
+    ("<animate",
+     "`<animate>` is unsupported and is not drawn: the board holds one still "
+     "figure, so draw the end state"),
+    ("<mask",
+     "`<mask>` is unsupported and is not drawn: use a clip path, or draw only "
+     "the shapes that should be visible"),
+    ("<foreignObject",
+     "`<foreignObject>` is unsupported and is not drawn: use SVG text, or a "
+     "`math_text` element for notation"),
+    ("<script",
+     "`<script>` is unsupported and never runs: remove it"),
+)
+
+#: Both spellings of one problem in one pattern, so a document written with the
+#: namespaced form is not told about it twice — `xlink:href` ends in `href`.
+_EXTERNAL_REFERENCE_RE = re.compile(r'(?:xlink:)?href="http')
+_EXTERNAL_REFERENCE_WARNING = (
+    'an external reference (`href="http...`) is unsupported: the device '
+    "fetches nothing while it draws, so inline the artwork or place the "
+    "picture with an `image` element"
+)
+
+
+def lint_svg(markup: str) -> list[str]:
+    """Name what one raw SVG document asks for and the device cannot draw.
+
+    Warnings, and only warnings. The element is stored and sent whatever this
+    returns, because the server does not render SVG and cannot be sure what
+    the document would have looked like: three-quarters of a figure on the
+    board beats a refused call and a blank board. The tool's ack carries these
+    lines, so the model reads them beside "applied" and revises next turn.
+
+    The scan is textual on purpose. Well-formedness is the device's business —
+    it is the thing that parses the document — and a server-side XML parse
+    would reject markup that draws perfectly well, or fall over an unclosed
+    tag and then report nothing at all about the features that same document
+    asked for. Length and emptiness are already refused at parse time.
+    """
+    if not isinstance(markup, str):
+        return []
+    warnings = [
+        warning for needle, warning in _UNSUPPORTED_SVG_FEATURES if needle in markup
+    ]
+    if _EXTERNAL_REFERENCE_RE.search(markup):
+        warnings.append(_EXTERNAL_REFERENCE_WARNING)
+    return warnings
