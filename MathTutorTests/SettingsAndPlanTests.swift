@@ -297,24 +297,92 @@ final class SettingsAndPlanTests: XCTestCase {
 
     // MARK: - The pickers
 
-    func testModelOptionsAreTheBoardsThreeRoutesInOrder() {
+    func testModelOptionsAreTheBoardsRoutesInOrder() {
         let options = SettingsOption.models(selected: .sol)
-        XCTAssertEqual(options.map(\.title), ["Sol", "Terra", "Luna"])
-        XCTAssertEqual(options.map(\.caption), ["Focused route", "Balanced route", "Vision route"])
-        XCTAssertEqual(options.filter(\.isSelected).map(\.value), [.sol])
-    }
-
-    func testEffortOptionsAreTheBoardsSixLevelsInOrder() {
-        let options = SettingsOption.efforts(selected: .high)
-        XCTAssertEqual(options.map(\.title), ["None", "Low", "Medium", "High", "X-High", "Max"])
+        XCTAssertEqual(options.map(\.title), ["Sol", "Terra", "Luna", "Flash", "Flash-Lite"])
         XCTAssertEqual(
             options.map(\.caption),
             [
-                "Fastest replies", "Light reasoning", "Balanced depth",
+                "Focused route", "Balanced route", "Vision route",
+                // Neither Gemini caption claims a price win over Luna, because
+                // there is none: Flash-Lite is dearer than the default.
+                "Wide context", "Cheaper, less capable",
+            ]
+        )
+        XCTAssertEqual(options.filter(\.isSelected).map(\.value), [.sol])
+    }
+
+    func testEffortOptionsAreTheFiveLevelsAGptRouteTakes() {
+        let options = SettingsOption.efforts(for: .sol, selected: .high)
+        XCTAssertEqual(options.map(\.title), ["Low", "Medium", "High", "X-High", "Max"])
+        XCTAssertEqual(
+            options.map(\.caption),
+            [
+                "Light reasoning", "Balanced depth",
                 "Deep reasoning", "Extra-deep reasoning", "Maximum depth",
             ]
         )
         XCTAssertEqual(options.filter(\.isSelected).map(\.value), [.high])
+    }
+
+    func testModelPickerOffersBothFamilies() {
+        let options = SettingsOption.models(selected: .luna)
+        XCTAssertEqual(options.count, ModelChoice.allCases.count)
+        XCTAssertTrue(options.map(\.value).contains(.flash))
+        XCTAssertTrue(options.map(\.value).contains(.flashLite))
+        XCTAssertEqual(options.filter(\.isSelected).count, 1)
+    }
+
+    /// The raw values are the wire contract, the same way the voice models' are:
+    /// `TurnRequest.model` carries the literal and `MODEL_ALLOWLIST` in
+    /// `server/app/config.py` holds these two strings. A rename here is a 422 on
+    /// every turn the learner then sends.
+    func testGeminiRawValuesAreTheServersOwnModelIds() {
+        XCTAssertEqual(ModelChoice.flash.rawValue, "gemini-3.7-flash")
+        XCTAssertEqual(ModelChoice.flashLite.rawValue, "gemini-3.5-flash-lite")
+    }
+
+    /// Gemini's `thinking_level` is low / medium / high. Offering X-High under a
+    /// Gemini model would show a level the request cannot carry.
+    func testGeminiModelsOfferThreeEfforts() {
+        XCTAssertEqual(ModelChoice.flash.supportedEfforts, [.low, .medium, .high])
+        XCTAssertEqual(ModelChoice.flashLite.supportedEfforts, [.low, .medium, .high])
+    }
+
+    func testOpenAIModelsKeepAllFiveEfforts() {
+        for model in [ModelChoice.sol, .terra, .luna] {
+            XCTAssertEqual(model.supportedEfforts, [.low, .medium, .high, .xhigh, .max])
+        }
+    }
+
+    /// `clamp(_:)` reads `supportedEfforts.last` as the deepest level, so every
+    /// one of those arrays has to run shallow to deep.
+    func testEverySupportedEffortListRunsShallowToDeep() {
+        let depth = [ReasoningEffort.low: 0, .medium: 1, .high: 2, .xhigh: 3, .max: 4]
+        for model in ModelChoice.allCases {
+            let depths = model.supportedEfforts.compactMap { depth[$0] }
+            XCTAssertEqual(depths.count, model.supportedEfforts.count)
+            XCTAssertEqual(depths, depths.sorted(), "\(model.displayName) lists its efforts out of order")
+        }
+    }
+
+    func testTheEffortRowFollowsTheSelectedModel() {
+        let options = SettingsOption.efforts(for: .flash, selected: .high)
+        XCTAssertEqual(options.map(\.value), [.low, .medium, .high])
+        XCTAssertEqual(options.filter(\.isSelected).count, 1)
+    }
+
+    /// Without the clamp the session keeps an effort the model does not accept
+    /// and the next turn 422s.
+    func testSwitchingToGeminiClampsADeepEffort() {
+        XCTAssertEqual(ModelChoice.flash.clamp(.max), .high)
+        XCTAssertEqual(ModelChoice.flash.clamp(.xhigh), .high)
+        XCTAssertEqual(ModelChoice.flashLite.clamp(.max), .high)
+    }
+
+    func testSwitchingToGeminiLeavesASupportedEffortAlone() {
+        XCTAssertEqual(ModelChoice.flash.clamp(.medium), .medium)
+        XCTAssertEqual(ModelChoice.sol.clamp(.max), .max)
     }
 
     func testVoiceModelOptionsAreTheBoardsTwoModelsInOrder() {
@@ -336,8 +404,15 @@ final class SettingsAndPlanTests: XCTestCase {
         for model in ModelChoice.allCases {
             XCTAssertEqual(SettingsOption.models(selected: model).filter(\.isSelected).count, 1)
         }
-        for effort in ReasoningEffort.allCases {
-            XCTAssertEqual(SettingsOption.efforts(selected: effort).filter(\.isSelected).count, 1)
+        // Each model against its own depths, not `ReasoningEffort.allCases`: an
+        // effort a model does not accept is never selected in its row, because
+        // the row does not list it.
+        for model in ModelChoice.allCases {
+            for effort in model.supportedEfforts {
+                XCTAssertEqual(
+                    SettingsOption.efforts(for: model, selected: effort).filter(\.isSelected).count, 1
+                )
+            }
         }
         for voiceModel in VoiceModelChoice.allCases {
             XCTAssertEqual(
@@ -362,6 +437,40 @@ final class SettingsAndPlanTests: XCTestCase {
         XCTAssertEqual(options.first(where: \.isSelected)?.title, ModelChoice.sol.displayName)
     }
 
+    /// The effort follows the model down, because the row it lives in does.
+    @MainActor
+    func testSetModelClampsTheStoredEffort() {
+        let store = TutorStore(service: DemoTutorService())
+        store.resetSession()
+        store.setReasoningEffort(.max)
+
+        store.setModel(.flash)
+
+        XCTAssertEqual(store.session.selectedModel, .flash)
+        XCTAssertEqual(store.session.reasoningEffort, .high)
+        XCTAssertEqual(
+            SettingsOption.efforts(
+                for: store.session.selectedModel, selected: store.session.reasoningEffort
+            ).filter(\.isSelected).map(\.value),
+            [ReasoningEffort.high],
+            "the row the learner is left looking at still has one level marked"
+        )
+    }
+
+    /// The clamp is lossy on purpose. Restoring `max` would mean storing a shadow
+    /// effort per family, and two efforts behind one row is a trap.
+    @MainActor
+    func testSetModelBackToOpenAIDoesNotRestoreTheDeepEffort() {
+        let store = TutorStore(service: DemoTutorService())
+        store.resetSession()
+        store.setReasoningEffort(.max)
+
+        store.setModel(.flash)
+        store.setModel(.sol)
+
+        XCTAssertEqual(store.session.reasoningEffort, .high)
+    }
+
     @MainActor
     func testPickingAnEffortMovesTheSelectedFillAndPersistsToTheStore() {
         let store = TutorStore(service: DemoTutorService())
@@ -370,13 +479,17 @@ final class SettingsAndPlanTests: XCTestCase {
 
         store.setReasoningEffort(.max)
 
-        let options = SettingsOption.efforts(selected: store.session.reasoningEffort)
+        let options = SettingsOption.efforts(
+            for: store.session.selectedModel, selected: store.session.reasoningEffort
+        )
         XCTAssertEqual(store.session.reasoningEffort, .max)
         XCTAssertEqual(options.filter(\.isSelected).map(\.value), [.max])
 
         store.setReasoningEffort(.none)
         XCTAssertEqual(
-            SettingsOption.efforts(selected: store.session.reasoningEffort).filter(\.isSelected).map(\.value),
+            SettingsOption.efforts(
+                for: store.session.selectedModel, selected: store.session.reasoningEffort
+            ).filter(\.isSelected).map(\.value),
             [ReasoningEffort.none]
         )
     }
@@ -423,6 +536,21 @@ final class SettingsAndPlanTests: XCTestCase {
         let older = try JSONSerialization.data(withJSONObject: object)
         let decoded = try JSONDecoder().decode(LearningSession.self, from: older)
         XCTAssertEqual(decoded.selectedVoiceModel, .mini)
+    }
+
+    /// A Gemini choice has to survive the session file, or it lasts until the
+    /// next launch and no further. The stored string is the wire id, because
+    /// `selectedModel` is what `TurnRequest.model` carries.
+    func testAGeminiModelSurvivesASessionRoundTrip() throws {
+        var session = LearningSession.empty
+        session.selectedModel = .flashLite
+        let data = try JSONEncoder().encode(session)
+
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(object["selectedModel"] as? String, "gemini-3.5-flash-lite")
+
+        let restored = try JSONDecoder().decode(LearningSession.self, from: data)
+        XCTAssertEqual(restored.selectedModel, .flashLite)
     }
 
     // MARK: - The panel's bottom slot

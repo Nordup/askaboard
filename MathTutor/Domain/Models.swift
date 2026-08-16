@@ -322,10 +322,24 @@ struct LearningSession: Codable, Sendable, Equatable {
     }
 }
 
+/// Which model thinks about a turn, across the two provider families the server
+/// routes to.
+///
+/// The raw values are the wire contract, not display strings: `TurnRequest`
+/// carries them unchanged and the server refuses anything outside
+/// `MODEL_ALLOWLIST` (`server/app/config.py`) with a 422 at body validation,
+/// before it picks a provider. So a case added here is a case added there, in
+/// the same change, and a typo in one of these literals is not a wrong model —
+/// it is a session that cannot take a turn at all.
+///
+/// The two families do not offer the same reasoning depths. That is what
+/// `supportedEfforts` and `clamp(_:)` below are for.
 enum ModelChoice: String, Codable, CaseIterable, Sendable, Identifiable {
     case sol = "gpt-5.6-sol"
     case terra = "gpt-5.6-terra"
     case luna = "gpt-5.6-luna"
+    case flash = "gemini-3.7-flash"
+    case flashLite = "gemini-3.5-flash-lite"
 
     var id: String { rawValue }
     var displayName: String {
@@ -333,14 +347,26 @@ enum ModelChoice: String, Codable, CaseIterable, Sendable, Identifiable {
         case .sol: return "Sol"
         case .terra: return "Terra"
         case .luna: return "Luna"
+        case .flash: return "Flash"
+        case .flashLite: return "Flash-Lite"
         }
     }
 
+    /// What the route is for, in the register `VoiceModelChoice.caption` set: the
+    /// honest trade rather than a sales line.
+    ///
+    /// Neither Gemini caption says "cheapest". Flash-Lite bills $0.30 / $2.50 per
+    /// 1M against Luna's $0.20 / $1.20, so the cheapest model in this row is
+    /// still Luna, and the saving a Gemini route buys is against Terra and Sol. A
+    /// caption that claimed otherwise would read as a recommendation to move off
+    /// the default, and it would be wrong.
     var caption: String {
         switch self {
         case .sol: return "Focused route"
         case .terra: return "Balanced route"
         case .luna: return "Vision route"
+        case .flash: return "Wide context"
+        case .flashLite: return "Cheaper, less capable"
         }
     }
 
@@ -350,7 +376,35 @@ enum ModelChoice: String, Codable, CaseIterable, Sendable, Identifiable {
         case .sol: return "\(effort) route"
         case .terra: return "Balanced route · \(effort)"
         case .luna: return "Vision route · \(effort)"
+        case .flash: return "Wide context · \(effort)"
+        case .flashLite: return "Cheaper route · \(effort)"
         }
+    }
+
+    /// The reasoning depths this model actually accepts, shallowest first.
+    ///
+    /// Gemini's `thinking_level` is low / medium / high; the gpt-5.6 route takes
+    /// five. The picker reads this so it never shows a level the request cannot
+    /// carry, which is the whole reason the effort row is model-dependent.
+    ///
+    /// **The order is load-bearing, and it looks incidental.** Both arrays run
+    /// shallow to deep because `clamp(_:)` takes `last` as the deepest supported
+    /// level. Sort one of them any other way and a clamp lands on a shallower
+    /// depth than the learner asked for, quietly.
+    var supportedEfforts: [ReasoningEffort] {
+        switch self {
+        case .sol, .terra, .luna: [.low, .medium, .high, .xhigh, .max]
+        case .flash, .flashLite: [.low, .medium, .high]
+        }
+    }
+
+    /// `effort` if this model accepts it, otherwise the deepest one it does.
+    ///
+    /// Lossy on purpose. Restoring the original depth when the learner switches
+    /// back would mean storing one effort per family, and two efforts behind one
+    /// row is a trap — the row would show a level the next turn did not use.
+    func clamp(_ effort: ReasoningEffort) -> ReasoningEffort {
+        supportedEfforts.contains(effort) ? effort : (supportedEfforts.last ?? .high)
     }
 }
 

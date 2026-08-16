@@ -1362,8 +1362,14 @@ final class TutorStore: ObservableObject {
         sessions = summaries.sorted { $0.lastSavedAt > $1.lastSavedAt }
     }
 
+    /// Moves the model, and the effort with it when the new model is shallower.
+    ///
+    /// Without the clamp a session sitting on Max would keep sending it after a
+    /// switch to Gemini, and every turn would 422 at `TurnRequest`. The picker
+    /// would also be showing a level that is not in the new model's row.
     func setModel(_ model: ModelChoice) {
         session.selectedModel = model
+        session.reasoningEffort = model.clamp(session.reasoningEffort)
         persist()
     }
 

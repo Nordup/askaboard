@@ -76,7 +76,10 @@ struct TutorPane: View {
             SettingPickerRow(
                 label: SettingsCopy.effortLabel,
                 caption: SettingsCopy.effortCaption,
-                options: SettingsOption.efforts(selected: store.session.reasoningEffort),
+                options: SettingsOption.efforts(
+                    for: store.session.selectedModel,
+                    selected: store.session.reasoningEffort
+                ),
                 width: width,
                 identifierPrefix: "effort-option",
                 select: store.setReasoningEffort

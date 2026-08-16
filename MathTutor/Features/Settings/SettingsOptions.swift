@@ -35,9 +35,19 @@ extension SettingsOption where Value == VoiceModelChoice {
 }
 
 extension SettingsOption where Value == ReasoningEffort {
-    /// Board 10's `Reasoning effort` grid: None / Low / Medium · High / X-High / Max.
-    static func efforts(selected: ReasoningEffort) -> [Self] {
-        ReasoningEffort.allCases.map {
+    /// Board 10's `Reasoning effort` row, for the model that is selected: five
+    /// levels under a gpt-5.6 route, three under a Gemini one.
+    ///
+    /// `model.supportedEfforts` rather than `ReasoningEffort.allCases`, and the
+    /// difference is not a safety filter. `ReasoningEffort` is already the set
+    /// the backend accepts, so a filter over *it* would only hide a case that
+    /// should not exist — which is how `None` reached this picker and 422'd
+    /// every turn the learner then sent. What this reads instead is the set the
+    /// **selected model** accepts: Gemini's `thinking_level` takes low / medium
+    /// / high, so a row that listed X-High under Flash would offer a depth the
+    /// request cannot carry, and the turn would 422 all the same.
+    static func efforts(for model: ModelChoice, selected: ReasoningEffort) -> [Self] {
+        model.supportedEfforts.map {
             Self(value: $0, title: $0.displayName, caption: $0.caption, isSelected: $0 == selected)
         }
     }
@@ -46,5 +56,5 @@ extension SettingsOption where Value == ReasoningEffort {
 // `rows(_:across:)` used to live here, splitting the six efforts into the board's 2 × 3 grid
 // — *"produced by wrapping a 740 row, not by a grid definition."* The redesign put the options
 // behind a menu on `row/setting`, so there is no grid left to lay out and the function went
-// with it. `models(selected:)` and `efforts(selected:)` survive unchanged: what the picker row
-// needs is exactly what the cards needed — the options, in order, with one marked.
+// with it. `models(selected:)` and `efforts(for:selected:)` kept the shape they had: what the
+// picker row needs is exactly what the cards needed — the options, in order, with one marked.
