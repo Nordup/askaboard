@@ -132,8 +132,16 @@ _unpriced_realtime = REALTIME_MODEL_ALLOWLIST - set(REALTIME_PRICES_PER_1M)
 if _unpriced_realtime:
     raise ValueError(f"REALTIME_PRICES_PER_1M is missing {sorted(_unpriced_realtime)}")
 
-# The only reasoning efforts a turn may name, for the reason MODEL_ALLOWLIST
-# exists — and it is the same reason, applied to the other half of the lever.
+# The efforts each model may be asked for.
+#
+# Per model rather than one set, because the two families do not offer the same
+# depths: the gpt-5.6 route takes five, and Gemini takes three. A single
+# allowlist would have to be their union, which means accepting `max` for a
+# model that has no such level and failing mid-stream at the provider instead of
+# at this boundary.
+#
+# The reason a guard exists at all is unchanged, and it is the reason
+# MODEL_ALLOWLIST exists, applied to the other half of the lever.
 # `TurnRequest.reasoning_effort` arrives unvalidated from the device, and effort
 # multiplies reasoning tokens, which bill at the *output* rate: six times input
 # on Luna, and $30 per million on Sol. Gating the model and not the effort
@@ -141,9 +149,25 @@ if _unpriced_realtime:
 #
 # It also stops a typo becoming a failed turn. An unknown effort string is a
 # 400 from the provider mid-stream; a 422 from here says which values exist.
-REASONING_EFFORT_ALLOWLIST: frozenset[str] = frozenset({
-    "low", "medium", "high", "xhigh", "max",
-})
+_OPENAI_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
+_GEMINI_EFFORTS = frozenset({"low", "medium", "high"})
+
+EFFORTS_FOR_MODEL: dict[str, frozenset[str]] = {
+    "gpt-5.6-sol": _OPENAI_EFFORTS,
+    "gpt-5.6-terra": _OPENAI_EFFORTS,
+    "gpt-5.6-luna": _OPENAI_EFFORTS,
+    "gemini-3.7-flash": _GEMINI_EFFORTS,
+    "gemini-3.5-flash-lite": _GEMINI_EFFORTS,
+}
+
+# Same guard as the price and provider tables', for the same reason: an
+# allowlist edit that forgets this row should fail the boot, not a turn the
+# learner already sent. `TurnRequest` indexes this table by a model the field
+# validator has already accepted, so a missing row would be a KeyError inside
+# validation rather than the 422 the device can read.
+_effortless = MODEL_ALLOWLIST - set(EFFORTS_FOR_MODEL)
+if _effortless:
+    raise ValueError(f"EFFORTS_FOR_MODEL is missing {sorted(_effortless)}")
 
 # What a session gets when something other than a turn creates it — /v1/dictation
 # and /v1/attachments, whose forms carry neither value. Both columns are NOT NULL,

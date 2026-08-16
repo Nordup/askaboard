@@ -14,7 +14,7 @@ import anyio
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from openai import APIConnectionError, APIError, APIStatusError, AsyncOpenAI
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,8 +22,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.attachments.parts import UploadPart
 from app.auth import require_device_token
 from app.config import (
-    MAX_ATTACHMENTS_PER_TURN, MODEL_ALLOWLIST, PROVIDER_FOR_MODEL,
-    REASONING_EFFORT_ALLOWLIST, RECENT_SESSION_COUNT, SOLE_LEARNER_ID,
+    EFFORTS_FOR_MODEL, MAX_ATTACHMENTS_PER_TURN, MODEL_ALLOWLIST,
+    PROVIDER_FOR_MODEL, RECENT_SESSION_COUNT, SOLE_LEARNER_ID,
     get_settings,
 )
 from app.learner.mastery import snapshot
@@ -321,19 +321,32 @@ class TurnRequest(BaseModel):
             )
         return value
 
-    @field_validator("reasoning_effort")
-    @classmethod
-    def _effort_must_be_allowed(cls, value: str) -> str:
+    @model_validator(mode="after")
+    def _effort_must_suit_the_model(self) -> TurnRequest:
         # The other half of the same gap the check above closes. Effort is a
         # multiplier on reasoning tokens, which bill at the output rate, so a
         # device free to name it is a device free to choose the bill. It went
         # unguarded while the model beside it did not.
-        if value not in REASONING_EFFORT_ALLOWLIST:
+        #
+        # A model validator rather than a field validator on
+        # `reasoning_effort`, because the effort cannot be judged alone any
+        # more: the two families offer different depths, so which efforts are
+        # allowed depends on which model this turn names.
+        #
+        # `EFFORTS_FOR_MODEL[self.model]` cannot KeyError, and the reason is
+        # ordering, which looks incidental and is not. Pydantic runs field
+        # validators before every `mode="after"` model validator, so
+        # `_model_must_be_allowed` has already refused any model outside
+        # MODEL_ALLOWLIST by the time this runs — and every allowlisted model
+        # has a row, guarded at import in app/config.py. Move this check ahead
+        # of the field validators and an unknown model becomes a 500.
+        allowed = EFFORTS_FOR_MODEL[self.model]
+        if self.reasoning_effort not in allowed:
             raise ValueError(
-                f"Unknown reasoning effort {value!r}. "
-                f"Allowed: {sorted(REASONING_EFFORT_ALLOWLIST)}"
+                f"Model {self.model!r} does not accept reasoning effort "
+                f"{self.reasoning_effort!r}. Allowed: {sorted(allowed)}"
             )
-        return value
+        return self
 
 
 def get_recorder() -> Recorder:
