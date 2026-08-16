@@ -156,8 +156,29 @@ final class BoardSVGStore {
     /// What the resident figures cost right now, for the tests that price them.
     var totalBytesForTesting: Int { totalBytes }
 
+    /// Removes every parsed figure when the system says memory is short.
+    ///
+    /// nonisolated(unsafe): deinit must remove a block-based observer, and
+    /// deinit is nonisolated in Swift 6. Every other access is MainActor-only,
+    /// and by the time deinit runs no other reference exists.
+    /// `VoiceAudioSessionController` holds its observers the same way.
+    private nonisolated(unsafe) var memoryWarningObserver: (any NSObjectProtocol)?
+
     init(byteLimit: Int = 64 * 1024 * 1024) {
         self.byteLimit = byteLimit
+        memoryWarningObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.purgeUnderMemoryPressure() }
+        }
+    }
+
+    deinit {
+        if let memoryWarningObserver {
+            NotificationCenter.default.removeObserver(memoryWarningObserver)
+        }
     }
 
     /// The markup, digested. Not the frame: see the type's note.
@@ -282,6 +303,27 @@ final class BoardSVGStore {
             // board still needs.
             deferred.insert(victim)
         }
+    }
+
+    /// Drops every parsed figure when the system says memory is short.
+    ///
+    /// Nothing is recorded against the keys. The markup that made each bitmap
+    /// is still in the element that carries it, so the next draw re-renders the
+    /// figures the viewport can *see*, and the ones it cannot stay gone. That
+    /// cull is where the saving actually is, and it is why this is not an
+    /// eviction: an eviction defers, because the thing that would re-schedule
+    /// it is the very draw that lost it, and the two would take turns. Here
+    /// every key can come back and none of them is competing for the same
+    /// bytes.
+    ///
+    /// What must not happen is a repaint from inside this call.
+    /// `BoardSceneLayerView` drops its tiles on the same notification and
+    /// deliberately no longer reconciles on it; the next pan, zoom, scene
+    /// install or landed artifact is what brings the visible figures back.
+    private func purgeUnderMemoryPressure() {
+        documents.removeAll()
+        order.removeAll()
+        totalBytes = 0
     }
 
     private func touch(_ key: String) {

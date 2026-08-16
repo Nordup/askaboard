@@ -57,7 +57,8 @@ final class BoardSceneLayerView: UIView {
 
     /// The largest element this view will draw at all, in square board points.
     ///
-    /// 2,000 x 2,000 points is half the span `BoardGeometry.maximumEvaluationSpan`
+    /// 2,000 x 2,000 points is half the span
+    /// `PencilCanvasConfiguration.maximumEvaluationSpan`
     /// allows for a whole solution region, so a single element past it is not a
     /// figure — it is one whose coordinates the server never clamped (an `svg`
     /// path's `d` string is not parsed there). Those are refused outright: the
@@ -404,11 +405,18 @@ final class BoardSceneLayerView: UIView {
     }
 
     /// The bitmaps are the largest thing this view owns and every one of them
-    /// can be redrawn from the scene. Dropping the cache frees the off-screen
-    /// ones outright; the reconcile that follows repaints only what the
-    /// viewport can currently see.
+    /// can be redrawn from the scene, so dropping the cache costs nothing but
+    /// work later.
+    ///
+    /// Nothing is repainted here, and that is deliberate. A reconcile on this
+    /// notification re-rasterizes every visible element immediately — and now
+    /// that the three artifact stores drop their own bitmaps on the same
+    /// notification, it would also make each of them decode, parse or typeset
+    /// its whole working set back into memory. Re-filling memory is the
+    /// opposite of what the system just asked for. The next natural
+    /// reconcile — a pan, a zoom bucket change, a scene install, or an artifact
+    /// landing — repaints what the viewport can see by then.
     @objc private func handleMemoryWarning() {
         rasterCache.removeAll()
-        reconcile()
     }
 }

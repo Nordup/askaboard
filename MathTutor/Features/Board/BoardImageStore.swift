@@ -53,10 +53,17 @@ final class BoardImageStore {
 
     /// The longest side any decoded blob may have, whatever frame asked for it.
     ///
-    /// The same ceiling `BoardSceneLayerView.maximumRasterSide` puts on the
-    /// tile a picture is drawn into — the largest 2D texture the GPUs this
-    /// ships on can hold — so a bitmap larger than this could not be composited
-    /// even if something wanted it.
+    /// A backstop rather than the working bound. `maxPixelSize(for:)` derives
+    /// what one element actually needs from its own frame, and this is only the
+    /// value that budget is clamped to.
+    ///
+    /// 4,096 is one quarter of `BoardSceneLayerView.maximumRasterSide`, and the
+    /// two numbers do not share a reason: that one is the largest 2D texture
+    /// the GPUs this ships on can hold, which bounds compositing rather than
+    /// decoding. This one is a 512-point element seen at the board's largest
+    /// zoom bucket on a 2x screen — 4 x 2 x 512 — which is about half the
+    /// viewport's width. Past that a photograph is being held sharper than any
+    /// pinch can show it.
     nonisolated static let maximumDecodedSide = 4_096
 
     /// The resident budget for decoded pictures, in bytes.
@@ -94,13 +101,55 @@ final class BoardImageStore {
     /// for it fails, which is what keeps a draw → schedule → fail → notify →
     /// draw cycle from becoming an unbounded retry loop.
     private var cached: Set<String> = []
+    /// Keys a *draw* must not schedule work for until the next scene install.
+    ///
+    /// `BoardSVGStore.deferred`, for the one hazard this store shares with it.
+    /// A picture dropped under the byte cap is exactly the picture a draw is
+    /// about to ask for again, and `cached` says its bytes are on disk — so
+    /// without this, `artifact(for:)` re-schedules the decode, the decode
+    /// evicts whichever picture took its place, and the completion posts
+    /// `.boardSceneArtifactReady`, which brings the layer view back to draw
+    /// both again. Two large photographs would cycle decode and evict for as
+    /// long as they stayed on the board, and every cycle is an ImageIO decode.
+    ///
+    /// The cost is that the element draws its placeholder until the next scene
+    /// install, which `prepare(scene:)` clears this set for. `render(element:)`
+    /// ignores it, because an explicit ask is not a draw.
+    private var deferred: Set<String> = []
     private var inFlight: [String: Task<CGImage?, Never>] = [:]
+
+    /// Removes every decoded picture when the system says memory is short.
+    ///
+    /// nonisolated(unsafe): deinit must remove a block-based observer, and
+    /// deinit is nonisolated in Swift 6. Every other access is MainActor-only,
+    /// and by the time deinit runs no other reference exists.
+    /// `VoiceAudioSessionController` holds its observers the same way.
+    private nonisolated(unsafe) var memoryWarningObserver: (any NSObjectProtocol)?
 
     init(byteLimit: Int = 64 * 1024 * 1024) {
         self.byteLimit = byteLimit
+        memoryWarningObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.purgeUnderMemoryPressure() }
+        }
+    }
+
+    deinit {
+        if let memoryWarningObserver {
+            NotificationCenter.default.removeObserver(memoryWarningObserver)
+        }
     }
 
     var artifactBytesForTesting: Int { totalBytes }
+
+    /// How many times a blob has been read and decoded. Tests read it to tell
+    /// "answered from memory" from "did the work again" —
+    /// `BoardSVGStore.renderPassesForTesting`, for this store's unit of work.
+    /// Nothing in the app looks at it.
+    private(set) var decodePassesForTesting = 0
 
     /// The blob key, and nothing else.
     ///
@@ -133,6 +182,7 @@ final class BoardImageStore {
     /// This is also the retry point for a blob whose last attempt failed in
     /// transport.
     func prepare(scene: BoardScene) {
+        deferred.removeAll()
         for element in scene.elements {
             if case .image(let image) = element {
                 prepare(imageElement: image)
@@ -154,16 +204,18 @@ final class BoardImageStore {
     /// The synchronous read the renderer draws from.
     ///
     /// A miss also *schedules* — but only for a blob whose bytes are already on
-    /// disk, which is exactly the artifact this store evicted under its byte
-    /// cap. Without that, a picture pushed out of memory would show its
-    /// placeholder until something replaced the whole scene.
+    /// disk and that this store has nothing recorded against. A picture that
+    /// merely lost its bitmap to a cold start is worth re-reading from a local
+    /// file; one this store *evicted* is not, because re-decoding it would
+    /// evict whatever took its place. Those wait for the next scene install,
+    /// through `deferred`.
     func artifact(for element: ImageElement) -> CGImage? {
         let key = Self.cacheKey(for: element)
         if let existing = artifacts[key] {
             touch(key)
             return existing.image
         }
-        if cached.contains(key) {
+        if cached.contains(key), !deferred.contains(key) {
             prepare(imageElement: element)
         }
         return nil
@@ -202,11 +254,13 @@ final class BoardImageStore {
         let task = Task { @MainActor [weak self] () -> CGImage? in
             guard let self else { return nil }
             let outcome = await self.load(blobID: blobID, maxPixelSize: maxPixelSize)
+            self.decodePassesForTesting += 1
             self.inFlight[key] = nil
             let bitmap: CGImage?
             switch outcome {
             case .bitmap(let image):
                 self.cached.insert(key)
+                self.deferred.remove(key)
                 self.store(image, maxPixelSize: maxPixelSize, for: key)
                 bitmap = image
             case .refused(let reason):
@@ -367,7 +421,33 @@ final class BoardImageStore {
             if let evicted = artifacts.removeValue(forKey: victim) {
                 totalBytes -= Self.cost(of: evicted.image)
             }
+            // The picture that was just dropped is exactly the one a draw is
+            // about to ask for again, and decoding it again would drop this one
+            // in its place. The next scene install decides which of them the
+            // board still needs. See `deferred`.
+            deferred.insert(victim)
         }
+    }
+
+    /// Drops every decoded picture when the system says memory is short.
+    ///
+    /// Nothing is recorded against the keys. The bytes are all still on disk —
+    /// `cached` is what says so — so the next draw re-reads and re-decodes the
+    /// pictures the viewport can *see*, and the ones it cannot stay gone. That
+    /// cull is where the saving actually is, and it is why this is not an
+    /// eviction: an eviction defers, because the thing that would re-schedule
+    /// it is the very draw that lost it, and the two would take turns. Here
+    /// every key can come back and none of them is competing for the same
+    /// bytes.
+    ///
+    /// What must not happen is a repaint from inside this call.
+    /// `BoardSceneLayerView` drops its tiles on the same notification and
+    /// deliberately no longer reconciles on it; the next pan, zoom, scene
+    /// install or landed artifact is what brings the visible pictures back.
+    private func purgeUnderMemoryPressure() {
+        artifacts.removeAll()
+        order.removeAll()
+        totalBytes = 0
     }
 
     private func touch(_ key: String) {

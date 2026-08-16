@@ -135,6 +135,77 @@ final class BoardMathElementTests: XCTestCase {
         await fulfillment(of: [announced], timeout: 2)
     }
 
+    // MARK: - Residency
+
+    /// The cap is a real cap, and eviction is not a refusal.
+    ///
+    /// A fragment of notation is small, which is why this store went without a
+    /// budget for longer than its siblings — and it is the wrong bound. A key
+    /// is the LaTeX, the font size and the colour together, so a session in
+    /// which the model rewrites the same working at a new size every turn is a
+    /// new key every turn, and without a cap every one of them stays resident
+    /// for the life of the process.
+    ///
+    /// What eviction must *not* do is poison the key. `completed` means
+    /// "attempted, and never to be attempted again", which is right for LaTeX
+    /// that will not parse and wrong for a bitmap this store chose to drop: the
+    /// fragment is still in the element, so the next scene install typesets it
+    /// again.
+    func testAnEvictedFragmentGivesUpItsBytesAndIsTypesetAgain() async throws {
+        // One byte of budget: every fragment but the newest is evicted.
+        let store = BoardMathStore(byteLimit: 1)
+        let first = MathTextElement(id: "m-cap-a", x: 0, y: 0, latex: #"\frac{1}{2}"#, fontSize: 24)
+        let second = MathTextElement(id: "m-cap-b", x: 0, y: 0, latex: #"\sqrt{7}"#, fontSize: 24)
+
+        _ = try XCTUnwrap(await store.render(element: first))
+        let afterOne = store.artifactBytesForTesting
+        let secondArtifact = try XCTUnwrap(await store.render(element: second))
+
+        XCTAssertGreaterThan(afterOne, 0, "the budget is priced in the bytes the bitmap holds")
+        XCTAssertEqual(
+            store.artifactBytesForTesting,
+            secondArtifact.image.bytesPerRow * secondArtifact.image.height,
+            "one fragment at a time"
+        )
+        XCTAssertNil(store.artifact(for: first), "the older fragment gave up its bytes")
+
+        store.prepare(scene: BoardScene(elements: [.mathText(first)]))
+        let back = await store.render(element: first)
+        XCTAssertNotNil(back, "an evicted fragment is typeset again, not refused")
+    }
+
+    /// Under memory pressure the typeset bitmaps go, and the keys go back to
+    /// being typesettable — the LaTeX is still in the element that carries it.
+    ///
+    /// The notation returns at the next scene install rather than the next
+    /// draw, and that is this store's shape: `artifact(for:)` is a pure read,
+    /// because the layer view calls it for every element in the scene while it
+    /// culls and scheduling from there would typeset a whole board's notation
+    /// straight back into memory.
+    func testAMemoryWarningDropsTheTypesetBitmapsAndTheySurvive() async throws {
+        let store = BoardMathStore()
+        let element = MathTextElement(id: "m-warn", x: 0, y: 0, latex: #"x^2 + 1"#, fontSize: 24)
+        _ = try XCTUnwrap(await store.render(element: element))
+        XCTAssertGreaterThan(store.artifactBytesForTesting, 0)
+
+        NotificationCenter.default.post(
+            name: UIApplication.didReceiveMemoryWarningNotification, object: nil
+        )
+        // The observer is registered on the main queue, so the purge can land
+        // on a later turn of the run loop rather than inside `post`.
+        var turns = 0
+        while store.artifactBytesForTesting != 0, turns < 200 {
+            try? await Task.sleep(nanoseconds: 5_000_000)
+            turns += 1
+        }
+
+        XCTAssertEqual(store.artifactBytesForTesting, 0)
+        XCTAssertNil(store.artifact(for: element))
+        store.prepare(scene: BoardScene(elements: [.mathText(element)]))
+        let back = await store.render(element: element)
+        XCTAssertNotNil(back, "a dropped bitmap is not a fragment that cannot be typeset")
+    }
+
     // MARK: - Delimiters the model pads the fragment with
 
     /// The server hands `latex` to the device byte for byte, and the model

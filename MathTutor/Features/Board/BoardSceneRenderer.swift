@@ -47,8 +47,14 @@ enum BoardSceneRenderer {
     /// the stroke inset and the kind's own extras (arrowhead, text
     /// measurement), then, when the style rotates the element, by the sweep of
     /// that rotation. The scene bounds above are a union of these, and the
-    /// raster cache sizes one element's tile from the same rectangle, so a
-    /// cached tile and the live drawing agree by construction.
+    /// raster cache sizes one element's tile from the same rectangle, so both
+    /// read one rule about how large an element is.
+    ///
+    /// They read it; they do not share it. Each `case` below restates a
+    /// geometry that `draw(element:in:)` computes separately, so a tile clips
+    /// the moment the two arms disagree — which is what `angle_marker` did with
+    /// a radius under four points. Only a test comparing the two can say they
+    /// still agree; nothing here enforces it.
     static func bounds(of element: BoardElement, boardOrigin: CGPoint) -> CGRect {
         var rect = elementBounds(element, boardOrigin: boardOrigin)
         if element.style.rotation != 0 {
@@ -627,13 +633,20 @@ enum BoardSceneRenderer {
                 rect = bounds(of: points, origin: CGPoint(x: originX, y: originY))
                     .insetBy(dx: -inset, dy: -inset)
             } else {
-                let radius = max(value.radius, inset)
+                // `max(4, value.radius)`, exactly as `draw(angleMarker:in:)`
+                // computes it, and then the stroke inset on top — the same two
+                // steps the right-angle arm above takes. Reading the radius as
+                // `max(value.radius, inset)` did neither: an arc drawn at the
+                // floor of four points reported a tile of `strokeWidth / 2`,
+                // and even at a larger radius the outer half of the stroke fell
+                // outside the tile and was clipped.
+                let radius = max(4, value.radius)
                 rect = CGRect(
                     x: value.vertexX - radius + originX,
                     y: value.vertexY - radius + originY,
                     width: radius * 2,
                     height: radius * 2
-                )
+                ).insetBy(dx: -inset, dy: -inset)
             }
         case .path(let value):
             let box = SVGPath.path(from: value.d).cgPath.boundingBoxOfPath

@@ -304,6 +304,89 @@ final class BoardImageElementTests: XCTestCase {
         XCTAssertEqual(store.artifactBytesForTesting, afterOne, "one picture at a time")
     }
 
+    /// Two pictures that cannot both fit must not take turns decoding each
+    /// other out of memory.
+    ///
+    /// The trap is this store's own. An evicted key keeps its bytes on disk,
+    /// `cached` records exactly that, and `artifact(for:)` re-schedules a decode
+    /// for anything in `cached` — which is the recovery that makes an eviction
+    /// survivable. But every completed decode posts
+    /// `.boardSceneArtifactReady`, the layer view reconciles on it, and
+    /// reconciling draws: so a draw that re-decoded an evicted picture would
+    /// drive its own next round for as long as the board showed both, at one
+    /// ImageIO decode of a photograph per round. The tile cache does not damp
+    /// it either — the layer view consults this store before its own cache. So
+    /// the board degrades instead: one of the two draws its placeholder, and
+    /// the scene install is what re-decides.
+    func testAWorkingSetOverTheBudgetDoesNotThrash() async throws {
+        let first = Self.uniqueBlobID()
+        let second = Self.uniqueBlobID()
+        defer { cleanUp(first) }
+        defer { cleanUp(second) }
+        let store = BoardImageStore(byteLimit: 1)
+        store.loaderForTesting = { _ in Self.pngData(width: 8, height: 8) }
+        _ = try XCTUnwrap(await store.render(element: Self.element(first)))
+        _ = try XCTUnwrap(await store.render(element: Self.element(second)))
+        XCTAssertEqual(store.decodePassesForTesting, 2)
+        XCTAssertNil(store.artifact(for: Self.element(first)), "the older picture was evicted")
+
+        // Twenty reconcile passes' worth of draws. Work scheduled by one of
+        // them would announce itself when it finished, which is the
+        // notification that brings the layer view back for the next pass — so
+        // an inverted expectation on it is the loop's own trigger, asserted
+        // absent.
+        let quiet = expectation(forNotification: .boardSceneArtifactReady, object: nil)
+        quiet.isInverted = true
+        for _ in 0..<20 {
+            _ = store.artifact(for: Self.element(first))
+            _ = store.artifact(for: Self.element(second))
+            await Task.yield()
+        }
+        await fulfillment(of: [quiet], timeout: 0.5)
+        XCTAssertEqual(
+            store.decodePassesForTesting, 2, "draws alone must not schedule a single decode"
+        )
+
+        // The scene install is the retry point, and it costs one decode — read
+        // from the disk cache, so the network is still never touched again.
+        store.prepare(scene: BoardScene(elements: [.image(Self.element(first))]))
+        let back = await store.render(element: Self.element(first))
+        XCTAssertNotNil(back)
+        XCTAssertEqual(store.decodePassesForTesting, 3)
+    }
+
+    /// Under memory pressure the decoded pictures go and the disk record stays,
+    /// so the next draw brings back the ones the viewport can actually see.
+    ///
+    /// Unlike an eviction, nothing is deferred: the pictures are not competing
+    /// for the same bytes, so every one of them is free to come back.
+    func testAMemoryWarningDropsTheDecodedPicturesAndTheyComeBack() async throws {
+        let blobID = Self.uniqueBlobID()
+        defer { cleanUp(blobID) }
+        let store = BoardImageStore()
+        store.loaderForTesting = { _ in Self.pngData(width: 8, height: 8) }
+        _ = try XCTUnwrap(await store.render(element: Self.element(blobID)))
+        XCTAssertGreaterThan(store.artifactBytesForTesting, 0)
+
+        NotificationCenter.default.post(
+            name: UIApplication.didReceiveMemoryWarningNotification, object: nil
+        )
+        // The observer is registered on the main queue, so the purge can land
+        // on a later turn of the run loop rather than inside `post`.
+        var turns = 0
+        while store.artifactBytesForTesting != 0, turns < 200 {
+            try? await Task.sleep(nanoseconds: 5_000_000)
+            turns += 1
+        }
+
+        XCTAssertEqual(store.artifactBytesForTesting, 0, "the bitmaps are what the warning is about")
+        XCTAssertNil(store.artifact(for: Self.element(blobID)))
+        // The read above is the draw, and it is allowed to schedule here: the
+        // bytes are on disk and no other picture wants the space.
+        let recovered = await store.render(element: Self.element(blobID))
+        XCTAssertNotNil(recovered)
+    }
+
     /// A refused blob is refused for good, and eviction does not launder it:
     /// nothing is on disk for it, so a draw that misses schedules nothing.
     func testARefusedBlobIsNotRescheduledByADraw() async {

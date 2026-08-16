@@ -71,9 +71,68 @@ final class BoardMathStore {
     /// pixels of a small label and nothing that matters.
     static let rasterOversample: CGFloat = 2
 
+    /// The resident budget for typeset notation, in bytes.
+    ///
+    /// `BoardSVGStore`'s and `BoardImageStore`'s budget, and priced the same
+    /// way — `bytesPerRow * height`, the bytes the bitmap actually holds.
+    ///
+    /// This store went without one for longer than its siblings because a
+    /// fragment of notation is small, and that is the wrong bound: nothing caps
+    /// how *many* there are. A key is the LaTeX, the font size and the colour
+    /// together, so one long session in which the model rewrites the same
+    /// working at a new size or in a new colour every turn is a new key every
+    /// turn, and every one of them stayed resident for the life of the process.
+    private let byteLimit: Int
+
     private var artifacts: [String: MathArtifact] = [:]
+    /// Least recently used first — `BoardRasterCache`'s array, at this scale.
+    private var order: [String] = []
+    private var totalBytes = 0
     private var completed: Set<String> = []
+    /// Keys a *draw* must not schedule work for until the next scene install.
+    ///
+    /// `BoardSVGStore.deferred`, kept here for the hazard the byte cap above
+    /// introduces. Eviction takes a key back out of `completed`, because the
+    /// LaTeX that made the bitmap is still in the element and the next scene
+    /// install must be free to typeset it again — and that is exactly what
+    /// would let two fragments that cannot both fit take turns evicting each
+    /// other, since every typeset posts `.boardSceneArtifactReady` and the
+    /// layer view draws on it.
+    ///
+    /// Nothing in this file schedules from a draw today: `artifact(for:)` is a
+    /// pure read, unlike its two siblings'. So this is the guarantee rather
+    /// than the repair — the damper is in place before a draw-path schedule is
+    /// ever added, which is the order the other two stores did not get.
+    private var deferred: Set<String> = []
     private var inFlight: [String: Task<MathArtifact?, Never>] = [:]
+
+    /// Removes every typeset fragment when the system says memory is short.
+    ///
+    /// nonisolated(unsafe): deinit must remove a block-based observer, and
+    /// deinit is nonisolated in Swift 6. Every other access is MainActor-only,
+    /// and by the time deinit runs no other reference exists.
+    /// `VoiceAudioSessionController` holds its observers the same way.
+    private nonisolated(unsafe) var memoryWarningObserver: (any NSObjectProtocol)?
+
+    init(byteLimit: Int = 64 * 1024 * 1024) {
+        self.byteLimit = byteLimit
+        memoryWarningObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.purgeUnderMemoryPressure() }
+        }
+    }
+
+    deinit {
+        if let memoryWarningObserver {
+            NotificationCenter.default.removeObserver(memoryWarningObserver)
+        }
+    }
+
+    /// What the resident notation costs right now, for the tests that price it.
+    var artifactBytesForTesting: Int { totalBytes }
 
     /// The LaTeX a fragment is actually typeset from.
     ///
@@ -116,6 +175,7 @@ final class BoardMathStore {
     /// Ensures every `math_text` element in a scene has a typeset scheduled.
     /// Called when a scene is installed, including restored scenes on relaunch.
     func prepare(scene: BoardScene) {
+        deferred.removeAll()
         for element in scene.elements {
             if case .mathText(let math) = element {
                 prepare(mathElement: math)
@@ -125,12 +185,21 @@ final class BoardMathStore {
 
     func prepare(mathElement element: MathTextElement) {
         let key = Self.cacheKey(for: element)
-        guard !completed.contains(key), inFlight[key] == nil else { return }
+        guard !completed.contains(key), !deferred.contains(key),
+              inFlight[key] == nil
+        else { return }
         schedule(element: element, key: key)
     }
 
+    /// The synchronous read the renderer draws from, and a pure one: a miss
+    /// schedules nothing. `math_text` has no frame of its own, so a fragment
+    /// without an artifact reports `.zero` bounds and is unmounted rather than
+    /// drawn — there is no placeholder pass that would want to start work.
     func artifact(for element: MathTextElement) -> MathArtifact? {
-        artifacts[Self.cacheKey(for: element)]
+        let key = Self.cacheKey(for: element)
+        guard let artifact = artifacts[key] else { return nil }
+        touch(key)
+        return artifact
     }
 
     /// Typesets (or awaits an in-flight typeset) and returns the ready
@@ -139,7 +208,10 @@ final class BoardMathStore {
     @discardableResult
     func render(element: MathTextElement) async -> MathArtifact? {
         let key = Self.cacheKey(for: element)
-        if let artifact = artifacts[key] { return artifact }
+        if let artifact = artifacts[key] {
+            touch(key)
+            return artifact
+        }
         if let task = inFlight[key] {
             return await task.value
         }
@@ -169,13 +241,71 @@ final class BoardMathStore {
             // rather than half-drawn.
             self.completed.insert(key)
             if let artifact {
-                self.artifacts[key] = artifact
+                self.deferred.remove(key)
+                self.remember(artifact, for: key)
             }
             NotificationCenter.default.post(name: .boardSceneArtifactReady, object: nil)
             return artifact
         }
         inFlight[key] = task
         return task
+    }
+
+    // MARK: - Residency
+
+    private func remember(_ artifact: MathArtifact, for key: String) {
+        if let previous = artifacts[key] { totalBytes -= Self.cost(of: previous.image) }
+        artifacts[key] = artifact
+        totalBytes += Self.cost(of: artifact.image)
+        touch(key)
+        // `order.count > 1` keeps the fragment that was just typeset even when
+        // it alone is over the cap: one enormous expression still draws from
+        // memory rather than being typeset again on every frame.
+        while totalBytes > byteLimit, let victim = order.first, order.count > 1 {
+            order.removeFirst()
+            if let evicted = artifacts.removeValue(forKey: victim) {
+                totalBytes -= Self.cost(of: evicted.image)
+            }
+            // Out of `completed` as well, and that pairing is the whole of the
+            // rule. `completed` means "attempted, and never to be attempted
+            // again", which is right for LaTeX that would not parse and wrong
+            // for a bitmap this store chose to drop — the fragment is still in
+            // the element, so the next scene install must be free to typeset it
+            // again. `deferred` is what keeps that freedom from becoming a loop.
+            completed.remove(victim)
+            deferred.insert(victim)
+        }
+    }
+
+    private func touch(_ key: String) {
+        if let index = order.firstIndex(of: key) { order.remove(at: index) }
+        order.append(key)
+    }
+
+    private nonisolated static func cost(of image: CGImage) -> Int {
+        image.bytesPerRow * image.height
+    }
+
+    /// Drops every typeset fragment when the system says memory is short.
+    ///
+    /// The keys leave `completed`, because the LaTeX that made each bitmap is
+    /// still in the element that carries it and dropping a bitmap is not the
+    /// same statement as "this fragment cannot be typeset". They do *not* enter
+    /// `deferred`: nothing here is competing for the same bytes, so every one
+    /// of them is free to come back.
+    ///
+    /// It comes back later than a figure or a picture does, and that is this
+    /// store's shape rather than a choice made here. `artifact(for:)` is a pure
+    /// read — it is called for every element in the scene while the layer view
+    /// culls, not only the visible ones, so scheduling from it would typeset a
+    /// whole board's notation and undo the purge. The retry point is therefore
+    /// `prepare(scene:)`, and the learner's notation returns with the tutor's
+    /// next board update.
+    private func purgeUnderMemoryPressure() {
+        completed.subtract(artifacts.keys)
+        artifacts.removeAll()
+        order.removeAll()
+        totalBytes = 0
     }
 
     /// The whole of the engine contact.

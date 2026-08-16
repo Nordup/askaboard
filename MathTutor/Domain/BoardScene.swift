@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import OSLog
 
 /// The tutor-authored semantic layer on the whiteboard.
 ///
@@ -720,10 +721,26 @@ private struct LenientElement: Decodable {
 
     private enum CodingKeys: String, CodingKey { case kind }
 
+    /// Skipping is silent everywhere else: no throw, no event, and a board that
+    /// simply lacks an object the server believes it drew. So the skip says so
+    /// once, naming the kind — which is the one thing that tells version skew
+    /// (a primitive this build predates) from a server bug (a kind nothing has
+    /// ever defined), and the one thing a fix needs.
+    ///
+    /// The kind string and nothing else. It is a wire enum case chosen by the
+    /// server, not learner content, so it is safe to log in a release build;
+    /// every coordinate, every label and every fragment of the learner's work
+    /// stays out of it. `.public` for the same reason — an interpolation left
+    /// private redacts to `<private>` on device and records nothing at all.
+    private static let log = Logger(subsystem: "com.nordup.MathTutor", category: "board-scene")
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let kind = try container.decode(String.self, forKey: .kind)
         guard BoardElementKind(rawValue: kind) != nil else {
+            Self.log.error(
+                "board element skipped: this build has no kind \(kind, privacy: .public)"
+            )
             element = nil
             return
         }
