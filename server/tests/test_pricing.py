@@ -9,8 +9,8 @@ the provider's published rates on 2026-08-15 (post the July 30 cut).
 import pytest
 
 from app.config import (
-    MODEL_ALLOWLIST, MODEL_PRICES_PER_1M, REALTIME_MODEL_ALLOWLIST,
-    REALTIME_PRICES_PER_1M, Settings,
+    MODEL_ALLOWLIST, MODEL_PRICES_PER_1M, PROVIDER_FOR_MODEL,
+    REALTIME_MODEL_ALLOWLIST, REALTIME_PRICES_PER_1M, Settings,
 )
 from app.pricing import realtime_cost_usd, turn_cost_usd
 
@@ -172,3 +172,15 @@ def test_the_mini_is_the_cheaper_choice_in_every_modality():
     mini = REALTIME_PRICES_PER_1M["gpt-realtime-2.1-mini"]
     for modality, price in full.items():
         assert mini[modality] < price, modality
+
+
+def test_every_allowlisted_model_names_a_provider():
+    """A model with no provider is a model no turn can route, and finding that
+    out at request time means a 500 on a turn the learner already sent."""
+    assert MODEL_ALLOWLIST <= set(PROVIDER_FOR_MODEL)
+
+
+def test_no_provider_entry_is_orphaned():
+    """A provider row for a model the device may not name is dead config, and
+    dead config is what someone later mistakes for an allowlist."""
+    assert set(PROVIDER_FOR_MODEL) <= MODEL_ALLOWLIST

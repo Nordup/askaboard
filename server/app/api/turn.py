@@ -22,8 +22,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.attachments.parts import UploadPart
 from app.auth import require_device_token
 from app.config import (
-    MAX_ATTACHMENTS_PER_TURN, MODEL_ALLOWLIST, REASONING_EFFORT_ALLOWLIST,
-    RECENT_SESSION_COUNT, SOLE_LEARNER_ID, get_settings,
+    MAX_ATTACHMENTS_PER_TURN, MODEL_ALLOWLIST, PROVIDER_FOR_MODEL,
+    REASONING_EFFORT_ALLOWLIST, RECENT_SESSION_COUNT, SOLE_LEARNER_ID,
+    get_settings,
 )
 from app.learner.mastery import snapshot
 from app.memory.dispatch import memory_handler
@@ -122,15 +123,16 @@ def _client() -> AsyncOpenAI:
 
 
 def _provider(model: str) -> Provider:
-    """The model family this turn runs on.
+    """The family that serves this model.
 
-    One family for every model today, which is why `model` is read and not used:
-    the argument is here because the choice belongs to the model id and nowhere
-    else, and a caller passing it now cannot later be the place a second family
-    is forgotten. `_client` is cached, so this builds a wrapper around the same
-    pool rather than a new one.
+    `TurnRequest.model` has already been checked against `MODEL_ALLOWLIST`, and
+    every allowlisted model has a provider row or the process did not boot, so
+    a KeyError here is unreachable rather than unhandled.
     """
-    return OpenAIProvider(client=_client())
+    family = PROVIDER_FOR_MODEL[model]
+    if family == "openai":
+        return OpenAIProvider(client=_client())
+    raise ValueError(f"no provider wired for {family!r}")
 
 
 async def _memory_sections(

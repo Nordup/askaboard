@@ -38,6 +38,23 @@ _unpriced = MODEL_ALLOWLIST - set(MODEL_PRICES_PER_1M)
 if _unpriced:
     raise ValueError(f"MODEL_PRICES_PER_1M is missing {sorted(_unpriced)}")
 
+# Which family serves each model, read by `turn.py` to pick a provider.
+#
+# An explicit table rather than a model-id prefix test. A prefix is a guess
+# about how the next model gets named, and this table is cheap to extend and
+# impossible to misread. Guarded at import for the reason the price table is:
+# an allowlist edit that forgets this row should fail the boot, not a turn the
+# learner already sent.
+PROVIDER_FOR_MODEL: dict[str, str] = {
+    "gpt-5.6-sol": "openai",
+    "gpt-5.6-terra": "openai",
+    "gpt-5.6-luna": "openai",
+}
+
+_unrouted = MODEL_ALLOWLIST - set(PROVIDER_FOR_MODEL)
+if _unrouted:
+    raise ValueError(f"PROVIDER_FOR_MODEL is missing {sorted(_unrouted)}")
+
 # USD per 1M tokens for the realtime voice models, priced per modality: the
 # usage a voice response reports splits input and output into audio and text,
 # and audio bills at a different order of magnitude. The device reports each
