@@ -250,6 +250,12 @@ class Settings(BaseSettings):
     #: has produced audio, so it is chosen here, at session creation, only.
     #: `cedar` is the sleep app's own default, carried over on 2026-08-16.
     openai_realtime_voice: str = "cedar"
+    #: The Gemini Developer API key, env `GEMINI_API_KEY`. Optional, unlike
+    #: `openai_api_key`: a server with no Gemini key must still boot and serve
+    #: every OpenAI model. What it may not do is answer a Gemini turn, so the
+    #: absence is a 503 at the point a turn names a Gemini model, not a crash
+    #: at import.
+    gemini_api_key: str | None = None
     database_url: str
     device_token: str
     blob_dir: Path = Path("./blobs")

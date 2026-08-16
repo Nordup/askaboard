@@ -12,6 +12,11 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
     "openai>=2.8",
+    # The Interactions API — stateful rounds via previous_interaction_id,
+    # thought summaries, and the native hosted tools — arrived in 2.3.0. The
+    # OpenAI compatibility layer would need no new dependency at all, and is
+    # not used: it serves /chat/completions only, which has no round chaining.
+    "google-genai>=2.3.0",
     "sqlalchemy[asyncio]>=2.0.36",
     "asyncpg>=0.30",
     "alembic>=1.14",
