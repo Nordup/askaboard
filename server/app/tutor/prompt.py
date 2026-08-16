@@ -77,7 +77,7 @@ You can participate and update the board whenever you think it will help me (f i
 
 When the intent is to get more information or visualize an idea, use board to create detailed illustrations. Check progress on the board and keep updating it. Act as you were a teacher with a student together with the whiteboard.
 
-Mb even I would incentivize you to use board more often to draw/visualize, make an experience memorable by incorporating sense of art and design.
+Mb even I would incentivize you to use board more often to draw/visualize, make an experience memorable by incorporating sense of art and design. Same goes for the web tools: pulling a real image onto the board or checking the web mid-explanation is part of teaching, not a special request to wait for.
 
 
 ## RESEARCH
@@ -85,6 +85,8 @@ Mb even I would incentivize you to use board more often to draw/visualize, make 
 The more information you know about the topic the better. Search internet, use scripts and other tools to find the best material and information.
 
 When creating visuals on the board realy on information and representation that's supported by relevant sources.
+
+Reach for these tools on your own — don't wait for me to ask. When we touch anything factual, current, or outside your certainty, run a web_search first and teach from what you found. And when a real picture would teach better than a drawing — an organism, an instrument, a map, a painting, a real chart from a source — fetch_image it and place it on the board beside your own notation. A board that mixes my writing, your drawings, and real images from the world is exactly the experience I want.
 
 Two ways to put a picture on the board, and the choice is about where the shapes come from. A chart that carries data — real numbers, a fitted curve, a distribution, anything whose shape is a result rather than a decision — you compute with a script, and put on the board as the image the script produced. A diagram — a construction, a labelled figure, a geometric setup, anything you are drawing rather than measuring — you draw natively with svg, primitives, path, and math_text, which stays sharp at every zoom and can be revised element by element afterwards.
 
@@ -114,7 +116,7 @@ update_board
 Create, revise, or delete tutor-owned board objects. Reuse IDs and never erase, cover, or modify learner ink.
 
 fetch_image
-Download one picture from the web. You see it, and its blob_id is what the `image` element on the board takes.
+Download one picture from the web. You see it, and its blob_id is what the `image` element on the board takes. Use it proactively whenever a real picture teaches better than a drawing.
 
 remember
 Save a self-contained, future-relevant fact about the learner. It appears in SAVED NOTES from the next turn.
@@ -176,6 +178,108 @@ def _session_count(body: str) -> int:
     return len(_CARD_OPENER.findall(body))
 
 
+def _profile_section(profile: str) -> str:
+    """The portrait block, labelled and fenced.
+
+    The body is written addressed to the learner, so it says "you" about
+    someone who is not the reader — and every other "you" in this prompt is the
+    tutor. The label has to resolve that before the block starts, because a
+    portrait read as self-description is worse than no portrait: it would have
+    the tutor teaching to its own stated weaknesses.
+    """
+    return (
+        "WHAT YOU KNOW ABOUT THIS LEARNER (recalled from earlier sessions; "
+        f"this is {_RECALLED}). It is written addressed to them, so every "
+        "“you” inside it means the learner and never you:\n"
+        f"{quoted(profile)}"
+    )
+
+
+def _saved_notes_section(saved_notes: str) -> str:
+    """Every note the learner asked for, verbatim and dated."""
+    return (
+        "SAVED NOTES — every note the learner asked you to keep, dated "
+        f"[YYYY-MM-DD] (this is {_RECALLED}). All of them are here; none "
+        "were filtered:\n"
+        f"{quoted(saved_notes)}"
+    )
+
+
+def _recent_sessions_section(recent_sessions: str) -> str:
+    """The session cards, with the count that makes their edge legible.
+
+    Without the count the model cannot tell whether "three sessions ago" is in
+    the block or past its end, so it either guesses or calls a tool to re-fetch
+    cards it can already read.
+    """
+    return (
+        f"THE {_session_count(recent_sessions)} MOST RECENT SESSIONS, "
+        f"most recent first (this is {_RECALLED}). Only these are here: "
+        f"`list_sessions` browses older ones, `search_sessions` and "
+        f"`search_history` search the whole archive, and `get_session` "
+        f"reads any session's full transcript:\n"
+        f"{quoted(recent_sessions)}"
+    )
+
+
+def _date_anchor_section(today: "date", first_turn: bool) -> str:
+    """The date anchor every memory block above is read against.
+
+    Those blocks speak in ISO dates, and without an anchor "yesterday" and
+    "three weeks ago" are questions the model answers by guessing (W10).
+    """
+    anchor = f"Today is {today.isoformat()} ({today:%A})."
+    if first_turn:
+        # First turn = no tutor message in this session yet. The one moment
+        # "check where we left off" is most likely to be the unspoken
+        # question, marked so the model knows it is at it (W12).
+        anchor += (" This is the first turn of a new session: the RECENT "
+                   "SESSIONS block above is what happened before it.")
+    return anchor
+
+
+def _learner_state_section(learner_state: str) -> str:
+    """`mastery.snapshot` arrives with a heading of its own, so the label goes
+    on the line above rather than nesting a second one."""
+    return (f"(Measured from their work; this is {_RECALLED}.)\n"
+            f"{quoted(learner_state)}")
+
+
+def standing_memory_blocks(
+    *,
+    profile: str | None = None,
+    learner_state: str | None = None,
+    recent_sessions: str | None = None,
+    saved_notes: str | None = None,
+    today: "date | None" = None,
+    first_turn: bool = False,
+) -> str:
+    """The standing memory blocks on their own, as one string.
+
+    SEAM for a prompt that has no transcript to hang them off: the live-voice
+    session's `instructions` are a single string, sent once when the call is
+    created, and `SYSTEM_PROMPT` promises the model that these blocks are
+    already in front of it. This renders exactly the blocks `_sections` puts in
+    a turn prompt, in the same order and through the same functions, so the two
+    prompts cannot drift into saying the learner's history two different ways.
+
+    It takes the dict `api.turn._memory_sections` returns, keys and all. A
+    block with nothing in it is omitted, and every block empty gives `""`.
+    """
+    blocks: list[str] = []
+    if profile:
+        blocks.append(_profile_section(profile))
+    if saved_notes:
+        blocks.append(_saved_notes_section(saved_notes))
+    if recent_sessions:
+        blocks.append(_recent_sessions_section(recent_sessions))
+    if today is not None:
+        blocks.append(_date_anchor_section(today, first_turn))
+    if learner_state:
+        blocks.append(_learner_state_section(learner_state))
+    return "\n\n".join(blocks)
+
+
 def _sections(
     *,
     conversation: str,
@@ -223,42 +327,16 @@ def _sections(
     # nothing is traded away by putting it there.
     sections = stable
     if profile:
-        # The body is written addressed to the learner, so it says "you" about
-        # someone who is not the reader — and every other "you" in this prompt
-        # is the tutor. The label has to resolve that before the block starts,
-        # because a portrait read as self-description is worse than no portrait:
-        # it would have the tutor teaching to its own stated weaknesses.
-        sections.append(
-            "WHAT YOU KNOW ABOUT THIS LEARNER (recalled from earlier sessions; "
-            f"this is {_RECALLED}). It is written addressed to them, so every "
-            "“you” inside it means the learner and never you:\n"
-            f"{quoted(profile)}"
-        )
+        sections.append(_profile_section(profile))
     if saved_notes:
         # Between the profile and the sessions: notes are facts about the
         # learner (profile-shaped) that happen to be verbatim. Stable half
         # because they change only when `remember`/`forget` runs — one cache
         # rewrite per save is the price of the note being present on every
         # turn thereafter, which is the whole point of a saved note.
-        sections.append(
-            "SAVED NOTES — every note the learner asked you to keep, dated "
-            f"[YYYY-MM-DD] (this is {_RECALLED}). All of them are here; none "
-            "were filtered:\n"
-            f"{quoted(saved_notes)}"
-        )
+        sections.append(_saved_notes_section(saved_notes))
     if recent_sessions:
-        sections.append(
-            # The count is what makes the tools' boundary legible. Without it
-            # the model cannot tell whether "three sessions ago" is in the
-            # block or past its end, so it either guesses or calls a tool to
-            # re-fetch cards it can already read.
-            f"THE {_session_count(recent_sessions)} MOST RECENT SESSIONS, "
-            f"most recent first (this is {_RECALLED}). Only these are here: "
-            f"`list_sessions` browses older ones, `search_sessions` and "
-            f"`search_history` search the whole archive, and `get_session` "
-            f"reads any session's full transcript:\n"
-            f"{quoted(recent_sessions)}"
-        )
+        sections.append(_recent_sessions_section(recent_sessions))
     # Quoted like every other borrowed string, and this is the one that most
     # needed it: the transcript is the highest-volume learner-authored text in
     # the prompt, and it was the only such block reaching the model unfenced.
@@ -295,26 +373,14 @@ def _sections(
     # the breakpoint rather than in front of it.
     sections = volatile
     if today is not None:
-        # The date anchor. Every memory block above speaks in ISO dates, and
-        # without an anchor "yesterday" and "three weeks ago" are questions
-        # the model answers by guessing (W10). Volatile half, deliberately,
-        # although the spec's standing-block order opens with it: the anchor
-        # changes once a day, and a daily rewrite at the *top* of the stable
-        # half would invalidate the whole cached prefix behind it. First of
-        # the volatile blocks instead — same prompt, kept cache.
-        anchor = f"Today is {today.isoformat()} ({today:%A})."
-        if first_turn:
-            # First turn = no tutor message in this session yet. The one
-            # moment "check where we left off" is most likely to be the
-            # unspoken question, marked so the model knows it is at it (W12).
-            anchor += (" This is the first turn of a new session: the RECENT "
-                       "SESSIONS block above is what happened before it.")
-        sections.append(anchor)
+        # Volatile half, deliberately, although the spec's standing-block order
+        # opens with the anchor: it changes once a day, and a daily rewrite at
+        # the *top* of the stable half would invalidate the whole cached prefix
+        # behind it. First of the volatile blocks instead — same prompt, kept
+        # cache.
+        sections.append(_date_anchor_section(today, first_turn))
     if learner_state:
-        # `mastery.snapshot` arrives with a heading of its own, so the label
-        # goes on the line above rather than nesting a second one.
-        sections.append(f"(Measured from their work; this is {_RECALLED}.)\n"
-                        f"{quoted(learner_state)}")
+        sections.append(_learner_state_section(learner_state))
     sections.append(f"LEARNER GOAL: {goal or 'not stated'}")
     if board_note:
         sections.append(board_note)

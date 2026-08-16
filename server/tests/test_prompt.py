@@ -11,7 +11,10 @@ def test_system_prompt_is_the_unchanged_experimental_draft():
     # code_interpreter, and RESEARCH gained the compute-a-chart /
     # draw-a-diagram split. Any *other* edit still has to show up here.
     assert hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest() == (
-        "d40ef2a3a0f038e585a65d3e95a4ddd68a81900b6069dd6d802d53d34804d8bc"
+        # 2026-08-16: proactive-tools addition — RESEARCH tells the tutor to
+        # web_search and fetch_image unprompted, BOARD says web tools are part
+        # of teaching, and fetch_image's TOOLS line says "use it proactively".
+        "b0f28845cfe0f40f0b40a8a9a8b88726eaa07e29967a3cba6b1be64dd6260764"
     )
 
 
