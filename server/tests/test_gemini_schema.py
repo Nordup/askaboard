@@ -65,29 +65,16 @@ def test_strict_is_gone_from_every_declaration(converted):
 
 
 def test_every_board_element_arm_keeps_its_discriminator(converted):
-    """Every `kind` survives as a non-empty Gemini enum.
-
-    Single-kind arms arrive from `const`; compact shared arms already use an
-    enum for renderer-identical kinds such as rectangle/ellipse. Gemini must
-    preserve both shapes without requiring every arm to contain one value.
-    """
+    """`const` has no Gemini equivalent, so each arm's `kind` becomes a
+    single-value enum. Without it the union is unparseable, and an
+    unparseable union is a board that never changes."""
     board = next(d for d in _declarations(converted) if d["name"] == "update_board")
     arms = board["parameters"]["properties"]["elements"]["items"]["anyOf"]
-    source = next(t for t in TOOL_DEFINITIONS if t.get("name") == "update_board")
-    source_arms = source["parameters"]["properties"]["elements"]["items"]["anyOf"]
-    expected = set()
-    for arm in source_arms:
-        kind = arm["properties"]["kind"]
-        expected.update([kind["const"]] if "const" in kind else kind["enum"])
-
     assert len(arms) >= 12
-    actual = set()
     for arm in arms:
         kind = arm["properties"]["kind"]
         assert "const" not in kind
-        assert kind["enum"]
-        actual.update(kind["enum"])
-    assert actual == expected
+        assert len(kind["enum"]) == 1
 
 
 def test_the_hosted_tools_are_renamed(converted):
