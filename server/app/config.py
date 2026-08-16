@@ -13,6 +13,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # app/api/turn.py:TurnRequest before any provider call.
 MODEL_ALLOWLIST: frozenset[str] = frozenset({
     "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
+    "gemini-3.7-flash", "gemini-3.5-flash-lite",
 })
 
 # USD per 1M tokens, by model — what makes DAILY_SPEND_CAP_USD real. The
@@ -28,6 +29,39 @@ MODEL_PRICES_PER_1M: dict[str, dict[str, float]] = {
     "gpt-5.6-sol":   {"input": 5.00, "cached_input": 0.50, "output": 30.00},
     "gpt-5.6-terra": {"input": 2.00, "cached_input": 0.20, "output": 12.00},
     "gpt-5.6-luna":  {"input": 0.20, "cached_input": 0.02, "output": 1.20},
+    # Verified against ai.google.dev/gemini-api/docs/pricing on 2026-08-16.
+    #
+    # **These are introductory rates and they expire.** $0.75/$3.75 runs through
+    # 2026-12-31; on 2027-01-01 Flash becomes $1.50/$7.50 and its cached rate
+    # $0.15. The introductory numbers are here rather than the 2027 ones because
+    # putting the higher price in early would quietly halve the effective daily
+    # cap on Gemini for four months, and a cap that trips early reads as a bug
+    # and gets raised. Nothing enforces this date — see the spec's risk 4.
+    #
+    # `per_search` is not a token rate. Grounding with Google Search bills $14
+    # per 1,000 requests, and one turn may run several queries. At $0.014 a
+    # search that is what ~47,000 Flash-Lite input tokens cost, so a grounded
+    # turn priced on tokens alone would report a fraction of its spend. The
+    # 5,000-per-month free allowance is deliberately not modelled: it needs
+    # monthly state the recorder does not have and it is shared with any other
+    # Gemini 3.x usage on the key, so this over-reports inside the free tier and
+    # errs toward the cap tripping early.
+    "gemini-3.7-flash": {
+        "input": 0.75, "cached_input": 0.075, "output": 3.75, "per_search": 0.014,
+    },
+    # Flash-Lite's price carries no expiry.
+    "gemini-3.5-flash-lite": {
+        "input": 0.30, "cached_input": 0.03, "output": 2.50, "per_search": 0.014,
+    },
+    # There is no `cache_storage` dimension, and that is a statement about which
+    # cache this design uses. Gemini bills cache *storage* by the hour, and only
+    # on an explicit cache — one a caller creates and holds by handle. The
+    # implicit cache, which a repeated prompt prefix hits and which is the only
+    # one this service relies on, carries no storage fee, so `cached_input`
+    # alone is the whole of what a cache hit costs here. Anyone who later adds
+    # an explicit cache adds an hourly charge that appears in no turn's usage
+    # dict, which puts spend back outside what DAILY_SPEND_CAP_USD can see:
+    # price it here first, and decide what it is charged against.
 }
 
 # A model the device may name must have a price, or its spend goes back to
@@ -49,6 +83,8 @@ PROVIDER_FOR_MODEL: dict[str, str] = {
     "gpt-5.6-sol": "openai",
     "gpt-5.6-terra": "openai",
     "gpt-5.6-luna": "openai",
+    "gemini-3.7-flash": "gemini",
+    "gemini-3.5-flash-lite": "gemini",
 }
 
 _unrouted = MODEL_ALLOWLIST - set(PROVIDER_FOR_MODEL)

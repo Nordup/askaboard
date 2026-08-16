@@ -24,7 +24,14 @@ def turn_cost_usd(model: str, usage: dict) -> float | None:
     `output_tokens` already contains the reasoning tokens (the provider bills
     reasoning at the output rate and reports it inside the total, with
     `output_tokens_details.reasoning_tokens` as a breakdown), so reasoning is
-    deliberately not priced separately here — that would double-charge.
+    deliberately not priced separately here — that would double-charge. Gemini
+    reports its thinking the same way, inside `output_tokens`, so the rule holds
+    across both families.
+
+    Not every charge is a token, which is why the last term is a count and not a
+    rate: grounding with Google Search bills per search request, and a turn that
+    reported only searches still cost money. `{"grounding_tool_count": 3}` is
+    not an empty usage dict, so it prices past the guard above.
     """
     prices = MODEL_PRICES_PER_1M.get(model)
     if prices is None:
@@ -41,11 +48,17 @@ def turn_cost_usd(model: str, usage: dict) -> float | None:
         (usage.get("input_tokens_details") or {}).get("cached_tokens") or 0,
         input_tokens,
     )
+    # Not a token rate, and not divided by a million. Grounding bills per
+    # search request, so this term is a count times a price. Absent on the
+    # OpenAI rows, where it reads as zero rather than raising.
+    searches = usage.get("grounding_tool_count") or 0
+    search_cost = searches * prices.get("per_search", 0.0)
+
     return (
         (input_tokens - cached) * prices["input"]
         + cached * prices["cached_input"]
         + output_tokens * prices["output"]
-    ) / 1_000_000
+    ) / 1_000_000 + search_cost
 
 
 def realtime_cost_usd(

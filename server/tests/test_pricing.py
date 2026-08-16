@@ -184,3 +184,82 @@ def test_no_provider_entry_is_orphaned():
     """A provider row for a model the device may not name is dead config, and
     dead config is what someone later mistakes for an allowlist."""
     assert set(PROVIDER_FOR_MODEL) <= MODEL_ALLOWLIST
+
+
+def test_a_flash_turn_costs_input_plus_output():
+    cost = turn_cost_usd(
+        "gemini-3.7-flash",
+        {"input_tokens": 1_000_000, "output_tokens": 1_000_000},
+    )
+    assert cost == pytest.approx(0.75 + 3.75)
+
+
+def test_a_flash_lite_turn_costs_input_plus_output():
+    cost = turn_cost_usd(
+        "gemini-3.5-flash-lite",
+        {"input_tokens": 1_000_000, "output_tokens": 1_000_000},
+    )
+    assert cost == pytest.approx(0.30 + 2.50)
+
+
+def test_grounding_searches_are_priced_on_top_of_the_tokens():
+    """$14 per 1,000 searches, and not a token charge. One search costs what
+    ~47,000 Flash-Lite input tokens cost, so a grounded turn priced on tokens
+    alone reports a fraction of its cost and spend_today() leaks under the
+    cap."""
+    cost = turn_cost_usd(
+        "gemini-3.5-flash-lite",
+        {"input_tokens": 0, "output_tokens": 0, "grounding_tool_count": 3},
+    )
+    assert cost == pytest.approx(3 * 0.014)
+
+
+def test_the_free_search_allowance_is_not_modelled():
+    """Deliberate. Tracking it needs monthly state the recorder does not have,
+    and the allowance is shared with any other Gemini 3.x usage on the key.
+    Over-reporting errs toward the cap tripping early, which is the safe
+    direction for a spend guard."""
+    assert turn_cost_usd("gemini-3.7-flash", {"grounding_tool_count": 1}) > 0
+
+
+def test_an_openai_turn_is_not_charged_for_searches():
+    """No per_search row, so the term is zero rather than a KeyError."""
+    cost = turn_cost_usd(
+        "gpt-5.6-luna",
+        {"input_tokens": 1_000_000, "output_tokens": 0, "grounding_tool_count": 5},
+    )
+    assert cost == pytest.approx(0.20)
+
+
+def test_thought_tokens_are_not_priced_twice():
+    """Gemini bills thinking inside the output tokens, so a reasoning
+    breakdown must not add to the bill."""
+    without = turn_cost_usd(
+        "gemini-3.7-flash", {"input_tokens": 0, "output_tokens": 1_000_000},
+    )
+    with_breakdown = turn_cost_usd(
+        "gemini-3.7-flash",
+        {
+            "input_tokens": 0, "output_tokens": 1_000_000,
+            "output_tokens_details": {"reasoning_tokens": 900_000},
+        },
+    )
+    assert without == with_breakdown
+
+
+def test_flash_is_cheaper_than_terra_on_both_halves():
+    """The picker's reason to exist. If this ever fails, the caption on the
+    settings row is a lie on screen."""
+    flash = MODEL_PRICES_PER_1M["gemini-3.7-flash"]
+    terra = MODEL_PRICES_PER_1M["gpt-5.6-terra"]
+    assert flash["input"] < terra["input"]
+    assert flash["output"] < terra["output"]
+
+
+def test_both_gemini_models_route_to_the_gemini_provider():
+    """The half of the config edit the set-inclusion guards cannot see: they
+    check that every allowlisted model *has* a provider, not which one. A
+    Gemini id left on `"openai"` would send Gemini prices down the OpenAI
+    client and price the turn from a table the call never used."""
+    for model in ("gemini-3.7-flash", "gemini-3.5-flash-lite"):
+        assert PROVIDER_FOR_MODEL[model] == "gemini", model
