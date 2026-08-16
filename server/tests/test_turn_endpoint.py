@@ -464,6 +464,72 @@ async def test_a_fetched_picture_reaches_the_model_small_and_the_blob_whole(
 
 
 @respx.mock
+async def test_a_picture_too_large_to_decode_is_named_but_never_described(
+    db_app, db_factory, monkeypatch
+):
+    """The gap between the two ceilings, end to end. `_measured` admits
+    anything under 32 Mpx and `model_copy` refuses to decode past 8, so every
+    fetched picture in between is saved, blob-stored, named to the model — and
+    never seen by it. A 4000x3000 PNG is an ordinary thing to find on the web.
+
+    Without the note the tool result is indistinguishable from a successful one:
+    a blob id, a width, a height, no error, and no picture. A model in that
+    position places the image and describes it from the URL, which is exactly
+    what `UNAVAILABLE_ACK` exists to stop `view_board` doing."""
+    import io
+
+    from PIL import Image
+
+    from app.tutor import fetch_image as fetch_image_module
+    from app.tutor.fetch_image import MODEL_IMAGE_MAX_PIXELS
+    from app.tutor.providers import PICTURE_NOT_SHOWN_NOTE
+
+    async def _public(host: str, port: int) -> list[str]:
+        return ["93.184.216.34"]
+
+    monkeypatch.setattr(fetch_image_module, "_resolve", _public)
+
+    assert 4_000 * 3_000 > MODEL_IMAGE_MAX_PIXELS
+    original = io.BytesIO()
+    Image.new("RGB", (4_000, 3_000), "white").save(original, format="PNG")
+    original = original.getvalue()
+
+    respx.get("https://example.com/parabola.png").mock(return_value=Response(
+        200, headers={"Content-Type": "image/png"}, content=original,
+    ))
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*FETCH_IMAGE_TURN)),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*FETCH_IMAGE_FOLLOW_UP)),
+        ]
+    )
+    payload = _payload(text="find me a parabola")
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        async with client.stream("POST", "/v1/turn", json=payload, headers=AUTH) as r:
+            await _collect(r)
+
+    second = json.loads(route.calls[1].request.content)
+    answered = [item for item in second["input"]
+                if item.get("type") == "function_call_output"]
+    result = json.loads(answered[0]["output"])
+
+    # The blob id still goes out: the picture is fine, the device can draw it,
+    # and placing it then looking at the board is a complete recovery.
+    assert result["blob_id"].startswith("sha256:")
+    assert (result["width"], result["height"]) == (4_000, 3_000)
+    assert result["note"] == PICTURE_NOT_SHOWN_NOTE
+
+    assert not [
+        part for item in second["input"] if isinstance(item.get("content"), list)
+        for part in item["content"] if part["type"] == "input_image"
+    ], "nothing was decoded, so no picture may be sent"
+
+
+@respx.mock
 async def test_a_billing_429_is_not_retried_by_the_sdk(db_app):
     """classify() alone is not enough — the openai SDK also retries 429s at
     the transport layer by default (max_retries=2), which would fire off two

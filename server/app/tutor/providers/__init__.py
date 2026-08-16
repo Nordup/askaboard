@@ -173,6 +173,33 @@ RELAYED_FILES_CAPTION = (
 )
 
 
+#: What a picture that was kept but not shown is answered with.
+#:
+#: `fetch_image.model_copy` refuses to decode past its own ceiling, so a picture
+#: can be downloaded, blob-stored and named to the model without the model ever
+#: having seen it. Without this sentence that is invisible: the tool result
+#: carries a `blob_id`, a width and a height, no error of any kind, and no
+#: image beside it — and a model in that position places the picture and then
+#: describes it, from the URL and the filename. It is the same failure
+#: `loop.UNAVAILABLE_ACK` was written for ("you still have not seen it. Do not
+#: describe what is written there"), arriving through a different door.
+#:
+#: It says what it still *can* do, because the picture is genuinely fine — the
+#: blob holds it at full resolution and the device can draw it. Placing it and
+#: then looking at the board is a complete recovery, and one the model already
+#: knows how to perform.
+#:
+#: Here rather than in `loop.py` for the reason `RELAYED_FILES_CAPTION` above
+#: is: both sides need it and neither may import the other. `app.api.turn`
+#: attaches it to a refused fetch; `providers.openai.relay_item` attaches it to
+#: a refused container file.
+PICTURE_NOT_SHOWN_NOTE = (
+    "The picture was too large to show you. You have NOT seen it: do not "
+    "describe its contents. You may still place it on the board by blob_id, "
+    "and judge it afterwards with view_board."
+)
+
+
 @dataclass(frozen=True)
 class Created:
     pass

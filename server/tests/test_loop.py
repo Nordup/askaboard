@@ -36,6 +36,7 @@ from app.tutor.loop import (
 # which is what the assertions below are here to prove.
 from app.tutor.providers import (
     DEFAULT_SCRIPT_OUTPUT_TYPE,
+    PICTURE_NOT_SHOWN_NOTE,
     RELAYED_FILES_CAPTION,
     ProducedFile,
     RelayedFile,
@@ -1146,6 +1147,62 @@ def test_a_file_that_could_not_be_relayed_says_so_by_name():
     assert "chart.png" in text
     assert "fetch budget for this turn is used up" in text
     assert BLOB not in text
+
+
+def test_a_relayed_picture_that_was_not_shown_says_so():
+    """`model_copy` refuses to decode past its ceiling, so a file can be kept,
+    blob-stored and listed without the model ever having seen it. That line
+    reads exactly like one whose picture follows — same name, same blob id, no
+    error — so without the mark and the note the model reads a blob id with no
+    image and describes the chart it thinks it drew."""
+    item = _relay_item([
+        ("chart.png", RelayedFile(blob_id=BLOB, data=None,
+                                  content_type="image/png")),
+    ])
+
+    text = item["content"][0]["text"]
+    assert len(item["content"]) == 1, "there was nothing decoded to show"
+    assert f"chart.png → {BLOB}" in text, "the blob id still goes out"
+    assert "not shown" in text
+    assert PICTURE_NOT_SHOWN_NOTE in text
+
+
+def test_a_relayed_picture_that_was_shown_carries_no_such_note():
+    """The note is about one specific absence and must not follow every file."""
+    item = _relay_item([
+        ("chart.png", RelayedFile(blob_id=BLOB, data=b"PNG-ish",
+                                  content_type="image/png")),
+    ])
+
+    text = item["content"][0]["text"]
+    assert "not shown" not in text
+    assert PICTURE_NOT_SHOWN_NOTE not in text
+
+
+def test_a_relayed_data_file_is_listed_without_the_note():
+    """A file with no picture to show is the ordinary case, not a refusal. The
+    note would tell the model it had missed something that never existed."""
+    item = _relay_item([
+        ("data.csv", RelayedFile(blob_id=BLOB, data=b"a,b\n1,2\n",
+                                 content_type="text/csv")),
+    ])
+
+    text = item["content"][0]["text"]
+    assert f"data.csv → {BLOB}" in text
+    assert PICTURE_NOT_SHOWN_NOTE not in text
+
+
+def test_the_note_says_what_was_missed_and_what_can_still_be_done():
+    """Pinned because it is the sentence that stops the model describing a
+    picture it never saw — the same failure `UNAVAILABLE_ACK` was written for,
+    arriving through a different door. And it must not read as a dead end: the
+    blob holds the picture at full resolution, so placing it and then looking at
+    the board is a complete recovery."""
+    note = PICTURE_NOT_SHOWN_NOTE
+    assert "NOT seen" in note
+    assert "do not describe" in note.lower()
+    assert "blob_id" in note
+    assert "view_board" in note
 
 
 def test_the_relayed_files_caption_says_whose_output_this_is():

@@ -11,9 +11,10 @@ from app.tutor import retry
 from app.tutor.events import CODE_INTERPRETER
 from app.tutor.fetch_image import ALLOWED_CONTENT_TYPES, MAX_IMAGE_BYTES
 from app.tutor.providers import (
-    RELAYED_FILES_CAPTION, Completed, Created, HostedToolActivity,
-    HostedToolStarted, ProducedFile, ProviderEvent, RelayedFile, RetryDecision,
-    TextDelta, ThoughtDelta, ToolArgsDelta, ToolArgsDone, ToolCall, ToolCallStarted,
+    PICTURE_NOT_SHOWN_NOTE, RELAYED_FILES_CAPTION, Completed, Created,
+    HostedToolActivity, HostedToolStarted, ProducedFile, ProviderEvent,
+    RelayedFile, RetryDecision, TextDelta, ThoughtDelta, ToolArgsDelta,
+    ToolArgsDone, ToolCall, ToolCallStarted,
 )
 from app.tutor.tools import TOOL_DEFINITIONS
 
@@ -195,6 +196,7 @@ def _relay_item(relayed: list[tuple[str, RelayedFile]]) -> dict:
     """
     lines = []
     pictures = []
+    withheld = False
     for filename, file in relayed:
         if file.blob_id:
             lines.append(f"{filename} → {file.blob_id}")
@@ -211,13 +213,25 @@ def _relay_item(relayed: list[tuple[str, RelayedFile]]) -> dict:
         # the next round, which fails the whole turn rather than losing one
         # picture. See `relayed_content_type` for the half that protects the
         # device.
-        if file.data and file.content_type in ALLOWED_CONTENT_TYPES:
+        if file.content_type not in ALLOWED_CONTENT_TYPES:
+            continue
+        if file.data:
             pictures.append(_image_part(file.data, file.content_type))
+        elif file.blob_id:
+            # A picture that was kept and then not shown: `model_copy` refused
+            # to decode it. The line above is indistinguishable from one whose
+            # picture follows, so the file is marked and the note below says
+            # what to do about it. Without either, the model reads a blob id
+            # with no image and describes the chart it thinks it drew.
+            lines[-1] += " (not shown — too large to display)"
+            withheld = True
+    text = RELAYED_FILES_CAPTION + "\n\n" + "\n".join(lines)
+    if withheld:
+        text += "\n\n" + PICTURE_NOT_SHOWN_NOTE
     return {
         "role": "user",
         "content": [
-            {"type": "input_text",
-             "text": RELAYED_FILES_CAPTION + "\n\n" + "\n".join(lines)},
+            {"type": "input_text", "text": text},
             *pictures,
         ],
     }

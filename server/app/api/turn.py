@@ -55,6 +55,7 @@ from app.tutor.loop import (
     run_turn,
 )
 from app.tutor.providers import (
+    PICTURE_NOT_SHOWN_NOTE,
     ProducedFile,
     Provider,
     RelayedFile,
@@ -730,12 +731,21 @@ async def create_turn(
                 len(shown[0]) if shown else None,
                 shown[1] if shown else "none",
             )
+            answer = {
+                "blob_id": ref.key,
+                "width": fetched.width,
+                "height": fetched.height,
+            }
+            if shown is None:
+                # Said out loud, because nothing else in this answer says it.
+                # The blob id, the width and the height all arrive exactly as
+                # they do for a picture the model *was* shown, and there is no
+                # error — so without this the model places the image and then
+                # describes it from the URL it read somewhere. See
+                # `PICTURE_NOT_SHOWN_NOTE`.
+                answer["note"] = PICTURE_NOT_SHOWN_NOTE
             return FetchedImage(
-                output=json.dumps({
-                    "blob_id": ref.key,
-                    "width": fetched.width,
-                    "height": fetched.height,
-                }),
+                output=json.dumps(answer),
                 # Not the bytes the blob holds — the small copy of them, handed
                 # back so `run_turn` can show the model what it is about to
                 # place and then talk about. Without a picture at all it would

@@ -241,11 +241,23 @@ def model_copy(data: bytes, content_type: str) -> tuple[bytes, str] | None:
     `None` is the one deliberate refusal, and it is the pixel ceiling. This is
     the only place in the module that decodes rather than measures, so it is the
     only place that pays for pixels; past `MODEL_IMAGE_MAX_PIXELS` nothing is
-    decoded and the model is simply not shown the picture. A fetched image can
-    never reach that — `_measured` refuses far below it — but a file a hosted
-    script wrote arrives here through no pixel guard at all, and a refusal there
-    lands on a path that already exists: `relay_item` lists the file with its
-    blob id and no picture beside it.
+    decoded and the model is simply not shown the picture.
+
+    **Both callers can reach that, and the fetch path reaches it easily.** An
+    earlier draft of this docstring claimed a fetched image never could, on the
+    reasoning that `_measured` refuses first — it does not. `_measured`'s
+    ceiling is `MAX_IMAGE_PIXELS_TOTAL`, four times this one, so every fetched
+    picture between 8 and 32 megapixels passes the guard and is refused here: a
+    4000x3000 PNG is an ordinary thing to find on the web and lands in that gap.
+    A file a hosted script wrote arrives with no pixel guard in front of it at
+    all.
+
+    So a refusal is a normal outcome on both paths, and both must **say so**.
+    The model is about to place this picture on a learner's board and talk about
+    it, and a model that is handed a blob id and no picture, with nothing saying
+    why, describes the picture it imagines — which is the failure
+    `UNAVAILABLE_ACK` exists to prevent for `view_board`. See
+    `providers.PICTURE_NOT_SHOWN_NOTE`, which both callers attach.
     """
     try:
         with Image.open(io.BytesIO(data)) as image:
