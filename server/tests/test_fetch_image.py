@@ -6,6 +6,7 @@ prove the refusals are not simply refusing everything.
 """
 
 import io
+import random
 import socket
 import struct
 import warnings
@@ -19,9 +20,14 @@ from PIL import Image
 
 from app.tutor import fetch_image as module
 from app.tutor.fetch_image import (
-    MAX_IMAGE_BYTES, MAX_IMAGE_PIXELS_TOTAL, MODEL_IMAGE_MAX_EDGE,
+    MAX_IMAGE_BYTES, MAX_IMAGE_PIXELS_TOTAL, MODEL_IMAGE_JPEG_TYPE,
+    MODEL_IMAGE_MAX_EDGE, MODEL_IMAGE_MAX_PIXELS, MODEL_IMAGE_PNG_TYPE,
     ImageFetchError, fetch_image, model_copy,
 )
+
+#: EXIF's orientation tag. Named rather than written as 274 at the one call
+#: site, which is a test asserting a photo comes out upright.
+_ORIENTATION_TAG = 274
 
 
 URL = "https://example.com/cat.png"
@@ -598,11 +604,7 @@ def test_the_model_copy_is_capped_on_its_long_side():
     data, content_type = model_copy(_image("PNG", 1080, 1080), "image/png")
 
     assert _opened(data).size == (MODEL_IMAGE_MAX_EDGE, MODEL_IMAGE_MAX_EDGE)
-    # One format whatever came down the wire: the provider's documented vision
-    # formats all cost the same tokens, so the only thing format decides is
-    # bytes.
-    assert content_type == "image/jpeg"
-    assert _opened(data).format == "JPEG"
+    assert content_type in {MODEL_IMAGE_JPEG_TYPE, MODEL_IMAGE_PNG_TYPE}
 
 
 def test_the_model_copy_keeps_the_shape_of_a_wide_picture():
@@ -619,6 +621,37 @@ def test_a_picture_already_small_enough_is_never_enlarged():
     assert _opened(data).size == (200, 120)
 
 
+def test_flat_artwork_is_kept_as_a_lossless_png():
+    """Both encodings are written and the smaller kept. Flat colour and hard
+    edges — clipart, a chart a script drew, a screenshot of an equation, which
+    is most of what this tutor fetches — is routinely smaller as PNG *and*
+    lossless, so a JPEG's ringing around the text would buy nothing."""
+    data, content_type = model_copy(_image("PNG", 1080, 1080), "image/png")
+
+    assert content_type == MODEL_IMAGE_PNG_TYPE
+    assert _opened(data).format == "PNG"
+
+
+def test_a_photograph_is_kept_as_a_jpeg():
+    """The other half of the same rule, and the reason it is a comparison
+    rather than a preference."""
+    noise = Image.new("RGB", (900, 900))
+    pixels = noise.load()
+    random.seed(11)
+    for y in range(900):
+        for x in range(900):
+            pixels[x, y] = (
+                random.randrange(256), random.randrange(256), random.randrange(256),
+            )
+    buffer = io.BytesIO()
+    noise.save(buffer, format="PNG")
+
+    data, content_type = model_copy(buffer.getvalue(), "image/png")
+
+    assert content_type == MODEL_IMAGE_JPEG_TYPE
+    assert len(data) < len(buffer.getvalue())
+
+
 def test_transparency_is_flattened_onto_the_boards_own_white():
     """Chosen to tell the truth rather than to look good. The board's ground is
     white, so this is what the learner will see — and two of the three pictures
@@ -630,6 +663,24 @@ def test_transparency_is_flattened_onto_the_boards_own_white():
     assert _opened(data).convert("RGB").getpixel((3, 3)) == (255, 255, 255)
 
 
+def test_a_sideways_photo_is_turned_upright_before_it_is_shown():
+    """A phone stores a portrait photo as sensor-native landscape pixels plus an
+    orientation tag, and neither encoding this writes carries EXIF — so without
+    `exif_transpose` a picture of a worksheet reaches the model on its side and
+    it describes what it sees. The same hazard `convert._convert_image` answers
+    the same way."""
+    landscape = Image.new("RGB", (900, 600), "white")
+    exif = landscape.getexif()
+    exif[_ORIENTATION_TAG] = 6  # rotate 90° clockwise to display
+    buffer = io.BytesIO()
+    landscape.save(buffer, format="JPEG", exif=exif)
+
+    data, _ = model_copy(buffer.getvalue(), "image/jpeg")
+
+    width, height = _opened(data).size
+    assert height > width, "the tag said portrait, so the pixels must be portrait"
+
+
 def test_a_picture_that_cannot_be_read_comes_back_exactly_as_it_arrived():
     """Never raises and never refuses a turn: the worst case is the behaviour
     that existed before this function did."""
@@ -638,12 +689,25 @@ def test_a_picture_that_cannot_be_read_comes_back_exactly_as_it_arrived():
     )
 
 
-def test_a_picture_past_the_pixel_ceiling_is_left_alone_rather_than_decoded():
-    """This is the one place in the module that decodes pixels, so it is the one
-    place that pays for them. A fetched image can never reach here past the
-    ceiling — it is refused long before — but a file relayed out of the
-    provider's code interpreter arrives without passing it."""
-    huge = _png_declaring(8_000, 8_000)
-    assert 8_000 * 8_000 > MAX_IMAGE_PIXELS_TOTAL
+def test_a_picture_past_the_decode_ceiling_is_refused_rather_than_decoded():
+    """This is the only place in the module that decodes rather than measures,
+    so it is the only place that pays for pixels — 32 Mpx of RGBA is about
+    220 MB in one allocation, inside an event loop serving every other learner's
+    turn. Past the ceiling there is no copy and the model is shown no picture. A
+    fetched image can never reach it; a file a hosted script wrote arrives
+    through no pixel guard at all."""
+    huge = _png_declaring(4_000, 3_000)
+    assert 4_000 * 3_000 > MODEL_IMAGE_MAX_PIXELS
 
-    assert model_copy(huge, "image/png") == (huge, "image/png")
+    assert model_copy(huge, "image/png") is None
+
+
+def test_the_decode_ceiling_is_well_under_what_a_device_may_be_given():
+    """Two ceilings because they bound two machines. `MAX_IMAGE_PIXELS_TOTAL`
+    asks what an iPad can draw; `MODEL_IMAGE_MAX_PIXELS` asks what this process
+    can hold. Named here so the gap is read rather than inherited."""
+    assert MODEL_IMAGE_MAX_PIXELS == 8_000_000
+    assert MODEL_IMAGE_MAX_PIXELS < MAX_IMAGE_PIXELS_TOTAL
+    # And far past what the output can use: a 768-px long side is at most about
+    # 0.6 Mpx, so everything above is detail decoded and thrown away.
+    assert MODEL_IMAGE_MAX_EDGE ** 2 < MODEL_IMAGE_MAX_PIXELS

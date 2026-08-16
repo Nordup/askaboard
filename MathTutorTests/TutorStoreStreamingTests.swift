@@ -159,6 +159,17 @@ final class TutorStoreStreamingTests: XCTestCase {
         XCTAssertFalse(store.errorMessage?.contains("gpt-5.6-luna") == true)
     }
 
+    /// The flag means "a wait may fix this" and nothing more. It is set for a
+    /// rate limit, for a provider 5xx, for a connection the server could not
+    /// make, and for a turn that ended without completing — so copy that named
+    /// the rate limit would be a guess the learner can catch being wrong the
+    /// moment their own Wi-Fi is the problem.
+    func testTheRetryableCopyDoesNotGuessAtTheCause() {
+        let copy = TutorStore.failureMessage(retryable: true)
+        XCTAssertFalse(copy.localizedCaseInsensitiveContains("rate limit"))
+        XCTAssertTrue(copy.contains("try again"))
+    }
+
     /// The retryable flag used to be discarded at the point of use, so the one
     /// structured fact a failure carried changed nothing the learner saw.
     func testTheFailureCopyFollowsWhetherAnotherTryIsWorthIt() async {

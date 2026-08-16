@@ -1356,6 +1356,38 @@ async def test_the_turn_stops_fetching_once_its_byte_budget_is_spent(monkeypatch
 
 
 @respx.mock
+async def test_a_fetch_with_no_showable_copy_still_answers_with_the_blob_id():
+    """`model_copy` refuses to decode a picture past its ceiling, and the loop
+    has to carry on without one: the tool output still names the blob, so the
+    model can place a picture it was not shown — the same position `view_board`
+    leaves it in when the device cannot draw. Nothing is attached, which is what
+    `image is None` has always meant here."""
+    route = _three_rounds(
+        FETCH_IMAGE_TURN, FETCH_IMAGE_FOLLOW_UP, FETCH_IMAGE_FOLLOW_UP
+    )
+    client = AsyncOpenAI(api_key="sk-test")
+    bundle = ContextBundle(system="s", input=[{"role": "user", "content": "find one"}])
+
+    async def fetch_image(url: str) -> FetchedImage:
+        return FetchedImage(output=json.dumps({"blob_id": BLOB}),
+                            image=None, content_type=None, source_bytes=9_000_000)
+
+    result = None
+    async for _event, running in run_turn(
+        provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+        effort="high", bundle=bundle, fetch_image=fetch_image,
+    ):
+        result = running
+
+    assert json.loads(result.tool_calls[0]["result"])["blob_id"] == BLOB
+    sent = json.loads(route.calls[1].request.content)
+    assert not [
+        part for item in sent["input"] if isinstance(item.get("content"), list)
+        for part in item["content"] if part["type"] == "input_image"
+    ], "there was no copy to show, so no picture may be sent"
+
+
+@respx.mock
 async def test_the_byte_budget_counts_the_download_not_the_copy(monkeypatch):
     """The picture handed back is a reduced copy for the model's context — the
     blob keeps the original — so its length stopped being what the download

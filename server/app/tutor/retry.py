@@ -71,6 +71,20 @@ RATE_LIMIT_ERROR_CODES = frozenset({
     "requests",
 })
 
+#: What the provider's own trouble calls itself, delivered the same way.
+#:
+#: Here so the two paths agree. `classify` reads any 5xx as retryable, and a
+#: provider failing on its own account inside a stream is the same event
+#: arriving through a door with no status line on it — a verdict that depended
+#: on which door it came through would be a bug that only shows up in the
+#: column nobody reads.
+SERVER_ERROR_CODES = frozenset({
+    "server_error",
+    "internal_error",
+    "internal_server_error",
+    "service_unavailable",
+})
+
 #: The same fact, as the provider writes it in prose.
 #:
 #: Read only when neither `code` nor `type` says anything, because a body is not
@@ -159,6 +173,8 @@ def _without_status(body: dict | None, message: str | None) -> RetryDecision:
     kind = _error_field(body, "type")
     if code in RATE_LIMIT_ERROR_CODES or kind in RATE_LIMIT_ERROR_CODES:
         return RetryDecision(True, "rate limited")
+    if code in SERVER_ERROR_CODES or kind in SERVER_ERROR_CODES:
+        return RetryDecision(True, f"server error {code or kind}")
     if _reads_as_rate_limit(message) or _reads_as_rate_limit(
         _error_field(body, "message")
     ):

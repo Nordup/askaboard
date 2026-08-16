@@ -78,11 +78,15 @@ class RelayedFile:
     #: `fetch_image.model_copy`'s output here, so `blob_id` above still names
     #: the original the device downloads. For everything else it is the file
     #: itself, unchanged, because nothing reduces a CSV.
+    #:
+    #: `None` with a `blob_id` set is a third case, and `relay_item` already
+    #: draws it: the file was kept but there is no picture to show — a CSV, or
+    #: an image `model_copy` refused to decode. It is listed by name and id
+    #: with nothing beside it.
     data: bytes | None = None
-    #: What `data` is. Names the media type in the data URL below, so a JPEG
-    #: announced as `image/png` would be a picture the provider is handed under
-    #: a false description — which means this is the reduced copy's type, not
-    #: the type the row and the device know the file by.
+    #: What `data` is when there is any, and otherwise what the file is. Names
+    #: the media type in the data URL below, so a JPEG announced as `image/png`
+    #: would be a picture the provider is handed under a false description.
     content_type: str | None = None
     #: How many bytes the download actually cost, which is what the turn's
     #: download budget is counted in. Its own field for the reason

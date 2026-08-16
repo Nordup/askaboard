@@ -1836,14 +1836,18 @@ final class TutorStore: ObservableObject {
     /// this is the half that does not have to trust that it did.
     ///
     /// `retryable` is the one structured fact the event carries, and it is what
-    /// picks between the two. A retryable failure is the provider asking for a
-    /// moment — a rate limit is the case it was written for, and the provider's
-    /// own text on that turn said "Please try again in 662ms" — so the copy
-    /// says a wait will fix it. Anything else falls back to board 14's line,
-    /// which is what the thread said for every failure before this existed.
+    /// picks between the two. It says a wait will fix this and nothing more,
+    /// because that is all the flag actually means: a rate limit is the case it
+    /// was written for — the provider's own text on that turn said "Please try
+    /// again in 662ms" — but the same flag is set for a provider 5xx, for a
+    /// connection the server could not make, and for a turn that ended without
+    /// completing. Naming the rate limit would be a guess the learner can catch
+    /// being wrong. Anything not worth waiting for falls back to board 14's
+    /// line, which is what the thread said for every failure before this
+    /// existed.
     static func failureMessage(retryable: Bool) -> String {
         retryable
-            ? "The tutor hit a rate limit — try again in a moment."
+            ? "The tutor is busy right now — try again in a moment."
             : ChatErrorState.networkMessage
     }
 

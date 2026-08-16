@@ -114,6 +114,20 @@ def test_an_in_stream_rate_limit_is_retried_off_a_code_or_a_type(body):
     assert classify(None, body).retry is True
 
 
+@pytest.mark.parametrize("body", [
+    {"code": "server_error"},
+    {"error": {"code": "internal_error"}},
+    {"type": "internal_server_error"},
+    {"error": {"type": "service_unavailable"}},
+])
+def test_the_providers_own_trouble_is_retried_with_or_without_a_status(body):
+    """`classify` reads any 5xx as retryable. The same event delivered inside a
+    stream has no status line on it, and a verdict that depended on which door
+    it came through would be a bug visible only in a column nobody reads."""
+    assert classify(None, body).retry is True
+    assert classify(503, body).retry is True
+
+
 @pytest.mark.parametrize("code", sorted([
     "credit_balance_exhausted",
     "organization_spend_limit_exceeded",

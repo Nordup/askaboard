@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -679,12 +680,20 @@ async def create_turn(
                 turn_id=body.turn_id, kind=FETCHED_IMAGE_KIND,
                 data=fetched.data, content_type=fetched.content_type,
             )
-            shown, shown_type = model_copy(fetched.data, fetched.content_type)
+            # Off the event loop, and that is not politeness. `model_copy`
+            # decodes, resamples and encodes; run inline it would stop every
+            # other learner's SSE stream in this process for its whole length,
+            # inside the one handler whose whole job is not to go quiet.
+            shown = await asyncio.to_thread(
+                model_copy, fetched.data, fetched.content_type
+            )
             logger.info(
                 "image fetched | turn_id=%s bytes=%d type=%s size=%dx%d "
-                "shown_bytes=%d shown_type=%s",
+                "shown_bytes=%s shown_type=%s",
                 body.turn_id, len(fetched.data), fetched.content_type,
-                fetched.width, fetched.height, len(shown), shown_type,
+                fetched.width, fetched.height,
+                len(shown[0]) if shown else None,
+                shown[1] if shown else "none",
             )
             return FetchedImage(
                 output=json.dumps({
@@ -696,8 +705,13 @@ async def create_turn(
                 # back so `run_turn` can show the model what it is about to
                 # place and then talk about. Without a picture at all it would
                 # be describing a URL.
-                image=shown,
-                content_type=shown_type,
+                #
+                # `None` when there is no copy to show. The blob id above still
+                # went out, so the model can place a picture it was not shown —
+                # which is the same position `view_board` leaves it in when the
+                # device cannot draw, and better than a turn that fails over it.
+                image=shown[0] if shown else None,
+                content_type=shown[1] if shown else None,
                 source_bytes=len(fetched.data),
             )
 
@@ -753,22 +767,28 @@ async def create_turn(
             # wrote, which is the one the device downloads by `blob_id`. Nothing
             # else is touched — a CSV has no resolution to spend, and
             # `relay_item` never shows it anyway.
-            shown, shown_type = (
-                model_copy(data, content_type)
+            # Off the event loop, for the reason the fetch above gives.
+            shown = (
+                await asyncio.to_thread(model_copy, data, content_type)
                 if content_type in ALLOWED_CONTENT_TYPES
                 else (data, content_type)
             )
             logger.info(
                 "container file relayed | turn_id=%s file=%s bytes=%d type=%s "
-                "shown_bytes=%d",
-                body.turn_id, filename, len(data), content_type, len(shown),
+                "shown_bytes=%s",
+                body.turn_id, filename, len(data), content_type,
+                len(shown[0]) if shown else None,
             )
             return RelayedFile(
                 blob_id=ref.key,
-                # Always something, whatever the file is. The provider's
-                # `relay_item` shows the pictures and lists the rest.
-                data=shown,
-                content_type=shown_type,
+                # The picture, reduced — or nothing, when `model_copy` refused to
+                # decode it. This is the one path into that function with no
+                # pixel guard in front of it, so the refusal is reachable here
+                # and only here, and it lands somewhere that already works:
+                # `relay_item` lists a file with no `data` by name and blob id,
+                # with no picture beside it, which is exactly what a CSV gets.
+                data=shown[0] if shown else None,
+                content_type=shown[1] if shown else content_type,
                 # The download, which `TURN_DOWNLOAD_BYTE_LIMIT` is counted in.
                 source_bytes=len(data),
             )
@@ -901,7 +921,11 @@ async def create_turn(
                 recorder, turn_id=body.turn_id, message=_describe_error(error),
                 retryable=decision.retry, result=result, request_body=request_body,
                 image_blob_key=image_ref.key if image_ref else None,
-                diagnostics=diagnostics(),
+                # The rule that made the call, recorded beside the failure. On
+                # this branch as much as on the in-stream one below: a billing
+                # 429 and a rate-limit 429 are the same status and opposite
+                # verdicts, and the row could not previously say which it read.
+                diagnostics={**diagnostics(), "classified": decision.reason},
             )
             yield sse(event)
         except APIConnectionError as error:

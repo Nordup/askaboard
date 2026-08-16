@@ -403,7 +403,9 @@ async def test_a_fetched_picture_reaches_the_model_small_and_the_blob_whole(
 
     from app.store.models import Attachment
     from app.tutor import fetch_image as fetch_image_module
-    from app.tutor.fetch_image import MODEL_IMAGE_MAX_EDGE
+    from app.tutor.fetch_image import (
+        MODEL_IMAGE_JPEG_TYPE, MODEL_IMAGE_MAX_EDGE, MODEL_IMAGE_PNG_TYPE,
+    )
 
     async def _public(host: str, port: int) -> list[str]:
         return ["93.184.216.34"]
@@ -439,9 +441,14 @@ async def test_a_fetched_picture_reaches_the_model_small_and_the_blob_whole(
              for part in item["content"] if part["type"] == "input_image"]
     assert len(parts) == 1
     url = parts[0]["image_url"]
-    assert url.startswith("data:image/jpeg;base64,")
+    # Whichever of the two encodings came out smaller — flat white is a PNG's
+    # best case, so this one is a PNG. What the test pins is the media type
+    # matching the bytes, and the size, which is where the tokens are.
+    media_type = url.removeprefix("data:").split(";", 1)[0]
+    assert media_type in {MODEL_IMAGE_JPEG_TYPE, MODEL_IMAGE_PNG_TYPE}
     shown = Image.open(io.BytesIO(base64.b64decode(url.split(",", 1)[1])))
     assert shown.size == (MODEL_IMAGE_MAX_EDGE, MODEL_IMAGE_MAX_EDGE)
+    assert shown.get_format_mimetype() == media_type
     # Still `high`. What comes back is a diagram with labels on it, and the
     # low-detail path downsamples until none of them can be read.
     assert parts[0]["detail"] == "high"
