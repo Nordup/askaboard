@@ -723,10 +723,72 @@ def to_gemini_tools(tools: list[dict]) -> list[dict]:
     return converted
 ```
 
-- [ ] **Step 4: Run the invariant test**
+### Corrections found while implementing Task 3 — the code above is buggy
 
-Run: `cd server && uv run pytest tests/test_gemini_schema.py -v`
-Expected: PASS, all seven tests.
+Three defects in this plan's own Task 3 text, found in implementation on 2026-08-16.
+Do not re-derive the code above without these.
+
+1. **`_strip` destroys every tool's arguments.** As written it recurses into a schema
+   node and keeps only keys in `GEMINI_SUPPORTED_KEYWORDS`. But the *values* under
+   `properties` are keyed by **argument name** (`"mode"`, `"delete_ids"`,
+   `"elements"`), not by schema keyword — so the filter deletes all of them and every
+   tool ships with an empty `properties` map. `_strip` must treat a `properties` (and
+   `$defs`) value as a **map of names to schemas**, recursing into each value without
+   filtering the keys. The same applies to `_resolve`.
+
+2. **The test's `_walk` helper has the identical bug**, which is why it did not catch
+   defect 1: it yields every dict including the `properties` map itself, so
+   `set(node) - GEMINI_SUPPORTED_KEYWORDS` sees argument names as unsupported
+   keywords. As written, `test_no_unsupported_keyword_survives_anywhere` and
+   `test_every_board_element_arm_keeps_its_discriminator` are mutually
+   unsatisfiable — no implementation can pass both. `_walk` must skip the key set of
+   a `properties`/`$defs` map and descend only into its values.
+
+3. **`type: ["string", "null"]` must become `{"type": "string", "nullable": True}`.**
+   Six fields across four memory tools use the JSON-Schema type-list form for
+   nullability. Gemini's declaration schema has no type-list; it has `nullable`. Left
+   as a list, those four tools are malformed and the memory tools break on Gemini
+   only. None of the seven tests above catches this — add one:
+
+```python
+def test_nullable_types_become_the_nullable_flag(converted):
+    """Gemini has no type-list form. `["string", "null"]` left as a list makes the
+    declaration malformed, and it is the memory tools that carry it — so the
+    failure would be Gemini losing `search_memory` while the board still worked."""
+    for declaration in _declarations(converted):
+        for node in _walk(declaration["parameters"]):
+            assert not isinstance(node.get("type"), list), declaration["name"]
+
+
+def test_a_nullable_field_keeps_its_type_and_gains_the_flag():
+    converted = to_gemini_tools([{
+        "type": "function", "name": "t", "description": "d",
+        "parameters": {"type": "object", "properties": {
+            "q": {"type": ["string", "null"], "description": "maybe"},
+        }},
+    }])
+    field = converted[0]["parameters"]["properties"]["q"]
+    assert field["type"] == "string"
+    assert field["nullable"] is True
+```
+
+Add `"nullable"` to `GEMINI_SUPPORTED_KEYWORDS` — it is on Gemini's supported list and
+was wrongly omitted above.
+
+**The real arm count is 15, not 12.** The prose in this plan and in the spec says
+twelve; `tools.py` has fifteen `_board_element(` arms. The `>= 12` assertion still
+holds, but read the number as fifteen.
+
+- [ ] **Step 4: Hand the owner the invariant test command**
+
+You cannot run it. Verify by importing and converting through plain `python -c`, which
+the hook permits, then give the owner:
+
+```bash
+cd server && uv run pytest tests/test_gemini_schema.py -v
+```
+
+Expected: PASS, nine tests (the seven above plus the two nullable tests).
 
 - [ ] **Step 5: Commit**
 
@@ -787,6 +849,9 @@ makes one real call and prints what actually arrived.
 Usage:
 
     cd server && uv run python scripts/record_interaction.py "draw a right triangle"
+    cd server && uv run python scripts/record_interaction.py "..." gemini-3.7-flash
+
+The model is the optional second argument, defaulting to the cheaper Flash-Lite.
 
 Paste the output into `tests/fixtures/interactions.py`, trimming the argument
 deltas to two or three so the fixture stays readable. Keep every event *type*
@@ -811,7 +876,12 @@ async def main(prompt: str) -> None:
         raise SystemExit("GEMINI_API_KEY is not set")
     client = genai.Client(api_key=settings.gemini_api_key)
     stream = await client.aio.interactions.create(
-        model="gemini-3.7-flash",
+        # Flash-Lite, not Flash: this script records the *wire shape*, which is
+        # identical across Gemini 3.x, and Flash-Lite's input is $0.30 against
+        # $0.75. The one exception is the board recording — if Flash-Lite will
+        # not draw a usable `update_board` call, record that one on
+        # `gemini-3.7-flash` and say so in the fixture module's docstring.
+        model=model,
         input=prompt,
         system_instruction="You are a maths tutor. Use your tools.",
         tools=to_gemini_tools(TOOL_DEFINITIONS),
