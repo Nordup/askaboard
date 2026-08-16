@@ -217,6 +217,26 @@ enum BoardSceneRenderer {
             withRotation(style.rotation, around: rect, in: context) {
                 artifact.draw(in: rect, into: context, isFlipped: isFlipped)
             }
+        case .inkText(let value):
+            // The one bitmap-free element that still produces a shape rather
+            // than a stroke. `InkTextRenderer` returns the *outline* of a
+            // tapered pen — a region, not a centreline — so it is filled, not
+            // stroked, and it is filled in `stroke`'s colour, which is the ink
+            // for every other kind too. The context's fill colour was set from
+            // `style.fill` above; this kind has no interior to fill, and
+            // overriding it here is what makes `fill` and `stroke_width`
+            // genuinely ignored rather than accidentally honoured.
+            //
+            // Synchronous throughout: no store to ask, nothing to schedule and
+            // no `.boardSceneArtifactReady` to wait for. The bounds arm agrees
+            // with this rectangle because both call the same layout.
+            guard let inkPath = InkTextRenderer.path(for: value) else { break }
+            let inkBounds = InkTextRenderer.bounds(for: value)
+            withRotation(style.rotation, around: inkBounds, in: context) {
+                context.addPath(inkPath)
+                context.setFillColor(UIColor(hex: style.stroke)?.cgColor ?? UIColor.black.cgColor)
+                context.fillPath()
+            }
         case .image(let value):
             // The one element that draws something while it is still loading.
             // Its frame is the model's layout decision rather than the
@@ -669,6 +689,21 @@ enum BoardSceneRenderer {
             } else {
                 rect = .zero
             }
+        case .inkText(let value):
+            // The layout's own metric box, grown by `InkTextRenderer`'s ink
+            // padding — half the widest pen, plus how far the per-character
+            // jitter can carry a glyph. Computed from the layout rather than
+            // from the built path: this arm runs for every element on every
+            // cull pass, and measuring advance widths is cheap where building
+            // a few thousand outline points is not.
+            //
+            // No stroke inset, and `stroke_width` is not read at all: the pen's
+            // width comes from `size`. Nothing to draw — an empty string, a
+            // string of nothing but spaces — reports `.zero`, which is what
+            // `math_text` reports before its artifact lands and what the scene
+            // union and `BoardSceneLayerView.isMountable` both drop.
+            let inkBounds = InkTextRenderer.bounds(for: value)
+            rect = inkBounds.isEmpty ? .zero : inkBounds.offsetBy(dx: originX, dy: originY)
         case .image(let value):
             // The frame, exactly, and from the moment the element arrives —
             // the placeholder fills the same rectangle the bitmap will, so

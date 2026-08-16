@@ -153,6 +153,7 @@ enum BoardElementKind: String, Codable, Sendable, CaseIterable {
     case angleMarker = "angle_marker"
     case path
     case mathText = "math_text"
+    case inkText = "ink_text"
     case image
     case svg
 }
@@ -392,6 +393,49 @@ struct MathTextElement: Codable, Hashable, Sendable {
     }
 }
 
+/// A line of the tutor's own handwriting.
+///
+/// The model sends a string; the app draws the letters. That split is the whole
+/// design: a model writes English well and letterform geometry badly, so asking
+/// it for the strokes of a `q` produces something between a scribble and a
+/// crash, while asking it for the word "quarter" produces the word. `InkGlyphs`
+/// owns the alphabet and `InkTextRenderer` owns the pen.
+///
+/// It is not notation and it is not a label. `math_text` still owns everything
+/// with a fraction bar or an exponent in it, because notation assembled from
+/// glyphs is unreadable; `text` still owns compact typeset labels on a figure.
+/// This is what a teacher writes in the margin — a hint, a nudge, a "nice
+/// work" — and it is drawn as ink because a margin note in a system font reads
+/// as the app talking rather than as the tutor writing.
+///
+/// `size` is the cap height in board points, the same 8–256 range the server's
+/// schema allows, and `(x, y)` is the top-left of the first line's band. Of the
+/// seven shared style fields this kind honours `stroke` (the ink's colour),
+/// `opacity` and `rotation`. It ignores `fill`, `dash` and — the one that
+/// surprises — `stroke_width`: the pen's width comes from `size`, because
+/// handwriting whose nib does not grow with its letters stops looking like
+/// handwriting.
+///
+/// Unlike its three bitmap-producing siblings this element is synchronous. It
+/// has no store, waits on nothing, and reports real bounds the moment it
+/// arrives, because laying out glyphs the app already holds is arithmetic.
+struct InkTextElement: Codable, Hashable, Sendable {
+    var id: String
+    var kind: BoardElementKind = .inkText
+    var x: CGFloat
+    var y: CGFloat
+    /// Up to 400 characters, with `\n` for a line break. Anything past that is
+    /// dropped at layout time; see `InkGlyphs.maximumCharacters`.
+    var text: String
+    /// The cap height in board points.
+    var size: CGFloat = 24
+    var style: BoardStyle = BoardStyle()
+
+    enum CodingKeys: String, CodingKey {
+        case id, kind, x, y, text, size, style
+    }
+}
+
 /// A picture the server already holds, placed on the board by its key.
 ///
 /// The bytes never travel in the scene. `blobId` names a blob a tool put in the
@@ -479,6 +523,7 @@ enum BoardElement: Codable, Hashable, Sendable {
     case angleMarker(AngleMarkerElement)
     case path(PathElement)
     case mathText(MathTextElement)
+    case inkText(InkTextElement)
     case image(ImageElement)
     case svg(SVGElement)
 
@@ -497,6 +542,7 @@ enum BoardElement: Codable, Hashable, Sendable {
         case .angleMarker(let value): value.id
         case .path(let value): value.id
         case .mathText(let value): value.id
+        case .inkText(let value): value.id
         case .image(let value): value.id
         case .svg(let value): value.id
         }
@@ -517,6 +563,7 @@ enum BoardElement: Codable, Hashable, Sendable {
         case .angleMarker: .angleMarker
         case .path: .path
         case .mathText: .mathText
+        case .inkText: .inkText
         case .image: .image
         case .svg: .svg
         }
@@ -537,6 +584,7 @@ enum BoardElement: Codable, Hashable, Sendable {
         case .angleMarker(let value): value.style
         case .path(let value): value.style
         case .mathText(let value): value.style
+        case .inkText(let value): value.style
         case .image(let value): value.style
         case .svg(let value): value.style
         }
@@ -671,6 +719,16 @@ enum BoardElement: Codable, Hashable, Sendable {
                 y: wire.y ?? 0,
                 latex: wire.latex ?? "",
                 fontSize: wire.fontSize ?? 24,
+                style: wire.style
+            ))
+        case .inkText:
+            self = .inkText(InkTextElement(
+                id: wire.id,
+                kind: .inkText,
+                x: wire.x ?? 0,
+                y: wire.y ?? 0,
+                text: wire.text ?? "",
+                size: wire.size ?? 24,
                 style: wire.style
             ))
         case .image:
@@ -810,11 +868,13 @@ private struct WireElement: Codable {
     var fillRule: PathFillRule?
 
     var latex: String?
+    /// `ink_text`'s cap height. A single word on the wire, so no rename.
+    var size: CGFloat?
 
     var blobId: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, kind, x, y, text, width, height, points, svg, d, latex
+        case id, kind, x, y, text, width, height, points, svg, d, latex, size
         case x1, y1, x2, y2, cx, cy, radius
         case role, stroke, fill, opacity, dash, rotation
         case fillRule = "fill_rule"
@@ -872,6 +932,9 @@ private struct WireElement: Codable {
         case .mathText(let value):
             x = value.x; y = value.y
             latex = value.latex; fontSize = value.fontSize
+        case .inkText(let value):
+            x = value.x; y = value.y
+            text = value.text; size = value.size
         case .image(let value):
             x = value.x; y = value.y; width = value.width; height = value.height
             blobId = value.blobId
@@ -928,6 +991,7 @@ private struct WireElement: Codable {
         d = try container.decodeIfPresent(String.self, forKey: .d)
         fillRule = try container.decodeIfPresent(PathFillRule.self, forKey: .fillRule)
         latex = try container.decodeIfPresent(String.self, forKey: .latex)
+        size = try container.decodeIfPresent(CGFloat.self, forKey: .size)
         blobId = try container.decodeIfPresent(String.self, forKey: .blobId)
     }
 
@@ -971,6 +1035,7 @@ private struct WireElement: Codable {
         if let d { try container.encode(d, forKey: .d) }
         if let fillRule { try container.encode(fillRule, forKey: .fillRule) }
         if let latex { try container.encode(latex, forKey: .latex) }
+        if let size { try container.encode(size, forKey: .size) }
         if let blobId { try container.encode(blobId, forKey: .blobId) }
     }
 }

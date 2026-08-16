@@ -30,6 +30,7 @@
 		25606622B78BBDDA73726986 /* LaunchOptions.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB02097A62CC28EC0B3834B1 /* LaunchOptions.swift */; };
 		26CD5C4DB7F32B2D18DEC74D /* RealtimeSignalingClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = D135C65ED372E4E69447A476 /* RealtimeSignalingClient.swift */; };
 		29CCD36CA6350F76004148CA /* BoardGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DAA007B907FE56B1E8A66F7 /* BoardGeometry.swift */; };
+		2A18631311A823FBFF1F6494 /* InkTextTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBB6AA8ABE5720F982800CD2 /* InkTextTests.swift */; };
 		2AB6F98E30A667B56F432BAE /* VoiceAudioSessionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80B10D37311A90DC0ED48AD /* VoiceAudioSessionController.swift */; };
 		2BF595A2FBB67A2BDC49CD01 /* BoardToolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77A7DD39D721ACCC0D62826F /* BoardToolTests.swift */; };
 		2C3B102ADBD059079F06F5D4 /* VoiceCallSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 928252085D17E70C450D91A3 /* VoiceCallSessionTests.swift */; };
@@ -48,6 +49,7 @@
 		40F8CD19E0DED1C0D7B74793 /* SelectionAttachment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B4837CE04C13B9963DC4754 /* SelectionAttachment.swift */; };
 		4176586452BF327D5F482C23 /* SettingsOptions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77A01E280787A9D796C47A84 /* SettingsOptions.swift */; };
 		41E73D693A9C4EC247E50BDB /* AttachmentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B2EAA96D5D01DB1432106F3 /* AttachmentStore.swift */; };
+		41E75125889D4E726FC3EC5D /* InkTextRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D527132E5AEA492D5AD380A8 /* InkTextRenderer.swift */; };
 		4250B2E071DC9D8F67852F79 /* DrawerRevealLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18525748C4B0E4A66289FAD0 /* DrawerRevealLayer.swift */; };
 		42A90FCA38591E34983FDF54 /* BoardSceneRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED7FDD72E49425CDA75ED766 /* BoardSceneRendererTests.swift */; };
 		49937F693DD3AE0B3C46C9AC /* VoiceBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B4A8F49C9D2250F777C04A0 /* VoiceBar.swift */; };
@@ -125,6 +127,7 @@
 		B31E3D93CDC97207E80A325F /* IconTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EC6EB284F209A08B2D0E2A1 /* IconTests.swift */; };
 		B366553CEEF5B22C7E6E9FF0 /* SettingsSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F5E4A4B0992C23D2307164F /* SettingsSidebar.swift */; };
 		B5FD8AA551AF597A4904A241 /* AttachmentStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0E636CF98B8B5B2D40A95EA /* AttachmentStoreTests.swift */; };
+		B61C402A80A8DE8E63F7DB72 /* InkGlyphs.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3ADEDEF6F53D224906B3570D /* InkGlyphs.swift */; };
 		B869A9B81CB70FA8EE40C4A3 /* Layout.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAB4A0EDD663149C6BE8D7CB /* Layout.swift */; };
 		B8C8402116B81B279E426A78 /* SessionSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8253C7910B50F4BAAB7D0BF0 /* SessionSummary.swift */; };
 		B911747BF2C09A7A7CF6DCA7 /* BoardScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA7BBCEDC1728230AF71647E /* BoardScreen.swift */; };
@@ -229,6 +232,7 @@
 		363744A8B651DA004FC6F837 /* UIStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIStateTests.swift; sourceTree = "<group>"; };
 		3819B07BA533544E9FFF5372 /* SuggestionChip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuggestionChip.swift; sourceTree = "<group>"; };
 		39DA22664B80DABB57EF9533 /* BoardRasterCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardRasterCache.swift; sourceTree = "<group>"; };
+		3ADEDEF6F53D224906B3570D /* InkGlyphs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InkGlyphs.swift; sourceTree = "<group>"; };
 		3BBA848D742151999F767084 /* BoardSelection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardSelection.swift; sourceTree = "<group>"; };
 		3C742B8F4CF845931CCEFC3D /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		3CFED3B175C3922A5241AF7C /* SessionPlanView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionPlanView.swift; sourceTree = "<group>"; };
@@ -327,6 +331,7 @@
 		C8EAE13468EF5CF55B7DD396 /* MessageBubble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageBubble.swift; sourceTree = "<group>"; };
 		CAB4A0EDD663149C6BE8D7CB /* Layout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Layout.swift; sourceTree = "<group>"; };
 		CB96C449E6F25690ABBF7028 /* ChatGallery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatGallery.swift; sourceTree = "<group>"; };
+		CBB6AA8ABE5720F982800CD2 /* InkTextTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InkTextTests.swift; sourceTree = "<group>"; };
 		CDC29B5C0EE22B4B88E0C16D /* BoardInk.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardInk.swift; sourceTree = "<group>"; };
 		CE21716456338270C146DD1F /* AttachmentUploader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentUploader.swift; sourceTree = "<group>"; };
 		CE8BA11A166196B847324B4D /* BackendConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendConfiguration.swift; sourceTree = "<group>"; };
@@ -335,6 +340,7 @@
 		D207D577F59A94A0666E7CB3 /* GreetingBlock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GreetingBlock.swift; sourceTree = "<group>"; };
 		D3D368DED69760CC8C9E9471 /* SwiftDrawProbeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftDrawProbeTests.swift; sourceTree = "<group>"; };
 		D511827ABE54595D7F8366E1 /* MessageThreadLazinessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageThreadLazinessTests.swift; sourceTree = "<group>"; };
+		D527132E5AEA492D5AD380A8 /* InkTextRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InkTextRenderer.swift; sourceTree = "<group>"; };
 		D6A6AC55DDB94015492D4C2A /* MathTutorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MathTutorTests.swift; sourceTree = "<group>"; };
 		D72F7D127584C65A5F19FCFE /* BoardSceneHashTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoardSceneHashTests.swift; sourceTree = "<group>"; };
 		D947222D75F7A3F2ED55D0DD /* ToolRail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolRail.swift; sourceTree = "<group>"; };
@@ -514,6 +520,7 @@
 				95328C09291FF057FF5EC160 /* DesignSystemTokenTests.swift */,
 				5E71EAD98E5C0012B1C4D4B2 /* DictationTests.swift */,
 				5EC6EB284F209A08B2D0E2A1 /* IconTests.swift */,
+				CBB6AA8ABE5720F982800CD2 /* InkTextTests.swift */,
 				255C26B763A5F36C69C477AD /* LayoutTests.swift */,
 				E4EA2B107414EF9093D12A65 /* MascotMotionTests.swift */,
 				D6A6AC55DDB94015492D4C2A /* MathTutorTests.swift */,
@@ -653,6 +660,7 @@
 				FC4FD0C2563CFF4993BE958D /* Resize */,
 				E5350113098845186BFC0238 /* Elevation.swift */,
 				6A8932D22AB94BA80F44B1B8 /* Icon.swift */,
+				3ADEDEF6F53D224906B3570D /* InkGlyphs.swift */,
 				CAB4A0EDD663149C6BE8D7CB /* Layout.swift */,
 				437A816AC93664B09A7FEBB9 /* SVGPath.swift */,
 				6C3BD7AF8ABF8A0911D1890A /* Typography.swift */,
@@ -762,6 +770,7 @@
 				4F4CB4E8BC1C345DC5B34973 /* BoardSelectionMarquee.swift */,
 				EF8D24EF32D14ACF9CE6B9F2 /* BoardSVGStore.swift */,
 				2BBBD05225BE422A782124B7 /* E2ESeedFixture.swift */,
+				D527132E5AEA492D5AD380A8 /* InkTextRenderer.swift */,
 			);
 			path = Board;
 			sourceTree = "<group>";
@@ -940,6 +949,7 @@
 				A7141CE867CF341D0955479E /* DesignSystemTokenTests.swift in Sources */,
 				D620B41620F9A2C4C9C26AD0 /* DictationTests.swift in Sources */,
 				B31E3D93CDC97207E80A325F /* IconTests.swift in Sources */,
+				2A18631311A823FBFF1F6494 /* InkTextTests.swift in Sources */,
 				AA43B884F9CF945EA312DEE2 /* LayoutTests.swift in Sources */,
 				D1101370A9F951738474EC73 /* MascotMotionTests.swift in Sources */,
 				E7AA3EADB2E34641D55A2A0A /* MathTutorTests.swift in Sources */,
@@ -1022,6 +1032,8 @@
 				D06365D7D4E247E420E73476 /* HorizontalSwipeRouter.swift in Sources */,
 				E3926EFC9E73C2829B0E74F7 /* Icon.swift in Sources */,
 				9986C716988CA98C7B16DA42 /* IconPaths.swift in Sources */,
+				B61C402A80A8DE8E63F7DB72 /* InkGlyphs.swift in Sources */,
+				41E75125889D4E726FC3EC5D /* InkTextRenderer.swift in Sources */,
 				8CFFCA8713A559A17AA2D839 /* KeychainStore.swift in Sources */,
 				25606622B78BBDDA73726986 /* LaunchOptions.swift in Sources */,
 				B869A9B81CB70FA8EE40C4A3 /* Layout.swift in Sources */,
