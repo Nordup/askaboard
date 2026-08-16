@@ -678,7 +678,12 @@ def test_every_recorded_event_decodes_to_the_shape_the_provider_reads():
     )
 
     adapter = TypeAdapter(InteractionSSEEvent)
-    provider = GeminiProvider(client=None)
+    # Two providers, each shown one well-formed stream. One provider fed both
+    # copies of every event would be a stream in which each step starts twice and
+    # stops twice, and the accumulator is deliberately not indifferent to that —
+    # see `test_a_repeated_step_stop_does_not_complete_the_same_call_twice`.
+    from_objects = GeminiProvider(client=None)
+    from_dicts = GeminiProvider(client=None)
     for fixture in (
         TEXT_ONLY_INTERACTION, TOOL_CALL_INTERACTION, TOOL_CALL_FOLLOW_UP,
         BOARD_UPDATE_INTERACTION, CODE_EXECUTION_INTERACTION,
@@ -687,7 +692,198 @@ def test_every_recorded_event_decodes_to_the_shape_the_provider_reads():
         for raw in fixture:
             decoded = adapter.validate_python(raw)
             assert not isinstance(decoded, UnknownInteractionSSEEvent), raw
-            dumped, from_sdk = provider.normalise(decoded)
+            dumped, from_sdk = from_objects.normalise(decoded)
             assert dumped == raw
-            _, from_dict = provider.normalise(raw)
+            _, from_dict = from_dicts.normalise(raw)
             assert type(from_sdk) is type(from_dict)
+
+
+class _FakeStream:
+    """One recorded interaction, shaped like the stream `open_round` returns.
+
+    An async context manager over an async iterator, which is what `run_turn`
+    requires of every provider (`async with stream: async for raw in stream:`) and
+    what `google.genai`'s `AsyncStream` is. Yields the fixture's dicts, because
+    `normalise` reads an SDK object and a dict identically — held down by
+    `test_every_recorded_event_decodes_to_the_shape_the_provider_reads`.
+    """
+
+    def __init__(self, events):
+        self._events = list(events)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_):
+        return False
+
+    def __aiter__(self):
+        async def gen():
+            for event in self._events:
+                yield event
+        return gen()
+
+
+async def test_an_in_stream_error_reaches_the_turn_as_an_error_event():
+    """The signal `app.api.turn` now keys its failure path on.
+
+    A Gemini round can fail *inside* an open stream, and that failure does not
+    raise: `run_turn` logs the provider's words, yields one `ErrorEvent` and
+    returns. So the handler's `async for` completes normally and every `except`
+    clause is skipped — which is why the handler has to notice the event itself,
+    and why this test asserts the event is really what arrives.
+
+    Driven through `run_turn` rather than through `normalise` alone, because the
+    thing under test is the seam between the two: a provider that returned
+    `Failed` and a loop that yielded nothing would look correct in isolation."""
+    from app.tutor.context import ContextBundle
+    from app.tutor.events import TURN_FAILED_MESSAGE
+    from app.tutor.loop import run_turn
+
+    provider = GeminiProvider(client=None)
+
+    async def open_round(payload):
+        return _FakeStream(FAILED_INTERACTION)
+
+    provider.open_round = open_round
+
+    events = []
+    async for event, result in run_turn(
+        provider=provider, model="gemini-3.5-flash-lite", effort="low",
+        bundle=ContextBundle(system="be a tutor", input=[
+            {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+        ]),
+    ):
+        events.append(event)
+
+    failure, = [event for event in events if event.type == "error"]
+    # The provider's own words must not be on this wire; see TURN_FAILED_MESSAGE.
+    assert failure.message == TURN_FAILED_MESSAGE
+    assert failure.retryable is False
+    # No completion arrived, so there is no usage — which is exactly why the
+    # handler must not take the success path: `finish_turn` would write status
+    # "ok" for a turn whose spend it could not even record.
+    assert result.usage is None
+
+
+def test_a_repeated_step_stop_does_not_complete_the_same_call_twice():
+    """`step.stop` carries only an index, so nothing in the event distinguishes a
+    duplicate from a new step. Left in the accumulator, a second stop would
+    append a second `ToolCall` with the same `call_id` — and `run_turn` answers
+    every call it is given, so the next round would carry two `function_result`
+    items under one id, on top of a board drawn twice."""
+    provider, _ = _normalise_all(TOOL_CALL_INTERACTION)
+    repeated = provider.neutral({"index": 1, "event_type": "step.stop"})
+    assert repeated is None
+
+    completed = provider.neutral({"interaction": {
+        "id": "v1_workspace", "status": "requires_action", "usage": {},
+    }, "event_type": "interaction.completed"})
+    assert len(completed.calls) == 1
+
+
+def test_arguments_for_a_step_that_never_started_produce_no_call():
+    """`step.start` is the only event that carries a call's name and id, so a
+    step invented from an `arguments_delta` would be completed into a
+    `ToolCall(name="", call_id="")`. `tool_output` would then build a
+    `function_result` with an empty `name`, which is the 400 its own docstring
+    warns about — produced by this service rather than by the model."""
+    provider = GeminiProvider(client=None)
+    provider.neutral({"interaction": {"id": "v1"}, "event_type": "interaction.created"})
+    delta = provider.neutral({
+        "index": 4,
+        "delta": {"arguments": '{"mode":', "type": "arguments_delta"},
+        "event_type": "step.delta",
+    })
+    assert isinstance(delta, ToolArgsDelta)
+    assert provider.neutral({"index": 4, "event_type": "step.stop"}) is None
+
+    completed = provider.neutral({"interaction": {
+        "id": "v1", "status": "completed", "usage": {},
+    }, "event_type": "interaction.completed"})
+    assert completed.calls == []
+
+
+def test_an_unclamped_effort_reaches_the_deepest_level_rather_than_raising():
+    """The map exists for the effort that arrives unclamped — an older client, a
+    restored session — so a KeyError here would fail the turn it was written to
+    rescue. `EFFORTS_FOR_MODEL` has already refused anything outside the five at
+    the request boundary."""
+    payload = GeminiProvider(client=None).build_round(
+        model="gemini-3.7-flash", effort="ludicrous", outbox=[], previous_id=None,
+        cache_key=None,
+    )
+    assert payload["generation_config"]["thinking_level"] == "high"
+
+
+def test_the_canonical_free_tier_429_is_retried():
+    """The regression this file exists for after review. Google's per-*minute*
+    free-tier 429 carries `RESOURCE_EXHAUSTED`, the words "You exceeded your
+    current quota, please check your plan and billing details", a
+    `PerMinute…-FreeTier` quota id, and a `RetryInfo` saying when to try again.
+
+    Reading the prose as exhaustion classified that common, recoverable refusal
+    as final and suppressed the retry — a hiccup the provider was willing to
+    serve, shown to a child as a dead end. The window and the stated delay are
+    the evidence; the sentence is boilerplate on every free-tier 429."""
+    decision = GeminiProvider(client=None).classify(429, {"error": {
+        "code": 429,
+        "status": "RESOURCE_EXHAUSTED",
+        "message": (
+            "You exceeded your current quota, please check your plan and "
+            "billing details."
+        ),
+        "details": [
+            {"@type": "type.googleapis.com/google.rpc.QuotaFailure",
+             "violations": [{
+                 "quotaMetric": "generativelanguage.googleapis.com/generate_requests",
+                 "quotaId": "GenerateRequestsPerMinutePerProjectPerModel-FreeTier",
+             }]},
+            {"@type": "type.googleapis.com/google.rpc.RetryInfo",
+             "retryDelay": "38s"},
+        ],
+    }})
+    assert decision.retry
+    assert decision.reason == "rate limited"
+
+
+def test_a_stated_retry_delay_beats_a_long_window():
+    """A provider saying when to try again is a provider saying to try again —
+    the same fact `retry.retry_delay` reads off a `Retry-After` header on the
+    other family, delivered in a body instead. And a refusal naming both windows
+    will serve the next minute's requests, so the short one wins: everything
+    ambiguous is a burst, because suppressing a good retry costs far more than
+    two seconds of backoff in front of a certain refusal."""
+    provider = GeminiProvider(client=None)
+
+    both_windows = provider.classify(429, {"error": {"details": [{
+        "violations": [
+            {"quotaId": "GenerateRequestsPerMinutePerProjectPerModel"},
+            {"quotaId": "GenerateRequestsPerDayPerProjectPerModel"},
+        ],
+    }]}})
+    assert both_windows.retry
+
+    delay_wins = provider.classify(429, {"error": {
+        "message": "Quota exceeded",
+        "details": [
+            {"violations": [{"quotaId": "GenerateRequestsPerDayPerProject"}]},
+            {"@type": "type.googleapis.com/google.rpc.RetryInfo",
+             "retry_delay": "12s"},
+        ],
+    }})
+    assert delay_wins.retry
+
+
+def test_a_spent_day_with_no_delay_offered_is_final():
+    """The other half of the pair, and the only shape read as spent: a long
+    window named, and nothing anywhere saying to come back."""
+    decision = GeminiProvider(client=None).classify(429, {"error": {
+        "code": 429,
+        "status": "RESOURCE_EXHAUSTED",
+        "message": "Quota exceeded for quota metric 'Generate requests'.",
+        "details": [{"@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                     "violations": [{"quotaId": "GenerateRequestsPerDayPerProject"}]}],
+    }})
+    assert not decision.retry
+    assert "quota" in decision.reason

@@ -141,12 +141,21 @@ def _gemini_client() -> genai.Client:
     **The transport's own retry is left on here, unlike `max_retries=0` above,
     and that is the opposite trade rather than an oversight.** `loop._open_round`
     catches `openai.APIStatusError`, which this SDK never raises, so nothing in
-    this service retries a Gemini open — switching the transport's four attempts
-    off would leave a single refused connection or one 502 ending a learner's
-    turn outright. What it costs is exactly what `_client`'s comment describes: a
-    429 is waited through before `GeminiProvider.classify` gets to say whether it
-    was a burst limit or a spent quota. That is the trade to revisit when
-    `_open_round` learns this family's exception type, not before.
+    this service retries a Gemini open — switching the transport off would leave
+    a single refused connection or one 502 ending a learner's turn outright.
+
+    What it costs is exactly what `_client`'s comment describes: a 429 is waited
+    through before `GeminiProvider.classify` gets to say whether it was a burst
+    limit or a spent quota. The size of that wait is worth writing down, because
+    it is what a learner sits through. The generated SDK is configured with
+    `max_retries=3` — four attempts — over 408, 409, 429 and every 5xx, backing
+    off from 500 ms doubling to an 8 s cap, and bounded by
+    `max_elapsed_time=30_000` ms. Thirty seconds is therefore the ceiling, and it
+    is the number to weigh against the client's own 120 s `streamTimeout`.
+
+    `http_options=HttpOptions(retry_options=HttpRetryOptions(attempts=0))` turns
+    it off in one line, and that is the change to make when `_open_round` learns
+    this family's exception type — not before.
     """
     return genai.Client(api_key=get_settings().gemini_api_key)
 
@@ -609,6 +618,22 @@ async def create_turn(
         ttft_ms: int | None = None
         image_ref = None
         result: TurnResult | None = None
+        # The `error` event `run_turn` put on the wire, if it put one there.
+        #
+        # A round can fail *inside* an open stream, and that failure does not
+        # raise: `run_turn` logs the provider's words, yields one `ErrorEvent`
+        # and returns, so the `async for` below finishes normally and every
+        # `except` clause is skipped. Without this the success path then ran —
+        # `finish_turn` wrote status "ok" and a `DoneEvent` followed the error
+        # the learner had already been shown, and because a stream that ends on
+        # an error never sent a completion there was no usage either, so the
+        # round's spend was recorded as nothing at all. That is the same shape
+        # `TURN_FAILED_MESSAGE`'s own commit was written to close, arrived at
+        # from the other side.
+        #
+        # The event rather than a bare flag, because `retryable` is the one
+        # structured fact the device was given and the row should agree with it.
+        stream_failure: ErrorEvent | None = None
         # How long this turn has gone without putting anything on the wire, and
         # the worst such gap so far.
         #
@@ -922,9 +947,42 @@ async def create_turn(
                 result = running
                 if ttft_ms is None and event.type == "text_delta":
                     ttft_ms = int((time.monotonic() - started) * 1000)
+                if event.type == "error":
+                    # Both of `run_turn`'s error yields are a provider `Failed`
+                    # arriving mid-stream, and both end the turn. Recorded here
+                    # rather than acted on here so the event still reaches the
+                    # device in its proper place in the stream.
+                    stream_failure = event
                 yield sse(event)
 
-            if result is not None:
+            if stream_failure is not None:
+                # Failed, not finished. The device already has its `ErrorEvent`,
+                # so the one this returns is dropped — telling a learner twice
+                # would be worse than not recording at all, which is what this
+                # branch exists to stop.
+                #
+                # `result` is passed for the reason `fail_turn`'s own docstring
+                # gives: a turn that spent money and then died is the turn whose
+                # usage matters most, and on a multi-round turn everything before
+                # the failing round is already in it.
+                #
+                # The message says where the provider's own words are rather than
+                # repeating them, because it cannot: `run_turn` logs them and
+                # hands back only the sanitised event. The log line it names is
+                # the grep target.
+                await _fail_turn_and_report(
+                    recorder, turn_id=body.turn_id,
+                    message=(
+                        "the round reported an error inside an open stream; the "
+                        "provider's own words are in the preceding "
+                        "'the round failed' log line"
+                    ),
+                    retryable=stream_failure.retryable, result=result,
+                    request_body=request_body,
+                    image_blob_key=image_ref.key if image_ref else None,
+                    diagnostics=diagnostics(),
+                )
+            elif result is not None:
                 await recorder.finish_turn(
                     turn_id=body.turn_id, session_id=session.id, next_seq=next_seq,
                     result=result, request_body=request_body,

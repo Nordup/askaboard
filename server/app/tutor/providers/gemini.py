@@ -147,25 +147,50 @@ IMAGE_RESOLUTION = "high"
 #:
 #: Gemini answers both with 429 and `RESOURCE_EXHAUSTED`, so neither the status
 #: code nor the status name separates "five requests in one second" from "the
-#: day's quota is gone". The first is worth two backoffs. The second is a learner
-#: watching a thinking indicator through them for a refusal that was already
-#: certain, which is exactly what `retry.BILLING_ERROR_CODES` exists to prevent on
-#: the other family — this is the same rule expressed against the only evidence
-#: this API gives, which is prose and a `QuotaFailure` detail.
+#: day's quota is gone", and `retry.BILLING_ERROR_CODES`' code-based test has
+#: nothing to match. The only evidence this API gives is the quota's **window**,
+#: which arrives inside a `google.rpc.QuotaFailure` violation's `quotaId`.
 #:
-#: Read against the message *and* the serialised `details`, because the useful
-#: half is usually in a violation's `quotaId` (`…PerDay`, `…PerDayPerProject`)
-#: rather than in the sentence. A false positive costs one retry the learner did
-#: not need; a false negative costs backoff in front of a certain failure.
+#: **The window is the whole of the test, and the prose is deliberately not.**
+#: The first version of this list read `exceededyourcurrentquota`, `billing` and
+#: `freetier` as marks of exhaustion, and every one of those is boilerplate on a
+#: free-tier 429 whatever its window: the canonical per-*minute* refusal says
+#: "You exceeded your current quota, please check your plan and billing
+#: details". So the common transient 429 was classified final and the retry that
+#: would have recovered the turn was suppressed.
+#:
+#: **Which way to err, stated plainly, because the first version had it
+#: backwards.** Reading a burst as spent *suppresses* a retry and turns a hiccup
+#: the provider was willing to serve into a dead end a child is shown. Reading
+#: spent as a burst costs `RETRY_LIMIT` short backoffs — one or two seconds,
+#: since `retry_delay` falls back to `FALLBACK_RETRY_DELAY` — in front of a
+#: refusal that was already certain. Those costs are nowhere near equal, so
+#: everything ambiguous is a burst.
 #:
 #: Written without spaces, underscores or hyphens because that is how
 #: `_reads_as_spent_quota` normalises what it reads: the same fact is spelled
 #: `PerDay` in a quota id, `per day` in an English sentence and `per_day` in a
 #: metric name, and three spellings of one phrase is three chances to miss it.
 QUOTA_EXHAUSTION_PHRASES: tuple[str, ...] = (
-    "perday", "dailylimit", "quotaexceeded", "exceededyourcurrentquota",
-    "billing", "freetier",
+    "perday", "dailylimit", "permonth", "monthlylimit",
 )
+
+#: What the same body says when the allowance is only momentarily hot.
+#:
+#: Checked *before* the phrases above and beating them, which matters because one
+#: refusal can carry several violations. A body naming both windows is a body
+#: that will serve the next minute's requests, and the ordering is the "everything
+#: ambiguous is a burst" rule made concrete.
+RETRYABLE_WINDOW_PHRASES: tuple[str, ...] = ("perminute", "persecond")
+
+#: `google.rpc.RetryInfo`, as it survives the same squashing.
+#:
+#: Positive evidence, and the strongest in the body: a provider saying when to try
+#: again is a provider saying to try again. Matched as a substring rather than by
+#: walking to the typed detail, so both `retryDelay` and `retry_delay` are found
+#: wherever in the shape they sit. It is the same fact `retry.retry_delay` reads
+#: off a `Retry-After` header on the other family, delivered in a body instead.
+RETRY_INFO_MARKER = "retrydelay"
 
 
 async def _inline_bytes(data: bytes) -> bytes:
@@ -366,7 +391,15 @@ class GeminiProvider:
                 # rejected outright by these models and are not sent — the SDK's
                 # own `GenerationConfig` has no field for any of the three, which
                 # is the second half of that evidence.
-                "thinking_level": EFFORT_TO_THINKING_LEVEL[effort],
+                #
+                # `.get`, not `[...]`, because the map exists precisely for the
+                # effort that arrives unclamped and a `KeyError` here would fail
+                # the turn the map was written to rescue. `high` is the fallback
+                # for the same reason `xhigh` and `max` clamp to it: the values
+                # that can plausibly arrive unrecognised are the deep ones, and
+                # `EFFORTS_FOR_MODEL` has already refused anything else at the
+                # request boundary.
+                "thinking_level": EFFORT_TO_THINKING_LEVEL.get(effort, "high"),
                 "thinking_summaries": "auto",
                 # What `strict: True` bought on the other side, which
                 # `to_gemini_tools` had to drop because a Gemini declaration has
@@ -566,12 +599,24 @@ class GeminiProvider:
 
         if kind == "arguments_delta":
             fragment = delta.get("arguments")
-            if isinstance(index, int) and isinstance(fragment, str):
+            step = self._round.steps.get(index) if isinstance(index, int) else None
+            if step is None:
+                # Dropped, never invented. A step created here would carry no
+                # name and no call id — `step.start` is the only event that
+                # announces either — and it would still be completed by
+                # `step.stop` into a `ToolCall` the loop then answers with a
+                # `function_result` whose `name` is the empty string. That is the
+                # 400 `tool_output` warns about, produced by this service rather
+                # than by the model.
+                logger.warning(
+                    "arguments arrived for a step that never started | step=%s",
+                    index,
+                )
+            elif isinstance(fragment, str):
                 # Appended, never parsed here. The recorded fixtures split the
                 # JSON mid-key on purpose, because a provider that tried to read
                 # each fragment on its own would pass on a call that happened to
                 # arrive whole and break on every real one.
-                step = self._round.steps.setdefault(index, _Step(kind="function_call"))
                 step.arguments += fragment
             return ToolArgsDelta(
                 output_index=index if isinstance(index, int) else -1
@@ -605,12 +650,22 @@ class GeminiProvider:
         out of the accumulator: `step.stop` has no name, no call id and no
         arguments. It is also the only place `Completed.calls` is filled, which is
         what `run_turn` reads to decide whether the turn buys another round.
+
+        **The step is taken out of the accumulator as it closes**, so a stop
+        repeated at the same index cannot complete the same call twice. A
+        duplicate would put two `ToolCall`s with one `call_id` into
+        `Completed.calls`, and `run_turn` answers every call it is given — two
+        `function_result` items under a single id, which is a malformed round on
+        top of a board drawn twice.
         """
         index = event.get("index")
         step = self._round.steps.get(index) if isinstance(index, int) else None
         if step is None or step.kind != "function_call":
             return None
 
+        # Removed before it is reported, which is what makes a second stop at
+        # this index a no-op rather than a second call.
+        del self._round.steps[index]
         self._round.calls.append(ToolCall(
             name=step.name, call_id=step.call_id, arguments=step.arguments,
         ))
@@ -1108,16 +1163,21 @@ def _thought_text(delta: dict) -> str:
 def _reads_as_spent_quota(body: dict | None) -> bool:
     """Whether a 429's body says the allowance is gone rather than momentarily hot.
 
-    Reads the message and the `details` array, because the useful half is usually
-    a `QuotaFailure` violation's `quotaId` rather than the sentence. Serialised
-    with `json.dumps` rather than walked field by field: the details are a list of
-    open-ended `google.rpc` types whose shape varies by failure, and a walk that
-    guessed the nesting wrong would find nothing while looking like it had
-    checked.
+    Reads the message and the `details` array, because the whole of the evidence
+    is a `QuotaFailure` violation's `quotaId` and a `RetryInfo`'s delay rather
+    than anything in the sentence. Serialised with `json.dumps` rather than walked
+    field by field: the details are a list of open-ended `google.rpc` types whose
+    shape varies by failure, and a walk that guessed the nesting wrong would find
+    nothing while looking like it had checked.
+
+    Three tests, in the order that makes an ambiguous body a burst — see
+    `QUOTA_EXHAUSTION_PHRASES` for why the two mistakes here are nothing like
+    equally expensive. A stated retry delay wins outright, a per-minute window
+    beats a per-day one when both are named, and only a body that names a long
+    window and nothing else is read as spent.
 
     Spaces, underscores and hyphens come out before the match, so `PerDay`,
-    `per day` and `per_day` are one phrase rather than three — see
-    `QUOTA_EXHAUSTION_PHRASES`.
+    `per day` and `per_day` are one phrase rather than three.
     """
     if not isinstance(body, dict):
         return False
@@ -1132,4 +1192,8 @@ def _reads_as_spent_quota(body: dict | None) -> bool:
         except (TypeError, ValueError):
             text += " " + str(details)
     squashed = text.lower().replace(" ", "").replace("_", "").replace("-", "")
+    if RETRY_INFO_MARKER in squashed:
+        return False
+    if any(phrase in squashed for phrase in RETRYABLE_WINDOW_PHRASES):
+        return False
     return any(phrase in squashed for phrase in QUOTA_EXHAUSTION_PHRASES)
