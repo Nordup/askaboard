@@ -557,12 +557,14 @@ def update_payload(update: BoardSceneUpdate) -> BoardUpdatePayload:
 #: the same document back with the same feature in it. None of them ends in a
 #: full stop, because they are joined with "; " into one line on the ack.
 #:
-#: Every line here is what the renderer was measured doing, not what its
-#: documentation claims: `SwiftDrawProbeTests` draws each feature and reads the
-#: pixels back. That probe is why `<mask>` is absent — masks render correctly,
-#: and warning about one would have taught the model out of markup that works —
-#: and why `<filter>` says the effect is dropped rather than the element: the
-#: filtered shape still draws, unfiltered.
+#: Two of these lines are pixel-measured rather than read off documentation.
+#: `SwiftDrawProbeTests` draws a filtered shape and a masked one and reads the
+#: bytes back, and both answers contradicted what this table used to say: masks
+#: render correctly, so the `<mask>` line is gone — warning about one taught the
+#: model out of markup that works — and a `<filter>` draws its shape unfiltered
+#: rather than vanishing, so the line says the effect is dropped, not the
+#: element. The rest of the table is verified against the renderer's source,
+#: which is weaker evidence: a probe is what settles a disagreement.
 #:
 #: `<animate` covers `<animateTransform` and `<animateMotion` as well. The
 #: element spellings are the ones valid SVG uses, so the scan is case

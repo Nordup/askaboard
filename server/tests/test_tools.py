@@ -143,15 +143,18 @@ def test_update_board_svg_arm_asks_for_a_viewbox_and_no_frame():
 
 
 def test_update_board_svg_arm_states_the_subset_the_renderer_was_measured_on():
-    """`SwiftDrawProbeTests` draws each feature and reads the pixels back, and
-    this sentence is the only place the model learns the result. It advertised
-    animation and filters before the probe ran, which is how a figure comes
-    back missing the half the model was counting on."""
+    """This sentence is the only place the model learns what survives the
+    renderer. It advertised animation and filters before `SwiftDrawProbeTests`
+    ran — the probe pixel-measured masks, filters, clip paths, `<style>` blocks
+    and text, and the rest of the list is source-verified — which is how a
+    figure comes back missing the half the model was counting on."""
     arms = UPDATE_BOARD_TOOL["parameters"]["properties"]["elements"]["items"]["anyOf"]
     svg = next(arm for arm in arms if arm["properties"]["kind"]["const"] == "svg")
     document = svg["properties"]["svg"]["description"]
 
-    for supported in ("paths", "gradients", "defs/use", "masks", "`<style>`", "text"):
+    for supported in (
+        "paths", "gradients", "defs/use", "masks", "clip paths", "`<style>`", "text",
+    ):
         assert supported in document, supported
     assert "`<filter>` effects are dropped" in document
     for ignored in ("animation", "scripts", "`<foreignObject>`", "external references"):
@@ -229,18 +232,24 @@ def test_update_board_description_names_an_element_kind_for_every_job():
 
 
 def test_update_board_description_makes_no_claim_the_renderer_disproved():
-    """`SwiftDrawProbeTests` measured the renderer feature by feature. This
-    description used to recommend raw SVG *for* masks and filters, and used to
-    read as though SVG were only for complex work; both were wrong, and a wrong
-    claim here is read on every request of every turn."""
+    """`SwiftDrawProbeTests` pixel-measured the two features this description
+    used to recommend raw SVG *for* — "masks, filters" — and the filter half was
+    wrong. It also read as though SVG were only for complex work. A wrong claim
+    here is read on every request of every turn.
+
+    Each guard names the stale phrase it is guarding against, not a substring
+    that happens to appear inside it: a bare `"filters" not in` would also fire
+    on a future sentence that correctly said filter effects are dropped."""
     description = UPDATE_BOARD_TOOL["description"]
 
-    assert "filters" not in description
+    assert "masks, filters" not in description
     assert "complex multi-part illustrations" not in description
     # The document contract belongs to the arm that carries the markup, and is
     # asserted there. Saying it twice spends the bytes on every request.
     assert "passed through unchanged" not in description
-    assert "second" not in description, "no time budget was ever true here"
+    # The deleted render-time budget, in every spelling it was ever written in.
+    for stale in ("2 seconds", "two seconds", "2-second", "two-second"):
+        assert stale not in description, f"no time budget was ever true here: {stale}"
 
 
 def test_update_board_description_keeps_the_rules_that_protect_learner_work():
@@ -399,11 +408,18 @@ def test_the_tool_surface_stays_inside_its_budget():
     # before it reads one. The rest is the corrected account of what the
     # renderer draws. Both replace claims that were false: the description
     # recommended raw SVG for "masks, filters", and the arm advertised
-    # animation. The surface is 31,081, which leaves 119 — less than one clause
-    # — so the bound moves to 32,000 on the reasoning every raise here has
-    # used: about a thousand characters of room, still under the ~1,100 the
-    # cheapest function tool in this plan cost. A rewritten sentence fits; a
-    # sixteenth primitive does not, and trips this line.
+    # animation. That left the surface on 31,081 and 119 under the old 31,200
+    # bound — less than one clause — so the bound moves to 32,000 on the
+    # reasoning every raise here has used: about a thousand characters of room,
+    # still under the ~1,100 the cheapest function tool in this plan cost. A
+    # rewritten sentence fits; a sixteenth primitive does not, and trips this
+    # line.
+    #
+    # Review round 1 then spent 15 net: "clip paths" in the arm's supported
+    # list (the probe renders them, and the deleted mask warning was their only
+    # other mention), against an opening clause that got shorter as it got
+    # broader — the tool is for whenever a visual helps, not only when one is
+    # asked for. The surface is 31,096, leaving 904.
     assert len(json.dumps(TOOL_DEFINITIONS)) < 32_000
 
 

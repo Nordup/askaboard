@@ -22,10 +22,12 @@ import XCTest
 ///    parses but draws nothing still gives an image — a blank one. Only the
 ///    pixels separate "supported" from "silently dropped".
 ///
-/// Two of the probes contradict the server. `server/app/tutor/board_scene.py`
-/// warns the model that `<filter>` and `<mask>` are "unsupported and not drawn".
-/// Against this renderer neither claim holds, and the test names below say what
-/// happens instead. Fix the warnings, do not fix these tests.
+/// Two of the probes contradicted the server, and the server has since been
+/// corrected: `server/app/tutor/board_scene.py` no longer warns about `<mask>`
+/// at all, and its `<filter>` warning now says the effect is dropped while the
+/// shape still draws. The test names below are what those two warnings are
+/// written from. If one of them goes red, fix the warning to match the new
+/// answer — do not fix these tests.
 ///
 /// The `@testable import MathTutor` is deliberate although no app type is used.
 /// It proves the name `SVG` stays unambiguous while both modules are in scope,
@@ -184,8 +186,9 @@ final class SwiftDrawProbeTests: XCTestCase {
         XCTAssertGreaterThan(raster.inkedPixels, 100)
     }
 
-    /// A `clipPath` clips. The server's lint tells the model to reach for this
-    /// instead of a mask, so the advice needs to be true.
+    /// A `clipPath` clips. The deleted mask warning used to send the model here
+    /// instead; the `svg` arm's description now names clip paths outright, so
+    /// this is still the probe that has to hold for that list to be true.
     func testClipPathIsApplied() throws {
         let raster = try render(Markup.clipPath)
         assertColour(raster, x: 25, y: 50, red: 32, green: 64, blue: 96, alpha: 255)
@@ -202,10 +205,11 @@ final class SwiftDrawProbeTests: XCTestCase {
     /// document with the `filter` attribute removed produce identical pixels.
     /// The blur is absent, not the rectangle.
     ///
-    /// `server/app/tutor/board_scene.py` tells the model `<filter>` "is
-    /// unsupported and is not drawn". The first half is right and the second
-    /// half is wrong, and the difference matters: a figure that leans on a drop
-    /// shadow comes back hard-edged, not missing.
+    /// `server/app/tutor/board_scene.py` used to tell the model `<filter>` "is
+    /// unsupported and is not drawn". The first half was right and the second
+    /// half was wrong, and the difference matters: a figure that leans on a drop
+    /// shadow comes back hard-edged, not missing. The warning now says the
+    /// effect is ignored and the shape still draws, which is this test in prose.
     func testFilterElementIsDrawnUnfilteredRatherThanDropped() throws {
         let filtered = try render(Markup.gaussianBlurFilter)
         let unfiltered = try render(Markup.filterControl)
@@ -249,10 +253,11 @@ final class SwiftDrawProbeTests: XCTestCase {
     /// A `<mask>` **is** applied. The masked-in half draws and the masked-out
     /// half is clear.
     ///
-    /// `server/app/tutor/board_scene.py` tells the model `<mask>` "is
-    /// unsupported and is not drawn". Against this renderer that is simply
-    /// wrong, and it is the expensive kind of wrong: it pushes the model away
-    /// from a feature that works.
+    /// `server/app/tutor/board_scene.py` used to tell the model `<mask>` "is
+    /// unsupported and is not drawn". Against this renderer that was simply
+    /// wrong, and it was the expensive kind of wrong: it pushed the model away
+    /// from a feature that works. That warning is deleted; the `svg` arm's
+    /// description now lists masks among the things the device draws.
     func testMaskIsAppliedRatherThanDropped() throws {
         let masked = try render(Markup.mask)
         assertColour(

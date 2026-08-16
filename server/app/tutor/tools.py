@@ -184,9 +184,9 @@ UPDATE_BOARD_TOOL: dict = {
     "name": "update_board",
     "description": (
         "Draw, label, correct, update, or delete the tutor's semantic objects on the "
-        "learner's whiteboard. Use it when the learner explicitly asks for a visual, "
-        "exercise, or diagram, and when a small visual correction materially helps "
-        "(for example placing a correction beside their work). Tutor objects are "
+        "learner's whiteboard. Use it whenever a visual would help them — an exercise "
+        "to work on, a diagram that carries an explanation, a correction beside their "
+        "work — and not only when one is asked for. Tutor objects are "
         "structured text and geometry, never simulated handwriting. Choose the "
         "element for the job: ordinary primitives — lines, arrows, shapes, arcs, "
         "angle markers, plain text labels — for simple geometry and quick "
@@ -425,7 +425,7 @@ UPDATE_BOARD_TOOL: dict = {
                                     "type": "string",
                                     "minLength": 1,
                                     "maxLength": MAX_SVG_CHARS,
-                                    "description": "A complete raw SVG document, passed through unchanged and interpreted locally on the learner's device. Give it a viewBox: one user unit is drawn as one board point, and the viewBox's top-left corner sits at (x, y), so size the figure in the same units as every other element and size it only once. The device draws paths, shapes, groups, transforms, linear and radial gradients, defs/use, masks, CSS `<style>` blocks, and text; `<filter>` effects are dropped, and animation, scripts, `<foreignObject>`, and external references draw nothing.",
+                                    "description": "A complete raw SVG document, passed through unchanged and interpreted locally on the learner's device. Give it a viewBox: one user unit is drawn as one board point, and the viewBox's top-left corner sits at (x, y), so size the figure in the same units as every other element and size it only once. The device draws paths, shapes, groups, transforms, linear and radial gradients, defs/use, masks, clip paths, CSS `<style>` blocks, and text; `<filter>` effects are dropped, and animation, scripts, `<foreignObject>`, and external references draw nothing.",
                                 },
                             },
                             required=["x", "y", "width", "height", "svg"],
