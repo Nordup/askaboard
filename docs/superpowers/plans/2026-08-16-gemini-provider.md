@@ -745,8 +745,11 @@ Do not re-derive the code above without these.
    a `properties`/`$defs` map and descend only into its values.
 
 3. **`type: ["string", "null"]` must become `{"type": "string", "nullable": True}`.**
-   Six fields across four memory tools use the JSON-Schema type-list form for
-   nullability. Gemini's declaration schema has no type-list; it has `nullable`. Left
+   Six fields use the JSON-Schema type-list form for nullability, across exactly four
+   tools: `search_sessions.date_from`/`date_to`, `search_history.date_from`/`date_to`,
+   `list_sessions.before_date` and `record_evidence.misconception`. **Not
+   `search_memory`** — an earlier draft of this correction said so and was wrong; it
+   carries only a non-nullable `query: string`. Gemini's declaration schema has no type-list; it has `nullable`. Left
    as a list, those four tools are malformed and the memory tools break on Gemini
    only. None of the seven tests above catches this — add one:
 
@@ -754,7 +757,8 @@ Do not re-derive the code above without these.
 def test_nullable_types_become_the_nullable_flag(converted):
     """Gemini has no type-list form. `["string", "null"]` left as a list makes the
     declaration malformed, and it is the memory tools that carry it — so the
-    failure would be Gemini losing `search_memory` while the board still worked."""
+    failure would be Gemini losing `search_sessions`, `search_history`,
+    `list_sessions` and `record_evidence` while the board still worked."""
     for declaration in _declarations(converted):
         for node in _walk(declaration["parameters"]):
             assert not isinstance(node.get("type"), list), declaration["name"]
@@ -772,8 +776,19 @@ def test_a_nullable_field_keeps_its_type_and_gains_the_flag():
     assert field["nullable"] is True
 ```
 
-Add `"nullable"` to `GEMINI_SUPPORTED_KEYWORDS` — it is on Gemini's supported list and
-was wrongly omitted above.
+**Correction to this correction:** I claimed `GEMINI_SUPPORTED_KEYWORDS` omitted
+`"nullable"`. It does not — it was already there, accepted on output but never
+produced. No edit is needed for it. The defect was only that nothing ever emitted it.
+
+The `[X, "null"]` collapse handles the two-entry form in either order and raises
+`ValueError` on anything else. Keeping the first entry of a longer list would give a
+well-formed but wrong declaration, moving the failure one round later into the tool
+call, where it reads as the model misbehaving. The input is `TOOL_DEFINITIONS`, a
+module constant, so the raise is deterministic and never depends on a learner's turn.
+
+Note the raise cannot literally "fail the boot" until `to_gemini_tools` has a call
+site — Task 5 must convert **once at import or startup**, not per turn, for that
+property to hold.
 
 **The real arm count is 15, not 12.** The prose in this plan and in the spec says
 twelve; `tools.py` has fifteen `_board_element(` arms. The `>= 12` assertion still
@@ -1126,6 +1141,74 @@ EFFORT_TO_THINKING_LEVEL: dict[str, str] = {
 | `error` | `Failed` |
 
 The provider accumulates argument text per step across `step.delta` events, because arguments arrive as incremental JSON strings and `ToolArgsDone` carries the whole string. Use the step index as the `output_index` so `EventTranslator._tool_names` keeps working.
+
+### The table above is WRONG in seven places — corrected from real recordings
+
+Task 4 recorded real turns on `gemini-3.5-flash-lite` (2026-08-16, google-genai 2.18.1).
+Everything below overrides the table above. **Build Task 5 on this, not on the table.**
+
+**1. `interaction.completed` carries no output and no steps array.** This is the big one.
+The OpenAI provider reads `response.completed`'s `output` to find the round's function
+calls and its container citations. Gemini has no equivalent, so every tool call, text run
+and image must be **accumulated from deltas across the whole stream** and emitted on
+`Completed`. The Gemini provider is stateful across a round in a way the OpenAI one is
+not, and `run_turn`'s "did this round end on a tool call" decision depends on that
+accumulator being right.
+
+**2. `step.stop` carries only `index`.** `ToolArgsDone` takes its `arguments` from the
+provider's accumulator, never from the event.
+
+**3. `arguments` has two shapes.** A JSON **string** on `function_call` deltas, a parsed
+**dict** on hosted-tool deltas and on `step.start`. Normalise to a string — the board and
+workspace parsers take strings, and that is deliberate (it keeps them testing what
+production sends).
+
+**4. `thought_signature` is a delta type this table omits** — opaque base64, and it is what
+carries reasoning continuity across rounds. Also, at `thinking_level: "low"` roughly half
+of turns emit **no `thought_summary` at all**, so the reasoning ribbon can be empty on
+Gemini in a way it never is on the gpt-5.6 route. That is a UX difference to accept or
+raise with the owner, not a defect to patch here.
+
+**5. A produced image is an `image` delta inside a later `model_output` step**, with no id
+and no filename, and `code_execution_result.result` is the empty string. So `ProducedFile`
+cannot key on a code-execution step id: key on the enclosing step index plus an image
+counter, and synthesise the filename.
+
+**6. `usage.grounding_tool_count` is a list of `{count, type}`**, absent entirely when
+nothing searched. `pricing.turn_cost_usd` is already committed and multiplies an **int**.
+So `map_usage` MUST flatten the list to one int — that is exactly what `_searches(usage)`
+below is for. Getting it wrong prices a grounded turn as a `TypeError`, not as money.
+
+**7. `error` replaces `interaction.completed` on an HTTP 200.** There is no status code to
+classify. Gemini's `classify` must read `error.code`; keep the protocol signature and pass
+a sentinel status, or handle the in-stream error before `classify` is reached — but do not
+invent a status code that did not arrive.
+
+Also: `interaction.status_update` is a real event type the table omits, and a
+`function_result` whose `name` does not match its call is a **400** — so `tool_output`'s
+`name` argument is load-bearing, not decoration.
+
+**The full observed vocabulary** for `normalise` to switch on:
+
+- Events: `interaction.created`, `interaction.status_update`, `step.start`, `step.delta`,
+  `step.stop`, `interaction.completed`, `error`
+- Step types: `thought`, `model_output`, `function_call`, `code_execution_call`,
+  `code_execution_result`, `google_search_call`, `google_search_result`
+- Delta types: `text`, `thought_summary`, `thought_signature`, `arguments_delta`,
+  `code_execution_call`, `code_execution_result`, `google_search_call`,
+  `google_search_result`, `text_annotation_delta`, `image`
+
+**Convert the tools once, at import or startup** — not per turn. `to_gemini_tools` raises
+on a malformed schema, and that is only a boot-time guarantee if it runs at boot.
+
+**Two cost findings**, neither blocking: `to_gemini_tools(TOOL_DEFINITIONS)` costs about
+**10,100 input tokens per round**, and `total_cached_tokens` was **0 on every recording**.
+Inlining the `$defs` is part of why the schema is large. The design's claim that Gemini
+needs no `prompt_cache_key` because implicit caching routes on the prefix is so far
+unevidenced, and worth revisiting before anyone relies on it for COGS.
+
+**The recorder runs as a module**, not by path: `uv run python -m scripts.record_interaction`.
+Task 10's probe commands need the same correction.
 
 `Completed` reads `usage` through a mapping function:
 
