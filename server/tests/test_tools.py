@@ -102,8 +102,7 @@ def test_update_board_description_carries_the_compact_layout_contract():
     description = UPDATE_BOARD_TOOL["description"]
     assert "recommended_tutor_rect" in description
     assert "reserved_learner_work_rect" in description
-    assert "clear" in description
-    assert "place corrections beside learner work" in description
+    assert "clear for the learner's working" in description
 
 
 def test_update_board_primitives_are_a_discriminated_union():
@@ -227,10 +226,8 @@ def test_update_board_math_text_arm_claims_all_notation():
     assert math_text["properties"]["font_size"]["minimum"] == 8
     assert math_text["properties"]["font_size"]["maximum"] == 256
     description = math_text["properties"]["latex"]["description"]
-    assert "LaTeX" in description
-    assert "delimiters" in description
-    assert "notation" in description
-    assert "only correct way" not in description
+    assert "only correct way" in description
+    assert "notation on the board" in description
 
 
 def test_update_board_ink_text_arm_writes_prose_in_the_tutors_own_hand():
@@ -255,17 +252,17 @@ def test_update_board_ink_text_arm_writes_prose_in_the_tutors_own_hand():
 
     description = ink["properties"]["text"]["description"]
     assert "handwriting-look ink" in description
-    assert "notation goes in `math_text`" in description
-    assert "the rest is the learner's" in description
+    assert "notation still goes in `math_text`" in description
+    assert "the learner's work is the writing you did not put there" in description
     # The scene is assembled once, before the first tool call; `view_board`
     # renders the device as it stands now. Without this clause the rule reads
     # as "anything not in the list is theirs", and a tutor that wrote a note
     # this turn then grades its own handwriting as the learner's work.
-    assert "plus anything written this turn" in description
+    assert "plus whatever you have written this turn" in description
     # The device draws from an ASCII glyph table. A model writing in the
     # register the rest of this schema is written in gets "nice _ now try".
-    assert "ASCII equivalents" in description
-    assert "placeholders" in description
+    assert "normalised to their ASCII equivalents" in description
+    assert "comes out as a placeholder" in description
     for typographic in ("—", "–", "“", "”", "’", "…"):
         assert typographic not in description, (
             f"the description asks for plain text and must model it: {typographic}"
@@ -284,8 +281,7 @@ def test_update_board_image_arm_places_a_blob_the_server_already_holds():
     assert image["properties"]["blob_id"]["pattern"] == r"^sha256:[0-9a-f]{64}$"
     description = image["properties"]["blob_id"]["description"]
     assert "tool result" in description
-    assert "invented key" in description
-    assert "empty frame" in description
+    assert "never invent" in description.lower()
     # Schema-legal sizes are all sizes the scene model accepts: it refuses a
     # frame of zero, and nothing useful is drawn in under a board point.
     for axis in ("width", "height"):
@@ -299,15 +295,21 @@ def test_update_board_description_names_an_element_kind_for_every_job():
     curves, notation, a multi-part figure, a picture it did not draw itself."""
     description = UPDATE_BOARD_TOOL["description"]
 
-    assert "primitives" in description
-    assert "`text` labels for simple labels and geometry" in description
-    assert "`path`/freehand for curves" in description
-    assert "`ink_text` for brief tutor prose" in description
-    assert "`math_text` for notation" in description
-    assert "`svg` for a polished multi-part illustration" in description
-    assert "`image` for a photo fetched with fetch_image" in description
-    assert "script chart by blob_id" in description
-    assert "fetch_image" in description
+    assert "ordinary primitives" in description
+    assert "`path` for curves and freeform shapes" in description
+    # Words and notation are one field name apart, so the routing between them
+    # is stated in the same breath — and `ink_text` carries the frequency the
+    # rest of this description only gives to drawing.
+    assert "`ink_text` for anything you say in words" in description
+    assert "reach for it often" in description
+    assert "`math_text` for every piece of mathematical notation" in description
+    assert "never plain `text`, never SVG `<text>`" in description
+    assert "never symbols built out of primitives" in description
+    assert "`svg` for any figure made of several parts" in description
+    assert "`width` and `height` sent as 0" in description
+    assert "one user unit to one board point" in description
+    assert "`image` for a photograph fetched with fetch_image" in description
+    assert "a chart a script produced" in description
     assert "blob_id" in description
 
 
@@ -348,11 +350,12 @@ def test_update_board_description_keeps_the_rules_that_protect_learner_work():
     """
     description = UPDATE_BOARD_TOOL["description"]
 
-    assert "never alter the learner's PencilKit ink" in description
-    assert "place corrections beside learner work" in description
-    assert "view_board before grading or quoting" in description
-    assert "do not draw gratuitously" not in description
-    assert "reuse to revise" in description
+    assert "never touches the learner's own PencilKit ink" in description
+    assert "theirs stays theirs" in description
+    assert "Do not cover or erase learner ink" in description
+    assert "Inspect the board with view_board before grading" in description
+    assert "do not draw gratuitously" in description
+    assert "reuse ids to revise existing content" in description
     assert "recommended_tutor_rect" in description
     assert "reserved_learner_work_rect" in description
 
@@ -393,9 +396,9 @@ def test_the_style_fields_are_written_once_not_once_per_primitive():
     """
     serialised = json.dumps(UPDATE_BOARD_TOOL)
 
-    assert serialised.count("Width in board points.") == 1
-    assert serialised.count("Board point [x, y].") == 1
-    assert serialised.count("Stable id; reuse to revise.") == 1
+    assert serialised.count("Stroke width in board points.") == 1
+    assert serialised.count("One board point as [x, y].") == 1
+    assert serialised.count("Reuse it in a later call to revise this object") == 1
 
 
 def test_every_ref_in_the_update_board_schema_resolves():
@@ -617,16 +620,7 @@ def test_the_tool_surface_stays_inside_its_budget():
     # So the bound comes down again, to 29,200: the same thousand characters of
     # room. `test_each_primitive_demands_exactly_the_style_its_renderer_reads`
     # is what guards the cut itself.
-    #
-    # The 2026-08-16 description rewrite then took the surface from 26,751 to
-    # 21,179: the board invites proactive teaching and creative composition,
-    # blanket discouragement is gone, and contracts are stated once. The bound
-    # comes down to 22,000.
-    serialised = json.dumps(TOOL_DEFINITIONS, separators=(",", ":"))
-    assert len(serialised) < 22_000
-    # `update_board` is the largest tool by far; keeping it under its own
-    # tighter bound names the regression if a schema ever quietly doubles.
-    assert len(json.dumps(UPDATE_BOARD_TOOL, separators=(",", ":"))) < 13_500
+    assert len(json.dumps(TOOL_DEFINITIONS)) < 29_200
 
 
 def test_fetch_image_is_strict_closed_and_takes_one_url():

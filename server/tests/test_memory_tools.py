@@ -101,13 +101,16 @@ def test_search_memory_demands_a_self_contained_query():
     its own context or it retrieves nothing."""
     description = _named("search_memory")["description"].lower()
     assert "self-contained" in description
-    assert "cannot see the current conversation" in description
+    # Both halves of the contrast, because the counter-example is what stops a
+    # model writing the query it would otherwise write.
+    assert "no access to the current conversation" in description
+    assert "what did they mean by that" in description
 
 
 def test_remember_forbids_claiming_a_save_before_making_one():
     description = _named("remember")["description"]
     assert "'noted'" in description
-    assert "until the tool answers" in description
+    assert "call this tool first" in description
 
 
 def test_remember_hands_deletion_to_forget_rather_than_refusing_it():
