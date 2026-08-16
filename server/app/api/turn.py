@@ -67,7 +67,7 @@ from app.tutor.providers import (
 from app.tutor.providers.gemini import GeminiProvider
 from app.tutor.providers.openai import ContainerFileTooLarge, OpenAIProvider
 from app.tutor.rendezvous import BoardRegion
-from app.tutor.retry import classify
+from app.tutor.retry import RetryDecision, classify
 
 logger = logging.getLogger(__name__)
 
@@ -141,26 +141,49 @@ def _gemini_client() -> genai.Client:
     connection pool, which is a DNS lookup and a TLS handshake in front of the
     first token of every turn, and the pools are never closed.
 
-    **The transport's own retry is left on here, unlike `max_retries=0` above,
-    and that is the opposite trade rather than an oversight.** `loop._open_round`
-    catches `openai.APIStatusError`, which this SDK never raises, so nothing in
-    this service retries a Gemini open — switching the transport off would leave
-    a single refused connection or one 502 ending a learner's turn outright.
+    **The transport's own retry is off, for the reason `max_retries=0` is set
+    above.** `loop._open_round` is the only retry that may run, and it is the
+    only one that classifies before it waits: `GeminiProvider.classify` reads a
+    spent quota apart from a burst limit, which no transport can do. A transport
+    retry underneath it is a second loop stacked under the first, so each of the
+    loop's attempts can hide a whole backoff before the error is ever
+    classified, and the learner waits the product of the two rather than one
+    bounded wait.
 
-    What it costs is exactly what `_client`'s comment describes: a 429 is waited
-    through before `GeminiProvider.classify` gets to say whether it was a burst
-    limit or a spent quota. The size of that wait is worth writing down, because
-    it is what a learner sits through. The generated SDK is configured with
-    `max_retries=3` — four attempts — over 408, 409, 429 and every 5xx, backing
-    off from 500 ms doubling to an 8 s cap, and bounded by
-    `max_elapsed_time=30_000` ms. Thirty seconds is therefore the ceiling, and it
-    is the number to weigh against the client's own 120 s `streamTimeout`.
+    The figures this docstring used to quote were wrong — four attempts, 500 ms
+    doubling to an 8 s cap, a 30 s `max_elapsed_time` ceiling — so they are
+    written down again from the installed SDK, `google-genai==2.18.1`, which has
+    no `max_elapsed_time` in it at all:
 
-    `http_options=HttpOptions(retry_options=HttpRetryOptions(attempts=0))` turns
-    it off in one line, and that is the change to make when `_open_round` learns
-    this family's exception type — not before.
+      * With no `http_options` at all, `retry_options` stays unset and
+        `_api_client.retry_args(None)` makes that `stop_after_attempt(1)` — one
+        attempt, no transport retry. So this line is a pin rather than a repair.
+        What it stops is a future default, or one stray `HttpRetryOptions()`,
+        putting the stacked loop back silently.
+      * Supply `retry_options` and leave `attempts` unset and the SDK's own
+        defaults apply: 5 attempts, 1 s doubling to a 60 s cap, jittered, over
+        408, 429, 500, 502, 503 and 504. That is about 17 s of sleeping inside a
+        single open, and `_open_round` opens up to three times — a minute or more
+        of silence on a persistently failing 5xx or a burst 429, against the
+        handful of seconds the loop's own retry bounds it to. That is what
+        re-enabling this would cost, and it is why `attempts=0` is written out
+        rather than left to a default that happens to agree with it today.
+
+    `attempts=0` rather than `1` because 0 is how this SDK spells "do not retry".
+    `retry_args` then normalises it to 1 *in place*, so reading
+    `retry_options.attempts` back off a built client says 1; the honest thing to
+    assert is `_api_client._async_retry.stop.max_attempt_number`, and
+    `tests/test_turn_endpoint.py` does.
+
+    `genai.types.` rather than a top-level import of the two option classes, so
+    the qualified name says whose retry is being turned off.
     """
-    return genai.Client(api_key=get_settings().gemini_api_key)
+    return genai.Client(
+        api_key=get_settings().gemini_api_key,
+        http_options=genai.types.HttpOptions(
+            retry_options=genai.types.HttpRetryOptions(attempts=0),
+        ),
+    )
 
 
 def _provider(model: str) -> Provider:
@@ -186,6 +209,56 @@ def _provider(model: str) -> Provider:
             )
         return GeminiProvider(client=_gemini_client())
     raise ValueError(f"no provider wired for {family!r}")
+
+
+def _open_verdict(model: str, error: Exception) -> RetryDecision | None:
+    """This model's family reading the exception that ended the turn, or `None`.
+
+    The one thing `stream`'s last `except` clause could not do for itself, and
+    the reason a correct verdict was being thrown away. `loop._open_round`
+    re-raises a refused open unchanged — immediately for a refusal the provider
+    called final, or after `RETRY_LIMIT` attempts — and by then
+    `Provider.open_failure` and the family's own `classify` have already decided
+    the question. Every named clause in that ladder is `openai`-typed, so a
+    `google.genai` exception matched none of them, fell to the generic clause,
+    and was recorded `retryable=False` on top of a `RetryDecision` that said
+    otherwise: a Gemini 429 the provider itself had read as a burst limit
+    reached the iPad as final.
+
+    `None` means no family claims this exception, which is every bug in this
+    service's own code, and it is what preserves the generic clause's old
+    answer for exactly those. An unanticipated exception is a bug of ours, and
+    telling a learner to retry into a bug is worse than telling them plainly
+    that the turn failed.
+
+    `provider.open_failure` rather than a second `except` clause naming
+    `google.genai`, for the reason the seam exists: this module already imports
+    that SDK to *build* a client, but the rule about which of its exceptions is
+    retryable belongs to the provider that raised it, beside the `classify` that
+    answers it. It is also the only arrangement that scales — a third family
+    would otherwise be a fourth clause and a fourth set of attribute names.
+
+    The provider is rebuilt here rather than carried out of the round. It is a
+    value object over an `lru_cache`d client, so a second one costs nothing,
+    and the alternative is one more piece of generator state that every failure
+    path has to keep `None`-safe — including the paths that fail before a
+    provider was ever chosen. Everything is guarded, because an exception raised
+    while classifying an exception would replace a recorded failure with an
+    unrecorded one, inside the handler written to record it: `_provider` itself
+    raises an `HTTPException` for a Gemini turn on a server holding no Gemini
+    key, and a provider's own `open_failure` reads attributes off a stranger's
+    exception object. Logged rather than swallowed silently, because a verdict
+    that stopped being recoverable should not look the same as one that was
+    never claimed.
+    """
+    try:
+        failure = _provider(model).open_failure(error)
+    except Exception:
+        logger.exception(
+            "could not read a provider verdict for a failed turn on model=%s", model
+        )
+        return None
+    return failure.decision if failure is not None else None
 
 
 async def _memory_sections(
@@ -1341,18 +1414,43 @@ async def create_turn(
             )
             yield sse(event)
         except Exception as error:
-            # A mid-stream failure is never silently retried by us, and an
-            # unanticipated exception is treated as a bug in our own code
-            # rather than a transient provider hiccup: telling a learner to
-            # retry into a bug is worse than telling them plainly it failed.
-            # This also now covers a raise from assemble_context and from
-            # recorder.finish_turn, neither of which used to be reachable
-            # from here.
+            # **Last, and it has to stay last.** The three clauses above are all
+            # `openai`-typed and two of them subclass the third, so Python's
+            # first-match rule is the only thing keeping a status code and a
+            # `Retry-After` from being swallowed by the wider clause behind them.
+            # This one is wider still — it catches every exception, including
+            # those of a family whose exception class this ladder must not name —
+            # so anywhere but the end it would take all three.
+            #
+            # What it used to do with a `google.genai` refusal was throw the
+            # answer away. `loop._open_round` re-raises one unchanged, either
+            # straight away or once `RETRY_LIMIT` is spent; it matched none of the
+            # `openai` clauses, arrived here, and was written down
+            # `retryable=False` — a hardcoded verdict laid over the provider's
+            # own, which `open_failure` and `classify` had already got right. So
+            # the verdict is recovered rather than re-decided; see
+            # `_open_verdict`.
+            #
+            # A mid-stream failure is still never silently retried by us, and a
+            # bug in our own code still lands here and is still final: a `None`
+            # verdict is what says no family claims this, and telling a learner
+            # to retry into a bug is worse than telling them plainly it failed.
+            # This clause also covers a raise from assembling the prompt and from
+            # recorder.finish_turn, neither of which used to be reachable here.
+            decision = _open_verdict(body.model, error)
             event = await _fail_turn_and_report(
                 recorder, turn_id=body.turn_id, message=_describe_error(error),
-                retryable=False, result=result, request_body=request_body,
+                retryable=False if decision is None else decision.retry,
+                result=result, request_body=request_body,
                 image_blob_key=image_ref.key if image_ref else None,
-                diagnostics=diagnostics(),
+                # `classified` only when a family actually made the call, for the
+                # reason the two clauses above record it: a row saying which rule
+                # was applied is a row someone can argue with. Its absence is
+                # itself the reading — nothing classified this, so nothing about
+                # it was ever judged retryable.
+                diagnostics=diagnostics() if decision is None else {
+                    **diagnostics(), "classified": decision.reason,
+                },
             )
             yield sse(event)
         finally:

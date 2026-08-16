@@ -1089,3 +1089,378 @@ async def test_a_turn_naming_a_valid_attachment_includes_it_in_the_prompt(
     content = body["input"][1]["content"]
     texts = [part["text"] for part in content if part.get("type") == "input_text"]
     assert any("homework.txt" in text and "2 + 2 = ?" in text for text in texts)
+
+
+# ---- a refused open, and whose verdict is recorded -------------------------
+#
+# Everything below is one failure and the two layers that used to lose it: the
+# `google.genai` transport retrying underneath the round loop's own retry, and
+# `stream`'s `except` ladder writing `retryable=False` over a verdict the
+# provider had already got right.
+
+
+def _gemini_refusal(status: int, message: str, retry_after: str | None = None):
+    """A real `google.genai` refusal, raised by the SDK's own constructor.
+
+    `APIError.raise_for_response` is the classmethod the SDK itself calls on a
+    response it did not like, so what comes back is exactly the class production
+    raises — `ServerError` for a 5xx, `ClientError` for a 4xx — carrying `code`,
+    `details` and `message` under the names `GeminiProvider.open_failure` reads
+    them by. A `Mock` would prove only that a mock satisfies the `isinstance`
+    check the real exception has to satisfy for itself, which is the one thing
+    that decides whether the provider claims the error at all.
+
+    `retry_after` is read off the response by `gemini._open_retry_delay`, and the
+    tests set it small for exactly one reason: `_open_round` really does sleep
+    between its attempts, and a test asserting that it made all of them should
+    not spend two seconds proving it.
+    """
+    from google.genai import errors as genai_errors
+
+    headers = {"Retry-After": retry_after} if retry_after is not None else {}
+    response = httpx.Response(
+        status,
+        headers=headers,
+        json={"error": {
+            "code": status, "message": message,
+            "status": "UNAVAILABLE" if status >= 500 else "RESOURCE_EXHAUSTED",
+        }},
+        request=httpx.Request(
+            "POST", "https://generativelanguage.googleapis.com/v1beta/interactions"
+        ),
+    )
+    try:
+        genai_errors.APIError.raise_for_response(response)
+    except genai_errors.APIError as error:
+        return error
+    raise AssertionError(f"the SDK does not treat {status} as an error")
+
+
+def _gemini_turn_that_refuses(monkeypatch, error) -> list:
+    """Point the turn at a real `GeminiProvider` whose open always raises.
+
+    The provider is the production class, holding a real (never-called) SDK
+    client, with only `open_round` replaced — so `open_failure` and `classify`
+    are the shipped ones, which is the whole point: the verdict under test is
+    the provider's own. Patching `_provider` rather than setting a key also keeps
+    the test hermetic, and it means `_open_verdict` is answered by the same
+    instance that refused, exactly as in production.
+
+    Returns the list every open appends to, so a caller can say how many
+    attempts `loop._open_round` really made.
+    """
+    from google import genai
+
+    from app.tutor.providers.gemini import GeminiProvider
+
+    provider = GeminiProvider(client=genai.Client(api_key="test-key"))
+    opens: list = []
+
+    async def _refuse(payload):
+        opens.append(payload)
+        raise error
+
+    monkeypatch.setattr(provider, "open_round", _refuse)
+    monkeypatch.setattr("app.api.turn._provider", lambda model: provider)
+    return opens
+
+
+def test_the_gemini_client_leaves_the_transport_no_attempt_to_retry(monkeypatch):
+    """Read back off the built client, because the call site is not the contract.
+
+    Two retry loops stacked is the failure this closes: `loop._open_round`
+    classifies a refusal and retries it a bounded number of times, and a
+    transport retry underneath it can hide a whole backoff inside each of those
+    attempts. The learner then waits the product of the two instead of one
+    bounded wait, and `GeminiProvider.classify` — the only layer that can tell a
+    burst limit from a spent quota — does not get to speak until all of it is
+    over.
+
+    The second half of this test pins the figures `turn._gemini_client`'s
+    docstring quotes, straight out of the installed SDK. The docstring it
+    replaced quoted four attempts, 500 ms doubling to 8 s and a 30-second
+    ceiling; none of those were `google-genai` 2.18.1's, and prose that has
+    silently gone stale is what sent someone looking for a ceiling that does not
+    exist. An SDK upgrade that moves these numbers now fails here.
+    """
+    from google.genai import _api_client as sdk
+    from google.genai.types import HttpRetryOptions
+
+    from app.api.turn import _gemini_client
+    from app.config import get_settings
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    get_settings.cache_clear()
+    _gemini_client.cache_clear()
+    try:
+        api = _gemini_client()._api_client
+
+        # `attempts=0` is how this SDK spells "do not retry", and `retry_args`
+        # normalises it to 1 in place — so the built client reports 1 here, and
+        # the assertion that means anything is the stop strategy below.
+        assert api._http_options.retry_options is not None
+        assert api._http_options.retry_options.attempts in (0, 1)
+        assert api._async_retry.stop.max_attempt_number == 1
+        assert api._retry.stop.max_attempt_number == 1
+
+        # Passing `http_options` must not cost the SDK's other defaults. It
+        # merges rather than replaces, and a client that had quietly lost its
+        # base URL would fail a long way from here.
+        assert api._http_options.base_url == "https://generativelanguage.googleapis.com/"
+        assert api._http_options.api_version == "v1beta"
+    finally:
+        _gemini_client.cache_clear()
+        get_settings.cache_clear()
+
+    # What re-enabling it would cost, which is the paragraph the docstring owes
+    # anyone reading it: supply `retry_options` and leave `attempts` unset and
+    # these are the defaults that apply.
+    assert sdk.retry_args(HttpRetryOptions())["stop"].max_attempt_number == 5
+    assert sdk._RETRY_INITIAL_DELAY == 1.0
+    assert sdk._RETRY_EXP_BASE == 2
+    assert sdk._RETRY_MAX_DELAY == 60.0
+    assert sdk._RETRY_HTTP_STATUS_CODES == (408, 429, 500, 502, 503, 504)
+
+
+def test_the_except_ladder_keeps_its_order_and_recovers_only_at_the_end():
+    """The ladder's order is load-bearing, so it is asserted rather than assumed.
+
+    `APIStatusError` and `APIConnectionError` are subclasses of `APIError`, and
+    Python takes the first clause that matches — so moving the base ahead of its
+    subclasses throws away a status code and a `Retry-After` that are already
+    read properly, silently and on every failure. The broad clause is wider
+    still: it catches everything, including the exceptions of a family whose
+    class this module must not name, so anywhere but last it would swallow all
+    three.
+
+    The behavioural half of this gate is the test below and the three that
+    already exist (`..._billing_429_is_reported_as_not_retryable`,
+    `..._dropped_connection_fails_the_turn_visibly`,
+    `..._rate_limit_inside_the_stream_is_recorded_retryable`). What only a
+    structural assertion can catch is a reordering that leaves all four clauses
+    present and every one of those tests still passing for the wrong reason.
+    """
+    import ast
+    import inspect
+
+    from app.api import turn as turn_module
+
+    tree = ast.parse(inspect.getsource(turn_module))
+    stream = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "stream"
+    )
+    guarded = [
+        node for node in ast.walk(stream)
+        if isinstance(node, ast.Try) and node.finalbody
+    ]
+    assert len(guarded) == 1, "stream() should have exactly one guarded body"
+    handlers = guarded[0].handlers
+
+    assert [ast.unparse(handler.type) for handler in handlers] == [
+        "APIStatusError", "APIConnectionError", "APIError", "Exception",
+    ]
+
+    # And the recovery lives only in the last clause. The three above it read
+    # their own family's exception directly and must keep doing so — routing
+    # them through the provider would lose the status code and the `Retry-After`
+    # that only an `APIStatusError` carries.
+    bodies = [ast.unparse(ast.Module(body=handler.body, type_ignores=[]))
+              for handler in handlers]
+    assert "_open_verdict" in bodies[-1]
+    assert not any("_open_verdict" in body for body in bodies[:-1])
+
+
+@respx.mock
+async def test_the_openai_clauses_still_match_ahead_of_the_broad_one(
+    db_app, db_factory
+):
+    """The regression gate, and it discriminates rather than merely passing.
+
+    `OpenAIProvider.open_failure` claims `APIStatusError` and nothing wider —
+    deliberately, so an `APIConnectionError` keeps travelling to this handler
+    instead of being retried. That is what makes these two cases a real test of
+    the ladder's order: if the broad clause were reached first it would ask the
+    provider, be told `None`, and record both of them `retryable=False`. Clause
+    two answers `True` because a transport failure is transient by definition,
+    and clause three answers `True` because it reads the message a bare
+    `APIError` carries. A reordering flips both to `False`.
+    """
+    # Clause two: a transport failure, retryable by definition and with no
+    # `classified` reason, because no rule was consulted to decide it.
+    respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=httpx.ConnectError("connection reset by peer")
+    )
+    dropped = _payload()
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        async with client.stream("POST", "/v1/turn", json=dropped, headers=AUTH) as r:
+            events = await _collect(r)
+    assert events[-1]["retryable"] is True
+    async with db_factory() as db:
+        turn = await db.get(Turn, uuid.UUID(dropped["turn_id"]))
+        assert "APIConnectionError" in turn.error["message"]
+        assert "classified" not in turn.error["diagnostics"]
+
+    # Clause three: the refusal that arrives inside an open stream as a bare
+    # `APIError`, whose own words said to try again in 662 ms.
+    respx.post("https://api.openai.com/v1/responses").mock(
+        return_value=Response(200, headers={"Content-Type": "text/event-stream"},
+                              content=sse_stream(*RATE_LIMITED_MID_STREAM))
+    )
+    in_stream = _payload()
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        async with client.stream("POST", "/v1/turn", json=in_stream, headers=AUTH) as r:
+            events = await _collect(r)
+    assert events[-1]["retryable"] is True
+    async with db_factory() as db:
+        turn = await db.get(Turn, uuid.UUID(in_stream["turn_id"]))
+        assert turn.error["diagnostics"]["classified"] == "rate limited"
+
+    # Clause one: a status code and a body, read where they have always been
+    # read. A billing 429 is the same status as a burst limit and the opposite
+    # verdict.
+    respx.post("https://api.openai.com/v1/responses").mock(
+        return_value=Response(
+            429, json={"error": {"code": "insufficient_quota", "message": "no credits"}}
+        )
+    )
+    billed = _payload()
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        async with client.stream("POST", "/v1/turn", json=billed, headers=AUTH) as r:
+            events = await _collect(r)
+    assert events[-1]["retryable"] is False
+    async with db_factory() as db:
+        turn = await db.get(Turn, uuid.UUID(billed["turn_id"]))
+        assert turn.error["diagnostics"]["classified"]
+
+
+@respx.mock
+async def test_a_gemini_refusal_is_recorded_with_the_providers_own_verdict(
+    db_app, db_factory, monkeypatch
+):
+    """The verdict already existed; the ladder was writing over it.
+
+    A `google.genai` exception matches none of the three `openai`-typed clauses,
+    so it fell to the broad one and was recorded `retryable=False` — while
+    `GeminiProvider.classify` had already read this 503 as a server error worth
+    another go, and `loop._open_round` had already retried it that many times
+    before giving the exception back. The learner was told a transient outage was
+    final.
+
+    `respx.mock` with no routes registered is the second assertion here: no HTTP
+    request may be made at all. The refusal is raised by the provider's own
+    `open_round`, which is where a refused open raises in production too.
+    """
+    from app.tutor.retry import RETRY_LIMIT
+
+    error = _gemini_refusal(
+        503, "The model is overloaded. Please try again later.", retry_after="0.01"
+    )
+    opens = _gemini_turn_that_refuses(monkeypatch, error)
+
+    payload = _payload(model="gemini-3.7-flash", reasoning_effort="high")
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        async with client.stream("POST", "/v1/turn", json=payload, headers=AUTH) as r:
+            events = await _collect(r)
+
+    # Retried first, and only reported once the loop ran out of attempts. A
+    # verdict of `True` reported after one attempt would mean the loop had
+    # stopped retrying.
+    assert len(opens) == RETRY_LIMIT + 1
+
+    assert events[-1]["type"] == "error"
+    assert events[-1]["retryable"] is True
+
+    async with db_factory() as db:
+        turn = await db.get(Turn, uuid.UUID(payload["turn_id"]))
+        assert turn.status == "error"
+        assert turn.error["retryable"] is True
+        # The row says which rule made the call, so a wrong verdict is arguable
+        # from the table rather than only from the code.
+        assert turn.error["diagnostics"]["classified"] == "server error 503"
+        # And it is genuinely diagnosable: the provider's words are kept here.
+        assert "ServerError" in turn.error["message"]
+        assert "overloaded" in turn.error["message"]
+
+    # A provider writes its errors for whoever holds the account, and this path
+    # is no different from the others: one app-authored sentence reaches the
+    # device and nothing else.
+    wire = json.dumps(events)
+    assert "overloaded" not in wire
+    assert "503" not in wire
+    assert "gemini-3.7-flash" not in wire
+    assert events[-1]["message"] == TURN_FAILED_MESSAGE
+
+
+@respx.mock
+async def test_a_gemini_burst_limit_is_offered_again_rather_than_recorded_final(
+    db_app, db_factory, monkeypatch
+):
+    """The reported failure, in the shape it was reported in.
+
+    Gemini gives the same error code — `RESOURCE_EXHAUSTED` — to a one-second
+    burst and to a spent day's quota, so `GeminiProvider.classify` reads the
+    message to tell them apart. It read this one correctly as a burst limit all
+    along; the verdict just never reached the row or the device.
+    """
+    error = _gemini_refusal(
+        429, "Resource has been exhausted (e.g. check quota).", retry_after="0.01"
+    )
+    _gemini_turn_that_refuses(monkeypatch, error)
+
+    payload = _payload(model="gemini-3.7-flash", reasoning_effort="high")
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        async with client.stream("POST", "/v1/turn", json=payload, headers=AUTH) as r:
+            events = await _collect(r)
+
+    assert events[-1]["retryable"] is True
+    assert events[-1]["message"] == TURN_FAILED_MESSAGE
+
+    async with db_factory() as db:
+        turn = await db.get(Turn, uuid.UUID(payload["turn_id"]))
+        assert turn.error["diagnostics"]["classified"] == "rate limited"
+
+
+@respx.mock
+async def test_a_bug_in_our_own_code_is_still_reported_final(
+    db_app, db_factory, monkeypatch
+):
+    """The other half of asking the provider: it is allowed to say "not mine".
+
+    `open_failure` returning `None` is the whole safety property of catching
+    broadly — an exception no family claims is a bug in this service, and
+    telling a learner to retry into a bug is worse than telling them plainly
+    that the turn failed. `classified` stays off the row for the same reason: no
+    rule was consulted, so there is none to name.
+    """
+    _gemini_turn_that_refuses(
+        monkeypatch, TypeError("board_scene() got an unexpected keyword argument")
+    )
+
+    payload = _payload(model="gemini-3.7-flash", reasoning_effort="high")
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        async with client.stream("POST", "/v1/turn", json=payload, headers=AUTH) as r:
+            events = await _collect(r)
+
+    assert events[-1]["type"] == "error"
+    assert events[-1]["retryable"] is False
+    assert events[-1]["message"] == TURN_FAILED_MESSAGE
+
+    async with db_factory() as db:
+        turn = await db.get(Turn, uuid.UUID(payload["turn_id"]))
+        assert turn.status == "error"
+        assert turn.error["retryable"] is False
+        assert "classified" not in turn.error["diagnostics"]
+        assert "TypeError" in turn.error["message"]
