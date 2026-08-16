@@ -19,7 +19,13 @@ def test_system_prompt_is_the_unchanged_experimental_draft():
         # write on the board in its own handwriting, and to do it often. The
         # TOOLS list is unchanged: `ink_text` is an element of `update_board`,
         # which is already listed, not a tool of its own.
-        "2ea85713c1bfbc9f36c8ab544c98e53bde1954948371962f73816e04b98c5a95"
+        #
+        # 2026-08-16, later: the fetch-image investigation's three lessons —
+        # RESEARCH now says there is no image-search tool (web_search finds
+        # URLs, fetch_image downloads one), prefers source sites over clipart,
+        # and warns that the white board swallows pale images, with a
+        # one-retry-then-draw budget.
+        "634d525cc82689c69146572a78b3d714624e0eed394200f602bb8eb660c5bae7"
     )
 
 

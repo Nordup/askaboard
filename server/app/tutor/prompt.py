@@ -90,6 +90,8 @@ When creating visuals on the board realy on information and representation that'
 
 Reach for these tools on your own — don't wait for me to ask. When we touch anything factual, current, or outside your certainty, run a web_search first and teach from what you found. And when a real picture would teach better than a drawing — an organism, an instrument, a map, a painting, a real chart from a source — fetch_image it and place it on the board beside your own notation. A board that mixes my writing, your drawings, and real images from the world is exactly the experience I want.
 
+How to actually get a picture: there is no image-search tool — web_search finds candidate image URLs, and fetch_image downloads exactly one of them. Prefer photographs and real diagrams from source sites (museums, encyclopedias, papers, textbooks) over clipart libraries — clipart tends to arrive as pale line art that teaches nothing. And remember the board is white paper: a white-on-transparent or pale image disappears into it, and every fetched picture is flattened onto white before you see it, so pick images that carry their own contrast. If a fetch comes back unusable, one retry with a better source beats a long hunt — a drawing of your own is often the faster teacher.
+
 Two ways to put a picture on the board, and the choice is about where the shapes come from. A chart that carries data — real numbers, a fitted curve, a distribution, anything whose shape is a result rather than a decision — you compute with a script, and put on the board as the image the script produced. A diagram — a construction, a labelled figure, a geometric setup, anything you are drawing rather than measuring — you draw natively with svg, primitives, path, and math_text, which stays sharp at every zoom and can be revised element by element afterwards.
 
 
@@ -300,18 +302,24 @@ def _sections(
     first_turn: bool = False,
     uploads: list["UploadPart"] | None = None,
     transcript_note: str | None = None,
-) -> tuple[list[str], list[str]]:
-    """Every block of the user prompt, split in two at the cache boundary.
+) -> tuple[list[str], str | None, list[str]]:
+    """Every block of the user prompt, in three groups by how each one changes.
 
-    The first list is what holds still or only grows; the second is what this
-    turn rewrites. `assemble_context` sends them as two `input_text` parts and
-    puts a `prompt_cache_breakpoint` on the first, which is what turns the
-    ordering below from a convention the provider happens to reward into a
-    boundary it is told about. `compose_user_prompt` joins them back into the
-    single string the eval harness and the tests read.
+    The standing blocks hold still for a whole session. The transcript comes
+    back on its own because it is the one block that *grows*, and a cache
+    breakpoint names an exact prefix rather than "this or anything shorter" —
+    so a breakpoint at the end of a block that is longer than it was last turn
+    names a prefix nothing ever wrote, and the read falls back to the last
+    boundary that did. `compose_user_prompt_blocks` cuts the transcript into
+    fixed-size pieces whose boundaries do hold still. The volatile blocks are
+    what this turn rewrites and sit behind all of them.
+
+    `compose_user_prompt` joins the three back into the single string the eval
+    harness and the tests read, byte for byte as before.
     """
-    stable: list[str] = []
+    standing: list[str] = []
     volatile: list[str] = []
+    transcript_section: str | None = None
     # Ordered by how often each block is rewritten, because the provider caches
     # a prompt prefix and a block that changes re-costs every token after it.
     # At ~2,500 constant system tokens that ordering is the difference between
@@ -327,7 +335,7 @@ def _sections(
     # goes behind the transcript, beside the per-turn blocks that are rewritten
     # anyway. Last-read is also where the model is most likely to act on it, so
     # nothing is traded away by putting it there.
-    sections = stable
+    sections = standing
     if profile:
         sections.append(_profile_section(profile))
     if saved_notes:
@@ -370,7 +378,10 @@ def _sections(
         )
         if transcript_note:
             heading += f". {transcript_note}"
-        sections.append(f"{heading}:\n{quoted(conversation)}")
+        # Returned rather than appended, because this is the block whose
+        # *end* moves. Everything above it holds still for a session, and
+        # a breakpoint has to sit somewhere that held still.
+        transcript_section = f"{heading}:\n{quoted(conversation)}"
     # Everything from here down is rewritten on most turns, so it sits behind
     # the breakpoint rather than in front of it.
     sections = volatile
@@ -435,28 +446,84 @@ def _sections(
             "The learner explicitly said I don’t know. Respond with reassurance and one "
             "tiny next step."
         )
-    return stable, volatile
+    return standing, transcript_section, volatile
+
+
+#: How much transcript one cacheable content block holds, in characters.
+#:
+#: A breakpoint names an *exact* prefix — the provider matches the key against
+#: the exact prompt prefix at each breakpoint a request declares, and nowhere
+#: else — so a breakpoint at the end of the whole transcript names a boundary
+#: that moved since the last request, and the read drops back to the system
+#: prompt. Fixed-size blocks are what stop the boundary moving: block k is the
+#: same bytes at the same index on every later turn of the session, so a
+#: breakpoint on it names a prefix an earlier request really did write.
+#:
+#: 4,000 characters is about 1,100 tokens. It has to be comfortably more than
+#: half of what one turn appends, because the two rolling breakpoints ride the
+#: last two *complete* blocks and a turn that fills two new blocks at once
+#: clears both. Measured over the turn pairs in `logs/server.log`, the median
+#: turn adds two messages — about 850 characters — and the busiest added
+#: fourteen, about 6,300, which is a voice call flushing its transcript at
+#: once. 8,000 clears even that. A turn that did not clear it would lose its
+#: own transcript for that one turn and no longer: it still writes the
+#: boundaries the turn after it reads. Do not lower this without re-measuring
+#: how much a turn appends.
+TRANSCRIPT_BLOCK_CHARS = 4_000
+
+
+def transcript_blocks(section: str | None) -> tuple[list[str], int]:
+    """The transcript as content blocks, and how many of them are complete.
+
+    Only a complete block may carry a breakpoint. The last one is the growing
+    end — a different string on every turn — which is exactly the thing a
+    breakpoint must not be put on.
+    """
+    if not section:
+        return [], 0
+    complete = len(section) // TRANSCRIPT_BLOCK_CHARS
+    blocks = [
+        section[index * TRANSCRIPT_BLOCK_CHARS:(index + 1) * TRANSCRIPT_BLOCK_CHARS]
+        for index in range(complete)
+    ]
+    tail = section[complete * TRANSCRIPT_BLOCK_CHARS:]
+    if tail:
+        blocks.append(tail)
+    return blocks, complete
 
 
 def compose_user_prompt(**arguments) -> str:
     """The whole user prompt as one string.
 
-    What the eval harness reads and what the tests assert against. The two
-    halves are joined with the same blank line that separates every other
+    What the eval harness reads and what the tests assert against. The three
+    groups are joined with the same blank line that separates every other
     section, so this is byte-for-byte what the model saw before the split.
     """
-    stable, volatile = _sections(**arguments)
-    return "\n\n".join(stable + volatile)
+    standing, section, volatile = _sections(**arguments)
+    return "\n\n".join(standing + ([section] if section else []) + volatile)
 
 
-def compose_user_prompt_blocks(**arguments) -> tuple[str, str]:
-    """The same prompt as the two content parts the provider is sent.
+def compose_user_prompt_blocks(**arguments) -> tuple[str, list[str], int, str]:
+    """The same prompt as the content parts the provider is sent.
 
-    The stable half ends with a newline. Two content parts are concatenated by
-    the provider, and nothing documents what — if anything — goes between
-    them; the trailing newline is what stops the transcript's last line and
-    the block behind the breakpoint running together on the page. It is
-    constant, so it costs the cache nothing.
+    Four values: the standing text, the transcript's blocks, how many of those
+    blocks are complete — and so may carry a breakpoint — and the volatile
+    text. Concatenated in order they are `compose_user_prompt` plus the one
+    extra newline described below.
+
+    The stable half ends with a newline. Content parts are concatenated by the
+    provider, and nothing documents what — if anything — goes between them;
+    the trailing newline is what stops the transcript's last line and the
+    block behind the breakpoint running together on the page. It is constant,
+    so it costs the cache nothing.
+
+    It rides on the *front* of the volatile text rather than the back of the
+    last transcript block, and that is not a stylistic choice: a complete
+    block has to stay byte-identical to what it will be next turn, when it is
+    no longer the last one, and appending anything to it would break the one
+    invariant this whole split exists to create.
     """
-    stable, volatile = _sections(**arguments)
-    return "\n\n".join(stable) + "\n", "\n\n".join(volatile)
+    standing, section, volatile = _sections(**arguments)
+    blocks, complete = transcript_blocks(section)
+    head = "\n\n".join(standing) + ("\n\n" if blocks else "")
+    return head, blocks, complete, "\n" + "\n\n".join(volatile)
