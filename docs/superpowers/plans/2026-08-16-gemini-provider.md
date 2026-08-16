@@ -13,7 +13,10 @@
 ## Global Constraints
 
 - **Work in place on `main`.** Do not create a branch or a worktree. This overrides the worktree step in any skill invoked while executing this plan.
-- **Never run the full test suite.** `xcodebuild test` and full `pytest` runs are the repository owner's job. Run only the specific test named in each step.
+- **You cannot run tests at all, and must not try.** `.claude/hooks/no-parallel-tests.sh` is a `PreToolUse` hook that denies every `pytest`, `xcodebuild test`, `swift test` and `build-for-testing` invocation, because several Claude sessions share this machine. Every `Run: uv run pytest …` step below is therefore a step you **write the test for and hand the command over** — put the exact command in your report for the owner to run. Do not work around the hook by invoking a runner directly. Verify by reading, and say plainly in your report that no test was executed.
+- **`MAX_TOOL_ROUNDS` is 8, not 5.** The spec and this plan's prose were written when it was 5. The owner changed it in `c8f76b9` and added a `_closing_round` that runs after the cap. Trust the code over any number quoted in this plan or the spec.
+- **`_closing_round` (`loop.py:351`) already goes through the provider seam** — it calls `provider.build_round` and `provider.normalise`. Any task touching the round loop must keep it that way.
+- **`_answer` (`loop.py:~600`) still builds OpenAI-shaped `function_call_output` dicts directly.** Task 1 deliberately left it alone. Task 5 must route it through `provider.tool_output`, or Gemini turns will send OpenAI-shaped tool results.
 - **Do not `git checkout` any file.** The working tree carries the owner's concurrent edits and there are no snapshots. Undo your own temporary edits with an explicit edit.
 - **Re-read a file immediately before editing it.** The owner edits and builds during the session.
 - **Commit only the files each task names.** Never `git add -A`.
