@@ -32,7 +32,7 @@ struct InkGlyph: Hashable, Sendable {
 /// right and y **down**, matching the board's own coordinate system:
 ///
 /// ```
-///   y = -0.06   overshoot — the top of a round capital (O, C, S, 0)
+///   y = -0.06   overshoot — as high as anything reaches: ( ) and /
 ///   y =  0.00   the cap line: the top of A–Z, of b d f h k l, and of 0–9
 ///   y =  0.30   the x-height line: the top of the lowercase body
 ///   y =  1.00   the baseline
@@ -59,8 +59,15 @@ enum InkGlyphs {
     static let xHeight: CGFloat = 0.30
     /// The baseline, as a y in the unit box. One cap height below the cap line.
     static let baseline: CGFloat = 1
-    /// The highest a glyph may reach: round capitals are drawn a little above
-    /// the cap line, exactly as a hand does.
+    /// The highest a glyph may reach.
+    ///
+    /// A bracket and a slash are taller than the capitals they stand beside —
+    /// that is what a hand does with them, and it is the whole of what this
+    /// line is for. The round capitals of this alphabet are *not* drawn above
+    /// the cap line: `O`, `C`, `S` and `0` all start at 0.02, so the optical
+    /// overshoot a typeface would give them is not part of this hand. The line
+    /// still bounds the box the bounds arm measures, so widening it later costs
+    /// nothing but a re-sweep.
     static let overshoot: CGFloat = -0.06
     /// The lowest a glyph may reach — the tail of a `g`, `j`, `p`, `q` or `y`.
     static let descender: CGFloat = 1.28
@@ -276,7 +283,7 @@ enum InkGlyphs {
     /// A glyph from an advance and one flat list of coordinates per stroke.
     ///
     /// Flat `[CGFloat]` literals rather than nested `CGPoint` ones: the table
-    /// is ninety glyphs and the type checker charges by the literal.
+    /// is eighty-seven glyphs and the type checker charges by the literal.
     private static func glyph(_ advance: CGFloat, _ strokes: [CGFloat]...) -> InkGlyph {
         InkGlyph(advance: advance, strokes: strokes.map(pen))
     }
@@ -303,7 +310,10 @@ enum InkGlyphs {
                    [0.64, 0.00, 0.64, 0.88, 0.76, 1.00]),
         "e": glyph(0.70,
                    [0.08, 0.68, 0.60, 0.64, 0.56, 0.42, 0.34, 0.28, 0.14, 0.38, 0.06, 0.64, 0.14, 0.90, 0.36, 1.02, 0.62, 0.92]),
-        "f": glyph(0.56,
+        // The advance clears the hook, which reaches to 0.60 — the letterform
+        // that overhangs its own width furthest, and the one glyph that broke
+        // the box sweep when the advance was set from the crossbar instead.
+        "f": glyph(0.62,
                    [0.60, 0.14, 0.50, 0.01, 0.34, 0.02, 0.27, 0.20, 0.27, 1.00],
                    [0.04, 0.36, 0.54, 0.34]),
         "g": glyph(0.76,

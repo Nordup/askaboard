@@ -117,6 +117,43 @@ final class InkTextTests: XCTestCase {
         }
     }
 
+    /// The dot threshold fires for every mark in the table and for nothing
+    /// else.
+    ///
+    /// `InkTextRenderer` draws a stroke shorter than `dotThreshold` half-widths
+    /// as a round dab instead of running the taper down it. That rule is only
+    /// safe because the alphabet leaves a wide gap: every dot is about 1.7
+    /// half-widths long and the next shortest stroke — the apostrophe — is
+    /// about 6.8. The threshold shipped once at 1.6, *below* every dot, so the
+    /// branch was unreachable at every size and the dots were lenses while two
+    /// comments said they were circles. Nothing but this test can see that: an
+    /// unreachable branch draws something plausible.
+    func testTheDotThresholdSitsInTheGapTheAlphabetLeaves() throws {
+        let halfWidth = InkTextRenderer.maximumPenWidth / 2
+        let threshold = halfWidth * InkTextRenderer.dotThreshold
+        var dots: [CGFloat] = []
+        var strokes: [CGFloat] = []
+        for (_, glyph) in InkGlyphs.glyphs {
+            for stroke in glyph.strokes {
+                let length = zip(stroke, stroke.dropFirst()).reduce(CGFloat(0)) {
+                    $0 + hypot($1.1.x - $1.0.x, $1.1.y - $1.0.y)
+                }
+                if length < threshold { dots.append(length) } else { strokes.append(length) }
+            }
+        }
+
+        // i j . , omitted — a comma is a stroke — : ; ! ? and the two of ÷.
+        XCTAssertEqual(dots.count, 10, "ten marks in the alphabet are dabs, not lines")
+        XCTAssertLessThan(
+            try XCTUnwrap(dots.max()), threshold * 0.85,
+            "the longest dot must clear the threshold, or it renders as a lens"
+        )
+        XCTAssertGreaterThan(
+            try XCTUnwrap(strokes.min()), threshold * 1.5,
+            "the shortest real stroke must clear it the other way, or it renders as a blob"
+        )
+    }
+
     /// The coverage the plan asks for, stated as the set itself rather than as
     /// a count, so adding a glyph never quietly satisfies a missing one.
     func testTheTableCoversLettersDigitsAndTheWritingPunctuation() {
@@ -361,6 +398,36 @@ final class InkTextTests: XCTestCase {
         )
     }
 
+    /// A full stop is a round dab, measured.
+    ///
+    /// The companion to the threshold test above: that one proves the branch is
+    /// reachable, this one proves it produces a circle. A tapered lens has a
+    /// bounding box taller than it is wide — a period's stroke is 0.061 cap
+    /// heights of near-vertical travel against a pen 0.071 wide, so the lens
+    /// came out about 0.80 as wide as it was tall, and filled its box more
+    /// completely than a disc does.
+    func testAFullStopIsARoundDabRatherThanATaperedLens() throws {
+        let element = InkTextElement(id: "stop", x: 0, y: 0, text: ".", size: 200)
+        let raster = try render(.inkText(element), in: InkTextRenderer.bounds(for: element))
+        let box = try XCTUnwrap(raster.inkBox(), "a full stop has to put ink somewhere")
+
+        let aspect = CGFloat(box.width) / CGFloat(box.height)
+        XCTAssertEqual(aspect, 1, accuracy: 0.11, "a dab is as wide as it is tall")
+
+        // A disc fills π/4 ≈ 0.785 of its bounding box. A capsule or a square
+        // fills more, a lens less.
+        let fill = CGFloat(raster.inkCount) / CGFloat(box.width * box.height)
+        XCTAssertEqual(fill, .pi / 4, accuracy: 0.09, "the dab is a disc, not a capsule")
+
+        // And it is exactly one dab of the pen the rest of the writing uses.
+        XCTAssertEqual(
+            CGFloat(box.width) / raster.scale,
+            200 * InkTextRenderer.maximumPenWidth,
+            accuracy: 2,
+            "the dot's diameter is the pen's width"
+        )
+    }
+
     /// Two renders of one element are the same bytes, and two elements that
     /// differ only by id are not.
     ///
@@ -391,6 +458,45 @@ final class InkTextTests: XCTestCase {
 
         XCTAssertEqual(first, second, "one element, one render, forever")
         XCTAssertNotEqual(first, other, "the hand is seeded by the element id")
+    }
+
+    /// The hand does not zig-zag.
+    ///
+    /// Determinism is necessary and not sufficient: a jitter that alternates
+    /// between two values is perfectly deterministic and looks like a comb.
+    /// That is what plain FNV-1a produced here — its multiply carries bits
+    /// upward only, so consecutive salts, which is all this renderer ever asks
+    /// for, left the top of the word barely moved and every character was
+    /// nudged one of two ways. The salts for one character's dx step by four,
+    /// so that is the sequence held to account.
+    func testConsecutiveCharactersDoNotGetAnAlternatingJitter() throws {
+        let sequence = (0..<24).map { InkTextRenderer.signedUnit("margin-note", $0 * 4) }
+
+        let distinct = Set(sequence.map { ($0 * 1_000).rounded() })
+        XCTAssertGreaterThan(distinct.count, 16, "a period-two sequence has two values")
+
+        var alternations = 0
+        for index in 1..<sequence.count where (sequence[index] < 0) != (sequence[index - 1] < 0) {
+            alternations += 1
+        }
+        XCTAssertLessThan(
+            alternations, sequence.count - 4,
+            "the sign must not flip on almost every character"
+        )
+
+        // And it uses the range it is given rather than hugging the middle.
+        XCTAssertGreaterThan(try XCTUnwrap(sequence.max()), 0.5)
+        XCTAssertLessThan(try XCTUnwrap(sequence.min()), -0.5)
+
+        // Still a pure function of its two inputs.
+        XCTAssertEqual(
+            InkTextRenderer.signedUnit("margin-note", 8),
+            InkTextRenderer.signedUnit("margin-note", 8)
+        )
+        XCTAssertNotEqual(
+            InkTextRenderer.signedUnit("margin-note", 8),
+            InkTextRenderer.signedUnit("margin-notes", 8)
+        )
     }
 
     /// `stroke` is the ink. It is the field every other kind draws its outline
@@ -493,6 +599,16 @@ final class InkTextTests: XCTestCase {
 
         func rowsWithInk() -> [Int] {
             (0..<height).filter { y in (0..<width).contains { isInk(x: $0, y: y) } }
+        }
+
+        /// The tightest box around every inked pixel, in pixels.
+        func inkBox() -> (x: Int, y: Int, width: Int, height: Int)? {
+            let columns = inkedColumns()
+            let rows = rowsWithInk()
+            guard let minX = columns.first, let maxX = columns.last,
+                  let minY = rows.first, let maxY = rows.last
+            else { return nil }
+            return (minX, minY, maxX - minX + 1, maxY - minY + 1)
         }
     }
 

@@ -23,9 +23,11 @@ import OSLog
 ///    the two tips, full width through the middle, with a slow pressure
 ///    modulation on top. That single change is most of the difference between
 ///    "handwriting" and "engineering stencil".
-/// 2. **The smoothing.** The glyph table stores polylines; the corners are
-///    rounded by the same quadratic-through-midpoints scheme the `freehand`
-///    arm uses, so a hand-authored corner comes out as a hand's corner.
+/// 2. **The corner rounding.** The glyph table stores polylines, and a corner
+///    drawn infinitely sharp is the other half of looking like a machine. Each
+///    vertex is rounded by a fixed *distance* rather than by the `freehand`
+///    arm's fixed fraction of a segment — see `cornerRadius`, which is where
+///    that difference is argued out.
 /// 3. **The jitter.** Each character is nudged and turned by a hair. It is
 ///    seeded from the element id and the character's index — never from a
 ///    random generator — so the same element draws the same pixels forever,
@@ -54,16 +56,25 @@ enum InkTextRenderer {
     /// the widest width.
     static let pressureDepth: CGFloat = 0.1
 
+    /// How short a stroke has to be, in half-widths of the pen, before it is a
+    /// dot rather than a line. See `append(outlineOf:…)` for the gap in the
+    /// table this sits inside.
+    static let dotThreshold: CGFloat = 2.5
+
     /// What the metric box has to grow by to contain the ink, as a fraction of
     /// the cap height.
     ///
-    /// Three terms, and this is the sum of their worst cases rounded up: half
-    /// the widest pen (`maximumPenWidth / 2` = 0.036), the jitter's reach on
-    /// one axis (`jitter` = 0.02), and how far `jitterRotation` can carry a
-    /// point at the far corner of a glyph box (about 0.019). A glyph's own
-    /// strokes never leave its declared box — `InkTextTests` sweeps the whole
-    /// table to prove it — so those three are the only things that put ink
-    /// outside the layout.
+    /// Three terms, and this is the sum of their worst cases rounded up:
+    ///
+    /// - half the widest pen, `maximumPenWidth / 2` = 0.0357;
+    /// - the jitter's reach on one axis, `jitter` = 0.02;
+    /// - how far `jitterRotation` carries the furthest corner of the widest
+    ///   glyph box, which is 1.5° about a radius of 0.943 = 0.0247.
+    ///
+    /// That is 0.0804, and 0.09 is it rounded up with a little room. A glyph's
+    /// own strokes never leave its declared box — `InkTextTests` sweeps the
+    /// whole table to prove it — so those three are the only things that put
+    /// ink outside the layout, and the sweep is what this number rests on.
     static let inkPadding: CGFloat = 0.09
 
     /// The rectangle the ink occupies, in board points, or `.zero` when the
@@ -144,10 +155,16 @@ enum InkTextRenderer {
 
     /// One character's share of the deterministic wobble.
     ///
-    /// Seeded from the element id and the character's own index, hashed with
-    /// FNV-1a. Never `SystemRandomNumberGenerator`: two renders of one element
-    /// have to be the same pixels, or every board capture differs from the one
-    /// before it for reasons that have nothing to do with what the tutor wrote.
+    /// Seeded from the element id and the character's own index. Never
+    /// `SystemRandomNumberGenerator`: two renders of one element have to be the
+    /// same pixels, or every board capture differs from the one before it for
+    /// reasons that have nothing to do with what the tutor wrote.
+    ///
+    /// The four draws are four salts on one hash rather than four hashes, and
+    /// they are only as independent as `signedUnit` makes them — which is why
+    /// that function has a finaliser. Read its documentation before changing
+    /// anything here: consecutive salts are what a line of text asks for, and
+    /// they are exactly the input a plain FNV-1a is worst at.
     private struct Hand {
         let dx: CGFloat
         let dy: CGFloat
@@ -167,7 +184,20 @@ enum InkTextRenderer {
         }
     }
 
-    /// FNV-1a over the element id and one salt.
+    /// FNV-1a over the element id and one salt, then a splitmix64 finaliser.
+    ///
+    /// The finaliser is not decoration. FNV-1a's multiply carries bits upward
+    /// only, so two salts differing in their low byte leave the *top* of the
+    /// word barely moved — and the top is what `signedUnit` reads. Every salt
+    /// this renderer asks for is consecutive, one per character across a line,
+    /// which is precisely that case: without the finaliser the sequence
+    /// collapses into a period-two zig-zag, every character nudged one of two
+    /// ways with dx, dy, rotation and pressure all moving together. That is a
+    /// comb, not a hand, and it is worse than no jitter because it is visible.
+    ///
+    /// splitmix64's shift-xor-multiply rounds avalanche the low bits into the
+    /// high ones, which is the one thing FNV does not do. It is a pure function
+    /// of the same input, so determinism is untouched.
     private static func hash(_ id: String, _ salt: Int) -> UInt64 {
         let prime: UInt64 = 0x0000_0100_0000_01b3
         var value: UInt64 = 0xcbf2_9ce4_8422_2325
@@ -179,11 +209,20 @@ enum InkTextRenderer {
             value = (value ^ (remaining & 0xff)) &* prime
             remaining >>= 8
         }
+        value ^= value >> 30
+        value = value &* 0xbf58_476d_1ce4_e5b9
+        value ^= value >> 27
+        value = value &* 0x94d0_49bb_1331_11eb
+        value ^= value >> 31
         return value
     }
 
     /// A deterministic value in `-1...1`, from the top 53 bits of the hash.
-    private static func signedUnit(_ id: String, _ salt: Int) -> CGFloat {
+    ///
+    /// Internal rather than private so a test can hold the sequence to the
+    /// claim `hash` makes about it. The claim is about *consecutive* salts, and
+    /// nothing else in this file can be asked about them.
+    static func signedUnit(_ id: String, _ salt: Int) -> CGFloat {
         let bits = hash(id, salt) >> 11
         return CGFloat(Double(bits) / Double(1 << 53) * 2 - 1)
     }
@@ -322,11 +361,30 @@ enum InkTextRenderer {
             travelled.append(travelled[index - 1] + step)
         }
         let total = travelled[points.count - 1]
-        // A stroke no longer than the pen is wide is a dot — the tittle of an
-        // `i`, a full stop, the two dots of a division sign. Tapering one
-        // leaves a lens where a round mark belongs, so it keeps full width and
-        // the two caps close into a circle.
-        let isDot = total <= halfWidth * 1.6
+        // A stroke barely longer than the pen is wide is a *mark*, not a line:
+        // the tittle of an `i` or a `j`, a full stop, the upper half of a colon
+        // or a semicolon, the two dots of a division sign, the dot under a
+        // question or exclamation mark. Ten strokes in the table, all of them
+        // 0.061 cap heights long. Running the taper down one leaves a lens
+        // where a round dab belongs, so it is drawn as the dab it is.
+        //
+        // The threshold is stated in pen widths so that it is scale-free, and
+        // it sits in a gap the table makes wide on purpose: every dot is 1.70
+        // half-widths long and the next shortest stroke in the whole alphabet —
+        // the apostrophe — is 6.81. `InkTextTests` pins both ends of that gap,
+        // because a threshold that drifts to either side of it silently turns
+        // every dot into a lens or every apostrophe into a blob.
+        if total <= halfWidth * dotThreshold {
+            appendDot(
+                at: CGPoint(
+                    x: (first.x + points[points.count - 1].x) / 2,
+                    y: (first.y + points[points.count - 1].y) / 2
+                ),
+                radius: halfWidth,
+                to: path
+            )
+            return
+        }
 
         var tangents: [CGPoint] = []
         var widths: [CGFloat] = []
@@ -343,7 +401,7 @@ enum InkTextRenderer {
                     : CGPoint(x: 1, y: 0)
             )
             let position = total > 0 ? travelled[index] / total : 0
-            widths.append(isDot ? halfWidth : halfWidth * pressure(at: position, phase: phase))
+            widths.append(halfWidth * pressure(at: position, phase: phase))
         }
 
         func normal(_ index: Int) -> CGPoint {
