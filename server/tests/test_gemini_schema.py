@@ -1,7 +1,7 @@
 """What survives the trip to a Gemini function declaration.
 
 These are invariant sweeps over the whole produced schema, not spot checks on
-its top level. `update_board`'s `elements` is a twelve-arm union built from
+its top level. `update_board`'s `elements` is a fourteen-arm union built from
 `$defs`, and a malformed arm nested three levels down is a blank band on the
 learner's board — a top-level assertion would pass while that was broken.
 """
@@ -44,6 +44,17 @@ def _declarations(tools):
     return [tool for tool in tools if tool.get("type") == "function"]
 
 
+#: How many arms `update_board`'s element union has.
+#:
+#: Pinned exactly rather than as a floor. `>= 12` was the assertion, and a floor
+#: cannot fail: it passed while the count was really fourteen, it would pass if
+#: an arm were dropped down to twelve, and it would say nothing at all when a
+#: fifteenth is added. The number is a claim two comments make in prose —
+#: `gemini_schema._strip` and this module's docstring — so it needs one place
+#: that fails when the prose goes stale.
+BOARD_ELEMENT_ARMS = 14
+
+
 def test_no_unsupported_keyword_survives_anywhere(converted):
     for declaration in _declarations(converted):
         for node in _walk(declaration["parameters"]):
@@ -80,7 +91,11 @@ def test_every_board_element_arm_keeps_its_discriminator(converted):
         kind = arm["properties"]["kind"]
         expected.update([kind["const"]] if "const" in kind else kind["enum"])
 
-    assert len(arms) >= 12
+    assert len(source_arms) == BOARD_ELEMENT_ARMS, (
+        "an arm was added or removed in tools.py: update BOARD_ELEMENT_ARMS and "
+        "the two comments that state the count in prose"
+    )
+    assert len(arms) == BOARD_ELEMENT_ARMS, "the conversion dropped an arm"
     actual = set()
     for arm in arms:
         kind = arm["properties"]["kind"]
@@ -108,8 +123,15 @@ def test_every_custom_tool_survives_the_trip(converted):
 
 def test_nullable_types_become_the_nullable_flag(converted):
     """Gemini has no type-list form. `["string", "null"]` left as a list makes the
-    declaration malformed, and it is the memory tools that carry it — so the
-    failure would be Gemini losing `search_memory` while the board still worked."""
+    declaration malformed, so the failure would be Gemini losing whole tools while
+    the board still worked.
+
+    Four tools carry a type-list field, and they are worth naming because the
+    obvious guess is wrong: `search_sessions`, `search_history`, `list_sessions`
+    and `record_evidence`. `search_memory` is *not* one of them — an earlier
+    version of this docstring said it was — so a reader checking the claim by
+    reading `search_memory` would have found nothing and concluded the defect was
+    imaginary."""
     for declaration in _declarations(converted):
         for node in _walk(declaration["parameters"]):
             assert not isinstance(node.get("type"), list), declaration["name"]

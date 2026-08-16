@@ -346,8 +346,13 @@ async def _open_round(provider: Provider, payload: dict):
         # clause named `openai.APIStatusError` for as long as there was one
         # family, which quietly made the whole retry OpenAI-only: `google.genai`
         # raises its own `APIError` instead, nothing here caught it, and a
-        # refused Gemini open ended a learner's turn outright after up to thirty
-        # seconds of the transport's own invisible backoff.
+        # refused Gemini open ended a learner's turn outright on the first
+        # refusal. Immediately, with no backoff of any kind — an earlier version
+        # of this comment blamed up to thirty seconds of the transport's own
+        # invisible retry, and that transport retry was never running:
+        # `_api_client.retry_args(None)` is `stop_after_attempt(1)`, so a client
+        # built with no `retry_options` makes exactly one attempt. See
+        # `turn._gemini_client`, which pins that against the installed SDK.
         #
         # Naming the second class beside the first was the obvious repair and is
         # the wrong one: `loop.py` importing either SDK is exactly what the

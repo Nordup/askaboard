@@ -78,8 +78,16 @@ class ProducedFile:
 
     `key` is what `run_turn` de-duplicates on, so a model that re-cites its
     chart in a later round does not buy a second round to hand over the same
-    picture. OpenAI keys on (container_id, file_id); Gemini keys on the step id
-    and an index, because its bytes arrive inline and have no ids.
+    picture. OpenAI keys on (container_id, file_id).
+
+    Gemini has no ids to key on at all — its bytes arrive inline, with no file
+    id, no filename and no citation naming them — so its key is built:
+    `(interaction_id, step, ordinal)`. **The interaction id is load-bearing and
+    is the part a reader will be tempted to drop.** De-duplication runs across a
+    whole turn and every round numbers its steps from zero, so a key of
+    step-plus-ordinal alone makes round two's chart look like round one's
+    already-relayed file, and the picture is thrown away rather than shown. See
+    `gemini._produced_files`.
     """
     key: tuple[str, ...]
     filename: str
@@ -304,14 +312,18 @@ class Completed:
     usage: dict | None
     response_id: str | None
     #: Gemini ends a tool round with "requires_action" rather than a plain
-    #: completion, so a status has to be carryable. `run_turn` never branches on
-    #: this — it branches on whether `calls` is empty, exactly as it already did.
+    #: completion, so a status has to be carryable. `run_turn` does not decide
+    #: whether to buy another round from this — it decides that from whether
+    #: `calls` is empty, exactly as it always did.
     #:
-    #: **Nothing in `app/` reads it yet.** The OpenAI provider fills it with the
-    #: constant `"completed"`, because the Responses API has no interaction
-    #: status to read; Task 5's Gemini provider is what first fills it with a
-    #: real one, and `TERMINAL_ERROR_STATUSES` is what a reader would test it
-    #: against.
+    #: **What it does decide is whether the turn ended badly.** `run_turn` tests
+    #: this against `TERMINAL_ERROR_STATUSES` and yields one `ErrorEvent` when it
+    #: matches, after merging the round's usage. Without that the four terminal
+    #: statuses ended a turn with `done`, and a learner read a truncated answer
+    #: as a finished one. The OpenAI provider fills this with the constant
+    #: `"completed"`, because the Responses API has no interaction status to
+    #: read; `GeminiProvider._completed` and `._status_update` are what fill it
+    #: with a real one.
     status: str
     calls: list[ToolCall] = field(default_factory=list)
     files: list[ProducedFile] = field(default_factory=list)
@@ -324,13 +336,20 @@ class Failed:
     Not produced by the OpenAI provider: a Responses round that goes wrong
     raises on the open, which `loop._open_round` classifies and retries, and
     this service has never read `response.failed` off the stream. `run_turn` has
-    the branch — one `ErrorEvent`, then it stops — and Task 5 is what first
-    emits this.
+    the branch — one `ErrorEvent`, then it stops — and `GeminiProvider._failed`
+    is the only thing that emits this, for the `error` event that replaces
+    `interaction.completed` inside an HTTP 200.
     """
 
     message: str
     #: The interaction status this failure arrived under, for a reader to test
-    #: against `TERMINAL_ERROR_STATUSES`. Nothing in `app/` reads it yet.
+    #: against `TERMINAL_ERROR_STATUSES`.
+    #:
+    #: Nothing in `app/` reads it: the one producer is an in-stream `error`, which
+    #: has no status to read, so `IN_STREAM_FAILURE_STATUS` writes the constant
+    #: `"failed"` here. A terminal status that *was* read off an interaction
+    #: arrives on `Completed.status` instead, because that event carries the
+    #: round's usage and this one cannot.
     status: str
     #: Whether a *fresh* turn could succeed, from the provider's own `classify`.
     #:
@@ -362,9 +381,17 @@ ProviderEvent = (
 #: absent: it is how a normal tool round ends, and treating it as a failure would
 #: break every turn that touches the board.
 #:
-#: No caller yet — the OpenAI family's failures all arrive as exceptions on the
-#: open. It is here because the set is the same for both families and belongs
-#: with the vocabulary; Task 5 is what reads it.
+#: Here rather than in either provider because the set is the same for both
+#: families and belongs with the vocabulary. Two readers: `gemini._completed`
+#: logs a warning when an `interaction.completed` names one of these, and
+#: `loop.run_turn` tests `Completed.status` against it and ends the turn as a
+#: failure. Nothing on the OpenAI side reads it — that family's failures all
+#: arrive as exceptions on the open.
+#:
+#: `budget_exceeded` cannot reach `interaction.completed` at all: the SDK's
+#: status enum for the interaction object has no such member, and only
+#: `InteractionStatusUpdate` does. That is why `gemini._status_update` reports a
+#: terminal status too — see its docstring.
 TERMINAL_ERROR_STATUSES: frozenset[str] = frozenset({
     "failed", "cancelled", "budget_exceeded", "incomplete",
 })

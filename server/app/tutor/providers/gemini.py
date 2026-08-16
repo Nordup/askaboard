@@ -474,25 +474,32 @@ class GeminiProvider:
         `RETRY_LIMIT` and `retry_delay` are shared with `/v1/dictation` and a
         second copy of either is a second thing to keep in step.
 
-        The client this holds is built with the SDK's own transport retry turned
-        off, and `_open_round` above is the only retry left. Leaving the transport
-        one on was the opposite trade rather than an oversight, for as long as
-        `_open_round` caught `openai.APIStatusError` only: nothing in this service
-        retried a Gemini open at all, so a single refused connection ended a
-        learner's turn.
+        The client this holds is built with the SDK's own transport retry
+        explicitly turned off, and `_open_round` above is the only retry there is.
 
-        **That reason is now gone.** `open_failure` below makes this family's
-        refusals visible to `_open_round`, which classifies a spent quota as
-        final rather than waiting through a backoff for it. The transport's retry
-        is the layer that cannot tell a burst limit from an exhausted account,
-        which is exactly why `turn._client` passes `max_retries=0` — so
-        `turn._gemini_client` now passes
-        `http_options=HttpOptions(retry_options=HttpRetryOptions(attempts=0))`
-        beside it. See that function for what the installed SDK really does; the
-        figures this docstring used to quote — four attempts over
-        408/409/429/5xx, up to thirty seconds of backoff — were not
+        **Nothing was ever retrying a Gemini open, at either layer, and both
+        halves of that are worth stating because earlier versions of this
+        docstring got both wrong.** `_open_round` caught `openai.APIStatusError`
+        only, so this service did not retry; and the transport was not quietly
+        covering for it either —
+        `_api_client.retry_args(None)` is `stop_after_attempt(1)`, so a client
+        built with no `retry_options` makes one attempt and stops. A single
+        refused connection ended a learner's turn immediately, not after the
+        "four attempts over 408/409/429/5xx, up to thirty seconds of backoff"
+        this docstring used to quote. None of those figures are
         `google-genai` 2.18.1's, and the thirty-second ceiling does not exist in
         it at all.
+
+        `open_failure` below is what makes this family's refusals visible to
+        `_open_round`, which classifies a spent quota as final rather than waiting
+        through a backoff for it. The transport is the layer that cannot tell a
+        burst limit from an exhausted account, which is exactly why `turn._client`
+        passes `max_retries=0` — so `turn._gemini_client` passes
+        `http_options=HttpOptions(retry_options=HttpRetryOptions(attempts=0))`
+        beside it. That line is a pin rather than a repair: it stops a future SDK
+        default, or one stray `HttpRetryOptions()`, stacking a second retry loop
+        under this one silently. See that function for what the installed SDK
+        really does, and for what re-enabling it would cost.
         """
         return await self._client.aio.interactions.create(**_sdk_kwargs(payload))
 

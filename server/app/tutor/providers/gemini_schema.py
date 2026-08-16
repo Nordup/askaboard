@@ -100,8 +100,17 @@ def _strip(node: Any) -> Any:
     """Drop unsupported keywords, and turn `const` into a one-value `enum`.
 
     `const` is rewritten rather than dropped because it is the `kind`
-    discriminator on all twelve arms of `update_board`'s element union. Dropped,
-    the arms become indistinguishable and the union stops parsing.
+    discriminator on `update_board`'s element union. Dropped, the arms become
+    indistinguishable and the union stops parsing.
+
+    Fourteen arms as this is written — `text`, `line`, `arrow`,
+    `rectangle`/`ellipse`, `circle`, `polygon`, `polyline`/`freehand`, `arc`,
+    `angle_marker`, `path`, `math_text`, `ink_text`, `image`, `svg` — and two of
+    them carry a short `enum` rather than a `const`, because kinds with identical
+    field sets share one arm. So this rewrite has to leave an existing `enum`
+    alone as well as convert a `const`; `tests/test_gemini_schema.py` asserts the
+    count exactly, so an arm added to `tools.py` fails there rather than going
+    unnoticed here.
 
     `properties` gets special handling for a reason that is easy to miss: its
     keys are not schema keywords, they are the tool's own argument names —
