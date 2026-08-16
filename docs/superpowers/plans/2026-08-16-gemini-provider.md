@@ -366,8 +366,32 @@ Expected: PASS
 
 - [ ] **Step 9: Run the tests that prove nothing changed**
 
+`run_turn` loses its `client` parameter and gains `provider`, and `test_loop.py`
+passes `client=client` at 28 call sites. So those 28 lines change. Nothing else
+in the file may.
+
+Make exactly this substitution, and nothing else:
+
+```python
+# before
+        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle
+# after
+        provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+        effort="high", bundle=bundle
+```
+
+Leave every `AsyncOpenAI(api_key="sk-test")` line alone — the provider wraps that
+same client, so `respx` keeps intercepting exactly as it does now.
+
+**The gate: no assertion, no fixture, and no expected value may change.** If any
+test needs a changed expectation, the refactor changed behaviour. Stop and find
+out why rather than updating the expectation.
+
 Run: `cd server && uv run pytest tests/test_loop.py tests/test_turn_endpoint.py -v`
-Expected: PASS, with no test edited. If a test needed editing, the refactor changed behaviour — find out why before continuing.
+Expected: PASS. Then prove the assertions are untouched:
+
+Run: `cd server && git diff tests/test_loop.py | grep -E '^[-+]' | grep -v 'client=client\|provider=OpenAIProvider\|effort=\|model=\|bundle=\|^[-+]{3}'`
+Expected: no output. Any line here is an assertion or fixture you changed, which the gate forbids.
 
 - [ ] **Step 10: Commit**
 
