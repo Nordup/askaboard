@@ -434,8 +434,29 @@ class Provider(Protocol):
         bytes are leads once, before any of them are looked at.
         """
 
-    def classify(self, status_code: int, body: dict | None) -> RetryDecision:
-        """Whether a failed open is worth retrying."""
+    def classify(
+        self, status_code: int | None, body: dict | None, message: str | None = None
+    ) -> RetryDecision:
+        """Whether a failed open is worth retrying.
+
+        The three parameters are `retry.classify`'s, deliberately: both families
+        delegate to it, and a declaration narrower than the function every
+        implementation calls is a declaration that describes nothing real.
+
+        `status_code=None` is a refusal that arrived without a status line — the
+        in-stream `error` event on the Interactions API, which `retry._without_status`
+        already owns. `message` is the exception's own text, read only in that case
+        and only when the body names nothing.
+
+        **`isinstance` cannot catch a signature that drifts from this one.**
+        `runtime_checkable` tests for member *presence* and never for a
+        signature, so `test_the_gemini_provider_satisfies_the_protocol` passed
+        for as long as this method declared `status_code: int` and two parameters
+        while `GeminiProvider.classify` took three and `retry.classify` had been
+        widened underneath both. These signatures are held by reading them, not
+        by the check — so an implementation that adds a parameter has to widen
+        this declaration in the same commit.
+        """
 
     def open_failure(self, error: BaseException) -> OpenFailure | None:
         """This family's reading of the exception a failed open raised.

@@ -16,7 +16,8 @@ from app.tutor.events import (
     EventTranslator, StatusEvent, WorkspaceEvent,
 )
 from app.tutor.providers import (
-    Completed, Failed, ProducedFile, Provider, RelayedFile, TextDelta,
+    TERMINAL_ERROR_STATUSES, Completed, Failed, ProducedFile, Provider,
+    RelayedFile, TextDelta,
 )
 from app.tutor.rendezvous import BoardRegion, BoardUnavailable
 from app.tutor.retry import RETRY_LIMIT
@@ -645,7 +646,7 @@ def _svg_warnings(update: BoardSceneUpdate) -> list[str]:
 
 
 def _answer(
-    call: dict, *, has_board: bool, has_memory: bool = False,
+    call: dict, *, provider: Provider, has_board: bool, has_memory: bool = False,
     has_image: bool = False,
 ) -> ToolAnswer:
     """Plan one tool call's reply.
@@ -656,14 +657,38 @@ def _answer(
     has no way to be given — it is synchronous and is called per tool call from
     inside the stream. `fetch_image` needs the network and the blob store. All
     three come back as an intent for `run_turn` to carry out.
+
+    **`provider` is here because every answer below is a wire item, and this
+    function used to write one family's by hand.** Each of the seven replies was
+    a literal `{"type": "function_call_output", "call_id": …}` — the Responses
+    API's shape — and `run_turn` appends them to the next round's `outbox`
+    verbatim. On Gemini they arrived at the Interactions request untranslated
+    (`gemini._input_item` passes anything that already carries a `type`), where
+    the request type resolves them to an `UnknownStep` rather than to a
+    `FunctionResultStep`. `update_board` and `set_workspace` are the two tools
+    the tutor uses most, so every Gemini turn that drew anything was malformed
+    at round two. The provider is threaded in rather than the items built by the
+    caller because that keeps `run_turn`'s handling of a `ToolAnswer` unchanged
+    and adds one argument instead of a fifth `ToolAnswer` shape.
+
+    The tool's own name travels with every answer, and it is `call.get("name")`
+    rather than a name this function chose: a `function_result` whose `name`
+    disagrees with the call it answers is a 400 on this family — see
+    `GeminiProvider.tool_output` — so echoing the call is the only reading that
+    is right for the unsupported-tool branch as well as for the known ones.
     """
     call_id = call["call_id"]
 
     name = call.get("name")
+
+    def answered(output: str) -> ToolAnswer:
+        """One reply, in whichever family's item shape this turn is running on."""
+        return ToolAnswer(items=[provider.tool_output(
+            call_id=call_id, name=name or "", output=output,
+        )])
+
     if name == "set_workspace":
-        return ToolAnswer(items=[
-            {"type": "function_call_output", "call_id": call_id, "output": SET_WORKSPACE_ACK}
-        ])
+        return answered(SET_WORKSPACE_ACK)
 
     if name == "update_board":
         update, _ = parse_board_update(call.get("arguments") or "{}")
@@ -678,9 +703,7 @@ def _answer(
             output = UPDATE_BOARD_ACK
             if warnings:
                 output = UPDATE_BOARD_ACK + " Warnings: " + "; ".join(warnings)
-        return ToolAnswer(items=[
-            {"type": "function_call_output", "call_id": call_id, "output": output}
-        ])
+        return answered(output)
 
     if name == "fetch_image":
         # Turned down rather than attempted when no fetcher was wired: the tool
@@ -689,10 +712,7 @@ def _answer(
         # prefix — so the model can always call it, and `UNSUPPORTED_TOOL_ACK`
         # says exactly what is true, that it is not available in this session.
         if not has_image:
-            return ToolAnswer(items=[
-                {"type": "function_call_output", "call_id": call_id,
-                 "output": UNSUPPORTED_TOOL_ACK}
-            ])
+            return answered(UNSUPPORTED_TOOL_ACK)
         arguments = _arguments(call) or {}
         url = arguments.get("url")
         # Type-checked, not content-checked. Whether the URL is fetchable is
@@ -700,10 +720,7 @@ def _answer(
         # it resolves to, not against how it looks; the only thing that matters
         # here is that there is a string to hand it.
         if not isinstance(url, str) or not url.strip():
-            return ToolAnswer(items=[
-                {"type": "function_call_output", "call_id": call_id,
-                 "output": MALFORMED_FETCH_ACK}
-            ])
+            return answered(MALFORMED_FETCH_ACK)
         return ToolAnswer(fetch=url.strip())
 
     if name in MEMORY_TOOLS:
@@ -714,19 +731,13 @@ def _answer(
             output = MALFORMED_MEMORY_ACK
         else:
             return ToolAnswer(run=(name, arguments))
-        return ToolAnswer(items=[
-            {"type": "function_call_output", "call_id": call_id, "output": output}
-        ])
+        return answered(output)
 
     if name != "view_board":
-        return ToolAnswer(items=[
-            {"type": "function_call_output", "call_id": call_id, "output": UNSUPPORTED_TOOL_ACK}
-        ])
+        return answered(UNSUPPORTED_TOOL_ACK)
 
     if not has_board:
-        return ToolAnswer(items=[
-            {"type": "function_call_output", "call_id": call_id, "output": NO_BOARD_ACK}
-        ])
+        return answered(NO_BOARD_ACK)
 
     region = _region_from(_arguments(call) or {})
     detail = (
@@ -937,6 +948,48 @@ async def run_turn(
                         for call in neutral.calls
                     ]
                     files = list(neutral.files)
+                    if neutral.status in TERMINAL_ERROR_STATUSES:
+                        # **A completion is not always a finish.** Gemini ends
+                        # an interaction that ran out of budget, was cancelled,
+                        # or gave up part-way with a terminal status on an
+                        # otherwise ordinary `interaction.completed`, and such a
+                        # round arrives with no calls — so without this branch
+                        # the loop fell straight through to `return` and the
+                        # device got `done`. The learner then reads a truncated
+                        # answer as a finished one, which is the one outcome
+                        # this whole file exists to prevent.
+                        #
+                        # The usage is merged *above* this line and deliberately
+                        # so. Converting the event to a `Failed` inside the
+                        # provider was the other repair and it hides money:
+                        # `Failed` carries no usage, and a round that reached
+                        # `incomplete` or `budget_exceeded` spent tokens getting
+                        # there. The two goals were never exclusive — record the
+                        # spend, then say the turn ended badly.
+                        #
+                        # `retryable=True`, and it is a claim about a *fresh*
+                        # turn rather than about this round: nothing here is
+                        # re-run, because the prose that did arrive the learner
+                        # has already read. None of the four statuses carries an
+                        # error body to classify, so the choice is which way to
+                        # err — and offering another go costs one turn against
+                        # `DAILY_SPEND_CAP_USD`, where withholding it leaves a
+                        # learner holding half an explanation with no way
+                        # forward. That is the same asymmetry
+                        # `QUOTA_EXHAUSTION_PHRASES` is ordered by.
+                        #
+                        # The status is logged and goes no further: the device
+                        # is told `TURN_FAILED_MESSAGE`, for the reason the
+                        # `Failed` branch below gives.
+                        logger.warning(
+                            "the interaction ended %s | response_id=%s "
+                            "text_chars=%d", neutral.status,
+                            neutral.response_id, len(result.text),
+                        )
+                        yield ErrorEvent(
+                            message=TURN_FAILED_MESSAGE, retryable=True
+                        ), result
+                        return
                 elif isinstance(neutral, Failed):
                     # Never reached on OpenAI, whose failures raise on the open
                     # and are classified by `_open_round`.
@@ -1002,6 +1055,7 @@ async def run_turn(
             call_id = call["call_id"]
             answer = _answer(
                 call,
+                provider=provider,
                 has_board=bundle.has_board and fetch_board is not None,
                 has_memory=handle_memory is not None,
                 has_image=fetch_image is not None,

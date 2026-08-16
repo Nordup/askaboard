@@ -1035,3 +1035,466 @@ def test_both_families_announce_drawing_at_the_head_of_the_board_call():
         assert drawing[0] < kinds.index("step"), (
             f"{provider.name} announced drawing after the step row opened"
         )
+
+
+# MARK: - What a built request really validates as
+
+
+def _unknown_members(model) -> list[str]:
+    """Every `Unknown…` object anywhere inside a validated request.
+
+    The SDK's unions are *lenient*: a member it does not recognise is not a
+    validation error, it is an `UnknownStep`, an `UnknownTool` or an
+    `UnknownContent` carrying the raw dict. So `model_validate` succeeding proves
+    nothing on its own, and the assertion that means something is this walk. The
+    class name is tested rather than a tuple of imported classes, because the set
+    of `Unknown…` types grows with the SDK and a tuple written today would stop
+    covering the one added tomorrow.
+
+    Reported as paths rather than as a bool, so a failure says which item.
+    """
+    from pydantic import BaseModel
+
+    found: list[str] = []
+
+    def walk(value, path: str) -> None:
+        if isinstance(value, BaseModel):
+            name = type(value).__name__
+            if name.startswith("Unknown"):
+                found.append(f"{path}: {name}")
+                return
+            for field in type(value).model_fields:
+                walk(getattr(value, field, None), f"{path}.{field}")
+            return
+        if isinstance(value, (list, tuple)):
+            for index, item in enumerate(value):
+                walk(item, f"{path}[{index}]")
+            return
+        if isinstance(value, dict):
+            for key, item in value.items():
+                walk(item, f"{path}[{key!r}]")
+
+    walk(model, "input")
+    return found
+
+
+def _validated(payload: dict) -> list[str]:
+    """One built payload through the request type the SDK really posts."""
+    from google.genai.interactions import CreateModelInteraction
+
+    return _unknown_members(CreateModelInteraction.model_validate(payload))
+
+
+def _every_answer_shape(provider) -> list[dict]:
+    """Every item `loop._answer` can put in a later round's outbox.
+
+    Produced by calling `_answer` itself rather than by writing the seven items
+    out here, because the defect this guards was `_answer` writing an item shape
+    of its own. A copy of the shapes in this file would have agreed with the bug.
+    """
+    from app.tutor.loop import _answer
+
+    calls = [
+        # The two the tutor uses most, and the two that were malformed.
+        ({"call_id": "c1", "name": "set_workspace", "arguments": "{}"}, {}),
+        (
+            {"call_id": "c2", "name": "update_board",
+             "arguments": json.dumps(BOARD_UPDATE_ARGUMENTS)},
+            {"has_board": True},
+        ),
+        # `fetch_image` with no fetcher wired, and with no usable url.
+        ({"call_id": "c3", "name": "fetch_image",
+          "arguments": '{"url": "https://example.com/a.png"}'}, {}),
+        ({"call_id": "c4", "name": "fetch_image", "arguments": "{}"},
+         {"has_image": True}),
+        # The memory refusals: no handler wired, and arguments that are not an
+        # object. One site, two strings.
+        ({"call_id": "c5", "name": "search_memory", "arguments": "{}"}, {}),
+        ({"call_id": "c6", "name": "search_memory", "arguments": "[1, 2]"},
+         {"has_memory": True}),
+        # A tool this service does not implement.
+        ({"call_id": "c7", "name": "future_web_search", "arguments": "{}"}, {}),
+        # `view_board` with nothing on the board.
+        ({"call_id": "c8", "name": "view_board", "arguments": "{}"}, {}),
+    ]
+    items = []
+    for call, flags in calls:
+        answer = _answer(
+            call, provider=provider, has_board=flags.get("has_board", False),
+            has_memory=flags.get("has_memory", False),
+            has_image=flags.get("has_image", False),
+        )
+        assert answer.items is not None, call["name"]
+        items.extend(answer.items)
+    return items
+
+
+def test_a_first_round_validates_with_no_unknown_step_tool_or_content():
+    """The guard that was missing, at the round where the tools are sent.
+
+    `test_every_recorded_event_decodes_to_the_shape_the_provider_reads` validates
+    recorded *events* against the SDK. Nothing validated a *built request*, and
+    that asymmetry is exactly the hole `loop._answer` fell through for nine
+    reviews: an item in the wrong family's vocabulary is not a 422 anywhere in
+    this repository, it is an `UnknownStep` the provider silently posts.
+
+    `tools` rides in the same payload, so this covers the whole converted
+    declaration set against `UnknownTool` too — which no other test does.
+    """
+    provider = GeminiProvider(client=None)
+    payload = provider.build_round(
+        model="gemini-3.7-pro", effort="high", previous_id=None, cache_key=None,
+        outbox=[
+            {"role": "system", "content": "be a tutor"},
+            {"role": "user", "content": [
+                {"type": "input_text", "text": "what is 7 times 8?"},
+                {"type": "input_image",
+                 "image_url": "data:image/png;base64," + INLINE_IMAGE_BASE64,
+                 "detail": "low"},
+            ]},
+        ],
+    )
+
+    assert _validated(payload) == []
+    assert payload["tools"] is GEMINI_TOOLS, "the real declarations, not a stub"
+
+
+def test_every_answer_a_tool_round_can_send_validates_as_a_function_result():
+    """**Fix 1's proof.** All seven `_answer` replies, in a real later round.
+
+    Each one used to be a literal `{"type": "function_call_output", …}` — the
+    Responses API's shape — which `gemini._input_item` passes through untouched
+    because it already carries a `type`. `CreateModelInteraction` then resolves
+    every one of them to an `UnknownStep`, and `update_board` and
+    `set_workspace` are the two tools the tutor uses most: every Gemini turn
+    that drew anything was malformed from round two onwards.
+
+    Asserted as `FunctionResultStep` by name and not merely as "no unknowns",
+    because a step that validated as some *other* known type would be just as
+    wrong and would pass the walk.
+    """
+    from google.genai.interactions import (
+        CreateModelInteraction, FunctionResultStep,
+    )
+
+    provider = GeminiProvider(client=None)
+    outbox = _every_answer_shape(provider)
+    payload = provider.build_round(
+        model="gemini-3.7-pro", effort="high", outbox=outbox,
+        previous_id="v1_earlier_round", cache_key=None,
+    )
+
+    assert _validated(payload) == []
+    steps = CreateModelInteraction.model_validate(payload).input
+    assert len(steps) == 8, "one reply per call, and none folded together"
+    for step, item in zip(steps, outbox):
+        assert isinstance(step, FunctionResultStep), item
+        assert step.call_id == item["call_id"]
+        # The name travels, because a `function_result` whose name disagrees
+        # with its call is a 400 on this API.
+        assert step.name == item["name"]
+
+
+def test_a_round_carrying_pictures_validates_as_user_input_with_images():
+    """The other half of a later round, and the only mechanical cover the image
+    shapes have: no recorded fixture carries a request that returns a picture.
+
+    Three producers, because all three build an item this provider invented
+    rather than translated — the board render answering `view_board`, a fetched
+    picture, and the files a hosted script wrote.
+    """
+    provider = GeminiProvider(client=None)
+    png = base64.b64decode(INLINE_IMAGE_BASE64)
+    rendered = provider.rendered_items("c9", png, "Showing x 0-100%.")
+    outbox = [
+        *rendered,
+        provider.image_item(png, "Here is the image you fetched."),
+        provider.relay_item([("chart.png", RelayedFile(
+            blob_id="sha256:" + "a" * 64, data=png, content_type="image/png",
+        ))]),
+    ]
+    payload = provider.build_round(
+        model="gemini-3.7-pro", effort="high", outbox=outbox,
+        previous_id="v1_earlier_round", cache_key=None,
+    )
+
+    assert _validated(payload) == []
+
+
+def test_a_closing_round_validates_after_the_tool_choice_is_moved():
+    """`loop._closing_round` puts `tool_choice` at the payload's top level, and
+    `_sdk_kwargs` moves it into `generation_config` on the way out. The moved
+    shape is what is really posted, so it is the shape that has to validate."""
+    from app.tutor.providers.gemini import _sdk_kwargs
+
+    provider = GeminiProvider(client=None)
+    payload = provider.build_round(
+        model="gemini-3.7-pro", effort="high",
+        outbox=_every_answer_shape(provider),
+        previous_id="v1_earlier_round", cache_key=None,
+    )
+    payload["tool_choice"] = "none"
+
+    assert _validated(_sdk_kwargs(payload)) == []
+
+
+# MARK: - A terminal status may not end a turn quietly
+
+
+async def _gemini_turn(events):
+    """One whole turn against a stream of already-shaped provider events."""
+    from app.tutor.context import ContextBundle
+    from app.tutor.loop import run_turn
+
+    provider = GeminiProvider(client=None)
+
+    async def open_round(payload):
+        return _FakeStream(events)
+
+    provider.open_round = open_round
+
+    collected = []
+    result = None
+    async for event, running in run_turn(
+        provider=provider, model="gemini-3.5-flash-lite", effort="low",
+        bundle=ContextBundle(system="be a tutor", input=[
+            {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+        ]),
+    ):
+        collected.append(event)
+        result = running
+    return collected, result
+
+
+def _ended(status: str, usage: dict | None = None) -> tuple[dict, ...]:
+    """`TEXT_ONLY_INTERACTION` with its completion restated under one status."""
+    completion = dict(TEXT_ONLY_INTERACTION[-1])
+    interaction = dict(completion["interaction"])
+    interaction["status"] = status
+    if usage is not None:
+        interaction["usage"] = usage
+    completion["interaction"] = interaction
+    return TEXT_ONLY_INTERACTION[:-1] + (completion,)
+
+
+async def test_no_terminal_interaction_status_ends_a_turn_quietly():
+    """All four, not just `failed`.
+
+    `run_turn` read `Failed` and never `Completed.status`, and three of the four
+    statuses had no code path at all — so an interaction that ended `cancelled`,
+    `incomplete` or `budget_exceeded` sent the device `done` and the learner read
+    a truncated answer as a finished one. The prose is kept, because whatever
+    arrived they have already read; what changes is that the turn says it ended
+    badly.
+    """
+    from app.tutor.events import TURN_FAILED_MESSAGE
+
+    for status in sorted(TERMINAL_ERROR_STATUSES):
+        events, result = await _gemini_turn(_ended(status))
+        errors = [event for event in events if event.type == "error"]
+
+        assert len(errors) == 1, f"{status} ended the turn quietly"
+        assert errors[0].message == TURN_FAILED_MESSAGE, status
+        assert errors[0].retryable is True, status
+        assert events[-1] is errors[0], f"{status} kept streaming after failing"
+        assert result.text == "7 times 8 is 56.", (
+            f"{status} threw away the prose the learner had already read"
+        )
+
+
+async def test_a_terminally_ended_round_still_records_what_it_spent():
+    """The reason the provider does not convert this into a `Failed`.
+
+    `Failed` carries no usage, and a round that reached `incomplete` or
+    `budget_exceeded` spent tokens getting there — so converting would leave that
+    spend out of `turns.cost_usd`, which is money nobody can see. The two goals
+    were never exclusive: the usage is merged before the failure is yielded.
+    """
+    for status in sorted(TERMINAL_ERROR_STATUSES):
+        _events, result = await _gemini_turn(_ended(status))
+
+        assert result.usage is not None, status
+        assert result.usage["input_tokens"] == 10101, status
+        assert result.usage["output_tokens"] == 9, status
+        assert turn_cost_usd("gemini-3.5-flash-lite", result.usage), status
+
+
+async def test_a_terminal_status_update_ends_the_turn_too():
+    """The only door `budget_exceeded` has.
+
+    The SDK's two status enums are not the same set: `InteractionStatusUpdate`
+    admits `budget_exceeded`, and the `interaction` object on
+    `interaction.completed` does not. So one of the four statuses can only ever
+    arrive on the event this provider used to drop to `None` — and a turn that
+    ends there ends with no completion behind it, which is `done` and half an
+    answer.
+    """
+    stream = TEXT_ONLY_INTERACTION[:-1] + ({
+        "interaction_id": "v1_text_only",
+        "status": "budget_exceeded",
+        "event_type": "interaction.status_update",
+    },)
+    events, result = await _gemini_turn(stream)
+
+    errors = [event for event in events if event.type == "error"]
+    assert len(errors) == 1
+    assert result.text == "7 times 8 is 56."
+
+
+def test_an_in_progress_status_update_is_still_nothing():
+    """It arrives on every turn recorded, immediately after
+    `interaction.created`, saying what `created` already said. Reading it as
+    anything would end every turn before it began."""
+    provider = GeminiProvider(client=None)
+
+    assert provider.neutral({
+        "interaction_id": "v1_text_only", "status": "in_progress",
+        "event_type": "interaction.status_update",
+    }) is None
+    assert provider.neutral({
+        "interaction_id": "v1_text_only", "status": "queued",
+        "event_type": "interaction.status_update",
+    }) is None
+
+
+# MARK: - What an absent usage key must not do to the running total
+
+
+async def test_a_second_rounds_empty_usage_leaves_the_first_rounds_tokens():
+    """`map_usage` used to materialise every key with `.get`, so a round whose
+    usage arrived without the totals read as `input_tokens: None` — and
+    `_merge_usage` assigns rather than sums when one side is not a number, so
+    that `None` erased the earlier round's count. The recorded turn then cost
+    less than it did, in the unsafe direction for `DAILY_SPEND_CAP_USD`."""
+    from app.tutor.context import ContextBundle
+    from app.tutor.loop import run_turn
+
+    provider = GeminiProvider(client=None)
+    streams = [
+        _FakeStream(TOOL_CALL_INTERACTION),
+        _FakeStream(_ended("completed", usage={})),
+    ]
+
+    async def open_round(payload):
+        return streams.pop(0)
+
+    provider.open_round = open_round
+
+    result = None
+    async for _event, running in run_turn(
+        provider=provider, model="gemini-3.5-flash-lite", effort="low",
+        bundle=ContextBundle(system="be a tutor", input=[
+            {"role": "user", "content": [{"type": "input_text", "text": "plan it"}]},
+        ]),
+    ):
+        result = running
+
+    first = TOOL_CALL_INTERACTION[-1]["interaction"]["usage"]
+    assert first["total_input_tokens"] > 0, "the fixture has to count something"
+    # Round two reported an empty usage, so the turn's totals are round one's,
+    # unchanged. They used to be `None`.
+    assert result.usage["input_tokens"] == first["total_input_tokens"]
+    assert result.usage["output_tokens"] == first["total_output_tokens"]
+
+
+def test_map_usage_omits_a_key_the_provider_did_not_send():
+    """Absence, not `None`. The OpenAI family passes the provider's dict
+    through, so an unreported key is simply missing there — and that is what
+    `_merge_usage` is safe against."""
+    mapped = map_usage({})
+
+    assert "input_tokens" not in mapped
+    assert "output_tokens" not in mapped
+    assert "tool_use_tokens" not in mapped
+    assert mapped["input_tokens_details"] == {}
+    assert mapped["output_tokens_details"] == {}
+    # Never absent and never None: `_searches` answers 0 for a round that
+    # grounded nothing, and 0 added to a running total changes nothing.
+    assert mapped["grounding_tool_count"] == 0
+
+
+def test_merging_an_empty_usage_over_a_counted_one_keeps_the_counts():
+    """The mechanism, in isolation from any stream."""
+    from app.tutor.loop import _merge_usage
+
+    first = map_usage({
+        "total_input_tokens": 1000, "total_output_tokens": 200,
+        "grounding_tool_count": [{"count": 2, "type": "google_search"}],
+    })
+    merged = _merge_usage(first, map_usage({}))
+
+    assert merged["input_tokens"] == 1000
+    assert merged["output_tokens"] == 200
+    assert merged["grounding_tool_count"] == 2
+
+
+# MARK: - A picture kept and not shown
+
+
+def test_a_kept_but_unshown_picture_is_marked_on_both_families():
+    """`fetch_image.model_copy` refuses to decode past its own ceiling, so a
+    chart can be downloaded, blob-stored and named to the model with no picture
+    beside it — and `chart.png → blob_abc` is indistinguishable from a line whose
+    picture follows. The OpenAI provider marks the line and appends
+    `PICTURE_NOT_SHOWN_NOTE`; the Gemini one did not, so the same chart was
+    handed over silently and described from its filename."""
+    from app.tutor.providers import PICTURE_NOT_SHOWN_NOTE
+
+    withheld = [("chart.png", RelayedFile(
+        blob_id="sha256:" + "a" * 64, data=None, content_type="image/png",
+    ))]
+
+    for provider in (OpenAIProvider(client=None), GeminiProvider(client=None)):
+        item = provider.relay_item(withheld)
+        text = json.dumps(item)
+
+        assert PICTURE_NOT_SHOWN_NOTE in text, provider.name
+        assert "not shown" in text, provider.name
+        assert "sha256:" in text, f"{provider.name} dropped the blob id"
+
+    # And a CSV — a file that never had a picture — says nothing about one.
+    kept = [("data.csv", RelayedFile(
+        blob_id="sha256:" + "b" * 64, data=b"a,b\n1,2\n", content_type="text/csv",
+    ))]
+    for provider in (OpenAIProvider(client=None), GeminiProvider(client=None)):
+        assert PICTURE_NOT_SHOWN_NOTE not in json.dumps(
+            provider.relay_item(kept)
+        ), provider.name
+
+
+# MARK: - The seam's declared signatures
+
+
+def test_both_providers_classify_with_the_signature_the_protocol_declares():
+    """`isinstance(…, Provider)` cannot check this, and that is the point.
+
+    A `runtime_checkable` Protocol tests for member *presence* and never for a
+    signature, so both providers satisfied `Provider` while the protocol declared
+    `classify(status_code: int, body)` and `GeminiProvider` took a third
+    parameter. `retry.classify` had been widened underneath all three. This is
+    the check that isinstance is not.
+    """
+    import inspect
+
+    from app.tutor import retry
+
+    expected = inspect.signature(retry.classify).parameters
+    for owner in (Provider, OpenAIProvider, GeminiProvider):
+        actual = inspect.signature(owner.classify).parameters
+        assert list(actual)[1:] == list(expected), owner.__name__
+        for name in expected:
+            # Compared as text, because `from __future__ import annotations` is
+            # set in some of these modules and not in others, so one side is a
+            # string where the other is an evaluated type.
+            assert _annotation(actual[name]) == _annotation(expected[name]), (
+                f"{owner.__name__}.{name}"
+            )
+        assert actual["message"].default is None, (
+            f"{owner.__name__}.message has to stay optional"
+        )
+
+
+def _annotation(parameter) -> str:
+    """One parameter's annotation as text, however the module spells it."""
+    annotation = parameter.annotation
+    return annotation if isinstance(annotation, str) else str(annotation)

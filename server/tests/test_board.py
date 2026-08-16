@@ -34,7 +34,7 @@ from app.tutor.loop import (
 )
 # The items answering `view_board` are request-item shapes, so they moved behind
 # the provider with the rest of them. What they contain did not change.
-from app.tutor.providers.openai import _rendered_items
+from app.tutor.providers.openai import OpenAIProvider, _rendered_items
 from app.api.turn import BoardRenderBody, deliver_board_render
 from app.tutor.rendezvous import (
     BoardUnavailable,
@@ -46,6 +46,9 @@ from app.tutor.rendezvous import (
 )
 
 TURN = __import__("uuid").UUID("11111111-2222-3333-4444-555555555555")
+
+#: The provider `_answer` writes its replies through — see `test_loop.py`.
+_PROVIDER = OpenAIProvider(client=None)
 
 RAW_SVG_DOCUMENT = (
     '<svg viewBox="0 0 800 500" xmlns="http://www.w3.org/2000/svg">'
@@ -166,7 +169,7 @@ def test_view_board_asks_the_device_rather_than_answering_itself():
     """The server holds no board any more. It can only ask."""
     answer = _answer(
         {"call_id": "c1", "name": "view_board", "arguments": json.dumps({"x": 0, "y": 50, "width": 100, "height": 50})},
-        has_board=True,
+        provider=_PROVIDER, has_board=True,
     )
 
     assert answer.items is None, "nothing can be answered without the device"
@@ -179,7 +182,10 @@ def test_view_board_asks_the_device_rather_than_answering_itself():
 def test_view_board_on_an_empty_board_is_answered_without_asking():
     """A learner can ask 'check this' with an empty canvas, and there is nothing
     to render. Waiting twenty seconds to discover that would be absurd."""
-    answer = _answer({"call_id": "c", "name": "view_board", "arguments": "{}"}, has_board=False)
+    answer = _answer(
+        {"call_id": "c", "name": "view_board", "arguments": "{}"},
+        provider=_PROVIDER, has_board=False,
+    )
 
     assert answer.ask is None
     assert json.loads(answer.items[0]["output"])["status"] == "empty"
@@ -191,7 +197,7 @@ def test_unparseable_arguments_still_produce_a_request():
     mode is a picture it can still use."""
     answer = _answer(
         {"call_id": "c", "name": "view_board", "arguments": "not json at all"},
-        has_board=True,
+        provider=_PROVIDER, has_board=True,
     )
 
     assert answer.ask is not None
@@ -199,7 +205,10 @@ def test_unparseable_arguments_still_produce_a_request():
 
 def test_set_workspace_is_still_answered_the_old_way():
     """The new dispatch must not change the tool that already worked."""
-    answer = _answer({"call_id": "c", "name": "set_workspace", "arguments": "{}"}, has_board=True)
+    answer = _answer(
+        {"call_id": "c", "name": "set_workspace", "arguments": "{}"},
+        provider=_PROVIDER, has_board=True,
+    )
 
     assert answer.ask is None
     assert len(answer.items) == 1

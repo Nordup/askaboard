@@ -1222,6 +1222,47 @@ def test_the_gemini_client_leaves_the_transport_no_attempt_to_retry(monkeypatch)
     assert sdk._RETRY_HTTP_STATUS_CODES == (408, 429, 500, 502, 503, 504)
 
 
+def test_the_gemini_client_bounds_a_silent_read(monkeypatch):
+    """Unset is unbounded on this SDK, which is the trap this closes.
+
+    `HttpOptions.timeout` defaults to `None`, `get_timeout_in_seconds` turns that
+    into `None`, and httpx reads `timeout=None` as *no deadline* rather than a
+    long one — so a Gemini round whose stream went quiet forever was awaited
+    forever, with the turn row never finished. Read back off the built client
+    and off the SDK's own converter, because the number is in milliseconds and
+    the plain `90` a reader of the openai SDK would write is 90 ms.
+
+    Asserted as a bound *below* the device's own idle timeout rather than as a
+    literal. `BackendTutorService.streamTimeout` is 120 s; above it this number
+    could never help, because the learner's app has already abandoned the
+    stream.
+    """
+    from google.genai._api_client import get_timeout_in_seconds
+
+    from app.api.turn import GEMINI_TIMEOUT_MS, _gemini_client
+    from app.config import get_settings
+
+    DEVICE_STREAM_TIMEOUT_SECONDS = 120.0
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    get_settings.cache_clear()
+    _gemini_client.cache_clear()
+    try:
+        options = _gemini_client()._api_client._http_options
+        assert options.timeout == GEMINI_TIMEOUT_MS
+        seconds = get_timeout_in_seconds(options.timeout)
+        assert 0 < seconds < DEVICE_STREAM_TIMEOUT_SECONDS, (
+            "a read bound at or past the device's own idle timeout is a bound "
+            "that can never be reached in time to tell the learner anything"
+        )
+        # Enough margin to record the failure and put an `error` event on the
+        # wire before the device gives up on the stream.
+        assert DEVICE_STREAM_TIMEOUT_SECONDS - seconds >= 15.0
+    finally:
+        _gemini_client.cache_clear()
+        get_settings.cache_clear()
+
+
 def test_the_except_ladder_keeps_its_order_and_recovers_only_at_the_end():
     """The ladder's order is load-bearing, so it is asserted rather than assumed.
 

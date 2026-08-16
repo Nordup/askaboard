@@ -133,6 +133,15 @@ def _client() -> AsyncOpenAI:
     return AsyncOpenAI(api_key=get_settings().openai_api_key, max_retries=0)
 
 
+#: How long the Gemini transport may wait on one read, in **milliseconds**.
+#:
+#: A constant so a test can assert the built client really carries it, and named
+#: in the unit the SDK's own field is documented in. See `_gemini_client` for why
+#: 90 s, why an unset value is unbounded rather than long, and what it does not
+#: bound.
+GEMINI_TIMEOUT_MS = 90_000
+
+
 @lru_cache
 def _gemini_client() -> genai.Client:
     """The one Gemini client, built on first use and then kept.
@@ -177,11 +186,57 @@ def _gemini_client() -> genai.Client:
 
     `genai.types.` rather than a top-level import of the two option classes, so
     the qualified name says whose retry is being turned off.
+
+    **`timeout` is stated because this SDK has no default for it.** Left unset,
+    `HttpOptions.timeout` is `None`, `_api_client.get_timeout_in_seconds` returns
+    `None`, and the httpx path is built with `timeout=None` — which in httpx means
+    *no deadline at all*, not a long one. So a Gemini round whose stream went
+    quiet forever would have been awaited forever, with `run_turn` inside an
+    `async for` that never yields again and the turn row never finished. That is
+    read off the installed 2.18.1, not the documentation: `aiohttp` is not a
+    dependency of this service, so `_use_aiohttp()` is False and the httpx branch
+    is the one that runs. (On the aiohttp branch the same number would be an
+    `aiohttp.ClientTimeout(total=…)` — a whole-request deadline rather than a
+    per-read one — so adding that dependency would silently change what this
+    bounds. Worth knowing before anyone does.)
+
+    **Milliseconds, and the field says so.** `HttpOptions.timeout` is documented
+    as "Timeout for the request in milliseconds" and divided by 1000 before it
+    reaches httpx, so the plain `90` a reader of the openai SDK would write here
+    is 90 ms and fails every turn on the connect.
+
+    **90 s, chosen against the device's 120 s and nothing else.**
+    `BackendTutorService.streamTimeout` is 120 s and it is an *idle* bound on
+    iOS, so the learner's app abandons a stream after 120 s without a byte. The
+    server's own keep-alive cannot cover that gap — `EventTranslator.translate`
+    emits one on incoming provider events, of which there are none while the
+    provider is silent. So the only useful place for this number is below 120 s:
+    at 90 s the server's read raises, `app.api.turn` records the failure and puts
+    an `error` event on the wire with 30 s to spare, instead of the device giving
+    up on a stream this process still believes is live. Above 120 s the number
+    could never help, because the turn is already lost to the learner by then.
+    Under httpx this is a per-read bound — the gap between two SSE events, not
+    the length of the round — which is what makes 90 s generous rather than tight
+    for a model that thinks before it writes.
+
+    **The four eventless waits in `loop.py` were re-checked against this SDK and
+    none of them moves.** Every one of them is awaited outside this client:
+    `rendezvous.RENDER_TIMEOUT_SECONDS` (20 s) waits on the iPad through an
+    `asyncio.Future` and touches no HTTP client at all;
+    `loop.MEMORY_TIMEOUT_SECONDS` (20 s) bounds a database query and an
+    embeddings call on the *OpenAI* client; `loop.IMAGE_FETCH_TIMEOUT_SECONDS`
+    (15 s) sits over `app.tutor.fetch_image`, which owns its own
+    `httpx.AsyncClient` and its own total deadline; and
+    `loop.FILE_RELAY_TIMEOUT_SECONDS` (15 s) covers `ProducedFile.read`, which on
+    this family is `gemini._inline_bytes` — the picture already arrived inside the
+    stream, so there is no second request to bound and the 15 s covers only the
+    blob write. The bound this client needed was the missing one, above.
     """
     return genai.Client(
         api_key=get_settings().gemini_api_key,
         http_options=genai.types.HttpOptions(
             retry_options=genai.types.HttpRetryOptions(attempts=0),
+            timeout=GEMINI_TIMEOUT_MS,
         ),
     )
 

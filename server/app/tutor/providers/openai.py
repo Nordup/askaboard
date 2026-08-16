@@ -454,15 +454,28 @@ class OpenAIProvider:
         """The files a script wrote, as the one item that hands them over."""
         return _relay_item(relayed)
 
-    def classify(self, status_code: int, body: dict | None) -> RetryDecision:
+    def classify(
+        self, status_code: int | None, body: dict | None, message: str | None = None
+    ) -> RetryDecision:
         """Whether a failed open is worth retrying.
 
         Delegated rather than restated: `/v1/dictation` opens a transcription
         stream against the same rules, and a billing 429 this file called
         retryable would be backoff a learner waits through on an exhausted
         account.
+
+        All three of `retry.classify`'s parameters, so this method really is the
+        function it delegates to. It declared two for as long as `retry.classify`
+        took two, and kept declaring two after that function was widened — which
+        `isinstance(…, Provider)` cannot notice, because a `runtime_checkable`
+        Protocol tests for member presence and never for a signature. Nothing on
+        this family passes `message` today: `open_failure` only claims an
+        `APIStatusError`, which always carries a status code, so `_without_status`
+        is unreachable from here. The parameter is accepted anyway, because a
+        caller written against the seam is entitled to pass what the seam
+        declares.
         """
-        return retry.classify(status_code, body)
+        return retry.classify(status_code, body, message)
 
     def open_failure(self, error: BaseException) -> OpenFailure | None:
         """This family's reading of a refused open, or `None` for a stranger's.

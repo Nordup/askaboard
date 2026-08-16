@@ -52,6 +52,9 @@ from app.tutor.tools import (
 from tests.conftest import requires_db
 from tests.fixtures.sse import TEXT_ONLY_TURN, sse_stream
 
+#: The provider `_answer` writes its replies through — see `test_loop.py`.
+_PROVIDER = OpenAIProvider(client=None)
+
 # ---------------------------------------------------------------------------
 # Everything down to `_learner` is the definitions and the routing: no
 # database, no network, and nothing that should ever be slow.
@@ -193,7 +196,7 @@ def test_a_memory_call_becomes_an_intent_for_the_caller_to_run():
     answer = _answer(
         {"call_id": "c", "name": "search_memory",
          "arguments": '{"query": "what exam are they sitting"}'},
-        has_board=False, has_memory=True,
+        provider=_PROVIDER, has_board=False, has_memory=True,
     )
     assert answer.items is None and answer.ask is None
     assert answer.run == ("search_memory", {"query": "what exam are they sitting"})
@@ -205,7 +208,7 @@ def test_a_memory_call_with_no_handler_is_not_reported_as_unsupported():
     whether it then tells the learner it does not remember them."""
     answer = _answer(
         {"call_id": "c", "name": "remember", "arguments": '{"text": "x"}'},
-        has_board=False, has_memory=False,
+        provider=_PROVIDER, has_board=False, has_memory=False,
     )
     assert answer.run is None
     assert answer.items[0]["output"] == NO_MEMORY_ACK
@@ -215,7 +218,7 @@ def test_a_memory_call_with_no_handler_is_not_reported_as_unsupported():
 def test_memory_arguments_that_are_not_an_object_run_nothing():
     answer = _answer(
         {"call_id": "c", "name": "remember", "arguments": '["text", "x"]'},
-        has_board=False, has_memory=True,
+        provider=_PROVIDER, has_board=False, has_memory=True,
     )
     assert answer.run is None
     assert answer.items[0]["output"] == MALFORMED_MEMORY_ACK
@@ -225,7 +228,7 @@ def test_an_unknown_tool_is_still_unsupported():
     """The memory branch must not swallow every name it does not recognise."""
     answer = _answer(
         {"call_id": "c", "name": "future_web_search", "arguments": "{}"},
-        has_board=False, has_memory=True,
+        provider=_PROVIDER, has_board=False, has_memory=True,
     )
     assert answer.items[0]["output"] == UNSUPPORTED_TOOL_ACK
 

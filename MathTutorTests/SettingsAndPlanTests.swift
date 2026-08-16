@@ -553,6 +553,54 @@ final class SettingsAndPlanTests: XCTestCase {
         XCTAssertEqual(restored.selectedModel, .flashLite)
     }
 
+    /// An unknown model id must cost the learner a model choice, not the session.
+    ///
+    /// `selectedModel` was decoded with a plain `try` while every field around it
+    /// — the session `id`, `boardScene`, `reasoningEffort`, `selectedVoiceModel` —
+    /// already had a fallback. So one stale or renamed model id made the whole
+    /// `session.json` undecodable, `SessionPersistence.load` returned nil, and the
+    /// learner lost every message, the plan and the board with it.
+    ///
+    /// Both doors, because one does not imply the other: a value this build does
+    /// not know reaches `ModelChoice.init(from:)`, and an absent key never does —
+    /// Swift throws `keyNotFound` before the initialiser runs.
+    func testAnUnknownModelIdCostsTheChoiceRatherThanTheWholeSession() throws {
+        var session = LearningSession.empty
+        session.selectedModel = .flashLite
+        session.messages = [TutorMessage(role: .learner, text: "why is 7 times 8 56?")]
+        let data = try JSONEncoder().encode(session)
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+
+        object["selectedModel"] = "gemini-4.0-retired"
+        let renamed = try JSONDecoder().decode(
+            LearningSession.self,
+            from: try JSONSerialization.data(withJSONObject: object)
+        )
+        XCTAssertEqual(renamed.selectedModel, .defaultValue)
+        XCTAssertEqual(renamed.messages.count, 1, "the transcript survives")
+        XCTAssertEqual(renamed.messages.first?.text, "why is 7 times 8 56?")
+
+        object.removeValue(forKey: "selectedModel")
+        let older = try JSONDecoder().decode(
+            LearningSession.self,
+            from: try JSONSerialization.data(withJSONObject: object)
+        )
+        XCTAssertEqual(older.selectedModel, .defaultValue)
+        XCTAssertEqual(older.messages.count, 1)
+    }
+
+    /// The fallback has to be a model that carries every reasoning depth, or a
+    /// session whose effort decoded fine lands on a model that cannot take it.
+    func testTheDefaultModelSupportsEveryReasoningEffort() {
+        XCTAssertEqual(
+            Set(ModelChoice.defaultValue.supportedEfforts),
+            Set(ReasoningEffort.allCases)
+        )
+        XCTAssertEqual(LearningSession.empty.selectedModel, .defaultValue)
+    }
+
     // MARK: - The panel's bottom slot
 
     /// Board 11's `btn/primary` used to share this slot with the composer, and the geometry

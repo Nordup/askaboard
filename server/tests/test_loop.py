@@ -72,6 +72,17 @@ from tests.fixtures.sse import (
     sse_stream,
 )
 
+#: The provider `_answer` writes its replies through.
+#:
+#: Every direct `_answer` test below reads `answer.items[0]["output"]`, which is
+#: this family's `function_call_output` shape. It is deliberately not both
+#: families: `_answer` used to build that literal itself, and asserting the
+#: *Gemini* item shape one branch at a time here would still not have caught the
+#: bug, because the shape only becomes wrong once the item is in a request. That
+#: is `test_providers.py`'s payload-validation sweep, which drives all seven of
+#: these replies into a real `CreateModelInteraction`.
+_PROVIDER = OpenAIProvider(client=None)
+
 
 def test_sse_stream_terminates_done_as_its_own_record():
     """Prove the fixture's [DONE] line is a real, independently-decoded SSE
@@ -270,7 +281,7 @@ async def test_an_update_board_turn_yields_a_board_update_event_and_prose():
 def test_update_board_is_answered_with_its_own_ack_not_set_workspaces():
     answer = _answer(
         {"call_id": "c", "name": "update_board", "arguments": '{"mode":"upsert","delete_ids":[],"elements":[]}'},
-        has_board=True,
+        provider=_PROVIDER, has_board=True,
     )
     assert answer.ask is None
     assert answer.items[0]["output"] == UPDATE_BOARD_ACK
@@ -279,7 +290,7 @@ def test_update_board_is_answered_with_its_own_ack_not_set_workspaces():
 def test_malformed_update_board_is_rejected_without_an_applied_ack():
     answer = _answer(
         {"call_id": "c", "name": "update_board", "arguments": '{"elements": "not a list"}'},
-        has_board=True,
+        provider=_PROVIDER, has_board=True,
     )
     assert answer.items[0]["output"] == MALFORMED_BOARD_ACK
 
@@ -287,7 +298,7 @@ def test_malformed_update_board_is_rejected_without_an_applied_ack():
 def test_an_unknown_tool_is_answered_with_an_unsupported_ack():
     answer = _answer(
         {"call_id": "c", "name": "future_web_search", "arguments": "{}"},
-        has_board=True,
+        provider=_PROVIDER, has_board=True,
     )
     assert answer.ask is None
     assert answer.items[0]["output"] == UNSUPPORTED_TOOL_ACK
@@ -649,7 +660,7 @@ SVG_BOARD_UPDATE_FOLLOW_UP = (
 def test_update_board_accepts_raw_svg_and_acknowledges_it():
     answer = _answer(
         {"call_id": "c", "name": "update_board", "arguments": json.dumps(SVG_UPDATE_ARGUMENTS)},
-        has_board=True,
+        provider=_PROVIDER, has_board=True,
     )
 
     assert answer.ask is None
@@ -681,7 +692,7 @@ def test_unsupported_svg_features_come_back_as_warnings_on_the_applied_ack():
     rather than turning into a rejection the learner sees as a blank board."""
     answer = _answer(
         {"call_id": "c", "name": "update_board", "arguments": _svg_update(ANIMATED_SVG)},
-        has_board=True,
+        provider=_PROVIDER, has_board=True,
     )
 
     output = answer.items[0]["output"]
@@ -700,7 +711,7 @@ def test_one_warning_is_reported_once_however_many_elements_earn_it():
             "name": "update_board",
             "arguments": _svg_update(ANIMATED_SVG, ANIMATED_SVG, ANIMATED_SVG),
         },
-        has_board=True,
+        provider=_PROVIDER, has_board=True,
     )
 
     assert answer.items[0]["output"].count("<animate>") == 1
@@ -1253,7 +1264,7 @@ def test_fetch_image_is_turned_down_when_no_fetcher_is_wired():
     answer = _answer(
         {"call_id": "c", "name": "fetch_image",
          "arguments": '{"url": "https://example.com/cat.png"}'},
-        has_board=True,
+        provider=_PROVIDER, has_board=True,
     )
     assert answer.fetch is None
     assert answer.items[0]["output"] == UNSUPPORTED_TOOL_ACK
@@ -1263,7 +1274,7 @@ def test_a_wired_fetch_image_call_comes_back_as_the_url_to_fetch():
     answer = _answer(
         {"call_id": "c", "name": "fetch_image",
          "arguments": '{"url": "https://example.com/cat.png"}'},
-        has_board=False, has_image=True,
+        provider=_PROVIDER, has_board=False, has_image=True,
     )
     assert answer.fetch == "https://example.com/cat.png"
     assert answer.items is None
@@ -1275,7 +1286,7 @@ def test_a_wired_fetch_image_call_comes_back_as_the_url_to_fetch():
 def test_a_fetch_image_call_with_no_usable_url_is_refused_without_fetching(arguments):
     answer = _answer(
         {"call_id": "c", "name": "fetch_image", "arguments": arguments},
-        has_board=False, has_image=True,
+        provider=_PROVIDER, has_board=False, has_image=True,
     )
     assert answer.fetch is None
     assert json.loads(answer.items[0]["output"])["error"]

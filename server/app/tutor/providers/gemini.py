@@ -61,10 +61,11 @@ from app.tutor import retry
 from app.tutor.events import CODE_INTERPRETER
 from app.tutor.fetch_image import ALLOWED_CONTENT_TYPES
 from app.tutor.providers import (
-    RELAYED_FILES_CAPTION, TERMINAL_ERROR_STATUSES, Completed, Created, Failed,
-    HostedToolActivity, HostedToolStarted, OpenFailure, ProducedFile,
-    ProviderEvent, RelayedFile, RetryDecision, TextDelta, ThoughtDelta,
-    ToolArgsDelta, ToolArgsDone, ToolCall, ToolCallStarted,
+    PICTURE_NOT_SHOWN_NOTE, RELAYED_FILES_CAPTION, TERMINAL_ERROR_STATUSES,
+    Completed, Created, Failed, HostedToolActivity, HostedToolStarted,
+    OpenFailure, ProducedFile, ProviderEvent, RelayedFile, RetryDecision,
+    TextDelta, ThoughtDelta, ToolArgsDelta, ToolArgsDone, ToolCall,
+    ToolCallStarted,
 )
 from app.tutor.providers.gemini_schema import to_gemini_tools
 from app.tutor.tools import TOOL_DEFINITIONS
@@ -232,19 +233,49 @@ def map_usage(usage: dict) -> dict:
     `{count, type}`, and `turn_cost_usd` multiplies it by `per_search` as an int.
     Handed on as the list, a grounded turn would price as a `TypeError` instead of
     as money — see `_searches`.
+
+    **A key the provider did not send is left out, never materialised as `None`.**
+    This function used to write all six keys unconditionally, and a round whose
+    usage arrives without the totals then reads as `input_tokens: None` rather
+    than as "not reported". `loop._merge_usage` sums a key when both sides are
+    numbers and *assigns* otherwise, so that `None` overwrote the running total
+    of every earlier round: a turn measured at 1000 input tokens in round one and
+    an empty usage in round two recorded 0 input tokens and a smaller
+    `turns.cost_usd` than it cost. That is under-reporting in the unsafe
+    direction for `DAILY_SPEND_CAP_USD`. The OpenAI family was never exposed to
+    it because it passes the provider's own dict through, where an absent key
+    stays absent — so absence is what this has to reproduce.
     """
-    return {
+    mapped = {
         "input_tokens": usage.get("total_input_tokens"),
         "output_tokens": usage.get("total_output_tokens"),
-        "input_tokens_details": {"cached_tokens": usage.get("total_cached_tokens")},
-        "output_tokens_details": {
+        "input_tokens_details": _reported({
+            "cached_tokens": usage.get("total_cached_tokens"),
+        }),
+        "output_tokens_details": _reported({
             "reasoning_tokens": usage.get("total_thought_tokens"),
-        },
-        # Recorded, not priced: the code-execution documentation describes these
-        # as intermediate tokens already counted in input and output.
+        }),
+        # Recorded, not priced, and recorded in exactly one place: the
+        # `llm_calls.usage` JSONB blob this dict is stored as. Nothing reads it
+        # — `recorder._apply_usage` never looks at it and `turns` has no column
+        # for it — because the code-execution documentation describes these as
+        # intermediate tokens already counted in input and output.
         "tool_use_tokens": usage.get("total_tool_use_tokens"),
         "grounding_tool_count": _searches(usage),
     }
+    return _reported(mapped)
+
+
+def _reported(mapped: dict) -> dict:
+    """Only the keys the provider actually reported.
+
+    One comprehension, used at both levels of the usage dict, because an absent
+    nested count is the same hazard as an absent top-level one — see `map_usage`.
+    An empty details dict is left in place rather than dropped: `_merge_usage`
+    recurses into two dicts and an empty one adds nothing, where a `None` would
+    replace whatever the earlier rounds had counted.
+    """
+    return {key: value for key, value in mapped.items() if value is not None}
 
 
 def _searches(usage: dict) -> int:
@@ -522,10 +553,64 @@ class GeminiProvider:
         if kind == "error":
             return self._failed(event)
 
-        # `interaction.status_update` lands here, and it is the event a heartbeat
-        # sees most often: it arrives immediately after `interaction.created` on
-        # every turn recorded, saying `in_progress`, which `created` already said.
+        if kind == "interaction.status_update":
+            return self._status_update(event)
+
+        # `thought_signature`, `text_annotation_delta` and `google_search_result`'s
+        # payload land here. The heartbeat still fires on them, which is why this
+        # returns rather than drops.
         return None
+
+    def _status_update(self, event: dict) -> ProviderEvent | None:
+        """A bare status, which is `None` unless the status ends the turn.
+
+        Almost always nothing: this event arrives immediately after
+        `interaction.created` on every turn recorded, saying `in_progress`, which
+        `created` already said. It is the event a heartbeat sees most often, and
+        returning `None` is what lets the heartbeat fire on it.
+
+        **A terminal status here does surface, and this is the only door
+        `budget_exceeded` has.** The SDK's two status enums are not the same set:
+        `InteractionStatusUpdate.status` admits `budget_exceeded` and `queued`,
+        while the `interaction` object on `interaction.completed` admits neither.
+        So one of the four statuses `TERMINAL_ERROR_STATUSES` names can *only*
+        arrive on this event, and dropping it to `None` — which is what this
+        branch used to do — meant a spent budget ended a turn with `done` and a
+        half-written answer. The spec is explicit that none of the four may end a
+        turn quietly.
+
+        Reported as a `Completed` rather than a `Failed`, which looks odd and is
+        the accurate shape. `run_turn`'s terminal-status branch merges usage and
+        then yields the `ErrorEvent`, so a `Completed` gets both halves where a
+        `Failed` would report the failure and drop the spend. There is no spend on
+        *this* event to drop: `InteractionStatusUpdate` carries `interaction_id`
+        and `status` and nothing else — no usage field exists on the type. The one
+        thing this forgoes is an `interaction.completed` arriving afterwards with
+        the round's usage on it, since `run_turn` stops at the first terminal
+        status it is shown. That ordering is unrecorded; a `budget_exceeded` that
+        is invisible is not.
+        """
+        status = event.get("status")
+        if not isinstance(status, str) or status not in TERMINAL_ERROR_STATUSES:
+            return None
+        interaction_id = event.get("interaction_id")
+        response_id = (
+            interaction_id if isinstance(interaction_id, str) and interaction_id
+            else self._round.interaction_id or None
+        )
+        logger.warning(
+            "interaction reported %s | interaction_id=%s", status, response_id,
+        )
+        return Completed(
+            # Nothing to record. The event has no usage field, so `None` is what
+            # it says rather than a gap this method invented; `_merge_usage`
+            # leaves the turn's running total exactly as it was.
+            usage=None,
+            response_id=response_id,
+            status=status,
+            calls=list(self._round.calls),
+            files=self._produced_files(response_id),
+        )
 
     def _step_started(self, event: dict) -> ProviderEvent | None:
         """A step opening: the only event that names a function call.
@@ -742,9 +827,17 @@ class GeminiProvider:
             # into a `Failed`. A round that ended `incomplete` or
             # `budget_exceeded` spent tokens getting there, and `Failed` carries
             # no usage — so converting it would leave that spend out of
-            # `turns.cost_usd`, which is money nobody can see. `run_turn` ends the
-            # turn on its own from here, because a status like this arrives with no
-            # calls, and the learner keeps whatever prose did arrive.
+            # `turns.cost_usd`, which is money nobody can see.
+            #
+            # **What used to be missing is the other half.** This warning was
+            # once the whole of the response: `run_turn` read only `Failed` and
+            # never `Completed.status`, so a status like this — which arrives
+            # with no calls — fell through the loop's own `return` and the
+            # device was sent `done`. The learner read a truncated answer as a
+            # finished one. `run_turn` now tests this status against
+            # `TERMINAL_ERROR_STATUSES` after merging the usage, so the spend is
+            # recorded *and* the turn ends as a failure. Both goals, which were
+            # never in conflict.
             logger.warning(
                 "interaction ended %s | interaction_id=%s", status, response_id,
             )
@@ -927,20 +1020,37 @@ class GeminiProvider:
         not accept is a 400 on the next round, which fails everything rather than
         losing one picture. See `relayed_content_type` for the half that protects
         the device.
+
+        **A kept-but-unshown picture is marked**, which is the branch
+        `providers.openai._relay_item` has and this method was missing.
+        `fetch_image.model_copy` refuses to decode past its own ceiling, so a
+        chart can be downloaded, blob-stored and named here with no picture
+        beside it — and the line `chart.png → blob_abc` is indistinguishable from
+        one whose picture follows. A model in that position places the blob and
+        then describes a chart it has never seen. See `PICTURE_NOT_SHOWN_NOTE`.
         """
         lines = []
         pictures = []
+        withheld = False
         for filename, file in relayed:
             if file.blob_id:
                 lines.append(f"{filename} → {file.blob_id}")
             else:
                 lines.append(f"{filename} → not saved ({file.error or 'unknown'})")
-            if file.data and file.content_type in ALLOWED_CONTENT_TYPES:
+            if file.content_type not in ALLOWED_CONTENT_TYPES:
+                # A CSV, or an image in a format this provider will not take. It
+                # is listed by name and id and nothing more; there was never a
+                # picture to show, so there is nothing to say was withheld.
+                continue
+            if file.data:
                 pictures.append(_image_part(file.data, file.content_type))
-        return _user_input([
-            _text_part(RELAYED_FILES_CAPTION + "\n\n" + "\n".join(lines)),
-            *pictures,
-        ])
+            elif file.blob_id:
+                lines[-1] += " (not shown — too large to display)"
+                withheld = True
+        text = RELAYED_FILES_CAPTION + "\n\n" + "\n".join(lines)
+        if withheld:
+            text += "\n\n" + PICTURE_NOT_SHOWN_NOTE
+        return _user_input([_text_part(text), *pictures])
 
     # ---- failures ----------------------------------------------------------
 

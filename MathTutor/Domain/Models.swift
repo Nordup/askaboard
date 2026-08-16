@@ -301,7 +301,13 @@ struct LearningSession: Codable, Sendable, Equatable {
         exercise = try container.decodeIfPresent(Exercise.self, forKey: .exercise)
         drawingData = try container.decodeIfPresent(Data.self, forKey: .drawingData)
         boardScene = (try? container.decodeIfPresent(BoardScene.self, forKey: .boardScene)) ?? .empty
-        selectedModel = try container.decode(ModelChoice.self, forKey: .selectedModel)
+        // `try?` on top of `ModelChoice`'s own lenient decoder, for the reason
+        // `reasoningEffort` below carries both: the decoder repairs an unknown
+        // model *id*, and this repairs a file with no `selectedModel` key at all.
+        // Swift throws `keyNotFound` rather than reaching the initialiser then,
+        // so one guard does not imply the other.
+        selectedModel = (try? container.decode(ModelChoice.self, forKey: .selectedModel))
+            ?? .defaultValue
         // Older session files do not have this key. Keep those sessions intact
         // and opt them into the same default used for a new session.
         reasoningEffort = (try? container.decode(ReasoningEffort.self, forKey: .reasoningEffort)) ?? .defaultValue
@@ -325,7 +331,7 @@ struct LearningSession: Codable, Sendable, Equatable {
             plan: nil,
             exercise: nil,
             drawingData: nil,
-            selectedModel: .luna,
+            selectedModel: .defaultValue,
             reasoningEffort: .defaultValue,
             selectedVoiceModel: .mini,
             startedAt: .now,
@@ -417,6 +423,36 @@ enum ModelChoice: String, Codable, CaseIterable, Sendable, Identifiable {
     /// row is a trap — the row would show a level the next turn did not use.
     func clamp(_ effort: ReasoningEffort) -> ReasoningEffort {
         supportedEfforts.contains(effort) ? effort : (supportedEfforts.last ?? .high)
+    }
+
+    /// What a session opens on, and what an unreadable saved choice falls back
+    /// to. `LearningSession.empty` reads it too, so the two cannot drift.
+    ///
+    /// Luna rather than any other row, and it is the safe answer for the
+    /// fallback as well as the pleasant one for a new session: it supports all
+    /// five reasoning depths, so a session whose `reasoningEffort` decoded
+    /// successfully never lands on a model that cannot carry it.
+    static let defaultValue: ModelChoice = .luna
+
+    /// An unknown model id must not make a saved session undecodable.
+    ///
+    /// The same guard `ReasoningEffort` above already has, and it was the one
+    /// missing member of the set. `LearningSession.init(from:)` decodes this
+    /// with a plain `try`, so a `session.json` naming a model this build does
+    /// not have — a row renamed on the server, a file written by a newer build,
+    /// a provider retiring a name — took the **whole file** down:
+    /// `SessionPersistence.load` returns nil for it, and the learner loses every
+    /// message, the plan, and the board along with a model choice nobody could
+    /// have kept anyway.
+    ///
+    /// Falling back means the session opens on Luna and the learner can pick
+    /// again from a row that is really there. That is what already happens for
+    /// `reasoningEffort`, `selectedVoiceModel`, `boardScene` and the session
+    /// `id`; this field was the only one still able to destroy the file.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        self = ModelChoice(rawValue: rawValue) ?? .defaultValue
     }
 }
 
