@@ -12,9 +12,9 @@ SET_WORKSPACE_TOOL: dict = {
     "type": "function",
     "name": "set_workspace",
     "description": (
-        "Replace the learner's session plan and board exercise. Call this only when "
-        "the learner asks to create, add, replace, change, simplify, advance, or get "
-        "another board exercise."
+        "Replace the learner's session plan and board exercise. Call it when the "
+        "learner asks to create, add, change, simplify, advance, or get another "
+        "exercise."
     ),
     "strict": True,
     "parameters": {
@@ -53,15 +53,11 @@ VIEW_BOARD_TOOL: dict = {
     "type": "function",
     "name": "view_board",
     "description": (
-        "Look closely at part of the learner's whiteboard. The overview image in your "
-        "context shows their whole board but is too small to read; call this to get a "
-        "legible image of any region of it. Call it whenever answering depends on what "
-        "is actually written — 'check this', 'is this right', 'what did I do wrong', or "
-        "any reply that would otherwise be a guess about their working. You may call it "
-        "more than once to read different parts — each region is rendered fresh on the "
-        "learner's iPad at full resolution, so zooming in loses no detail. "
-        "Never describe, quote, or grade the "
-        "learner's work without having looked at it here first."
+        "Read any region of the learner's whiteboard at full resolution; the "
+        "overview is too small to read clearly. Call before grading, quoting, "
+        "or placing anything relative to learner work, and whenever an answer "
+        "depends on what is actually written. Call again for other regions; "
+        "each crop renders fresh."
     ),
     "strict": True,
     "parameters": {
@@ -70,15 +66,15 @@ VIEW_BOARD_TOOL: dict = {
         "properties": {
             "x": {
                 "type": "number",
-                "description": "Left edge, percent across the overview (0-100).",
+                "description": "Left edge, percent across the board (0-100).",
             },
             "y": {
                 "type": "number",
-                "description": "Top edge, percent down the overview (0-100).",
+                "description": "Top edge, percent down the board (0-100).",
             },
             "width": {
                 "type": "number",
-                "description": "Region width in percent; 100 is the whole board, at readable size.",
+                "description": "Region width in percent; 100 = whole board.",
             },
             "height": {
                 "type": "number",
@@ -127,7 +123,7 @@ _STYLE_DEFS: dict = {
         "type": "number",
         "minimum": 0.5,
         "maximum": 60,
-        "description": "Stroke width in board points.",
+        "description": "Width in board points.",
     },
     "opacity": {
         "type": "number",
@@ -138,11 +134,11 @@ _STYLE_DEFS: dict = {
         "type": "array",
         "maxItems": 8,
         "items": {"type": "number", "minimum": 0, "maximum": 200},
-        "description": "Dash pattern in board points; [] is solid.",
+        "description": "Dash pattern; [] solid.",
     },
     "rotation": {
         "type": "number",
-        "description": "Clockwise degrees about the object's own centre; 0 for none.",
+        "description": "Clockwise degrees; 0 = none.",
     },
 }
 
@@ -152,14 +148,14 @@ _BOARD_DEFS: dict = {
     "element_id": {
         "type": "string",
         "pattern": "^[A-Za-z0-9._:+-]{1,128}$",
-        "description": "Stable id. Reuse it in a later call to revise this object.",
+        "description": "Stable id; reuse to revise.",
     },
     "point": {
         "type": "array",
         "items": {"type": "number"},
         "minItems": 2,
         "maxItems": 2,
-        "description": "One board point as [x, y].",
+        "description": "Board point [x, y].",
     },
 }
 
@@ -234,36 +230,24 @@ UPDATE_BOARD_TOOL: dict = {
     "type": "function",
     "name": "update_board",
     "description": (
-        "Draw, label, correct, update, or delete the tutor's semantic objects on the "
-        "learner's whiteboard. Use it whenever a visual would help them — an exercise "
-        "to work on, a diagram that carries an explanation, a correction beside their "
-        "work — and not only when one is asked for. Choose the "
-        "element for the job: ordinary primitives — lines, arrows, shapes, arcs, "
-        "angle markers, compact `text` labels — for simple geometry and short "
-        "captions; `path` for curves and freeform shapes; `ink_text` for anything "
-        "you say in words — a hint, encouragement, a note in the margin, "
-        "commentary beside a step — written in handwriting-look ink, the way a "
-        "teacher writes at a board, and reach for it often; `math_text` for every "
-        "piece of mathematical notation, never plain `text`, never SVG `<text>`, "
-        "and never symbols built out of primitives; `svg` for any figure made of "
-        "several parts, which is what most real illustrations are — one document "
-        "with a viewBox, `width` and `height` sent as 0, drawn one user unit to one "
-        "board point; `image` for a photograph fetched with fetch_image or a chart "
-        "a script produced, placed by the blob_id that tool answered with. "
-        "This tool never touches the "
-        "learner's own PencilKit ink: what you write is a tutor object in your "
-        "own scene, and theirs stays theirs. Each object has a stable id: "
-        "reuse ids to revise existing content and list ids in delete_ids to remove "
-        "it. Pass elements=[] to only delete and delete_ids=[] to only upsert. "
-        "Coordinates and every size are logical board points: (0,0) is the board "
-        "centre, +x right, +y down. Keep new standalone diagrams compact and "
-        "inside `recommended_tutor_rect` supplied in context; leave "
-        "`reserved_learner_work_rect` clear for the learner's working. Do not cover "
-        "or erase learner ink; place corrections "
-        "beside the relevant work. Inspect the board with view_board before grading, "
-        "correcting, or placing content relative to learner writing; a requested "
-        "standalone exercise or diagram may be drawn on an empty board without that "
-        "look, and do not draw gratuitously for simple conversational answers."
+        "Draw, label, revise, or delete your objects on the learner's whiteboard "
+        "whenever a visual teaches better than words; do not wait to be asked. "
+        "Compose like a thoughtful teacher: clear hierarchy, whitespace, a "
+        "restrained coherent palette, legible type, one cohesive scene rather "
+        "than scattered marks. Surprise is welcome when it clarifies or makes "
+        "an idea memorable. "
+        "Kind by job: primitives and `text` labels for simple labels and "
+        "geometry; `path`/freehand for curves; `ink_text` for brief tutor "
+        "prose in your own hand; `math_text` for notation; `svg` for a "
+        "polished multi-part illustration; `image` for a photo fetched with "
+        "fetch_image or a script chart by blob_id. "
+        "Your objects never alter the learner's PencilKit ink. Use stable "
+        "ids: reuse to revise, list in delete_ids to remove; elements=[] "
+        "deletes only, delete_ids=[] upserts only. Board points: (0,0) "
+        "centre, +x right, +y down. Keep work compact in "
+        "`recommended_tutor_rect`, leave `reserved_learner_work_rect` clear, "
+        "place corrections beside learner work, and view_board before grading "
+        "or quoting."
     ),
     "strict": True,
     "parameters": {
@@ -277,7 +261,7 @@ UPDATE_BOARD_TOOL: dict = {
             "mode": {
                 "type": "string",
                 "enum": ["upsert", "replace_all"],
-                "description": "upsert applies the batch by id; replace_all clears the scene first and applies the batch.",
+                "description": "upsert applies by id; replace_all clears first, then applies.",
             },
             "delete_ids": {
                 "type": "array",
@@ -294,10 +278,10 @@ UPDATE_BOARD_TOOL: dict = {
                             fields={
                                 "x": {"type": "number", "description": "Left edge."},
                                 "y": {"type": "number", "description": "Top edge."},
-                                "text": {"type": "string", "maxLength": 2000, "description": "Newlines make multiple lines."},
+                                "text": {"type": "string", "maxLength": 2000, "description": "Newlines make lines."},
                                 "font_size": {"type": "number", "minimum": 8, "maximum": 256},
                                 "alignment": {"type": "string", "enum": ["left", "center", "right"]},
-                                "width": {"type": "number", "minimum": 0, "maximum": 50000, "description": "Text box width; 0 means natural width."},
+                                "width": {"type": "number", "minimum": 0, "maximum": 50000, "description": "Text box width; 0 = natural."},
                             },
                             required=["x", "y", "text", "font_size", "alignment", "width"],
                             # A label is glyphs, not a shape. `draw(text:in:)`
@@ -327,7 +311,7 @@ UPDATE_BOARD_TOOL: dict = {
                             fields={
                                 "x1": {"type": "number", "description": "Tail x."},
                                 "y1": {"type": "number", "description": "Tail y."},
-                                "x2": {"type": "number", "description": "Head x: the arrowhead is drawn here."},
+                                "x2": {"type": "number", "description": "Head x: the arrowhead lands here."},
                                 "y2": {"type": "number", "description": "Head y."},
                                 "head_size": {"type": "number", "minimum": 4, "maximum": 120},
                             },
@@ -380,7 +364,7 @@ UPDATE_BOARD_TOOL: dict = {
                         # call.
                         _board_element(
                             kind=("polyline", "freehand"),
-                            kind_description="Open chains through the points: polyline joins them with straight segments, freehand smooths them into a curve.",
+                            kind_description="Open chains: polyline joins straight, freehand smooths.",
                             fields={
                                 "points": {
                                     "type": "array",
@@ -403,7 +387,7 @@ UPDATE_BOARD_TOOL: dict = {
                                 "cy": {"type": "number"},
                                 "radius": {"type": "number", "minimum": 0, "maximum": 50000},
                                 "start_angle": {"type": "number", "description": "Degrees; 0 is right, increasing clockwise."},
-                                "end_angle": {"type": "number", "description": "Sweeps clockwise from start_angle, past 180 degrees when asked; use circle for a full turn."},
+                                "end_angle": {"type": "number", "description": "Degrees clockwise from start_angle, past 180 when asked; use circle for a full turn."},
                             },
                             required=["cx", "cy", "radius", "start_angle", "end_angle"],
                             # An arc is a sampled open path and is only stroked
@@ -416,12 +400,12 @@ UPDATE_BOARD_TOOL: dict = {
                             fields={
                                 "vertex_x": {"type": "number"},
                                 "vertex_y": {"type": "number"},
-                                "ray1_x": {"type": "number", "description": "A point on the first ray."},
-                                "ray1_y": {"type": "number", "description": "A point on the first ray."},
-                                "ray2_x": {"type": "number", "description": "A point on the second ray."},
-                                "ray2_y": {"type": "number", "description": "A point on the second ray."},
+                                "ray1_x": {"type": "number"},
+                                "ray1_y": {"type": "number"},
+                                "ray2_x": {"type": "number"},
+                                "ray2_y": {"type": "number"},
                                 "radius": {"type": "number", "minimum": 4, "maximum": 50000},
-                                "right_angle": {"type": "boolean", "description": "Draw the small-square right-angle mark."},
+                                "right_angle": {"type": "boolean", "description": "Also draw the square mark."},
                             },
                             required=[
                                 "vertex_x", "vertex_y", "ray1_x", "ray1_y",
@@ -439,12 +423,12 @@ UPDATE_BOARD_TOOL: dict = {
                                     "type": "string",
                                     "minLength": 1,
                                     "maxLength": MAX_PATH_CHARS,
-                                    "description": "One SVG path string: M, L, H, V, C, S, Q, T, A, Z. Every coordinate is in absolute board points, the same space as every other element, so the path needs no frame and no viewbox.",
+                                    "description": "SVG path data (M L H V C S Q T A Z) in absolute board points; no frame or viewBox.",
                                 },
                                 "fill_rule": {
                                     "type": "string",
                                     "enum": ["nonzero", "evenodd"],
-                                    "description": "How overlapping subpaths fill; nonzero unless the shape needs holes.",
+                                    "description": "nonzero unless the shape needs holes.",
                                 },
                             },
                             required=["d", "fill_rule"],
@@ -458,7 +442,7 @@ UPDATE_BOARD_TOOL: dict = {
                                     "type": "string",
                                     "minLength": 1,
                                     "maxLength": MAX_LATEX_CHARS,
-                                    "description": "The expression as LaTeX, with no surrounding $ or $$ delimiters, typeset on the learner's device. This is the only correct way to put mathematical notation on the board.",
+                                    "description": "LaTeX without $ delimiters, typeset on the learner's device; use for all notation.",
                                 },
                                 "font_size": {"type": "number", "minimum": 8, "maximum": 256},
                             },
@@ -489,9 +473,9 @@ UPDATE_BOARD_TOOL: dict = {
                                     # a description written in the register it
                                     # is asking the model *not* to use teaches
                                     # the opposite of what it says.
-                                    "description": "The words to write, drawn on the device as handwriting-look ink in your own hand; newlines make lines. Prose only, and every piece of notation still goes in `math_text`. Write it as plain text: em and en dashes, curly quotes and ellipses are normalised to their ASCII equivalents, and anything with no glyph to draw, such as emoji or a non-Latin script, comes out as a placeholder. Your writing looks handwritten in a board capture too, so when you read the board back, the learner's work is the writing you did not put there: every piece you did is listed, by id, in the scene you were given, plus whatever you have written this turn.",
+                                    "description": "The words to draw as handwriting-look ink; newlines make lines. Prose only - notation goes in `math_text`. Plain text: dashes, quotes, and ellipses become ASCII equivalents; emoji or non-Latin scripts become placeholders. When reading the board back, your ink is the scene list plus anything written this turn; the rest is the learner's.",
                                 },
-                                "size": {"type": "number", "minimum": 8, "maximum": 256, "description": "Cap height: how tall one line of the writing stands."},
+                                "size": {"type": "number", "minimum": 8, "maximum": 256, "description": "Line height in board points."},
                             },
                             required=["x", "y", "text", "size"],
                             # Handwriting is a filled pen outline rather than a
@@ -517,7 +501,7 @@ UPDATE_BOARD_TOOL: dict = {
                                 "blob_id": {
                                     "type": "string",
                                     "pattern": "^sha256:[0-9a-f]{64}$",
-                                    "description": "The key of a picture already on the server, copied from a tool result word for word. Never invent one: a made-up key draws an empty frame.",
+                                    "description": "Blob key from a tool result; an invented key draws an empty frame.",
                                 },
                             },
                             required=["x", "y", "width", "height", "blob_id"],
@@ -534,15 +518,15 @@ UPDATE_BOARD_TOOL: dict = {
                         _board_element(
                             kind="svg",
                             fields={
-                                "x": {"type": "number", "description": "Where the viewBox's top-left corner lands."},
-                                "y": {"type": "number", "description": "Where the viewBox's top-left corner lands."},
-                                "width": {"type": "number", "minimum": 0, "maximum": 50000, "description": "Send 0: the figure is drawn at the size its viewBox gives it. A positive value scales the whole document into that box instead."},
-                                "height": {"type": "number", "minimum": 0, "maximum": 50000, "description": "Send 0, as for width."},
+                                "x": {"type": "number", "description": "Where the viewBox top-left lands."},
+                                "y": {"type": "number", "description": "Where the viewBox top-left lands."},
+                                "width": {"type": "number", "minimum": 0, "maximum": 50000, "description": "0 = draw at viewBox size; positive scales the whole document into this box."},
+                                "height": {"type": "number", "minimum": 0, "maximum": 50000, "description": "0, as for width."},
                                 "svg": {
                                     "type": "string",
                                     "minLength": 1,
                                     "maxLength": MAX_SVG_CHARS,
-                                    "description": "A complete raw SVG document, passed through unchanged and interpreted locally on the learner's device. Give it a viewBox: one user unit is drawn as one board point, and the viewBox's top-left corner sits at (x, y), so size the figure in the same units as every other element and size it only once. The device draws paths, shapes, groups, transforms, linear and radial gradients, defs/use, masks, clip paths, CSS `<style>` blocks, and text; `<filter>` effects are dropped, and animation, scripts, `<foreignObject>`, and external references draw nothing.",
+                                    "description": "A complete raw SVG document, interpreted locally on the learner's device. Give a viewBox: one user unit = one board point, top-left at (x, y); width/height 0 sizes it once. Draws paths, shapes, groups, transforms, gradients, defs/use, masks, clip paths, `<style>`, text; `<filter>` effects are dropped; animation, scripts, `<foreignObject>`, external references draw nothing.",
                                 },
                             },
                             required=["x", "y", "width", "height", "svg"],
@@ -571,14 +555,12 @@ FETCH_IMAGE_TOOL: dict = {
     "type": "function",
     "name": "fetch_image",
     "description": (
-        "Download one picture from the web so you can see it and put it on the "
-        "learner's board — a diagram they linked, or an image you found. The "
-        "answer carries a blob_id, which is what the `image` element in "
-        "update_board takes, and the picture itself arrives in your context: "
-        "look at it before you place it, and never describe one you have not "
-        "seen. Give the direct https address of the image file itself — .png, "
-        ".jpg, .webp or .gif — not of the page it sits on. Anything refused "
-        "answers with an error you can read and retry from with another URL."
+        "Download an image to see and place on the board - a diagram the "
+        "learner linked, or a real image that teaches better than a drawing. "
+        "It returns a blob_id for update_board's `image` element and the "
+        "picture lands in your context - look before placing. Give the direct "
+        "https image URL (.png, .jpg, .webp, .gif), not a page; refusals "
+        "return an error to retry from."
     ),
     "strict": True,
     "parameters": {
@@ -587,7 +569,7 @@ FETCH_IMAGE_TOOL: dict = {
         "properties": {
             "url": {
                 "type": "string",
-                "description": "The direct https URL of one image file.",
+                "description": "Direct https URL of one image file.",
             },
         },
         "required": ["url"],
@@ -598,16 +580,10 @@ REMEMBER_TOOL: dict = {
     "type": "function",
     "name": "remember",
     "description": (
-        "Save a note about this learner for future sessions. Call this when "
-        "they ask you to remember something, and when they tell you something "
-        "that will still matter next time — a preference, a goal, a deadline, "
-        "how they like to work. Write the fact so it stands alone with no "
-        "surrounding conversation: resolve every pronoun and reference. A "
-        "saved note appears, dated, in your SAVED NOTES block from the next "
-        "turn on, every turn, until `forget` removes it. Before you write any "
-        "message containing 'noted', 'got it', or 'I'll remember that', call "
-        "this tool first and wait for its answer — otherwise you have told "
-        "them something untrue."
+        "Save a self-contained fact about this learner for future sessions - a "
+        "preference, goal, deadline, or how they like to work. It appears "
+        "dated in SAVED NOTES until `forget` closes it. Never say 'noted', "
+        "'got it', or 'I'll remember that' until the tool answers."
     ),
     "strict": True,
     "parameters": {
@@ -648,13 +624,11 @@ FORGET_TOOL: dict = {
     "type": "function",
     "name": "forget",
     "description": (
-        "Close one saved note or remembered fact, so it stops appearing and "
-        "stops being found. Call this when the learner asks you to forget "
-        "something, and confirm only after the tool answers that it was "
-        "closed. Pass the note's text word for word as SAVED NOTES or a "
-        "search result shows it — or a phrase distinctive enough to match "
-        "exactly one note; if several match, the answer lists them so you can "
-        "call again with the exact one."
+        "Close one saved note so it stops appearing and being found. Call "
+        "when asked to forget something, and confirm only after the tool "
+        "answers. Pass the note text word for word, or a phrase distinctive "
+        "enough to match exactly one; if several match, the answer lists "
+        "them."
     ),
     "strict": True,
     "parameters": {
@@ -664,8 +638,7 @@ FORGET_TOOL: dict = {
             "text": {
                 "type": "string",
                 "description": (
-                    "The note to forget, word for word, or a distinctive "
-                    "phrase from it."
+                    "The note, word for word, or a distinctive phrase."
                 ),
             },
         },
@@ -677,17 +650,12 @@ SEARCH_MEMORY_TOOL: dict = {
     "type": "function",
     "name": "search_memory",
     "description": (
-        "Search the individual facts on file about this learner — "
-        "preferences, goals, struggles, saved notes. Every result is dated "
-        "and says where it came from. Use it whenever answering depends on "
-        "something they told you before. This tool has NO access to the "
-        "current conversation, so your query must be entirely self-contained: "
-        "write 'what has this learner said about preparing for their June "
-        "exam', never 'what did they mean by that'. Never tell the learner "
-        "you cannot remember something without searching here first — and "
-        "when it answers that nothing is on file, that is the truth to pass "
-        "on. For whole sessions use `search_sessions`; for the exact words of "
-        "a past conversation use `search_history`."
+        "Search the individual facts on file about this learner - preferences, "
+        "goals, saved notes - all dated and sourced. Use it when an answer "
+        "depends on what they told you before. Query must be self-contained; "
+        "this tool cannot see the current conversation. Nothing on file is "
+        "the truth to pass on. Whole sessions: `search_sessions`; exact past "
+        "words: `search_history`."
     ),
     "strict": True,
     "parameters": {
@@ -707,15 +675,11 @@ SEARCH_SESSIONS_TOOL: dict = {
     "type": "function",
     "name": "search_sessions",
     "description": (
-        "Find past sessions by what they were about — topic, problem, "
-        "formula, anything the work touched. Searches every session summary, "
-        "by meaning as well as by keyword, and answers with dated cards: "
-        "when, a title, and the session's narrative, plus how many sessions "
-        "matched in total. The RECENT SESSIONS block already in your context "
-        "covers the newest few — search when the session you want is older or "
-        "you only know the topic. The query must be self-contained; this tool "
-        "cannot see the current conversation. Follow up with `get_session` "
-        "when you need a session's exact words."
+        "Find past sessions by topic, problem, or what the work touched; "
+        "results are dated cards with titles and summaries. RECENT SESSIONS "
+        "already in your context covers the newest few; call this for older "
+        "or topic-led searches. Query is self-contained (no current "
+        "conversation); follow with `get_session` for exact words."
     ),
     "strict": True,
     "parameters": {
@@ -732,15 +696,13 @@ SEARCH_SESSIONS_TOOL: dict = {
             "date_from": {
                 "type": ["string", "null"],
                 "description": (
-                    "Earliest session date to include, as YYYY-MM-DD, or null "
-                    "for no lower bound."
+                    "YYYY-MM-DD or null (no lower bound)."
                 ),
             },
             "date_to": {
                 "type": ["string", "null"],
                 "description": (
-                    "Latest session date to include (that whole day counts), "
-                    "as YYYY-MM-DD, or null for no upper bound."
+                    "YYYY-MM-DD or null (no upper bound)."
                 ),
             },
             "limit": {
@@ -756,15 +718,11 @@ SEARCH_HISTORY_TOOL: dict = {
     "type": "function",
     "name": "search_history",
     "description": (
-        "Find the exact place something was said, in any session ever. "
-        "Full-text search over every stored message of the entire history — "
-        "nothing ages out of it — answering with dated excerpts: who said it, "
-        "when, the matched words marked, and the line spoken just before. Use "
-        "it when the question is about specific words, numbers, formulas, or "
-        "claims — 'where did I say X', 'what exactly did you tell me about "
-        "Y' — then `get_session` with that date to read the full context. "
-        "Keyword search: it finds the words you give it, so quote distinctive "
-        "ones rather than describing the topic (that is `search_sessions`)."
+        "Find the exact place words were said in any session, ever: dated "
+        "excerpts with who said it and the matched words. Use for specific "
+        "wording, numbers, or claims, then `get_session` for context. Keyword "
+        "search: quote distinctive terms, not the topic (`search_sessions` "
+        "does that)."
     ),
     "strict": True,
     "parameters": {
@@ -781,15 +739,13 @@ SEARCH_HISTORY_TOOL: dict = {
             "date_from": {
                 "type": ["string", "null"],
                 "description": (
-                    "Earliest message date to include, as YYYY-MM-DD, or null "
-                    "for no lower bound."
+                    "YYYY-MM-DD or null (no lower bound)."
                 ),
             },
             "date_to": {
                 "type": ["string", "null"],
                 "description": (
-                    "Latest message date to include (that whole day counts), "
-                    "as YYYY-MM-DD, or null for no upper bound."
+                    "YYYY-MM-DD or null (no upper bound)."
                 ),
             },
             "limit": {
@@ -805,15 +761,11 @@ GET_SESSION_TOOL: dict = {
     "type": "function",
     "name": "get_session",
     "description": (
-        "Read one past session — its summary, or its full stored transcript, "
-        "page by page. This is the detail path: a summary says what happened, "
-        "the transcript says what exactly was said, and for any question "
-        "about the details of a past session you read here BEFORE answering "
-        "rather than reciting a summary from memory. Name the session by its "
-        "date (YYYY-MM-DD, all of that day's windows) or by an offset "
-        "counting back through RECENT SESSIONS ('0' is the newest, '1' the "
-        "one before). Long transcripts come paged; the answer says how many "
-        "pages there are."
+        "Read one past session: its summary or full stored transcript, page "
+        "by page. For any question about what was said, read the transcript "
+        "BEFORE answering. Name it by date (YYYY-MM-DD) or offset from RECENT "
+        "SESSIONS (0 = newest). Long transcripts are paged; the answer says "
+        "how many pages."
     ),
     "strict": True,
     "parameters": {
@@ -823,21 +775,17 @@ GET_SESSION_TOOL: dict = {
             "date_or_offset": {
                 "type": "string",
                 "description": (
-                    "A date like 2026-08-14, or an offset like 0 (newest), 1, "
-                    "2 counting back."
+                    "YYYY-MM-DD or an offset back (0 newest)."
                 ),
             },
             "part": {
                 "type": "string",
                 "enum": ["summary", "transcript"],
-                "description": (
-                    "summary for what happened; transcript for the exact "
-                    "words."
-                ),
+                "description": "summary or transcript.",
             },
             "page": {
                 "type": "integer",
-                "description": "Which transcript page, from 1. Use 1 first.",
+                "description": "Transcript page, from 1.",
             },
         },
         "required": ["date_or_offset", "part", "page"],
@@ -848,13 +796,10 @@ LIST_SESSIONS_TOOL: dict = {
     "type": "function",
     "name": "list_sessions",
     "description": (
-        "Browse the session history in order, most recent first: one dated "
-        "line per session with its title. The RECENT SESSIONS block in your "
-        "context already shows the newest few in more detail — call this to "
-        "see past its end, and page further back by passing before_date = "
-        "the oldest date the previous call showed. The sequence, which is "
-        "what a continuity question wants and what a search is the wrong "
-        "shape for."
+        "Browse sessions newest first: one dated line per session. RECENT "
+        "SESSIONS already shows the newest few; call this to see past its end "
+        "with before_date = the oldest date shown. Use it when a continuity "
+        "question needs the sequence."
     ),
     "strict": True,
     "parameters": {
@@ -868,8 +813,7 @@ LIST_SESSIONS_TOOL: dict = {
             "before_date": {
                 "type": ["string", "null"],
                 "description": (
-                    "Only sessions before this date (YYYY-MM-DD), or null to "
-                    "start from the most recent."
+                    "YYYY-MM-DD or null (start newest)."
                 ),
             },
         },
@@ -900,15 +844,11 @@ RECORD_EVIDENCE_TOOL: dict = {
     "type": "function",
     "name": "record_evidence",
     "description": (
-        "Record what the learner just demonstrated about a concept, so their "
-        "mastery is tracked across sessions. Call this whenever they attempt "
-        "something and you can judge how it went — a solved problem, a step "
-        "on the board, an explanation, or an explicit 'I don't know'. Name "
-        "Common Core standard codes such as 7.RP.A.2. Weights say how much of "
-        "the attempt each concept accounts for and should sum to about 1. "
-        "Choose `kind` honestly: it decides how much this observation is "
-        "trusted, and calling a glance at a sketch a reading of their working "
-        "corrupts the record."
+        "Record what the learner just demonstrated so mastery is tracked "
+        "across sessions; call whenever you can judge an attempt - a solved "
+        "problem, a board step, an explanation, or 'I don't know'. Use Common "
+        "Core codes like 7.RP.A.2; weights sum to about 1. Choose `kind` "
+        "honestly - it sets how much the observation is trusted."
     ),
     "strict": True,
     "parameters": {
@@ -930,18 +870,16 @@ RECORD_EVIDENCE_TOOL: dict = {
             "outcome": {
                 "type": "number",
                 "description": (
-                    "0 to 1. 1 correct unaided, 0.6 correct after one nudge, "
-                    "0.2 correct after being walked through, 0 wrong."
+                    "0-1: 1 unaided, 0.6 after a nudge, 0.2 after a "
+                    "walkthrough, 0 wrong."
                 ),
             },
             "kind": {
                 "type": "string",
                 "description": (
-                    "How you observed this. dont_know: they said outright they "
-                    "did not know. ink_symbolic: you read the symbolic working "
-                    "they wrote on the board. answer_llm: you judged an answer "
-                    "they wrote or said. hinted: they got there after you gave "
-                    "the step away. ink_diagram: you read a drawing or sketch."
+                    "How observed: dont_know = said so; ink_symbolic = read "
+                    "board work; answer_llm = judged a written/spoken answer; "
+                    "hinted = after a nudge; ink_diagram = read a drawing."
                 ),
                 "enum": list(EVIDENCE_KINDS),
             },
