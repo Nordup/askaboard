@@ -14,6 +14,7 @@ from functools import lru_cache
 import anyio
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
+from google import genai
 from openai import APIConnectionError, APIError, APIStatusError, AsyncOpenAI
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
@@ -59,6 +60,7 @@ from app.tutor.providers import (
     RelayedFile,
     relayed_content_type,
 )
+from app.tutor.providers.gemini import GeminiProvider
 from app.tutor.providers.openai import ContainerFileTooLarge, OpenAIProvider
 from app.tutor.rendezvous import BoardRegion
 from app.tutor.retry import classify
@@ -127,6 +129,27 @@ def _client() -> AsyncOpenAI:
     return AsyncOpenAI(api_key=get_settings().openai_api_key, max_retries=0)
 
 
+@lru_cache
+def _gemini_client() -> genai.Client:
+    """The one Gemini client, built on first use and then kept.
+
+    Cached for the reason `_client` is cached: a client per request is a fresh
+    connection pool, which is a DNS lookup and a TLS handshake in front of the
+    first token of every turn, and the pools are never closed.
+
+    **The transport's own retry is left on here, unlike `max_retries=0` above,
+    and that is the opposite trade rather than an oversight.** `loop._open_round`
+    catches `openai.APIStatusError`, which this SDK never raises, so nothing in
+    this service retries a Gemini open — switching the transport's four attempts
+    off would leave a single refused connection or one 502 ending a learner's
+    turn outright. What it costs is exactly what `_client`'s comment describes: a
+    429 is waited through before `GeminiProvider.classify` gets to say whether it
+    was a burst limit or a spent quota. That is the trade to revisit when
+    `_open_round` learns this family's exception type, not before.
+    """
+    return genai.Client(api_key=get_settings().gemini_api_key)
+
+
 def _provider(model: str) -> Provider:
     """The family that serves this model.
 
@@ -137,6 +160,18 @@ def _provider(model: str) -> Provider:
     family = PROVIDER_FOR_MODEL[model]
     if family == "openai":
         return OpenAIProvider(client=_client())
+    if family == "gemini":
+        # A 503 rather than a crash at import, which is the whole reason
+        # `gemini_api_key` is optional: a server holding only an OpenAI key must
+        # still boot and serve every OpenAI model. What it may not do is answer a
+        # Gemini turn, and this is the point where that becomes true — after the
+        # request has been validated and before any spend.
+        if not get_settings().gemini_api_key:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "GEMINI_API_KEY is not configured on this server",
+            )
+        return GeminiProvider(client=_gemini_client())
     raise ValueError(f"no provider wired for {family!r}")
 
 

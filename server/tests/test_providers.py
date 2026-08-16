@@ -1,22 +1,56 @@
 """The seam both model families are reached through.
 
-One provider so far, so what this file can assert is conformance: that the
-OpenAI provider satisfies the protocol every later task writes against, that it
-names itself, and that the one piece of wiring the seam newly owns — the
-download bound behind `ProducedFile.read` — really reaches the provider.
+What this file asserts about each provider is conformance: that it satisfies the
+protocol every caller writes against, that it names itself, and that the wiring
+the seam owns — the download bound behind `ProducedFile.read`, the input items a
+tool answer travels in — really reaches the provider.
 
-The parity test this file is eventually for arrives with Task 9: two providers,
-one `ClientEvent` sequence, so that a change making one family behave
-differently from the other fails here before anyone notices it on a board.
+The Gemini half is longer than the OpenAI half for one reason, and it is the
+reason to read the provider's module docstring first: `interaction.completed`
+carries no output and no steps, so every tool call and every produced image is
+accumulated from the deltas across a whole stream. `run_turn` decides whether to
+buy another round by asking whether `Completed.calls` is empty, so an accumulator
+that drops a call ends a turn in silence and one that keeps a stale call bills
+the learner for a round that does nothing. Both of those are tested here, against
+streams recorded off real turns rather than written from the documentation.
+
+The cross-provider parity test this file is eventually for arrives with Task 9:
+two providers, one `ClientEvent` sequence, so that a change making one family
+behave differently from the other fails here before anyone notices it on a board.
+`test_a_board_update_reaches_the_same_board_as_the_openai_fixture` is the first
+instalment of it.
 """
+
+import asyncio
+import base64
+import json
 
 import respx
 from httpx import Response
 from openai import AsyncOpenAI
+from pydantic import TypeAdapter
 
-from app.tutor.providers import TERMINAL_ERROR_STATUSES, Completed, Provider
+from app.pricing import turn_cost_usd
+from app.tutor.events import CODE_INTERPRETER, EventTranslator
+from app.tutor.fetch_image import ALLOWED_CONTENT_TYPES
+from app.tutor.providers import (
+    TERMINAL_ERROR_STATUSES, Completed, Created, Failed, HostedToolActivity,
+    HostedToolStarted, Provider, RelayedFile, TextDelta, ThoughtDelta,
+    ToolArgsDelta, ToolArgsDone, ToolCallStarted, relayed_content_type,
+)
+from app.tutor.providers.gemini import (
+    EFFORT_TO_THINKING_LEVEL, GEMINI_TOOLS, GeminiProvider, map_usage,
+)
 from app.tutor.providers.openai import OpenAIProvider
-from tests.fixtures.sse import CODE_INTERPRETER_TURN, CONTAINER_ID, SCRIPT_FILE_ID, SCRIPT_FILENAME
+from tests.fixtures.interactions import (
+    BOARD_UPDATE_INTERACTION, CODE_EXECUTION_INTERACTION, FAILED_INTERACTION,
+    GROUNDED_SEARCH_INTERACTION, INLINE_IMAGE_BASE64, TEXT_ONLY_INTERACTION,
+    TOOL_CALL_FOLLOW_UP, TOOL_CALL_INTERACTION,
+)
+from tests.fixtures.sse import (
+    BOARD_UPDATE_ARGUMENTS, BOARD_UPDATE_TURN, CODE_INTERPRETER_TURN, CONTAINER_ID,
+    SCRIPT_FILE_ID, SCRIPT_FILENAME, WORKSPACE_ARGUMENTS,
+)
 
 
 def test_requires_action_is_not_a_terminal_error():
@@ -83,3 +117,577 @@ def test_a_completion_with_no_script_output_produces_no_files():
     assert completed.calls == []
     assert completed.status == "completed"
     assert completed.response_id == "resp_1"
+
+
+# --------------------------------------------------------------------------
+# Gemini
+# --------------------------------------------------------------------------
+
+
+def _normalise_all(fixture, provider: GeminiProvider | None = None):
+    """One recorded stream, as the neutral events a provider makes of it.
+
+    Returns the provider too, so a test can drive a second stream through the
+    same one — which is how the round-reset test catches an accumulator that
+    leaks. Every recordable dict is serialised on the way past, because
+    `TurnResult.raw_events` is written to a JSON column and a provider that
+    returned something unserialisable would fail at the end of a turn rather
+    than here.
+    """
+    provider = provider or GeminiProvider(client=None)
+    events = []
+    for raw in fixture:
+        recordable, neutral = provider.normalise(raw)
+        json.dumps(recordable)
+        events.append(neutral)
+    return provider, events
+
+
+def _only(events, kind):
+    return [event for event in events if isinstance(event, kind)]
+
+
+def test_the_gemini_provider_satisfies_the_protocol():
+    assert isinstance(GeminiProvider(client=None), Provider)
+
+
+def test_the_gemini_provider_names_itself():
+    assert GeminiProvider(client=None).name == "gemini"
+
+
+def test_the_tools_are_converted_once_at_import():
+    """`to_gemini_tools` raises on a schema it cannot express, and that is only
+    a boot-time guarantee if it runs at boot. Converted per round instead, an
+    edit to `tools.py` that broke one arm would pass every import and fail on
+    the first turn a learner sent."""
+    assert GEMINI_TOOLS, "the module-level conversion produced nothing"
+    kinds = {tool.get("type") for tool in GEMINI_TOOLS}
+    assert {"function", "google_search", "code_execution"} <= kinds
+    payload = GeminiProvider(client=None).build_round(
+        model="gemini-3.7-flash", effort="high", outbox=[], previous_id=None,
+        cache_key=None,
+    )
+    assert payload["tools"] is GEMINI_TOOLS
+
+
+def test_a_round_lifts_the_system_prompt_out_of_the_input():
+    """OpenAI takes a system item inside `input`; Gemini takes a top-level
+    `system_instruction`. Left in `input`, the prompt would arrive as a user
+    turn and the tutor's whole character would be advice rather than
+    instruction."""
+    payload = GeminiProvider(client=None).build_round(
+        model="gemini-3.7-flash",
+        effort="high",
+        outbox=[
+            {"role": "system",
+             "content": [{"type": "input_text", "text": "BE A TUTOR"}]},
+            {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+        ],
+        previous_id=None,
+        cache_key="session-1",
+    )
+    assert payload["system_instruction"] == "BE A TUTOR"
+    assert all(item.get("role") != "system" for item in payload["input"])
+
+
+def test_a_round_never_sends_the_rejected_generation_parameters():
+    """Gemini 3.x rejects all three, and thinking_budget is superseded."""
+    payload = GeminiProvider(client=None).build_round(
+        model="gemini-3.7-flash", effort="high", outbox=[], previous_id=None,
+        cache_key=None,
+    )
+    for rejected in ("temperature", "top_p", "top_k"):
+        assert rejected not in payload
+        assert rejected not in payload["generation_config"]
+    assert "thinking_budget" not in payload["generation_config"]
+
+
+def test_a_round_carries_no_cache_key():
+    """There is no prompt_cache_key equivalent: implicit caching routes on the
+    prefix by itself. A key passed through would be an unknown field."""
+    payload = GeminiProvider(client=None).build_round(
+        model="gemini-3.7-flash", effort="high", outbox=[], previous_id=None,
+        cache_key="session-1",
+    )
+    assert "prompt_cache_key" not in payload
+
+
+def test_later_rounds_chain_on_the_previous_interaction():
+    payload = GeminiProvider(client=None).build_round(
+        model="gemini-3.7-flash", effort="medium", outbox=[], previous_id="int_9",
+        cache_key=None,
+    )
+    assert payload["previous_interaction_id"] == "int_9"
+
+
+def test_a_later_round_repeats_no_system_instruction():
+    """The outbox then holds only tool results, and the instruction is already
+    part of the stored interaction the chaining id names. Sending it again would
+    be the prompt arriving twice, at the input rate, on every round."""
+    payload = GeminiProvider(client=None).build_round(
+        model="gemini-3.7-flash", effort="medium",
+        outbox=[{"type": "function_result", "call_id": "c1", "name": "view_board",
+                 "result": "ok"}],
+        previous_id="int_9", cache_key=None,
+    )
+    assert "system_instruction" not in payload
+
+
+def test_the_deep_efforts_clamp_to_high():
+    """Gemini offers three levels where the picker offers five. The client
+    clamps before sending, and this is the second line of that defence."""
+    assert EFFORT_TO_THINKING_LEVEL["xhigh"] == "high"
+    assert EFFORT_TO_THINKING_LEVEL["max"] == "high"
+    assert EFFORT_TO_THINKING_LEVEL["low"] == "low"
+
+
+def test_an_image_part_splits_the_data_url():
+    """OpenAI takes one data: URL string; Gemini takes the mime type and the
+    raw base64 in separate fields."""
+    item = GeminiProvider(client=None).image_item(b"\x89PNG...", "look")
+    part = next(p for p in item["content"] if p["type"] == "image")
+    assert part["mime_type"] == "image/png"
+    assert "data:" not in part["data"]
+
+
+def test_the_prompts_own_image_parts_are_split_and_keep_their_detail():
+    """The same split, on the parts `assemble_context` built rather than the
+    ones this provider built. Forwarded whole, the payload would begin with the
+    characters `data:image/png;base64,` and fail as a corrupt picture rather
+    than as a bad request.
+
+    `detail` survives as `resolution`, and that is not cosmetic: the board
+    overview rides on every single turn at `low` precisely so a thumbnail is
+    not billed at reading resolution."""
+    payload = GeminiProvider(client=None).build_round(
+        model="gemini-3.7-flash", effort="high",
+        outbox=[{"role": "user", "content": [
+            {"type": "input_image", "image_url": "data:image/jpeg;base64,QUJD",
+             "detail": "low"},
+        ]}],
+        previous_id=None, cache_key=None,
+    )
+    part, = payload["input"][0]["content"]
+    assert part == {"type": "image", "mime_type": "image/jpeg", "data": "QUJD",
+                    "resolution": "low"}
+
+
+def test_an_attached_pdf_becomes_a_document_part():
+    """`input_file` carries its bytes in `file_data` rather than `image_url`,
+    and Gemini calls the part a document. A part left untranslated is a
+    learner's worksheet the tutor never sees."""
+    payload = GeminiProvider(client=None).build_round(
+        model="gemini-3.7-flash", effort="high",
+        outbox=[{"role": "user", "content": [
+            {"type": "input_file", "filename": "worksheet.pdf",
+             "file_data": "data:application/pdf;base64,QUJD"},
+        ]}],
+        previous_id=None, cache_key=None,
+    )
+    part, = payload["input"][0]["content"]
+    assert part == {"type": "document", "mime_type": "application/pdf", "data": "QUJD"}
+
+
+def test_the_providers_own_items_pass_through_a_round_untouched():
+    """A later round's outbox mixes items this provider built — the results
+    answering a run of calls, and the pictures those results wanted to show —
+    and they are already in this API's vocabulary. Translated a second time
+    they would be wrapped again, and the run of results answering the run of
+    calls would no longer be one."""
+    provider = GeminiProvider(client=None)
+    result = provider.tool_output(call_id="c1", name="view_board", output="ok")
+    picture = provider.image_item(b"png", "here")
+    payload = provider.build_round(
+        model="gemini-3.7-flash", effort="high", outbox=[result, picture],
+        previous_id="int_9", cache_key=None,
+    )
+    assert payload["input"] == [result, picture]
+
+
+def test_a_tool_result_names_its_function():
+    """function_result carries the name as well as the call_id. OpenAI's
+    function_call_output carries only the id, which is why `name` is in the
+    shared signature at all — and here it is load-bearing rather than
+    decoration: a result whose name disagrees with the call it answers is a
+    400."""
+    item = GeminiProvider(client=None).tool_output(
+        call_id="call_1", name="update_board", output='{"status":"ok"}',
+    )
+    assert item["type"] == "function_result"
+    assert item["call_id"] == "call_1"
+    assert item["name"] == "update_board"
+    assert item["result"] == '{"status":"ok"}'
+
+
+def test_a_board_render_is_named_for_the_tool_that_asked_for_it():
+    """`rendered_items` answers exactly one tool, so it writes that tool's name
+    itself. An empty name here would be the 400 above, on every turn that looks
+    at the board."""
+    result, picture = GeminiProvider(client=None).rendered_items(
+        "call_9", b"png-bytes", "Showing x 0–100%, y 0–100% of the board."
+    )
+    assert result["type"] == "function_result"
+    assert result["name"] == "view_board"
+    assert result["call_id"] == "call_9"
+    assert json.loads(result["result"])["status"] == "ok"
+    assert picture["type"] == "user_input"
+    assert [part["type"] for part in picture["content"]] == ["text", "image"]
+
+
+def test_a_relayed_file_that_could_not_be_kept_still_gets_a_line():
+    """Silence about a failure is the failure the relay exists to prevent: a
+    model not told the chart never saved describes it to the learner anyway and
+    then places a blob id it invented. The CSV gets a line and no picture,
+    because `input`'s image part is not a channel for arbitrary bytes."""
+    item = GeminiProvider(client=None).relay_item([
+        ("image_1.png", RelayedFile(blob_id="blob-1", data=b"x",
+                                    content_type="image/png")),
+        ("data.csv", RelayedFile(error="the file was too large to keep")),
+    ])
+    text = item["content"][0]["text"]
+    assert "image_1.png → blob-1" in text
+    assert "data.csv → not saved (the file was too large to keep)" in text
+    assert [part["type"] for part in item["content"]] == ["text", "image"]
+
+
+def test_a_text_only_interaction_normalises_to_the_expected_events():
+    provider = GeminiProvider(client=None)
+    neutral = [provider.normalise(raw)[1] for raw in TEXT_ONLY_INTERACTION]
+    assert any(isinstance(event, TextDelta) for event in neutral)
+    completed = next(e for e in neutral if isinstance(e, Completed))
+    assert completed.response_id
+    assert completed.usage is not None
+
+
+def test_a_text_only_round_reports_no_calls_and_no_files():
+    """The other half of the accumulator's job, and the one that decides whether
+    a turn ends. `run_turn` buys another round when `Completed.calls` is
+    non-empty, so a phantom call here would bill the learner for a round that
+    answers nothing."""
+    _, events = _normalise_all(TEXT_ONLY_INTERACTION)
+    completed, = _only(events, Completed)
+    assert completed.calls == []
+    assert completed.files == []
+    assert completed.status == "completed"
+    assert isinstance(events[0], Created)
+    assert "".join(e.text for e in _only(events, TextDelta)) == "7 times 8 is 56."
+
+
+def test_a_thought_signature_never_reaches_the_reasoning_ribbon():
+    """`thought_signature` is an opaque base64 blob carrying reasoning
+    continuity, not prose. Mapped to a `ThoughtDelta` it would print base64 in
+    the learner's activity trail — and `TEXT_ONLY_INTERACTION` is a turn whose
+    only thought event is that signature, which is what a `low` thinking level
+    routinely produces."""
+    _, events = _normalise_all(TEXT_ONLY_INTERACTION)
+    assert _only(events, ThoughtDelta) == []
+
+    _, events = _normalise_all(TOOL_CALL_INTERACTION)
+    thought, = _only(events, ThoughtDelta)
+    assert thought.text.startswith("**Initiating Planning")
+
+
+def test_a_tool_calls_arguments_are_accumulated_across_deltas():
+    """`step.stop` carries only `index` — no name, no call id, no arguments — so
+    everything `ToolArgsDone` and `ToolCall` carry comes out of the provider's
+    own accumulator. The recorded deltas split the JSON mid-key on purpose: a
+    provider that read each fragment on its own would pass on a call that
+    happened to arrive whole and break on every real one."""
+    _, events = _normalise_all(TOOL_CALL_INTERACTION)
+
+    started, = _only(events, ToolCallStarted)
+    assert (started.name, started.call_id) == ("set_workspace", "call_1042187")
+    assert _only(events, ToolArgsDelta), "no argument deltas were reported at all"
+
+    done, = _only(events, ToolArgsDone)
+    assert done.output_index == started.output_index
+    assert json.loads(done.arguments) == WORKSPACE_ARGUMENTS
+
+    completed, = _only(events, Completed)
+    call, = completed.calls
+    assert (call.name, call.call_id) == ("set_workspace", "call_1042187")
+    assert json.loads(call.arguments) == WORKSPACE_ARGUMENTS
+
+
+def test_a_tool_round_ends_requires_action_and_that_is_not_a_failure():
+    """It is how a normal tool round ends on this family. Read as terminal, every
+    turn that touches the board would end in an error."""
+    _, events = _normalise_all(TOOL_CALL_INTERACTION)
+    completed, = _only(events, Completed)
+    assert completed.status == "requires_action"
+    assert completed.status not in TERMINAL_ERROR_STATUSES
+
+
+def test_the_accumulator_does_not_survive_into_the_next_round():
+    """The one defect this provider's statefulness makes possible, and the most
+    expensive one available: a turn is up to eight rounds through one provider,
+    and a call still in the accumulator at round two makes `Completed.calls`
+    non-empty forever. The loop would answer the same tool again and buy another
+    round, to `MAX_TOOL_ROUNDS`, every one of them billed."""
+    provider, _ = _normalise_all(TOOL_CALL_INTERACTION)
+    _, events = _normalise_all(TOOL_CALL_FOLLOW_UP, provider)
+
+    completed, = _only(events, Completed)
+    assert completed.calls == []
+    assert completed.response_id == "v1_workspace_2"
+
+
+def test_a_board_update_reaches_the_same_board_as_the_openai_fixture():
+    """The first instalment of the cross-provider parity test.
+
+    Both fixtures name the same board — `interactions.py` imports
+    `BOARD_UPDATE_ARGUMENTS` from `sse.py` rather than copying it, so they
+    cannot drift — and this asserts that two entirely different wire vocabularies
+    produce one `board_update` payload. Driven through `EventTranslator` as well
+    as through `normalise`, because the payload is what actually changes a
+    learner's screen."""
+    def board_payloads(fixture, provider):
+        # `neutral`, not `normalise`: both providers expose the mapping over an
+        # already-dumped dict precisely so it can be driven from a recorded
+        # fixture, and the OpenAI one takes an SDK object in `normalise`.
+        translator = EventTranslator()
+        produced = []
+        for raw in fixture:
+            produced.extend(translator.translate(provider.neutral(raw)))
+        return [e.payload for e in produced if e.type == "board_update"]
+
+    gemini, = board_payloads(BOARD_UPDATE_INTERACTION, GeminiProvider(client=None))
+    openai, = board_payloads(BOARD_UPDATE_TURN, OpenAIProvider(client=None))
+    assert gemini == openai
+
+    _, events = _normalise_all(BOARD_UPDATE_INTERACTION)
+    done, = _only(events, ToolArgsDone)
+    assert json.loads(done.arguments) == BOARD_UPDATE_ARGUMENTS
+    completed, = _only(events, Completed)
+    call, = completed.calls
+    assert call.name == "update_board"
+    assert json.loads(call.arguments) == BOARD_UPDATE_ARGUMENTS
+
+
+def test_a_hosted_script_reports_itself_and_hands_back_its_picture():
+    """Three recorded shapes at once, none of which exists on the other side.
+    The hosted call is a step of its own that the provider runs inline, so the
+    interaction ends `completed` with no tool call to answer. Its `id` is what
+    the device keys the activity row on. And the PNG the script wrote is not in
+    the `code_execution_result` step — whose `result` is the empty string — but
+    in a later `model_output` step, with no id and no filename anywhere."""
+    _, events = _normalise_all(CODE_EXECUTION_INTERACTION)
+
+    hosted, = _only(events, HostedToolStarted)
+    assert hosted.item_id == "call_1006863"
+    assert hosted.tool == CODE_INTERPRETER
+    assert any(e.phase == "computing" for e in _only(events, HostedToolActivity))
+
+    completed, = _only(events, Completed)
+    assert completed.status == "completed"
+    assert completed.calls == []
+    produced, = completed.files
+    assert asyncio.run(produced.read()) == base64.b64decode(INLINE_IMAGE_BASE64)
+
+
+def test_a_produced_images_name_survives_the_relays_content_type_check():
+    """The synthesised filename is load-bearing. `app.api.turn`'s relay derives
+    the attachment's content type from it, and that type is what decides whether
+    `model_copy` reduces the picture before it goes back into the conversation. A
+    name with no real image extension would come back as
+    `application/octet-stream`, skip the reduction, and put a full-resolution PNG
+    into a context that is re-billed on every one of up to eight rounds."""
+    _, events = _normalise_all(CODE_EXECUTION_INTERACTION)
+    completed, = _only(events, Completed)
+    produced, = completed.files
+    assert relayed_content_type(produced.filename) in ALLOWED_CONTENT_TYPES
+
+
+def test_two_rounds_of_one_turn_produce_different_file_keys():
+    """`run_turn` de-duplicates relays on `ProducedFile.key` across a whole turn,
+    and every round numbers its steps from zero. Keyed on the step index alone,
+    round two's chart would look like round one's already-relayed file and be
+    thrown away — a turn that drew two graphs would hand over one, and the model
+    would place a blob id for a picture nobody kept.
+
+    The second stream is the same fixture with its interaction id rewritten,
+    which is what a second round of one turn actually is: a new interaction,
+    chained on the first."""
+    def with_id(fixture, interaction_id):
+        rewritten = []
+        for raw in fixture:
+            event = dict(raw)
+            if "interaction" in event:
+                event["interaction"] = {**event["interaction"], "id": interaction_id}
+            rewritten.append(event)
+        return rewritten
+
+    provider, first = _normalise_all(CODE_EXECUTION_INTERACTION)
+    _, second = _normalise_all(
+        with_id(CODE_EXECUTION_INTERACTION, "v1_code_round_two"), provider
+    )
+
+    one, = _only(first, Completed)[0].files
+    two, = _only(second, Completed)[0].files
+    assert one.key[0] == "v1_code"
+    assert two.key[0] == "v1_code_round_two"
+    assert one.key != two.key
+
+
+def test_a_grounded_turn_prices_its_searches_as_an_integer():
+    """`usage.grounding_tool_count` arrives as `[{"count": 2, "type": …}]` and
+    `turn_cost_usd` multiplies it by `per_search`. Passed through as the list, a
+    grounded turn would price as a TypeError instead of as money — and grounding
+    is the one charge in this service that is not a token."""
+    _, events = _normalise_all(GROUNDED_SEARCH_INTERACTION)
+    assert any(e.phase == "searching" for e in _only(events, HostedToolActivity))
+
+    completed, = _only(events, Completed)
+    assert completed.usage["grounding_tool_count"] == 2
+    cost = turn_cost_usd("gemini-3.5-flash-lite", completed.usage)
+    assert cost is not None
+    assert cost > 2 * 0.014, "the searches were not priced"
+
+
+def test_usage_maps_into_the_shape_the_recorder_already_writes():
+    """Mapped rather than stored raw so `_apply_usage` and `turn_cost_usd` need
+    no provider branch. Thought tokens land under `reasoning_tokens` and are not
+    priced separately: Gemini bills thinking inside the output tokens, the same
+    as the OpenAI family, so a rate of their own would double-charge.
+
+    `cache_write_tokens` has no equivalent and stays absent, so the column stays
+    NULL — a visible gap someone can query for, which is the rule
+    `recorder.cache_tokens` already follows."""
+    mapped = map_usage({
+        "total_input_tokens": 100, "total_output_tokens": 20,
+        "total_cached_tokens": 30, "total_thought_tokens": 8,
+        "total_tool_use_tokens": 5, "total_tokens": 120,
+    })
+    assert mapped["input_tokens"] == 100
+    assert mapped["output_tokens"] == 20
+    assert mapped["input_tokens_details"]["cached_tokens"] == 30
+    assert mapped["output_tokens_details"]["reasoning_tokens"] == 8
+    assert mapped["tool_use_tokens"] == 5
+    assert "cache_write_tokens" not in mapped
+    assert mapped["input_tokens_details"].get("cache_write_tokens") is None
+    # Absent entirely when nothing searched, and an int either way.
+    assert mapped["grounding_tool_count"] == 0
+    assert map_usage({"grounding_tool_count": [
+        {"count": 2, "type": "google_search"}, {"count": 1, "type": "google_search"},
+    ]})["grounding_tool_count"] == 3
+    # Provider-authored and treated as absent-or-wrong until proven an integer:
+    # `True` is an `int` in Python, and two of them add up to a plausible 2.
+    assert map_usage({"grounding_tool_count": [
+        {"count": True}, "not a dict", {"count": "2"}, {},
+    ]})["grounding_tool_count"] == 0
+
+
+def test_an_in_stream_error_is_a_failure_that_never_had_a_status_code():
+    """`error` replaces `interaction.completed` on an HTTP 200: the stream opened,
+    said `in_progress`, and then ended. So there is no status code to classify,
+    and no `failed` interaction status either — `Failed.status` says `failed`
+    because a reader testing it against `TERMINAL_ERROR_STATUSES` must not
+    conclude the round is still running, which is what the last status that
+    actually arrived would tell them.
+
+    The message is diagnosable text for the log and for nothing else. The device
+    is told `TURN_FAILED_MESSAGE` by `run_turn`, which is why an iPad no longer
+    displays a provider's rate-limit prose complete with an organization id."""
+    _, events = _normalise_all(FAILED_INTERACTION)
+    failed, = _only(events, Failed)
+    assert failed.status in TERMINAL_ERROR_STATUSES
+    assert "invalid_request" in failed.message
+    assert "classified:" in failed.message
+
+
+def test_classify_separates_a_burst_limit_from_a_spent_quota():
+    """Gemini answers both with 429 and `RESOURCE_EXHAUSTED`, so neither the
+    status code nor the status name separates them. A burst is worth waiting out;
+    a day's quota is a learner watching a thinking indicator through backoff for
+    a refusal that was already certain — the failure `BILLING_ERROR_CODES`
+    prevents on the other family."""
+    provider = GeminiProvider(client=None)
+
+    burst = provider.classify(429, {"error": {
+        "code": 429, "status": "RESOURCE_EXHAUSTED",
+        "message": "Resource has been exhausted (e.g. check quota).",
+    }})
+    assert burst.retry
+    assert burst.reason == "rate limited"
+
+    spent = provider.classify(429, {"error": {
+        "code": 429, "status": "RESOURCE_EXHAUSTED",
+        "message": "You exceeded your current quota.",
+        "details": [{
+            "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+            "violations": [{"quotaId": "GenerateRequestsPerDayPerProject"}],
+        }],
+    }})
+    assert not spent.retry
+    assert "quota" in spent.reason
+
+    assert provider.classify(503, None).retry
+    assert not provider.classify(400, {"error": {"code": 400}}).retry
+
+
+def test_classify_takes_the_no_status_path_for_an_in_stream_error():
+    """The shape `retry._without_status` was written for, arriving on the other
+    family too: a 200, an open stream, and a refusal minutes later. Delegated
+    rather than restated, and never given an invented status code — a made-up
+    number is one someone later reads as the provider's."""
+    provider = GeminiProvider(client=None)
+    decision = provider.classify(
+        None, {"error": {"code": "rate_limit_exceeded", "message": "try again"}}
+    )
+    assert decision.retry
+    assert decision.reason == "rate limited"
+    assert not provider.classify(
+        None, {"error": {"code": "invalid_request", "message": "bad argument"}}
+    ).retry
+
+
+def test_the_closing_rounds_tool_choice_moves_into_the_generation_config():
+    """`loop._closing_round` sets `tool_choice` at the top level of the payload,
+    where the Responses API takes it. On this API it lives inside
+    `generation_config`, so left where it was put it would be a field the request
+    type does not declare — and the closing round is bought precisely when a turn
+    is about to end in silence, so it is the last round that can afford to fail.
+
+    The payload itself is not mutated: `run_turn` records the first round's
+    payload as the turn's request envelope, and a stored call should say what was
+    built."""
+    from app.tutor.providers.gemini import _sdk_kwargs
+
+    provider = GeminiProvider(client=None)
+    payload = provider.build_round(
+        model="gemini-3.7-flash", effort="low", outbox=[], previous_id=None,
+        cache_key=None,
+    )
+    payload["tool_choice"] = "none"
+
+    kwargs = _sdk_kwargs(payload)
+    assert "tool_choice" not in kwargs
+    assert kwargs["generation_config"]["tool_choice"] == "none"
+    assert payload["generation_config"]["tool_choice"] == "validated"
+
+
+def test_every_recorded_event_decodes_to_the_shape_the_provider_reads():
+    """The fixtures are dicts and production hands the provider SDK objects, so
+    this is the assertion that lets every test above use the dicts: each recorded
+    event validates as a *known* `InteractionSSEEvent` variant, and dumping it
+    back gives the fixture unchanged. An `Unknown…` here would mean the recorded
+    shape and the installed SDK no longer agree, which is the one way these
+    fixtures could quietly stop describing what a real turn sends."""
+    from google.genai.interactions import (
+        InteractionSSEEvent, UnknownInteractionSSEEvent,
+    )
+
+    adapter = TypeAdapter(InteractionSSEEvent)
+    provider = GeminiProvider(client=None)
+    for fixture in (
+        TEXT_ONLY_INTERACTION, TOOL_CALL_INTERACTION, TOOL_CALL_FOLLOW_UP,
+        BOARD_UPDATE_INTERACTION, CODE_EXECUTION_INTERACTION,
+        GROUNDED_SEARCH_INTERACTION, FAILED_INTERACTION,
+    ):
+        for raw in fixture:
+            decoded = adapter.validate_python(raw)
+            assert not isinstance(decoded, UnknownInteractionSSEEvent), raw
+            dumped, from_sdk = provider.normalise(decoded)
+            assert dumped == raw
+            _, from_dict = provider.normalise(raw)
+            assert type(from_sdk) is type(from_dict)
