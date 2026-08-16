@@ -22,6 +22,42 @@ only assert that two providers reach the same tool call if the fixtures carry
 the same arguments. The recorded Flash-Lite call drew a labelled right triangle
 with an `angle_marker`; the shape of the events around it is untouched.
 
+**Every fixture is reproducible from the committed script.** The exact commands,
+so nobody has to guess how a shape was obtained:
+
+    # TEXT_ONLY_INTERACTION
+    uv run python -m scripts.record_interaction "what is 7 times 8"
+    # TOOL_CALL_INTERACTION — round one only
+    uv run python -m scripts.record_interaction "Set up a study plan for adding
+        fractions with unlike denominators, with a first exercise. Use
+        set_workspace. Do not draw."
+    # BOARD_UPDATE_INTERACTION
+    uv run python -m scripts.record_interaction "draw a right triangle on the board"
+    # CODE_EXECUTION_INTERACTION
+    uv run python -m scripts.record_interaction "Use code execution with
+        matplotlib to plot y = x squared and show me the resulting image. Do not
+        use update_board."
+    # GROUNDED_SEARCH_INTERACTION
+    uv run python -m scripts.record_interaction "Search the web for who won the
+        2026 Fields Medal, then tell me. Do not draw anything."
+    # TOOL_CALL_FOLLOW_UP — the second round of the set_workspace turn
+    uv run python -m scripts.record_interaction "<the set_workspace prompt>" \
+        --answer '{"ok": true}'
+    # FAILED_INTERACTION — the same, answered under the wrong tool name
+    uv run python -m scripts.record_interaction "<the set_workspace prompt>" \
+        --answer '{"ok": true}' --answer-as update_board
+
+The last two need `--answer`, which records round one and then chains a
+`function_result` on `previous_interaction_id`. They were first recorded through
+an ad hoc script, before `--answer` existed; the flag was added so the claim
+"recorded, not guessed" is checkable for all seven, and both were then
+re-recorded through it unchanged.
+
+The "Do not draw" clauses are not decoration. With the whole of
+`TOOL_DEFINITIONS` in scope, Flash-Lite reaches for `update_board` on the
+code-execution and search prompts unprompted, and these fixtures want each
+tool's wire shape rather than the model's unsteered tool choice.
+
 Trimmed, never reshaped. Each tuple keeps every event *type* that appeared in
 its recording, including the four this service does not read
 (`interaction.status_update`, `thought_signature`, `text_annotation_delta`,
@@ -304,11 +340,12 @@ TOOL_CALL_INTERACTION = (
 # its own id. The `function_result` input step that provokes it is never echoed
 # back as an event.
 #
-# Recorded, and worth recording for one reason the events do not show: the round
-# fails with `error.code == "invalid_request"` if the `function_result`'s `name`
-# names a different tool than the call it answers. Feeding back
-# `name: "update_board"` for a `view_board` call is a 400, not a mismatch the
-# provider forgives.
+# Recorded through `record_interaction.py --answer`, and worth recording for one
+# reason the events do not show: the round fails with
+# `error.code == "invalid_request"` if the `function_result`'s `name` names a
+# different tool than the call it answers. That is a 400, not a mismatch the
+# provider forgives, and `--answer-as` exists to provoke it — see
+# `FAILED_INTERACTION`.
 TOOL_CALL_FOLLOW_UP = (
     _created(FOLLOW_UP_ID),
     _status_update(FOLLOW_UP_ID),
@@ -646,6 +683,10 @@ GROUNDED_SEARCH_INTERACTION = (
 # `failed` status, and no HTTP error either, because the 200 was already sent.
 # So `classify` cannot see a status code here: the whole signal is
 # `error.code`, and `Failed` has to come off this event.
+#
+# Provoked by `record_interaction.py --answer-as <a tool that was not called>`,
+# which is a rejection this service can cause on purpose. The alternative was
+# waiting for a real quota exhaustion or a real outage to record one.
 FAILED_INTERACTION = (
     _created(FAILED_ID),
     _status_update(FAILED_ID),
