@@ -1,65 +1,38 @@
-import hashlib
-
 from app.attachments.parts import UploadPart
-from app.tutor.prompt import SYSTEM_PROMPT, compose_user_prompt
+from app.tutor.prompt import SYSTEM_PROMPT, TURN_CONVENTIONS, compose_user_prompt
 
 
-def test_system_prompt_is_the_unchanged_experimental_draft():
-    # Re-pinned for the 2026-08-15 draft merge plus the learner-led section
-    # move after KINDS OF OBJECTIVES, and again for the board rework's prompt
-    # flip: the TOOLS list gained fetch_image, web_search, and
-    # code_interpreter, and RESEARCH gained the compute-a-chart /
-    # draw-a-diagram split. Any *other* edit still has to show up here.
-    assert hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest() == (
-        # 2026-08-16: proactive-tools addition — RESEARCH tells the tutor to
-        # web_search and fetch_image unprompted, BOARD says web tools are part
-        # of teaching, and fetch_image's TOOLS line says "use it proactively".
-        #
-        # 2026-08-16: ink_text — BOARD gains the paragraph telling the tutor to
-        # write on the board in its own handwriting, and to do it often. The
-        # TOOLS list is unchanged: `ink_text` is an element of `update_board`,
-        # which is already listed, not a tool of its own.
-        #
-        # 2026-08-16, later: the fetch-image investigation's three lessons —
-        # RESEARCH now says there is no image-search tool (web_search finds
-        # URLs, fetch_image downloads one), prefers source sites over clipart,
-        # and warns that the white board swallows pale images, with a
-        # one-retry-then-draw budget.
-        "634d525cc82689c69146572a78b3d714624e0eed394200f602bb8eb660c5bae7"
-    )
+def test_model_facing_instructions_stay_compact():
+    """Guard the whole repeated instruction surface, not a brittle hash."""
+    assert len(SYSTEM_PROMPT) < 5_500
+    assert len(TURN_CONVENTIONS) < 1_000
+    assert len(SYSTEM_PROMPT) + len(TURN_CONVENTIONS) < 6_500
 
 
-def test_system_prompt_keeps_the_three_draft_merge_additions():
-    assert (
-        "And provide materials for me to read and learn from in a way that "
-        "it's easy to read/see/understand from my level of knowledge and "
-        "personal preferences" in SYSTEM_PROMPT
-    )
-    assert (
-        "And use board to visualize concepts, structure the material."
-        in SYSTEM_PROMPT
-    )
-    assert (
-        "Mb even I would incentivize you to use board more often to "
-        "draw/visualize, make an experience memorable by incorporating sense "
-        "of art and design." in SYSTEM_PROMPT
-    )
+def test_system_prompt_keeps_the_product_taste():
+    for principle in (
+        "easy to see and feel",
+        "beauty, emotion, analogy, and surprise",
+        "coherent scene with hierarchy, negative space",
+        "playful, emotional, or unexpected",
+        "Mix them freely",
+    ):
+        assert principle in SYSTEM_PROMPT
 
 
 def test_system_prompt_requests_chatgpt_style_math_delimiters():
-    assert "Write replies as polished Markdown" in SYSTEM_PROMPT
+    assert "Write polished Markdown" in SYSTEM_PROMPT
     assert "inline math inside `\\( ... \\)`" in SYSTEM_PROMPT
     assert "display math inside `\\[ ... \\]`" in SYSTEM_PROMPT
     assert "instead of showing raw source" in SYSTEM_PROMPT
 
 
-def test_system_prompt_contains_every_draft_section_and_tool():
+def test_system_prompt_contains_the_compact_sections_without_a_tool_catalog():
     for heading in (
-        "# ABOUT",
-        "## UNDERSTAND THE USER",
+        "# ROLE",
+        "## READ THE LEARNER",
+        "## TEACH",
         "## LEARNER-LED MODE",
-        "## GOAL",
-        "## KINDS OF OBJECTIVES",
         "## BOARD",
         "## RESEARCH",
         "## MEMORY",
@@ -67,27 +40,12 @@ def test_system_prompt_contains_every_draft_section_and_tool():
     ):
         assert heading in SYSTEM_PROMPT
 
-    for tool in (
-        "set_workspace",
-        "view_board",
-        "update_board",
-        "remember",
-        "forget",
-        "search_memory",
-        "search_sessions",
-        "search_history",
-        "get_session",
-        "list_sessions",
-        "record_evidence",
-        # The board rework's three additions. A tool the model is offered on
-        # every request and never told about in the prompt is a tool it reaches
-        # for by accident or not at all.
-        "fetch_image",
-        "web_search",
-        "code_interpreter",
-    ):
-        assert tool in SYSTEM_PROMPT
-    assert "recent_sessions" not in SYSTEM_PROMPT
+    assert "schemas are the source of truth" in SYSTEM_PROMPT
+    # Function descriptions already arrive beside the prompt. Repeating a
+    # prose directory here wastes tokens and gives the model two contracts.
+    assert "\nset_workspace\n" not in SYSTEM_PROMPT
+    assert "\nview_board\n" not in SYSTEM_PROMPT
+    assert "\nupdate_board\n" not in SYSTEM_PROMPT
 
 
 def test_system_prompt_splits_computed_charts_from_drawn_diagrams():
@@ -97,9 +55,9 @@ def test_system_prompt_splits_computed_charts_from_drawn_diagrams():
     research = SYSTEM_PROMPT[SYSTEM_PROMPT.index("## RESEARCH"):]
     research = research[:research.index("## MEMORY")]
 
-    assert "compute with a script" in research
+    assert "compute it with a script" in research
     assert "the image the script produced" in research
-    assert "draw natively" in research
+    assert "draw natively with svg" in research
     assert "math_text" in research
 
 
@@ -111,8 +69,8 @@ def test_system_prompt_tells_the_tutor_to_write_on_the_board_by_hand():
     board = SYSTEM_PROMPT[SYSTEM_PROMPT.index("## BOARD"):]
     board = board[:board.index("## RESEARCH")]
 
-    assert "`ink_text` puts your words there in ink" in board
-    assert "Use it often" in board
+    assert "Write brief human notes with `ink_text`" in board
+    assert "use it often" in board
     assert "Notation stays `math_text`" in board
 
 
@@ -126,15 +84,11 @@ def test_system_prompt_enforces_the_learner_led_invariant():
     )
 
 
-def test_system_prompt_orders_learner_led_after_objectives_before_board():
-    objectives = SYSTEM_PROMPT.index("## KINDS OF OBJECTIVES")
+def test_system_prompt_orders_learner_led_after_teaching_before_board():
+    teaching = SYSTEM_PROMPT.index("## TEACH")
     learner_led = SYSTEM_PROMPT.index("## LEARNER-LED MODE")
     board = SYSTEM_PROMPT.index("## BOARD")
-    objectives_tail = SYSTEM_PROMPT.index(
-        "There might be other scenarios, try do identify them and figure out my intent."
-    )
-    assert objectives < learner_led < board
-    assert objectives_tail < learner_led
+    assert teaching < learner_led < board
 
 
 def test_user_prompt_marks_the_transcript_as_data():
