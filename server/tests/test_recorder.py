@@ -371,6 +371,95 @@ async def test_fail_turn_records_the_tokens_the_provider_already_billed_for(
 
 
 @requires_db
+async def test_fail_turn_records_the_tool_calls_that_did_run(
+    db, db_factory, tmp_path
+):
+    """A turn that spent money and died is the turn whose tool calls matter
+    most, and this path used to drop every one of them. A session that
+    downloaded four pictures and then hit a rate limit left `SELECT count(*)
+    FROM tool_calls WHERE name='fetch_image'` answering zero, all time —
+    nothing else holds them: `llm_calls.request` is the *first* round's body, so
+    the accumulated calls never reach it, and `raw_events` is what the provider
+    sent, never what a tool answered."""
+    session = Session(model="gpt-5.6-luna", reasoning_effort="high")
+    db.add(session)
+    await db.flush()
+    turn_id = uuid.uuid4()
+    db.add(Turn(
+        id=turn_id, session_id=session.id, status="running",
+        model="gpt-5.6-luna", reasoning_effort="high",
+    ))
+    await db.commit()
+
+    recorder = Recorder(db_factory, LocalBlobStore(tmp_path))
+    from app.tutor.loop import TurnResult
+    result = TurnResult(
+        raw_events=[{"type": "response.created"}],
+        usage={"input_tokens": 87_037, "output_tokens": 2_410},
+        tool_calls=[
+            {"name": "view_board",
+             "arguments": {"x": 45, "y": 0, "width": 55, "height": 100},
+             "result": '{"status": "ok"}'},
+            {"name": "fetch_image",
+             "arguments": {"url": "https://example.com/fish.png"},
+             "result": '{"blob_id": "sha256:abc", "width": 1080, "height": 1080}'},
+        ],
+    )
+    await recorder.fail_turn(
+        turn_id=turn_id, message="APIError: Rate limit reached", retryable=True,
+        result=result, request_body={"model": "gpt-5.6-luna"},
+    )
+
+    async with db_factory() as fresh:
+        call = (await fresh.execute(select(LLMCall))).scalar_one()
+        tools = (await fresh.execute(
+            select(ToolCall).order_by(ToolCall.name)
+        )).scalars().all()
+        assert [tool.name for tool in tools] == ["fetch_image", "view_board"]
+        assert all(tool.llm_call_id == call.id for tool in tools)
+        assert tools[0].arguments == {"url": "https://example.com/fish.png"}
+        assert tools[0].result == {
+            "output": '{"blob_id": "sha256:abc", "width": 1080, "height": 1080}',
+        }
+
+
+@requires_db
+async def test_fail_turn_files_the_tool_calls_once_however_often_it_runs(
+    db, db_factory, tmp_path
+):
+    """A second pass is a real path, not a defensive one: the request handler
+    swallows a failed `fail_turn` write, then its `finally` sees the turn still
+    "running" and fails it again. A second pass that re-filed every call would
+    report a turn that fetched one picture as having fetched two."""
+    session = Session(model="gpt-5.6-luna", reasoning_effort="high")
+    db.add(session)
+    await db.flush()
+    turn_id = uuid.uuid4()
+    db.add(Turn(
+        id=turn_id, session_id=session.id, status="running",
+        model="gpt-5.6-luna", reasoning_effort="high",
+    ))
+    await db.commit()
+
+    recorder = Recorder(db_factory, LocalBlobStore(tmp_path))
+    from app.tutor.loop import TurnResult
+    result = TurnResult(
+        raw_events=[{"type": "response.created"}],
+        tool_calls=[{"name": "fetch_image", "arguments": {"url": "u"},
+                     "result": "{}"}],
+    )
+    for _ in range(2):
+        await recorder.fail_turn(
+            turn_id=turn_id, message="rate limited", retryable=True,
+            result=result, request_body={"model": "gpt-5.6-luna"},
+        )
+
+    async with db_factory() as fresh:
+        tools = (await fresh.execute(select(ToolCall))).scalars().all()
+        assert len(tools) == 1
+
+
+@requires_db
 async def test_fail_turn_without_a_result_still_records_the_error(db, db_factory, tmp_path):
     """Failures before any model call exists (idempotency, spend cap) have no
     TurnResult to persist — fail_turn must still work without one."""

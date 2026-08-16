@@ -349,6 +349,33 @@ FETCH_IMAGE_FOLLOW_UP = (
 )
 
 
+# The provider refusing from *inside* a stream it already opened.
+#
+# Not a hypothetical shape. The `POST /v1/responses` behind this answered 200,
+# the model wrote a few words, and a minute later the account's
+# tokens-per-minute ceiling arrived as this event — so the SDK raises a bare
+# `openai.APIError` with no status code, which is the whole reason
+# `retry.classify` learned to read a body with no status on it.
+#
+# The message is the real one, with the organization id replaced. It is here in
+# full on purpose: it is what a nine-year-old was shown on an iPad, and a test
+# that asserts this string never reaches the wire needs the string.
+RATE_LIMIT_MESSAGE = (
+    "Rate limit reached for gpt-5.6-luna in organization org-EXAMPLE0000 on "
+    "tokens per min (TPM): Limit 200000, Used 164798, Requested 37409. Please "
+    "try again in 662ms. Visit https://platform.openai.com/account/rate-limits "
+    "to learn more."
+)
+
+# Deliberately carries no `code` and no `type`: the body that produced this
+# named neither, and the message was the only thing left to read.
+RATE_LIMITED_MID_STREAM = (
+    {"type": "response.created", "sequence_number": 0, "response": {"id": "resp_rl"}},
+    {"type": "response.output_text.delta", "sequence_number": 1, "delta": "Let me look "},
+    {"type": "error", "sequence_number": 2, "error": {"message": RATE_LIMIT_MESSAGE}},
+)
+
+
 CONTAINER_ID = "cntr_1"
 SCRIPT_FILE_ID = "cfile_1"
 SCRIPT_FILENAME = "chart.png"

@@ -57,6 +57,34 @@ BILLING_ERROR_CODES = frozenset({
     "insufficient_quota",
 })
 
+#: What a rate limit calls itself when there is no status code to read it off.
+#:
+#: A 429 says it in the status line and nothing else is needed. An error
+#: delivered *inside* a response stream has no status line at all — the request
+#: succeeded, and the refusal arrives as an SSE `error` event minutes later — so
+#: the only thing naming it is the body the provider put in that event. These
+#: are the values seen in `code` and in `type`.
+RATE_LIMIT_ERROR_CODES = frozenset({
+    "rate_limit_exceeded",
+    "rate_limit",
+    "tokens",
+    "requests",
+})
+
+#: The same fact, as the provider writes it in prose.
+#:
+#: Read only when neither `code` nor `type` says anything, because a body is not
+#: guaranteed to carry either: the turn that produced this file's in-stream
+#: branch arrived as a bare message — "Rate limit reached for … on tokens per
+#: min (TPM): Limit 200000, Used 164798, Requested 37409. Please try again in
+#: 662ms." — and was recorded as final. A provider telling us when to try again
+#: is a provider telling us to try again.
+#:
+#: The cost of reading this wrong in either direction is small and unequal. A
+#: false positive is one retry the learner did not need; a false negative is a
+#: transient hiccup presented to a child as a dead end.
+_RATE_LIMIT_PHRASES = ("rate limit", "rate_limit", "too many requests")
+
 
 @dataclass(frozen=True)
 class RetryDecision:
@@ -89,7 +117,66 @@ def _error_code(body: dict | None) -> str | None:
     return code if isinstance(code, str) else None
 
 
-def classify(status_code: int, body: dict | None) -> RetryDecision:
+def _error_field(body: dict | None, key: str) -> str | None:
+    """One string field off a provider error body of either shape.
+
+    The companion to `_error_code`, and it accepts the same two shapes for the
+    same reason. `type` and `message` are what is left to read when the code is
+    absent, which is the ordinary case for an error delivered inside a stream.
+    """
+    if not isinstance(body, dict):
+        return None
+    error = body.get("error", body)
+    if not isinstance(error, dict):
+        return None
+    value = error.get(key)
+    return value if isinstance(value, str) else None
+
+
+def _reads_as_rate_limit(text: str | None) -> bool:
+    if not text:
+        return False
+    lowered = text.lower()
+    return any(phrase in lowered for phrase in _RATE_LIMIT_PHRASES)
+
+
+def _without_status(body: dict | None, message: str | None) -> RetryDecision:
+    """Whether to retry a failure that never carried a status code.
+
+    The whole of this branch exists for one shape: an `openai.APIError` raised
+    out of the middle of a response stream. The round's `POST` answered 200, the
+    stream opened, and the refusal arrived as an SSE `error` event — so there is
+    no status line, the exception is not an `APIStatusError`, and every caller
+    that reached for `.status_code` found nothing there.
+
+    Billing first, exactly as the 429 branch does it: an exhausted account
+    says the same thing however it is delivered, and retrying it is backoff a
+    learner waits through for a refusal that was already final.
+    """
+    code = _error_code(body)
+    if code in BILLING_ERROR_CODES:
+        return RetryDecision(False, f"billing error {code} is final")
+    kind = _error_field(body, "type")
+    if code in RATE_LIMIT_ERROR_CODES or kind in RATE_LIMIT_ERROR_CODES:
+        return RetryDecision(True, "rate limited")
+    if _reads_as_rate_limit(message) or _reads_as_rate_limit(
+        _error_field(body, "message")
+    ):
+        return RetryDecision(True, "rate limited")
+    return RetryDecision(False, "no status, and nothing saying it is retryable")
+
+
+def classify(
+    status_code: int | None, body: dict | None, message: str | None = None
+) -> RetryDecision:
+    """Whether a provider failure is worth trying again.
+
+    `status_code` is `None` for a failure that arrived without one — see
+    `_without_status`. `message` is the exception's own text, read only in that
+    case and only when the body names nothing.
+    """
+    if status_code is None:
+        return _without_status(body, message)
     if status_code == 429:
         code = _error_code(body)
         if code in BILLING_ERROR_CODES:

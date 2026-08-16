@@ -281,6 +281,22 @@ class Recorder:
         service exists to make visible: money spent, nothing to show for it,
         and no row saying how much.
 
+        `tool_calls` rows are written here for exactly that argument, one step
+        further along. A turn that spent money and died is the turn whose tool
+        calls matter most, and they were the one thing this path dropped: a
+        session that downloaded four pictures and then hit a rate limit left
+        `SELECT count(*) FROM tool_calls WHERE name='fetch_image'` answering
+        zero, all time. Nothing else holds them either — `llm_calls.request` is
+        the *first* round's body, so the accumulated `function_call` items never
+        reach it, and `raw_events` carries only what the provider sent, never
+        what a tool answered. The evidence existed nowhere.
+
+        Written once, however many times this runs. `_fail_turn_and_report`
+        swallows a failed write and the handler's `finally` then sees the turn
+        still "running" and fails it again, so a second pass is a real path —
+        and a second pass that re-filed every tool call would report a turn that
+        fetched two pictures as having fetched four.
+
         A `REPLY_LOST_TEXT` tutor `Message` is written too, in the same
         transaction. The learner's side of a failed turn is already in
         `messages` — the request handler commits it with the turn row before
@@ -300,15 +316,35 @@ class Recorder:
         """
         call = None
         usage: dict = {}
+        tool_calls: list = []
         if result is not None:
             call, usage = await self._build_llm_call(
                 turn_id=turn_id, result=result,
                 request_body=request_body or {}, image_blob_key=image_blob_key,
             )
+            tool_calls = list(getattr(result, "tool_calls", None) or [])
 
         async with self._sessionmaker() as session:
             if call is not None:
                 session.add(call)
+                if tool_calls:
+                    # Flushed for `call.id`, which the rows below are keyed on —
+                    # the same order `finish_turn` writes them in.
+                    await session.flush()
+                    already = await session.scalar(
+                        select(func.count())
+                        .select_from(ToolCall)
+                        .where(ToolCall.turn_id == turn_id)
+                    )
+                    if not already:
+                        for tool in tool_calls:
+                            session.add(ToolCall(
+                                turn_id=turn_id,
+                                llm_call_id=call.id,
+                                name=tool.get("name") or "",
+                                arguments=tool.get("arguments"),
+                                result={"output": tool.get("result")},
+                            ))
 
             turn = await session.get(Turn, turn_id)
             if turn is None:

@@ -1340,7 +1340,8 @@ async def test_the_turn_stops_fetching_once_its_byte_budget_is_spent(monkeypatch
     async def fetch_image(url: str) -> FetchedImage:
         seen.append(url)
         return FetchedImage(output=json.dumps({"blob_id": BLOB}),
-                            image=b"12345678", content_type="image/png")
+                            image=b"12345678", content_type="image/png",
+                            source_bytes=8)
 
     result = None
     async for _event, running in run_turn(
@@ -1352,6 +1353,35 @@ async def test_the_turn_stops_fetching_once_its_byte_budget_is_spent(monkeypatch
 
     assert len(seen) == 1, "eight bytes already put the turn past a four-byte cap"
     assert result.tool_calls[1]["result"] == FETCH_BUDGET_ACK
+
+
+@respx.mock
+async def test_the_byte_budget_counts_the_download_not_the_copy(monkeypatch):
+    """The picture handed back is a reduced copy for the model's context — the
+    blob keeps the original — so its length stopped being what the download
+    cost. Counting the copy would let a turn bring in far more than the cap
+    says it may: a 4 MB PNG reduced to 40 KB would spend a hundredth of its own
+    weight."""
+    monkeypatch.setattr("app.tutor.loop.TURN_DOWNLOAD_BYTE_LIMIT", 4)
+    _three_rounds(FETCH_IMAGE_TURN, FETCH_IMAGE_TURN, FETCH_IMAGE_FOLLOW_UP)
+    client = AsyncOpenAI(api_key="sk-test")
+    bundle = ContextBundle(system="s", input=[{"role": "user", "content": "find one"}])
+    seen = []
+
+    async def fetch_image(url: str) -> FetchedImage:
+        seen.append(url)
+        # One byte to show, a hundred brought in.
+        return FetchedImage(output=json.dumps({"blob_id": BLOB}), image=b"J",
+                            content_type="image/jpeg", source_bytes=100)
+
+    async for _event, _running in run_turn(
+        provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+        effort="high", bundle=bundle,
+        fetch_image=fetch_image,
+    ):
+        pass
+
+    assert len(seen) == 1, "the download is what the budget is counted in"
 
 
 @respx.mock

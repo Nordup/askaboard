@@ -14,8 +14,8 @@ from app.tutor.board_scene import (
 )
 from app.tutor.context import ContextBundle
 from app.tutor.events import (
-    BoardRequestEvent, ClientEvent, ErrorEvent, EventTranslator, StatusEvent,
-    WorkspaceEvent,
+    TURN_FAILED_MESSAGE, BoardRequestEvent, ClientEvent, ErrorEvent,
+    EventTranslator, StatusEvent, WorkspaceEvent,
 )
 from app.tutor.providers import (
     Completed, Failed, ProducedFile, Provider, RelayedFile, TextDelta,
@@ -406,7 +406,13 @@ async def _closing_round(
                 result.usage = _merge_usage(result.usage, neutral.usage)
                 result.response_id = neutral.response_id
             elif isinstance(neutral, Failed):
-                yield ErrorEvent(message=neutral.message, retryable=False)
+                # The provider's own words go to the log and no further; the
+                # device gets `TURN_FAILED_MESSAGE`, for the reason that
+                # constant gives.
+                logger.warning(
+                    "the closing round failed | %s", neutral.message,
+                )
+                yield ErrorEvent(message=TURN_FAILED_MESSAGE, retryable=False)
                 return
 
             for client_event in translator.translate(neutral):
@@ -452,12 +458,25 @@ class FetchedImage:
     """
 
     output: str
+    #: The picture as the *model* is shown it, which is not the picture the
+    #: device gets. `app.api.turn` records the download at full resolution and
+    #: puts a reduced copy here — see `fetch_image.model_copy` for the whole
+    #: argument, and note that the `blob_id` in `output` still names the
+    #: original. Nothing downstream needs to know: this is simply the bytes to
+    #: show.
     image: bytes | None = None
-    #: What `image` actually is, as `app.tutor.fetch_image` determined from the
-    #: bytes. It names the media type in the data URL, so a JPEG sent as
-    #: `data:image/png` would be a picture the provider is handed under a false
-    #: description.
+    #: What `image` actually is. It names the media type in the data URL, so a
+    #: JPEG sent as `data:image/png` would be a picture the provider is handed
+    #: under a false description. The reduced copy is a JPEG whatever was
+    #: downloaded, so this is the copy's type and not the download's.
     content_type: str | None = None
+    #: How many bytes the download actually cost, which is what the turn's
+    #: download budget is counted in. Its own field because `image` stopped
+    #: being able to answer that question the moment it became a reduced copy —
+    #: counting the small one would let a turn bring in far more than
+    #: `TURN_DOWNLOAD_BYTE_LIMIT` says it may. Zero for a refusal, which is what
+    #: the length of a missing picture said before.
+    source_bytes: int = 0
 
 
 #: How `run_turn` fetches a picture from a URL the model chose. Injected for the
@@ -880,7 +899,13 @@ async def run_turn(
                     # and are classified by `_open_round`. `retryable=False` for
                     # the reason nothing after the open is retried: whatever
                     # streamed, the learner has already read.
-                    yield ErrorEvent(message=neutral.message, retryable=False), result
+                    #
+                    # The provider's own words are logged and go no further —
+                    # see `TURN_FAILED_MESSAGE`.
+                    logger.warning("the round failed | %s", neutral.message)
+                    yield ErrorEvent(
+                        message=TURN_FAILED_MESSAGE, retryable=False
+                    ), result
                     return
 
                 for client_event in translator.translate(neutral):
@@ -966,7 +991,10 @@ async def run_turn(
                         IMAGE_FETCH_TIMEOUT_SECONDS,
                     )
                     fetched = FetchedImage(output=FETCH_TIMEOUT_ACK)
-                downloaded_bytes += len(fetched.image or b"")
+                # What the download cost, not what is about to be shown: the
+                # picture in `fetched.image` has already been reduced for the
+                # model's context, and this budget is about bytes brought in.
+                downloaded_bytes += fetched.source_bytes
                 outputs.append(provider.tool_output(
                     call_id=call_id, name=call.get("name") or "",
                     output=fetched.output,
@@ -1107,7 +1135,8 @@ async def run_turn(
                         FILE_RELAY_TIMEOUT_SECONDS, filename,
                     )
                     file = RelayedFile(error="the download timed out")
-                downloaded_bytes += len(file.data or b"")
+                # The download, not the copy — see the fetch branch above.
+                downloaded_bytes += file.source_bytes
                 relayed.append((filename, file))
 
         # The item rides an already-happening round for free, so when the model

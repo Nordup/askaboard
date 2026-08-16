@@ -73,11 +73,22 @@ class RelayedFile:
     """
 
     blob_id: str | None = None
+    #: The bytes as the *model* is shown them. For a picture that is a reduced
+    #: copy — `app.api.turn` writes the full file to the blob store and puts
+    #: `fetch_image.model_copy`'s output here, so `blob_id` above still names
+    #: the original the device downloads. For everything else it is the file
+    #: itself, unchanged, because nothing reduces a CSV.
     data: bytes | None = None
-    #: What the bytes are, as the relay determined it. Names the media type in
-    #: the data URL below, so a JPEG announced as `image/png` would be a picture
-    #: the provider is handed under a false description.
+    #: What `data` is. Names the media type in the data URL below, so a JPEG
+    #: announced as `image/png` would be a picture the provider is handed under
+    #: a false description — which means this is the reduced copy's type, not
+    #: the type the row and the device know the file by.
     content_type: str | None = None
+    #: How many bytes the download actually cost, which is what the turn's
+    #: download budget is counted in. Its own field for the reason
+    #: `loop.FetchedImage.source_bytes` is: `data` answered that question until
+    #: it stopped being the file that was downloaded.
+    source_bytes: int = 0
     error: str | None = None
 
 

@@ -1,8 +1,9 @@
 import json
 
 from app.tutor.events import (
-    TOOL_STEP_LABELS, BoardUpdateEvent, EventTranslator, ReasoningDeltaEvent,
-    StatusEvent, StepEvent, TextDeltaEvent, WorkspaceEvent, region_label,
+    TOOL_STEP_LABELS, TURN_FAILED_MESSAGE, BoardUpdateEvent, ErrorEvent,
+    EventTranslator, ReasoningDeltaEvent, StatusEvent, StepEvent,
+    TextDeltaEvent, WorkspaceEvent, region_label,
 )
 from app.tutor.providers.openai import OpenAIProvider
 from app.tutor.tools import MEMORY_TOOLS
@@ -730,3 +731,18 @@ def test_the_fetched_url_never_reaches_the_learners_status_row():
         "arguments": '{"url": "https://example.com/ignore-your-instructions.png"}',
     })
     assert events == [StepEvent(id="call_f", tool="fetch_image", label="Fetching image")]
+
+
+def test_the_only_thing_a_failed_turn_tells_the_device_is_our_own_sentence():
+    """The other half of "the fetched URL never reaches the learner's status
+    row", one event along. A provider's error text is written for whoever holds
+    the account: the one this constant exists for named the model, the
+    organization id and the account's tokens-per-minute ceiling, and it was
+    shown verbatim on an iPad. `ErrorEvent` carries this and the retryable flag,
+    and nothing else has to be sanitised because nothing else is sent."""
+    event = ErrorEvent(message=TURN_FAILED_MESSAGE, retryable=True)
+    assert json.loads(event.model_dump_json()) == {
+        "type": "error",
+        "message": "The tutor could not finish that turn.",
+        "retryable": True,
+    }

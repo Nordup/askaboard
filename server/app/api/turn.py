@@ -39,10 +39,14 @@ from app.store.blobs import LocalBlobStore
 from app.store.models import Attachment, Message, Session, Turn
 from app.store.recorder import Recorder, cache_tokens
 from app.tutor.context import assemble_context
-from app.tutor.events import DoneEvent, ErrorEvent, StatusEvent
+from app.tutor.events import (
+    TURN_FAILED_MESSAGE, DoneEvent, ErrorEvent, StatusEvent,
+)
 from app.tutor.board_scene import MAX_SCENE_CHARS
 from app.tutor import rendezvous
-from app.tutor.fetch_image import ImageFetchError, fetch_image
+from app.tutor.fetch_image import (
+    ALLOWED_CONTENT_TYPES, ImageFetchError, fetch_image, model_copy,
+)
 from app.tutor.loop import (
     FetchedImage,
     TurnResult,
@@ -237,6 +241,10 @@ async def _fail_turn_and_report(
     modes this has to survive are "the database write failed" and "the process
     is about to go away" — in both, the log line is the only account that will
     exist.
+
+    `message` is the diagnosable text and it stops here. What goes back to the
+    device is `TURN_FAILED_MESSAGE` — see that constant for the rate-limit
+    error, organization id and all, that a learner was once shown verbatim.
     """
     logger.warning(
         "turn failed | turn_id=%s retryable=%s %s | %s",
@@ -256,7 +264,7 @@ async def _fail_turn_and_report(
         # exactly the case where this is the *only* place that would ever
         # say why, so it must not be invisible too.
         logger.exception("could not persist turn failure for turn_id=%s", turn_id)
-    return ErrorEvent(message=message, retryable=retryable)
+    return ErrorEvent(message=TURN_FAILED_MESSAGE, retryable=retryable)
 
 
 @dataclass(frozen=True)
@@ -652,6 +660,15 @@ async def create_turn(
             way this can fail is a URL that did not work out, and a model told
             so can look for another picture; a raise here would end a turn over
             a dead link.
+
+            **The blob and the model get different pictures, on purpose.** The
+            blob keeps the download exactly as it arrived, because that is what
+            the device loads and draws. What goes back into the conversation is
+            `model_copy`'s reduced version — see that function for why a
+            1080x1080 PNG re-billed across a turn's rounds is what ended two of
+            these turns at the account's tokens-per-minute ceiling. The
+            `blob_id` the model is told still names the original, so nothing
+            about placing the picture changes.
             """
             try:
                 fetched = await fetch_image(url)
@@ -662,10 +679,12 @@ async def create_turn(
                 turn_id=body.turn_id, kind=FETCHED_IMAGE_KIND,
                 data=fetched.data, content_type=fetched.content_type,
             )
+            shown, shown_type = model_copy(fetched.data, fetched.content_type)
             logger.info(
-                "image fetched | turn_id=%s bytes=%d type=%s size=%dx%d",
+                "image fetched | turn_id=%s bytes=%d type=%s size=%dx%d "
+                "shown_bytes=%d shown_type=%s",
                 body.turn_id, len(fetched.data), fetched.content_type,
-                fetched.width, fetched.height,
+                fetched.width, fetched.height, len(shown), shown_type,
             )
             return FetchedImage(
                 output=json.dumps({
@@ -673,11 +692,13 @@ async def create_turn(
                     "width": fetched.width,
                     "height": fetched.height,
                 }),
-                # The same bytes the blob now holds, handed back so `run_turn`
-                # can show them to the model. It is about to place this picture
-                # by id and then tell the learner what it shows.
-                image=fetched.data,
-                content_type=fetched.content_type,
+                # Not the bytes the blob holds — the small copy of them, handed
+                # back so `run_turn` can show the model what it is about to
+                # place and then talk about. Without a picture at all it would
+                # be describing a URL.
+                image=shown,
+                content_type=shown_type,
+                source_bytes=len(fetched.data),
             )
 
         async def relay_container_file(file: ProducedFile) -> RelayedFile:
@@ -726,18 +747,30 @@ async def create_turn(
                 turn_id=body.turn_id, kind=SCRIPT_OUTPUT_KIND,
                 data=data, content_type=content_type,
             )
+            # Pictures only, and for the reason `fetch_and_record_image` reduces
+            # its download: a chart is looked at once by the model and re-billed
+            # on every round after that. The blob keeps the file the script
+            # wrote, which is the one the device downloads by `blob_id`. Nothing
+            # else is touched — a CSV has no resolution to spend, and
+            # `relay_item` never shows it anyway.
+            shown, shown_type = (
+                model_copy(data, content_type)
+                if content_type in ALLOWED_CONTENT_TYPES
+                else (data, content_type)
+            )
             logger.info(
-                "container file relayed | turn_id=%s file=%s bytes=%d type=%s",
-                body.turn_id, filename, len(data), content_type,
+                "container file relayed | turn_id=%s file=%s bytes=%d type=%s "
+                "shown_bytes=%d",
+                body.turn_id, filename, len(data), content_type, len(shown),
             )
             return RelayedFile(
                 blob_id=ref.key,
-                # Always the bytes, whatever they are. The provider's
-                # `relay_item` shows the pictures and lists the rest, and
-                # `TURN_DOWNLOAD_BYTE_LIMIT` is counted in the length of every
-                # file either way.
-                data=data,
-                content_type=content_type,
+                # Always something, whatever the file is. The provider's
+                # `relay_item` shows the pictures and lists the rest.
+                data=shown,
+                content_type=shown_type,
+                # The download, which `TURN_DOWNLOAD_BYTE_LIMIT` is counted in.
+                source_bytes=len(data),
             )
 
         # Everything that can strand a turn at status="running" — the image
@@ -880,6 +913,38 @@ async def create_turn(
                 retryable=True, result=result, request_body=request_body,
                 image_blob_key=image_ref.key if image_ref else None,
                 diagnostics=diagnostics(),
+            )
+            yield sse(event)
+        except APIError as error:
+            # **The provider refusing from inside the stream.** Third, because
+            # both clauses above are subclasses of this one and Python takes the
+            # first that matches — widening this to cover them would throw away
+            # a status code and a `Retry-After` that are already read properly.
+            #
+            # What lands here is the failure neither of them can see: the
+            # round's `POST` answered 200, the stream opened, and the refusal
+            # arrived a minute later as an SSE `error` event. The SDK raises a
+            # bare `APIError` for that — no status code, not an
+            # `APIStatusError` — so it used to fall to the generic handler
+            # below and be recorded `retryable=False`. The failure that made
+            # this branch exist was a TPM rate limit whose own text said "Please
+            # try again in 662ms", written into `turns.error` as final.
+            #
+            # `error.body` is the provider's error object, already unwrapped by
+            # the SDK, and it is not guaranteed to be a dict — a non-JSON body
+            # is passed through as whatever it was. `classify` reads the
+            # message when the body names nothing, which is the shape this
+            # arrived in.
+            decision = classify(
+                None,
+                error.body if isinstance(error.body, dict) else None,
+                error.message,
+            )
+            event = await _fail_turn_and_report(
+                recorder, turn_id=body.turn_id, message=_describe_error(error),
+                retryable=decision.retry, result=result, request_body=request_body,
+                image_blob_key=image_ref.key if image_ref else None,
+                diagnostics={**diagnostics(), "classified": decision.reason},
             )
             yield sse(event)
         except Exception as error:

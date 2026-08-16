@@ -15,11 +15,13 @@ from app.tutor.board_scene import MAX_SCENE_CHARS
 from app.config import DEFAULT_MODEL, DEFAULT_REASONING_EFFORT, get_settings
 from app.main import create_app
 from app.store.models import Message, Session, Turn
-from app.tutor.events import StatusEvent
+from app.tutor.events import TURN_FAILED_MESSAGE, StatusEvent
 from app.tutor.loop import TurnResult
 from tests.conftest import requires_db
 from tests.fixtures.sse import (
-    TEXT_ONLY_TURN, TOOL_CALL_FOLLOW_UP, TOOL_CALL_TURN, sse_stream,
+    FETCH_IMAGE_FOLLOW_UP, FETCH_IMAGE_TURN, RATE_LIMIT_MESSAGE,
+    RATE_LIMITED_MID_STREAM, TEXT_ONLY_TURN, TOOL_CALL_FOLLOW_UP,
+    TOOL_CALL_TURN, sse_stream,
 )
 
 AUTH = {"Authorization": "Bearer test-token"}
@@ -228,16 +230,19 @@ async def test_a_dropped_connection_fails_the_turn_visibly(db_app, db_factory):
     assert events[-1]["type"] == "error"
     assert events[-1]["retryable"] is True
 
-    # str(APIConnectionError(...)) alone is just the generic "Connection
-    # error." — both the event the client sees and the row we persist must
-    # carry the exception type and the underlying httpx failure that
-    # actually explains what went wrong, not just that generic string.
-    assert "APIConnectionError" in events[-1]["message"]
-    assert "connection reset by peer" in events[-1]["message"]
+    # The device is told one app-authored sentence and nothing about the
+    # failure itself — see `TURN_FAILED_MESSAGE`.
+    assert events[-1]["message"] == TURN_FAILED_MESSAGE
 
     # A turn that dies mid-stream must not stay "running" forever — that
     # would permanently poison the turn_id, since the idempotency check only
     # tests for the row's existence.
+    #
+    # str(APIConnectionError(...)) alone is just the generic "Connection
+    # error." — the row we persist must carry the exception type and the
+    # underlying httpx failure that actually explains what went wrong, not just
+    # that generic string. This is where that detail lives now, and the only
+    # place it does.
     async with db_factory() as db:
         turn = await db.get(Turn, uuid.UUID(payload["turn_id"]))
         assert turn.status == "error"
@@ -292,11 +297,12 @@ async def test_a_failed_attachment_write_still_fails_the_turn_visibly(
         app.dependency_overrides.clear()
 
     assert events[-1]["type"] == "error"
-    assert "OSError" in events[-1]["message"]
+    assert events[-1]["message"] == TURN_FAILED_MESSAGE
 
     async with db_factory() as db:
         turn = await db.get(Turn, uuid.UUID(payload["turn_id"]))
         assert turn.status == "error"
+        assert "OSError" in turn.error["message"]
 
 
 @respx.mock
@@ -315,6 +321,139 @@ async def test_a_billing_429_is_reported_as_not_retryable(db_app):
 
     assert events[-1]["type"] == "error"
     assert events[-1]["retryable"] is False
+
+
+@respx.mock
+async def test_a_rate_limit_inside_the_stream_is_recorded_retryable(
+    db_app, db_factory
+):
+    """The failure that started all of this, and the one shape no handler could
+    see. The round's POST answered 200 and the refusal arrived a minute later as
+    an SSE `error` event, so the SDK raises a bare `openai.APIError`: no status
+    code, and not an `APIStatusError`. It fell to the generic handler and was
+    written down as final — while the provider's own words in it said "Please
+    try again in 662ms"."""
+    respx.post("https://api.openai.com/v1/responses").mock(
+        return_value=Response(200, headers={"Content-Type": "text/event-stream"},
+                              content=sse_stream(*RATE_LIMITED_MID_STREAM))
+    )
+    payload = _payload()
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        async with client.stream("POST", "/v1/turn", json=payload, headers=AUTH) as r:
+            events = await _collect(r)
+
+    assert events[-1]["type"] == "error"
+    assert events[-1]["retryable"] is True
+
+    async with db_factory() as db:
+        turn = await db.get(Turn, uuid.UUID(payload["turn_id"]))
+        assert turn.status == "error"
+        assert turn.error["retryable"] is True
+        # The row says which rule made that call, so a wrong one is arguable
+        # from the table rather than only from the code.
+        assert turn.error["diagnostics"]["classified"] == "rate limited"
+
+
+@respx.mock
+async def test_the_providers_own_words_never_reach_the_device(db_app, db_factory):
+    """A provider writes its errors for whoever holds the account. This one
+    named the model, the organization id and the account's per-minute ceiling,
+    and every character of it was put on a child's iPad. It belongs in the row
+    and in the log, and nowhere else."""
+    respx.post("https://api.openai.com/v1/responses").mock(
+        return_value=Response(200, headers={"Content-Type": "text/event-stream"},
+                              content=sse_stream(*RATE_LIMITED_MID_STREAM))
+    )
+    payload = _payload()
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        async with client.stream("POST", "/v1/turn", json=payload, headers=AUTH) as r:
+            events = await _collect(r)
+
+    wire = json.dumps(events)
+    assert "org-EXAMPLE0000" not in wire
+    assert "tokens per min" not in wire
+    assert "gpt-5.6-luna" not in wire
+    assert events[-1]["message"] == TURN_FAILED_MESSAGE
+
+    # And it is genuinely kept, not merely dropped: a turn nobody can diagnose
+    # is the other half of this failure.
+    async with db_factory() as db:
+        turn = await db.get(Turn, uuid.UUID(payload["turn_id"]))
+        assert RATE_LIMIT_MESSAGE in turn.error["message"]
+
+
+@respx.mock
+async def test_a_fetched_picture_reaches_the_model_small_and_the_blob_whole(
+    db_app, db_factory, monkeypatch
+):
+    """The two halves of one download, and they are deliberately different
+    pictures. The device loads the blob and draws it, so the blob keeps what
+    arrived. The model looks at the picture once and is then re-billed for it on
+    every later round of the turn, so what goes into the conversation is a small
+    copy — which is the single largest lever on the token ceiling this turn
+    family kept hitting."""
+    import base64
+    import io
+
+    from PIL import Image
+
+    from app.store.models import Attachment
+    from app.tutor import fetch_image as fetch_image_module
+    from app.tutor.fetch_image import MODEL_IMAGE_MAX_EDGE
+
+    async def _public(host: str, port: int) -> list[str]:
+        return ["93.184.216.34"]
+
+    monkeypatch.setattr(fetch_image_module, "_resolve", _public)
+
+    original = io.BytesIO()
+    Image.new("RGB", (1080, 1080), "white").save(original, format="PNG")
+    original = original.getvalue()
+
+    respx.get("https://example.com/parabola.png").mock(return_value=Response(
+        200, headers={"Content-Type": "image/png"}, content=original,
+    ))
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*FETCH_IMAGE_TURN)),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*FETCH_IMAGE_FOLLOW_UP)),
+        ]
+    )
+    payload = _payload(text="find me a parabola")
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        async with client.stream("POST", "/v1/turn", json=payload, headers=AUTH) as r:
+            await _collect(r)
+
+    # What the model was shown, dug out of the round that answered the call.
+    second = json.loads(route.calls[1].request.content)
+    parts = [part for item in second["input"]
+             if isinstance(item.get("content"), list)
+             for part in item["content"] if part["type"] == "input_image"]
+    assert len(parts) == 1
+    url = parts[0]["image_url"]
+    assert url.startswith("data:image/jpeg;base64,")
+    shown = Image.open(io.BytesIO(base64.b64decode(url.split(",", 1)[1])))
+    assert shown.size == (MODEL_IMAGE_MAX_EDGE, MODEL_IMAGE_MAX_EDGE)
+    # Still `high`. What comes back is a diagram with labels on it, and the
+    # low-detail path downsamples until none of them can be read.
+    assert parts[0]["detail"] == "high"
+
+    # And the blob is the download, untouched — it is what the iPad will GET
+    # when the model places this picture by id.
+    async with db_factory() as db:
+        row = (await db.execute(
+            select(Attachment).where(Attachment.kind == "fetched_image")
+        )).scalar_one()
+        assert row.bytes == len(original)
+        assert row.content_type == "image/png"
 
 
 @respx.mock

@@ -19,7 +19,8 @@ from PIL import Image
 
 from app.tutor import fetch_image as module
 from app.tutor.fetch_image import (
-    MAX_IMAGE_BYTES, MAX_IMAGE_PIXELS_TOTAL, ImageFetchError, fetch_image,
+    MAX_IMAGE_BYTES, MAX_IMAGE_PIXELS_TOTAL, MODEL_IMAGE_MAX_EDGE,
+    ImageFetchError, fetch_image, model_copy,
 )
 
 
@@ -573,3 +574,76 @@ async def test_an_image_just_inside_the_pixel_ceiling_is_still_fetched(public_dn
     fetched = await fetch_image(URL)
 
     assert (fetched.width, fetched.height) == (width, height)
+
+
+# --- the copy the model is shown ---------------------------------------------
+# Not a guard. It is the same argument about what a picture costs, applied to
+# the one place `MAX_IMAGE_PIXELS_TOTAL` says nothing about: the model's own
+# context, where a fetched image is re-billed as input on every later round of
+# the turn. Two 1080x1080 PNGs across four rounds is what walked a session into
+# its account's tokens-per-minute ceiling.
+
+
+def _transparent(mode: str, width: int, height: int) -> bytes:
+    buffer = io.BytesIO()
+    Image.new(mode, (width, height), 0).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _opened(data: bytes) -> Image.Image:
+    return Image.open(io.BytesIO(data))
+
+
+def test_the_model_copy_is_capped_on_its_long_side():
+    data, content_type = model_copy(_image("PNG", 1080, 1080), "image/png")
+
+    assert _opened(data).size == (MODEL_IMAGE_MAX_EDGE, MODEL_IMAGE_MAX_EDGE)
+    # One format whatever came down the wire: the provider's documented vision
+    # formats all cost the same tokens, so the only thing format decides is
+    # bytes.
+    assert content_type == "image/jpeg"
+    assert _opened(data).format == "JPEG"
+
+
+def test_the_model_copy_keeps_the_shape_of_a_wide_picture():
+    """`thumbnail`, not `resize`: a diagram squashed into a square is a diagram
+    the model reads wrong."""
+    data, _ = model_copy(_image("PNG", 2000, 500), "image/png")
+
+    assert _opened(data).size == (MODEL_IMAGE_MAX_EDGE, MODEL_IMAGE_MAX_EDGE // 4)
+
+
+def test_a_picture_already_small_enough_is_never_enlarged():
+    data, _ = model_copy(_image("PNG", 200, 120), "image/png")
+
+    assert _opened(data).size == (200, 120)
+
+
+def test_transparency_is_flattened_onto_the_boards_own_white():
+    """Chosen to tell the truth rather than to look good. The board's ground is
+    white, so this is what the learner will see — and two of the three pictures
+    the incident fetched were exactly this case: a white outline on
+    transparency, and an alpha silhouette the model read as "completely
+    black"."""
+    data, _ = model_copy(_transparent("LA", 772, 596), "image/png")
+
+    assert _opened(data).convert("RGB").getpixel((3, 3)) == (255, 255, 255)
+
+
+def test_a_picture_that_cannot_be_read_comes_back_exactly_as_it_arrived():
+    """Never raises and never refuses a turn: the worst case is the behaviour
+    that existed before this function did."""
+    assert model_copy(b"not an image at all", "image/png") == (
+        b"not an image at all", "image/png",
+    )
+
+
+def test_a_picture_past_the_pixel_ceiling_is_left_alone_rather_than_decoded():
+    """This is the one place in the module that decodes pixels, so it is the one
+    place that pays for them. A fetched image can never reach here past the
+    ceiling — it is refused long before — but a file relayed out of the
+    provider's code interpreter arrives without passing it."""
+    huge = _png_declaring(8_000, 8_000)
+    assert 8_000 * 8_000 > MAX_IMAGE_PIXELS_TOTAL
+
+    assert model_copy(huge, "image/png") == (huge, "image/png")

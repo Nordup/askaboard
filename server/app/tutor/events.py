@@ -153,7 +153,34 @@ class DoneEvent(BaseModel):
     cached_tokens: int | None = None
 
 
+#: What a failed turn tells the device, whatever it was that actually failed.
+#:
+#: One sentence, and never the provider's own words. A provider writes its
+#: errors for whoever holds the account: the rate limit that this constant was
+#: written for named the model, the organization id, and the account's
+#: tokens-per-minute ceiling — and every character of it was put on a child's
+#: iPad. There is no sanitising a string like that after the fact, so none is
+#: attempted; the wire carries this, and the provider's text goes where it
+#: belongs. `_describe_error` still writes the diagnosable version to the log
+#: and into `turns.error`, which is where someone debugging a failed turn
+#: reads it.
+#:
+#: Deliberately says nothing about *why*. The one structured fact the device
+#: gets is `retryable`, which is what it maps to its own copy — see
+#: `TutorStore.failureMessage`. A second sentence here would be a second place
+#: for that copy to live, in a language this service does not choose.
+TURN_FAILED_MESSAGE = "The tutor could not finish that turn."
+
+
 class ErrorEvent(BaseModel):
+    """A turn that ended badly, as the device is told it.
+
+    `message` is `TURN_FAILED_MESSAGE` and nothing else — see the constant for
+    why it is not the failure's own text. `retryable` is the fact worth having:
+    a rate limit the provider says to retry in 662 ms and a bug in our own code
+    are the same blank wall to a learner unless something says which is which.
+    """
+
     type: Literal["error"] = "error"
     message: str
     retryable: bool

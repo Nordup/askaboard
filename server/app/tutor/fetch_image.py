@@ -32,6 +32,12 @@ The guards, and what each one is for:
 
 The bytes are then handed to Pillow for their dimensions, which doubles as the
 proof they are an image at all.
+
+`model_copy` is the one thing here that is not a guard. It is in this module
+because it is the same argument, applied to a different cost: the picture the
+*model* is shown does not have to be the picture the *device* is given, and
+sending the full-resolution original into a model's context is what turned two
+of these downloads into a rate-limited turn. See the constants below it.
 """
 
 from __future__ import annotations
@@ -112,6 +118,103 @@ _CONTENT_TYPE_OF_FORMAT = {
     "WEBP": "image/webp",
     "GIF": "image/gif",
 }
+
+
+#: The longest side, in pixels, of the copy the model is shown.
+#:
+#: Not a quality setting and not the same number as the blob's. The device gets
+#: the original — it draws the picture in a frame on a board, and a learner can
+#: zoom it — while the model gets this, because what a model does with an image
+#: is look at it once and describe it. The provider's own vision pipeline
+#: already reduces the long side to 768 before it tiles the image, so anything
+#: larger is bytes on the wire that become the same tokens either way.
+#:
+#: The cost this exists to stop is not the one round it is sent on. A turn is
+#: up to `MAX_TOOL_ROUNDS` rounds against the same accumulating conversation, so
+#: every picture in it is re-billed as input on every later round — two fetched
+#: images plus board renders, eight times over, is the shape that walked a
+#: session into its account's tokens-per-minute ceiling and lost the reply.
+MODEL_IMAGE_MAX_EDGE = 768
+
+#: JPEG quality for that copy. Low enough to matter, high enough that a label
+#: on a diagram is still readable — which is the whole reason the picture is
+#: shown at all, and why `_image_part` keeps `detail: "high"` beside it.
+MODEL_IMAGE_QUALITY = 70
+
+#: What the copy always is, whatever came down the wire. One format rather than
+#: four: the provider's documented vision formats all cost the same tokens, so
+#: the only thing format decides here is bytes, and JPEG wins that.
+MODEL_IMAGE_CONTENT_TYPE = "image/jpeg"
+
+#: What transparency is flattened onto, and it is chosen to tell the truth
+#: rather than to look good. The board's ground is white, so a white outline on
+#: a transparent background is invisible *there* — and a model shown that
+#: picture on any other ground would describe a fish the learner cannot see.
+#: The three pictures fetched in the incident this was written for were exactly
+#: this case twice over: one white-on-transparent, one an alpha silhouette the
+#: model read as "completely black".
+MODEL_IMAGE_BACKGROUND = (255, 255, 255)
+
+
+def model_copy(data: bytes, content_type: str) -> tuple[bytes, str]:
+    """A small copy of one picture, for the model's context only.
+
+    Returns `(bytes, content_type)`. The caller keeps the original: the blob
+    store holds full resolution because the device fetches from it, and only
+    what goes into the conversation is reduced.
+
+    **Never raises, and never refuses a turn.** Every failure — an image Pillow
+    cannot decode, a format its plugins mishandle, an encoder that runs out of
+    something — comes back as the original bytes unchanged, so the worst case is
+    the behaviour that existed before this function did. These are bytes a
+    stranger chose, fed to a large parser; the cost of guessing the exception
+    list wrong is a learner's turn, and the benefit of guessing it right is
+    nothing at all.
+
+    This is the one place in the module that *decodes* pixels rather than
+    reading a header, so it is also the one place that pays for them.
+    `MAX_IMAGE_PIXELS_TOTAL` is what bounds that, and an image past it is
+    returned untouched instead: a fetched picture can never be — the ceiling is
+    enforced before the bytes are ever handed here — but a file relayed out of
+    the provider's code interpreter reaches this function without passing it.
+    """
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            width, height = image.size
+            if width <= 0 or height <= 0:
+                return data, content_type
+            if width * height > MAX_IMAGE_PIXELS_TOTAL:
+                logger.warning(
+                    "not shrinking a %dx%d image for the model | type=%s",
+                    width, height, content_type,
+                )
+                return data, content_type
+            # A no-op for every format except JPEG, where it decodes straight to
+            # roughly the size wanted instead of decoding in full and throwing
+            # most of it away. `image.size` reports the drafted size afterwards,
+            # which is why the flattening below reads it here and not above.
+            image.draft("RGB", (MODEL_IMAGE_MAX_EDGE, MODEL_IMAGE_MAX_EDGE))
+            transparent = image.convert("RGBA")
+            flattened = Image.new("RGB", transparent.size, MODEL_IMAGE_BACKGROUND)
+            flattened.paste(transparent, mask=transparent.split()[-1])
+            # `thumbnail` rather than `resize`: it keeps the aspect ratio and it
+            # never enlarges, so a picture already smaller than the cap is left
+            # at its own size instead of being blown up into blur.
+            flattened.thumbnail(
+                (MODEL_IMAGE_MAX_EDGE, MODEL_IMAGE_MAX_EDGE),
+                Image.Resampling.LANCZOS,
+            )
+            buffer = io.BytesIO()
+            flattened.save(
+                buffer, format="JPEG", quality=MODEL_IMAGE_QUALITY, optimize=True,
+            )
+    except Exception as error:
+        logger.warning(
+            "could not shrink an image for the model | type=%s error=%r",
+            content_type, error,
+        )
+        return data, content_type
+    return buffer.getvalue(), MODEL_IMAGE_CONTENT_TYPE
 
 
 class ImageFetchError(Exception):
