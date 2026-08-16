@@ -106,6 +106,49 @@ final class BoardSceneRendererTests: XCTestCase {
         XCTAssertTrue(capture.contentExtent()?.width ?? 0 > 0)
     }
 
+    /// The board of a session the learner is not looking at has no
+    /// `PKCanvasView` behind it, and `view_board` still has to answer for it.
+    /// This is the render that has no canvas to read — it is handed the
+    /// drawing and the scene instead.
+    func testARegionRendersFromStoredBoardStateWithNoCanvas() {
+        let scene = BoardScene(elements: [
+            .circle(CircleElement(
+                id: "circle",
+                cx: 50, cy: 0, radius: 120,
+                style: BoardStyle(
+                    role: .content,
+                    stroke: "#0155FB",
+                    fill: "transparent",
+                    strokeWidth: 6,
+                    opacity: 1,
+                    dash: [],
+                    rotation: 0
+                )
+            ))
+        ])
+
+        let data = CanvasCapture.regionPNG(
+            percent: CGRect(x: 0, y: 0, width: 100, height: 100),
+            drawing: PKDrawing(),
+            scene: scene
+        )
+
+        XCTAssertNotNil(data, "a stored scene is a board, canvas or no canvas")
+    }
+
+    /// The one honest `nil`: nothing has been drawn and nothing placed, so
+    /// there is no region to render and the device must say so rather than
+    /// send white paper.
+    func testAnEmptyStoredBoardRendersNothing() {
+        XCTAssertNil(
+            CanvasCapture.regionPNG(
+                percent: CGRect(x: 0, y: 0, width: 100, height: 100),
+                drawing: PKDrawing(),
+                scene: .empty
+            )
+        )
+    }
+
     func testCenterOnContentIncludesTutorSceneWhenThereIsNoInk() {
         let capture = CanvasCapture()
         let canvas = PKCanvasView(frame: CGRect(x: 0, y: 0, width: 1_000, height: 700))

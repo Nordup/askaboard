@@ -94,6 +94,17 @@ struct VoiceSessionHooks {
     /// behavior, exactly.
     var streamUserTranscript: ((_ itemID: String, _ delta: String) -> Void)? = nil
     var finalizeUserUtterance: ((_ itemID: String, _ text: String?) -> Void)? = nil
+    /// [Recap primer, 2026-08-16] What the call's session has said so far, as
+    /// `VoiceRecapPrimer.text(for:)` builds it. The engine seeds the realtime
+    /// conversation with it and nothing else; nil means an empty thread and no
+    /// primer item at all.
+    ///
+    /// A **value**, not a closure, and that is the point: it is read once,
+    /// where the hooks are built, which is the moment the call binds to a
+    /// session. A closure would be evaluated after the SDP exchange, seconds
+    /// later, and could hand the call whatever thread the learner had browsed
+    /// to by then.
+    var contextPrimer: String? = nil
 }
 
 /// The engine as the UI sees it.

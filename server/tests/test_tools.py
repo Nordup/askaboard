@@ -16,6 +16,21 @@ from app.tutor.tools import (
 )
 
 
+def _kinds_of(arm: dict) -> set[str]:
+    """Every element kind one arm of the union accepts.
+
+    Two kinds share an arm when their field sets are identical, so the
+    discriminator is a `const` on a lone kind and an `enum` on a shared one.
+    A test that reaches straight for `["const"]` raises `KeyError` the moment
+    it iterates past a shared arm, and whether it does is a matter of which
+    arm happens to come first — so it passes or fails on arm order rather
+    than on the thing it is asserting.
+    """
+    discriminator = arm["properties"]["kind"]
+    return ({discriminator["const"]} if "const" in discriminator
+            else set(discriminator["enum"]))
+
+
 def test_the_registry_exposes_the_function_tools_then_the_hosted_ones():
     """Order is the whole assertion: the hosted tools come last, after every
     function tool, because the list is one cache prefix and a tool inserted in
@@ -91,16 +106,34 @@ def test_update_board_description_carries_the_compact_layout_contract():
 
 
 def test_update_board_primitives_are_a_discriminated_union():
+    """Sixteen kinds, and fewer than sixteen arms.
+
+    An arm names one kind with `const` and several with `enum`, and it may only
+    name several when their field sets are identical: `rectangle` and `ellipse`
+    are placed by the same box, and `polyline` and `freehand` by the same open
+    chain. What the model may send for each kind is unchanged — the shared arm
+    is the schema each of them already had — and `parse_board_update`
+    discriminates on the value, which is the same either way. What is saved is
+    the copy: one twelve-name `required` list and one style block per arm
+    rather than per kind.
+    """
     arms = UPDATE_BOARD_TOOL["parameters"]["properties"]["elements"]["items"]["anyOf"]
     kinds = {}
     for arm in arms:
-        kind = arm["properties"]["kind"]["const"]
-        assert kind not in kinds, f"duplicate primitive {kind}"
-        kinds[kind] = arm
+        discriminator = arm["properties"]["kind"]
+        assert discriminator["type"] == "string"
+        named = ([discriminator["const"]] if "const" in discriminator
+                 else discriminator["enum"])
+        assert named, "an arm must name at least one kind"
+        for kind in named:
+            assert kind not in kinds, f"duplicate primitive {kind}"
+            kinds[kind] = arm
         assert arm["additionalProperties"] is False
         assert "id" in arm["required"]
         assert "kind" in arm["required"]
-        assert "role" in arm["required"], "strict schemas require every property"
+        assert set(arm["properties"]) == set(arm["required"]), (
+            "strict schemas require every property they list"
+        )
 
     assert set(kinds) == {
         "text", "line", "arrow", "rectangle", "ellipse", "circle",
@@ -111,7 +144,7 @@ def test_update_board_primitives_are_a_discriminated_union():
 
 def test_update_board_svg_arm_is_an_opaque_raw_document():
     arms = UPDATE_BOARD_TOOL["parameters"]["properties"]["elements"]["items"]["anyOf"]
-    svg = next(arm for arm in arms if arm["properties"]["kind"]["const"] == "svg")
+    svg = next(arm for arm in arms if "svg" in _kinds_of(arm))
 
     assert {"id", "kind", "x", "y", "width", "height", "svg"}.issubset(
         set(svg["required"])
@@ -132,7 +165,7 @@ def test_update_board_svg_arm_asks_for_a_viewbox_and_no_frame():
     the model keeps sizing figures twice and the two sizes fight.
     """
     arms = UPDATE_BOARD_TOOL["parameters"]["properties"]["elements"]["items"]["anyOf"]
-    svg = next(arm for arm in arms if arm["properties"]["kind"]["const"] == "svg")
+    svg = next(arm for arm in arms if "svg" in _kinds_of(arm))
 
     document = svg["properties"]["svg"]["description"]
     assert "viewBox" in document
@@ -154,7 +187,7 @@ def test_update_board_svg_arm_states_the_subset_the_renderer_was_measured_on():
     and text, and the rest of the list is source-verified — which is how a
     figure comes back missing the half the model was counting on."""
     arms = UPDATE_BOARD_TOOL["parameters"]["properties"]["elements"]["items"]["anyOf"]
-    svg = next(arm for arm in arms if arm["properties"]["kind"]["const"] == "svg")
+    svg = next(arm for arm in arms if "svg" in _kinds_of(arm))
     document = svg["properties"]["svg"]["description"]
 
     for supported in (
@@ -169,7 +202,7 @@ def test_update_board_svg_arm_states_the_subset_the_renderer_was_measured_on():
 
 def test_update_board_path_arm_speaks_in_board_points():
     arms = UPDATE_BOARD_TOOL["parameters"]["properties"]["elements"]["items"]["anyOf"]
-    path = next(arm for arm in arms if arm["properties"]["kind"]["const"] == "path")
+    path = next(arm for arm in arms if "path" in _kinds_of(arm))
 
     assert {"id", "kind", "d", "fill_rule"}.issubset(set(path["required"]))
     assert path["properties"]["d"]["minLength"] == 1
@@ -182,7 +215,7 @@ def test_update_board_math_text_arm_claims_all_notation():
     """A model that reaches for `text` or SVG `<text>` writes unreadable maths."""
     arms = UPDATE_BOARD_TOOL["parameters"]["properties"]["elements"]["items"]["anyOf"]
     math_text = next(
-        arm for arm in arms if arm["properties"]["kind"]["const"] == "math_text"
+        arm for arm in arms if "math_text" in _kinds_of(arm)
     )
 
     assert {"id", "kind", "x", "y", "latex", "font_size"}.issubset(
@@ -208,7 +241,7 @@ def test_update_board_ink_text_arm_writes_prose_in_the_tutors_own_hand():
     the scene lists the tutor's ids, and everything else on the board is theirs.
     """
     arms = UPDATE_BOARD_TOOL["parameters"]["properties"]["elements"]["items"]["anyOf"]
-    ink = next(arm for arm in arms if arm["properties"]["kind"]["const"] == "ink_text")
+    ink = next(arm for arm in arms if "ink_text" in _kinds_of(arm))
 
     assert {"id", "kind", "x", "y", "text", "size"}.issubset(set(ink["required"]))
     assert ink["properties"]["text"]["minLength"] == 1
@@ -240,7 +273,7 @@ def test_update_board_image_arm_places_a_blob_the_server_already_holds():
     """A model that invents a key places a picture nobody has. The pattern is
     the one `GET /v1/blobs/{key}` gates, so a made-up id cannot even be sent."""
     arms = UPDATE_BOARD_TOOL["parameters"]["properties"]["elements"]["items"]["anyOf"]
-    image = next(arm for arm in arms if arm["properties"]["kind"]["const"] == "image")
+    image = next(arm for arm in arms if "image" in _kinds_of(arm))
 
     assert {"id", "kind", "x", "y", "width", "height", "blob_id"}.issubset(
         set(image["required"])
@@ -333,11 +366,11 @@ def test_update_board_caps_are_expressed_in_the_schema():
     assert props["delete_ids"]["maxItems"] == 200
 
     arms = props["elements"]["items"]["anyOf"]
-    polygon = next(arm for arm in arms if arm["properties"]["kind"]["const"] == "polygon")
+    polygon = next(arm for arm in arms if "polygon" in _kinds_of(arm))
     assert polygon["properties"]["points"]["maxItems"] == 512
     assert polygon["properties"]["points"]["minItems"] == 3
 
-    text = next(arm for arm in arms if arm["properties"]["kind"]["const"] == "text")
+    text = next(arm for arm in arms if "text" in _kinds_of(arm))
     assert text["properties"]["text"]["maxLength"] == 2000
     assert text["properties"]["font_size"]["minimum"] == 8
     assert text["properties"]["font_size"]["maximum"] == 256
@@ -345,7 +378,7 @@ def test_update_board_caps_are_expressed_in_the_schema():
 
 def test_update_board_schema_bounds_are_the_logical_board_range():
     arms = UPDATE_BOARD_TOOL["parameters"]["properties"]["elements"]["items"]["anyOf"]
-    line = next(arm for arm in arms if arm["properties"]["kind"]["const"] == "line")
+    line = next(arm for arm in arms if "line" in _kinds_of(arm))
     # JSON Schema `minimum`/`maximum` express the range directly; `exclusive`
     # variants are not needed because the server clamps after validation.
     assert line["properties"]["x1"].get("minimum", -25_000) >= -25_000
@@ -394,15 +427,65 @@ def test_every_ref_in_the_update_board_schema_resolves():
         assert ref.removeprefix("#/$defs/") in defined, ref
 
 
-def test_every_primitive_still_demands_the_whole_style_block():
-    """Referencing a definition changes where it is written, not what the
-    model has to supply. Strict schemas have no optional fields."""
-    arms = UPDATE_BOARD_TOOL["parameters"]["properties"]["elements"]["items"]["anyOf"]
-    style = {"role", "stroke", "fill", "stroke_width", "opacity", "dash", "rotation"}
+def test_each_primitive_demands_exactly_the_style_its_renderer_reads():
+    """A listed style field is required; an unlisted one is a field no arm of
+    `BoardSceneRenderer` reads.
 
+    Strict schemas have no optional fields, so every name an arm lists is one
+    the model spells out on every element it draws — about twenty characters of
+    serial, uncached output each. Three of them reached no drawing call:
+
+      * `role` on all sixteen kinds. Decoded, stored, re-encoded, and read by
+        nothing (`BoardScene.swift:957, 1002`).
+      * `fill` wherever the arm only strokes, or fills in `stroke`'s colour:
+        `line`, `arrow`, `polyline`, `freehand`, `arc`, `angle_marker`, and the
+        four kinds that composite a bitmap.
+      * `stroke_width` on the five kinds that never stroke, whose bounds arms
+        take no stroke inset either.
+
+    `stroke` survives everywhere except `image` and `svg`, which paint from a
+    bitmap the board's context never colours — `BoardSVGStore` keys its cache
+    on the markup's digest alone, so two figures differing only in `stroke`
+    share one raster.
+
+    The map below is the verdict, not a restatement of the code: it is written
+    out by hand so that a `_board_element(... ignores=...)` edit that quietly
+    drops a field the renderer *does* read fails here.
+    """
+    style = {"stroke", "fill", "stroke_width", "opacity", "dash", "rotation"}
+    always = {"opacity", "dash", "rotation"}
+    expected = {
+        "text": {"stroke"} | always,
+        "line": {"stroke", "stroke_width"} | always,
+        "arrow": {"stroke", "stroke_width"} | always,
+        "rectangle": style,
+        "ellipse": style,
+        "circle": style,
+        "polygon": style,
+        "polyline": {"stroke", "stroke_width"} | always,
+        "freehand": {"stroke", "stroke_width"} | always,
+        "arc": {"stroke", "stroke_width"} | always,
+        "angle_marker": {"stroke", "stroke_width"} | always,
+        "path": style,
+        "math_text": {"stroke"} | always,
+        "ink_text": {"stroke"} | always,
+        "image": always,
+        "svg": always,
+    }
+
+    arms = UPDATE_BOARD_TOOL["parameters"]["properties"]["elements"]["items"]["anyOf"]
     for arm in arms:
-        assert style.issubset(arm["required"])
-        assert style.issubset(arm["properties"])
+        discriminator = arm["properties"]["kind"]
+        named = ([discriminator["const"]] if "const" in discriminator
+                 else discriminator["enum"])
+        listed = style & set(arm["properties"])
+        for kind in named:
+            assert listed == expected[kind], kind
+        assert listed <= set(arm["required"]), "a listed field is a required one"
+
+    assert "role" not in json.dumps(UPDATE_BOARD_TOOL), (
+        "role is no longer asked for; `BoardStyle` still accepts it"
+    )
 
 
 def test_the_tool_surface_stays_inside_its_budget():
@@ -509,7 +592,35 @@ def test_the_tool_surface_stays_inside_its_budget():
     # per em dash here because `json.dumps` escapes non-ASCII to `\\uXXXX`.
     # The surface is 32,965, leaving 835 — a sentence of room, still far under
     # the 1,647 this arm cost — so the bound does not move.
-    assert len(json.dumps(TOOL_DEFINITIONS)) < 33_800
+    #
+    # The schema shrink then took 3,226 back, and this is the first time this
+    # number has gone down. None of it came out of what the tool can do: 1,448
+    # is the two arms that merged (`rectangle`/`ellipse` and
+    # `polyline`/`freehand` are each placed by an identical field set, so one
+    # arm carried two kinds), and the rest is field descriptions that restated
+    # the field name, the unit the description above them already gives, or a
+    # sentence stated a second time somewhere the model reads first. The
+    # surface is 29,739.
+    #
+    # So the bound comes down to 30,800, on the reasoning every move here has
+    # used: about a thousand characters of room, which is still under what a
+    # new arm costs. Left at 33,800 the guard would have gone slack by four
+    # thousand characters, which is four descriptions' worth of drift nobody
+    # would be asked to justify.
+    #
+    # Dropping the style fields no renderer reads then took 1,559 more, and
+    # none of it out of what the tool can do either: `role` off all sixteen
+    # kinds, `fill` off the ten that never fill in a colour the model chose,
+    # `stroke_width` off the five that never stroke, and `stroke` off the two
+    # that paint from a bitmap the board's context does not colour. What that
+    # buys is not really the schema — it is the ~50 characters per element the
+    # model no longer writes out, which is serial, uncached output the learner
+    # waits through. The surface is 28,180.
+    #
+    # So the bound comes down again, to 29,200: the same thousand characters of
+    # room. `test_each_primitive_demands_exactly_the_style_its_renderer_reads`
+    # is what guards the cut itself.
+    assert len(json.dumps(TOOL_DEFINITIONS)) < 29_200
 
 
 def test_fetch_image_is_strict_closed_and_takes_one_url():

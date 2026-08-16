@@ -15,7 +15,7 @@ import uuid
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
-from app.config import get_settings
+from app.config import REALTIME_PRICES_PER_1M, get_settings
 from app.main import create_app
 from app.store.models import RealtimeUsage, Session, Turn
 from tests.conftest import requires_db
@@ -137,12 +137,75 @@ async def test_a_retried_report_bills_once(db_app, db_factory):
 
 
 @requires_db
+async def test_two_deliveries_of_one_response_bill_once(db_app, db_factory):
+    """One `response.done`, two event paths, two fresh `report_id`s.
+
+    This is the 2026-08-16 double-bill: `report_id` cannot catch it because
+    each delivery minted its own. The unique index on
+    `(session_id, response_id)` must — two 200s, one row.
+    """
+    session_id = str(uuid.uuid4())
+    first_report = _report(session_id=session_id, response_id="resp_twice")
+    second_report = _report(session_id=session_id, response_id="resp_twice")
+    assert first_report["report_id"] != second_report["report_id"]
+
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        first = await client.post(
+            "/v1/realtime/usage", json=first_report, headers=AUTH
+        )
+        second = await client.post(
+            "/v1/realtime/usage", json=second_report, headers=AUTH
+        )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    async with db_factory() as db:
+        rows = (await db.execute(select(RealtimeUsage))).scalars().all()
+        assert len(rows) == 1
+        assert rows[0].id == uuid.UUID(first_report["report_id"])
+
+
+@requires_db
+async def test_reports_without_a_response_id_do_not_collapse(db_app, db_factory):
+    """`response_id` is optional, and NULLs are distinct in the unique index.
+
+    Two reports from the same session that name no response must both land —
+    collapsing them would eat real money rows from a client that stopped
+    sending the field.
+    """
+    session_id = str(uuid.uuid4())
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        for _ in range(2):
+            report = _report(session_id=session_id)
+            del report["response_id"]
+            response = await client.post(
+                "/v1/realtime/usage", json=report, headers=AUTH
+            )
+            assert response.status_code == 200
+
+    async with db_factory() as db:
+        rows = (await db.execute(select(RealtimeUsage))).scalars().all()
+        assert len(rows) == 2
+
+
+@requires_db
 async def test_voice_spend_trips_the_turn_cap(db_app):
     """The whole point of the table: a day of voice alone must 402 the next
     turn. On 2026-08-15 voice was ~$4.70 of a $7 day and the cap saw $0.00."""
     cap = get_settings().daily_spend_cap_usd
-    # Enough audio output alone to clear the cap at $64/1M.
-    over_cap = math.ceil(cap * 1_000_000 / 64.00) + 1_000
+    # Enough audio output alone to clear the cap, at whatever the *default*
+    # model's rate is — the report below names no model, so the server prices
+    # it from its setting. The rate was hard-coded at the full model's $64/1M
+    # until the default became Mini ($20/1M) and the report stopped reaching
+    # the cap.
+    audio_output_rate = REALTIME_PRICES_PER_1M[
+        get_settings().openai_realtime_model
+    ]["audio_output"]
+    over_cap = math.ceil(cap * 1_000_000 / audio_output_rate) + 1_000
     report = _report(
         audio_input_tokens=0, cached_audio_input_tokens=0,
         text_input_tokens=0, cached_text_input_tokens=0, text_output_tokens=0,

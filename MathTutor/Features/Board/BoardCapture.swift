@@ -168,7 +168,16 @@ final class CanvasCapture: ObservableObject {
     /// The union of learner ink and tutor scene, in drawing coordinates, padded
     /// the way the ink extent is. `nil` only when both are empty.
     func contentExtent() -> CGRect? {
-        var union = canvasView.flatMap { Self.inkExtent(of: $0.drawing) }
+        Self.contentExtent(drawing: canvasView?.drawing, scene: scene)
+    }
+
+    /// The same extent, for a board that is not on screen.
+    ///
+    /// Static because the board of a session the learner has walked out of has
+    /// no `PKCanvasView` behind it at all — only the drawing and the scene the
+    /// session was saved with. See `regionPNG(percent:drawing:scene:)`.
+    static func contentExtent(drawing: PKDrawing?, scene: BoardScene) -> CGRect? {
+        var union = drawing.flatMap { inkExtent(of: $0) }
         if let sceneBounds = BoardSceneRenderer.bounds(
             of: scene,
             boardOrigin: PencilCanvasConfiguration.boardOrigin
@@ -200,10 +209,31 @@ final class CanvasCapture: ObservableObject {
     /// rather than an upscale of a thumbnail. That is the whole reason this
     /// moved off the server.
     func renderRegion(percent: CGRect) -> Data? {
-        guard let extent = contentExtent() else { return nil }
+        guard let canvasView else { return nil }
+        return Self.regionPNG(percent: percent, drawing: canvasView.drawing, scene: scene)
+    }
+
+    /// The same region, rendered from a board that is not on screen.
+    ///
+    /// `view_board` answers for the board of the turn that asked, and that is
+    /// not always the board under the pen: a delegated voice turn runs for the
+    /// call's session while the learner browses another one, and the canvas
+    /// belongs to what is on screen. Handed the session's saved drawing and
+    /// scene, this draws the right board from wherever the learner is
+    /// standing. It is also the answer when the live canvas cannot serve the
+    /// render at all — a torn-down `PKCanvasView` is a board this can still
+    /// draw, where `renderRegion(percent:)` can only return `nil`.
+    ///
+    /// `nil` means exactly one thing here: nothing has been drawn and nothing
+    /// placed, so there is no region to render. White paper would be worse —
+    /// the model would describe a board it had not seen.
+    static func regionPNG(percent: CGRect, drawing: PKDrawing, scene: BoardScene) -> Data? {
+        guard let extent = contentExtent(drawing: drawing, scene: scene) else { return nil }
         return renderPNG(
-            drawingRect: Self.drawingRect(forPercent: percent, in: extent),
-            maximumDimension: Self.regionMaximumDimension
+            drawingRect: drawingRect(forPercent: percent, in: extent),
+            drawing: drawing,
+            scene: scene,
+            maximumDimension: regionMaximumDimension
         )
     }
 
@@ -564,13 +594,31 @@ final class CanvasCapture: ObservableObject {
         maximumDimension: CGFloat = 2_000,
         scene: BoardScene? = nil
     ) -> Data? {
-        guard let canvasView, requested.width > 0, requested.height > 0 else { return nil }
+        guard let canvasView else { return nil }
+        return Self.renderPNG(
+            drawingRect: requested,
+            drawing: canvasView.drawing,
+            scene: scene ?? self.scene,
+            maximumDimension: maximumDimension
+        )
+    }
+
+    /// The rasteriser itself, which needs no canvas — only the vectors.
+    ///
+    /// Split out from the instance method above so the same pixels can be
+    /// produced for a board that is not mounted. Nothing here ever read the
+    /// canvas for anything but `drawing`; that is now a parameter.
+    private static func renderPNG(
+        drawingRect requested: CGRect,
+        drawing: PKDrawing,
+        scene sceneToDraw: BoardScene,
+        maximumDimension: CGFloat = 2_000
+    ) -> Data? {
+        guard requested.width > 0, requested.height > 0 else { return nil }
 
         // Keep handwriting crisp without sending an unnecessarily huge original-detail
         // image. A white background also avoids ambiguous transparent-PNG rendering.
         let scale = min(2, maximumDimension / max(requested.width, requested.height))
-        let drawing = canvasView.drawing
-        let sceneToDraw = scene ?? self.scene
         let pixelSize = CGSize(width: requested.width * scale, height: requested.height * scale)
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1

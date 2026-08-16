@@ -53,7 +53,7 @@ extension SettingsOption where Value == ReasoningEffort {
     }
 }
 
-// `rows(_:across:)` used to live here, splitting the six efforts into the board's 2 × 3 grid
+// `rows(_:across:)` used to live here, splitting the then-six efforts into the board's 2 × 3 grid
 // — *"produced by wrapping a 740 row, not by a grid definition."* The redesign put the options
 // behind a menu on `row/setting`, so there is no grid left to lay out and the function went
 // with it. `models(selected:)` and `efforts(for:selected:)` kept the shape they had: what the

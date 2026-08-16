@@ -16,7 +16,7 @@ from app.logging_config import configure_logging
 from app.memory.jobs import (
     backlog_status, schedule_periodic_sweep, schedule_startup_drain,
 )
-from app.store.db import dispose_engine, init_engine
+from app.store.db import dispose_engine, init_engine, warm_pool
 
 logger = logging.getLogger(__name__)
 
@@ -35,12 +35,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # logs, and both drain schedulers detach. A boot that cannot reach the
     # database still has to answer `/health` and say so.
     await seed_curriculum()
+    # Detached for the same reason the drains are: filling the connection pool
+    # must not hold the port closed, and a turn that arrives before it finishes
+    # simply opens its own connections exactly as it does today.
+    warm_task = asyncio.create_task(warm_pool())
     schedule_startup_drain()
     periodic_task = schedule_periodic_sweep()
     try:
         yield
     finally:
         logger.info("service stopping")
+        warm_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await warm_task
         periodic_task.cancel()
         with suppress(asyncio.CancelledError):
             await periodic_task

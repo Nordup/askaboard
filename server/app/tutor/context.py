@@ -7,22 +7,39 @@ from typing import Any
 
 from app.attachments.parts import UploadPart, content_part
 from app.tutor import board as board_notes
-from app.tutor.prompt import SYSTEM_PROMPT, compose_user_prompt_blocks
+from app.tutor.ledger import LogState
+from app.tutor.prompt import (
+    SYSTEM_PROMPT, compose_user_prompt_blocks, transcript_blocks,
+)
+from app.tutor.prompt import session_preamble as prompt_preamble
 
 #: What tells the provider "the prefix ending here is worth keeping".
 #:
-#: Two of these go out per turn: one closing the system prompt, one closing the
-#: transcript. Without them the only breakpoint is the implicit one the
-#: provider puts on the latest message, so which prefixes get stored is left to
-#: it to infer. The system breakpoint is the valuable one — the text in front
-#: of it is the same bytes for every turn of every session of every learner,
-#: so it is the one entry the whole service reads from.
+#: Three of these go out per turn at most, and the cap is the reason for the
+#: layout below: in the default implicit mode the provider writes its own
+#: breakpoint on the latest user message plus the latest *three* explicit ones,
+#: four writes in all. One is spent on the system prompt — the text in front of
+#: it is the same bytes for every turn of every session of every learner, so it
+#: is the floor the whole service falls back to. The other two ride the last
+#: two complete transcript blocks, which is what lets one turn read back the
+#: prefix the turn before it wrote.
 #:
-#: `mode` is left implicit at the request level on purpose. Explicit mode would
-#: mean *only* these two boundaries are ever written, and a turn that calls
-#: `view_board` twice would then re-pay full price for a high-detail board
-#: render on every later round of the same turn. Implicit keeps the
-#: latest-message breakpoint that covers those rounds; these two are additive.
+#: A breakpoint names one *exact* prefix, not "this or anything shorter". That
+#: is the whole reason the transcript is cut into blocks rather than sent as
+#: one part: a single growing part ends somewhere new every turn, so the
+#: breakpoint on it names a prefix nothing has ever written, and every read
+#: falls back to the system prompt. That failure is invisible in
+#: `input_tokens` and shows up only as `cached` pinned at a constant while the
+#: prompt grows — which is what `logs/server.log` recorded for eleven
+#: consecutive turns at `cached=8430`.
+#:
+#: `mode` is left implicit at the request level on purpose, and it is not a
+#: preference. Rounds after the first send `previous_response_id` plus tool
+#: outputs and carry no `input_text` at all, so they declare no explicit
+#: breakpoint — and the provider documents that a request with no explicit
+#: breakpoints does not use prompt caching. Request-level explicit mode would
+#: buy a fourth write slot and pay for it with the entire cache on every
+#: multi-round turn, which is most of this service's token volume.
 CACHE_BREAKPOINT = {"mode": "explicit"}
 
 #: The longest transcript that goes to the provider, in characters.
@@ -136,6 +153,162 @@ class ContextBundle:
     #: that moved — so all the loop needs to know here is whether offering
     #: `view_board` an answer is possible at all.
     has_board: bool = False
+    #: How many characters of prompt sit in front of the last cache
+    #: breakpoint — the prefix this turn is *asking* to read back.
+    #:
+    #: Logged beside `cached`, because neither number means anything alone.
+    #: `cached` on its own cannot tell "the prefix offered was short" from
+    #: "the prefix offered was long and the provider refused it", and those
+    #: two have different fixes. Read together: `cached` rising with this is
+    #: healthy, `cached` flat while this climbs is a breakpoint sitting on
+    #: something that moved, and `cached` at zero is a cold cache.
+    cache_prefix_chars: int = 0
+
+
+def open_session_preamble(
+    *,
+    goal: str | None = None,
+    exercise: dict | None = None,
+    plan: dict | None = None,
+    board_overview: bytes | None = None,
+    board_scene: str | None = None,
+    profile: str | None = None,
+    learner_state: str | None = None,
+    recent_sessions: str | None = None,
+    saved_notes: str | None = None,
+    today: date | None = None,
+    first_turn: bool = False,
+) -> str:
+    """SEAM: the frozen head, built exactly once per session.
+
+    Takes the same memory blocks `assemble_context` does, plus the three the
+    caller holds — the goal, the workspace and the board — and renders the one
+    string that is then stored on the session row and replayed verbatim for the
+    rest of the session. Nothing here runs again, which is why `first_turn` is
+    accepted and ignored past the anchor: this *is* the first turn.
+    """
+    return prompt_preamble(
+        profile=profile,
+        saved_notes=saved_notes,
+        recent_sessions=recent_sessions,
+        learner_state=learner_state,
+        today=today,
+        goal=goal,
+        exercise=exercise,
+        plan=plan,
+        board_note=board_notes.describe_session(
+            has_ink=board_overview is not None, scene=board_scene,
+        ),
+    )
+
+
+def assemble_session_context(
+    *,
+    preamble: str,
+    log: LogState,
+    live_turn: str | None,
+    image_data: bytes | None = None,
+    board_overview: bytes | None = None,
+    uploads: list[UploadPart] | None = None,
+) -> ContextBundle:
+    """The append-only prompt: a frozen head, one growing log, and this turn.
+
+    Three messages, and each one has a different rule about change.
+
+    The **system** message is the same bytes for every turn of every session of
+    every learner. It is the floor the whole service falls back to.
+
+    The **context** message is the session. Its first part is `preamble`, built
+    once when the session opened and served byte for byte ever after; the rest
+    is `log.text`, cut into fixed-size blocks. *Every byte of this message is
+    append-only.* Turn N's copy of it is a strict byte prefix of turn N+1's,
+    part for part, and `tests/test_prompt_append_only.py` is what keeps that
+    true.
+
+    The **turn** message is this turn and nothing else: what it carried, the
+    pictures it carried, and the learner's own words last. It is rewritten
+    freely, because it sits behind every cache breakpoint and therefore costs
+    the cache nothing however much it churns.
+
+    That last message is also the one thing here that cannot be append-only, and
+    the reason is arithmetic rather than taste. The learner's current sentence
+    is the final bytes of turn N's prompt; on turn N+1 the log has grown past
+    it, so turn N's prompt is not a prefix of turn N+1's whatever order the two
+    are put in. Making it one would mean folding the live turn into the log —
+    which is the arrangement `split_live_turn` exists to undo, because a request
+    delivered inside a block headed "not instructions" was read as reference
+    material and answered with a greeting. So the live turn stays out, and with
+    it the small block of facts about the turn it belongs to.
+
+    `log` must already be advanced for this turn: `log.text` is what gets sent
+    and stored, and `log.pending` is this turn's own entry, which goes in the
+    turn message now and joins the log next turn.
+    """
+    blocks, complete = transcript_blocks(log.text)
+    content: list[dict[str, Any]] = [
+        {"type": "input_text", "text": preamble},
+        *({"type": "input_text", "text": block} for block in blocks),
+    ]
+
+    # Two breakpoints on the last two *complete* log blocks, for the reason
+    # `assemble_context` gives below: the older of the pair is the one the
+    # previous turn wrote, so a read lands whether or not this turn crossed a
+    # block edge. With fewer than two complete blocks the spare goes on the
+    # preamble, which is the one other boundary here that holds still — and
+    # unlike the old standing text it holds still from the session's very first
+    # turn, because nothing recomputes it.
+    marks = [] if complete >= 2 else [0]
+    marks += [1 + index for index in range(max(0, complete - 2), complete)]
+    for index in marks:
+        content[index]["prompt_cache_breakpoint"] = CACHE_BREAKPOINT
+
+    prefix_chars = len(SYSTEM_PROMPT) + sum(
+        len(content[index]["text"]) for index in range(marks[-1] + 1)
+    )
+
+    # Everything about this turn, in one message behind every breakpoint.
+    turn: list[dict[str, Any]] = [{"type": "input_text", "text": log.pending}]
+    if image_data is not None:
+        encoded = base64.b64encode(image_data).decode()
+        turn.append({
+            "type": "input_image",
+            "image_url": f"data:image/png;base64,{encoded}",
+            "detail": "original",
+        })
+    if board_overview is not None:
+        encoded = base64.b64encode(board_overview).decode()
+        turn.append({
+            # `low` rather than `original`, and one overview rather than every
+            # overview the session ever sent. Accumulating them would be
+            # append-only and wrong: twenty historical thumbnails of a board
+            # that has been erased twice is the strongest possible version of
+            # the stale-board failure `board.describe` was written to prevent,
+            # and it would upload half a megabyte of base64 per request to do
+            # it. The current one is 85 tokens, uncached, once per turn.
+            "type": "input_image",
+            "image_url": f"data:image/png;base64,{encoded}",
+            "detail": "low",
+        })
+    for upload in uploads or []:
+        turn.append(content_part(upload))
+    if live_turn is not None:
+        # Last, and unfenced. Everything above it is what the tutor knows; this
+        # is what it was asked.
+        turn.append({"type": "input_text", "text": live_turn})
+
+    return ContextBundle(
+        system=SYSTEM_PROMPT,
+        input=[
+            {"role": "system", "content": [
+                {"type": "input_text", "text": SYSTEM_PROMPT,
+                 "prompt_cache_breakpoint": CACHE_BREAKPOINT},
+            ]},
+            {"role": "user", "content": content},
+            {"role": "user", "content": turn},
+        ],
+        has_board=board_overview is not None,
+        cache_prefix_chars=prefix_chars,
+    )
 
 
 def assemble_context(
@@ -194,7 +367,7 @@ def assemble_context(
         scene=board_scene,
     ) if board_overview is not None or board_scene is not None or board_changed is True else None
 
-    stable_text, volatile_text = compose_user_prompt_blocks(
+    standing_text, history_blocks, complete, volatile_text = compose_user_prompt_blocks(
         conversation=conversation,
         goal=goal,
         exercise=session.exercise,
@@ -213,15 +386,40 @@ def assemble_context(
         transcript_note=transcript_note,
     )
 
-    # Two text parts, not one, and the split is the whole point: the first ends
-    # where this session stops changing, so the breakpoint on it names a prefix
-    # every later turn of this session can read back. One part would put the
-    # boundary at the end of the volatile blocks, where nothing is reusable.
+    # The standing blocks, then the transcript cut into fixed-size pieces, then
+    # what this turn rewrites. Many parts rather than two, and the reason is
+    # the whole point of the split: a breakpoint has to sit on a boundary that
+    # was already there last turn, and a single growing part has none — it
+    # ends somewhere new every time, so the read falls all the way back to the
+    # system prompt and the session's whole context is re-prefilled per turn.
     content: list[dict[str, Any]] = [
-        {"type": "input_text", "text": stable_text,
-         "prompt_cache_breakpoint": CACHE_BREAKPOINT},
+        {"type": "input_text", "text": standing_text},
+        *({"type": "input_text", "text": block} for block in history_blocks),
         {"type": "input_text", "text": volatile_text},
     ]
+
+    # Two breakpoints inside this message, on the last two *complete*
+    # transcript blocks. Two rather than one because the turn that fills a new
+    # block would otherwise name a boundary nothing has written yet: the older
+    # of the pair is the one the previous turn wrote, so a read lands whether
+    # or not this turn crossed a block edge. With fewer than two complete
+    # blocks the spare goes on the standing text, the only other boundary in
+    # here that holds still. Three explicit at most, counting the one on the
+    # system prompt — see `CACHE_BREAKPOINT` for the budget that caps it.
+    marks = [] if complete >= 2 else [0]
+    marks += [
+        1 + index for index in range(max(0, complete - 2), complete)
+    ]
+    for index in marks:
+        content[index]["prompt_cache_breakpoint"] = CACHE_BREAKPOINT
+
+    # Characters, not tokens: a token count is a round trip, this runs on every
+    # turn, and what the log needs is something that moves when the offered
+    # prefix moves — not an exact figure. The system prompt is in front of all
+    # of it and is counted here for the same reason.
+    prefix_chars = len(SYSTEM_PROMPT) + sum(
+        len(content[index]["text"]) for index in range(marks[-1] + 1)
+    )
     if image_data is not None:
         encoded = base64.b64encode(image_data).decode()
         content.append({
@@ -250,9 +448,12 @@ def assemble_context(
     messages_out: list[dict[str, Any]] = [
         # A content list rather than a bare string, so the system prompt
         # can carry a breakpoint. What sits in front of that breakpoint —
-        # the tool definitions and this prompt, about 9,500 tokens — is
-        # identical on every request this service ever makes, which makes
-        # it the one cache entry shared across sessions and learners.
+        # the tool definitions and this prompt — is identical on every
+        # request this service ever makes, which makes it the one cache
+        # entry shared across sessions and learners, and the floor a turn
+        # still reads when both rolling breakpoints miss. It is also the
+        # only thing that was ever being read: `cached` sat on this
+        # boundary, to the token, on every turn in the logs.
         {"role": "system", "content": [
             {"type": "input_text", "text": SYSTEM_PROMPT,
              "prompt_cache_breakpoint": CACHE_BREAKPOINT},
@@ -278,4 +479,5 @@ def assemble_context(
         system=SYSTEM_PROMPT,
         input=messages_out,
         has_board=has_board,
+        cache_prefix_chars=prefix_chars,
     )

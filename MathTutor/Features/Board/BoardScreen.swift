@@ -243,17 +243,35 @@ struct BoardScreen: View {
             store.boardProvider = { [weak capture] in capture?.overviewData() }
             store.boardManifestProvider = { [weak capture] in capture?.manifest() }
             store.boardSceneProvider = { [weak capture] in capture?.sceneContextString() }
-            // The service answers `view_board` straight from the canvas: the
-            // tutor asks for a rectangle mid-turn and this renders it from the
-            // vectors, at a resolution a thumbnail upload could never carry.
-            // It answers for the board on screen, so it answers only for a turn
-            // whose session *is* the one on screen. A delegated turn running for
-            // a call the learner has walked away from must never be handed this
-            // canvas: `nil` reaches the model as "I could not see the board",
-            // which is true — see `TutorStore.turnSeesTheVisibleBoard`.
-            BackendTutorService.boardRenderer = { [weak capture, weak store] percent in
-                guard store?.turnSeesTheVisibleBoard ?? false else { return nil }
-                return capture?.renderRegion(percent: percent)
+            // The service answers `view_board` straight from the vectors: the
+            // tutor asks for a rectangle mid-turn and this renders it at a
+            // resolution a thumbnail upload could never carry.
+            //
+            // **It answers for the session that asked, not for the screen.**
+            // The live canvas is the right source for exactly one board — the
+            // one on screen, whose newest strokes are still under the pen —
+            // and this used to refuse every other case outright, on the sound
+            // ground that showing a turn the *wrong* board is worse than
+            // showing it none. The refusal was reaching the model as "I could
+            // not see the board" for boards that were saved and complete: a
+            // delegated voice turn running while the learner browses
+            // elsewhere, and a canvas torn down and not yet remounted. Both
+            // are answered from the session's own stored board now, so the
+            // promise (never the wrong board) survives without the lie.
+            //
+            // `nil` is left for the one honest case: that session has nothing
+            // drawn and nothing placed. The service posts that to the server
+            // as a failure rather than going quiet, so the turn does not spend
+            // 20 s waiting for it.
+            BackendTutorService.boardRenderer = { [weak capture, weak store] sessionID, percent in
+                if sessionID == store?.session.id,
+                   let live = capture?.renderRegion(percent: percent) {
+                    return live
+                }
+                guard let board = store?.storedBoard(for: sessionID) else { return nil }
+                return CanvasCapture.regionPNG(
+                    percent: percent, drawing: board.drawing, scene: board.scene
+                )
             }
         }
     }
@@ -943,7 +961,15 @@ struct BoardScreen: View {
             },
             finalizeUserUtterance: { [weak store] itemID, text in
                 store?.finalizeVoiceUserUtterance(itemID: itemID, text: text)
-            }
+            },
+            // Read here, now, and never again. This property is evaluated at
+            // exactly one moment — the `voice.begin` call below `store
+            // .voiceCallBegan` — and at that moment the visible session *is*
+            // the call session. Everything after it (the SDP exchange, the
+            // learner wandering to another thread) happens with the primer
+            // already captured, so the call is primed with the conversation it
+            // belongs to rather than the one on screen when the channel opens.
+            contextPrimer: VoiceRecapPrimer.text(for: store.session.messages)
         )
     }
 

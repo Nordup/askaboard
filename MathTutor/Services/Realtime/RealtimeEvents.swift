@@ -38,6 +38,14 @@ struct RealtimeUsageCounts: Equatable, Sendable {
     let textInputTokens: Int
     let cachedTextInputTokens: Int
     let textOutputTokens: Int
+
+    /// A response cancelled before it produced a single token. Zero everywhere means zero
+    /// dollars and zero information — `VoiceUsageReportGate` drops these instead of writing
+    /// empty rows server-side.
+    var isAllZero: Bool {
+        audioInputTokens == 0 && cachedAudioInputTokens == 0 && audioOutputTokens == 0
+            && textInputTokens == 0 && cachedTextInputTokens == 0 && textOutputTokens == 0
+    }
 }
 
 /// Whether a completed transcription actually carried words, and if not, *how* it did not.
@@ -271,6 +279,12 @@ enum RealtimeEventDecoder {
 /// instructions, tools, voice and turn detection are all server-owned (they ride in the SDP
 /// call's session config), so the client's `session.update` vocabulary is the keepalive and
 /// nothing else.
+///
+/// It grew by exactly one: the **recap primer** (`contextPrimer`). Session config is static, so
+/// the realtime model opened every call knowing nothing about the conversation it was joining —
+/// it could not greet with continuity, could not repeat a line said before the call, and wrote
+/// vague `send_to_tutor` requests. Seeding the thread is the one job the device cannot delegate
+/// to the server, because the server never sees this data channel.
 enum RealtimeEventEncoder {
 
     /// `conversation.item.create` with a `function_call_output` item. `output` is serialized to
@@ -296,6 +310,26 @@ enum RealtimeEventEncoder {
             "item": [
                 "type": "message",
                 "role": "user",
+                "content": [["type": "input_text", "text": text]]
+            ]
+        ]
+        return try JSONSerialization.data(withJSONObject: payload, options: [])
+    }
+
+    /// The recap primer: one `system`-role message item carrying the session's conversation so
+    /// far, sent once at call start.
+    ///
+    /// **No `response.create` follows it.** The primer is context, not a cue — a model that
+    /// answers it starts the call by reciting the thread back at the learner.
+    ///
+    /// Role `system` rather than `user` on purpose: the text is an instruction about what the
+    /// model knows, and a `user` item would read as something the learner just said.
+    static func contextPrimer(text: String) throws -> Data {
+        let payload: [String: Any] = [
+            "type": "conversation.item.create",
+            "item": [
+                "type": "message",
+                "role": "system",
                 "content": [["type": "input_text", "text": text]]
             ]
         ]

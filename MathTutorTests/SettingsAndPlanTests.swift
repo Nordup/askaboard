@@ -485,12 +485,12 @@ final class SettingsAndPlanTests: XCTestCase {
         XCTAssertEqual(store.session.reasoningEffort, .max)
         XCTAssertEqual(options.filter(\.isSelected).map(\.value), [.max])
 
-        store.setReasoningEffort(.none)
+        store.setReasoningEffort(.low)
         XCTAssertEqual(
             SettingsOption.efforts(
                 for: store.session.selectedModel, selected: store.session.reasoningEffort
             ).filter(\.isSelected).map(\.value),
-            [ReasoningEffort.none]
+            [ReasoningEffort.low]
         )
     }
 

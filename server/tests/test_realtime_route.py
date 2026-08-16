@@ -1,11 +1,16 @@
 """`POST /v1/realtime/calls` — the SDP proxy, with the upstream faked.
 
-No database anywhere in here: the route is stateless by design, and these
-tests must stay runnable without TEST_DATABASE_URL (`ASGITransport` runs no
-lifespan, so `create_app()` never touches an engine).
+No database anywhere in here: `ASGITransport` runs no lifespan, so
+`create_app()` never touches an engine, and these tests must stay runnable
+without TEST_DATABASE_URL. The route reads memory when a call names a session,
+so the tests that cover that stub the memory sources the way
+`test_turn_memory` does and hand the route a recorder whose session is never
+used — the database stays absent, the assembly is real.
 """
 
 import uuid
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 import respx
 from httpx import ASGITransport, AsyncClient, Response
@@ -13,6 +18,7 @@ from httpx import ASGITransport, AsyncClient, Response
 from app.api.realtime import (
     TURN_DETECTION_HEADER, build_realtime_session, redact_api_key,
 )
+from app.api.turn import get_recorder
 from app.main import create_app
 from app.tutor.prompt import SYSTEM_PROMPT
 
@@ -25,10 +31,12 @@ ANSWER = "v=0\r\no=- 987654321 2 IN IP4 203.0.113.7\r\ns=-\r\nt=0 0\r\n"
 UPSTREAM = "https://api.openai.com/v1/realtime/calls"
 
 
+def _client_for(app) -> AsyncClient:
+    return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+
+
 def _app_client() -> AsyncClient:
-    return AsyncClient(
-        transport=ASGITransport(app=create_app()), base_url="http://test"
-    )
+    return _client_for(create_app())
 
 
 def test_the_session_config_matches_the_spec():
@@ -223,6 +231,233 @@ async def test_a_json_content_type_is_rejected():
             headers={**AUTH, "Content-Type": "application/json"},
         )
     assert response.status_code == 415
+
+
+# ---------------------------------------------------------------------------
+# The standing memory blocks in the call's instructions. `VOICE_SYSTEM_PROMPT`
+# contains the tutor prompt, which promises the model those blocks are already
+# in front of it; these are what make the promise true for a call.
+# ---------------------------------------------------------------------------
+
+
+class _FakeRecorder:
+    """Only the seam `/v1/realtime/calls` touches.
+
+    `sessions()` yields nothing, because every memory source below is stubbed
+    and none of them reads the session. That is the point: the assembly under
+    test is real, the database is absent.
+    """
+
+    @property
+    def sessions(self):
+        @asynccontextmanager
+        async def _session():
+            yield None
+        return _session
+
+
+class _BrokenRecorder:
+    """A recorder whose database will not answer."""
+
+    @property
+    def sessions(self):
+        def _session():
+            raise RuntimeError("no connection")
+        return _session
+
+
+class _FakeEpisode:
+    """The two fields `episode_card` needs off a summarized window."""
+
+    def __init__(self, closed_at, digest):
+        self.closed_at = closed_at
+        self.digest = digest
+        self.title = None
+        self.narrative = None
+        self.next_steps = None
+
+
+class _FakeNote:
+    def __init__(self, text, valid_from):
+        self.text = text
+        self.valid_from = valid_from
+
+
+def _stub_memory(monkeypatch, *, episodes=(), notes=(), profile=None):
+    """The same stubbing `test_turn_memory` uses, on the same five sources —
+    so a call and a turn are shown to read one builder, not two."""
+    async def _profile(db, learner_id):
+        return profile
+
+    async def _snapshot(db, learner_id):
+        return ""
+
+    async def _episodes(db, learner_id, *, limit):
+        return list(episodes)
+
+    async def _tail(db, learner_id, *, exclude_session=None):
+        return None
+
+    async def _notes(db, learner_id):
+        return list(notes)
+
+    monkeypatch.setattr("app.api.turn.current_profile", _profile)
+    monkeypatch.setattr("app.api.turn.snapshot", _snapshot)
+    monkeypatch.setattr("app.api.turn.recent_episodes", _episodes)
+    monkeypatch.setattr("app.api.turn.backstop_tail", _tail)
+    monkeypatch.setattr("app.api.turn.explicit_notes", _notes)
+
+
+def _app_with(recorder):
+    """An app whose `get_recorder` is this fake — the override the route reads
+    by hand, keyed by the same function object the fixtures use."""
+    app = create_app()
+    app.dependency_overrides[get_recorder] = lambda: recorder
+    return app
+
+
+def _upstream_body(route) -> str:
+    """The multipart body as text; the session JSON, instructions and all,
+    is one of its two fields."""
+    return route.calls[0].request.read().decode("utf-8", errors="replace")
+
+
+@respx.mock
+async def test_a_call_carries_this_learners_standing_memory_blocks(monkeypatch):
+    """What the prompt has always claimed was there.
+
+    `SYSTEM_PROMPT` tells the model to answer "what did we do last time?"
+    straight out of the RECENT SESSIONS block, with no tool call. A call built
+    from the prompt alone had the instruction and not the block.
+    """
+    _stub_memory(
+        monkeypatch,
+        episodes=[_FakeEpisode(datetime(2026, 8, 10, tzinfo=timezone.utc),
+                               "similar triangles")],
+        notes=[_FakeNote("Exam is on the 3rd of September.",
+                         datetime(2026, 8, 1, tzinfo=timezone.utc))],
+    )
+    route = respx.post(UPSTREAM).mock(
+        return_value=Response(
+            200, content=ANSWER, headers={"Content-Type": "application/sdp"}
+        )
+    )
+    async with _client_for(_app_with(_FakeRecorder())) as client:
+        response = await client.post(
+            f"/v1/realtime/calls?session_id={uuid.uuid4()}",
+            content=OFFER, headers=SDP_HEADERS,
+        )
+
+    assert response.status_code == 200
+    body = _upstream_body(route)
+    # The rendered heading, counted — not the phrase, which `SYSTEM_PROMPT`
+    # uses when it tells the model the block is there.
+    assert "THE 1 MOST RECENT SESSIONS, most recent first" in body
+    assert "similar triangles" in body
+    assert "SAVED NOTES" in body
+    assert "Exam is on the 3rd of September." in body
+    # The date anchor rides with them: the cards are ISO dates, and "last
+    # week" is unanswerable without knowing what today is.
+    assert "Today is " in body
+
+
+@respx.mock
+async def test_a_call_with_no_session_opens_on_the_prompt_alone(monkeypatch):
+    """No session named, nothing to load — and still a working call."""
+    _stub_memory(monkeypatch, episodes=[
+        _FakeEpisode(datetime(2026, 8, 10, tzinfo=timezone.utc), "vectors"),
+    ])
+    route = respx.post(UPSTREAM).mock(
+        return_value=Response(
+            200, content=ANSWER, headers={"Content-Type": "application/sdp"}
+        )
+    )
+    async with _client_for(_app_with(_FakeRecorder())) as client:
+        response = await client.post(
+            "/v1/realtime/calls", content=OFFER, headers=SDP_HEADERS,
+        )
+
+    assert response.status_code == 200
+    body = _upstream_body(route)
+    assert "MOST RECENT SESSIONS, most recent first" not in body
+    assert "vectors" not in body
+    assert "send_to_tutor" in body
+
+
+@respx.mock
+async def test_a_memory_read_that_fails_still_opens_the_call(monkeypatch):
+    """The trade this fallback exists to make.
+
+    A learner who taps the voice button gets a tutor with a shorter
+    recollection, never silence, when the memory read cannot be done.
+    """
+    _stub_memory(monkeypatch)
+    route = respx.post(UPSTREAM).mock(
+        return_value=Response(
+            200, content=ANSWER, headers={"Content-Type": "application/sdp"}
+        )
+    )
+    async with _client_for(_app_with(_BrokenRecorder())) as client:
+        response = await client.post(
+            f"/v1/realtime/calls?session_id={uuid.uuid4()}",
+            content=OFFER, headers=SDP_HEADERS,
+        )
+
+    assert response.status_code == 200
+    assert response.text == ANSWER
+    body = _upstream_body(route)
+    assert "MOST RECENT SESSIONS, most recent first" not in body
+    assert "send_to_tutor" in body
+
+
+@respx.mock
+async def test_a_call_without_a_recorder_at_all_still_opens():
+    """No database configured under this app: `get_recorder` itself raises.
+
+    Every other test in this file goes down this path — no override, no
+    engine — so the assertion is really about all of them: the memory read is
+    additive, and its absence changes nothing about whether a call starts.
+    """
+    route = respx.post(UPSTREAM).mock(
+        return_value=Response(
+            200, content=ANSWER, headers={"Content-Type": "application/sdp"}
+        )
+    )
+    async with _app_client() as client:
+        response = await client.post(
+            f"/v1/realtime/calls?session_id={uuid.uuid4()}",
+            content=OFFER, headers=SDP_HEADERS,
+        )
+
+    assert response.status_code == 200
+    assert b"send_to_tutor" in route.calls[0].request.read()
+
+
+def test_the_blocks_are_the_same_text_a_turn_carries():
+    """One builder, so the two prompts cannot drift.
+
+    `standing_memory_blocks` is what the call route appends;
+    `compose_user_prompt` is what a worker turn sends. The block bodies must be
+    byte-identical, or "answer from the RECENT SESSIONS block" means two
+    different blocks depending on which way the learner is talking.
+    """
+    from app.tutor.prompt import compose_user_prompt, standing_memory_blocks
+
+    sections = {
+        "profile": "You like a worked example first.",
+        "learner_state": None,
+        "recent_sessions": "2026-08-10 (last week) — similar triangles",
+        "saved_notes": "[2026-08-01] Exam is on the 3rd of September.",
+        "today": datetime(2026, 8, 16, tzinfo=timezone.utc).date(),
+        "first_turn": False,
+    }
+    blocks = standing_memory_blocks(**sections)
+    turn = compose_user_prompt(
+        conversation="", goal=None, exercise=None, plan=None,
+        image_region=None, has_image=False, signal=None, **sections,
+    )
+    for block in blocks.split("\n\n"):
+        assert block in turn
 
 
 def test_redaction_catches_exact_and_shaped_keys():

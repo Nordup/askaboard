@@ -326,6 +326,32 @@ struct VoiceToolCallGate: Equatable {
     }
 }
 
+// MARK: - Usage-report gate
+
+/// De-duplication for usage reports, mirroring `VoiceToolCallGate` for the same underlying
+/// fault: one `response.done` can be delivered through more than one event path, and each
+/// delivery would mint a fresh `report_id` — so the server's retry idempotency never sees a
+/// duplicate. On 2026-08-16 that billed one response twice. The gate remembers which response
+/// ids have already been reported and lets each through once.
+///
+/// It also drops reports whose counts are all zero: a response cancelled before it produced a
+/// single token carries no money and no information, and was writing empty rows.
+struct VoiceUsageReportGate: Equatable {
+    private var reportedResponseIDs: Set<String> = []
+
+    /// Whether this `response.done`'s usage should go to the backend. Mutating: a `true`
+    /// answer marks the response id as reported.
+    ///
+    /// A nil response id with non-zero counts still reports — there is nothing to dedupe on,
+    /// and dropping it would lose real money. The server's `(session_id, response_id)` unique
+    /// index is the backstop for anything this gate cannot see.
+    mutating func shouldReport(responseID: String?, usage: RealtimeUsageCounts) -> Bool {
+        guard !usage.isAllZero else { return false }
+        guard let responseID else { return true }
+        return reportedResponseIDs.insert(responseID).inserted
+    }
+}
+
 // MARK: - Mute guard
 
 /// Every mute has an owner, and any mute whose owner is gone gets a watchdog (sleep lesson 4).
@@ -408,5 +434,123 @@ struct MicMuteGuard: Equatable {
         // re-asserting, and `shouldTransmit` is what the coordinator applies to the track — a
         // user mute stays a user mute.
         return .reenableMicrophone(reason: trigger)
+    }
+}
+
+// MARK: - Recap primer
+
+/// The text of the one item the device seeds a call with: what has been said in this session
+/// before the learner tapped the voice disc.
+///
+/// The worker model behind `send_to_tutor` always has the full conversation — the backend
+/// rebuilds it from the session id. The realtime shell had none of it, and that is what the
+/// founder met on device: a voice that could not say what they had been working on, could not
+/// repeat a line from two minutes earlier, and asked the worker for "help with the problem".
+///
+/// Deliberately a *tail*, not a summary: a summary needs a model call on the critical path of
+/// answering a tap, and the last thousand characters of the thread are what the next sentence
+/// of a call is actually about.
+enum VoiceRecapPrimer {
+
+    /// What the model is told the text is for. Every clause earns its place: the model must not
+    /// read it out (it is not a message), must not mention it (it is not something the learner
+    /// said), and must use it when asked to repeat (which is the whole reason it is here).
+    static let header = """
+        WHERE WE ARE — this session's conversation so far, for your context only. Never read it \
+        aloud, never mention this note. If I ask to repeat something from before this call, use it.
+        """
+
+    /// How much of the thread's tail rides along, in characters.
+    ///
+    /// The primer lands at the very start of the conversation and never changes, so from the
+    /// second turn onward it is inside the cached prefix: it is paid for once, at text rates,
+    /// for about a third of a cent per call. That is what makes a generous budget the cheap
+    /// choice — trimming it would save nothing that matters and lose the context that does.
+    static let transcriptBudget = 6_000
+
+    /// The most one message may spend of the budget. One long tutor explanation must not eat
+    /// the window that was meant to hold a conversation — unclamped, a single board-check
+    /// reply left the 2026-08-16 test call knowing nothing about the sketches it was asked
+    /// about. Clamped, the budget holds the last ~20 exchanges instead of the last two.
+    /// Older messages keep their head (the head names the topic); the newest keeps its tail
+    /// (the tail is where the call resumes).
+    static let messageClamp = 300
+
+    /// The whole primer, or nil when there is nothing to prime with. An empty thread — the
+    /// ordinary "tapped the disc on a fresh session" case — sends no item at all rather than a
+    /// note announcing that nothing has happened.
+    static func text(for messages: [TutorMessage], budget: Int = transcriptBudget) -> String? {
+        guard let transcript = transcript(for: messages, budget: budget) else { return nil }
+        return header + "\n\n" + transcript
+    }
+
+    /// The tail of the thread, one message per line, oldest of the kept ones first.
+    ///
+    /// Cuts fall between whole messages, never inside one: half a sentence attributed to the
+    /// learner is worse context than no sentence at all. The single exception is a lone message
+    /// bigger than the whole budget, where the choice is its tail or nothing — and its tail is
+    /// the half that the next thing said in the call will be about.
+    static func transcript(for messages: [TutorMessage], budget: Int = transcriptBudget) -> String? {
+        let raw = messages.compactMap(line(for:))
+        guard !raw.isEmpty, budget > 0 else { return nil }
+        let lines = raw.enumerated().map { index, line in
+            clamp(line, keepingTail: index == raw.count - 1)
+        }
+
+        var kept: [String] = []
+        var total = 0
+        for line in lines.reversed() {
+            // The newline that would join this line to the ones already kept counts too.
+            let cost = line.count + (kept.isEmpty ? 0 : 1)
+            guard total + cost <= budget else { break }
+            kept.append(line)
+            total += cost
+        }
+        if kept.isEmpty, let newest = lines.last {
+            kept = [tail(of: newest, budget: budget)]
+        }
+        return kept.reversed().joined(separator: "\n")
+    }
+
+    /// One message as one line, or nil for anything that is not conversation: an empty or
+    /// whitespace-only text (a turn still streaming, a bubble that never filled) and the
+    /// `system` role, which is bookkeeping the model has no use for.
+    private static func line(for message: TutorMessage) -> String? {
+        let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        let label: String
+        switch message.role {
+        case .learner: label = "Learner: "
+        case .tutor: label = "Tutor: "
+        case .system: return nil
+        }
+        // Newlines inside one message would read as extra speakers once the lines are joined.
+        return label + text.replacingOccurrences(of: "\n", with: " ")
+    }
+
+    /// One line cut to `messageClamp` characters of text, label preserved, "…" marking the
+    /// cut. No-op for anything short enough, which is most conversation.
+    private static func clamp(_ line: String, keepingTail: Bool) -> String {
+        guard let separator = line.range(of: ": "), separator.upperBound < line.endIndex else {
+            return line
+        }
+        let label = String(line[line.startIndex..<separator.upperBound])
+        let text = String(line[separator.upperBound...])
+        guard text.count > messageClamp else { return line }
+        return keepingTail
+            ? label + "…" + text.suffix(messageClamp)
+            : label + text.prefix(messageClamp) + "…"
+    }
+
+    /// The last `budget` characters of one over-long line, with its speaker label kept: a tail
+    /// that has lost its "Learner:" is a tail the model may attribute to itself.
+    private static func tail(of line: String, budget: Int) -> String {
+        guard line.count > budget else { return line }
+        guard let separator = line.range(of: ": "), separator.upperBound < line.endIndex else {
+            return String(line.suffix(budget))
+        }
+        let label = String(line[line.startIndex..<separator.upperBound])
+        guard label.count < budget else { return String(line.suffix(budget)) }
+        return label + String(line[separator.upperBound...].suffix(budget - label.count))
     }
 }

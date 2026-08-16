@@ -230,6 +230,28 @@ turn window, is this failure — not a slow iPad and not a network drop. The
 device's POST landed the instant a listener came back; before that it had
 nowhere to connect.
 
+**No restart in the window?** Then the device refused, and it says so in its
+own line rather than leaving you to read timings:
+
+```
+board render refused by the device | turn_id=… call_id=… reason=…
+view_board unanswered | call_id=… region=… waited=20.0s
+```
+
+The first line is the device answering `/v1/turn/{id}/board` with `error`
+instead of an image — instant, so the turn loses no time. The second is the
+20 s wait expiring with no answer of either kind, which now means the device
+never received the request or never ran: the renderer itself always answers.
+Before 2026-08-16 the device sent nothing at all when it could not draw, and
+both cases looked identical from here — the only record was
+`tool_calls.result` in the database:
+
+```sql
+select tc.arguments, tc.result from tool_calls tc
+  join turns t on t.id = tc.turn_id
+ where t.session_id = :session and tc.name = 'view_board';
+```
+
 The rule: do not save server files while a learner turn streams, or point
 development work at a second server instance. The tutor's reply is the
 designed fallback — it says it cannot see rather than describe a board it

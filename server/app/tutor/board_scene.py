@@ -119,10 +119,35 @@ def _validated_font_size(value: float, *, name: str = "font_size") -> float:
 
 
 class BoardStyle(BaseModel):
-    """The style every primitive shares. `fill` is "transparent" when absent."""
+    """The style every primitive shares. `fill` is "transparent" when absent.
+
+    Every field has a default, and that is what lets `tools.py` leave a field
+    out of an arm whose renderer never reads it: the absent key arrives here as
+    the same value the model used to have to spell out. `WireElement` in
+    `MathTutor/Domain/BoardScene.swift` reads each style key with
+    `decodeIfPresent` and the identical default, so the two sides agree about
+    what an omitted key means.
+
+    **Accepted is wider than asked for, and deliberately.** `extra="forbid"`
+    means a key this model does not name fails the whole batch, and the device
+    round-trips its scene back through `TurnRequest.board_scene` and through
+    `BoardUpdatePayload`. So a field may stop being *requested* long before it
+    can stop being *accepted*, and nothing here may be deleted merely because
+    the schema no longer offers it.
+
+    `role` is the standing example. It was a required four-value enum on every
+    element and no arm of `BoardSceneRenderer` ever read it, so `tools.py` no
+    longer asks for one. It stays here because scenes carrying it are already
+    saved on learners' iPads and in stored sessions, because the device still
+    encodes it on every element it sends back
+    (`BoardScene.swift:1002`), and because a model that writes one anyway must
+    not lose the batch beside it. It is stored and re-encoded; it decides
+    nothing.
+    """
 
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
+    #: Accepted, never requested, and read by no renderer. See the class note.
     role: BoardRole = "content"
     stroke: str = "#0A0A0A"
     fill: str = "transparent"

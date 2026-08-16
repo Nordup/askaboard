@@ -1283,12 +1283,39 @@ final class TutorStore: ObservableObject {
     /// life of the call, whichever session is on screen.
     private var voiceSessionID: UUID { callSessionID ?? session.id }
 
-    /// Whether the live canvas is the board of the turn that is running — what
-    /// `view_board` must be gated on, so a tutor working for a call in another
-    /// session is never shown the board the learner is looking at now.
-    var turnSeesTheVisibleBoard: Bool {
-        guard let turnSessionID else { return true }
-        return turnSessionID == session.id
+    /// One session's board, as the two things a render needs.
+    struct StoredBoard {
+        var drawing: PKDrawing
+        var scene: BoardScene
+    }
+
+    /// The board of any session, on screen or not — what `view_board` answers
+    /// from when the live canvas cannot serve the render.
+    ///
+    /// This replaced a gate. `view_board` used to be refused outright unless
+    /// the running turn belonged to the session on screen, because the only
+    /// board the device could draw was the one under the pen and showing the
+    /// tutor the *wrong* board is worse than showing it none. The refusal
+    /// reached the model as "I could not see the board" — for a board that was
+    /// sitting there, saved and complete. Answering from the turn's own
+    /// session keeps the promise the gate was making (never the wrong board)
+    /// without the lie (there is a board, and this is it).
+    ///
+    /// The visible session reads its ink through `currentDrawingData`, not off
+    /// `session.drawingData`: strokes are saved on a rest timer, so the stored
+    /// copy can be a few seconds behind the pen and the tutor would be shown a
+    /// board the learner has already written past.
+    ///
+    /// `nil` for a session this device does not have — a call session deleted
+    /// out from under its own turn. There is nothing to render and nothing to
+    /// invent.
+    func storedBoard(for id: UUID) -> StoredBoard? {
+        guard let stored = sessionValue(id) else { return nil }
+        let ink = id == session.id ? currentDrawingData : stored.drawingData
+        // A drawing that will not decode still leaves the tutor's own scene,
+        // which is the half this render can always draw.
+        let drawing = ink.flatMap { try? PKDrawing(data: $0) } ?? PKDrawing()
+        return StoredBoard(drawing: drawing, scene: stored.boardScene)
     }
 
     /// A read of the session with `id`, wherever it lives. Loads it from disk
@@ -1514,8 +1541,9 @@ final class TutorStore: ObservableObject {
             // are looking at now: nothing is drawing on the call session's
             // board while they are away, so the tutor works from its stored
             // scene instead — the exact scene it drew there, carried on
-            // `boardSceneStored` — and no picture at all. `view_board` is gated
-            // the same way; see `turnSeesTheVisibleBoard`.
+            // `boardSceneStored` — and no picture at all. `view_board` is not
+            // limited the same way: it renders the turn's own board on demand,
+            // wherever the learner is standing. See `storedBoard(for:)`.
             boardOverview: isVisibleTurn ? boardProvider?() : nil,
             boardManifest: isVisibleTurn ? boardManifestProvider?() : nil,
             boardScene: isVisibleTurn ? boardSceneProvider?() : Self.storedSceneContext(base.boardScene),

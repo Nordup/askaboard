@@ -627,4 +627,56 @@ final class VoiceEngineTests: XCTestCase {
         XCTAssertNil(body["response_id"],
                      "Absent, not null-as-string: the server's column is nullable and the decoder is typed.")
     }
+
+    // MARK: - Usage-report gate
+
+    private static let someUsage = RealtimeUsageCounts(audioInputTokens: 50,
+                                                       cachedAudioInputTokens: 12,
+                                                       audioOutputTokens: 15,
+                                                       textInputTokens: 30,
+                                                       cachedTextInputTokens: 8,
+                                                       textOutputTokens: 5)
+
+    private static let zeroUsage = RealtimeUsageCounts(audioInputTokens: 0,
+                                                       cachedAudioInputTokens: 0,
+                                                       audioOutputTokens: 0,
+                                                       textInputTokens: 0,
+                                                       cachedTextInputTokens: 0,
+                                                       textOutputTokens: 0)
+
+    func testASecondDeliveryOfTheSameResponseDoesNotReport() {
+        var gate = VoiceUsageReportGate()
+        XCTAssertTrue(gate.shouldReport(responseID: "resp_9", usage: Self.someUsage))
+        XCTAssertFalse(
+            gate.shouldReport(responseID: "resp_9", usage: Self.someUsage),
+            "One response.done can arrive via two event paths; each delivery mints a fresh report_id, so only this gate stops the double bill."
+        )
+    }
+
+    func testDistinctResponsesEachReportOnce() {
+        var gate = VoiceUsageReportGate()
+        XCTAssertTrue(gate.shouldReport(responseID: "resp_9", usage: Self.someUsage))
+        XCTAssertTrue(gate.shouldReport(responseID: "resp_10", usage: Self.someUsage))
+    }
+
+    func testAllZeroUsageIsNotReported() {
+        var gate = VoiceUsageReportGate()
+        XCTAssertFalse(
+            gate.shouldReport(responseID: "resp_9", usage: Self.zeroUsage),
+            "A response cancelled before any token carries no money and no information."
+        )
+        XCTAssertTrue(
+            gate.shouldReport(responseID: "resp_9", usage: Self.someUsage),
+            "Dropping a zero report must not mark the response as reported — a later real count for the same id still bills."
+        )
+    }
+
+    func testANilResponseIdStillReports() {
+        var gate = VoiceUsageReportGate()
+        XCTAssertTrue(gate.shouldReport(responseID: nil, usage: Self.someUsage))
+        XCTAssertTrue(
+            gate.shouldReport(responseID: nil, usage: Self.someUsage),
+            "Nothing to dedupe on: dropping an id-less report would lose real money. The server's unique index is the backstop."
+        )
+    }
 }

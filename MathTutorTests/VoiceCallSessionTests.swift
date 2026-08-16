@@ -249,14 +249,43 @@ final class VoiceCallSessionTests: XCTestCase {
         )
     }
 
-    func testAVisibleTurnStillSeesTheVisibleBoard() async {
-        let service = VoiceTurnSpyService()
+    /// `view_board` used to refuse outright whenever the learner had walked
+    /// into another session, and that refusal reached the model as "I could
+    /// not see the board" — with no board missing at all. The turn's own board
+    /// is readable from wherever the learner is standing, and it is *that*
+    /// board, never the one on screen.
+    func testTheBoardOfTheTurnsSessionIsReadableWhileTheLearnerBrowsesElsewhere() async {
+        let element = BoardElement.text(
+            TextElement(id: "hint", x: 10, y: 20, text: "try halves", fontSize: 24)
+        )
+        let service = VoiceTurnSpyService(
+            boardUpdate: BoardSceneUpdate(upserts: [element])
+        )
         let store = makeStore(service)
-        XCTAssertTrue(store.turnSeesTheVisibleBoard, "No turn running is not a wrong board")
+        await store.sendAndWait("fractions please")
+        let call = store.session.id
+        store.voiceCallBegan()
+        _ = await store.runVoiceTurn(request: "draw me a hint")
 
-        await store.sendAndWait("a plain typed turn")
+        store.startNewSession()
 
-        XCTAssertTrue(store.turnSeesTheVisibleBoard)
+        XCTAssertEqual(
+            store.storedBoard(for: call)?.scene.elements.count, 1,
+            "The call session's board is what its own turn must be shown"
+        )
+        XCTAssertEqual(
+            store.storedBoard(for: store.session.id)?.scene.elements.count, 0,
+            "And the board on screen stays the property of the session on screen"
+        )
+    }
+
+    func testTheBoardOfASessionThatDoesNotExistIsNotInvented() {
+        let store = makeStore(VoiceTurnSpyService())
+
+        XCTAssertNil(
+            store.storedBoard(for: UUID()),
+            "A session deleted out from under a call has no board to render"
+        )
     }
 
     // MARK: - The pill
@@ -420,7 +449,136 @@ final class VoiceCallSessionTests: XCTestCase {
         XCTAssertNil(TutorStore.storedSceneContext(BoardScene(elements: [])))
     }
 
+    // MARK: - The recap primer
+
+    func testAnEmptyThreadSendsNoPrimerAtAll() {
+        XCTAssertNil(VoiceRecapPrimer.text(for: []))
+        XCTAssertNil(
+            VoiceRecapPrimer.text(for: [message(.learner, "   \n  ")]),
+            "A bubble with no words is not a conversation to recap"
+        )
+    }
+
+    func testThePrimerLabelsBothSpeakersAndKeepsTheirOrder() throws {
+        let text = try XCTUnwrap(VoiceRecapPrimer.text(for: [
+            message(.learner, "How do I add 1/2 and 1/3?"),
+            message(.tutor, "Find a common denominator first."),
+            message(.learner, "Six?")
+        ]))
+
+        XCTAssertTrue(text.hasPrefix(VoiceRecapPrimer.header), "The header explains what follows")
+        let lines = text.split(separator: "\n").map(String.init)
+        XCTAssertEqual(lines.suffix(3), [
+            "Learner: How do I add 1/2 and 1/3?",
+            "Tutor: Find a common denominator first.",
+            "Learner: Six?"
+        ])
+    }
+
+    func testSystemMessagesAndEmptyOnesAreNotConversation() throws {
+        let transcript = try XCTUnwrap(VoiceRecapPrimer.transcript(for: [
+            message(.system, "session opened"),
+            message(.learner, "Ready."),
+            message(.tutor, "")
+        ]))
+
+        XCTAssertEqual(transcript, "Learner: Ready.")
+    }
+
+    func testAMessageWithNewlinesStaysOneLine() throws {
+        let transcript = try XCTUnwrap(
+            VoiceRecapPrimer.transcript(for: [message(.tutor, "Step 1\nStep 2")])
+        )
+
+        XCTAssertEqual(transcript, "Tutor: Step 1 Step 2", "Two lines would read as two speakers")
+    }
+
+    func testTruncationDropsTheOldestMessagesAndKeepsWholeOnes() throws {
+        let messages = (1...20).map { message(.learner, "Message number \($0) about fractions") }
+        let transcript = try XCTUnwrap(VoiceRecapPrimer.transcript(for: messages, budget: 120))
+
+        XCTAssertLessThanOrEqual(transcript.count, 120)
+        XCTAssertTrue(
+            transcript.hasSuffix("Learner: Message number 20 about fractions"),
+            "The newest message is the one the call is about"
+        )
+        for line in transcript.split(separator: "\n") {
+            XCTAssertTrue(line.hasPrefix("Learner: Message number "), "Cut between messages, not inside one")
+            XCTAssertTrue(line.hasSuffix(" about fractions"), "A half message is worse than no message")
+        }
+        XCTAssertFalse(transcript.contains("number 1 "), "The oldest messages fell off the front")
+    }
+
+    func testTheWholeThreadSurvivesWhenItFitsTheBudget() throws {
+        let transcript = try XCTUnwrap(VoiceRecapPrimer.transcript(
+            for: [message(.learner, "Hi"), message(.tutor, "Hello")], budget: 1_000
+        ))
+
+        XCTAssertEqual(transcript, "Learner: Hi\nTutor: Hello")
+    }
+
+    func testASingleHugeMessageKeepsItsTailAndItsLabel() throws {
+        let long = String(repeating: "a", count: 200) + "the last thing said"
+        let transcript = try XCTUnwrap(
+            VoiceRecapPrimer.transcript(for: [message(.tutor, long)], budget: 60)
+        )
+
+        XCTAssertEqual(transcript.count, 60)
+        XCTAssertTrue(transcript.hasPrefix("Tutor: "), "A tail with no speaker is a tail the model may claim")
+        XCTAssertTrue(transcript.hasSuffix("the last thing said"))
+    }
+
+    func testALongOlderMessageIsClampedToItsHeadSoOthersStillFit() throws {
+        let essay = "The topic is triangles. " + String(repeating: "x", count: 400)
+        let transcript = try XCTUnwrap(VoiceRecapPrimer.transcript(for: [
+            message(.tutor, essay),
+            message(.learner, "Okay let me try"),
+        ]))
+
+        XCTAssertTrue(transcript.contains("Tutor: The topic is triangles. "), "The head names the topic")
+        XCTAssertTrue(transcript.contains("…\nLearner: Okay let me try"), "The cut is marked and the rest fits")
+        XCTAssertFalse(transcript.contains(String(repeating: "x", count: 301)), "Clamped, not whole")
+    }
+
+    func testTheNewestLongMessageKeepsItsTailInstead() throws {
+        let essay = String(repeating: "y", count: 400) + " so try the next exercise"
+        let transcript = try XCTUnwrap(VoiceRecapPrimer.transcript(for: [message(.tutor, essay)]))
+
+        XCTAssertTrue(transcript.hasPrefix("Tutor: …"), "The cut is marked at the front")
+        XCTAssertTrue(transcript.hasSuffix(" so try the next exercise"), "The tail is where the call resumes")
+    }
+
+    func testAHugeNewestMessageStillWinsOverOlderOnesThatWouldFit() throws {
+        let long = String(repeating: "b", count: 300)
+        let transcript = try XCTUnwrap(VoiceRecapPrimer.transcript(
+            for: [message(.learner, "short"), message(.tutor, long)], budget: 40
+        ))
+
+        XCTAssertTrue(transcript.hasPrefix("Tutor: "))
+        XCTAssertFalse(transcript.contains("short"))
+    }
+
+    func testThePrimerEncodesAsASystemMessageItem() throws {
+        let data = try RealtimeEventEncoder.contextPrimer(text: "WHERE WE ARE — …")
+        let object = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+
+        XCTAssertEqual(object["type"] as? String, "conversation.item.create")
+        let item = try XCTUnwrap(object["item"] as? [String: Any])
+        XCTAssertEqual(item["type"] as? String, "message")
+        XCTAssertEqual(item["role"] as? String, "system")
+        let content = try XCTUnwrap(item["content"] as? [[String: Any]])
+        XCTAssertEqual(content.count, 1)
+        XCTAssertEqual(content.first?["type"] as? String, "input_text")
+        XCTAssertEqual(content.first?["text"] as? String, "WHERE WE ARE — …")
+    }
+
     // MARK: - Helpers
+
+    private func message(_ role: MessageRole, _ text: String) -> TutorMessage {
+        TutorMessage(role: role, text: text)
+    }
 
     private func makeStore(_ service: any TutorService) -> TutorStore {
         TutorStore(

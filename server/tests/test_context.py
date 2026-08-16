@@ -32,6 +32,21 @@ def _text(bundle) -> str:
     )
 
 
+def _halves(bundle) -> tuple[str, str]:
+    """The cacheable text and the per-turn text, however many parts each is in.
+
+    The cacheable side is several parts now — the standing blocks and then the
+    transcript cut into fixed-size pieces, see `prompt.TRANSCRIPT_BLOCK_CHARS`
+    — and the per-turn side is the last one. Tests that care which side a
+    block landed on ask for the two halves; how many parts carry them is
+    `context.assemble_context`'s business, and unpacking a fixed number here
+    is how a test breaks on a change it was never about.
+    """
+    texts = [part["text"] for part in bundle.input[1]["content"]
+             if part["type"] == "input_text"]
+    return "".join(texts[:-1]), texts[-1]
+
+
 def _images(bundle) -> list[dict]:
     return [part for part in bundle.input[1]["content"]
             if part["type"] == "input_image"]
@@ -232,10 +247,12 @@ def test_the_stable_half_closes_a_cache_prefix_and_the_volatile_one_does_not():
         image_data=None, image_region=None, signal=None, goal=None,
     )
 
-    stable, volatile = [part for part in bundle.input[1]["content"]
-                        if part["type"] == "input_text"]
-    assert stable["prompt_cache_breakpoint"] == {"mode": "explicit"}
-    assert "prompt_cache_breakpoint" not in volatile
+    parts = [part for part in bundle.input[1]["content"]
+             if part["type"] == "input_text"]
+    # First and last, not "the two of them": the cacheable side is one part
+    # here only because this turn has no transcript yet.
+    assert parts[0]["prompt_cache_breakpoint"] == {"mode": "explicit"}
+    assert "prompt_cache_breakpoint" not in parts[-1]
 
 
 def test_the_transcript_is_in_front_of_the_breakpoint_and_the_goal_behind_it():
@@ -249,33 +266,69 @@ def test_the_transcript_is_in_front_of_the_breakpoint_and_the_goal_behind_it():
         profile="They like worked examples.",
     )
 
-    stable, volatile = [part["text"] for part in bundle.input[1]["content"]
-                        if part["type"] == "input_text"]
+    stable, volatile = _halves(bundle)
     assert "EARLIER IN THIS CONVERSATION" in stable
     assert "WHAT YOU KNOW ABOUT THIS LEARNER" in stable
     assert "LEARNER GOAL: fractions" in volatile
     assert "LEARNER GOAL" not in stable
 
 
-def test_a_turn_that_only_appends_keeps_the_stable_half_as_a_prefix():
-    """Turn N+1's cacheable half has to *start with* turn N's, byte for byte.
-    Anything else and the provider matches nothing and the whole layout is
-    decoration."""
-    def stable_half(messages):
-        bundle = assemble_context(
-            session=FakeSession(), messages=messages,
-            image_data=None, image_region=None, signal=None, goal="fractions",
-            profile="They like worked examples.",
-        )
-        return next(part["text"] for part in bundle.input[1]["content"]
-                    if part["type"] == "input_text")
+def _marked(messages):
+    """The user message's parts, and the indices of the ones that carry a
+    breakpoint."""
+    bundle = assemble_context(
+        session=FakeSession(), messages=messages,
+        image_data=None, image_region=None, signal=None, goal="fractions",
+        profile="They like worked examples.",
+    )
+    parts = bundle.input[1]["content"]
+    return parts, [index for index, part in enumerate(parts)
+                   if "prompt_cache_breakpoint" in part]
 
+
+def test_a_turn_that_only_appends_reuses_the_earlier_turn_s_breakpoints():
+    """Every part turn N marks has to come back in turn N+1 byte-identical and
+    at the same index.
+
+    Not "starts with" — *identical*. A breakpoint names one exact prefix: the
+    provider matches at the breakpoints a request declares and nowhere else,
+    so a marked part that merely grew names a prefix nothing has written and
+    the read drops to the system prompt. That is the failure this file's
+    predecessor could not see, and it cost a whole session's context on every
+    turn while the assertion below it passed.
+    """
     first = [FakeMessage("learner", "hi")]
     second = first + [FakeMessage("tutor", "hello"), FakeMessage("learner", "next")]
 
-    # The trailing newline `compose_user_prompt_blocks` adds is the only thing
-    # between them, so compare against the half without it.
-    assert stable_half(second).startswith(stable_half(first).rstrip("\n"))
+    first_parts, first_marks = _marked(first)
+    second_parts, _ = _marked(second)
+
+    assert first_marks, "a turn with no breakpoint at all can never be read back"
+    for index in first_marks:
+        assert second_parts[index]["text"] == first_parts[index]["text"]
+
+
+def test_the_rolling_breakpoints_hold_still_once_the_transcript_is_long():
+    """The same invariant on a transcript long enough to be cut into blocks,
+    which is the case the short one above cannot reach: a session only starts
+    losing real money once the transcript is thousands of tokens, and that is
+    exactly when the single-part layout stopped matching."""
+    line = "x" * 900
+    history = [FakeMessage("learner" if index % 2 == 0 else "tutor", line)
+               for index in range(20)]
+    first = history + [FakeMessage("learner", "and now?")]
+    second = (history + [FakeMessage("learner", "and now?"),
+                         FakeMessage("tutor", line), FakeMessage("learner", "next")])
+
+    first_parts, first_marks = _marked(first)
+    second_parts, second_marks = _marked(second)
+
+    # Past two complete blocks the breakpoints ride the transcript, so they are
+    # no longer both on the standing text.
+    assert first_marks != [0]
+    assert len(first_marks) == 2 and len(second_marks) == 2
+    for index in first_marks:
+        assert second_parts[index]["text"] == first_parts[index]["text"]
 
 
 # --- transcript trimming ----------------------------------------------------

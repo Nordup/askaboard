@@ -39,8 +39,17 @@ enum AppearancePreference {
 /// can be persisted and forwarded without a translation layer. `high` is the
 /// default for both new sessions and sessions saved before this setting was
 /// introduced.
+///
+/// There is deliberately no `none`. Because there is no translation layer, this
+/// list *is* the wire contract: `BackendTutorService.body(for:)` sends the raw
+/// value and the server refuses anything outside
+/// `REASONING_EFFORT_ALLOWLIST` (`server/app/config.py`) with a 422 at body
+/// validation, before the turn reaches a provider. `none` shipped here once and
+/// the provider does not accept it, so every case this enum adds must be added
+/// to that allowlist in the same change — see
+/// `testEveryEffortIsOnTheServerAllowlist`. A case the server rejects is not a
+/// slower turn; it is a session that cannot take a turn at all.
 enum ReasoningEffort: String, CaseIterable, Codable, Hashable, Identifiable, Sendable {
-    case none
     case low
     case medium
     case high
@@ -53,7 +62,6 @@ enum ReasoningEffort: String, CaseIterable, Codable, Hashable, Identifiable, Sen
 
     var displayName: String {
         switch self {
-        case .none: "None"
         case .low: "Low"
         case .medium: "Medium"
         case .high: "High"
@@ -68,7 +76,6 @@ enum ReasoningEffort: String, CaseIterable, Codable, Hashable, Identifiable, Sen
     /// Explain the speed/depth trade-off in the settings picker.
     var caption: String {
         switch self {
-        case .none: "Fastest replies"
         case .low: "Light reasoning"
         case .medium: "Balanced depth"
         case .high: "Deep reasoning"
@@ -79,6 +86,11 @@ enum ReasoningEffort: String, CaseIterable, Codable, Hashable, Identifiable, Sen
 
     /// Unknown values should not make an otherwise valid saved session
     /// undecodable after the provider adds a new effort level.
+    ///
+    /// This is also what repairs a session saved while `none` was still a case.
+    /// That session persisted `"none"`, and every turn it sent 422'd until the
+    /// learner picked a different effort by hand. Falling back to `high` here
+    /// means it heals on the next load rather than staying stuck.
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
         let rawValue = try container.decode(String.self)

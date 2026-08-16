@@ -62,7 +62,7 @@ curl -sk -o /dev/null -w '%{http_code}\n' https://air.tail27c2bc.ts.net:8443/v1/
 
 ## How the app reaches its tutor
 
-**The app holds no OpenAI key and never talks to OpenAI.** It talks to one backend ([`server/`](server/README.md)), which holds the key. There is nothing to set up on the device and no credential surface in the app: the backend's address is a constant in `BackendConfiguration`, not a setting, and the device's own bearer token is compiled in from a gitignored xcconfig — never in source, in git, or in `UserDefaults`. Settings has two panes, Tutor and Session, and neither of them configures a server. Reasoning effort supports none, low, medium, high, xhigh, and max; new and reset sessions default to high and the selected value is persisted with the session. A deterministic demo tutor is available only through explicit test/debug injection.
+**The app holds no OpenAI key and never talks to OpenAI.** It talks to one backend ([`server/`](server/README.md)), which holds the key. There is nothing to set up on the device and no credential surface in the app: the backend's address is a constant in `BackendConfiguration`, not a setting, and the device's own bearer token is compiled in from a gitignored xcconfig — never in source, in git, or in `UserDefaults`. Settings has two panes, Tutor and Session, and neither of them configures a server. Reasoning effort supports low, medium, high, xhigh, and max — the same set the backend's `REASONING_EFFORT_ALLOWLIST` accepts, because the app sends the raw value and the backend 422s anything outside it; new and reset sessions default to high and the selected value is persisted with the session. A deterministic demo tutor is available only through explicit test/debug injection.
 
 ### The device token
 

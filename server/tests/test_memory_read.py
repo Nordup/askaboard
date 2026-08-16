@@ -239,12 +239,21 @@ def test_pages_split_on_line_boundaries_and_split_monster_lines():
 
 
 def _blocks(**overrides) -> tuple[str, str]:
+    """The stable and volatile halves, as the tests below read them.
+
+    `compose_user_prompt_blocks` returns four values now — the transcript is
+    cut into its own cacheable blocks, see `prompt.TRANSCRIPT_BLOCK_CHARS` —
+    so the standing text and those blocks are joined back into the one stable
+    half these tests were written against. Which side of the cache boundary a
+    block lands on is what they assert, and that has not changed.
+    """
     arguments = dict(
         conversation="learner: hi", goal=None, exercise=None, plan=None,
         image_region=None, has_image=False, signal=None,
     )
     arguments.update(overrides)
-    return compose_user_prompt_blocks(**arguments)
+    standing, history, _complete, volatile = compose_user_prompt_blocks(**arguments)
+    return standing + "".join(history), volatile
 
 
 def test_the_date_anchor_lives_in_the_volatile_half():

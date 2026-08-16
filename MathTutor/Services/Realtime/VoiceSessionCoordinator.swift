@@ -50,6 +50,7 @@ final class VoiceSessionCoordinator: VoiceSessionControlling {
     private var bargeIn = VoiceBargeIn()
     private var ledger = AssistantResponseLedger()
     private var toolGate = VoiceToolCallGate()
+    private var usageGate = VoiceUsageReportGate()
     private var muteGuard = MicMuteGuard()
     private var speechProxy = AssistantSpeechProxy()
     private var captureReducer = CaptureLevelReducer()
@@ -141,6 +142,20 @@ final class VoiceSessionCoordinator: VoiceSessionControlling {
         // The user tapped X while the SDP exchange was in flight: `end()` already tore
         // everything down and `connect()` still returned. Do not resurrect the call.
         guard lifecycle == .connecting, self.connection === connection else { return }
+
+        // **The recap primer, first byte on the channel.** `connect()` returns only once
+        // `oai-events` is open, so this is the earliest instant the device may send anything —
+        // and it must be the earliest: the microphone track was attached during bring-up, so
+        // the server can already be forming a response, and a primer that arrives after it is
+        // context the answer never had. No `response.create` follows; the primer is what the
+        // model knows, not a cue to speak.
+        //
+        // Cost: the item lands at the start of the conversation and never changes, so every
+        // later turn reads it out of the cached prefix. About a third of a cent per call at
+        // text rates, once.
+        if let primer = hooks.contextPrimer {
+            send({ try RealtimeEventEncoder.contextPrimer(text: primer) }, "context primer")
+        }
 
         lifecycle = .live
         isActive = true
@@ -343,7 +358,8 @@ final class VoiceSessionCoordinator: VoiceSessionControlling {
             for item in ledger.finish(responseID: responseID) {
                 hooks?.assistantResponseFinished(item.itemID, item.delegated)
             }
-            if let usage, let reporter = usageReporter {
+            if let usage, let reporter = usageReporter,
+               usageGate.shouldReport(responseID: responseId, usage: usage) {
                 // Fire and forget, captured by value on purpose: the final response's report
                 // races `end()`'s teardown, and money already spent must still land server-side.
                 Task { await reporter.report(usage, responseID: responseId) }
@@ -656,6 +672,7 @@ final class VoiceSessionCoordinator: VoiceSessionControlling {
         bargeIn = VoiceBargeIn()
         ledger = AssistantResponseLedger()
         toolGate = VoiceToolCallGate()
+        usageGate = VoiceUsageReportGate()
         muteGuard = MicMuteGuard()
         speechProxy = AssistantSpeechProxy()
         captureReducer = CaptureLevelReducer()

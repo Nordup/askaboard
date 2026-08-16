@@ -284,6 +284,87 @@ def standing_memory_blocks(
     return "\n\n".join(blocks)
 
 
+#: How to read a turn entry, said once because every entry is shaped the same.
+#:
+#: These are the standing forms of what used to be per-turn instruction blocks.
+#: An instruction cannot live in the session log — the log is permanent, so
+#: "ground your feedback in legible lines from the image" would keep instructing
+#: for the twelve turns after the one that carried an image. Splitting each one
+#: into a rule here and a fact there is what lets the fact be appended and the
+#: rule be cached.
+TURN_CONVENTIONS = """HOW TO READ THIS PROMPT. Everything above is the session as it opened, and it is not sent again: it is the same bytes on every turn of this session. Everything below is the session log, which only ever grows at the end — see its own heading. The learner's current message is the last thing in this prompt, on its own, and it is the one thing here that is a request rather than a record.
+
+Some standing rules for what a turn entry can say:
+
+A turn that attached a region of the board: ground feedback in legible lines from the image. Transcribe only what you can read, praise correct work, flag the smallest issue, and ask one next-step question. If the work is ambiguous, say so and ask the learner to rewrite that line. Do not invent unreadable marks.
+
+A turn that attached files: those are files the learner handed you, not their own working — do not give them feedback as an attempt. If an attachment contains a problem to solve, transcribe it onto the board with `update_board` first and teach from the board, rather than answering it in the thread: the transcription is how the learner checks you read it correctly, and it puts the problem somewhere they can work under.
+
+A turn where the learner pressed I don’t know: respond with reassurance and one tiny next step.
+
+A turn whose entry says THE BOARD CHANGED: anything said about the board before that entry is out of date and must not be repeated. Look before you answer, and describe only what is in the image you get back.
+
+A turn whose entry says WHAT YOU DREW ON THE BOARD: those are the board objects you created on that turn, listed by the stable id the device holds them under. The log is the only place those ids are written down, so read them out of it rather than guessing: to change something you drew earlier in this session, call `update_board` with the id the log gives it. A new id makes a new object on top of the old one, and the learner sees both."""
+
+
+def session_preamble(
+    *,
+    profile: str | None = None,
+    saved_notes: str | None = None,
+    recent_sessions: str | None = None,
+    learner_state: str | None = None,
+    today: "date | None" = None,
+    goal: str | None = None,
+    exercise: dict | None = None,
+    plan: dict | None = None,
+    board_note: str | None = None,
+) -> str:
+    """The session as it opened: computed once, then served byte for byte.
+
+    **Everything here is frozen for the life of the session, including the
+    things that move.** The portrait, the saved notes and the session digests
+    hold still on their own. The mastery snapshot, the goal, the exercise, the
+    plan and the board scene do not — and they are frozen anyway, because the
+    conversation already carries whatever moved them. `record_evidence` moving a
+    band, `remember` saving a note, `set_workspace` replacing the plan and
+    `update_board` drawing an element are all tool calls the model made and acks
+    it read, sitting in the log below in order. Restating the result would be
+    telling the model something it just did, and paying for the whole block
+    again on every turn after.
+
+    That is the trade, stated plainly: the prompt hands over a starting state
+    and a log, where it used to hand over a rebuilt current state. What it buys
+    is that none of these bytes is ever sent twice.
+
+    The date anchor is written with its first-turn note because that is when
+    this string is built. A session that runs past midnight does not get a new
+    anchor; the log's own entries are dated by the turns in them, and the tools
+    that read history are dated in their results.
+    """
+    blocks: list[str] = []
+    if profile:
+        blocks.append(_profile_section(profile))
+    if saved_notes:
+        blocks.append(_saved_notes_section(saved_notes))
+    if recent_sessions:
+        blocks.append(_recent_sessions_section(recent_sessions))
+    if today is not None:
+        blocks.append(_date_anchor_section(today, True))
+    if learner_state:
+        blocks.append(_learner_state_section(learner_state))
+    blocks.append(f"LEARNER GOAL: {goal or 'not stated'}")
+    if exercise:
+        blocks.append(
+            f"EXERCISE CONTEXT: {exercise['context']}\nPROMPT: {exercise['prompt']}"
+        )
+    if plan:
+        blocks.append("SESSION PLAN: " + " → ".join(plan["steps"]))
+    if board_note:
+        blocks.append(board_note)
+    blocks.append(TURN_CONVENTIONS)
+    return "\n\n".join(blocks)
+
+
 def _sections(
     *,
     conversation: str,
@@ -522,8 +603,25 @@ def compose_user_prompt_blocks(**arguments) -> tuple[str, list[str], int, str]:
     block has to stay byte-identical to what it will be next turn, when it is
     no longer the last one, and appending anything to it would break the one
     invariant this whole split exists to create.
+
+    **The separator after the standing text is unconditional, and that is the
+    same rule applied to the standing block itself.** It used to be written
+    only when there was a transcript to separate from, which made the standing
+    text one string on a session's first turn and a different string on its
+    second — a breakpoint on a boundary that moved, one turn earlier in the
+    session than the one this split exists to fix. The first turn wrote a
+    prefix the second could never read.
+
+    **The volatile text is what absorbs the difference**, because it is the
+    one part that carries no breakpoint and may therefore vary freely: it
+    keeps its leading newline when there are transcript blocks in front of it
+    and drops it when there are none. The visible effect is one extra blank
+    line between the standing blocks and the volatile blocks on a turn with no
+    transcript — which is exactly what `compose_user_prompt` already renders
+    there, so the two agree in that case now instead of differing by a
+    newline. With a transcript, every byte is as it was.
     """
     standing, section, volatile = _sections(**arguments)
     blocks, complete = transcript_blocks(section)
-    head = "\n\n".join(standing) + ("\n\n" if blocks else "")
-    return head, blocks, complete, "\n" + "\n\n".join(volatile)
+    head = "\n\n".join(standing) + "\n\n"
+    return head, blocks, complete, ("\n" if blocks else "") + "\n\n".join(volatile)

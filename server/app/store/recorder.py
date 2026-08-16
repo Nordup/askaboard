@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.attachments.convert import Converted
@@ -120,6 +120,22 @@ class Recorder:
         self._sessionmaker = sessionmaker
         self._blobs = blob_store
 
+    @property
+    def sessions(self) -> async_sessionmaker[AsyncSession]:
+        """The maker this recorder writes through, for a caller that has to
+        read.
+
+        A route holds a recorder because the recorder is where the test
+        fixtures point the database — overrides are keyed by `get_recorder`,
+        and a second factory resolved anywhere else writes to whatever
+        DATABASE_URL names. A caller that needs a plain read on the same
+        database (`/v1/realtime/calls` loading the standing memory blocks)
+        therefore has to borrow this one rather than build its own. Read-only
+        by convention: writes belong in the methods below, which is where the
+        `async with` discipline is enforced.
+        """
+        return self._sessionmaker
+
     async def _build_llm_call(
         self,
         *,
@@ -170,6 +186,8 @@ class Recorder:
         ttft_ms: int | None,
         latency_ms: int | None,
         image_blob_key: str | None = None,
+        prompt_preamble: str | None = None,
+        prompt_log: dict | None = None,
     ) -> None:
         """Persist a successful turn — and, in the same transaction, the two
         things a successful turn produces that must never land apart from
@@ -226,11 +244,28 @@ class Recorder:
                     session_id=session_id, seq=next_seq, role="tutor", text=result.text,
                 ))
 
-            if result.workspace:
+            if result.workspace or prompt_preamble is not None or prompt_log is not None:
                 session_row = await session.get(Session, session_id)
                 if session_row is not None:
-                    session_row.plan = result.workspace["plan"]
-                    session_row.exercise = result.workspace["exercise"]
+                    if result.workspace:
+                        session_row.plan = result.workspace["plan"]
+                        session_row.exercise = result.workspace["exercise"]
+                    # The prompt this turn actually sent, kept so the next turn
+                    # can extend it rather than rebuild it. Written here and
+                    # nowhere else, which is what makes a failed turn harmless:
+                    # nothing was stored, so the retry re-derives the same head
+                    # and the same log from the same rows, and the bytes match.
+                    #
+                    # A turn that fails *after* its learner message is committed
+                    # is the interesting case, and it is safe for a reason worth
+                    # naming: the extra message is folded in by the next turn as
+                    # more quoted lines on the end of the same block, and
+                    # `quoting.quoted` is line-wise, so the shorter rendering is
+                    # a byte prefix of the longer one.
+                    if prompt_preamble is not None:
+                        session_row.prompt_preamble = prompt_preamble
+                    if prompt_log is not None:
+                        session_row.prompt_log = prompt_log
 
             await session.commit()
 
@@ -506,13 +541,17 @@ class Recorder:
     ) -> None:
         """One voice response's token counts, priced and written.
 
-        `report_id` is minted on the device, which is what makes a blind
-        retry safe: the second INSERT of the same id hits the primary key and
-        is swallowed here, so the response bills once — the same idempotency
-        `Turn.id` gives `/v1/turn`, without asking the device to remember
-        whether its last report landed.
+        Idempotent twice over, and both keys matter. `report_id` is minted on
+        the device, so a blind retry of the same report hits the primary key —
+        the same idempotency `Turn.id` gives `/v1/turn`. But one
+        `response.done` can also be delivered through two event paths, each
+        delivery minting a fresh `report_id`; the unique index on
+        `(session_id, response_id)` is what makes *that* bill once. Either
+        conflict is swallowed by ON CONFLICT DO NOTHING — nothing to
+        reconcile, the row's values are a function of the same usage event —
+        so a duplicate report commits clean and the route answers 200.
         """
-        row = RealtimeUsage(
+        statement = pg_insert(RealtimeUsage).values(
             id=report_id, session_id=session_id, response_id=response_id,
             model=model,
             audio_input_tokens=audio_input_tokens,
@@ -530,35 +569,36 @@ class Recorder:
                 cached_text_input_tokens=cached_text_input_tokens,
                 text_output_tokens=text_output_tokens,
             ),
-        )
+        ).on_conflict_do_nothing()
         async with self._sessionmaker() as session:
-            session.add(row)
-            try:
-                await session.commit()
-            except IntegrityError:
-                # The same report already landed. Nothing to reconcile: the
-                # row's values are a function of the same usage event.
-                await session.rollback()
+            await session.execute(statement)
+            await session.commit()
 
     async def spend_today(self) -> float:
         """Today's recorded dollars: turns plus voice, since UTC midnight.
 
-        Two sums, one connection. Voice rows joined in because the realtime
+        Two sums, one *statement*. Voice rows counted in because the realtime
         path used to record nothing at all — the day this fix was written,
         voice was ~$4.70 of a $7 day and `DAILY_SPEND_CAP_USD` saw none of it.
+
+        One statement rather than two, because this runs on the request path in
+        front of every turn and a round trip to Neon costs 262 ms from where
+        this server sits. Scalar subqueries rather than a join: the two tables
+        share no key to join on, and a cross join would multiply each sum by the
+        other table's row count.
         """
         midnight = datetime.now(timezone.utc).replace(
             hour=0, minute=0, second=0, microsecond=0
         )
         async with self._sessionmaker() as session:
-            turns = await session.scalar(
-                select(func.coalesce(func.sum(Turn.cost_usd), 0.0)).where(
-                    Turn.started_at >= midnight
+            turns, voice = (await session.execute(
+                select(
+                    select(func.coalesce(func.sum(Turn.cost_usd), 0.0))
+                    .where(Turn.started_at >= midnight)
+                    .scalar_subquery(),
+                    select(func.coalesce(func.sum(RealtimeUsage.cost_usd), 0.0))
+                    .where(RealtimeUsage.created_at >= midnight)
+                    .scalar_subquery(),
                 )
-            )
-            voice = await session.scalar(
-                select(func.coalesce(func.sum(RealtimeUsage.cost_usd), 0.0)).where(
-                    RealtimeUsage.created_at >= midnight
-                )
-            )
+            )).one()
         return float(turns or 0.0) + float(voice or 0.0)

@@ -862,6 +862,40 @@ final class MathTutorTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(ReasoningEffort.self, from: unknown), .high)
     }
 
+    /// The picker's cases are the wire contract, so the whole set is pinned
+    /// rather than one guard against one bad value.
+    ///
+    /// `BackendTutorService.body(for:)` sends `rawValue` with no translation
+    /// layer, and `REASONING_EFFORT_ALLOWLIST` in `server/app/config.py`
+    /// 422s anything outside it at body validation. `none` was offered by the
+    /// picker and rejected by that allowlist, which broke every turn in the
+    /// session — and stayed broken across a relaunch, because the raw value
+    /// persisted. Nothing in the app can see the server's set, so this
+    /// mirrors it: adding a case here fails the test until the allowlist and
+    /// the provider both take it.
+    func testEveryEffortIsOnTheServerAllowlist() {
+        // Mirrors REASONING_EFFORT_ALLOWLIST in server/app/config.py.
+        let serverAllowlist: Set<String> = ["low", "medium", "high", "xhigh", "max"]
+        XCTAssertEqual(Set(ReasoningEffort.allCases.map(\.rawValue)), serverAllowlist)
+        XCTAssertNil(ReasoningEffort(rawValue: "none"))
+        XCTAssertTrue(serverAllowlist.contains(ReasoningEffort.defaultValue.rawValue))
+    }
+
+    /// Nothing may filter the picker down to a safe subset: what the picker
+    /// offers has to be exactly what the request may carry, or an option the
+    /// server refuses is one tap away again.
+    func testTheEffortPickerOffersEveryCaseAndNothingElse() {
+        // The row is per-model since Gemini joined the picker: three depths under
+        // a Gemini route, five under a gpt-5.6 one. Their union is still exactly
+        // this enum — no model offers a level outside it, and between them they
+        // offer all of it.
+        let offered = ModelChoice.allCases.flatMap {
+            SettingsOption.efforts(for: $0, selected: .high).map(\.value.rawValue)
+        }
+        XCTAssertEqual(Set(offered), Set(ReasoningEffort.allCases.map(\.rawValue)))
+        XCTAssertFalse(offered.contains("none"))
+    }
+
     func testLearningSessionBackwardDecodeDefaultsMissingReasoningEffort() throws {
         var sessionObject = try jsonObject(for: LearningSession.empty)
         sessionObject.removeValue(forKey: "reasoningEffort")

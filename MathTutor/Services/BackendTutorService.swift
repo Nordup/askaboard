@@ -125,9 +125,11 @@ struct BackendTutorService: TutorService, Sendable {
                             if case let .boardRequest(callID, region, detail) = event {
                                 let configuration = configuration
                                 let session = session
+                                let sessionID = request.sessionID
                                 group.addTask {
                                     if let image = await Self.answerBoardRequest(
                                         callID: callID, region: region, turnID: turnID,
+                                        sessionID: sessionID,
                                         configuration: configuration, session: session
                                     ) {
                                         continuation.yield(.boardViewed(
@@ -153,48 +155,75 @@ struct BackendTutorService: TutorService, Sendable {
     ///
     /// Injected rather than reached for, because the board belongs to the
     /// canvas and this type is a network client. Returning `nil` means the
-    /// board could not be rendered — no canvas mounted, nothing drawn — and the
+    /// board could not be rendered — nothing drawn and nothing placed — and the
     /// service answers the server with that rather than silently hanging the
     /// turn until it times out.
+    ///
+    /// **It is given the session, not only the rectangle.** `view_board`
+    /// answers for the board of the turn that asked, and that is not always the
+    /// board under the pen: a delegated voice turn runs for the call's session
+    /// while the learner browses another one. Passing the id is what lets the
+    /// renderer draw the right board instead of guessing that the turn meant
+    /// whatever is on screen — the guess that used to come back as "I could not
+    /// see the board".
     ///
     /// Main-actor isolated because rendering a `PKDrawing` touches the live
     /// canvas, and because Swift 6 will not have mutable global state any other
     /// way. `BoardScreen` sets it; the render task in `stream(_:)`'s task group
     /// reads it back on the main actor before rendering.
-    @MainActor static var boardRenderer: ((CGRect) -> Data?)?
+    @MainActor static var boardRenderer: ((UUID, CGRect) -> Data?)?
 
     /// Renders the region the tutor asked for and POSTs it back to the turn
     /// that is parked waiting for it.
     ///
-    /// Failures are swallowed on purpose. The server already has a timeout and
-    /// an answer for a device that never replies — it tells the model it could
-    /// not see the board — so a render or upload that fails here degrades to
-    /// exactly that, one round trip later. Throwing would abort the SSE stream
-    /// and take the whole turn down with it, which is strictly worse than a
-    /// tutor that says it could not look.
+    /// **A render that fails still answers.** It used to return `nil` and send
+    /// nothing at all, on the reasoning that the server has a timeout and an
+    /// answer for a device that never replies. It does — but the reasoning
+    /// costs the learner the whole 20 s of `RENDER_TIMEOUT_SECONDS` for a
+    /// failure the device knew about instantly, and it leaves no trace
+    /// anywhere: no POST, no log line, nothing but a tutor saying it could not
+    /// look. So the failure is posted as a failure, the turn resumes at once,
+    /// and the server writes down why.
+    ///
+    /// Upload errors are still swallowed. Throwing here would abort the SSE
+    /// stream and take the whole turn down with it, which is strictly worse
+    /// than a tutor that says it could not look.
     private static func answerBoardRequest(
         callID: String,
         region: CGRect,
         turnID: String,
+        sessionID: UUID,
         configuration: BackendConfiguration,
         session: URLSession
     ) async -> Data? {
-        // One hop, doing both: reading the renderer and running it are equally
-        // main-actor work, and splitting them would leave a window where the
-        // screen tore down between the two.
-        guard let image = await MainActor.run(body: { boardRenderer?(region) }) else { return nil }
+        // One hop, doing all three: reading the renderer, running it, and
+        // naming the failure are equally main-actor work, and splitting them
+        // would leave a window where the screen tore down between two of them.
+        //
+        // The reason travels with the answer because the server is where it
+        // gets written down. There is one cause left that the renderer cannot
+        // fix — a board with nothing on it — so a log line naming any other is
+        // a bug, and the session id is what finds it.
+        let answer = await MainActor.run { () -> (image: Data?, reason: String) in
+            guard let renderer = boardRenderer else {
+                return (nil, "no board renderer is registered on the device")
+            }
+            guard let image = renderer(sessionID, region) else {
+                return (nil, "session \(sessionID.uuidString) has no board content to render")
+            }
+            return (image, "")
+        }
 
         let url = configuration.baseURL.appendingPathComponent("v1/turn/\(turnID)/board")
         var upload = URLRequest(url: url)
         upload.httpMethod = "POST"
         upload.setValue("Bearer \(configuration.token)", forHTTPHeaderField: "Authorization")
         upload.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        upload.httpBody = try? JSONSerialization.data(withJSONObject: [
-            "call_id": callID,
-            "image_base64": image.base64EncodedString(),
-        ])
+        upload.httpBody = try? JSONSerialization.data(withJSONObject: answer.image.map {
+            ["call_id": callID, "image_base64": $0.base64EncodedString()]
+        } ?? ["call_id": callID, "error": answer.reason])
         _ = try? await session.data(for: upload)
-        return image
+        return answer.image
     }
 
     /// How long a close may take before it is abandoned to the server's sweep.

@@ -17,9 +17,9 @@ from fastapi.responses import StreamingResponse
 from google import genai
 from openai import APIConnectionError, APIError, APIStatusError, AsyncOpenAI
 from pydantic import BaseModel, Field, field_validator, model_validator
-from sqlalchemy import select
+from sqlalchemy import Row, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.attachments.parts import UploadPart
 from app.auth import require_device_token
@@ -40,7 +40,10 @@ from app.store.db import db_session, session_factory
 from app.store.blobs import LocalBlobStore
 from app.store.models import Attachment, Message, Session, Turn
 from app.store.recorder import Recorder, cache_tokens
-from app.tutor.context import assemble_context
+from app.tutor import ledger
+from app.tutor.context import (
+    assemble_session_context, open_session_preamble, split_live_turn,
+)
 from app.tutor.events import (
     TURN_FAILED_MESSAGE, DoneEvent, ErrorEvent, StatusEvent,
 )
@@ -186,7 +189,7 @@ def _provider(model: str) -> Provider:
 
 
 async def _memory_sections(
-    db: AsyncSession,
+    sessions: async_sessionmaker[AsyncSession],
     *,
     session_id: uuid.UUID | None = None,
     first_turn: bool = False,
@@ -211,19 +214,43 @@ async def _memory_sections(
     dict would see a section that exists and is blank. `snapshot` returns `""`
     for a learner nothing has been measured about yet, which is a learner we
     have no reading on, not one who knows nothing.
+
+    Five readers, five sessions, run together. A session owns one connection
+    and one transaction, so a `gather` over a single `AsyncSession` interleaves
+    two coroutines' protocol traffic on one socket and corrupts its state — the
+    fan-out has to be over independent sessions or not at all. Serially these
+    are six to eight round trips at 262 ms each; together they cost the slowest
+    one, and the block went from 5.5 s to 1.6 s when it was measured.
+
+    The *maker* rather than a session, and not only because the fan-out needs
+    one. Test overrides are keyed on `get_recorder`, so a caller that has
+    pointed the recorder at another database — the tests do exactly that —
+    keeps every leg pointed there too. Resolving `session_factory()` in here
+    would have reached past those overrides to whatever `DATABASE_URL` names,
+    which is the branch holding real sessions.
     """
     today = datetime.now(timezone.utc).date()
-    episodes = await recent_episodes(db, SOLE_LEARNER_ID,
-                                     limit=RECENT_SESSION_COUNT)
+
+    async def read(fn):
+        async with sessions() as db:
+            return await fn(db)
+
     # The backstop: when the latest quiet window has no summary yet —
     # extraction pending, failed, or quarantined — its raw transcript tail
     # stands in as the newest card, so recall never depends on a background
     # job having run.
-    tail = await backstop_tail(db, SOLE_LEARNER_ID, exclude_session=session_id)
-    notes = await explicit_notes(db, SOLE_LEARNER_ID)
+    episodes, tail, notes, profile, learner_state = await _all_of(
+        read(lambda db: recent_episodes(db, SOLE_LEARNER_ID,
+                                        limit=RECENT_SESSION_COUNT)),
+        read(lambda db: backstop_tail(db, SOLE_LEARNER_ID,
+                                      exclude_session=session_id)),
+        read(lambda db: explicit_notes(db, SOLE_LEARNER_ID)),
+        read(lambda db: current_profile(db, SOLE_LEARNER_ID)),
+        read(lambda db: snapshot(db, SOLE_LEARNER_ID)),
+    )
     return {
-        "profile": await current_profile(db, SOLE_LEARNER_ID),
-        "learner_state": (await snapshot(db, SOLE_LEARNER_ID)) or None,
+        "profile": profile,
+        "learner_state": learner_state or None,
         "recent_sessions": render_sessions(episodes, today=today,
                                            backstop=tail) or None,
         "saved_notes": render_notes(notes) or None,
@@ -262,6 +289,43 @@ def _describe_error(error: Exception) -> str:
     if cause is not None:
         message += f" (caused by {type(cause).__name__}: {cause})"
     return message
+
+
+async def _all_of(*aws) -> list:
+    """Run these to completion, concurrently, then raise the first failure.
+
+    `asyncio.gather(..., return_exceptions=True)` rather than a `TaskGroup`,
+    and the difference is durability rather than style. A TaskGroup cancels its
+    siblings the moment one child raises — so a memory read that failed would
+    cancel the board write beside it, and a turn that failed would lose the
+    attachment row it writes today. Here every await runs to the end, and only
+    then is the first exception re-raised.
+
+    Every exception is retrieved, so none can surface later as an unhandled
+    "Task exception was never retrieved". The ones not re-raised are logged,
+    because a second failure hidden behind the first is exactly the kind of
+    thing that goes unnoticed for a month.
+
+    Cancellation propagates as it would from any await: `gather` cancels the
+    children and re-raises `CancelledError`, which is a `BaseException` and so
+    reaches `stream`'s `finally` untouched by any `except Exception` on the way.
+    """
+    results = await asyncio.gather(*aws, return_exceptions=True)
+    failures = [r for r in results if isinstance(r, BaseException)]
+    for extra in failures[1:]:
+        logger.warning("concurrent step also failed | %s", _describe_error(extra))
+    if failures:
+        raise failures[0]
+    return results
+
+
+async def _nothing() -> None:
+    """A coroutine standing in for a step this turn does not have.
+
+    Keeps `_all_of`'s results positional, so the caller unpacks the same names
+    whether or not the learner sent a region.
+    """
+    return None
 
 
 async def _fail_turn_and_report(
@@ -433,10 +497,22 @@ def _memory_sessions() -> AsyncSession:
 
 
 class BoardRenderBody(BaseModel):
-    """One rendered region, on its way back up to the turn that asked for it."""
+    """One rendered region, on its way back up to the turn that asked for it —
+    or the device saying it has none to send.
+
+    Exactly one of the two fields carries the answer. `error` exists because
+    the device's failures are instant and knowable: no canvas, a session whose
+    board it cannot read. Leaving those to the 20 s timeout spends the
+    learner's turn on an answer that was decided in a millisecond.
+    """
 
     call_id: str
-    image_base64: str
+    image_base64: str | None = None
+    #: Why the device could not render, in its own words. Recorded in the log
+    #: and nowhere else — the model is told the board was unavailable, in the
+    #: same words it is told after a timeout, because the reason is ours to
+    #: debug and not the tutor's to explain to a learner.
+    error: str | None = None
 
 
 @router.post("/turn/{turn_id}/board")
@@ -453,6 +529,26 @@ async def deliver_board_render(turn_id: uuid.UUID, body: BoardRenderBody):
     into a void the device thinks succeeded. It also covers a duplicate POST and
     a device replaying an old turn.
     """
+    if body.error is not None:
+        # Logged at warning because this is the device failing to do the one
+        # thing only it can do. It is the line to grep for when a tutor says it
+        # could not see the board and the server never restarted.
+        logger.warning(
+            "board render refused by the device | turn_id=%s call_id=%s reason=%s",
+            turn_id, body.call_id, body.error,
+        )
+        if not rendezvous.fail(turn_id, body.call_id):
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                "No turn is waiting for that render; it may have already timed out.",
+            )
+        return {"status": "ok"}
+
+    if body.image_base64 is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Send image_base64, or error saying why not."
+        )
+
     try:
         image = base64.b64decode(body.image_base64)
     except (ValueError, TypeError):
@@ -469,27 +565,118 @@ async def deliver_board_render(turn_id: uuid.UUID, body: BoardRenderBody):
     return {"status": "ok"}
 
 
+async def _previous_board_sha(
+    sessions: async_sessionmaker[AsyncSession], session_id: uuid.UUID
+) -> str | None:
+    """The sha256 of the last whole board this session sent, or None.
+
+    Its own session so it can run beside the other prologue reads rather than
+    behind them: they are all independent, and serially they are sixteen round
+    trips at 262 ms in front of every turn.
+    """
+    async with sessions() as db:
+        return (await db.execute(
+            select(Attachment.sha256)
+            .join(Turn, Turn.id == Attachment.turn_id)
+            .where(Turn.session_id == session_id, Attachment.kind == BOARD_KIND)
+            .order_by(Attachment.created_at.desc())
+            .limit(1)
+        )).scalar_one_or_none()
+
+
+async def _session_messages(
+    sessions: async_sessionmaker[AsyncSession], session_id: uuid.UUID
+) -> list[Row]:
+    """This session's transcript so far, oldest first, as plain rows.
+
+    Fetched by a query rather than through `session.messages`: on an
+    AsyncSession, touching an unloaded relationship attribute after flush()
+    attempts a lazy SELECT outside the greenlet context and raises
+    MissingGreenlet. A plain awaited query has no such trap.
+
+    Columns rather than `select(Message)`, and the column that matters is the
+    one that is not here. `Message.fts` is a persisted generated tsvector, 99%
+    the size of the text beside it, and nothing outside `search_history` ever
+    reads it; hauling it cost a whole extra round trip on every turn — 527 ms
+    against 265 ms.
+
+    Plain rows also carry their values out of the session that fetched them.
+    `assemble_context` reads `.role` and `.text` long after this returns, and an
+    ORM `Message` from a closed session is detached — a trap for the next
+    reader rather than for this one.
+    """
+    async with sessions() as db:
+        return list((await db.execute(
+            select(Message.seq, Message.role, Message.text, Message.signal)
+            .where(Message.session_id == session_id)
+            .order_by(Message.seq)
+        )).all())
+
+
 @router.post("/turn")
 async def create_turn(
     body: TurnRequest,
     db: AsyncSession = Depends(db_session),
     recorder: Recorder = Depends(get_recorder),
 ):
+    # When the request arrived, not when the stream opens.
+    #
+    # `stream`'s clock used to start at the top of the generator, which runs
+    # after everything below has already happened — so the prologue's round
+    # trips were in no log line at all, and `ttft_ms` reported a turn as
+    # starting several seconds after the learner pressed send. `stream` takes
+    # `started = received`, so every number on the "turn ok" line now measures
+    # from the request rather than from the middle of it.
+    received = time.monotonic()
     settings = get_settings()
 
-    if await db.get(Turn, body.turn_id) is not None:
+    # Every read this handler needs before it can write anything, at once.
+    #
+    # None of the five is upstream of another: the idempotency check, the spend
+    # cap, the session row, the previous board's hash, the transcript and the
+    # named uploads all answer questions about state that already exists.
+    # Serially they were sixteen round trips at 262 ms — about 4.2 s in front
+    # of every turn. The checks below still run in the order they always did,
+    # so the same request still gets the same status code; only a duplicate
+    # turn_id now pays for reads it will throw away, and that is an error path.
+    #
+    # `db.get(Turn)` and `db.get(Session)` share the request session because
+    # the session row is mutated and committed through it. The rest take their
+    # own session from the pool — a `gather` over one `AsyncSession` would
+    # interleave two coroutines on one connection and corrupt it.
+    async def _turn_and_session():
+        return (await db.get(Turn, body.turn_id),
+                await db.get(Session, body.session_id))
+
+    (existing_turn, session), spend, previous_sha, existing_messages, upload_rows = (
+        await _all_of(
+            _turn_and_session(),
+            recorder.spend_today(),
+            _previous_board_sha(recorder.sessions, body.session_id),
+            _session_messages(recorder.sessions, body.session_id),
+            # Loaded before the stream opens, because a missing attachment is a
+            # transport-level refusal — the learner's file never made it —
+            # rather than something to report mid-turn once they have already
+            # seen the tutor start to answer. Returns [] without touching the
+            # database when the request named none.
+            recorder.load_uploads(
+                session_id=body.session_id, ids=body.attachment_ids
+            ),
+        )
+    )
+
+    if existing_turn is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, "This turn was already handled.")
 
     # Today's recorded dollars — turns and voice both, each priced at record
     # time from config's price tables. Checked before the session row or any
     # provider call exists, so a capped day is one clean 402 rather than a
     # turn that dies mid-stream.
-    if await recorder.spend_today() >= settings.daily_spend_cap_usd:
+    if spend >= settings.daily_spend_cap_usd:
         raise HTTPException(
             status.HTTP_402_PAYMENT_REQUIRED, "Daily spend cap reached."
         )
 
-    session = await db.get(Session, body.session_id)
     if session is None:
         session = Session(
             id=body.session_id, model=body.model, reasoning_effort=body.reasoning_effort
@@ -516,18 +703,18 @@ async def create_turn(
     image = base64.b64decode(body.image_base64) if body.image_base64 else None
     board = base64.b64decode(body.board_overview_base64) if body.board_overview_base64 else None
 
-    # Loaded before the stream opens, because a missing attachment is a
-    # transport-level refusal — the learner's file never made it — rather than
-    # something to report mid-turn once they have already seen the tutor start
-    # to answer.
-    upload_rows = await recorder.load_uploads(
-        session_id=body.session_id, ids=body.attachment_ids
-    )
     if len(upload_rows) != len(body.attachment_ids):
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             "One of those attachments is not on this session.",
         )
+    # Together, for the same reason the reads above are: the blob store is
+    # local files read on a thread, so five uploads was five serial thread hops
+    # for no reason. `_all_of` returns [] for no uploads without awaiting.
+    upload_bytes = await _all_of(*(
+        recorder.blob(row.converted_blob_key or row.blob_key)
+        for row in upload_rows
+    ))
     uploads = [
         UploadPart(
             # What the learner called it, for the prompt's inventory and for
@@ -539,9 +726,9 @@ async def create_turn(
             kind=_upload_kind(row),
             page_count=row.page_count or 1,
             content_type=row.converted_content_type or row.content_type,
-            data=await recorder.blob(row.converted_blob_key or row.blob_key),
+            data=data,
         )
-        for row in upload_rows
+        for row, data in zip(upload_rows, upload_bytes)
     ]
 
     # Whether the board differs from the one this session last sent.
@@ -552,26 +739,7 @@ async def create_turn(
     # single fact that stops it — see `board.describe`. `None` means "no previous
     # board to compare against", which is a first look, not an unchanged one.
     board_sha = hashlib.sha256(board).hexdigest() if board is not None else None
-    previous_sha = (
-        await db.execute(
-            select(Attachment.sha256)
-            .join(Turn, Turn.id == Attachment.turn_id)
-            .where(Turn.session_id == body.session_id, Attachment.kind == BOARD_KIND)
-            .order_by(Attachment.created_at.desc())
-            .limit(1)
-        )
-    ).scalar_one_or_none()
     board_changed = None if previous_sha is None else (board_sha != previous_sha)
-
-    # Fetched explicitly rather than through `session.messages`: on an
-    # AsyncSession, touching an unloaded relationship attribute after flush()
-    # attempts a lazy SELECT outside the greenlet context and raises
-    # MissingGreenlet. A plain awaited query has no such trap.
-    existing_messages = (
-        await db.execute(
-            select(Message).where(Message.session_id == session.id).order_by(Message.seq)
-        )
-    ).scalars().all()
 
     # First turn of a new session = no tutor message in it yet. Computed off
     # the rows already in hand, before this turn's own message is added: a
@@ -606,15 +774,21 @@ async def create_turn(
     ]
     next_seq = seq + 1
 
+    # `prologue_ms` is everything above this line: the concurrent read block
+    # and the commit. It is on its own because it is the one stretch of a turn
+    # that no other number covers — `elapsed_ms` now contains it, but only this
+    # says how much of the total it was.
     logger.info(
         "turn started | turn_id=%s session_id=%s model=%s effort=%s "
-        "has_image=%s has_board=%s history=%d",
+        "has_image=%s has_board=%s history=%d prologue_ms=%d",
         body.turn_id, session.id, body.model, body.reasoning_effort,
         image is not None, board is not None, seq,
+        int((time.monotonic() - received) * 1000),
     )
 
     async def stream():
-        started = time.monotonic()
+        # The request's own clock, not the generator's. See `received` above.
+        started = received
         ttft_ms: int | None = None
         image_ref = None
         result: TurnResult | None = None
@@ -884,39 +1058,91 @@ async def create_turn(
                 # reaches the model through the assembled prompt, and the wire
                 # contract for this status is bare.
                 yield sse(StatusEvent(phase="looking", detail=None))
-                image_ref = await recorder.record_attachment(
+
+            # The two attachment writes and the memory read, together, because
+            # not one of them is upstream of another.
+            #
+            # Both writes are *only for the record*. The bytes are already in
+            # memory and reach the model through `assemble_context` below, so
+            # nothing in the prompt waits on a row landing. `board_changed` is
+            # the one thing that ever reads a BOARD_KIND row back, and it read
+            # the *previous* turn's row in the prologue — this turn's write
+            # cannot race its own comparison. The memory read touches neither.
+            #
+            # Serially these were about 7.1 s on the measured link: a write
+            # session is six round trips at 262 ms, and the memory read is six
+            # to eight statements behind a fresh checkout. Run together they
+            # cost the slowest one, about 2.4 s.
+            #
+            # Still inside the guard, not before the stream opens. A failure in
+            # any of them has to fail the turn visibly rather than raise past
+            # `create_turn` and leave the row at status="running" forever — the
+            # same hole `assemble_context` itself was moved in here to close.
+            # `_all_of` re-raises inside this `try`, from the same position
+            # these awaits already raised from, so every existing `except`
+            # below sees exactly what it saw before.
+            image_ref, _board_ref, sections = await _all_of(
+                recorder.record_attachment(
                     turn_id=body.turn_id, kind="board_png", data=image,
                     content_type="image/png",
-                )
-
-            if board is not None:
+                ) if image is not None else _nothing(),
                 # Recorded for the *next* turn's comparison as much as for the
-                # audit trail: `board_changed` above reads exactly this row back.
-                # Content-addressed, so a board sent twice unchanged costs one
-                # blob, not two.
-                await recorder.record_attachment(
+                # audit trail: `board_changed` above reads exactly this row
+                # back. Content-addressed, so a board sent twice unchanged
+                # costs one blob, not two.
+                recorder.record_attachment(
                     turn_id=body.turn_id, kind=BOARD_KIND, data=board,
                     content_type="image/png",
-                )
-
-            # Read inside the guard, not before the stream opens. These are
-            # a handful of round trips to Neon, and a failure in any of them
-            # has to fail the turn visibly rather than raise past
-            # `create_turn` and leave the row at status="running" forever —
-            # the same hole `assemble_context` itself was moved in here to
-            # close.
-            sections = await _memory_sections(
-                db, session_id=session.id, first_turn=first_turn,
+                ) if board is not None else _nothing(),
+                # Once per session, and never again. The four blocks it reads
+                # go into `prompt_preamble`, which is then served byte for byte
+                # for the rest of the session — so turns 2..N skip this
+                # entirely. It is six to eight statements on a 262 ms link,
+                # about 2,400 ms even parallelised, in front of every turn.
+                _memory_sections(
+                    recorder.sessions, session_id=session.id,
+                    first_turn=first_turn,
+                ) if session.prompt_preamble is None else _nothing(),
             )
 
-            bundle = assemble_context(
-                session=session, messages=messages, image_data=image,
-                image_region=body.image_region, signal=body.signal, goal=body.goal,
-                board_overview=board, board_manifest=body.board_manifest,
-                board_scene=body.board_scene,
-                board_changed=board_changed,
-                uploads=uploads,
-                **sections,
+            # The frozen head: this session's first turn builds it, every turn
+            # after replays it. Nothing recomputes it, and that is deliberate
+            # for the values inside it that *do* move — the mastery snapshot,
+            # the goal, the workspace, the board scene. Whatever moved one of
+            # them is a tool call the model made, sitting in the log below with
+            # the ack it read; restating the result would be telling the model
+            # something it just did and re-costing the whole head to say it.
+            preamble = session.prompt_preamble
+            if preamble is None:
+                preamble = open_session_preamble(
+                    goal=body.goal, exercise=session.exercise, plan=session.plan,
+                    board_overview=board, board_scene=body.board_scene,
+                    **sections,
+                )
+
+            # The log, extended by exactly this turn's bytes. `history` is the
+            # conversation behind the live turn; the live turn stays out of the
+            # log until it is history, which is what stops a request being
+            # delivered as a quotation of itself.
+            history, live_turn = split_live_turn(messages)
+            stored_log = ledger.LogState.from_json(session.prompt_log)
+            log = ledger.advance(
+                stored_log,
+                messages=history,
+                entry=ledger.turn_entry(
+                    stored_log.turn + 1,
+                    image_region=body.image_region,
+                    has_image=image is not None,
+                    upload_names=[upload.filename for upload in uploads],
+                    signal=body.signal,
+                    board_changed=board_changed,
+                    board_manifest=body.board_manifest,
+                ),
+            )
+
+            bundle = assemble_session_context(
+                preamble=preamble, log=log, live_turn=live_turn,
+                image_data=image, board_overview=board, uploads=uploads,
             )
             async for event, running in run_turn(
                 provider=_provider(body.model), model=body.model,
@@ -989,6 +1215,18 @@ async def create_turn(
                     ttft_ms=ttft_ms,
                     latency_ms=int((time.monotonic() - started) * 1000),
                     image_blob_key=image_ref.key if image_ref else None,
+                    # The exact bytes this turn sent, so the next turn extends
+                    # them rather than rebuilding them. On the success path
+                    # only: see `finish_turn` for why a failed turn storing
+                    # nothing is the safe outcome rather than a lost update.
+                    prompt_preamble=preamble,
+                    # `recording` folds in what this turn drew, read off
+                    # `result.tool_calls`. It is the only record of the ids the
+                    # model assigned to its own board elements: the transcript
+                    # renders a message as `role: text`, so a tool call leaves
+                    # no trace in it, and the scene string that used to carry
+                    # them is no longer re-sent.
+                    prompt_log=log.recording(result.tool_calls).as_json(),
                 )
                 usage = result.usage or {}
                 cached, written = cache_tokens(usage)
@@ -1009,12 +1247,40 @@ async def create_turn(
                 # it is only ever noticed when it is already on the page next
                 # to the cost it explains, and a prompt whose whole layout is
                 # built around earning that hit deserves to say whether it did.
+                #
+                # `cached` alone could not say *why* it was low, which is why
+                # a prefix that had quietly stopped matching went unnoticed
+                # through eleven consecutive turns of one session. Three more
+                # fields settle it between them, and all three are free:
+                #
+                #   `bp_chars` — the prompt in front of this turn's last cache
+                #     breakpoint, the prefix the turn asked to read back.
+                #   `bp` — how many breakpoints the request declared, so a
+                #     silently dropped one is visible rather than inferred.
+                #   `session_id` — which turns to read against each other, and
+                #     the timestamps between two of them are the gap that says
+                #     whether a cache had time to expire.
+                #
+                # Read together:
+                #   cached ≈ 0                      → cold cache. Check the gap
+                #     to this session's previous line against the 30m TTL, or
+                #     it is simply the session's first turn.
+                #   cached > 0, flat across turns,
+                #   while bp_chars climbs           → breakpoint miss: something
+                #     marked is a different string than it was last turn.
+                #   cached rising with bp_chars     → healthy.
                 logger.info(
-                    "turn ok | turn_id=%s %s in=%s cached=%s written=%s "
-                    "out=%s reasoning=%s",
-                    body.turn_id,
+                    "turn ok | turn_id=%s session_id=%s %s in=%s cached=%s "
+                    "written=%s bp_chars=%s bp=%s out=%s reasoning=%s",
+                    body.turn_id, session.id,
                     " ".join(f"{k}={v}" for k, v in diagnostics().items()),
                     usage.get("input_tokens"), cached, written,
+                    bundle.cache_prefix_chars,
+                    sum(
+                        1 for item in bundle.input
+                        for part in (item.get("content") or [])
+                        if isinstance(part, dict) and "prompt_cache_breakpoint" in part
+                    ),
                     usage.get("output_tokens"),
                     (usage.get("output_tokens_details") or {}).get("reasoning_tokens"),
                 )

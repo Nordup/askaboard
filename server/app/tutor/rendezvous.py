@@ -92,6 +92,24 @@ def deliver(turn_id: uuid.UUID, call_id: str, image: bytes) -> bool:
     return True
 
 
+def fail(turn_id: uuid.UUID, call_id: str) -> bool:
+    """Tell the waiting turn that the device cannot render this region at all.
+
+    The device knows that immediately — no canvas mounted, a session it cannot
+    read — and the timeout is a poor way to hear it: the learner spends
+    `RENDER_TIMEOUT_SECONDS` on an answer that was decided in a millisecond. So
+    a device that cannot draw says so, and the turn answers the model then.
+
+    Returns False on the same terms as `deliver`: nothing was waiting, so the
+    device must be told rather than left believing the turn heard it.
+    """
+    future = _pending.pop((turn_id, call_id), None)
+    if future is None or future.done():
+        return False
+    future.set_exception(BoardUnavailable())
+    return True
+
+
 def abandon(turn_id: uuid.UUID, call_id: str) -> None:
     """Forget a request whose turn has stopped waiting.
 

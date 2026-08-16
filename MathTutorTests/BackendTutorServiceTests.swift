@@ -275,7 +275,7 @@ final class BackendTutorServiceTests: XCTestCase {
     /// it is the production fix that makes this assertion deterministic, not
     /// anything added here.
     func testABoardViewCarriesTheCallItAnswered() async throws {
-        await MainActor.run { BackendTutorService.boardRenderer = { _ in Data("png".utf8) } }
+        await MainActor.run { BackendTutorService.boardRenderer = { _, _ in Data("png".utf8) } }
         defer { Task { @MainActor in BackendTutorService.boardRenderer = nil } }
 
         StubURLProtocol.body = """
@@ -293,6 +293,65 @@ final class BackendTutorServiceTests: XCTestCase {
             return nil
         }
         XCTAssertEqual(viewed, ["call_a"])
+    }
+
+    /// The renderer is asked for *this turn's* board, so it is told which
+    /// session the turn belongs to. It used to be handed a rectangle alone and
+    /// had to guess that the turn meant the session on screen — and a
+    /// delegated voice turn does not, which is one of the ways `view_board`
+    /// answered "I could not see the board" while the board was fine.
+    func testTheRendererIsToldWhichSessionsBoardToDraw() async throws {
+        let session = UUID()
+        let asked = OSAllocatedUnfairLock<[UUID]>(initialState: [])
+        await MainActor.run {
+            BackendTutorService.boardRenderer = { sessionID, _ in
+                asked.withLock { $0.append(sessionID) }
+                return Data("png".utf8)
+            }
+        }
+        defer { Task { @MainActor in BackendTutorService.boardRenderer = nil } }
+
+        StubURLProtocol.body = """
+        data: {"type":"board_request","call_id":"call_a","x":0,"y":0,"width":40,"height":40,"detail":"Showing x 0–40%, y 0–40% of the board."}
+
+        data: {"type":"done","turn_id":"\(UUID().uuidString)"}
+
+
+        """
+        for try await _ in makeService().stream(.fixture(sessionID: session)) {}
+
+        XCTAssertEqual(asked.withLock { $0 }, [session])
+    }
+
+    /// A device that cannot draw says so at once. Saying nothing parks the
+    /// turn on the server's 20 s rendezvous timeout, and the learner pays
+    /// every second of it for an answer the device already had.
+    func testADeviceThatCannotRenderTellsTheServerRatherThanGoingQuiet() async throws {
+        await MainActor.run { BackendTutorService.boardRenderer = { _, _ in nil } }
+        defer { Task { @MainActor in BackendTutorService.boardRenderer = nil } }
+
+        StubURLProtocol.body = """
+        data: {"type":"board_request","call_id":"call_a","x":0,"y":0,"width":40,"height":40,"detail":"Showing x 0–40%, y 0–40% of the board."}
+
+        data: {"type":"done","turn_id":"\(UUID().uuidString)"}
+
+
+        """
+        var events: [TutorEvent] = []
+        for try await event in makeService().stream(.fixture()) { events.append(event) }
+
+        let body = try XCTUnwrap(StubURLProtocol.lastBody)
+        let payload = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: body) as? [String: Any]
+        )
+        XCTAssertEqual(StubURLProtocol.lastRequest?.url?.lastPathComponent, "board")
+        XCTAssertEqual(payload["call_id"] as? String, "call_a")
+        XCTAssertNotNil(payload["error"], "the device names why, so the log can say")
+        XCTAssertNil(payload["image_base64"], "there is no picture to send")
+        XCTAssertFalse(
+            events.contains { if case .boardViewed = $0 { return true } else { return false } },
+            "No crop exists, so no row in the trail may claim one"
+        )
     }
 
     // MARK: - TutorServiceRouter.stream(_:)

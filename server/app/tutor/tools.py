@@ -14,7 +14,7 @@ SET_WORKSPACE_TOOL: dict = {
     "description": (
         "Replace the learner's session plan and board exercise. Call this only when "
         "the learner asks to create, add, replace, change, simplify, advance, or get "
-        "another board exercise. Both halves are required; there is no way to set one."
+        "another board exercise."
     ),
     "strict": True,
     "parameters": {
@@ -70,19 +70,19 @@ VIEW_BOARD_TOOL: dict = {
         "properties": {
             "x": {
                 "type": "number",
-                "description": "Left edge, as a percentage across the overview (0 = its left edge, 100 = its right).",
+                "description": "Left edge, percent across the overview (0-100).",
             },
             "y": {
                 "type": "number",
-                "description": "Top edge, as a percentage down the overview (0 = its top edge, 100 = its bottom).",
+                "description": "Top edge, percent down the overview (0-100).",
             },
             "width": {
                 "type": "number",
-                "description": "Region width as a percentage of the board's width. Use 100 to see the whole board at readable size.",
+                "description": "Region width in percent; 100 is the whole board, at readable size.",
             },
             "height": {
                 "type": "number",
-                "description": "Region height as a percentage of the board's height.",
+                "description": "Region height in percent.",
             },
         },
         "required": ["x", "y", "width", "height"],
@@ -104,23 +104,24 @@ VIEW_BOARD_TOOL: dict = {
 #: every one of these in its own `required`, so what a model must supply is
 #: unchanged — only the description of it is now written once.
 #:
-#: Every field is required because strict function schemas have no optional
-#: fields; the device defaults absent style to the same values these describe.
+#: Every field an arm *lists* is required, because strict function schemas have
+#: no optional fields; the device defaults absent style to the same values these
+#: describe. What an arm may leave out is what its own renderer never reads —
+#: see `_board_element`'s `ignores`.
+#:
+#: `role` used to head this block: a four-value enum the model chose on every
+#: element, and no arm of `BoardSceneRenderer` ever read it. It is no longer
+#: asked for. It is still *accepted*: `BoardStyle` keeps the field, because
+#: `extra="forbid"` would otherwise make every scene already saved on a device
+#: undecodable, and the device still sends `role` back in the scene string.
 _STYLE_DEFS: dict = {
-    "role": {
-        "type": "string",
-        "enum": ["content", "hint", "correction", "emphasis"],
-        "description": "What the object is for: regular content, a hint, a correction beside learner work, or emphasis.",
-    },
     "stroke": {
         "type": "string",
         "pattern": "^#[0-9A-Fa-f]{6}$",
-        "description": "Stroke colour as #RRGGBB.",
     },
     "fill": {
         "type": "string",
         "pattern": "^(transparent|#[0-9A-Fa-f]{6})$",
-        "description": "Fill colour as #RRGGBB, or transparent.",
     },
     "stroke_width": {
         "type": "number",
@@ -132,17 +133,16 @@ _STYLE_DEFS: dict = {
         "type": "number",
         "minimum": 0,
         "maximum": 1,
-        "description": "Element opacity from 0 to 1.",
     },
     "dash": {
         "type": "array",
         "maxItems": 8,
         "items": {"type": "number", "minimum": 0, "maximum": 200},
-        "description": "Optional dash pattern in board points; use [] for a solid stroke.",
+        "description": "Dash pattern in board points; [] is solid.",
     },
     "rotation": {
         "type": "number",
-        "description": "Clockwise rotation in degrees around the object's own centre; 0 for none.",
+        "description": "Clockwise degrees about the object's own centre; 0 for none.",
     },
 }
 
@@ -152,7 +152,7 @@ _BOARD_DEFS: dict = {
     "element_id": {
         "type": "string",
         "pattern": "^[A-Za-z0-9._:+-]{1,128}$",
-        "description": "Stable id. Reuse it in a later call to revise this object, or list it in delete_ids to remove it.",
+        "description": "Stable id. Reuse it in a later call to revise this object.",
     },
     "point": {
         "type": "array",
@@ -169,18 +169,64 @@ _POINT_REF = {"$ref": "#/$defs/point"}
 _STYLE_REFS: dict = {name: {"$ref": f"#/$defs/{name}"} for name in _STYLE_DEFS}
 
 
-def _board_element(*, kind: str, fields: dict, required: list[str]) -> dict:
+def _board_element(
+    *,
+    kind: str | tuple[str, ...],
+    fields: dict,
+    required: list[str],
+    kind_description: str | None = None,
+    ignores: tuple[str, ...] = (),
+) -> dict:
+    """One arm of the element union.
+
+    `kind` may name several element kinds at once. Two or more kinds share an
+    arm only when their field sets are identical, so the arm they share is the
+    schema each of them already had; the discriminator becomes a short `enum`
+    instead of a `const`, which `parse_board_update` reads the same way — the
+    pydantic union discriminates on the value, not on how the schema wrote it.
+    A merged arm is one copy of the twelve-name `required` list and one copy of
+    the style block instead of two or three, and that duplication was most of
+    what this tool cost.
+
+    `ignores` names the style fields *this kind's renderer does not read*, and
+    they are left out of both `properties` and `required`. A strict schema has
+    no optional fields, so a listed field is one the model must write on every
+    element — and a field that reaches no drawing call is pure output tokens,
+    generated serially, uncached, in front of the learner. Each name here is
+    named in the comment beside it, with the renderer line that proves it dead.
+
+    Leaving a field out changes nothing the device does. Every one of them is
+    still a field on `BoardStyle` on both sides — `board_scene.BoardStyle` has a
+    default, and `WireElement` in `MathTutor/Domain/BoardScene.swift` reads
+    every style key with `decodeIfPresent` — so an absent key decodes to the
+    same value the model used to have to spell out, and a model that sends one
+    anyway is still accepted.
+
+    A name that is not a style field raises rather than being ignored: a typo
+    here would silently keep a field this arm meant to drop, which is a saving
+    that quietly does not happen.
+    """
+    unknown = [name for name in ignores if name not in _STYLE_DEFS]
+    if unknown:
+        raise KeyError(f"not style fields: {unknown!r}")
+    discriminator: dict = (
+        {"type": "string", "const": kind} if isinstance(kind, str)
+        else {"type": "string", "enum": list(kind)}
+    )
+    if kind_description:
+        discriminator["description"] = kind_description
     properties: dict = {
         "id": {"$ref": "#/$defs/element_id"},
-        "kind": {"type": "string", "const": kind},
+        "kind": discriminator,
     }
     properties.update(fields)
-    properties.update(_STYLE_REFS)
+    style = {name: ref for name, ref in _STYLE_REFS.items() if name not in ignores}
+    properties.update(style)
     return {
         "type": "object",
         "additionalProperties": False,
         "properties": properties,
-        "required": ["id", "kind"] + required + list(_STYLE_REFS),
+        "required": ["id", "kind"] + required + list(style),
     }
 
 
@@ -208,10 +254,9 @@ UPDATE_BOARD_TOOL: dict = {
         "learner's own PencilKit ink: what you write is a tutor object in your "
         "own scene, and theirs stays theirs. Each object has a stable id: "
         "reuse ids to revise existing content and list ids in delete_ids to remove "
-        "it. Pass elements=[] to only delete, delete_ids=[] to only upsert, or "
-        "mode=replace_all to replace the entire tutor scene. Coordinates are logical "
-        "board points: (0,0) is the board centre (25,000,25,000 in drawing "
-        "coordinates), +x right, +y down. Keep new standalone diagrams compact and "
+        "it. Pass elements=[] to only delete and delete_ids=[] to only upsert. "
+        "Coordinates and every size are logical board points: (0,0) is the board "
+        "centre, +x right, +y down. Keep new standalone diagrams compact and "
         "inside `recommended_tutor_rect` supplied in context; leave "
         "`reserved_learner_work_rect` clear for the learner's working. Do not cover "
         "or erase learner ink; place corrections "
@@ -238,7 +283,6 @@ UPDATE_BOARD_TOOL: dict = {
                 "type": "array",
                 "maxItems": 200,
                 "items": {"type": "string"},
-                "description": "Stable ids to delete.",
             },
             "elements": {
                 "type": "array",
@@ -248,51 +292,61 @@ UPDATE_BOARD_TOOL: dict = {
                         _board_element(
                             kind="text",
                             fields={
-                                "x": {"type": "number", "description": "Left edge of the text, board points."},
-                                "y": {"type": "number", "description": "Top edge of the text, board points."},
-                                "text": {"type": "string", "maxLength": 2000, "description": "Text; newlines make multiple lines."},
-                                "font_size": {"type": "number", "minimum": 8, "maximum": 256, "description": "Font size in board points."},
+                                "x": {"type": "number", "description": "Left edge."},
+                                "y": {"type": "number", "description": "Top edge."},
+                                "text": {"type": "string", "maxLength": 2000, "description": "Newlines make multiple lines."},
+                                "font_size": {"type": "number", "minimum": 8, "maximum": 256},
                                 "alignment": {"type": "string", "enum": ["left", "center", "right"]},
                                 "width": {"type": "number", "minimum": 0, "maximum": 50000, "description": "Text box width; 0 means natural width."},
                             },
                             required=["x", "y", "text", "font_size", "alignment", "width"],
+                            # A label is glyphs, not a shape. `draw(text:in:)`
+                            # paints them from an attributed string whose
+                            # `.foregroundColor` is `stroke`, and sets no
+                            # `.strokeWidth` attribute, so neither the context's
+                            # fill colour nor its pen reaches the run
+                            # (BoardSceneRenderer.swift:376-384); the bounds arm
+                            # applies no stroke inset either (line 588-591).
+                            ignores=("fill", "stroke_width"),
                         ),
                         _board_element(
                             kind="line",
                             fields={
-                                "x1": {"type": "number", "description": "Start x, board points."},
-                                "y1": {"type": "number", "description": "Start y, board points."},
-                                "x2": {"type": "number", "description": "End x, board points."},
-                                "y2": {"type": "number", "description": "End y, board points."},
+                                "x1": {"type": "number"},
+                                "y1": {"type": "number"},
+                                "x2": {"type": "number"},
+                                "y2": {"type": "number"},
                             },
                             required=["x1", "y1", "x2", "y2"],
+                            # An open segment has no interior: the arm only ever
+                            # strokes (BoardSceneRenderer.swift:118-120).
+                            ignores=("fill",),
                         ),
                         _board_element(
                             kind="arrow",
                             fields={
-                                "x1": {"type": "number", "description": "Tail x, board points."},
-                                "y1": {"type": "number", "description": "Tail y, board points."},
-                                "x2": {"type": "number", "description": "Head x, board points."},
-                                "y2": {"type": "number", "description": "Head y, board points."},
-                                "head_size": {"type": "number", "minimum": 4, "maximum": 120, "description": "Arrowhead size in board points."},
+                                "x1": {"type": "number", "description": "Tail x."},
+                                "y1": {"type": "number", "description": "Tail y."},
+                                "x2": {"type": "number", "description": "Head x: the arrowhead is drawn here."},
+                                "y2": {"type": "number", "description": "Head y."},
+                                "head_size": {"type": "number", "minimum": 4, "maximum": 120},
                             },
                             required=["x1", "y1", "x2", "y2", "head_size"],
+                            # The shaft is stroked and the head is filled — but
+                            # filled in `stroke`'s colour, which the arm sets
+                            # over the context's fill immediately before the
+                            # `fillPath` (BoardSceneRenderer.swift:406-407). An
+                            # arrow is one colour by construction.
+                            ignores=("fill",),
                         ),
+                        # One arm, because a rectangle and an ellipse are placed
+                        # by exactly the same four numbers: the box, and the
+                        # figure inscribed in it.
                         _board_element(
-                            kind="rectangle",
+                            kind=("rectangle", "ellipse"),
                             fields={
-                                "x": {"type": "number", "description": "Top-left x, board points."},
-                                "y": {"type": "number", "description": "Top-left y, board points."},
-                                "width": {"type": "number", "minimum": 0, "maximum": 50000},
-                                "height": {"type": "number", "minimum": 0, "maximum": 50000},
-                            },
-                            required=["x", "y", "width", "height"],
-                        ),
-                        _board_element(
-                            kind="ellipse",
-                            fields={
-                                "x": {"type": "number", "description": "Bounding-box top-left x, board points."},
-                                "y": {"type": "number", "description": "Bounding-box top-left y, board points."},
+                                "x": {"type": "number", "description": "Top-left x of the box."},
+                                "y": {"type": "number", "description": "Top-left y of the box."},
                                 "width": {"type": "number", "minimum": 0, "maximum": 50000},
                                 "height": {"type": "number", "minimum": 0, "maximum": 50000},
                             },
@@ -301,8 +355,8 @@ UPDATE_BOARD_TOOL: dict = {
                         _board_element(
                             kind="circle",
                             fields={
-                                "cx": {"type": "number", "description": "Centre x, board points."},
-                                "cy": {"type": "number", "description": "Centre y, board points."},
+                                "cx": {"type": "number"},
+                                "cy": {"type": "number"},
                                 "radius": {"type": "number", "minimum": 0, "maximum": 50000},
                             },
                             required=["cx", "cy", "radius"],
@@ -319,8 +373,14 @@ UPDATE_BOARD_TOOL: dict = {
                             },
                             required=["points"],
                         ),
+                        # One arm for the two open chains. `polygon` keeps its
+                        # own, because only it can say minItems 3, and a
+                        # two-point polygon the schema allowed would come back
+                        # from `parse_board_update` as a refusal of the whole
+                        # call.
                         _board_element(
-                            kind="polyline",
+                            kind=("polyline", "freehand"),
+                            kind_description="Open chains through the points: polyline joins them with straight segments, freehand smooths them into a curve.",
                             fields={
                                 "points": {
                                     "type": "array",
@@ -330,46 +390,47 @@ UPDATE_BOARD_TOOL: dict = {
                                 }
                             },
                             required=["points"],
-                        ),
-                        _board_element(
-                            kind="freehand",
-                            fields={
-                                "points": {
-                                    "type": "array",
-                                    "minItems": 2,
-                                    "maxItems": 512,
-                                    "items": _POINT_REF,
-                                }
-                            },
-                            required=["points"],
+                            # Both are open chains, and neither arm fills:
+                            # `polyline` strokes its path and `freehand` strokes
+                            # the smoothed one (BoardSceneRenderer.swift:
+                            # 166-177). Only `polygon`, which closes, fills.
+                            ignores=("fill",),
                         ),
                         _board_element(
                             kind="arc",
                             fields={
-                                "cx": {"type": "number", "description": "Centre x, board points."},
-                                "cy": {"type": "number", "description": "Centre y, board points."},
+                                "cx": {"type": "number"},
+                                "cy": {"type": "number"},
                                 "radius": {"type": "number", "minimum": 0, "maximum": 50000},
-                                "start_angle": {"type": "number", "description": "Start angle in degrees; 0 = right and values increase clockwise."},
-                                "end_angle": {"type": "number", "description": "End angle in degrees. The arc sweeps clockwise from start to end, including sweeps over 180 degrees; use circle for a full turn."},
+                                "start_angle": {"type": "number", "description": "Degrees; 0 is right, increasing clockwise."},
+                                "end_angle": {"type": "number", "description": "Sweeps clockwise from start_angle, past 180 degrees when asked; use circle for a full turn."},
                             },
                             required=["cx", "cy", "radius", "start_angle", "end_angle"],
+                            # An arc is a sampled open path and is only stroked
+                            # (BoardSceneRenderer.swift:186-189). A full turn is
+                            # a `circle`, which does fill.
+                            ignores=("fill",),
                         ),
                         _board_element(
                             kind="angle_marker",
                             fields={
-                                "vertex_x": {"type": "number", "description": "Angle vertex x, board points."},
-                                "vertex_y": {"type": "number", "description": "Angle vertex y, board points."},
-                                "ray1_x": {"type": "number", "description": "A point on the first ray, board points."},
-                                "ray1_y": {"type": "number", "description": "A point on the first ray, board points."},
-                                "ray2_x": {"type": "number", "description": "A point on the second ray, board points."},
-                                "ray2_y": {"type": "number", "description": "A point on the second ray, board points."},
-                                "radius": {"type": "number", "minimum": 4, "maximum": 50000, "description": "Marker radius in board points."},
-                                "right_angle": {"type": "boolean", "description": "Use the small-square convention for a right angle."},
+                                "vertex_x": {"type": "number"},
+                                "vertex_y": {"type": "number"},
+                                "ray1_x": {"type": "number", "description": "A point on the first ray."},
+                                "ray1_y": {"type": "number", "description": "A point on the first ray."},
+                                "ray2_x": {"type": "number", "description": "A point on the second ray."},
+                                "ray2_y": {"type": "number", "description": "A point on the second ray."},
+                                "radius": {"type": "number", "minimum": 4, "maximum": 50000},
+                                "right_angle": {"type": "boolean", "description": "Draw the small-square right-angle mark."},
                             },
                             required=[
                                 "vertex_x", "vertex_y", "ray1_x", "ray1_y",
                                 "ray2_x", "ray2_y", "radius", "right_angle",
                             ],
+                            # Neither branch fills: the right-angle square is
+                            # three stroked segments and the sweep is a stroked
+                            # arc (BoardSceneRenderer.swift:427-428, 441-442).
+                            ignores=("fill",),
                         ),
                         _board_element(
                             kind="path",
@@ -378,7 +439,7 @@ UPDATE_BOARD_TOOL: dict = {
                                     "type": "string",
                                     "minLength": 1,
                                     "maxLength": MAX_PATH_CHARS,
-                                    "description": "One SVG path string — M, L, H, V, C, S, Q, T, A, Z. Every coordinate is in absolute board points, the same space as every other element, so the path needs no frame and no viewbox. Use this for curves and freeform shapes.",
+                                    "description": "One SVG path string: M, L, H, V, C, S, Q, T, A, Z. Every coordinate is in absolute board points, the same space as every other element, so the path needs no frame and no viewbox.",
                                 },
                                 "fill_rule": {
                                     "type": "string",
@@ -391,23 +452,32 @@ UPDATE_BOARD_TOOL: dict = {
                         _board_element(
                             kind="math_text",
                             fields={
-                                "x": {"type": "number", "description": "Left edge of the notation, board points."},
-                                "y": {"type": "number", "description": "Top edge of the notation, board points."},
+                                "x": {"type": "number", "description": "Left edge."},
+                                "y": {"type": "number", "description": "Top edge."},
                                 "latex": {
                                     "type": "string",
                                     "minLength": 1,
                                     "maxLength": MAX_LATEX_CHARS,
-                                    "description": "The expression as LaTeX, with no surrounding $ or $$ delimiters, typeset on the learner's device. This is the only correct way to put mathematical notation on the board: never spell an equation out with text and never build one from lines, arcs, or SVG glyphs.",
+                                    "description": "The expression as LaTeX, with no surrounding $ or $$ delimiters, typeset on the learner's device. This is the only correct way to put mathematical notation on the board.",
                                 },
-                                "font_size": {"type": "number", "minimum": 8, "maximum": 256, "description": "Font size in board points."},
+                                "font_size": {"type": "number", "minimum": 8, "maximum": 256},
                             },
                             required=["x", "y", "latex", "font_size"],
+                            # Notation is typeset into a bitmap of its own, with
+                            # `stroke` as the glyph colour, and then composited
+                            # (BoardMathStore.swift:244, 341-347, 50).
+                            # Compositing a `CGImage` reads the context's alpha
+                            # and nothing else about paint, so neither the fill
+                            # colour nor the pen can reach the glyphs; the
+                            # bounds arm applies no stroke inset and says so
+                            # (BoardSceneRenderer.swift:682-683).
+                            ignores=("fill", "stroke_width"),
                         ),
                         _board_element(
                             kind="ink_text",
                             fields={
-                                "x": {"type": "number", "description": "Left edge of the writing, board points."},
-                                "y": {"type": "number", "description": "Top edge of the first line, board points."},
+                                "x": {"type": "number", "description": "Left edge of the writing."},
+                                "y": {"type": "number", "description": "Top edge of the first line."},
                                 "text": {
                                     "type": "string",
                                     "minLength": 1,
@@ -419,36 +489,53 @@ UPDATE_BOARD_TOOL: dict = {
                                     # a description written in the register it
                                     # is asking the model *not* to use teaches
                                     # the opposite of what it says.
-                                    "description": "The words to write, drawn on the device as handwriting-look ink in your own hand; newlines make lines. Prose only (a hint, a nudge, a margin note, commentary beside a step), and every piece of notation still goes in `math_text`. Write it as plain text: em and en dashes, curly quotes and ellipses are normalised to their ASCII equivalents, and anything with no glyph to draw, such as emoji or a non-Latin script, comes out as a placeholder. Your writing looks handwritten in a board capture too, so when you read the board back, the learner's work is the writing you did not put there: every piece you did is listed, by id, in the scene you were given, plus whatever you have written this turn.",
+                                    "description": "The words to write, drawn on the device as handwriting-look ink in your own hand; newlines make lines. Prose only, and every piece of notation still goes in `math_text`. Write it as plain text: em and en dashes, curly quotes and ellipses are normalised to their ASCII equivalents, and anything with no glyph to draw, such as emoji or a non-Latin script, comes out as a placeholder. Your writing looks handwritten in a board capture too, so when you read the board back, the learner's work is the writing you did not put there: every piece you did is listed, by id, in the scene you were given, plus whatever you have written this turn.",
                                 },
-                                "size": {"type": "number", "minimum": 8, "maximum": 256, "description": "Cap height in board points; roughly how tall one line of the writing stands."},
+                                "size": {"type": "number", "minimum": 8, "maximum": 256, "description": "Cap height: how tall one line of the writing stands."},
                             },
                             required=["x", "y", "text", "size"],
+                            # Handwriting is a filled pen outline rather than a
+                            # stroked centreline, and it is filled in `stroke`'s
+                            # colour, set over the context's fill immediately
+                            # before the `fillPath`
+                            # (BoardSceneRenderer.swift:237-238). The nib's
+                            # width comes from `size`, not from the pen, so the
+                            # bounds arm takes no stroke inset (line 700-701).
+                            ignores=("fill", "stroke_width"),
                         ),
                         _board_element(
                             kind="image",
                             fields={
-                                "x": {"type": "number", "description": "Left edge of the picture, board points."},
-                                "y": {"type": "number", "description": "Top edge of the picture, board points."},
+                                "x": {"type": "number", "description": "Left edge."},
+                                "y": {"type": "number", "description": "Top edge."},
                                 # Every size this schema allows is a size the
                                 # scene model accepts: it refuses a frame with
                                 # no area, and nothing is legible under a
                                 # board point.
-                                "width": {"type": "number", "minimum": 1, "maximum": 50000, "description": "Frame width in board points; the picture is drawn inside this frame."},
-                                "height": {"type": "number", "minimum": 1, "maximum": 50000, "description": "Frame height in board points."},
+                                "width": {"type": "number", "minimum": 1, "maximum": 50000, "description": "Frame width; the picture is drawn inside it."},
+                                "height": {"type": "number", "minimum": 1, "maximum": 50000, "description": "Frame height."},
                                 "blob_id": {
                                     "type": "string",
                                     "pattern": "^sha256:[0-9a-f]{64}$",
-                                    "description": "The key of a picture already on the server, copied from a tool result word for word. Never invent one: a key names bytes the server holds, and a made-up key draws an empty frame.",
+                                    "description": "The key of a picture already on the server, copied from a tool result word for word. Never invent one: a made-up key draws an empty frame.",
                                 },
                             },
                             required=["x", "y", "width", "height", "blob_id"],
+                            # A picture is composited, and until its blob lands
+                            # its frame is filled with the system's own
+                            # placeholder grey — set inside the helper, over
+                            # whatever the context held
+                            # (BoardSceneRenderer.swift:338, 359). Nothing
+                            # outlines a photograph: `BoardImageStore` reads no
+                            # style at all, and the bounds arm takes no stroke
+                            # inset and says why (line 711-712).
+                            ignores=("fill", "stroke_width", "stroke"),
                         ),
                         _board_element(
                             kind="svg",
                             fields={
-                                "x": {"type": "number", "description": "Where the viewBox's top-left corner lands, board points."},
-                                "y": {"type": "number", "description": "Where the viewBox's top-left corner lands, board points."},
+                                "x": {"type": "number", "description": "Where the viewBox's top-left corner lands."},
+                                "y": {"type": "number", "description": "Where the viewBox's top-left corner lands."},
                                 "width": {"type": "number", "minimum": 0, "maximum": 50000, "description": "Send 0: the figure is drawn at the size its viewBox gives it. A positive value scales the whole document into that box instead."},
                                 "height": {"type": "number", "minimum": 0, "maximum": 50000, "description": "Send 0, as for width."},
                                 "svg": {
@@ -459,6 +546,18 @@ UPDATE_BOARD_TOOL: dict = {
                                 },
                             },
                             required=["x", "y", "width", "height", "svg"],
+                            # The document owns its own paint. SwiftDraw
+                            # rasterizes it in a detached task, into a renderer
+                            # it creates for itself, and the board's context
+                            # only ever composites the finished bitmap
+                            # (BoardSVGStore.swift:386-406, 40) — so no board
+                            # style can reach a shape inside the markup. The
+                            # cache key is the markup's digest and nothing else
+                            # (line 185-188), which is the same statement made
+                            # twice: two figures differing only in `stroke`
+                            # share one bitmap. No stroke inset either
+                            # (BoardSceneRenderer.swift:730-732).
+                            ignores=("fill", "stroke_width", "stroke"),
                         ),
                     ]
                 },

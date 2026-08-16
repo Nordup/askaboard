@@ -20,7 +20,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time as dt_time, timedelta, timezone
 
-from sqlalchemy import Select, and_, desc, func, join, or_, select, tuple_
+from sqlalchemy import Row, Select, and_, desc, func, join, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import (
@@ -177,9 +177,29 @@ async def search_atoms(
 _SUMMARIZED = or_(Episode.narrative.is_not(None), Episode.digest.is_not(None))
 
 
+#: Exactly the columns `episode_card` renders, and no more.
+#:
+#: `select(Episode)` pulled the whole row, which on the measured store is
+#: 47 222 B of `transcript` and 76 406 B of `narrative_embedding` for six
+#: episodes: 130 KB on the wire to render 6.6 KB of cards, on every turn.
+#: Neither column is reachable from `episode_card`. The transcript is read by
+#: `backstop_tail`, which selects it separately and for a different row.
+#:
+#: Columns rather than `load_only`, so what comes back is a plain `Row` with no
+#: session affinity. A deferred attribute on a detached ORM instance raises
+#: `DetachedInstanceError`, and these rows outlive the session that fetched
+#: them; a `Row` has no such trap, and does not carry the pruned names at all,
+#: so a future reader that wants the transcript is told plainly rather than
+#: silently served a lazy load.
+EPISODE_CARD_COLUMNS = (
+    Episode.closed_at, Episode.title, Episode.digest,
+    Episode.narrative, Episode.next_steps,
+)
+
+
 async def recent_episodes(
     db: AsyncSession, learner_id: uuid.UUID, *, limit: int = 20,
-) -> list[Episode]:
+) -> list[Row]:
     """The learner's last summarized windows, most recent first.
 
     Unsummarized episodes are skipped rather than shown empty: a row whose
@@ -187,14 +207,17 @@ async def recent_episodes(
     what stands in for it — the raw end of the window, so recall never waits on
     a background job. The transcripts stay where they are; `get_session` is how
     a whole one is read.
+
+    `EPISODE_CARD_COLUMNS` rather than the whole row — see that constant for
+    the 130 KB per turn that decision is worth.
     """
     return list((await db.execute(
-        select(Episode)
+        select(*EPISODE_CARD_COLUMNS)
         .where(Episode.learner_id == learner_id, _SUMMARIZED)
         # `id` last for the same reason the retrieval arms carry it.
         .order_by(desc(Episode.closed_at), Episode.id)
         .limit(limit)
-    )).scalars().all())
+    )).all())
 
 
 def relative_label(when: date, today: date) -> str:
@@ -227,7 +250,7 @@ def relative_label(when: date, today: date) -> str:
 
 async def explicit_notes(
     db: AsyncSession, learner_id: uuid.UUID,
-) -> list[MemoryAtom]:
+) -> list[Row]:
     """Every live note the learner asked to keep, oldest first.
 
     Oldest first because the block reads as a log the learner has been keeping:
@@ -235,18 +258,22 @@ async def explicit_notes(
     is the oldest — the top — that fall out. All of them, no similarity gate,
     no limit: being injected wholesale is the property that makes a saved note
     trustworthy, and the cap is a rendering decision, not a query.
+
+    Two columns rather than the row, for the reason `EPISODE_CARD_COLUMNS`
+    gives one line up: `select(MemoryAtom)` carried 38 224 B of `embedding` to
+    render 398 B of note text, on every turn.
     """
     return list((await db.execute(
-        select(MemoryAtom)
+        select(MemoryAtom.valid_from, MemoryAtom.text)
         .where(MemoryAtom.learner_id == learner_id,
                MemoryAtom.valid_to.is_(None),
                MemoryAtom.explicit.is_(True))
         .order_by(MemoryAtom.valid_from, MemoryAtom.id)
-    )).scalars().all())
+    )).all())
 
 
 def render_notes(
-    atoms: Sequence[MemoryAtom], *, cap_chars: int = SAVED_NOTES_CHAR_CAP,
+    atoms: Sequence[Row], *, cap_chars: int = SAVED_NOTES_CHAR_CAP,
 ) -> str:
     """The SAVED NOTES body: one dated line per note, newest kept under the cap.
 
@@ -270,7 +297,7 @@ def render_notes(
     return "\n".join(kept)
 
 
-def _next_steps(episode: Episode) -> str | None:
+def _next_steps(episode: Episode | Row) -> str | None:
     """The open loops as one line, whatever shape the JSONB arrived in.
 
     A list of strings is the contract; a bare string is a summarizer slip that
@@ -286,7 +313,7 @@ def _next_steps(episode: Episode) -> str | None:
     return "; ".join(parts) if parts else None
 
 
-def episode_card(episode: Episode, *, today: date, full: bool) -> str:
+def episode_card(episode: Episode | Row, *, today: date, full: bool) -> str:
     """One session window as the standing block and the tools both show it.
 
     One rendering for the same reason `render_digests` used to be one: the
@@ -317,7 +344,7 @@ def episode_card(episode: Episode, *, today: date, full: bool) -> str:
 
 
 def render_sessions(
-    episodes: Sequence[Episode], *, today: date, backstop: str | None = None,
+    episodes: Sequence[Row], *, today: date, backstop: str | None = None,
 ) -> str:
     """The RECENT SESSIONS body: newest first, the newest in full.
 

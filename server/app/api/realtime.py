@@ -7,13 +7,22 @@ permanent key, and OpenAI's SDP answer is handed straight back. A port of the
 sleep app's `apps/server/src/routes/realtime-session.ts` to FastAPI/httpx
 (`docs/research/voice-mode/sleep-app-voice-stack.md` §2-3).
 
-The call proxy is stateless on purpose: no database, no session row.
-Rendezvous stays in-process elsewhere, so it can live in the same worker as
-the turn stream without caring which worker that is. The one route here that
-does write is `POST /v1/realtime/usage` — the device reporting what a voice
-response cost, which is the only way voice spend can exist server-side at
-all: the call itself runs WebRTC device↔OpenAI, and the usage events ride a
-data channel this server never sees.
+The call proxy holds no state of its own — no session row, no rendezvous;
+that stays in-process elsewhere, so this can live in the same worker as the
+turn stream without caring which worker that is. It does read the database
+once, when a call is created: the voice model's instructions are
+`VOICE_SYSTEM_PROMPT`, which contains the tutor prompt, and that prompt tells
+the model its standing memory blocks are already in front of it. On a worker
+turn they are — `assemble_context` puts them there every time. A call built
+without them left the model instructed to answer "what did we do last time?"
+from a block it did not have, so it improvised. `_call_instructions` below
+loads the same blocks for the call's session; a failure to load them is a
+call that still starts, without them.
+
+The one route here that writes is `POST /v1/realtime/usage` — the device
+reporting what a voice response cost, which is the only way voice spend can
+exist server-side at all: the call itself runs WebRTC device↔OpenAI, and the
+usage events ride a data channel this server never sees.
 """
 
 from __future__ import annotations
@@ -35,8 +44,9 @@ from app.config import REALTIME_MODEL_ALLOWLIST, get_settings
 # The turn endpoint's own wiring, not a copy: dependency overrides are keyed
 # by function object, so a second `get_recorder` here would dodge the test
 # fixtures' override and write straight to DATABASE_URL under pytest.
-from app.api.turn import get_recorder
+from app.api.turn import _memory_sections, get_recorder
 from app.store.recorder import Recorder
+from app.tutor.prompt import standing_memory_blocks
 from app.tutor.vocabulary import DICTATION_PROMPT, KEYWORDS, sanitize
 from app.tutor.voice_prompt import (
     SEND_TO_TUTOR_TOOL,
@@ -103,7 +113,11 @@ TRANSCRIPTION_PROMPT = sanitize(
 )
 
 
-def build_realtime_session(mode: str = "semantic_vad", model: str | None = None) -> dict:
+def build_realtime_session(
+    mode: str = "semantic_vad",
+    model: str | None = None,
+    instructions: str | None = None,
+) -> dict:
     """The whole session configuration, server-owned bar the model.
 
     Built here rather than on the device so there is not a second copy of
@@ -116,12 +130,16 @@ def build_realtime_session(mode: str = "semantic_vad", model: str | None = None)
     `model` is the one value the caller supplies, already checked against
     REALTIME_MODEL_ALLOWLIST by the route. `None` falls back to the setting,
     which is what a client that names no model gets.
+
+    `instructions` is `VOICE_SYSTEM_PROMPT` plus this session's standing memory
+    blocks, built by `_call_instructions`. `None` is the prompt alone — what a
+    call with no session, or one whose memory read failed, opens on.
     """
     settings = get_settings()
     return {
         "type": "realtime",
         "model": model or settings.openai_realtime_model,
-        "instructions": VOICE_SYSTEM_PROMPT,
+        "instructions": instructions or VOICE_SYSTEM_PROMPT,
         "output_modalities": ["audio"],
         "audio": {
             "input": {
@@ -144,6 +162,68 @@ def build_realtime_session(mode: str = "semantic_vad", model: str | None = None)
         "tools": [SEND_TO_TUTOR_TOOL, STEP_BACK_TOOL],
         "tool_choice": "auto",
     }
+
+
+def optional_recorder(request: Request) -> Recorder | None:
+    """`get_recorder`, but a call still starts when there is no database.
+
+    Resolved by hand rather than with `Depends(get_recorder)` because the two
+    routes want opposite failure modes from the same dependency. `/v1/turn`
+    cannot record anything without it and must fail; a call only wants it to
+    read memory, and refusing to open the line because the memory read is
+    unavailable is the wrong trade — the learner would get silence instead of
+    a tutor with a shorter recollection.
+
+    The override table is read first, which is what keeps this equivalent to
+    `Depends(get_recorder)` under the test fixtures: overrides are keyed by the
+    function object, so pointing `get_recorder` at the test branch points this
+    at it too.
+    """
+    provider = request.app.dependency_overrides.get(get_recorder, get_recorder)
+    try:
+        return provider()
+    except Exception as error:
+        logger.warning("realtime.calls has no recorder | %s: %s",
+                       type(error).__name__, error)
+        return None
+
+
+async def _call_instructions(
+    recorder: Recorder | None, session_id: uuid.UUID | None
+) -> str:
+    """`VOICE_SYSTEM_PROMPT` with this session's standing memory blocks behind
+    it — the same blocks, from the same builder, a worker turn carries.
+
+    The blocks join the *static* instruction prefix of the realtime
+    conversation: `instructions` is sent once, when the call is created, and
+    every response of the call reads back the same bytes. So this is billed at
+    the text rate, once, and cached from the second response on — pennies per
+    call, for the difference between a tutor that remembers last week and one
+    that is instructed to and cannot.
+
+    The current session is excluded from RECENT SESSIONS exactly as a turn
+    excludes it: `_memory_sections` passes `session_id` down to
+    `backstop_tail`, so a call cannot be told about the conversation it is
+    about to have.
+
+    Any failure — no session named, no recorder, a database that will not
+    answer — returns the prompt alone. A call that cannot start because memory
+    hiccuped is a worse outcome than a call with no recollection.
+    """
+    if session_id is None or recorder is None:
+        return VOICE_SYSTEM_PROMPT
+    try:
+        sections = await _memory_sections(recorder.sessions, session_id=session_id)
+        blocks = standing_memory_blocks(**sections)
+    except Exception as error:
+        logger.warning(
+            "realtime.calls memory blocks unavailable | session_id=%s %s: %s",
+            session_id, type(error).__name__, error,
+        )
+        return VOICE_SYSTEM_PROMPT
+    if not blocks:
+        return VOICE_SYSTEM_PROMPT
+    return f"{VOICE_SYSTEM_PROMPT}\n\n{blocks}"
 
 
 def redact_api_key(text: str, api_key: str) -> str:
@@ -266,13 +346,15 @@ async def create_realtime_call(
     request: Request,
     session_id: uuid.UUID | None = None,
     model: str | None = Query(default=None),
+    recorder: Recorder | None = Depends(optional_recorder),
 ) -> Response:
     """Forward an SDP offer to OpenAI and return the SDP answer.
 
     `session_id` is the learning session the call belongs to — optional but
-    expected, carried for the log line only: the route itself is stateless
-    and the voice model learns about the session through `send_to_tutor`
-    turns, not through this parameter.
+    expected. It names whose memory the call opens with: the standing blocks
+    are loaded for it and appended to the instructions, and the session itself
+    is excluded from them. Absent, the call opens on the prompt alone and the
+    voice model learns about the session through `send_to_tutor` turns only.
 
     `model` is the learner's `Voice model` setting. Absent falls back to
     `Settings.openai_realtime_model`; anything off REALTIME_MODEL_ALLOWLIST is
@@ -312,6 +394,8 @@ async def create_realtime_call(
             detail="Server is not configured for Realtime calls.",
         )
 
+    instructions = await _call_instructions(recorder, session_id)
+
     async def post(mode: str) -> httpx.Response:
         # FormData {sdp, session}, the shape the upstream endpoint takes. The
         # `(None, bytes)` tuples make httpx send multipart fields without
@@ -323,7 +407,9 @@ async def create_realtime_call(
                 "sdp": (None, offer.encode("utf-8")),
                 "session": (
                     None,
-                    json.dumps(build_realtime_session(mode, call_model)).encode("utf-8"),
+                    json.dumps(
+                        build_realtime_session(mode, call_model, instructions)
+                    ).encode("utf-8"),
                 ),
             },
         )
@@ -385,9 +471,14 @@ async def create_realtime_call(
 
     answer = upstream.text
     logger.info(
-        "realtime.calls ok | session_id=%s model=%s voice=%s turn_detection=%s duration_ms=%s answer_bytes=%s",
+        "realtime.calls ok | session_id=%s model=%s voice=%s turn_detection=%s "
+        "duration_ms=%s answer_bytes=%s memory_blocks=%s",
         session_id, call_model, settings.openai_realtime_voice,
         mode, duration_ms, len(answer),
+        # The one line that says whether this call opened with a memory or
+        # without one. Without it, "the voice did not remember" is
+        # indistinguishable from "the voice was told and ignored it".
+        len(instructions) > len(VOICE_SYSTEM_PROMPT),
     )
 
     # The mode rides back with the answer on every call, not just after a

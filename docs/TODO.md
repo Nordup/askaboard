@@ -103,3 +103,25 @@ The fix, if it ever matters: have `turn.py` relabel abandoned turns on the way
 in as well as on the way out — a new turn arriving for a session is proof the
 previous one is over — or have the close reschedule itself once the blocking
 turn leaves "running", instead of waiting for the sweep.
+
+### 8. There is no way for the model to re-read the board scene
+
+The tutor's semantic scene used to ride in every prompt. It no longer does: the
+append-only prompt freezes it at session open and `app/tutor/ledger.py` appends
+each turn's board actions — id, kind, anchor, a short label — so the ids the
+model assigns stay in the log without the scene being re-sent. That closed the
+cost (up to 15,000 tokens a turn, uncached) and the duplicate-stacking risk it
+was there to prevent.
+
+What is left is the case the log cannot reach. The device holds truth the server
+does not: elements it dropped when its own scene hit `MAX_SCENE_CHARS`, and a
+partial apply. And past `LOG_MAX_CHARS` the chain restarts, taking the earliest
+board records with it. Today the model has no way to ask; the per-turn re-send
+used to correct all of this silently.
+
+A `get_board_scene` tool is the clean answer, and it is cheap. The part that
+needs care is not the tool, it is discoverability — a tool the model never calls
+is not a fix, and `step_back` on mini is the standing proof. Name it in the
+`update_board` **ack**, not only in the tool list: that string is read at the one
+moment the model has just acted on an id, which is exactly when "if you are
+unsure an id is still on the board, call `get_board_scene` first" lands.

@@ -11,6 +11,7 @@ import base64
 import json
 
 import pytest
+from fastapi import HTTPException
 
 from app.tutor import board
 from app.tutor.board_scene import (
@@ -34,11 +35,13 @@ from app.tutor.loop import (
 # The items answering `view_board` are request-item shapes, so they moved behind
 # the provider with the rest of them. What they contain did not change.
 from app.tutor.providers.openai import _rendered_items
+from app.api.turn import BoardRenderBody, deliver_board_render
 from app.tutor.rendezvous import (
     BoardUnavailable,
     abandon,
     await_render,
     deliver,
+    fail,
     open_request,
 )
 
@@ -254,6 +257,47 @@ async def await_render_with_short_timeout(future, call_id):
         return await rv.await_render(future, turn_id=TURN, call_id=call_id)
     finally:
         rv.RENDER_TIMEOUT_SECONDS = original
+
+
+async def test_a_device_that_cannot_render_ends_the_wait_at_once():
+    """The device knows immediately when it has no board to draw — no canvas, a
+    session it cannot read. It says so, and the turn answers the model then,
+    rather than spending the whole `RENDER_TIMEOUT_SECONDS` on an answer that
+    has already arrived."""
+    future = open_request(TURN, "c5")
+
+    assert fail(TURN, "c5") is True
+
+    with pytest.raises(BoardUnavailable):
+        await await_render(future, turn_id=TURN, call_id="c5")
+
+
+async def test_a_failure_nobody_is_waiting_for_is_refused():
+    """Refused for the reason a late render is: the device must be told that
+    nothing took its answer."""
+    assert fail(TURN, "nobody") is False
+
+
+async def test_the_board_endpoint_takes_a_failure_instead_of_an_image():
+    future = open_request(TURN, "c6")
+
+    assert await deliver_board_render(
+        TURN, BoardRenderBody(call_id="c6", error="the board could not be rendered")
+    ) == {"status": "ok"}
+
+    with pytest.raises(BoardUnavailable):
+        await await_render(future, turn_id=TURN, call_id="c6")
+
+
+async def test_the_board_endpoint_refuses_a_body_that_carries_neither():
+    """One of the two, never neither: a body with no image and no reason is a
+    device bug, and accepting it would park the turn until it timed out."""
+    open_request(TURN, "c7")
+
+    with pytest.raises(HTTPException) as raised:
+        await deliver_board_render(TURN, BoardRenderBody(call_id="c7"))
+
+    assert raised.value.status_code == 400
 
 
 async def test_abandoning_a_request_leaves_nothing_behind():

@@ -28,6 +28,31 @@ class Session(Base):
     reasoning_effort: Mapped[str] = mapped_column(String(16))
     plan: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     exercise: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    #: The prompt's frozen head, built on this session's first turn and served
+    #: byte for byte on every turn after it. See `prompt.session_preamble`.
+    #:
+    #: **On the row rather than in a process cache, and that is the whole
+    #: point.** These bytes are the front of the cached prefix, so if they are
+    #: ever recomputed mid-session they come back different — memory moved, a
+    #: note was saved, the date rolled — and every token behind them is
+    #: invalidated. A dict keyed by session id cannot promise they will not be:
+    #: `uvicorn --reload` throws the process away on every file save, which in
+    #: normal development is several times an hour, and a second worker holds a
+    #: different dict from the first. Durability here is not an optimisation, it
+    #: is what makes the append-only invariant true rather than usually true.
+    #:
+    #: It is also free. The row is already fetched by `db.get(Session, ...)` in
+    #: the turn prologue and already written in the same commit, so neither the
+    #: read nor the write costs a round trip — where the four memory queries it
+    #: replaces cost about 2,400 ms of a 262 ms-latency link on every turn.
+    prompt_preamble: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: The session log and the two facts needed to extend it. See
+    #: `app.tutor.ledger.LogState`, which owns the shape.
+    #:
+    #: The bytes already sent, kept rather than rebuilt. A reconstruction is one
+    #: refactor away from producing a byte that differs, and that failure is
+    #: silent: the prompt still reads correctly, the cache simply stops hitting.
+    prompt_log: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     started_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(), onupdate=func.now()
@@ -188,6 +213,18 @@ class RealtimeUsage(Base):
     """
 
     __tablename__ = "realtime_usage"
+    __table_args__ = (
+        # One row per response per session, whatever `report_id` the delivery
+        # carried. `report_id` only dedupes a *retry* of the same report; the
+        # device has delivered one `response.done` through two event paths
+        # with two fresh report ids, and that must still bill once. NULLs stay
+        # distinct (Postgres default), so rows with no `response_id` never
+        # collide.
+        Index(
+            "uq_realtime_usage_session_response",
+            "session_id", "response_id", unique=True,
+        ),
+    )
 
     #: Client-generated, which is what makes a retried report idempotent —
     #: the same pattern, for the same reason, as `Turn.id`.
