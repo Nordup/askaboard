@@ -235,7 +235,7 @@ final class BoardSceneStoreTests: XCTestCase {
         await store.sendAndWait("draw")
 
         XCTAssertEqual(store.session.boardScene.elements.map(\.id), ["c"])
-        XCTAssertEqual(store.errorMessage, "stream died")
+        XCTAssertEqual(store.errorMessage, TutorStore.failureMessage(retryable: true))
         let saved = try XCTUnwrap(store.persistence.loadCurrent())
         XCTAssertEqual(saved.boardScene.elements.map(\.id), ["c"])
     }

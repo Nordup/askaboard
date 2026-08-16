@@ -133,8 +133,47 @@ final class TutorStoreStreamingTests: XCTestCase {
         ]), persistence: .inMemory, configuration: .stub)
         store.applyForTesting(plan: .radicalEquation, exercise: .radicalEquation)
         await store.sendAndWait("continue")
-        XCTAssertEqual(store.errorMessage, "stream died")
+        XCTAssertEqual(store.errorMessage, TutorStore.failureMessage(retryable: true))
         XCTAssertEqual(store.session.plan?.title, SessionPlan.radicalEquation.title)
+    }
+
+    /// **The server's sentence is never the learner's.** The `error` event
+    /// carries a message and this app does not print it: for one real turn it
+    /// carried the provider's own rate-limit error — the model's name, the
+    /// organization id, and the account's tokens-per-minute ceiling — and a
+    /// child read it off an iPad. The server sanitises its half now; this is
+    /// the half that does not have to trust that it did.
+    func testTheServersOwnWordsNeverBecomeTheLearnersMessage() async {
+        let raw = """
+            APIError: Rate limit reached for gpt-5.6-luna in organization \
+            org-EXAMPLE0000 on tokens per min (TPM): Limit 200000, Used 164798.
+            """
+        let store = TutorStore(service: ScriptedTutorService(events: [
+            .failure(message: raw, retryable: true),
+        ]), persistence: .inMemory, configuration: .stub)
+
+        await store.sendAndWait("find me a fish")
+
+        XCTAssertEqual(store.errorMessage, TutorStore.failureMessage(retryable: true))
+        XCTAssertFalse(store.errorMessage?.contains("org-") == true)
+        XCTAssertFalse(store.errorMessage?.contains("gpt-5.6-luna") == true)
+    }
+
+    /// The retryable flag used to be discarded at the point of use, so the one
+    /// structured fact a failure carried changed nothing the learner saw.
+    func testTheFailureCopyFollowsWhetherAnotherTryIsWorthIt() async {
+        func message(retryable: Bool) async -> String? {
+            let store = TutorStore(service: ScriptedTutorService(events: [
+                .failure(message: "provider text", retryable: retryable),
+            ]), persistence: .inMemory, configuration: .stub)
+            await store.sendAndWait("go")
+            return store.errorMessage
+        }
+
+        let retryable = await message(retryable: true)
+        let final = await message(retryable: false)
+        XCTAssertNotEqual(retryable, final)
+        XCTAssertEqual(final, ChatErrorState.networkMessage)
     }
 
     /// Replaces the old `TutorReply.coherentPair`-era coverage of this same
@@ -530,6 +569,6 @@ final class TutorStoreStreamingTests: XCTestCase {
         await store.sendAndWait("Hello")
 
         XCTAssertNil(store.session.messages.last { $0.role == .tutor })
-        XCTAssertEqual(store.errorMessage, "The tutor is unavailable.")
+        XCTAssertEqual(store.errorMessage, TutorStore.failureMessage(retryable: true))
     }
 }

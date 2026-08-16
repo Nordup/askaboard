@@ -1718,16 +1718,29 @@ final class TutorStore: ObservableObject {
                         self.persistSession(turnSession)
                         onDone?(accumulatedText)
                         finish(.success(accumulatedText))
-                    case .failure(let message, _):
+                    case .failure(let message, let retryable):
                         // `activity?.duration` is deliberately left untouched here
                         // — it stays `nil` unless a message was never even
                         // created. A trail that never finished must not claim a
                         // time.
                         settleTurnFlags()
+                        // The server's text is logged and goes no further. It
+                        // used to be assigned straight to `errorMessage` and
+                        // handed to the voice model, and what arrived in it once
+                        // was the provider's own rate-limit error — the model
+                        // name, the organization id and the account's per-minute
+                        // ceiling, on a child's iPad and read aloud in a call.
+                        // What the learner is told is this app's own sentence,
+                        // chosen from the one structured fact the event carries.
+                        let copy = Self.failureMessage(retryable: retryable)
                         if !isVoiceTurn {
-                            self.errorMessage = message
+                            self.errorMessage = copy
                         }
-                        finish(.failure(TutorServiceError.network(message)))
+                        self.logger.error("""
+                            Tutor turn failed: retryable=\(retryable, privacy: .public) \
+                            \(message, privacy: .private)
+                            """)
+                        finish(.failure(TutorServiceError.network(copy)))
                     }
                 }
                 // A stream that stopped without `.done` or `.failure` still
@@ -1739,7 +1752,14 @@ final class TutorStore: ObservableObject {
             } catch {
                 settleTurnFlags()
                 if !isVoiceTurn {
-                    self.errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                    // Board 14's line, not the error's own. This is the turn
+                    // that never reached the service — a timeout, a dropped
+                    // connection, no route to the Mac — and "The request timed
+                    // out." is `URLError`'s wording for a developer, not
+                    // something to put in a thread. The exact cause is on the
+                    // log line below, which is where `describe` exists to be
+                    // read.
+                    self.errorMessage = ChatErrorState.networkMessage
                 }
                 finish(.failure(error))
                 // `localizedDescription` alone is what made a real failure
@@ -1806,12 +1826,34 @@ final class TutorStore: ObservableObject {
         return text
     }
 
+    /// What the thread says about a turn that failed on the server.
+    ///
+    /// **Never the server's own sentence.** The `error` event carries a message
+    /// and this app does not print it, because for one turn it carried the
+    /// provider's raw rate-limit error — the model's name, the organization id,
+    /// and the account's tokens-per-minute ceiling — and a nine-year-old read
+    /// it. The server sanitises its half now (`events.TURN_FAILED_MESSAGE`);
+    /// this is the half that does not have to trust that it did.
+    ///
+    /// `retryable` is the one structured fact the event carries, and it is what
+    /// picks between the two. A retryable failure is the provider asking for a
+    /// moment — a rate limit is the case it was written for, and the provider's
+    /// own text on that turn said "Please try again in 662ms" — so the copy
+    /// says a wait will fix it. Anything else falls back to board 14's line,
+    /// which is what the thread said for every failure before this existed.
+    static func failureMessage(retryable: Bool) -> String {
+        retryable
+            ? "The tutor hit a rate limit — try again in a moment."
+            : ChatErrorState.networkMessage
+    }
+
     /// A failure named precisely enough to act on — for the log, never a screen.
     ///
-    /// The thread deliberately shows board 14's fixed copy whatever went wrong,
-    /// so this is the only place the actual cause is ever stated, and it is free
-    /// to be exact and unfriendly. A `URLError`'s numeric code is the part that
-    /// distinguishes the cases that look identical to a learner: −1001 timed out
+    /// The thread shows one of this app's own short sentences whatever went
+    /// wrong — see `failureMessage` — so this is the only place the actual cause
+    /// is ever stated, and it is free to be exact and unfriendly. A `URLError`'s
+    /// numeric code is the part that distinguishes the cases that look
+    /// identical to a learner: −1001 timed out
     /// (the stream went quiet for longer than `BackendTutorService.streamTimeout`),
     /// −1005 the connection dropped, −1009 the iPad had no route to the Mac.
     static func describe(_ error: Error) -> String {

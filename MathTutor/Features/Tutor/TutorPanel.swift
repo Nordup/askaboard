@@ -627,15 +627,34 @@ struct TutorThreadView: View {
             SessionPlanView(plan: plan, scale: scale, width: column, onStart: actions.startPlan)
         }
 
-        if store.errorMessage != nil {
+        if let failure = store.errorMessage {
             // Board 14: *"A failure is a tutor message, not a system alert: same 17/25 text,
-            // same left edge, no box, no colour."* The store's own error string is not shown
-            // in its place — the board writes this copy deliberately, and the recovery chip
-            // is the retry.
+            // same left edge, no box, no colour."* The chip, the reassurance and the shape
+            // are the board's; the sentence comes from the store.
+            //
+            // It used to be fixed here, and for a good reason at the time: `errorMessage`
+            // could hold anything the network or the server put in it, and one turn put the
+            // provider's raw rate-limit error — organization id included — where the board's
+            // line belonged. Every value it can now take is this app's own copy, and board
+            // 14's line is still what it holds for every failure that is not worth naming
+            // (`TutorStore.failureMessage`), so what this draws is unchanged except where
+            // there is something truer to say.
             //
             // Told in the thread's own column, because the failure is one of its children:
             // board 14's stack was measured at 301 and is 301 only where the thread is.
-            ChatErrorState.network(onRetry: actions.retry, metrics: .for(scale, width: column))
+            //
+            // Built here rather than through `ChatErrorState.network`, which is the same
+            // thing with the sentence fixed. Everything else it sets is taken from that
+            // factory unchanged, so the two cannot drift on anything but the one line this
+            // needs to vary.
+            ChatErrorState(
+                message: failure,
+                actionLabel: ChatErrorState.networkAction,
+                actionIcon: .uiRetry,
+                reassurance: ChatErrorState.networkReassurance,
+                action: actions.retry,
+                metrics: .for(scale, width: column)
+            )
         }
 
         if store.isLoading, store.phase != .writing {
