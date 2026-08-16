@@ -5,16 +5,16 @@ import json
 from functools import partial
 from typing import Any
 
-from openai import AsyncOpenAI
+from openai import APIStatusError, AsyncOpenAI
 
 from app.tutor import retry
 from app.tutor.events import CODE_INTERPRETER
 from app.tutor.fetch_image import ALLOWED_CONTENT_TYPES, MAX_IMAGE_BYTES
 from app.tutor.providers import (
     PICTURE_NOT_SHOWN_NOTE, RELAYED_FILES_CAPTION, Completed, Created,
-    HostedToolActivity, HostedToolStarted, ProducedFile, ProviderEvent,
-    RelayedFile, RetryDecision, TextDelta, ThoughtDelta, ToolArgsDelta,
-    ToolArgsDone, ToolCall, ToolCallStarted,
+    HostedToolActivity, HostedToolStarted, OpenFailure, ProducedFile,
+    ProviderEvent, RelayedFile, RetryDecision, TextDelta, ThoughtDelta,
+    ToolArgsDelta, ToolArgsDone, ToolCall, ToolCallStarted,
 )
 from app.tutor.tools import TOOL_DEFINITIONS
 
@@ -463,3 +463,31 @@ class OpenAIProvider:
         account.
         """
         return retry.classify(status_code, body)
+
+    def open_failure(self, error: BaseException) -> OpenFailure | None:
+        """This family's reading of a refused open, or `None` for a stranger's.
+
+        `APIStatusError` and nothing wider, which is this loop's behaviour
+        preserved exactly rather than a choice made afresh. `_open_round` caught
+        that one class and no other, so its subclasses' siblings kept their old
+        route out: an `APIConnectionError` or an `APITimeoutError` still travels
+        past the loop to `app.api.turn`, which records it retryable and does not
+        re-open the round. Widening here to cover them would add a retry nothing
+        has measured to a path that already fails safely.
+
+        Every field of the answer used to be one of these three attribute reads
+        inside `loop._open_round`, and they are the reason a Gemini exception
+        could never have been handled by widening that `except` — see
+        `OpenFailure`. The body arrives already unwrapped by the SDK, which
+        `retry._error_code` accounts for.
+        """
+        if not isinstance(error, APIStatusError):
+            return None
+        return OpenFailure(
+            decision=self.classify(error.status_code, error.body),
+            # `error.response` is an `httpx.Response` on every `APIStatusError`
+            # the SDK raises, so `Retry-After` is read exactly where it always
+            # was — the same function `/v1/dictation` calls on the same header.
+            delay=retry.retry_delay(error.response),
+            status_code=error.status_code,
+        )

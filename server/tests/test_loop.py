@@ -6,7 +6,8 @@ import mimetypes
 
 import pytest
 import respx
-from httpx import Response
+from google.genai import errors as genai_errors
+from httpx import Request, Response
 from openai import APIStatusError, AsyncOpenAI
 from openai._streaming import SSEDecoder
 
@@ -14,10 +15,10 @@ from app.tutor.fetch_image import ALLOWED_CONTENT_TYPES, MAX_IMAGE_BYTES
 
 from app.tutor.context import ContextBundle
 from app.tutor.events import (
-    BoardUpdateEvent, ReasoningDeltaEvent, StatusEvent, TextDeltaEvent,
-    WorkspaceEvent,
+    TURN_FAILED_MESSAGE, BoardUpdateEvent, ReasoningDeltaEvent, StatusEvent,
+    TextDeltaEvent, WorkspaceEvent,
 )
-from app.tutor.retry import RETRY_LIMIT
+from app.tutor.retry import FALLBACK_RETRY_DELAY, RETRY_LIMIT
 from app.tutor.loop import (
     FETCH_BUDGET_ACK,
     FETCH_TIMEOUT_ACK,
@@ -28,6 +29,7 @@ from app.tutor.loop import (
     UPDATE_BOARD_ACK,
     FetchedImage,
     _answer,
+    _open_round,
     run_turn,
 )
 # The container machinery, the item builders and the two file records now live
@@ -42,6 +44,7 @@ from app.tutor.providers import (
     RelayedFile,
     relayed_content_type,
 )
+from app.tutor.providers.gemini import GeminiProvider
 from app.tutor.providers.openai import (
     ContainerFileTooLarge,
     OpenAIProvider,
@@ -50,6 +53,7 @@ from app.tutor.providers.openai import (
     _rendered_items,
     download_container_file,
 )
+from tests.fixtures.interactions import FAILED_INTERACTION
 from tests.fixtures.sse import (
     BOARD_UPDATE_FOLLOW_UP,
     BOARD_UPDATE_TURN,
@@ -809,6 +813,437 @@ async def test_a_retryable_failure_gives_up_after_the_limit():
             pass
 
     assert route.call_count == RETRY_LIMIT + 1
+
+
+# --- opening a round on a second family -------------------------------------
+#
+# Everything above drives the OpenAI family, which for a long time was the only
+# family `_open_round` could see: the clause caught `openai.APIStatusError`, and
+# a refused Gemini open — a different exception class carrying differently named
+# attributes — raised straight past the retry loop. So `GeminiProvider.classify`
+# was dead code in production, and a spent quota cost a learner up to thirty
+# seconds of the transport's own invisible backoff before the turn was recorded
+# non-retryable.
+#
+# These drive `_open_round` directly rather than through `run_turn`, because the
+# thing under test is one function: which exceptions it hands to the provider,
+# and what it does with the answer.
+
+
+def _gemini_refusal(status_code: int, body: dict, headers: dict | None = None):
+    """The exception a refused Gemini open really raises.
+
+    Built through the SDK's own `raise_for_response` rather than by calling
+    `ClientError(...)` directly, so the test cannot quietly disagree with the
+    SDK about which class is raised for a 4xx, or about what lands in `code`,
+    `details` and `message`. Those three attribute names are the whole reason
+    widening the loop's old `except` could not have worked — the OpenAI family
+    calls them `status_code`, `body` and `message` — so a test that set them by
+    hand would be testing the fix against itself.
+    """
+    response = Response(status_code, json=body, headers=headers or {})
+    try:
+        genai_errors.APIError.raise_for_response(response)
+    except genai_errors.APIError as error:
+        return error
+    raise AssertionError(f"the SDK raised nothing for a {status_code}")
+
+
+#: A per-minute 429, as the free tier really words it.
+#:
+#: The boilerplate sentence is the trap `QUOTA_EXHAUSTION_PHRASES` was rewritten
+#: for — it says "exceeded your current quota" on a burst limit as well as on a
+#: spent day — so the only thing separating the two is the `quotaId`'s window.
+GEMINI_BURST_429 = {
+    "error": {
+        "code": 429,
+        "status": "RESOURCE_EXHAUSTED",
+        "message": (
+            "You exceeded your current quota, please check your plan and "
+            "billing details."
+        ),
+        "details": [{
+            "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+            "violations": [{
+                "quotaId": "GenerateRequestsPerMinutePerProjectPerModel",
+            }],
+        }],
+    },
+}
+
+#: The same status and the same sentence, with the day's allowance gone.
+GEMINI_SPENT_429 = {
+    "error": {
+        "code": 429,
+        "status": "RESOURCE_EXHAUSTED",
+        "message": (
+            "You exceeded your current quota, please check your plan and "
+            "billing details."
+        ),
+        "details": [{
+            "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+            "violations": [{"quotaId": "GenerateRequestsPerDayPerProject"}],
+        }],
+    },
+}
+
+
+async def test_a_refused_gemini_open_is_retried_on_its_own_providers_verdict(
+    monkeypatch,
+):
+    """The defect, from the outside. A burst 429 from this family used to raise
+    past `_open_round` untouched, because the clause named the other family's
+    exception class; the retry that recovers the turn never ran and
+    `GeminiProvider.classify` was never asked.
+
+    The spy is on `classify` rather than on the outcome alone: a loop that
+    retried every exception it caught would pass an outcome-only assertion while
+    having thrown away the one decision that separates a burst limit from an
+    exhausted account.
+    """
+    provider = GeminiProvider(client=None)
+    consulted = []
+    real_classify = provider.classify
+
+    def spy(status_code, body, message=None):
+        decision = real_classify(status_code, body, message)
+        consulted.append((status_code, decision.retry))
+        return decision
+
+    provider.classify = spy
+
+    attempts = []
+
+    async def open_round(payload):
+        attempts.append(payload)
+        if len(attempts) == 1:
+            raise _gemini_refusal(429, GEMINI_BURST_429)
+        return "the second attempt's stream"
+
+    provider.open_round = open_round
+    slept = []
+    monkeypatch.setattr(
+        "app.tutor.loop.asyncio.sleep", _record_sleep(slept),
+    )
+
+    stream = await _open_round(provider, {"model": "gemini-3.5-flash-lite"})
+
+    assert stream == "the second attempt's stream", "the turn survives the 429"
+    assert len(attempts) == 2
+    assert consulted == [(429, True)], "the provider's own classify decided it"
+    # No `Retry-After` on this response, so the shared fallback — the same
+    # answer `retry_delay` gives for every unusable header shape.
+    assert slept == [FALLBACK_RETRY_DELAY]
+
+
+async def test_a_refused_gemini_open_honours_a_retry_after_header(monkeypatch):
+    """`Retry-After` is `Retry-After` on both families, so it is read by the same
+    function rather than by a second copy of one rule. This is what keeps
+    `MAX_RETRY_DELAY` — a provider asking for longer than a learner will wait is
+    a failure, not a pause — from having to be decided twice."""
+    provider = GeminiProvider(client=None)
+    attempts = []
+
+    async def open_round(payload):
+        attempts.append(payload)
+        if len(attempts) == 1:
+            raise _gemini_refusal(
+                503, {"error": {"code": 503, "message": "overloaded"}},
+                headers={"Retry-After": "2"},
+            )
+        return "the second attempt's stream"
+
+    provider.open_round = open_round
+    slept = []
+    monkeypatch.setattr("app.tutor.loop.asyncio.sleep", _record_sleep(slept))
+
+    assert await _open_round(provider, {}) == "the second attempt's stream"
+    assert slept == [2.0]
+
+
+async def test_a_spent_gemini_quota_is_not_retried(monkeypatch):
+    """Same status, same sentence, opposite verdict — the window in the
+    `quotaId` is the only evidence there is, and it is the provider that reads
+    it. Retrying here would spend the learner's wait on backoff in front of a
+    refusal that was already certain, which is what `turn._client`'s
+    `max_retries=0` exists to prevent on the other family."""
+    provider = GeminiProvider(client=None)
+    attempts = []
+
+    async def open_round(payload):
+        attempts.append(payload)
+        raise _gemini_refusal(429, GEMINI_SPENT_429)
+
+    provider.open_round = open_round
+    slept = []
+    monkeypatch.setattr("app.tutor.loop.asyncio.sleep", _record_sleep(slept))
+
+    with pytest.raises(genai_errors.ClientError):
+        await _open_round(provider, {})
+
+    assert len(attempts) == 1, "a spent quota is final on the first answer"
+    assert slept == [], "and the learner waits for nothing"
+
+
+async def test_a_retryable_gemini_failure_gives_up_after_the_limit(monkeypatch):
+    """The bound is the loop's, not the provider's: `RETRY_LIMIT` is shared with
+    `/v1/dictation` and stays in one place. The sibling of
+    `test_a_retryable_failure_gives_up_after_the_limit` above, and it has to
+    agree with it — a family whose retries were counted differently would be a
+    second thing to keep in step."""
+    provider = GeminiProvider(client=None)
+    attempts = []
+
+    async def open_round(payload):
+        attempts.append(payload)
+        raise _gemini_refusal(503, {"error": {"code": 503, "message": "down"}})
+
+    provider.open_round = open_round
+    monkeypatch.setattr("app.tutor.loop.asyncio.sleep", _record_sleep([]))
+
+    with pytest.raises(genai_errors.ServerError):
+        await _open_round(provider, {})
+
+    assert len(attempts) == RETRY_LIMIT + 1
+
+
+@pytest.mark.parametrize("error", [
+    RuntimeError("a bug in this service's own code"),
+    ValueError("an outbox item nothing could build"),
+    KeyError("a provider row that was not there"),
+])
+async def test_an_exception_no_provider_claims_propagates_unchanged(error):
+    """The safety property of the broad `except`, and the reason this design was
+    chosen over a second `except` clause per family.
+
+    `_open_round` catches `Exception` because it may not name either SDK's
+    classes — importing one into `loop.py` is what the provider seam exists to
+    prevent — so everything rests on a provider being willing to say "not mine".
+    Swallowing a stranger's exception here would turn a bug anywhere in the
+    stack into a turn that failed silently and told the learner not to retry:
+    strictly worse than the missing retry this whole change is about.
+
+    Identity, not just type: the same object with its own traceback, which is
+    what `app.api.turn` records and what a person reads afterwards.
+    """
+    provider = GeminiProvider(client=None)
+    attempts = []
+
+    async def open_round(payload):
+        attempts.append(payload)
+        raise error
+
+    provider.open_round = open_round
+
+    with pytest.raises(type(error)) as raised:
+        await _open_round(provider, {})
+
+    assert raised.value is error
+    assert len(attempts) == 1, "nothing unrecognised is ever tried twice"
+
+
+async def test_neither_provider_claims_the_others_exception():
+    """Each provider recognises its own SDK's exceptions and nothing else.
+
+    A duck-typed test — "anything with a `status_code`", "anything with a
+    `code`" — would let one family classify the other's refusal off an attribute
+    name and then answer with rules written for a different API. So the two are
+    checked against each other directly: the exception each one really raises,
+    handed to the other one.
+    """
+    gemini = GeminiProvider(client=None)
+    openai_provider = OpenAIProvider(client=None)
+    gemini_error = _gemini_refusal(429, GEMINI_BURST_429)
+    openai_error = APIStatusError(
+        "rate limited",
+        response=Response(429, json={"error": {"code": "rate_limit_exceeded"}},
+                          request=Request("POST", "https://api.openai.com/x")),
+        body={"code": "rate_limit_exceeded"},
+    )
+
+    assert gemini.open_failure(gemini_error) is not None
+    assert openai_provider.open_failure(openai_error) is not None
+    assert openai_provider.open_failure(gemini_error) is None
+    assert gemini.open_failure(openai_error) is None
+
+
+async def test_a_refused_gemini_open_with_an_unreadable_response_still_decides():
+    """`APIError.response` is optional — it defaults to `None`, and
+    `APIError._rebuild` leaves it unset on an unpickled error — so reaching
+    straight for `.headers.get` would raise an `AttributeError` from inside the
+    handler written to recover the refusal. The retry loop failing on the error
+    it was retrying is the one failure this path cannot have."""
+    provider = GeminiProvider(client=None)
+    error = genai_errors.ClientError(429, GEMINI_BURST_429, None)
+
+    failure = provider.open_failure(error)
+
+    assert failure is not None
+    assert failure.decision.retry is True
+    assert failure.delay == FALLBACK_RETRY_DELAY
+
+
+def _record_sleep(slept: list):
+    """A stand-in for `asyncio.sleep` that records instead of waiting.
+
+    The delays here are real seconds — `FALLBACK_RETRY_DELAY` twice is two of
+    them — and a suite that sat through backoff would be a suite people stop
+    running. Recorded rather than merely skipped, because the *length* of the
+    wait is part of what these tests are asserting.
+    """
+    async def sleep(seconds):
+        slept.append(seconds)
+
+    return sleep
+
+
+# --- a round that fails inside an open stream --------------------------------
+
+
+class _FakeStream:
+    """One interaction's events, shaped like the stream `open_round` returns.
+
+    An async context manager over an async iterator, which is what `run_turn`
+    requires of every provider (`async with stream: async for raw in stream:`)
+    and what `google.genai`'s `AsyncStream` is. Yields plain dicts, because
+    `GeminiProvider.normalise` reads an SDK object and a dict identically — held
+    down by `test_providers.py`'s
+    `test_every_recorded_event_decodes_to_the_shape_the_provider_reads`.
+    """
+
+    def __init__(self, events):
+        self._events = list(events)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_):
+        return False
+
+    def __aiter__(self):
+        async def gen():
+            for event in self._events:
+                yield event
+        return gen()
+
+
+#: An in-stream rate limit, worded the way the incident that produced
+#: `retry._RATE_LIMIT_PHRASES` was worded.
+#:
+#: The round's POST answered 200, the stream opened, and the refusal arrived as
+#: an `error` record — so there is no status code anywhere and the body is the
+#: only thing naming what happened. This one names nothing in `code` or `type`
+#: either, which is why the message has to be read: a provider telling us when to
+#: try again is a provider telling us to try again.
+#:
+#: It also carries exactly what must never reach an iPad: a model name, an
+#: organization id and an account's per-minute ceiling.
+IN_STREAM_RATE_LIMIT = {
+    "event_type": "error",
+    "error": {
+        "code": "rate_limit_exceeded",
+        "message": (
+            "Rate limit reached for gemini-3.5-flash-lite in organization "
+            "org-9tK2 on tokens per min (TPM): Limit 200000, Used 164798, "
+            "Requested 37409. Please try again in 662ms."
+        ),
+    },
+}
+
+#: The same door, a final refusal behind it. A malformed request will be
+#: malformed again however many times it is sent.
+IN_STREAM_INVALID_REQUEST = {
+    "event_type": "error",
+    "error": {
+        "code": "invalid_request",
+        "message": "Request contains an invalid argument.",
+    },
+}
+
+
+async def _turn_over(events):
+    """One whole turn against a stream of already-shaped provider events."""
+    provider = GeminiProvider(client=None)
+
+    async def open_round(payload):
+        return _FakeStream(events)
+
+    provider.open_round = open_round
+
+    collected = []
+    async for event, _result in run_turn(
+        provider=provider, model="gemini-3.5-flash-lite", effort="low",
+        bundle=ContextBundle(system="be a tutor", input=[
+            {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+        ]),
+    ):
+        collected.append(event)
+    return collected
+
+
+async def test_an_in_stream_rate_limit_reaches_the_device_as_retryable(caplog):
+    """The second defect. `run_turn`'s `Failed` branch hardcoded
+    `retryable=False`, because the neutral event had no field to carry a verdict
+    — so a 429 the provider had correctly read as a burst limit reached the iPad
+    as final, and `app.api.turn` wrote it to `turns.error` that way. The device
+    was told not to retry something whose own body said "try again in 662ms".
+
+    `retryable` is not a claim that the *round* can be re-opened — it cannot,
+    and nothing here retries it. It is the one structured fact the device is
+    given about the failure, and it decides whether the learner is offered
+    another go.
+    """
+    with caplog.at_level(logging.WARNING, logger="app.tutor.loop"):
+        events = await _turn_over(
+            FAILED_INTERACTION[:-1] + (IN_STREAM_RATE_LIMIT,)
+        )
+
+    failure, = [event for event in events if event.type == "error"]
+    assert failure.retryable is True
+    # And the sanitisation is untouched: the diagnosable text goes to the log
+    # and the device gets the one sentence `TURN_FAILED_MESSAGE` allows.
+    assert failure.message == TURN_FAILED_MESSAGE
+    on_the_wire = json.dumps(failure.model_dump(mode="json"))
+    for secret in ("gemini-3.5-flash-lite", "org-9tK2", "200000", "662ms"):
+        assert secret not in on_the_wire, (
+            "an iPad once displayed a model name, an organization id and an "
+            "account's per-minute ceiling"
+        )
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert "org-9tK2" in logged, "the diagnosable text still exists somewhere"
+    assert "rate limited" in logged, "including the verdict and why"
+
+
+async def test_an_in_stream_failure_that_is_final_still_says_so():
+    """The other half, and the reason the field is a verdict rather than a
+    cheerful `True`: a malformed request is final, and offering a retry would
+    send a learner round the same wall again."""
+    events = await _turn_over(
+        FAILED_INTERACTION[:-1] + (IN_STREAM_INVALID_REQUEST,)
+    )
+
+    failure, = [event for event in events if event.type == "error"]
+    assert failure.retryable is False
+    assert failure.message == TURN_FAILED_MESSAGE
+
+
+async def test_the_verdict_the_loop_reports_is_the_one_the_provider_reached():
+    """`Failed.retryable` and the `error` event agree by construction rather than
+    by coincidence. Asserted against `classify` on the same body, so a loop that
+    hardcoded `True` — the mirror image of the bug — could not pass this."""
+    provider = GeminiProvider(client=None)
+    _, failed = provider.normalise(IN_STREAM_RATE_LIMIT)
+    expected = provider.classify(
+        None, IN_STREAM_RATE_LIMIT, IN_STREAM_RATE_LIMIT["error"]["message"],
+    )
+
+    assert failed.retryable is expected.retry
+
+    events = await _turn_over(
+        FAILED_INTERACTION[:-1] + (IN_STREAM_RATE_LIMIT,)
+    )
+    failure, = [event for event in events if event.type == "error"]
+    assert failure.retryable is failed.retryable
 
 
 def test_fetch_image_is_turned_down_when_no_fetcher_is_wired():

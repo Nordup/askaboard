@@ -55,14 +55,16 @@ from dataclasses import dataclass, field
 from functools import partial
 from typing import Any
 
+from google.genai import errors as genai_errors
+
 from app.tutor import retry
 from app.tutor.events import CODE_INTERPRETER
 from app.tutor.fetch_image import ALLOWED_CONTENT_TYPES
 from app.tutor.providers import (
     RELAYED_FILES_CAPTION, TERMINAL_ERROR_STATUSES, Completed, Created, Failed,
-    HostedToolActivity, HostedToolStarted, ProducedFile, ProviderEvent,
-    RelayedFile, RetryDecision, TextDelta, ThoughtDelta, ToolArgsDelta,
-    ToolArgsDone, ToolCall, ToolCallStarted,
+    HostedToolActivity, HostedToolStarted, OpenFailure, ProducedFile,
+    ProviderEvent, RelayedFile, RetryDecision, TextDelta, ThoughtDelta,
+    ToolArgsDelta, ToolArgsDone, ToolCall, ToolCallStarted,
 )
 from app.tutor.providers.gemini_schema import to_gemini_tools
 from app.tutor.tools import TOOL_DEFINITIONS
@@ -441,15 +443,22 @@ class GeminiProvider:
         `RETRY_LIMIT` and `retry_delay` are shared with `/v1/dictation` and a
         second copy of either is a second thing to keep in step.
 
-        Unlike the OpenAI client, the one this holds keeps the SDK's *own* retry
-        (4 attempts over 408/409/429/5xx). That looks like a contradiction of
-        `turn._client`'s `max_retries=0` and is the opposite trade: `_open_round`
-        catches `openai.APIStatusError` only, so nothing in this service retries a
-        Gemini open at all, and switching the transport's retry off would leave a
-        single refused connection ending a learner's turn. What it costs is the
-        thing `max_retries=0` was chosen to avoid — an exhausted quota is waited
-        through before anything classifies it — and `classify` below is where
-        that gets fixed once the loop can see this family's exceptions.
+        Unlike the OpenAI client, the one this holds still keeps the SDK's *own*
+        retry (4 attempts over 408/409/429/5xx). That was the opposite trade
+        rather than an oversight: `_open_round` used to catch
+        `openai.APIStatusError` only, so nothing in this service retried a Gemini
+        open at all, and switching the transport's retry off would have left a
+        single refused connection ending a learner's turn.
+
+        **That reason is now gone.** `open_failure` below makes this family's
+        refusals visible to `_open_round`, which classifies a spent quota as final
+        instead of waiting through up to thirty seconds of transport backoff for
+        it. The transport's retry is now the layer that cannot tell a burst limit
+        from an exhausted account, which is exactly why `turn._client` passes
+        `max_retries=0` — so `turn._gemini_client` should pass
+        `http_options=HttpOptions(retry_options=HttpRetryOptions(attempts=0))`,
+        as its own docstring already says. Left alone here because a client is
+        that module's to build, not this one's.
         """
         return await self._client.aio.interactions.create(**_sdk_kwargs(payload))
 
@@ -794,13 +803,21 @@ class GeminiProvider:
         it is classified through exactly that path rather than through a status
         code invented to stand in for one that never arrived.
 
-        The classification goes into the message, not into the event, because
-        `run_turn`'s `Failed` branch reports `retryable=False` for everything: the
-        stream had already started, so whatever text arrived the learner has
-        already read, and re-running the round would write it twice. The verdict
-        is still worth recording — a rate limit that says "try again in 662ms" and
-        a malformed request are the same blank wall in a log that does not say
-        which it was.
+        The classification goes into the event as well as into the message.
+        `Failed.retryable` is what `run_turn` puts on the device's `error` event
+        and what `app.api.turn` writes to `turns.error`; it used to be a
+        hardcoded `False` there, so this verdict reached the log and nothing else
+        — a rate limit whose own words were "try again in 662ms" was recorded as
+        final, and the learner was told to give up. It stays in the message too,
+        because a reason string is what a person greps: "not retryable" and
+        "429 names a spent quota rather than a burst limit" are the same bool and
+        very different mornings.
+
+        Nothing about the round is retried here, and `retryable` is not a claim
+        that it could be — the stream had already started, so whatever text
+        arrived the learner has read, and re-running the round would write it
+        twice. It is a claim about a *fresh* turn, which is the only thing the
+        device can offer.
 
         **The provider's own words stop here.** `message` is diagnosable text for
         the log; the device is told `TURN_FAILED_MESSAGE` by `run_turn`, and that
@@ -820,6 +837,7 @@ class GeminiProvider:
                 f"(classified: {decision.reason})"
             ),
             status=IN_STREAM_FAILURE_STATUS,
+            retryable=decision.retry,
         )
 
     # ---- the input items ---------------------------------------------------
@@ -945,11 +963,12 @@ class GeminiProvider:
         Reason strings stay specific because they are logged, and a log line that
         says only "not retryable" is a line nobody can act on.
 
-        Unreached in production today, and worth saying so plainly:
-        `loop._open_round` catches `openai.APIStatusError`, which the Gemini SDK
-        never raises, so a refused Gemini open currently raises past the loop
-        and is recorded final by `app.api.turn`. Widening that `except` is what
-        makes this method live.
+        Reached from two directions, and `open_failure` below is the one that was
+        missing. A refused open used to raise straight past
+        `loop._open_round` — it caught `openai.APIStatusError`, which this SDK
+        never raises — so every word of this method was dead code in production
+        and a spent quota cost a learner the transport's own thirty seconds of
+        backoff before the turn was recorded final.
         """
         if status_code is None:
             return retry.classify(None, body, message)
@@ -962,6 +981,48 @@ class GeminiProvider:
         if 500 <= status_code < 600:
             return RetryDecision(True, f"server error {status_code}")
         return RetryDecision(False, f"status {status_code} is not retryable")
+
+    def open_failure(self, error: BaseException) -> OpenFailure | None:
+        """This family's reading of a refused open, or `None` for a stranger's.
+
+        `google.genai.errors.APIError` is the base of everything this SDK raises
+        for a response it did not like — `ClientError` for a 4xx, `ServerError`
+        for a 5xx — so the one `isinstance` covers a refused open of any kind
+        while leaving every other exception to travel on unchanged. That last
+        half is the point: `loop._open_round` now catches `Exception` and relies
+        on this method saying "not mine", so a `TypeError` from this service's own
+        code must not be claimed here and reported to a learner as a provider
+        hiccup.
+
+        The three fields come off names of this SDK's own choosing, which is why
+        widening the loop's old `except` could never have worked: the status code
+        is `code`, not `status_code`, and the body is `details`, not `body`.
+        `details` is the whole response JSON, `{"error": {...}}` and all, which is
+        the shape `retry._error_code` and `_reads_as_spent_quota` both already
+        accept.
+
+        Every field is guarded rather than trusted, for the reason every provider
+        field in this file is: an exception raised while classifying an exception
+        would replace a recoverable refusal with a crashed turn, inside the one
+        handler written to recover it. A `code` that is not an integer becomes
+        `None`, which `classify` reads through `retry._without_status` off the
+        body and the message instead — the same path an in-stream `error` takes.
+        """
+        if not isinstance(error, genai_errors.APIError):
+            return None
+        # `bool` excluded explicitly because it is a subclass of `int`, the same
+        # care `_searches` takes: `True` would arrive at the `429 ==` test below
+        # as a plausible-looking 1.
+        code = error.code
+        if isinstance(code, bool) or not isinstance(code, int):
+            code = None
+        body = error.details if isinstance(error.details, dict) else None
+        message = error.message if isinstance(error.message, str) else None
+        return OpenFailure(
+            decision=self.classify(code, body, message),
+            delay=_open_retry_delay(error),
+            status_code=code,
+        )
 
 
 @dataclass
@@ -1024,6 +1085,43 @@ def _sdk_kwargs(payload: dict) -> dict:
         config["tool_choice"] = tool_choice
         kwargs["generation_config"] = config
     return kwargs
+
+
+def _open_retry_delay(error: genai_errors.APIError) -> float:
+    """How long to wait before re-opening a round this error refused.
+
+    `retry.retry_delay` rather than a second rule, because `Retry-After` is
+    `Retry-After` on both families and `MAX_RETRY_DELAY` — a provider asking for
+    longer than a learner will wait is a failure, not a pause — is a decision
+    that should not be made twice. It reads one header off the response and
+    nothing else, so it works on any response object that carries a
+    case-insensitive header mapping, which is every shape below.
+
+    **The response is the part that has to be guarded.** On the other family
+    `APIStatusError.response` is always an `httpx.Response`; here `APIError.response`
+    is annotated as an httpx, a requests, or a google-auth async response, is set
+    from a parameter that defaults to `None`, and is left unset entirely by
+    `APIError._rebuild` on an unpickled error. Reaching straight for
+    `.headers.get` would turn a refused open into an `AttributeError` raised from
+    inside the handler written to recover it — the retry loop failing on the
+    error it was retrying.
+
+    `FALLBACK_RETRY_DELAY` is what an unreadable response resolves to, which is
+    the same answer `retry_delay` gives for every unusable header shape.
+
+    **The body's `RetryInfo` is deliberately not read as a duration**, though
+    `_reads_as_spent_quota` reads its presence as evidence of retryability. A
+    per-minute quota states a delay in the tens of seconds, `MAX_RETRY_DELAY`
+    caps this whole path at ten, and a learner is not going to sit through either
+    — so honouring the number would mean sleeping past the cap or clamping to it
+    and retrying too early anyway. One second twice, then the failure, is the
+    honest shape.
+    """
+    response = getattr(error, "response", None)
+    headers = getattr(response, "headers", None)
+    if headers is None or not hasattr(headers, "get"):
+        return retry.FALLBACK_RETRY_DELAY
+    return retry.retry_delay(response)
 
 
 def _split_system(outbox: list[dict]) -> tuple[str, list[dict]]:

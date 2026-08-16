@@ -7,8 +7,6 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 
-from openai import APIStatusError
-
 from app.tutor.board_scene import (
     BoardSceneUpdate, SVGElement, lint_svg, parse_board_update,
 )
@@ -21,7 +19,7 @@ from app.tutor.providers import (
     Completed, Failed, ProducedFile, Provider, RelayedFile, TextDelta,
 )
 from app.tutor.rendezvous import BoardRegion, BoardUnavailable
-from app.tutor.retry import RETRY_LIMIT, retry_delay
+from app.tutor.retry import RETRY_LIMIT
 from app.tutor.tools import MEMORY_TOOLS
 
 logger = logging.getLogger(__name__)
@@ -317,10 +315,11 @@ MALFORMED_FETCH_ACK = json.dumps({
 async def _open_round(provider: Provider, payload: dict):
     """Open one round's stream, retrying a retryable failure silently.
 
-    Here rather than behind the provider because `RETRY_LIMIT` and `retry_delay`
+    Here rather than behind the provider because `RETRY_LIMIT` and the sleeping
     are shared with `/v1/dictation`, and a second copy of either is a second
-    thing to keep in step. Only the *decision* is the provider's, through
-    `classify`.
+    thing to keep in step. Everything that needs a family's own exception in
+    hand is the provider's, through `open_failure`: the verdict, and how long to
+    wait for it.
 
     The turn client keeps `max_retries=0`, because the SDK's own retry cannot
     tell a rate-limit 429 from a billing one and would sit through backoff on
@@ -342,20 +341,38 @@ async def _open_round(provider: Provider, payload: dict):
     for attempt in range(RETRY_LIMIT + 1):
         try:
             return await provider.open_round(payload)
-        # `APIStatusError` is the OpenAI SDK's, which is the one this loop has
-        # ever seen: it is what a refused open raises today, and `error.response`
-        # is where `Retry-After` is read from. A second family raising something
-        # else needs this widened rather than copied — the classification is
-        # already the provider's.
-        except APIStatusError as error:
-            decision = provider.classify(error.status_code, error.body)
-            if not decision.retry or attempt == RETRY_LIMIT:
+        # **Broad on purpose, and narrowed immediately by the provider.** This
+        # clause named `openai.APIStatusError` for as long as there was one
+        # family, which quietly made the whole retry OpenAI-only: `google.genai`
+        # raises its own `APIError` instead, nothing here caught it, and a
+        # refused Gemini open ended a learner's turn outright after up to thirty
+        # seconds of the transport's own invisible backoff.
+        #
+        # Naming the second class beside the first was the obvious repair and is
+        # the wrong one: `loop.py` importing either SDK is exactly what the
+        # provider seam exists to prevent, and the attribute names differ anyway
+        # — `status_code`/`body` against `code`/`details`. So the family's own
+        # exception is recognised by the family, through `open_failure`.
+        #
+        # `Exception`, never `BaseException`: a client disconnect arrives as
+        # `asyncio.CancelledError`, which is a `BaseException` and must keep
+        # travelling.
+        except Exception as error:
+            failure = provider.open_failure(error)
+            if failure is None:
+                # Not this family's exception at all, so nothing here has an
+                # opinion about it. Re-raised unchanged, with its traceback, for
+                # `app.api.turn` to record: a bug in this service swallowed as a
+                # provider hiccup would become a turn that failed for no stated
+                # reason, which is worse than the missing retry above.
+                raise
+            if not failure.decision.retry or attempt == RETRY_LIMIT:
                 raise
             logger.warning(
                 "retrying round after %s | attempt=%d reason=%s",
-                error.status_code, attempt + 1, decision.reason,
+                failure.status_code, attempt + 1, failure.decision.reason,
             )
-            await asyncio.sleep(retry_delay(error.response))
+            await asyncio.sleep(failure.delay)
     raise AssertionError("unreachable: loop above always returns or raises")
 
 
@@ -420,10 +437,19 @@ async def _closing_round(
                 # The provider's own words go to the log and no further; the
                 # device gets `TURN_FAILED_MESSAGE`, for the reason that
                 # constant gives.
+                #
+                # The verdict is carried for the reason the round loop's own
+                # `Failed` branch carries it: a hardcoded `False` here is the
+                # same defect one bound further along, and this round is bought
+                # precisely when the turn has no prose to protect — so a learner
+                # told "final" about a burst limit has been told to give up on a
+                # turn that produced nothing at all.
                 logger.warning(
                     "the closing round failed | %s", neutral.message,
                 )
-                yield ErrorEvent(message=TURN_FAILED_MESSAGE, retryable=False)
+                yield ErrorEvent(
+                    message=TURN_FAILED_MESSAGE, retryable=neutral.retryable,
+                )
                 return
 
             for client_event in translator.translate(neutral):
@@ -913,15 +939,28 @@ async def run_turn(
                     files = list(neutral.files)
                 elif isinstance(neutral, Failed):
                     # Never reached on OpenAI, whose failures raise on the open
-                    # and are classified by `_open_round`. `retryable=False` for
-                    # the reason nothing after the open is retried: whatever
-                    # streamed, the learner has already read.
+                    # and are classified by `_open_round`.
+                    #
+                    # **The verdict is the provider's, and it used to be
+                    # hardcoded `False` here.** Nothing about the round is
+                    # retried — this returns, and a round that has already
+                    # streamed text the learner read is never run again — but
+                    # `retryable` is not a statement about the round. It is the
+                    # one structured fact the device is given, and it decides
+                    # whether the learner is offered another go at the turn. A
+                    # Gemini 429 whose own body says "try again in 662ms"
+                    # arriving as final was the provider being overruled by a
+                    # constant, and `turns.error` recorded the constant.
                     #
                     # The provider's own words are logged and go no further —
-                    # see `TURN_FAILED_MESSAGE`.
+                    # see `TURN_FAILED_MESSAGE`. That is unchanged and is the
+                    # point of carrying only a bool across this line: an iPad
+                    # once displayed a model name, an organization id and an
+                    # account's per-minute ceiling.
                     logger.warning("the round failed | %s", neutral.message)
                     yield ErrorEvent(
-                        message=TURN_FAILED_MESSAGE, retryable=False
+                        message=TURN_FAILED_MESSAGE,
+                        retryable=neutral.retryable,
                     ), result
                     return
 

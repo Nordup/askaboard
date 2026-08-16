@@ -19,6 +19,48 @@ from app.tutor.retry import RetryDecision  # noqa: F401
 
 
 @dataclass(frozen=True)
+class OpenFailure:
+    """One family's refused open, in the terms the round loop can act on.
+
+    Everything `loop._open_round` needs to decide whether to try again, with
+    nothing family-specific left in it. Every field was previously read off an
+    `openai.APIStatusError` in the loop itself — `.status_code`, `.body` and
+    `.response` — and that is precisely why a refused Gemini open was invisible:
+    the loop caught one family's exception class and then reached for one
+    family's attribute names. `google.genai` raises a different class carrying
+    `code` and `details`, and a response object that is not always an httpx one,
+    so neither the `except` nor the three attribute reads could ever match. The
+    fix is not a second `except` clause beside the first — it is this record,
+    which every family fills in from its own exceptions.
+
+    Built only by `Provider.open_failure`, and `None` from that method is the
+    other half of the design: see its docstring for why the loop may catch
+    broadly only because a provider can say "that one is not mine".
+    """
+
+    #: The provider's own verdict, from its own `classify`. The loop reads
+    #: `.retry` and logs `.reason`; it never re-decides.
+    decision: RetryDecision
+    #: How long to wait before the next attempt, in seconds.
+    #:
+    #: Computed by the provider rather than by the loop, because the answer is
+    #: read off a family's own exception. It is `retry.retry_delay` on the
+    #: response `openai.APIStatusError` carries; on the Gemini side the response
+    #: may be an aiohttp one, a requests one, or absent entirely, so the fallback
+    #: has to be chosen where that is known. `RETRY_LIMIT` and the sleeping stay
+    #: in the loop, and `/v1/dictation` still reads `retry_delay` directly — one
+    #: function, three callers, which is the arrangement that file already has.
+    delay: float
+    #: What the provider called it, for the retry log line and nothing else.
+    #:
+    #: `None` for a refusal that carried no status code — the shape
+    #: `retry._without_status` was written for. Not used in any decision, so a
+    #: family that cannot supply one loses a number in a log rather than a
+    #: verdict.
+    status_code: int | None
+
+
+@dataclass(frozen=True)
 class ToolCall:
     """One function call a round ended on."""
     name: str
@@ -290,6 +332,24 @@ class Failed:
     #: The interaction status this failure arrived under, for a reader to test
     #: against `TERMINAL_ERROR_STATUSES`. Nothing in `app/` reads it yet.
     status: str
+    #: Whether a *fresh* turn could succeed, from the provider's own `classify`.
+    #:
+    #: Not "may the loop re-open this round" — it may not, and nothing here
+    #: changes that: a round that has streamed text the learner has already read
+    #: is never run again. This is the one structured fact the device is given
+    #: about a failure, and it decides whether the learner is offered another go.
+    #:
+    #: It is a field because `run_turn` used to hardcode `retryable=False` on
+    #: every in-stream failure, there being nothing on this event to read
+    #: instead. So a Gemini 429 that `GeminiProvider.classify` had correctly read
+    #: as a burst limit — the provider itself saying "try again in 662ms" —
+    #: reached the iPad as final, and `turns.error` recorded it that way. The
+    #: verdict already existed; the only thing missing was somewhere to put it.
+    #:
+    #: Required, with no default. `False` as a default would restore exactly that
+    #: bug for any future provider that forgot the field, and it would do it
+    #: silently — a wrong verdict looks the same as a considered one.
+    retryable: bool
 
 
 #: Every neutral event a provider may emit.
@@ -376,3 +436,25 @@ class Provider(Protocol):
 
     def classify(self, status_code: int, body: dict | None) -> RetryDecision:
         """Whether a failed open is worth retrying."""
+
+    def open_failure(self, error: BaseException) -> OpenFailure | None:
+        """This family's reading of the exception a failed open raised.
+
+        `None` means "that exception is not mine", and it is the entire safety
+        property of the broad `except` in `loop._open_round`. The loop cannot
+        name a family's exception class — importing either SDK there is the one
+        thing this seam exists to prevent — so it catches `Exception`, asks the
+        provider what it is looking at, and re-raises unchanged anything the
+        provider does not recognise. Swallowing an unrelated exception in the
+        round loop would turn a bug anywhere in the stack into a silently failed
+        turn, which is worse than the missing retry this method was added for.
+
+        So the rule for an implementer is one line: recognise your own SDK's
+        exception types and nothing else. Not `Exception`, not "anything with a
+        `status_code`" — a duck-typed test would claim a stranger's exception and
+        classify it as final on the strength of an attribute name.
+
+        Every field of the answer is this family's to fill in, because every
+        field used to be an attribute read off one family's exception in the
+        loop; see `OpenFailure`.
+        """
