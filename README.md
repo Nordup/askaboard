@@ -183,11 +183,16 @@ distinct document for the live overlay and board captures, and parses it again
 after relaunch. The document needs no frame: its `viewBox` is drawn one user
 unit to one board point, with the top-left corner at the element's `(x, y)`,
 so a figure is sized once and sits in the same space as every other element.
-This supports declarative SVG—paths, text, gradients, clipping, markers,
-symbols, and transforms—without a server-side SVG parser or tag allowlist.
-There is no web view, no script engine, and no network in the figure path at
-all; what the parser cannot draw (`<filter>`, `<mask>`, `<foreignObject>`,
-`<animate>`) is named back to the tutor as a warning rather than refused.
+This supports declarative SVG—paths, text, gradients, masks, clip paths,
+markers, symbols, and transforms—without a server-side SVG parser or tag
+allowlist. There is no web view, no script engine, and no network in the figure
+path at all, and that is what the warnings are about: a `<filter>` effect is
+dropped, though the shape under it still draws; `<animate>`, `<foreignObject>`
+and `<script>` are not drawn at all; and an external `href="http…"` fetches
+nothing. Each is named back to the tutor as a warning rather than refused, and
+`_UNSUPPORTED_SVG_FEATURES` in
+[`server/app/tutor/board_scene.py`](server/app/tutor/board_scene.py) is the
+whole list.
 
 **Typography.** Source Sans 3 is the design's only typeface and iOS does not ship it, so the 400/500/600 weights are bundled. Two conversions in `Typography.swift` are easy to get wrong and are unit-tested: CSS `line-height` is a total line box while SwiftUI's `lineSpacing` is the gap *between* lines, and the design's tracking is in `em` while `.tracking()` takes points.
 

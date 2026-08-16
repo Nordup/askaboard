@@ -451,6 +451,49 @@ turn. Each call is bounded by `MEMORY_TIMEOUT_SECONDS`, and the whole turn by
 issuing seven memory calls and blowing past the client's 120s stream timeout
 inside a single round.
 
+**Three more things the tutor can do, and none of them are hypothetical.**
+They sit in the same `TOOL_DEFINITIONS` list, on every request, whether or not
+a given turn can serve them — the tool set never varies per request, because
+tool definitions sit at the top of the provider's cache-invalidation hierarchy
+and a set that changes re-bills the whole prompt prefix. `loop._answer` is
+where a tool this turn cannot serve is turned down.
+
+- **`fetch_image`** — a function tool, ours, and the only thing in this
+  service that opens a socket to a host the *model* named.
+  [`app/tutor/fetch_image.py`](app/tutor/fetch_image.py) is written as a
+  server-side request forgery surface first and a downloader second: `https`
+  only, every resolved address must be public, no redirects, a content-type
+  allowlist checked against the header and again against the bytes, a 10 MB
+  cap enforced while reading, a pixel cap, and one total 10s deadline over
+  DNS, connect, TLS, headers and body. What survives is written to the blob
+  store, and the model is handed the blob id plus the picture itself — labelled
+  as third-party data, because a caption rendered into an image is an
+  instruction nobody sanitised. The blob id is what an `image` board element
+  places.
+- **`web_search`** — hosted. A type and nothing else of ours: the provider owns
+  the name, the schema and the execution, so no call of it ever reaches
+  `loop._answer`. It reports itself through `response.web_search_call.*`, which
+  [`app/tutor/events.py`](app/tutor/events.py) already reads as the `searching`
+  phase, so the learner sees it happening.
+- **The code interpreter** — hosted, with `{"type": "auto"}` for its container,
+  which asks the provider for a fresh sandbox per response. A named container
+  id would pin every learner in the deployment to one machine and one
+  filesystem, and let one turn's scratch files be read by the next learner's
+  script. It differs from every other tool in what it leaves behind: a script
+  that draws a chart writes a *file*, and that file dies with the container.
+  `providers.openai._container_citations` finds those files on the message
+  annotations, `loop.FileRelay` copies the bytes into this service's blob
+  store, and the round that hands the model their blob ids is its only chance
+  to put the chart on the learner's board.
+
+Both downloaders spend one budget, per turn rather than per round:
+`TURN_DOWNLOAD_LIMIT` (8 downloads) and `TURN_DOWNLOAD_BYTE_LIMIT` (40 MB),
+counted across `fetch_image` calls and container-file relays together, because
+the cost is the same wherever the bytes came from. Each is bounded in time as
+well — `IMAGE_FETCH_TIMEOUT_SECONDS` and `FILE_RELAY_TIMEOUT_SECONDS`, both
+15s — for the reason the memory tools are: no provider event passes through a
+download, so nothing puts a byte on the wire while one runs.
+
 **The learner model** is separate from memory and coarser.
 [`app/learner/`](app/learner) holds the Common Core concept graph (see
 [Setup](#setup) for the seed), an Elo-style ability estimate per concept, and
@@ -463,9 +506,11 @@ about 86% of the time when the student is correct and 69% when they are wrong,
 and taking that at face value drifts the estimate confidently upward.
 
 **Still seams.** `TOOL_DEFINITIONS` remains the whole of what it takes to add
-a tool: web search is `{"type": "web_search"}` appended to that list, file
-search is `{"type": "file_search", "vector_store_ids": [...]}`, and a
-domain-specific function is a new definition in the same shape. The event
+a tool, and web search is the proof rather than the example: adding it was
+`{"type": "web_search"}` appended to that list, and it has been in the list
+since. File search would be `{"type": "file_search", "vector_store_ids": [...]}`
+in the same place, and a domain-specific function is a new definition in the
+same shape. The event
 translator ([`app/tutor/events.py`](app/tutor/events.py)) already correlates a
 tool call's name with its arguments through
 `response.output_item.added` / `response.function_call_arguments.done`, so a
