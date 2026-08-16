@@ -35,15 +35,25 @@ logger = logging.getLogger(__name__)
 # an error — whatever prose arrived by then is the answer, and the workspace was
 # applied on the way.
 #
-# **Five since `view_board`.** Reading a board is genuinely iterative in a way
-# setting a workspace is not: the overview says where the work is, one crop
-# reads the first few lines, and a second reads the line the first one ran out
-# at. Three rounds made a tutor that looked twice spend its last round looking
-# instead of answering — the learner got silence for the same reason the
-# workspace bug produced silence, one layer up. Five leaves two looks and an
-# answer with room to spare, and the per-crop pixel caps in `board` are what
-# actually bound the cost.
-MAX_TOOL_ROUNDS = 5
+# **Eight since the code interpreter.** Rounds are not all bought by the model
+# reaching for a tool. A turn that plots something spends three before it has
+# said anything to the learner: the hosted script runs inside a round, the relay
+# that hands its files over buys a second, and the `update_board` call that puts
+# the chart on the board is a third. Add the two `view_board` looks the
+# paragraph above bought — the overview and the crop that reads the line it ran
+# out at — and five is exactly the arithmetic of an ordinary charted turn, with
+# nothing left for the prose. Eight is that turn plus headroom, and the real
+# bounds on cost are elsewhere: the per-crop pixel caps in `board`,
+# `TURN_DOWNLOAD_LIMIT`, and `MEMORY_BUDGET_SECONDS`.
+#
+# Hitting the bound is still not an error, but it is no longer allowed to be
+# silent. A turn that spends its last round on a tool has written whatever prose
+# it wrote before that, which can be none at all — and a learner who gets a
+# `done` event and an empty thread has been failed exactly the way the
+# `set_workspace` bug failed them. So the cap is followed by one closing round
+# that offers no tools; see `_closing_round` and the `else` at the foot of the
+# loop.
+MAX_TOOL_ROUNDS = 8
 
 # The smallest region `view_board` will honour, as a percentage of a side.
 #
@@ -119,7 +129,7 @@ FILE_RELAY_TIMEOUT_SECONDS = 15.0
 #
 # One counter over both, because the cost is the same wherever it comes from and
 # nothing else bounds either. A response may carry any number of `fetch_image`
-# calls, a script may write any number of files, and `MAX_TOOL_ROUNDS` lets five
+# calls, a script may write any number of files, and `MAX_TOOL_ROUNDS` lets eight
 # rounds each carry more — so the ceiling without this is "as many as the model
 # feels like", paid in wall-clock the learner waits through and in bytes this
 # service stores forever. Eight is past any turn with an honest purpose: a
@@ -336,6 +346,78 @@ async def _open_round(provider: Provider, payload: dict):
             )
             await asyncio.sleep(retry_delay(error.response))
     raise AssertionError("unreachable: loop above always returns or raises")
+
+
+async def _closing_round(
+    *,
+    provider: Provider,
+    model: str,
+    effort: str,
+    outbox: list[dict],
+    previous_id: str | None,
+    cache_key: str | None,
+    translator: EventTranslator,
+    result: TurnResult,
+) -> AsyncIterator[ClientEvent]:
+    """One last round with the tools taken away, so the turn ends in prose.
+
+    Bought exactly once, when `MAX_TOOL_ROUNDS` ran out on a round that still
+    ended in tool calls. Everything the loop would normally send next is still
+    pending — the outputs answering those calls, which the API requires and
+    which the model has not seen — so this round has to happen for the
+    conversation to be well formed at all. What is different is that no tool may
+    be called: the model is handed its own tool results and the only thing left
+    to do with them is write.
+
+    Without it the cap was a silent failure. A turn whose last round was a tool
+    call has written whatever prose came before that round, which for a
+    reasoning model is routinely nothing at all, and the learner got a `done`
+    event and an empty thread — the same silence the round loop itself was
+    written to end, one bound further along.
+
+    **Outside the loop, and terminal by construction.** Nothing here reads the
+    calls or the files the round produces, so this cannot buy a further round
+    however the model answers. One request is the whole of the extension.
+
+    A failed open raises, exactly as it does in every other round: `run_turn`'s
+    caller has one path for that and it records the turn with whatever text had
+    accumulated. A quieter second path here would be a new thing to reason
+    about for no gain — this round is bought precisely when there is no text to
+    protect.
+    """
+    payload = provider.build_round(
+        model=model, effort=effort, outbox=outbox,
+        previous_id=previous_id, cache_key=cache_key,
+    )
+    # The whole of the difference. `"none"` leaves the tool *definitions* on the
+    # request — dropping them would invalidate the cached prompt prefix for the
+    # sake of one request, which is the rule `TOOL_DEFINITIONS` is built around
+    # — and forbids calling any of them.
+    payload["tool_choice"] = "none"
+    stream = await _open_round(provider, payload)
+    async with stream:
+        async for raw in stream:
+            event, neutral = provider.normalise(raw)
+            result.raw_events.append(event)
+
+            if isinstance(neutral, TextDelta):
+                result.text += neutral.text
+            elif isinstance(neutral, Completed):
+                result.usage = _merge_usage(result.usage, neutral.usage)
+                result.response_id = neutral.response_id
+            elif isinstance(neutral, Failed):
+                yield ErrorEvent(message=neutral.message, retryable=False)
+                return
+
+            for client_event in translator.translate(neutral):
+                # A `set_workspace` call cannot reach here — that is what
+                # `tool_choice` above is for — but the branch is kept rather
+                # than dropped: it is the loop's own handling, and a provider
+                # that ignored the field would otherwise apply a workspace to
+                # the learner's screen and record nothing about it.
+                if isinstance(client_event, WorkspaceEvent):
+                    result.workspace = client_event.model_dump(mode="json")
+                yield client_event
 
 
 #: How `run_turn` gets a region of the board rendered.
@@ -730,7 +812,7 @@ async def run_turn(
     # What this turn has spent on bringing bytes in, across both downloaders and
     # every round. Counted per turn rather than per round for the reason the
     # memory budget is: the per-call bound says nothing about how many calls
-    # there are, and five rounds of eight fetches is the shape that has to be
+    # there are, and eight rounds of eight fetches is the shape that has to be
     # stopped. A download that timed out still spends its slot — charging only
     # the successful ones would let a run of timeouts cost fifteen seconds each
     # and never reduce the budget that exists to stop exactly that.
@@ -739,7 +821,7 @@ async def run_turn(
     # Every container file this turn has already tried to keep. A model that
     # mentions its chart again in a later round re-cites the same file, and
     # without this the loop would relay it, buy a round to hand it over, and be
-    # handed the same citation again — a five-round turn spent copying one PNG.
+    # handed the same citation again — a whole turn spent copying one PNG.
     # Failures are recorded here too: a file the provider would not give up once
     # will not give it up four more times.
     relayed_ids: set[tuple[str, ...]] = set()
@@ -1085,14 +1167,14 @@ async def run_turn(
     else:
         # The cap bit — `return` above is the only other way out, so this runs
         # exactly when the last round still ended on tool calls. Hitting it is
-        # not an error, but it is invisible: whatever prose arrived is the
-        # answer, and if none did the learner gets a `done` event and silence,
+        # not an error, but it was invisible: whatever prose arrived was the
+        # answer, and if none did the learner got a `done` event and silence,
         # which is the failure `MAX_TOOL_ROUNDS`' own comment was written to
         # prevent. Nothing anywhere said it had happened. `text_chars=0` is the
         # bad case; the tool names say which loop the model was stuck in.
         # `last_files` matters as much as `last_tools` now: a turn can also be
         # held open by files, and one relayed file per round with no tool call
-        # is a different stuck loop from a model calling `set_workspace` five
+        # is a different stuck loop from a model calling `set_workspace` eight
         # times. Both end here, and the two lists are what tell them apart.
         logger.warning(
             "tool rounds exhausted | rounds=%d text_chars=%d last_tools=%s "
@@ -1102,3 +1184,17 @@ async def run_turn(
             ",".join(filename for filename, _ in relayed),
             downloads,
         )
+        # And then the turn is closed rather than dropped. `outbox` is the
+        # outputs answering the calls the last round made, plus anything they
+        # wanted to show — pending work the API is waiting for, and the reason
+        # this is worth one more request. Empty is not reachable from here (the
+        # two `return`s above cover every way out with nothing to send) and is
+        # checked anyway: a round that named the previous response and posted an
+        # empty `input` would ask the model to continue from nothing.
+        if outbox:
+            async for client_event in _closing_round(
+                provider=provider, model=model, effort=effort, outbox=outbox,
+                previous_id=previous_id, cache_key=cache_key,
+                translator=translator, result=result,
+            ):
+                yield client_event, result

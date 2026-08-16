@@ -450,26 +450,35 @@ async def test_memory_calls_share_one_budget_across_the_turn(monkeypatch, caplog
 
 @respx.mock
 async def test_exhausting_the_tool_rounds_says_so(caplog):
-    """Hitting the cap is not an error, but it is invisible.
+    """Hitting the cap is not an error, but it was invisible.
 
     A last round that ends on tool calls leaves `result.text` empty, so the
-    learner gets a `done` event and silence — the exact failure
+    learner got a `done` event and silence — the exact failure
     `MAX_TOOL_ROUNDS`' own comment was written to prevent — and nothing
     anywhere said it had happened.
+
+    Two things answer it now, and both are asserted here. The warning is the
+    record, written before anything else and still reporting `text_chars=0`,
+    which is the state the turn was actually in. The closing round is the
+    repair: one more request with no tool on offer, so the learner reads a
+    reply instead of nothing.
     """
     async def handle(name: str, arguments: dict) -> str:
         return "Nothing on file about that."
 
+    result = None
     with caplog.at_level(logging.WARNING, logger="app.tutor.loop"):
-        async for _ in _run(
+        async for _event, running in _run(
             handle,
             *[_memory_call_turn("search_memory", {"query": "q"})] * MAX_TOOL_ROUNDS,
+            TEXT_ONLY_TURN,
         ):
-            pass
+            result = running
 
     assert "tool rounds exhausted" in caplog.text
     assert "text_chars=0" in caplog.text
     assert "search_memory" in caplog.text
+    assert result.text == "Nice work."
 
 
 async def test_a_session_that_cannot_be_opened_answers_instead_of_killing_the_turn():

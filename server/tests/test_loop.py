@@ -375,9 +375,13 @@ async def test_without_a_cache_key_the_field_is_left_off_rather_than_nulled():
 
 @respx.mock
 async def test_a_model_that_only_ever_calls_the_tool_is_bounded():
-    """Whatever prose arrived by the bound is the answer. Without it, a model
-    that answers every tool result with another tool call bills the learner
-    until something else stops it."""
+    """Without a bound, a model that answers every tool result with another
+    tool call bills the learner until something else stops it.
+
+    The bound is `MAX_TOOL_ROUNDS` tool rounds and then exactly one more. That
+    last round offers no tools, so it cannot end in a call and cannot buy
+    another: the total is fixed at the cap plus one, whatever the model does.
+    """
     route = respx.post("https://api.openai.com/v1/responses").mock(
         return_value=Response(200, headers={"Content-Type": "text/event-stream"},
                               content=sse_stream(*TOOL_CALL_TURN))
@@ -391,7 +395,54 @@ async def test_a_model_that_only_ever_calls_the_tool_is_bounded():
     ):
         pass
 
-    assert route.call_count == MAX_TOOL_ROUNDS
+    assert route.call_count == MAX_TOOL_ROUNDS + 1
+    bodies = [json.loads(call.request.content) for call in route.calls]
+    assert all("tool_choice" not in body for body in bodies[:-1]), (
+        "a tool round leaves the choice to the model"
+    )
+    assert bodies[-1]["tool_choice"] == "none"
+    # The definitions stay on the request even with none of them callable:
+    # dropping them would invalidate the cached prompt prefix for one request.
+    assert bodies[-1]["tools"] == bodies[0]["tools"]
+    # And it carries the outputs answering the calls the capped round made —
+    # pending work the API is waiting for, which is why the round is bought.
+    assert [item.get("call_id") for item in bodies[-1]["input"]] == ["call_1"]
+
+
+@respx.mock
+async def test_the_round_after_the_cap_closes_the_turn_in_prose():
+    """The cap used to end the turn wherever it happened to be.
+
+    A round that ends on a tool call has written whatever prose came before it,
+    which for a reasoning model is routinely nothing — so the learner got a
+    `done` event and an empty thread, the exact silence the round loop itself
+    was written to end. The closing round is what answers them: the model is
+    handed its own tool results with no tool it may call, and the only thing
+    left to do is write.
+    """
+    respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*leg))
+            for leg in ([TOOL_CALL_TURN] * MAX_TOOL_ROUNDS + [TEXT_ONLY_TURN])
+        ]
+    )
+    client = AsyncOpenAI(api_key="sk-test")
+    bundle = ContextBundle(system="s", input=[{"role": "user", "content": "hi"}])
+
+    events = []
+    result = None
+    async for event, running in run_turn(
+        provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+        effort="high", bundle=bundle
+    ):
+        events.append(event)
+        result = running
+
+    assert result.text == "Nice work.", "the learner is answered rather than left silent"
+    assert TextDeltaEvent(text="Nice ") in events, "and reads it as it is written"
+    # One turn, one bill: the closing round's usage is summed in like any other.
+    assert result.usage["output_tokens"] == 24 * MAX_TOOL_ROUNDS + 8
 
 
 # A response that ended on a call the provider gave no `call_id`. Not a shape a
