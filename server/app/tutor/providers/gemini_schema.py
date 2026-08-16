@@ -12,6 +12,10 @@ re-validate every element after the call returns, so the check moves from the
 request to the response. It does not disappear. What that costs is the failure
 mode: a bound the model breaks is now a rejected element rather than an
 argument it was never offered.
+
+Two forms are rewritten rather than dropped, because dropping them changes what
+the tool means: `const` becomes a one-value `enum`, and a nullable field's
+`["string", "null"]` becomes `type: "string"` with `nullable: true`.
 """
 
 from __future__ import annotations
@@ -59,6 +63,39 @@ def _resolve(node: Any, defs: dict[str, Any]) -> Any:
     return {key: _resolve(value, defs) for key, value in node.items()}
 
 
+def _nullable_type(types: list[Any]) -> tuple[Any, bool]:
+    """`["string", "null"]` as Gemini writes it: one type plus a `nullable` flag.
+
+    A Gemini declaration gives `type` a single value and carries nullability in
+    a separate boolean, so JSON Schema's type-list form has to be split. Only
+    the two-entry `[<type>, "null"]` shape can be split. A list of two real
+    types (`["string", "number"]`) has no Gemini expression at all, and a
+    longer list has none either.
+
+    Those cases raise, the same way `_resolve` raises on an unresolvable
+    `$ref`. The alternatives are both worse. Keeping the list makes the
+    declaration malformed, and the six fields that carry this form all sit on
+    memory tools, so a Gemini turn would lose `search_history` and its siblings
+    while the board still worked — the learner sees a tutor that forgot, not an
+    error. Quietly keeping the first entry is worse still: it offers the model
+    an argument the tutor does not accept, and the failure lands one round later
+    inside the tool call.
+
+    The input is `TOOL_DEFINITIONS`, a module constant, so the raise does not
+    depend on what the learner asked: it fires on the first conversion and it
+    fires every time. Convert once at startup, and a tool nobody can express
+    stops the server in front of whoever edited `tools.py`, rather than a turn
+    the learner already sent.
+    """
+    named = [name for name in types if name != "null"]
+    if len(types) != 2 or "null" not in types or len(named) != 1:
+        raise ValueError(
+            f"no Gemini equivalent for type list {types!r}; only the two-entry "
+            '[<type>, "null"] form converts to a nullable declaration'
+        )
+    return named[0], True
+
+
 def _strip(node: Any) -> Any:
     """Drop unsupported keywords, and turn `const` into a one-value `enum`.
 
@@ -74,21 +111,32 @@ def _strip(node: Any) -> Any:
     `properties` map in the tree. That is not a smaller schema; it is a tool
     with no arguments at all, silently, which is worse than the union that
     fails to parse.
+
+    A list-valued `type` is split by `_nullable_type` rather than passed
+    through. The flag it produces is written after the loop, so it wins over an
+    explicit `nullable` on the same node: a node that says both
+    `["string", "null"]` and `nullable: false` contradicts itself, and the type
+    list is the half that names the type.
     """
     if isinstance(node, list):
         return [_strip(item) for item in node]
     if not isinstance(node, dict):
         return node
     out: dict[str, Any] = {}
+    nullable: bool | None = None
     for key, value in node.items():
         if key == "const":
             out["enum"] = [value]
+        elif key == "type" and isinstance(value, list):
+            out["type"], nullable = _nullable_type(value)
         elif key == "properties" and isinstance(value, dict):
             out["properties"] = {
                 name: _strip(schema) for name, schema in value.items()
             }
         elif key in GEMINI_SUPPORTED_KEYWORDS:
             out[key] = _strip(value)
+    if nullable is not None:
+        out["nullable"] = nullable
     return out
 
 

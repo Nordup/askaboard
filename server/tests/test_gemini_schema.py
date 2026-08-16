@@ -93,6 +93,27 @@ def test_every_custom_tool_survives_the_trip(converted):
     assert before == after
 
 
+def test_nullable_types_become_the_nullable_flag(converted):
+    """Gemini has no type-list form. `["string", "null"]` left as a list makes the
+    declaration malformed, and it is the memory tools that carry it — so the
+    failure would be Gemini losing `search_memory` while the board still worked."""
+    for declaration in _declarations(converted):
+        for node in _walk(declaration["parameters"]):
+            assert not isinstance(node.get("type"), list), declaration["name"]
+
+
+def test_a_nullable_field_keeps_its_type_and_gains_the_flag():
+    converted = to_gemini_tools([{
+        "type": "function", "name": "t", "description": "d",
+        "parameters": {"type": "object", "properties": {
+            "q": {"type": ["string", "null"], "description": "maybe"},
+        }},
+    }])
+    field = converted[0]["parameters"]["properties"]["q"]
+    assert field["type"] == "string"
+    assert field["nullable"] is True
+
+
 def test_every_property_name_survives_stripping():
     """`_strip` filters schema *keywords*, not property *names*.
 
