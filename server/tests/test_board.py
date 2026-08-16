@@ -15,6 +15,7 @@ import pytest
 from app.tutor import board
 from app.tutor.board_scene import (
     MAX_FONT_SIZE,
+    MAX_INK_TEXT_CHARS,
     MAX_LATEX_CHARS,
     MAX_PATH_CHARS,
     MAX_SCENE_CHARS,
@@ -324,7 +325,14 @@ def test_a_semantic_scene_is_reflected_back_exactly():
     assert scene in note
     assert "SEMANTIC BOARD SCENE" in note
     assert "update_board" in note
-    assert "never convert your own text into simulated handwriting" in note
+    assert "never redraw existing objects as new ids" in note
+    # This note used to end "never convert your own text into simulated
+    # handwriting". `ink_text` is that, done properly, so the style rule is
+    # gone and the rule that actually needed stating took its place: on a board
+    # where the tutor's own writing looks handwritten, the scene list is the
+    # only thing that says whose hand wrote what.
+    assert "simulated handwriting" not in note
+    assert "the learner's work is the writing that is not listed here" in note
 
 
 def test_scene_data_without_a_renderable_overview_is_still_not_viewable():
@@ -601,6 +609,99 @@ def test_the_new_kinds_reach_the_device_as_one_flat_element():
     assert path["fill_rule"] == "evenodd"
     assert math_text["font_size"] == 24
     assert path["stroke"] == "#0A0A0A", "style rides beside the geometry, not under it"
+
+
+# MARK: - Handwritten text
+
+
+def test_ink_text_parses():
+    update, error = parse_board_update(_update_json(
+        kind="ink_text", id="note1", x=-40, y=120,
+        text="nice — now try the next one", size=28,
+    ))
+
+    assert error is None
+    writing = update.elements[0]
+    assert (writing.x, writing.y, writing.size) == (-40.0, 120.0, 28.0)
+    assert writing.text == "nice — now try the next one"
+
+
+def test_ink_text_keeps_its_line_breaks():
+    """The device lays the string out itself, one line per newline, so the
+    breaks the tutor wrote are the breaks the learner reads."""
+    update, error = parse_board_update(_update_json(
+        kind="ink_text", id="note1", x=0, y=0, text="check the sign\non line 2",
+        size=24,
+    ))
+
+    assert error is None
+    assert update.elements[0].text == "check the sign\non line 2"
+
+
+def test_over_long_ink_text_is_trimmed_rather_than_refused():
+    """The opposite of what `latex`, `d`, and `svg` do, and deliberately.
+
+    Those are markup: half a document parses to nothing, so a truncation would
+    draw a blank board and say nothing about why. Prose is not markup. The
+    first 400 characters of a margin note still read as a margin note, and
+    refusing the call would leave the margin empty instead.
+    """
+    update, error = parse_board_update(_update_json(
+        kind="ink_text", id="note1", x=0, y=0,
+        text="a" * (MAX_INK_TEXT_CHARS + 100), size=24,
+    ))
+
+    assert update is not None, error
+    assert len(update.elements[0].text) == MAX_INK_TEXT_CHARS
+
+
+def test_empty_ink_text_is_refused():
+    """A hand that writes nothing is only ever a mistake: it spends an id and a
+    slot, draws nothing, and the model reads an applied ack and believes there
+    is a note on the board that the learner will never see."""
+    update, error = parse_board_update(_update_json(
+        kind="ink_text", id="note1", x=0, y=0, text="", size=24,
+    ))
+
+    assert update is None
+    assert "empty" in (error or "")
+
+
+def test_ink_text_size_is_clamped_to_the_readable_range():
+    """One range governs every size on the board, whatever the field is
+    called — this one is a cap height rather than a font size."""
+    update, error = parse_board_update(_update_json(
+        kind="ink_text", id="note1", x=0, y=0, text="hi", size=9_000,
+    ))
+
+    assert update is not None, error
+    assert update.elements[0].size == MAX_FONT_SIZE
+
+
+def test_ink_text_reaches_the_device_as_one_flat_element():
+    """The Swift-side contract, pinned here for the reason the path and
+    `math_text` one above is: only this side can break it. `size` is its own
+    coding key beside `text`, snake_case and unnested, and a scene that spelled
+    it `fontSize` or hid it under a `style` object would decode to a default
+    size on the device with nothing failing anywhere to say so."""
+    update, error = parse_board_update(json.dumps({
+        "mode": "upsert",
+        "delete_ids": [],
+        "elements": [
+            {"id": "note1", "kind": "ink_text", "x": 10, "y": 20,
+             "text": "try again", "size": 32, **_STYLE},
+        ],
+    }))
+    assert update is not None, error
+
+    wire = json.loads(update_payload(update).model_dump_json())
+    writing = wire["upserts"][0]
+
+    style_keys = {"role", "stroke", "fill", "stroke_width", "opacity", "dash", "rotation"}
+    assert set(writing) == {"id", "kind", "x", "y", "text", "size"} | style_keys
+    assert "style" not in writing
+    assert writing["kind"] == "ink_text"
+    assert writing["size"] == 32
 
 
 # MARK: - Images

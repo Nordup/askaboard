@@ -1,6 +1,11 @@
 from app.learner.mastery import RELIABILITY
 from app.memory.schema import MemoryCategory
-from app.tutor.board_scene import MAX_LATEX_CHARS, MAX_PATH_CHARS, MAX_SVG_CHARS
+from app.tutor.board_scene import (
+    MAX_INK_TEXT_CHARS,
+    MAX_LATEX_CHARS,
+    MAX_PATH_CHARS,
+    MAX_SVG_CHARS,
+)
 
 
 SET_WORKSPACE_TOOL: dict = {
@@ -186,11 +191,13 @@ UPDATE_BOARD_TOOL: dict = {
         "Draw, label, correct, update, or delete the tutor's semantic objects on the "
         "learner's whiteboard. Use it whenever a visual would help them — an exercise "
         "to work on, a diagram that carries an explanation, a correction beside their "
-        "work — and not only when one is asked for. Tutor objects are "
-        "structured text and geometry, never simulated handwriting. Choose the "
+        "work — and not only when one is asked for. Choose the "
         "element for the job: ordinary primitives — lines, arrows, shapes, arcs, "
-        "angle markers, plain text labels — for simple geometry and quick "
-        "annotations; `path` for curves and freeform shapes; `math_text` for every "
+        "angle markers, compact `text` labels — for simple geometry and short "
+        "captions; `path` for curves and freeform shapes; `ink_text` for anything "
+        "you say in words — a hint, encouragement, a note in the margin, "
+        "commentary beside a step — written in handwriting-look ink, the way a "
+        "teacher writes at a board, and reach for it often; `math_text` for every "
         "piece of mathematical notation, never plain `text`, never SVG `<text>`, "
         "and never symbols built out of primitives; `svg` for any figure made of "
         "several parts, which is what most real illustrations are — one document "
@@ -198,7 +205,8 @@ UPDATE_BOARD_TOOL: dict = {
         "board point; `image` for a photograph fetched with fetch_image or a chart "
         "a script produced, placed by the blob_id that tool answered with. "
         "This tool never touches the "
-        "learner's own PencilKit ink. Each object has a stable id: "
+        "learner's own PencilKit ink: what you write is a tutor object in your "
+        "own scene, and theirs stays theirs. Each object has a stable id: "
         "reuse ids to revise existing content and list ids in delete_ids to remove "
         "it. Pass elements=[] to only delete, delete_ids=[] to only upsert, or "
         "mode=replace_all to replace the entire tutor scene. Coordinates are logical "
@@ -394,6 +402,21 @@ UPDATE_BOARD_TOOL: dict = {
                                 "font_size": {"type": "number", "minimum": 8, "maximum": 256, "description": "Font size in board points."},
                             },
                             required=["x", "y", "latex", "font_size"],
+                        ),
+                        _board_element(
+                            kind="ink_text",
+                            fields={
+                                "x": {"type": "number", "description": "Left edge of the writing, board points."},
+                                "y": {"type": "number", "description": "Top edge of the first line, board points."},
+                                "text": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": MAX_INK_TEXT_CHARS,
+                                    "description": "The words to write, drawn on the device as handwriting-look ink in your own hand; newlines make lines. Prose only — a hint, a nudge, a margin note, commentary beside a step — and every piece of notation still goes in `math_text`. Your writing looks handwritten in a board capture too, so when you read the board back, the learner's work is the writing you did not put there: every piece you did is listed, by id, in the scene you are given.",
+                                },
+                                "size": {"type": "number", "minimum": 8, "maximum": 256, "description": "Cap height in board points; roughly how tall one line of the writing stands."},
+                            },
+                            required=["x", "y", "text", "size"],
                         ),
                         _board_element(
                             kind="image",

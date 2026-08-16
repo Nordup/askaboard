@@ -39,6 +39,12 @@ MAX_PATH_CHARS = 20_000
 #: Maximum length of one LaTeX fragment. Notation is short: 2,000 characters is
 #: already a very long expression, and the same figure caps plain text.
 MAX_LATEX_CHARS = 2_000
+#: Maximum length of one handwritten string. Far shorter than the other text
+#: caps, because this one is drawn stroke by stroke and read as handwriting:
+#: 400 characters is about four lines of a margin note, which is already more
+#: than a learner reads beside their own working, and a paragraph written in
+#: ink is a paragraph nobody reads. Prose that long belongs in the reply.
+MAX_INK_TEXT_CHARS = 400
 
 #: The logical board is 50,000 points on a side centred on the drawing-space
 #: origin (25,000, 25,000), so the valid logical range is -25,000...25,000 on
@@ -95,10 +101,16 @@ def _validated_document(value: str, *, name: str, limit: int) -> str:
     return value
 
 
-def _validated_font_size(value: float) -> float:
-    """Shared by every element that sets type, so one range governs all of it."""
+def _validated_font_size(value: float, *, name: str = "font_size") -> float:
+    """Shared by every element that sets type, so one range governs all of it.
+
+    `name` only changes what a refusal is called. `ink_text` sizes its writing
+    by cap height and spells the field `size`, and a model told that
+    `font_size` was not a finite number has been told about a field it did not
+    send — so the range is shared and the message says which key was wrong.
+    """
     if not _finite(value):
-        raise ValueError("font_size must be a finite number")
+        raise ValueError(f"{name} must be a finite number")
     return _clamp(value, MIN_FONT_SIZE, MAX_FONT_SIZE)
 
 
@@ -380,6 +392,67 @@ class MathTextElement(_Identified):
         return _validated_font_size(value)
 
 
+class InkTextElement(_Identified):
+    """Words the tutor writes on the board in its own hand.
+
+    The model sends a string and the device draws it: one stroke template per
+    character, laid out by a cursor and rendered as tapered ink. So this is
+    text that *looks* handwritten — a hint in the margin, "nice!" beside a
+    step, a line of commentary under the working — written the way a teacher
+    standing at the board writes, rather than typeset beside it.
+
+    Handwriting-look, not handwriting: nothing here reaches the learner's
+    `PKDrawing`. This is a tutor element with an id like every other one, so
+    the tutor can revise or delete what it wrote, and the learner's undo
+    history stays theirs. That separation used to be visible — tutor content
+    was the typeset content and everything in ink was theirs — and it now has
+    to be read off the scene instead, which is why `update_board`'s description
+    says so and why the scene the device sends back lists these ids.
+
+    `text` is prose, not notation. `latex` exists for notation and typesets it
+    properly; an equation spelled out in drawn glyphs is exactly the unreadable
+    thing `MathTextElement` was written to prevent.
+    """
+
+    kind: Literal["ink_text"] = "ink_text"
+    x: float
+    y: float
+    text: str
+    #: Cap height in board points, in the same range as every other size on the
+    #: board. Spelled `size` rather than `font_size` because there is no font:
+    #: the device measures the glyph table against this number.
+    size: float
+
+    @field_validator("text")
+    @classmethod
+    def _text(cls, value: str) -> str:
+        """Refused when empty, trimmed when long — and the halves differ.
+
+        An empty one is not writing at all: it spends an id and a slot, draws
+        nothing, and the model reads "applied" and believes there is a note on
+        the board that the learner will never see. `TextElement` tolerates that
+        because a typeset label is a box the device still lays out; a hand that
+        writes nothing is only ever a mistake, so it is named here.
+
+        Over-length is trimmed rather than refused, which is the opposite of
+        what `latex`, `d`, and `svg` do. Those are markup: half a document
+        parses to nothing, so a truncation would draw a blank and say nothing
+        about why. Prose is not markup — the first 400 characters of a note
+        still read as a note — and a refusal here would leave the margin empty
+        instead.
+        """
+        if not isinstance(value, str):
+            raise ValueError("text must be a string")
+        if not value:
+            raise ValueError("ink_text text must not be empty")
+        return value[:MAX_INK_TEXT_CHARS]
+
+    @field_validator("size")
+    @classmethod
+    def _size(cls, value: float) -> float:
+        return _validated_font_size(value, name="size")
+
+
 class ImageElement(_Identified):
     """A picture the server already holds, placed on the board by its key.
 
@@ -484,7 +557,7 @@ BoardElement = Annotated[
     TextElement | LineElement | ArrowElement | RectangleElement | EllipseElement
     | CircleElement | PolygonElement | PolylineElement | FreehandElement
     | ArcElement | AngleMarkerElement | PathElement | MathTextElement
-    | ImageElement | SVGElement,
+    | InkTextElement | ImageElement | SVGElement,
     Field(discriminator="kind"),
 ]
 

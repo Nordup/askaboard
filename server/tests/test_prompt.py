@@ -14,7 +14,12 @@ def test_system_prompt_is_the_unchanged_experimental_draft():
         # 2026-08-16: proactive-tools addition — RESEARCH tells the tutor to
         # web_search and fetch_image unprompted, BOARD says web tools are part
         # of teaching, and fetch_image's TOOLS line says "use it proactively".
-        "b0f28845cfe0f40f0b40a8a9a8b88726eaa07e29967a3cba6b1be64dd6260764"
+        #
+        # 2026-08-16: ink_text — BOARD gains the paragraph telling the tutor to
+        # write on the board in its own handwriting, and to do it often. The
+        # TOOLS list is unchanged: `ink_text` is an element of `update_board`,
+        # which is already listed, not a tool of its own.
+        "2ea85713c1bfbc9f36c8ab544c98e53bde1954948371962f73816e04b98c5a95"
     )
 
 
@@ -90,6 +95,19 @@ def test_system_prompt_splits_computed_charts_from_drawn_diagrams():
     assert "the image the script produced" in research
     assert "draw natively" in research
     assert "math_text" in research
+
+
+def test_system_prompt_tells_the_tutor_to_write_on_the_board_by_hand():
+    """A tool description says an element exists; only the prompt says how
+    often to reach for it. `ink_text` is worth nothing if the tutor treats
+    handwriting as a flourish, so BOARD asks for it as ordinary teaching — and
+    routes notation away from it in the same breath."""
+    board = SYSTEM_PROMPT[SYSTEM_PROMPT.index("## BOARD"):]
+    board = board[:board.index("## RESEARCH")]
+
+    assert "`ink_text` puts your words there in ink" in board
+    assert "Use it often" in board
+    assert "Notation stays `math_text`" in board
 
 
 def test_system_prompt_enforces_the_learner_led_invariant():

@@ -88,9 +88,11 @@ def describe(
             f"{trimmed}\n\n"
             "Coordinates are logical board points with (0,0) at the board "
             "centre, +x right and +y down. Update these objects with "
-            "`update_board` using their stable ids; never redraw existing "
-            "objects as new ids, and never convert your own text into "
-            "simulated handwriting."
+            "`update_board` using their stable ids, and never redraw existing "
+            "objects as new ids. This list is also how you tell the two hands "
+            "apart: everything in it is yours, including any `ink_text` you "
+            "wrote, which looks handwritten in the overview as well — the "
+            "learner's work is the writing that is not listed here."
         )
 
     lines = []

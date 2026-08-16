@@ -287,10 +287,18 @@ the strict `update_board` function tool in
 [`app/tutor/tools.py`](app/tutor/tools.py). The tool takes a discriminated
 union of primitives — `text`, `line`, `arrow`, `rectangle`, `ellipse`,
 `circle`, `polygon`, `polyline`, `freehand`, `arc`, `angle_marker`, `path`,
-`math_text`, `image`, and a raw
+`math_text`, `ink_text`, `image`, and a raw
 `svg` element — each with a stable id, exact board coordinates, and shared
 style fields (role, stroke/fill colors, width, opacity, dash, rotation where
 meaningful).
+
+`ink_text` is the tutor's own handwriting: the model sends a string of prose and
+a cap height, and the device draws it character by character as ink-look
+strokes. It is a tutor object with an id like every other one — nothing it
+writes enters the learner's `PKDrawing` — so a hint can sit in the margin in
+ink without ever touching their drawing or their undo history. That makes the
+scene the only thing on the board that says whose hand wrote what, which is why
+the scene context names the tutor's ids as its own.
 
 A call is parsed and validated in
 [`app/tutor/board_scene.py`](app/tutor/board_scene.py): coordinates, element
@@ -315,9 +323,10 @@ The device also sends the current scene back on every turn in the
 `board_scene` request field, and the context assembler
 ([`app/tutor/context.py`](app/tutor/context.py)) includes that exact string in
 the prompt, labelled as quoted data, so the model can see and revise its own
-previous output. The prompt tells the model when to draw, to use semantic text
-rather than simulated handwriting, to place corrections beside learner ink
-without covering it, and to avoid gratuitous drawing. The scene context also
+previous output. The prompt tells the model when to draw, to write its own words
+in `ink_text` and keep every piece of notation in `math_text`, to place
+corrections beside learner ink without covering it, and to avoid gratuitous
+drawing. The scene context also
 contains the current viewport and the logical bounds represented by the board
 overview; because `view_board` regions are percentages of that same overview,
 the model can convert what it inspected back into exact coordinates for a

@@ -1,6 +1,11 @@
 import json
 
-from app.tutor.board_scene import MAX_LATEX_CHARS, MAX_PATH_CHARS, MAX_SVG_CHARS
+from app.tutor.board_scene import (
+    MAX_INK_TEXT_CHARS,
+    MAX_LATEX_CHARS,
+    MAX_PATH_CHARS,
+    MAX_SVG_CHARS,
+)
 from app.tutor.tools import (
     FETCH_IMAGE_TOOL,
     MEMORY_TOOL_DEFINITIONS,
@@ -100,7 +105,7 @@ def test_update_board_primitives_are_a_discriminated_union():
     assert set(kinds) == {
         "text", "line", "arrow", "rectangle", "ellipse", "circle",
         "polygon", "polyline", "freehand", "arc", "angle_marker", "path",
-        "math_text", "image", "svg",
+        "math_text", "ink_text", "image", "svg",
     }
 
 
@@ -192,6 +197,32 @@ def test_update_board_math_text_arm_claims_all_notation():
     assert "notation on the board" in description
 
 
+def test_update_board_ink_text_arm_writes_prose_in_the_tutors_own_hand():
+    """The kind that draws words rather than typesetting them.
+
+    Two things the model can only learn here, and both are corrections it
+    cannot make afterwards. Notation drawn as glyphs is the unreadable output
+    `math_text` exists to prevent, and it is now one field name away. And once
+    the tutor's own writing looks handwritten, "the handwriting is the
+    learner's" stops being true — so the arm says where the boundary moved to:
+    the scene lists the tutor's ids, and everything else on the board is theirs.
+    """
+    arms = UPDATE_BOARD_TOOL["parameters"]["properties"]["elements"]["items"]["anyOf"]
+    ink = next(arm for arm in arms if arm["properties"]["kind"]["const"] == "ink_text")
+
+    assert {"id", "kind", "x", "y", "text", "size"}.issubset(set(ink["required"]))
+    assert ink["properties"]["text"]["minLength"] == 1
+    assert ink["properties"]["text"]["maxLength"] == MAX_INK_TEXT_CHARS
+    # The same range every other size on the board is written in.
+    assert ink["properties"]["size"]["minimum"] == 8
+    assert ink["properties"]["size"]["maximum"] == 256
+
+    description = ink["properties"]["text"]["description"]
+    assert "handwriting-look ink" in description
+    assert "notation still goes in `math_text`" in description
+    assert "the learner's work is the writing you did not put there" in description
+
+
 def test_update_board_image_arm_places_a_blob_the_server_already_holds():
     """A model that invents a key places a picture nobody has. The pattern is
     the one `GET /v1/blobs/{key}` gates, so a made-up id cannot even be sent."""
@@ -220,6 +251,11 @@ def test_update_board_description_names_an_element_kind_for_every_job():
 
     assert "ordinary primitives" in description
     assert "`path` for curves and freeform shapes" in description
+    # Words and notation are one field name apart, so the routing between them
+    # is stated in the same breath — and `ink_text` carries the frequency the
+    # rest of this description only gives to drawing.
+    assert "`ink_text` for anything you say in words" in description
+    assert "reach for it often" in description
     assert "`math_text` for every piece of mathematical notation" in description
     assert "never plain `text`, never SVG `<text>`" in description
     assert "never symbols built out of primitives" in description
@@ -244,6 +280,12 @@ def test_update_board_description_makes_no_claim_the_renderer_disproved():
 
     assert "masks, filters" not in description
     assert "complex multi-part illustrations" not in description
+    # The style rule the ink renderer retired: tutor objects were "structured
+    # text and geometry, never simulated handwriting" until the device learned
+    # to draw glyphs. It is a claim about what this tool can do, and `ink_text`
+    # makes it false. The storage rule it used to sit beside is a different
+    # sentence and stays — see the test below.
+    assert "never simulated handwriting" not in description
     # The document contract belongs to the arm that carries the markup, and is
     # asserted there. Saying it twice spends the bytes on every request.
     assert "passed through unchanged" not in description
@@ -253,10 +295,17 @@ def test_update_board_description_makes_no_claim_the_renderer_disproved():
 
 
 def test_update_board_description_keeps_the_rules_that_protect_learner_work():
-    """The drawing guidance was rewritten around these; they were not."""
+    """The drawing guidance was rewritten around these; they were not.
+
+    The PencilKit sentence is the one that had to survive `ink_text`. It reads
+    like a style rule and is not one: it is storage. The tutor's writing lives
+    in the tutor's scene, so the learner's drawing — and their undo history —
+    stays theirs, which is exactly as true now that both hands look the same.
+    """
     description = UPDATE_BOARD_TOOL["description"]
 
     assert "never touches the learner's own PencilKit ink" in description
+    assert "theirs stays theirs" in description
     assert "Do not cover or erase learner ink" in description
     assert "Inspect the board with view_board before grading" in description
     assert "do not draw gratuitously" in description
@@ -420,7 +469,23 @@ def test_the_tool_surface_stays_inside_its_budget():
     # other mention), against an opening clause that got shorter as it got
     # broader — the tool is for whenever a visual helps, not only when one is
     # asked for. The surface is 31,096, leaving 904.
-    assert len(json.dumps(TOOL_DEFINITIONS)) < 32_000
+    #
+    # `ink_text` (docs/superpowers/plans/2026-08-16-ink-text.md) cost 1,625 and
+    # trips the 32,000 bound, which is the line working. The arm is 1,403 of
+    # that — the most expensive one here, and the price is its `text`
+    # description, which has to carry three things no other arm needs to say:
+    # that this kind is prose and notation still belongs to `math_text`, that
+    # the device draws it rather than typesets it, and how to tell the two
+    # hands apart on a board where the tutor's own writing now looks
+    # handwritten. The other 210 are the routing sentence gaining a clause and
+    # the PencilKit rule gaining the reason it is still true; the retired
+    # "never simulated handwriting" claim paid 76 of it back.
+    #
+    # So the bound moves to 33,800, on the reasoning every raise here has used:
+    # about a thousand characters of room — 1,079 over the 32,721 the surface
+    # now stands at — which is still under what a new arm costs. A rewritten
+    # description fits; a seventeenth primitive does not, and trips this line.
+    assert len(json.dumps(TOOL_DEFINITIONS)) < 33_800
 
 
 def test_fetch_image_is_strict_closed_and_takes_one_url():
