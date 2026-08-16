@@ -221,6 +221,19 @@ def test_update_board_ink_text_arm_writes_prose_in_the_tutors_own_hand():
     assert "handwriting-look ink" in description
     assert "notation still goes in `math_text`" in description
     assert "the learner's work is the writing you did not put there" in description
+    # The scene is assembled once, before the first tool call; `view_board`
+    # renders the device as it stands now. Without this clause the rule reads
+    # as "anything not in the list is theirs", and a tutor that wrote a note
+    # this turn then grades its own handwriting as the learner's work.
+    assert "plus whatever you have written this turn" in description
+    # The device draws from an ASCII glyph table. A model writing in the
+    # register the rest of this schema is written in gets "nice _ now try".
+    assert "normalised to their ASCII equivalents" in description
+    assert "comes out as a placeholder" in description
+    for typographic in ("—", "–", "“", "”", "’", "…"):
+        assert typographic not in description, (
+            f"the description asks for plain text and must model it: {typographic}"
+        )
 
 
 def test_update_board_image_arm_places_a_blob_the_server_already_holds():
@@ -485,6 +498,17 @@ def test_the_tool_surface_stays_inside_its_budget():
     # about a thousand characters of room — 1,079 over the 32,721 the surface
     # now stands at — which is still under what a new arm costs. A rewritten
     # description fits; a seventeenth primitive does not, and trips this line.
+    #
+    # Review round 1 then spent 244 net on two corrections to that arm, both of
+    # things it stated as true and were not. The scene list is not the whole of
+    # what the tutor wrote — this turn's own writing is not in it — and the
+    # glyph table is ASCII, so an em dash the model copies from its own prompt
+    # comes out of the renderer as a placeholder. The clauses cost 254; the
+    # rest came back by writing that description without the typographic
+    # punctuation it now asks the model to avoid, which is worth 5 characters
+    # per em dash here because `json.dumps` escapes non-ASCII to `\\uXXXX`.
+    # The surface is 32,965, leaving 835 — a sentence of room, still far under
+    # the 1,647 this arm cost — so the bound does not move.
     assert len(json.dumps(TOOL_DEFINITIONS)) < 33_800
 
 

@@ -412,7 +412,14 @@ UPDATE_BOARD_TOOL: dict = {
                                     "type": "string",
                                     "minLength": 1,
                                     "maxLength": MAX_INK_TEXT_CHARS,
-                                    "description": "The words to write, drawn on the device as handwriting-look ink in your own hand; newlines make lines. Prose only — a hint, a nudge, a margin note, commentary beside a step — and every piece of notation still goes in `math_text`. Your writing looks handwritten in a board capture too, so when you read the board back, the learner's work is the writing you did not put there: every piece you did is listed, by id, in the scene you are given.",
+                                    # Written without em dashes, curly quotes,
+                                    # or an ellipsis, on purpose. The device
+                                    # draws from an ASCII glyph table and
+                                    # normalises the typographic forms into it;
+                                    # a description written in the register it
+                                    # is asking the model *not* to use teaches
+                                    # the opposite of what it says.
+                                    "description": "The words to write, drawn on the device as handwriting-look ink in your own hand; newlines make lines. Prose only (a hint, a nudge, a margin note, commentary beside a step), and every piece of notation still goes in `math_text`. Write it as plain text: em and en dashes, curly quotes and ellipses are normalised to their ASCII equivalents, and anything with no glyph to draw, such as emoji or a non-Latin script, comes out as a placeholder. Your writing looks handwritten in a board capture too, so when you read the board back, the learner's work is the writing you did not put there: every piece you did is listed, by id, in the scene you were given, plus whatever you have written this turn.",
                                 },
                                 "size": {"type": "number", "minimum": 8, "maximum": 256, "description": "Cap height in board points; roughly how tall one line of the writing stands."},
                             },

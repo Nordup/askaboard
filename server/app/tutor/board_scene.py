@@ -105,9 +105,13 @@ def _validated_font_size(value: float, *, name: str = "font_size") -> float:
     """Shared by every element that sets type, so one range governs all of it.
 
     `name` only changes what a refusal is called. `ink_text` sizes its writing
-    by cap height and spells the field `size`, and a model told that
-    `font_size` was not a finite number has been told about a field it did not
-    send — so the range is shared and the message says which key was wrong.
+    by cap height and spells the field `size`, so a message about `font_size`
+    would name a key that call does not carry.
+
+    Not for the model's benefit: `loop` discards this string and answers every
+    malformed batch with one constant ack, so nothing here is ever read by the
+    thing that wrote the bad value. It is for the log line, the test failure,
+    and whoever is reading either one.
     """
     if not _finite(value):
         raise ValueError(f"{name} must be a finite number")
@@ -434,12 +438,21 @@ class InkTextElement(_Identified):
         because a typeset label is a box the device still lays out; a hand that
         writes nothing is only ever a mistake, so it is named here.
 
+        What that refusal costs is worth stating, because it is not local: a
+        batch is validated whole, so one empty string rejects every element
+        beside it, and `loop.MALFORMED_BOARD_ACK` is a constant that names
+        none of them. A strict schema makes it unreachable — `minLength` is 1 —
+        but the Gemini declaration strips bounds and leans on this module to
+        re-check them, so on that path an empty note costs the whole update.
+        Still the right trade: a rejected batch is one the model writes again,
+        while an accepted empty one is a note it believes is on the board.
+
         Over-length is trimmed rather than refused, which is the opposite of
         what `latex`, `d`, and `svg` do. Those are markup: half a document
         parses to nothing, so a truncation would draw a blank and say nothing
         about why. Prose is not markup — the first 400 characters of a note
         still read as a note — and a refusal here would leave the margin empty
-        instead.
+        instead, at the same whole-batch price.
         """
         if not isinstance(value, str):
             raise ValueError("text must be a string")

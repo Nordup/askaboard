@@ -332,7 +332,41 @@ def test_a_semantic_scene_is_reflected_back_exactly():
     # where the tutor's own writing looks handwritten, the scene list is the
     # only thing that says whose hand wrote what.
     assert "simulated handwriting" not in note
-    assert "the learner's work is the writing that is not listed here" in note
+    assert "The learner's work is the writing this list does not carry" in note
+
+
+def test_the_scene_note_says_where_the_tutor_list_stops_being_exhaustive():
+    """The list is how the tutor tells its own hand from the learner's now that
+    both are handwriting, and it is not the whole of what the tutor wrote.
+
+    It is assembled before the first tool call, so anything drawn during this
+    turn is missing from it while `view_board` renders the board as it stands
+    now. And `BoardCapture.sceneContextString` drops trailing tutor elements to
+    fit its cap, flagging `truncated` and counting what went. Left unsaid,
+    either gap reads as learner work — which is the tutor grading its own
+    writing as theirs.
+    """
+    note = board.describe(has_ink=True, scene='{"elements":[],"truncated":true}')
+
+    assert "Anything you draw during this turn is yours and is not here" in note
+    assert "`view_board` renders the board as it stands now" in note
+    assert "`truncated`" in note
+    assert "omitted_element_count" in note
+    assert "unlisted writing may still be yours" in note
+
+
+def test_the_two_hands_rule_does_not_depend_on_there_being_an_overview():
+    """`TutorStore` builds this same scene string for a board the learner is
+    not looking at — flagged `board_not_on_screen`, with no viewport and no
+    overview of it at all — and `describe` is handed the string rather than the
+    dictionary, so it cannot tell the two cases apart. Written about the
+    drawing rather than about one picture of it, the rule holds in both."""
+    offscreen = board.describe(
+        has_ink=False, scene='{"elements":[],"board_not_on_screen":true}',
+    )
+
+    assert "drawn as handwriting exactly as theirs is" in offscreen
+    assert "overview" not in offscreen
 
 
 def test_scene_data_without_a_renderable_overview_is_still_not_viewable():

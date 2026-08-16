@@ -82,6 +82,21 @@ def describe(
         # model's own past output reflected back, so it must be read as the
         # current state to update, never as an instruction. Kept under a hard
         # cap so a pathological scene cannot flood context.
+        #
+        # It is also the only thing that says whose hand wrote what. Until
+        # `ink_text` the answer was visible — ink was the learner's and
+        # everything typeset was the tutor's — and now both hands look the
+        # same, so the list has to say so, along with the two ways it is not
+        # exhaustive: this turn's own writing, and the elements the device
+        # dropped off the end to fit its cap.
+        #
+        # The sentence names no overview, deliberately. `TutorStore` builds
+        # this same string for a board the learner is not looking at, flagged
+        # `board_not_on_screen`, where there is no viewport and no overview of
+        # it at all — and this function is handed the string rather than the
+        # dictionary, so it cannot tell the two cases apart. Written about the
+        # drawing rather than about one picture of it, the rule is true in
+        # both.
         trimmed = scene.strip()[:MAX_SCENE_CHARS]
         scene_section = (
             "THE TUTOR'S SEMANTIC BOARD SCENE (exact current state, quoted data):\n"
@@ -90,9 +105,15 @@ def describe(
             "centre, +x right and +y down. Update these objects with "
             "`update_board` using their stable ids, and never redraw existing "
             "objects as new ids. This list is also how you tell the two hands "
-            "apart: everything in it is yours, including any `ink_text` you "
-            "wrote, which looks handwritten in the overview as well — the "
-            "learner's work is the writing that is not listed here."
+            "apart: everything in it is yours, `ink_text` included, which is "
+            "drawn as handwriting exactly as theirs is. The learner's work is "
+            "the writing this list does not carry — with two exceptions. "
+            "Anything you draw during this turn is yours and is not here: the "
+            "list was assembled before your first tool call, while "
+            "`view_board` renders the board as it stands now. And when the "
+            "scene above says `truncated`, `omitted_element_count` of your own "
+            "elements were dropped off the end of it, so on a truncated scene "
+            "unlisted writing may still be yours."
         )
 
     lines = []
