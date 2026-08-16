@@ -14,11 +14,14 @@ that drops a call ends a turn in silence and one that keeps a stale call bills
 the learner for a round that does nothing. Both of those are tested here, against
 streams recorded off real turns rather than written from the documentation.
 
-The cross-provider parity test this file is eventually for arrives with Task 9:
-two providers, one `ClientEvent` sequence, so that a change making one family
-behave differently from the other fails here before anyone notices it on a board.
-`test_a_board_update_reaches_the_same_board_as_the_openai_fixture` is the first
-instalment of it.
+The cross-provider parity test this file exists for is at the bottom:
+`test_a_board_update_turn_produces_the_same_shape_on_both_providers` drives one
+recorded turn through each family and compares what the device is left holding,
+so that a change making one family behave differently from the other fails here
+rather than on a board. It is the test to keep if any other in this file is ever
+dropped. `test_a_board_update_reaches_the_same_board_as_the_openai_fixture` came
+first and stays beside it: its subject is the Gemini accumulator's arguments
+string, which the parity test never looks at directly.
 """
 
 import asyncio
@@ -31,7 +34,10 @@ from openai import AsyncOpenAI
 from pydantic import TypeAdapter
 
 from app.pricing import turn_cost_usd
-from app.tutor.events import CODE_INTERPRETER, EventTranslator
+from app.tutor.events import (
+    CODE_INTERPRETER, BoardUpdateEvent, EventTranslator, ReasoningDeltaEvent,
+    StatusEvent, TextDeltaEvent,
+)
 from app.tutor.fetch_image import ALLOWED_CONTENT_TYPES
 from app.tutor.providers import (
     TERMINAL_ERROR_STATUSES, Completed, Created, Failed, HostedToolActivity,
@@ -887,3 +893,145 @@ def test_a_spent_day_with_no_delay_offered_is_final():
     }})
     assert not decision.retry
     assert "quota" in decision.reason
+
+
+# --------------------------------------------------------------------------
+# Both providers, one client-event sequence
+# --------------------------------------------------------------------------
+
+
+def _client_events(provider, raw_events):
+    """Every `ClientEvent` one recorded stream produces, in order.
+
+    `neutral`, not `normalise`. `normalise` on the OpenAI side dumps an SDK
+    object, and these fixtures already *are* the dicts such a dump produces;
+    both providers expose the mapping over an already-dumped dict for exactly
+    this reason. That the dict path and the SDK path agree is not assumed here,
+    it is asserted by
+    `test_every_recorded_event_decodes_to_the_shape_the_provider_reads`.
+
+    The clock is frozen so that no heartbeat can fire. `HEARTBEAT_SECONDS` of
+    silence inserts an extra `status` wherever the interval happens to elapse,
+    and the two fixtures are different lengths — so a real clock would make a
+    cross-provider comparison depend on how fast the machine ran this loop.
+    """
+    translator = EventTranslator(now=lambda: 0.0)
+    produced = []
+    for raw in raw_events:
+        produced.extend(translator.translate(provider.neutral(raw)))
+    return produced
+
+
+def _shape(events):
+    """The sequence reduced to what the device actually reacts to.
+
+    Three reductions, each for a reason, because the unreduced sequences differ
+    and every one of the differences is a property of a recording rather than of
+    the seam.
+
+    **`reasoning_delta` is filtered out.** Whether a turn narrates its thinking
+    is the model's choice on the day: the recorded Gemini turn emitted a
+    `thought_summary` and the recorded OpenAI turn did not, and at
+    `thinking_level: "low"` roughly half of Gemini turns emit no summary at all
+    — so two recordings of the same Gemini prompt would not agree with each
+    other either. A test pinning the raw sequence pins one recording, goes red
+    the next time anyone re-records a fixture, and leaves "weaken the assertion"
+    as the only correct response to the failure. That is the least useful
+    failing test there is.
+
+    **Text is joined** rather than compared delta by delta. The two families
+    chunk prose into different numbers of events and a learner cannot see that.
+
+    **Only the event kinds are kept, not a step's `id`.** That id is the
+    provider's own `call_id` — `call_board` here against `call_937729` there —
+    and two recordings can no more agree on it than on a response id. The kind
+    is what the device switches on; the payload it must agree about is returned
+    separately and compared whole.
+    """
+    kinds = [
+        event.type for event in events
+        if not isinstance(event, ReasoningDeltaEvent)
+    ]
+    text = "".join(e.text for e in events if isinstance(e, TextDeltaEvent))
+    boards = [e for e in events if isinstance(e, BoardUpdateEvent)]
+    return kinds, text, boards
+
+
+def test_a_board_update_turn_produces_the_same_shape_on_both_providers():
+    """The parity test the whole provider seam exists for.
+
+    Two recorded streams of the same turn — `BOARD_UPDATE_TURN` off the
+    Responses API, `BOARD_UPDATE_INTERACTION` off the Interactions API — each
+    through its own provider and then through the one `EventTranslator`, reduced
+    to what the device reacts to. `interactions.py` imports
+    `BOARD_UPDATE_ARGUMENTS` from `sse.py` rather than copying it, so the two
+    fixtures cannot drift into naming different boards and leave this comparing
+    two turns instead of two providers.
+
+    This is the test to keep if any other in this file is dropped. A change that
+    makes one family behave differently from the other — a status the provider
+    forgets to announce, a step row opened under a different name, an
+    accumulator that hands the translator a different arguments string — fails
+    here, in a suite, rather than on a nine-year-old's board.
+    """
+    openai_kinds, openai_text, openai_boards = _shape(
+        _client_events(OpenAIProvider(client=None), BOARD_UPDATE_TURN)
+    )
+    gemini_kinds, gemini_text, gemini_boards = _shape(
+        _client_events(GeminiProvider(client=None), BOARD_UPDATE_INTERACTION)
+    )
+
+    assert gemini_kinds == openai_kinds
+    # Both recordings are tool-call rounds that write no prose, so today this
+    # compares "" against "": on both families the round that writes is a
+    # separate interaction, and there is no recorded second leg of the *board*
+    # turn on the Gemini side to pair with `BOARD_UPDATE_FOLLOW_UP`. Stated
+    # plainly rather than left looking like evidence — the limb is here because
+    # joining is the right reduction, and it starts holding something down the
+    # moment either fixture gains a text delta.
+    assert gemini_text == openai_text
+    # Compared whole, not field by field. This payload *is* what changes the
+    # learner's screen, and an assertion that named its fields would silently
+    # stop covering whichever field `BoardUpdatePayload` gains next.
+    assert len(gemini_boards) == len(openai_boards) == 1
+    assert gemini_boards[0].model_dump() == openai_boards[0].model_dump()
+
+
+def test_both_families_announce_drawing_at_the_head_of_the_board_call():
+    """The status that stops the learner staring at nothing while a diagram's
+    arguments stream — asserted as a named phase in a named position, which is
+    the one thing the parity test above cannot do.
+
+    Not a restatement of that test, and the difference is the whole reason this
+    one is worth its lines. The parity test compares the two sequences to *each
+    other*, so it stays green whenever both families regress together: delete
+    the `update_board` row from `TOOL_PHASES` and neither stream carries a
+    `drawing` status, the two reduced sequences still match exactly, and every
+    learner on both families watches a minutes-long silence with the status line
+    still reading `thinking`. That is the defect `TOOL_PHASES` exists to
+    prevent, and naming the phase here is what makes it fail.
+
+    The position is measured against the `step` row, not against the board
+    update. Both the status and the row come out of one `ToolCallStarted`, so a
+    `drawing` that arrived from the heartbeat instead — up to
+    `HEARTBEAT_SECONDS` into a call whose arguments take minutes — would land
+    *after* the row and fail here. Measured against the board update it would
+    prove nothing at all: `Created` puts a `thinking` status at the front of
+    every stream, so "some status precedes the board update" passes even with no
+    `drawing` status anywhere in the turn.
+    """
+    for provider, fixture in (
+        (OpenAIProvider(client=None), BOARD_UPDATE_TURN),
+        (GeminiProvider(client=None), BOARD_UPDATE_INTERACTION),
+    ):
+        events = _client_events(provider, fixture)
+        kinds = [event.type for event in events]
+        drawing = [
+            index for index, event in enumerate(events)
+            if isinstance(event, StatusEvent) and event.phase == "drawing"
+        ]
+
+        assert drawing, f"{provider.name} never announced the drawing phase"
+        assert drawing[0] < kinds.index("step"), (
+            f"{provider.name} announced drawing after the step row opened"
+        )
