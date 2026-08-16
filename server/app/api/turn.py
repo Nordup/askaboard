@@ -47,12 +47,13 @@ from app.tutor.loop import (
     TurnResult,
     run_turn,
 )
-from app.tutor.providers import ProducedFile, Provider, RelayedFile
-from app.tutor.providers.openai import (
-    ContainerFileTooLarge,
-    OpenAIProvider,
+from app.tutor.providers import (
+    ProducedFile,
+    Provider,
+    RelayedFile,
     relayed_content_type,
 )
+from app.tutor.providers.openai import ContainerFileTooLarge, OpenAIProvider
 from app.tutor.rendezvous import BoardRegion
 from app.tutor.retry import classify
 

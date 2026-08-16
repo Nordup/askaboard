@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+import logging
 import mimetypes
 
 import pytest
@@ -33,17 +34,20 @@ from app.tutor.loop import (
 # behind the provider seam: containers are this family's alone, and `loop.py`
 # importing the provider would be a circle. Nothing about what they do changed,
 # which is what the assertions below are here to prove.
-from app.tutor.providers import ProducedFile, RelayedFile
-from app.tutor.providers.openai import (
+from app.tutor.providers import (
     DEFAULT_SCRIPT_OUTPUT_TYPE,
     RELAYED_FILES_CAPTION,
+    ProducedFile,
+    RelayedFile,
+    relayed_content_type,
+)
+from app.tutor.providers.openai import (
     ContainerFileTooLarge,
     OpenAIProvider,
     _container_citations,
     _relay_item,
     _rendered_items,
     download_container_file,
-    relayed_content_type,
 )
 from tests.fixtures.sse import (
     BOARD_UPDATE_FOLLOW_UP,
@@ -388,6 +392,74 @@ async def test_a_model_that_only_ever_calls_the_tool_is_bounded():
         pass
 
     assert route.call_count == MAX_TOOL_ROUNDS
+
+
+# A response that ended on a call the provider gave no `call_id`. Not a shape a
+# healthy provider sends; it is the shape the two guards in `run_turn` exist for,
+# and the reason those two guards have to agree with each other.
+CALL_WITHOUT_ID_TURN = (
+    {"type": "response.created", "sequence_number": 0,
+     "response": {"id": "resp_noid"}},
+    {
+        "type": "response.output_item.added",
+        "sequence_number": 1,
+        "output_index": 0,
+        "item": {"type": "function_call", "id": "fc_noid",
+                 "name": "set_workspace", "arguments": ""},
+    },
+    {
+        "type": "response.completed",
+        "sequence_number": 2,
+        "response": {
+            "id": "resp_noid",
+            "usage": {"input_tokens": 12, "output_tokens": 3},
+            "output": [{
+                "type": "function_call",
+                "id": "fc_noid",
+                "name": "set_workspace",
+                "arguments": "{}",
+                "status": "completed",
+            }],
+        },
+    },
+)
+
+
+@respx.mock
+async def test_a_call_with_no_call_id_is_recorded_nowhere_and_ends_the_turn(caplog):
+    """Two guards read the same field, and they have to agree.
+
+    A call the provider gave no `call_id` cannot be answered — there is nothing
+    to key an output to — so `run_turn` skips it and ends the turn rather than
+    posting an empty `input` against the previous response. The recorded list has
+    to skip it for the same reason: a `tool_calls` row for a call nothing answered
+    tells whoever reads the database that a tool ran and returned null.
+
+    The regression this pins is one guard drifting from the other. A provider
+    normalises a missing id to the empty string rather than dropping the field,
+    so a guard written `is None` passes it through while the guard written on
+    falsiness does not — and the row comes back.
+    """
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        return_value=Response(200, headers={"Content-Type": "text/event-stream"},
+                              content=sse_stream(*CALL_WITHOUT_ID_TURN))
+    )
+    client = AsyncOpenAI(api_key="sk-test")
+    bundle = ContextBundle(system="s", input=[{"role": "user", "content": "hi"}])
+
+    result = None
+    with caplog.at_level(logging.WARNING, logger="app.tutor.loop"):
+        async for _event, running in run_turn(
+            provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+            effort="high", bundle=bundle
+        ):
+            result = running
+
+    assert result.tool_calls == [], "nothing answered it, so nothing may claim it ran"
+    # One round, not five: the turn stopped instead of asking the model to
+    # continue from an empty input.
+    assert route.call_count == 1
+    assert "tool calls arrived with no call_id" in caplog.text
 
 
 @respx.mock

@@ -1051,7 +1051,12 @@ async def run_turn(
             for item in outputs if item.get("call_id") is not None
         }
         for call in calls:
-            if call.get("call_id") is None:
+            # Falsiness, not `is None`, and it has to match the guard above that
+            # decides which calls get answered at all. A provider that sends no
+            # `call_id` normalises it to the empty string rather than leaving the
+            # field out, so `is None` here would file a row for a call nothing
+            # answered — name, arguments, and a `result` of null.
+            if not call.get("call_id"):
                 continue
             result.tool_calls.append({
                 "name": call.get("name") or "?",
