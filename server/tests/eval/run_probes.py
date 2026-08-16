@@ -91,6 +91,7 @@ from app.store.models import (  # noqa: E402
 )
 from app.tutor.context import assemble_context  # noqa: E402
 from app.tutor.loop import run_turn  # noqa: E402
+from app.tutor.providers.openai import OpenAIProvider  # noqa: E402
 
 PROBES = pathlib.Path(__file__).parent / "probes.yaml"
 
@@ -650,7 +651,8 @@ async def ask(
     # is the single most expensive call in the run.
     result = None
     async for _event, running in run_turn(
-        client=client, model=model, effort=effort, bundle=bundle,
+        provider=OpenAIProvider(client=client), model=model, effort=effort,
+        bundle=bundle,
         handle_memory=traced,
     ):
         result = running

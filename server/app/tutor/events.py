@@ -13,6 +13,10 @@ from app.tutor.board_scene import (
     parse_board_update,
     update_payload,
 )
+from app.tutor.providers import (
+    Created, HostedToolActivity, HostedToolStarted, ProviderEvent, TextDelta,
+    ThoughtDelta, ToolArgsDelta, ToolArgsDone, ToolCallStarted,
+)
 
 
 class Plan(BaseModel):
@@ -190,11 +194,11 @@ HEARTBEAT_SECONDS = 5.0
 #: is what puts a byte on the wire immediately before that gap, so the gap
 #: starts from zero rather than on top of whatever quiet came before it.
 #: What the provider calls its hosted code interpreter, in the one place both
-#: the step label and the item-type branch below can read it from. Not in
-#: `TOOL_PHASES`: that map is keyed by `function_call` names and read through
-#: `_tool_names`, which only a `function_call` ever fills, so an entry there
-#: would be a line nothing could reach. The phase comes from the tool's own
-#: event prefix instead — see `_translate`.
+#: the step label below and the provider's item-type branch can read it from.
+#: Not in `TOOL_PHASES`: that map is keyed by `function_call` names and read
+#: through `_tool_names`, which only a `function_call` ever fills, so an entry
+#: there would be a line nothing could reach. The phase comes from the tool's own
+#: event prefix instead — see `providers.openai.OpenAIProvider.neutral`.
 CODE_INTERPRETER = "code_interpreter"
 
 TOOL_PHASES: dict[str, PhaseName] = {
@@ -291,14 +295,18 @@ def region_label(x: float, y: float, width: float, height: float) -> str:
 
 
 class EventTranslator:
-    """Turns Responses API events into our own vocabulary.
+    """Turns a provider's events into our own vocabulary.
 
-    Stateful on purpose: a function call's name arrives on
-    `response.output_item.added` and its arguments arrive later carrying only
-    `output_index`, so the two have to be correlated. That correlation now
-    earns its keep twice — it is also what lets a heartbeat during a long tool
-    call say *which* tool, so the keep-alive and the thing that drives the
-    device's status line are one mechanism rather than two.
+    Takes the neutral `ProviderEvent` a provider normalised, not a Responses
+    API dict, which is what lets one phase latch, one set of step labels and one
+    pair of board parsers serve both model families.
+
+    Stateful on purpose: a function call's name arrives on `ToolCallStarted` and
+    its arguments arrive later carrying only `output_index`, so the two have to
+    be correlated. That correlation now earns its keep twice — it is also what
+    lets a heartbeat during a long tool call say *which* tool, so the keep-alive
+    and the thing that drives the device's status line are one mechanism rather
+    than two.
     """
 
     def __init__(
@@ -322,7 +330,7 @@ class EventTranslator:
         self._phase: PhaseName = "thinking"
         self._last_emit = now()
 
-    def translate(self, event: dict) -> list[ClientEvent]:
+    def translate(self, event: ProviderEvent | None) -> list[ClientEvent]:
         """Translate one provider event, or keep the connection alive.
 
         Every raw event is a chance to notice that nothing has reached the
@@ -345,7 +353,7 @@ class EventTranslator:
             if isinstance(event, StatusEvent):
                 self._phase = event.phase
 
-    def _heartbeat(self, event: dict) -> list[ClientEvent]:
+    def _heartbeat(self, event: ProviderEvent | None) -> list[ClientEvent]:
         """A status event sent for no reason except that the line is quiet.
 
         Repeating the current phase rather than inventing a new event type: the
@@ -360,82 +368,77 @@ class EventTranslator:
         self._last_emit = now
         return [StatusEvent(phase=self._phase)]
 
-    def _phase_of(self, event: dict) -> PhaseName | None:
+    def _phase_of(self, event: ProviderEvent | None) -> PhaseName | None:
         """The phase an *untranslatable* event still tells us we are in.
 
         Argument deltas are the whole point: they carry no content this service
         forwards, but they do say which tool is mid-flight, and that is exactly
         the stretch the learner used to spend staring at nothing.
         """
-        if event.get("type") != "response.function_call_arguments.delta":
+        if not isinstance(event, ToolArgsDelta):
             return None
-        name = self._tool_names.get(event.get("output_index", -1), "")
+        name = self._tool_names.get(event.output_index, "")
         return TOOL_PHASES.get(name)
 
-    def _translate(self, event: dict) -> list[ClientEvent]:
-        kind = event.get("type", "")
-
-        if kind == "response.created":
+    def _translate(self, event: ProviderEvent | None) -> list[ClientEvent]:
+        if isinstance(event, Created):
             return [StatusEvent(phase="thinking")]
 
-        if kind == "response.reasoning_summary_text.delta":
-            return [ReasoningDeltaEvent(text=event.get("delta", ""))]
+        if isinstance(event, ThoughtDelta):
+            return [ReasoningDeltaEvent(text=event.text)]
 
-        if kind == "response.output_text.delta":
-            delta = TextDeltaEvent(text=event.get("delta", ""))
+        if isinstance(event, TextDelta):
+            delta = TextDeltaEvent(text=event.text)
             if self._writing_announced:
                 return [delta]
             self._writing_announced = True
             return [StatusEvent(phase="writing"), delta]
 
-        if kind == "response.output_item.added":
-            item = event.get("item") or {}
-            output_index = event.get("output_index")
-            if item.get("type") == "function_call" and output_index is not None:
-                name = item.get("name", "")
-                self._tool_names[output_index] = name
-                produced: list[ClientEvent] = []
-                # Announced here, at the head of the call, rather than left to
-                # the first heartbeat: this is the moment the turn stops
-                # thinking and starts drawing, and the device should say so
-                # then, not up to `HEARTBEAT_SECONDS` later.
-                phase = TOOL_PHASES.get(name)
-                if phase is not None:
-                    # Clearing the latch is what lets prose *after* this call
-                    # announce `writing` again. Without it `_writing_announced`
-                    # stays true from the first text delta of the turn, no
-                    # later one emits a status, and the phase sticks on this
-                    # tool until the turn ends.
-                    self._writing_announced = False
-                    produced.append(StatusEvent(phase=phase))
-                label = TOOL_STEP_LABELS.get(name)
-                call_id = item.get("call_id")
-                if label is not None and call_id:
-                    self._call_ids[output_index] = call_id
-                    produced.append(StepEvent(id=call_id, tool=name, label=label))
-                return produced
+        if isinstance(event, ToolCallStarted):
+            name = event.name
+            self._tool_names[event.output_index] = name
+            produced: list[ClientEvent] = []
+            # Announced here, at the head of the call, rather than left to
+            # the first heartbeat: this is the moment the turn stops
+            # thinking and starts drawing, and the device should say so
+            # then, not up to `HEARTBEAT_SECONDS` later.
+            phase = TOOL_PHASES.get(name)
+            if phase is not None:
+                # Clearing the latch is what lets prose *after* this call
+                # announce `writing` again. Without it `_writing_announced`
+                # stays true from the first text delta of the turn, no
+                # later one emits a status, and the phase sticks on this
+                # tool until the turn ends.
+                self._writing_announced = False
+                produced.append(StatusEvent(phase=phase))
+            label = TOOL_STEP_LABELS.get(name)
+            call_id = event.call_id
+            if label is not None and call_id:
+                self._call_ids[event.output_index] = call_id
+                produced.append(StepEvent(id=call_id, tool=name, label=label))
+            return produced
 
-            # A hosted call is its own output item rather than a
-            # `function_call`, so it has no `call_id` and never reaches the
-            # branch above. Its `id` is what the device keys the row on, and
-            # without one there is nothing to key: a row filed under the empty
-            # string is one the next call silently overwrites, which is worse
-            # than no row. Sent once, at the head of the call — the arguments
-            # this row could be refined from are the provider's, not ours.
-            #
-            # No status here: `response.code_interpreter_call.in_progress`
-            # follows immediately and is where `computing` comes from.
-            if item.get("type") == "code_interpreter_call":
-                item_id = item.get("id")
-                label = TOOL_STEP_LABELS.get(CODE_INTERPRETER)
-                if item_id and label is not None:
-                    return [StepEvent(id=item_id, tool=CODE_INTERPRETER, label=label)]
+        # A hosted call is its own output item rather than a `function_call`, so
+        # it has no `call_id` and never reaches the branch above. Its `item_id`
+        # is what the device keys the row on, and without one there is nothing
+        # to key: a row filed under the empty string is one the next call
+        # silently overwrites, which is worse than no row — so a provider that
+        # has no id does not send this at all, and the guard here is the second
+        # half of that one rule. Sent once, at the head of the call — the
+        # arguments this row could be refined from are the provider's, not ours.
+        #
+        # No status here: `HostedToolActivity` follows immediately and is where
+        # `computing` comes from.
+        if isinstance(event, HostedToolStarted):
+            label = TOOL_STEP_LABELS.get(event.tool)
+            if event.item_id and label is not None:
+                return [StepEvent(id=event.item_id, tool=event.tool, label=label)]
             return []
 
-        if kind == "response.function_call_arguments.done":
-            output_index = event.get("output_index", -1)
+        if isinstance(event, ToolArgsDone):
+            output_index = event.output_index
             name = self._tool_names.get(output_index)
-            raw_arguments = event.get("arguments", "")
+            raw_arguments = event.arguments
             produced: list[ClientEvent] = []
             if name == "set_workspace":
                 produced.extend(self._workspace_from(raw_arguments))
@@ -448,21 +451,14 @@ class EventTranslator:
                 produced.append(step)
             return produced
 
-        if kind.startswith("response.file_search_call.") or kind.startswith(
-            "response.web_search_call."
-        ):
-            return self._hosted_status("searching")
-
-        # The trailing dot is doing work. This family is `in_progress`,
-        # `interpreting` and `completed` — a handful of events per call. The
-        # *code* streams under `response.code_interpreter_call_code.delta`, one
-        # event per token of the script, and matching that too would put
-        # hundreds of identical statuses on a wire that carries five for a whole
-        # web search. Those fall through to `_heartbeat` instead, which repeats
-        # the phase `in_progress` has already set — the same answer, at the
-        # keep-alive's rate rather than the model's.
-        if kind.startswith("response.code_interpreter_call."):
-            return self._hosted_status("computing")
+        # `searching` for a hosted search, `computing` for a hosted script. Which
+        # of the two is the provider's to say: the phase is the only thing this
+        # event carries, because a hosted call has no `function_call` item to
+        # read a name off. The events that stream a script's *code* — one per
+        # token — deliberately do not reach here at all; see the provider's
+        # mapping, and `_heartbeat` for what happens to them instead.
+        if isinstance(event, HostedToolActivity):
+            return self._hosted_status(event.phase)
 
         return []
 

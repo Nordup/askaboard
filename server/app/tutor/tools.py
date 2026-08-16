@@ -874,8 +874,9 @@ MEMORY_TOOLS: frozenset[str] = frozenset(
 # It differs from every other tool here in what it leaves behind. A script that
 # draws a chart writes a *file*, and that file lives in the provider's container
 # and expires with it — so a turn that does not fetch the bytes before it ends
-# has produced a picture nobody can ever see. `loop._container_citations` is
-# what finds those files, and `loop.FileRelay` is what keeps them.
+# has produced a picture nobody can ever see.
+# `providers.openai._container_citations` is what finds those files, and
+# `loop.FileRelay` is what keeps them.
 TOOL_DEFINITIONS: list[dict] = [
     SET_WORKSPACE_TOOL, VIEW_BOARD_TOOL, UPDATE_BOARD_TOOL, FETCH_IMAGE_TOOL,
     *MEMORY_TOOL_DEFINITIONS,

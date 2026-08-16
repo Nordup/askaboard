@@ -43,13 +43,15 @@ from app.tutor.board_scene import MAX_SCENE_CHARS
 from app.tutor import rendezvous
 from app.tutor.fetch_image import ImageFetchError, fetch_image
 from app.tutor.loop import (
-    ContainerFileTooLarge,
     FetchedImage,
-    RelayedFile,
     TurnResult,
-    download_container_file,
-    relayed_content_type,
     run_turn,
+)
+from app.tutor.providers import ProducedFile, Provider, RelayedFile
+from app.tutor.providers.openai import (
+    ContainerFileTooLarge,
+    OpenAIProvider,
+    relayed_content_type,
 )
 from app.tutor.rendezvous import BoardRegion
 from app.tutor.retry import classify
@@ -116,6 +118,18 @@ def _client() -> AsyncOpenAI:
     `classify` ever saw the error. `loop._open_round` is the only retry that may run.
     """
     return AsyncOpenAI(api_key=get_settings().openai_api_key, max_retries=0)
+
+
+def _provider(model: str) -> Provider:
+    """The model family this turn runs on.
+
+    One family for every model today, which is why `model` is read and not used:
+    the argument is here because the choice belongs to the model id and nowhere
+    else, and a caller passing it now cannot later be the place a second family
+    is forgotten. `_client` is cached, so this builds a wrapper around the same
+    pool rather than a new one.
+    """
+    return OpenAIProvider(client=_client())
 
 
 async def _memory_sections(
@@ -588,7 +602,6 @@ async def create_turn(
             # cache a request reaches, and the prompt is the other half.
             "prompt_cache_key": str(session.id),
         }
-        client = _client()
 
         async def fetch_board(call_id: str, region: BoardRegion) -> bytes:
             """Wait for the device to render one region of its board.
@@ -651,10 +664,8 @@ async def create_turn(
                 content_type=fetched.content_type,
             )
 
-        async def relay_container_file(
-            container_id: str, file_id: str, filename: str
-        ) -> RelayedFile:
-            """Copy one file a script wrote out of the provider's container.
+        async def relay_container_file(file: ProducedFile) -> RelayedFile:
+            """Keep one file a script wrote, wherever the provider held it.
 
             The reason this exists at all is that the container is temporary.
             A `code_interpreter` sandbox lives for the response that created it,
@@ -662,14 +673,15 @@ async def create_turn(
             taken now are bytes nobody can ever see. This is the only window.
 
             Three steps, and the middle one is what makes the result usable.
-            `download_container_file` is the guarded read — the SDK call
-            verified against openai 2.53.0, streamed and capped, holding every
-            rule about how much of a file this service will take. The blob write
-            is what gives the bytes a name the iPad can GET, because what the
-            model does next is place an `image` element carrying that `blob_id`.
-            The attachment row is where `GET /v1/blobs/{key}` recovers the
-            content type — the blob store itself only knows bytes, and
-            `relayed_content_type` is what decides which claim the row may make.
+            `file.read()` is the guarded read the provider bound — for OpenAI,
+            `download_container_file`: the SDK call verified against openai
+            2.53.0, streamed and capped, holding every rule about how much of a
+            file this service will take. The blob write is what gives the bytes a
+            name the iPad can GET, because what the model does next is place an
+            `image` element carrying that `blob_id`. The attachment row is where
+            `GET /v1/blobs/{key}` recovers the content type — the blob store
+            itself only knows bytes, and `relayed_content_type` is what decides
+            which claim the row may make.
 
             A failure comes back as `RelayedFile(error=...)` rather than raising,
             for the reason `fetch_and_record_image` refuses in band: a provider
@@ -677,8 +689,9 @@ async def create_turn(
             told the file did not save can say so instead of describing a
             picture that is not there.
             """
+            filename = file.filename
             try:
-                data = await download_container_file(client, container_id, file_id)
+                data = await file.read()
             except ContainerFileTooLarge as error:
                 logger.warning(
                     "container file too large | turn_id=%s file=%s error=%s",
@@ -703,9 +716,10 @@ async def create_turn(
             )
             return RelayedFile(
                 blob_id=ref.key,
-                # Always the bytes, whatever they are. `loop._relay_item` shows
-                # the pictures and lists the rest, and `TURN_DOWNLOAD_BYTE_LIMIT`
-                # is counted in the length of every file either way.
+                # Always the bytes, whatever they are. The provider's
+                # `relay_item` shows the pictures and lists the rest, and
+                # `TURN_DOWNLOAD_BYTE_LIMIT` is counted in the length of every
+                # file either way.
                 data=data,
                 content_type=content_type,
             )
@@ -766,7 +780,8 @@ async def create_turn(
                 **sections,
             )
             async for event, running in run_turn(
-                client=client, model=body.model, effort=body.reasoning_effort,
+                provider=_provider(body.model), model=body.model,
+                effort=body.reasoning_effort,
                 bundle=bundle, request_body=request_body, fetch_board=fetch_board,
                 fetch_image=fetch_and_record_image,
                 # Without this the hosted code interpreter can still run — it is

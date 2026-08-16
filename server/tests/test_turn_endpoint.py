@@ -611,7 +611,7 @@ async def test_a_client_disconnect_mid_stream_leaves_the_turn_not_running(
     # keyword the endpoint learns to pass makes the call raise TypeError before
     # the body runs, and the turn reaches "error" through the generic path
     # instead of the CancelledError path this test is about.
-    async def _cancelled_run_turn(*, client, model, effort, bundle, fetch_board,
+    async def _cancelled_run_turn(*, provider, model, effort, bundle, fetch_board,
                                   handle_memory, **_):
         result = TurnResult()
         yield StatusEvent(phase="thinking"), result
@@ -658,7 +658,7 @@ async def test_a_cancel_scope_disconnect_still_leaves_the_turn_not_running(
     # fake stands in for the whole signature, and every keyword the endpoint
     # learns to pass would otherwise fail it as a TypeError that reads like a
     # cancellation bug. `request_body` did exactly that.
-    async def _hanging_run_turn(*, client, model, effort, bundle, fetch_board,
+    async def _hanging_run_turn(*, provider, model, effort, bundle, fetch_board,
                                 handle_memory, **_):
         result = TurnResult()
         yield StatusEvent(phase="thinking"), result

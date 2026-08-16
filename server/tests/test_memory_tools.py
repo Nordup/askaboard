@@ -41,6 +41,7 @@ from app.tutor.loop import (
     _answer,
     run_turn,
 )
+from app.tutor.providers.openai import OpenAIProvider
 from app.tutor.tools import (
     EVIDENCE_KINDS,
     MEMORY_TOOL_DEFINITIONS,
@@ -270,7 +271,8 @@ async def test_run_turn_hands_the_handlers_answer_back_to_the_model():
 
     result = None
     async for _event, running in run_turn(
-        client=AsyncOpenAI(api_key="sk-test"), model="gpt-5.6-luna", effort="high",
+        provider=OpenAIProvider(client=AsyncOpenAI(api_key="sk-test")),
+        model="gpt-5.6-luna", effort="high",
         bundle=ContextBundle(system="s", input=[{"role": "user", "content": "hi"}]),
         handle_memory=handle,
     ):
@@ -302,7 +304,8 @@ def _run(handle, *legs):
         ]
     )
     return run_turn(
-        client=AsyncOpenAI(api_key="sk-test"), model="gpt-5.6-luna", effort="high",
+        provider=OpenAIProvider(client=AsyncOpenAI(api_key="sk-test")),
+        model="gpt-5.6-luna", effort="high",
         bundle=ContextBundle(system="s", input=[{"role": "user", "content": "hi"}]),
         handle_memory=handle,
     )

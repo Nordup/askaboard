@@ -362,8 +362,9 @@ SCRIPT_FILENAME = "chart.png"
 # the model carries straight on in the same response — so this turn ends with a
 # message and no function call at all. Second, the file the script wrote is
 # named only by a `container_file_citation` annotation hanging off that
-# message's text, which is the one place `loop._container_citations` can find
-# it. A fixture that omitted either would let a relay that never runs pass.
+# message's text, which is the one place the provider's `_container_citations`
+# can find it. A fixture that omitted either would let a relay that never runs
+# pass.
 CODE_INTERPRETER_TURN = (
     {"type": "response.created", "sequence_number": 0, "response": {"id": "resp_ci"}},
     {

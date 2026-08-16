@@ -18,25 +18,32 @@ from app.tutor.events import (
 )
 from app.tutor.retry import RETRY_LIMIT
 from app.tutor.loop import (
-    DEFAULT_SCRIPT_OUTPUT_TYPE,
     FETCH_BUDGET_ACK,
     FETCH_TIMEOUT_ACK,
     FETCHED_IMAGE_CAPTION,
     MALFORMED_BOARD_ACK,
     MAX_TOOL_ROUNDS,
-    RELAYED_FILES_CAPTION,
     UNSUPPORTED_TOOL_ACK,
     UPDATE_BOARD_ACK,
-    ContainerFileTooLarge,
     FetchedImage,
-    RelayedFile,
     _answer,
+    run_turn,
+)
+# The container machinery, the item builders and the two file records now live
+# behind the provider seam: containers are this family's alone, and `loop.py`
+# importing the provider would be a circle. Nothing about what they do changed,
+# which is what the assertions below are here to prove.
+from app.tutor.providers import ProducedFile, RelayedFile
+from app.tutor.providers.openai import (
+    DEFAULT_SCRIPT_OUTPUT_TYPE,
+    RELAYED_FILES_CAPTION,
+    ContainerFileTooLarge,
+    OpenAIProvider,
     _container_citations,
     _relay_item,
     _rendered_items,
     download_container_file,
     relayed_content_type,
-    run_turn,
 )
 from tests.fixtures.sse import (
     BOARD_UPDATE_FOLLOW_UP,
@@ -93,7 +100,8 @@ async def test_a_text_only_turn_streams_status_then_text():
     events = []
     result = None
     async for event, running in run_turn(
-        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle
+        provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+        effort="high", bundle=bundle
     ):
         events.append(event)
         result = running
@@ -118,7 +126,8 @@ async def test_the_request_body_carries_every_tool_and_stores_the_response():
     bundle = ContextBundle(system="s", input=[{"role": "user", "content": "hi"}])
 
     async for _ in run_turn(
-        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle
+        provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+        effort="high", bundle=bundle
     ):
         pass
 
@@ -169,7 +178,8 @@ async def test_a_tool_call_turn_yields_a_workspace_event():
     events = []
     result = None
     async for event, running in run_turn(
-        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle
+        provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+        effort="high", bundle=bundle
     ):
         events.append(event)
         result = running
@@ -207,7 +217,8 @@ async def test_a_reasoning_turn_yields_reasoning_deltas():
 
     events = []
     async for event, _ in run_turn(
-        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle
+        provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+        effort="high", bundle=bundle
     ):
         events.append(event)
 
@@ -234,7 +245,8 @@ async def test_an_update_board_turn_yields_a_board_update_event_and_prose():
     events = []
     result = None
     async for event, running in run_turn(
-        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle
+        provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+        effort="high", bundle=bundle
     ):
         events.append(event)
         result = running
@@ -297,7 +309,8 @@ async def test_a_tool_call_is_answered_so_the_model_writes_its_reply():
 
     result = None
     async for _event, running in run_turn(
-        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle
+        provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+        effort="high", bundle=bundle
     ):
         result = running
 
@@ -324,7 +337,8 @@ async def test_the_first_round_carries_the_prompt_and_names_no_previous_response
     bundle = ContextBundle(system="s", input=[{"role": "user", "content": "hi"}])
 
     async for _ in run_turn(
-        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle,
+        provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+        effort="high", bundle=bundle,
         cache_key="sesn-7",
     ):
         pass
@@ -347,7 +361,8 @@ async def test_without_a_cache_key_the_field_is_left_off_rather_than_nulled():
     bundle = ContextBundle(system="s", input=[{"role": "user", "content": "hi"}])
 
     async for _ in run_turn(
-        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle
+        provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+        effort="high", bundle=bundle
     ):
         pass
 
@@ -367,7 +382,8 @@ async def test_a_model_that_only_ever_calls_the_tool_is_bounded():
     bundle = ContextBundle(system="s", input=[{"role": "user", "content": "hi"}])
 
     async for _event, _running in run_turn(
-        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle
+        provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+        effort="high", bundle=bundle
     ):
         pass
 
@@ -391,7 +407,8 @@ async def test_usage_is_summed_across_a_turns_rounds():
 
     result = None
     async for _event, running in run_turn(
-        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle
+        provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+        effort="high", bundle=bundle
     ):
         result = running
 
@@ -577,7 +594,8 @@ async def test_an_svg_update_board_turn_streams_the_raw_document_unchanged():
     events = []
     result = None
     async for event, running in run_turn(
-        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle
+        provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+        effort="high", bundle=bundle
     ):
         events.append(event)
         result = running
@@ -614,7 +632,8 @@ async def test_a_server_error_opening_a_round_is_retried_silently():
 
     result = None
     async for _event, running in run_turn(
-        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle
+        provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+        effort="high", bundle=bundle
     ):
         result = running
 
@@ -639,7 +658,8 @@ async def test_a_billing_429_is_not_retried():
 
     with pytest.raises(APIStatusError):
         async for _ in run_turn(
-            client=client, model="gpt-5.6-luna", effort="high", bundle=bundle
+            provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+            effort="high", bundle=bundle
         ):
             pass
 
@@ -659,7 +679,8 @@ async def test_a_retryable_failure_gives_up_after_the_limit():
 
     with pytest.raises(APIStatusError):
         async for _ in run_turn(
-            client=client, model="gpt-5.6-luna", effort="high", bundle=bundle
+            provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+            effort="high", bundle=bundle
         ):
             pass
 
@@ -729,7 +750,8 @@ async def test_a_fetch_image_call_hands_back_the_blob_and_shows_the_picture():
 
     result = None
     async for _event, running in run_turn(
-        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle,
+        provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+        effort="high", bundle=bundle,
         fetch_image=fetch_image,
     ):
         result = running
@@ -775,7 +797,8 @@ async def test_a_fetched_image_is_recorded_as_the_call_that_was_made():
 
     result = None
     async for _event, running in run_turn(
-        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle,
+        provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+        effort="high", bundle=bundle,
         fetch_image=fetch_image,
     ):
         result = running
@@ -812,7 +835,8 @@ async def test_a_fetch_that_never_answers_is_abandoned_and_the_turn_carries_on(
 
     result = None
     async for _event, running in run_turn(
-        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle,
+        provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+        effort="high", bundle=bundle,
         fetch_image=never,
     ):
         result = running
@@ -844,7 +868,8 @@ async def test_a_fetch_announces_itself_before_it_blocks():
         return FetchedImage(output=json.dumps({"error": "no"}))
 
     async for event, _running in run_turn(
-        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle,
+        provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+        effort="high", bundle=bundle,
         fetch_image=fetch_image,
     ):
         events.append(event)
@@ -1025,13 +1050,14 @@ async def test_a_cited_file_is_relayed_and_shown_in_the_next_round():
     bundle = ContextBundle(system="s", input=[{"role": "user", "content": "plot it"}])
     seen = []
 
-    async def relay(container_id: str, file_id: str, filename: str) -> RelayedFile:
-        seen.append((container_id, file_id, filename))
+    async def relay(file: ProducedFile) -> RelayedFile:
+        seen.append((*file.key, file.filename))
         return RelayedFile(blob_id=BLOB, data=b"PNG-ish", content_type="image/png")
 
     result = None
     async for _event, running in run_turn(
-        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle,
+        provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+        effort="high", bundle=bundle,
         relay_file=relay,
     ):
         result = running
@@ -1060,12 +1086,13 @@ async def test_a_relay_announces_itself_before_it_blocks():
     bundle = ContextBundle(system="s", input=[{"role": "user", "content": "plot it"}])
     events = []
 
-    async def relay(container_id: str, file_id: str, filename: str) -> RelayedFile:
+    async def relay(file: ProducedFile) -> RelayedFile:
         assert StatusEvent(phase="computing") in events
         return RelayedFile(blob_id=BLOB, data=b"PNG-ish", content_type="image/png")
 
     async for event, _running in run_turn(
-        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle,
+        provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+        effort="high", bundle=bundle,
         relay_file=relay,
     ):
         events.append(event)
@@ -1083,7 +1110,8 @@ async def test_no_relay_wired_means_no_extra_round():
 
     result = None
     async for _event, running in run_turn(
-        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle,
+        provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+        effort="high", bundle=bundle,
     ):
         result = running
 
@@ -1100,12 +1128,13 @@ async def test_a_relay_that_fails_does_not_buy_a_round_of_its_own():
     client = AsyncOpenAI(api_key="sk-test")
     bundle = ContextBundle(system="s", input=[{"role": "user", "content": "plot it"}])
 
-    async def relay(container_id: str, file_id: str, filename: str) -> RelayedFile:
+    async def relay(file: ProducedFile) -> RelayedFile:
         return RelayedFile(error="the container is gone")
 
     result = None
     async for _event, running in run_turn(
-        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle,
+        provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+        effort="high", bundle=bundle,
         relay_file=relay,
     ):
         result = running
@@ -1125,13 +1154,14 @@ async def test_a_relay_that_never_answers_is_abandoned_and_the_turn_carries_on(
     client = AsyncOpenAI(api_key="sk-test")
     bundle = ContextBundle(system="s", input=[{"role": "user", "content": "plot it"}])
 
-    async def never(container_id: str, file_id: str, filename: str) -> RelayedFile:
+    async def never(file: ProducedFile) -> RelayedFile:
         await asyncio.sleep(30)
         raise AssertionError("unreachable")
 
     result = None
     async for _event, running in run_turn(
-        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle,
+        provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+        effort="high", bundle=bundle,
         relay_file=never,
     ):
         result = running
@@ -1161,7 +1191,8 @@ async def test_the_turn_stops_fetching_once_its_call_budget_is_spent(monkeypatch
 
     result = None
     async for _event, running in run_turn(
-        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle,
+        provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+        effort="high", bundle=bundle,
         fetch_image=fetch_image,
     ):
         result = running
@@ -1190,7 +1221,8 @@ async def test_the_turn_stops_fetching_once_its_byte_budget_is_spent(monkeypatch
 
     result = None
     async for _event, running in run_turn(
-        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle,
+        provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+        effort="high", bundle=bundle,
         fetch_image=fetch_image,
     ):
         result = running
@@ -1216,12 +1248,13 @@ async def test_a_fetch_and_a_relay_spend_the_same_budget(monkeypatch):
         return FetchedImage(output=json.dumps({"blob_id": BLOB}), image=b"PNG",
                             content_type="image/png")
 
-    async def relay(container_id: str, file_id: str, filename: str) -> RelayedFile:
-        relayed.append(file_id)
+    async def relay(file: ProducedFile) -> RelayedFile:
+        relayed.append(file.key[1])
         return RelayedFile(blob_id=BLOB, data=b"PNG", content_type="image/png")
 
     async for _event, _running in run_turn(
-        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle,
+        provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+        effort="high", bundle=bundle,
         fetch_image=fetch_image, relay_file=relay,
     ):
         pass
@@ -1271,12 +1304,13 @@ async def test_a_file_cited_again_in_a_later_round_is_not_relayed_again():
     bundle = ContextBundle(system="s", input=[{"role": "user", "content": "plot it"}])
     seen = []
 
-    async def relay(container_id: str, file_id: str, filename: str) -> RelayedFile:
-        seen.append(file_id)
+    async def relay(file: ProducedFile) -> RelayedFile:
+        seen.append(file.key[1])
         return RelayedFile(blob_id=BLOB, data=b"PNG-ish", content_type="image/png")
 
     async for _event, _running in run_turn(
-        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle,
+        provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+        effort="high", bundle=bundle,
         relay_file=relay,
     ):
         pass
@@ -1415,13 +1449,14 @@ async def test_an_oversized_file_reaches_the_model_as_a_failure_not_a_picture():
     client = AsyncOpenAI(api_key="sk-test")
     bundle = ContextBundle(system="s", input=[{"role": "user", "content": "plot it"}])
 
-    async def relay(container_id: str, file_id: str, filename: str) -> RelayedFile:
+    async def relay(file: ProducedFile) -> RelayedFile:
         # What `turn.py`'s closure returns once the download refuses.
         return RelayedFile(error="the file was too large to keep")
 
     result = None
     async for _event, running in run_turn(
-        client=client, model="gpt-5.6-luna", effort="high", bundle=bundle,
+        provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+        effort="high", bundle=bundle,
         relay_file=relay,
     ):
         result = running

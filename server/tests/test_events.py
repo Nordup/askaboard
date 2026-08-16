@@ -4,7 +4,22 @@ from app.tutor.events import (
     TOOL_STEP_LABELS, BoardUpdateEvent, EventTranslator, ReasoningDeltaEvent,
     StatusEvent, StepEvent, TextDeltaEvent, WorkspaceEvent, region_label,
 )
+from app.tutor.providers.openai import OpenAIProvider
 from app.tutor.tools import MEMORY_TOOLS
+
+#: The translator takes a neutral `ProviderEvent` now, so the raw Responses
+#: events below reach it the way a turn's do: through the provider that maps
+#: them. Deliberately the real mapping rather than hand-built neutral events —
+#: what this file is for is the wire shapes this family actually sends, and a
+#: hand-written neutral event would be the translator tested against a shape
+#: nothing produces.
+_PROVIDER = OpenAIProvider(client=None)
+
+
+def _translated(translator: EventTranslator, event: dict) -> list:
+    """One raw Responses event, translated the way a turn translates it."""
+    return translator.translate(_PROVIDER.neutral(event))
+
 
 WORKSPACE_ARGS = {
     "plan": {
@@ -54,12 +69,12 @@ ONE_ELEMENT_UPDATE = json.dumps({
 
 
 def test_created_emits_thinking_status():
-    events = EventTranslator().translate({"type": "response.created"})
+    events = _translated(EventTranslator(), {"type": "response.created"})
     assert events == [StatusEvent(phase="thinking")]
 
 
 def test_reasoning_summary_delta_becomes_reasoning_delta():
-    events = EventTranslator().translate(
+    events = _translated(EventTranslator(),
         {"type": "response.reasoning_summary_text.delta", "delta": "Checking the domain"}
     )
     assert events == [ReasoningDeltaEvent(text="Checking the domain")]
@@ -67,21 +82,21 @@ def test_reasoning_summary_delta_becomes_reasoning_delta():
 
 def test_first_text_delta_also_emits_writing_status():
     translator = EventTranslator()
-    first = translator.translate({"type": "response.output_text.delta", "delta": "Nice"})
+    first = _translated(translator, {"type": "response.output_text.delta", "delta": "Nice"})
     assert first == [StatusEvent(phase="writing"), TextDeltaEvent(text="Nice")]
 
-    second = translator.translate({"type": "response.output_text.delta", "delta": " work"})
+    second = _translated(translator, {"type": "response.output_text.delta", "delta": " work"})
     assert second == [TextDeltaEvent(text=" work")]
 
 
 def test_set_workspace_tool_call_becomes_a_workspace_event():
     translator = EventTranslator()
-    translator.translate({
+    _translated(translator, {
         "type": "response.output_item.added",
         "output_index": 0,
         "item": {"type": "function_call", "name": "set_workspace", "call_id": "call_1"},
     })
-    events = translator.translate({
+    events = _translated(translator, {
         "type": "response.function_call_arguments.done",
         "output_index": 0,
         "arguments": json.dumps(WORKSPACE_ARGS),
@@ -98,12 +113,12 @@ def test_set_workspace_tool_call_becomes_a_workspace_event():
 
 def test_malformed_tool_arguments_are_dropped_not_raised():
     translator = EventTranslator()
-    translator.translate({
+    _translated(translator, {
         "type": "response.output_item.added",
         "output_index": 0,
         "item": {"type": "function_call", "name": "set_workspace", "call_id": "call_1"},
     })
-    events = translator.translate({
+    events = _translated(translator, {
         "type": "response.function_call_arguments.done",
         "output_index": 0,
         "arguments": "{not json",
@@ -118,12 +133,12 @@ def test_malformed_tool_arguments_are_dropped_not_raised():
 
 def test_update_board_tool_call_becomes_a_board_update_event():
     translator = EventTranslator()
-    translator.translate({
+    _translated(translator, {
         "type": "response.output_item.added",
         "output_index": 0,
         "item": {"type": "function_call", "name": "update_board", "call_id": "call_b"},
     })
-    events = translator.translate({
+    events = _translated(translator, {
         "type": "response.function_call_arguments.done",
         "output_index": 0,
         "arguments": json.dumps({
@@ -150,12 +165,12 @@ def test_update_board_tool_call_becomes_a_board_update_event():
 
 def test_update_board_svg_roundtrips_unchanged_through_the_event():
     translator = EventTranslator()
-    translator.translate({
+    _translated(translator, {
         "type": "response.output_item.added",
         "output_index": 0,
         "item": {"type": "function_call", "name": "update_board", "call_id": "call_svg"},
     })
-    events = translator.translate({
+    events = _translated(translator, {
         "type": "response.function_call_arguments.done",
         "output_index": 0,
         "arguments": ONE_ELEMENT_UPDATE,
@@ -174,12 +189,12 @@ def test_update_board_svg_roundtrips_unchanged_through_the_event():
 
 def test_malformed_update_board_arguments_are_dropped_not_raised():
     translator = EventTranslator()
-    translator.translate({
+    _translated(translator, {
         "type": "response.output_item.added",
         "output_index": 0,
         "item": {"type": "function_call", "name": "update_board", "call_id": "call_b"},
     })
-    events = translator.translate({
+    events = _translated(translator, {
         "type": "response.function_call_arguments.done",
         "output_index": 0,
         "arguments": json.dumps({"mode": "replace_all", "delete_ids": [], "elements": [
@@ -196,12 +211,12 @@ def test_malformed_update_board_arguments_are_dropped_not_raised():
 
 def test_replace_all_update_drops_delete_ids_from_the_payload():
     translator = EventTranslator()
-    translator.translate({
+    _translated(translator, {
         "type": "response.output_item.added",
         "output_index": 0,
         "item": {"type": "function_call", "name": "update_board", "call_id": "call_b"},
     })
-    events = translator.translate({
+    events = _translated(translator, {
         "type": "response.function_call_arguments.done",
         "output_index": 0,
         "arguments": json.dumps({
@@ -217,18 +232,18 @@ def test_replace_all_update_drops_delete_ids_from_the_payload():
 
 def test_output_item_added_without_output_index_is_dropped_not_raised():
     translator = EventTranslator()
-    events = translator.translate({
+    events = _translated(translator, {
         "type": "response.output_item.added",
         "item": {"type": "function_call", "name": "set_workspace", "call_id": "call_1"},
     })
     assert events == []
 
-    translator.translate({
+    _translated(translator, {
         "type": "response.output_item.added",
         "output_index": 0,
         "item": {"type": "function_call", "name": "set_workspace", "call_id": "call_2"},
     })
-    events = translator.translate({
+    events = _translated(translator, {
         "type": "response.function_call_arguments.done",
         "output_index": 0,
         "arguments": json.dumps(WORKSPACE_ARGS),
@@ -240,7 +255,7 @@ def test_output_item_added_without_output_index_is_dropped_not_raised():
 
 
 def test_file_search_emits_searching_status():
-    events = EventTranslator().translate({"type": "response.file_search_call.searching"})
+    events = _translated(EventTranslator(), {"type": "response.file_search_call.searching"})
     assert events == [StatusEvent(phase="searching")]
 
 
@@ -254,7 +269,7 @@ def test_web_search_emits_searching_status():
         "response.web_search_call.searching",
         "response.web_search_call.completed",
     ):
-        events = EventTranslator().translate({"type": kind})
+        events = _translated(EventTranslator(), {"type": kind})
         assert events == [StatusEvent(phase="searching")], kind
 
 
@@ -269,7 +284,7 @@ def test_code_interpreter_emits_computing_status():
         "response.code_interpreter_call.interpreting",
         "response.code_interpreter_call.completed",
     ):
-        events = EventTranslator().translate({"type": kind})
+        events = _translated(EventTranslator(), {"type": kind})
         assert events == [StatusEvent(phase="computing")], kind
 
 
@@ -279,12 +294,12 @@ def test_streaming_code_does_not_emit_a_status_per_delta():
     wire that carries five for a whole web search. It falls through to the
     heartbeat instead, which repeats the phase `in_progress` already set."""
     translator = EventTranslator()
-    assert translator.translate(
+    assert _translated(translator,
         {"type": "response.code_interpreter_call.in_progress"}
     ) == [StatusEvent(phase="computing")]
 
     for _ in range(20):
-        assert translator.translate({
+        assert _translated(translator, {
             "type": "response.code_interpreter_call_code.delta",
             "output_index": 0, "delta": "x = 1\n",
         }) == []
@@ -294,7 +309,7 @@ def test_a_code_interpreter_call_opens_a_step_row():
     """The trail row for the slowest thing a turn can do. A hosted call arrives
     as its own output item, not a `function_call`, so the id is the item's own —
     which is what the device keys the row on."""
-    events = EventTranslator().translate({
+    events = _translated(EventTranslator(), {
         "type": "response.output_item.added",
         "output_index": 0,
         "item": {"type": "code_interpreter_call", "id": "ci_9",
@@ -308,7 +323,7 @@ def test_a_code_interpreter_item_with_no_id_opens_no_row():
     """The row's id is what a later event would replace it by. Without one the
     device would key a row on the empty string and let the next call overwrite
     it, so no row is better than a row."""
-    assert EventTranslator().translate({
+    assert _translated(EventTranslator(), {
         "type": "response.output_item.added",
         "output_index": 0,
         "item": {"type": "code_interpreter_call", "status": "in_progress"},
@@ -326,15 +341,15 @@ def test_prose_after_a_hosted_call_announces_writing_again():
     the whole of the reply that followed — the phase never came back.
     """
     translator = EventTranslator()
-    assert translator.translate(
+    assert _translated(translator,
         {"type": "response.output_text.delta", "delta": "Let me look."}
     ) == [StatusEvent(phase="writing"), TextDeltaEvent(text="Let me look.")]
 
-    assert translator.translate(
+    assert _translated(translator,
         {"type": "response.web_search_call.completed"}
     ) == [StatusEvent(phase="searching")]
 
-    assert translator.translate(
+    assert _translated(translator,
         {"type": "response.output_text.delta", "delta": "Here is what I found."}
     ) == [
         StatusEvent(phase="writing"),
@@ -345,16 +360,16 @@ def test_prose_after_a_hosted_call_announces_writing_again():
 def test_prose_after_the_code_interpreter_announces_writing_again():
     """The same latch, reached through the tool this task added."""
     translator = EventTranslator()
-    translator.translate({"type": "response.output_text.delta", "delta": "Plotting."})
-    translator.translate({"type": "response.code_interpreter_call.completed"})
+    _translated(translator, {"type": "response.output_text.delta", "delta": "Plotting."})
+    _translated(translator, {"type": "response.code_interpreter_call.completed"})
 
-    assert translator.translate(
+    assert _translated(translator,
         {"type": "response.output_text.delta", "delta": "Done."}
     ) == [StatusEvent(phase="writing"), TextDeltaEvent(text="Done.")]
 
 
 def test_unknown_events_are_ignored():
-    assert EventTranslator().translate({"type": "response.content_part.added"}) == []
+    assert _translated(EventTranslator(), {"type": "response.content_part.added"}) == []
 
 
 class FakeClock:
@@ -368,7 +383,7 @@ class FakeClock:
 
 
 def _begin_update_board(translator: EventTranslator) -> list:
-    return translator.translate({
+    return _translated(translator, {
         "type": "response.output_item.added",
         "output_index": 0,
         "item": {"type": "function_call", "name": "update_board", "call_id": "call_b"},
@@ -385,7 +400,7 @@ def test_starting_update_board_announces_drawing_immediately():
 
 
 def test_starting_view_board_announces_looking():
-    events = EventTranslator().translate({
+    events = _translated(EventTranslator(), {
         "type": "response.output_item.added",
         "output_index": 0,
         "item": {"type": "function_call", "name": "view_board", "call_id": "call_v"},
@@ -407,7 +422,7 @@ def test_argument_deltas_stay_silent_until_the_heartbeat_is_due():
         "output_index": 0,
         "delta": "<svg",
     }
-    assert translator.translate(delta) == []
+    assert _translated(translator, delta) == []
 
 
 def test_a_long_update_board_heartbeats_as_drawing():
@@ -425,7 +440,7 @@ def test_a_long_update_board_heartbeats_as_drawing():
     beats = []
     for _ in range(12):
         clock.seconds += 1.0
-        beats.extend(translator.translate(delta))
+        beats.extend(_translated(translator, delta))
 
     # Twelve seconds of pure argument streaming, and the connection heard from
     # the server twice — not once.
@@ -438,13 +453,13 @@ def test_a_translated_event_resets_the_heartbeat_clock():
     _begin_update_board(translator)
 
     clock.seconds += 4.0
-    assert translator.translate(
+    assert _translated(translator,
         {"type": "response.reasoning_summary_text.delta", "delta": "Sketching"}
     ) == [ReasoningDeltaEvent(text="Sketching")]
 
     # Four seconds after that real event, not nine after the last beat.
     clock.seconds += 4.0
-    assert translator.translate({
+    assert _translated(translator, {
         "type": "response.function_call_arguments.delta",
         "output_index": 0,
         "delta": "x",
@@ -454,10 +469,10 @@ def test_a_translated_event_resets_the_heartbeat_clock():
 def test_a_heartbeat_outside_any_tool_call_repeats_the_current_phase():
     clock = FakeClock()
     translator = EventTranslator(now=clock, heartbeat_seconds=5.0)
-    translator.translate({"type": "response.created"})
+    _translated(translator, {"type": "response.created"})
 
     clock.seconds += 6.0
-    assert translator.translate({"type": "response.content_part.added"}) == [
+    assert _translated(translator, {"type": "response.content_part.added"}) == [
         StatusEvent(phase="thinking")
     ]
 
@@ -468,15 +483,15 @@ def test_prose_after_a_tool_call_announces_writing_again():
     # left on `drawing` leaves that indicator up for the rest of the turn,
     # claiming the tutor is still drawing over prose the learner is reading.
     translator = EventTranslator()
-    translator.translate({"type": "response.output_text.delta", "delta": "Let me draw."})
+    _translated(translator, {"type": "response.output_text.delta", "delta": "Let me draw."})
     _begin_update_board(translator)
-    translator.translate({
+    _translated(translator, {
         "type": "response.function_call_arguments.done",
         "output_index": 0,
         "arguments": "{}",
     })
 
-    events = translator.translate(
+    events = _translated(translator,
         {"type": "response.output_text.delta", "delta": "Now try it."}
     )
 
@@ -489,17 +504,17 @@ def test_a_heartbeat_after_a_tool_call_does_not_still_claim_drawing():
     # The prose *before* the tool call is what arms the bug: it is the delta
     # that sets `_writing_announced`, and without it here the delta after the
     # call announces `writing` on its own and the test proves nothing.
-    translator.translate({"type": "response.output_text.delta", "delta": "Let me draw."})
+    _translated(translator, {"type": "response.output_text.delta", "delta": "Let me draw."})
     _begin_update_board(translator)
-    translator.translate({
+    _translated(translator, {
         "type": "response.function_call_arguments.done",
         "output_index": 0,
         "arguments": "{}",
     })
-    translator.translate({"type": "response.output_text.delta", "delta": "Now try it."})
+    _translated(translator, {"type": "response.output_text.delta", "delta": "Now try it."})
 
     clock.seconds += 6.0
-    quiet = translator.translate({"type": "response.content_part.added"})
+    quiet = _translated(translator, {"type": "response.content_part.added"})
 
     assert quiet == [StatusEvent(phase="writing")]
 
@@ -510,7 +525,7 @@ def test_a_memory_tool_puts_something_on_the_wire_before_it_blocks():
     # and the heartbeat cannot fire. The status announced here is the last byte
     # the device gets before the silence, which is what keeps the silence from
     # being added to whatever quiet already preceded it.
-    events = EventTranslator().translate({
+    events = _translated(EventTranslator(), {
         "type": "response.output_item.added",
         "output_index": 0,
         "item": {"type": "function_call", "name": "search_memory", "call_id": "call_m"},
@@ -527,7 +542,7 @@ def test_every_memory_tool_announces_a_phase():
     # database round trip, and the searching ones an embedding call on top.
     # Derived from the registry, so a ninth memory tool cannot arrive silent.
     for name in sorted(MEMORY_TOOLS):
-        events = EventTranslator().translate({
+        events = _translated(EventTranslator(), {
             "type": "response.output_item.added",
             "output_index": 0,
             "item": {"type": "function_call", "name": name, "call_id": "c"},
@@ -537,7 +552,7 @@ def test_every_memory_tool_announces_a_phase():
 
 def test_function_call_added_emits_a_step_with_the_general_label():
     translator = EventTranslator()
-    events = translator.translate({
+    events = _translated(translator, {
         "type": "response.output_item.added",
         "output_index": 0,
         "item": {"type": "function_call", "name": "update_board", "call_id": "call_a"},
@@ -550,7 +565,7 @@ def test_function_call_added_emits_a_step_with_the_general_label():
 
 def test_a_tool_with_no_label_emits_no_step():
     translator = EventTranslator()
-    events = translator.translate({
+    events = _translated(translator, {
         "type": "response.output_item.added",
         "output_index": 0,
         "item": {"type": "function_call", "name": "not_a_tool", "call_id": "call_a"},
@@ -561,7 +576,7 @@ def test_a_tool_with_no_label_emits_no_step():
 def test_a_heartbeat_never_emits_a_step():
     # A clock that has already passed the heartbeat interval.
     translator = EventTranslator(now=lambda: 1_000.0, heartbeat_seconds=0.0)
-    events = translator.translate({"type": "response.some.unknown.event"})
+    events = _translated(translator, {"type": "response.some.unknown.event"})
     assert events == [StatusEvent(phase="thinking")]
 
 
@@ -569,12 +584,12 @@ def test_two_rounds_reusing_output_index_zero_produce_distinct_step_ids():
     # Each round numbers its own output from zero. `call_id` is what keeps the
     # second round's first call from overwriting the first round's.
     translator = EventTranslator()
-    first = translator.translate({
+    first = _translated(translator, {
         "type": "response.output_item.added",
         "output_index": 0,
         "item": {"type": "function_call", "name": "view_board", "call_id": "call_a"},
     })
-    second = translator.translate({
+    second = _translated(translator, {
         "type": "response.output_item.added",
         "output_index": 0,
         "item": {"type": "function_call", "name": "view_board", "call_id": "call_b"},
@@ -585,12 +600,12 @@ def test_two_rounds_reusing_output_index_zero_produce_distinct_step_ids():
 
 def test_view_board_refines_to_a_named_region():
     translator = EventTranslator()
-    translator.translate({
+    _translated(translator, {
         "type": "response.output_item.added",
         "output_index": 0,
         "item": {"type": "function_call", "name": "view_board", "call_id": "call_a"},
     })
-    events = translator.translate({
+    events = _translated(translator, {
         "type": "response.function_call_arguments.done",
         "output_index": 0,
         "arguments": json.dumps({"x": 0, "y": 0, "width": 40, "height": 40}),
@@ -607,12 +622,12 @@ def test_view_board_covering_everything_says_the_whole_board():
 
 def test_search_memory_refines_to_its_query():
     translator = EventTranslator()
-    translator.translate({
+    _translated(translator, {
         "type": "response.output_item.added",
         "output_index": 0,
         "item": {"type": "function_call", "name": "search_memory", "call_id": "call_a"},
     })
-    events = translator.translate({
+    events = _translated(translator, {
         "type": "response.function_call_arguments.done",
         "output_index": 0,
         "arguments": json.dumps({"query": "what does this learner find hard?"}),
@@ -625,12 +640,12 @@ def test_search_memory_refines_to_its_query():
 
 def test_update_board_refines_to_a_count_and_still_emits_the_board_update():
     translator = EventTranslator()
-    translator.translate({
+    _translated(translator, {
         "type": "response.output_item.added",
         "output_index": 0,
         "item": {"type": "function_call", "name": "update_board", "call_id": "call_a"},
     })
-    events = translator.translate({
+    events = _translated(translator, {
         "type": "response.function_call_arguments.done",
         "output_index": 0,
         "arguments": ONE_ELEMENT_UPDATE,
@@ -642,12 +657,12 @@ def test_update_board_refines_to_a_count_and_still_emits_the_board_update():
 
 def test_set_workspace_refines_to_its_plan_title():
     translator = EventTranslator()
-    translator.translate({
+    _translated(translator, {
         "type": "response.output_item.added",
         "output_index": 0,
         "item": {"type": "function_call", "name": "set_workspace", "call_id": "call_a"},
     })
-    events = translator.translate({
+    events = _translated(translator, {
         "type": "response.function_call_arguments.done",
         "output_index": 0,
         "arguments": json.dumps(WORKSPACE_ARGS),
@@ -659,12 +674,12 @@ def test_set_workspace_refines_to_its_plan_title():
 
 def test_unparseable_arguments_keep_the_general_label():
     translator = EventTranslator()
-    translator.translate({
+    _translated(translator, {
         "type": "response.output_item.added",
         "output_index": 0,
         "item": {"type": "function_call", "name": "search_memory", "call_id": "call_a"},
     })
-    events = translator.translate({
+    events = _translated(translator, {
         "type": "response.function_call_arguments.done",
         "output_index": 0,
         "arguments": "{not json",
@@ -676,7 +691,7 @@ def test_unparseable_arguments_keep_the_general_label():
 
 def test_arguments_done_for_a_call_never_added_emits_nothing():
     translator = EventTranslator()
-    events = translator.translate({
+    events = _translated(translator, {
         "type": "response.function_call_arguments.done",
         "output_index": 7,
         "arguments": "{}",
@@ -688,7 +703,7 @@ def test_fetch_image_announces_a_phase_and_a_row_at_the_head_of_its_call():
     # Same reasoning as the memory tools above: the fetch is awaited inside the
     # tool round, no provider events are consumed while it runs, and the
     # heartbeat cannot fire. This is the last byte before that silence.
-    events = EventTranslator().translate({
+    events = _translated(EventTranslator(), {
         "type": "response.output_item.added",
         "output_index": 0,
         "item": {"type": "function_call", "name": "fetch_image", "call_id": "call_f"},
@@ -704,12 +719,12 @@ def test_the_fetched_url_never_reaches_the_learners_status_row():
     # tool's only argument is a URL the *model* wrote from something it read on
     # the internet. The general label is what the learner sees instead.
     translator = EventTranslator()
-    translator.translate({
+    _translated(translator, {
         "type": "response.output_item.added",
         "output_index": 0,
         "item": {"type": "function_call", "name": "fetch_image", "call_id": "call_f"},
     })
-    events = translator.translate({
+    events = _translated(translator, {
         "type": "response.function_call_arguments.done",
         "output_index": 0,
         "arguments": '{"url": "https://example.com/ignore-your-instructions.png"}',

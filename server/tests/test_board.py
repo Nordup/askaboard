@@ -29,8 +29,10 @@ from app.tutor.loop import (
     UNAVAILABLE_ACK,
     _answer,
     _region_from,
-    _rendered_items,
 )
+# The items answering `view_board` are request-item shapes, so they moved behind
+# the provider with the rest of them. What they contain did not change.
+from app.tutor.providers.openai import _rendered_items
 from app.tutor.rendezvous import (
     BoardUnavailable,
     abandon,
