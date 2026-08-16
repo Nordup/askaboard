@@ -134,6 +134,12 @@ final class BoardMathStore {
     /// What the resident notation costs right now, for the tests that price it.
     var artifactBytesForTesting: Int { totalBytes }
 
+    /// How many times a fragment has actually been typeset.
+    /// `BoardSVGStore.renderPassesForTesting`, for this store's unit of work:
+    /// tests read it to tell "answered from memory" from "did the work again".
+    /// Nothing in the app looks at it.
+    private(set) var typesetPassesForTesting = 0
+
     /// The LaTeX a fragment is actually typeset from.
     ///
     /// The server passes `latex` through byte for byte and holds no opinion on
@@ -195,11 +201,19 @@ final class BoardMathStore {
     /// schedules nothing. `math_text` has no frame of its own, so a fragment
     /// without an artifact reports `.zero` bounds and is unmounted rather than
     /// drawn — there is no placeholder pass that would want to start work.
+    ///
+    /// **It does not touch the LRU order, and must not.** This is not only the
+    /// draw path: `BoardSceneRenderer.elementBounds` calls it for a
+    /// `math_text` element's *bounds*, and `BoardSceneLayerView.visibleIds`
+    /// computes bounds for every element in the scene on every scroll tick. So
+    /// this read runs O(scene) times per tick, and `touch` is a linear search
+    /// of `order` — the pan path would pay an array scan per fragment per
+    /// tick. It is also the wrong order: the cull walks `scene.elements` in
+    /// array order, so touching here would rewrite the LRU into scene order
+    /// and hand every eviction the wrong victim. The order is maintained where
+    /// a fragment is really used — `render(element:)` and `remember(_:for:)`.
     func artifact(for element: MathTextElement) -> MathArtifact? {
-        let key = Self.cacheKey(for: element)
-        guard let artifact = artifacts[key] else { return nil }
-        touch(key)
-        return artifact
+        artifacts[Self.cacheKey(for: element)]
     }
 
     /// Typesets (or awaits an in-flight typeset) and returns the ready
@@ -229,6 +243,7 @@ final class BoardMathStore {
                 fontSize: element.fontSize,
                 color: UIColor(hex: element.style.stroke) ?? .black
             )
+            self.typesetPassesForTesting += 1
             self.inFlight[key] = nil
             // A failure is recorded as completed too. That is what
             // `BoardSVGStore` does with markup that does not parse, and here it

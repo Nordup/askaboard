@@ -431,14 +431,18 @@ final class BoardImageStore {
 
     /// Drops every decoded picture when the system says memory is short.
     ///
-    /// Nothing is recorded against the keys. The bytes are all still on disk —
-    /// `cached` is what says so — so the next draw re-reads and re-decodes the
-    /// pictures the viewport can *see*, and the ones it cannot stay gone. That
-    /// cull is where the saving actually is, and it is why this is not an
-    /// eviction: an eviction defers, because the thing that would re-schedule
-    /// it is the very draw that lost it, and the two would take turns. Here
-    /// every key can come back and none of them is competing for the same
-    /// bytes.
+    /// Nothing is recorded against the keys, and that is what separates this
+    /// from an eviction. An eviction defers, because the thing that would
+    /// re-schedule it is the very draw that lost it and the two would take
+    /// turns. Here nothing is competing for the same bytes, so every key is
+    /// free to come back — and the bytes are all still on disk, which `cached`
+    /// is what says.
+    ///
+    /// An `image` reports the model's frame as its bounds whether or not the
+    /// picture has landed, so nothing asks this store for a bitmap while the
+    /// layer view culls, and only a *draw* re-decodes: the visible set on a
+    /// reconcile, and the whole scene when something captures the board.
+    /// `BoardSVGStore` cannot say the same, and its own note explains why.
     ///
     /// What must not happen is a repaint from inside this call.
     /// `BoardSceneLayerView` drops its tiles on the same notification and

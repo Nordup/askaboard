@@ -220,4 +220,65 @@ final class BoardSceneLayerTests: XCTestCase {
         XCTAssertEqual(view.mountedElementIdsForTesting, ["s"])
         XCTAssertEqual(view.rasterCacheBytesForTesting, 0)
     }
+
+    // MARK: - Memory pressure
+
+    /// A memory warning must cost work, never content.
+    ///
+    /// The three stores drop their bitmaps on the warning and this view drops
+    /// its tiles, and nothing is repainted then — repainting under pressure is
+    /// what the handler exists to avoid. For `svg` and `image` the next draw is
+    /// the way back. For `math_text` there is no way back at all on its own: a
+    /// fragment with no artifact reports `.zero` bounds, so the cull unmounts
+    /// it and no draw ever asks for it again, and the ordinary retry point —
+    /// the `scene` setter — is guarded by `scene != oldValue`. The learner's
+    /// notation would stay blank until the tutor wrote a *different* scene.
+    ///
+    /// So the warning records that the stores need preparing, and the first
+    /// reconcile after it does that once, before it culls.
+    func testAMemoryWarningIsRepaidByTheNextReconcileRatherThanKept() async throws {
+        let view = makeView()
+        // Unique LaTeX, so this is a fresh key in the shared store whatever
+        // else has run in this process.
+        let latex = "x_{\(abs(UUID().hashValue % 100_000))}^2"
+        let element = MathTextElement(id: "m", x: 100, y: 100, latex: latex, fontSize: 24)
+        view.scene = scene([.mathText(element)])
+        _ = try XCTUnwrap(await BoardMathStore.shared.render(element: element))
+        view.reconcile()
+        XCTAssertEqual(view.mountedElementIdsForTesting, ["m"], "notation on the board")
+        let typesetsBefore = BoardMathStore.shared.typesetPassesForTesting
+
+        NotificationCenter.default.post(
+            name: UIApplication.didReceiveMemoryWarningNotification, object: nil
+        )
+        // The stores observe on the main queue, so the purge can land on a
+        // later turn of the run loop rather than inside `post`.
+        var turns = 0
+        while BoardMathStore.shared.artifact(for: element) != nil, turns < 200 {
+            try? await Task.sleep(nanoseconds: 5_000_000)
+            turns += 1
+        }
+        XCTAssertNil(
+            BoardMathStore.shared.artifact(for: element),
+            "the bitmap went, and no draw brought it back — nothing repaints under pressure"
+        )
+        XCTAssertEqual(view.rasterCacheBytesForTesting, 0, "and the tiles went with it")
+
+        // The next natural reconcile is what pays for it.
+        view.reconcile()
+        let ready = expectation(description: "the fragment is typeset again")
+        Task { @MainActor in
+            while BoardMathStore.shared.artifact(for: element) == nil {
+                await Task.yield()
+            }
+            ready.fulfill()
+        }
+        await fulfillment(of: [ready], timeout: 2)
+        XCTAssertGreaterThan(
+            BoardMathStore.shared.typesetPassesForTesting, typesetsBefore,
+            "the reconcile re-prepared the scene rather than leaving it blank"
+        )
+        view.reconcile()
+        XCTAssertEqual(view.mountedElementIdsForTesting, ["m"], "and the notation is back")
+    }
 }

@@ -81,6 +81,10 @@ final class BoardSceneLayerView: UIView {
     private var zoomScale: CGFloat = 1
     private var currentBucket = ZoomBucket.bucket(forZoom: 1)
     private var lastCulledSize: CGSize = .zero
+    /// Set when a memory warning made the three artifact stores drop their
+    /// bitmaps; cleared by the first `reconcile()` after it, which re-prepares
+    /// the scene once. See `handleMemoryWarning`.
+    private var needsReprepareAfterPurge = false
 
     private var mountedElementIds: Set<String> { Set(elementLayers.keys) }
 
@@ -223,7 +227,25 @@ final class BoardSceneLayerView: UIView {
 
     /// Mounts what the viewport can see, unmounts what it cannot, and refreshes
     /// the bitmap of everything that stays.
+    ///
+    /// It is also where a memory warning is paid for. The three stores dropped
+    /// their bitmaps when the warning arrived and nothing was repainted then,
+    /// which is the rule; this is the "next natural reconcile" that rule defers
+    /// to, and for `math_text` it is the *only* way back. A fragment with no
+    /// artifact reports `.zero` bounds, so the cull unmounts it and no draw
+    /// ever asks for it again — and the ordinary retry point, the `scene`
+    /// setter, is guarded by `scene != oldValue`, so the notation would stay
+    /// blank until the tutor wrote a *different* scene. Checked and cleared
+    /// before the cull runs, so the prepares are in flight by the time bounds
+    /// are computed, and so the notification each one posts on landing finds
+    /// the flag already down.
     func reconcile() {
+        if needsReprepareAfterPurge {
+            needsReprepareAfterPurge = false
+            BoardSVGStore.shared.prepare(scene: scene)
+            BoardMathStore.shared.prepare(scene: scene)
+            BoardImageStore.shared.prepare(scene: scene)
+        }
         lastCulledSize = bounds.size
         apply(visible: currentlyVisibleIds())
     }
@@ -413,10 +435,18 @@ final class BoardSceneLayerView: UIView {
     /// that the three artifact stores drop their own bitmaps on the same
     /// notification, it would also make each of them decode, parse or typeset
     /// its whole working set back into memory. Re-filling memory is the
-    /// opposite of what the system just asked for. The next natural
-    /// reconcile — a pan, a zoom bucket change, a scene install, or an artifact
-    /// landing — repaints what the viewport can see by then.
+    /// opposite of what the system just asked for.
+    ///
+    /// What is recorded instead is that the stores need preparing again, which
+    /// the next natural `reconcile()` does before it culls. Every caller of it
+    /// is one: a zoom bucket change, a resize, a moved board origin, a scene
+    /// install, and an artifact landing. A pan reaches it indirectly — it draws
+    /// through `reconcileVisibilityOnly`, an `svg` or `image` re-schedules from
+    /// that draw, and the bitmap that lands posts `.boardSceneArtifactReady`.
+    /// Without this flag a purge would be permanent for `math_text`: see
+    /// `reconcile()`.
     @objc private func handleMemoryWarning() {
         rasterCache.removeAll()
+        needsReprepareAfterPurge = true
     }
 }
