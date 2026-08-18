@@ -126,6 +126,10 @@ struct TutorMessage: Identifiable, Codable, Sendable, Equatable {
     /// talk. Defaults off, and decodes off for every session written before
     /// voice existed — the same migration `attachments` and `activity` carry.
     var isVoice: Bool = false
+    /// Web sources the tutor used for this message, from `search_sources`
+    /// events. Defaults empty on every message written before web research
+    /// existed — the same migration `attachments` and `activity` carry.
+    var sources: [TutorSource] = []
 
     init(
         id: UUID = UUID(),
@@ -135,7 +139,8 @@ struct TutorMessage: Identifiable, Codable, Sendable, Equatable {
         signal: LearningSignal? = nil,
         attachments: [MessageAttachment] = [],
         activity: ActivityTrail? = nil,
-        isVoice: Bool = false
+        isVoice: Bool = false,
+        sources: [TutorSource] = []
     ) {
         self.id = id
         self.role = role
@@ -145,19 +150,21 @@ struct TutorMessage: Identifiable, Codable, Sendable, Equatable {
         self.attachments = attachments
         self.activity = activity
         self.isVoice = isVoice
+        self.sources = sources
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, role, text, createdAt, signal, attachments, activity, isVoice
+        case id, role, text, createdAt, signal, attachments, activity, isVoice, sources
     }
 
-    /// Written out for two lines of it: `attachments` and `activity`.
+    /// Written out for three lines of it: `attachments`, `activity`, and
+    /// `sources`.
     ///
     /// Swift's synthesised decoder does **not** fall back to a stored
     /// property's default value when its key is missing — it throws
     /// `keyNotFound`. Every session written before attachments existed lacks
     /// that key, and every session written before the activity trail existed
-    /// lacks this one; `LearningSession` decodes `messages` with a plain
+    /// lacks that one too; `LearningSession` decodes `messages` with a plain
     /// `try`, so one legacy message would take the whole session down and
     /// `SessionPersistence.load` would return nil for it. A default value is
     /// not a migration; this is.
@@ -171,7 +178,24 @@ struct TutorMessage: Identifiable, Codable, Sendable, Equatable {
         attachments = try container.decodeIfPresent([MessageAttachment].self, forKey: .attachments) ?? []
         activity = try container.decodeIfPresent(ActivityTrail.self, forKey: .activity)
         isVoice = try container.decodeIfPresent(Bool.self, forKey: .isVoice) ?? false
+        sources = try container.decodeIfPresent([TutorSource].self, forKey: .sources) ?? []
     }
+}
+
+/// One web page the tutor grounded a turn in, sent in a `search_sources`
+/// event.
+///
+/// `Codable` and saved on `TutorMessage` so the source chips a learner saw
+/// stay on the message across a relaunch, exactly like the activity trail.
+/// Equatable by content so a repeated event with identical sources merges to
+/// nothing.
+struct TutorSource: Codable, Sendable, Equatable, Identifiable {
+    /// The search engine's own identifier for the result. `id` is part of the
+    /// wire contract, so it is what dedupes repeated `search_sources` events.
+    let id: String
+    let title: String
+    let url: String
+    let snippet: String?
 }
 
 enum LearningSignal: String, Codable, Sendable {
@@ -245,6 +269,15 @@ struct LearningSession: Codable, Sendable, Equatable {
     /// kind of choice with the same lifecycle: it rides the session file and a
     /// reset returns it to the default.
     var selectedVoiceModel: VoiceModelChoice
+    /// Where the learner last left the whiteboard's camera, in drawing
+    /// coordinates plus the view-independent zoom. Saved alongside the session
+    /// so rotation, split view, a board remount and a later launch all reopen
+    /// on the same stretch of the board.
+    ///
+    /// Older session files do not carry this key; they decode to `nil` (the
+    /// pre-existing behavior of centering on the content) so a saved session
+    /// never fails to load just because it predates camera persistence.
+    var boardCamera: BoardCamera?
     var startedAt: Date
     var lastSavedAt: Date
 
@@ -258,6 +291,7 @@ struct LearningSession: Codable, Sendable, Equatable {
         selectedModel: ModelChoice,
         reasoningEffort: ReasoningEffort = .defaultValue,
         selectedVoiceModel: VoiceModelChoice = .mini,
+        boardCamera: BoardCamera? = nil,
         startedAt: Date,
         lastSavedAt: Date
     ) {
@@ -270,6 +304,7 @@ struct LearningSession: Codable, Sendable, Equatable {
         self.selectedModel = selectedModel
         self.reasoningEffort = reasoningEffort
         self.selectedVoiceModel = selectedVoiceModel
+        self.boardCamera = boardCamera
         self.startedAt = startedAt
         self.lastSavedAt = lastSavedAt
     }
@@ -284,6 +319,7 @@ struct LearningSession: Codable, Sendable, Equatable {
         case selectedModel
         case reasoningEffort
         case selectedVoiceModel
+        case boardCamera
         case startedAt
         case lastSavedAt
     }
@@ -316,6 +352,10 @@ struct LearningSession: Codable, Sendable, Equatable {
         // files predate the setting, so they carry no preference to respect —
         // they take today's default, which is Mini.
         selectedVoiceModel = (try? container.decode(VoiceModelChoice.self, forKey: .selectedVoiceModel)) ?? .mini
+        // Same fallback as `boardScene`: files written before camera
+        // persistence existed open centered on their content, which is what
+        // `nil` means here.
+        boardCamera = try? container.decodeIfPresent(BoardCamera.self, forKey: .boardCamera)
         startedAt = try container.decode(Date.self, forKey: .startedAt)
         lastSavedAt = try container.decode(Date.self, forKey: .lastSavedAt)
     }
@@ -337,6 +377,26 @@ struct LearningSession: Codable, Sendable, Equatable {
             startedAt: .now,
             lastSavedAt: .now
         )
+    }
+}
+
+/// The whiteboard's persisted view of the board: where its viewport is centered,
+/// plus the zoom it is seen at.
+///
+/// `center` lives in unscaled drawing coordinates (the same space `CanvasScroller`
+/// and `CanvasViewportMapper` work in), so the same board location restores at
+/// any viewport size — rotation and split view do not change what it means. It is
+/// deliberately not a raw `contentOffset`, which is zoom- and viewport-dependent.
+///
+/// The camera stays `nil` for a session that has never been moved, so a fresh or
+/// legacy session keeps the pre-camera behavior of opening centered on its content.
+struct BoardCamera: Codable, Sendable, Equatable {
+    var center: CGPoint
+    var zoomScale: CGFloat
+
+    init(center: CGPoint, zoomScale: CGFloat) {
+        self.center = center
+        self.zoomScale = zoomScale
     }
 }
 

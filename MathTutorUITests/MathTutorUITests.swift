@@ -282,6 +282,161 @@ final class MathTutorUITests: XCTestCase {
         assertBoard(app, isWide: false)
     }
 
+    /// A dock transition may keep both surfaces mounted while its spring finishes, but the
+    /// surface it has just arrived at must already accept the learner's next touch. This is the
+    /// device sequence that exposed the distinction: collapse the whole panel, reopen it, reveal
+    /// Sessions, then press a control there. The drawer swipe is driven by its UIKit ancestor and
+    /// therefore still worked when the reopened SwiftUI panel itself was incorrectly inert.
+    func testReopenedDockAcceptsTouchesAfterRevealingSessions() {
+        let app = launch([
+            "--ui-state", "docked-active", "--ui-fixture",
+            "--e2e-seed-radical-attempt"
+        ])
+
+        let panel = app.otherElements["tutor-panel"]
+        XCTAssertTrue(panel.waitForExistence(timeout: 5))
+        panel.swipeLeft()
+
+        let orb = app.buttons["Open the tutor"]
+        XCTAssertTrue(orb.waitForExistence(timeout: 5), "the panel swipe must collapse the dock")
+        orb.tap()
+
+        let reopenedPanel = app.otherElements["tutor-panel"]
+        XCTAssertTrue(reopenedPanel.waitForExistence(timeout: 5), "the orb must restore the panel")
+        reopenedPanel.swipeRight()
+
+        let recent = app.staticTexts["RECENT"]
+        XCTAssertTrue(recent.waitForExistence(timeout: 5), "the reopened panel must reveal Sessions")
+        let newChat = app.buttons["New chat"]
+        XCTAssertTrue(newChat.waitForExistence(timeout: 5))
+        newChat.tap()
+        XCTAssertTrue(
+            app.staticTexts["Hi! I'm your AI Tutor"].waitForExistence(timeout: 5),
+            "New chat must be actionable after the dock is reopened and Sessions is revealed"
+        )
+    }
+
+    /// **The recent-session tap regression, in the exact device sequence.**
+    ///
+    /// The user's repro: swipe the docked chat fully away, restore it from the orb, open
+    /// Sessions, and press a non-current recent session — on a physical iPad the press
+    /// sometimes does nothing. Two independent holes existed in that path: the old 10–12 pt
+    /// tap/pan dead zone, and a row tap owned by hosted SwiftUI content whose root can be
+    /// replaced by a parent update while the finger is down. The row's stable UIKit control
+    /// now owns the complete touch sequence and accepts every touch the pan has not taken.
+    ///
+    /// This test drives that dead zone on purpose — a controlled 11 pt press-drag on the
+    /// non-current row — and asserts the actual outcome: the chat content becomes the pressed
+    /// session's. It runs the exact hide → restore → open → press cycle against the seeded
+    /// non-current row. The resulting content assertion also proves the UIKit control's action
+    /// survives the session switch rebuilding its hosted label and dismisses the drawer through
+    /// the ordinary `onOpen` path.
+    func testRecentSessionSwitchesAfterDockHideRestoreAndSessionsOpen() {
+        let app = launch([
+            "--ui-state", "docked-active",
+            "--e2e-seed-recent-sessions"
+        ])
+
+        let radicalContent = "Radical equations: square both sides, then check each candidate in the original equation."
+        let vectorsContent = "Vectors in 2D: resolve the 60 N force into x and y components."
+        XCTAssertTrue(
+            app.staticTexts[radicalContent].waitForExistence(timeout: 5),
+            "the seeded radical session must be open with its own thread content"
+        )
+
+        let panel = app.otherElements["tutor-panel"]
+        XCTAssertTrue(panel.waitForExistence(timeout: 5))
+        panel.swipeLeft()
+
+        let orb = app.buttons["Open the tutor"]
+        XCTAssertTrue(orb.waitForExistence(timeout: 5), "swiping the panel left must collapse the dock")
+        orb.tap()
+
+        let reopenedPanel = app.otherElements["tutor-panel"]
+        XCTAssertTrue(reopenedPanel.waitForExistence(timeout: 5), "the orb must restore the panel")
+        reopenedPanel.swipeRight()
+
+        let recent = app.staticTexts["RECENT"]
+        XCTAssertTrue(recent.waitForExistence(timeout: 5), "the restored panel must reveal Sessions")
+
+        let row = app.buttons["Vectors in 2D"]
+        XCTAssertTrue(row.waitForExistence(timeout: 5), "the non-current Vectors in 2D row must be listed")
+        pressWithDrift(row, points: 30, "a committed drawer pan must not open its row")
+        XCTAssertTrue(
+            app.staticTexts[radicalContent].exists,
+            "a committed horizontal pan across a row must cancel that row's activation"
+        )
+        pressWithDrift(row, points: 11, "an 11 pt drift is inside the old 10–12 pt dead zone")
+
+        XCTAssertTrue(
+            app.staticTexts[vectorsContent].waitForExistence(timeout: 5),
+            "pressing Vectors in 2D with the controlled drift must open that session's thread"
+        )
+    }
+
+    /// SwiftUI clips the translated chat visually but does not implicitly clip its hit-test
+    /// rectangle. At full drawer travel that invisible rectangle reaches across the complete
+    /// tool rail, so this presses the rail while Sessions is open and verifies the tap reaches
+    /// the visible control rather than the hidden part of the chat pane.
+    func testSessionsDrawerDoesNotCoverBoardOrToolRailHitAreas() {
+        let app = launch([
+            "--ui-state", "docked-active", "--ui-fixture",
+            "--e2e-seed-radical-attempt", "--ui-freeze"
+        ], resetting: false)
+
+        let toggle = app.buttons["Show sessions"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        toggle.tap()
+
+        let board = app.otherElements["whiteboard"]
+        XCTAssertTrue(board.waitForExistence(timeout: 5))
+        let boardScroller = board.scrollViews.firstMatch
+        XCTAssertTrue(boardScroller.waitForExistence(timeout: 5))
+        Thread.sleep(forTimeInterval: 1)
+        let chat = app.descendants(matching: .any)["chat-scroll"]
+        XCTAssertTrue(chat.waitForExistence(timeout: 5))
+        let chatBefore = chat.screenshot().pngRepresentation
+        boardScroller.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.25))
+            .press(
+                forDuration: 0.1,
+                thenDragTo: boardScroller.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.75))
+            )
+        XCTAssertLessThan(
+            changedPixelCount(
+                from: chatBefore,
+                to: chat.screenshot(),
+                maxWidthFraction: 0.22
+            ),
+            500,
+            "a board pan must not scroll the chat strip"
+        )
+        let eraser = app.buttons["Eraser"]
+        XCTAssertTrue(eraser.waitForExistence(timeout: 5))
+        eraser.tap()
+        XCTAssertTrue(eraser.isSelected, "the visible tool rail must remain tappable beside Sessions")
+
+        tap(
+            app.buttons["Close sessions"],
+            untilExists: toggle,
+            "the fixed visible chat strip must still close Sessions"
+        )
+    }
+
+    func testBoardPanDoesNotScrollDockedChat() {
+        let app = launch([
+            "--ui-state", "docked-active", "--ui-fixture",
+            "--e2e-seed-radical-attempt", "--ui-freeze"
+        ], resetting: false)
+        let chat = app.descendants(matching: .any)["chat-scroll"]
+        XCTAssertTrue(chat.waitForExistence(timeout: 5))
+        let board = app.otherElements["whiteboard"]
+        XCTAssertTrue(board.waitForExistence(timeout: 5))
+        let before = chat.screenshot().pngRepresentation
+        board.swipeUp()
+        let after = chat.screenshot().pngRepresentation
+        XCTAssertEqual(after, before, "a board pan must not scroll the docked chat")
+    }
+
     func testFullScreenControlAndThePeekBack() {
         let app = launch(["--ui-state", "docked-start", "--ui-fixture", "--ui-freeze"])
 
@@ -444,6 +599,42 @@ final class MathTutorUITests: XCTestCase {
         )
     }
 
+    func testSeededTutorSceneRemainsVisibleAcrossBoardPanAndPinch() {
+        let baselineApp = launch(["--ui-test-reset"], resetting: false)
+        let baselineBoard = baselineApp.otherElements["whiteboard"]
+        XCTAssertTrue(baselineBoard.waitForExistence(timeout: 10))
+        let baselinePixelCount = saturatedPixelCount(in: baselineBoard.screenshot())
+        baselineApp.terminate()
+
+        let app = launch(["--ui-test-reset", "--e2e-seed-tutor-scene"], resetting: false)
+        let board = app.otherElements["whiteboard"]
+        XCTAssertTrue(board.waitForExistence(timeout: 10))
+
+        XCTAssertGreaterThan(
+            saturatedPixelCount(in: board.screenshot()),
+            baselinePixelCount + 1_000,
+            "The seeded tutor scene must add visible colored pixels beyond the board controls"
+        )
+
+        board.coordinate(withNormalizedOffset: CGVector(dx: 0.72, dy: 0.52))
+            .press(
+                forDuration: 0.1,
+                thenDragTo: board.coordinate(withNormalizedOffset: CGVector(dx: 0.28, dy: 0.62))
+            )
+        XCTAssertGreaterThan(
+            saturatedPixelCount(in: board.screenshot()),
+            baselinePixelCount + 1_000,
+            "The seeded tutor scene must remain visible after a board pan"
+        )
+
+        board.pinch(withScale: 1.35, velocity: 1)
+        XCTAssertGreaterThan(
+            saturatedPixelCount(in: board.screenshot()),
+            baselinePixelCount + 1_000,
+            "The seeded tutor scene must remain visible after a board pinch"
+        )
+    }
+
     /// Collapse and arm `btn/select` from the dock.
     ///
     /// **`btn/select` has a visible result of its own**, which is what this helper used to
@@ -503,7 +694,7 @@ final class MathTutorUITests: XCTestCase {
     /// has no credential a student could supply, so there is nothing to ask for and nothing to
     /// send them to: the panel is the ordinary start state, and a send fails in the thread.
     func testThereIsNoFirstRunSetupStateWithoutAToken() {
-        let app = launch(["--ui-test-reset"], resetting: false)
+        let app = launch(["--live-e2e-reset"], resetting: false)
 
         XCTAssertFalse(app.staticTexts["One thing before we start"].exists)
         XCTAssertFalse(app.buttons["add-api-key"].exists)
@@ -750,6 +941,102 @@ final class MathTutorUITests: XCTestCase {
         return board.frame
     }
 
+    private func saturatedPixelCount(in screenshot: XCUIScreenshot) -> Int {
+        guard let image = UIImage(data: screenshot.pngRepresentation)?.cgImage else { return 0 }
+        let width = image.width
+        let height = image.height
+        let bytesPerRow = width * 4
+        var bytes = [UInt8](repeating: 0, count: bytesPerRow * height)
+        guard let context = CGContext(
+            data: &bytes,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return 0 }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        var count = 0
+        for y in 0..<height {
+            for x in 0..<width {
+                let index = y * bytesPerRow + x * 4
+                let red = Int(bytes[index])
+                let green = Int(bytes[index + 1])
+                let blue = Int(bytes[index + 2])
+                let maximum = max(red, green, blue)
+                let minimum = min(red, green, blue)
+                if maximum - minimum >= 30 && maximum < 250 {
+                    count += 1
+                }
+            }
+        }
+        return count
+    }
+
+    /// PNG bytes are not a stable screenshot identity: CoreGraphics may choose a different
+    /// ancillary chunk or antialias one edge on the next frame even when the visible content is
+    /// unchanged. Count material pixel changes instead, so this regression catches a translated
+    /// chat (thousands of changed pixels) without failing on that encoding noise.
+    private func changedPixelCount(
+        from before: Data,
+        to after: XCUIScreenshot,
+        maxWidthFraction: CGFloat = 1
+    ) -> Int {
+        guard
+            let beforeImage = UIImage(data: before)?.cgImage,
+            let afterImage = UIImage(data: after.pngRepresentation)?.cgImage,
+            beforeImage.width == afterImage.width,
+            beforeImage.height == afterImage.height
+        else { return .max }
+
+        let width = beforeImage.width
+        let height = beforeImage.height
+        let comparedWidth = min(width, max(1, Int(CGFloat(width) * maxWidthFraction)))
+        let bytesPerRow = width * 4
+        var beforeBytes = [UInt8](repeating: 0, count: bytesPerRow * height)
+        var afterBytes = [UInt8](repeating: 0, count: bytesPerRow * height)
+        guard
+            let beforeContext = CGContext(
+                data: &beforeBytes,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: bytesPerRow,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ),
+            let afterContext = CGContext(
+                data: &afterBytes,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: bytesPerRow,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )
+        else { return .max }
+
+        let bounds = CGRect(x: 0, y: 0, width: width, height: height)
+        beforeContext.draw(beforeImage, in: bounds)
+        afterContext.draw(afterImage, in: bounds)
+
+        var changed = 0
+        for y in 0..<height {
+            for x in 0..<comparedWidth {
+                let index = y * bytesPerRow + x * 4
+                let maxDelta = max(
+                    abs(Int(beforeBytes[index]) - Int(afterBytes[index])),
+                    abs(Int(beforeBytes[index + 1]) - Int(afterBytes[index + 1])),
+                    abs(Int(beforeBytes[index + 2]) - Int(afterBytes[index + 2]))
+                )
+                if maxDelta > 4 { changed += 1 }
+            }
+        }
+        return changed
+    }
+
     /// One element, one rectangle. The message names the board's own region so a failure reads
     /// as "the suggestion grid moved" rather than as four numbers.
     private func assertFrame(
@@ -851,6 +1138,16 @@ final class MathTutorUITests: XCTestCase {
     private func waitForDisappearance(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
         let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element)
         return XCTWaiter().wait(for: [gone], timeout: timeout) == .completed
+    }
+
+    /// Presses `element` and drags the finger `points` horizontally before lifting — a
+    /// controlled micro-drift that reproduces the 10–12 pt dead zone between the row's old
+    /// tap slop and the drawer pan's commit threshold.
+    private func pressWithDrift(_ element: XCUIElement, points: CGFloat, _ message: String) {
+        XCTAssertTrue(element.exists, message)
+        let start = element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        let end = start.withOffset(CGVector(dx: points, dy: 0))
+        start.press(forDuration: 0.08, thenDragTo: end)
     }
 
     /// Records dropped taps in the test report so a rising rate stays visible instead of

@@ -325,8 +325,10 @@ final class BoardImageElementTests: XCTestCase {
         defer { cleanUp(second) }
         let store = BoardImageStore(byteLimit: 1)
         store.loaderForTesting = { _ in Self.pngData(width: 8, height: 8) }
-        _ = try XCTUnwrap(await store.render(element: Self.element(first)))
-        _ = try XCTUnwrap(await store.render(element: Self.element(second)))
+        let renderedFirst = await store.render(element: Self.element(first))
+        _ = try XCTUnwrap(renderedFirst)
+        let renderedSecond = await store.render(element: Self.element(second))
+        _ = try XCTUnwrap(renderedSecond)
         XCTAssertEqual(store.decodePassesForTesting, 2)
         XCTAssertNil(store.artifact(for: Self.element(first)), "the older picture was evicted")
 
@@ -365,7 +367,8 @@ final class BoardImageElementTests: XCTestCase {
         defer { cleanUp(blobID) }
         let store = BoardImageStore()
         store.loaderForTesting = { _ in Self.pngData(width: 8, height: 8) }
-        _ = try XCTUnwrap(await store.render(element: Self.element(blobID)))
+        let rendered = await store.render(element: Self.element(blobID))
+        _ = try XCTUnwrap(rendered)
         XCTAssertGreaterThan(store.artifactBytesForTesting, 0)
 
         NotificationCenter.default.post(

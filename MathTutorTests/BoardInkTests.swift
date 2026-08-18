@@ -99,6 +99,61 @@ final class BoardInkTests: XCTestCase {
         }
     }
 
+    /// The board must not show PencilKit's empty-text menu ("Select All |
+    /// Insert Space") on a tap. Both responder-chain gates
+    /// (`canPerformAction` and `target(forAction:)`) are pinned in one place.
+    ///
+    /// The lasso's cut/copy/paste/duplicate/delete menu is presented by
+    /// PencilKit itself and never routes through this canvas's responder chain,
+    /// so the meaningful preservation contract is that a non-empty-text action
+    /// answers exactly like a stock `PKCanvasView` in the same environment.
+    /// The subclass must not veto or re-target anything else.
+    @MainActor
+    func testBoardCanvasSuppressesEmptyTextActionsButKeepsLassoEditActions() {
+        let canvas = BoardCanvasView(frame: CGRect(x: 0, y: 0, width: 1_024, height: 768)).pencilCanvas
+        let stock = PKCanvasView(frame: canvas.frame)
+
+        XCTAssertTrue(
+            canvas is BoardPencilCanvasView,
+            "The board's default canvas must install the popup-suppressing subclass"
+        )
+        XCTAssertFalse(
+            canvas.canPerformAction(#selector(UIResponder.selectAll(_:)), withSender: nil),
+            "A tap must not offer Select All on an empty board"
+        )
+        XCTAssertNil(
+            canvas.target(forAction: #selector(UIResponder.selectAll(_:)), withSender: nil),
+            "Select All must have no responder target on an empty board"
+        )
+        XCTAssertFalse(
+            canvas.canPerformAction(#selector(UIKeyInput.insertText(_:)), withSender: nil),
+            "A tap must not offer Insert Space on a drawing board"
+        )
+        XCTAssertNil(
+            canvas.target(forAction: #selector(UIKeyInput.insertText(_:)), withSender: nil),
+            "Insert Space must have no responder target on a drawing board"
+        )
+
+        for action in [
+            #selector(UIResponder.cut(_:)),
+            #selector(UIResponder.copy(_:)),
+            #selector(UIResponder.paste(_:)),
+            #selector(UIResponder.delete(_:)),
+            #selector(UIResponder.duplicate(_:))
+        ] {
+            XCTAssertEqual(
+                canvas.canPerformAction(action, withSender: nil),
+                stock.canPerformAction(action, withSender: nil),
+                "Lasso edit action \(action) must keep the stock canvas answer"
+            )
+            XCTAssertEqual(
+                canvas.target(forAction: action, withSender: nil) != nil,
+                stock.target(forAction: action, withSender: nil) != nil,
+                "Lasso edit action \(action) must keep the stock responder target"
+            )
+        }
+    }
+
     /// The board must never hand tool selection back to PencilKit. This is a
     /// structural guard rather than a behavioural one: a reinstated
     /// `PKToolPicker` would float its own palette over the rail, and nothing

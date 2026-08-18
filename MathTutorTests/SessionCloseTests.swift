@@ -9,6 +9,7 @@ import os
 /// URL and is tested against it separately.
 final class ClosingSpyService: TutorService, Sendable {
     private let closedIDs = OSAllocatedUnfairLock<[UUID]>(initialState: [])
+    private let deletedIDs = OSAllocatedUnfairLock<[UUID]>(initialState: [])
     private let holdsTurnOpen: Bool
     private let onClose: (@Sendable () -> Void)?
 
@@ -21,6 +22,7 @@ final class ClosingSpyService: TutorService, Sendable {
     }
 
     var closed: [UUID] { closedIDs.withLock { $0 } }
+    var deleted: [UUID] { deletedIDs.withLock { $0 } }
 
     func stream(_ request: TutorRequest) -> AsyncThrowingStream<TutorEvent, Error> {
         AsyncThrowingStream { continuation in
@@ -32,6 +34,11 @@ final class ClosingSpyService: TutorService, Sendable {
 
     func closeSession(id: UUID) async {
         closedIDs.withLock { $0.append(id) }
+        onClose?()
+    }
+
+    func deleteSession(id: UUID) async {
+        deletedIDs.withLock { $0.append(id) }
         onClose?()
     }
 }
@@ -97,8 +104,8 @@ final class SessionCloseTests: XCTestCase {
         )
     }
 
-    func testResettingClosesTheSessionItDeletes() async {
-        let sent = expectation(description: "close sent")
+    func testResettingDeletesTheSessionFromTheBackendWithoutClosingIt() async {
+        let sent = expectation(description: "delete sent")
         let service = ClosingSpyService(onClose: { sent.fulfill() })
         let store = makeStore(service)
         await store.sendAndWait("check my working")
@@ -107,12 +114,12 @@ final class SessionCloseTests: XCTestCase {
         store.resetSession()
 
         await fulfillment(of: [sent], timeout: 2)
+        XCTAssertEqual(service.closed, [], "a close would freeze the deleted transcript into memory")
         XCTAssertEqual(
-            service.closed, [deleted],
+            service.deleted, [deleted],
             """
-            The server keeps its own transcript and the abandoned-session sweep \
-            would reach it within the day regardless, so not closing would only \
-            make a deleted session remembered later, never unremembered
+            Reset is destructive, so the server must forget the transcript and \
+            any frozen episode instead of recording the session as remembered
             """
         )
     }

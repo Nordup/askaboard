@@ -157,9 +157,11 @@ final class BoardMathElementTests: XCTestCase {
         let first = MathTextElement(id: "m-cap-a", x: 0, y: 0, latex: #"\frac{1}{2}"#, fontSize: 24)
         let second = MathTextElement(id: "m-cap-b", x: 0, y: 0, latex: #"\sqrt{7}"#, fontSize: 24)
 
-        _ = try XCTUnwrap(await store.render(element: first))
+        let renderedFirst = await store.render(element: first)
+        _ = try XCTUnwrap(renderedFirst)
         let afterOne = store.artifactBytesForTesting
-        let secondArtifact = try XCTUnwrap(await store.render(element: second))
+        let renderedSecond = await store.render(element: second)
+        let secondArtifact = try XCTUnwrap(renderedSecond)
 
         XCTAssertGreaterThan(afterOne, 0, "the budget is priced in the bytes the bitmap holds")
         XCTAssertEqual(
@@ -185,7 +187,8 @@ final class BoardMathElementTests: XCTestCase {
     func testAMemoryWarningDropsTheTypesetBitmapsAndTheySurvive() async throws {
         let store = BoardMathStore()
         let element = MathTextElement(id: "m-warn", x: 0, y: 0, latex: #"x^2 + 1"#, fontSize: 24)
-        _ = try XCTUnwrap(await store.render(element: element))
+        let rendered = await store.render(element: element)
+        _ = try XCTUnwrap(rendered)
         XCTAssertGreaterThan(store.artifactBytesForTesting, 0)
 
         NotificationCenter.default.post(

@@ -10,6 +10,10 @@ enum E2ESeedFixture {
     /// Seeds the semantic tutor scene instead of (or alongside) PencilKit ink,
     /// so Luna can inspect every primitive without a live API.
     static let sceneLaunchArgument = "--e2e-seed-tutor-scene"
+    /// Seeds two persisted sessions — the radical-attempt session as the open one and a
+    /// "Vectors in 2D" session one index position older — so the sessions drawer has a
+    /// non-current row with visibly different thread content to press.
+    static let recentSessionsLaunchArgument = "--e2e-seed-recent-sessions"
 
     /// The cap height the seeded attempt is written at, in board points.
     ///
@@ -50,6 +54,72 @@ enum E2ESeedFixture {
         session.exercise = .radicalEquation
         session.drawingData = drawingData()
         session.lastSavedAt = .now
+    }
+
+    /// The two-session fixture the recent-session tap regression runs on.
+    ///
+    /// The regression needs a non-current row with its own distinct content, and it has to
+    /// survive the exact device sequence (hide dock → restore → open Sessions). `seedSession`
+    /// covers the open session alone; this is the same idea with a second session written
+    /// through `SessionPersistence` so the drawer actually has a row to press.
+    ///
+    /// The open session is saved after the second one, so the index opens it and lists it
+    /// first; the two rows stay distinguishable by title ("Radical equations" from the plan,
+    /// "Vectors in 2D" from the learner's opening message) and by thread content.
+    static func seedRecentSessions(open: inout LearningSession, into persistence: SessionPersistence) {
+        open.plan = .radicalEquation
+        open.exercise = .radicalEquation
+        open.drawingData = drawingData()
+        open.messages = [
+            TutorMessage(
+                role: .tutor,
+                text: "Radical equations: square both sides, then check each candidate in the original equation."
+            )
+        ]
+        open.lastSavedAt = .now
+        persistence.save(open)
+        persistence.save(recentOtherSession(openLastSavedAt: open.lastSavedAt))
+    }
+
+    /// The older "Vectors in 2D" session the drawer must list as a tappable non-current row.
+    static func recentOtherSession(openLastSavedAt: Date) -> LearningSession {
+        // A fixed id, shared by the persisted file and the drawer's row, so tapping the row
+        // loads exactly the file that was written. A fresh `UUID()` per call (as in
+        // `LearningSession.empty`) would give the row a different id than the file it names.
+        var other = LearningSession(
+            id: Self.recentOtherSessionID,
+            messages: [],
+            plan: nil,
+            exercise: nil,
+            drawingData: nil,
+            selectedModel: .defaultValue,
+            reasoningEffort: .defaultValue,
+            selectedVoiceModel: .mini,
+            startedAt: openLastSavedAt.addingTimeInterval(-9_000),
+            lastSavedAt: openLastSavedAt
+        )
+        other.messages = [
+            TutorMessage(role: .learner, text: "Vectors in 2D"),
+            TutorMessage(
+                role: .tutor,
+                text: "Vectors in 2D: resolve the 60 N force into x and y components."
+            )
+        ]
+        other.lastSavedAt = openLastSavedAt.addingTimeInterval(-7_200)
+        return other
+    }
+
+    /// Stable identity for the second, non-current fixture session.
+    static let recentOtherSessionID = UUID(uuidString: "00000000-0000-0000-0000-000000000002")
+        ?? UUID()
+
+    /// The two drawer rows the recent-session regression runs against, built directly from the
+    /// fixture so the list is deterministic no matter what a previous run left on disk.
+    static func recentSessionSummaries(open: LearningSession) -> [SessionSummary] {
+        [
+            SessionSummary(open),
+            SessionSummary(recentOtherSession(openLastSavedAt: open.lastSavedAt)),
+        ]
     }
 
     static func scene() -> BoardScene {
@@ -219,9 +289,15 @@ enum E2ESeedFixture {
             // dashed style on purpose: `ink_text` ignores `dash`, `fill` and
             // `stroke_width`, and a fixture that only ever showed the fields
             // this kind honours would never show that.
+            //
+            // And it ends in an emoji, which is the one part of this kind no
+            // pen draws: the letters are a tapered outline filled in `stroke`,
+            // the picture is a colour glyph placed on the same baseline, and
+            // the only way to see that the two sit in one line is to look at
+            // them. This is where a human eye lands on that.
             .inkText(InkTextElement(
                 id: "ink-note", x: -290, y: 315,
-                text: "Nice start!", size: 18, style: hintStyle
+                text: "Nice start! \u{1F44D}", size: 18, style: hintStyle
             )),
         ])
     }

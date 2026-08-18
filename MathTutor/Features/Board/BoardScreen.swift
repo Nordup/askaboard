@@ -408,6 +408,8 @@ struct BoardScreen: View {
                 onDrawingChange: store.updateDrawing,
                 onUndo: capture.undo,
                 onRedo: capture.redo,
+                onCameraChange: store.updateCamera,
+                initialCamera: store.session.boardCamera,
                 scene: store.session.boardScene
             )
             // Switching sessions swaps the board under the pen, and

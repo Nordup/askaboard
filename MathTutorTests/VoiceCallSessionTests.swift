@@ -249,6 +249,29 @@ final class VoiceCallSessionTests: XCTestCase {
         )
     }
 
+    /// A delegated voice turn writes into the call's session even while the
+    /// learner browses another thread. Source evidence is part of that turn,
+    /// so it must follow the same routing and survive on disk for the return.
+    func testSearchSourcesFromAnAwayTurnLandInTheCallSession() async {
+        let source = TutorSource(
+            id: "a", title: "Fractions", url: "https://example.com/fractions", snippet: nil
+        )
+        let service = VoiceTurnSpyService(source: source)
+        let store = makeStore(service)
+        await store.sendAndWait("fractions please")
+        let call = store.session.id
+        store.voiceCallBegan()
+        store.startNewSession()
+
+        let result = await store.runVoiceTurn(request: "explain fractions")
+
+        guard case .success = result else {
+            return XCTFail("The away turn should have completed: \(result)")
+        }
+        let stored = SessionPersistence(directoryURL: directory).load(id: call)
+        XCTAssertEqual(stored?.messages.last?.sources, [source])
+    }
+
     /// `view_board` used to refuse outright whenever the learner had walked
     /// into another session, and that refusal reached the model as "I could
     /// not see the board" — with no board missing at all. The turn's own board
@@ -599,9 +622,11 @@ private final class VoiceTurnSpyService: TutorService, Sendable {
 
     private let sessionIDs = OSAllocatedUnfairLock<[UUID]>(initialState: [])
     private let boardUpdate: BoardSceneUpdate?
+    private let source: TutorSource?
 
-    init(boardUpdate: BoardSceneUpdate? = nil) {
+    init(boardUpdate: BoardSceneUpdate? = nil, source: TutorSource? = nil) {
         self.boardUpdate = boardUpdate
+        self.source = source
     }
 
     /// The sessions turns went out against, in order — a delegated voice turn
@@ -611,9 +636,15 @@ private final class VoiceTurnSpyService: TutorService, Sendable {
     func stream(_ request: TutorRequest) -> AsyncThrowingStream<TutorEvent, Error> {
         sessionIDs.withLock { $0.append(request.sessionID) }
         let update = boardUpdate
+        let source = source
         return AsyncThrowingStream { continuation in
             continuation.yield(.textDelta(Self.reply))
             if let update { continuation.yield(.boardUpdate(update)) }
+            if let source {
+                continuation.yield(.searchSources(
+                    searchID: "s_1", query: "fractions", sources: [source]
+                ))
+            }
             continuation.yield(.done)
             continuation.finish()
         }

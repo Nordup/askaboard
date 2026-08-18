@@ -59,6 +59,29 @@ final class TutorEventTests: XCTestCase {
         )
     }
 
+    func testDecodesSearchSourcesWithANullSnippet() {
+        let line = #"data: {"type":"search_sources","search_id":"s_1","query":"radical equations","sources":[{"id":"a","title":"Radical Equations","url":"https://example.com/radical","snippet":null},{"id":"b","title":"Checking roots","url":"https://example.org/roots","snippet":"Substitute back."}]}"#
+        XCTAssertEqual(
+            TutorEvent.decode(from: line),
+            .searchSources(
+                searchID: "s_1",
+                query: "radical equations",
+                sources: [
+                    TutorSource(id: "a", title: "Radical Equations", url: "https://example.com/radical", snippet: nil),
+                    TutorSource(id: "b", title: "Checking roots", url: "https://example.org/roots", snippet: "Substitute back."),
+                ]
+            )
+        )
+    }
+
+    func testASearchSourcesEventMissingRequiredFieldsIsRefused() {
+        let missingSources = #"data: {"type":"search_sources","search_id":"s_1","query":"radical"}"#
+        XCTAssertNil(TutorEvent.decode(from: missingSources))
+
+        let missingID = #"data: {"type":"search_sources","query":"radical","sources":[]}"#
+        XCTAssertNil(TutorEvent.decode(from: missingID))
+    }
+
     func testAStepMissingItsIDIsIgnored() {
         let line = #"data: {"type":"step","tool":"update_board","label":"Drawing"}"#
         XCTAssertNil(TutorEvent.decode(from: line))

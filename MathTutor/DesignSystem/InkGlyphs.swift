@@ -71,13 +71,34 @@ enum InkGlyphs {
     static let overshoot: CGFloat = -0.06
     /// The lowest a glyph may reach — the tail of a `g`, `j`, `p`, `q` or `y`.
     static let descender: CGFloat = 1.28
-    /// Tracking between two glyphs, in cap heights.
-    static let letterSpacing: CGFloat = 0.06
+    /// Tracking between two glyphs, in cap heights. Handwriting needs a little
+    /// air — at 0.10 a line reads as roomy without falling apart into separate
+    /// letters.
+    static let letterSpacing: CGFloat = 0.10
     /// Baseline to baseline, in cap heights. Wide enough that a descender on
-    /// one line clears the cap line of the next.
-    static let lineHeight: CGFloat = 1.62
+    /// one line clears the cap line of the next, with a little more room than
+    /// the bare minimum because a handwritten note wants it.
+    static let lineHeight: CGFloat = 1.70
     /// The width of a space, in cap heights.
     static let spaceAdvance: CGFloat = 0.34
+
+    /// The side of a pictograph's square, in cap heights — which is also how
+    /// far the pen travels afterwards, because the two are the same number.
+    ///
+    /// Apple Color Emoji is astonishingly regular: measured across the whole
+    /// block — faces, flags, keycaps, skin tones, ZWJ families — every glyph
+    /// advances exactly one em and inks exactly the square that em describes.
+    /// So one em of that font is one cap height of this hand, and an emoji
+    /// stands as tall as the capitals beside it.
+    static let pictographAdvance: CGFloat = 1
+    /// How far below the cap line the top of that square lands, in cap heights.
+    ///
+    /// Also measured rather than chosen: the ink of an emoji runs from 0.875 em
+    /// above its baseline to 0.125 em below, so a square whose baseline is the
+    /// writing's baseline starts `1 - 0.875` under the cap line and ends
+    /// `0.125` under it — inside `descender`, which is what keeps a pictograph
+    /// within the box the bounds arm reports.
+    static let pictographDrop: CGFloat = 0.125
 
     /// The size range the server's schema allows, restated here because a
     /// persisted scene reaches this code without passing through the server
@@ -171,6 +192,41 @@ enum InkGlyphs {
         }
     }
 
+    /// Whether a character is a picture rather than a letterform.
+    ///
+    /// A pen cannot write an emoji. It is not a shape a hand makes and then
+    /// fills — it is artwork, and on Apple platforms it is artwork in the
+    /// literal sense: `AppleColorEmoji` is a bitmap font whose glyphs have no
+    /// outline at all, so `CTFontCreatePathForGlyph` hands back `nil` for every
+    /// one of them. Nothing this table or `InkTextRenderer` does can produce
+    /// one, and the honest answer is not the placeholder underscore — it is to
+    /// stop pretending the pen is involved and let the system draw the picture
+    /// where the pen would have written the letter.
+    ///
+    /// Asked only after `glyphs` has already been consulted, so the hand-drawn
+    /// table always wins: `+`, `-`, `=`, the digits and `#` all carry Unicode's
+    /// `Emoji` property because each is the base of a keycap sequence, and each
+    /// has a letterform here that is what the model meant.
+    ///
+    /// Three ways in, in the order they are cheap:
+    ///
+    /// - a variation selector or a combining keycap, which is what turns a
+    ///   character that *has* a letterform into one that does not — `1` is the
+    ///   digit this table draws, `1️⃣` is a picture of a key;
+    /// - the `Emoji` property on any other multi-scalar cluster, which is every
+    ///   flag, skin tone and ZWJ family;
+    /// - the `Emoji` property on a single scalar above ASCII, which is the
+    ///   ordinary case, ✅ and 🎉 alike.
+    static func isPictograph(_ character: Character) -> Bool {
+        let scalars = character.unicodeScalars
+        guard let first = scalars.first else { return false }
+        if scalars.count > 1 {
+            let modified = scalars.contains { $0.value == 0xFE0F || $0.value == 0x20E3 }
+            return modified || first.properties.isEmoji
+        }
+        return first.value > 0x7F && first.properties.isEmoji
+    }
+
     // MARK: - Layout
 
     /// One glyph, placed.
@@ -186,9 +242,32 @@ enum InkGlyphs {
         let index: Int
     }
 
+    /// One picture, placed.
+    ///
+    /// Deliberately a sibling of `PlacedGlyph` rather than a case inside it.
+    /// The two are drawn by different machinery — one becomes a tapered pen
+    /// outline, the other is handed to the system's own text drawing — and one
+    /// of them, `strokes(text:origin:size:)`, is the centreline a `PKInk` pen
+    /// is given. A union would put a case in that path that it cannot answer.
+    struct PlacedPictograph: Hashable, Sendable {
+        /// The grapheme cluster to draw, exactly as the model wrote it.
+        let text: String
+        /// The same origin `PlacedGlyph` reports: the pen's x and the line's
+        /// cap line y, in board points from the element's top-left corner. The
+        /// picture's own square starts `pictographDrop` below that y.
+        let origin: CGPoint
+        /// The square's side in board points, which is the cap height.
+        let side: CGFloat
+        /// The character's offset in the laid-out text, seeding the same
+        /// per-character jitter its lettered neighbours get.
+        let index: Int
+    }
+
     /// A laid-out string: where every glyph goes, and how large the whole is.
     struct Layout: Hashable, Sendable {
         let placements: [PlacedGlyph]
+        /// The emoji in the string, in the order they were written.
+        let pictographs: [PlacedPictograph]
         /// The metric box in board points, measured from the element's `(x, y)`.
         /// It is the *line* box, not the inked box — the full ascender-to-
         /// descender band of every line, whether or not this particular text
@@ -199,8 +278,11 @@ enum InkGlyphs {
         /// arm lays the same text out on every reconcile.
         let unsupported: [UInt32]
 
-        /// Nothing to draw: no text, only spaces, or only line breaks.
-        var isEmpty: Bool { placements.isEmpty }
+        /// Nothing to draw: no text, only spaces, or only line breaks. A string
+        /// of nothing but emoji is *not* empty — it has no pen strokes at all,
+        /// and reporting it empty is how a note that is only a picture loses
+        /// its bounds and never gets mounted.
+        var isEmpty: Bool { placements.isEmpty && pictographs.isEmpty }
     }
 
     /// Lays a string out at a cap height of `size` board points.
@@ -213,6 +295,7 @@ enum InkGlyphs {
         let size = clampedSize(rawSize)
         let capInset = -overshoot * size
         var placements: [PlacedGlyph] = []
+        var pictographs: [PlacedPictograph] = []
         var unsupported: Set<UInt32> = []
         var widest: CGFloat = 0
         var pen: CGFloat = 0
@@ -227,9 +310,22 @@ enum InkGlyphs {
                 lineIndex += 1
                 continue
             }
+            let capLine = capInset + CGFloat(lineIndex) * lineHeight * size
             let resolved: InkGlyph
             if let known = glyph(for: character) {
                 resolved = known
+            } else if isPictograph(character) {
+                // Not a gap in the table and not something to log: the pen was
+                // never going to write this one. It takes its square, the pen
+                // moves on, and `InkTextRenderer` draws the picture there.
+                pictographs.append(PlacedPictograph(
+                    text: String(character),
+                    origin: CGPoint(x: pen, y: capLine),
+                    side: pictographAdvance * size,
+                    index: index
+                ))
+                pen += (pictographAdvance + letterSpacing) * size
+                continue
             } else {
                 unsupported.insert(character.unicodeScalars.first?.value ?? 0)
                 resolved = glyphs[fallbackCharacter] ?? InkGlyph(advance: spaceAdvance, strokes: [])
@@ -237,10 +333,7 @@ enum InkGlyphs {
             if !resolved.strokes.isEmpty {
                 placements.append(PlacedGlyph(
                     glyph: resolved,
-                    origin: CGPoint(
-                        x: pen,
-                        y: capInset + CGFloat(lineIndex) * lineHeight * size
-                    ),
+                    origin: CGPoint(x: pen, y: capLine),
                     index: index
                 ))
             }
@@ -253,6 +346,7 @@ enum InkGlyphs {
             + descender * size
         return Layout(
             placements: placements,
+            pictographs: pictographs,
             size: CGSize(width: widest, height: height),
             unsupported: unsupported.sorted()
         )

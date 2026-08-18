@@ -130,6 +130,7 @@ struct DrawerRevealLayer<Drawer: View, Chat: View, Toggle: View, Chrome: View>: 
         ZStack(alignment: .topLeading) {
             drawerPane
             chatPane
+            closeStrip
             togglePane
             // Last, so it paints over both panes, and outside `chatPane` so it takes none of
             // the pane's offset, radius or veil. See `chrome`.
@@ -149,6 +150,12 @@ struct DrawerRevealLayer<Drawer: View, Chat: View, Toggle: View, Chrome: View>: 
         // animating container cannot be reordered against anything, and the two panes are the
         // only things that move, so this is the cheap place to guarantee it.
         .clipShape(RoundedRectangle(cornerRadius: TutorPanelMetrics.cornerRadius))
+        // Clipping pixels does not clip SwiftUI's hit-test geometry. When Sessions is open,
+        // `chatPane` is still `size.width` wide and translated right by `travel`: only its
+        // trailing strip is visible inside the panel, but without this shape its invisible
+        // remainder extends over the neighbouring tool rail and board and steals their taps.
+        // State the panel boundary as the interaction boundary too.
+        .contentShape(RoundedRectangle(cornerRadius: TutorPanelMetrics.cornerRadius))
         // **The whole panel is the grab region, both panes.** Board 18 states the opening
         // half — *"A right-swipe anywhere in the chat area drags the drawer"* — and the closing
         // half has to hold on the other pane or the gesture is one-way: a left-swipe that starts
@@ -282,6 +289,7 @@ struct DrawerRevealLayer<Drawer: View, Chat: View, Toggle: View, Chrome: View>: 
     /// screen.
     private var chatPane: some View {
         chat
+            .allowsHitTesting(progress == 0)
             .frame(width: size.width, height: size.height, alignment: .top)
             .background(DS.Color.surfacePanel)
             // **Veil first, then clip.** This was the other half of the escaping-veil bug: the
@@ -297,29 +305,52 @@ struct DrawerRevealLayer<Drawer: View, Chat: View, Toggle: View, Chrome: View>: 
                 )
             )
             .compositingGroup()
-            // Board 18: *"A tap on the chat strip, or a left-swipe from it, closes the drawer."*
-            // Mounted only while the drawer is showing, for the reason the switcher's dismiss
-            // layer was: a view that swallows every touch on the chat is not something to leave
-            // lying on it the rest of the time.
-            .overlay {
-                if progress > 0 {
-                    Color.clear
-                        .contentShape(.rect)
-                        .onTapGesture {
-                            withAnimation(DrawerReveal.settle(velocity: 0, travel: travel)) {
-                                drag = nil
-                                onSettle(false)
-                            }
-                        }
-                        .accessibilityLabel("Close sessions")
-                        .accessibilityAddTraits(.isButton)
-                }
-            }
             // Whole points. A `compositingGroup` rasterises the pane, and translating that
             // raster by a fraction resamples every glyph in it a little differently on every
             // frame — which on an A10 at 2x reads as the contents shimmering rather than
             // sliding. The travel is 263 points, so rounding costs nothing anyone can see.
             .offset(x: DrawerReveal.wholePoints(progress * travel))
+            // The translated pane is still full-panel width. On iPadOS 17 its invisible
+            // remainder can retain a hit region outside the visual clip and cover the rail or
+            // PencilKit. While Sessions is visible, the chat contributes no interaction at all;
+            // `closeStrip` restores its one intended action with fixed in-panel geometry.
+            .allowsHitTesting(progress == 0)
+            // Keep UIKit's scroll view inert as a second line of defence on iPadOS 17. The
+            // translated view is removed from SwiftUI hit testing above, but an already-mounted
+            // UIScrollView can otherwise keep accepting a new pan through the hosting hierarchy
+            // while the drawer settles.
+            .scrollDisabled(progress > 0)
+            // Disable the chat subtree as well as its scroll environment. On iPadOS 17 a hosted
+            // UIScrollView can retain its own gesture recognizer after the ancestor leaves the
+            // SwiftUI hit-test tree; the disabled environment reaches the UIKit bridge and makes
+            // that recognizer refuse the touch even in that stale-hosting window.
+            .disabled(progress > 0)
+    }
+
+    /// Board 18's visible chat strip while Sessions is open.
+    ///
+    /// This cannot be an overlay on `chatPane`: that pane is the full-width translated view
+    /// whose escaped hit region caused the bug. This target is born at the strip's final size
+    /// and position, so its trailing edge never extends beyond the panel.
+    @ViewBuilder
+    private var closeStrip: some View {
+        if progress > 0 {
+            Button {
+                withAnimation(DrawerReveal.settle(velocity: 0, travel: travel)) {
+                    drag = nil
+                    onSettle(false)
+                }
+            } label: {
+                Color.clear
+                    .frame(width: max(0, size.width - travel), height: size.height)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Close sessions")
+            .accessibilityIdentifier("Close sessions")
+            .accessibilityElement(children: .ignore)
+            .offset(x: travel)
+        }
     }
 
     /// Board 17's `btn/sidebar-toggle`, attached to the chat and going with it.

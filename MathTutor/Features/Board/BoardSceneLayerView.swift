@@ -2,12 +2,10 @@ import UIKit
 
 /// The tutor's scene, composited by Core Animation instead of redrawn.
 ///
-/// This replaces the repaint-per-frame overlay. One content layer carries the
-/// pan/zoom transform of the enclosing `PKCanvasView` scroll view, and every
-/// visible element owns a sublayer whose contents are a bitmap rasterized once
-/// per zoom bucket. A pan therefore costs one transform assignment instead of
-/// a full-scene `draw(_:)` pass, and a scene far larger than the viewport
-/// costs only the elements the viewport can actually see.
+/// This replaces the repaint-per-frame overlay. Every visible element owns a
+/// sublayer whose contents are a bitmap rasterized once per zoom bucket. Pan
+/// and zoom remap those cached layer frames through `CanvasViewportMapper`, so
+/// the scene stays aligned with PencilKit without redrawing element bitmaps.
 ///
 /// Two coordinate spaces meet here. *Board* coordinates are what the tutor
 /// authors and what `BoardSceneRenderer.draw(element:in:)` draws in. *Drawing*
@@ -74,7 +72,6 @@ final class BoardSceneLayerView: UIView {
     /// coarser rather than into a texture the compositor would drop.
     private static let maximumRasterSide: CGFloat = 16_384
 
-    private let contentLayer = CALayer()
     private var elementLayers: [String: CALayer] = [:]
     private let rasterCache = BoardRasterCache()
     private var contentOffset: CGPoint = .zero
@@ -102,6 +99,10 @@ final class BoardSceneLayerView: UIView {
         return rasterCache.image(for: RasterKey(element: element, bucket: currentBucket))
     }
 
+    func mountedFrameForTesting(id: String) -> CGRect? {
+        elementLayers[id]?.frame
+    }
+
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -114,8 +115,6 @@ final class BoardSceneLayerView: UIView {
         // composite outside the canvas, over the chat panel beside it. The
         // old overlay clipped implicitly, through `draw(_:)`.
         clipsToBounds = true
-        contentLayer.anchorPoint = .zero
-        layer.addSublayer(contentLayer)
         accessibilityIdentifier = "tutor-scene-overlay"
         isAccessibilityElement = false
         accessibilityElementsHidden = true
@@ -151,8 +150,9 @@ final class BoardSceneLayerView: UIView {
         reconcile()
     }
 
-    /// Called from the scroll delegate on every pan and zoom tick. It sets a
-    /// transform; it never draws.
+    /// Called from the scroll delegate on every pan and zoom tick. It remaps
+    /// cached layer frames; it never reruns the element renderer at the same
+    /// zoom bucket.
     func setViewport(contentOffset: CGPoint, zoomScale: CGFloat) {
         self.contentOffset = contentOffset
         // A scroll view that is still being configured can report a zoom of
@@ -160,15 +160,6 @@ final class BoardSceneLayerView: UIView {
         // Clamping once here keeps `nan` and infinity out of both the layer
         // transform (Core Animation traps on them) and the cull.
         self.zoomScale = zoomScale.isFinite && zoomScale > 0 ? zoomScale : 1
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        // Drawing point p maps to view point `p * zoom - contentOffset`, which
-        // is the transform the repaint overlay concatenated by hand.
-        contentLayer.setAffineTransform(
-            CGAffineTransform(translationX: -contentOffset.x, y: -contentOffset.y)
-                .scaledBy(x: self.zoomScale, y: self.zoomScale)
-        )
-        CATransaction.commit()
         let bucket = ZoomBucket.bucket(forZoom: self.zoomScale)
         guard bucket == currentBucket else {
             // A new bucket invalidates every mounted bitmap's resolution.
@@ -176,7 +167,7 @@ final class BoardSceneLayerView: UIView {
             reconcile()
             return
         }
-        reconcileVisibilityOnly()
+        reconcile()
     }
 
     /// The culling decision: which element ids a viewport can show.
@@ -289,7 +280,11 @@ final class BoardSceneLayerView: UIView {
             // set does not preserve, so the scene's order is restated here on
             // every pass rather than trusted to survive mounting.
             layer.zPosition = CGFloat(entry.zOrder)
-            layer.frame = bounds
+            layer.frame = CanvasViewportMapper.viewportRect(
+                for: bounds,
+                canvasBounds: CGRect(origin: contentOffset, size: self.bounds.size),
+                zoomScale: zoomScale
+            )
             layer.contents = raster(for: entry.element, bounds: bounds)
         }
         CATransaction.commit()
@@ -309,7 +304,7 @@ final class BoardSceneLayerView: UIView {
     private func makeElementLayer(id: String) -> CALayer {
         let layer = CALayer()
         layer.anchorPoint = .zero
-        contentLayer.addSublayer(layer)
+        self.layer.addSublayer(layer)
         elementLayers[id] = layer
         return layer
     }

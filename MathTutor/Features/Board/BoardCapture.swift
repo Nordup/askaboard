@@ -645,7 +645,6 @@ final class CanvasCapture: ObservableObject {
             image = UIGraphicsImageRenderer(size: pixelSize, format: format).image { context in
                 UIColor.white.setFill()
                 context.fill(CGRect(origin: .zero, size: pixelSize))
-                drawingImage.draw(in: CGRect(origin: .zero, size: pixelSize))
                 if !sceneToDraw.elements.isEmpty {
                     context.cgContext.saveGState()
                     context.cgContext.scaleBy(x: scale, y: scale)
@@ -657,6 +656,10 @@ final class CanvasCapture: ObservableObject {
                     )
                     context.cgContext.restoreGState()
                 }
+                // Ink over the tutor scene — the order the live board composites
+                // in (see `BoardCanvasView.updateSceneOverlay`). It has to be the
+                // same order here or the model reads a board the learner never saw.
+                drawingImage.draw(in: CGRect(origin: .zero, size: pixelSize))
             }
         }
         return image?.pngData()

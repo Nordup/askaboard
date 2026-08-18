@@ -4,16 +4,16 @@ import UIKit
 import XCTest
 @testable import MathTutor
 
-/// The `ink_text` primitive — one string, drawn as the app's own handwriting —
-/// and the glyph table underneath it.
+/// The `ink_text` primitive — tutor prose drawn with the bundled Shantell Sans
+/// face — and the legacy glyph table still used by the seeded PencilKit work.
 ///
 /// Four rules can only be proven here. The wire element is flat: `text` and
 /// `size` sit beside `x` and `y` rather than under a `style` object, and a
 /// missing `size` decodes to a default rather than to zero, which would put a
 /// note on the board with no letters in it and nothing failing to say so. The
-/// pen tapers, which is the whole difference between ink and a plotter, and a
-/// stroked line cannot be told from a filled outline except by measuring what
-/// reached the pixels. Every render of one element is the same render, because
+/// bundled face is selected by its exact PostScript name and rendered as vector
+/// outlines with no id-seeded distortion. Every render of one element is the
+/// same render, because
 /// a board capture that differs from the one before it for reasons unrelated to
 /// what the tutor wrote is worse than no capture. And every glyph stays inside
 /// the box the layout measured it by, because ink outside that box is ink
@@ -117,43 +117,6 @@ final class InkTextTests: XCTestCase {
         }
     }
 
-    /// The dot threshold fires for every mark in the table and for nothing
-    /// else.
-    ///
-    /// `InkTextRenderer` draws a stroke shorter than `dotThreshold` half-widths
-    /// as a round dab instead of running the taper down it. That rule is only
-    /// safe because the alphabet leaves a wide gap: every dot is about 1.7
-    /// half-widths long and the next shortest stroke — the apostrophe — is
-    /// about 6.8. The threshold shipped once at 1.6, *below* every dot, so the
-    /// branch was unreachable at every size and the dots were lenses while two
-    /// comments said they were circles. Nothing but this test can see that: an
-    /// unreachable branch draws something plausible.
-    func testTheDotThresholdSitsInTheGapTheAlphabetLeaves() throws {
-        let halfWidth = InkTextRenderer.maximumPenWidth / 2
-        let threshold = halfWidth * InkTextRenderer.dotThreshold
-        var dots: [CGFloat] = []
-        var strokes: [CGFloat] = []
-        for (_, glyph) in InkGlyphs.glyphs {
-            for stroke in glyph.strokes {
-                let length = zip(stroke, stroke.dropFirst()).reduce(CGFloat(0)) {
-                    $0 + hypot($1.1.x - $1.0.x, $1.1.y - $1.0.y)
-                }
-                if length < threshold { dots.append(length) } else { strokes.append(length) }
-            }
-        }
-
-        // i j . , omitted — a comma is a stroke — : ; ! ? and the two of ÷.
-        XCTAssertEqual(dots.count, 10, "ten marks in the alphabet are dabs, not lines")
-        XCTAssertLessThan(
-            try XCTUnwrap(dots.max()), threshold * 0.85,
-            "the longest dot must clear the threshold, or it renders as a lens"
-        )
-        XCTAssertGreaterThan(
-            try XCTUnwrap(strokes.min()), threshold * 1.5,
-            "the shortest real stroke must clear it the other way, or it renders as a blob"
-        )
-    }
-
     /// The coverage the plan asks for, stated as the set itself rather than as
     /// a count, so adding a glyph never quietly satisfies a missing one.
     func testTheTableCoversLettersDigitsAndTheWritingPunctuation() {
@@ -208,21 +171,19 @@ final class InkTextTests: XCTestCase {
 
     func testBoundsAreAnchoredAtTheElementOriginAndCarryTheBoardOrigin() {
         let element = InkTextElement(id: "b", x: 40, y: 60, text: "hi", size: 24)
-        let padding = 24 * InkTextRenderer.inkPadding
-
         let local = InkTextRenderer.bounds(for: element)
-        XCTAssertEqual(local.minX, 40 - padding, accuracy: 0.01)
-        XCTAssertEqual(local.minY, 60 - padding, accuracy: 0.01)
+        XCTAssertFalse(local.isEmpty)
 
         let placed = BoardSceneRenderer.bounds(
             of: .inkText(element),
             boardOrigin: CGPoint(x: 1_000, y: 500)
         )
-        XCTAssertEqual(placed.minX, 1_040 - padding, accuracy: 0.01)
-        XCTAssertEqual(placed.minY, 560 - padding, accuracy: 0.01)
+        XCTAssertEqual(placed.minX - local.minX, 1_000, accuracy: 0.01)
+        XCTAssertEqual(placed.minY - local.minY, 500, accuracy: 0.01)
+        XCTAssertEqual(placed.size, local.size)
     }
 
-    func testASecondLineAddsExactlyOneLineHeight() {
+    func testASecondLineUsesTheFontLineHeight() throws {
         let one = InkTextElement(id: "one", x: 0, y: 0, text: "keep going", size: 20)
         var two = one
         two.text = "keep\ngoing"
@@ -230,11 +191,8 @@ final class InkTextTests: XCTestCase {
         let single = InkTextRenderer.bounds(for: one)
         let double = InkTextRenderer.bounds(for: two)
 
-        XCTAssertEqual(
-            double.height - single.height,
-            InkGlyphs.lineHeight * 20,
-            accuracy: 0.01
-        )
+        let font = try XCTUnwrap(InkTextRenderer.uiFont(forCapHeight: 20))
+        XCTAssertEqual(double.height - single.height, font.lineHeight, accuracy: 1)
         XCTAssertLessThan(double.width, single.width, "the broken line is narrower")
     }
 
@@ -283,23 +241,22 @@ final class InkTextTests: XCTestCase {
         )
     }
 
-    // MARK: - Characters the table cannot write
+    // MARK: - The bundled face
 
-    func testACharacterWithNoGlyphDrawsThePlaceholderAndSaysSo() throws {
-        XCTAssertNil(InkGlyphs.glyph(for: "\u{2603}"), "the snowman is not in the table")
+    func testUsesStaticUprightShantellSansAtTheRequestedCapHeight() throws {
+        let font = try XCTUnwrap(InkTextRenderer.uiFont(forCapHeight: 40))
 
-        let layout = InkGlyphs.layout(text: "a\u{2603}b", size: 24)
+        XCTAssertEqual(font.fontName, InkTextRenderer.fontPostScriptName)
+        XCTAssertEqual(font.capHeight, 40, accuracy: 0.01)
+        XCTAssertFalse(font.fontDescriptor.symbolicTraits.contains(.traitItalic))
+    }
 
-        XCTAssertEqual(layout.placements.count, 3, "the placeholder takes the missing glyph's place")
-        let underscore = try XCTUnwrap(InkGlyphs.glyphs[InkGlyphs.fallbackCharacter])
-        XCTAssertEqual(
-            layout.placements[1].glyph, underscore,
-            "and the placeholder is the underscore"
+    func testShantellSansRendersAccentedTutorTextAsOutlines() {
+        let element = InkTextElement(
+            id: "accent", x: 0, y: 0,
+            text: "Très bien — Cố lên!",
+            size: 24
         )
-        XCTAssertEqual(layout.unsupported, [0x2603], "the codepoint is what a fix needs")
-
-        // And it draws, rather than crashing or vanishing.
-        let element = InkTextElement(id: "snow", x: 0, y: 0, text: "a\u{2603}b", size: 24)
         XCTAssertNotNil(InkTextRenderer.path(for: element))
         XCTAssertFalse(InkTextRenderer.bounds(for: element).isEmpty)
     }
@@ -309,7 +266,7 @@ final class InkTextTests: XCTestCase {
     /// A full pangram and the ten digits, at the size the plan names.
     ///
     /// A pixel test cannot read, so it asserts the three things that go wrong
-    /// when a glyph table breaks: nothing is drawn at all, ink escapes the
+    /// when font rendering breaks: nothing is drawn at all, ink escapes the
     /// rectangle the bounds arm promised, or the letters collapse into a blot.
     /// Legibility itself was checked by eye against a rendered specimen sheet;
     /// this keeps it from silently regressing.
@@ -368,72 +325,8 @@ final class InkTextTests: XCTestCase {
         XCTAssertLessThan(density, 0.3, "too much ink to be letters")
     }
 
-    /// The taper, measured.
-    ///
-    /// One long horizontal stroke, rendered large. A stroked line would be the
-    /// same number of pixels tall in every column of its body; a tapered pen is
-    /// not, and the difference is what separates ink from a plotter. The two
-    /// round caps are excluded — they narrow at the tips whether or not the
-    /// body tapers, so including them would let a uniform pen pass.
-    func testThePenTapersRatherThanDrawingAConstantWidth() throws {
-        let element = InkTextElement(id: "taper", x: 0, y: 0, text: "-", size: 200)
-        let raster = try render(.inkText(element), in: InkTextRenderer.bounds(for: element))
-
-        let heights = raster.columnInkHeights()
-        let inked = raster.inkedColumns()
-        let first = try XCTUnwrap(inked.first)
-        let last = try XCTUnwrap(inked.last)
-        let span = last - first
-        XCTAssertGreaterThan(span, 40, "the stroke has to be long enough to measure")
-
-        // The body: the inked span with the cap at each end trimmed off.
-        let body = (first + span / 12)...(last - span / 12)
-        let widest = body.map { heights[$0] }.max() ?? 0
-        let narrowest = body.map { heights[$0] }.min() ?? 0
-
-        XCTAssertGreaterThan(narrowest, 0)
-        XCTAssertGreaterThan(
-            CGFloat(widest) / CGFloat(narrowest), 1.3,
-            "the pen's body is \(narrowest)…\(widest) px — that is a constant width, not a taper"
-        )
-    }
-
-    /// A full stop is a round dab, measured.
-    ///
-    /// The companion to the threshold test above: that one proves the branch is
-    /// reachable, this one proves it produces a circle. A tapered lens has a
-    /// bounding box taller than it is wide — a period's stroke is 0.061 cap
-    /// heights of near-vertical travel against a pen 0.071 wide, so the lens
-    /// came out about 0.80 as wide as it was tall, and filled its box more
-    /// completely than a disc does.
-    func testAFullStopIsARoundDabRatherThanATaperedLens() throws {
-        let element = InkTextElement(id: "stop", x: 0, y: 0, text: ".", size: 200)
-        let raster = try render(.inkText(element), in: InkTextRenderer.bounds(for: element))
-        let box = try XCTUnwrap(raster.inkBox(), "a full stop has to put ink somewhere")
-
-        let aspect = CGFloat(box.width) / CGFloat(box.height)
-        XCTAssertEqual(aspect, 1, accuracy: 0.11, "a dab is as wide as it is tall")
-
-        // A disc fills π/4 ≈ 0.785 of its bounding box. A capsule or a square
-        // fills more, a lens less.
-        let fill = CGFloat(raster.inkCount) / CGFloat(box.width * box.height)
-        XCTAssertEqual(fill, .pi / 4, accuracy: 0.09, "the dab is a disc, not a capsule")
-
-        // And it is exactly one dab of the pen the rest of the writing uses.
-        XCTAssertEqual(
-            CGFloat(box.width) / raster.scale,
-            200 * InkTextRenderer.maximumPenWidth,
-            accuracy: 2,
-            "the dot's diameter is the pen's width"
-        )
-    }
-
-    /// Two renders of one element are the same bytes, and two elements that
-    /// differ only by id are not.
-    ///
-    /// The second half is what proves the wobble is really seeded: identical
-    /// output for two ids would mean the jitter had been optimised away, and
-    /// identical output could otherwise be mistaken for correctness.
+    /// The regular face is deterministic and deliberately has no id-seeded
+    /// wobble: changing metadata cannot reshape the tutor's writing.
     func testTheSameElementAlwaysDrawsTheSamePixels() throws {
         let element = InkTextElement(id: "steady", x: 0, y: 0, text: "Nice work", size: 40)
         var renamed = element
@@ -457,46 +350,7 @@ final class InkTextTests: XCTestCase {
         ))
 
         XCTAssertEqual(first, second, "one element, one render, forever")
-        XCTAssertNotEqual(first, other, "the hand is seeded by the element id")
-    }
-
-    /// The hand does not zig-zag.
-    ///
-    /// Determinism is necessary and not sufficient: a jitter that alternates
-    /// between two values is perfectly deterministic and looks like a comb.
-    /// That is what plain FNV-1a produced here — its multiply carries bits
-    /// upward only, so consecutive salts, which is all this renderer ever asks
-    /// for, left the top of the word barely moved and every character was
-    /// nudged one of two ways. The salts for one character's dx step by four,
-    /// so that is the sequence held to account.
-    func testConsecutiveCharactersDoNotGetAnAlternatingJitter() throws {
-        let sequence = (0..<24).map { InkTextRenderer.signedUnit("margin-note", $0 * 4) }
-
-        let distinct = Set(sequence.map { ($0 * 1_000).rounded() })
-        XCTAssertGreaterThan(distinct.count, 16, "a period-two sequence has two values")
-
-        var alternations = 0
-        for index in 1..<sequence.count where (sequence[index] < 0) != (sequence[index - 1] < 0) {
-            alternations += 1
-        }
-        XCTAssertLessThan(
-            alternations, sequence.count - 4,
-            "the sign must not flip on almost every character"
-        )
-
-        // And it uses the range it is given rather than hugging the middle.
-        XCTAssertGreaterThan(try XCTUnwrap(sequence.max()), 0.5)
-        XCTAssertLessThan(try XCTUnwrap(sequence.min()), -0.5)
-
-        // Still a pure function of its two inputs.
-        XCTAssertEqual(
-            InkTextRenderer.signedUnit("margin-note", 8),
-            InkTextRenderer.signedUnit("margin-note", 8)
-        )
-        XCTAssertNotEqual(
-            InkTextRenderer.signedUnit("margin-note", 8),
-            InkTextRenderer.signedUnit("margin-notes", 8)
-        )
+        XCTAssertEqual(first, other, "the element id must not distort the font")
     }
 
     /// `stroke` is the ink. It is the field every other kind draws its outline
@@ -524,6 +378,163 @@ final class InkTextTests: XCTestCase {
         }
         XCTAssertGreaterThan(reds, 100, "the glyphs are drawn in the stroke colour")
         XCTAssertEqual(blues, 0, "fill is not a colour this kind paints with")
+    }
+
+    // MARK: - Emoji
+
+    /// The classifier, at both edges.
+    ///
+    /// It is asked only after the table has been consulted, and that ordering
+    /// is load-bearing rather than incidental: `+`, `-`, `=` and every digit
+    /// carry Unicode's `Emoji` property because each is the base of a keycap
+    /// sequence, and each has a letterform here that is what the model meant.
+    /// The characters below are the ones that would go wrong if the ordering
+    /// or the rule slipped — the two check marks land on opposite sides of it,
+    /// and `1` and `1️⃣` differ only by two invisible scalars.
+    func testAnEmojiIsAPictureAndTheTableStillOwnsItsOwnCharacters() {
+        for character: Character in ["🎉", "👍", "✅", "🔥", "⭐️", "❤️", "1️⃣", "🇺🇸", "👨‍👩‍👦", "👍🏽"] {
+            XCTAssertTrue(InkGlyphs.isPictograph(character), "\(character) is a picture")
+            XCTAssertNil(InkGlyphs.glyph(for: character), "and the pen cannot write it")
+        }
+
+        // Everything the hand writes stays the hand's, keycap bases included.
+        for character: Character in ["a", "Z", "0", "9", "+", "-", "=", "%", "(", ")",
+                                     "\u{2192}", "\u{2713}", "\u{2717}", "\u{00D7}", "\u{00F7}"] {
+            XCTAssertNotNil(InkGlyphs.glyph(for: character), "\(character) is written")
+            XCTAssertFalse(InkGlyphs.isPictograph(character), "\(character) is not a picture")
+        }
+    }
+
+    /// One emoji takes one square of the line, and takes it silently.
+    ///
+    /// Silence is half the assertion: an emoji is not a gap in the table, so it
+    /// must not reach `unsupported` and must not be logged as a glyph somebody
+    /// forgot to draw.
+    func testAnEmojiTakesItsOwnSquareAndIsNotReportedAsMissing() throws {
+        let size: CGFloat = 40
+        let withEmoji = InkGlyphs.layout(text: "A 👍", size: size)
+        let without = InkGlyphs.layout(text: "A ", size: size)
+
+        XCTAssertEqual(withEmoji.unsupported, [], "an emoji is not a missing glyph")
+        XCTAssertEqual(withEmoji.placements.count, without.placements.count, "the pen wrote the A")
+        XCTAssertEqual(withEmoji.pictographs.count, 1)
+
+        let picture = try XCTUnwrap(withEmoji.pictographs.first)
+        XCTAssertEqual(picture.text, "👍")
+        XCTAssertEqual(picture.side, size, "an emoji stands as tall as the capitals")
+        XCTAssertEqual(picture.index, 2, "the third character, so the third seed")
+        XCTAssertEqual(picture.origin.y, -InkGlyphs.overshoot * size, accuracy: 0.01)
+
+        // The square plus its tracking is exactly what the line grew by.
+        XCTAssertEqual(
+            withEmoji.size.width - without.size.width,
+            (InkGlyphs.pictographAdvance + InkGlyphs.letterSpacing) * size,
+            accuracy: 0.01
+        )
+        // And it fits the band the bounds arm already measures, which is what
+        // keeps the picture inside the tile the layer view mounts.
+        XCTAssertLessThanOrEqual(
+            InkGlyphs.pictographDrop + InkGlyphs.pictographAdvance,
+            InkGlyphs.descender
+        )
+    }
+
+    /// A note that is only a picture still mounts.
+    ///
+    /// This is the case the draw arm used to lose: it asked the pen for a path
+    /// first and gave up when there was none, and a lone `🎉` has no strokes at
+    /// all. So the bounds decide whether anything is drawn, and the bounds have
+    /// to be real even when `path(for:)` is `nil`.
+    func testANoteThatIsOnlyEmojiStillHasBoundsAndReachesTheCanvas() throws {
+        let element = InkTextElement(id: "cheer", x: 0, y: 0, text: "🎉", size: 80)
+
+        XCTAssertNil(InkTextRenderer.path(for: element), "no pen stroke anywhere in it")
+        let bounds = InkTextRenderer.bounds(for: element)
+        XCTAssertFalse(bounds.isEmpty, "and yet it is something to mount")
+        XCTAssertEqual(
+            BoardSceneRenderer.bounds(of: .inkText(element), boardOrigin: .zero),
+            bounds
+        )
+
+        let raster = try render(.inkText(element), in: bounds)
+        XCTAssertGreaterThan(raster.inkCount, 200, "the picture reached the pixels")
+    }
+
+    /// An emoji brings its own colours, and `stroke` does not reach them.
+    ///
+    /// The companion to `testTheInkTakesItsColourFromStrokeAndNotFromFill`:
+    /// there, every pixel had to be the ink colour; here the writing is that
+    /// colour and the picture is not, because a colour-emoji glyph is artwork
+    /// and painting over it would be the same mistake as tinting an `image`.
+    func testAnEmojiKeepsItsOwnColoursWhileTheWritingTakesTheInk() throws {
+        let element = InkTextElement(
+            id: "hot", x: 0, y: 0, text: "l 🔥", size: 120,
+            style: BoardStyle(
+                role: .hint, stroke: "#000000", fill: "#0155FB",
+                strokeWidth: 1, opacity: 1, dash: [], rotation: 0
+            )
+        )
+        let raster = try render(.inkText(element), in: InkTextRenderer.bounds(for: element))
+
+        var warm = 0
+        var grey = 0
+        for index in stride(from: 0, to: raster.bytes.count, by: 4) {
+            let red = Int(raster.bytes[index])
+            let green = Int(raster.bytes[index + 1])
+            let blue = Int(raster.bytes[index + 2])
+            if red - blue > 60 { warm += 1 }
+            if red < 200, abs(red - green) < 24, abs(green - blue) < 24 { grey += 1 }
+        }
+        XCTAssertGreaterThan(warm, 100, "the flame is drawn in the flame's colours")
+        XCTAssertGreaterThan(grey, 20, "and the stroke is still the pen's black")
+    }
+
+    /// Ink and picture alike stay inside the rectangle the bounds arm promised.
+    ///
+    /// The same check the pangram gets, because an emoji is placed by the
+    /// system's own text metrics rather than by this table, and a placement
+    /// that drifts is ink outside the mounted tile — a clipped picture, not a
+    /// cosmetic problem.
+    func testAnEmojiStaysInsideTheReportedBounds() throws {
+        let element = InkTextElement(id: "mixed", x: 0, y: 0, text: "Nice 👍 work", size: 40)
+        let margin: CGFloat = 10
+        let bounds = InkTextRenderer.bounds(for: element)
+        let raster = try render(.inkText(element), in: bounds.insetBy(dx: -margin, dy: -margin))
+
+        let edge = margin * raster.scale - 2
+        XCTAssertGreaterThan(edge, 0)
+        let columns = raster.inkedColumns()
+        let rows = raster.rowsWithInk()
+        XCTAssertFalse(columns.isEmpty)
+        XCTAssertGreaterThanOrEqual(CGFloat(columns.first ?? 0), edge, "escaped the left edge")
+        XCTAssertLessThanOrEqual(
+            CGFloat(columns.last ?? raster.width), CGFloat(raster.width) - edge,
+            "escaped the right edge"
+        )
+        XCTAssertGreaterThanOrEqual(CGFloat(rows.first ?? 0), edge, "escaped the top")
+        XCTAssertLessThanOrEqual(
+            CGFloat(rows.last ?? raster.height), CGFloat(raster.height) - edge,
+            "escaped the bottom"
+        )
+    }
+
+    /// Still the same pixels twice, with a picture in the line.
+    ///
+    /// The picture is drawn through a second, entirely different pass — the
+    /// system's text drawing rather than this file's outline builder.
+    /// Determinism has to survive both, or every board capture differs from the
+    /// one before it.
+    func testANoteWithAnEmojiStillDrawsTheSamePixelsTwice() throws {
+        let element = InkTextElement(id: "again", x: 0, y: 0, text: "yes 🎉", size: 48)
+        let rect = InkTextRenderer.bounds(for: element)
+
+        let first = try XCTUnwrap(BoardSceneRenderer.renderPNG(
+            scene: BoardScene(elements: [.inkText(element)]), drawingRect: rect, boardOrigin: .zero
+        ))
+        let second = try XCTUnwrap(BoardSceneRenderer.renderPNG(
+            scene: BoardScene(elements: [.inkText(element)]), drawingRect: rect, boardOrigin: .zero
+        ))
+        XCTAssertEqual(first, second)
     }
 
     // MARK: - The seed fixture

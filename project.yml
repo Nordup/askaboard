@@ -111,12 +111,14 @@ targets:
           The photo is sent to Math Tutor's server and on to OpenAI, which does not use it to
           train its models but can keep it for up to 30 days to check for misuse before
           deleting it. Nothing is posted anywhere or shared with anyone else.
-        # Source Sans 3 is the design's only typeface and iOS does not ship it.
-        # Bundled at exactly the three weights the product uses: 400, 500, 600.
+        # Source Sans 3 is the interface face. Shantell Sans Regular is the
+        # tutor's vector handwriting face for `ink_text`; no variable axes or
+        # synthetic handwriting effects are applied.
         UIAppFonts:
           - SourceSans3-Regular.otf
           - SourceSans3-Medium.otf
           - SourceSans3-Semibold.otf
+          - ShantellSans-Normal-Regular.otf
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.nordup.MathTutor

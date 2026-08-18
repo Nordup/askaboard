@@ -168,30 +168,50 @@ final class TutorStore: ObservableObject {
         #if DEBUG
         let shouldSeedE2E = ProcessInfo.processInfo.arguments.contains(E2ESeedFixture.launchArgument)
         let shouldSeedScene = ProcessInfo.processInfo.arguments.contains(E2ESeedFixture.sceneLaunchArgument)
-        #else
+        let shouldSeedRecentSessions = ProcessInfo.processInfo.arguments.contains(
+            E2ESeedFixture.recentSessionsLaunchArgument
+        )
+#else
         let shouldSeedE2E = false
         let shouldSeedScene = false
-        #endif
+        let shouldSeedRecentSessions = false
+#endif
         self.startsClean = isUITestReset
         let stored = isUITestReset ? nil : persistence.loadCurrent()
         var restored = stored ?? .empty
         #if DEBUG
         if shouldSeedE2E { E2ESeedFixture.seedSession(&restored) }
         if shouldSeedScene { E2ESeedFixture.seedScene(&restored) }
+        if shouldSeedRecentSessions {
+            E2ESeedFixture.seedRecentSessions(open: &restored, into: persistence)
+        }
         #endif
         self.session = restored
+        // The comparison baseline for whether a save represents learner work.
+        // It exists even for a brand-new session that has no file yet: camera
+        // movement must be able to create that file without turning the move
+        // into a "last changed" event.
+        self.lastModificationBaseline = restored
         // What is already on disk, so launching and quitting without touching
         // anything writes nothing and moves no clocks. `nil` whenever the
         // session in hand is *not* what the file holds — nothing stored, or a
         // seeded fixture — because then the first save has real work to do.
-        self.lastWritten = (stored != nil && !shouldSeedE2E && !shouldSeedScene)
+        self.lastWritten = (stored != nil && !shouldSeedE2E && !shouldSeedScene && !shouldSeedRecentSessions)
             ? restored
             : nil
         self.usesLiveTutor = configuration != nil
         let usingDemoService = resolvedService is DemoTutorService
         self.isWorkspace = restored.plan != nil && restored.exercise != nil && (self.usesLiveTutor || usingDemoService)
-        if shouldSeedE2E || shouldSeedScene { persistence.save(restored) }
+        if shouldSeedE2E || shouldSeedScene || shouldSeedRecentSessions {
+            persistence.save(restored)
+        }
         refreshSessions()
+        if shouldSeedRecentSessions {
+            // In-memory rows, straight from the fixture, so the drawer lists exactly the two
+            // fixture sessions regardless of what a previous run left on disk.
+            sessions = E2ESeedFixture.recentSessionSummaries(open: restored)
+                .sorted { $0.lastSavedAt > $1.lastSavedAt }
+        }
     }
 
     /// Whether this session has started — the one question that decides between
@@ -343,6 +363,16 @@ final class TutorStore: ObservableObject {
     /// of well under 600ms between strokes, so a line of maths is one write.
     static let boardInkRestBeforeSave: Duration = .milliseconds(600)
 
+    /// How long the board has to rest between the camera stopping and its next
+    /// write.
+    ///
+    /// Pan and pinch report continuously while a finger is down, exactly like
+    /// the pen's stroke reports, and the saved camera only needs to be the one
+    /// the learner left; a gesture that continues past the deadline re-arms it.
+    /// Short enough that a fast pan followed by an app background flushes the
+    /// latest position rather than a rest-saved midpoint.
+    static let boardCameraRestBeforeSave: Duration = .milliseconds(600)
+
     /// The board as the pen last left it, held **outside** `session` on purpose.
     ///
     /// `session` is `@Published`, and the board reports a change at the frequency
@@ -359,6 +389,12 @@ final class TutorStore: ObservableObject {
     /// launch and `session.drawingData` is still the truth.
     private var boardInkData: Data?
     private var boardInkSaveTask: Task<Void, Never>?
+    /// The camera as the learner last left it, held outside `session` for the
+    /// same reason `pendingBoardInk` is: pan and pinch report at gesture
+    /// frequency, and folding each report into the `@Published` struct would
+    /// re-render every observer of the store while the viewport is moving.
+    private var pendingBoardCamera: BoardCamera?
+    private var boardCameraSaveTask: Task<Void, Never>?
 
     /// What a canvas restores from, which is the board **as of the last save**.
     ///
@@ -375,6 +411,7 @@ final class TutorStore: ObservableObject {
     /// When the pen will have rested long enough to save. Pushed forward by each
     /// change; the waiting task reads it rather than being replaced.
     private var boardInkSaveDeadline: ContinuousClock.Instant?
+    private var boardCameraSaveDeadline: ContinuousClock.Instant?
 
     /// The board reporting that its ink changed.
     ///
@@ -412,6 +449,40 @@ final class TutorStore: ObservableObject {
         persist()
     }
 
+    /// Writes the board without waiting out the camera's rest. The scene
+    /// leaving the foreground and a session switch are the cases this exists
+    /// for; a camera-only movement must reach the disk here exactly like ink.
+    func saveBoardStateNow() {
+        guard pendingBoardInk != nil || pendingBoardCamera != nil else { return }
+        boardInkSaveTask?.cancel()
+        boardInkSaveTask = nil
+        boardInkSaveDeadline = nil
+        boardCameraSaveTask?.cancel()
+        boardCameraSaveTask = nil
+        boardCameraSaveDeadline = nil
+        persist()
+    }
+
+    /// The camera reporting that the viewport moved.
+    ///
+    /// Same contract as `updateDrawing`: retain the value, re-arm the deadline,
+    /// and let the one waiting task read the deadline itself rather than being
+    /// replaced per report. The programmatic first-layout restore is filtered
+    /// by `PencilCanvasView` and never reaches here.
+    func updateCamera(_ camera: BoardCamera) {
+        pendingBoardCamera = camera
+        boardCameraSaveDeadline = .now + Self.boardCameraRestBeforeSave
+        guard boardCameraSaveTask == nil else { return }
+        boardCameraSaveTask = Task { [weak self] in
+            while let deadline = self?.boardCameraSaveDeadline, .now < deadline {
+                try? await Task.sleep(until: deadline, clock: .continuous)
+                if Task.isCancelled { return }
+            }
+            self?.boardCameraSaveTask = nil
+            self?.saveBoardStateNow()
+        }
+    }
+
     /// Brings `boardInkData` up to date with the pen. Serializing here rather than
     /// in `updateDrawing` is the whole point: `dataRepresentation()` walks every
     /// stroke on the board, so it runs once per save instead of once per stroke.
@@ -419,6 +490,15 @@ final class TutorStore: ObservableObject {
         guard let pendingBoardInk else { return }
         self.pendingBoardInk = nil
         boardInkData = pendingBoardInk.dataRepresentation()
+    }
+
+    /// Brings `pendingBoardCamera` into the next save. Kept separate from the
+    /// ink fold because a camera movement after a stroke must not re-serialize
+    /// the drawing.
+    private func foldPendingBoardCamera() {
+        guard let pendingBoardCamera else { return }
+        self.pendingBoardCamera = nil
+        session.boardCamera = pendingBoardCamera
     }
 
     /// Forgets the board, in memory and on the next save. Both halves are needed:
@@ -429,6 +509,16 @@ final class TutorStore: ObservableObject {
         boardInkSaveDeadline = nil
         pendingBoardInk = nil
         boardInkData = nil
+    }
+
+    /// Forgets the camera in flight, both halves of what `discardBoardInk` does
+    /// for ink: a session switch or reset must not save the previous board's
+    /// camera into the next session.
+    private func discardBoardCamera() {
+        boardCameraSaveTask?.cancel()
+        boardCameraSaveTask = nil
+        boardCameraSaveDeadline = nil
+        pendingBoardCamera = nil
     }
 
     /// One board evaluation.
@@ -1089,6 +1179,9 @@ final class TutorStore: ObservableObject {
         boardInkSaveTask?.cancel()
         boardInkSaveTask = nil
         boardInkSaveDeadline = nil
+        boardCameraSaveTask?.cancel()
+        boardCameraSaveTask = nil
+        boardCameraSaveDeadline = nil
         if notifyingServer {
             // A live call in the outgoing session defers the close until the
             // call ends; every other switch sends it here, as before.
@@ -1102,6 +1195,7 @@ final class TutorStore: ObservableObject {
     /// writes, as a value.
     private func snapshotWithBoardInk() -> LearningSession {
         foldPendingBoardInk()
+        foldPendingBoardCamera()
         var snapshot = session
         if let boardInkData { snapshot.drawingData = boardInkData }
         return snapshot
@@ -1222,7 +1316,9 @@ final class TutorStore: ObservableObject {
             isStored = false
         }
         discardBoardInk()
+        discardBoardCamera()
         lastWritten = isStored ? next : nil
+        lastModificationBaseline = next
         session = next
         isWorkspace = next.plan != nil && next.exercise != nil && canRequestTutor
         evaluationText = nil
@@ -1709,6 +1805,17 @@ final class TutorStore: ObservableObject {
                         // Answered inside the service, which owns the network and
                         // the renderer. It reaches here only as `.boardViewed`.
                         break
+                    case .searchSources(_, _, let incoming):
+                        // Sources are evidence, not token deltas: they arrive as
+                        // discrete batches and must be visible even when the turn
+                        // only updates the board and writes little or no prose.
+                        // `search_id`/`query` ride along for context, and the
+                        // rows themselves dedupe on `id`/`url` across batches.
+                        withMessage { message in
+                            message.sources = Self.mergedSources(
+                                existing: message.sources, incoming: incoming
+                            )
+                        }
                     case .workspace(let plan, let exercise):
                         self.mutateSession(turnSession) {
                             $0.plan = plan
@@ -1803,6 +1910,30 @@ final class TutorStore: ObservableObject {
                     """)
             }
         }
+    }
+
+    /// Merges a `search_sources` batch into a message's existing sources.
+    ///
+    /// A repeated event with the same rows must not duplicate them. Within a
+    /// batch, the same `id` or `url` is one source even if the backend repeats
+    /// it across events. A later row with a known `id` replaces the earlier one
+    /// so a refined batch upgrades a result instead of stacking a second copy;
+    /// a row whose `url` is already present under another id is skipped.
+    static func mergedSources(existing: [TutorSource], incoming: [TutorSource]) -> [TutorSource] {
+        var merged = existing
+        var urls = Set(merged.map { $0.url })
+        for source in incoming {
+            if let index = merged.firstIndex(where: { $0.id == source.id }) {
+                let previousURL = merged[index].url
+                merged[index] = source
+                urls.remove(previousURL)
+                urls.insert(source.url)
+            } else if !urls.contains(source.url) {
+                merged.append(source)
+                urls.insert(source.url)
+            }
+        }
+        return merged
     }
 
     /// The board context for a turn whose session is not on screen — a
@@ -1900,15 +2031,25 @@ final class TutorStore: ObservableObject {
     }
 
     /// Every save goes through here, so every save carries the board's current
-    /// ink whether or not its own rest timer has come up yet. That is what lets
-    /// `updateDrawing` stay off `session` without any caller having to know.
+    /// ink and camera whether or not their rest timers have come up yet. That is
+    /// what lets `updateDrawing` and `updateCamera` stay off `session` without
+    /// any caller having to know.
     private func persist() {
         foldPendingBoardInk()
+        foldPendingBoardCamera()
         var snapshot = session
         if let boardInkData { snapshot.drawingData = boardInkData }
         guard changedSinceLastWrite(snapshot) else { return }
-        snapshot.lastSavedAt = .now
+        if changesLastModifiedDate(snapshot) {
+            snapshot.lastSavedAt = .now
+        } else if let baseline = lastModificationBaseline {
+            // Camera position is persisted state, but navigating the board is
+            // not editing the learning session. Keep the exact prior clock so
+            // SessionPersistence's index upsert cannot reorder the drawer.
+            snapshot.lastSavedAt = baseline.lastSavedAt
+        }
         lastWritten = snapshot
+        lastModificationBaseline = snapshot
         persistence.save(snapshot)
         // The switcher's other rows come from the index, and this is the write
         // that just changed it — a session saved is a session moved to the top
@@ -1925,6 +2066,20 @@ final class TutorStore: ObservableObject {
     /// recent thing you did and floated it to the top of the list, when all you
     /// had done was look at it.
     private var lastWritten: LearningSession?
+
+    /// The last state against which "did the learner change this session?" is
+    /// judged. Unlike `lastWritten`, this exists for a fresh session before its
+    /// first file is created. Camera and clock are normalized out of the
+    /// comparison; everything else remains an edit and advances the date.
+    private var lastModificationBaseline: LearningSession?
+
+    private func changesLastModifiedDate(_ snapshot: LearningSession) -> Bool {
+        guard var previous = lastModificationBaseline else { return true }
+        let current = snapshot
+        previous.lastSavedAt = current.lastSavedAt
+        previous.boardCamera = current.boardCamera
+        return previous != current
+    }
 
     /// Whether `snapshot` differs from the last thing written in any way that is
     /// not the clock itself.

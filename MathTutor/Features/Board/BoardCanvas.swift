@@ -2,7 +2,45 @@ import PencilKit
 import SwiftUI
 import UIKit
 
-/// A `PKCanvasView` that reports its laid-out size.
+/// The board's PencilKit surface, with the empty-text edit menu routed out.
+///
+/// PencilKit installs its own `UIEditMenuInteraction` on iPadOS 17, and a plain
+/// tap on the board presents its default text-editing menu ("Select All |
+/// Insert Space") even though a board has no text to select or insert. Routing
+/// the two empty-text actions out of the responder chain removes those items
+/// while leaving PencilKit's lasso selection menu (cut, copy, paste, duplicate,
+/// delete) untouched, since that menu is presented by PencilKit itself, not by
+/// the responder actions this override blocks.
+final class BoardPencilCanvasView: PKCanvasView {
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        switch action {
+        case #selector(UIResponder.selectAll(_:)), Selector(("insertText:")):
+            // "Select All" and "Insert Space" come from the board's text-editing
+            // menu, which has no text to act on. Every other action (including
+            // the lasso's cut/copy/paste/duplicate/delete) keeps the responder
+            // chain's normal answer.
+            return false
+        default:
+            return super.canPerformAction(action, withSender: sender)
+        }
+    }
+
+    override func target(forAction action: Selector, withSender sender: Any?) -> Any? {
+        switch action {
+        case #selector(UIResponder.selectAll(_:)), Selector(("insertText:")):
+            // The responder chain must not be able to route these two empty-text
+            // actions at all, not merely report them unavailable. PencilKit can
+            // build its edit menu from the responder chain, so a nil target here
+            // closes the second path the popup could reach a handler through.
+            return nil
+        default:
+            return super.target(forAction: action, withSender: sender)
+        }
+    }
+}
+
+/// A public board host that paints the board's opaque paper and composites the
+/// tutor scene below PencilKit's own transparent ink surface.
 ///
 /// Board setup depends on the viewport, but SwiftUI only re-invokes
 /// `updateUIView` when one of the representable's own arguments changes — not
@@ -10,16 +48,110 @@ import UIKit
 /// meant a cold launch configured the board against a zero viewport and never
 /// corrected it. UIKit's layout pass is the signal that actually tracks
 /// geometry.
-final class BoardCanvasView: PKCanvasView {
+final class BoardCanvasView: UIView {
     /// Called on each layout pass whose size differs from the last reported
     /// one, skipping empty sizes. The first call is the board's real start.
     var onViewportChange: ((CGSize) -> Void)?
 
     private var reportedViewport: CGSize?
 
-    /// The tutor's semantic scene, composited by a transparent viewport-pinned
-    /// layer view. `PKCanvasView` keeps its own drawing path completely
-    /// untouched.
+    let pencilCanvas: BoardPencilCanvasView
+
+    var drawing: PKDrawing {
+        get { pencilCanvas.drawing }
+        set { pencilCanvas.drawing = newValue }
+    }
+
+    var contentOffset: CGPoint {
+        get { pencilCanvas.contentOffset }
+        set {
+            pencilCanvas.contentOffset = newValue
+            updateSceneOverlay()
+        }
+    }
+
+    var zoomScale: CGFloat {
+        get { pencilCanvas.zoomScale }
+        set {
+            pencilCanvas.setZoomScale(newValue, animated: false)
+            updateSceneOverlay()
+        }
+    }
+
+    var contentSize: CGSize { pencilCanvas.contentSize }
+
+    /// What the learner is looking at, in drawing coordinates plus zoom — the
+    /// persisted "camera". Computed from the scroll view's own state so pan and
+    /// pinch always report through the same normalization.
+    var camera: BoardCamera {
+        BoardCamera(
+            center: PencilCanvasConfiguration.center(
+                in: bounds,
+                contentOffset: pencilCanvas.contentOffset,
+                scaledContentSize: pencilCanvas.contentSize,
+                zoomScale: pencilCanvas.zoomScale
+            ),
+            zoomScale: pencilCanvas.zoomScale
+        )
+    }
+
+    /// Restores a saved camera. The center travels through the same clamp as
+    /// any live pan, so an older camera saved against a different viewport still
+    /// lands inside the board's scrollable range.
+    ///
+    /// This is a programmatic first-layout configuration, not a learner gesture:
+    /// the coordinator suppresses the pan/zoom report that follows so it is not
+    /// mistaken for a user change.
+    func restoreCamera(_ camera: BoardCamera) {
+        let zoom = min(
+            max(camera.zoomScale, PencilCanvasConfiguration.minimumZoomScale),
+            PencilCanvasConfiguration.maximumZoomScale
+        )
+        pencilCanvas.setZoomScale(zoom, animated: false)
+        pencilCanvas.contentOffset = PencilCanvasConfiguration.offset(
+            centering: CGRect(origin: camera.center, size: .zero),
+            viewport: bounds.size,
+            zoomScale: pencilCanvas.zoomScale
+        )
+        updateSceneOverlay()
+    }
+
+    /// The camera a fresh canvas restores on its first real layout, if the
+    /// session carries one. `nil` keeps the pre-camera behavior of opening
+    /// centered on the session's ink.
+    var initialCamera: BoardCamera?
+
+    var mountedSceneElementIdsForTesting: Set<String> {
+        sceneOverlay.mountedElementIdsForTesting
+    }
+
+    var mountedSceneFrameForTesting: CGRect? {
+        sceneOverlay.mountedFrameForTesting(id: "scene")
+    }
+
+    func setZoomScale(_ scale: CGFloat, animated: Bool) {
+        pencilCanvas.setZoomScale(scale, animated: animated)
+        updateSceneOverlay()
+    }
+
+    init(frame: CGRect, pencilCanvas: BoardPencilCanvasView = BoardPencilCanvasView(frame: .zero)) {
+        self.pencilCanvas = pencilCanvas
+        super.init(frame: frame)
+        pencilCanvas.isUserInteractionEnabled = true
+        pencilCanvas.alpha = 1
+        let scale = traitCollection.displayScale > 0 ? traitCollection.displayScale : 2
+        backgroundColor = BoardPaper.background(scale: scale)
+        isOpaque = true
+        pencilCanvas.backgroundColor = .clear
+        pencilCanvas.isOpaque = false
+        pencilCanvas.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        sceneOverlay.isUserInteractionEnabled = false
+        sceneOverlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        addSubview(sceneOverlay)
+        addSubview(pencilCanvas)
+        updateSceneOverlay()
+    }
+
     var boardScene: BoardScene = .empty {
         didSet {
             guard boardScene != oldValue else { return }
@@ -35,23 +167,26 @@ final class BoardCanvasView: PKCanvasView {
 
     private let sceneOverlay = BoardSceneLayerView()
 
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("BoardCanvasView is created in code only")
+    }
+
     /// Keeps the layer view's frame pinned to the viewport and its content
     /// transform in sync with the current pan/zoom. Called on layout passes and
     /// from the scroll delegate so a pan or pinch never leaves tutor geometry
     /// behind.
     func updateSceneOverlay() {
-        if sceneOverlay.superview != self {
-            addSubview(sceneOverlay)
-        }
-        // Always on top after add/update/layout: PencilKit can add its own
-        // sublayers/views between updates, so the semantic layer must be
-        // re-fronted every time rather than only when first attached.
-        bringSubviewToFront(sceneOverlay)
-        // Frame first, viewport second: `setViewport` culls against
-        // `bounds.size`, so the size of this pass has to be in place before it
-        // decides what the viewport can see.
+        pencilCanvas.frame = bounds
         sceneOverlay.frame = bounds
-        sceneOverlay.setViewport(contentOffset: contentOffset, zoomScale: zoomScale)
+        updatePaperSurface()
+        sceneOverlay.setViewport(contentOffset: pencilCanvas.contentOffset, zoomScale: pencilCanvas.zoomScale)
+    }
+
+    private func updatePaperSurface() {
+        let scale = traitCollection.displayScale > 0 ? traitCollection.displayScale : 2
+        backgroundColor = BoardPaper.background(scale: scale)
+        isOpaque = true
     }
 
     override func layoutSubviews() {
@@ -62,6 +197,7 @@ final class BoardCanvasView: PKCanvasView {
         reportedViewport = size
         onViewportChange?(size)
     }
+
 }
 
 struct PencilCanvasView: UIViewRepresentable {
@@ -93,8 +229,17 @@ struct PencilCanvasView: UIViewRepresentable {
     let onDrawingChange: (PKDrawing) -> Void
     let onUndo: () -> Void
     let onRedo: () -> Void
-    /// The tutor-authored semantic scene to render above the learner ink.
+    /// Called on pan/zoom so the store can rest-save the board's camera. The
+    /// programmatic first-layout restore does not call it; a real learner pan
+    /// does.
+    let onCameraChange: (BoardCamera) -> Void
+    /// The tutor-authored semantic scene. The host places it above the opaque
+    /// paper and below PencilKit's native ink.
     let scene: BoardScene
+    /// The camera to restore on the board's first real layout, when the session
+    /// has one. `nil` keeps the pre-camera behavior of opening centered on the
+    /// session's ink.
+    let initialCamera: BoardCamera?
 
     init(
         capture: CanvasCapture,
@@ -107,6 +252,8 @@ struct PencilCanvasView: UIViewRepresentable {
         onDrawingChange: @escaping (PKDrawing) -> Void,
         onUndo: @escaping () -> Void,
         onRedo: @escaping () -> Void,
+        onCameraChange: @escaping (BoardCamera) -> Void = { _ in },
+        initialCamera: BoardCamera? = nil,
         scene: BoardScene = .empty
     ) {
         self.capture = capture
@@ -119,20 +266,25 @@ struct PencilCanvasView: UIViewRepresentable {
         self.onDrawingChange = onDrawingChange
         self.onUndo = onUndo
         self.onRedo = onRedo
+        self.onCameraChange = onCameraChange
         self.scene = scene
+        self.initialCamera = initialCamera
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeUIView(context: Context) -> BoardCanvasView {
         let canvas = BoardCanvasView(frame: .zero)
-        PencilCanvasConfiguration.configure(canvas, viewport: .zero)
-        applyTool(to: canvas, coordinator: context.coordinator)
+        canvas.initialCamera = initialCamera
+        let pencilCanvas = canvas.pencilCanvas
+        PencilCanvasConfiguration.configure(pencilCanvas, viewport: .zero)
+        applyTool(to: pencilCanvas, coordinator: context.coordinator)
         // The first viewport report centers the board on the restored ink
         // through `capture`, so the capture must already know the canvas by
         // the time that closure can fire.
-        context.coordinator.canvas = canvas
-        capture.canvasView = canvas
+        context.coordinator.canvas = pencilCanvas
+        context.coordinator.host = canvas
+        capture.canvasView = pencilCanvas
         capture.scene = scene
         canvas.boardScene = scene
         if let initialDrawingData, let drawing = try? PKDrawing(data: initialDrawingData) {
@@ -161,7 +313,7 @@ struct PencilCanvasView: UIViewRepresentable {
 
         // Install the delegate after restoring persisted ink so the initial load
         // does not publish a drawing change while SwiftUI is still updating views.
-        canvas.delegate = context.coordinator
+        pencilCanvas.delegate = context.coordinator
 
         context.coordinator.updateFirstResponder(isActive)
         canvas.isUserInteractionEnabled = !isSelecting
@@ -172,10 +324,10 @@ struct PencilCanvasView: UIViewRepresentable {
         let addsMultiTouchTaps = true
         #endif
         if addsMultiTouchTaps {
-            canvas.addGestureRecognizer(
+            pencilCanvas.addGestureRecognizer(
                 multiTouchTap(touches: 2, action: #selector(Coordinator.twoFingerUndo), coordinator: context.coordinator)
             )
-            canvas.addGestureRecognizer(
+            pencilCanvas.addGestureRecognizer(
                 multiTouchTap(touches: 3, action: #selector(Coordinator.threeFingerRedo), coordinator: context.coordinator)
             )
         }
@@ -208,8 +360,10 @@ struct PencilCanvasView: UIViewRepresentable {
     }
 
     func updateUIView(_ canvas: BoardCanvasView, context: Context) {
+        let pencilCanvas = canvas.pencilCanvas
         context.coordinator.parent = self
-        capture.canvasView = canvas
+        context.coordinator.host = canvas
+        capture.canvasView = pencilCanvas
         capture.scene = scene
         canvas.boardScene = scene
         // `updateUIView` is inside SwiftUI's render transaction. Publishing
@@ -217,7 +371,7 @@ struct PencilCanvasView: UIViewRepresentable {
         // behavior warning when a tutor scene first arrives.
         let capture = capture
         Task { @MainActor in capture.refreshHasInk() }
-        applyTool(to: canvas, coordinator: context.coordinator)
+        applyTool(to: pencilCanvas, coordinator: context.coordinator)
         // Showing or hiding full chat doesn't change the canvas bounds, but it
         // does change which view should own first responder. Viewport-driven
         // setup lives in `BoardCanvasView.onViewportChange`.
@@ -226,7 +380,7 @@ struct PencilCanvasView: UIViewRepresentable {
     }
 
     static func dismantleUIView(_ uiView: BoardCanvasView, coordinator: Coordinator) {
-        coordinator.teardown(canvas: uiView)
+        coordinator.teardown(canvas: uiView.pencilCanvas)
     }
 
     /// Arms the canvas with the rail's selection. Called from `makeUIView` as
@@ -258,7 +412,8 @@ struct PencilCanvasView: UIViewRepresentable {
 
     final class Coordinator: NSObject, PKCanvasViewDelegate, UIScrollViewDelegate, UIGestureRecognizerDelegate {
         var parent: PencilCanvasView
-        weak var canvas: BoardCanvasView?
+        weak var canvas: PKCanvasView?
+        weak var host: BoardCanvasView?
         /// What `canvas.tool` was last set from — see `applyTool`.
         var appliedInk: InkSelection?
         /// Whether `BoardCanvasView.onViewportChange` has fired at least
@@ -266,16 +421,26 @@ struct PencilCanvasView: UIViewRepresentable {
         /// first report configures fresh and centers on ink; every later one
         /// (rotation, split view) preserves the viewport instead.
         var didConfigure = false
-
-        init(_ parent: PencilCanvasView) { self.parent = parent }
+        init(_ parent: PencilCanvasView) {
+            self.parent = parent
+        }
 
         /// Routes a `BoardCanvasView` layout report to board setup. The first
-        /// report configures the board fresh and opens it on the session's
-        /// existing ink; every later one (rotation, split view) preserves the
-        /// viewport instead.
+        /// report restores the session's saved camera when it has one, otherwise
+        /// it configures fresh and opens on the session's existing ink; every
+        /// later one (rotation, split view) preserves the viewport instead.
         func handleViewportChange(canvas: BoardCanvasView, size: CGSize) {
+            let pencilCanvas = canvas.pencilCanvas
             let isFirstReport = !didConfigure
-            PencilCanvasConfiguration.configure(canvas, viewport: size, preserveViewport: !isFirstReport)
+            isApplyingViewportConfiguration = true
+            defer { isApplyingViewportConfiguration = false }
+            if isFirstReport, let camera = canvas.initialCamera {
+                PencilCanvasConfiguration.configure(pencilCanvas, viewport: size, preserveViewport: false)
+                canvas.restoreCamera(camera)
+                didConfigure = true
+                return
+            }
+            PencilCanvasConfiguration.configure(pencilCanvas, viewport: size, preserveViewport: !isFirstReport)
             didConfigure = true
             // `configure` can only center the board origin — it never sees the
             // drawing. Restored ink wins over that default, but only on the
@@ -385,11 +550,33 @@ struct PencilCanvasView: UIViewRepresentable {
         }
 
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
-            (scrollView as? BoardCanvasView)?.updateSceneOverlay()
+            host?.updateSceneOverlay()
+            reportCameraIfNeeded()
         }
 
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
-            (scrollView as? BoardCanvasView)?.updateSceneOverlay()
+            host?.updateSceneOverlay()
+            reportCameraIfNeeded()
+        }
+
+        /// True only while layout is configuring, restoring, or preserving the
+        /// viewport. UIKit invokes scroll delegates synchronously from those
+        /// setters, and those callbacks are geometry maintenance rather than a
+        /// learner camera change.
+        private var isApplyingViewportConfiguration = false
+
+        /// Persists pan/zoom from the delegate callbacks. The scroll view
+        /// reports continuously while a finger is down, so the store's rest
+        /// timer gets re-armed per report exactly as the ink path does, keeping
+        /// high-frequency camera updates out of `@Published` session state.
+        ///
+        /// The programmatic restore itself is not reported (see
+        /// `handleViewportChange`); a later real pan is, because it changes the
+        /// camera again.
+        private func reportCameraIfNeeded() {
+            guard !isApplyingViewportConfiguration else { return }
+            guard let host else { return }
+            parent.onCameraChange(host.camera)
         }
 
         @objc func twoFingerUndo() {

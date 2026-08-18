@@ -149,6 +149,106 @@ final class BoardSVGStoreTests: XCTestCase {
         XCTAssertLessThanOrEqual(abs(pixel.blue - 170), 8, seen)
     }
 
+    // MARK: - Emoji in SVG text
+
+    func testOnlyEmojiInRenderedTextRoutesToTheEmojiRenderer() {
+        XCTAssertTrue(BoardSVGStore.containsDrawnEmoji(inTextOf: """
+        <svg><text>ordinary</text><text>second run 🎉</text></svg>
+        """))
+        XCTAssertTrue(BoardSVGStore.containsDrawnEmoji(inTextOf: """
+        <svg><text>Step <tspan>1️⃣</tspan></text></svg>
+        """))
+        XCTAssertFalse(BoardSVGStore.containsDrawnEmoji(inTextOf: """
+        <svg><title>🎉</title><path id="emoji-🎉" d="M0 0 L1 1"/></svg>
+        """))
+        XCTAssertFalse(BoardSVGStore.containsDrawnEmoji(inTextOf: """
+        <svg><!-- 🎉 --><text>ordinary outline text</text></svg>
+        """))
+    }
+
+    /// A representative emoji inside `<text>` must come back visible and
+    /// colourful, while the ordinary geometry around it still renders.
+    ///
+    /// SwiftDraw converts a `<text>` run into Core Text outlines and Apple
+    /// Color Emoji has no outline, so the glyph silently vanishes on the native
+    /// path. The store routes documents that draw an emoji in `<text>` to the
+    /// WebKit raster fallback, so the pixel here is the whole proof: read the
+    /// bytes, not the markup.
+    func testEmojiInSVGTextRendersAsColorfulPixelsBesideOrdinaryGeometry() async throws {
+        let store = BoardSVGStore()
+        let markup = """
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 120">\
+        <text x="40" y="70" font-size="52">\u{1F389}</text>\
+        <rect x="220" y="20" width="80" height="80" fill="#E33E38"/></svg>
+        """
+        let rendered = await store.render(element: element(markup))
+        let parsed = try XCTUnwrap(rendered)
+
+        XCTAssertEqual(parsed.size, CGSize(width: 320, height: 120))
+        let raster = try Raster(parsed.image)
+
+        // The red rectangle is the ordinary-geometry control: the WebKit
+        // fallback must draw it, not drop everything else when emoji is present.
+        let rectX = Int(240 * BoardSVGStore.rasterOversample)
+        let rectY = Int(60 * BoardSVGStore.rasterOversample)
+        let red = raster.pixel(x: rectX, y: rectY)
+        XCTAssertGreaterThan(red.red - red.blue, 120, "the neighbouring rect must still draw")
+        XCTAssertEqual(red.alpha, 255)
+
+        // The emoji glyph occupies the left half of the document. WebKit's Apple
+        // Color Emoji glyph is colourful and multi-toned; capture any pixel in
+        // the glyph's box that carries visible colour beyond a flat outline.
+        var sawColourfulEmoji = false
+        for y in stride(from: 20, to: 100, by: 2) {
+            for x in stride(from: 30, to: 130, by: 2) {
+                let px = raster.pixel(
+                    x: Int(CGFloat(x) * BoardSVGStore.rasterOversample),
+                    y: Int(CGFloat(y) * BoardSVGStore.rasterOversample)
+                )
+                guard px.alpha > 40 else { continue }
+                let spread = max(px.red, px.green, px.blue) - min(px.red, px.green, px.blue)
+                if spread > 80 || (px.red > 190 && px.green > 90 && px.blue < 110) {
+                    sawColourfulEmoji = true
+                    break
+                }
+            }
+            if sawColourfulEmoji { break }
+        }
+        XCTAssertTrue(sawColourfulEmoji, "the emoji in SVG text must render visible, colourful pixels")
+    }
+
+    /// The emoji fallback owns one WebKit view. Two scene figures are prepared
+    /// together, so their loads must queue rather than replace each other's
+    /// navigation and return the wrong document under a cache key.
+    func testConcurrentEmojiDocumentsKeepTheirOwnPixels() async throws {
+        let store = BoardSVGStore()
+        let redMarkup = """
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 120">\
+        <text x="40" y="70" font-size="52">🎉</text>\
+        <rect x="220" y="20" width="80" height="80" fill="#E33E38"/></svg>
+        """
+        let blueMarkup = """
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 120">\
+        <text x="40" y="70" font-size="52">✅</text>\
+        <rect x="220" y="20" width="80" height="80" fill="#0155FB"/></svg>
+        """
+
+        let redElement = element(redMarkup, id: "red")
+        let blueElement = element(blueMarkup, id: "blue")
+        async let redDocument = store.render(element: redElement)
+        async let blueDocument = store.render(element: blueElement)
+        let (redResult, blueResult) = await (redDocument, blueDocument)
+        let redRaster = try Raster(XCTUnwrap(redResult).image)
+        let blueRaster = try Raster(XCTUnwrap(blueResult).image)
+        let sampleX = Int(240 * BoardSVGStore.rasterOversample)
+        let sampleY = Int(60 * BoardSVGStore.rasterOversample)
+        let red = redRaster.pixel(x: sampleX, y: sampleY)
+        let blue = blueRaster.pixel(x: sampleX, y: sampleY)
+
+        XCTAssertGreaterThan(red.red - red.blue, 120, "the red document must not receive the blue render")
+        XCTAssertGreaterThan(blue.blue - blue.red, 120, "the blue document must not receive the red render")
+    }
+
     // MARK: - The two kinds of failure
 
     /// Markup that does not parse is refused once. A second ask, and every
@@ -188,17 +288,14 @@ final class BoardSVGStoreTests: XCTestCase {
         XCTAssertNil(failed)
         XCTAssertEqual(store.renderPassesForTesting, 1)
 
-        // Two reconcile passes' worth of draws. Work scheduled by one of them
-        // would announce itself when it finished, which is the notification
-        // that brings the layer view back for the next pass — so an inverted
-        // expectation on it is the loop's own trigger, asserted absent.
-        let quiet = expectation(forNotification: .boardSceneArtifactReady, object: nil)
-        quiet.isInverted = true
+        // Two reconcile passes' worth of draws. The render-pass counter belongs
+        // to this store, unlike the process-wide readiness notification, which
+        // can also be posted by an unrelated math/image artifact finishing in
+        // the test host.
         for _ in 0..<2 {
             XCTAssertNil(store.document(for: element(Self.triangle)))
             await Task.yield()
         }
-        await fulfillment(of: [quiet], timeout: 0.5)
         XCTAssertEqual(
             store.renderPassesForTesting, 1, "a draw must never retry a failed raster"
         )

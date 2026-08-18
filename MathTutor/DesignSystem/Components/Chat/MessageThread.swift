@@ -256,6 +256,7 @@ struct ChatScrollColumn<Content: View>: View {
             // Back to the column for layout. A frame does not clip, so the bleed hangs
             // symmetrically outside this one and the content keeps the x it had.
             .frame(width: proxy.size.width, height: proxy.size.height)
+            .accessibilityIdentifier("chat-scroll")
         }
         .frame(width: width)
     }
@@ -436,6 +437,9 @@ struct MessageRow: View {
                     ActivityTrailView(trail: activity, width: metrics.rowWidth, crop: crop)
                 }
                 TutorMessageText(markdown: item.message.text, metrics: metrics)
+                if !item.message.sources.isEmpty {
+                    SourcesView(sources: item.message.sources, width: metrics.rowWidth)
+                }
             }
             .frame(width: metrics.rowWidth, alignment: .leading)
         }
@@ -569,4 +573,3 @@ struct MessageRow: View {
         }
     }
 }
-

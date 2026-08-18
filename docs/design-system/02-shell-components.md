@@ -673,17 +673,12 @@ decision — and on iPadOS 17 it falls through. A confirmation dialog the drawer
 was tried and rejected: it closed the leak by replacing the interaction, and the interaction was
 the part worth keeping.
 
-So the drawer infers the menu instead. A long press of its own runs early against the same touch
-(0.35 s, deliberately inside `UIContextMenuInteraction`'s ~0.5 s commit, because the interaction
-cancels every other recogniser when it takes the touch — a detector on the system's own
-threshold would be cancelled instead of firing). From then until a tap arrives, a transparent
-layer over the whole drawer swallows taps rather than letting them act, and holds for a further
-0.35 s while the menu animates away. Every way the inference can be wrong costs one swallowed
-tap and none of them can switch a session.
-
-A row's tap is a `DragGesture` whose translation must be within 10 pt, not a `Button` — evidence
-the row holds itself, which nothing outside it has to notice in time. Lifting after a menu opens
-never reaches it, because the interaction cancels the drag and a cancelled drag never ends.
+The row therefore owns a `UIContextMenuInteraction` and uses its delegate callbacks as the exact
+menu lifecycle. Its ordinary tap belongs to the same stable UIKit row control, while the hosted
+SwiftUI tree is visual content only. Parent updates may replace that hosted tree without
+cancelling a finger already down on the control. The control accepts travel through the drawer
+pan's 12 pt intent threshold; a committed pan cancels the control before lift, and a displayed
+menu suppresses activation.
 | `Drawer bottom bar` | `44` tall, on the content column, `justify-content: space-between`, one inset up from the floor (docked `top 914`, full screen `top 960`). |
 | `btn/new-chat` | Bottom **left**. `44` tall pill, `--color-brand` fill, `--radius-full`, `gap 8`, `padding-left 16`, `padding-right 20`. Glyph `ui/plus` `20 × 20` white, label "New chat" 17 / 22 weight 600 white. Shadow `#6051DC33 0 4 12` + `#14143214 0 1 2`. |
 | `btn/settings` | Bottom **right**. `44 × 44` `--color-surface` circle, glyph `control/settings` at 24, elevation 03 · Control. Already at the tap-target minimum, so unlike the panel's 32pt controls it needs no expansion. **It leaves the drawer open**: Settings is a window over the whole screen and it is reached from here, so closing the thing you opened it from returns you somewhere you were not. Every other action in this drawer replaces what the chat is showing, which is why they all close it and this one does not. |
@@ -804,12 +799,11 @@ control mid-pan, and `scrollDisabled` stops it scrolling a list the pan is slidi
 Extend it — add regions, add routes — and never add a rival SwiftUI gesture or re-add a
 SwiftUI-level press guard.
 
-**The session rows need neither guard.** They are a plain view with a `LongPressGesture` and a
-`DragGesture`, not a `Button`, so the row proves for itself that a swipe was not a tap: the
-drag's own translation has to be within 10 pt for the tap to count. Evidence the row already
-holds cannot be raced by anything that failed to switch it off in time. The hold is checked
-first — `LongPressGesture` ends half a second in with the finger still down, so a lift after a
-hold cannot also open the session.
+**The session rows need neither guard.** Each is a stable UIKit control with a
+`UIContextMenuInteraction`; its hosted SwiftUI label receives no touches. The control measures
+maximum travel through the drawer pan's 12 pt intent threshold. A committed drawer pan cancels
+that touch sequence, and an active context menu suppresses activation, so neither a swipe nor a
+long press can also open the session.
 
 ### 14.2 The full-screen sidebar (board 19)
 
@@ -953,6 +947,13 @@ The panel and the dock are each mounted only in their own presentation, plus for
 a gesture and the spring after it. Screen 06 gives the board the screen to itself, which is a
 performance promise as much as a layout: a message thread left mounted off the leading edge
 would still be laid out and drawn on every frame the learner spends inking.
+
+Mount lifetime is not hit-test lifetime. While the finger owns the dock gesture both surfaces
+are inert; after release, the settled destination accepts the next touch immediately and the
+outgoing surface remains inert while it finishes drawing its spring. In particular, a reopened
+panel must not inherit `DockRevealModel.isSettling` as a hit-test block: the drawer's ancestor
+pan recogniser can still reveal Sessions through that block, leaving a perfectly visible drawer
+whose rows and controls refuse every press.
 
 ### 15.2 The leading-edge zone
 

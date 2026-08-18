@@ -3,6 +3,7 @@ import CryptoKit
 import Foundation
 import SwiftDraw
 import UIKit
+import WebKit
 
 /// One parsed SVG document: the bitmap it was drawn into, and the size the
 /// document declares for itself.
@@ -350,7 +351,7 @@ final class BoardSVGStore {
     /// again by the task that made it, so handing it across is safe — said
     /// explicitly rather than relying on how the CoreGraphics overlay happens
     /// to be annotated in a given SDK.
-    private enum Outcome: @unchecked Sendable {
+    fileprivate enum Outcome: @unchecked Sendable {
         case ready(CGImage, CGSize)
         /// SwiftDraw refused the document. It will refuse it next time too.
         case unparseable
@@ -362,7 +363,16 @@ final class BoardSVGStore {
     /// milliseconds of work that would otherwise land in the middle of a frame.
     /// The image decode takes the same escape in `BoardImageStore`.
     private nonisolated static func rasterize(markup: String) async -> Outcome {
-        await Task.detached(priority: .userInitiated) {
+        // Ordinary SVG keeps the fast SwiftDraw path. A document that draws an
+        // emoji inside `<text>` cannot: SwiftDraw turns a text run into Core
+        // Text outlines, and Apple Color Emoji has no outline, so the glyph is
+        // silently absent. Those documents take the WebKit raster fallback
+        // below, which renders the raw document with the system's own text
+        // engine. The split keeps a plain figure off the WebKit path entirely.
+        if containsDrawnEmoji(inTextOf: markup) {
+            return await WebKitSVGRasterizer.rasterize(markup: markup)
+        }
+        return await Task.detached(priority: .userInitiated) {
             BoardSVGStore.raster(markup: markup)
         }.value
     }
@@ -418,7 +428,7 @@ final class BoardSVGStore {
     /// `BoardSceneLayerView.rasterize` pins its tiles the same way, for the
     /// same reason. `opaque` stays false: a figure is drawn over the board, and
     /// everything the document did not paint has to stay clear.
-    private nonisolated static func flattened(_ image: UIImage, size: CGSize) -> CGImage? {
+    fileprivate nonisolated static func flattened(_ image: UIImage, size: CGSize) -> CGImage? {
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         format.opaque = false
@@ -434,7 +444,432 @@ final class BoardSVGStore {
     ///
     /// The only caller has already refused a document under one point on either
     /// axis, so the division has a divisor of at least 1.
-    private nonisolated static func rasterScale(forDocumentSize size: CGSize) -> CGFloat {
+    fileprivate nonisolated static func rasterScale(forDocumentSize size: CGSize) -> CGFloat {
         min(rasterOversample, maximumRasterSide / max(size.width, size.height))
+    }
+
+    /// Whether a raw SVG document draws an emoji inside a `<text>` or `<tspan>`
+    /// element's character data.
+    ///
+    /// Emoji can reach a document two ways and only one of them drops a glyph
+    /// under SwiftDraw's outline path: inside a drawn `<text>`/`<tspan>` run
+    /// they vanish, while in a `<title>`, an attribute, an id or a comment they
+    /// were never going to be drawn anyway. Detection is scoped to the actual
+    /// character data of text-bearing elements (via `XMLParser`), so a
+    /// decorative emoji does not send an ordinary figure down the WebKit path.
+    ///
+    /// The emoji test mirrors the former server lint rule for which characters
+    /// carry `Emoji_Presentation` (plus the variation selector and
+    /// combining-keycap markers that turn a digit into `1️⃣`), so a document the
+    /// device routes to WebKit and one the server declines to warn about agree.
+    /// Internal so the routing regression in `BoardSVGStoreTests` can pin the
+    /// exact decision without driving two renderers.
+    nonisolated static func containsDrawnEmoji(inTextOf markup: String) -> Bool {
+        let delegate = TextEmojiDetector()
+        let parser = XMLParser(data: Data(markup.utf8))
+        parser.delegate = delegate
+        parser.shouldResolveExternalEntities = false
+        // The delegate aborts as soon as it sees one emoji. `parse()` therefore
+        // returns false on the successful fast-exit path as well as for malformed
+        // XML, so the delegate's result is the authority.
+        _ = parser.parse()
+        return delegate.foundEmoji
+    }
+}
+
+/// Collects the character data of SVG text-bearing elements (`<text>` and
+/// `<tspan>`) so the store can decide whether a document actually draws an
+/// emoji. `<title>` and other tags never contribute: SVG defines them as
+/// non-rendered metadata, matching the server's own lint rule.
+private final class TextEmojiDetector: NSObject, XMLParserDelegate {
+    private var textDepth = 0
+    private(set) var foundEmoji = false
+
+    // `text` and `tspan` are the only two SVG elements whose content is drawn
+    // as text runs. Every other element's character data is metadata that
+    // SwiftDraw never rasterizes.
+    private static let textElements: Set<String> = ["text", "tspan"]
+
+    func parser(
+        _ parser: XMLParser,
+        didStartElement elementName: String,
+        namespaceURI: String?,
+        qualifiedName qName: String?,
+        attributes attributeDict: [String: String] = [:]
+    ) {
+        let localName = elementName.split(separator: ":").last.map(String.init) ?? elementName
+        if Self.textElements.contains(localName) {
+            textDepth += 1
+        }
+    }
+
+    func parser(_ parser: XMLParser, foundCharacters string: String) {
+        inspect(string, parser: parser)
+    }
+
+    func parser(_ parser: XMLParser, foundCDATA CDATABlock: Data) {
+        if let string = String(data: CDATABlock, encoding: .utf8) {
+            inspect(string, parser: parser)
+        }
+    }
+
+    func parser(
+        _ parser: XMLParser,
+        didEndElement elementName: String,
+        namespaceURI: String?,
+        qualifiedName qName: String?
+    ) {
+        let localName = elementName.split(separator: ":").last.map(String.init) ?? elementName
+        if Self.textElements.contains(localName), textDepth > 0 {
+            textDepth -= 1
+        }
+    }
+
+    private func inspect(_ string: String, parser: XMLParser) {
+        guard textDepth > 0, !foundEmoji else { return }
+        for scalar in string.unicodeScalars where scalar.properties.isEmojiPresentation
+            || scalar.value == 0xFE0F || scalar.value == 0x20E3 {
+            foundEmoji = true
+            parser.abortParsing()
+            return
+        }
+    }
+}
+
+// MARK: - WebKit emoji fallback
+
+/// The raster engine for raw SVG documents that draw emoji inside `<text>`.
+///
+/// Apple Color Emoji is a bitmap/colour font, so SwiftDraw's Core Text outline
+/// conversion produces no glyph for those runs and they disappear. WebKit is
+/// the platform's own SVG renderer and draws `<text>` with the system text
+/// stack, so the emoji survive. To keep that capability out of the fast path a
+/// `Parser` only lands here after the store decided the document actually needs
+/// it.
+///
+/// This restores the project's earlier `BoardSVGRenderer` design for the
+/// narrow case that needs it: one reusable noninteractive `WKWebView` in an
+/// offscreen window, JavaScript disabled, a content rule list that blocks every
+/// external `http(s)`/`ftp`/`file` fetch, hard navigation and operation
+/// timeouts, and a PDF-first render with a snapshot fallback. The exact UTF-8
+/// bytes are handed straight to WebKit; nothing is parsed, trimmed or rewritten.
+@MainActor
+private final class WebKitSVGRasterizer: NSObject, WKNavigationDelegate {
+    private static let contentRuleIdentifier = "mathTutor.blockExternalNetwork.v2"
+    private static let blockExternalRuleJSON = """
+    [
+      {"trigger":{"url-filter":"^https?:"},"action":{"type":"block"}},
+      {"trigger":{"url-filter":"^ftp:"},"action":{"type":"block"}},
+      {"trigger":{"url-filter":"^file:"},"action":{"type":"block"}}
+    ]
+    """
+    private static let navigationTimeoutNanoseconds: UInt64 = 10_000_000_000
+    private static let operationTimeoutNanoseconds: UInt64 = 15_000_000_000
+    /// WebKit needs a settle pass after `didFinish` before async layout is
+    /// captured. The original probe used 2s on iPad iOS 26.
+    private static let renderSettleNanoseconds: UInt64 = 2_000_000_000
+
+    private static let shared = WebKitSVGRasterizer()
+
+    private var webView: WKWebView?
+    private var hostWindow: UIWindow?
+    private var contentRuleList: WKContentRuleList?
+    private var pendingNavigation: TimedCompletion<Bool>?
+    private weak var pendingWebNavigation: WKNavigation?
+    /// The renderer owns one reusable web view, so loads must be serialized.
+    /// Otherwise a second emoji figure replaces the first one's navigation
+    /// continuation and each cache key can receive the other's pixels.
+    private var lastRender: Task<UIImage?, Never>?
+
+    /// Parses the document with SwiftDraw to learn its size, then rasterizes it
+    /// at the store's normal oversample/ceiling policy through WebKit. Returns
+    /// the same `Outcome` the SwiftDraw engine does.
+    static func rasterize(markup: String) async -> BoardSVGStore.Outcome {
+        // The document size comes from the native parse, which is deterministic
+        // and needs no web view. Refuse malformed or dimensionless markup before
+        // allocating the offscreen renderer.
+        guard let svg = SVG(data: Data(markup.utf8)) else { return .unparseable }
+        let size = svg.size
+        guard size.width.isFinite, size.height.isFinite,
+              size.width >= 1, size.height >= 1
+        else { return .unparseable }
+
+        let scale = BoardSVGStore.rasterScale(forDocumentSize: size)
+        let box = CGSize(
+            width: max(1, (size.width * scale).rounded()),
+            height: max(1, (size.height * scale).rounded())
+        )
+        guard let image = await shared.render(markup: markup, pixelSize: box),
+              let bitmap = BoardSVGStore.flattened(image, size: box),
+              bitmap.width > 0, bitmap.height > 0
+        else { return .noRaster }
+        return .ready(bitmap, size)
+    }
+
+    /// One render of a raw document into a transparent bitmap at `pixelSize`.
+    private func render(markup: String, pixelSize: CGSize) async -> UIImage? {
+        let previous = lastRender
+        let task = Task { @MainActor [weak self] () -> UIImage? in
+            guard let self else { return nil }
+            if let previous { _ = await previous.value }
+            return await self.renderNow(markup: markup, pixelSize: pixelSize)
+        }
+        lastRender = task
+        return await task.value
+    }
+
+    private func renderNow(markup: String, pixelSize: CGSize) async -> UIImage? {
+        // External-resource blocking is part of the renderer's trust boundary.
+        // If WebKit cannot install it, fail the figure rather than render the
+        // model-authored document with unrestricted network/file access.
+        guard await installContentRuleListIfNeeded() else { return nil }
+        let webView = ensureWebView(size: pixelSize)
+        webView.frame = CGRect(origin: .zero, size: pixelSize)
+        hostWebView(webView, size: pixelSize)
+
+        guard await load(svg: markup, in: webView) else { return nil }
+        try? await Task.sleep(nanoseconds: Self.renderSettleNanoseconds)
+
+        if let pdfData = await createPDF(in: webView, pixelSize: pixelSize),
+           !pdfData.isEmpty,
+           Self.pdfIsUsable(pdfData, expectedSize: pixelSize),
+           let pdfImage = Self.rasterize(pdf: pdfData, pixelSize: pixelSize) {
+            return pdfImage
+        }
+        return await takeSnapshot(in: webView)
+    }
+
+    private func installContentRuleListIfNeeded() async -> Bool {
+        if contentRuleList != nil { return true }
+        guard let store = WKContentRuleListStore.default() else { return false }
+        contentRuleList = await withCheckedContinuation { continuation in
+            store.lookUpContentRuleList(forIdentifier: Self.contentRuleIdentifier) { rule, _ in
+                if let rule {
+                    continuation.resume(returning: rule)
+                    return
+                }
+                store.compileContentRuleList(
+                    forIdentifier: Self.contentRuleIdentifier,
+                    encodedContentRuleList: Self.blockExternalRuleJSON
+                ) { compiled, _ in
+                    continuation.resume(returning: compiled)
+                }
+            }
+        }
+        return contentRuleList != nil
+    }
+
+    private func ensureWebView(size: CGSize) -> WKWebView {
+        if let webView { return webView }
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        let preferences = WKWebpagePreferences()
+        preferences.allowsContentJavaScript = false
+        configuration.defaultWebpagePreferences = preferences
+        if let contentRuleList {
+            configuration.userContentController.add(contentRuleList)
+        }
+        let webView = WKWebView(frame: CGRect(origin: .zero, size: size), configuration: configuration)
+        webView.navigationDelegate = self
+        webView.isUserInteractionEnabled = false
+        webView.isOpaque = false
+        webView.backgroundColor = .clear
+        webView.scrollView.isScrollEnabled = false
+        webView.scrollView.bounces = false
+        webView.scrollView.backgroundColor = .clear
+        self.webView = webView
+        return webView
+    }
+
+    /// Keeps the offscreen view in a window far outside the screen so local SVG
+    /// rendering never flashes UI or steals first responder.
+    private func hostWebView(_ webView: WKWebView, size: CGSize) {
+        if let hostWindow, hostWindow.frame.size == size,
+           webView.superview === hostWindow.rootViewController?.view {
+            return
+        }
+        if webView.superview != nil {
+            webView.removeFromSuperview()
+        }
+        let window: UIWindow
+        if let hostWindow, hostWindow.frame.size == size {
+            window = hostWindow
+        } else {
+            window = UIWindow(frame: CGRect(
+                x: -10_000,
+                y: -10_000,
+                width: max(1, size.width),
+                height: max(1, size.height)
+            ))
+            window.windowLevel = UIWindow.Level(rawValue: -1_000)
+            window.rootViewController = UIViewController()
+            window.isHidden = false
+            self.hostWindow = window
+        }
+        window.rootViewController?.view.addSubview(webView)
+    }
+
+    private func load(svg: String, in webView: WKWebView) async -> Bool {
+        await withCheckedContinuation { continuation in
+            let completion = TimedCompletion(continuation)
+            pendingNavigation = completion
+            completion.arm(
+                nanoseconds: Self.navigationTimeoutNanoseconds,
+                timeoutValue: false
+            ) { [weak self, weak webView] in
+                guard let self, self.pendingNavigation === completion else { return }
+                webView?.stopLoading()
+                self.pendingNavigation = nil
+                self.pendingWebNavigation = nil
+            }
+            pendingWebNavigation = webView.load(
+                Data(svg.utf8),
+                mimeType: "image/svg+xml",
+                characterEncodingName: "UTF-8",
+                baseURL: URL(string: "about:blank")!
+            )
+            if pendingWebNavigation == nil {
+                finishNavigation(false)
+            }
+        }
+    }
+
+    private func createPDF(in webView: WKWebView, pixelSize: CGSize) async -> Data? {
+        let configuration = WKPDFConfiguration()
+        configuration.rect = CGRect(origin: .zero, size: pixelSize)
+        return await withCheckedContinuation { continuation in
+            let completion = TimedCompletion(continuation)
+            completion.arm(
+                nanoseconds: Self.operationTimeoutNanoseconds,
+                timeoutValue: nil
+            )
+            webView.createPDF(configuration: configuration) { result in
+                completion.resume(try? result.get())
+            }
+        }
+    }
+
+    private func takeSnapshot(in webView: WKWebView) async -> UIImage? {
+        await withCheckedContinuation { continuation in
+            let completion = TimedCompletion(continuation)
+            completion.arm(
+                nanoseconds: Self.operationTimeoutNanoseconds,
+                timeoutValue: nil
+            )
+            webView.takeSnapshot(with: nil) { image, _ in
+                completion.resume(image)
+            }
+        }
+    }
+
+    /// PDF is y-up and scaled to `pixelSize`; redraw it into a transparent
+    /// bitmap through the same flattened pipeline as the snapshot path.
+    private static func rasterize(pdf: Data, pixelSize: CGSize) -> UIImage? {
+        guard let provider = CGDataProvider(data: pdf as CFData),
+              let document = CGPDFDocument(provider),
+              let page = document.page(at: 1)
+        else { return nil }
+        let pageRect = page.getBoxRect(.mediaBox)
+        guard pageRect.width > 0, pageRect.height > 0 else { return nil }
+        return UIGraphicsImageRenderer(size: pixelSize).image { context in
+            let cg = context.cgContext
+            cg.saveGState()
+            cg.interpolationQuality = .high
+            let scaleX = pixelSize.width / pageRect.width
+            let scaleY = pixelSize.height / pageRect.height
+            cg.translateBy(x: 0, y: pixelSize.height)
+            cg.scaleBy(x: scaleX, y: -scaleY)
+            cg.translateBy(x: -pageRect.minX, y: -pageRect.minY)
+            cg.drawPDFPage(page)
+            cg.restoreGState()
+        }
+    }
+
+    private static func pdfIsUsable(_ data: Data, expectedSize: CGSize) -> Bool {
+        guard let provider = CGDataProvider(data: data as CFData),
+              let document = CGPDFDocument(provider),
+              let page = document.page(at: 1)
+        else { return false }
+        let box = page.getBoxRect(.mediaBox)
+        let tolerance: CGFloat = 1
+        return box.width > 0
+            && box.height > 0
+            && abs(box.width - expectedSize.width) <= tolerance
+            && abs(box.height - expectedSize.height) <= tolerance
+    }
+
+    // MARK: - WKNavigationDelegate
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard navigation === pendingWebNavigation else { return }
+        finishNavigation(true)
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        guard navigation === pendingWebNavigation else { return }
+        finishNavigation(false)
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        guard navigation === pendingWebNavigation else { return }
+        finishNavigation(false)
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
+    ) {
+        let scheme = navigationAction.request.url?.scheme?.lowercased()
+        if scheme == "http" || scheme == "https" || scheme == "ftp" || scheme == "file" {
+            finishNavigation(false)
+            decisionHandler(.cancel)
+            return
+        }
+        decisionHandler(.allow)
+    }
+
+    private func finishNavigation(_ success: Bool) {
+        pendingNavigation?.resume(success)
+        pendingNavigation = nil
+        pendingWebNavigation = nil
+    }
+}
+
+/// Resumes a WebKit callback exactly once, with a real timeout that does not
+/// wait for the losing operation. A task-group race would wait for every child,
+/// so a child suspended on a callback that never arrives could still hang.
+@MainActor
+private final class TimedCompletion<Value: Sendable> {
+    private var continuation: CheckedContinuation<Value, Never>?
+    private var timeoutTask: Task<Void, Never>?
+
+    init(_ continuation: CheckedContinuation<Value, Never>) {
+        self.continuation = continuation
+    }
+
+    func arm(
+        nanoseconds: UInt64,
+        timeoutValue: Value,
+        onTimeout: @escaping @MainActor () -> Void = {}
+    ) {
+        timeoutTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: nanoseconds)
+            } catch {
+                return
+            }
+            guard let self, self.continuation != nil else { return }
+            onTimeout()
+            self.resume(timeoutValue)
+        }
+    }
+
+    func resume(_ value: Value) {
+        guard let continuation else { return }
+        self.continuation = nil
+        timeoutTask?.cancel()
+        timeoutTask = nil
+        continuation.resume(returning: value)
     }
 }

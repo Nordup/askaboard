@@ -549,6 +549,140 @@ final class TutorStoreStreamingTests: XCTestCase {
         XCTAssertNotEqual(steps?[0].imageID, steps?[1].imageID)
     }
 
+    /// Sources arrive as a separate event, not as part of the prose, and they
+    /// must land on the turn's tutor message: a board-focused turn can update
+    /// the scene with no prose at all, and its evidence still has to be visible
+    /// the moment the turn appears.
+    func testSearchSourcesAttachToTheActiveTurnMessage() async {
+        let store = TutorStore(
+            service: ScriptedTutorService(events: [
+                .searchSources(
+                    searchID: "s_1",
+                    query: "radical equations",
+                    sources: [
+                        TutorSource(
+                            id: "a", title: "Radical Equations",
+                            url: "https://example.com/radical", snippet: nil
+                        ),
+                    ]
+                ),
+                .textDelta("Check the original equation."),
+                .done,
+            ]),
+            persistence: .inMemory,
+            configuration: .stub
+        )
+
+        await store.sendAndWait("check my work")
+
+        let tutor = store.session.messages.last { $0.role == .tutor }
+        XCTAssertEqual(tutor?.sources, [
+            TutorSource(
+                id: "a", title: "Radical Equations",
+                url: "https://example.com/radical", snippet: nil
+            ),
+        ])
+    }
+
+    /// A drawing turn can answer by updating the board with no prose at all.
+    /// The source evidence still has to create the tutor message so the thread
+    /// has somewhere to show it.
+    func testSearchSourcesOnABoardOnlyTurnCreateTheMessage() async {
+        let element = BoardElement.text(
+            TextElement(id: "hint", x: 10, y: 20, text: "try halves", fontSize: 24)
+        )
+        let source = TutorSource(
+            id: "a", title: "Fractions", url: "https://example.com/fractions", snippet: nil
+        )
+        let store = TutorStore(
+            service: ScriptedTutorService(events: [
+                .searchSources(searchID: "s_1", query: "fractions", sources: [source]),
+                .boardUpdate(BoardSceneUpdate(upserts: [element])),
+                .done,
+            ]),
+            persistence: .inMemory,
+            configuration: .stub
+        )
+
+        await store.sendAndWait("draw me a hint")
+
+        let tutor = store.session.messages.last { $0.role == .tutor }
+        XCTAssertEqual(tutor?.text, "")
+        XCTAssertEqual(tutor?.sources, [source])
+        XCTAssertEqual(store.session.boardScene.elements.count, 1)
+    }
+
+    /// `search_sources` arrives as batches, and a provider can repeat or
+    /// overlap them. A stable merge keeps every distinct row once: the same
+    /// event twice, the same `id` in a later batch, and the same `url` under a
+    /// different id are each one source.
+    func testSearchSourcesMergeAndDedupeRepeatedBatches() async {
+        let store = TutorStore(
+            service: ScriptedTutorService(events: [
+                .searchSources(
+                    searchID: "s_1",
+                    query: "radical equations",
+                    sources: [
+                        TutorSource(
+                            id: "a", title: "Radical Equations",
+                            url: "https://example.com/radical", snippet: nil
+                        ),
+                        TutorSource(
+                            id: "b", title: "Checking roots",
+                            url: "https://example.org/roots", snippet: "Substitute back."
+                        ),
+                    ]
+                ),
+                // The same batch repeated: nothing new.
+                .searchSources(
+                    searchID: "s_1",
+                    query: "radical equations",
+                    sources: [
+                        TutorSource(
+                            id: "b", title: "Checking roots",
+                            url: "https://example.org/roots", snippet: "Substitute back."
+                        ),
+                    ]
+                ),
+                // Same row by url under a fresh id: still one source.
+                .searchSources(
+                    searchID: "s_2",
+                    query: "extraneous roots",
+                    sources: [
+                        TutorSource(
+                            id: "c", title: "Checking roots again",
+                            url: "https://example.org/roots", snippet: nil
+                        ),
+                    ]
+                ),
+                // Same id with a refined snippet: the row upgrades, not stacks.
+                .searchSources(
+                    searchID: "s_2",
+                    query: "extraneous roots",
+                    sources: [
+                        TutorSource(
+                            id: "b", title: "Checking roots",
+                            url: "https://example.org/roots", snippet: "Candidates must satisfy the original equation."
+                        ),
+                    ]
+                ),
+                .done,
+            ]),
+            persistence: .inMemory,
+            configuration: .stub
+        )
+
+        await store.sendAndWait("check my work")
+
+        let tutor = store.session.messages.last { $0.role == .tutor }
+        XCTAssertEqual(tutor?.sources.count, 2)
+        XCTAssertEqual(tutor?.sources.first?.id, "a")
+        XCTAssertEqual(
+            tutor?.sources.first { $0.id == "b" }?.snippet,
+            "Candidates must satisfy the original equation."
+        )
+    }
+
     /// The duration the trail's header reports is measured on the device —
     /// the wait as the learner actually experienced it, network included —
     /// not a figure the server sends.

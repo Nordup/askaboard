@@ -1108,6 +1108,21 @@ final class ShellComponentTests: XCTestCase {
         )
     }
 
+    /// The row's tap and the drawer pan must leave no silent band between them.
+    ///
+    /// The pan commits (and cancels the row's touch) once the touch reaches
+    /// `DrawerReveal.intentThreshold`. A row tap has to own everything below that, or a press
+    /// that drifts just short of the pan — 11pt against a 10pt row slop — is neither a tap nor
+    /// a pan and nothing happens. The regression made the two values the same constant, so a
+    /// future change to either number fails here rather than reopening that dead zone.
+    func testTheRowTapSlopCoversEverythingThePanHasNotTaken() {
+        XCTAssertEqual(
+            SessionsDrawerMetrics.tapSlop,
+            DrawerReveal.intentThreshold,
+            "a row must accept every travel short of the drawer pan's commit threshold"
+        )
+    }
+
     /// One-to-one with the finger, anchored on where the drawer was, clamped at both ends.
     func testTravelTracksTheFingerFromTheAnchorAndStopsAtBothEnds() {
         XCTAssertEqual(DrawerReveal.progress(from: 0, translation: 131.5, travel: 263), 0.5)

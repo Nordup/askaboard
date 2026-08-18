@@ -99,6 +99,52 @@ final class MathTutorTests: XCTestCase {
         XCTAssertEqual(zoomed.y, 49_600, accuracy: 0.001)
     }
 
+    /// The two directions a persisted camera must survive: a saved center is
+    /// viewport-independent (same drawing point at any viewport size), and it
+    /// surfaces from a canvas as the exact value that was saved — including
+    /// after a zoom that would make a raw `contentOffset` meaningless.
+    func testBoardCameraCenterAndRestoreRoundTripThroughZoomedContent() {
+        let viewport = CGRect(x: 0, y: 0, width: 1_024, height: 768)
+        let camera = BoardCamera(center: CGPoint(x: 27_000, y: 33_000), zoomScale: 1.4)
+
+        let offset = PencilCanvasConfiguration.offset(
+            centering: CGRect(origin: camera.center, size: .zero),
+            viewport: viewport.size,
+            zoomScale: camera.zoomScale
+        )
+        let restored = PencilCanvasConfiguration.center(
+            in: viewport,
+            contentOffset: offset,
+            scaledContentSize: CGSize(
+                width: max(PencilCanvasConfiguration.boardExtent, viewport.width) * camera.zoomScale,
+                height: max(PencilCanvasConfiguration.boardExtent, viewport.height) * camera.zoomScale
+            ),
+            zoomScale: camera.zoomScale
+        )
+
+        XCTAssertEqual(restored.x, camera.center.x, accuracy: 0.01)
+        XCTAssertEqual(restored.y, camera.center.y, accuracy: 0.01)
+    }
+
+    func testBoardCameraCenterClampsBounceAtTheFarBoardEdge() {
+        let viewport = CGRect(x: 0, y: 0, width: 1_024, height: 768)
+        let zoom: CGFloat = 1.4
+        let scaledContent = CGSize(
+            width: PencilCanvasConfiguration.boardExtent * zoom,
+            height: PencilCanvasConfiguration.boardExtent * zoom
+        )
+
+        let center = PencilCanvasConfiguration.center(
+            in: viewport,
+            contentOffset: CGPoint(x: scaledContent.width + 500, y: scaledContent.height + 500),
+            scaledContentSize: scaledContent,
+            zoomScale: zoom
+        )
+
+        XCTAssertEqual(center.x, (scaledContent.width - viewport.width / 2) / zoom, accuracy: 0.01)
+        XCTAssertEqual(center.y, (scaledContent.height - viewport.height / 2) / zoom, accuracy: 0.01)
+    }
+
     func testDrawingDataRoundTripsCoordinatesNearBoardOrigin() throws {
         let origin = PencilCanvasConfiguration.boardOrigin
         let locations = [
@@ -142,6 +188,10 @@ final class MathTutorTests: XCTestCase {
         PencilCanvasConfiguration.configure(canvas, viewport: canvas.bounds.size)
 
         XCTAssertEqual(canvas.drawingPolicy, .pencilOnly)
+        // The live board composites the paper behind PencilKit: the canvas is
+        // clear and non-opaque, so native ink is the only ink surface.
+        XCTAssertFalse(canvas.isOpaque)
+        XCTAssertEqual(canvas.backgroundColor, .clear)
         XCTAssertTrue(canvas.isScrollEnabled)
         XCTAssertEqual(canvas.minimumZoomScale, PencilCanvasConfiguration.minimumZoomScale)
         XCTAssertEqual(canvas.maximumZoomScale, PencilCanvasConfiguration.maximumZoomScale)
@@ -534,7 +584,7 @@ final class MathTutorTests: XCTestCase {
         let viewportRect = CGRect(origin: .zero, size: canvas.bounds.size)
         let before = CanvasViewportMapper.drawingRect(
             for: viewportRect,
-            canvasBounds: canvas.bounds,
+            canvasBounds: CGRect(origin: canvas.contentOffset, size: canvas.bounds.size),
             zoomScale: canvas.zoomScale
         )
         XCTAssertFalse(before.intersects(canvas.drawing.bounds), "Ink 30,000pt away must start off screen")
@@ -543,7 +593,7 @@ final class MathTutorTests: XCTestCase {
 
         let after = CanvasViewportMapper.drawingRect(
             for: viewportRect,
-            canvasBounds: canvas.bounds,
+            canvasBounds: CGRect(origin: canvas.contentOffset, size: canvas.bounds.size),
             zoomScale: canvas.zoomScale
         )
         XCTAssertTrue(
@@ -613,14 +663,15 @@ final class MathTutorTests: XCTestCase {
         let coordinator = PencilCanvasView.Coordinator(parent)
         let canvas = BoardCanvasView(frame: CGRect(x: 0, y: 0, width: 1_024, height: 768))
         canvas.drawing = makeDrawing(color: .black, origin: CGPoint(x: 30_000, y: 41_000))
-        capture.canvasView = canvas
-        coordinator.canvas = canvas
+        capture.canvasView = canvas.pencilCanvas
+        coordinator.canvas = canvas.pencilCanvas
+        coordinator.host = canvas
 
         coordinator.handleViewportChange(canvas: canvas, size: canvas.bounds.size)
 
         let visible = CanvasViewportMapper.drawingRect(
             for: CGRect(origin: .zero, size: canvas.bounds.size),
-            canvasBounds: canvas.bounds,
+            canvasBounds: CGRect(origin: canvas.contentOffset, size: canvas.bounds.size),
             zoomScale: canvas.zoomScale
         )
         XCTAssertTrue(
@@ -636,6 +687,36 @@ final class MathTutorTests: XCTestCase {
 
         XCTAssertEqual(canvas.contentOffset.x, panned.x, accuracy: 0.5)
         XCTAssertEqual(canvas.contentOffset.y, panned.y, accuracy: 0.5)
+    }
+
+    @MainActor
+    func testFirstViewportChangeRestoresTheSessionsCameraWithoutReportingAMove() {
+        let saved = BoardCamera(center: CGPoint(x: 27_000, y: 33_000), zoomScale: 1.4)
+        let capture = CanvasCapture()
+        var reports: [BoardCamera] = []
+        let parent = PencilCanvasView(
+            capture: capture,
+            initialDrawingData: nil,
+            onDrawingChange: { _ in },
+            onUndo: { },
+            onRedo: { },
+            onCameraChange: { reports.append($0) },
+            initialCamera: saved
+        )
+        let coordinator = PencilCanvasView.Coordinator(parent)
+        let canvas = BoardCanvasView(frame: CGRect(x: 0, y: 0, width: 1_024, height: 768))
+        canvas.initialCamera = saved
+        capture.canvasView = canvas.pencilCanvas
+        coordinator.canvas = canvas.pencilCanvas
+        coordinator.host = canvas
+        canvas.pencilCanvas.delegate = coordinator
+
+        coordinator.handleViewportChange(canvas: canvas, size: canvas.bounds.size)
+
+        XCTAssertEqual(canvas.zoomScale, saved.zoomScale, accuracy: 0.001)
+        XCTAssertEqual(canvas.camera.center.x, saved.center.x, accuracy: 0.01)
+        XCTAssertEqual(canvas.camera.center.y, saved.center.y, accuracy: 0.01)
+        XCTAssertTrue(reports.isEmpty, "Restoring persisted state is not a learner camera change")
     }
 
     @MainActor
@@ -690,6 +771,183 @@ final class MathTutorTests: XCTestCase {
         canvas.layoutIfNeeded()
 
         XCTAssertEqual(receivedSizes, [CGSize(width: 1_024, height: 768), CGSize(width: 800, height: 600)])
+    }
+
+    /// The live board has two public surfaces: the semantic scene and PencilKit's
+    /// native ink. Paper is the host's own opaque background; the clear,
+    /// non-opaque canvas sits above the scene, so learner ink is PencilKit only.
+    /// `BoardInkLayerView` no longer exists — this test cannot even name it —
+    /// and the exact child order below fails the moment a third surface is
+    /// re-added. The scene/ink order is what the UI regression (and the
+    /// snapshot compositor) depend on, so the shared viewport mapping is pinned
+    /// without relying on PencilKit's private descendants.
+    @MainActor
+    func testTutorSceneLayerStaysBehindTheLearnersInkAcrossReorderAndViewportUpdates() throws {
+        let canvas = BoardCanvasView(frame: CGRect(x: 0, y: 0, width: 1_024, height: 768))
+        let window = UIWindow(frame: canvas.frame)
+        let controller = UIViewController()
+        controller.view = canvas
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        PencilCanvasConfiguration.configure(canvas.pencilCanvas, viewport: canvas.bounds.size)
+        canvas.contentOffset = PencilCanvasConfiguration.initialContentOffset(viewport: canvas.bounds.size)
+        canvas.boardScene = BoardScene(elements: [
+            .rectangle(RectangleElement(
+                id: "scene",
+                x: -120,
+                y: -120,
+                width: 240,
+                height: 240,
+                style: BoardStyle(fill: "#E33E38", strokeWidth: 0)
+            ))
+        ])
+        let drawing = makeDrawing(
+            color: .black,
+            origin: CGPoint(
+                x: PencilCanvasConfiguration.boardOrigin.x - 20,
+                y: PencilCanvasConfiguration.boardOrigin.y
+            )
+        )
+        canvas.drawing = drawing
+        canvas.setNeedsLayout()
+        canvas.layoutIfNeeded()
+        XCTAssertEqual(canvas.mountedSceneElementIdsForTesting, ["scene"])
+
+        // Exactly two subviews, scene first then the native canvas: host paper
+        // behind everything, no raster ink mirror anywhere in the live board.
+        XCTAssertEqual(
+            canvas.subviews.map { String(describing: type(of: $0)) },
+            ["BoardSceneLayerView", "BoardPencilCanvasView"]
+        )
+        XCTAssertTrue(canvas.isOpaque, "The host paints the board's opaque paper")
+        XCTAssertFalse(canvas.pencilCanvas.isOpaque, "PencilKit must stay transparent above the scene")
+        XCTAssertEqual(canvas.pencilCanvas.backgroundColor, .clear)
+
+        // The native canvas is the one live ink surface: the drawing the host
+        // received is the drawing the canvas holds, strokes and all. (PKDrawing
+        // is a value type, so equivalence is the serialized data, not `===`.)
+        XCTAssertEqual(canvas.pencilCanvas.drawing.dataRepresentation(), drawing.dataRepresentation())
+        XCTAssertEqual(canvas.pencilCanvas.drawing.strokes.count, drawing.strokes.count)
+
+        let sceneDrawingBounds = CGRect(
+            x: PencilCanvasConfiguration.boardOrigin.x - 120,
+            y: PencilCanvasConfiguration.boardOrigin.y - 120,
+            width: 240,
+            height: 240
+        )
+        let initialExpectedFrame = CanvasViewportMapper.viewportRect(
+            for: sceneDrawingBounds,
+            canvasBounds: CGRect(origin: canvas.contentOffset, size: canvas.bounds.size),
+            zoomScale: canvas.zoomScale
+        )
+        XCTAssertEqual(canvas.mountedSceneFrameForTesting, initialExpectedFrame)
+
+        canvas.contentOffset = CGPoint(
+            x: PencilCanvasConfiguration.boardOrigin.x - 512 + 80,
+            y: PencilCanvasConfiguration.boardOrigin.y - 384 + 40
+        )
+        canvas.updateSceneOverlay()
+        let pannedExpectedFrame = CanvasViewportMapper.viewportRect(
+            for: sceneDrawingBounds,
+            canvasBounds: CGRect(origin: canvas.contentOffset, size: canvas.bounds.size),
+            zoomScale: canvas.zoomScale
+        )
+        XCTAssertEqual(canvas.mountedSceneFrameForTesting, pannedExpectedFrame)
+
+        canvas.setZoomScale(2, animated: false)
+        canvas.contentOffset = CGPoint(
+            x: PencilCanvasConfiguration.boardOrigin.x * 2 - 512,
+            y: PencilCanvasConfiguration.boardOrigin.y * 2 - 384
+        )
+        canvas.updateSceneOverlay()
+        let zoomedExpectedFrame = CanvasViewportMapper.viewportRect(
+            for: sceneDrawingBounds,
+            canvasBounds: CGRect(origin: canvas.contentOffset, size: canvas.bounds.size),
+            zoomScale: canvas.zoomScale
+        )
+        XCTAssertEqual(canvas.mountedSceneFrameForTesting, zoomedExpectedFrame)
+    }
+
+    /// The snapshot the model reads composites in the same order the board
+    /// shows: the tutor's scene first, learner ink over it. If the snapshot
+    /// compositor painted the scene over the ink, what the learner wrote could
+    /// be erased from the picture the model reads even though it remains on
+    /// top on the live board.
+    @MainActor
+    func testBoardSnapshotKeepsTheLearnersInkOverTheTutorScene() throws {
+        let origin = PencilCanvasConfiguration.boardOrigin
+        let drawing = makeDrawing(
+            color: .black,
+            origin: CGPoint(x: origin.x + 100, y: origin.y + 100)
+        )
+        // Board coordinates: 60...260 on both axes, which covers the ink with 40
+        // points to spare on every side, so the sample point below sits on the
+        // learner's stroke and inside the filled element.
+        let scene = BoardScene(elements: [
+            .rectangle(RectangleElement(
+                id: "cover",
+                x: 60,
+                y: 60,
+                width: 200,
+                height: 200,
+                style: BoardStyle(fill: "#E33E38")
+            ))
+        ])
+
+        let data = try XCTUnwrap(CanvasCapture.regionPNG(
+            percent: CGRect(x: 0, y: 0, width: 100, height: 100),
+            drawing: drawing,
+            scene: scene
+        ))
+        let cgImage = try XCTUnwrap(UIImage(data: data)?.cgImage)
+        let extent = try XCTUnwrap(CanvasCapture.contentExtent(drawing: drawing, scene: scene))
+        let width = cgImage.width
+        let height = cgImage.height
+        let bytesPerRow = width * 4
+        let pixelCount = bytesPerRow * height
+        var pixels = [UInt8](repeating: 0, count: pixelCount)
+        let context = try XCTUnwrap(CGContext(
+            data: &pixels,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ))
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        // The midpoint of the stroke's left edge, mapped from drawing
+        // coordinates into the rendered pixels. `regionPNG` at 100% renders
+        // exactly `extent`, so one scale factor carries both axes.
+        let scale = CGFloat(width) / extent.width
+        let inkColumn = origin.x + 100
+        let inkRow = origin.y + 125
+        let column = Int((inkColumn - extent.minX) * scale)
+        let row = Int((inkRow - extent.minY) * scale)
+        XCTAssertTrue(
+            column >= 0 && column < width && row >= 0 && row < height,
+            "The sample point must land inside the rendered region"
+        )
+
+        var isInkOverTheFill = false
+        sampleLoop: for dx in -2...2 {
+            for dy in -2...2 {
+                let x = column + dx
+                let y = row + dy
+                guard x >= 0, x < width, y >= 0, y < height else { continue }
+                let index = (y * width + x) * 4
+                if pixels[index] < 150 && pixels[index + 1] < 150 && pixels[index + 2] < 150 {
+                    isInkOverTheFill = true
+                    break sampleLoop
+                }
+            }
+        }
+        XCTAssertTrue(
+            isInkOverTheFill,
+            "The learner's ink must render over the tutor's fill, matching the live board"
+        )
     }
 
     @MainActor
@@ -924,6 +1182,23 @@ final class MathTutorTests: XCTestCase {
         XCTAssertNotEqual(decoded.id, decodedAgain.id, "Each decode of an id-less session must mint its own fresh id")
     }
 
+    /// A session file written before camera persistence existed has no
+    /// `boardCamera` key. It must decode (the pre-existing behavior of opening
+    /// centered on the content is `nil`), and saving it again must not invent a
+    /// camera the learner never moved.
+    func testLearningSessionBackwardDecodeDefaultsMissingBoardCameraToNil() throws {
+        var sessionObject = try jsonObject(for: LearningSession.empty)
+        sessionObject.removeValue(forKey: "boardCamera")
+        let legacyData = try JSONSerialization.data(withJSONObject: sessionObject)
+
+        let decodedLegacy = try JSONDecoder().decode(LearningSession.self, from: legacyData)
+
+        XCTAssertNil(
+            decodedLegacy.boardCamera,
+            "Files written before cameras existed stayed centered on their content; nil is that behavior"
+        )
+    }
+
     @MainActor
     func testStoreReasoningEffortSetterPersistsInSession() {
         let store = TutorStore(service: DemoTutorService())
@@ -1105,7 +1380,21 @@ final class MathTutorTests: XCTestCase {
         """.utf8)
         let message = try JSONDecoder().decode(TutorMessage.self, from: json)
         XCTAssertNil(message.activity)
+        XCTAssertEqual(message.sources, [], "Messages written before web research must decode with no sources")
         XCTAssertEqual(message.text, "Hello")
+    }
+
+    func testSourcesSurviveEncodingAndDecoding() throws {
+        let sources = [
+            TutorSource(id: "a", title: "Radical Equations", url: "https://example.com/radical", snippet: nil),
+            TutorSource(id: "b", title: "Checking roots", url: "https://example.org/roots", snippet: "Substitute back."),
+        ]
+        var message = TutorMessage(role: .tutor, text: "Try squaring both sides.")
+        message.sources = sources
+
+        let data = try JSONEncoder().encode(message)
+        let decoded = try JSONDecoder().decode(TutorMessage.self, from: data)
+        XCTAssertEqual(decoded.sources, sources)
     }
 
     func testATrailSurvivesEncodingAndDecoding() throws {

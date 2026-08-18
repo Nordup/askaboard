@@ -243,7 +243,8 @@ final class BoardSceneLayerTests: XCTestCase {
         let latex = "x_{\(abs(UUID().hashValue % 100_000))}^2"
         let element = MathTextElement(id: "m", x: 100, y: 100, latex: latex, fontSize: 24)
         view.scene = scene([.mathText(element)])
-        _ = try XCTUnwrap(await BoardMathStore.shared.render(element: element))
+        let rendered = await BoardMathStore.shared.render(element: element)
+        _ = try XCTUnwrap(rendered)
         view.reconcile()
         XCTAssertEqual(view.mountedElementIdsForTesting, ["m"], "notation on the board")
         let typesetsBefore = BoardMathStore.shared.typesetPassesForTesting

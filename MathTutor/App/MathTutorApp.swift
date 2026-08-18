@@ -9,13 +9,13 @@ struct MathTutorApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(store)
-                // The board's ink is written after the pen has rested rather than
-                // after every stroke — see `TutorStore.updateDrawing` — so the one
-                // thing that has to be caught is the app leaving before that rest
-                // comes up. Leaving the foreground is exactly that moment, and it
-                // is the moment iOS may not give the app another.
+                // Ink and camera changes are written after the board has rested
+                // rather than at pen/gesture frequency, so the one thing that has
+                // to be caught is the app leaving before that rest comes up.
+                // Leaving the foreground is exactly that moment, and it is the
+                // moment iOS may not give the app another.
                 .onChange(of: scenePhase) { _, phase in
-                    if phase != .active { store.saveBoardInkNow() }
+                    if phase != .active { store.saveBoardStateNow() }
                 }
         }
     }

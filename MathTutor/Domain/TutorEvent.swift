@@ -61,6 +61,10 @@ enum TutorEvent: Sendable, Equatable {
     /// wrong step as soon as one turn asks for two regions and the second
     /// render returns first.
     case boardViewed(callID: String, imageData: Data, detail: String)
+    /// One batch of web research results for the current turn. The id and
+    /// query accompany the batch so a client can attach it to the right turn
+    /// and merge repeated batches stably.
+    case searchSources(searchID: String, query: String, sources: [TutorSource])
     case done
     case failure(message: String, retryable: Bool)
 
@@ -102,6 +106,12 @@ enum TutorEvent: Sendable, Equatable {
                 region: CGRect(x: x, y: y, width: width, height: height),
                 detail: envelope.detail ?? ""
             )
+        case "search_sources":
+            guard let searchID = envelope.search_id,
+                  let query = envelope.query,
+                  let sources = envelope.sources
+            else { return nil }
+            return .searchSources(searchID: searchID, query: query, sources: sources)
         case "step":
             guard let id = envelope.id, let tool = envelope.tool,
                   let label = envelope.label
@@ -154,5 +164,9 @@ enum TutorEvent: Sendable, Equatable {
         let id: String?
         let tool: String?
         let label: String?
+        // `search_sources`.
+        let search_id: String?
+        let query: String?
+        let sources: [TutorSource]?
     }
 }

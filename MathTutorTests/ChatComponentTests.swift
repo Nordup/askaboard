@@ -16,6 +16,50 @@ import XCTest
 /// iPad produces, and is either about a value the column must *not* move (`ChatScale`'s
 /// discrete treatment) or about one it must (the row, the grid, the measures).
 final class ChatComponentTests: XCTestCase {
+    // MARK: - Sources
+
+    func testASourceCardNamesItsTitleAndDomain() {
+        let source = TutorSource(
+            id: "w",
+            title: "Radical equations: roots and domains",
+            url: "https://math.example.org/radical-equations",
+            snippet: "Check every candidate in the original equation."
+        )
+
+        XCTAssertEqual(source.displayDomain, "math.example.org")
+        XCTAssertEqual(
+            SourcesView.cardLabel(for: source),
+            "Radical equations: roots and domains, math.example.org"
+        )
+        XCTAssertEqual(SourcesView.sectionLabel(count: 1), "1 source")
+        XCTAssertEqual(SourcesView.sectionLabel(count: 3), "3 sources")
+    }
+
+    func testASourceCardOnlyOpensHTTPURLs() {
+        let web = TutorSource(
+            id: "w", title: "Radical equations",
+            url: "https://math.example.org/radical-equations", snippet: nil
+        )
+        XCTAssertNotNil(web.destinationURL)
+
+        let javascript = TutorSource(
+            id: "j", title: "Not a link", url: "javascript:alert(1)", snippet: nil
+        )
+        XCTAssertNil(javascript.destinationURL)
+    }
+
+    func testAReloadedMessageDrawsItsStoredSources() {
+        let source = TutorSource(
+            id: "w", title: "Radical equations",
+            url: "https://math.example.org/radical-equations", snippet: nil
+        )
+        var message = TutorMessage(role: .tutor, text: "Check the original equation.")
+        message.sources = [source]
+
+        let item = ChatThreadItem(message)
+        XCTAssertEqual(item.message.sources, [source])
+    }
+
     // MARK: - Greeting blocks
 
     func testPanelGreetingIsFiveHundredAndTwentyTwoAndEveryStepAddsUp() {

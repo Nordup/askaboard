@@ -171,10 +171,13 @@ struct DockRevealLayer<Panel: View, Dock: View>: View {
     /// The docked panel, placed at its own lane and offset by however much of the travel it
     /// has given up.
     ///
-    /// Hit testing goes off for the whole gesture and the spring after it, which is what
-    /// `inertToTouches(_:)` does inside the panel one level down and for the same reason: the
-    /// committing touch's presses are already cancelled natively by `DrawerPanRecognizer`, and
-    /// this is about the fingers that land afterwards, on a surface that is on its way out.
+    /// Hit testing goes off while a finger owns the dock gesture, and stays off after release
+    /// only when this is the outgoing surface. Mount lifetime and interaction lifetime are
+    /// deliberately separate: `isActive` keeps both surfaces alive for the spring, but using it
+    /// as the interaction gate left a newly reopened panel drawing normally while refusing every
+    /// control. The ancestor `DrawerPanRecognizer` could still reveal the sessions pane, which
+    /// made that failure look like dead session rows rather than a dock transition still holding
+    /// the entire panel inert.
     @ViewBuilder
     private var panelSlot: some View {
         if isDocked || drag.isActive {
@@ -183,7 +186,7 @@ struct DockRevealLayer<Panel: View, Dock: View>: View {
                     x: panelOrigin.x + DockReveal.panelOffset(at: progress, travel: travel),
                     y: panelOrigin.y
                 )
-                .allowsHitTesting(!drag.isActive)
+                .allowsHitTesting(isDocked && !drag.isDragging)
                 .accessibilityHidden(progress <= 0)
                 // **For the taps, not for the swipes.** A swipe mounts the panel at
                 // commitment, un-animated and already out at `-travel`, and every frame after
@@ -212,9 +215,10 @@ struct DockRevealLayer<Panel: View, Dock: View>: View {
                     x: dockOrigin.x - DS.Space.gap * DockReveal.dockSlide(at: progress, fadeStart: fadeStart),
                     y: dockOrigin.y
                 )
-                // Nothing hit-tests at zero opacity, and nothing on its way out hit-tests at
-                // all: one number decides both, the same rule the sidebar toggle follows.
-                .allowsHitTesting(opacity >= 1 && !drag.isActive)
+                // Nothing hit-tests at zero opacity or while a finger owns the dock gesture.
+                // Once released, only the settled destination may receive a new touch; the
+                // other surface remains mounted solely to finish drawing its spring.
+                .allowsHitTesting(!isDocked && opacity >= 1 && !drag.isDragging)
                 .accessibilityHidden(opacity <= 0)
                 // The mirror of the panel's, for the same reason and over the same distance:
                 // `btn/dock` inserts the dock in the transaction that collapses the tutor, so

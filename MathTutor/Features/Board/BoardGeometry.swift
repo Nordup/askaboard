@@ -32,14 +32,6 @@ enum PencilCanvasConfiguration {
     /// a few pixels and get confident feedback on a smudge.
     static let maximumEvaluationSpan: CGFloat = 4_000
 
-    /// A canvas that is not in a window yet reports a `displayScale` of 0, and a
-    /// pattern tile rendered at 0 is empty. Every device this ships on is 2x.
-    @MainActor
-    private static func displayScale(for canvas: PKCanvasView) -> CGFloat {
-        let scale = canvas.traitCollection.displayScale
-        return scale > 0 ? scale : 2
-    }
-
     static func contentSize(for viewport: CGSize) -> CGSize {
         CGSize(
             width: max(boardExtent, viewport.width),
@@ -56,6 +48,56 @@ enum PencilCanvasConfiguration {
         )
     }
 
+    static func offset(
+        centering target: CGRect,
+        viewport: CGSize,
+        zoomScale: CGFloat
+    ) -> CGPoint {
+        let scale = max(zoomScale, self.minimumZoomScale)
+        return CanvasScroller.offset(
+            centering: target,
+            viewport: viewport,
+            zoomScale: scale,
+            // The scroll view's content size already includes the zoom, so the
+            // restore clamp must use the same scaled size `CameraGeometry.center`
+            // measures against — otherwise a zoomed camera restores to a
+            // clamped offset computed against the unscaled board.
+            scaledContentSize: CGSize(
+                width: max(boardExtent, viewport.width) * scale,
+                height: max(boardExtent, viewport.height) * scale
+            )
+        )
+    }
+
+    /// The view-independent position the live viewport centers on, in unscaled
+    /// drawing coordinates.
+    ///
+    /// `viewport` is a rectangle in the canvas's own coordinate space (usually
+    /// its bounds); `contentOffset` is the scroll view's scaled-space offset;
+    /// `scaledContentSize` is the scroll view's content size, which already
+    /// includes the zoom. Dividing the clamped scaled center by the zoom is
+    /// what makes the saved camera stable across viewport sizes.
+    static func center(
+        in viewport: CGRect,
+        contentOffset: CGPoint,
+        scaledContentSize: CGSize,
+        zoomScale: CGFloat
+    ) -> CGPoint {
+        let scale = max(zoomScale, .leastNonzeroMagnitude)
+        let maximumOffset = CGPoint(
+            x: max(0, scaledContentSize.width - viewport.width),
+            y: max(0, scaledContentSize.height - viewport.height)
+        )
+        let clampedOffset = CGPoint(
+            x: min(max(contentOffset.x, 0), maximumOffset.x),
+            y: min(max(contentOffset.y, 0), maximumOffset.y)
+        )
+        return CGPoint(
+            x: (clampedOffset.x + viewport.width / 2) / scale,
+            y: (clampedOffset.y + viewport.height / 2) / scale
+        )
+    }
+
     @MainActor
     static func configure(
         _ canvas: PKCanvasView,
@@ -64,8 +106,8 @@ enum PencilCanvasConfiguration {
     ) {
         #if DEBUG
         guard BoardConfig.current.usesBoardGeometry else {
-            canvas.backgroundColor = BoardPaper.background(scale: displayScale(for: canvas))
-            canvas.isOpaque = true
+            canvas.backgroundColor = .clear
+            canvas.isOpaque = false
             canvas.drawingPolicy = .pencilOnly
             return
         }
@@ -73,21 +115,17 @@ enum PencilCanvasConfiguration {
         let previousZoomScale = canvas.zoomScale
         let previousContentOffset = canvas.contentOffset
 
-        // **The canvas paints the board's paper, and is opaque because of it.**
+        // **The canvas is transparent; the board host paints the paper.**
         //
-        // This used to be a clear, non-opaque canvas over a SwiftUI fill and dot
-        // grid. That is the configuration PencilKit cannot present in-progress
-        // strokes through: with something to blend against underneath, the wet
-        // ink arrives on ordinary Core Animation commits instead of on its own
-        // high-frequency path, and a stroke lands in visible segments rather than
-        // following the tip. See `BoardPaper`, which is the grid the fill and the
-        // `DotGrid` below it used to draw.
-        //
-        // `WhiteboardSurface` no longer masks this view either — it paints the
-        // card's rounded corners *over* it — because a rounded clip is the other
-        // way the canvas ends up in an offscreen buffer instead of on the screen.
-        canvas.backgroundColor = BoardPaper.background(scale: displayScale(for: canvas))
-        canvas.isOpaque = true
+        // The host owns an opaque `BoardPaper` background with the scene
+        // composited above it, and the native PencilKit canvas sits clear and
+        // non-opaque on top so learner ink is PencilKit's own surface and the
+        // only ink surface. A clear, non-opaque PencilKit surface presents
+        // in-progress strokes on ordinary Core Animation commits instead of its
+        // high-frequency path, which is the accepted wet-ink tradeoff for
+        // exactly one live ink layer.
+        canvas.backgroundColor = .clear
+        canvas.isOpaque = false
         canvas.drawingPolicy = .pencilOnly
         canvas.isScrollEnabled = true
         canvas.contentInsetAdjustmentBehavior = .never

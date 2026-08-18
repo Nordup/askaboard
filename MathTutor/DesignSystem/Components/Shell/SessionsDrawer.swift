@@ -184,14 +184,20 @@ enum SessionsDrawerMetrics {
         TextStyle(size: DS.Size.body, leading: DS.Leading.control, weight: current ? .semibold : .medium)
     }
 
-    /// How far a finger may travel and still have been a tap on a row.
+    /// How far a finger may travel and still be a tap on a row.
     ///
-    /// The row proves for itself that a swipe was not a tap, rather than trusting anything
-    /// outside it to have switched it off in time — see `SessionsDrawer.rowGestures(_:)`. 10 is
-    /// `LongPressGesture`'s own `maximumDistance`, so the two halves of the row's gesture agree
-    /// about what counts as having moved, and it sits just under the drawer pan's 12: a touch
-    /// that goes on to become a pan has already failed this by the time the pan commits.
-    static let tapSlop: CGFloat = 10
+    /// Equal to `DrawerReveal.intentThreshold` (12), the distance the ancestor
+    /// `DrawerPanRecognizer` needs before it commits to the horizontal drawer pan and, in the
+    /// same breath, cancels every other recogniser analysing the touch. Marking anything below
+    /// that a tap is not a gamble on a separate, smaller number: the pan's 12 is the whole of
+    /// the boundary between "still a tap" and "a swipe", so the row accepts every touch the pan
+    /// has not already taken and leaves no silent band between the two.
+    ///
+    /// The former value (10) created exactly that band: a press drifting 11 points was farther
+    /// than the row's 10 and not yet far enough for the pan's 12, so it was neither a tap nor a
+    /// pan and nothing happened. Because the committed pan cancels the row control's touch
+    /// sequence before lift, a touch at or past 12 still reads as a swipe, never as a tap.
+    static let tapSlop: CGFloat = DrawerReveal.intentThreshold
 
     /// How many rows the drawer shows.
     ///
@@ -385,8 +391,8 @@ struct SessionsDrawer: View {
         }
     }
 
-    /// One session row: the label, the travel-evidence tap, and the menu — with the menu owned
-    /// in UIKit rather than declared to SwiftUI.
+    /// One session row: the label, the stable UIKit tap control, and the menu — with both
+    /// interactions owned in UIKit rather than declared to SwiftUI.
     ///
     /// `SessionRowMenu` hosts the row's content and attaches a `UIContextMenuInteraction` of
     /// its own, which is what replaces the 0.35s inference this drawer used to run. SwiftUI's
@@ -399,13 +405,14 @@ struct SessionsDrawer: View {
     private func row(_ summary: SessionSummary) -> some View {
         let isCurrent = summary.id == currentID
         return SessionRowMenu(
+            onTap: { onOpen(summary.id) },
             onDelete: { onDelete(summary.id) },
             onMenuActivity: onMenuActivity
         ) {
             rowLabel(summary, isCurrent: isCurrent)
-                .simultaneousGesture(tapGesture(summary))
         }
         .frame(width: contentWidth, height: SessionsDrawerMetrics.rowHeight)
+        .accessibilityIdentifier("session-row-\(summary.id.uuidString)")
         // `.ignore` rather than `.combine`, because the children are a UIKit hierarchy now:
         // every fact VoiceOver needs is stated here explicitly, exactly as it was before.
         .accessibilityElement(children: .ignore)
@@ -416,33 +423,6 @@ struct SessionsDrawer: View {
         // A long press is not a gesture VoiceOver performs, so the destructive action is
         // published as a named one instead.
         .accessibilityAction(named: "Delete") { onDelete(summary.id) }
-    }
-
-    /// The tap that opens the session — **and the proof that it was a tap.**
-    ///
-    /// A `DragGesture` measuring its own travel rather than a `TapGesture`, and that is the
-    /// fix rather than a stylistic choice. A tap recogniser fires on touch-*up* whenever the
-    /// touch stayed inside the view, and these rows are 227 × 44, so a 100pt horizontal swipe
-    /// starts and ends inside the same one and reads as a tap on it. Every way of switching
-    /// that off from outside — hit testing, `isEnabled` — depends on something else having
-    /// noticed in time; the translation is evidence the row already holds, so it needs no help
-    /// and cannot be raced.
-    ///
-    /// `minimumDistance: 0` so the gesture exists from touch-down and always reports. A scroll
-    /// takes the touch away in the ordinary way and this still ends, with a translation far
-    /// past the slop, which is exactly the answer wanted.
-    ///
-    /// Lifting the finger after a menu has opened does not reach this at all: the context menu
-    /// interaction cancels every other recogniser on the row when it takes the touch, and a
-    /// cancelled `DragGesture` never ends. The tap that *dismisses* the menu is a separate
-    /// touch and never reaches the row either — `BoardScreen`'s screen-wide shield has it.
-    private func tapGesture(_ summary: SessionSummary) -> some Gesture {
-        DragGesture(minimumDistance: 0)
-            .onEnded { value in
-                let travelled = hypot(value.translation.width, value.translation.height)
-                guard travelled <= SessionsDrawerMetrics.tapSlop else { return }
-                onOpen(summary.id)
-            }
     }
 
     private func rowLabel(_ summary: SessionSummary, isCurrent: Bool) -> some View {
@@ -566,13 +546,11 @@ struct SessionsDrawer: View {
 /// `willEndFor(_:animator:)` as ground truth, and removes the competing recogniser in the
 /// same stroke.
 ///
-/// **What a touch on a row now meets, exhaustively:** the interaction's own recognisers
-/// (the one long press left on the row), the hosted content's `DragGesture(minimumDistance: 0)`
-/// (the travel-evidence tap, which claims nothing and cancels nothing), and the ancestor
-/// `DrawerPanRecognizer` (simultaneous with everything, `.possible` under a still finger, and
-/// it cancels others only at a 12pt horizontal commit — which a still long press never
-/// reaches). Nothing in that set can starve the menu; only a real pan can cancel it, and a
-/// real pan should.
+/// **What a touch on a row now meets, exhaustively:** the interaction's own long-press
+/// recogniser, the stable `UIControl` receiving the ordinary touch sequence, and the ancestor
+/// `DrawerPanRecognizer`. The pan is `.possible` under a still finger and cancels the control
+/// only at a 12pt horizontal commit, which a still long press never reaches. Nothing in that
+/// set can starve the menu; only a real pan can cancel it, and a real pan should.
 ///
 /// **The lift is the same shape it was.** The platter is `UIPreviewParameters.visiblePath`,
 /// cut from `SessionsDrawerMetrics.rowRadius` — the radius the resting fill and the old
@@ -580,9 +558,15 @@ struct SessionsDrawer: View {
 /// compositing the row into it, so an untinted row still lifts onto a plate.
 ///
 /// The content is embedded through a `UIHostingController` so the interaction's view *is* the
-/// rendered row: the default lift snapshot then shows the row itself, and the row's SwiftUI
-/// gesture still runs inside the hosted tree.
+/// rendered row and the default lift snapshot shows the row itself. The hosted tree is visual;
+/// the stable UIKit container owns activation so replacing that tree cannot cancel a tap.
 private struct SessionRowMenu<Content: View>: UIViewRepresentable {
+    /// The ordinary row activation. This deliberately belongs to the stable UIKit container,
+    /// not to the hosted SwiftUI content: `updateUIView` replaces `host.rootView` whenever the
+    /// drawer's parent updates, and replacing a root while a finger is down cancels a SwiftUI
+    /// `DragGesture` before its `onEnded` can run. The container itself survives those updates,
+    /// so one physical press has one owner from touch-down through lift.
+    let onTap: () -> Void
     /// Board 17's destructive action, verbatim — the caller's semantics are untouched.
     let onDelete: () -> Void
     /// The menu's two edges, as the delegate reports them. `false` is sent only after the
@@ -593,13 +577,17 @@ private struct SessionRowMenu<Content: View>: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    func makeUIView(context: Context) -> UIView {
-        let container = UIView()
+    func makeUIView(context: Context) -> SessionRowControl {
+        let container = SessionRowControl()
         container.backgroundColor = .clear
         // `ignoresSafeArea` on the root, or the hosting controller keyboard-avoids a 44pt
         // row that happens to sit near the composer's keyboard.
         let host = UIHostingController(rootView: AnyView(content.ignoresSafeArea()))
         host.view.backgroundColor = .clear
+        // The label is visual content only. Sending the touch to the stable control keeps its
+        // lifetime independent of `host.rootView`, while `UIContextMenuInteraction` on that
+        // same control still owns the row's long press and preview.
+        host.view.isUserInteractionEnabled = false
         host.view.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(host.view)
         NSLayoutConstraint.activate([
@@ -609,12 +597,14 @@ private struct SessionRowMenu<Content: View>: UIViewRepresentable {
             host.view.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
         context.coordinator.host = host
+        context.coordinator.control = container
         container.addInteraction(UIContextMenuInteraction(delegate: context.coordinator))
         return container
     }
 
-    func updateUIView(_ uiView: UIView, context: Context) {
+    func updateUIView(_ uiView: SessionRowControl, context: Context) {
         context.coordinator.host?.rootView = AnyView(content.ignoresSafeArea())
+        uiView.onTap = onTap
         context.coordinator.onDelete = onDelete
         context.coordinator.onMenuActivity = onMenuActivity
     }
@@ -623,12 +613,13 @@ private struct SessionRowMenu<Content: View>: UIViewRepresentable {
     /// exactly that — and a flag left `true` then would shield the app forever. The system
     /// still calls `willEndFor` in the ordinary cases; this is the backstop, and
     /// `Coordinator.endMenu()` is idempotent so the two cannot double-fire.
-    static func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) {
+    static func dismantleUIView(_ uiView: SessionRowControl, coordinator: Coordinator) {
         coordinator.endMenu()
     }
 
     final class Coordinator: NSObject, UIContextMenuInteractionDelegate {
         var host: UIHostingController<AnyView>?
+        weak var control: SessionRowControl?
         var onDelete: () -> Void = {}
         var onMenuActivity: (Bool) -> Void = { _ in }
         private var isMenuActive = false
@@ -639,6 +630,7 @@ private struct SessionRowMenu<Content: View>: UIViewRepresentable {
         func endMenu() {
             guard isMenuActive else { return }
             isMenuActive = false
+            control?.isMenuActive = false
             onMenuActivity(false)
         }
 
@@ -665,6 +657,7 @@ private struct SessionRowMenu<Content: View>: UIViewRepresentable {
             animator: UIContextMenuInteractionAnimating?
         ) {
             isMenuActive = true
+            control?.isMenuActive = true
             onMenuActivity(true)
         }
 
@@ -675,6 +668,7 @@ private struct SessionRowMenu<Content: View>: UIViewRepresentable {
         ) {
             guard isMenuActive else { return }
             isMenuActive = false
+            control?.isMenuActive = false
             // The shield holds through the dismissal animation because *this* is where the
             // flag drops — the animator's own completion, not a guessed quarter-second.
             if let animator {
@@ -710,6 +704,60 @@ private struct SessionRowMenu<Content: View>: UIViewRepresentable {
                 cornerRadius: SessionsDrawerMetrics.rowRadius
             )
             return UITargetedPreview(view: view, parameters: parameters)
+        }
+    }
+
+    /// A session row is a control, not a gesture recogniser competing with the drawer pan.
+    ///
+    /// UIKit keeps delivering a control's touch sequence across updates to its hosted label.
+    /// A committed `DrawerPanRecognizer` still cancels the control in the ordinary UIKit way,
+    /// and a vertical `UIScrollView` pan does the same. For an unclaimed touch, the maximum
+    /// travel proves it remained a tap; maximum rather than final travel means a finger cannot
+    /// wander past the boundary and return to manufacture a tap on lift.
+    final class SessionRowControl: UIControl {
+        var onTap: () -> Void = {}
+        var isMenuActive = false
+
+        private weak var trackedTouch: UITouch?
+        private var origin = CGPoint.zero
+        private var maximumTravel: CGFloat = 0
+
+        override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+            super.touchesBegan(touches, with: event)
+            guard trackedTouch == nil, let touch = touches.first else { return }
+            trackedTouch = touch
+            origin = touch.location(in: window)
+            maximumTravel = 0
+        }
+
+        override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+            super.touchesMoved(touches, with: event)
+            guard let touch = trackedTouch, touches.contains(touch) else { return }
+            let point = touch.location(in: window)
+            maximumTravel = max(maximumTravel, hypot(point.x - origin.x, point.y - origin.y))
+        }
+
+        override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+            super.touchesEnded(touches, with: event)
+            guard let touch = trackedTouch, touches.contains(touch) else { return }
+            let point = touch.location(in: window)
+            maximumTravel = max(maximumTravel, hypot(point.x - origin.x, point.y - origin.y))
+            let shouldOpen = maximumTravel <= SessionsDrawerMetrics.tapSlop
+                && bounds.contains(touch.location(in: self))
+                && !isMenuActive
+            clearTouch()
+            if shouldOpen { onTap() }
+        }
+
+        override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+            super.touchesCancelled(touches, with: event)
+            guard let touch = trackedTouch, touches.contains(touch) else { return }
+            clearTouch()
+        }
+
+        private func clearTouch() {
+            trackedTouch = nil
+            maximumTravel = 0
         }
     }
 }
