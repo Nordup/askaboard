@@ -73,6 +73,9 @@ struct ParsedSVG {
 /// any `viewBox` it likes, and a board element may span 25,000 points, so the
 /// raster is capped on its long side. Under the cap it is *oversampled*
 /// instead, because the board zooms and a 1:1 bitmap goes soft under a pinch.
+/// It is oversampled to the board's most extreme draw — maximum zoom times the
+/// screen's own scale — so a figure stays sharp when the learner zooms and
+/// writes on it.
 /// Every bitmap is then flattened to 8-bit sRGB, so a pixel is four bytes on
 /// every device and the byte cap below prices what it says it prices. What
 /// survives is held under that cap: a session where the model draws a new
@@ -92,14 +95,29 @@ final class BoardSVGStore {
 
     /// How many pixels are kept per board point, below the ceiling.
     ///
-    /// `BoardMathStore.rasterOversample`'s reasoning, applied to figures: the
-    /// board zooms to 4x on a 2x screen, a bitmap rasterized at the document's
-    /// own size is soft the moment the learner pinches, and twice the linear
-    /// size costs four times the pixels of a small figure and nothing that
-    /// matters. It does not reach the board's maximum zoom, and deliberately:
-    /// covering 8x would cost sixteen times the memory to sharpen the rarest
-    /// view of a figure.
-    nonisolated static let rasterOversample: CGFloat = 2
+    /// This is the largest scale any outer board tile is ever drawn at — the
+    /// board's maximum zoom bucket times the screen's own scale — so a figure
+    /// stays sharp when the learner zooms to 4x on a 2x screen and writes on
+    /// it. `BoardImageStore` prices its photograph decodes the same way. The
+    /// long side is still bounded by `maximumRasterSide`, so a document that
+    /// cannot be kept at this density is drawn coarser rather than unbounded.
+    nonisolated static var rasterOversample: CGFloat { cachedZoomResolution }
+
+    /// The value behind `rasterOversample`.
+    ///
+    /// SwiftDraw's raster path runs off the main actor, where
+    /// `UITraitCollection` is not safe to read, so the value is computed once
+    /// on the main actor (in `init`) and reused everywhere. `nonisolated(unsafe)`
+    /// for that same reason: every access after the first init is a read.
+    private nonisolated(unsafe) static var cachedZoomResolution: CGFloat = 8
+
+    /// Sets `cachedZoomResolution` from the current screen. Called on the main
+    /// actor, once the first store is built.
+    private static func refreshRasterOversample() {
+        let screenScale = UITraitCollection.current.displayScale
+        let displayScale = screenScale > 0 ? screenScale : 2
+        cachedZoomResolution = ZoomBucket.scale(forBucket: ZoomBucket.maxBucket) * displayScale
+    }
 
     /// The longest side, in pixels, any figure's bitmap may have.
     ///
@@ -167,6 +185,7 @@ final class BoardSVGStore {
 
     init(byteLimit: Int = 64 * 1024 * 1024) {
         self.byteLimit = byteLimit
+        Self.refreshRasterOversample()
         memoryWarningObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.didReceiveMemoryWarningNotification,
             object: nil,

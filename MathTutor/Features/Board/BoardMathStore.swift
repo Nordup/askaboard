@@ -67,9 +67,19 @@ final class BoardMathStore {
 
     /// How much larger than the board size the bitmap is taken. The board zooms,
     /// and a bitmap rasterized at the logical size goes soft the moment the
-    /// learner pinches; typesetting at twice the size costs four times the
-    /// pixels of a small label and nothing that matters.
-    static let rasterOversample: CGFloat = 2
+    /// learner pinches. This is the largest scale any outer board tile is drawn
+    /// at — the board's maximum zoom bucket times the screen's own scale — so
+    /// notation stays sharp at 4x on a 2x screen while the learner writes on
+    /// it. `BoardSVGStore` prices its figure rasters the same way.
+    static var rasterOversample: CGFloat { zoomResolutionScale }
+
+    /// `ZoomBucket`'s maximum times the screen's own scale, with the usual
+    /// fallback when a device reports none.
+    private static var zoomResolutionScale: CGFloat {
+        let screenScale = UITraitCollection.current.displayScale
+        let displayScale = screenScale > 0 ? screenScale : 2
+        return ZoomBucket.scale(forBucket: ZoomBucket.maxBucket) * displayScale
+    }
 
     /// The resident budget for typeset notation, in bytes.
     ///

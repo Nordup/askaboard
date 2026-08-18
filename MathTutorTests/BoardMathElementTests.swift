@@ -92,8 +92,8 @@ final class BoardMathElementTests: XCTestCase {
         let artifact = await BoardMathStore.shared.render(element: element)
 
         XCTAssertNotNil(artifact?.image)
-        // The raster is taken at twice the requested size, and a fraction is
-        // taller than its own font size, so this holds twice over.
+        // The raster is taken at `rasterOversample` times the requested size,
+        // and a fraction is taller than its own font size, so this holds.
         XCTAssertGreaterThan(artifact?.size.height ?? 0, 24)
         XCTAssertGreaterThan(artifact?.size.width ?? 0, 0)
     }
@@ -284,8 +284,8 @@ final class BoardMathElementTests: XCTestCase {
 
         XCTAssertEqual(bounds.minX, 1_040, accuracy: 0.01)
         XCTAssertEqual(bounds.minY, 560, accuracy: 0.01)
-        XCTAssertEqual(bounds.width, artifact.size.width / 2, accuracy: 0.01)
-        XCTAssertEqual(bounds.height, artifact.size.height / 2, accuracy: 0.01)
+        XCTAssertEqual(bounds.width, artifact.drawSize.width, accuracy: 0.01)
+        XCTAssertEqual(bounds.height, artifact.drawSize.height, accuracy: 0.01)
     }
 
     // MARK: - Drawing
@@ -313,8 +313,8 @@ final class BoardMathElementTests: XCTestCase {
         let rect = CGRect(
             x: -10,
             y: -10,
-            width: artifact.size.width / 2 + 20,
-            height: artifact.size.height / 2 + 20
+            width: artifact.drawSize.width + 20,
+            height: artifact.drawSize.height + 20
         )
 
         let data = try XCTUnwrap(BoardSceneRenderer.renderPNG(
