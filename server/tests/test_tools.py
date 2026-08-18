@@ -1,18 +1,22 @@
 import json
 
 from app.tutor.board_scene import (
+    MAX_DELETES_PER_UPDATE,
+    MAX_ELEMENTS_PER_UPDATE,
     MAX_INK_TEXT_CHARS,
     MAX_LATEX_CHARS,
     MAX_PATH_CHARS,
     MAX_SVG_CHARS,
 )
 from app.tutor.tools import (
+    DRAW_BOARD_SVG_TOOL,
     FETCH_IMAGE_TOOL,
     MEMORY_TOOL_DEFINITIONS,
     SET_WORKSPACE_TOOL,
     TOOL_DEFINITIONS,
     UPDATE_BOARD_TOOL,
     VIEW_BOARD_TOOL,
+    WEB_SEARCH_TOOL,
 )
 
 
@@ -36,9 +40,10 @@ def test_the_registry_exposes_the_function_tools_then_the_hosted_ones():
     function tool, because the list is one cache prefix and a tool inserted in
     the middle of it re-bills every prompt this service sends."""
     assert TOOL_DEFINITIONS == [
-        SET_WORKSPACE_TOOL, VIEW_BOARD_TOOL, UPDATE_BOARD_TOOL, FETCH_IMAGE_TOOL,
+        SET_WORKSPACE_TOOL, VIEW_BOARD_TOOL, DRAW_BOARD_SVG_TOOL,
+        UPDATE_BOARD_TOOL, FETCH_IMAGE_TOOL,
         *MEMORY_TOOL_DEFINITIONS,
-        {"type": "web_search"},
+        WEB_SEARCH_TOOL,
         {"type": "code_interpreter", "container": {"type": "auto"}},
     ]
 
@@ -54,7 +59,6 @@ def test_a_hosted_tool_carries_no_function_schema():
     about the entry being a lone `type`."""
     hosted = [tool for tool in TOOL_DEFINITIONS if tool.get("type") != "function"]
     assert hosted == [
-        {"type": "web_search"},
         {"type": "code_interpreter", "container": {"type": "auto"}},
     ]
     for tool in hosted:
@@ -138,13 +142,12 @@ def test_update_board_primitives_are_a_discriminated_union():
     assert set(kinds) == {
         "text", "line", "arrow", "rectangle", "ellipse", "circle",
         "polygon", "polyline", "freehand", "arc", "angle_marker", "path",
-        "math_text", "ink_text", "image", "svg",
+        "math_text", "ink_text", "image",
     }
 
 
 def test_update_board_svg_arm_is_an_opaque_raw_document():
-    arms = UPDATE_BOARD_TOOL["parameters"]["properties"]["elements"]["items"]["anyOf"]
-    svg = next(arm for arm in arms if "svg" in _kinds_of(arm))
+    svg = DRAW_BOARD_SVG_TOOL["parameters"]["properties"]["elements"]["items"]
 
     assert {"id", "kind", "x", "y", "width", "height", "svg"}.issubset(
         set(svg["required"])
@@ -164,8 +167,7 @@ def test_update_board_svg_arm_asks_for_a_viewbox_and_no_frame():
     scales the whole figure — so the description has to say what 0 means, or
     the model keeps sizing figures twice and the two sizes fight.
     """
-    arms = UPDATE_BOARD_TOOL["parameters"]["properties"]["elements"]["items"]["anyOf"]
-    svg = next(arm for arm in arms if "svg" in _kinds_of(arm))
+    svg = DRAW_BOARD_SVG_TOOL["parameters"]["properties"]["elements"]["items"]
 
     document = svg["properties"]["svg"]["description"]
     assert "viewBox" in document
@@ -186,8 +188,7 @@ def test_update_board_svg_arm_states_the_subset_the_renderer_was_measured_on():
     ran — the probe pixel-measured masks, filters, clip paths, `<style>` blocks
     and text, and the rest of the list is source-verified — which is how a
     figure comes back missing the half the model was counting on."""
-    arms = UPDATE_BOARD_TOOL["parameters"]["properties"]["elements"]["items"]["anyOf"]
-    svg = next(arm for arm in arms if "svg" in _kinds_of(arm))
+    svg = DRAW_BOARD_SVG_TOOL["parameters"]["properties"]["elements"]["items"]
     document = svg["properties"]["svg"]["description"]
 
     for supported in (
@@ -263,6 +264,13 @@ def test_update_board_ink_text_arm_writes_prose_in_the_tutors_own_hand():
     # register the rest of this schema is written in gets "nice _ now try".
     assert "normalised to their ASCII equivalents" in description
     assert "comes out as a placeholder" in description
+    # An emoji is the exception the arm has to name, because it used to be part
+    # of that rule and no longer is. The pen still cannot write one, so the
+    # device stops pretending it can and draws the picture instead
+    # (InkTextRenderer.drawPictographs). A description that leaves the old
+    # claim standing is a tutor that never reaches for one.
+    assert "An emoji is not a placeholder" in description
+    assert "draws as itself" in description
     for typographic in ("—", "–", "“", "”", "’", "…"):
         assert typographic not in description, (
             f"the description asks for plain text and must model it: {typographic}"
@@ -362,8 +370,14 @@ def test_update_board_description_keeps_the_rules_that_protect_learner_work():
 
 def test_update_board_caps_are_expressed_in_the_schema():
     props = UPDATE_BOARD_TOOL["parameters"]["properties"]
-    assert props["elements"]["maxItems"] == 200
-    assert props["delete_ids"]["maxItems"] == 200
+    assert props["elements"]["maxItems"] == MAX_ELEMENTS_PER_UPDATE == 24
+    assert props["delete_ids"]["maxItems"] == MAX_DELETES_PER_UPDATE
+    draw_props = DRAW_BOARD_SVG_TOOL["parameters"]["properties"]
+    assert draw_props["elements"]["minItems"] == 1
+    assert draw_props["elements"]["maxItems"] == 1
+    assert draw_props["elements"]["items"]["properties"]["kind"] == {
+        "type": "string", "const": "svg",
+    }
 
     arms = props["elements"]["items"]["anyOf"]
     polygon = next(arm for arm in arms if "polygon" in _kinds_of(arm))
@@ -620,7 +634,17 @@ def test_the_tool_surface_stays_inside_its_budget():
     # So the bound comes down again, to 29,200: the same thousand characters of
     # room. `test_each_primitive_demands_exactly_the_style_its_renderer_reads`
     # is what guards the cut itself.
-    assert len(json.dumps(TOOL_DEFINITIONS)) < 29_200
+    #
+    # Emoji in `ink_text` then spent 163: the clause retracting a claim the arm
+    # used to make. It had emoji lumped in with non-Latin scripts as characters
+    # that come out as placeholders, which was true and is not — the device now
+    # draws the picture where the pen would have written the letter — and a
+    # capability the model has been told it does not have is a capability it
+    # never uses. The surface is 28,343, inside the room the last cut left, so
+    # the bound does not move.
+    # Splitting SVG out of the sixteen-way union buys a reliable coherent-art
+    # route at the cost of a second strict wrapper and shared definitions.
+    assert len(json.dumps(TOOL_DEFINITIONS)) < 31_800
 
 
 def test_fetch_image_is_strict_closed_and_takes_one_url():

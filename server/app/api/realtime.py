@@ -13,7 +13,8 @@ turn stream without caring which worker that is. It does read the database
 once, when a call is created: the voice model's instructions are
 `VOICE_SYSTEM_PROMPT`, which contains the tutor prompt, and that prompt tells
 the model its standing memory blocks are already in front of it. On a worker
-turn they are — `assemble_context` puts them there every time. A call built
+turn they are — `open_session_preamble` puts them in the frozen head when the
+session opens, and every turn after replays that head verbatim. A call built
 without them left the model instructed to answer "what did we do last time?"
 from a block it did not have, so it improvised. `_call_instructions` below
 loads the same blocks for the call's session; a failure to load them is a

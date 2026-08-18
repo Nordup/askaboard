@@ -160,7 +160,7 @@ async def test_finish_turn_writes_the_turn_and_its_llm_call(db, db_factory, tmp_
 
 @requires_db
 async def test_finish_turn_writes_the_tutors_reply_as_a_message(db, db_factory, tmp_path):
-    """C1: without this, assemble_context's transcript is learner-only —
+    """C1: without this, the session log is learner-only —
     the model can never see anything it said on an earlier turn."""
     session = Session(model="gpt-5.6-luna", reasoning_effort="high")
     db.add(session)

@@ -283,6 +283,15 @@ class Settings(BaseSettings):
     database_url: str
     device_token: str
     blob_dir: Path = Path("./blobs")
+    #: The OpenAI model used for the app-owned `web_search` function tool.
+    #:
+    #: The tutor's turn can run on either provider family (including Gemini),
+    #: but every web search is a focused OpenAI Responses subrequest so the
+    #: tool behaves identically everywhere. The subrequest is server-chosen and
+    #: never arrives from the device, so it does not need a `MODEL_ALLOWLIST`
+    #: row. `gpt-5.6-luna` is the project's safe, cheap default already used
+    #: for other server-chosen work; `WEB_SEARCH_MODEL` overrides it.
+    web_search_model: str = "gpt-5.6-luna"
     #: Where the rotating server log is written. Its own directory rather than
     #: a path, because the handler rotates into siblings (`server.log.1` and
     #: so on) and they should land together.

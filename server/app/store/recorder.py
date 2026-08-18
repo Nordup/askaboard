@@ -194,9 +194,9 @@ class Recorder:
         the turn record itself:
 
         - the tutor's own reply, as a `Message(role="tutor")` at `next_seq`,
-          so the next turn's transcript actually contains what the model
-          said (without this, `assemble_context` only ever sees the
-          learner's side of the conversation);
+          so the next turn's log actually contains what the model said
+          (without this, `ledger.advance` only ever folds in the learner's
+          side of the conversation);
         - `session.plan` / `session.exercise`, when the turn called
           `set_workspace`, so `compose_user_prompt`'s EXERCISE CONTEXT and
           SESSION PLAN sections — and `GET /v1/sessions/{id}` — are ever

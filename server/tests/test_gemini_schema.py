@@ -1,7 +1,7 @@
 """What survives the trip to a Gemini function declaration.
 
 These are invariant sweeps over the whole produced schema, not spot checks on
-its top level. `update_board`'s `elements` is a fourteen-arm union built from
+its top level. `update_board`'s `elements` is a thirteen-arm union built from
 `$defs`, and a malformed arm nested three levels down is a blank band on the
 learner's board — a top-level assertion would pass while that was broken.
 """
@@ -47,12 +47,12 @@ def _declarations(tools):
 #: How many arms `update_board`'s element union has.
 #:
 #: Pinned exactly rather than as a floor. `>= 12` was the assertion, and a floor
-#: cannot fail: it passed while the count was really fourteen, it would pass if
+#: cannot fail: it passed while the count was really thirteen, it would pass if
 #: an arm were dropped down to twelve, and it would say nothing at all when a
-#: fifteenth is added. The number is a claim two comments make in prose —
+#: fourteenth is added. The number is a claim two comments make in prose —
 #: `gemini_schema._strip` and this module's docstring — so it needs one place
 #: that fails when the prose goes stale.
-BOARD_ELEMENT_ARMS = 14
+BOARD_ELEMENT_ARMS = 13
 
 
 def test_no_unsupported_keyword_survives_anywhere(converted):
@@ -97,10 +97,10 @@ def test_every_board_element_arm_keeps_its_discriminator(converted):
     assert actual == expected
 
 
-def test_the_hosted_tools_are_renamed(converted):
+def test_the_remaining_hosted_tool_is_renamed(converted):
     types = {tool["type"] for tool in converted}
-    assert "google_search" in types
     assert "code_execution" in types
+    assert "google_search" not in types
     assert "web_search" not in types
     assert "code_interpreter" not in types
 

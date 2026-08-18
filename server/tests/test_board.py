@@ -497,6 +497,45 @@ def test_extra_keys_are_rejected_by_the_scene_models():
     assert "unexpected" in (error or "")
 
 
+def test_an_all_transparent_upsert_is_rejected_as_a_visual_noop():
+    update, error = parse_board_update(_update_json(
+        kind="ellipse", id="invisible", x=0, y=0, width=100, height=100,
+        opacity=0,
+    ))
+
+    assert update is None
+    assert "opacity above 0" in (error or "")
+
+
+def test_an_all_transparent_replace_all_is_also_rejected():
+    raw = json.loads(_update_json(
+        kind="ellipse", id="invisible", x=0, y=0, width=100, height=100,
+        opacity=0,
+    ))
+    raw["mode"] = "replace_all"
+    update, error = parse_board_update(json.dumps(raw))
+
+    assert update is None
+    assert "opacity above 0" in (error or "")
+
+
+def test_a_delete_only_upsert_remains_a_visible_mutation():
+    update, error = parse_board_update(json.dumps({
+        "mode": "upsert", "delete_ids": ["old"], "elements": [],
+    }))
+
+    assert update is not None, error
+    assert update.delete_ids == ["old"]
+
+
+def test_an_empty_replace_all_can_intentionally_clear_the_board():
+    update, error = parse_board_update(json.dumps({
+        "mode": "replace_all", "delete_ids": [], "elements": [],
+    }))
+
+    assert update is not None, error
+
+
 # MARK: - Raw SVG transport
 
 
@@ -932,6 +971,25 @@ def test_lint_flags_an_external_reference_however_it_is_spelled(markup):
     assert len(warnings) == 1
     assert "external" in warnings[0]
     assert "unsupported" in warnings[0]
+
+
+@pytest.mark.parametrize("markup", [
+    '<svg><text x="0" y="0">Great work \U0001f389</text></svg>',
+    '<svg><text x="0" y="0">Step 1️⃣</text></svg>',
+    '<svg><text x="0" y="0">✅ correct</text></svg>',
+])
+def test_lint_stays_silent_about_an_emoji_in_svg_text(markup):
+    """The device now draws emoji inside SVG `<text>` with its WebKit fallback,
+    so the server must not warn the model out of markup that works.
+    """
+    assert lint_svg(markup) == []
+
+
+def test_lint_leaves_an_emoji_alone_in_a_document_that_draws_no_text():
+    """An emoji reaches an SVG two ways and only one of them needs the WebKit
+    fallback. In a `<title>` it is never drawn, so it neither warns here nor
+    routes the document off the fast native renderer on the device."""
+    assert lint_svg('<svg><title>\U0001f389</title><path d="M0 0 L1 1"/></svg>') == []
 
 
 def test_lint_still_reads_markup_that_is_not_well_formed():

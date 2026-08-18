@@ -13,7 +13,8 @@ from app.tutor.board_scene import (
 from app.tutor.context import ContextBundle
 from app.tutor.events import (
     TURN_FAILED_MESSAGE, BoardRequestEvent, ClientEvent, ErrorEvent,
-    EventTranslator, StatusEvent, WorkspaceEvent,
+    EventTranslator, SearchSourceModel, SearchSourcesEvent, StatusEvent,
+    WorkspaceEvent,
 )
 from app.tutor.providers import (
     TERMINAL_ERROR_STATUSES, Completed, Failed, ProducedFile, Provider,
@@ -22,6 +23,7 @@ from app.tutor.providers import (
 from app.tutor.rendezvous import BoardRegion, BoardUnavailable
 from app.tutor.retry import RETRY_LIMIT
 from app.tutor.tools import MEMORY_TOOLS
+from app.tutor.web_search import SearchEvidence, evidence_tool_result
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +55,20 @@ logger = logging.getLogger(__name__)
 # that offers no tools; see `_closing_round` and the `else` at the foot of the
 # loop.
 MAX_TOOL_ROUNDS = 8
+
+# How many syntactically valid `update_board` calls may land in one turn.
+#
+# A valid update mutates the learner's board, so each one is another full board
+# draw the learner watches and the model bills for. One complete mutation keeps
+# the turn bounded; a correction is a new learner-visible turn rather than a
+# silent second redraw. The turn is then forced to close in prose
+# — `_closing_round` with `tool_choice: none` — so it can never loop
+# `update_board` into the `MAX_TOOL_ROUNDS` ceiling. A call that fails
+# validation (and is answered `MALFORMED_BOARD_ACK`) never reaches the board and
+# does not spend this budget; the model may keep retrying it until a valid batch
+# lands.
+MAX_BOARD_UPDATE_CALLS = 1
+BOARD_MUTATION_TOOLS = frozenset({"draw_board_svg", "update_board"})
 
 # The smallest region `view_board` will honour, as a percentage of a side.
 #
@@ -165,6 +181,8 @@ SET_WORKSPACE_ACK = json.dumps({
 UPDATE_BOARD_ACK = json.dumps({
     "status": "applied",
     "detail": "The tutor's board objects were updated on the learner's iPad. "
+              "Treat this as the complete visual. No further board mutation is "
+              "available in this turn. "
               "Mention what you drew and why, in your reply.",
 })
 
@@ -484,6 +502,7 @@ BoardFetcher = Callable[[str, BoardRegion], Awaitable[bytes]]
 #: that opens its own; `app.memory.dispatch.memory_handler` is that binding and
 #: says the rest.
 MemoryHandler = Callable[[str, dict], Awaitable[str]]
+WebSearchHandler = Callable[[str], Awaitable[SearchEvidence]]
 
 @dataclass(frozen=True)
 class FetchedImage:
@@ -575,13 +594,14 @@ MEMORY_PHASES: dict[str, str] = {
 class ToolAnswer:
     """What answering one tool call produces, before anything is awaited.
 
-    Four shapes, and exactly one of them is set. `items` is a reply the server
+    Five shapes, and exactly one of them is set. `items` is a reply the server
     can write on its own — `set_workspace`, an empty board, a malformed call.
     `ask` is a `view_board` that needs the device: the caller has to emit it,
     wait for the render, and only then build the items. `run` is a memory tool,
     which needs a database session `_answer` has not got. `fetch` is a URL to
     download, which needs the network and the recorder, and neither is here
-    either. Splitting it this way is what lets the awaiting live in `run_turn` —
+    either. `search` is the focused query for the app-owned web-search handler.
+    Splitting it this way is what lets the awaiting live in `run_turn` —
     the only place that can *yield* the board request down the stream the device
     is listening to, and the only place holding the injected handlers.
     """
@@ -594,6 +614,7 @@ class ToolAnswer:
     #: lives in `app.tutor.fetch_image`, which is the only place that should
     #: hold them.
     fetch: str | None = None
+    search: str | None = None
 
 
 def _region_from(arguments: dict) -> BoardRegion:
@@ -652,16 +673,17 @@ def _svg_warnings(update: BoardSceneUpdate) -> list[str]:
 
 def _answer(
     call: dict, *, provider: Provider, has_board: bool, has_memory: bool = False,
-    has_image: bool = False,
+    has_image: bool = False, has_web_search: bool = False,
 ) -> ToolAnswer:
     """Plan one tool call's reply.
 
-    Three calls cannot be answered here. `view_board` needs the iPad, because
+    Four calls cannot be answered here. `view_board` needs the iPad, because
     the only thing that can render a region of a `PKDrawing` is the device
     holding it. The memory tools need a database session, which this function
     has no way to be given — it is synchronous and is called per tool call from
     inside the stream. `fetch_image` needs the network and the blob store. All
-    three come back as an intent for `run_turn` to carry out.
+    Web search needs its focused provider subrequest. All four come back as an
+    intent for `run_turn` to carry out.
 
     **`provider` is here because every answer below is a wire item, and this
     function used to write one family's by hand.** Each of the seven replies was
@@ -695,7 +717,7 @@ def _answer(
     if name == "set_workspace":
         return answered(SET_WORKSPACE_ACK)
 
-    if name == "update_board":
+    if name in BOARD_MUTATION_TOOLS:
         update, _ = parse_board_update(call.get("arguments") or "{}")
         if update is None:
             output = MALFORMED_BOARD_ACK
@@ -727,6 +749,20 @@ def _answer(
         if not isinstance(url, str) or not url.strip():
             return answered(MALFORMED_FETCH_ACK)
         return ToolAnswer(fetch=url.strip())
+
+    if name == "web_search":
+        arguments = _arguments(call)
+        query = arguments.get("query") if arguments is not None else None
+        if not has_web_search:
+            return answered(json.dumps({
+                "status": "unusable", "error": "web search is unavailable"
+            }))
+        if not isinstance(query, str) or not query.strip():
+            return answered(json.dumps({
+                "status": "unusable",
+                "error": "web_search requires a non-empty query",
+            }))
+        return ToolAnswer(search=query.strip())
 
     if name in MEMORY_TOOLS:
         arguments = _arguments(call)
@@ -819,6 +855,7 @@ async def run_turn(
     fetch_image: ImageFetcher | None = None,
     relay_file: FileRelay | None = None,
     handle_memory: MemoryHandler | None = None,
+    handle_web_search: WebSearchHandler | None = None,
     cache_key: str | None = None,
 ) -> AsyncIterator[tuple[ClientEvent, TurnResult]]:
     """Stream one turn, yielding client events as they happen.
@@ -887,6 +924,13 @@ async def run_turn(
     # and a deadline measured from the start would refuse a memory call in a
     # later round for time the model spent thinking.
     memory_budget = MEMORY_BUDGET_SECONDS
+    # How many syntactically valid `update_board` calls have landed this turn.
+    #
+    # Each such call mutated the learner's board for real, so this is a board
+    # budget: one complete draw, and then the turn
+    # is forced into `_closing_round` rather than being offered another
+    # `update_board` round. A malformed call never lands and never counts.
+    board_update_calls = 0
     # What this turn has spent on bringing bytes in, across both downloaders and
     # every round. Counted per turn rather than per round for the reason the
     # memory budget is: the per-call bound says nothing about how many calls
@@ -1054,16 +1098,23 @@ async def run_turn(
         # outputs the API expects to find answering the run of calls.
         outputs: list[dict] = []
         attachments: list[dict] = []
+        # Re-validated here, the same way `_answer` chose each ack, so a call
+        # that was answered `MALFORMED_BOARD_ACK` never spends the budget.
+        valid_board_calls = 0
+        board_called = False
         for call in calls:
             if not call.get("call_id"):
                 continue
             call_id = call["call_id"]
+            if call.get("name") in BOARD_MUTATION_TOOLS:
+                board_called = True
             answer = _answer(
                 call,
                 provider=provider,
                 has_board=bundle.has_board and fetch_board is not None,
                 has_memory=handle_memory is not None,
                 has_image=fetch_image is not None,
+                has_web_search=handle_web_search is not None,
             )
 
             if answer.items is not None:
@@ -1128,6 +1179,28 @@ async def run_turn(
                         FETCHED_IMAGE_CAPTION,
                         fetched.content_type or "image/png",
                     ))
+                continue
+
+            if answer.search is not None:
+                yield StatusEvent(phase="searching", detail=None), result
+                # `_answer` only returns this shape when the handler exists;
+                # keeping the assertion here also narrows the optional type.
+                assert handle_web_search is not None
+                evidence = await handle_web_search(answer.search)
+                output = evidence_tool_result(evidence)
+                outputs.append(provider.tool_output(
+                    call_id=call_id, name=call.get("name") or "",
+                    output=output,
+                ))
+                if evidence.usable:
+                    yield SearchSourcesEvent(
+                        search_id=call_id,
+                        query=evidence.query,
+                        sources=[SearchSourceModel(
+                            id=source.id, title=source.title, url=source.url,
+                            snippet=source.snippet,
+                        ) for source in evidence.sources],
+                    ), result
                 continue
 
             if answer.run is not None:
@@ -1284,6 +1357,13 @@ async def run_turn(
             # answered — name, arguments, and a `result` of null.
             if not call.get("call_id"):
                 continue
+            # A syntactically valid `update_board` mutation, counted the same
+            # way `_answer` chose the ack: a call answered `MALFORMED_BOARD_ACK`
+            # never lands on the board and never spends the budget.
+            if call.get("name") in BOARD_MUTATION_TOOLS:
+                update, _ = parse_board_update(call.get("arguments") or "{}")
+                if update is not None:
+                    valid_board_calls += 1
             result.tool_calls.append({
                 "name": call.get("name") or "?",
                 "arguments": _arguments(call),
@@ -1308,6 +1388,21 @@ async def run_turn(
             # turn is over on its own terms — the model already wrote its reply.
             return
         outbox = outputs + attachments
+        # The close that makes the budget a budget. A turn is still an open
+        # conversation, so the outputs answering this round have to go back and
+        # the model has to write the accompanying prose — but this is the last
+        # round that may draw, and the one that follows puts `tool_choice:
+        # "none"` on the wire so the model cannot reach for `update_board`
+        # again.
+        board_update_calls += valid_board_calls
+        if board_called and board_update_calls >= MAX_BOARD_UPDATE_CALLS:
+            async for client_event in _closing_round(
+                provider=provider, model=model, effort=effort, outbox=outbox,
+                previous_id=previous_id, cache_key=cache_key,
+                translator=translator, result=result,
+            ):
+                yield client_event, result
+            return
     else:
         # The cap bit — `return` above is the only other way out, so this runs
         # exactly when the last round still ended on tool calls. Hitting it is

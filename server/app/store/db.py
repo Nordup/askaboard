@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from collections.abc import AsyncIterator
+from datetime import datetime, timezone
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
@@ -48,6 +49,27 @@ POOL_SIZE = 12
 
 _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
+
+#: When a request last reached for the database, or None if none has since this
+#: process started. Read by `app.memory.jobs.run_periodic_sweep`.
+#:
+#: Only the two per-request dependencies write it — `db_session` here and
+#: `api.turn.get_recorder`. Background work resolves `session_factory` directly
+#: and stays invisible, which is the entire point: the sweep asks this stamp
+#: whether anything can have happened since it last looked, and a sweep whose
+#: own queries counted as activity would answer "yes" forever.
+_last_request_use: datetime | None = None
+
+
+def note_request_use() -> None:
+    """Stamp now as the last time a request reached for the database."""
+    global _last_request_use
+    _last_request_use = datetime.now(timezone.utc)
+
+
+def last_request_use() -> datetime | None:
+    """When a request last reached for it. None if none has, this process."""
+    return _last_request_use
 
 
 def init_engine() -> AsyncEngine:
@@ -150,5 +172,6 @@ def session_factory() -> async_sessionmaker[AsyncSession]:
 
 
 async def db_session() -> AsyncIterator[AsyncSession]:
+    note_request_use()
     async with session_factory()() as session:
         yield session

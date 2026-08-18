@@ -1,6 +1,7 @@
 import pytest
 
-from app.tutor.context import assemble_context
+from app.tutor import ledger
+from app.tutor.context import assemble_session_context, open_session_preamble
 from app.tutor.prompt import compose_user_prompt
 from app.tutor.tools import (
     GET_SESSION_TOOL,
@@ -17,11 +18,6 @@ def _compose(**kwargs):
     base = dict(conversation="learner: hi", goal=None, exercise=None, plan=None,
                 image_region=None, has_image=False, signal=None)
     return compose_user_prompt(**{**base, **kwargs})
-
-
-class _FakeSession:
-    plan = None
-    exercise = None
 
 
 class _FakeMessage:
@@ -101,19 +97,28 @@ def test_a_recalled_body_cannot_break_out_of_its_own_block():
                              out.index("\nEARLIER IN THIS CONVERSATION")]
 
 
-def test_assemble_context_threads_the_recalled_blocks_into_the_user_text():
-    bundle = assemble_context(
-        session=_FakeSession(), messages=[_FakeMessage()],
-        image_data=None, image_region=None, signal=None, goal=None,
+def test_the_recalled_blocks_are_threaded_into_the_prompt_the_endpoint_sends():
+    """Read on the shipped path, not on the composer alone: every block below
+    is rendered correctly by `_compose` in the tests above and would still
+    reach nobody if the head that carries them were never assembled in."""
+    preamble = open_session_preamble(
+        goal=None, exercise=None, plan=None,
+        board_overview=None, board_scene=None,
         profile="Wants the June exam.",
         learner_state="WHAT THIS LEARNER KNOWS:\n- Fractions (F1): mastered",
         recent_sessions="2026-06-01 (today) — fractions",
         saved_notes="[2026-06-01] Practises on Tuesdays.",
     )
-    # Joined across the parts: the portrait and the digests hold still for a
-    # session so they sit in front of the cache breakpoint, and the learner
-    # model is rewritten by `record_evidence` so it sits behind it. Which side
-    # each lands on is `prompt._sections`' business; that all three reach the
+    log = ledger.advance(
+        ledger.LogState.from_json(None), messages=[_FakeMessage()],
+        entry=ledger.turn_entry(1),
+    )
+    bundle = assemble_session_context(
+        preamble=preamble, log=log, live_turn=None,
+    )
+    # Joined across the parts: the head is one part and the log is cut into
+    # more so a cache breakpoint has a boundary to sit on. How many there are
+    # is `assemble_session_context`'s business; that all four blocks reach the
     # model is this test's.
     text = "".join(part["text"] for part in bundle.input[1]["content"]
                    if part["type"] == "input_text")

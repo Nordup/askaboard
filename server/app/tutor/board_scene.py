@@ -18,9 +18,11 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-#: How much model output one update may carry. Large enough for a diagram, small
-#: enough that a runaway loop cannot push a megabyte of geometry at the device.
-MAX_ELEMENTS_PER_UPDATE = 200
+#: How much model output one update may carry. A coherent illustration belongs
+#: in one SVG element, while 24 semantic objects still cover labels, arrows and
+#: manipulatives that genuinely need stable ids. The old 200-element ceiling
+#: let a simple exercise consume tens of thousands of output tokens twice.
+MAX_ELEMENTS_PER_UPDATE = 24
 MAX_DELETES_PER_UPDATE = 200
 MAX_POINTS_PER_ELEMENT = 512
 MAX_ID_LENGTH = 128
@@ -647,7 +649,27 @@ def parse_board_update(raw_arguments: str) -> tuple[BoardSceneUpdate | None, str
         payload = json.loads(raw_arguments)
         if not isinstance(payload, dict):
             return None, "update_board arguments must be a JSON object"
-        return BoardSceneUpdate.model_validate(payload), None
+        update = BoardSceneUpdate.model_validate(payload)
+        # An upsert containing only transparent objects changes stored scene
+        # data but draws nothing. Treat it as malformed so the translator emits
+        # no board mutation and the model can retry without spending the one
+        # visible-update budget. `replace_all` may intentionally clear a board,
+        # and explicit deletes are visible mutations in their own right.
+        if (
+            not update.delete_ids
+            and (
+                (update.mode == "upsert" and not update.elements)
+                or (
+                    bool(update.elements)
+                    and not any(element.opacity > 0 for element in update.elements)
+                )
+            )
+        ):
+            return None, (
+                "update_board must draw at least one element with opacity above 0 "
+                "or delete an existing element"
+            )
+        return update, None
     except (json.JSONDecodeError, TypeError, ValidationError) as error:
         return None, str(error)
 

@@ -168,7 +168,8 @@ def test_the_tools_are_converted_once_at_import():
     the first turn a learner sent."""
     assert GEMINI_TOOLS, "the module-level conversion produced nothing"
     kinds = {tool.get("type") for tool in GEMINI_TOOLS}
-    assert {"function", "google_search", "code_execution"} <= kinds
+    assert {"function", "code_execution"} <= kinds
+    assert "google_search" not in kinds
     payload = GeminiProvider(client=None).build_round(
         model="gemini-3.7-flash", effort="high", outbox=[], previous_id=None,
         cache_key=None,
@@ -257,9 +258,9 @@ def test_an_image_part_splits_the_data_url():
 
 
 def test_the_prompts_own_image_parts_are_split_and_keep_their_detail():
-    """The same split, on the parts `assemble_context` built rather than the
-    ones this provider built. Forwarded whole, the payload would begin with the
-    characters `data:image/png;base64,` and fail as a corrupt picture rather
+    """The same split, on the parts `assemble_session_context` built rather than
+    the ones this provider built. Forwarded whole, the payload would begin with
+    the characters `data:image/png;base64,` and fail as a corrupt picture rather
     than as a bad request.
 
     `detail` survives as `resolution`, and that is not cosmetic: the board

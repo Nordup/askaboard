@@ -2,7 +2,7 @@
 
 Two failures this file exists to catch, and a test of `_memory_sections` on its
 own catches neither. The first is sections that are computed correctly and then
-never passed to `assemble_context` — the store is read, the prompt is not
+never passed to `open_session_preamble` — the store is read, the prompt is not
 changed, and every assertion about the returned dict still passes. The second
 is the four memory tools being offered on every turn with nothing bound to run
 them, so the model calls one and is answered `NO_MEMORY_ACK`: four tool
@@ -16,6 +16,7 @@ it down somewhere".
 
 import json
 import uuid
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -41,6 +42,11 @@ AUTH = {"Authorization": "Bearer test-token"}
 
 PROFILE = "Sitting the higher tier paper in June. Prefers worked examples."
 RATIO = "7.RP.A.2"
+
+
+@asynccontextmanager
+async def _stub_sessions():
+    yield None
 
 
 def _payload(**overrides):
@@ -135,7 +141,7 @@ async def test_the_sessions_are_dated_and_asked_for_by_the_half_dozen(monkeypatc
         ],
     )
 
-    sections = await _memory_sections(None)
+    sections = await _memory_sections(_stub_sessions)
 
     lines = sections["recent_sessions"].splitlines()
     assert lines[0].startswith("2026-06-03 (") and lines[0].endswith("— ratios")
@@ -156,7 +162,7 @@ async def test_a_block_with_nothing_to_say_is_none_and_not_an_empty_string(
     """
     _stub_sources(monkeypatch, profile=None, state="", episodes=[])
 
-    sections = await _memory_sections(None)
+    sections = await _memory_sections(_stub_sessions)
 
     assert sections == {"profile": None, "learner_state": None,
                         "recent_sessions": None, "saved_notes": None,
@@ -200,11 +206,11 @@ async def _seed(db) -> None:
 
 
 @requires_db
-async def test_memory_sections_reads_the_three_blocks_out_of_the_real_store(db):
+async def test_memory_sections_reads_the_three_blocks_out_of_the_real_store(db, db_factory):
     await _seed(db)
     db.expire_all()
 
-    sections = await _memory_sections(db)
+    sections = await _memory_sections(db_factory)
 
     assert sections["profile"] == PROFILE
     assert sections["learner_state"] == (
@@ -229,7 +235,7 @@ async def test_a_turns_memory_reaches_the_model_and_not_just_the_dictionary(
     """The failure this task exists to prevent, in one assertion.
 
     Read against the captured provider request rather than a spy on
-    `assemble_context`: a spy proves the call was made with the right keyword
+    `open_session_preamble`: a spy proves the call was made with the right keyword
     arguments, and the thing that actually has to be true is that the learner's
     portrait ends up in the text the model reads.
     """

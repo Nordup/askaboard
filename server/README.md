@@ -462,14 +462,17 @@ a cosine threshold — decides ADD / SUPERSEDE / NOOP, because a sentence and it
 negation are near-identical to every embedding model and a threshold over that
 number merges a fact with its own opposite.
 
-**`app/tutor/context.py`, `assemble_context`** — still the one place
-everything the model is told is assembled, and memory arrived through it
-exactly as predicted. The prompt is now: the learner portrait, recent session
-digests, the conversation transcript, the learner model, then the per-turn
-tail. Every recalled block is *fenced* — each body line prefixed with `> ` —
-rather than merely labelled, because the profile body is unbounded model prose
-and a body containing a blank line plus a forged heading would otherwise render
-an attacker-controlled section of the prompt.
+**`app/tutor/context.py`** — still the one module where everything the model is
+told is assembled, and memory arrived through it exactly as predicted. It is
+two functions rather than one now, because the prompt is append-only: the
+learner portrait, saved notes, recent session digests and learner model go into
+the frozen head `open_session_preamble` renders once, when the session opens,
+and `assemble_session_context` serves that head byte for byte on every later
+turn in front of the growing session log. Every recalled block is *fenced* —
+each body line prefixed with `> ` — rather than merely labelled, because the
+profile body is unbounded model prose and a body containing a blank line plus a
+forged heading would otherwise render an attacker-controlled section of the
+prompt.
 
 **`app/tutor/tools.py`, `TOOL_DEFINITIONS`** — now `set_workspace`,
 `view_board`, `update_board`, and four memory tools: `search_memory`,

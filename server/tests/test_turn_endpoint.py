@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import json
+from types import SimpleNamespace
 import uuid
 
 import anyio
@@ -10,7 +11,8 @@ import respx
 from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy import select
 
-from app.api.turn import TurnRequest
+import app.api.turn as turn_api
+from app.api.turn import OPENAI_READ_TIMEOUT_SECONDS, TurnRequest
 from app.tutor.board_scene import MAX_SCENE_CHARS
 from app.config import DEFAULT_MODEL, DEFAULT_REASONING_EFFORT, get_settings
 from app.main import create_app
@@ -25,6 +27,22 @@ from tests.fixtures.sse import (
 )
 
 AUTH = {"Authorization": "Bearer test-token"}
+
+
+async def test_openai_client_read_timeout_finishes_before_the_device_gives_up(monkeypatch):
+    turn_api._client.cache_clear()
+    monkeypatch.setattr(
+        turn_api, "get_settings",
+        lambda: SimpleNamespace(openai_api_key="sk-test"),
+    )
+    client = turn_api._client()
+    try:
+        assert client.timeout.connect == 5.0
+        assert client.timeout.read == OPENAI_READ_TIMEOUT_SECONDS == 90.0
+        assert client.timeout.read < 120.0
+    finally:
+        await client.close()
+        turn_api._client.cache_clear()
 
 
 def _prompt_text(body) -> str:
@@ -618,8 +636,8 @@ async def test_a_second_turn_continues_seq_instead_of_restarting_at_zero(db_app,
 
 @respx.mock
 async def test_a_second_turns_prompt_contains_the_first_turns_reply(db_app):
-    """C1: assemble_context's transcript must include what the tutor said on
-    the previous turn, not just what the learner said — otherwise turn 3 of
+    """C1: the prompt's transcript must include what the tutor said on the
+    previous turn, not just what the learner said — otherwise turn 3 of
     a session has no record of anything the model replied to. This inspects
     the captured respx request body (not our own internal state): reading
     our own persisted rows back would happily pass even if the tutor's
@@ -652,7 +670,7 @@ async def test_a_second_turns_prompt_contains_the_first_turns_reply(db_app):
     # The turn being answered is not history and is not in that block. It is
     # the request, and it goes as its own message — see `split_live_turn`.
     assert "learner: second" not in prompt_text
-    assert _live_text(second_turn_body) == "second"
+    assert _live_text(second_turn_body).endswith("second")
 
 
 @respx.mock
@@ -703,8 +721,9 @@ async def test_a_turn_that_sets_the_workspace_persists_plan_and_exercise(
     assert route.call_count == 3
     second_turn_body = json.loads(route.calls[2].request.content)
     prompt_text = _prompt_text(second_turn_body)
-    assert "EXERCISE CONTEXT" in prompt_text
-    assert "SESSION PLAN" in prompt_text
+    assert "WORKSPACE YOU SET" in prompt_text
+    assert "EXERCISE CONTEXT: Unlike denominators" in prompt_text
+    assert "PROMPT: What is 1/3 + 1/4?" in prompt_text
 
 
 @respx.mock
@@ -731,17 +750,26 @@ async def test_an_unallowed_model_is_rejected_before_any_provider_call(db_app):
     assert route.call_count == 0
 
 
-async def test_an_exception_in_assemble_context_leaves_the_turn_not_running(
-    db_app, db_factory, monkeypatch
+@pytest.mark.parametrize(
+    "assembler", ["open_session_preamble", "assemble_session_context"]
+)
+async def test_an_exception_in_assembling_the_prompt_leaves_the_turn_not_running(
+    db_app, db_factory, monkeypatch, assembler
 ):
-    """C3: assemble_context used to run entirely outside the guarded
+    """C3: assembling the prompt used to run entirely outside the guarded
     generator — an exception there committed the turn as "running" and then
-    500'd with nothing left to catch it, permanently stranding the
-    turn_id."""
+    500'd with nothing left to catch it, permanently stranding the turn_id.
+
+    Both halves of the assembly, because the prompt is no longer built by one
+    call: `open_session_preamble` runs on the turn that opens a session and
+    never again, `assemble_session_context` runs on every turn. A guard that
+    covered only the second would leave the first turn of every session
+    strandable — the same hole, one turn narrower."""
     def _boom(**kwargs):
         raise ValueError("boom")
 
-    monkeypatch.setattr("app.api.turn.assemble_context", _boom)
+    # Both are called with keyword arguments only, so one stub fits either.
+    monkeypatch.setattr(f"app.api.turn.{assembler}", _boom)
 
     payload = _payload()
     async with AsyncClient(
@@ -751,7 +779,7 @@ async def test_an_exception_in_assemble_context_leaves_the_turn_not_running(
             events = await _collect(r)
 
     assert events[-1]["type"] == "error"
-    assert "ValueError" in events[-1]["message"]
+    assert events[-1]["message"] == TURN_FAILED_MESSAGE
 
     async with db_factory() as db:
         turn = await db.get(Turn, uuid.UUID(payload["turn_id"]))
@@ -799,7 +827,7 @@ async def test_a_finish_turn_failure_leaves_the_turn_not_running(db_factory, tmp
         app.dependency_overrides.clear()
 
     assert events[-1]["type"] == "error"
-    assert "RuntimeError" in events[-1]["message"]
+    assert events[-1]["message"] == TURN_FAILED_MESSAGE
 
     async with db_factory() as db:
         turn = await db.get(Turn, uuid.UUID(payload["turn_id"]))
@@ -1045,8 +1073,8 @@ async def test_a_turn_naming_a_valid_attachment_includes_it_in_the_prompt(
     db_app, db_factory, tmp_path
 ):
     """The happy path: an upload that really is on this session becomes a
-    content part the model sees, appended after the board images (pinned by
-    a dedicated test on `assemble_context` itself — this only proves the
+    content part the model sees, appended after the board images (the order
+    itself is `assemble_session_context`'s to keep — this only proves the
     turn handler wires the loaded upload through to the provider call)."""
     from app.attachments.convert import Converted
     from app.attachments.kinds import Kind
@@ -1086,9 +1114,13 @@ async def test_a_turn_naming_a_valid_attachment_includes_it_in_the_prompt(
             await _collect(r)
 
     body = json.loads(route.calls[0].request.content)
-    content = body["input"][1]["content"]
-    texts = [part["text"] for part in content if part.get("type") == "input_text"]
-    assert any("homework.txt" in text and "2 + 2 = ?" in text for text in texts)
+    texts = [
+        part["text"]
+        for item in body["input"]
+        for part in item.get("content", [])
+        if part.get("type") == "input_text"
+    ]
+    assert any("homework.txt" in text and "2 + 2 = ?" in text for text in texts), texts
 
 
 # ---- a refused open, and whose verdict is recorded -------------------------

@@ -15,6 +15,7 @@ import anyio
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from google import genai
+import httpx
 from openai import APIConnectionError, APIError, APIStatusError, AsyncOpenAI
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import Row, select
@@ -36,7 +37,7 @@ from app.memory.retrieve import (
     render_sessions,
 )
 from app.sse import SSE_HEADERS, format_sse
-from app.store.db import db_session, session_factory
+from app.store.db import db_session, note_request_use, session_factory
 from app.store.blobs import LocalBlobStore
 from app.store.models import Attachment, Message, Session, Turn
 from app.store.recorder import Recorder, cache_tokens
@@ -68,6 +69,7 @@ from app.tutor.providers.gemini import GeminiProvider
 from app.tutor.providers.openai import ContainerFileTooLarge, OpenAIProvider
 from app.tutor.rendezvous import BoardRegion
 from app.tutor.retry import RetryDecision, classify
+from app.tutor.web_search import search_web
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +116,17 @@ SCRIPT_OUTPUT_KIND = "script_output"
 CLEANUP_TIMEOUT_SECONDS = 10.0
 
 
+#: How long one OpenAI request may wait on a read, in **seconds**.
+#:
+#: The SDK's own default is 600 s (`DEFAULT_TIMEOUT.read`), which is minutes of
+#: silence inside a learner's turn: `BackendTutorService.streamTimeout` abandons
+#: the stream after 120 s while this server would still believe it is live.
+#: Under httpx a read bound is per-read — the gap between two SSE events, not the
+#: length of the round — so 90 s is generous for a model that thinks before it
+#: writes, and always fires before the device gives up.
+OPENAI_READ_TIMEOUT_SECONDS = 90.0
+
+
 @lru_cache
 def _client() -> AsyncOpenAI:
     """The one provider client, built on first use and then kept.
@@ -130,7 +143,16 @@ def _client() -> AsyncOpenAI:
     the transport would sit through backoff on an exhausted account before
     `classify` ever saw the error. `loop._open_round` is the only retry that may run.
     """
-    return AsyncOpenAI(api_key=get_settings().openai_api_key, max_retries=0)
+    return AsyncOpenAI(
+        api_key=get_settings().openai_api_key,
+        max_retries=0,
+        timeout=httpx.Timeout(
+            connect=5.0,
+            read=OPENAI_READ_TIMEOUT_SECONDS,
+            write=600.0,
+            pool=600.0,
+        ),
+    )
 
 
 #: How long the Gemini transport may wait on one read, in **milliseconds**.
@@ -325,11 +347,11 @@ async def _memory_sections(
     """Everything memory contributes to one turn's context — the standing
     block of the memory redesign, deterministic and fresh on every turn.
 
-    Four rendered blocks plus two bare facts, in the shape `assemble_context`
-    takes them — see `prompt._sections` for where each sits relative to the
-    cache boundary and why. The blocks are rendered by the module that owns
-    the rows, so the tools cannot answer with the same sessions written a
-    second way inside the same prompt.
+    Four rendered blocks plus two bare facts, in the shape
+    `open_session_preamble` takes them — see `prompt._sections` for where each
+    sits relative to the cache boundary and why. The blocks are rendered by the
+    module that owns the rows, so the tools cannot answer with the same
+    sessions written a second way inside the same prompt.
 
     `session_id` is this turn's own session: `backstop_tail` must not stand
     the current conversation in for a "previous window" — the transcript
@@ -524,7 +546,7 @@ class TurnRequest(BaseModel):
     #: The learner's whole board as it currently stands, sent on every turn that
     #: has ink on it — not because they asked for it to be looked at, but so the
     #: tutor *can* look. `image_base64` above is the other thing: a region they
-    #: chose and pointed at. See `assemble_context`.
+    #: chose and pointed at. See `assemble_session_context`.
     #:
     #: A thumbnail, not the board: it is what the model aims with, and anything
     #: it wants to read it asks the device to render. The full-resolution upload
@@ -602,8 +624,17 @@ def get_recorder() -> Recorder:
     endpoint built it from the module-level session_factory(), an overridden
     db_session would not reach it and the recorder would write to whatever
     DATABASE_URL names — which is the branch holding real sessions.
+
+    The stamp is the second half of what `app.memory.jobs._SETTLED_AT` leans
+    on, and it is here rather than only in `db_session` because the two
+    `/realtime/*` routes take this dependency and no other: they reach the
+    database through the recorder, so a stamp that only `db_session` wrote
+    would leave a voice call invisible to the sweep's decision. Nothing writes
+    a `Message` outside a `db_session` request today, so this changes no
+    behaviour — it stops a future route that does from stranding a window.
     """
     settings = get_settings()
+    note_request_use()
     return Recorder(session_factory(), LocalBlobStore(settings.blob_dir))
 
 
@@ -729,9 +760,9 @@ async def _session_messages(
     against 265 ms.
 
     Plain rows also carry their values out of the session that fetched them.
-    `assemble_context` reads `.role` and `.text` long after this returns, and an
-    ORM `Message` from a closed session is detached — a trap for the next
-    reader rather than for this one.
+    `split_live_turn` and `ledger.advance` read `.role` and `.text` long after
+    this returns, and an ORM `Message` from a closed session is detached — a
+    trap for the next reader rather than for this one.
     """
     async with sessions() as db:
         return list((await db.execute(
@@ -891,8 +922,9 @@ async def create_turn(
         await db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "This turn was already handled.")
 
-    # assemble_context reads only .role and .text, so the pending learner turn
-    # joins the history as a plain record rather than a premature ORM object.
+    # split_live_turn and ledger.advance read only .role and .text, so the
+    # pending learner turn joins the history as a plain record rather than a
+    # premature ORM object.
     # It joins it at the end, and being last is what makes it the turn rather
     # than more history: `context.split_live_turn` takes the trailing learner
     # message back off and sends it as its own message, so the request is asked
@@ -974,7 +1006,7 @@ async def create_turn(
                 # answering and something cut it off".
                 "provider_events": len(result.raw_events) if result is not None else 0,
             }
-        # Always defined, even if assemble_context itself never runs: an
+        # Always defined, even if the prompt is never assembled at all: an
         # except clause (or the finally guard) reached before the first
         # model round must still have something to hand to fail_turn/
         # finish_turn rather than raising NameError on top of the original
@@ -1172,7 +1204,7 @@ async def create_turn(
         # regardless of which of those raised, or whether nothing raised at
         # all and the client simply disconnected. A per-branch try/except
         # was tried here twice before and left new holes each time:
-        # assemble_context used to run entirely outside this generator
+        # assembling the prompt used to run entirely outside this generator
         # (nothing caught it), recorder.finish_turn used to run after the
         # try/except ended (nothing caught it either), and a client
         # disconnect throws asyncio.CancelledError, a BaseException that
@@ -1191,11 +1223,12 @@ async def create_turn(
             # not one of them is upstream of another.
             #
             # Both writes are *only for the record*. The bytes are already in
-            # memory and reach the model through `assemble_context` below, so
-            # nothing in the prompt waits on a row landing. `board_changed` is
-            # the one thing that ever reads a BOARD_KIND row back, and it read
-            # the *previous* turn's row in the prologue — this turn's write
-            # cannot race its own comparison. The memory read touches neither.
+            # memory and reach the model through `assemble_session_context`
+            # below, so nothing in the prompt waits on a row landing.
+            # `board_changed` is the one thing that ever reads a BOARD_KIND row
+            # back, and it read the *previous* turn's row in the prologue —
+            # this turn's write cannot race its own comparison. The memory read
+            # touches neither.
             #
             # Serially these were about 7.1 s on the measured link: a write
             # session is six round trips at 262 ms, and the memory read is six
@@ -1205,7 +1238,7 @@ async def create_turn(
             # Still inside the guard, not before the stream opens. A failure in
             # any of them has to fail the turn visibly rather than raise past
             # `create_turn` and leave the row at status="running" forever — the
-            # same hole `assemble_context` itself was moved in here to close.
+            # same hole assembling the prompt was moved in here to close.
             # `_all_of` re-raises inside this `try`, from the same position
             # these awaits already raised from, so every existing `except`
             # below sees exactly what it saw before.
@@ -1297,6 +1330,7 @@ async def create_turn(
                     _memory_sessions, learner_id=SOLE_LEARNER_ID,
                     turn_id=body.turn_id, session_id=session.id,
                 ),
+                handle_web_search=search_web,
             ):
                 result = running
                 if ttft_ms is None and event.type == "text_delta":

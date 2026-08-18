@@ -125,8 +125,8 @@ HOSTED_PHASES: dict[str, str] = {
 #:
 #: Carried across rather than dropped, and it is not cosmetic. The board overview
 #: rides on every turn at `detail: "low"` precisely so a thumbnail is not billed
-#: at reading resolution — see `assemble_context`. Dropped here, that saving
-#: would silently disappear on this family only.
+#: at reading resolution — see `assemble_session_context`. Dropped here, that
+#: saving would silently disappear on this family only.
 #:
 #: `original` maps to `high` rather than to `ultra_high`. What `original` means on
 #: the other side is "do not downsample this", and the pictures that carry it are
@@ -1255,8 +1255,8 @@ def _split_system(outbox: list[dict]) -> tuple[str, list[dict]]:
     and every remaining item is translated into this API's own vocabulary.
 
     Joined with a blank line if there were somehow two system items.
-    `assemble_context` builds exactly one, but silently keeping the last of them
-    would be a prompt half of which vanished.
+    `assemble_session_context` builds exactly one, but silently keeping the last
+    of them would be a prompt half of which vanished.
     """
     instructions: list[str] = []
     items: list[dict] = []
@@ -1293,14 +1293,14 @@ def _input_item(item: dict) -> dict:
     built itself — a `function_result`, a `user_input` — already carry a `type`
     from this API's vocabulary and pass through untouched, which is what lets a
     later round's outbox mix the answers to a run of calls with the pictures those
-    answers wanted to show. The items `assemble_context` built are in the
+    answers wanted to show. The items `assemble_session_context` built are in the
     Responses API's vocabulary, roles and `input_text` and all, because that is
     the one prompt builder both families share; those are translated.
 
     A role other than `system` becomes `user_input`. The only one
-    `assemble_context` ever writes is `user`, and a model turn is never resent —
-    `previous_interaction_id` carries the model's own side, which is the whole
-    reason later rounds send tool results and nothing else.
+    `assemble_session_context` ever writes is `user`, and a model turn is never
+    resent — `previous_interaction_id` carries the model's own side, which is
+    the whole reason later rounds send tool results and nothing else.
     """
     if item.get("type") is not None:
         return item

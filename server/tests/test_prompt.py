@@ -23,10 +23,14 @@ def test_system_prompt_is_the_unchanged_experimental_draft():
         # 2026-08-16, later: the fetch-image investigation's three lessons —
         # RESEARCH now says there is no image-search tool (web_search finds
         # URLs, fetch_image downloads one), prefers source sites over clipart,
-        # and warns that the white board swallows pale images, with a
-        # one-retry-then-draw budget.
-        "634d525cc82689c69146572a78b3d714624e0eed394200f602bb8eb660c5bae7"
-    )
+            # and warns that the white board swallows pale images, with a
+            # one-retry-then-draw budget.
+            #
+            # 2026-08-17: app-owned search — a result only counts as research
+            # when it returns concrete source URLs; unusable searches must not
+            # be described to the learner as successful research.
+            "055de5e6d06471d20bb8e7b3a95f2640d6009027653c1d5846c962603567d632"
+        )
 
 
 def test_system_prompt_keeps_the_three_draft_merge_additions():

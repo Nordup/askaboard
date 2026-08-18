@@ -49,7 +49,7 @@ from app.memory.consolidate import consolidate
 from app.memory.embed import embed_texts
 from app.memory.extract import extract_atoms
 from app.memory.profile import rebuild_profile
-from app.store.db import session_factory
+from app.store.db import last_request_use, session_factory
 from app.store.models import Episode, Message, Session, Turn
 
 log = logging.getLogger(__name__)
@@ -228,6 +228,64 @@ _TASKS: set[asyncio.Task] = set()
 #: staleness sweep records them the slow way. The set is an optimization on
 #: latency, never the thing correctness leans on.
 _PENDING_CLOSES: set[uuid.UUID] = set()
+
+#: When a sweep pass last proved there is nothing left to do, or None if no
+#: pass has proved it since the last thing happened. A tick that finds this
+#: set, and no request newer than it, skips the database entirely.
+#:
+#: This is what lets a serverless database sleep. Neon suspends a compute after
+#: 300 s without a *query* — an idle connection does not hold it up, measured:
+#: one held open with no traffic was dropped and the compute suspended 314 s
+#: after its last SELECT — and `SWEEP_INTERVAL` is exactly 300 s. So a loop
+#: that runs its three SELECTs on every tick, with or without anything to find,
+#: resets that timer forever. Measured over the project's first nine days the
+#: compute was awake 11.4 hours a day against perhaps an hour of tutoring, and
+#: through the night the only client it had was this loop.
+#:
+#: Skipping cannot lose work. A pass settles only when it found nothing *and*
+#: the last request is older than `STALE_AFTER`, so no session it did not
+#: already consider can still turn stale; a pass that recorded, extracted or
+#: backfilled anything returns a non-zero count and does not settle, which
+#: means `run_extraction_backlog` has necessarily drained before the loop goes
+#: quiet. `_PENDING_CLOSES` is checked in memory and outranks all of it. What
+#: stops is the polling of a database that has nothing in it — not any promise
+#: this file makes about abandonment or recovery.
+_SETTLED_AT: datetime | None = None
+
+
+def _sweep_can_find_work() -> bool:
+    """Whether a pass could find anything, decided without asking the database.
+
+    Conservative in the one direction that matters: every answer of True costs
+    three SELECTs, and every wrong answer of False would cost an episode. A
+    declined close is work by definition, an unsettled loop has not yet proved
+    the database empty, and a request since the settling pass may have written
+    the messages that pass never saw.
+    """
+    if _PENDING_CLOSES:
+        return True
+    if _SETTLED_AT is None:
+        return True
+    last = last_request_use()
+    return last is not None and last > _SETTLED_AT
+
+
+def _settle_sweep(counts: tuple[int, int, int], now: datetime) -> None:
+    """Record whether the pass that just ran proved the database quiet.
+
+    `now` is deliberately the stamp taken *before* the pass rather than after:
+    a request that arrives while the pass is running is then newer than the
+    settling time and re-arms the next tick, instead of being swallowed by a
+    pass that had already read past it.
+    """
+    global _SETTLED_AT
+    last = last_request_use()
+    if any(counts):
+        _SETTLED_AT = None
+    elif last is None or now - last > STALE_AFTER:
+        _SETTLED_AT = now
+    else:
+        _SETTLED_AT = None
 
 #: One drain at a time, per event loop.
 #:
@@ -988,17 +1046,25 @@ async def run_periodic_sweep(
     One failed iteration must not stop the loop: the next tick retries the
     same work, which is exactly how a transient provider or database failure
     is supposed to behave. Cancellation is the one thing that ends it.
+
+    A tick only reaches the database when `_sweep_can_find_work` says a pass
+    could find something. The loop keeps ticking either way — it is the queries
+    that stop, not the timer — because a database nobody queries is a database
+    a serverless provider is free to suspend. See `_SETTLED_AT`.
     """
     while True:
         try:
-            swept, extracted, backfilled = await run_sweep_and_drain(
-                db_factory=db_factory
-            )
-            if swept or extracted or backfilled:
-                log.info(
-                    "periodic memory sweep | swept=%d extracted=%d backfilled=%d",
-                    swept, extracted, backfilled,
+            now = datetime.now(timezone.utc)
+            if _sweep_can_find_work():
+                swept, extracted, backfilled = await run_sweep_and_drain(
+                    db_factory=db_factory
                 )
+                if swept or extracted or backfilled:
+                    log.info(
+                        "periodic memory sweep | swept=%d extracted=%d backfilled=%d",
+                        swept, extracted, backfilled,
+                    )
+                _settle_sweep((swept, extracted, backfilled), now)
         except asyncio.CancelledError:
             raise
         except Exception:

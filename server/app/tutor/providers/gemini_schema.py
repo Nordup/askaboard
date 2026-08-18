@@ -31,9 +31,10 @@ GEMINI_SUPPORTED_KEYWORDS: frozenset[str] = frozenset({
     "properties", "items", "enum", "anyOf",
 })
 
-#: What each OpenAI hosted tool is called on the other side.
+#: What each remaining OpenAI hosted tool is called on the other side.
+#: Web search is an app-owned function tool, so it must survive as a function
+#: declaration and be executed by the server identically for both providers.
 _HOSTED_TOOLS: dict[str, dict] = {
-    "web_search": {"type": "google_search"},
     "code_interpreter": {"type": "code_execution"},
 }
 
@@ -103,9 +104,9 @@ def _strip(node: Any) -> Any:
     discriminator on `update_board`'s element union. Dropped, the arms become
     indistinguishable and the union stops parsing.
 
-    Fourteen arms as this is written — `text`, `line`, `arrow`,
+    Thirteen arms as this is written — `text`, `line`, `arrow`,
     `rectangle`/`ellipse`, `circle`, `polygon`, `polyline`/`freehand`, `arc`,
-    `angle_marker`, `path`, `math_text`, `ink_text`, `image`, `svg` — and two of
+    `angle_marker`, `path`, `math_text`, `ink_text`, `image` — and two of
     them carry a short `enum` rather than a `const`, because kinds with identical
     field sets share one arm. So this rewrite has to leave an existing `enum`
     alone as well as convert a `const`; `tests/test_gemini_schema.py` asserts the

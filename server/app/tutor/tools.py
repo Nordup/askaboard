@@ -1,6 +1,8 @@
 from app.learner.mastery import RELIABILITY
 from app.memory.schema import MemoryCategory
 from app.tutor.board_scene import (
+    MAX_DELETES_PER_UPDATE,
+    MAX_ELEMENTS_PER_UPDATE,
     MAX_INK_TEXT_CHARS,
     MAX_LATEX_CHARS,
     MAX_PATH_CHARS,
@@ -86,6 +88,29 @@ VIEW_BOARD_TOOL: dict = {
             },
         },
         "required": ["x", "y", "width", "height"],
+    },
+}
+
+
+WEB_SEARCH_TOOL: dict = {
+    "type": "function",
+    "name": "web_search",
+    "description": (
+        "Search the current public web when the answer needs recent, changing, "
+        "or externally verifiable information. Returns grounded evidence and "
+        "concrete source URLs that the learner can open."
+    ),
+    "strict": True,
+    "parameters": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "A focused standalone web search query.",
+            },
+        },
+        "required": ["query"],
     },
 }
 
@@ -263,7 +288,12 @@ UPDATE_BOARD_TOOL: dict = {
         "beside the relevant work. Inspect the board with view_board before grading, "
         "correcting, or placing content relative to learner writing; a requested "
         "standalone exercise or diagram may be drawn on an empty board without that "
-        "look, and do not draw gratuitously for simple conversational answers."
+        "look, and do not draw gratuitously for simple conversational answers. "
+        "Use this for object-level edits whose separate elements need stable ids. "
+        "For a standalone exercise or coherent diagram, call `draw_board_svg` instead. "
+        "Build the complete edit in ONE call; no second mutation is available in the "
+        "turn. Never fake text, labels or equations with rectangles; rectangles are "
+        "visible boxes only. Then reply in prose."
     ),
     "strict": True,
     "parameters": {
@@ -281,12 +311,12 @@ UPDATE_BOARD_TOOL: dict = {
             },
             "delete_ids": {
                 "type": "array",
-                "maxItems": 200,
+                "maxItems": MAX_DELETES_PER_UPDATE,
                 "items": {"type": "string"},
             },
             "elements": {
                 "type": "array",
-                "maxItems": 200,
+                "maxItems": MAX_ELEMENTS_PER_UPDATE,
                 "items": {
                     "anyOf": [
                         _board_element(
@@ -489,7 +519,7 @@ UPDATE_BOARD_TOOL: dict = {
                                     # a description written in the register it
                                     # is asking the model *not* to use teaches
                                     # the opposite of what it says.
-                                    "description": "The words to write, drawn on the device as handwriting-look ink in your own hand; newlines make lines. Prose only, and every piece of notation still goes in `math_text`. Write it as plain text: em and en dashes, curly quotes and ellipses are normalised to their ASCII equivalents, and anything with no glyph to draw, such as emoji or a non-Latin script, comes out as a placeholder. Your writing looks handwritten in a board capture too, so when you read the board back, the learner's work is the writing you did not put there: every piece you did is listed, by id, in the scene you were given, plus whatever you have written this turn.",
+                                    "description": "The words to write, drawn on the device as handwriting-look ink in your own hand; newlines make lines. Prose only, and every piece of notation still goes in `math_text`. Write it as plain text: em and en dashes, curly quotes and ellipses are normalised to their ASCII equivalents, and a non-Latin script has no glyph to draw and comes out as a placeholder. An emoji is not a placeholder: it draws as itself, in full colour, standing as tall as the writing around it, so a star beside a good step or a warning sign beside a trap is yours to use. Your writing looks handwritten in a board capture too, so when you read the board back, the learner's work is the writing you did not put there: every piece you did is listed, by id, in the scene you were given, plus whatever you have written this turn.",
                                 },
                                 "size": {"type": "number", "minimum": 8, "maximum": 256, "description": "Cap height: how tall one line of the writing stands."},
                             },
@@ -561,6 +591,43 @@ UPDATE_BOARD_TOOL: dict = {
                         ),
                     ]
                 },
+            },
+        },
+        "required": ["mode", "delete_ids", "elements"],
+    },
+}
+
+# A coherent document gets its own tool instead of asking a structured decoder
+# to choose the sixteenth arm of a large semantic union. The server still parses
+# legacy `update_board` calls carrying SVG; only the offered schema is split.
+_board_arms = UPDATE_BOARD_TOOL["parameters"]["properties"]["elements"]["items"]["anyOf"]
+_svg_arm_index = next(
+    index for index, arm in enumerate(_board_arms)
+    if arm["properties"]["kind"].get("const") == "svg"
+)
+_svg_arm = _board_arms.pop(_svg_arm_index)
+
+DRAW_BOARD_SVG_TOOL: dict = {
+    "type": "function",
+    "name": "draw_board_svg",
+    "description": (
+        "Draw one complete standalone exercise or coherent diagram on the board. "
+        "Use exactly one SVG document containing every visible word, equation, shape, "
+        "and illustration. This is the required board tool for a newly created "
+        "exercise. The call replaces the tutor scene and is the only board mutation "
+        "available in the turn; after it, reply in prose."
+    ),
+    "strict": True,
+    "parameters": {
+        "type": "object",
+        "additionalProperties": False,
+        "$defs": _BOARD_DEFS,
+        "properties": {
+            "mode": {"type": "string", "const": "replace_all"},
+            "delete_ids": {"type": "array", "maxItems": 0, "items": {"type": "string"}},
+            "elements": {
+                "type": "array", "minItems": 1, "maxItems": 1,
+                "items": _svg_arm,
             },
         },
         "required": ["mode", "delete_ids", "elements"],
@@ -987,12 +1054,9 @@ MEMORY_TOOLS: frozenset[str] = frozenset(
 # on the next re-bills the entire prompt prefix every time the set changes.
 # `loop._answer` is where a tool the turn cannot serve is turned down.
 #
-# A hosted tool is a type and nothing else of ours: the provider owns its name,
-# its schema and its execution, so no call of it ever reaches `loop._answer` and
-# nothing here describes it. `web_search` reports itself through
-# `response.web_search_call.*`, which `events` already reads as the searching
-# phase. Anything walking this list for a `name` or a `description` must first
-# say it means the function tools — the entries carrying `"type": "function"`.
+# Web search is deliberately a function tool here. The answering model can be
+# OpenAI or Gemini; the server executes the same focused hosted-search
+# subrequest and returns the same source evidence to either family.
 #
 # `code_interpreter` carries one key beyond its type, and it is configuration
 # rather than schema. `{"type": "auto"}` tells the provider to create and own a
@@ -1007,8 +1071,9 @@ MEMORY_TOOLS: frozenset[str] = frozenset(
 # `providers.openai._container_citations` is what finds those files, and
 # `loop.FileRelay` is what keeps them.
 TOOL_DEFINITIONS: list[dict] = [
-    SET_WORKSPACE_TOOL, VIEW_BOARD_TOOL, UPDATE_BOARD_TOOL, FETCH_IMAGE_TOOL,
+    SET_WORKSPACE_TOOL, VIEW_BOARD_TOOL, DRAW_BOARD_SVG_TOOL, UPDATE_BOARD_TOOL,
+    FETCH_IMAGE_TOOL,
     *MEMORY_TOOL_DEFINITIONS,
-    {"type": "web_search"},
+    WEB_SEARCH_TOOL,
     {"type": "code_interpreter", "container": {"type": "auto"}},
 ]

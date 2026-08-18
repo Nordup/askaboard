@@ -767,8 +767,9 @@ async def test_remember_saves_explicitly_even_when_the_fact_is_an_inference(
     notes = await explicit_notes(db, SOLE_LEARNER_ID)
     assert [note.text for note in notes] == \
         ["Seems to prefer deriving results before using them."]
-    assert notes[0].explicit is True
-    assert notes[0].stated is False
+    stored = (await db.execute(select(MemoryAtom))).scalar_one()
+    assert stored.explicit is True
+    assert stored.stated is False
 
 
 @requires_db

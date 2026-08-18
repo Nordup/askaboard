@@ -89,7 +89,10 @@ from app.memory.retrieve import recent_episodes, render_sessions  # noqa: E402
 from app.store.models import (  # noqa: E402
     Base, Episode, Learner, MemoryAtom, Message, Session,
 )
-from app.tutor.context import assemble_context  # noqa: E402
+from app.tutor import ledger  # noqa: E402
+from app.tutor.context import (  # noqa: E402
+    assemble_session_context, open_session_preamble, split_live_turn,
+)
 from app.tutor.loop import run_turn  # noqa: E402
 from app.tutor.providers.openai import OpenAIProvider  # noqa: E402
 
@@ -602,10 +605,11 @@ async def ask(
     """Put the question to the tutor the way `/v1/turn` would.
 
     Everything below the HTTP layer is the real thing: `_memory_sections` reads
-    the store the endpoint reads, `assemble_context` builds the prompt the
-    endpoint builds, and `run_turn` streams with the four memory tools bound
-    through `memory_handler`. What is skipped is auth, SSE framing, the board
-    and the recorder — none of which memory passes through.
+    the store the endpoint reads, `open_session_preamble` and
+    `assemble_session_context` build the prompt the endpoint builds, and
+    `run_turn` streams with the four memory tools bound through
+    `memory_handler`. What is skipped is auth, SSE framing, the board and the
+    recorder — none of which memory passes through.
 
     The tool names are traced because they are the difference between a tutor
     that answered from the injected portrait and one that went and looked, and
@@ -623,10 +627,32 @@ async def ask(
             select(Message).where(Message.session_id == session_id)
             .order_by(Message.seq)
         )).scalars().all())
-        sections = await _memory_sections(db)
-        bundle = assemble_context(
-            session=session, messages=messages, image_data=None,
-            image_region=None, signal=None, goal=None, **sections,
+        # The maker, not this session: `_memory_sections` fans its five reads
+        # out over independent sessions, so it calls what it is given. Handing
+        # it `db` raised `'AsyncSession' object is not callable` on the first
+        # probe of every run.
+        sections = await _memory_sections(store.factory)
+        # The endpoint's own two steps, in the endpoint's own order: the head
+        # is built once per session, the log is advanced by this turn's entry,
+        # and the live turn is split back out so it arrives as the request
+        # rather than as the last line of its own transcript. A probe session
+        # is one turn long, so the head is always built here and the log always
+        # starts empty — but building it the same way is the point, because a
+        # probe that assembled its own prompt would be measuring a prompt no
+        # learner ever gets.
+        history, live_turn = split_live_turn(messages)
+        preamble = open_session_preamble(
+            goal=None, exercise=session.exercise, plan=session.plan,
+            board_overview=None, board_scene=None, **sections,
+        )
+        log = ledger.advance(
+            ledger.LogState.from_json(session.prompt_log),
+            messages=history,
+            entry=ledger.turn_entry(1),
+        )
+        bundle = assemble_session_context(
+            preamble=preamble, log=log, live_turn=live_turn,
+            image_data=None, board_overview=None, uploads=[],
         )
 
     called: list[str] = []

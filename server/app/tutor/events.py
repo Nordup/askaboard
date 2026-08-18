@@ -120,6 +120,22 @@ class BoardRequestEvent(BaseModel):
     detail: str
 
 
+class SearchSourceModel(BaseModel):
+    id: str
+    title: str
+    url: str
+    snippet: str | None = None
+
+
+class SearchSourcesEvent(BaseModel):
+    """Concrete web evidence for a source card in the learner's thread."""
+
+    type: Literal["search_sources"] = "search_sources"
+    search_id: str
+    query: str
+    sources: list[SearchSourceModel]
+
+
 class StepEvent(BaseModel):
     """One thing the tutor did, as a row in the device's activity trail.
 
@@ -188,7 +204,8 @@ class ErrorEvent(BaseModel):
 
 ClientEvent = Annotated[
     StatusEvent | ReasoningDeltaEvent | TextDeltaEvent | WorkspaceEvent
-    | BoardUpdateEvent | BoardRequestEvent | StepEvent | DoneEvent | ErrorEvent,
+    | BoardUpdateEvent | BoardRequestEvent | SearchSourcesEvent | StepEvent
+    | DoneEvent | ErrorEvent,
     Field(discriminator="type"),
 ]
 
@@ -236,6 +253,7 @@ TOOL_PHASES: dict[str, PhaseName] = {
     # awaited inside the tool round, and for its whole length no provider event
     # reaches this translator, so the heartbeat below cannot fire.
     "fetch_image": "searching",
+    "web_search": "searching",
     "search_memory": "searching",
     "search_sessions": "searching",
     "search_history": "searching",
@@ -270,6 +288,7 @@ TOOL_STEP_LABELS: dict[str, str] = {
     "view_board": "Looking at the board",
     "set_workspace": "Making a plan",
     "fetch_image": "Fetching image",
+    "web_search": "Searching the web",
     "search_memory": "Searching memory",
     "search_sessions": "Searching past sessions",
     "search_history": "Searching past conversations",
@@ -469,7 +488,7 @@ class EventTranslator:
             produced: list[ClientEvent] = []
             if name == "set_workspace":
                 produced.extend(self._workspace_from(raw_arguments))
-            elif name == "update_board":
+            elif name in {"draw_board_svg", "update_board"}:
                 produced.extend(self._board_update_from(raw_arguments))
             # After the tool's own event, not before: the board must change on
             # the device before a row claims it did.
@@ -571,7 +590,7 @@ class EventTranslator:
             title = (arguments.get("plan") or {}).get("title")
             return f"Set the plan: {title}" if title else None
 
-        if name == "update_board":
+        if name in {"draw_board_svg", "update_board"}:
             update, _ = parse_board_update(raw_arguments)
             if update is None:
                 return None

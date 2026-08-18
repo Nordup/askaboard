@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta, timezone
 import pytest
 from sqlalchemy import func as sa_func, select
 
+import app.memory.jobs as jobs
 from app.config import EMBEDDING_DIMS, SOLE_LEARNER_ID
 from app.memory.jobs import (
     _PENDING_CLOSES, STALE_AFTER, SWEEP_INTERVAL, TURN_ASSUMED_DEAD_AFTER,
@@ -142,10 +143,17 @@ def _install(monkeypatch, *, summarize=None, extract=None, consolidate=None,
 def _no_pending_closes():
     """`_PENDING_CLOSES` is module state; a test must neither inherit nor
     leak one — the mid-turn decline test below parks its session there, and a
-    later test's sweep should not have to reason about the leftover."""
+    later test's sweep should not have to reason about the leftover.
+
+    `_SETTLED_AT` is module state for the same reason and needs the same
+    treatment: a test that leaves the sweep settled would make the next one's
+    first tick skip the database, and it would fail describing a sweep that
+    never ran rather than the behaviour it meant to check."""
     _PENDING_CLOSES.clear()
+    jobs._SETTLED_AT = None
     yield
     _PENDING_CLOSES.clear()
+    jobs._SETTLED_AT = None
 
 
 async def _session_with(db_factory, turns: list[tuple[str, str]], *,
@@ -693,7 +701,16 @@ async def test_the_periodic_sweep_runs_until_cancelled(monkeypatch):
     (`server/app/main.py` cancels the task and suppresses the error), and that
     is what proves the loop is cancellable rather than a task that must be
     killed with the process.
+
+    The request stamp is held inside `STALE_AFTER` for the whole test, which is
+    what keeps both ticks reaching the database: a learner who stopped typing
+    two minutes ago may still fall quiet long enough to sweep, so the loop may
+    not settle yet. The tick that *is* allowed to skip has its own test below.
     """
+    monkeypatch.setattr(
+        "app.memory.jobs.last_request_use",
+        lambda: datetime.now(timezone.utc) - timedelta(minutes=2),
+    )
     sweeps = []
     extracts = []
     backfills = []
@@ -730,6 +747,143 @@ async def test_the_periodic_sweep_runs_until_cancelled(monkeypatch):
     assert extracts == ["extract", "extract"]
     # The backfill rides the same tick, after the fresh work.
     assert backfills == ["backfill", "backfill"]
+
+
+def _counting_passes(monkeypatch) -> list[str]:
+    """Stub the three passes to record their calls and find nothing.
+
+    Finding nothing is the condition under test everywhere below: it is what
+    lets a tick settle, and a pass that returned work would keep the loop
+    reaching for the database whatever the timestamps said.
+    """
+    calls: list[str] = []
+
+    async def fake_sweep(*, db_factory=None):
+        calls.append("sweep")
+        return 0
+
+    async def fake_extract(*, db_factory=None):
+        return 0
+
+    async def fake_backfill(*, db_factory=None, limit=None):
+        return 0
+
+    monkeypatch.setattr("app.memory.jobs.sweep_abandoned_sessions", fake_sweep)
+    monkeypatch.setattr("app.memory.jobs.run_extraction_backlog", fake_extract)
+    monkeypatch.setattr("app.memory.jobs.run_summary_backfill", fake_backfill)
+    return calls
+
+
+def _run_n_ticks(monkeypatch, n: int) -> None:
+    """Make `asyncio.sleep` end the loop after `n` ticks, without waiting."""
+    ticks = []
+
+    async def fake_sleep(_seconds):
+        ticks.append(1)
+        if len(ticks) == n:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr("app.memory.jobs.asyncio.sleep", fake_sleep)
+
+
+async def test_a_quiet_database_stops_being_queried_at_all(monkeypatch):
+    """An idle service must let a serverless compute suspend.
+
+    This is a cost test with a correctness proof attached. Neon suspends a
+    compute after 300 s without a query, and `SWEEP_INTERVAL` is 300 s, so a
+    loop that queried on every tick held the database awake around the clock —
+    11.4 hours a day, measured, against perhaps an hour of tutoring. Once a
+    pass has found nothing and the last request is older than `STALE_AFTER`,
+    nothing the pass did not already consider can turn stale, so every later
+    tick must skip the database entirely rather than prove the same emptiness
+    again.
+
+    The loop itself keeps ticking. It is the queries that stop.
+    """
+    calls = _counting_passes(monkeypatch)
+    monkeypatch.setattr(
+        "app.memory.jobs.last_request_use",
+        lambda: datetime.now(timezone.utc) - (STALE_AFTER + timedelta(minutes=1)),
+    )
+    _run_n_ticks(monkeypatch, 4)
+
+    with pytest.raises(asyncio.CancelledError):
+        await run_periodic_sweep(interval=timedelta(seconds=1))
+
+    assert calls == ["sweep"], "the first tick settles; the other three must not query"
+
+
+async def test_a_session_still_short_of_staleness_keeps_the_sweep_awake(monkeypatch):
+    """The guarantee this must not trade away.
+
+    A learner who put the iPad down two minutes ago has a session that becomes
+    sweepable `STALE_AFTER` from now, and no request will arrive to say so.
+    A tick may only settle once the last request is older than that threshold,
+    so here every tick still runs — the saving is not allowed to arrive by
+    forgetting a session that has not yet gone quiet for long enough.
+    """
+    calls = _counting_passes(monkeypatch)
+    monkeypatch.setattr(
+        "app.memory.jobs.last_request_use",
+        lambda: datetime.now(timezone.utc) - timedelta(minutes=2),
+    )
+    _run_n_ticks(monkeypatch, 3)
+
+    with pytest.raises(asyncio.CancelledError):
+        await run_periodic_sweep(interval=timedelta(seconds=1))
+
+    assert calls == ["sweep", "sweep", "sweep"]
+
+
+async def test_a_request_wakes_a_settled_sweep(monkeypatch):
+    """A learner coming back re-arms the loop, without the loop having to poll.
+
+    `db_session` stamps every request, so the tick after one has something new
+    to look at and says so from memory. Without this the saving would be a
+    one-way door: the first quiet evening would stop the sweep for the life of
+    the process, and the next session's window would wait for a restart.
+    """
+    calls = _counting_passes(monkeypatch)
+    stamp = datetime.now(timezone.utc) - (STALE_AFTER + timedelta(minutes=1))
+    monkeypatch.setattr("app.memory.jobs.last_request_use", lambda: stamp)
+
+    async def fake_sleep_then_request(_seconds):
+        # A request lands during the second sleep: the third tick must query.
+        nonlocal stamp
+        calls.append("tick")
+        if calls.count("tick") == 2:
+            stamp = datetime.now(timezone.utc)
+        if calls.count("tick") == 3:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr("app.memory.jobs.asyncio.sleep", fake_sleep_then_request)
+
+    with pytest.raises(asyncio.CancelledError):
+        await run_periodic_sweep(interval=timedelta(seconds=1))
+
+    assert calls == ["sweep", "tick", "tick", "sweep", "tick"]
+
+
+async def test_a_declined_close_outranks_a_settled_sweep(monkeypatch):
+    """A parked close is work by definition, whatever the timestamps say.
+
+    `_PENDING_CLOSES` holds sessions the device explicitly left while a turn
+    was still running, and `sweep_abandoned_sessions` retries them with no
+    staleness gate. That promise is in memory, so the skip must consult it
+    before it consults the clock.
+    """
+    calls = _counting_passes(monkeypatch)
+    monkeypatch.setattr(
+        "app.memory.jobs.last_request_use",
+        lambda: datetime.now(timezone.utc) - (STALE_AFTER + timedelta(minutes=1)),
+    )
+    _PENDING_CLOSES.add(uuid.uuid4())
+    _run_n_ticks(monkeypatch, 3)
+
+    with pytest.raises(asyncio.CancelledError):
+        await run_periodic_sweep(interval=timedelta(seconds=1))
+
+    assert calls == ["sweep", "sweep", "sweep"]
 
 
 async def test_the_periodic_sweep_survives_a_failed_iteration(monkeypatch, caplog):

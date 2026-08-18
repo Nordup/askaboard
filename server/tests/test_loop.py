@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import copy
 import json
 import logging
 import mimetypes
@@ -15,15 +16,17 @@ from app.tutor.fetch_image import ALLOWED_CONTENT_TYPES, MAX_IMAGE_BYTES
 
 from app.tutor.context import ContextBundle
 from app.tutor.events import (
-    TURN_FAILED_MESSAGE, BoardUpdateEvent, ReasoningDeltaEvent, StatusEvent,
-    TextDeltaEvent, WorkspaceEvent,
+    TURN_FAILED_MESSAGE, BoardUpdateEvent, ReasoningDeltaEvent,
+    SearchSourcesEvent, StatusEvent, TextDeltaEvent, WorkspaceEvent,
 )
 from app.tutor.retry import FALLBACK_RETRY_DELAY, RETRY_LIMIT
+from app.tutor.web_search import SearchEvidence, SearchSource
 from app.tutor.loop import (
     FETCH_BUDGET_ACK,
     FETCH_TIMEOUT_ACK,
     FETCHED_IMAGE_CAPTION,
     MALFORMED_BOARD_ACK,
+    MAX_BOARD_UPDATE_CALLS,
     MAX_TOOL_ROUNDS,
     UNSUPPORTED_TOOL_ACK,
     UPDATE_BOARD_ACK,
@@ -55,6 +58,7 @@ from app.tutor.providers.openai import (
 )
 from tests.fixtures.interactions import FAILED_INTERACTION
 from tests.fixtures.sse import (
+    BOARD_UPDATE_ARGUMENTS,
     BOARD_UPDATE_FOLLOW_UP,
     BOARD_UPDATE_TURN,
     CODE_INTERPRETER_FOLLOW_UP,
@@ -163,12 +167,14 @@ async def test_the_request_body_carries_every_tool_and_stores_the_response():
     # A hosted tool has no name of ours — the provider owns its schema and runs
     # it — so it is identified on the wire by its type alone.
     assert [tool.get("name", tool.get("type")) for tool in body["tools"]] == [
-        "set_workspace", "view_board", "update_board", "fetch_image",
+        "set_workspace", "view_board", "draw_board_svg", "update_board", "fetch_image",
         "remember", "forget", "search_memory", "search_sessions",
         "search_history", "get_session", "list_sessions", "record_evidence",
         "web_search", "code_interpreter",
     ]
-    assert body["tools"][-2] == {"type": "web_search"}
+    assert body["tools"][-2]["type"] == "function"
+    assert body["tools"][-2]["name"] == "web_search"
+    assert body["tools"][-2]["parameters"]["required"] == ["query"]
     assert body["tools"][-1] == {
         "type": "code_interpreter", "container": {"type": "auto"}
     }
@@ -221,6 +227,64 @@ async def test_a_tool_call_turn_yields_a_workspace_event():
     assert result.workspace is not None
     assert result.workspace["plan"]["title"] == WORKSPACE_ARGUMENTS["plan"]["title"]
     assert result.workspace["exercise"]["prompt"] == WORKSPACE_ARGUMENTS["exercise"]["prompt"]
+
+
+@respx.mock
+async def test_web_search_emits_concrete_sources_and_answers_the_call():
+    arguments = json.dumps({"query": "current quadratic formula history"})
+    search_turn = (
+        {"type": "response.created", "sequence_number": 0,
+         "response": {"id": "resp_search"}},
+        {"type": "response.output_item.added", "sequence_number": 1,
+         "output_index": 0, "item": {
+             "type": "function_call", "id": "fc_search",
+             "call_id": "call_search", "name": "web_search", "arguments": "",
+         }},
+        {"type": "response.function_call_arguments.done", "sequence_number": 2,
+         "output_index": 0, "item_id": "fc_search", "name": "web_search",
+         "arguments": arguments},
+        {"type": "response.completed", "sequence_number": 3, "response": {
+            "id": "resp_search", "usage": {"input_tokens": 30, "output_tokens": 8},
+            "output": [{"type": "function_call", "id": "fc_search",
+                        "call_id": "call_search", "name": "web_search",
+                        "arguments": arguments, "status": "completed"}],
+        }},
+    )
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*search_turn)),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*TOOL_CALL_FOLLOW_UP)),
+        ]
+    )
+
+    async def search(query: str) -> SearchEvidence:
+        return SearchEvidence(query=query, summary="Verified history", sources=(
+            SearchSource(id="source-1", title="Reference",
+                         url="https://example.com/quadratic", snippet="History"),
+        ))
+
+    events = []
+    result = None
+    async for event, running in run_turn(
+        provider=OpenAIProvider(client=AsyncOpenAI(api_key="sk-test")),
+        model="gpt-5.6-luna", effort="high",
+        bundle=ContextBundle(system="s", input=[{"role": "user", "content": "hi"}]),
+        handle_web_search=search,
+    ):
+        events.append(event)
+        result = running
+
+    source_event = next(event for event in events
+                        if isinstance(event, SearchSourcesEvent))
+    assert source_event.search_id == "call_search"
+    assert source_event.sources[0].url == "https://example.com/quadratic"
+    second = json.loads(route.calls[1].request.content)
+    output = json.loads(second["input"][0]["output"])
+    assert output["status"] == "ok"
+    assert output["summary"] == "Verified history"
+    assert json.loads(result.tool_calls[0]["result"])["sources"][0]["id"] == "source-1"
 
 
 @respx.mock
@@ -278,13 +342,65 @@ async def test_an_update_board_turn_yields_a_board_update_event_and_prose():
     assert result.text == "Here is the vector diagram."
 
 
+@respx.mock
+async def test_board_updates_stop_after_one_valid_call_and_close_in_prose():
+    """A malformed attempt does not touch the board or spend its budget.
+
+    Once one valid mutation has landed, the very next request is the forced
+    prose close. This is the regression for turns that previously redrew the
+    board through all eight general-purpose tool rounds.
+    """
+    malformed = copy.deepcopy(BOARD_UPDATE_TURN)
+    for event in malformed:
+        if event.get("type") == "response.function_call_arguments.done":
+            event["arguments"] = '{"elements":"not a list"}'
+        response = event.get("response")
+        if response:
+            for item in response.get("output", []):
+                if item.get("name") == "update_board":
+                    item["arguments"] = '{"elements":"not a list"}'
+
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*leg))
+            for leg in (malformed, BOARD_UPDATE_TURN, TEXT_ONLY_TURN)
+        ]
+    )
+
+    events = []
+    result = None
+    async for event, running in run_turn(
+        provider=OpenAIProvider(client=AsyncOpenAI(api_key="sk-test")),
+        model="gpt-5.6-luna", effort="high",
+        bundle=ContextBundle(system="s", input=[{"role": "user", "content": "draw it"}]),
+    ):
+        events.append(event)
+        result = running
+
+    assert MAX_BOARD_UPDATE_CALLS == 1
+    assert len([event for event in events if isinstance(event, BoardUpdateEvent)]) == 1
+    assert route.call_count == 3
+    bodies = [json.loads(call.request.content) for call in route.calls]
+    assert all("tool_choice" not in body for body in bodies[:-1])
+    assert bodies[-1]["tool_choice"] == "none"
+    assert result.text == "Nice work."
+    assert [call["name"] for call in result.tool_calls] == [
+        "update_board", "update_board",
+    ]
+    assert json.loads(result.tool_calls[0]["result"])["status"] == "rejected"
+
+
 def test_update_board_is_answered_with_its_own_ack_not_set_workspaces():
     answer = _answer(
-        {"call_id": "c", "name": "update_board", "arguments": '{"mode":"upsert","delete_ids":[],"elements":[]}'},
+        {"call_id": "c", "name": "update_board", "arguments": json.dumps(BOARD_UPDATE_ARGUMENTS)},
         provider=_PROVIDER, has_board=True,
     )
     assert answer.ask is None
     assert answer.items[0]["output"] == UPDATE_BOARD_ACK
+    detail = json.loads(answer.items[0]["output"])["detail"]
+    assert "complete visual" in detail
+    assert "No further board mutation" in detail
 
 
 def test_malformed_update_board_is_rejected_without_an_applied_ack():
@@ -745,6 +861,46 @@ async def test_an_svg_update_board_turn_streams_the_raw_document_unchanged():
     assert svg.kind == "svg"
     assert svg.svg == SVG_UPDATE_ARGUMENTS["elements"][0]["svg"]
     assert result.text == "Here is the circuit."
+
+
+@respx.mock
+async def test_the_dedicated_svg_tool_reaches_the_same_board_event():
+    draw_turn = copy.deepcopy(SVG_BOARD_UPDATE_TURN)
+    for event in draw_turn:
+        if event.get("name") == "update_board":
+            event["name"] = "draw_board_svg"
+        item = event.get("item")
+        if item and item.get("name") == "update_board":
+            item["name"] = "draw_board_svg"
+        response = event.get("response")
+        if response:
+            for output in response.get("output", []):
+                if output.get("name") == "update_board":
+                    output["name"] = "draw_board_svg"
+
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*draw_turn)),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*SVG_BOARD_UPDATE_FOLLOW_UP)),
+        ]
+    )
+    events = []
+    result = None
+    async for event, running in run_turn(
+        provider=OpenAIProvider(client=AsyncOpenAI(api_key="sk-test")),
+        model="gpt-5.6-sol", effort="medium",
+        bundle=ContextBundle(system="s", input=[{"role": "user", "content": "draw"}]),
+    ):
+        events.append(event)
+        result = running
+
+    updates = [event for event in events if isinstance(event, BoardUpdateEvent)]
+    assert len(updates) == 1
+    assert updates[0].payload.upserts[0].kind == "svg"
+    assert result.tool_calls[0]["name"] == "draw_board_svg"
+    assert json.loads(route.calls[1].request.content)["tool_choice"] == "none"
 
 
 # --- opening a round --------------------------------------------------------

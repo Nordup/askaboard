@@ -8,9 +8,7 @@ from typing import Any
 from app.attachments.parts import UploadPart, content_part
 from app.tutor import board as board_notes
 from app.tutor.ledger import LogState
-from app.tutor.prompt import (
-    SYSTEM_PROMPT, compose_user_prompt_blocks, transcript_blocks,
-)
+from app.tutor.prompt import SYSTEM_PROMPT, transcript_blocks
 from app.tutor.prompt import session_preamble as prompt_preamble
 
 #: What tells the provider "the prefix ending here is worth keeping".
@@ -125,11 +123,11 @@ def split_live_turn(messages: list[Any]) -> tuple[list[Any], str | None]:
     answered with a greeting. It was reading the prompt correctly. The prompt
     contained no request.
 
-    Splitting it out is what lets `assemble_context` send it as a message of its
-    own, which is what it always was. That also settles the question the fence
-    was answering: a top-level section can only be forged by text concatenated
-    into the block that holds the real sections, and this text is no longer
-    concatenated into anything.
+    Splitting it out is what lets `assemble_session_context` send it as a
+    message of its own, which is what it always was. That also settles the
+    question the fence was answering: a top-level section can only be forged by
+    text concatenated into the block that holds the real sections, and this text
+    is no longer concatenated into anything.
 
     Only a learner turn is promoted, and only one with something in it. A
     trailing tutor message means the caller passed pure history, and answering
@@ -181,8 +179,9 @@ def open_session_preamble(
 ) -> str:
     """SEAM: the frozen head, built exactly once per session.
 
-    Takes the same memory blocks `assemble_context` does, plus the three the
-    caller holds — the goal, the workspace and the board — and renders the one
+    Takes the four blocks the memory modules render — the portrait, the saved
+    notes, the recent sessions and the learner model — plus the three the
+    caller holds, the goal, the workspace and the board, and renders the one
     string that is then stored on the session row and replayed verbatim for the
     rest of the session. Nothing here runs again, which is why `first_turn` is
     accepted and ignored past the anchor: this *is* the first turn.
@@ -250,13 +249,16 @@ def assemble_session_context(
         *({"type": "input_text", "text": block} for block in blocks),
     ]
 
-    # Two breakpoints on the last two *complete* log blocks, for the reason
-    # `assemble_context` gives below: the older of the pair is the one the
+    # Two breakpoints on the last two *complete* log blocks. Two rather than
+    # one because the turn that fills a new block would otherwise name a
+    # boundary nothing has written yet: the older of the pair is the one the
     # previous turn wrote, so a read lands whether or not this turn crossed a
     # block edge. With fewer than two complete blocks the spare goes on the
     # preamble, which is the one other boundary here that holds still — and
     # unlike the old standing text it holds still from the session's very first
-    # turn, because nothing recomputes it.
+    # turn, because nothing recomputes it. Three explicit at most, counting the
+    # one on the system prompt — see `CACHE_BREAKPOINT` for the budget that
+    # caps it.
     marks = [] if complete >= 2 else [0]
     marks += [1 + index for index in range(max(0, complete - 2), complete)]
     for index in marks:
@@ -307,177 +309,5 @@ def assemble_session_context(
             {"role": "user", "content": turn},
         ],
         has_board=board_overview is not None,
-        cache_prefix_chars=prefix_chars,
-    )
-
-
-def assemble_context(
-    *,
-    session: Any,
-    messages: list[Any],
-    image_data: bytes | None,
-    image_region: str | None,
-    signal: str | None,
-    goal: str | None,
-    board_overview: bytes | None = None,
-    board_manifest: str | None = None,
-    board_scene: str | None = None,
-    board_changed: bool | None = None,
-    profile: str | None = None,
-    learner_state: str | None = None,
-    recent_sessions: str | None = None,
-    saved_notes: str | None = None,
-    today: date | None = None,
-    first_turn: bool = False,
-    uploads: list[UploadPart] | None = None,
-) -> ContextBundle:
-    """SEAM: everything the model is told, assembled in one place.
-
-    Memory arrives as four blocks its own modules have already rendered —
-    `profile`, `learner_state`, `recent_sessions`, `saved_notes` — plus the
-    two facts only the caller knows, `today` and `first_turn`, and passes
-    straight through. Where each sits relative to the transcript and the
-    cache boundary, and why, belongs to `compose_user_prompt`; a caller that
-    has none of them changes nothing.
-
-    There are two separate ways the board reaches this function, and they mean
-    different things. `image_data` is a region the learner *chose* and sent — an
-    explicit "look at this" that goes straight into context at full size.
-    `board_overview` is the board as it currently stands, sent on every turn
-    whether the learner mentioned it or not, small enough to be free; anything
-    the model wants to actually read, it asks the device for. The first is the
-    learner pointing; the second is the tutor being able to look.
-
-    `uploads` is neither: files the learner attached in the composer, already
-    converted server-side to something the provider reads. They are not the
-    board at all, and a turn can carry both.
-    """
-    history, live_turn = split_live_turn(messages)
-    conversation, transcript_note = transcript(history)
-
-    # `has_board` means the turn carries a renderable overview the model can
-    # actually ask `view_board` to inspect. That overview may contain learner
-    # ink, tutor-authored objects, or both. A scene-context string by itself is
-    # spatial metadata, not proof that the device has pixels to return.
-    has_board = board_overview is not None
-    board_note = board_notes.describe(
-        has_ink=board_overview is not None,
-        manifest=board_manifest,
-        changed=board_changed,
-        scene=board_scene,
-    ) if board_overview is not None or board_scene is not None or board_changed is True else None
-
-    standing_text, history_blocks, complete, volatile_text = compose_user_prompt_blocks(
-        conversation=conversation,
-        goal=goal,
-        exercise=session.exercise,
-        plan=session.plan,
-        image_region=image_region,
-        has_image=image_data is not None,
-        signal=signal,
-        board_note=board_note,
-        profile=profile,
-        learner_state=learner_state,
-        recent_sessions=recent_sessions,
-        saved_notes=saved_notes,
-        today=today,
-        first_turn=first_turn,
-        uploads=uploads or [],
-        transcript_note=transcript_note,
-    )
-
-    # The standing blocks, then the transcript cut into fixed-size pieces, then
-    # what this turn rewrites. Many parts rather than two, and the reason is
-    # the whole point of the split: a breakpoint has to sit on a boundary that
-    # was already there last turn, and a single growing part has none — it
-    # ends somewhere new every time, so the read falls all the way back to the
-    # system prompt and the session's whole context is re-prefilled per turn.
-    content: list[dict[str, Any]] = [
-        {"type": "input_text", "text": standing_text},
-        *({"type": "input_text", "text": block} for block in history_blocks),
-        {"type": "input_text", "text": volatile_text},
-    ]
-
-    # Two breakpoints inside this message, on the last two *complete*
-    # transcript blocks. Two rather than one because the turn that fills a new
-    # block would otherwise name a boundary nothing has written yet: the older
-    # of the pair is the one the previous turn wrote, so a read lands whether
-    # or not this turn crossed a block edge. With fewer than two complete
-    # blocks the spare goes on the standing text, the only other boundary in
-    # here that holds still. Three explicit at most, counting the one on the
-    # system prompt — see `CACHE_BREAKPOINT` for the budget that caps it.
-    marks = [] if complete >= 2 else [0]
-    marks += [
-        1 + index for index in range(max(0, complete - 2), complete)
-    ]
-    for index in marks:
-        content[index]["prompt_cache_breakpoint"] = CACHE_BREAKPOINT
-
-    # Characters, not tokens: a token count is a round trip, this runs on every
-    # turn, and what the log needs is something that moves when the offered
-    # prefix moves — not an exact figure. The system prompt is in front of all
-    # of it and is counted here for the same reason.
-    prefix_chars = len(SYSTEM_PROMPT) + sum(
-        len(content[index]["text"]) for index in range(marks[-1] + 1)
-    )
-    if image_data is not None:
-        encoded = base64.b64encode(image_data).decode()
-        content.append({
-            "type": "input_image",
-            "image_url": f"data:image/png;base64,{encoded}",
-            "detail": "original",
-        })
-    if board_overview is not None:
-        encoded = base64.b64encode(board_overview).decode()
-        content.append({
-            # `low` rather than `original`: the overview exists to be glanced at
-            # and aimed with, and `view_board` is what reading is for. Paying
-            # original-detail token cost for a thumbnail on every single turn
-            # would undo the reason it is a thumbnail.
-            "type": "input_image",
-            "image_url": f"data:image/png;base64,{encoded}",
-            "detail": "low",
-        })
-
-    # After both board images, and in the learner's own chip order. The board
-    # is what the tutor can look at; these are what the learner handed over,
-    # and the prompt above has already named them.
-    for upload in uploads or []:
-        content.append(content_part(upload))
-
-    messages_out: list[dict[str, Any]] = [
-        # A content list rather than a bare string, so the system prompt
-        # can carry a breakpoint. What sits in front of that breakpoint —
-        # the tool definitions and this prompt — is identical on every
-        # request this service ever makes, which makes it the one cache
-        # entry shared across sessions and learners, and the floor a turn
-        # still reads when both rolling breakpoints miss. It is also the
-        # only thing that was ever being read: `cached` sat on this
-        # boundary, to the token, on every turn in the logs.
-        {"role": "system", "content": [
-            {"type": "input_text", "text": SYSTEM_PROMPT,
-             "prompt_cache_breakpoint": CACHE_BREAKPOINT},
-        ]},
-        {"role": "user", "content": content},
-    ]
-    if live_turn is not None:
-        # Last, and on its own. Everything above it is what the tutor knows;
-        # this is what it was asked. See `split_live_turn` for what putting it
-        # inside the block above cost.
-        #
-        # It costs the cache nothing to be here. Both breakpoints are on parts
-        # of the two messages in front of it, so the prefix they name is the
-        # same bytes whatever this says — where the old arrangement had the
-        # learner's newest sentence sitting *inside* the stable half, ahead of
-        # the boundary, rewriting the tail of the cached block on every turn.
-        messages_out.append({
-            "role": "user",
-            "content": [{"type": "input_text", "text": live_turn}],
-        })
-
-    return ContextBundle(
-        system=SYSTEM_PROMPT,
-        input=messages_out,
-        has_board=has_board,
         cache_prefix_chars=prefix_chars,
     )

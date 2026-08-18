@@ -259,6 +259,11 @@ BOARD_RECORD_HEADING = (
     "of the old one, and the learner sees both."
 )
 
+WORKSPACE_RECORD_HEADING = (
+    "WORKSPACE YOU SET during this turn. This remains the active exercise and "
+    "plan until a later set_workspace call replaces it:"
+)
+
 
 def _element_line(element: Any) -> str:
     """One drawn element, as the least that still identifies it.
@@ -290,7 +295,7 @@ def _element_line(element: Any) -> str:
 
 
 def board_actions(tool_calls: list[dict] | None) -> str:
-    """What one turn drew, as the bytes that turn adds to the log.
+    """What one turn changed, as the bytes that turn adds to the log.
 
     Built from `TurnResult.tool_calls` after the turn has run, and re-validated
     through `BoardSceneUpdate` rather than read off the raw arguments. That is
@@ -307,7 +312,27 @@ def board_actions(tool_calls: list[dict] | None) -> str:
     new element while believing it is editing an old one.
     """
     lines: list[str] = []
+    workspace_blocks: list[str] = []
     for call in tool_calls or []:
+        if call.get("name") == "set_workspace":
+            arguments = call.get("arguments")
+            if not isinstance(arguments, dict):
+                continue
+            plan = arguments.get("plan")
+            exercise = arguments.get("exercise")
+            if not isinstance(plan, dict) or not isinstance(exercise, dict):
+                continue
+            steps = plan.get("steps")
+            if not isinstance(steps, list):
+                continue
+            workspace_blocks.append(quoted("\n".join([
+                f"PLAN: {plan.get('title', '')}",
+                f"GOAL: {plan.get('goal', '')}",
+                "STEPS: " + " -> ".join(str(step) for step in steps),
+                f"EXERCISE CONTEXT: {exercise.get('context', '')}",
+                f"PROMPT: {exercise.get('prompt', '')}",
+            ])))
+            continue
         if call.get("name") != "update_board":
             continue
         arguments = call.get("arguments")
@@ -324,9 +349,10 @@ def board_actions(tool_calls: list[dict] | None) -> str:
             lines.append(_element_line(element))
         for identifier in update.delete_ids:
             lines.append(f"deleted {identifier}")
-    if not lines:
-        return ""
-    return f"{BOARD_RECORD_HEADING}\n{quoted(chr(10).join(lines))}"
+    blocks = [f"{WORKSPACE_RECORD_HEADING}\n{block}" for block in workspace_blocks]
+    if lines:
+        blocks.append(f"{BOARD_RECORD_HEADING}\n{quoted(chr(10).join(lines))}")
+    return "\n\n".join(blocks)
 
 
 def advance(state: LogState, *, messages: list[Any], entry: str) -> LogState:
