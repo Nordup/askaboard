@@ -366,6 +366,24 @@ def test_update_board_description_keeps_the_rules_that_protect_learner_work():
     assert "reuse ids to revise existing content" in description
     assert "recommended_tutor_rect" in description
     assert "reserved_learner_work_rect" in description
+    assert "call `view_board` to confirm how it rendered" in description
+
+
+def test_board_tool_descriptions_require_inspect_before_and_after():
+    """Both mutation tools must tell the model to look before editing a board
+    that already has content, and to verify its result afterwards. Wording is
+    not the enforcement (that is `_BoardGate`), but it is what tells a compliant
+    model the expected causal order."""
+    for description in (UPDATE_BOARD_TOOL["description"],
+                        DRAW_BOARD_SVG_TOOL["description"]):
+        assert "view_board" in description
+        assert "it lands" in description
+    assert (
+        "Before drawing on a board that already has content on it"
+        in DRAW_BOARD_SVG_TOOL["description"]
+    )
+    assert "looked at it here first" in VIEW_BOARD_TOOL["description"]
+    assert "after drawing" in VIEW_BOARD_TOOL["description"]
 
 
 def test_update_board_caps_are_expressed_in_the_schema():
@@ -644,6 +662,9 @@ def test_the_tool_surface_stays_inside_its_budget():
     # the bound does not move.
     # Splitting SVG out of the sixteen-way union buys a reliable coherent-art
     # route at the cost of a second strict wrapper and shared definitions.
+    # The inspect-before / inspect-after guidance in `view_board`,
+    # `update_board` and `draw_board_svg` spends a few hundred more characters,
+    # inside the same fixed bound.
     assert len(json.dumps(TOOL_DEFINITIONS)) < 31_800
 
 

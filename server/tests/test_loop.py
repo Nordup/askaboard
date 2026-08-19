@@ -17,7 +17,8 @@ from app.tutor.fetch_image import ALLOWED_CONTENT_TYPES, MAX_IMAGE_BYTES
 from app.tutor.context import ContextBundle
 from app.tutor.events import (
     TURN_FAILED_MESSAGE, BoardUpdateEvent, ReasoningDeltaEvent,
-    SearchSourcesEvent, StatusEvent, TextDeltaEvent, WorkspaceEvent,
+    BoardRequestEvent, SearchSourcesEvent, StatusEvent, TextDeltaEvent,
+    WorkspaceEvent,
 )
 from app.tutor.retry import FALLBACK_RETRY_DELAY, RETRY_LIMIT
 from app.tutor.web_search import SearchEvidence, SearchSource
@@ -26,7 +27,6 @@ from app.tutor.loop import (
     FETCH_TIMEOUT_ACK,
     FETCHED_IMAGE_CAPTION,
     MALFORMED_BOARD_ACK,
-    MAX_BOARD_UPDATE_CALLS,
     MAX_TOOL_ROUNDS,
     UNSUPPORTED_TOOL_ACK,
     UPDATE_BOARD_ACK,
@@ -35,6 +35,7 @@ from app.tutor.loop import (
     _open_round,
     run_turn,
 )
+from app.tutor.loop import INSPECT_FIRST_ACK
 # The container machinery, the item builders and the two file records now live
 # behind the provider seam: containers are this family's alone, and `loop.py`
 # importing the provider would be a circle. Nothing about what they do changed,
@@ -56,6 +57,7 @@ from app.tutor.providers.openai import (
     _rendered_items,
     download_container_file,
 )
+from app.tutor.rendezvous import BoardUnavailable
 from tests.fixtures.interactions import FAILED_INTERACTION
 from tests.fixtures.sse import (
     BOARD_UPDATE_ARGUMENTS,
@@ -342,13 +344,580 @@ async def test_an_update_board_turn_yields_a_board_update_event_and_prose():
     assert result.text == "Here is the vector diagram."
 
 
-@respx.mock
-async def test_board_updates_stop_after_one_valid_call_and_close_in_prose():
-    """A malformed attempt does not touch the board or spend its budget.
+VIEW_BOARD_ARGUMENTS = {"x": 0, "y": 0, "width": 100, "height": 100}
 
-    Once one valid mutation has landed, the very next request is the forced
-    prose close. This is the regression for turns that previously redrew the
-    board through all eight general-purpose tool rounds.
+
+def _view_board_turn(call_id: str = "call_view", response_id: str = "resp_view"):
+    """One round that only calls `view_board`, ending the response."""
+    arguments = json.dumps(VIEW_BOARD_ARGUMENTS)
+    return (
+        {"type": "response.created", "sequence_number": 0,
+         "response": {"id": response_id}},
+        {"type": "response.output_item.added", "sequence_number": 1,
+         "output_index": 0, "item": {
+             "type": "function_call", "id": "fc_view", "call_id": call_id,
+             "name": "view_board", "arguments": "",
+         }},
+        {"type": "response.function_call_arguments.done", "sequence_number": 2,
+         "output_index": 0, "item_id": "fc_view", "name": "view_board",
+         "arguments": arguments},
+        {"type": "response.completed", "sequence_number": 3, "response": {
+            "id": response_id, "usage": {"input_tokens": 30, "output_tokens": 8},
+            "output": [{"type": "function_call", "id": "fc_view",
+                        "call_id": call_id, "name": "view_board",
+                        "arguments": arguments, "status": "completed"}],
+        }},
+    )
+
+
+def _message_turn(text: str, response_id: str = "resp_msg"):
+    """One prose-only round that ends the turn."""
+    return (
+        {"type": "response.created", "response": {"id": response_id}},
+        {"type": "response.output_text.delta", "delta": text},
+        {"type": "response.output_text.done", "text": text},
+        {"type": "response.completed", "response": {
+            "id": response_id, "usage": {"input_tokens": 20, "output_tokens": 4},
+        }},
+    )
+
+
+def _render_board():
+    """A board fetcher that always answers with a tiny PNG."""
+
+    async def fetch_board(call_id: str, region):
+        return b"\x89PNG-ish"
+
+    return fetch_board
+
+
+@respx.mock
+async def test_a_mutation_on_an_existing_board_cannot_land_before_a_view():
+    """The causal guard: on a renderable board, drawing before looking is refused
+    and nothing reaches the device. This is the runtime half of 'do not act
+    blind' — descriptive wording alone was ignored by Gemini."""
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*BOARD_UPDATE_TURN)),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_message_turn("I need to look first."))),
+        ]
+    )
+    bundle = ContextBundle(
+        system="s", input=[{"role": "user", "content": "fix my work"}],
+        has_board=True,
+    )
+
+    events = []
+    result = None
+    async for event, running in run_turn(
+        provider=OpenAIProvider(client=AsyncOpenAI(api_key="sk-test")),
+        model="gpt-5.6-sol", effort="high", bundle=bundle,
+        fetch_board=_render_board(),
+    ):
+        events.append(event)
+        result = running
+
+    # No mutation ever reached the learner's board, and no board request either.
+    assert [e for e in events if isinstance(e, BoardUpdateEvent)] == []
+    assert [e for e in events if isinstance(e, BoardRequestEvent)] == []
+    assert json.loads(result.tool_calls[0]["result"])["status"] == "must_inspect"
+    assert result.text == "I need to look first."
+
+
+@respx.mock
+async def test_a_mutation_can_land_after_a_view_and_a_view_can_follow_it():
+    """Inspect before edit, and inspect again after: view - draw - view - prose.
+
+    The post-mutation view is what the old forced `tool_choice: none` close made
+    impossible; this proves the model is still able to see its own result before
+    ending the turn.
+    """
+    seen = []
+
+    async def fetch_board(call_id: str, region):
+        seen.append(call_id)
+        return b"\x89PNG-ish"
+
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_view_board_turn("call_view_1"))),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*BOARD_UPDATE_TURN)),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_view_board_turn("call_view_2"))),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_message_turn("Let me check it over."))),
+        ]
+    )
+    bundle = ContextBundle(
+        system="s", input=[{"role": "user", "content": "grade and correct"}],
+        has_board=True,
+    )
+
+    events = []
+    result = None
+    async for event, running in run_turn(
+        provider=OpenAIProvider(client=AsyncOpenAI(api_key="sk-test")),
+        model="gpt-5.6-sol", effort="high", bundle=bundle,
+        fetch_board=fetch_board,
+    ):
+        events.append(event)
+        result = running
+
+    # Exactly one mutation landed, and there were two fresh renders (one before
+    # the edit, one after) — the post-mutation look reached the board fetcher.
+    assert len([e for e in events if isinstance(e, BoardUpdateEvent)]) == 1
+    assert seen == ["call_view_1", "call_view_2"]
+    assert json.loads(result.tool_calls[1]["result"])["status"] == "applied"
+    assert result.text == "Let me check it over."
+    assert route.call_count == 4
+
+
+@respx.mock
+async def test_a_board_mutation_consumes_its_inspection_until_a_fresh_view():
+    """An allowed draw consumes the look that unlocked it. Until another render
+    is delivered, a further mutation is refused `must_inspect` before it
+    streams — so the model can never draw twice on the same sight of the board."""
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_view_board_turn())),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*BOARD_UPDATE_TURN)),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*BOARD_UPDATE_TURN)),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_message_turn("That is all."))),
+        ]
+    )
+    bundle = ContextBundle(
+        system="s", input=[{"role": "user", "content": "draw it twice"}],
+        has_board=True,
+    )
+
+    events = []
+    result = None
+    async for event, running in run_turn(
+        provider=OpenAIProvider(client=AsyncOpenAI(api_key="sk-test")),
+        model="gpt-5.6-sol", effort="high", bundle=bundle,
+        fetch_board=_render_board(),
+    ):
+        events.append(event)
+        result = running
+
+    updates = [e for e in events if isinstance(e, BoardUpdateEvent)]
+    assert len(updates) == 1, "the second draw shared the first draw's look"
+    assert [call["name"] for call in result.tool_calls] == [
+        "view_board", "update_board", "update_board",
+    ]
+    assert json.loads(result.tool_calls[1]["result"])["status"] == "applied"
+    assert json.loads(result.tool_calls[2]["result"])["status"] == "must_inspect"
+    assert result.text == "That is all."
+
+
+def _same_response_view_and_update_turn(
+    view_cid: str = "call_view", update_cid: str = "call_board",
+    response_id: str = "resp_vu",
+):
+    """One provider response carrying a `view_board` then an `update_board`.
+
+    The mutation's arguments are all chosen in the same stream as the view
+    request, so even though a render will be served for the view, the mutation
+    was authored before any returned image existed — it must not be unlocked by
+    that render.
+    """
+    view_args = json.dumps(VIEW_BOARD_ARGUMENTS)
+    update_args = json.dumps(BOARD_UPDATE_ARGUMENTS)
+    return (
+        {"type": "response.created", "sequence_number": 0,
+         "response": {"id": response_id}},
+        # view_board: output_index 0
+        {"type": "response.output_item.added", "sequence_number": 1,
+         "output_index": 0, "item": {
+             "type": "function_call", "id": "fc_view", "call_id": view_cid,
+             "name": "view_board", "arguments": "",
+         }},
+        {"type": "response.function_call_arguments.done", "sequence_number": 2,
+         "output_index": 0, "item_id": "fc_view", "name": "view_board",
+         "arguments": view_args},
+        # update_board: output_index 1
+        {"type": "response.output_item.added", "sequence_number": 3,
+         "output_index": 1, "item": {
+             "type": "function_call", "id": "fc_board", "call_id": update_cid,
+             "name": "update_board", "arguments": "",
+         }},
+        {"type": "response.function_call_arguments.done", "sequence_number": 4,
+         "output_index": 1, "item_id": "fc_board", "name": "update_board",
+         "arguments": update_args},
+        {"type": "response.completed", "sequence_number": 5, "response": {
+            "id": response_id, "usage": {"input_tokens": 60, "output_tokens": 30},
+            "output": [
+                {"type": "function_call", "id": "fc_view", "call_id": view_cid,
+                 "name": "view_board", "arguments": view_args,
+                 "status": "completed"},
+                {"type": "function_call", "id": "fc_board",
+                 "call_id": update_cid, "name": "update_board",
+                 "arguments": update_args, "status": "completed"},
+            ],
+        }},
+    )
+
+
+def _double_update_turn(
+    first_cid: str = "call_ms1", second_cid: str = "call_ms2",
+    response_id: str = "resp_double",
+):
+    """One provider response with two `update_board` calls, both valid.
+
+    The two mutations are authored against the same delivered view of the
+    board, so at most the first may land; the second is refused `must_inspect`
+    because the first consumed the look.
+    """
+    arguments = json.dumps(BOARD_UPDATE_ARGUMENTS)
+    return (
+        {"type": "response.created", "sequence_number": 0,
+         "response": {"id": response_id}},
+        # first update_board: output_index 0
+        {"type": "response.output_item.added", "sequence_number": 1,
+         "output_index": 0, "item": {
+             "type": "function_call", "id": "fc_ms1", "call_id": first_cid,
+             "name": "update_board", "arguments": "",
+         }},
+        {"type": "response.function_call_arguments.done", "sequence_number": 2,
+         "output_index": 0, "item_id": "fc_ms1", "name": "update_board",
+         "arguments": arguments},
+        # second update_board: output_index 1
+        {"type": "response.output_item.added", "sequence_number": 3,
+         "output_index": 1, "item": {
+             "type": "function_call", "id": "fc_ms2", "call_id": second_cid,
+             "name": "update_board", "arguments": "",
+         }},
+        {"type": "response.function_call_arguments.done", "sequence_number": 4,
+         "output_index": 1, "item_id": "fc_ms2", "name": "update_board",
+         "arguments": arguments},
+        {"type": "response.completed", "sequence_number": 5, "response": {
+            "id": response_id, "usage": {"input_tokens": 60, "output_tokens": 30},
+            "output": [
+                {"type": "function_call", "id": "fc_ms1", "call_id": first_cid,
+                 "name": "update_board", "arguments": arguments,
+                 "status": "completed"},
+                {"type": "function_call", "id": "fc_ms2",
+                 "call_id": second_cid, "name": "update_board",
+                 "arguments": arguments, "status": "completed"},
+            ],
+        }},
+    )
+
+
+@respx.mock
+async def test_a_view_and_mutation_in_the_same_response_do_not_unlock_the_mutation():
+    """Requesting a look in the same response as a mutation is not causal
+    inspection: the mutation's arguments were chosen before any render existed,
+    so it must still be refused."""
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(
+                         *_same_response_view_and_update_turn())),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(
+                         *_message_turn("Give me a moment to see your board."))),
+        ]
+    )
+    bundle = ContextBundle(
+        system="s", input=[{"role": "user", "content": "fix this"}],
+        has_board=True,
+    )
+
+    events = []
+    result = None
+    async for event, running in run_turn(
+        provider=OpenAIProvider(client=AsyncOpenAI(api_key="sk-test")),
+        model="gpt-5.6-sol", effort="high", bundle=bundle,
+        fetch_board=_render_board(),
+    ):
+        events.append(event)
+        result = running
+
+    # The render was served for the view, but the mutation in the same response
+    # was authored blind and must not land.
+    assert len([e for e in events if isinstance(e, BoardRequestEvent)]) == 1
+    assert [e for e in events if isinstance(e, BoardUpdateEvent)] == []
+    assert [call["name"] for call in result.tool_calls] == [
+        "view_board", "update_board",
+    ]
+    assert json.loads(result.tool_calls[1]["result"])["status"] == "must_inspect"
+    assert result.text == "Give me a moment to see your board."
+
+
+@respx.mock
+async def test_the_model_can_iterate_view_draw_view_fix_view():
+    """The approved iterative flow: each mutation is preceded by a fresh
+    delivered render, so the model may draw, look again, fix, look again, and
+    finish — bounded only by `MAX_TOOL_ROUNDS`, never by a one-mutation cap."""
+    seen = []
+
+    async def fetch_board(call_id: str, region):
+        seen.append(call_id)
+        return b"\x89PNG-ish"
+
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_view_board_turn("call_view_a"))),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*BOARD_UPDATE_TURN)),   # draw 1
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_view_board_turn("call_view_b"))),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*BOARD_UPDATE_TURN)),   # fix 1
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_view_board_turn("call_view_c"))),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_message_turn("Done."))),
+        ]
+    )
+    bundle = ContextBundle(
+        system="s", input=[{"role": "user", "content": "draw, then fix it"}],
+        has_board=True,
+    )
+
+    events = []
+    result = None
+    async for event, running in run_turn(
+        provider=OpenAIProvider(client=AsyncOpenAI(api_key="sk-test")),
+        model="gpt-5.6-sol", effort="high", bundle=bundle,
+        fetch_board=fetch_board,
+    ):
+        events.append(event)
+        result = running
+
+    # Three delivered views and two mutations, each preceded by a fresh look.
+    assert seen == ["call_view_a", "call_view_b", "call_view_c"]
+    assert len([e for e in events if isinstance(e, BoardUpdateEvent)]) == 2
+    assert [call["name"] for call in result.tool_calls] == [
+        "view_board", "update_board", "view_board", "update_board",
+        "view_board",
+    ]
+    assert all(
+        json.loads(call["result"])["status"] == "applied"
+        for call in result.tool_calls if call["name"] == "update_board"
+    )
+    assert result.text == "Done."
+    assert route.call_count == 6
+
+
+@respx.mock
+async def test_two_mutations_in_one_response_only_land_the_first():
+    """Two mutations authored against the same sight of the board: only the
+    first may land. The first consumes the inspection, so the second is refused
+    `must_inspect` before it streams."""
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_view_board_turn("call_view_only"))),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_double_update_turn())),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_message_turn("Only one went up."))),
+        ]
+    )
+    bundle = ContextBundle(
+        system="s", input=[{"role": "user", "content": "add two things"}],
+        has_board=True,
+    )
+
+    events = []
+    result = None
+    async for event, running in run_turn(
+        provider=OpenAIProvider(client=AsyncOpenAI(api_key="sk-test")),
+        model="gpt-5.6-sol", effort="high", bundle=bundle,
+        fetch_board=_render_board(),
+    ):
+        events.append(event)
+        result = running
+
+    updates = [e for e in events if isinstance(e, BoardUpdateEvent)]
+    assert len(updates) == 1, "only the first mutation on one look may land"
+    assert [call["name"] for call in result.tool_calls] == [
+        "view_board", "update_board", "update_board",
+    ]
+    assert json.loads(result.tool_calls[1]["result"])["status"] == "applied"
+    assert json.loads(result.tool_calls[2]["result"])["status"] == "must_inspect"
+    assert result.text == "Only one went up."
+
+
+@respx.mock
+async def test_an_unanswered_render_does_not_unlock_a_later_mutation():
+    """`BoardUnavailable` means the model still has not seen the board, so a
+    mutation in the next response must be refused all the same."""
+
+    async def unavailable(call_id, region):
+        raise BoardUnavailable()
+
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_view_board_turn("call_view_unavail"))),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*BOARD_UPDATE_TURN)),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_message_turn("I still cannot see it."))),
+        ]
+    )
+    bundle = ContextBundle(
+        system="s", input=[{"role": "user", "content": "grade my work"}],
+        has_board=True,
+    )
+
+    events = []
+    result = None
+    async for event, running in run_turn(
+        provider=OpenAIProvider(client=AsyncOpenAI(api_key="sk-test")),
+        model="gpt-5.6-sol", effort="high", bundle=bundle,
+        fetch_board=unavailable,
+    ):
+        events.append(event)
+        result = running
+
+    assert len([e for e in events if isinstance(e, BoardRequestEvent)]) == 1
+    assert [e for e in events if isinstance(e, BoardUpdateEvent)] == []
+    assert json.loads(result.tool_calls[0]["result"])["status"] == "unavailable"
+    assert json.loads(result.tool_calls[1]["result"])["status"] == "must_inspect"
+    assert result.text == "I still cannot see it."
+
+
+@respx.mock
+async def test_an_empty_board_standalone_creation_needs_no_pointless_view():
+    """On a board with nothing renderable, drawing an exercise straight away is
+    still allowed — no forced, meaningless look."""
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*BOARD_UPDATE_TURN)),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_message_turn("Here is the exercise."))),
+        ]
+    )
+    # has_board defaults to False and no fetcher is wired: nothing to look at.
+    bundle = ContextBundle(
+        system="s", input=[{"role": "user", "content": "put a fresh exercise up"}],
+    )
+
+    events = []
+    result = None
+    async for event, running in run_turn(
+        provider=OpenAIProvider(client=AsyncOpenAI(api_key="sk-test")),
+        model="gpt-5.6-sol", effort="high", bundle=bundle,
+    ):
+        events.append(event)
+        result = running
+
+    updates = [e for e in events if isinstance(e, BoardUpdateEvent)]
+    assert len(updates) == 1
+    assert [e for e in events if isinstance(e, BoardRequestEvent)] == []
+    assert json.loads(result.tool_calls[0]["result"])["status"] == "applied"
+
+
+@respx.mock
+async def test_empty_board_second_mutation_in_same_response_is_refused():
+    """Only the first empty-board creation is exempt. A second valid mutation
+    in the same response shares that first sight and must be refused
+    `must_inspect`, exactly like a board that had content all along."""
+    # No board at all to begin with.
+    bundle = ContextBundle(
+        system="s", input=[{"role": "user", "content": "put two things up"}],
+    )
+
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_double_update_turn())),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_message_turn("Only one went up."))),
+        ]
+    )
+
+    events = []
+    result = None
+    async for event, running in run_turn(
+        provider=OpenAIProvider(client=AsyncOpenAI(api_key="sk-test")),
+        model="gpt-5.6-sol", effort="high", bundle=bundle,
+    ):
+        events.append(event)
+        result = running
+
+    updates = [e for e in events if isinstance(e, BoardUpdateEvent)]
+    assert len(updates) == 1, "only the first creation may land on one exemption"
+    assert [call["name"] for call in result.tool_calls] == [
+        "update_board", "update_board",
+    ]
+    assert json.loads(result.tool_calls[0]["result"])["status"] == "applied"
+    assert json.loads(result.tool_calls[1]["result"])["status"] == "must_inspect"
+    assert result.text == "Only one went up."
+
+
+@respx.mock
+async def test_empty_board_creation_then_view_then_correction():
+    """Create on an empty board (no view), then deliver a view, then fix: the
+    gate must treat the first draw as making the board present, so the post-
+    creation look unlocks the correction."""
+    seen = []
+
+    async def fetch_board(call_id: str, region):
+        seen.append(call_id)
+        return b"\x89PNG-ish"
+
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*BOARD_UPDATE_TURN)),       # create
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_view_board_turn("call_view_create"))),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*BOARD_UPDATE_TURN)),       # fix
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_message_turn("Fixed it."))),
+        ]
+    )
+    bundle = ContextBundle(
+        system="s", input=[{"role": "user", "content": "create, then fix"}],
+    )
+
+    events = []
+    result = None
+    async for event, running in run_turn(
+        provider=OpenAIProvider(client=AsyncOpenAI(api_key="sk-test")),
+        model="gpt-5.6-sol", effort="high", bundle=bundle,
+        fetch_board=fetch_board,
+    ):
+        events.append(event)
+        result = running
+
+    # One delivered view between two allowed mutations, and the fix landed.
+    assert seen == ["call_view_create"]
+    assert len([e for e in events if isinstance(e, BoardUpdateEvent)]) == 2
+    assert [call["name"] for call in result.tool_calls] == [
+        "update_board", "view_board", "update_board",
+    ]
+    assert all(
+        json.loads(call["result"])["status"] == "applied"
+        for call in result.tool_calls if call["name"] == "update_board"
+    )
+    assert result.text == "Fixed it."
+    assert route.call_count == 4
+
+
+@respx.mock
+async def test_malformed_mutation_does_not_consume_empty_board_creation_exemption():
+    """A malformed attempt does not touch the board or consume a look.
+
+    An empty board still lets the model draw once without a pointless initial
+    look. The malformed call does not consume that exemption, and the turn
+    remains open after the valid creation so the model may inspect it.
     """
     malformed = copy.deepcopy(BOARD_UPDATE_TURN)
     for event in malformed:
@@ -378,12 +947,10 @@ async def test_board_updates_stop_after_one_valid_call_and_close_in_prose():
         events.append(event)
         result = running
 
-    assert MAX_BOARD_UPDATE_CALLS == 1
     assert len([event for event in events if isinstance(event, BoardUpdateEvent)]) == 1
     assert route.call_count == 3
     bodies = [json.loads(call.request.content) for call in route.calls]
-    assert all("tool_choice" not in body for body in bodies[:-1])
-    assert bodies[-1]["tool_choice"] == "none"
+    assert all("tool_choice" not in body for body in bodies)
     assert result.text == "Nice work."
     assert [call["name"] for call in result.tool_calls] == [
         "update_board", "update_board",
@@ -400,7 +967,8 @@ def test_update_board_is_answered_with_its_own_ack_not_set_workspaces():
     assert answer.items[0]["output"] == UPDATE_BOARD_ACK
     detail = json.loads(answer.items[0]["output"])["detail"]
     assert "complete visual" in detail
-    assert "No further board mutation" in detail
+    assert "Call `view_board` to confirm" in detail
+    assert "further correction you must look" in detail
 
 
 def test_malformed_update_board_is_rejected_without_an_applied_ack():
@@ -900,7 +1468,10 @@ async def test_the_dedicated_svg_tool_reaches_the_same_board_event():
     assert len(updates) == 1
     assert updates[0].payload.upserts[0].kind == "svg"
     assert result.tool_calls[0]["name"] == "draw_board_svg"
-    assert json.loads(route.calls[1].request.content)["tool_choice"] == "none"
+    # The follow-up is a normal prose round, not a forced no-tools close: the
+    # turn stays open after the draw so the model could `view_board` its result
+    # before ending in prose.
+    assert "tool_choice" not in json.loads(route.calls[1].request.content)
 
 
 # --- opening a round --------------------------------------------------------

@@ -123,17 +123,28 @@ final class BoardSVGStore {
     ///
     /// The ceiling the WebKit renderer put on its offscreen viewport, kept: a
     /// legal model frame can span most of the board, and a `viewBox` is just a
-    /// number in a string the server does not police. Half of
-    /// `BoardImageStore.maximumDecodedSide` because a figure is line art drawn
-    /// at roughly its natural size — a photograph is pinned to a frame that can
-    /// be zoomed into, a figure is not.
-    nonisolated static let maximumRasterSide: CGFloat = 2_048
+    /// number in a string the server does not police.
+    ///
+    /// `BoardImageStore.maximumDecodedSide` is the same bound. A square figure
+    /// at this side is 4,096 x 4,096 x 4 bytes — 64 MiB, two of which fit the
+    /// raised residency budget below, and well inside it for the landscape
+    /// figures a lesson actually draws. It is also enough to keep an ordinary
+    /// figure sharp at the board's maximum zoom — a ~500-point figure reaches
+    /// 8 pixels a point (4,096 / 500), the density `rasterOversample` targets.
+    /// A document too large for this is drawn coarser rather than refused.
+    nonisolated static let maximumRasterSide: CGFloat = 4_096
 
     /// The resident budget for figure bitmaps, in bytes.
     ///
-    /// `BoardImageStore`'s budget, and priced the same way: every bitmap here
-    /// is flattened to four bytes per pixel, so `cost(of:)` is the truth rather
-    /// than an estimate that a wide-gamut device doubles behind its back.
+    /// Priced the way `BoardImageStore`'s is, but raised for SVG: every bitmap
+    /// here is flattened to four bytes per pixel, so `cost(of:)` is the truth
+    /// rather than an estimate that a wide-gamut device doubles behind its
+    /// back. At the current 8 pixels-per-point oversample a realistic teaching
+    /// set — a solution region, a worked step, an annotation and a formula
+    /// band — prices to about 102 MB of flat raster, which the earlier 64 MiB
+    /// budget could not all hold. Evicting one of those figures makes its
+    /// element draw as a blank box, so the default is raised to the smallest
+    /// rounded bound that keeps the whole set resident.
     private let byteLimit: Int
 
     private var documents: [String: ParsedSVG] = [:]
@@ -183,7 +194,7 @@ final class BoardSVGStore {
     /// `VoiceAudioSessionController` holds its observers the same way.
     private nonisolated(unsafe) var memoryWarningObserver: (any NSObjectProtocol)?
 
-    init(byteLimit: Int = 64 * 1024 * 1024) {
+    init(byteLimit: Int = 128 * 1024 * 1024) {
         self.byteLimit = byteLimit
         Self.refreshRasterOversample()
         memoryWarningObserver = NotificationCenter.default.addObserver(
@@ -438,8 +449,8 @@ final class BoardSVGStore {
     ///
     /// SwiftDraw rasterizes through `UIGraphicsImageRendererFormat.preferred()`
     /// with `preferredRange = .automatic`, and on a wide-gamut iPad that is an
-    /// extended-range buffer: eight bytes per pixel, not four. A 2048 x 2048
-    /// figure would then be 33 MB rather than 16, and `cost(of:)` — which the
+    /// extended-range buffer: eight bytes per pixel, not four. A 4096 x 4096
+    /// figure would then be 128 MB rather than 64, and `cost(of:)` — which the
     /// byte cap is priced in — would be reporting half of what the store
     /// actually holds. Board colours are sRGB hex, so the wider range buys
     /// nothing to pay for that with.

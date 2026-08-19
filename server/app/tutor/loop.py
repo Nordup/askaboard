@@ -56,18 +56,6 @@ logger = logging.getLogger(__name__)
 # loop.
 MAX_TOOL_ROUNDS = 8
 
-# How many syntactically valid `update_board` calls may land in one turn.
-#
-# A valid update mutates the learner's board, so each one is another full board
-# draw the learner watches and the model bills for. One complete mutation keeps
-# the turn bounded; a correction is a new learner-visible turn rather than a
-# silent second redraw. The turn is then forced to close in prose
-# — `_closing_round` with `tool_choice: none` — so it can never loop
-# `update_board` into the `MAX_TOOL_ROUNDS` ceiling. A call that fails
-# validation (and is answered `MALFORMED_BOARD_ACK`) never reaches the board and
-# does not spend this budget; the model may keep retrying it until a valid batch
-# lands.
-MAX_BOARD_UPDATE_CALLS = 1
 BOARD_MUTATION_TOOLS = frozenset({"draw_board_svg", "update_board"})
 
 # The smallest region `view_board` will honour, as a percentage of a side.
@@ -181,9 +169,23 @@ SET_WORKSPACE_ACK = json.dumps({
 UPDATE_BOARD_ACK = json.dumps({
     "status": "applied",
     "detail": "The tutor's board objects were updated on the learner's iPad. "
-              "Treat this as the complete visual. No further board mutation is "
-              "available in this turn. "
-              "Mention what you drew and why, in your reply.",
+              "Treat this as the complete visual. Call `view_board` to confirm "
+              "how it rendered; to make a further correction you must look at "
+              "the board again first.",
+})
+
+# What a board mutation is answered with when the learner already has a
+# renderable board and this turn has not looked at it yet. The mutation is
+# refused (nothing was drawn) because acting on an unseen board is a guess;
+# the model has to `view_board` the current work first. Purely descriptive,
+# but the runtime gate in `_BoardGate` makes the refusal stick regardless of
+# how the model words it — this ack is the model-facing side of the same
+# decision.
+INSPECT_FIRST_ACK = json.dumps({
+    "status": "must_inspect",
+    "detail": "You have not yet seen the current board, so do not draw or edit "
+              "it blind. Call `view_board` to look at it in a separate round "
+              "first, then make your update. Nothing was changed by this call.",
 })
 
 # What a malformed `update_board` call is answered with. No event was sent, so
@@ -843,6 +845,82 @@ def _merge_usage(total: dict | None, addition: dict | None) -> dict | None:
     return merged
 
 
+class _BoardGate:
+    """Per-turn causal gate over the learner's board: every draw needs a fresh look.
+
+    A board mutation reaches the device the moment its arguments finish
+    streaming (`EventTranslator._board_update_from`), not when `run_turn`
+    writes the ack back to the provider. So the enforcement has to live where
+    the event is born — which is on the `EventTranslator` — and the ack the
+    model reads has to say the same thing the device saw. This object is that
+    shared per-turn state: the translator consults it to decide whether a
+    mutation may stream, and `run_turn` reads the recorded decision back to
+    choose the matching ack.
+
+    One rule, applied on every valid mutation:
+
+    * **Never two draws on one look.** A mutation may only land when the model
+      has actually inspected the current board, and landing it *consumes* that
+      inspection. A look is recorded by `run_turn` only after `fetch_board`
+      returns a render and `rendered_items` has prepared the image for the
+      model's next round. Merely requesting a `view_board` is not a look: an
+      unanswered render (`BoardUnavailable`) leaves the turn blind, and a view
+      and a mutation emitted in the same provider response cannot unlock one
+      another because the mutation's arguments were chosen before any returned
+      image.
+
+      So the model may iterate freely — view, draw, view again, fix, view again
+      — as long as each mutation is preceded by a fresh delivered look. The only
+      bound on how many times it may draw in one turn is `MAX_TOOL_ROUNDS`.
+
+    Only *valid* mutations are decided here: a malformed call never lands and is
+    not recorded, so it neither consumes an inspection nor is counted. On an
+    empty board (`renderable` False) there is nothing to look at, so a
+    standalone exercise may be drawn straight away — that is the *only*
+    exemption. It happens exactly once: the first allowed draw transitions the
+    gate to board-present (`renderable` True) and then consumes freshness, so
+    every later mutation — including a second one in the same response — needs
+    a fresh delivered view.
+    """
+
+    def __init__(self, *, renderable: bool) -> None:
+        self.renderable = renderable
+        self._looked = False
+        self._decisions: dict[str, str] = {}
+
+    def mark_render_delivered(self) -> None:
+        """Record that a board render reached the model's context this turn."""
+        self._looked = True
+
+    def decide(self, call_id: str) -> str:
+        """Decide a valid mutation: `allowed` or `inspect_first`.
+
+        Called only for a syntactically valid mutation (malformed calls never
+        reach it). Records the decision per call so `run_turn` can write the
+        matching ack. An `allowed` decision consumes the inspection, so the
+        next mutation — whatever its vintage — must wait for a fresh render.
+        """
+        # The one-time empty-board exemption: before any draw, `renderable` is
+        # False and a creation may land without a look. After that first draw
+        # the board has content, so the gate becomes board-present and the
+        # inspection is consumed like any other.
+        if not self.renderable:
+            decision = "allowed"
+        elif self._looked:
+            decision = "allowed"
+        else:
+            decision = "inspect_first"
+        self._decisions[call_id] = decision
+        if decision == "allowed":
+            self.renderable = True
+            self._looked = False
+        return decision
+
+    def decision_for(self, call_id: str) -> str | None:
+        """The decision already recorded for one call, if any."""
+        return self._decisions.get(call_id)
+
+
 async def run_turn(
     *,
     provider: Provider,
@@ -924,13 +1002,19 @@ async def run_turn(
     # and a deadline measured from the start would refuse a memory call in a
     # later round for time the model spent thinking.
     memory_budget = MEMORY_BUDGET_SECONDS
-    # How many syntactically valid `update_board` calls have landed this turn.
-    #
-    # Each such call mutated the learner's board for real, so this is a board
-    # budget: one complete draw, and then the turn
-    # is forced into `_closing_round` rather than being offered another
-    # `update_board` round. A malformed call never lands and never counts.
-    board_update_calls = 0
+    # The board causal gate, one per turn. `renderable` matches what
+    # `_answer` means by `has_board`: there are pixels a `view_board` could
+    # show, and a fetcher to render them. On such a turn every mutation must be
+    # preceded by a fresh look; on an empty board (`renderable` False) a
+    # standalone exercise may be drawn straight away. `MAX_TOOL_ROUNDS` is the
+    # only turn-level bound on how many iterations of view/draw may happen.
+    # The translator consults it while events stream (that is what stops a
+    # refused mutation reaching the device); `run_turn` reads back its recorded
+    # decision to write the matching ack. See `_BoardGate`.
+    board_gate = _BoardGate(
+        renderable=bundle.has_board and fetch_board is not None,
+    )
+    translator.attach_board_gate(board_gate)
     # What this turn has spent on bringing bytes in, across both downloaders and
     # every round. Counted per turn rather than per round for the reason the
     # memory budget is: the per-call bound says nothing about how many calls
@@ -1098,20 +1182,35 @@ async def run_turn(
         # outputs the API expects to find answering the run of calls.
         outputs: list[dict] = []
         attachments: list[dict] = []
-        # Re-validated here, the same way `_answer` chose each ack, so a call
-        # that was answered `MALFORMED_BOARD_ACK` never spends the budget.
-        valid_board_calls = 0
-        board_called = False
         for call in calls:
             if not call.get("call_id"):
                 continue
             call_id = call["call_id"]
-            if call.get("name") in BOARD_MUTATION_TOOLS:
-                board_called = True
+            name = call.get("name")
+            # The causal gate decided each *valid* mutation while its arguments
+            # were still streaming (`_BoardGate.decide`, consulted by the
+            # translator) and suppressed the board event for any it refused.
+            # Write the matching ack here so the provider is told exactly what
+            # the device saw: a mutation that did not land is answered
+            # "look first", never "applied". Calls with no recorded decision
+            # (e.g. malformed) fall through to `_answer`.
+            if name in BOARD_MUTATION_TOOLS:
+                decision = board_gate.decision_for(call_id)
+                if decision == "inspect_first":
+                    outputs.append(provider.tool_output(
+                        call_id=call_id, name=name, output=INSPECT_FIRST_ACK,
+                    ))
+                    continue
             answer = _answer(
                 call,
                 provider=provider,
-                has_board=bundle.has_board and fetch_board is not None,
+                # `view_board` asks to see the current board, and the gate now
+                # owns whether there *is* a renderable board: an initially
+                # empty board becomes renderable once the first creation lands,
+                # so a later look can deliver a render (and unlock a fix).
+                # Matches `bundle.has_board` for boards that had content all
+                # along; a fetcher is still required to actually render.
+                has_board=board_gate.renderable and fetch_board is not None,
                 has_memory=handle_memory is not None,
                 has_image=fetch_image is not None,
                 has_web_search=handle_web_search is not None,
@@ -1280,6 +1379,12 @@ async def run_turn(
                     call_id=call_id, name=call.get("name") or "",
                     output=UNAVAILABLE_ACK,
                 )]
+            else:
+                # The look only counts once the render is actually in hand and
+                # `rendered_items` has prepared it for the model's next round.
+                # A failed or unanswered render must not unlock a mutation: the
+                # model still has not seen the board.
+                board_gate.mark_render_delivered()
             outputs.append(items[0])
             attachments.extend(items[1:])
 
@@ -1357,13 +1462,6 @@ async def run_turn(
             # answered — name, arguments, and a `result` of null.
             if not call.get("call_id"):
                 continue
-            # A syntactically valid `update_board` mutation, counted the same
-            # way `_answer` chose the ack: a call answered `MALFORMED_BOARD_ACK`
-            # never lands on the board and never spends the budget.
-            if call.get("name") in BOARD_MUTATION_TOOLS:
-                update, _ = parse_board_update(call.get("arguments") or "{}")
-                if update is not None:
-                    valid_board_calls += 1
             result.tool_calls.append({
                 "name": call.get("name") or "?",
                 "arguments": _arguments(call),
@@ -1388,21 +1486,11 @@ async def run_turn(
             # turn is over on its own terms — the model already wrote its reply.
             return
         outbox = outputs + attachments
-        # The close that makes the budget a budget. A turn is still an open
-        # conversation, so the outputs answering this round have to go back and
-        # the model has to write the accompanying prose — but this is the last
-        # round that may draw, and the one that follows puts `tool_choice:
-        # "none"` on the wire so the model cannot reach for `update_board`
-        # again.
-        board_update_calls += valid_board_calls
-        if board_called and board_update_calls >= MAX_BOARD_UPDATE_CALLS:
-            async for client_event in _closing_round(
-                provider=provider, model=model, effort=effort, outbox=outbox,
-                previous_id=previous_id, cache_key=cache_key,
-                translator=translator, result=result,
-            ):
-                yield client_event, result
-            return
+        # `_BoardGate` enforces the look-first rule where the mutation event is
+        # born, so nothing here has to close the round. The model may iterate
+        # view/draw/view as often as it needs within `MAX_TOOL_ROUNDS`; the
+        # closing round at the foot of the loop still bounds the turn and ends
+        # it in prose.
     else:
         # The cap bit — `return` above is the only other way out, so this runs
         # exactly when the last round still ended on tool calls. Hitting it is

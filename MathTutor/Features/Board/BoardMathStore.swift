@@ -16,20 +16,22 @@ extension Notification.Name {
 
 /// One typeset LaTeX fragment, ready to composite.
 ///
-/// `size` is the raster's own size in points, taken at
-/// `BoardMathStore.rasterOversample` times the element's font size; `drawSize`
-/// is what it occupies on the board. Everything that places notation uses
-/// `drawSize`, so the oversampling factor lives in exactly one place.
+/// `size` is the raster's own size in points, taken at `oversample` times the
+/// element's font size; `drawSize` is what it occupies on the board. The
+/// oversample is captured on the artifact so a trait change on some later frame
+/// cannot rescale notation that is already on the board.
 @MainActor
 struct MathArtifact {
     let image: CGImage
     let size: CGSize
+    /// The oversample the bitmap was typeset at; `drawSize` divides by it.
+    let oversample: CGFloat
 
     /// The notation's size in board points.
     var drawSize: CGSize {
         CGSize(
-            width: size.width / BoardMathStore.rasterOversample,
-            height: size.height / BoardMathStore.rasterOversample
+            width: size.width / oversample,
+            height: size.height / oversample
         )
     }
 
@@ -348,9 +350,13 @@ final class BoardMathStore {
     private static func typeset(latex: String, fontSize: CGFloat, color: UIColor) -> MathArtifact? {
         let body = typesettableLatex(latex)
         guard !body.isEmpty else { return nil }
+        // Capture the scale in one local: the artifact keeps what it was drawn
+        // at, and `drawSize` divides by that captured value, so geometry does
+        // not move if the trait environment changes after the typeset.
+        let oversample = rasterOversample
         let math = MTMathImage(
             latex: body,
-            fontSize: max(1, fontSize) * rasterOversample,
+            fontSize: max(1, fontSize) * oversample,
             textColor: color,
             labelMode: .display,
             textAlignment: .left
@@ -362,6 +368,6 @@ final class BoardMathStore {
               image.size.height > 0,
               let cgImage = image.cgImage
         else { return nil }
-        return MathArtifact(image: cgImage, size: image.size)
+        return MathArtifact(image: cgImage, size: image.size, oversample: oversample)
     }
 }

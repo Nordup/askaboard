@@ -54,6 +54,32 @@ final class BoardSVGStoreTests: XCTestCase {
     <svg \(namespace) viewBox="0 0 8000 4000"><rect width="8000" height="4000" fill="#204060"/></svg>
     """
 
+    /// A typical figure the size of a solution region: large enough that the
+    /// old 2,048-pixel cap would have starved it of the 8 pixels-a-point that
+    /// `rasterOversample` targets, but small enough to fit the new cap.
+    private static let regionSized = """
+    <svg \(namespace) viewBox="0 0 500 400"><rect width="500" height="400" fill="#2266aa"/></svg>
+    """
+
+    /// The four documents of a realistic teaching set, sized to the frames the
+    /// physical binding produced on the iPad. At the current oversample each
+    /// prices to about 45.8, 33.8, 1.3 and 21.1 MB of flattened raster (see
+    /// `testTheDefaultStoreKeepsTheRealisticTeachingSetResident`). Together
+    /// they are what the default residency budget must hold without eviction.
+    private static let teachingSet: [(CGSize, String)] = [
+        (CGSize(width: 820, height: 560), teaching(820, 560)),
+        (CGSize(width: 480, height: 275), teaching(480, 275)),
+        (CGSize(width: 84, height: 62), teaching(84, 62)),
+        (CGSize(width: 620, height: 195), teaching(620, 195)),
+    ]
+
+    private static func teaching(_ width: Int, _ height: Int) -> String {
+        """
+        <svg \(namespace) viewBox="0 0 \(width) \(height)">\
+        <rect width="\(width)" height="\(height)" fill="#2266aa"/></svg>
+        """
+    }
+
     /// Red over blue, so that a vertical flip is unmistakable.
     private static let twoBands = """
     <svg \(namespace) viewBox="0 0 200 200">\
@@ -123,6 +149,57 @@ final class BoardSVGStoreTests: XCTestCase {
         XCTAssertEqual(
             CGFloat(parsed.image.height), BoardSVGStore.maximumRasterSide / 2, accuracy: 1
         )
+    }
+
+    /// A region-sized figure stays at the target density under the raised cap:
+    /// 500 points at 8 pixels-a-point is 4,000, inside the 4,096 ceiling. The
+    /// old 2,048 cap would have forced this figure down to ~4 pixels-a-point,
+    /// which is why the cap had to come up.
+    func testARegionSizedFigureReachesTheTargetDensity() async throws {
+        let rendered = await BoardSVGStore().render(element: element(Self.regionSized))
+        let parsed = try XCTUnwrap(rendered)
+
+        XCTAssertEqual(parsed.size, CGSize(width: 500, height: 400))
+        XCTAssertEqual(CGFloat(parsed.image.width), 500 * BoardSVGStore.rasterOversample)
+        XCTAssertEqual(CGFloat(parsed.image.height), 400 * BoardSVGStore.rasterOversample)
+        XCTAssertEqual(
+            CGFloat(parsed.image.width), 4_000,
+            "a region-sized figure must not be starved by the side cap"
+        )
+    }
+
+    /// The default store must hold the whole realistic teaching set at once.
+    ///
+    /// This is a regression from the raised oversample: at 8 pixels-a-point the
+    /// four documents above price to ~102 MB of flattened raster, which the old
+    /// 64 MiB default evicted down to one visible figure and left the rest as
+    /// blank outlined boxes. `document(for:)` answers from residency, so an
+    /// eviction here shows up as a nil read, exactly like the missing figures
+    /// on the board.
+    func testTheDefaultStoreKeepsTheRealisticTeachingSetResident() async throws {
+        let store = BoardSVGStore()
+        var totalBytes = 0
+        for (documentSize, markup) in Self.teachingSet {
+            let rendered = await store.render(element: element(markup, width: documentSize.width, height: documentSize.height))
+            let parsed = try XCTUnwrap(rendered)
+            totalBytes += parsed.image.bytesPerRow * parsed.image.height
+        }
+
+        // The regression this guards: the realistic set prices to ~102 MB, more
+        // than the old 64 MiB default, so the test must already sit above it.
+        XCTAssertEqual(
+            store.totalBytesForTesting, totalBytes,
+            "the four-figure set is priced by the bytes the bitmaps hold"
+        )
+        XCTAssertGreaterThan(
+            store.totalBytesForTesting, 64 * 1024 * 1024,
+            "the realistic teaching set outgrows the previous default and must live under the raised one"
+        )
+
+        for (documentSize, markup) in Self.teachingSet {
+            let resident = store.document(for: element(markup, width: documentSize.width, height: documentSize.height))
+            XCTAssertNotNil(resident, "every teaching-set figure must stay resident under the default budget")
+        }
     }
 
     /// The pixels, not merely the image. `rasterize` hands back a `UIImage`
@@ -359,8 +436,8 @@ final class BoardSVGStoreTests: XCTestCase {
     ///
     /// SwiftDraw rasterizes through `UIGraphicsImageRendererFormat.preferred()`
     /// at `preferredRange = .automatic`, which on a wide-gamut iPad is an
-    /// extended-range buffer at eight bytes a pixel. Left alone, one 2048-pixel
-    /// figure would be 33 MB and the byte cap would be counting half of what
+    /// extended-range buffer at eight bytes a pixel. Left alone, one 4096-pixel
+    /// figure would be 128 MB and the byte cap would be counting half of what
     /// the store holds.
     func testTheRasterIsFlattenedToFourBytesPerPixel() async throws {
         let store = BoardSVGStore()

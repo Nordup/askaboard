@@ -247,6 +247,7 @@ CODE_INTERPRETER = "code_interpreter"
 
 TOOL_PHASES: dict[str, PhaseName] = {
     "update_board": "drawing",
+    "draw_board_svg": "drawing",
     "view_board": "looking",
     "set_workspace": "thinking",
     # Here for the same second reason the memory tools are: the download is
@@ -285,6 +286,7 @@ TOOL_PHASES: dict[str, PhaseName] = {
 #: skipped it would show a learner a gap where the work was.
 TOOL_STEP_LABELS: dict[str, str] = {
     "update_board": "Drawing on the board",
+    "draw_board_svg": "Drawing on the board",
     "view_board": "Looking at the board",
     "set_workspace": "Making a plan",
     "fetch_image": "Fetching image",
@@ -375,6 +377,19 @@ class EventTranslator:
         self._heartbeat_seconds = heartbeat_seconds
         self._phase: PhaseName = "thinking"
         self._last_emit = now()
+        #: The per-turn board causal gate, attached by `run_turn` via
+        #: `attach_board_gate`. Consulted where a board mutation event is born
+        #: (see `_board_update_from`), so that a refused mutation never reaches
+        #: the device. Whether the turn has actually looked is decided by
+        #: `run_turn` *after* a render was delivered — this translator never
+        #: marks a look on its own, because seeing the request is not seeing the
+        #: board. None for a translator used on its own (e.g. unit tests), which
+        #: keeps its old behaviour: every valid mutation is translated.
+        self._board_gate = None
+
+    def attach_board_gate(self, gate) -> None:
+        """Give the translator the per-turn gate that governs board mutations."""
+        self._board_gate = gate
 
     def translate(self, event: ProviderEvent | None) -> list[ClientEvent]:
         """Translate one provider event, or keep the connection alive.
@@ -459,8 +474,14 @@ class EventTranslator:
                 produced.append(StatusEvent(phase=phase))
             label = TOOL_STEP_LABELS.get(name)
             call_id = event.call_id
-            if label is not None and call_id:
+            if call_id:
+                # Registered for every call that carries one, label or not:
+                # the board gate needs the id to attribute a mutation decision,
+                # and `draw_board_svg` has no step row of its own but still
+                # mutates the board. `_refined_step` uses the same map and
+                # simply finds nothing when no label applies.
                 self._call_ids[event.output_index] = call_id
+            if label is not None and call_id:
                 produced.append(StepEvent(id=call_id, tool=name, label=label))
             return produced
 
@@ -489,7 +510,8 @@ class EventTranslator:
             if name == "set_workspace":
                 produced.extend(self._workspace_from(raw_arguments))
             elif name in {"draw_board_svg", "update_board"}:
-                produced.extend(self._board_update_from(raw_arguments))
+                produced.extend(self._board_update_from(
+                    output_index, raw_arguments))
             # After the tool's own event, not before: the board must change on
             # the device before a row claims it did.
             step = self._refined_step(output_index, name, raw_arguments)
@@ -531,13 +553,24 @@ class EventTranslator:
         except (json.JSONDecodeError, KeyError, TypeError, ValidationError):
             return []
 
-    def _board_update_from(self, raw_arguments: str) -> list[ClientEvent]:
+    def _board_update_from(
+        self, output_index: int, raw_arguments: str
+    ) -> list[ClientEvent]:
         # A malformed scene update is dropped, not guessed at: the device keeps
         # its current scene and the loop answers the call with a rejection the
         # model can read.
         update, _ = parse_board_update(raw_arguments)
         if update is None:
             return []
+        gate = self._board_gate
+        if gate is not None:
+            call_id = self._call_ids.get(output_index)
+            if call_id is None or gate.decide(call_id) != "allowed":
+                # Refused before it streams: the mutation never reaches the
+                # learner's board. The ack `run_turn` writes for this call is
+                # chosen from the same recorded decision, so the model is told
+                # the same thing the device saw.
+                return []
         return [BoardUpdateEvent(payload=update_payload(update))]
 
     def _refined_step(

@@ -62,6 +62,9 @@ VIEW_BOARD_TOOL: dict = {
         "any reply that would otherwise be a guess about their working. You may call it "
         "more than once to read different parts — each region is rendered fresh on the "
         "learner's iPad at full resolution, so zooming in loses no detail. "
+        "Before you draw or edit anything on a board that already has content on it, "
+        "look at it here first; and after drawing, call this again to confirm how your "
+        "placement rendered rather than guessing. "
         "Never describe, quote, or grade the "
         "learner's work without having looked at it here first."
     ),
@@ -287,13 +290,15 @@ UPDATE_BOARD_TOOL: dict = {
         "or erase learner ink; place corrections "
         "beside the relevant work. Inspect the board with view_board before grading, "
         "correcting, or placing content relative to learner writing; a requested "
-        "standalone exercise or diagram may be drawn on an empty board without that "
-        "look, and do not draw gratuitously for simple conversational answers. "
+        "standalone exercise or diagram may be drawn on a board with no renderable "
+        "content without that look, and do not draw gratuitously for simple "
+        "conversational answers. "
         "Use this for object-level edits whose separate elements need stable ids. "
         "For a standalone exercise or coherent diagram, call `draw_board_svg` instead. "
         "Build the complete edit in ONE call; no second mutation is available in the "
-        "turn. Never fake text, labels or equations with rectangles; rectangles are "
-        "visible boxes only. Then reply in prose."
+        "turn. After it lands, call `view_board` to confirm how it rendered before "
+        "you reply in prose. Never fake text, labels or equations with rectangles; "
+        "rectangles are visible boxes only."
     ),
     "strict": True,
     "parameters": {
@@ -614,8 +619,11 @@ DRAW_BOARD_SVG_TOOL: dict = {
         "Draw one complete standalone exercise or coherent diagram on the board. "
         "Use exactly one SVG document containing every visible word, equation, shape, "
         "and illustration. This is the required board tool for a newly created "
-        "exercise. The call replaces the tutor scene and is the only board mutation "
-        "available in the turn; after it, reply in prose."
+        "exercise. Before drawing on a board that already has content on it, call "
+        "`view_board` to see the current board in this turn first; a board with no "
+        "renderable content may be drawn straight away. The call replaces the tutor "
+        "scene and is the only board mutation available in the turn; after it lands, "
+        "call `view_board` to confirm how it rendered, then reply in prose."
     ),
     "strict": True,
     "parameters": {

@@ -116,10 +116,13 @@ set_workspace
 Replace the session plan and exercise when the learner asks to create or change them. Both are required.
 
 view_board
-Render a readable board region. Call before making any claim about learner writing or work visible on the board.
+Render a readable board region. Call before making any claim about learner writing or work visible on the board. Before you draw or edit a board that already has content on it, look at it here first; after drawing, look again to confirm how your placement rendered.
 
 update_board
-Create, revise, or delete tutor-owned board objects. Reuse IDs and never erase, cover, or modify learner ink.
+Create, revise, or delete tutor-owned board objects. Reuse IDs and never erase, cover, or modify learner ink. Inspect the board with view_board before drawing on content, build the edit in one call, then view the result before replying.
+
+draw_board_svg
+Draw one standalone exercise or coherent diagram as a single SVG document. On a board that already has content, view_board the current board first; after it lands, view_board the result before replying.
 
 fetch_image
 Download one picture from the web. You see it, and its blob_id is what the `image` element on the board takes. Use it proactively whenever a real picture teaches better than a drawing.

@@ -29,7 +29,11 @@ def test_system_prompt_is_the_unchanged_experimental_draft():
             # 2026-08-17: app-owned search — a result only counts as research
             # when it returns concrete source URLs; unusable searches must not
             # be described to the learner as successful research.
-            "055de5e6d06471d20bb8e7b3a95f2640d6009027653c1d5846c962603567d632"
+            #
+            # 2026-08-18: inspect-before/after — view_board, update_board and
+            # the new draw_board_svg TOOLS lines say to look at a board that
+            # already has content before drawing, and to view the result after.
+            "8c4e51172f45a414d2542017c62500a879444cf930ac1b282496bb8ac27016d8"
         )
 
 
