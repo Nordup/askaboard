@@ -147,9 +147,9 @@ class StepEvent(BaseModel):
     for a large diagram is minutes later. The device replaces the row.
 
     `id` is the provider's `call_id`, deliberately not its `output_index`. A
-    turn runs up to `MAX_TOOL_ROUNDS` rounds and every round numbers its own
-    output from zero, so two unrelated calls in one turn share an index. A
-    device keying rows on that would overwrite a finished step with a stranger.
+    turn may run through many rounds and every round numbers its own output from
+    zero, so two unrelated calls in one turn share an index. A device keying
+    rows on that would overwrite a finished step with a stranger.
     """
 
     type: Literal["step"] = "step"

@@ -1189,13 +1189,11 @@ class _Round:
 def _sdk_kwargs(payload: dict) -> dict:
     """One round's payload as the SDK's keyword arguments.
 
-    Exists for one field. `loop._closing_round` sets `tool_choice` at the *top*
-    level of the payload, which is where the Responses API takes it — and on this
-    API it lives inside `generation_config`, so passed through untouched it would
-    be a keyword the request type does not declare and the round it is meant to
-    fix would fail on its own request. The closing round is bought precisely when
-    a turn is about to end in silence, so it is the last round that can afford to
-    be the broken one.
+    Exists for one field. The provider-neutral loop sets `tool_choice` at the
+    *top* level of the payload, where the Responses API takes it. On this API it
+    lives inside `generation_config`, so passed through untouched it would be a
+    keyword the request type does not declare and any constrained tool round
+    would fail on its own request.
 
     The payload is copied rather than edited. `run_turn` records the first round's
     payload verbatim as the turn's request envelope, and a recorded call should

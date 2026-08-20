@@ -28,7 +28,6 @@ from app.tutor.loop import (
     FETCH_TIMEOUT_ACK,
     FETCHED_IMAGE_CAPTION,
     MALFORMED_BOARD_ACK,
-    MAX_TOOL_ROUNDS,
     UNSUPPORTED_TOOL_ACK,
     UPDATE_BOARD_ACK,
     FetchedImage,
@@ -965,7 +964,7 @@ async def test_a_view_and_mutation_in_the_same_response_do_not_unlock_the_mutati
 async def test_the_model_can_iterate_view_draw_view_fix_view():
     """The approved iterative flow: each mutation is preceded by a fresh
     delivered render, so the model may draw, look again, fix, look again, and
-    finish — bounded only by `MAX_TOOL_ROUNDS`, never by a one-mutation cap."""
+    finish without a one-mutation or fixed round cap."""
     seen = []
 
     async def fetch_board(call_id: str, region):
@@ -1613,22 +1612,30 @@ async def test_provider_cannot_close_in_prose_while_post_draw_review_is_pending(
 
 
 @respx.mock
-async def test_cap_exhaustion_while_a_review_is_pending_yields_an_error_not_prose():
-    """If `MAX_TOOL_ROUNDS` runs out while a post-draw review is still pending,
-    the loop must never buy a prose-only closing round (which would hand the
-    learner uncorrected content the model never inspected). It yields the normal
-    sanitised retryable error instead, keeping the turn bounded."""
+async def test_board_review_can_continue_past_eight_rounds_and_finish():
+    """A complex draw/review/correct loop must not fail at the old round cap.
+
+    Round eight lands a fourth mutation, exactly where the old implementation
+    stopped with a retryable error because its required review was still
+    pending. The open-ended loop must deliver that review and let the model
+    finish naturally in prose.
+    """
+    views = [f"call_view_{index}" for index in range(5)]
+    legs = []
+    for index in range(4):
+        legs.extend((_view_board_turn(views[index]), BOARD_UPDATE_TURN))
+    legs.extend((_view_board_turn(views[-1]), _message_turn("Done.")))
     route = respx.post("https://api.openai.com/v1/responses").mock(
         side_effect=[
             Response(200, headers={"Content-Type": "text/event-stream"},
                      content=sse_stream(*leg))
-            for leg in (
-                [BOARD_UPDATE_TURN] * MAX_TOOL_ROUNDS
-                + [TEXT_ONLY_TURN]
-            )
+            for leg in legs
         ]
     )
-    bundle = ContextBundle(system="s", input=[{"role": "user", "content": "draw"}])
+    bundle = ContextBundle(
+        system="s", input=[{"role": "user", "content": "draw and refine"}],
+        has_board=True,
+    )
 
     events = []
     result = None
@@ -1640,19 +1647,14 @@ async def test_cap_exhaustion_while_a_review_is_pending_yields_an_error_not_pros
         events.append(event)
         result = running
 
-    bodies = [json.loads(call.request.content) for call in route.calls]
-    # Exactly MAX_TOOL_ROUNDS requests were made: the else branch (cap hit) runs
-    # the pending-review guard and returns without buying a closing round. The
-    # last request is the forced review round.
-    assert len(bodies) == MAX_TOOL_ROUNDS
-    assert bodies[-1]["tool_choice"] == {
-        "type": "function", "name": "view_board",
-    }
-    # The turn ends with the sanitised retryable error, never `done` in prose.
     from app.tutor.events import ErrorEvent
-    assert isinstance(events[-1], ErrorEvent)
-    assert events[-1].retryable is True
-    assert events[-1].message == TURN_FAILED_MESSAGE
+    assert not any(isinstance(event, ErrorEvent) for event in events)
+    assert len(route.calls) == 10
+    assert len([event for event in events if isinstance(event, BoardUpdateEvent)]) == 4
+    assert len([event for event in events if isinstance(event, BoardRequestEvent)]) == 5
+    assert result.text == "Done."
+
+
 @respx.mock
 async def test_empty_board_second_mutation_in_same_response_is_refused():
     """Only the first empty-board creation is exempt. A second valid mutation
@@ -1826,7 +1828,7 @@ def test_force_tool_choice_is_provider_compatible():
     not merely any tool. Each family spells that narrow pin differently: the
     Responses API's `ToolChoiceFunction` dict on OpenAI, and Gemini Interactions'
     `allowed_tools` ToolChoiceConfig. Both route through the same top-level field
-    the closing round uses, which `_sdk_kwargs` moves into generation_config."""
+    that `_sdk_kwargs` moves into generation_config."""
     from app.tutor.providers.gemini import GeminiProvider
     from app.tutor.loop import _post_review_tool_choice
 
@@ -1923,57 +1925,13 @@ async def test_without_a_cache_key_the_field_is_left_off_rather_than_nulled():
 
 
 @respx.mock
-async def test_a_model_that_only_ever_calls_the_tool_is_bounded():
-    """Without a bound, a model that answers every tool result with another
-    tool call bills the learner until something else stops it.
-
-    The bound is `MAX_TOOL_ROUNDS` tool rounds and then exactly one more. That
-    last round offers no tools, so it cannot end in a call and cannot buy
-    another: the total is fixed at the cap plus one, whatever the model does.
-    """
+async def test_tool_rounds_continue_past_eight_until_the_model_finishes():
+    """The model, not a fixed counter, decides when a complex turn is done."""
     route = respx.post("https://api.openai.com/v1/responses").mock(
-        return_value=Response(200, headers={"Content-Type": "text/event-stream"},
-                              content=sse_stream(*TOOL_CALL_TURN))
-    )
-    client = AsyncOpenAI(api_key="sk-test")
-    bundle = ContextBundle(system="s", input=[{"role": "user", "content": "hi"}])
-
-    async for _event, _running in run_turn(
-        provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
-        effort="high", bundle=bundle
-    ):
-        pass
-
-    assert route.call_count == MAX_TOOL_ROUNDS + 1
-    bodies = [json.loads(call.request.content) for call in route.calls]
-    assert all("tool_choice" not in body for body in bodies[:-1]), (
-        "a tool round leaves the choice to the model"
-    )
-    assert bodies[-1]["tool_choice"] == "none"
-    # The definitions stay on the request even with none of them callable:
-    # dropping them would invalidate the cached prompt prefix for one request.
-    assert bodies[-1]["tools"] == bodies[0]["tools"]
-    # And it carries the outputs answering the calls the capped round made —
-    # pending work the API is waiting for, which is why the round is bought.
-    assert [item.get("call_id") for item in bodies[-1]["input"]] == ["call_1"]
-
-
-@respx.mock
-async def test_the_round_after_the_cap_closes_the_turn_in_prose():
-    """The cap used to end the turn wherever it happened to be.
-
-    A round that ends on a tool call has written whatever prose came before it,
-    which for a reasoning model is routinely nothing — so the learner got a
-    `done` event and an empty thread, the exact silence the round loop itself
-    was written to end. The closing round is what answers them: the model is
-    handed its own tool results with no tool it may call, and the only thing
-    left to do is write.
-    """
-    respx.post("https://api.openai.com/v1/responses").mock(
         side_effect=[
             Response(200, headers={"Content-Type": "text/event-stream"},
                      content=sse_stream(*leg))
-            for leg in ([TOOL_CALL_TURN] * MAX_TOOL_ROUNDS + [TEXT_ONLY_TURN])
+            for leg in ([TOOL_CALL_TURN] * 10 + [TEXT_ONLY_TURN])
         ]
     )
     client = AsyncOpenAI(api_key="sk-test")
@@ -1988,10 +1946,14 @@ async def test_the_round_after_the_cap_closes_the_turn_in_prose():
         events.append(event)
         result = running
 
+    assert route.call_count == 11
+    bodies = [json.loads(call.request.content) for call in route.calls]
+    assert all("tool_choice" not in body for body in bodies), (
+        "a tool round leaves the choice to the model"
+    )
     assert result.text == "Nice work.", "the learner is answered rather than left silent"
     assert TextDeltaEvent(text="Nice ") in events, "and reads it as it is written"
-    # One turn, one bill: the closing round's usage is summed in like any other.
-    assert result.usage["output_tokens"] == 24 * MAX_TOOL_ROUNDS + 8
+    assert result.usage["output_tokens"] == 24 * 10 + 8
 
 
 # A response that ended on a call the provider gave no `call_id`. Not a shape a

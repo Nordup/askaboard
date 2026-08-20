@@ -427,10 +427,10 @@ def test_a_tool_round_ends_requires_action_and_that_is_not_a_failure():
 
 def test_the_accumulator_does_not_survive_into_the_next_round():
     """The one defect this provider's statefulness makes possible, and the most
-    expensive one available: a turn is up to eight rounds through one provider,
-    and a call still in the accumulator at round two makes `Completed.calls`
-    non-empty forever. The loop would answer the same tool again and buy another
-    round, to `MAX_TOOL_ROUNDS`, every one of them billed."""
+    expensive one available: a turn may run through many rounds using one
+    provider, and a call still in the accumulator at round two makes
+    `Completed.calls` non-empty forever. The loop would answer the same tool
+    again and buy another billed round indefinitely."""
     provider, _ = _normalise_all(TOOL_CALL_INTERACTION)
     _, events = _normalise_all(TOOL_CALL_FOLLOW_UP, provider)
 
@@ -648,12 +648,10 @@ def test_classify_takes_the_no_status_path_for_an_in_stream_error():
     ).retry
 
 
-def test_the_closing_rounds_tool_choice_moves_into_the_generation_config():
-    """`loop._closing_round` sets `tool_choice` at the top level of the payload,
-    where the Responses API takes it. On this API it lives inside
-    `generation_config`, so left where it was put it would be a field the request
-    type does not declare — and the closing round is bought precisely when a turn
-    is about to end in silence, so it is the last round that can afford to fail.
+def test_top_level_tool_choice_moves_into_the_generation_config():
+    """The neutral loop sets `tool_choice` at the payload's top level, where the
+    Responses API takes it. On Gemini it lives inside `generation_config`, so
+    left where it was put it would be a field the request type does not declare.
 
     The payload itself is not mutated: `run_turn` records the first round's
     payload as the turn's request envelope, and a stored call should say what was
@@ -1266,10 +1264,10 @@ def test_a_round_carrying_pictures_validates_as_user_input_with_images():
     assert _validated(payload) == []
 
 
-def test_a_closing_round_validates_after_the_tool_choice_is_moved():
-    """`loop._closing_round` puts `tool_choice` at the payload's top level, and
-    `_sdk_kwargs` moves it into `generation_config` on the way out. The moved
-    shape is what is really posted, so it is the shape that has to validate."""
+def test_a_constrained_round_validates_after_the_tool_choice_is_moved():
+    """The loop puts `tool_choice` at the payload's top level, and `_sdk_kwargs`
+    moves it into `generation_config` on the way out. The moved shape is what is
+    really posted, so it is the shape that has to validate."""
     from app.tutor.providers.gemini import _sdk_kwargs
 
     provider = GeminiProvider(client=None)

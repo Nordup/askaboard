@@ -157,11 +157,11 @@ _CONTENT_TYPE_OF_FORMAT = {
 #: Bytes are the second, smaller saving, and they are real whatever the tiling
 #: does: they pay for wire time on every round and for nothing else.
 #:
-#: The cost this exists to stop is not the one round it is sent on. A turn is
-#: up to `MAX_TOOL_ROUNDS` rounds against the same accumulating conversation, so
+#: The cost this exists to stop is not the one round it is sent on. A turn may
+#: continue through many rounds against the same accumulating conversation, so
 #: every picture in it is re-billed as input on every later round — two fetched
-#: images plus board renders, eight times over, is the shape that walked a
-#: session into its account's tokens-per-minute ceiling and lost the reply.
+#: images plus board renders, repeated several times, is the shape that walked
+#: a session into its account's tokens-per-minute ceiling and lost the reply.
 #:
 #: The measure of whether this works is `turns.input_tokens` on a turn that
 #: fetched a picture, read before and after. Nothing here should be believed

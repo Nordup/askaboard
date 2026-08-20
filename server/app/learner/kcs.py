@@ -105,9 +105,9 @@ async def seed_curriculum(
     model: `evidence.record` resolves the tutor's codes against this table, an
     empty table resolves none of them, and `dispatch._record_evidence` then
     answers "none of those codes are in the curriculum" to every call it will
-    ever receive. The tutor reads that as "wrong codes", tries different ones,
-    and spends `MAX_TOOL_ROUNDS` doing it. `mastery.snapshot` returns "" the
-    whole time, so the prompt says nothing about the learner either.
+    ever receive. The tutor reads that as "wrong codes" and may keep trying
+    different ones indefinitely. `mastery.snapshot` returns "" the whole time,
+    so the prompt says nothing about the learner either.
 
     Cheap enough to repeat: two statements, both upserts keyed on the natural
     key, so re-running refreshes the wording of a standard and never its id.
