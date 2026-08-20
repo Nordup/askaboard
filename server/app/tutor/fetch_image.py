@@ -17,9 +17,13 @@ The guards, and what each one is for:
   our network — `169.254.169.254` for cloud credentials, `127.0.0.1` for
   whatever else listens on this box. *Every* address, because a resolver
   answers with a set and the client is free to try any member of it.
-* **No redirects.** A followed redirect is the same hole with an extra hop:
-  the destination is chosen by whoever answered, and by then nothing has
-  checked it. The model is told to use the final URL instead.
+* **Bounded, validated redirects.** A redirect is the same hole as the first
+  hop — the destination is chosen by whoever answered — so it cannot be
+  trusted any more than the original URL is. Every hop is therefore checked
+  the way the first one is: `https`-only, every resolved address public, and
+  the connected peer confirmed on each response. The chain is capped at
+  `MAX_REDIRECTS` hops and shares the one total deadline, so a server that
+  points at itself forever is a bounded wait, not an open one.
 * **A type allowlist, checked twice.** Once against the header, and once
   against what the bytes turn out to be. `image/svg+xml` is deliberately absent
   — an SVG is a document with scripts and remote references in it, not a
@@ -48,11 +52,13 @@ import ipaddress
 import logging
 import socket
 from dataclasses import dataclass
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 import anyio
 import httpx
 from PIL import Image, ImageOps, UnidentifiedImageError
+
+from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +81,17 @@ MAX_IMAGE_BYTES = 10 * 1024 * 1024
 #: Ten seconds is generous for one image and well inside the fifteen the loop
 #: allows this call before it gives up on it.
 FETCH_TIMEOUT_SECONDS = 10.0
+
+#: How many redirect hops a fetch may follow before giving up.
+#
+#: The redirect chain is the same trust surface as the first hop, just governed
+#: by whoever answered earlier in the chain — so it is bounded like the body
+#: and the bytes are: a small constant number of hops that still covers the
+#: ordinary case (for example Wikimedia's `Special:FilePath` -> the real
+#: `upload.wikimedia.org` file, which is one hop) while refusing a server that
+#: answers every request with another location. `MAX_REDIRECTS + 1` is the
+#: total number of requests a chain may make.
+MAX_REDIRECTS = 3
 
 #: The most pixels a fetched image may declare.
 #:
@@ -468,31 +485,74 @@ def _measured(data: bytes) -> FetchedBytes:
     )
 
 
-async def _download(client: httpx.AsyncClient, url: str) -> bytes:
-    """The request itself, with every check that has to happen before the body.
+def _request_headers() -> dict[str, str]:
+    """The headers one outbound image request carries.
+
+    A callable (rather than a constant) so the user-agent can be overridden
+    via configuration without an import-time read, and so a test can inspect
+    the exact headers the fetch puts on the wire.
+
+    `Accept` limits what a server may claim it is sending to the raster types
+    `ALLOWED_CONTENT_TYPES` will accept. The `User-Agent` is the other half of
+    the same conversation: image hosts such as Wikimedia refuse requests with a
+    bare runtime agent or none at all (HTTP 403, "set a user-agent and respect
+    our robot policy"). A descriptive agent names the product, a reachable
+    contact, and the runtime, and is configurable via `IMAGE_USER_AGENT`.
+    """
+    return {
+        "Accept": ", ".join(sorted(ALLOWED_CONTENT_TYPES)),
+        "User-Agent": get_settings().image_user_agent,
+    }
+
+
+async def _request_once(client: httpx.AsyncClient, url: str) -> tuple[bytes, str | None]:
+    """One request in the chain, and the guards that have to happen before its body.
+
+    Returns `(body, None)` for a terminal 200 image and `(None, location)` for a
+    redirect. Either way every check that makes a redirect as safe as the first
+    hop runs here: the *current* URL's host is resolved and required public
+    before the connection opens, the connected peer is confirmed after, and the
+    response is handled without ever handing control of the next destination to
+    httpx (see `_follow`).
 
     `follow_redirects=False` is passed here rather than left to the client, so
-    an injected client built with redirects on cannot turn the guard off from
-    the outside.
+    an injected client built with redirects on cannot turn this off from the
+    outside — our loop decides the next hop, after checking it.
 
     Raising inside the `async with` closes the response and drops the
     connection, which is what stops a refused download from being read anyway.
     """
+    parsed = urlsplit(url)
+    scheme, host = parsed.scheme, parsed.hostname
+    # `.port` parses lazily, so it is read here rather than where it is used: it
+    # raises on a non-numeric port and on one out of range.
+    port = parsed.port or 443
+    if scheme != "https":
+        raise ImageFetchError(
+            "Only https can be fetched. Find an https link to the image."
+        )
+    if not host:
+        raise ImageFetchError("That URL has no host in it, so it was not fetched.")
+    _require_public(host, await _resolve(host, port))
+
     async with client.stream(
         "GET", url,
         follow_redirects=False,
         timeout=httpx.Timeout(FETCH_TIMEOUT_SECONDS),
-        headers={"Accept": ", ".join(sorted(ALLOWED_CONTENT_TYPES))},
+        headers=_request_headers(),
     ) as response:
         # First, before anything about the answer is looked at: the question
         # this asks is not "what did they send" but "who is they".
         _require_public_peer(response)
 
         if response.is_redirect:
-            raise ImageFetchError(
-                "That URL redirects somewhere else, which is not followed. "
-                "Use the address the image is actually served from."
-            )
+            location = response.headers.get("location")
+            if not location:
+                raise ImageFetchError(
+                    "That URL redirected without saying where to, so it was "
+                    "not followed."
+                )
+            return None, location
         if response.status_code != 200:
             raise ImageFetchError(
                 f"That URL answered {response.status_code}, so there is no "
@@ -529,7 +589,55 @@ async def _download(client: httpx.AsyncClient, url: str) -> bytes:
             if total > MAX_IMAGE_BYTES:
                 raise ImageFetchError(_TOO_LARGE)
             chunks.append(chunk)
-    return b"".join(chunks)
+    return b"".join(chunks), None
+
+
+def _next_url(current: str, location: str) -> str:
+    """Resolve one `Location` header against the URL that produced it.
+
+    A `Location` may be a full URL, a scheme-relative one (`//host/path`), or a
+    path-relative one (`/path`, `path`), so it is resolved against the current
+    URL with `urljoin` rather than taken verbatim. Whatever it resolves to is
+    then held to the same rules as the original address: `https` only, and a
+    host that exists. A downgrade, an unparseable target, or a missing host is a
+    refusal before any request is made to it.
+
+    `_request_once` re-parses the returned URL guard-table style, so the
+    host it names is resolved and required public before the next connection.
+    """
+    target = urljoin(current, location)
+    parsed = urlsplit(target)
+    if parsed.scheme != "https":
+        raise ImageFetchError(
+            "That URL redirects to a non-https address, which is not followed."
+        )
+    if not parsed.hostname:
+        raise ImageFetchError(
+            "That URL redirects to an invalid address, which is not followed."
+        )
+    return target
+
+
+async def _follow(client: httpx.AsyncClient, url: str) -> bytes:
+    """Follow a bounded redirect chain, one guarded hop at a time.
+
+    The chain is capped at `MAX_REDIRECTS` hops, and the whole thing runs inside
+    the single total deadline `fetch_image` owns, so a server that redirects
+    forever is a bounded wait that ends in a refusal rather than an unbounded
+    one. Each hop goes through `_request_once`, which resolves and validates
+    that hop's host, confirms the connected peer, and applies the type, byte,
+    and pixel caps on the terminal image exactly once.
+    """
+    current = url
+    for _ in range(MAX_REDIRECTS + 1):
+        body, location = await _request_once(client, current)
+        if location is None:
+            return body
+        current = _next_url(current, location)
+    raise ImageFetchError(
+        "That image redirected too many times. Use the address the picture is "
+        "actually served from."
+    )
 
 
 _TOO_LARGE = (
@@ -548,14 +656,18 @@ async def fetch_image(
     """Download one image, or say why it was refused.
 
     Raises `ImageFetchError` for everything: a refused scheme, a private
-    address, a redirect, a wrong type, an oversized body, a timeout, and any
-    transport failure. The caller turns that into `{"error": reason}` and hands
-    it to the model, which is free to try a different URL — so a refusal is an
-    ordinary outcome here, not an exception in the "something is broken" sense.
+    address, a redirected-to private or non-https target, a redirect loop that
+    exceeded `MAX_REDIRECTS`, a wrong type, an oversized body, a timeout, and
+    any transport failure. The caller turns that into `{"error": reason}` and
+    hands it to the model, which is free to try a different URL — so a refusal
+    is an ordinary outcome here, not an exception in the "something is broken"
+    sense.
 
     `client` exists so a caller with a pool can lend it. The guards do not
-    depend on how it was built: `follow_redirects` and the timeout are passed
-    per request.
+    depend on how it was built: `follow_redirects` is forced off per request
+    and redirects are followed by this module's own `_follow` loop, so an
+    injected client cannot bypass the per-hop checks. The timeout is passed per
+    request and the whole chain shares the one `asyncio.timeout` below.
     """
     try:
         parsed = urlsplit(url)
@@ -583,14 +695,14 @@ async def fetch_image(
     try:
         # The deadline covers the lookup as well as the transfer: a resolver
         # that never answers is the same silence to the learner as a server
-        # that never answers.
+        # that never answers. It is one deadline over the whole chain — every
+        # hop, every resolver, every connect — not one per request.
         async with asyncio.timeout(FETCH_TIMEOUT_SECONDS):
-            _require_public(host, await _resolve(host, port))
             if client is not None:
-                data = await _download(client, url)
+                data = await _follow(client, url)
             else:
                 async with httpx.AsyncClient(follow_redirects=False) as owned:
-                    data = await _download(owned, url)
+                    data = await _follow(owned, url)
     except TimeoutError:
         # Only ever this block's own deadline: `asyncio.timeout` re-raises an
         # outer cancellation as `CancelledError`, so a turn-level timeout

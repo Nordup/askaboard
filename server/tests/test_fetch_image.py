@@ -49,6 +49,17 @@ def _resolving_to(*addresses: str):
     return resolve
 
 
+def _resolving_by(host_map: dict[str, list[str]], default: list[str] | None = None):
+    """A stand-in for DNS that answers per hostname, for redirect-hop tests."""
+    async def resolve(host: str, port: int) -> list[str]:
+        if host in host_map:
+            return host_map[host]
+        if default is not None:
+            return default
+        raise socket.gaierror(socket.EAI_NONAME, "no such host")
+    return resolve
+
+
 @pytest.fixture
 def public_dns(monkeypatch):
     """Every hostname resolves to one public address.
@@ -87,6 +98,47 @@ async def test_a_public_image_comes_back_with_its_bytes_and_its_size(public_dns)
     assert fetched.content_type == "image/png"
     assert fetched.width == 4
     assert fetched.height == 7
+
+
+@respx.mock
+async def test_the_outbound_request_carries_a_descriptive_user_agent(public_dns):
+    """The fix for the confirmed production failure: Wikimedia answered a
+    headerless `Accept`-only request with 403 and "Please set a user-agent and
+    respect our robot policy". A descriptive agent is what lets a real raster
+    image be fetched at all, so it is asserted on the actual request that goes
+    to the network."""
+    png = _image(width=2, height=2)
+    route = respx.get(URL).mock(return_value=Response(
+        200, headers={"Content-Type": "image/png"}, content=png,
+    ))
+
+    fetched = await fetch_image(URL)
+
+    assert fetched.data == png
+    sent = route.calls[0].request.headers.get("User-Agent")
+    assert sent
+    # The descriptive part a host actually reads: identifiable product and a
+    # reachable contact, neither of which a bare `python-httpx/0.x` agent has.
+    assert "MathTutor" in sent
+    assert "github.com/Nordup/math-tutor" in sent
+
+
+@respx.mock
+async def test_the_user_agent_is_configurable(public_dns, monkeypatch):
+    """The default is an operator override away, so the contact an image host
+    sees can be owned without an edit to `fetch_image.py`."""
+    png = _image(width=2, height=2)
+    route = respx.get(URL).mock(return_value=Response(
+        200, headers={"Content-Type": "image/png"}, content=png,
+    ))
+    class _Settings:
+        image_user_agent = "TutorBot/1.0 (contact ops@example.com) httpx"
+    monkeypatch.setattr(module, "get_settings", lambda: _Settings())
+
+    await fetch_image(URL)
+
+    sent = route.calls[0].request.headers.get("User-Agent")
+    assert sent == "TutorBot/1.0 (contact ops@example.com) httpx"
 
 
 @respx.mock
@@ -269,19 +321,170 @@ async def test_a_host_that_moves_between_the_check_and_the_connection_is_refused
 
 @pytest.mark.parametrize("status_code", [301, 302, 303, 307, 308])
 @respx.mock
-async def test_a_redirect_is_an_error_rather_than_a_second_request(
+async def test_any_redirect_status_that_points_at_a_downgrade_is_refused(
     public_dns, status_code,
 ):
-    """A followed redirect is the same SSRF hole with an extra hop: the
-    location is chosen by whoever answered, and nothing checked it."""
+    """A redirect to a plaintext address is refused — the same `https`-only rule
+    as the first hop applies to every hop — and the refusal happens before any
+    request to the target."""
+    target = "http://169.254.169.254/latest/meta-data/"
+    second = respx.get(target).mock(return_value=Response(
+        200, headers={"Content-Type": "image/png"}, content=_image(),
+    ))
     respx.get(URL).mock(return_value=Response(
-        status_code, headers={"Location": "http://169.254.169.254/latest/meta-data/"},
+        status_code, headers={"Location": target},
     ))
 
     with pytest.raises(ImageFetchError) as caught:
         await fetch_image(URL)
 
     assert "redirect" in str(caught.value)
+    assert not second.called, "a downgrade or private target is never connected to"
+
+
+@respx.mock
+async def test_a_valid_cross_host_https_redirect_is_followed_to_the_image(public_dns):
+    """The case the live blocker needs: Wikimedia's `Special:FilePath` answers
+    with a redirect to the real `upload.wikimedia.org` file. A redirect whose
+    target is https and resolves public is followed once, and the terminal image
+    still passes every guard."""
+    jpeg = _image("JPEG", width=5, height=4)
+    first = respx.get(URL).mock(return_value=Response(
+        302, headers={"Location": "https://upload.example.net/soap.jpg"},
+    ))
+    second = respx.get("https://upload.example.net/soap.jpg").mock(return_value=Response(
+        200, headers={"Content-Type": "image/jpeg"}, content=jpeg,
+    ))
+
+    fetched = await fetch_image(URL)
+
+    assert fetched.data == jpeg
+    assert fetched.content_type == "image/jpeg"
+    assert first.called
+    assert second.called
+
+
+@respx.mock
+async def test_a_relative_redirect_is_resolved_against_the_current_url(public_dns):
+    """A `Location` of `/path.png` is resolved against the URL that produced it,
+    not taken as a bare path — the RFC-correct reading a server actually relies
+    on."""
+    png = _image(width=2, height=2)
+    first = respx.get(URL).mock(return_value=Response(
+        302, headers={"Location": "/media/soap.png"},
+    ))
+    second = respx.get("https://example.com/media/soap.png").mock(
+        return_value=Response(200, headers={"Content-Type": "image/png"}, content=png)
+    )
+
+    fetched = await fetch_image(URL)
+
+    assert fetched.data == png
+    assert second.called
+    assert first.called
+
+
+@respx.mock
+async def test_a_redirect_to_a_private_host_is_refused_before_the_second_request(
+    monkeypatch,
+):
+    """The destination of a redirect is resolved and required public before the
+    connection, exactly like the first hop. A target that resolves inside the
+    network is refused, and the second URL is never requested (the SSRF guard
+    has to hold even when the model only ever saw the first, public URL)."""
+    target = "https://metadata.example.internal/img.png"
+    second = respx.get(target).mock(return_value=Response(
+        200, headers={"Content-Type": "image/png"}, content=_image(),
+    ))
+    respx.get(URL).mock(return_value=Response(
+        302, headers={"Location": target},
+    ))
+    monkeypatch.setattr(
+        module, "_resolve",
+        _resolving_by({"example.com": [PUBLIC], "metadata.example.internal": ["169.254.169.254"]}),
+    )
+
+    with pytest.raises(ImageFetchError) as caught:
+        await fetch_image(URL)
+
+    assert "public" in str(caught.value)
+    assert not second.called, "the private hop must be refused before connecting"
+
+
+@respx.mock
+async def test_too_many_redirects_is_refused(public_dns):
+    """`MAX_REDIRECTS` bounds the chain, so a server that always answers with
+    another location is a bounded wait ending in a refusal, not an open one."""
+    png = _image(width=1, height=1)
+    hopped = respx.route(method="GET", url__regex=r"https://example\.com/hop_\d+\.png")
+    hopped.mock(return_value=Response(
+        302, headers={"Location": "https://example.com/hop_1.png"},
+    ))
+    respx.get(URL).mock(return_value=Response(
+        302, headers={"Location": "https://example.com/hop_0.png"},
+    ))
+
+    with pytest.raises(ImageFetchError) as caught:
+        await fetch_image(URL)
+
+    assert "redirected too many times" in str(caught.value)
+
+
+@respx.mock
+async def test_a_redirect_targets_public_resolution_is_validated_per_hop(
+    monkeypatch,
+):
+    """The redirect may name a host that passes one hop and points somewhere
+    else the next; each hop's own DNS answer is checked, so a chain mixing
+    public and private hosts is refused exactly at the private hop."""
+    png = _image(width=3, height=3)
+    hop_one = "https://hop-a.example/img.png"
+    hop_two = "https://hop-b.example/img.png"
+    respx.get(URL).mock(return_value=Response(
+        302, headers={"Location": hop_one},
+    ))
+    respx.get(hop_one).mock(return_value=Response(
+        302, headers={"Location": hop_two},
+    ))
+    hop_two_route = respx.get(hop_two).mock(return_value=Response(
+        200, headers={"Content-Type": "image/png"}, content=png,
+    ))
+    # hop-b resolves fine too, so the chain should complete — this is the proof
+    # that every hop is resolved independently rather than trusting the first.
+    monkeypatch.setattr(
+        module, "_resolve",
+        _resolving_by({
+            "example.com": [PUBLIC],
+            "hop-a.example": [PUBLIC],
+            "hop-b.example": [PUBLIC],
+        }),
+    )
+
+    fetched = await fetch_image(URL)
+
+    assert fetched.data == png
+    assert hop_two_route.called
+
+
+@respx.mock
+async def test_each_redirect_hop_carries_the_user_agent(public_dns):
+    """The descriptive user-agent travels with every hop, because the hop that
+    actually serves the image is the one whose robot policy matters — and the
+    whole reason this module exists is that Wikimedia judged a first hop by the
+    second one's headers."""
+    png = _image(width=2, height=2)
+    respx.get(URL).mock(return_value=Response(
+        302, headers={"Location": "https://example.net/soap.png"},
+    ))
+    second = respx.get("https://example.net/soap.png").mock(return_value=Response(
+        200, headers={"Content-Type": "image/png"}, content=png,
+    ))
+
+    fetched = await fetch_image(URL)
+
+    assert fetched.data == png
+    sent = second.calls[0].request.headers.get("User-Agent")
+    assert sent and "MathTutor" in sent
 
 
 @respx.mock
@@ -419,19 +622,27 @@ async def test_a_slow_server_gives_up_inside_the_fetcher(public_dns, monkeypatch
 
 
 @respx.mock
-async def test_an_injected_client_still_never_follows_a_redirect(public_dns):
+async def test_an_injected_client_redirect_on_still_goes_through_our_guarded_loop(
+    public_dns,
+):
     """The caller's client is used as given except for this: `follow_redirects`
-    is passed per request, so a client built with it on cannot turn the guard
-    off from the outside."""
-    respx.get(URL).mock(return_value=Response(
+    is forced off per request, so a client built with redirects on cannot make
+    httpx follow a hop we have not checked. The redirect is followed by this
+    module's own loop, which resolves and validates the target first."""
+    png = _image(width=3, height=2)
+    first = respx.get(URL).mock(return_value=Response(
         302, headers={"Location": "https://example.net/other.png"},
+    ))
+    second = respx.get("https://example.net/other.png").mock(return_value=Response(
+        200, headers={"Content-Type": "image/png"}, content=png,
     ))
 
     async with httpx.AsyncClient(follow_redirects=True) as client:
-        with pytest.raises(ImageFetchError) as caught:
-            await fetch_image(URL, client=client)
+        fetched = await fetch_image(URL, client=client)
 
-    assert "redirect" in str(caught.value)
+    assert fetched.data == png
+    assert first.called
+    assert second.called, "the guarded loop, not the injected client, follows the hop"
 
 
 @pytest.mark.parametrize("failure", [

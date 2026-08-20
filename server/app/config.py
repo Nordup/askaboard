@@ -292,6 +292,23 @@ class Settings(BaseSettings):
     #: row. `gpt-5.6-luna` is the project's safe, cheap default already used
     #: for other server-chosen work; `WEB_SEARCH_MODEL` overrides it.
     web_search_model: str = "gpt-5.6-luna"
+    #: The `User-Agent` header sent on `fetch_image` downloads, env
+    #: `IMAGE_USER_AGENT`.
+    #:
+    #: Wikimedia and other image hosts answer a request with no descriptive
+    #: user-agent, or a bare `python-httpx` one, with HTTP 403 and a plea to
+    #: "set a user-agent and respect our robot policy" — the confirmed
+    #: production failure this default exists to fix. A descriptive agent is
+    #: what lets the service fetch real raster images instead of handing the
+    #: model a refused URL. It is deliberately overridable so an operator can
+    #: own the contact address without editing code. The default names the
+    #: product (`MathTutor`), pins a contact that resolves to this project
+    #: (the GitHub repo), and the `python-httpx` runtime so it cannot be
+    #: mistaken for the bare httpx agent.
+    image_user_agent: str = (
+        "MathTutor/0.1 (https://github.com/Nordup/math-tutor; "
+        "contact via repository issues) python-httpx"
+    )
     #: Where the rotating server log is written. Its own directory rather than
     #: a path, because the handler rotates into siblings (`server.log.1` and
     #: so on) and they should land together.
