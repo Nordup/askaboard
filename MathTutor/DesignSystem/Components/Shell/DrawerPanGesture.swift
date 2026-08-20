@@ -2,6 +2,104 @@ import SwiftUI
 import UIKit
 import UIKit.UIGestureRecognizerSubclass
 
+/// One point the finger actually visited, as a time-stamped coordinate in window points.
+///
+/// UIKit delivers far more of these than a `touchesMoved` callback — `UIEvent` carries the
+/// coalesced touches between two events — and the release velocity only has the energy the
+/// recogniser actually saw. A velocity that samples just once per callback misses exactly the
+/// terminal movement that decides a flick.
+struct DrawerVelocitySample {
+    let timestamp: TimeInterval
+    let x: CGFloat
+    let y: CGFloat
+}
+
+/// A time-aware estimator of the finger's recent speed, kept separate from the recogniser so
+/// the windowing, the dedup and the terminal sample are assertable without a touch host.
+///
+/// The raw last-sample quotient is digitiser noise — a 2pt step over 4ms reads as 500pt/s —
+/// so the answer is a least-squares linear regression over a short recent window. The window
+/// is short enough (80ms) that a real flick keeps its energy, and a regression of
+/// time-stamped points averages out a single noisy last sample instead of trusting it.
+struct DrawerVelocitySampler {
+
+    /// How far back the regression looks. A flick across 263 points takes ~200ms at the
+    /// fling's 1300pt/s, so 80ms retains the moving tail without reaching back into the
+    /// deliberate placement the flick begins from.
+    static let window: TimeInterval = 0.08
+
+    /// The smallest time span over which a regression is trusted. One 240Hz touch-sampling
+    /// interval is enough to preserve a genuinely fast sub-frame flick; anything shorter is
+    /// still the single-sample digitiser noise the window exists to reject.
+    static let minimumSpan: TimeInterval = 1.0 / 240.0
+
+    /// The samples inside the window, in timestamp order. Only the most recent window's worth
+    /// is kept. Eighty milliseconds is long enough to average digitiser jitter without
+    /// washing a quick terminal flick into the slower placement that preceded it.
+    private(set) var samples: [DrawerVelocitySample] = []
+
+    /// Start a new touch sequence. `origin` seeds the first visit so a still finger produces
+    /// no velocity even though it produced no movement.
+    mutating func reset(origin: CGPoint, timestamp: TimeInterval = 0) {
+        samples = [DrawerVelocitySample(timestamp: timestamp, x: origin.x, y: origin.y)]
+    }
+
+    /// Ingests a visited point. Coalesced touches arrive in timestamp order but can repeat the
+    /// same moment, so only a strictly newer timestamp is a new sample — an equal or
+    /// non-increasing one is the same visit again and is ignored.
+    mutating func feed(point: CGPoint, timestamp: TimeInterval) {
+        if let last = samples.last, timestamp <= last.timestamp { return }
+        samples.append(DrawerVelocitySample(timestamp: timestamp, x: point.x, y: point.y))
+        trim(to: timestamp)
+    }
+
+    /// The recent speed in points per second, from the regression of time against position.
+    mutating func velocity() -> CGPoint {
+        guard let first = samples.first, let last = samples.last else { return .zero }
+        let span = last.timestamp - first.timestamp
+        guard span >= Self.minimumSpan else { return .zero }
+        return Self.regressionSlope(samples)
+    }
+
+    /// Removes every sample older than the window, keeping at least the newest one.
+    private mutating func trim(to now: TimeInterval) {
+        let cutoff = now - Self.window
+        while samples.count > 1, let first = samples.first, first.timestamp < cutoff {
+            samples.removeFirst()
+        }
+    }
+
+    /// The least-squares slope of point against time for each axis. `n` is at least 2 here
+    /// because `velocity()` guarded the span, and a zero time-variance (all samples at one
+    /// instant) yields zero rather than a divide-by-zero. Time is centred on the first sample
+    /// before it is squared: `UITouch.timestamp` is system uptime, and after days of uptime a
+    /// raw `sum(t²) - sum(t)²/n` subtracts two huge nearly equal numbers to recover an 80ms
+    /// variance. Centring keeps that fit numerically stable however long the device has run.
+    private static func regressionSlope(_ samples: [DrawerVelocitySample]) -> CGPoint {
+        guard let timeOrigin = samples.first?.timestamp else { return .zero }
+        let n = Double(samples.count)
+        let sumT = samples.reduce(0) { $0 + ($1.timestamp - timeOrigin) }
+        let sumX = samples.reduce(0) { $0 + Double($1.x) }
+        let sumY = samples.reduce(0) { $0 + Double($1.y) }
+        let sumTX = samples.reduce(0) {
+            $0 + ($1.timestamp - timeOrigin) * Double($1.x)
+        }
+        let sumTY = samples.reduce(0) {
+            $0 + ($1.timestamp - timeOrigin) * Double($1.y)
+        }
+        let sumTT = samples.reduce(0) {
+            let t = $1.timestamp - timeOrigin
+            return $0 + t * t
+        }
+        let denominator = sumTT - sumT * sumT / n
+        guard denominator != 0 else { return .zero }
+        return CGPoint(
+            x: (sumTX - sumT * sumX / n) / denominator,
+            y: (sumTY - sumT * sumY / n) / denominator
+        )
+    }
+}
+
 /// The drawer's pan, recognised in UIKit so that its commitment can *cancel* — which is the
 /// one thing three generations of SwiftUI-side fixes could not do.
 ///
@@ -34,9 +132,10 @@ final class DrawerPanRecognizer: UIGestureRecognizer {
     /// it: a per-frame sum accumulates rounding and drifts off the finger.
     private(set) var translation: CGPoint = .zero
 
-    /// Points per second, lightly low-passed. The raw last-sample quotient is digitiser
-    /// noise — a 2pt step over 4ms reads as 500pt/s — and `DrawerReveal.flingVelocity`
-    /// draws a line at 300, so the estimate has to be steadier than one sample.
+    /// Points per second, fitted over the recent coalesced touch samples. The raw last-sample
+    /// quotient is digitiser noise — a 2pt step over 4ms reads as 500pt/s — and
+    /// `DrawerReveal.flingVelocity` draws a line at 300, so the estimate has to be steadier
+    /// than one sample without averaging away a real terminal flick.
     private(set) var velocity: CGPoint = .zero
 
     /// The first touch down, and the only one this recogniser ever reads. Later fingers are
@@ -44,8 +143,7 @@ final class DrawerPanRecognizer: UIGestureRecognizer {
     /// finger resting on the panel must not yank the translation between the two.
     private weak var trackedTouch: UITouch?
     private var origin: CGPoint = .zero
-    private var lastPoint: CGPoint = .zero
-    private var lastTimestamp: TimeInterval = 0
+    private var velocitySampler = DrawerVelocitySampler()
 
     /// The touch sequence is over, whatever ended it — see `reset()`.
     ///
@@ -58,8 +156,7 @@ final class DrawerPanRecognizer: UIGestureRecognizer {
         if trackedTouch == nil, let touch = touches.first {
             trackedTouch = touch
             origin = touch.location(in: nil)
-            lastPoint = origin
-            lastTimestamp = touch.timestamp
+            velocitySampler.reset(origin: origin, timestamp: touch.timestamp)
         }
         for touch in touches where touch !== trackedTouch {
             ignore(touch, for: event)
@@ -70,16 +167,19 @@ final class DrawerPanRecognizer: UIGestureRecognizer {
         super.touchesMoved(touches, with: event)
         guard let touch = trackedTouch, touches.contains(touch) else { return }
         let point = touch.location(in: nil)
-        let dt = touch.timestamp - lastTimestamp
-        if dt > 0 {
-            velocity = CGPoint(
-                x: 0.25 * velocity.x + 0.75 * (point.x - lastPoint.x) / dt,
-                y: 0.25 * velocity.y + 0.75 * (point.y - lastPoint.y) / dt
-            )
-            lastPoint = point
-            lastTimestamp = touch.timestamp
-        }
         translation = CGPoint(x: point.x - origin.x, y: point.y - origin.y)
+        // UIKit hands out the coalesced touches *between* this event and the previous one,
+        // the current touch included. They carry the movement a once-per-callback sample
+        // would skip, and they arrive in timestamp order — feeding them in that order lets
+        // the terminal fast movement actually reach the velocity. Equal timestamps are the
+        // same visit and the sampler dedupes them.
+        let coalesced = (event.coalescedTouches(for: touch) ?? [touch])
+            .sorted { $0.timestamp < $1.timestamp }
+        for sampleTouch in coalesced {
+            let samplePoint = sampleTouch.location(in: nil)
+            velocitySampler.feed(point: samplePoint, timestamp: sampleTouch.timestamp)
+        }
+        velocity = velocitySampler.velocity()
 
         switch state {
         case .possible:
@@ -107,10 +207,15 @@ final class DrawerPanRecognizer: UIGestureRecognizer {
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
         super.touchesEnded(touches, with: event)
         guard let touch = trackedTouch, touches.contains(touch) else { return }
+        let point = touch.location(in: nil)
         translation = CGPoint(
-            x: touch.location(in: nil).x - origin.x,
-            y: touch.location(in: nil).y - origin.y
+            x: point.x - origin.x,
+            y: point.y - origin.y
         )
+        // The terminal ended touch is the most recent movement there is — it is exactly the
+        // fast tail a flick is thrown with — so it is fed before the velocity is published.
+        velocitySampler.feed(point: point, timestamp: touch.timestamp)
+        velocity = velocitySampler.velocity()
         state = state == .possible ? .failed : .ended
     }
 
@@ -144,6 +249,7 @@ final class DrawerPanRecognizer: UIGestureRecognizer {
         trackedTouch = nil
         translation = .zero
         velocity = .zero
+        velocitySampler.reset(origin: .zero)
         onTerminate?(finalTranslation)
     }
 

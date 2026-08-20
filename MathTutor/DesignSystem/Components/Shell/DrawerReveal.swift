@@ -20,6 +20,12 @@ import SwiftUI
 ///   the travel, or on a fast fling in either direction below 50%."*
 enum DrawerReveal {
 
+    /// One physical spring for taps and releases. The damping sits just below critical for a
+    /// fast arrival without the visible bounce the old 30-point damping produced at a hard
+    /// clipped boundary.
+    private static let springStiffness = 320.0
+    private static let springDamping = 34.0
+
     // MARK: - Intent lock
 
     /// How far the finger travels before the gesture has an axis. The note: *"the first 10–15°
@@ -136,10 +142,56 @@ enum DrawerReveal {
     /// stiffness change reaches every gesture at once.
     static func settle(velocity: CGFloat, travel: CGFloat) -> Animation {
         .interpolatingSpring(
-            stiffness: 320,
-            damping: 30,
+            stiffness: springStiffness,
+            damping: springDamping,
             initialVelocity: travel > 0 ? Double(velocity / travel) : 0
         )
+    }
+
+    /// The target-relative seed for a **tracked** settle, for the surfaces that know where
+    /// the finger actually left the pane.
+    ///
+    /// `interpolatingSpring` animates a normalised 0 → 1 curve, so its `initialVelocity` is
+    /// the property's speed in curve fractions per second: the point-per-second release
+    /// velocity divided by the *actual signed remaining property distance*, not by the full
+    /// travel. A drawer released half-open and closed with a leftward flick has a negative
+    /// remaining delta, and dividing the (negative) screen velocity by that negative
+    /// distance turns it into a positive curve velocity — the motion begins toward the
+    /// closing target exactly as an opening flick begins toward the opening one. A fast
+    /// flick into a nearly-finished settle is seeded far more forcefully than the same flick
+    /// from the middle of the travel, which is the hand-off the release is supposed to keep.
+    ///
+    /// The target-relative seed carries the finger's speed until the spring reaches its
+    /// boundary-aware collision limit; see `normalizedSettleVelocity`.
+    static func settle(
+        velocity: CGFloat,
+        progress: CGFloat,
+        opens: Bool,
+        travel: CGFloat
+    ) -> Animation {
+        let remaining = ((opens ? 1 : 0) - progress) * travel
+        return .interpolatingSpring(
+            stiffness: springStiffness,
+            damping: springDamping,
+            initialVelocity: Double(normalizedSettleVelocity(velocity: velocity, remaining: remaining))
+        )
+    }
+
+    /// The normalised spring seed: release velocity over the signed remaining property
+    /// distance. A seed moving toward the target is bounded at the spring's natural frequency:
+    /// that is the fastest critically stable arrival this spring can make without crossing the
+    /// hard drawer boundary. It is a collision response rather than an arbitrary speed limit:
+    /// far from the edge it still carries thousands of points per second, while a release a few
+    /// points from the edge absorbs the excess speed instead of animating invisibly past the
+    /// clip and bouncing back. Motion initially away from the chosen target is not capped, so
+    /// the spring still preserves the finger's real reversal before pulling home.
+    ///
+    /// Pure, so the sign and magnitude arithmetic is assertable without an animation host.
+    static func normalizedSettleVelocity(velocity: CGFloat, remaining: CGFloat) -> CGFloat {
+        guard remaining != 0 else { return 0 }
+        let normalized = velocity / remaining
+        let naturalFrequency = CGFloat(sqrt(springStiffness))
+        return normalized > 0 ? min(normalized, naturalFrequency) : normalized
     }
 
     // MARK: - The white veil

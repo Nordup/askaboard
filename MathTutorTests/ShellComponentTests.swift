@@ -1670,6 +1670,132 @@ final class ShellComponentTests: XCTestCase {
 
     // MARK: - The pan always ends
 
+    // MARK: - Drawer velocity capture
+
+    /// A fast flick lives in the *terminal* movement, which a once-per-callback sample skips
+    /// — the whole bug this velocity sampling replaces. A short recent window of coalesced
+    /// touches must carry that energy across the release, not average it away.
+    func testTheVelocitySamplerKeepsFastTerminalEnergy() {
+        var sampler = DrawerVelocitySampler()
+        sampler.reset(origin: CGPoint(x: 0, y: 0))
+        // A slow deliberate placement, then a fast flick in the last 40ms.
+        var t: TimeInterval = 0
+        for _ in 0..<10 {
+            sampler.feed(point: CGPoint(x: 0, y: 0), timestamp: t)
+            t += 0.016
+        }
+        // Fast terminal move: 200pt over 40ms = 5000pt/s.
+        sampler.feed(point: CGPoint(x: 100, y: 0), timestamp: 0.16)
+        sampler.feed(point: CGPoint(x: 180, y: 0), timestamp: 0.18)
+        sampler.feed(point: CGPoint(x: 300, y: 0), timestamp: 0.20)
+        let v = sampler.velocity()
+        XCTAssertGreaterThan(v.x, 1500, "the flick's energy survives the window")
+        XCTAssertGreaterThan(v.x, DrawerReveal.flingVelocity)
+    }
+
+    /// A very fast touch can begin and end inside one 120Hz display frame. The recogniser
+    /// must still report it rather than requiring the 20ms history the old filter needed.
+    func testTheVelocitySamplerSupportsSubFrameFlicks() {
+        var sampler = DrawerVelocitySampler()
+        sampler.reset(origin: CGPoint(x: 0, y: 0))
+        sampler.feed(point: CGPoint(x: 24, y: 0), timestamp: 0.006)
+        XCTAssertGreaterThan(sampler.velocity().x, DrawerReveal.flingVelocity)
+    }
+
+    /// Touch timestamps are device uptime, not gesture-relative time. The least-squares fit
+    /// must stay stable after a device has been running for months rather than subtracting two
+    /// enormous squared timestamps to recover a few milliseconds of motion.
+    func testTheVelocitySamplerIsStableAfterLongDeviceUptime() {
+        let uptime: TimeInterval = 10_000_000
+        var sampler = DrawerVelocitySampler()
+        sampler.reset(origin: CGPoint(x: 0, y: 0), timestamp: uptime)
+        sampler.feed(point: CGPoint(x: 40, y: 0), timestamp: uptime + 0.02)
+        sampler.feed(point: CGPoint(x: 80, y: 0), timestamp: uptime + 0.04)
+        XCTAssertEqual(sampler.velocity().x, 2_000, accuracy: 0.1)
+    }
+
+    /// Equal or non-increasing timestamps are the same visit again — coalesced touches can
+    /// duplicate the current frame's position. Duplicating them would double-count one point
+    /// and drag the regression, so the sampler must reject them and stay stable.
+    func testTheVelocitySamplerIgnoresDuplicateAndNonIncreasingTimestamps() {
+        var sampler = DrawerVelocitySampler()
+        sampler.reset(origin: CGPoint(x: 0, y: 0))
+        sampler.feed(point: CGPoint(x: 0, y: 0), timestamp: 0.0)
+        sampler.feed(point: CGPoint(x: 48, y: 0), timestamp: 0.4)
+        // Duplicate of the same instant, then a backwards timestamp.
+        sampler.feed(point: CGPoint(x: 96, y: 0), timestamp: 0.4)
+        sampler.feed(point: CGPoint(x: 144, y: 0), timestamp: 0.3)
+        // A genuinely later one still lands.
+        sampler.feed(point: CGPoint(x: 96, y: 0), timestamp: 0.47)
+        let v = sampler.velocity()
+        XCTAssertGreaterThan(v.x, 0)
+        XCTAssertEqual(v.y, 0, accuracy: 0.0001)
+    }
+
+    /// The ended touch is fed before the velocity is published, so the last finger movement
+    /// — the fast tail a flick is thrown with — reaches the sample the surface settles on.
+    /// Reproducing the recogniser's own terminal-release path needs a touch host, so this
+    /// asserts the searchable contract directly: the sample at the release point participates
+    /// in the velocity.
+    func testTheTerminalEndedTouchIsCapturedInTheVelocity() {
+        var sampler = DrawerVelocitySampler()
+        sampler.reset(origin: CGPoint(x: 0, y: 0))
+        sampler.feed(point: CGPoint(x: 20, y: 0), timestamp: 0.1)
+        sampler.feed(point: CGPoint(x: 40, y: 0), timestamp: 0.2)
+        sampler.feed(point: CGPoint(x: 320, y: 0), timestamp: 0.24)
+        let v = sampler.velocity()
+        XCTAssertGreaterThan(v.x, DrawerReveal.flingVelocity)
+        XCTAssertGreaterThan(v.x, 0)
+    }
+
+    // MARK: - Target-relative settle velocity
+
+    /// The spring curve runs 0 → 1, so the seed is release velocity divided by the *signed*
+    /// remaining distance to the destination. A leftward release velocity (negative, on this
+    /// axis) closing toward 0 is divided by a negative remaining delta and becomes a positive
+    /// curve velocity, so both opening and closing motion begin toward their target.
+    func testSettleVelocityIsNormalizedByTheSignedRemainingDistance() {
+        let travel: CGFloat = 263
+        // Opening: from half-open, rightward flick toward 1. Remaining is +131.5.
+        let opening = DrawerReveal.settle(velocity: 600, progress: 0.5, opens: true, travel: travel)
+        // Closing: from half-open, leftward flick toward 0. Remaining is -131.5.
+        let closing = DrawerReveal.settle(velocity: -600, progress: 0.5, opens: false, travel: travel)
+        let openSeed = DrawerReveal.normalizedSettleVelocity(velocity: 600, remaining: 131.5)
+        let closeSeed = DrawerReveal.normalizedSettleVelocity(velocity: -600, remaining: -131.5)
+        // Both seeds must be positive — the curve velocity points toward the target no matter
+        // which absolute direction the pan travelled.
+        XCTAssertGreaterThan(openSeed, 0)
+        XCTAssertGreaterThan(closeSeed, 0)
+        // The two are the same normalised curve velocity, and therefore the same spring —
+        // which is the point: a 600pt/s flick at the same position animates identically
+        // whether it is opening or closing.
+        XCTAssertEqual(openSeed, closeSeed, accuracy: 0.0001)
+        XCTAssertEqual(opening, closing, "the normalised spring is the same curve both ways")
+    }
+
+    /// A fast flick keeps scaling with the remaining distance until it reaches the spring's
+    /// physical collision limit. Near the hard boundary excess speed is absorbed rather than
+    /// sending the pane invisibly past its clip and bouncing it back hundreds of milliseconds
+    /// later.
+    func testSettleVelocityScalesThenAbsorbsImpactAtTheBoundary() {
+        let seedFromMiddle = DrawerReveal.normalizedSettleVelocity(velocity: 1300, remaining: 100)
+        let seedFromEdge = DrawerReveal.normalizedSettleVelocity(velocity: 1300, remaining: 10)
+        XCTAssertGreaterThan(seedFromEdge, seedFromMiddle,
+                             "the closer to the target, the stronger the hand-off")
+        XCTAssertEqual(seedFromEdge, sqrt(320), accuracy: 0.0001,
+                       "the natural frequency keeps boundary overshoot below one pixel")
+        XCTAssertGreaterThan(seedFromMiddle, 10, "high-speed energy is retained away from the edge")
+    }
+
+    /// Seeding a settle exactly at its destination carries no velocity.
+    func testSettleVelocityAtTheDestinationIsZero() {
+        XCTAssertEqual(
+            DrawerReveal.normalizedSettleVelocity(velocity: 1300, remaining: 0),
+            0,
+            accuracy: 0.0001
+        )
+    }
+
     /// The ordinary release: one commit, one end.
     func testAReleasedPanDeliversItsEndOnce() {
         var latch = PanEndLatch()

@@ -788,6 +788,152 @@ final class MathTutorUITests: XCTestCase {
         )
     }
 
+    /// The real Luna internet-image flow, against a real backend.
+    ///
+    /// Runs only when explicitly requested (`MATHTUTOR_LIVE_IMAGE_E2E=1`), because it bills a
+    /// real account on the configured key: the app launches with no demo service and no reset
+    /// so the compiled-in token reaches the backend named in `MATHTUTOR_BACKEND_URL`, and the
+    /// prompt asks the model to search the web, fetch a real photograph, and place it on the
+    /// board. It is a progress/result check, not a pixel check: the turn must visibly start
+    /// (the learner's message lands), and it must visibly complete (a substantive tutor reply
+    /// appears) without surfacing the network-failure state.
+    func testLiveLunaInternetImageOnBoard() throws {
+        guard ProcessInfo.processInfo.environment["MATHTUTOR_LIVE_IMAGE_E2E"] == "1" else {
+            throw XCTSkip("Set MATHTUTOR_LIVE_IMAGE_E2E=1 to run the live Luna image E2E")
+        }
+
+        // No `--ui-test-reset` (it makes `BackendConfiguration.load()` return nil) and no
+        // `--ui-test-demo-service`. `MATHTUTOR_BACKEND_URL` is the DEBUG-only base-url override
+        // read fresh per request; pointing it at the simulator host reaches the local backend.
+        let app = launch(
+            [],
+            resetting: false,
+            environment: ["MATHTUTOR_BACKEND_URL": "http://127.0.0.1:8080"]
+        )
+
+        // Start a genuinely new persisted session without the credential-clearing UI-test
+        // reset. `LearningSession.empty` defaults to Luna, and the clean thread also makes the
+        // completion signal below belong unambiguously to this request.
+        startFreshLunaSession(in: app)
+
+        // The composer may be the docked or full-screen placeholder depending on the persisted
+        // presentation. Reach whichever is present.
+        let anchoredField = app.textFields["Ask anything..."].exists
+            ? app.textFields["Ask anything..."]
+            : app.textFields["Ask me anything..."]
+        XCTAssertTrue(
+            anchoredField.waitForExistence(timeout: 15),
+            "The composer must be reachable to ask the tutor (visible: \(sanitized(visibleStaticTextLabels(in: app).joined(separator: " | "))))"
+        )
+        let completedTurnsBefore = completedTurnCount(in: app)
+        let prompt = "Teach me why soap bubbles show rainbow colors. Search the internet for a high-contrast real photograph, place it on the board, and explain what the colors show."
+        tap(anchoredField, untilExists: app.keyboards.element,
+            "Tapping the composer must raise the keyboard")
+        anchoredField.typeText(prompt)
+        app.buttons["Send message"].tap()
+        let hideKeyboard = app.keyboards.buttons["Hide keyboard"]
+        if hideKeyboard.waitForExistence(timeout: 3) {
+            hideKeyboard.tap()
+        }
+
+        // Progress, not completion: the learner's own turn entering the thread is the signal
+        // the send landed and the reply is streaming.
+        XCTAssertTrue(
+            staticText(containing: prompt, in: app, timeout: 30),
+            "The composer must hand the prompt into the thread; visible: \(sanitized(visibleStaticTextLabels(in: app).joined(separator: " | ")))"
+        )
+
+        // Completion, up to the 240s budget. A finished turn collapses its activity trail to a
+        // "Worked for Xs" button only on `.done`, which is the least brittle completion signal
+        // in this app — and the network-failure state is asserted away explicitly. A substantive
+        // reply is then checked as the result, independent of the learner's own prompt.
+        let completed = waitForTurnCompletion(
+            in: app,
+            after: completedTurnsBefore,
+            timeout: 240
+        )
+        let evidence = sanitized(visibleStaticTextLabels(in: app).joined(separator: " | "))
+        XCTAssertFalse(
+            evidence.lowercased().contains("couldn't reach the tutor service"),
+            "The turn hit the network-failure state rather than completing: \(evidence)"
+        )
+        XCTAssertTrue(
+            completed,
+            "The turn did not finish within 240s. Visible: \(evidence)"
+        )
+        let replyText = scienceReplyText(in: app)
+        XCTAssertFalse(replyText.isEmpty, "The finished turn produced no reply; visible: \(evidence)")
+
+        // A visual record of the finished board + thread for the parent/Luna review. Not an
+        // assertion source, so it cannot make the test flaky.
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "luna-image-board-final"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+
+        print("LIVE_IMAGE_E2E_REPLY: \(sanitized(replyText))")
+    }
+
+    private func startFreshLunaSession(in app: XCUIApplication) {
+        let panel = app.otherElements["tutor-panel"]
+        XCTAssertTrue(panel.waitForExistence(timeout: 10), "The tutor panel must be present")
+        panel.swipeRight()
+        XCTAssertTrue(
+            app.staticTexts["RECENT"].waitForExistence(timeout: 8),
+            "Swiping the panel must reveal Sessions"
+        )
+        let newChat = app.buttons["New chat"]
+        XCTAssertTrue(newChat.waitForExistence(timeout: 5), "Sessions must offer New chat")
+        newChat.tap()
+        XCTAssertTrue(
+            app.staticTexts["Hi! I'm your AI Tutor"].waitForExistence(timeout: 8),
+            "A new live Luna session must open on the greeting"
+        )
+    }
+
+    /// Waits for the running turn to finish, and only then returns.
+    ///
+    /// A finished turn collapses its activity trail to a "Worked for Xs" button — `duration`
+    /// is set on `.done` and on no earlier event, so this is a true completion signal rather
+    /// than a heuristic on prose. Polls up to `timeout`; still streaming returns `false`.
+    private func completedTurnCount(in app: XCUIApplication) -> Int {
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Worked for")).count
+    }
+
+    private func waitForTurnCompletion(
+        in app: XCUIApplication,
+        after previousCount: Int,
+        timeout: TimeInterval
+    ) -> Bool {
+        let completed = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Worked for"))
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "count > %d", previousCount),
+            object: completed
+        )
+        let result = XCTWaiter().wait(for: [expectation], timeout: timeout)
+        return result == .completed
+    }
+
+    /// The tutor's own reply text, or empty if none can be told apart from the learner's prompt.
+    ///
+    /// The prompt itself contains "colors", so a bare keyword match would return the learner's
+    /// own message. Every static text that exactly equals the sent prompt is excluded, and the
+    /// reply is preferred when it carries one of the explanation's signal words; otherwise the
+    /// longest non-prompt tutor prose is returned as a fallback.
+    private func scienceReplyText(in app: XCUIApplication) -> String {
+        let signalWords = ["interference", "wavelength", "thin-film", "film", "light"]
+        let labels = visibleStaticTextLabels(in: app)
+        let promptExact = "Teach me why soap bubbles show rainbow colors. Search the internet for a high-contrast real photograph, place it on the board, and explain what the colors show."
+        let candidates = labels.filter { $0 != promptExact }
+        if let match = candidates.first(where: {
+            let lower = $0.lowercased()
+            return signalWords.contains { lower.contains($0) }
+        }) {
+            return match
+        }
+        return candidates.max(by: { $0.count < $1.count }) ?? ""
+    }
+
     private func firstStaticTextLabel(containing fragment: String, in app: XCUIApplication, timeout: TimeInterval) -> String? {
         guard staticText(containing: fragment, in: app, timeout: timeout) else { return nil }
         for element in app.staticTexts.allElementsBoundByIndex where element.exists {
@@ -838,6 +984,7 @@ final class MathTutorUITests: XCTestCase {
     private func launch(
         _ arguments: [String] = [],
         resetting: Bool = true,
+        environment: [String: String] = [:],
         file: StaticString = #filePath,
         line: UInt = #line
     ) -> XCUIApplication {
@@ -847,6 +994,9 @@ final class MathTutorUITests: XCTestCase {
 
             let app = XCUIApplication()
             app.launchArguments = (resetting ? Self.designedScreenLaunch : []) + arguments
+            if !environment.isEmpty {
+                app.launchEnvironment = environment
+            }
             app.launch()
 
             // Three bundled fonts make a cold launch slow, so the first assertion in every

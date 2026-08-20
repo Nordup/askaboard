@@ -1045,7 +1045,7 @@ of it in `PresentationSwitch`:
 | Track | Value |
 |---|---|
 | Trigger | commit-triggered, never tracked: the edge swipes commit at axis lock and run the switch **on release**, with a fling back the way the pan came cancelling it (`DrawerReveal.settlesOpen`, progress pinned at the destination). `btn/full-screen` and the peek's tap run the same switch from rest |
-| Spring | `PresentationSwitch.settle` — `DrawerReveal.settle`'s construction (stiffness 320, damping 30, ~0.35s), release velocity carried in, normalised by `dockTravel` exactly as every dock settle is. One definition |
+| Spring | `PresentationSwitch.settle` — `DrawerReveal.settle`'s construction (stiffness 320, damping 34, ~0.35s), release velocity carried in. Tracked drawer releases normalise by the signed distance still remaining, so opening and closing preserve the same physical momentum; the spring's natural frequency absorbs excess speed at the hard clipped boundary instead of overshooting out of view. One definition |
 | Incoming surface | fades in over a short directional slide: `slideDistance` = **32 pt** from the direction of travel, spring-settled (`PresentationSwitch.fullScreenSurface` / `.dockedSurface`, applied as transitions on the two branches of `BoardScreen.tutor`) |
 | Outgoing surface | fades out with the matching 32 pt drift — the mirror of the same transition, so each surface's one symmetric transition states both legs |
 | Board card | never unmounts (the `PKCanvasView` ink contract); it **crossfades in place** via its `isTutorFullScreen` opacity, written inside the switch's animation. No slide, no scale |

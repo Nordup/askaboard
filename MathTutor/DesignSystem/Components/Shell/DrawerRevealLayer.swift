@@ -248,7 +248,14 @@ struct DrawerRevealLayer<Drawer: View, Chat: View, Toggle: View, Chrome: View>: 
         // Both writes inside the one transaction. Clearing the drag outside it would hand
         // `progress` straight back to the settled value and the pane would jump to its
         // destination instead of springing to it.
-        withAnimation(DrawerReveal.settle(velocity: velocity, travel: travel)) {
+        withAnimation(
+            DrawerReveal.settle(
+                velocity: velocity,
+                progress: drag.progress,
+                opens: opens,
+                travel: travel
+            )
+        ) {
             self.drag = nil
             onSettle(opens)
         }
