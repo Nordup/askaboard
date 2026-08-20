@@ -411,15 +411,17 @@ def test_the_scene_note_says_where_the_tutor_list_stops_being_exhaustive():
 def test_the_two_hands_rule_does_not_depend_on_there_being_an_overview():
     """`TutorStore` builds this same scene string for a board the learner is
     not looking at — flagged `board_not_on_screen`, with no viewport and no
-    overview of it at all — and `describe` is handed the string rather than the
-    dictionary, so it cannot tell the two cases apart. Written about the
-    drawing rather than about one picture of it, the rule holds in both."""
+    *picture* overview attached — and `describe` is handed the string rather
+    than the dictionary, so it cannot tell the two cases apart. Written about
+    the drawing rather than about one picture of it, the rule holds in both."""
     offscreen = board.describe(
         has_ink=False, scene='{"elements":[],"board_not_on_screen":true}',
     )
 
     assert "drawn as handwriting exactly as theirs is" in offscreen
-    assert "overview" not in offscreen
+    # The offscreen envelope carries no picture but may carry logical bounds;
+    # the placement guidance points the model at those rather than a viewport.
+    assert "view_board" in offscreen
 
 
 def test_scene_data_without_a_renderable_overview_is_still_not_viewable():
@@ -428,6 +430,75 @@ def test_scene_data_without_a_renderable_overview_is_still_not_viewable():
     assert "no renderable content" in note
     assert "do not call `view_board`" in note
     assert "[tutor scene]" in note
+
+
+def test_a_scene_with_tutor_elements_is_renderable_without_an_overview():
+    """A board holding only the tutor's own objects (no learner ink yet) has
+    renderable content: `view_board` must be offered against it, because the
+    model has to be able to inspect and correct its own placement."""
+    scene = json.dumps({
+        "kind": "board_scene_context",
+        "tutor_elements": [{"id": "tri", "kind": "polygon",
+                            "points": [[-190, -24955], [-180, -24955],
+                                       [-185, -24930]]}],
+    })
+    note = board.describe(has_ink=False, scene=scene)
+
+    assert "no renderable content" not in note
+    assert "do not call `view_board`" not in note
+    assert "Call `view_board`" in note
+
+
+def test_a_metadata_only_scene_without_tutor_elements_stays_empty():
+    """Layout metadata (`recommended_tutor_rect` etc.) with no `tutor_elements`
+    is the 'nothing on the board' envelope, so it must still read as having no
+    renderable content — a non-null scene string is not enough on its own."""
+    scene = json.dumps({
+        "kind": "board_scene_context",
+        "recommended_tutor_rect": {"x": 0, "y": 0, "w": 100, "h": 100},
+        "reserved_learner_work_rect": {"x": 0, "y": 200, "w": 100, "h": 100},
+    })
+    note = board.describe(has_ink=False, scene=scene)
+
+    assert "no renderable content" in note
+    assert "do not call `view_board`" in note
+
+
+def test_an_offscreen_learner_ink_scene_is_renderable_without_an_overview():
+    """A stored board that is all learner ink is renderable for `view_board`,
+    so `describe` must offer the call rather than saying the board is empty."""
+    scene = json.dumps({
+        "kind": "board_scene_context",
+        "board_not_on_screen": True,
+        "has_renderable_content": True,
+        "learner_ink_logical_bounds": [-200, -24960, 0, -24920],
+        "overview_logical_bounds": [-200, -24960, 0, -24920],
+    })
+    note = board.describe(has_ink=False, scene=scene)
+
+    assert "no renderable content" not in note
+    assert "do not call `view_board`" not in note
+    assert "Call `view_board`" in note
+
+
+def test_offscreen_scene_omits_layout_rects_and_points_at_logical_bounds():
+    """The offscreen envelope has no viewport, so `recommended_tutor_rect` /
+    `reserved_learner_work_rect` must not be claimed to exist. The guidance
+    points the model at the ink/overview/tutor bounds instead."""
+    scene = json.dumps({
+        "kind": "board_scene_context",
+        "board_not_on_screen": True,
+        "has_renderable_content": True,
+        "learner_ink_logical_bounds": [-200, -24960, 0, -24920],
+        "overview_logical_bounds": [-200, -24960, 0, -24920],
+    })
+    note = board.describe_scene(scene=scene, has_overview=False)
+
+    assert "recommended_tutor_rect" not in note
+    assert "reserved_learner_work_rect" not in note
+    assert "learner_ink_logical_bounds" in note
+    assert "overview_logical_bounds" in note
+    assert "Inspect the full board" in note
 
 
 def test_a_scene_context_without_an_overview_is_not_viewable_even_when_changed():

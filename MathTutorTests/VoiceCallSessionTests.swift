@@ -1,5 +1,6 @@
 import XCTest
 import os
+import PencilKit
 @testable import MathTutor
 
 /// A call survives the learner switching sessions to browse.
@@ -458,10 +459,12 @@ final class VoiceCallSessionTests: XCTestCase {
             .text(TextElement(id: "hint", x: 1, y: 2, text: "halves", fontSize: 24)),
         ])
 
-        let context = try XCTUnwrap(TutorStore.storedSceneContext(scene))
+        let board = TutorStore.StoredBoard(drawing: PKDrawing(), scene: scene)
+        let context = try XCTUnwrap(TutorStore.storedSceneContext(board))
 
         XCTAssertTrue(context.contains("\"board_not_on_screen\":true"))
         XCTAssertTrue(context.contains("hint"))
+        XCTAssertTrue(context.contains("\"has_renderable_content\":true"))
         XCTAssertFalse(
             context.contains("visible_logical_rect"),
             "There is no viewport to report: the learner is looking at another board"
@@ -469,7 +472,44 @@ final class VoiceCallSessionTests: XCTestCase {
     }
 
     func testAnEmptySceneCarriesNoBoardContextAtAll() {
-        XCTAssertNil(TutorStore.storedSceneContext(BoardScene(elements: [])))
+        let board = TutorStore.StoredBoard(drawing: PKDrawing(), scene: BoardScene(elements: []))
+        XCTAssertNil(TutorStore.storedSceneContext(board))
+    }
+
+    func testAnOffscreenLearnerInkOnlyBoardIsRenderableContent() throws {
+        // Learner ink with an empty tutor scene is still renderable, so the
+        // offscreen envelope must carry it rather than report an empty board.
+        let board = TutorStore.StoredBoard(drawing: Self.inkedDrawing(), scene: BoardScene(elements: []))
+        let context = try XCTUnwrap(TutorStore.storedSceneContext(board))
+
+        XCTAssertTrue(context.contains("\"has_renderable_content\":true"))
+        XCTAssertTrue(context.contains("\"board_not_on_screen\":true"))
+        XCTAssertTrue(context.contains("learner_ink_logical_bounds"))
+        XCTAssertTrue(context.contains("overview_logical_bounds"))
+        XCTAssertFalse(context.contains("tutor_elements"))
+    }
+
+    private static func inkedDrawing() -> PKDrawing {
+        let ink = PKInk(.pen, color: .black)
+        let points = (0..<8).map { step in
+            PKStrokePoint(
+                location: CGPoint(x: 100, y: 100 + Double(step) * 6),
+                timeOffset: Double(step) * 0.01,
+                size: CGSize(width: 3, height: 3),
+                opacity: 1,
+                force: 1,
+                azimuth: 0,
+                altitude: .pi / 2
+            )
+        }
+        let path = PKStrokePath(
+            controlPoints: points,
+            creationDate: Date(timeIntervalSinceReferenceDate: 0)
+        )
+        let stroke = PKStroke(
+            ink: ink, path: path, transform: .identity, mask: nil, randomSeed: 1
+        )
+        return PKDrawing(strokes: [stroke])
     }
 
     // MARK: - The recap primer

@@ -673,6 +673,50 @@ def test_the_closing_rounds_tool_choice_moves_into_the_generation_config():
     assert payload["generation_config"]["tool_choice"] == "validated"
 
 
+def test_the_post_review_tool_choice_validates_on_the_gemini_interactions_sdk():
+    """The exact Gemini Interactions ToolChoiceConfig for the post-draw review —
+    `{"allowed_tools": {"mode": "any", "tools": ["view_board"]}}` — must survive
+    the trip `_sdk_kwargs` makes from the payload's top level into
+    `generation_config`, and must validate as a real `CreateModelInteraction`.
+    This is the same proof the closing-round test gives for `"none"`: the shape
+    the tests build is only as good as the SDK it really posts."""
+    from app.tutor.loop import _post_review_tool_choice
+    from app.tutor.providers.gemini import GeminiProvider, _sdk_kwargs
+
+    provider = GeminiProvider(client=None)
+    payload = provider.build_round(
+        model="gemini-3.7-pro", effort="high",
+        outbox=_every_answer_shape(provider),
+        previous_id="v1_earlier_round", cache_key=None,
+    )
+    payload["tool_choice"] = _post_review_tool_choice(provider)
+
+    kwargs = _sdk_kwargs(payload)
+    assert "tool_choice" not in kwargs
+    assert kwargs["generation_config"]["tool_choice"] == {
+        "allowed_tools": {"mode": "any", "tools": ["view_board"]},
+    }
+    assert _validated(kwargs) == []
+
+    # The full tool list is kept; only the *choice* is narrowed.
+    assert "tools" in kwargs
+    assert len(kwargs["tools"]) == len(GEMINI_TOOLS)
+
+
+def test_the_post_review_tool_choice_is_the_forced_function_on_openai():
+    """On OpenAI the post-draw review is the Responses API's explicit
+    `ToolChoiceFunction` shape — `{"type": "function", "name": "view_board"}` —
+    which forces exactly that one function."""
+    from app.tutor.loop import _post_review_tool_choice
+    from app.tutor.providers.openai import OpenAIProvider
+    from openai.types.responses.tool_choice_function import ToolChoiceFunction
+
+    choice = _post_review_tool_choice(OpenAIProvider(client=None))
+    assert choice == {"type": "function", "name": "view_board"}
+    # The installed SDK documents this exact literal as the forced-function form.
+    assert ToolChoiceFunction.model_validate(choice).name == "view_board"
+
+
 def test_every_recorded_event_decodes_to_the_shape_the_provider_reads():
     """The fixtures are dicts and production hands the provider SDK objects, so
     this is the assertion that lets every test above use the dicts: each recorded

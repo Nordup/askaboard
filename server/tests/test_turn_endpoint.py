@@ -216,6 +216,57 @@ async def test_board_scene_reaches_the_provider_prompt(db_app):
 
 
 @respx.mock
+async def test_a_later_turn_carries_the_live_scene_beside_the_old_preamble(db_app):
+    """The reported bug: the frozen session preamble captures the scene once,
+    at session open, so a later turn that pushes the tutor objects to new
+    coordinates handed the model only the stale opening geometry and it stacked
+    the next image on top at ~(-190, -24955). The live per-turn scene must ride
+    the turn message on every turn, beside the frozen head."""
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        return_value=Response(200, headers={"Content-Type": "text/event-stream"},
+                              content=sse_stream(*TEXT_ONLY_TURN))
+    )
+    session_id = str(uuid.uuid4())
+    first_scene = ('{"kind":"board_scene_context","tutor_elements":[{"id":"tri",'
+                   '"kind":"polygon","points":[[0,0],[1,0],[0,1]]}]}')
+    second_scene = ('{"kind":"board_scene_context","tutor_elements":[{"id":"tri",'
+                    '"kind":"polygon","points":[[-190,-24955],[-180,-24955],'
+                    '[-185,-24930]]}],"recommended_tutor_rect":{"x":0,"y":0,'
+                    '"w":500,"h":300},"reserved_learner_work_rect":{"x":0,"y":400,'
+                    '"w":500,"h":300}}')
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        async with client.stream(
+            "POST", "/v1/turn",
+            json=_payload(session_id=session_id, text="first",
+                          board_scene=first_scene),
+            headers=AUTH,
+        ) as r:
+            await _collect(r)
+        async with client.stream(
+            "POST", "/v1/turn",
+            json=_payload(session_id=session_id, text="second",
+                          board_scene=second_scene),
+            headers=AUTH,
+        ) as r:
+            await _collect(r)
+
+    assert route.call_count == 2
+    body = json.loads(route.calls[1].request.content)
+    # The frozen head still carries the opening scene (it is never rebuilt).
+    assert first_scene in _prompt_text(body)
+    # The current turn's live scene rides the turn message, uncached, with the
+    # current geometry the model must place new material against.
+    live_text = "".join(part["text"] for part in body["input"][-1]["content"]
+                        if part["type"] == "input_text")
+    assert "SEMANTIC BOARD SCENE (exact current state" in live_text
+    assert second_scene in live_text
+    assert "recommended_tutor_rect" in live_text
+    assert "reserved_learner_work_rect" in live_text
+
+
+@respx.mock
 async def test_a_replayed_turn_id_is_rejected_without_calling_the_model(db_app):
     route = respx.post("https://api.openai.com/v1/responses").mock(
         return_value=Response(200, headers={"Content-Type": "text/event-stream"},

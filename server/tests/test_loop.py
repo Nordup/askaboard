@@ -24,6 +24,7 @@ from app.tutor.retry import FALLBACK_RETRY_DELAY, RETRY_LIMIT
 from app.tutor.web_search import SearchEvidence, SearchSource
 from app.tutor.loop import (
     FETCH_BUDGET_ACK,
+    FETCH_RETRY_ACK,
     FETCH_TIMEOUT_ACK,
     FETCHED_IMAGE_CAPTION,
     MALFORMED_BOARD_ACK,
@@ -290,6 +291,102 @@ async def test_web_search_emits_concrete_sources_and_answers_the_call():
 
 
 @respx.mock
+async def test_a_turn_can_search_fetch_and_place_an_image_on_the_board():
+    """The whole objective end to end: a web search returns a candidate URL,
+    fetch_image downloads it and hands back a blob_id, and an update_board
+    call places an `image` element carrying that blob_id on the learner's
+    board. The picture is shown to the model in the fetch round, so the model
+    sees what it is about to place.
+
+    The board starts empty, so the first draw lands without a prior look — the
+    empty-board exemption in the causal gate — letting this exercise the
+    search → fetch → place chain without simulating a device render."""
+    def _round(response_id, call_id, call_name, arguments, usage_in, usage_out):
+        return (
+            {"type": "response.created", "sequence_number": 0,
+             "response": {"id": response_id}},
+            {"type": "response.output_item.added", "sequence_number": 1,
+             "output_index": 0, "item": {
+                 "type": "function_call", "id": f"fc_{call_id}",
+                 "call_id": call_id, "name": call_name, "arguments": "",
+             }},
+            {"type": "response.function_call_arguments.done",
+             "sequence_number": 2, "output_index": 0,
+             "item_id": f"fc_{call_id}", "name": call_name,
+             "arguments": json.dumps(arguments)},
+            {"type": "response.completed", "sequence_number": 3,
+             "response": {"id": response_id,
+                          "usage": {"input_tokens": usage_in,
+                                    "output_tokens": usage_out},
+                          "output": [{"type": "function_call",
+                                      "id": f"fc_{call_id}",
+                                      "call_id": call_id, "name": call_name,
+                                      "arguments": json.dumps(arguments),
+                                      "status": "completed"}]}},
+        )
+
+    search_args = {"query": "parabola diagram"}
+    fetch_args = {"url": "https://example.com/parabola.png"}
+    place_args = {
+        "mode": "upsert", "delete_ids": [], "elements": [{
+            "id": "img1", "kind": "image",
+            "x": 0, "y": 0, "width": 640, "height": 480, "blob_id": BLOB,
+        }],
+    }
+    rounds = [
+        (_round("resp_s", "call_s", "web_search", search_args, 30, 8)),
+        (_round("resp_f", "call_f", "fetch_image", fetch_args, 40, 10)),
+        (_round("resp_p", "call_p", "update_board", place_args, 60, 12)),
+    ]
+    respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*round_))
+            for round_ in rounds
+        ] + [
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*FETCH_IMAGE_FOLLOW_UP)),
+        ]
+    )
+    client = AsyncOpenAI(api_key="sk-test")
+    bundle = ContextBundle(system="s",
+                           input=[{"role": "user", "content": "show me a parabola"}])
+
+    async def search(query: str) -> SearchEvidence:
+        return SearchEvidence(query=query, summary="Found it", sources=(
+            SearchSource(id="src-1", title="Parabola",
+                         url="https://example.com/parabola.png", snippet="Diagram"),
+        ))
+
+    async def fetch_image(url: str) -> FetchedImage:
+        return FetchedImage(
+            output=json.dumps({"blob_id": BLOB, "width": 640, "height": 480}),
+            image=b"\x89PNG-ish", content_type="image/png",
+        )
+
+    events = []
+    result = None
+    async for event, running in run_turn(
+        provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+        effort="high", bundle=bundle,
+        handle_web_search=search,
+        fetch_image=fetch_image,
+    ):
+        events.append(event)
+        result = running
+
+    assert [event for event in events if isinstance(event, SearchSourcesEvent)]
+    update_events = [event for event in events if isinstance(event, BoardUpdateEvent)]
+    assert len(update_events) == 1
+    assert update_events[0].payload.upserts[0].kind == "image"
+    assert update_events[0].payload.upserts[0].blob_id == BLOB
+    assert [call["name"] for call in result.tool_calls] == [
+        "web_search", "fetch_image", "update_board",
+    ]
+    assert result.text == "Here is the parabola."
+
+
+@respx.mock
 async def test_a_reasoning_turn_yields_reasoning_deltas():
     respx.post("https://api.openai.com/v1/responses").mock(
         return_value=Response(
@@ -391,6 +488,85 @@ def _render_board():
     return fetch_board
 
 
+def _mutation_turn(
+    arguments: dict,
+    call_id: str = "call_mut",
+    response_id: str = "resp_mut",
+):
+    """One round that calls `update_board` with the given arguments."""
+    raw = json.dumps(arguments)
+    return (
+        {"type": "response.created", "sequence_number": 0,
+         "response": {"id": response_id}},
+        {"type": "response.output_item.added", "sequence_number": 1,
+         "output_index": 0, "item": {
+             "type": "function_call", "id": "fc_mut", "call_id": call_id,
+             "name": "update_board", "arguments": "",
+         }},
+        {"type": "response.function_call_arguments.done", "sequence_number": 2,
+         "output_index": 0, "item_id": "fc_mut", "name": "update_board",
+         "arguments": raw},
+        {"type": "response.completed", "sequence_number": 3, "response": {
+            "id": response_id, "usage": {"input_tokens": 30, "output_tokens": 24},
+            "output": [{"type": "function_call", "id": "fc_mut",
+                        "call_id": call_id, "name": "update_board",
+                        "arguments": raw, "status": "completed"}],
+        }},
+    )
+
+
+def _view_board_args_turn(
+    x: float, y: float, width: float, height: float,
+    call_id: str = "call_view", response_id: str = "resp_view",
+):
+    """One round that calls `view_board` with an explicit crop."""
+    arguments = json.dumps({"x": x, "y": y, "width": width, "height": height})
+    return (
+        {"type": "response.created", "sequence_number": 0,
+         "response": {"id": response_id}},
+        {"type": "response.output_item.added", "sequence_number": 1,
+         "output_index": 0, "item": {
+             "type": "function_call", "id": "fc_view", "call_id": call_id,
+             "name": "view_board", "arguments": "",
+         }},
+        {"type": "response.function_call_arguments.done", "sequence_number": 2,
+         "output_index": 0, "item_id": "fc_view", "name": "view_board",
+         "arguments": arguments},
+        {"type": "response.completed", "sequence_number": 3, "response": {
+            "id": response_id, "usage": {"input_tokens": 30, "output_tokens": 8},
+            "output": [{"type": "function_call", "id": "fc_view",
+                        "call_id": call_id, "name": "view_board",
+                        "arguments": arguments, "status": "completed"}],
+        }},
+    )
+
+
+RAW_SVG_FIGURE = (
+    "<svg viewBox='0 0 200 100' xmlns='http://www.w3.org/2000/svg'>"
+    "<rect width='200' height='100'/></svg>"
+)
+
+
+def _svg_element(ident: str, x: float, y: float) -> dict:
+    """A framed svg element (defaults filled in for strict validation)."""
+    return {
+        "id": ident, "kind": "svg", "x": x, "y": y,
+        "width": 200, "height": 100, "svg": RAW_SVG_FIGURE,
+        "role": "content", "stroke": "#0A0A0A", "fill": "transparent",
+        "stroke_width": 4, "opacity": 1, "dash": [], "rotation": 0,
+    }
+
+
+def _image_element(ident: str, x: float, y: float) -> dict:
+    """A framed image element."""
+    return {
+        "id": ident, "kind": "image", "x": x, "y": y,
+        "width": 150, "height": 120, "blob_id": "sha256:" + "a" * 64,
+        "role": "content", "stroke": "#0A0A0A", "fill": "transparent",
+        "stroke_width": 4, "opacity": 1, "dash": [], "rotation": 0,
+    }
+
+
 @respx.mock
 async def test_a_mutation_on_an_existing_board_cannot_land_before_a_view():
     """The causal guard: on a renderable board, drawing before looking is refused
@@ -474,6 +650,138 @@ async def test_a_mutation_can_land_after_a_view_and_a_view_can_follow_it():
     assert json.loads(result.tool_calls[1]["result"])["status"] == "applied"
     assert result.text == "Let me check it over."
     assert route.call_count == 4
+
+
+@respx.mock
+async def test_a_landed_mutation_forces_a_tool_round_until_a_delivered_view():
+    """The runtime review: once a mutation lands, the next provider round must
+    be forced to call *exactly* `view_board`, so the model cannot end the turn
+    in prose or on another tool before inspecting how its placement rendered.
+    Only a delivered `view_board` clears the requirement and restores normal
+    choice."""
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*BOARD_UPDATE_TURN)),       # draw
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_view_board_turn("call_view_post"))),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_message_turn("Checked it over."))),
+        ]
+    )
+    bundle = ContextBundle(system="s", input=[{"role": "user", "content": "draw"}])
+
+    events = []
+    result = None
+    async for event, running in run_turn(
+        provider=OpenAIProvider(client=AsyncOpenAI(api_key="sk-test")),
+        model="gpt-5.6-sol", effort="high", bundle=bundle,
+        fetch_board=_render_board(),
+    ):
+        events.append(event)
+        result = running
+
+    bodies = [json.loads(call.request.content) for call in route.calls]
+    # The round after the draw is narrowed to exactly `view_board` on OpenAI.
+    assert bodies[1]["tool_choice"] == {
+        "type": "function", "name": "view_board",
+    }
+    # The round after a delivered view is free again.
+    assert "tool_choice" not in bodies[2]
+    assert [call["name"] for call in result.tool_calls] == [
+        "update_board", "view_board",
+    ]
+    assert result.text == "Checked it over."
+
+
+@respx.mock
+async def test_a_failed_view_does_not_clear_the_post_draw_review():
+    """An unanswered `view_board` (BoardUnavailable) does not prove the model
+    saw how its draw rendered, so the forced tool requirement must survive it
+    and apply again to the next round."""
+
+    tries = 0
+
+    async def flaky(call_id: str, region):
+        nonlocal tries
+        tries += 1
+        if tries == 1:
+            raise BoardUnavailable()
+        return b"\x89PNG-ish"
+
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*BOARD_UPDATE_TURN)),       # draw
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_view_board_turn("call_view_fail"))),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_view_board_turn("call_view_ok"))),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_message_turn("Seen now."))),
+        ]
+    )
+    bundle = ContextBundle(system="s", input=[{"role": "user", "content": "draw"}])
+
+    events = []
+    result = None
+    async for event, running in run_turn(
+        provider=OpenAIProvider(client=AsyncOpenAI(api_key="sk-test")),
+        model="gpt-5.6-sol", effort="high", bundle=bundle,
+        fetch_board=flaky,
+    ):
+        events.append(event)
+        result = running
+
+    bodies = [json.loads(call.request.content) for call in route.calls]
+    assert [body.get("tool_choice") for body in bodies] == [
+        None, {"type": "function", "name": "view_board"},
+        {"type": "function", "name": "view_board"}, None,
+    ]
+    assert json.loads(result.tool_calls[1]["result"])["status"] == "unavailable"
+    assert result.text == "Seen now."
+
+
+@respx.mock
+async def test_other_tools_do_not_clear_a_pending_post_draw_review():
+    """A non-board tool call mid-review is answered but does not satisfy the
+    post-draw inspection, so the requirement persists until a view lands."""
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*BOARD_UPDATE_TURN)),       # draw
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*TOOL_CALL_TURN)),          # set_workspace
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*BOARD_UPDATE_TURN)),       # still forced
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_view_board_turn("call_view_ok"))),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_message_turn("Done."))),
+        ]
+    )
+    bundle = ContextBundle(system="s", input=[{"role": "user", "content": "draw"}])
+
+    events = []
+    result = None
+    async for event, running in run_turn(
+        provider=OpenAIProvider(client=AsyncOpenAI(api_key="sk-test")),
+        model="gpt-5.6-sol", effort="high", bundle=bundle,
+        fetch_board=_render_board(),
+    ):
+        events.append(event)
+        result = running
+
+    bodies = [json.loads(call.request.content) for call in route.calls]
+    # Round 1 (draw): free. Rounds 2 (set_workspace) and 3 (a second draw,
+    # which the same-edition rule still refuses check-first) stay forced.
+    assert [body.get("tool_choice") for body in bodies] == [
+        None,
+        {"type": "function", "name": "view_board"},
+        {"type": "function", "name": "view_board"},
+        {"type": "function", "name": "view_board"},
+        None,
+    ]
 
 
 @respx.mock
@@ -823,6 +1131,529 @@ async def test_an_empty_board_standalone_creation_needs_no_pointless_view():
 
 
 @respx.mock
+async def test_view_board_on_tutor_only_content_reaches_the_fetcher():
+    """A board carrying only the tutor's own scene (no learner ink, so no
+    overview) still has renderable content, and `view_board` against it must
+    ask the device for a render rather than answering `NO_BOARD_ACK`."""
+    seen = []
+
+    async def fetch_board(call_id: str, region):
+        seen.append(call_id)
+        return b"\x89PNG-ish"
+
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_view_board_turn())),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_message_turn("Here is the scene."))),
+        ]
+    )
+    bundle = ContextBundle(
+        system="s", input=[{"role": "user", "content": "check my tutor drawing"}],
+        # `has_board` set from a scene-only board, exactly as the endpoint
+        # derives it from `board_scene` with tutor elements.
+        has_board=True,
+    )
+
+    events = []
+    result = None
+    async for event, running in run_turn(
+        provider=OpenAIProvider(client=AsyncOpenAI(api_key="sk-test")),
+        model="gpt-5.6-sol", effort="high", bundle=bundle,
+        fetch_board=fetch_board,
+    ):
+        events.append(event)
+        result = running
+
+    requests = [e for e in events if isinstance(e, BoardRequestEvent)]
+    assert len(requests) == 1
+    assert requests[0].call_id == "call_view"
+    assert seen == ["call_view"]
+    assert json.loads(result.tool_calls[0]["result"])["status"] == "ok"
+    assert result.text == "Here is the scene."
+
+
+@respx.mock
+async def test_an_overlapping_image_is_refused_and_emits_no_mutation():
+    """The reported failure: an existing large SVG around (-190,-24955) plus a
+    new image at (-180,-24930) must be rejected with `must_reposition`, emit no
+    board event, preserve the fresh look, and arm no pending review."""
+    scene = json.dumps({
+        "kind": "board_scene_context",
+        "tutor_elements": [_svg_element("fig", -190, -24955)],
+    })
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_view_board_turn())),  # fresh look
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_mutation_turn({
+                         "mode": "upsert", "delete_ids": [],
+                         "elements": [_image_element("img", -180, -24930)],
+                     }, call_id="call_img"))),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_message_turn("Moved it nowhere."))),
+        ]
+    )
+    bundle = ContextBundle(
+        system="s", input=[{"role": "user", "content": "add this"}],
+        has_board=True, board_scene=scene,
+    )
+
+    events = []
+    result = None
+    async for event, running in run_turn(
+        provider=OpenAIProvider(client=AsyncOpenAI(api_key="sk-test")),
+        model="gpt-5.6-sol", effort="high", bundle=bundle,
+        fetch_board=_render_board(),
+    ):
+        events.append(event)
+        result = running
+
+    upserts = [
+        e for e in events
+        if isinstance(e, BoardUpdateEvent) and e.payload.upserts
+    ]
+    assert upserts == [], "the overlapping placement must never reach the device"
+    assert result.tool_calls[1]["result"]
+    ack = json.loads(result.tool_calls[1]["result"])
+    assert ack["status"] == "must_reposition"
+    assert "`fig`" in ack["detail"]
+    # No pending review is armed by a refused overlap, so the round after it is
+    # free (not narrowed to view_board) and the model can end in prose.
+    bodies = [json.loads(call.request.content) for call in route.calls]
+    assert all("tool_choice" not in body for body in bodies)
+
+
+@respx.mock
+async def test_two_overlapping_framed_elements_in_one_update_are_refused():
+    """New batch members must be checked against each other, not just the scene."""
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_mutation_turn({
+                         "mode": "upsert", "delete_ids": [],
+                         "elements": [
+                             _image_element("first", 0, 0),
+                             _image_element("second", 10, 10),
+                         ],
+                     }, call_id="call_batch"))),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_message_turn("I will separate them."))),
+        ]
+    )
+    bundle = ContextBundle(system="s", input=[{"role": "user", "content": "draw two"}])
+
+    events = []
+    result = None
+    async for event, running in run_turn(
+        provider=OpenAIProvider(client=AsyncOpenAI(api_key="sk-test")),
+        model="gpt-5.6-sol", effort="high", bundle=bundle,
+        fetch_board=_render_board(),
+    ):
+        events.append(event)
+        result = running
+
+    assert not [e for e in events if isinstance(e, BoardUpdateEvent)]
+    ack = json.loads(result.tool_calls[0]["result"])
+    assert ack["status"] == "must_reposition"
+    assert "`first` in this update" in ack["detail"]
+
+
+@respx.mock
+async def test_truncated_scene_refuses_an_uncertifiable_new_framed_placement():
+    scene = json.dumps({
+        "kind": "board_scene_context", "truncated": True,
+        "omitted_element_count": 3,
+        "tutor_elements": [_svg_element("listed", -190, -24955)],
+    })
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_view_board_turn())),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_mutation_turn({
+                         "mode": "upsert", "delete_ids": [],
+                         "elements": [_image_element("new", 5000, 5000)],
+                     }, call_id="call_truncated"))),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_message_turn("I need a safer edit."))),
+        ]
+    )
+    bundle = ContextBundle(
+        system="s", input=[{"role": "user", "content": "add a picture"}],
+        has_board=True, board_scene=scene,
+    )
+
+    events = []
+    result = None
+    async for event, running in run_turn(
+        provider=OpenAIProvider(client=AsyncOpenAI(api_key="sk-test")),
+        model="gpt-5.6-sol", effort="high", bundle=bundle,
+        fetch_board=_render_board(),
+    ):
+        events.append(event)
+        result = running
+
+    assert not [e for e in events if isinstance(e, BoardUpdateEvent)]
+    ack = json.loads(result.tool_calls[1]["result"])
+    assert ack["status"] == "must_reposition"
+    assert "scene is truncated" in ack["detail"]
+
+
+@respx.mock
+async def test_a_non_overlapping_image_is_allowed_after_a_view():
+    scene = json.dumps({
+        "kind": "board_scene_context",
+        "tutor_elements": [_svg_element("fig", -190, -24955)],
+    })
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_view_board_turn())),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_mutation_turn({
+                         "mode": "upsert", "delete_ids": [],
+                         "elements": [_image_element("img", 1000, 1000)],
+                     }, call_id="call_img"))),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_view_board_turn("call_review"))),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_message_turn("Placed it."))),
+        ]
+    )
+    bundle = ContextBundle(
+        system="s", input=[{"role": "user", "content": "add this"}],
+        has_board=True, board_scene=scene,
+    )
+
+    events = []
+    result = None
+    async for event, running in run_turn(
+        provider=OpenAIProvider(client=AsyncOpenAI(api_key="sk-test")),
+        model="gpt-5.6-sol", effort="high", bundle=bundle,
+        fetch_board=_render_board(),
+    ):
+        events.append(event)
+        result = running
+
+    upserts = [e for e in events
+               if isinstance(e, BoardUpdateEvent) and e.payload.upserts]
+    assert len(upserts) == 1
+    assert upserts[0].payload.upserts[0].id == "img"
+    assert json.loads(result.tool_calls[1]["result"])["status"] == "applied"
+    bodies = [json.loads(call.request.content) for call in route.calls]
+    # The post-draw review does get armed after an allowed draw.
+    assert bodies[2]["tool_choice"] == {
+        "type": "function", "name": "view_board",
+    }
+
+
+@respx.mock
+async def test_a_same_id_edit_is_allowed_over_its_own_geometry():
+    scene = json.dumps({
+        "kind": "board_scene_context",
+        "tutor_elements": [_image_element("img", -180, -24930)],
+    })
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_view_board_turn())),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_mutation_turn({
+                         "mode": "upsert", "delete_ids": [],
+                         "elements": [_image_element("img", -170, -24920)],
+                     }, call_id="call_edit"))),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_view_board_turn("call_review"))),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_message_turn("Adjusted."))),
+        ]
+    )
+    bundle = ContextBundle(
+        system="s", input=[{"role": "user", "content": "move it"}],
+        has_board=True, board_scene=scene,
+    )
+
+    events = []
+    result = None
+    async for event, running in run_turn(
+        provider=OpenAIProvider(client=AsyncOpenAI(api_key="sk-test")),
+        model="gpt-5.6-sol", effort="high", bundle=bundle,
+        fetch_board=_render_board(),
+    ):
+        events.append(event)
+        result = running
+
+    upserts = [e for e in events
+               if isinstance(e, BoardUpdateEvent) and e.payload.upserts]
+    assert len(upserts) == 1
+    assert upserts[0].payload.upserts[0].id == "img"
+    assert json.loads(result.tool_calls[1]["result"])["status"] == "applied"
+
+
+@respx.mock
+async def test_an_annotation_overlap_is_not_hard_blocked():
+    """Annotations (line, text, etc.) overlapping an existing figure are not
+    material stacking; visual review handles them."""
+    scene = json.dumps({
+        "kind": "board_scene_context",
+        "tutor_elements": [_svg_element("fig", -190, -24955)],
+    })
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_view_board_turn())),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_mutation_turn({
+                         "mode": "upsert", "delete_ids": [],
+                         "elements": [{
+                             "id": "note", "kind": "text", "x": -180, "y": -24930,
+                             "text": "here", "font_size": 24, "alignment": "left",
+                             "width": 0, "role": "content", "stroke": "#0A0A0A",
+                             "fill": "transparent", "stroke_width": 1,
+                             "opacity": 1, "dash": [], "rotation": 0,
+                         }],
+                     }, call_id="call_note"))),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_view_board_turn("call_review"))),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_message_turn("Noted."))),
+        ]
+    )
+    bundle = ContextBundle(
+        system="s", input=[{"role": "user", "content": "add a label"}],
+        has_board=True, board_scene=scene,
+    )
+
+    events = []
+    result = None
+    async for event, running in run_turn(
+        provider=OpenAIProvider(client=AsyncOpenAI(api_key="sk-test")),
+        model="gpt-5.6-sol", effort="high", bundle=bundle,
+        fetch_board=_render_board(),
+    ):
+        events.append(event)
+        result = running
+
+    upserts = [e for e in events
+               if isinstance(e, BoardUpdateEvent) and e.payload.upserts]
+    assert len(upserts) == 1
+    assert upserts[0].payload.upserts[0].id == "note"
+
+
+@respx.mock
+async def test_replace_all_ignores_the_prior_tutor_scene():
+    scene = json.dumps({
+        "kind": "board_scene_context",
+        "tutor_elements": [_image_element("old", -180, -24930)],
+    })
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_view_board_turn())),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_mutation_turn({
+                         "mode": "replace_all", "delete_ids": [],
+                         "elements": [_image_element("img", -180, -24930)],
+                     }, call_id="call_rep"))),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_view_board_turn("call_review"))),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_message_turn("Replaced."))),
+        ]
+    )
+    bundle = ContextBundle(
+        system="s", input=[{"role": "user", "content": "replace"}],
+        has_board=True, board_scene=scene,
+    )
+
+    events = []
+    result = None
+    async for event, running in run_turn(
+        provider=OpenAIProvider(client=AsyncOpenAI(api_key="sk-test")),
+        model="gpt-5.6-sol", effort="high", bundle=bundle,
+        fetch_board=_render_board(),
+    ):
+        events.append(event)
+        result = running
+
+    upserts = [e for e in events
+               if isinstance(e, BoardUpdateEvent) and e.payload.upserts]
+    assert len(upserts) == 1
+    assert upserts[0].payload.replace_all is True
+    assert json.loads(result.tool_calls[1]["result"])["status"] == "applied"
+
+
+@respx.mock
+async def test_learner_ink_overlap_is_rejected():
+    scene = json.dumps({
+        "kind": "board_scene_context",
+        "learner_ink_logical_bounds": [-200, -24960, 0, -24920],
+        "has_renderable_content": True,
+    })
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_view_board_turn())),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_mutation_turn({
+                         "mode": "upsert", "delete_ids": [],
+                         "elements": [_image_element("img", -200, -24960)],
+                     }, call_id="call_img"))),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_message_turn("No."))),
+        ]
+    )
+    bundle = ContextBundle(
+        system="s", input=[{"role": "user", "content": "place it"}],
+        has_board=True, board_scene=scene,
+    )
+
+    events = []
+    result = None
+    async for event, running in run_turn(
+        provider=OpenAIProvider(client=AsyncOpenAI(api_key="sk-test")),
+        model="gpt-5.6-sol", effort="high", bundle=bundle,
+        fetch_board=_render_board(),
+    ):
+        events.append(event)
+        result = running
+
+    upserts = [e for e in events
+               if isinstance(e, BoardUpdateEvent) and e.payload.upserts]
+    assert upserts == []
+    ack = json.loads(result.tool_calls[1]["result"])
+    assert ack["status"] == "must_reposition"
+    assert "learner's work" in ack["detail"]
+
+
+@respx.mock
+async def test_an_arbitrary_crop_during_post_draw_review_renders_the_full_board():
+    """While a post-draw review is pending, any `view_board` call is answered by
+    rendering the full board (0,0,100,100) regardless of the model's crop."""
+    seen = []
+
+    async def fetch_board(call_id: str, region):
+        seen.append((call_id, region.x, region.y, region.width, region.height))
+        return b"\x89PNG-ish"
+
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*BOARD_UPDATE_TURN)),   # draw -> pending
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_view_board_args_turn(
+                         10, 20, 15, 15, call_id="call_crop"))),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_message_turn("Reviewed."))),
+        ]
+    )
+    bundle = ContextBundle(system="s", input=[{"role": "user", "content": "draw"}])
+
+    events = []
+    result = None
+    async for event, running in run_turn(
+        provider=OpenAIProvider(client=AsyncOpenAI(api_key="sk-test")),
+        model="gpt-5.6-sol", effort="high", bundle=bundle,
+        fetch_board=fetch_board,
+    ):
+        events.append(event)
+        result = running
+
+    # The draw lands (round 1: no tool_choice), then the crop view is forced to
+    # the full board (round 2: tool_choice narrowed), then prose.
+    assert (seen[0][0], seen[0][1], seen[0][2], seen[0][3], seen[0][4]) == (
+        "call_crop", 0.0, 0.0, 100.0, 100.0,
+    )
+    bodies = [json.loads(call.request.content) for call in route.calls]
+    assert bodies[1]["tool_choice"] == {
+        "type": "function", "name": "view_board",
+    }
+    assert "tool_choice" not in bodies[2]
+    requests = [e for e in events if isinstance(e, BoardRequestEvent)]
+    assert len(requests) == 1
+    assert (requests[0].x, requests[0].y,
+            requests[0].width, requests[0].height) == (0.0, 0.0, 100.0, 100.0)
+
+
+@respx.mock
+async def test_provider_cannot_close_in_prose_while_post_draw_review_is_pending():
+    """The server still enforces review if a provider ignores tool_choice."""
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*BOARD_UPDATE_TURN)),
+            # Deliberately violates the exact forced `view_board` choice.
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*TEXT_ONLY_TURN)),
+        ]
+    )
+    bundle = ContextBundle(system="s", input=[{"role": "user", "content": "draw"}])
+
+    events = []
+    result = None
+    async for event, running in run_turn(
+        provider=OpenAIProvider(client=AsyncOpenAI(api_key="sk-test")),
+        model="gpt-5.6-sol", effort="high", bundle=bundle,
+        fetch_board=_render_board(),
+    ):
+        events.append(event)
+        result = running
+
+    from app.tutor.events import ErrorEvent
+    bodies = [json.loads(call.request.content) for call in route.calls]
+    assert bodies[1]["tool_choice"] == {
+        "type": "function", "name": "view_board",
+    }
+    assert isinstance(events[-1], ErrorEvent)
+    assert events[-1].retryable is True
+    assert result.text == "Nice work."
+
+
+@respx.mock
+async def test_cap_exhaustion_while_a_review_is_pending_yields_an_error_not_prose():
+    """If `MAX_TOOL_ROUNDS` runs out while a post-draw review is still pending,
+    the loop must never buy a prose-only closing round (which would hand the
+    learner uncorrected content the model never inspected). It yields the normal
+    sanitised retryable error instead, keeping the turn bounded."""
+    route = respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*leg))
+            for leg in (
+                [BOARD_UPDATE_TURN] * MAX_TOOL_ROUNDS
+                + [TEXT_ONLY_TURN]
+            )
+        ]
+    )
+    bundle = ContextBundle(system="s", input=[{"role": "user", "content": "draw"}])
+
+    events = []
+    result = None
+    async for event, running in run_turn(
+        provider=OpenAIProvider(client=AsyncOpenAI(api_key="sk-test")),
+        model="gpt-5.6-sol", effort="high", bundle=bundle,
+        fetch_board=_render_board(),
+    ):
+        events.append(event)
+        result = running
+
+    bodies = [json.loads(call.request.content) for call in route.calls]
+    # Exactly MAX_TOOL_ROUNDS requests were made: the else branch (cap hit) runs
+    # the pending-review guard and returns without buying a closing round. The
+    # last request is the forced review round.
+    assert len(bodies) == MAX_TOOL_ROUNDS
+    assert bodies[-1]["tool_choice"] == {
+        "type": "function", "name": "view_board",
+    }
+    # The turn ends with the sanitised retryable error, never `done` in prose.
+    from app.tutor.events import ErrorEvent
+    assert isinstance(events[-1], ErrorEvent)
+    assert events[-1].retryable is True
+    assert events[-1].message == TURN_FAILED_MESSAGE
+@respx.mock
 async def test_empty_board_second_mutation_in_same_response_is_refused():
     """Only the first empty-board creation is exempt. A second valid mutation
     in the same response shares that first sight and must be refused
@@ -967,7 +1798,8 @@ def test_update_board_is_answered_with_its_own_ack_not_set_workspaces():
     assert answer.items[0]["output"] == UPDATE_BOARD_ACK
     detail = json.loads(answer.items[0]["output"])["detail"]
     assert "complete visual" in detail
-    assert "Call `view_board` to confirm" in detail
+    assert "Call `view_board` to inspect" in detail
+    assert "material overlap, clipping, or misalignment" in detail
     assert "further correction you must look" in detail
 
 
@@ -987,6 +1819,23 @@ def test_an_unknown_tool_is_answered_with_an_unsupported_ack():
     assert answer.ask is None
     assert answer.items[0]["output"] == UNSUPPORTED_TOOL_ACK
     assert json.loads(answer.items[0]["output"])["status"] == "unsupported"
+
+
+def test_force_tool_choice_is_provider_compatible():
+    """The post-draw review forces the next round to call *exactly* `view_board`,
+    not merely any tool. Each family spells that narrow pin differently: the
+    Responses API's `ToolChoiceFunction` dict on OpenAI, and Gemini Interactions'
+    `allowed_tools` ToolChoiceConfig. Both route through the same top-level field
+    the closing round uses, which `_sdk_kwargs` moves into generation_config."""
+    from app.tutor.providers.gemini import GeminiProvider
+    from app.tutor.loop import _post_review_tool_choice
+
+    assert _post_review_tool_choice(OpenAIProvider(client=None)) == {
+        "type": "function", "name": "view_board",
+    }
+    assert _post_review_tool_choice(GeminiProvider(client=None)) == {
+        "allowed_tools": {"mode": "any", "tools": ["view_board"]},
+    }
 
 
 @respx.mock
@@ -2141,6 +2990,36 @@ async def test_a_fetch_that_never_answers_is_abandoned_and_the_turn_carries_on(
     assert result.text == "Here is the parabola.", "the turn survives the timeout"
     assert result.tool_calls[0]["result"] == FETCH_TIMEOUT_ACK
     assert json.loads(FETCH_TIMEOUT_ACK) == {"error": "fetch timed out"}
+
+
+@respx.mock
+async def test_a_repeat_fetch_of_the_same_url_is_refused_without_another_download():
+    """A model that could not see a picture retries the identical URL — which,
+    in the 403/no-UA case, meant two extra full tool rounds and double the
+    turn's time-to-first-token while repeating the same refused download. The
+    second identical fetch answers from the loop without hitting the network
+    again, and the model is told to move on to a different source."""
+    _three_rounds(FETCH_IMAGE_TURN, FETCH_IMAGE_TURN, FETCH_IMAGE_FOLLOW_UP)
+    client = AsyncOpenAI(api_key="sk-test")
+    bundle = ContextBundle(system="s", input=[{"role": "user", "content": "find one"}])
+    seen = []
+
+    async def fetch_image(url: str) -> FetchedImage:
+        seen.append(url)
+        return FetchedImage(output=json.dumps({"error": "refused"}), image=None,
+                            content_type=None)
+
+    result = None
+    async for _event, running in run_turn(
+        provider=OpenAIProvider(client=client), model="gpt-5.6-luna",
+        effort="high", bundle=bundle,
+        fetch_image=fetch_image,
+    ):
+        result = running
+
+    assert seen == ["https://example.com/parabola.png"]
+    assert result.tool_calls[1]["result"] == FETCH_RETRY_ACK
+    assert json.loads(FETCH_RETRY_ACK)["error"]
 
 
 @respx.mock

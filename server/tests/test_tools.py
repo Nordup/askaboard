@@ -7,6 +7,7 @@ from app.tutor.board_scene import (
     MAX_LATEX_CHARS,
     MAX_PATH_CHARS,
     MAX_SVG_CHARS,
+    parse_board_update,
 )
 from app.tutor.tools import (
     DRAW_BOARD_SVG_TOOL,
@@ -23,16 +24,12 @@ from app.tutor.tools import (
 def _kinds_of(arm: dict) -> set[str]:
     """Every element kind one arm of the union accepts.
 
-    Two kinds share an arm when their field sets are identical, so the
-    discriminator is a `const` on a lone kind and an `enum` on a shared one.
-    A test that reaches straight for `["const"]` raises `KeyError` the moment
-    it iterates past a shared arm, and whether it does is a matter of which
-    arm happens to come first — so it passes or fails on arm order rather
-    than on the thing it is asserting.
+    Every arm is a singleton now: the discriminator is always a one-value
+    `const`. This helper still returns a set so a caller reads `{kind}` rather
+    than reaching into the dict.
     """
     discriminator = arm["properties"]["kind"]
-    return ({discriminator["const"]} if "const" in discriminator
-            else set(discriminator["enum"]))
+    return {discriminator["const"]}
 
 
 def test_the_registry_exposes_the_function_tools_then_the_hosted_ones():
@@ -107,31 +104,31 @@ def test_update_board_description_carries_the_compact_layout_contract():
     assert "recommended_tutor_rect" in description
     assert "reserved_learner_work_rect" in description
     assert "clear for the learner's working" in description
+    assert "When live layout rects are present" in description
+    assert "Otherwise" in description
 
 
 def test_update_board_primitives_are_a_discriminated_union():
-    """Sixteen kinds, and fewer than sixteen arms.
+    """Sixteen kinds, one singleton `const` arm each.
 
-    An arm names one kind with `const` and several with `enum`, and it may only
-    name several when their field sets are identical: `rectangle` and `ellipse`
-    are placed by the same box, and `polyline` and `freehand` by the same open
-    chain. What the model may send for each kind is unchanged — the shared arm
-    is the schema each of them already had — and `parse_board_update`
-    discriminates on the value, which is the same either way. What is saved is
-    the copy: one twelve-name `required` list and one style block per arm
-    rather than per kind.
+    Every arm names exactly one kind with a `const` discriminator. This is not
+    a stylistic choice: a merged pair (`rectangle`/`ellipse`, and likewise
+    `polyline`/`freehand`) made the discriminator a short `enum`, and the
+    constrained decoder locked a mixed array onto the wrong arm — the
+    confirmed live failure that coerced `image` ids into `ellipse`/`rectangle`
+    arms. A singleton `const` per arm is what keeps every kind independently
+    expressible.
     """
     arms = UPDATE_BOARD_TOOL["parameters"]["properties"]["elements"]["items"]["anyOf"]
     kinds = {}
     for arm in arms:
         discriminator = arm["properties"]["kind"]
         assert discriminator["type"] == "string"
-        named = ([discriminator["const"]] if "const" in discriminator
-                 else discriminator["enum"])
-        assert named, "an arm must name at least one kind"
-        for kind in named:
-            assert kind not in kinds, f"duplicate primitive {kind}"
-            kinds[kind] = arm
+        assert "const" in discriminator, "every arm must be a singleton const"
+        assert "enum" not in discriminator, "a shared enum arm invites coercion"
+        kind = discriminator["const"]
+        assert kind not in kinds, f"duplicate primitive {kind}"
+        kinds[kind] = arm
         assert arm["additionalProperties"] is False
         assert "id" in arm["required"]
         assert "kind" in arm["required"]
@@ -144,6 +141,37 @@ def test_update_board_primitives_are_a_discriminated_union():
         "polygon", "polyline", "freehand", "arc", "angle_marker", "path",
         "math_text", "ink_text", "image",
     }
+
+
+def test_a_mixed_rectangle_and_image_array_is_expressible_without_coercion():
+    """The exact failure this fix exists for, driven through the real parser.
+
+    In production the constrained decoder emitted a mixed batch — an `image`
+    plus placeholder `rectangle`/text ids intended to sit together — and
+    because `rectangle`/`ellipse` shared one `enum` arm it coerced the whole
+    array onto that arm, so the `image` element became an `ellipse` with no
+    `blob_id`. With singleton `const` arms, each kind is its own arm and the
+    array must come through with each element's real kind preserved.
+    """
+    update, error = parse_board_update(json.dumps({
+        "mode": "upsert",
+        "delete_ids": [],
+        "elements": [
+            {
+                "id": "photo", "kind": "image",
+                "x": 0, "y": 0, "width": 640, "height": 480,
+                "blob_id": "sha256:" + "a" * 64,
+            },
+            {
+                "id": "box", "kind": "rectangle",
+                "x": 10, "y": 10, "width": 200, "height": 120,
+            },
+        ],
+    }))
+    assert error is None, error
+    assert update is not None
+    assert [element.kind for element in update.elements] == ["image", "rectangle"]
+    assert update.elements[0].blob_id == "sha256:" + "a" * 64
 
 
 def test_update_board_svg_arm_is_an_opaque_raw_document():
@@ -360,13 +388,14 @@ def test_update_board_description_keeps_the_rules_that_protect_learner_work():
 
     assert "never touches the learner's own PencilKit ink" in description
     assert "theirs stays theirs" in description
-    assert "Do not cover or erase learner ink" in description
-    assert "Inspect the board with view_board before grading" in description
+    assert "do not cover or erase learner ink" in description
+    assert "Inspect the current board with `view_board`" in description
     assert "do not draw gratuitously" in description
     assert "reuse ids to revise existing content" in description
     assert "recommended_tutor_rect" in description
     assert "reserved_learner_work_rect" in description
-    assert "call `view_board` to confirm how it rendered" in description
+    assert "call `view_board` to inspect how it rendered" in description
+    assert "material overlap, clipping, or misalignment" in description
 
 
 def test_board_tool_descriptions_require_inspect_before_and_after():
@@ -377,11 +406,19 @@ def test_board_tool_descriptions_require_inspect_before_and_after():
     for description in (UPDATE_BOARD_TOOL["description"],
                         DRAW_BOARD_SVG_TOOL["description"]):
         assert "view_board" in description
-        assert "it lands" in description
+        assert "inspect" in description.lower()
+        assert "material overlap, clipping, or misalignment" in description
+        assert "when" in description.lower()
+        assert "otherwise" in description.lower()
     assert (
-        "Before drawing on a board that already has content on it"
+        "Before drawing on a board that already has content"
         in DRAW_BOARD_SVG_TOOL["description"]
     )
+    # `draw_board_svg` intentionally replaces the whole tutor scene; the wording
+    # must say so and steer add/revise work to `update_board` rather than imply
+    # coexistence or unoccupied placement that replace_all cannot honour.
+    assert "replacing the entire tutor scene" in DRAW_BOARD_SVG_TOOL["description"]
+    assert "use `update_board` instead" in DRAW_BOARD_SVG_TOOL["description"]
     assert "looked at it here first" in VIEW_BOARD_TOOL["description"]
     assert "after drawing" in VIEW_BOARD_TOOL["description"]
 
@@ -508,8 +545,7 @@ def test_each_primitive_demands_exactly_the_style_its_renderer_reads():
     arms = UPDATE_BOARD_TOOL["parameters"]["properties"]["elements"]["items"]["anyOf"]
     for arm in arms:
         discriminator = arm["properties"]["kind"]
-        named = ([discriminator["const"]] if "const" in discriminator
-                 else discriminator["enum"])
+        named = {discriminator["const"]}
         listed = style & set(arm["properties"])
         for kind in named:
             assert listed == expected[kind], kind
@@ -665,7 +701,16 @@ def test_the_tool_surface_stays_inside_its_budget():
     # The inspect-before / inspect-after guidance in `view_board`,
     # `update_board` and `draw_board_svg` spends a few hundred more characters,
     # inside the same fixed bound.
-    assert len(json.dumps(TOOL_DEFINITIONS)) < 31_800
+    #
+    # Splitting the two merged `enum` arms back into singleton `const` arms
+    # takes the surface to 32,431 — the cost of the fix, not of a feature:
+    # `rectangle`/`ellipse` and `polyline`/`freehand` each become two identical
+    # arms because a shared `enum` discriminator lets the constrained decoder
+    # coerce a mixed array onto the wrong arm (the confirmed `image` -> `ellipse`
+    # failure). The bound moves to 34,200, and a future editor who re-merges an
+    # arm to save these ~1,800 characters must explain why they are reviving the
+    # coercion this line exists because of.
+    assert len(json.dumps(TOOL_DEFINITIONS)) < 34_200
 
 
 def test_fetch_image_is_strict_closed_and_takes_one_url():

@@ -1303,7 +1303,8 @@ async def create_turn(
 
             bundle = assemble_session_context(
                 preamble=preamble, log=log, live_turn=live_turn,
-                image_data=image, board_overview=board, uploads=uploads,
+                image_data=image, board_overview=board, board_scene=body.board_scene,
+                uploads=uploads,
             )
             async for event, running in run_turn(
                 provider=_provider(body.model), model=body.model,

@@ -565,7 +565,9 @@ class EventTranslator:
         gate = self._board_gate
         if gate is not None:
             call_id = self._call_ids.get(output_index)
-            if call_id is None or gate.decide(call_id) != "allowed":
+            if call_id is None or gate.decide_update(
+                call_id, update
+            ) != "allowed":
                 # Refused before it streams: the mutation never reaches the
                 # learner's board. The ack `run_turn` writes for this call is
                 # chosen from the same recorded decision, so the model is told

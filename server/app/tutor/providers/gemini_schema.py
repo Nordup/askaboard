@@ -104,14 +104,17 @@ def _strip(node: Any) -> Any:
     discriminator on `update_board`'s element union. Dropped, the arms become
     indistinguishable and the union stops parsing.
 
-    Thirteen arms as this is written — `text`, `line`, `arrow`,
-    `rectangle`/`ellipse`, `circle`, `polygon`, `polyline`/`freehand`, `arc`,
-    `angle_marker`, `path`, `math_text`, `ink_text`, `image` — and two of
-    them carry a short `enum` rather than a `const`, because kinds with identical
-    field sets share one arm. So this rewrite has to leave an existing `enum`
-    alone as well as convert a `const`; `tests/test_gemini_schema.py` asserts the
-    count exactly, so an arm added to `tools.py` fails there rather than going
-    unnoticed here.
+    Fifteen arms as this is written — every element kind in `update_board`'s
+    union (`text`, `line`, `arrow`, `rectangle`, `ellipse`, `circle`,
+    `polygon`, `polyline`, `freehand`, `arc`, `angle_marker`, `path`,
+    `math_text`, `ink_text`, `image`) — and every one is a singleton `const`.
+    Earlier, `rectangle`/`ellipse` and `polyline`/`freehand` shared `enum`
+    arms to save tokens; the constrained decoder coerced mixed arrays onto
+    those arms, so they were split back into individual `const` arms. This
+    rewrite therefore always turns a `const` into a one-value `enum` and
+    never has to preserve a shared one; `tests/test_gemini_schema.py` asserts
+    the count exactly, so an arm added to `tools.py` fails there rather than
+    going unnoticed here.
 
     `properties` gets special handling for a reason that is easy to miss: its
     keys are not schema keywords, they are the tool's own argument names —

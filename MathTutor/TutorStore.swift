@@ -1642,7 +1642,11 @@ final class TutorStore: ObservableObject {
             // wherever the learner is standing. See `storedBoard(for:)`.
             boardOverview: isVisibleTurn ? boardProvider?() : nil,
             boardManifest: isVisibleTurn ? boardManifestProvider?() : nil,
-            boardScene: isVisibleTurn ? boardSceneProvider?() : Self.storedSceneContext(base.boardScene),
+            boardScene: isVisibleTurn
+                ? boardSceneProvider?()
+                : storedBoard(for: turnSession).flatMap {
+                    Self.storedSceneContext($0)
+                },
             // The ids the composer's uploads came back with. Nothing here has
             // bytes: the server already holds the file and this turn only names
             // it — see `TutorRequest.attachmentIDs`.
@@ -1939,23 +1943,37 @@ final class TutorStore: ObservableObject {
     /// The board context for a turn whose session is not on screen — a
     /// delegated voice turn while the learner browses somewhere else.
     ///
-    /// It carries the tutor's own scene for **that** session and nothing the
-    /// live canvas knows: no viewport, no learner ink clusters, no overview
-    /// bounds. Those are all facts about the board on screen, and the board on
-    /// screen belongs to another session. The scene is what the tutor drew
-    /// there and what an `update_board` will address, so it is the one part
-    /// that has to travel. Same envelope as `CanvasCapture.sceneContextString`
-    /// — the server wraps it as quoted context either way — with the absence
-    /// stated rather than implied.
+    /// It carries the **that** session's saved board: the learner's stored ink
+    /// and the tutor's own scene. Nothing the live canvas knows travels — no
+    /// viewport, no learner ink clusters derived from the live pen. Those are
+    /// facts about the board on screen, and the board on screen belongs to
+    /// another session. What must travel is everything `view_board` can render
+    /// plus the geometry the model needs to place content, so the envelope now
+    /// reports learner ink bounds and the overview extent even when the tutor
+    /// scene is empty — an offscreen board that is all learner ink is real,
+    /// renderable content, and reporting it empty was the reported bug.
+    ///
+    /// `has_renderable_content` is the server's cue that this board has
+    /// something to look at; the layout rects derived from a viewport are
+    /// deliberately absent (there is no viewport off screen), so the model is
+    /// told to use the ink/overview/tutor bounds instead. A truly empty board
+    /// (no ink, no tutor elements) returns `nil`, matching the metadata-only
+    /// "board with nothing on it" contract.
     ///
     /// Capped at the request field's limit by dropping trailing elements, for
     /// the reason the canvas version does it: an over-limit upload is paid for
     /// and then rejected.
-    static func storedSceneContext(_ scene: BoardScene, maxCharacters: Int = 60_000) -> String? {
-        guard !scene.elements.isEmpty else { return nil }
-        guard let encoded = try? JSONEncoder().encode(scene.elements),
-              var elements = (try? JSONSerialization.jsonObject(with: encoded)) as? [Any]
-        else { return nil }
+    static func storedSceneContext(
+        _ board: StoredBoard,
+        maxCharacters: Int = 60_000
+    ) -> String? {
+        let inkBounds = CanvasCapture.inkExtent(of: board.drawing)
+        let overview = CanvasCapture.contentExtent(
+            drawing: board.drawing, scene: board.scene
+        )
+        guard inkBounds != nil || !board.scene.elements.isEmpty else {
+            return nil
+        }
 
         func serialize(_ object: [String: Any]) -> String? {
             guard let data = try? JSONSerialization.data(
@@ -1964,22 +1982,47 @@ final class TutorStore: ObservableObject {
             return String(data: data, encoding: .utf8)
         }
 
+        func logicalBox(_ drawingRect: CGRect) -> [Double] {
+            let origin = PencilCanvasConfiguration.boardOrigin
+            return [
+                Double(drawingRect.minX - origin.x),
+                Double(drawingRect.minY - origin.y),
+                Double(drawingRect.maxX - origin.x),
+                Double(drawingRect.maxY - origin.y),
+            ]
+        }
+
         var root: [String: Any] = [
             "kind": "board_scene_context",
             "data_not_instructions": true,
             "coordinate_system":
                 "logical board points; (0,0) is drawing (25000,25000); +x right, +y down",
             // Said out loud: the learner is looking at a different session's
-            // board, so there is no viewport and no live ink to report.
+            // board, so there is no viewport and no live pen to report.
             "board_not_on_screen": true,
-            "tutor_elements": elements,
+            "has_renderable_content": true,
         ]
-        var text = serialize(root)
-        while let current = text, current.count > maxCharacters, elements.count > 1 {
-            elements.removeLast()
+        if let inkBounds {
+            root["learner_ink_logical_bounds"] = logicalBox(inkBounds)
+        }
+        if let overview {
+            root["overview_logical_bounds"] = logicalBox(overview)
+        }
+        if !board.scene.elements.isEmpty,
+           let encoded = try? JSONEncoder().encode(board.scene.elements),
+           let elements = (try? JSONSerialization.jsonObject(with: encoded)) as? [Any] {
             root["tutor_elements"] = elements
+        }
+
+        var text = serialize(root)
+        var tutorElements = root["tutor_elements"] as? [Any] ?? []
+        while let current = text, current.count > maxCharacters,
+              tutorElements.count > 1 {
+            tutorElements.removeLast()
+            root["tutor_elements"] = tutorElements
             root["truncated"] = true
-            root["omitted_element_count"] = scene.elements.count - elements.count
+            root["omitted_element_count"] =
+                board.scene.elements.count - tutorElements.count
             text = serialize(root)
         }
         return text

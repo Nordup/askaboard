@@ -10,6 +10,11 @@ from dataclasses import dataclass, field
 from app.tutor.board_scene import (
     BoardSceneUpdate, SVGElement, lint_svg, parse_board_update,
 )
+from app.tutor.board_geometry import (
+    FRAMED_KINDS, OVERLAP_THRESHOLD, element_logical_bounds,
+    learner_ink_bounds, overlap_fraction, scene_is_truncated,
+    scene_tutor_blocks,
+)
 from app.tutor.context import ContextBundle
 from app.tutor.events import (
     TURN_FAILED_MESSAGE, BoardRequestEvent, ClientEvent, ErrorEvent,
@@ -169,9 +174,10 @@ SET_WORKSPACE_ACK = json.dumps({
 UPDATE_BOARD_ACK = json.dumps({
     "status": "applied",
     "detail": "The tutor's board objects were updated on the learner's iPad. "
-              "Treat this as the complete visual. Call `view_board` to confirm "
-              "how it rendered; to make a further correction you must look at "
-              "the board again first.",
+              "Treat this as the complete visual. Call `view_board` to inspect "
+              "how it rendered, and correct any material overlap, clipping, or "
+              "misalignment you see before replying in prose. To make a further "
+              "correction you must look at the board again first.",
 })
 
 # What a board mutation is answered with when the learner already has a
@@ -187,6 +193,7 @@ INSPECT_FIRST_ACK = json.dumps({
               "it blind. Call `view_board` to look at it in a separate round "
               "first, then make your update. Nothing was changed by this call.",
 })
+
 
 # What a malformed `update_board` call is answered with. No event was sent, so
 # the learner's scene is unchanged; the model must read this and revise rather
@@ -287,6 +294,21 @@ DOWNLOAD_BUDGET_REASON = "fetch budget for this turn is used up"
 # `{"error": ...}` shape every refused fetch uses, so there is still only one
 # thing for the model to read: there is no picture, and this is why.
 FETCH_BUDGET_ACK = json.dumps({"error": DOWNLOAD_BUDGET_REASON})
+
+# What a `fetch_image` call is answered with when it names a URL this turn has
+# already fetched.
+#
+# The same `{"error": ...}` shape, so there is still only one thing to read:
+# there is no picture, and this is why. The point is to stop the identical
+# failed download being retried round after round — every retry of the same
+# refused URL costs another full tool round and another length of silence with
+# no new evidence, which is exactly the 403-and-retry loop that doubled a
+# confirmed turn's time-to-first-token. Refusing the repeat costs no network
+# and tells the model to move on to a different source.
+FETCH_RETRY_ACK = json.dumps({
+    "error": "That URL was already fetched this turn and cannot be fetched "
+             "again. Try a different image, or draw it yourself.",
+})
 
 # What the fetched picture is labelled with when it is handed to the model.
 #
@@ -785,7 +807,10 @@ def _answer(
     region = _region_from(_arguments(call) or {})
     detail = (
         f"Showing x {region.x:.0f}\u2013{region.x + region.width:.0f}%, "
-        f"y {region.y:.0f}\u2013{region.y + region.height:.0f}% of the board."
+        f"y {region.y:.0f}\u2013{region.y + region.height:.0f}% of the board. "
+        "If you drew on the board this turn, verify your placement in this "
+        "render: correct any material overlap, clipping, or misalignment "
+        "before replying in prose."
     )
     return ToolAnswer(ask=(
         BoardRequestEvent(
@@ -846,7 +871,7 @@ def _merge_usage(total: dict | None, addition: dict | None) -> dict | None:
 
 
 class _BoardGate:
-    """Per-turn causal gate over the learner's board: every draw needs a fresh look.
+    """Per-turn causal gate over the learner's board.
 
     A board mutation reaches the device the moment its arguments finish
     streaming (`EventTranslator._board_update_from`), not when `run_turn`
@@ -857,7 +882,7 @@ class _BoardGate:
     mutation may stream, and `run_turn` reads the recorded decision back to
     choose the matching ack.
 
-    One rule, applied on every valid mutation:
+    Three rules, applied in order on every valid mutation:
 
     * **Never two draws on one look.** A mutation may only land when the model
       has actually inspected the current board, and landing it *consumes* that
@@ -873,6 +898,29 @@ class _BoardGate:
       — as long as each mutation is preceded by a fresh delivered look. The only
       bound on how many times it may draw in one turn is `MAX_TOOL_ROUNDS`.
 
+    * **Never stack material on what is already there.** Once the model has
+      looked, a new substantial framed block (image, svg, rectangle, ellipse,
+      circle, polygon) may not land on top of an existing tutor object or the
+      learner's ink. Overlap is measured against the scene this turn actually
+      carries, at event time, with the conservative threshold in
+      `OVERLAP_THRESHOLD`: a placement overlapping the smaller box by a quarter
+      or more is refused `must_reposition`, nothing streams, and the fresh look
+      is preserved so it can move to clear space and retry. Same-id edits and
+      annotation kinds (line, arrow, path, text, ink_text, math_text, angle
+      markers, small marks) are never hard-blocked. `replace_all` refuses the
+      old tutor scene (it intentionally clears it) and checks only the
+      learner's ink.
+
+    * **Draw, then review what you drew.** An allowed mutation leaves a
+      *pending post-draw review* on the gate. While it is pending the next
+      provider round is forced to call exactly `view_board`, and that call is
+      answered by rendering the **full** board (0,0,100,100) however the model
+      wrote its crop — so the model cannot end a turn in prose the moment its
+      draw lands without seeing how it rendered. Only a successfully delivered
+      full-board render clears the pending flag; `BoardUnavailable` keeps it
+      set. A mutation refused `inspect_first`, refused `must_reposition`, a
+      malformed one, or any other tool call does not clear it.
+
     Only *valid* mutations are decided here: a malformed call never lands and is
     not recorded, so it neither consumes an inspection nor is counted. On an
     empty board (`renderable` False) there is nothing to look at, so a
@@ -883,42 +931,168 @@ class _BoardGate:
     a fresh delivered view.
     """
 
-    def __init__(self, *, renderable: bool) -> None:
+    def __init__(
+        self, *, renderable: bool, scene: str | None = None,
+    ) -> None:
         self.renderable = renderable
         self._looked = False
+        self._pending_review = False
         self._decisions: dict[str, str] = {}
+        # The gate's running view of the tutor scene, kept in sync so an
+        # iterative same-turn correction compares against the *current* scene
+        # rather than the turn's opening snapshot. Seeded from `scene`.
+        self._tutor_blocks: dict[str, object] = {
+            ident: box
+            for ident, box in scene_tutor_blocks(scene)
+        }
+        self._learner_ink = learner_ink_bounds(scene)
+        self._scene_truncated = scene_is_truncated(scene)
+        self._conflicts: dict[str, list[str]] = {}
 
     def mark_render_delivered(self) -> None:
         """Record that a board render reached the model's context this turn."""
         self._looked = True
+        # `run_turn` forces every view while a review is pending to the full
+        # board, so any render delivered here while pending is that full-board
+        # review render. Delivering it proves the model saw how its draw
+        # rendered, so it clears the pending flag.
+        self._pending_review = False
 
-    def decide(self, call_id: str) -> str:
-        """Decide a valid mutation: `allowed` or `inspect_first`.
+    @property
+    def pending_review(self) -> bool:
+        """Whether a landed mutation awaits a delivered `view_board`."""
+        return self._pending_review
+
+    def conflict_names(self, call_id: str) -> list[str]:
+        """The ids/learner-work marker a `must_reposition` refusal names."""
+        return self._conflicts.get(call_id, [])
+
+    def decide_update(self, call_id: str, update: BoardSceneUpdate) -> str:
+        """Decide a valid mutation: `allowed`, `inspect_first`, or
+        `must_reposition`.
 
         Called only for a syntactically valid mutation (malformed calls never
         reach it). Records the decision per call so `run_turn` can write the
-        matching ack. An `allowed` decision consumes the inspection, so the
-        next mutation — whatever its vintage — must wait for a fresh render.
+        matching ack. An `allowed` decision consumes the inspection, updates
+        the gate's view of the scene, and arms the pending review; a
+        `must_reposition` refuses before anything streams, preserves the fresh
+        look, and arms nothing.
         """
-        # The one-time empty-board exemption: before any draw, `renderable` is
-        # False and a creation may land without a look. After that first draw
-        # the board has content, so the gate becomes board-present and the
-        # inspection is consumed like any other.
         if not self.renderable:
-            decision = "allowed"
+            # Empty boards are exempt from the *look-first* requirement, not
+            # from spatial integrity inside the mutation itself. Two framed
+            # elements in the same first creation still must not stack.
+            decision = self._overlap_decision(update, call_id)
         elif self._looked:
-            decision = "allowed"
+            decision = self._overlap_decision(update, call_id)
         else:
             decision = "inspect_first"
         self._decisions[call_id] = decision
         if decision == "allowed":
             self.renderable = True
             self._looked = False
+            self._pending_review = True
+            self._apply_update(update)
         return decision
+
+    def _overlap_decision(
+        self, update: BoardSceneUpdate, call_id: str
+    ) -> str:
+        """`must_reposition` when a new framed block stacks on existing geometry."""
+        replace_all = update.mode == "replace_all"
+        conflicts: list[str] = []
+        incoming: list[tuple[str, object]] = []
+
+        for element in update.elements:
+            if element.kind not in FRAMED_KINDS:
+                continue
+            box = element_logical_bounds(element.model_dump())
+            if box is None:
+                continue
+            new_id = element.id
+
+            if not replace_all:
+                # The device could not fit every old tutor element into the
+                # scene envelope. Their locations are unknowable here, so a
+                # new framed placement cannot be certified clear. Replacing
+                # the whole tutor scene is safe because those omitted objects
+                # are cleared before the replacement lands.
+                if self._scene_truncated:
+                    conflicts.append("omitted tutor content (the scene is truncated)")
+                for existing_id, existing_box in self._tutor_blocks.items():
+                    if existing_id == new_id:
+                        continue
+                    if overlap_fraction(box, existing_box) >= OVERLAP_THRESHOLD:
+                        conflicts.append(f"`{existing_id}`")
+            # A single update can contain several new framed elements. Compare
+            # them as a staged batch so two distinct ids cannot bypass the gate
+            # merely by arriving in the same tool call.
+            for staged_id, staged_box in incoming:
+                if staged_id == new_id:
+                    continue
+                if overlap_fraction(box, staged_box) >= OVERLAP_THRESHOLD:
+                    conflicts.append(f"`{staged_id}` in this update")
+            if self._learner_ink is not None and overlap_fraction(
+                box, self._learner_ink
+            ) >= OVERLAP_THRESHOLD:
+                conflicts.append("the learner's work")
+            incoming.append((new_id, box))
+
+        if not conflicts:
+            return "allowed"
+        self._conflicts[call_id] = sorted(set(conflicts))
+        return "must_reposition"
+
+    def _apply_update(self, update: BoardSceneUpdate) -> None:
+        """Fold an allowed mutation into the gate's running scene view."""
+        if update.mode == "replace_all":
+            self._tutor_blocks = {}
+            self._scene_truncated = False
+        else:
+            for ident in update.delete_ids:
+                self._tutor_blocks.pop(ident, None)
+        for element in update.elements:
+            # An upsert replaces the prior object with this stable id even
+            # when the replacement has no practical geometry (for example an
+            # image becoming a text annotation). Drop the old box first so it
+            # cannot survive as an invisible obstacle for later placements in
+            # the same turn.
+            self._tutor_blocks.pop(element.id, None)
+            box = element_logical_bounds(element.model_dump())
+            if box is None:
+                continue
+            self._tutor_blocks[element.id] = box
 
     def decision_for(self, call_id: str) -> str | None:
         """The decision already recorded for one call, if any."""
         return self._decisions.get(call_id)
+
+
+def _post_review_tool_choice(provider: Provider) -> dict:
+    """The exact payload that forces the next round to call *only* `view_board`.
+
+    The post-draw review works because the round *must* call a tool, and it is
+    only as strong as the tool it is pinned to. `"required"` / `"any"` would
+    let the model spend the round on any other tool (or, until this change, on
+    a `view_board` anywhere and then prose) — so the choice is narrowed to
+    `view_board` exactly. Each family spells that narrow pin differently:
+
+    * **OpenAI Responses** — `{"type": "function", "name": "view_board"}`.
+      The installed `openai.types.responses.ToolChoiceFunction` documents this
+      exact literal as "force the model to call a specific function".
+    * **Gemini Interactions** — `{"allowed_tools": {"mode": "any",
+      "tools": ["view_board"]}}`. The installed
+      `google.genai.interactions.ToolChoiceConfig` / `AllowedTools` model
+      accepts exactly this shape when it rides
+      `generation_config.tool_choice` (which `_sdk_kwargs` moves the top-level
+      `tool_choice` into).
+
+    Both are placed in the payload's top-level `tool_choice`, the same slot
+    `_closing_round`'s `"none"` uses; only the value differs.
+    """
+    if getattr(provider, "name", "") == "gemini":
+        return {"allowed_tools": {"mode": "any", "tools": ["view_board"]}}
+    return {"type": "function", "name": "view_board"}
 
 
 async def run_turn(
@@ -1013,6 +1187,7 @@ async def run_turn(
     # decision to write the matching ack. See `_BoardGate`.
     board_gate = _BoardGate(
         renderable=bundle.has_board and fetch_board is not None,
+        scene=bundle.board_scene,
     )
     translator.attach_board_gate(board_gate)
     # What this turn has spent on bringing bytes in, across both downloaders and
@@ -1031,6 +1206,12 @@ async def run_turn(
     # Failures are recorded here too: a file the provider would not give up once
     # will not give it up four more times.
     relayed_ids: set[tuple[str, ...]] = set()
+    # Every URL this turn has already fetched, across all rounds. A model that
+    # could not see a picture it asked for has every reason to retry the
+    # identical URL, and in the 403/no-UA case that meant extra full tool
+    # rounds and doubled time-to-first-token while repeating the same refused
+    # download. Refusing the repeat costs nothing and tells it to move on.
+    fetched_urls: set[str] = set()
 
     for _ in range(MAX_TOOL_ROUNDS):
         # Emptied per round, and never left unbound: a round whose stream ends
@@ -1045,6 +1226,17 @@ async def run_turn(
             model=model, effort=effort, outbox=outbox,
             previous_id=previous_id, cache_key=cache_key,
         )
+        if board_gate.pending_review and fetch_board is not None:
+            # A landed mutation is awaiting a delivered `view_board`. Force the
+            # round to use a tool (OpenAI) / constrain to function calling
+            # (Gemini, through the same top-level field the closing round uses)
+            # so the model cannot end the turn in prose before it has seen how
+            # its placement rendered. A delivered view clears the flag in
+            # `mark_render_delivered`, and a refused mutation never set it.
+            # Gated on the fetcher being wired: without a renderer no view can
+            # be delivered, so forcing a tool round would only deadlock into
+            # `MAX_TOOL_ROUNDS` against an unanswerable board.
+            payload["tool_choice"] = _post_review_tool_choice(provider)
         if request_body is not None and previous_id is None:
             # First round only: later rounds are `previous_response_id` plus
             # tool outputs, which the envelope's `input` already accounts for.
@@ -1167,6 +1359,19 @@ async def run_turn(
             if file.key not in relayed_ids
         ]
         if not calls and not citations:
+            # Normally prose with no work left is a clean finish. Not while a
+            # draw is awaiting its mandatory render: a provider can violate or
+            # fail to honour the exact tool choice, and the server remains the
+            # final authority that an unreviewed placement cannot close as a
+            # successful turn.
+            if board_gate.pending_review:
+                logger.warning(
+                    "provider returned no review tool while post-draw review "
+                    "was pending; ending without a successful close"
+                )
+                yield ErrorEvent(
+                    message=TURN_FAILED_MESSAGE, retryable=True
+                ), result
             return
 
         # Nothing the round produced is echoed back. The calls, the reasoning
@@ -1199,6 +1404,22 @@ async def run_turn(
                 if decision == "inspect_first":
                     outputs.append(provider.tool_output(
                         call_id=call_id, name=name, output=INSPECT_FIRST_ACK,
+                    ))
+                    continue
+                if decision == "must_reposition":
+                    conflicts = board_gate.conflict_names(call_id)
+                    detail = (
+                        "Nothing was drawn: the content you placed overlaps "
+                        + (" and ".join(conflicts) if conflicts else "existing content")
+                        + ". Move it to clear space and try again \u2014 do not "
+                        "cover an existing object or the learner's working. "
+                        "Your fresh view of the board is unchanged."
+                    )
+                    outputs.append(provider.tool_output(
+                        call_id=call_id, name=name,
+                        output=json.dumps({
+                            "status": "must_reposition", "detail": detail,
+                        }),
                     ))
                     continue
             answer = _answer(
@@ -1235,6 +1456,17 @@ async def run_turn(
                         output=FETCH_BUDGET_ACK,
                     ))
                     continue
+                if answer.fetch in fetched_urls:
+                    logger.warning(
+                        "refusing repeat fetch of the same URL | url=%s",
+                        answer.fetch,
+                    )
+                    outputs.append(provider.tool_output(
+                        call_id=call_id, name=call.get("name") or "",
+                        output=FETCH_RETRY_ACK,
+                    ))
+                    continue
+                fetched_urls.add(answer.fetch)
                 # Announced before the wait, for the reason the memory branch
                 # below and the `board_request` further down both are: this is
                 # an eventless stretch, nothing else will put anything on the
@@ -1356,6 +1588,24 @@ async def run_turn(
                 continue
 
             request, region = answer.ask
+            if board_gate.pending_review:
+                # While a post-draw review is pending, any `view_board` call is
+                # answered by rendering the *full* current board (0,0,100,100),
+                # regardless of the model-authored crop. A crop the model wrote
+                # may not cover its own just-drawn content, so honouring it
+                # would fail the review the gate is enforcing. The full render
+                # is what clears the pending flag on delivery.
+                request = BoardRequestEvent(
+                    call_id=request.call_id,
+                    x=0.0, y=0.0, width=100.0, height=100.0,
+                    detail=(
+                        "Showing the whole board (x 0\u2013100%, y 0\u2013100%). "
+                        "You added or changed tutor content this turn; examine "
+                        "this full render before replying, and correct any "
+                        "material overlap, clipping, or misalignment you see."
+                    ),
+                )
+                region = BoardRegion(x=0.0, y=0.0, width=100.0, height=100.0)
             # The request goes out *before* the wait, because the thing that
             # answers it is at the far end of this very stream: the device is
             # reading these events, and it cannot render a region it has not
@@ -1480,10 +1730,25 @@ async def run_turn(
                 "tool calls arrived with no call_id; ending the turn | tools=%s",
                 ",".join(call.get("name") or "?" for call in calls),
             )
+            if board_gate.pending_review:
+                yield ErrorEvent(
+                    message=TURN_FAILED_MESSAGE, retryable=True
+                ), result
             return
         if not outputs and not attachments:
             # No calls, and the relay came back with nothing worth a round. The
-            # turn is over on its own terms — the model already wrote its reply.
+            # turn is normally over on its own terms — the model already wrote
+            # its reply. A provider that ignored the exact post-draw
+            # `view_board` choice is the exception: prose is not allowed to
+            # close a turn while the landed mutation is still unreviewed.
+            if board_gate.pending_review:
+                logger.warning(
+                    "provider returned no review tool while post-draw review "
+                    "was pending; ending without prose"
+                )
+                yield ErrorEvent(
+                    message=TURN_FAILED_MESSAGE, retryable=True
+                ), result
             return
         outbox = outputs + attachments
         # `_BoardGate` enforces the look-first rule where the mutation event is
@@ -1511,6 +1776,22 @@ async def run_turn(
             ",".join(filename for filename, _ in relayed),
             downloads,
         )
+        if board_gate.pending_review:
+            # A landed draw still awaits its post-draw view. Ending the turn
+            # here with a prose-only closing round would hand the learner
+            # uncorrected content the model never inspected, silently bypassing
+            # the very review the forced rounds were bought for. So when the
+            # bound runs out mid-review we do not buy a closing round: we yield
+            # the normal sanitised retryable error and stop, keeping the turn
+            # bounded exactly where it was.
+            logger.warning(
+                "post-draw review never delivered within cap; ending turn "
+                "without a closing round | text_chars=%d", len(result.text),
+            )
+            yield ErrorEvent(
+                message=TURN_FAILED_MESSAGE, retryable=True
+            ), result
+            return
         # And then the turn is closed rather than dropped. `outbox` is the
         # outputs answering the calls the last round made, plus anything they
         # wanted to show — pending work the API is waiting for, and the reason

@@ -150,7 +150,20 @@ class ContextBundle:
     #: The device renders every region on demand — see `app.tutor.board` for why
     #: that moved — so all the loop needs to know here is whether offering
     #: `view_board` an answer is possible at all.
+    #:
+    #: True when the turn carries an overview *or* a tutor scene with content.
+    #: The overview was once the only signal, which made a board holding only
+    #: the tutor's own objects (learner ink not yet drawn) look empty and
+    #: `view_board` return `NO_BOARD_ACK` against it — so the model could not
+    #: inspect or correct its own placement.
     has_board: bool = False
+    #: The device's exact current tutor scene (and board envelope), the same
+    #: string that rides the turn message. The loop's spatial overlap gate
+    #: reads the existing tutor geometry and learner ink bounds off it at
+    #: event time, so a later-turn placement is compared against the tutor
+    #: scene the device is really holding rather than the session's opening
+    #: snapshot.
+    board_scene: str | None = None
     #: How many characters of prompt sit in front of the last cache
     #: breakpoint — the prefix this turn is *asking* to read back.
     #:
@@ -208,6 +221,7 @@ def assemble_session_context(
     live_turn: str | None,
     image_data: bytes | None = None,
     board_overview: bytes | None = None,
+    board_scene: str | None = None,
     uploads: list[UploadPart] | None = None,
 ) -> ContextBundle:
     """The append-only prompt: a frozen head, one growing log, and this turn.
@@ -293,6 +307,11 @@ def assemble_session_context(
         })
     for upload in uploads or []:
         turn.append(content_part(upload))
+    scene_section = board_notes.describe_scene(
+        scene=board_scene, has_overview=board_overview is not None,
+    )
+    if scene_section is not None:
+        turn.append({"type": "input_text", "text": scene_section})
     if live_turn is not None:
         # Last, and unfenced. Everything above it is what the tutor knows; this
         # is what it was asked.
@@ -308,6 +327,10 @@ def assemble_session_context(
             {"role": "user", "content": content},
             {"role": "user", "content": turn},
         ],
-        has_board=board_overview is not None,
+        has_board=(
+            board_overview is not None
+            or board_notes.scene_has_tutor_content(board_scene)
+        ),
+        board_scene=board_scene,
         cache_prefix_chars=prefix_chars,
     )

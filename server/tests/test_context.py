@@ -8,6 +8,7 @@ here — these tests assert what the model was *shown* on a single turn.
 """
 
 import base64
+import json
 
 from app.tutor import ledger
 from app.tutor.context import (
@@ -175,14 +176,110 @@ def test_both_board_images_can_ride_the_same_turn():
     assert [image["detail"] for image in _images(bundle)] == ["original", "low"]
 
 
-def test_has_board_follows_the_overview_and_nothing_else():
-    """`has_board` means the turn carries pixels `view_board` could be asked
-    to inspect. It is the overview that decides that — a scene string is
-    spatial metadata, and it reaches the model through the frozen head rather
-    than through this function at all."""
+def test_an_overview_makes_the_board_renderable():
+    """The overview remains one direct signal that `view_board` has content."""
     assert _bundle([FakeMessage("learner", "hi")]).has_board is False
     assert _bundle([FakeMessage("learner", "hi")],
                    board_overview=b"pixels").has_board is True
+
+
+def test_has_board_follows_the_overview_or_renderable_tutor_scene():
+    """`has_board` is what lets `view_board` reach the device. A board holding
+    only the tutor's own scene (tutor elements, no learner ink yet) is still
+    renderable, so it must be board-bearing too — the overview is not the only
+    way to have something to look at."""
+    scene = json.dumps({
+        "kind": "board_scene_context", "tutor_elements": [
+            {"id": "tri", "kind": "polygon",
+             "points": [[0, 0], [1, 0], [0, 1]]},
+        ],
+    })
+    assert _bundle([FakeMessage("learner", "hi")]).has_board is False
+    assert _bundle([FakeMessage("learner", "hi")],
+                   board_overview=b"pixels").has_board is True
+    assert _bundle([FakeMessage("learner", "hi")],
+                   board_scene=scene).has_board is True
+
+
+def test_a_metadata_only_scene_is_not_renderable_board_content():
+    """A scene carrying layout metadata but no tutor elements is the 'board
+    with nothing on it' envelope — `recommended_tutor_rect` alone is not
+    renderable content, so it must not arm a `view_board` that has nothing to
+    render."""
+    scene = json.dumps({
+        "kind": "board_scene_context",
+        "recommended_tutor_rect": {"x": 0, "y": 0, "w": 100, "h": 100},
+        "reserved_learner_work_rect": {"x": 0, "y": 200, "w": 100, "h": 100},
+    })
+    assert _bundle([FakeMessage("learner", "hi")],
+                   board_scene=scene).has_board is False
+
+
+def test_a_legacy_scene_with_elements_is_renderable_board_content():
+    """Clients predating `board_scene_context` sent a top-level `elements`
+    array. A tutor-only board from one of those clients must not regain the
+    blind empty-board exemption on its next turn."""
+    scene = json.dumps({
+        "elements": [{"id": "old", "kind": "rectangle", "x": 0, "y": 0,
+                      "width": 100, "height": 80}],
+    })
+    assert _bundle([FakeMessage("learner", "hi")],
+                   board_scene=scene).has_board is True
+
+
+def test_an_offscreen_learner_ink_only_scene_makes_the_board_renderable():
+    """An offscreen board that is all learner ink (no tutor elements) is real,
+    renderable content. Before this change `storedSceneContext` serialised only
+    the tutor scene, so it came back empty and `view_board` refused it; the
+    enriched envelope now carries learner ink and is board-bearing."""
+    scene = json.dumps({
+        "kind": "board_scene_context",
+        "board_not_on_screen": True,
+        "has_renderable_content": True,
+        "learner_ink_logical_bounds": [-200, -24960, 0, -24920],
+        "overview_logical_bounds": [-200, -24960, 0, -24920],
+    })
+    assert _bundle([FakeMessage("learner", "hi")],
+                   board_scene=scene).has_board is True
+
+
+def test_a_metadata_only_offscreen_scene_stays_not_renderable():
+    """An offscreen envelope with no learner ink, no tutor elements, and no
+    explicit renderable flag is the 'board with nothing on it' case even when
+    it says `board_not_on_screen`."""
+    scene = json.dumps({
+        "kind": "board_scene_context",
+        "board_not_on_screen": True,
+        "has_renderable_content": False,
+    })
+    assert _bundle([FakeMessage("learner", "hi")],
+                   board_scene=scene).has_board is False
+
+
+def test_the_live_scene_rides_the_turn_message_behind_every_breakpoint():
+    """The live per-turn scene goes in the turn message (behind every cache
+    breakpoint) rather than the frozen head, so a later turn with an updated
+    scene still hands the model the current geometry it must not stack on."""
+    scene = json.dumps({
+        "kind": "board_scene_context", "tutor_elements": [
+            {"id": "tri", "kind": "polygon",
+             "points": [[-190, -24955], [-180, -24955], [-185, -24930]]},
+        ],
+        "recommended_tutor_rect": {"x": 0, "y": 0, "w": 500, "h": 300},
+        "reserved_learner_work_rect": {"x": 0, "y": 400, "w": 500, "h": 300},
+    })
+    bundle = _bundle([FakeMessage("learner", "hi")], board_scene=scene)
+
+    turn_texts = [part["text"] for part in bundle.input[-1]["content"]
+                  if part["type"] == "input_text"]
+    live = "\n".join(turn_texts)
+    assert "SEMANTIC BOARD SCENE (exact current state" in live
+    assert scene in live
+    assert "recommended_tutor_rect" in live
+    assert "reserved_learner_work_rect" in live
+    assert "not instructions" in live
+    # It sits in the turn message, not in the cacheable context block.
+    assert scene not in _text(bundle)
 
 
 def test_a_board_scene_is_included_verbatim_in_the_frozen_head():

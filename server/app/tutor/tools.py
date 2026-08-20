@@ -64,7 +64,8 @@ VIEW_BOARD_TOOL: dict = {
         "learner's iPad at full resolution, so zooming in loses no detail. "
         "Before you draw or edit anything on a board that already has content on it, "
         "look at it here first; and after drawing, call this again to confirm how your "
-        "placement rendered rather than guessing. "
+        "placement rendered rather than guessing — if you see material overlap, "
+        "clipping, or misalignment, correct it before you reply in prose. "
         "Never describe, quote, or grade the "
         "learner's work without having looked at it here first."
     ),
@@ -199,7 +200,7 @@ _STYLE_REFS: dict = {name: {"$ref": f"#/$defs/{name}"} for name in _STYLE_DEFS}
 
 def _board_element(
     *,
-    kind: str | tuple[str, ...],
+    kind: str,
     fields: dict,
     required: list[str],
     kind_description: str | None = None,
@@ -207,14 +208,17 @@ def _board_element(
 ) -> dict:
     """One arm of the element union.
 
-    `kind` may name several element kinds at once. Two or more kinds share an
-    arm only when their field sets are identical, so the arm they share is the
-    schema each of them already had; the discriminator becomes a short `enum`
-    instead of a `const`, which `parse_board_update` reads the same way — the
-    pydantic union discriminates on the value, not on how the schema wrote it.
-    A merged arm is one copy of the twelve-name `required` list and one copy of
-    the style block instead of two or three, and that duplication was most of
-    what this tool cost.
+    Every arm is a singleton: `kind` names exactly one element kind, and the
+    discriminator is a `const`. This is deliberate, and it is the whole point
+    of the fix below.
+
+    An OpenAI constrained decoder may lock a *multi-value* discriminator (a
+    short `enum`) onto the wrong arm when the model emits a mixed array — the
+    confirmed live failure coerced intended `image`/placeholder ids into
+    `ellipse`/`rectangle` arms because `rectangle`/`ellipse` shared one `enum`
+    arm and the decoder pinned the whole batch to it. A single `const` per arm
+    leaves no room for that coercion: every kind is its own arm, and the model
+    is forced to name the exact one it means.
 
     `ignores` names the style fields *this kind's renderer does not read*, and
     they are left out of both `properties` and `required`. A strict schema has
@@ -237,10 +241,7 @@ def _board_element(
     unknown = [name for name in ignores if name not in _STYLE_DEFS]
     if unknown:
         raise KeyError(f"not style fields: {unknown!r}")
-    discriminator: dict = (
-        {"type": "string", "const": kind} if isinstance(kind, str)
-        else {"type": "string", "enum": list(kind)}
-    )
+    discriminator: dict = {"type": "string", "const": kind}
     if kind_description:
         discriminator["description"] = kind_description
     properties: dict = {
@@ -284,21 +285,25 @@ UPDATE_BOARD_TOOL: dict = {
         "reuse ids to revise existing content and list ids in delete_ids to remove "
         "it. Pass elements=[] to only delete and delete_ids=[] to only upsert. "
         "Coordinates and every size are logical board points: (0,0) is the board "
-        "centre, +x right, +y down. Keep new standalone diagrams compact and "
-        "inside `recommended_tutor_rect` supplied in context; leave "
-        "`reserved_learner_work_rect` clear for the learner's working. Do not cover "
-        "or erase learner ink; place corrections "
-        "beside the relevant work. Inspect the board with view_board before grading, "
-        "correcting, or placing content relative to learner writing; a requested "
-        "standalone exercise or diagram may be drawn on a board with no renderable "
-        "content without that look, and do not draw gratuitously for simple "
-        "conversational answers. "
+        "centre, +x right, +y down. Inspect the current board with `view_board` "
+        "before you grade, correct, or place content on it, and read the live "
+        "scene supplied in context. When live layout rects are present, place "
+        "new material inside `recommended_tutor_rect` and leave "
+        "`reserved_learner_work_rect` clear for the learner's working. Otherwise "
+        "(for example an offscreen session), inspect the full "
+        "board and use the scene's learner-ink, overview, and tutor-element "
+        "bounds to choose unoccupied space. In either case, do "
+        "not cover or erase learner ink. Place corrections beside the relevant "
+        "work rather than on top of it. After any draw or edit, call "
+        "`view_board` to inspect how it rendered and correct any material "
+        "overlap, clipping, or misalignment you see before replying in prose. "
+        "A requested standalone exercise or diagram may be drawn on a board "
+        "with no renderable content without that initial look; do not draw "
+        "gratuitously for simple conversational answers. "
         "Use this for object-level edits whose separate elements need stable ids. "
         "For a standalone exercise or coherent diagram, call `draw_board_svg` instead. "
-        "Build the complete edit in ONE call; no second mutation is available in the "
-        "turn. After it lands, call `view_board` to confirm how it rendered before "
-        "you reply in prose. Never fake text, labels or equations with rectangles; "
-        "rectangles are visible boxes only."
+        "Never fake text, labels or equations with rectangles; rectangles are "
+        "visible boxes only."
     ),
     "strict": True,
     "parameters": {
@@ -374,11 +379,26 @@ UPDATE_BOARD_TOOL: dict = {
                             # arrow is one colour by construction.
                             ignores=("fill",),
                         ),
-                        # One arm, because a rectangle and an ellipse are placed
-                        # by exactly the same four numbers: the box, and the
-                        # figure inscribed in it.
+                        # Two arms, not one. A rectangle and an ellipse are
+                        # placed by the same four numbers, but sharing one arm
+                        # made the discriminator a short `enum`, and the
+                        # constrained decoder locked a mixed `[rectangle,
+                        # ...]` batch onto the first arm of the pair — the
+                        # confirmed place where `image` ids came back as
+                        # `ellipse`. Each gets its own `const` arm so the model
+                        # can only name exactly the kind it means.
                         _board_element(
-                            kind=("rectangle", "ellipse"),
+                            kind="rectangle",
+                            fields={
+                                "x": {"type": "number", "description": "Top-left x of the box."},
+                                "y": {"type": "number", "description": "Top-left y of the box."},
+                                "width": {"type": "number", "minimum": 0, "maximum": 50000},
+                                "height": {"type": "number", "minimum": 0, "maximum": 50000},
+                            },
+                            required=["x", "y", "width", "height"],
+                        ),
+                        _board_element(
+                            kind="ellipse",
                             fields={
                                 "x": {"type": "number", "description": "Top-left x of the box."},
                                 "y": {"type": "number", "description": "Top-left y of the box."},
@@ -408,14 +428,13 @@ UPDATE_BOARD_TOOL: dict = {
                             },
                             required=["points"],
                         ),
-                        # One arm for the two open chains. `polygon` keeps its
-                        # own, because only it can say minItems 3, and a
-                        # two-point polygon the schema allowed would come back
-                        # from `parse_board_update` as a refusal of the whole
-                        # call.
+                        # Two singleton arms for the two open chains. Sharing
+                        # one would turn the discriminator into a short `enum`
+                        # and open the same mixed-batch coercion that broke
+                        # `rectangle`/`ellipse`; `polygon` keeps its own
+                        # separately because only it can say minItems 3.
                         _board_element(
-                            kind=("polyline", "freehand"),
-                            kind_description="Open chains through the points: polyline joins them with straight segments, freehand smooths them into a curve.",
+                            kind="polyline",
                             fields={
                                 "points": {
                                     "type": "array",
@@ -425,10 +444,24 @@ UPDATE_BOARD_TOOL: dict = {
                                 }
                             },
                             required=["points"],
-                            # Both are open chains, and neither arm fills:
-                            # `polyline` strokes its path and `freehand` strokes
-                            # the smoothed one (BoardSceneRenderer.swift:
-                            # 166-177). Only `polygon`, which closes, fills.
+                            # Both open chains, and neither fills: `polyline`
+                            # strokes its path.
+                            ignores=("fill",),
+                        ),
+                        _board_element(
+                            kind="freehand",
+                            fields={
+                                "points": {
+                                    "type": "array",
+                                    "minItems": 2,
+                                    "maxItems": 512,
+                                    "items": _POINT_REF,
+                                }
+                            },
+                            required=["points"],
+                            # And `freehand` strokes the smoothed one
+                            # (BoardSceneRenderer.swift:166-177). Only
+                            # `polygon`, which closes, fills.
                             ignores=("fill",),
                         ),
                         _board_element(
@@ -616,14 +649,22 @@ DRAW_BOARD_SVG_TOOL: dict = {
     "type": "function",
     "name": "draw_board_svg",
     "description": (
-        "Draw one complete standalone exercise or coherent diagram on the board. "
-        "Use exactly one SVG document containing every visible word, equation, shape, "
-        "and illustration. This is the required board tool for a newly created "
-        "exercise. Before drawing on a board that already has content on it, call "
-        "`view_board` to see the current board in this turn first; a board with no "
-        "renderable content may be drawn straight away. The call replaces the tutor "
-        "scene and is the only board mutation available in the turn; after it lands, "
-        "call `view_board` to confirm how it rendered, then reply in prose."
+        "Draw one complete standalone exercise or coherent diagram as a single "
+        "SVG document containing every visible word, equation, shape, and "
+        "illustration. Use this only when you are intentionally replacing the "
+        "entire tutor scene with one self-contained figure. It clears the "
+        "existing tutor scene before drawing, so it deletes everything already "
+        "placed. On a populated tutor scene use `update_board` instead to add, "
+        "revise, or delete objects without wiping the rest. Before drawing on a "
+        "board that already has content, call `view_board` to see the current "
+        "board in this turn first; a board with no renderable content may be "
+        "drawn straight away. Place the figure in clear space using the current "
+        "scene: use `recommended_tutor_rect` and "
+        "`reserved_learner_work_rect` when those live layout rects are present; "
+        "otherwise inspect the full board and use learner-ink, overview, and "
+        "tutor-element bounds. After it lands, call `view_board` to "
+        "inspect the full board and correct any material overlap, clipping, or "
+        "misalignment before replying in prose."
     ),
     "strict": True,
     "parameters": {

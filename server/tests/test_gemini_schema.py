@@ -52,7 +52,12 @@ def _declarations(tools):
 #: fourteenth is added. The number is a claim two comments make in prose —
 #: `gemini_schema._strip` and this module's docstring — so it needs one place
 #: that fails when the prose goes stale.
-BOARD_ELEMENT_ARMS = 13
+#
+#: Fifteen: one singleton `const` arm per kind. The two merged `enum` pairs
+#: (`rectangle`/`ellipse`, `polyline`/`freehand`) were split back out — the
+#: constrained decoder coerced mixed arrays onto a shared `enum` arm, which is
+#: the live failure this suite guards against.
+BOARD_ELEMENT_ARMS = 15
 
 
 def test_no_unsupported_keyword_survives_anywhere(converted):
@@ -85,13 +90,14 @@ def test_every_board_element_arm_keeps_its_discriminator(converted):
     expected = set()
     for arm in source_arms:
         kind = arm["properties"]["kind"]
-        expected.update([kind["const"]] if "const" in kind else kind["enum"])
+        assert "const" in kind, "every source arm must be a singleton const"
+        assert "enum" not in kind, "a shared enum arm invites decoder coercion"
+        expected.add(kind["const"])
 
     assert len(arms) == BOARD_ELEMENT_ARMS, "the conversion dropped an arm"
     actual = set()
     for arm in arms:
         kind = arm["properties"]["kind"]
-        assert "const" not in kind
         assert kind["enum"]
         actual.update(kind["enum"])
     assert actual == expected
