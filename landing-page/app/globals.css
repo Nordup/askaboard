@@ -22,4 +22,6 @@
 .ipad-export{border-radius:0;display:block;height:auto;object-fit:contain}.ipad-export.hero-device{background:transparent;box-shadow:none;filter:drop-shadow(0 20px 26px rgba(0,0,0,.16));height:auto;overflow:visible;padding:0;width:100%}.ipad-export.workspace-device{background:transparent;box-shadow:none;filter:drop-shadow(0 18px 21px rgba(0,0,0,.14));height:auto;overflow:visible;padding:0;width:min(668px,calc(100% - 430px - var(--workspace-gap)))}
 @media(max-width:1100px){.ipad-export.workspace-device{max-width:668px;width:100%}}
 @media(max-width:560px){.ipad-export.hero-device{filter:drop-shadow(0 12px 14px rgba(0,0,0,.14))}}
+@media(max-width:840px){.hero{align-items:center;display:flex;flex-direction:column;height:auto;min-height:0;padding:52px 0 40px}.hero-copy{left:auto;position:relative;top:auto}.hero-stage{flex-shrink:0;left:auto;margin-top:24px;position:relative;top:auto;transform:none}}
+@media(max-width:560px){.hero{padding-top:38px}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.button{transition:none}}
