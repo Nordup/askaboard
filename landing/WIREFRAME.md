@@ -1,5 +1,12 @@
 # Landing page — wireframe & build plan
 
+> **Historical design artifact.** This records an earlier landing-page design
+> and its exact visual requirements. Its audience, pricing, and product claims
+> are not current direction. Use [`docs/product-vision.md`](../docs/product-vision.md)
+> for positioning and [`landing-page/app/page.tsx`](../landing-page/app/page.tsx)
+> for the current page structure and copy. Preserve this file only as a record
+> of the earlier Paper boards.
+
 **Delivered as Paper boards** in "AI Whiteboard Tutor — Design System, Components & Page",
 page **"Website — A+C Hybrid"**, strictly on the Website Tokens board
 (Surface `#FFFFFF` · Ink `#000000` · Rule `#EAEAEA` · Primary `#1557FF` · Selection `#55E12C`

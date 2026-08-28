@@ -1,5 +1,10 @@
 # Learn AI — the idea
 
+> **Historical source (superseded).** This document preserves the project's
+> original course-and-planning-centered concept. It is not the current product
+> direction and should not guide new product or landing-page decisions. See
+> [`product-vision.md`](product-vision.md) for the current source of truth.
+
 ## What it is
 
 An **engine for learning anything**, not a fixed-flow learning app.

@@ -7,19 +7,22 @@ const inter = Inter({ subsets: ['latin'], variable: '--font-inter', display: 'sw
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
-  title: 'Learn AI — A learning engine for iPad',
-  description: 'Turn a goal into a living study plan, work it out by hand, and let every session adapt to what you learn.',
+  title: 'Whiteboard AI — A personal tutor on your iPad',
+  description: 'Explore ideas, solve problems, and learn with a tutor that follows your work.',
+  icons: {
+    icon: [{ url: '/favicon-candidates/06-supplied-render-rounded.png', type: 'image/png' }],
+    shortcut: '/favicon-candidates/06-supplied-render-rounded.png',
+    apple: '/favicon-candidates/06-supplied-render-rounded.png',
+  },
   openGraph: {
-    title: 'Learn AI — A learning engine for iPad',
-    description: 'Turn a goal into a living study plan, work it out by hand, and let every session adapt to what you learn.',
+    title: 'Whiteboard AI — A personal tutor on your iPad',
+    description: 'Explore ideas, solve problems, and learn with a tutor that follows your work.',
     type: 'website',
-    images: [{ url: '/og.png', width: 1200, height: 630, alt: 'Learn AI adapts a study plan around your work.' }],
   },
   twitter: {
-    card: 'summary_large_image',
-    title: 'Learn AI — A learning engine for iPad',
-    description: 'Turn a goal into a living study plan, work it out by hand, and let every session adapt to what you learn.',
-    images: ['/og.png'],
+    card: 'summary',
+    title: 'Whiteboard AI — A personal tutor on your iPad',
+    description: 'Explore ideas, solve problems, and learn with a tutor that follows your work.',
   },
 };
 
