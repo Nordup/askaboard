@@ -115,7 +115,7 @@ export default function Home() {
           <nav className="footer-links" aria-label="Footer navigation">
             <div><strong>Product</strong><a href="#how-it-works">How it works</a><a href="#beta">Beta access</a><a href="#top">Release notes</a></div>
             <div><strong>Project</strong><a href="#principles">Why Whiteboard AI</a><a href="#top">Research</a><a href="#top">Privacy</a></div>
-            <div><strong>Contact</strong><a href="#newsletter">Newsletter</a><a href="#newsletter">Feedback</a><a href="mailto:hello@learn-ai.app">Email</a></div>
+            <div><strong>Contact</strong><a href="#newsletter">Newsletter</a><a href="#newsletter">Feedback</a><a href="mailto:nordup.ondr@gmail.com">Email</a></div>
           </nav>
         </div>
         <div className="footer-meta"><span>© 2026 Whiteboard AI</span><span>Write, ask, and learn on one shared board</span></div>

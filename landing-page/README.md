@@ -57,7 +57,4 @@ The reusable tokens and component styles live in `app/globals.css`; structural c
 
 - Add `BUTTONDOWN_API_KEY` to the production environment, then smoke-test both
   forms on the deployed site.
-- Create a new social-preview image from the current product story before
-  enabling large-image social metadata. The old preview was removed because it
-  advertised the superseded adaptive-plan positioning.
 - Choose the production name and domain, set `NEXT_PUBLIC_SITE_URL` in Vercel, and update the product metadata.

@@ -18,11 +18,20 @@ export const metadata: Metadata = {
     title: 'Whiteboard AI — A personal tutor on your iPad',
     description: 'Explore ideas, solve problems, and learn with a tutor that follows your work.',
     type: 'website',
+    images: [
+      {
+        url: '/og.png',
+        width: 1200,
+        height: 630,
+        alt: 'Whiteboard AI — a personal tutor on your iPad',
+      },
+    ],
   },
   twitter: {
-    card: 'summary',
+    card: 'summary_large_image',
     title: 'Whiteboard AI — A personal tutor on your iPad',
     description: 'Explore ideas, solve problems, and learn with a tutor that follows your work.',
+    images: ['/og.png'],
   },
 };
 
