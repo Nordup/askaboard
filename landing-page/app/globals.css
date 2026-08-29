@@ -47,9 +47,9 @@
 @media(max-width:560px){.hero{padding-top:34px}.hero h1,.hero-line{font-size:clamp(34px,9.7vw,40px);font-weight:650;letter-spacing:-.036em;line-height:1.1}.hero-line{margin-top:-4px}.hero-line em{font-weight:550;padding:1px 10px 4px}.hero-copy>p{font-size:16px;line-height:23px;margin-top:20px;max-width:350px}.hero-actions{padding-top:19px}.hero-stage{margin-top:24px}}
 /* Keep the copy, iPad, and mascot in one responsive stage. Copy changes can no
    longer alter their relationship: only --hero-stage-gap controls the distance. */
-.hero{--hero-stage-gap:40px;--hero-mascot-left:75.06%;--hero-mascot-top:-14.04%;align-items:center;display:flex;flex-direction:column;height:auto;min-height:1090px;padding:72px 0 66px}
+.hero{--hero-stage-gap:40px;--hero-mascot-left:75.06%;--hero-mascot-top:calc(-14.04% - 4px);align-items:center;display:flex;flex-direction:column;height:auto;min-height:1090px;padding:72px 0 66px}
 .hero-copy{left:auto;position:relative;top:auto}
-.hero-stage{aspect-ratio:834/634;flex-shrink:0;left:auto;margin-top:var(--hero-stage-gap);position:relative;top:auto;transform:none}
+.hero-stage{aspect-ratio:1668/1234;flex-shrink:0;left:auto;margin-top:var(--hero-stage-gap);position:relative;top:auto;transform:none}
 .ipad-export.hero-device{left:0;top:0}
 .mascot{left:var(--hero-mascot-left);top:var(--hero-mascot-top)}
 @media(max-width:900px){.hero{height:auto;min-height:0}.hero-stage{top:auto}}
@@ -129,4 +129,65 @@
 @media(prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.01ms!important;transition-delay:0ms!important}
   .motion-ready [data-reveal]{opacity:1;transform:none}
+}
+
+/* The hero iPad is the control: it loops automatically, pauses while hovered
+   or keyboard-focused, and also accepts click, swipe, and arrow-key input. */
+.ipad-showcase.hero-device{
+  background:transparent;
+  border:0;
+  border-radius:0;
+  box-shadow:none;
+  cursor:grab;
+  height:auto;
+  left:0;
+  overflow:visible;
+  padding:0;
+  position:absolute;
+  top:0;
+  touch-action:pan-y;
+  user-select:none;
+  width:100%;
+  z-index:1;
+}
+.ipad-showcase.hero-device:active{cursor:grabbing}
+.ipad-showcase.hero-device:focus{outline:none}
+.ipad-showcase.hero-device:focus-visible{border-radius:4%;outline:3px solid rgba(21,87,255,.38);outline-offset:8px}
+.ipad-showcase-frame{
+  display:block;
+  filter:drop-shadow(0 20px 26px rgba(0,0,0,.16));
+  height:auto!important;
+  pointer-events:none;
+  position:relative;
+  width:100%!important;
+  z-index:2;
+}
+.ipad-showcase-screen{
+  background:#fff;
+  border-radius:2.25% / 3.0875%;
+  inset:2.7553% 2.0384%;
+  overflow:hidden;
+  pointer-events:none;
+  position:absolute;
+  z-index:1;
+}
+.ipad-showcase-scenario{
+  display:block;
+  height:100%!important;
+  image-rendering:auto;
+  inset:0!important;
+  object-fit:cover;
+  pointer-events:none;
+  position:absolute;
+  transition:opacity 480ms ease;
+  width:100%!important;
+}
+.ipad-showcase-scenario[data-position="active"]{opacity:1;z-index:2}
+.ipad-showcase-scenario[data-position="past"],.ipad-showcase-scenario[data-position="future"]{opacity:0;z-index:1}
+@media(max-width:560px){
+  .ipad-showcase-frame{filter:drop-shadow(0 12px 14px rgba(0,0,0,.14))}
+  .ipad-showcase.hero-device:focus-visible{outline-offset:5px}
+}
+@media(prefers-reduced-motion:reduce){
+  .ipad-showcase-scenario{transition:none}
 }

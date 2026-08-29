@@ -8,14 +8,16 @@ import {
   RoadmapCard,
 } from './components';
 import Image from 'next/image';
+import Link from 'next/link';
 import { MotionController } from './motion-controller';
+import { IpadShowcase } from './ipad-showcase';
 
 export default function Home() {
   return (
     <main>
       <MotionController />
       <header className="site-nav">
-        <a className="brand-link" href="#top" aria-label="Whiteboard AI home"><Brand /></a>
+        <Link className="brand-link" href="/" aria-label="Whiteboard AI home"><Brand /></Link>
         <nav className="desktop-nav" aria-label="Primary navigation">
           <a href="#product">Product</a>
           <a href="#how-it-works">How it works</a>
@@ -44,7 +46,7 @@ export default function Home() {
         </div>
         <div className="hero-stage" aria-label="Whiteboard AI running on an iPad">
           <Image className="mascot" src="/assets/learn-ai-mascot.png" width={923} height={803} sizes="180px" alt="Whiteboard AI mascot leaning on the iPad" />
-          <DeviceFrame className="hero-device" />
+          <IpadShowcase className="hero-device" />
         </div>
       </section>
 
