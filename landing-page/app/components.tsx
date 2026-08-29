@@ -33,7 +33,7 @@ export function DeviceFrame({ className = '', compact = false }: { className?: s
 
 export function CapabilityCard({ eyebrow, title, children }: { eyebrow: string; title: string; children: ReactNode }) {
   return (
-    <article className="capability-card">
+    <article className="capability-card" data-reveal>
       <p className="capability-eyebrow">{eyebrow}</p>
       <h3>{title}</h3>
       <p className="capability-body">{children}</p>
@@ -50,12 +50,12 @@ const roadmapSteps = [
 
 export function RoadmapCard() {
   return (
-    <div className="roadmap-card">
+    <div className="roadmap-card" data-reveal="left">
       <p className="roadmap-eyebrow">YOUR LEARNING</p>
       <h3>It remembers where you are</h3>
       <div className="roadmap-steps">
         {roadmapSteps.map((step) => (
-          <div className="roadmap-step" key={step.label}>
+          <div className="roadmap-step" key={step.label} data-reveal>
             <span className={`step-marker step-${step.state}`}>{step.marker}</span>
             <strong>{step.label}</strong>
             {step.meta && <small className={`step-meta step-${step.state}`}>{step.meta}</small>}

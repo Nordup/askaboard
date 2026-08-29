@@ -8,10 +8,12 @@ import {
   RoadmapCard,
 } from './components';
 import Image from 'next/image';
+import { MotionController } from './motion-controller';
 
 export default function Home() {
   return (
     <main>
+      <MotionController />
       <header className="site-nav">
         <a className="brand-link" href="#top" aria-label="Whiteboard AI home"><Brand /></a>
         <nav className="desktop-nav" aria-label="Primary navigation">
@@ -41,13 +43,13 @@ export default function Home() {
           </div>
         </div>
         <div className="hero-stage" aria-label="Whiteboard AI running on an iPad">
-          <Image className="mascot" src="/assets/learn-ai-mascot.png" width={180} height={158} alt="Whiteboard AI mascot leaning on the iPad" />
+          <Image className="mascot" src="/assets/learn-ai-mascot.png" width={923} height={803} sizes="180px" alt="Whiteboard AI mascot leaning on the iPad" />
           <DeviceFrame className="hero-device" />
         </div>
       </section>
 
       <section className="core-loop" id="how-it-works">
-        <div className="section-heading">
+        <div className="section-heading" data-reveal>
           <h2>Start with a question</h2>
           <p>Write it on the board or say it aloud. Your tutor can see your work, understand what you are asking, and help you keep going.</p>
         </div>
@@ -65,22 +67,24 @@ export default function Home() {
       </section>
 
       <section className="workspace-section" id="product">
-        <div className="workspace-copy">
+        <div className="workspace-copy" data-reveal="left">
           <p className="eyebrow">A SHARED WHITEBOARD</p>
           <h2>Your tutor sees the board</h2>
           <p className="section-body">Your writing, the problem, and the tutor&apos;s explanations stay in one place. Point to any step, ask about it, and continue on the same board.</p>
           <ul className="feature-list">
-            <li>Write and draw with Apple Pencil</li>
-            <li>Ask about the exact step you are working on</li>
-            <li>See explanations next to your work</li>
+            <li data-reveal>Write and draw with Apple Pencil</li>
+            <li data-reveal>Ask about the exact step you are working on</li>
+            <li data-reveal>See explanations next to your work</li>
           </ul>
         </div>
-        <DeviceFrame compact className="workspace-device" />
+        <div className="workspace-device-wrap" data-reveal="right">
+          <DeviceFrame compact className="workspace-device" />
+        </div>
       </section>
 
       <section className="memory-section" id="learners">
         <RoadmapCard />
-        <div className="memory-copy">
+        <div className="memory-copy" data-reveal="right">
           <p className="eyebrow">PERSONAL TO YOU</p>
           <h2>Continue where you left off</h2>
           <p className="section-body">Whiteboard AI remembers what you are learning, what you understand, and where you need more help.</p>
@@ -90,13 +94,13 @@ export default function Home() {
       </section>
 
       <section className="mission-section" id="principles">
-        <h2>A tool for you to personalize your own education.</h2>
-        <p>Not a fixed course and not a stream of plausible answers. Learn AI is being built to hold a coherent plan across weeks, produce material worth studying, and evaluate the reasoning in handwritten work, not only the final result.</p>
+        <h2 data-reveal>A tool for you to personalize your own education.</h2>
+        <p data-reveal>Not a fixed course and not a stream of plausible answers. Learn AI is being built to hold a coherent plan across weeks, produce material worth studying, and evaluate the reasoning in handwritten work, not only the final result.</p>
         <div className="mission-tags"><span>Any subject</span><span>Native iPad + Pencil</span><span>Adaptive by design</span></div>
       </section>
 
       <section className="beta-section" id="beta">
-        <div className="beta-panel">
+        <div className="beta-panel" data-reveal>
           <span className="beta-orb beta-orb-left" aria-hidden="true" />
           <span className="beta-orb beta-orb-right" aria-hidden="true" />
           <h2>Help us test a different way to learn.</h2>
