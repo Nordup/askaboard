@@ -290,6 +290,72 @@ async def test_web_search_emits_concrete_sources_and_answers_the_call():
 
 
 @respx.mock
+async def test_web_search_heartbeats_while_the_focused_request_is_silent(
+    monkeypatch,
+):
+    """The app-owned search pauses provider events while it awaits a second
+    request. That exact silence dropped the iPad's SSE connection: the server
+    still recorded success, but the device never received sources, prose, or
+    ``done`` and stayed on Thinking. Repeating ``searching`` keeps the stream
+    alive until the evidence and final round can follow.
+    """
+    monkeypatch.setattr("app.tutor.loop.HEARTBEAT_SECONDS", 0.01)
+    arguments = json.dumps({"query": "official speed of light"})
+    search_turn = (
+        {"type": "response.created", "sequence_number": 0,
+         "response": {"id": "resp_search"}},
+        {"type": "response.output_item.added", "sequence_number": 1,
+         "output_index": 0, "item": {
+             "type": "function_call", "id": "fc_search",
+             "call_id": "call_search", "name": "web_search", "arguments": "",
+         }},
+        {"type": "response.function_call_arguments.done", "sequence_number": 2,
+         "output_index": 0, "item_id": "fc_search", "name": "web_search",
+         "arguments": arguments},
+        {"type": "response.completed", "sequence_number": 3, "response": {
+            "id": "resp_search", "usage": {"input_tokens": 30, "output_tokens": 8},
+            "output": [{"type": "function_call", "id": "fc_search",
+                        "call_id": "call_search", "name": "web_search",
+                        "arguments": arguments, "status": "completed"}],
+        }},
+    )
+    respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*search_turn)),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*TOOL_CALL_FOLLOW_UP)),
+        ]
+    )
+
+    async def slow_search(query: str) -> SearchEvidence:
+        await asyncio.sleep(0.035)
+        return SearchEvidence(query=query, summary="Exact SI value", sources=(
+            SearchSource(id="bipm", title="BIPM",
+                         url="https://www.bipm.org/", snippet="Exact value"),
+        ))
+
+    events = []
+    result = None
+    async for event, running in run_turn(
+        provider=OpenAIProvider(client=AsyncOpenAI(api_key="sk-test")),
+        model="gpt-5.6-luna", effort="high",
+        bundle=ContextBundle(system="s", input=[{"role": "user", "content": "hi"}]),
+        handle_web_search=slow_search,
+    ):
+        events.append(event)
+        result = running
+
+    searching = [
+        event for event in events
+        if event == StatusEvent(phase="searching", detail=None)
+    ]
+    assert len(searching) >= 3, "bytes must cross the wire throughout the silent search"
+    assert any(isinstance(event, SearchSourcesEvent) for event in events)
+    assert result.text == "Here is your plan."
+
+
+@respx.mock
 async def test_a_turn_can_search_fetch_and_place_an_image_on_the_board():
     """The whole objective end to end: a web search returns a candidate URL,
     fetch_image downloads it and hands back a blob_id, and an update_board

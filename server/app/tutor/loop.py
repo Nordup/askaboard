@@ -18,9 +18,9 @@ from app.tutor.board_geometry import (
 )
 from app.tutor.context import ContextBundle
 from app.tutor.events import (
-    TURN_FAILED_MESSAGE, BoardRequestEvent, ClientEvent, ErrorEvent,
-    EventTranslator, SearchSourceModel, SearchSourcesEvent, StatusEvent,
-    WorkspaceEvent,
+    HEARTBEAT_SECONDS, TURN_FAILED_MESSAGE, BoardRequestEvent, ClientEvent,
+    ErrorEvent, EventTranslator, SearchSourceModel, SearchSourcesEvent,
+    StatusEvent, WorkspaceEvent,
 )
 from app.observability import (
     BOARD_GATE_SPAN_NAME, FETCH_IMAGE_SPAN_NAME, FILE_RELAY_SPAN_NAME,
@@ -1732,7 +1732,36 @@ async def run_turn(
                 )
                 search_span = search_span if _is_span(search_span) else NullSpan()
                 with search_span:
-                    evidence = await handle_web_search(answer.search)
+                    # The focused search is an app-owned subrequest, not part
+                    # of the provider stream. While it is in flight there are
+                    # no provider events for EventTranslator's heartbeat to
+                    # translate. A real search took 10.284 s here; the proxy
+                    # path stopped delivering the SSE response during that
+                    # silence even though the server carried on, persisted a
+                    # successful turn, and produced the final answer. Keep the
+                    # same phase alive until the subrequest completes so every
+                    # hop sees bytes at the stream's normal heartbeat cadence.
+                    search_task = asyncio.create_task(
+                        handle_web_search(answer.search)
+                    )
+                    try:
+                        while True:
+                            done, _ = await asyncio.wait(
+                                {search_task}, timeout=HEARTBEAT_SECONDS
+                            )
+                            if done:
+                                evidence = await search_task
+                                break
+                            yield StatusEvent(
+                                phase="searching", detail=None
+                            ), result
+                    finally:
+                        if not search_task.done():
+                            search_task.cancel()
+                            try:
+                                await search_task
+                            except asyncio.CancelledError:
+                                pass
                     search_span.end(
                         status="ok",
                         outputs={

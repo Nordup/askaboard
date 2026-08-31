@@ -584,6 +584,57 @@ final class TutorStoreStreamingTests: XCTestCase {
         ])
     }
 
+    /// The server repeats `searching` while its focused web request has no
+    /// provider tokens to forward. Those keep-alives must remain ordinary
+    /// status updates: they cannot replace the activity trail, lose sources,
+    /// or prevent the final text and `done` from settling and persisting the
+    /// turn. This is the event shape that previously left the live iPad on
+    /// Thinking after the backend had already recorded success.
+    func testAHeartbeatKeptSearchFinishesAndPersistsTheWholeTurn() async {
+        let sessions = SessionPersistence.inMemory
+        let source = TutorSource(
+            id: "bipm", title: "BIPM",
+            url: "https://www.bipm.org/", snippet: "Exact SI value"
+        )
+        let store = TutorStore(
+            service: ScriptedTutorService(events: [
+                .reasoningDelta("Searching the official source."),
+                .status(.searching, detail: nil),
+                .status(.searching, detail: nil),
+                .status(.searching, detail: nil),
+                .searchSources(
+                    searchID: "call_search", query: "official speed of light",
+                    sources: [source]
+                ),
+                .status(.writing, detail: nil),
+                .textDelta("The exact value is 299,792,458 m/s."),
+                .done,
+            ]),
+            persistence: sessions,
+            configuration: .stub
+        )
+
+        await store.sendAndWait("Find the official value")
+
+        XCTAssertFalse(store.isLoading)
+        XCTAssertNil(store.phase)
+        let tutor = store.session.messages.last { $0.role == .tutor }
+        XCTAssertEqual(tutor?.text, "The exact value is 299,792,458 m/s.")
+        XCTAssertEqual(tutor?.sources, [source])
+        XCTAssertEqual(tutor?.activity?.duration == nil, false)
+        XCTAssertEqual(
+            tutor?.activity?.items.compactMap { item -> String? in
+                if case let .reasoning(_, text) = item { return text }
+                return nil
+            },
+            ["Searching the official source."]
+        )
+        XCTAssertEqual(
+            sessions.load(id: store.session.id)?.messages.last?.text,
+            "The exact value is 299,792,458 m/s."
+        )
+    }
+
     /// A drawing turn can answer by updating the board with no prose at all.
     /// The source evidence still has to create the tutor message so the thread
     /// has somewhere to show it.
