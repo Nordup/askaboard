@@ -17,8 +17,8 @@ from app.tutor.fetch_image import ALLOWED_CONTENT_TYPES, MAX_IMAGE_BYTES
 from app.tutor.context import ContextBundle
 from app.tutor.events import (
     TURN_FAILED_MESSAGE, BoardUpdateEvent, ReasoningDeltaEvent,
-    BoardRequestEvent, SearchSourcesEvent, StatusEvent, TextDeltaEvent,
-    WorkspaceEvent,
+    BoardRequestEvent, ErrorEvent, SearchSourcesEvent, StatusEvent,
+    TextDeltaEvent, WorkspaceEvent,
 )
 from app.tutor.retry import FALLBACK_RETRY_DELAY, RETRY_LIMIT
 from app.tutor.web_search import SearchEvidence, SearchSource
@@ -3719,3 +3719,305 @@ async def test_an_oversized_file_reaches_the_model_as_a_failure_not_a_picture():
 
     assert route.call_count == 1
     assert result.text == "I plotted it."
+
+
+# --- LangSmith span lifecycle ----------------------------------------------
+
+
+def test_langsmith_payload_summary_handles_openai_text_and_inline_media():
+    from app.tutor.loop import _payload_summary
+
+    summary = _payload_summary({
+        "model": "gpt-5.6-luna",
+        "input": [{
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "show the working"},
+                {"type": "input_image", "image_url": "data:image/png;base64,QUJD"},
+            ],
+        }],
+        "tools": [{"type": "function", "name": "view_board"}],
+        "previous_response_id": "resp_1",
+    })
+
+    assert "show the working" in summary["input_text"]
+    assert summary["previous_response"] is True
+    assert summary["tool_names"] == ["view_board"]
+    assert summary["binary_parts"][0]["estimated_bytes"] == 3
+
+
+def test_langsmith_payload_summary_handles_gemini_instruction_and_tools():
+    from app.tutor.loop import _payload_summary
+
+    summary = _payload_summary({
+        "model": "gemini-3.5-flash-lite",
+        "system_instruction": "Teach with questions.",
+        "input": [{
+            "type": "user_input",
+            "content": [{"type": "text", "text": "Factor x squared."}],
+        }],
+        "tools": [{"function_declarations": [{"name": "search_memory"}]}],
+        "previous_interaction_id": "interaction_1",
+    })
+
+    assert "Teach with questions." in summary["input_text"]
+    assert "Factor x squared." in summary["input_text"]
+    assert summary["previous_response"] is True
+    assert summary["tool_names"] == ["search_memory"]
+
+
+class _LoopRecordingSpan:
+    def __init__(self, name):
+        self.name = name
+        self.entered = 0
+        self.exited = 0
+        self.ends = []
+
+    def __enter__(self):
+        self.entered += 1
+        return self
+
+    def __exit__(self, *exc):
+        self.exited += 1
+        return False
+
+    def end(self, **kwargs):
+        self.ends.append(kwargs)
+
+    @property
+    def ended(self):
+        return bool(self.ends)
+
+
+class _LoopRecordingObsv:
+    def __init__(self):
+        self.spans = []
+
+    def span(self, *, name, run_type, parent=None, inputs=None, metadata=None,
+             root=False):
+        span = _LoopRecordingSpan(name)
+        self.spans.append(span)
+        return span
+
+
+async def test_langsmith_round_open_preserves_cancellation_identity():
+    from app.tutor.loop import _open_round_spanned
+
+    cancellation = asyncio.CancelledError("client disconnected")
+    provider = GeminiProvider(client=None)
+
+    async def open_round(payload):
+        raise cancellation
+
+    provider.open_round = open_round
+    span = _LoopRecordingSpan("llm.round")
+    span.__enter__()
+
+    with pytest.raises(asyncio.CancelledError) as raised:
+        await _open_round_spanned(
+            provider, {}, span=span, round_index=1,
+        )
+
+    assert raised.value is cancellation
+    assert span.exited == 1
+    assert len(span.ends) == 1
+    assert span.ends[0]["status"] == "failed"
+
+
+async def test_langsmith_round_stream_enter_failure_closes_span_once():
+    from app.tutor.loop import _open_round_spanned
+
+    failure = RuntimeError("stream enter failed")
+
+    class EnterFailureStream:
+        async def __aenter__(self):
+            raise failure
+
+        async def __aexit__(self, *exc):
+            raise AssertionError("exit is not called when enter fails")
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise StopAsyncIteration
+
+    provider = GeminiProvider(client=None)
+
+    async def open_round(payload):
+        return EnterFailureStream()
+
+    provider.open_round = open_round
+    span = _LoopRecordingSpan("llm.round")
+    span.__enter__()
+    stream = await _open_round_spanned(
+        provider, {}, span=span, round_index=1,
+    )
+
+    with pytest.raises(RuntimeError) as raised:
+        async with stream:
+            pass
+
+    assert raised.value is failure
+    assert span.exited == 1
+    assert len(span.ends) == 1
+    assert span.ends[0]["status"] == "failed"
+
+
+async def test_langsmith_stream_without_completion_is_marked_incomplete():
+    obsv = _LoopRecordingObsv()
+    root = _LoopRecordingSpan("tutor.turn")
+    root.entered = 1
+    provider = GeminiProvider(client=None)
+
+    async def open_round(payload):
+        return _FakeStream([])
+
+    provider.open_round = open_round
+    async for _ in run_turn(
+        provider=provider, model="gemini-3.5-flash-lite", effort="low",
+        bundle=ContextBundle(system="s", input=[{"role": "user", "content": "hi"}]),
+        observability=obsv, root_span=root,
+    ):
+        pass
+
+    span = next(item for item in obsv.spans if item.name == "llm.round")
+    assert span.exited == 1
+    assert span.ends[0]["status"] == "failed"
+    assert span.ends[0]["outputs"]["status"] == "incomplete_stream"
+
+
+async def test_langsmith_failed_branch_ends_round_span_failed_once():
+    """A neutral `Failed` (no raise) ends the round span as failed exactly once,
+    and the root span's wrapper closes it via __aexit__."""
+    obsv = _LoopRecordingObsv()
+    root = _LoopRecordingSpan("tutor.turn")
+    root.entered = 1
+    obsv.spans.append(root)
+    provider = GeminiProvider(client=None)
+
+    async def open_round(payload):
+        return _FakeStream([IN_STREAM_INVALID_REQUEST])
+
+    provider.open_round = open_round
+
+    collected = []
+    async for event, _ in run_turn(
+        provider=provider, model="gemini-3.5-flash-lite",
+        effort="low",
+        bundle=ContextBundle(system="be a tutor", input=[
+            {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+        ]),
+        observability=obsv, root_span=root,
+    ):
+        collected.append(event)
+
+    round_spans = [s for s in obsv.spans if s.name == "llm.round"]
+    assert len(round_spans) == 1
+    span = round_spans[0]
+    assert span.exited == 1
+    assert span.ends
+    assert span.ends[-1]["status"] == "failed"
+
+
+async def test_langsmith_terminal_completed_ends_round_span_failed_once():
+    """A `interaction.status_update` with a terminal status arrives as a
+    Completed, not a Failed. The round span must end failed exactly once —
+    this guards the earlier regression where the ok end fired before the
+    terminal-status check and the failed end was dropped."""
+    obsv = _LoopRecordingObsv()
+    root = _LoopRecordingSpan("tutor.turn")
+    root.entered = 1
+    obsv.spans.append(root)
+    provider = GeminiProvider(client=None)
+    terminal_status = {
+        "status": "budget_exceeded",
+        "interaction_id": "interaction_terminal",
+        "event_type": "interaction.status_update",
+    }
+
+    async def open_round(payload):
+        return _FakeStream([terminal_status])
+
+    provider.open_round = open_round
+
+    events = []
+    async for event, _ in run_turn(
+        provider=provider, model="gemini-3.5-flash-lite",
+        effort="low",
+        bundle=ContextBundle(system="be a tutor", input=[
+            {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+        ]),
+        observability=obsv, root_span=root,
+    ):
+        events.append(event)
+
+    assert any(isinstance(e, ErrorEvent) for e in events)
+    round_spans = [s for s in obsv.spans if s.name == "llm.round"]
+    assert len(round_spans) == 1
+    span = round_spans[0]
+    assert span.exited == 1
+    assert len(span.ends) == 1
+    assert span.ends[0]["status"] == "failed"
+
+
+@respx.mock
+async def test_langsmith_raised_search_handler_marks_round_and_root_failed():
+    """An unexpected exception from a tool handler must not leak the span: the
+    search tool span closes failed and the exception re-raises. The round span
+    is owned by run_turn; the turn root is owned by the endpoint, so nothing
+    here asserts root/persistence — those are covered by the endpoint
+    integration tests."""
+    arguments = json.dumps({"query": "current quadratic formula history"})
+    search_turn = (
+        {"type": "response.created", "sequence_number": 0,
+         "response": {"id": "resp_search"}},
+        {"type": "response.output_item.added", "sequence_number": 1,
+         "output_index": 0, "item": {
+             "type": "function_call", "id": "fc_search",
+             "call_id": "call_search", "name": "web_search", "arguments": "",
+         }},
+        {"type": "response.function_call_arguments.done", "sequence_number": 2,
+         "output_index": 0, "item_id": "fc_search", "name": "web_search",
+         "arguments": arguments},
+        {"type": "response.completed", "sequence_number": 3, "response": {
+            "id": "resp_search", "usage": {"input_tokens": 30, "output_tokens": 8},
+            "output": [{"type": "function_call", "id": "fc_search",
+                        "call_id": "call_search", "name": "web_search",
+                        "arguments": arguments, "status": "completed"}],
+        }},
+    )
+    respx.post("https://api.openai.com/v1/responses").mock(
+        return_value=Response(
+            200, headers={"Content-Type": "text/event-stream"},
+            content=sse_stream(*search_turn),
+        )
+    )
+    obsv = _LoopRecordingObsv()
+    root = _LoopRecordingSpan("tutor.turn")
+    root.entered = 1
+    obsv.spans.append(root)
+
+    async def boom_search(query):
+        raise RuntimeError("search exploded")
+
+    with pytest.raises(RuntimeError):
+        async for _event, _ in run_turn(
+            provider=OpenAIProvider(client=AsyncOpenAI(api_key="sk-test")),
+            model="gpt-5.6-luna", effort="high",
+            bundle=ContextBundle(system="s", input=[
+                {"role": "user", "content": "find me the answer"}
+            ]),
+            handle_web_search=boom_search,
+            observability=obsv, root_span=root,
+        ):
+            pass
+
+    tool_spans = [s for s in obsv.spans if s.name == "tool.web_search"]
+    assert tool_spans and tool_spans[0].exited == 1
+    # The production Span auto-ends failed on a raised handler (covered by
+    # test_span_auto_ends_failed_on_exception in the observability tests); the
+    # fake only records explicit end() calls, so lifecycle is what to assert
+    # here.
+    round_spans = [s for s in obsv.spans if s.name == "llm.round"]
+    assert round_spans and round_spans[0].exited == 1

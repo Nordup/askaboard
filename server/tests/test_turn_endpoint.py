@@ -1375,10 +1375,10 @@ def test_the_except_ladder_keeps_its_order_and_recovers_only_at_the_end():
         if isinstance(node, ast.AsyncFunctionDef) and node.name == "stream"
     )
     guarded = [
-        node for node in ast.walk(stream)
+        node for node in stream.body
         if isinstance(node, ast.Try) and node.finalbody
     ]
-    assert len(guarded) == 1, "stream() should have exactly one guarded body"
+    assert len(guarded) == 1, "stream() should have exactly one top-level guard"
     handlers = guarded[0].handlers
 
     assert [ast.unparse(handler.type) for handler in handlers] == [
@@ -1588,3 +1588,205 @@ async def test_a_bug_in_our_own_code_is_still_reported_final(
         assert turn.error["retryable"] is False
         assert "classified" not in turn.error["diagnostics"]
         assert "TypeError" in turn.error["message"]
+
+
+class _RecordingSpan:
+    """Fake Span used by the endpoint integration tests: records lifecycle."""
+
+    def __init__(self, name, inputs=None, metadata=None):
+        self.name = name
+        self.entered = 0
+        self.exited = 0
+        self.ends = []
+        self.run = None
+        self.inputs = inputs or {}
+        self.metadata = metadata or {}
+
+    def __enter__(self):
+        self.entered += 1
+        return self
+
+    def __exit__(self, *exc):
+        self.exited += 1
+        return False
+
+    def end(self, **kwargs):
+        self.ends.append(kwargs)
+
+    @property
+    def duration_seconds(self):
+        return 0.0
+
+
+class _RecordingObsv:
+    """Fake observability handle injected via app.state."""
+
+    def __init__(self):
+        self.spans = []
+        self.tracing_entered = 0
+        self.tracing_exited = 0
+
+    def __enter__(self):
+        self.tracing_entered += 1
+        return self
+
+    def __exit__(self, *exc):
+        self.tracing_exited += 1
+        return False
+
+    def span(self, *, name, run_type, parent=None, inputs=None, metadata=None,
+             root=False):
+        span = _RecordingSpan(name, inputs=inputs, metadata=metadata)
+        self.spans.append(span)
+        return span
+
+    def tracing_context(self, **kwargs):
+        return self
+
+
+@respx.mock
+async def test_langsmith_disabled_is_a_true_noop(db_app):
+    """With tracing disabled, the app gets an inactive ClientHandle whose
+    spans are all NullSpan: the SSE event sequence and usage fields match a
+    run with no observability handle, and no SDK client is constructed."""
+    from app.observability import TraceConfig, build_client, NullSpan
+
+    handle = build_client(TraceConfig(
+        enabled=False, api_key="", project="math-tutor",
+        endpoint="https://api.smith.langchain.com",
+    ))
+    assert handle.active is False
+    db_app.state.observability = handle
+    respx.post("https://api.openai.com/v1/responses").mock(
+        return_value=Response(200, headers={"Content-Type": "text/event-stream"},
+                              content=sse_stream(*TEXT_ONLY_TURN))
+    )
+    events_disabled = None
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        async with client.stream("POST", "/v1/turn", json=_payload(), headers=AUTH) as r:
+            events_disabled = await _collect(r)
+    assert isinstance(handle.span(name="tutor.turn", run_type="chain", root=True),
+                      NullSpan)
+
+    db_app.state.observability = None
+    respx.post("https://api.openai.com/v1/responses").mock(
+        return_value=Response(200, headers={"Content-Type": "text/event-stream"},
+                              content=sse_stream(*TEXT_ONLY_TURN))
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        async with client.stream("POST", "/v1/turn", json=_payload(), headers=AUTH) as r:
+            events_plain = await _collect(r)
+    assert [e["type"] for e in events_disabled] == [e["type"] for e in events_plain]
+    done_disabled, done_plain = events_disabled[-1], events_plain[-1]
+    assert done_disabled["type"] == done_plain["type"] == "done"
+    for key in ("input_tokens", "output_tokens", "cached_tokens"):
+        assert done_disabled.get(key) == done_plain.get(key)
+
+
+@respx.mock
+async def test_langsmith_root_and_round_spans_on_success(db_app):
+    """A fake handle records the root, context and one round span on a happy
+    text-only turn, and the root is closed exactly once."""
+    obsv = _RecordingObsv()
+    db_app.state.observability = obsv
+    respx.post("https://api.openai.com/v1/responses").mock(
+        return_value=Response(200, headers={"Content-Type": "text/event-stream"},
+                              content=sse_stream(*TEXT_ONLY_TURN))
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        async with client.stream("POST", "/v1/turn", json=_payload(), headers=AUTH) as r:
+            await _collect(r)
+
+    names = [s.name for s in obsv.spans]
+    assert "tutor.turn" in names
+    assert "tutor.context" in names
+    assert "llm.round" in names
+    root = next(s for s in obsv.spans if s.name == "tutor.turn")
+    assert root.entered == 1 and root.exited == 1
+    assert root.ends[-1]["status"] == "ok"
+    assert root.ends[-1]["outputs"]["answer"]
+    round_span = next(s for s in obsv.spans if s.name == "llm.round")
+    assert round_span.ends[-1]["outputs"]["text"]
+
+
+@respx.mock
+async def test_langsmith_failed_turn_marks_root_failed(db_app, db_factory):
+    """An in-stream provider error (no raise) still ends root as failed."""
+    obsv = _RecordingObsv()
+    db_app.state.observability = obsv
+    respx.post("https://api.openai.com/v1/responses").mock(
+        return_value=Response(200, headers={"Content-Type": "text/event-stream"},
+                              content=sse_stream(*RATE_LIMITED_MID_STREAM))
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        async with client.stream("POST", "/v1/turn", json=_payload(), headers=AUTH) as r:
+            events = await _collect(r)
+    assert events[-1]["type"] == "error"
+    root = next(s for s in obsv.spans if s.name == "tutor.turn")
+    assert root.ends[-1]["status"] == "failed"
+    assert root.ends[-1]["outputs"]["retryable"] is True
+    assert "tutor.persist_failure" in [s.name for s in obsv.spans]
+
+
+@respx.mock
+async def test_langsmith_cancellation_still_propagates_and_closes_root(
+    db_app, db_factory, monkeypatch
+):
+    """CancelledError inside the stream must propagate (BaseException) and
+    the root span must still be closed exactly once in the shielded finally."""
+    obsv = _RecordingObsv()
+    db_app.state.observability = obsv
+
+    async def _cancelled_run_turn(*args, **kwargs):
+        if False:
+            yield None
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr("app.api.turn.run_turn", _cancelled_run_turn)
+    respx.post("https://api.openai.com/v1/responses").mock(
+        return_value=Response(200, headers={"Content-Type": "text/event-stream"},
+                              content=sse_stream(*TEXT_ONLY_TURN))
+    )
+    with pytest.raises(Exception):
+        async with AsyncClient(
+            transport=ASGITransport(app=db_app), base_url="http://test"
+        ) as client:
+            async with client.stream(
+                "POST", "/v1/turn", json=_payload(), headers=AUTH
+            ) as r:
+                async for _ in r.aiter_lines():
+                    pass
+    root = next(s for s in obsv.spans if s.name == "tutor.turn")
+    assert root.exited == 1
+
+
+@respx.mock
+async def test_langsmith_two_round_turn_has_two_round_spans(db_app):
+    """A tool-call turn spans two llm.round children with distinct indexes."""
+    obsv = _RecordingObsv()
+    db_app.state.observability = obsv
+    respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*TOOL_CALL_TURN)),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*TOOL_CALL_FOLLOW_UP)),
+        ]
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=db_app), base_url="http://test"
+    ) as client:
+        async with client.stream("POST", "/v1/turn", json=_payload(), headers=AUTH) as r:
+            await _collect(r)
+    rounds = [s for s in obsv.spans if s.name == "llm.round"]
+    assert len(rounds) == 2
+    assert all(s.exited == 1 for s in rounds)
+    assert [r.inputs.get("round_index") for r in rounds] == [1, 2]

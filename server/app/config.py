@@ -315,6 +315,22 @@ class Settings(BaseSettings):
     log_dir: Path = Path("./logs")
     daily_spend_cap_usd: float = 5.0
     persist_dictation_audio: bool = True
+    #: LangSmith trace streaming. Defaults to off so a server with no key is
+    #: a true no-op: no SDK import, no client, no spans. Enabled trades every
+    #: turn's observability for background SDK batching; see
+    #: `app.observability` for the fail-open contract.
+    langsmith_tracing: bool = False
+    #: Optional LangSmith API key, env `LANGSMITH_API_KEY`. With tracing on
+    #: and no key, the factory degrades to the same null no-op.
+    langsmith_api_key: str | None = None
+    #: LangSmith project name, env `LANGSMITH_PROJECT`.
+    langsmith_project: str = "math-tutor"
+    #: Default official LangSmith endpoint, env `LANGSMITH_ENDPOINT`.
+    langsmith_endpoint: str = "https://api.smith.langchain.com"
+    #: Optional LangSmith workspace id, env `LANGSMITH_WORKSPACE_ID`. The SDK
+    #: accepts it at client construction when the key maps to several
+    #: workspaces.
+    langsmith_workspace_id: str | None = None
 
 
 @lru_cache

@@ -499,6 +499,10 @@ class Result:
     tools: list[str]
     sections: dict[str, bool]
     failures: list[str] = field(default_factory=list)
+    #: The prompt the model was actually shown (``Asked.prompt``), so offline
+    #: evaluators can score ``prompt_any`` against reality rather than against
+    #: the store snapshot.
+    prompt: str = ""
     #: Set when the probe carries `prompt_any`: did the fact reach the model at
     #: all. Used to label a failure, never to decide one.
     reached_prompt: bool | None = None
@@ -742,6 +746,7 @@ async def run_probe(
         name=probe["name"], ok=bool(failures) if control else not failures,
         seconds=time.monotonic() - started, answer=asked.answer, snapshot=shot,
         tools=asked.tools, sections=asked.sections, failures=failures,
+        prompt=asked.prompt,
         reached_prompt=reached_prompt, in_store=in_store, control=control,
     )
 

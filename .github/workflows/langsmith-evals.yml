@@ -1,0 +1,85 @@
+name: LangSmith memory-probe evals
+
+"on":
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      run_live:
+        description: "Also sync the dataset and run the live dataset experiment (requires LangSmith + DB env)."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate-and-test:
+    name: Deterministic dry-run + unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.6"
+
+      - name: Sync locked dependencies
+        run: uv sync --frozen
+
+      - name: Deterministic eval dry-run
+        run: uv run python -m tests.eval.langsmith_eval dry-run
+
+      - name: Deterministic eval and tracing regression tests
+        run: >-
+          uv run pytest
+          tests/test_langsmith_evals.py
+          tests/test_langsmith_observability.py
+          tests/test_loop.py
+          -q
+
+  live-sync-and-evaluate:
+    name: Live LangSmith sync + dataset experiment
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_live }}
+    defaults:
+      run:
+        working-directory: server
+    environment: langsmith-evals
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.6"
+
+      - name: Sync locked dependencies
+        run: uv sync --frozen
+
+      - name: Sync the deterministic dataset
+        env:
+          LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+          LANGSMITH_ENDPOINT: ${{ secrets.LANGSMITH_ENDPOINT }}
+          LANGSMITH_PROJECT: math-tutor
+          LANGSMITH_WORKSPACE_ID: ${{ secrets.LANGSMITH_WORKSPACE_ID }}
+        run: uv run python -m tests.eval.langsmith_eval sync
+
+      - name: Run the sequential dataset experiment
+        env:
+          LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+          LANGSMITH_ENDPOINT: ${{ secrets.LANGSMITH_ENDPOINT }}
+          LANGSMITH_PROJECT: math-tutor
+          LANGSMITH_WORKSPACE_ID: ${{ secrets.LANGSMITH_WORKSPACE_ID }}
+          TEST_DATABASE_URL: ${{ secrets.TEST_DATABASE_URL }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: uv run python -m tests.eval.langsmith_eval evaluate
+
+      - name: Assert dry-run also passes in the live job
+        run: uv run python -m tests.eval.langsmith_eval dry-run

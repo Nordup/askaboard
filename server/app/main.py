@@ -16,6 +16,7 @@ from app.logging_config import configure_logging
 from app.memory.jobs import (
     backlog_status, schedule_periodic_sweep, schedule_startup_drain,
 )
+from app.observability import TraceConfig, build_client
 from app.store.db import dispose_engine, init_engine, warm_pool
 
 logger = logging.getLogger(__name__)
@@ -41,10 +42,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     warm_task = asyncio.create_task(warm_pool())
     schedule_startup_drain()
     periodic_task = schedule_periodic_sweep()
+    settings = get_settings()
+    observability = build_client(TraceConfig(
+        enabled=settings.langsmith_tracing,
+        api_key=settings.langsmith_api_key or "",
+        project=settings.langsmith_project,
+        endpoint=settings.langsmith_endpoint,
+        workspace_id=settings.langsmith_workspace_id,
+    ))
+    app.state.observability = observability
     try:
         yield
     finally:
         logger.info("service stopping")
+        # Best-effort and time-boxed: drain the SDK's background queue from a
+        # worker thread so shutdown never blocks on LangSmith, and never fails
+        # because LangSmith is slow.
+        try:
+            await observability.flush()
+        finally:
+            observability.close()
         warm_task.cancel()
         with suppress(asyncio.CancelledError):
             await warm_task

@@ -66,9 +66,16 @@ failed one logs why and the service still comes up.
 | `LOG_DIR` | *Optional*, defaults to `./logs`. Where the rotating `server.log` is written. See [When a turn goes wrong](#when-a-turn-goes-wrong). |
 | `DAILY_SPEND_CAP_USD` | *Optional*, defaults to `5.0`. Turns are refused with `402` once today's recorded spend — turns plus reported voice usage, priced from the tables in [`app/config.py`](app/config.py) — reaches this. See [Known limitations](#known-limitations) for what the sum still misses. |
 | `PERSIST_DICTATION_AUDIO` | *Optional*, defaults to **`true`**. Whether dictation recordings are written to the blob store. Leaving this unset does not mean recordings are skipped — it means they're kept, same as if you'd set it to `true` explicitly. Retention below applies whenever this is `true`. |
+| `LANGSMITH_TRACING` | *Optional*, defaults to **`false`**. Enables LangSmith tracing only when `LANGSMITH_API_KEY` is also set. |
+| `LANGSMITH_API_KEY` | *Optional*. The LangSmith key used for traces and dataset commands. An empty key keeps runtime tracing inactive. |
+| `LANGSMITH_PROJECT` | *Optional*, defaults to `math-tutor`. Project receiving runtime turn traces. |
+| `LANGSMITH_ENDPOINT` | *Optional*, defaults to `https://api.smith.langchain.com`. LangSmith API endpoint. |
+| `LANGSMITH_WORKSPACE_ID` | *Optional*. Workspace selector for keys that can access more than one workspace. |
 | `TEST_DATABASE_URL` | A **separate** database the test suite runs against. See the warning immediately below — do not skip it. |
 
-The three marked *optional* have defaults in [`app/config.py`](app/config.py) and can be left out of `.env` entirely; the rest are required and the service will not start without them.
+Rows marked *optional* can be left out of `.env`; defaults live in
+[`app/config.py`](app/config.py). The remaining application settings are
+required and the service will not start without them.
 
 > **`TEST_DATABASE_URL` must point at a different Neon branch than
 > `DATABASE_URL`.** Each test run creates its own Postgres schema
@@ -81,6 +88,30 @@ The three marked *optional* have defaults in [`app/config.py`](app/config.py) an
 
 `.env` holds real secrets and is gitignored. Never commit it, print it, or
 paste a value from it into a README, a commit message, or a chat.
+
+### LangSmith traces
+
+Runtime tracing is off by default and is also inactive when the key is empty.
+To enable it for a development server:
+
+```sh
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=lsv2_...
+LANGSMITH_PROJECT=math-tutor
+```
+
+One `tutor.turn` root covers a streamed turn. Its stable child spans are
+`tutor.context`, one `llm.round` per provider request, the relevant
+`tool.*` waits and gate decisions, and `tutor.persist_finish` or
+`tutor.persist_failure`. Each root carries turn/session/model correlation,
+schema and orchestration versions, usage, event counts, tool names, and timing.
+Round inputs include a bounded prompt preview, tool list, continuation state,
+and media sizes. The existing Postgres recorder remains the application record;
+tracing adds a searchable execution timeline and experiment comparison.
+
+LangSmith setup and span operations are fail-open. A tracing setup or upload
+failure is logged and the tutor turn continues. Shutdown gives queued traces a
+bounded flush window, then releases the client without waiting indefinitely.
 
 ## Running it
 
@@ -296,7 +327,8 @@ they arrived together, because the schema doesn't allow them not to.
 **A turn that calls it is two requests, not one.** A function call *ends* a
 Responses API response — the model stops there, having written no prose — so
 [`app/tutor/loop.py`](app/tutor/loop.py) hands the tool result back and asks
-it to continue, up to `MAX_TOOL_ROUNDS`. Both legs stream into the same
+it to continue. The round loop is open-ended and stops on a prose completion,
+an error, or caller cancellation. All legs stream into the same
 client turn and are recorded as one `Turn`, with usage summed across them. A
 single-request implementation looks like it works right up until the model
 sets the workspace: the board changes and the thread stays empty.
@@ -667,3 +699,33 @@ impossible. `FLOOR` in `consolidate.py` had been calibrated for
 the candidate query returned nothing, the adjudicator was never called, and
 every reversal in a learner's state was written as a coexisting fact. Every
 unit test passed throughout, because they build their vectors by construction.
+
+### LangSmith dataset and evaluators
+
+[`tests/eval/langsmith_eval.py`](tests/eval/langsmith_eval.py) turns the same
+checked-in `probes.yaml` into deterministic LangSmith examples. Example UUIDs
+and content fingerprints are stable, sync is idempotent, and remote deletion
+only happens with an explicit `--prune`. Four deterministic evaluators cover
+required answer terms, forbidden answer terms, facts reaching the actual
+prompt, and stale-fact supersession.
+
+```sh
+cd server
+
+# Local contract checks: no network, key, provider call, or database.
+uv run python -m tests.eval.langsmith_eval dry-run
+uv run pytest tests/test_langsmith_evals.py -q
+
+# Remote dataset operations. These require LANGSMITH_API_KEY.
+uv run python -m tests.eval.langsmith_eval sync
+uv run python -m tests.eval.langsmith_eval sync --prune
+
+# Sequential live experiment through the real probe and tutor pipeline.
+# Also requires TEST_DATABASE_URL and the selected provider key.
+uv run python -m tests.eval.langsmith_eval evaluate
+```
+
+The workflow at [`.github/workflows/langsmith-evals.yml`](../.github/workflows/langsmith-evals.yml)
+runs the deterministic checks on pushes and pull requests. Its manually
+dispatched live job syncs first, then evaluates, so normal CI never initiates a
+paid provider run.

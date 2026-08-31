@@ -6,6 +6,7 @@ import logging
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
+from typing import Any
 
 from app.tutor.board_scene import (
     BoardSceneUpdate, SVGElement, lint_svg, parse_board_update,
@@ -21,9 +22,14 @@ from app.tutor.events import (
     EventTranslator, SearchSourceModel, SearchSourcesEvent, StatusEvent,
     WorkspaceEvent,
 )
+from app.observability import (
+    BOARD_GATE_SPAN_NAME, FETCH_IMAGE_SPAN_NAME, FILE_RELAY_SPAN_NAME,
+    MEMORY_TOOL_SPAN_NAME, ROUND_SPAN_NAME, VIEW_BOARD_SPAN_NAME,
+    WEB_SEARCH_SPAN_NAME, ORCHESTRATION_VERSION, Span, NullSpan, _is_span,
+)
 from app.tutor.providers import (
     TERMINAL_ERROR_STATUSES, Completed, Failed, ProducedFile, Provider,
-    RelayedFile, TextDelta,
+    RelayedFile, TextDelta, ThoughtDelta,
 )
 from app.tutor.rendezvous import BoardRegion, BoardUnavailable
 from app.tutor.retry import RETRY_LIMIT
@@ -393,6 +399,98 @@ async def _open_round(provider: Provider, payload: dict):
             )
             await asyncio.sleep(failure.delay)
     raise AssertionError("unreachable: loop above always returns or raises")
+
+
+class _RoundSpannedStream:
+    """Wrap one round's provider stream so its LangSmith span closes exactly
+    once: on exhaustion, on a provider exception, or on cancellation. The
+    round body iterates this wrapper instead of ``stream`` directly, so the
+    loop's existing streaming block stays byte-for-byte."""
+
+    def __init__(
+        self, stream: Any, span: Span | NullSpan, *, round_index: int
+    ) -> None:
+        self._inner = stream
+        self._span = span
+        self._round_index = round_index
+        self._closed = False
+        self._iterator: Any = None
+
+    def __aiter__(self) -> "_RoundSpannedStream":
+        return self
+
+    async def __aenter__(self) -> "_RoundSpannedStream":
+        try:
+            entered = self._inner
+            if hasattr(self._inner, "__aenter__"):
+                entered = await self._inner.__aenter__()
+            self._iterator = entered.__aiter__()
+            return self
+        except BaseException as error:
+            self._span.end(
+                status="failed",
+                error=(
+                    "provider stream could not enter: "
+                    f"{type(error).__name__}: {error}"
+                ),
+                outputs={"round_index": self._round_index},
+            )
+            self._close(type(error), error, error.__traceback__)
+            raise
+
+    async def __aexit__(self, *exc: Any) -> None:
+        try:
+            if hasattr(self._inner, "__aexit__"):
+                return await self._inner.__aexit__(*exc)
+            return None
+        except BaseException as error:
+            self._close(type(error), error, error.__traceback__)
+            raise
+        finally:
+            # Close the span even when the consumer stops early, the stream
+            # raises, or the inner __aexit__ itself fails. `Span.__exit__`
+            # auto-ends (failed on a live exception, ok otherwise) when the
+            # body did not call end() explicitly. The exception tuple is
+            # passed through so a failure here is recorded as failed.
+            self._close(*exc)
+
+    async def __anext__(self):
+        return await self._iterator.__anext__()
+
+    def _close(self, *exc: Any) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        if not exc:
+            exc = (None, None, None)
+        if exc[0] is None and not getattr(self._span, "ended", True):
+            self._span.end(
+                status="failed",
+                error="provider stream ended without a completion event",
+                outputs={
+                    "round_index": self._round_index,
+                    "status": "incomplete_stream",
+                },
+            )
+        self._span.__exit__(*exc)
+
+
+async def _open_round_spanned(
+    provider: Provider, payload: dict, *, span: Span | NullSpan,
+    round_index: int,
+) -> _RoundSpannedStream:
+    """Open the round (span already entered) and wrap its stream."""
+    try:
+        stream = await _open_round(provider, payload)
+    except BaseException as error:
+        span.end(
+            status="failed",
+            error=f"round could not open: {type(error).__name__}: {error}",
+            outputs={"round_index": round_index},
+        )
+        span.__exit__()
+        raise
+    return _RoundSpannedStream(stream, span, round_index=round_index)
 
 
 #: How `run_turn` gets a region of the board rendered.
@@ -980,6 +1078,112 @@ def _post_review_tool_choice(provider: Provider) -> dict:
     return {"type": "function", "name": "view_board"}
 
 
+def _payload_summary(payload: dict) -> dict:
+    """A bounded, diagnostic summary of the provider request payload.
+
+    Carries a prompt preview, message boundaries, continuation state, and tool
+    names while keeping each trace payload predictably small. Inline media is
+    represented by its encoded and estimated decoded sizes.
+    """
+    input_items = payload.get("input")
+    if not isinstance(input_items, list):
+        input_items = []
+
+    text_parts: list[str] = []
+    input_kinds: list[str] = []
+    binary_parts: list[dict[str, Any]] = []
+
+    def add_text(label: str, value: Any) -> None:
+        if isinstance(value, str) and value:
+            text_parts.append(f"[{label}]\n{value}")
+
+    def note_binary(kind: str, value: Any) -> None:
+        note: dict[str, Any] = {"type": kind}
+        if isinstance(value, (bytes, bytearray)):
+            note["bytes"] = len(value)
+        elif isinstance(value, str):
+            note["encoded_chars"] = len(value)
+            encoded = value.split(",", 1)[1] if value.startswith("data:") else value
+            note["estimated_bytes"] = max(0, len(encoded.rstrip("=")) * 3 // 4)
+        binary_parts.append(note)
+
+    def visit(value: Any, label: str) -> None:
+        if isinstance(value, list):
+            for index, item in enumerate(value[:100]):
+                visit(item, f"{label}.{index}")
+            return
+        if not isinstance(value, dict):
+            add_text(label, value)
+            return
+
+        kind = value.get("type") or value.get("role") or "item"
+        if isinstance(kind, str):
+            input_kinds.append(kind)
+        media_kind = kind in {
+            "image", "input_image", "image_url", "document", "input_file",
+            "audio", "video",
+        }
+        for key in ("image", "image_url", "file_data", "data"):
+            if key in value and (media_kind or key != "data"):
+                note_binary(str(kind), value[key])
+
+        content = value.get("content")
+        if isinstance(content, str):
+            add_text(f"{label}:{kind}:content", content)
+        elif isinstance(content, list):
+            visit(content, f"{label}:{kind}:content")
+        add_text(f"{label}:{kind}:text", value.get("text"))
+        add_text(f"{label}:{kind}:output", value.get("output"))
+
+        result_value = value.get("result")
+        if isinstance(result_value, str):
+            add_text(f"{label}:{kind}:result", result_value)
+        elif isinstance(result_value, (dict, list)):
+            visit(result_value, f"{label}:{kind}:result")
+
+    add_text("system_instruction", payload.get("system_instruction"))
+    visit(input_items, "input")
+    prompt_text = "\n\n".join(text_parts)
+
+    tool_names: list[str] = []
+    for tool in (payload.get("tools") or [])[:50]:
+        if not isinstance(tool, dict):
+            tool_names.append(type(tool).__name__)
+            continue
+        name = tool.get("name") or tool.get("type")
+        if isinstance(name, str):
+            tool_names.append(name)
+        declarations = tool.get("function_declarations") or []
+        for declaration in declarations[:50]:
+            if isinstance(declaration, dict) and isinstance(
+                declaration.get("name"), str
+            ):
+                tool_names.append(declaration["name"])
+        if name is None and not declarations:
+            tool_names.extend(str(key) for key in list(tool)[:5])
+
+    generation_config = payload.get("generation_config")
+    tool_choice = payload.get("tool_choice")
+    if tool_choice is None and isinstance(generation_config, dict):
+        tool_choice = generation_config.get("tool_choice")
+    return {
+        "model": payload.get("model"),
+        "input_items": len(input_items),
+        "input_kinds": input_kinds[:100],
+        "input_text_chars": len(prompt_text),
+        "input_text": prompt_text[:12000],
+        "input_text_tail": prompt_text[-4000:],
+        "tool_count": len(payload.get("tools") or []),
+        "tool_names": tool_names[:50],
+        "binary_parts": binary_parts[:50],
+        "previous_response": bool(
+            payload.get("previous_response_id")
+            or payload.get("previous_interaction_id")
+        ),
+        "tool_choice": str(tool_choice)[:1000] if tool_choice is not None else None,
+    }
+
+
 async def run_turn(
     *,
     provider: Provider,
@@ -994,6 +1198,8 @@ async def run_turn(
     handle_memory: MemoryHandler | None = None,
     handle_web_search: WebSearchHandler | None = None,
     cache_key: str | None = None,
+    observability: Any = None,
+    root_span: Any = None,
 ) -> AsyncIterator[tuple[ClientEvent, TurnResult]]:
     """Stream one turn, yielding client events as they happen.
 
@@ -1053,6 +1259,13 @@ async def run_turn(
     """
     translator = translator or EventTranslator()
     result = TurnResult()
+    # LangSmith spans. `root_span` is the endpoint's `tutor.turn` span when
+    # wired; direct `run_turn` tests pass nothing and every span degrades to a
+    # NullSpan no-op. Tool spans are parented to the root so the round span
+    # can close when its stream exhausts, before tool execution.
+    observability = observability if observability is not None else NullSpan()
+    root_span = root_span if root_span is not None else NullSpan()
+    round_index = 0
     #: What the next round puts on the wire. The whole prompt to begin with,
     #: and after that only what the provider does not already hold.
     outbox = list(bundle.input)
@@ -1106,6 +1319,9 @@ async def run_turn(
         # what these say.
         calls: list[dict] = []
         files: list[ProducedFile] = []
+        round_text = ""
+        round_reasoning = ""
+        round_index += 1
 
         # `payload`, not `request`: a `BoardRequestEvent` is already called
         # that further down this same function.
@@ -1131,7 +1347,25 @@ async def run_turn(
             # payload the SDK mutates during send.
             request_body.clear()
             request_body.update(payload)
-        stream = await _open_round(provider, payload)
+        round_span = observability.span(
+            name=ROUND_SPAN_NAME, run_type="llm",
+            parent=root_span,
+            inputs={
+                "round_index": round_index,
+                "provider": getattr(provider, "name", ""),
+                "model": model,
+                "effort": effort,
+                "previous_response": bool(previous_id),
+                "previous_response_id": previous_id,
+                "payload": _payload_summary(payload),
+            },
+            metadata={"orchestration_version": ORCHESTRATION_VERSION},
+        )
+        round_span = round_span if _is_span(round_span) else NullSpan()
+        round_span.__enter__()
+        stream = await _open_round_spanned(
+            provider, payload, span=round_span, round_index=round_index,
+        )
 
         # `async with` guarantees the upstream HTTP response is closed
         # deterministically — including when the caller stops iterating early
@@ -1145,6 +1379,9 @@ async def run_turn(
 
                 if isinstance(neutral, TextDelta):
                     result.text += neutral.text
+                    round_text += neutral.text
+                elif isinstance(neutral, ThoughtDelta):
+                    round_reasoning += neutral.text
                 elif isinstance(neutral, Completed):
                     result.usage = _merge_usage(result.usage, neutral.usage)
                     result.response_id = neutral.response_id
@@ -1193,6 +1430,21 @@ async def run_turn(
                         # The status is logged and goes no further: the device
                         # is told `TURN_FAILED_MESSAGE`, for the reason the
                         # `Failed` branch below gives.
+                        round_span.end(
+                            status="failed",
+                            error=f"interaction ended {neutral.status}",
+                            outputs={
+                                "round_index": round_index,
+                                "response_id": neutral.response_id,
+                                "status": neutral.status,
+                                "text": round_text,
+                                "text_tail": round_text[-2000:],
+                                "text_chars": len(round_text),
+                                "reasoning": round_reasoning,
+                                "reasoning_tail": round_reasoning[-2000:],
+                                "reasoning_chars": len(round_reasoning),
+                            },
+                        )
                         logger.warning(
                             "the interaction ended %s | response_id=%s "
                             "text_chars=%d", neutral.status,
@@ -1202,6 +1454,23 @@ async def run_turn(
                             message=TURN_FAILED_MESSAGE, retryable=True
                         ), result
                         return
+                    else:
+                        round_span.end(
+                            status="ok",
+                            outputs={
+                                "round_index": round_index,
+                                "response_id": neutral.response_id,
+                                "status": neutral.status,
+                                "usage": neutral.usage,
+                                "tool_names": [c.name for c in neutral.calls],
+                                "text": round_text,
+                                "text_tail": round_text[-2000:],
+                                "text_chars": len(round_text),
+                                "reasoning": round_reasoning,
+                                "reasoning_tail": round_reasoning[-2000:],
+                                "reasoning_chars": len(round_reasoning),
+                            },
+                        )
                 elif isinstance(neutral, Failed):
                     # Never reached on OpenAI, whose failures raise on the open
                     # and are classified by `_open_round`.
@@ -1222,6 +1491,20 @@ async def run_turn(
                     # point of carrying only a bool across this line: an iPad
                     # once displayed a model name, an organization id and an
                     # account's per-minute ceiling.
+                    round_span.end(
+                        status="failed",
+                        error=neutral.message,
+                        outputs={
+                            "round_index": round_index,
+                            "status": "failed",
+                            "text": round_text,
+                            "text_tail": round_text[-2000:],
+                            "text_chars": len(round_text),
+                            "reasoning": round_reasoning,
+                            "reasoning_tail": round_reasoning[-2000:],
+                            "reasoning_chars": len(round_reasoning),
+                        },
+                    )
                     logger.warning("the round failed | %s", neutral.message)
                     yield ErrorEvent(
                         message=TURN_FAILED_MESSAGE,
@@ -1288,6 +1571,18 @@ async def run_turn(
             # (e.g. malformed) fall through to `_answer`.
             if name in BOARD_MUTATION_TOOLS:
                 decision = board_gate.decision_for(call_id)
+                gate_span = observability.span(
+                    name=BOARD_GATE_SPAN_NAME, run_type="chain",
+                    parent=root_span,
+                    inputs={"tool": name, "call_id": call_id},
+                    metadata={"round_index": round_index},
+                )
+                gate_span = gate_span if _is_span(gate_span) else NullSpan()
+                with gate_span:
+                    gate_span.end(
+                        status="ok",
+                        outputs={"decision": decision or "not_recorded"},
+                    )
                 if decision == "inspect_first":
                     outputs.append(provider.tool_output(
                         call_id=call_id, name=name, output=INSPECT_FIRST_ACK,
@@ -1363,18 +1658,45 @@ async def run_turn(
                 # arguments streamed under does not change under the learner.
                 yield StatusEvent(phase="searching", detail=None), result
                 downloads += 1
-                try:
-                    async with asyncio.timeout(IMAGE_FETCH_TIMEOUT_SECONDS):
-                        fetched = await fetch_image(answer.fetch)
-                except TimeoutError:
-                    # The fetcher refuses in-band — every guard comes back as
-                    # `{"error": ...}` — so a raise here is the deadline and
-                    # nothing else. The turn carries on without the picture.
-                    logger.warning(
-                        "image fetch timed out after %.0fs",
-                        IMAGE_FETCH_TIMEOUT_SECONDS,
-                    )
-                    fetched = FetchedImage(output=FETCH_TIMEOUT_ACK)
+                fetch_span = observability.span(
+                    name=FETCH_IMAGE_SPAN_NAME, run_type="tool",
+                    parent=root_span, inputs={"url": answer.fetch},
+                )
+                fetch_span = fetch_span if _is_span(fetch_span) else NullSpan()
+                with fetch_span:
+                    try:
+                        async with asyncio.timeout(IMAGE_FETCH_TIMEOUT_SECONDS):
+                            fetched = await fetch_image(answer.fetch)
+                    except TimeoutError:
+                        # The fetcher refuses in-band — every guard comes back as
+                        # `{"error": ...}` — so a raise here is the deadline and
+                        # nothing else. The turn carries on without the picture.
+                        logger.warning(
+                            "image fetch timed out after %.0fs",
+                            IMAGE_FETCH_TIMEOUT_SECONDS,
+                        )
+                        fetched = FetchedImage(output=FETCH_TIMEOUT_ACK)
+                        fetch_span.end(
+                            status="failed", error="image fetch timed out",
+                            outputs={"source_bytes": 0},
+                        )
+                    else:
+                        try:
+                            fetch_answer = json.loads(fetched.output)
+                        except (TypeError, ValueError):
+                            fetch_answer = {}
+                        fetch_error = (
+                            fetch_answer.get("error")
+                            if isinstance(fetch_answer, dict) else None
+                        )
+                        fetch_span.end(
+                            status="failed" if fetch_error else "ok",
+                            error=str(fetch_error) if fetch_error else None,
+                            outputs={
+                                "source_bytes": fetched.source_bytes,
+                                "shown_to_model": fetched.image is not None,
+                            },
+                        )
                 # What the download cost, not what is about to be shown: the
                 # picture in `fetched.image` has already been reduced for the
                 # model's context, and this budget is about bytes brought in.
@@ -1404,7 +1726,20 @@ async def run_turn(
                 # `_answer` only returns this shape when the handler exists;
                 # keeping the assertion here also narrows the optional type.
                 assert handle_web_search is not None
-                evidence = await handle_web_search(answer.search)
+                search_span = observability.span(
+                    name=WEB_SEARCH_SPAN_NAME, run_type="tool",
+                    parent=root_span, inputs={"query": answer.search},
+                )
+                search_span = search_span if _is_span(search_span) else NullSpan()
+                with search_span:
+                    evidence = await handle_web_search(answer.search)
+                    search_span.end(
+                        status="ok",
+                        outputs={
+                            "sources": len(evidence.sources),
+                            "usable": bool(evidence.usable),
+                        },
+                    )
                 output = evidence_tool_result(evidence)
                 outputs.append(provider.tool_output(
                     call_id=call_id, name=call.get("name") or "",
@@ -1446,29 +1781,44 @@ async def run_turn(
                     ), result
                     allowance = min(MEMORY_TIMEOUT_SECONDS, memory_budget)
                     started = time.monotonic()
-                    try:
-                        # Bounded twice, because nothing else bounds either
-                        # one: `MEMORY_TIMEOUT_SECONDS` is what one call may
-                        # take, `memory_budget` is what the turn has left. The
-                        # handler answers rather than raising, so a timeout is
-                        # the only failure that can reach this branch — and
-                        # cancelling mid-flight can hand a half-used connection
-                        # back to the pool, which is what `pool_pre_ping` on
-                        # the engine is for.
-                        async with asyncio.timeout(allowance):
-                            output = await handle_memory(name, arguments)
-                    except TimeoutError:
-                        logger.warning(
-                            "memory tool timed out after %.0fs | tool=%s",
-                            allowance, name,
+                    memory_span = observability.span(
+                        name=MEMORY_TOOL_SPAN_NAME, run_type="tool",
+                        parent=root_span, inputs={"tool": name},
+                    )
+                    memory_span = (
+                        memory_span if _is_span(memory_span) else NullSpan()
+                    )
+                    memory_failed = False
+                    with memory_span:
+                        try:
+                            # Bounded twice, because nothing else bounds either
+                            # one: `MEMORY_TIMEOUT_SECONDS` is what one call may
+                            # take, `memory_budget` is what the turn has left. The
+                            # handler answers rather than raising, so a timeout is
+                            # the only failure that can reach this branch — and
+                            # cancelling mid-flight can hand a half-used connection
+                            # back to the pool, which is what `pool_pre_ping` on
+                            # the engine is for.
+                            async with asyncio.timeout(allowance):
+                                output = await handle_memory(name, arguments)
+                        except TimeoutError:
+                            logger.warning(
+                                "memory tool timed out after %.0fs | tool=%s",
+                                allowance, name,
+                            )
+                            output = MEMORY_TIMEOUT_ACK
+                            memory_failed = True
+                        finally:
+                            # In `finally` so a call that timed out still spends
+                            # what it burned. Charging only successful calls would
+                            # let a run of timeouts cost 20s each and never reduce
+                            # the budget that exists to stop exactly that.
+                            memory_budget -= time.monotonic() - started
+                        memory_span.end(
+                            status="failed" if memory_failed else "ok",
+                            error="memory tool timed out" if memory_failed else None,
+                            outputs={"tool": name},
                         )
-                        output = MEMORY_TIMEOUT_ACK
-                    finally:
-                        # In `finally` so a call that timed out still spends
-                        # what it burned. Charging only successful calls would
-                        # let a run of timeouts cost 20s each and never reduce
-                        # the budget that exists to stop exactly that.
-                        memory_budget -= time.monotonic() - started
                 outputs.append(provider.tool_output(
                     call_id=call_id, name=name, output=output,
                 ))
@@ -1499,29 +1849,47 @@ async def run_turn(
             # been asked for. Yielding here is what puts it on the wire.
             yield request, result
             started = time.monotonic()
-            try:
-                image = await fetch_board(call_id, region)
-                items = provider.rendered_items(call_id, image, request.detail)
-            except BoardUnavailable:
-                # The one place a `view_board` failure was invisible. Without
-                # this line a tutor saying "I could not load your board" left
-                # nothing in the log at all, and the only record was
-                # `tool_calls.result` in the database — see the README's "I
-                # couldn't load the selected board area".
-                logger.warning(
-                    "view_board unanswered | call_id=%s region=%s waited=%.1fs",
-                    call_id, request.detail, time.monotonic() - started,
-                )
-                items = [provider.tool_output(
-                    call_id=call_id, name=call.get("name") or "",
-                    output=UNAVAILABLE_ACK,
-                )]
-            else:
-                # The look only counts once the render is actually in hand and
-                # `rendered_items` has prepared it for the model's next round.
-                # A failed or unanswered render must not unlock a mutation: the
-                # model still has not seen the board.
-                board_gate.mark_render_delivered()
+            view_span = observability.span(
+                name=VIEW_BOARD_SPAN_NAME, run_type="tool",
+                parent=root_span,
+                inputs={"call_id": call_id, "detail": request.detail},
+            )
+            view_span = view_span if _is_span(view_span) else NullSpan()
+            with view_span:
+                try:
+                    image = await fetch_board(call_id, region)
+                    items = provider.rendered_items(call_id, image, request.detail)
+                except BoardUnavailable:
+                    # The one place a `view_board` failure was invisible. Without
+                    # this line a tutor saying "I could not load your board" left
+                    # nothing in the log at all, and the only record was
+                    # `tool_calls.result` in the database — see the README's "I
+                    # couldn't load the selected board area".
+                    logger.warning(
+                        "view_board unanswered | call_id=%s region=%s waited=%.1fs",
+                        call_id, request.detail, time.monotonic() - started,
+                    )
+                    items = [provider.tool_output(
+                        call_id=call_id, name=call.get("name") or "",
+                        output=UNAVAILABLE_ACK,
+                    )]
+                    view_span.end(
+                        status="failed", error="board render unavailable",
+                        outputs={"waited_s": round(time.monotonic() - started, 3)},
+                    )
+                else:
+                    # The look only counts once the render is actually in hand and
+                    # `rendered_items` has prepared it for the model's next round.
+                    # A failed or unanswered render must not unlock a mutation: the
+                    # model still has not seen the board.
+                    board_gate.mark_render_delivered()
+                    view_span.end(
+                        status="ok",
+                        outputs={
+                            "items": len(items),
+                            "waited_s": round(time.monotonic() - started, 3),
+                        },
+                    )
             outputs.append(items[0])
             attachments.extend(items[1:])
 
@@ -1553,18 +1921,37 @@ async def run_turn(
                     )
                     continue
                 downloads += 1
-                try:
-                    async with asyncio.timeout(FILE_RELAY_TIMEOUT_SECONDS):
-                        file = await relay_file(produced)
-                except TimeoutError:
-                    # The relay refuses in-band — a failure comes back as
-                    # `RelayedFile(error=...)` — so a raise here is the deadline
-                    # and nothing else. The turn carries on without the file.
-                    logger.warning(
-                        "file relay timed out after %.0fs | file=%s",
-                        FILE_RELAY_TIMEOUT_SECONDS, filename,
+                relay_span = observability.span(
+                    name=FILE_RELAY_SPAN_NAME, run_type="tool",
+                    parent=root_span, inputs={"filename": filename},
+                )
+                relay_span = relay_span if _is_span(relay_span) else NullSpan()
+                relay_failed = False
+                with relay_span:
+                    try:
+                        async with asyncio.timeout(FILE_RELAY_TIMEOUT_SECONDS):
+                            file = await relay_file(produced)
+                    except TimeoutError:
+                        # The relay refuses in-band — a failure comes back as
+                        # `RelayedFile(error=...)` — so a raise here is the deadline
+                        # and nothing else. The turn carries on without the file.
+                        logger.warning(
+                            "file relay timed out after %.0fs | file=%s",
+                            FILE_RELAY_TIMEOUT_SECONDS, filename,
+                        )
+                        file = RelayedFile(error="the download timed out")
+                        relay_failed = True
+                    if not getattr(file, "blob_id", None):
+                        relay_failed = True
+                    relay_span.end(
+                        status="failed" if relay_failed else "ok",
+                        error=(file.error or "file relay failed")
+                        if relay_failed else None,
+                        outputs={
+                            "filename": filename,
+                            "source_bytes": file.source_bytes,
+                        },
                     )
-                    file = RelayedFile(error="the download timed out")
                 # The download, not the copy — see the fetch branch above.
                 downloaded_bytes += file.source_bytes
                 relayed.append((filename, file))

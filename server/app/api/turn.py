@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 
 import anyio
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from google import genai
 import httpx
@@ -35,6 +35,11 @@ from app.memory.profile import current_profile
 from app.memory.retrieve import (
     backstop_tail, explicit_notes, recent_episodes, render_notes,
     render_sessions,
+)
+from app.observability import (
+    CONTEXT_SPAN_NAME, FAILURE_SPAN_NAME, FINISH_SPAN_NAME, ROOT_SPAN_NAME,
+    TRACE_SCHEMA_VERSION, ORCHESTRATION_VERSION, Span, NullSpan,
+    _is_span,
 )
 from app.sse import SSE_HEADERS, format_sse
 from app.store.db import db_session, note_request_use, session_factory
@@ -488,6 +493,9 @@ async def _fail_turn_and_report(
     request_body: dict,
     image_blob_key: str | None,
     diagnostics: dict | None = None,
+    observability=None,
+    root_span=None,
+    end_root=None,
 ) -> ErrorEvent:
     """Persist the failure, but never let persisting it fail silently.
 
@@ -512,18 +520,40 @@ async def _fail_turn_and_report(
         " ".join(f"{k}={v}" for k, v in (diagnostics or {}).items()),
         message,
     )
+    fail_span = NullSpan()
+    if observability is not None and root_span is not None:
+        fail_span = observability.span(
+            name=FAILURE_SPAN_NAME, run_type="chain", parent=root_span,
+            inputs={"turn_id": str(turn_id), "retryable": retryable},
+        )
+    if _is_span(fail_span):
+        fail_span.__enter__()
+    persisted = False
     try:
         await recorder.fail_turn(
             turn_id=turn_id, message=message, retryable=retryable,
             result=result, request_body=request_body, image_blob_key=image_blob_key,
             diagnostics=diagnostics,
         )
+        persisted = True
     except Exception:
         # The client still gets its ErrorEvent below either way — this
         # swallow is deliberate, not a bug. But a database-down scenario is
         # exactly the case where this is the *only* place that would ever
         # say why, so it must not be invisible too.
         logger.exception("could not persist turn failure for turn_id=%s", turn_id)
+    finally:
+        if _is_span(fail_span):
+            fail_span.end(
+                status="ok" if persisted else "failed",
+                error=None if persisted else "could not persist turn failure",
+                outputs={"retryable": retryable, "persisted": persisted},
+            )
+            fail_span.__exit__()
+    if end_root is not None:
+        end_root(
+            "failed", error=message, failed=True, retryable=retryable,
+        )
     return ErrorEvent(message=TURN_FAILED_MESSAGE, retryable=retryable)
 
 
@@ -775,6 +805,7 @@ async def _session_messages(
 @router.post("/turn")
 async def create_turn(
     body: TurnRequest,
+    request: Request,
     db: AsyncSession = Depends(db_session),
     recorder: Recorder = Depends(get_recorder),
 ):
@@ -938,6 +969,7 @@ async def create_turn(
     # and the commit. It is on its own because it is the one stretch of a turn
     # that no other number covers — `elapsed_ms` now contains it, but only this
     # says how much of the total it was.
+    observability = getattr(request.app.state, "observability", None)
     logger.info(
         "turn started | turn_id=%s session_id=%s model=%s effort=%s "
         "has_image=%s has_board=%s history=%d prologue_ms=%d",
@@ -952,6 +984,61 @@ async def create_turn(
         ttft_ms: int | None = None
         image_ref = None
         result: TurnResult | None = None
+        root_ended = False
+        tracing_entered = False
+        context_span: Span | NullSpan = NullSpan()
+        context_span_closed = True
+        # The observability handle is created at startup in main.lifespan and
+        # reached through app.state; the manifest attributes needed at the
+        # request boundary (turn/session ids, model, effort, upload/history
+        # counts) are only known here, so the root span is entered from inside
+        # the stream task — the same task that will exit it, which keeps the
+        # SDK's contextvars sane.
+        obsv_handle = observability
+        if obsv_handle is None or not all(
+            hasattr(obsv_handle, method) for method in ("span", "tracing_context")
+        ):
+            obsv_handle = NullSpan()
+        tracing_ctx = obsv_handle.tracing_context(
+            metadata={
+                "turn_id": str(body.turn_id),
+                "session_id": str(session.id),
+                "model": body.model,
+                "provider": PROVIDER_FOR_MODEL[body.model],
+                "reasoning_effort": body.reasoning_effort,
+                "orchestration_version": ORCHESTRATION_VERSION,
+                "trace_schema_version": TRACE_SCHEMA_VERSION,
+                "project": settings.langsmith_project,
+            }
+        )
+        tracing_ctx.__enter__()
+        tracing_entered = True
+        root_span = obsv_handle.span(
+            name=ROOT_SPAN_NAME, run_type="chain", root=True,
+            inputs={
+                "turn_id": str(body.turn_id),
+                "session_id": str(session.id),
+                "model": body.model,
+                "provider": PROVIDER_FOR_MODEL[body.model],
+                "reasoning_effort": body.reasoning_effort,
+                "has_image": image is not None,
+                "has_board": board is not None,
+                "has_board_scene": body.board_scene is not None,
+                "upload_count": len(upload_rows),
+                "history_count": seq,
+                "prologue_ms": int((time.monotonic() - received) * 1000),
+                "orchestration_version": ORCHESTRATION_VERSION,
+                "trace_schema_version": TRACE_SCHEMA_VERSION,
+            },
+            metadata={
+                "turn_id": str(body.turn_id),
+                "session_id": str(session.id),
+                "provider": PROVIDER_FOR_MODEL[body.model],
+                "project": settings.langsmith_project,
+            },
+        )
+        root_span = root_span if _is_span(root_span) else NullSpan()
+        root_span.__enter__()
         # The `error` event `run_turn` put on the wire, if it put one there.
         #
         # A round can fail *inside* an open stream, and that failure does not
@@ -1119,6 +1206,74 @@ async def create_turn(
                 source_bytes=len(fetched.data),
             )
 
+        def end_root(
+            status: str,
+            *,
+            error: str | None = None,
+            failed: bool = False,
+            retryable: bool | None = None,
+        ):
+            """Close the root span with the curated turn summary.
+
+            Safe to call from every exit path, including the shielded finally;
+            the tracing context is exited here too, in the same task that
+            entered it.
+            """
+            nonlocal root_span
+            nonlocal root_ended
+            nonlocal context_span_closed
+            if root_ended:
+                return
+            root_ended = True
+            if not context_span_closed:
+                context_span_closed = True
+                context_span.end(
+                    status="failed",
+                    error=error or "turn ended during context assembly",
+                    outputs={"history_count": seq},
+                )
+                context_span.__exit__()
+            usage_data = (result.usage or {}) if result is not None else {}
+            tool_names = [
+                tool.get("name") for tool in
+                (result.tool_calls if result is not None else [])
+            ]
+            finish_outputs = {
+                "outcome": status,
+                "elapsed_s": round(time.monotonic() - started, 3),
+                "ttft_ms": ttft_ms,
+                "events_sent": events_sent,
+                "max_silence_ms": int(max(
+                    max_silence, time.monotonic() - last_sent
+                ) * 1000),
+                "provider_events": (
+                    len(result.raw_events) if result is not None else 0
+                ),
+                "retryable": retryable,
+            }
+            if result is not None:
+                finish_outputs.update({
+                    "token_usage": usage_data,
+                    "response_id": result.response_id,
+                    "tool_names": tool_names,
+                    "tool_count": len(result.tool_calls),
+                    "text_chars": len(result.text),
+                    "answer": result.text,
+                    "answer_tail": result.text[-2000:],
+                })
+            try:
+                root_span.end(
+                    status="ok" if not failed else "failed",
+                    error=error,
+                    outputs=finish_outputs,
+                )
+            finally:
+                try:
+                    root_span.__exit__()
+                finally:
+                    if tracing_entered:
+                        tracing_ctx.__exit__()
+
         async def relay_container_file(file: ProducedFile) -> RelayedFile:
             """Keep one file a script wrote, wherever the provider held it.
 
@@ -1242,29 +1397,48 @@ async def create_turn(
             # `_all_of` re-raises inside this `try`, from the same position
             # these awaits already raised from, so every existing `except`
             # below sees exactly what it saw before.
-            image_ref, _board_ref, sections = await _all_of(
-                recorder.record_attachment(
-                    turn_id=body.turn_id, kind="board_png", data=image,
-                    content_type="image/png",
-                ) if image is not None else _nothing(),
-                # Recorded for the *next* turn's comparison as much as for the
-                # audit trail: `board_changed` above reads exactly this row
-                # back. Content-addressed, so a board sent twice unchanged
-                # costs one blob, not two.
-                recorder.record_attachment(
-                    turn_id=body.turn_id, kind=BOARD_KIND, data=board,
-                    content_type="image/png",
-                ) if board is not None else _nothing(),
-                # Once per session, and never again. The four blocks it reads
-                # go into `prompt_preamble`, which is then served byte for byte
-                # for the rest of the session — so turns 2..N skip this
-                # entirely. It is six to eight statements on a 262 ms link,
-                # about 2,400 ms even parallelised, in front of every turn.
-                _memory_sections(
-                    recorder.sessions, session_id=session.id,
-                    first_turn=first_turn,
-                ) if session.prompt_preamble is None else _nothing(),
+            context_span = obsv_handle.span(
+                name=CONTEXT_SPAN_NAME, run_type="chain", parent=root_span,
+                inputs={"history_count": seq},
             )
+            context_span = (
+                context_span if _is_span(context_span) else NullSpan()
+            )
+            context_span_closed = False
+            context_span.__enter__()
+            try:
+                image_ref, _board_ref, sections = await _all_of(
+                    recorder.record_attachment(
+                        turn_id=body.turn_id, kind="board_png", data=image,
+                        content_type="image/png",
+                    ) if image is not None else _nothing(),
+                    # Recorded for the *next* turn's comparison as much as for the
+                    # audit trail: `board_changed` above reads exactly this row
+                    # back. Content-addressed, so a board sent twice unchanged
+                    # costs one blob, not two.
+                    recorder.record_attachment(
+                        turn_id=body.turn_id, kind=BOARD_KIND, data=board,
+                        content_type="image/png",
+                    ) if board is not None else _nothing(),
+                    # Once per session, and never again. The four blocks it reads
+                    # go into `prompt_preamble`, which is then served byte for byte
+                    # for the rest of the session — so turns 2..N skip this
+                    # entirely. It is six to eight statements on a 262 ms link,
+                    # about 2,400 ms even parallelised, in front of every turn.
+                    _memory_sections(
+                        recorder.sessions, session_id=session.id,
+                        first_turn=first_turn,
+                    ) if session.prompt_preamble is None else _nothing(),
+                )
+            except BaseException:
+                context_span_closed = True
+                context_span.end(
+                    status="failed",
+                    error="context assembly failed",
+                    outputs={"history_count": seq},
+                )
+                context_span.__exit__()
+                raise
 
             # The frozen head: this session's first turn builds it, every turn
             # after replays it. Nothing recomputes it, and that is deliberate
@@ -1306,6 +1480,17 @@ async def create_turn(
                 image_data=image, board_overview=board, board_scene=body.board_scene,
                 uploads=uploads,
             )
+            context_span.end(
+                status="ok",
+                outputs={
+                    "history_count": seq,
+                    "upload_count": len(uploads),
+                    "input_items": len(bundle.input),
+                    "elapsed_s": round(context_span.duration_seconds, 3),
+                },
+            )
+            context_span_closed = True
+            context_span.__exit__()
             async for event, running in run_turn(
                 provider=_provider(body.model), model=body.model,
                 effort=body.reasoning_effort,
@@ -1332,6 +1517,8 @@ async def create_turn(
                     turn_id=body.turn_id, session_id=session.id,
                 ),
                 handle_web_search=search_web,
+                observability=obsv_handle,
+                root_span=root_span,
             ):
                 result = running
                 if ttft_ms is None and event.type == "text_delta":
@@ -1370,27 +1557,49 @@ async def create_turn(
                     request_body=request_body,
                     image_blob_key=image_ref.key if image_ref else None,
                     diagnostics=diagnostics(),
+                    observability=obsv_handle,
+                    root_span=root_span,
+                    end_root=end_root,
                 )
+                end_root("failed", error="round reported an error inside an open stream",
+                         failed=True)
             elif result is not None:
-                await recorder.finish_turn(
-                    turn_id=body.turn_id, session_id=session.id, next_seq=next_seq,
-                    result=result, request_body=request_body,
-                    ttft_ms=ttft_ms,
-                    latency_ms=int((time.monotonic() - started) * 1000),
-                    image_blob_key=image_ref.key if image_ref else None,
-                    # The exact bytes this turn sent, so the next turn extends
-                    # them rather than rebuilding them. On the success path
-                    # only: see `finish_turn` for why a failed turn storing
-                    # nothing is the safe outcome rather than a lost update.
-                    prompt_preamble=preamble,
-                    # `recording` folds in what this turn drew, read off
-                    # `result.tool_calls`. It is the only record of the ids the
-                    # model assigned to its own board elements: the transcript
-                    # renders a message as `role: text`, so a tool call leaves
-                    # no trace in it, and the scene string that used to carry
-                    # them is no longer re-sent.
-                    prompt_log=log.recording(result.tool_calls).as_json(),
+                persist_span = obsv_handle.span(
+                    name=FINISH_SPAN_NAME, run_type="chain", parent=root_span,
+                    inputs={"turn_id": str(body.turn_id)},
                 )
+                persist_span = (
+                    persist_span if _is_span(persist_span) else NullSpan()
+                )
+                persist_span.__enter__()
+                try:
+                    await recorder.finish_turn(
+                        turn_id=body.turn_id, session_id=session.id, next_seq=next_seq,
+                        result=result, request_body=request_body,
+                        ttft_ms=ttft_ms,
+                        latency_ms=int((time.monotonic() - started) * 1000),
+                        image_blob_key=image_ref.key if image_ref else None,
+                        # The exact bytes this turn sent, so the next turn extends
+                        # them rather than rebuilding them. On the success path
+                        # only: see `finish_turn` for why a failed turn storing
+                        # nothing is the safe outcome rather than a lost update.
+                        prompt_preamble=preamble,
+                        # `recording` folds in what this turn drew, read off
+                        # `result.tool_calls`. It is the only record of the ids the
+                        # model assigned to its own board elements: the transcript
+                        # renders a message as `role: text`, so a tool call leaves
+                        # no trace in it, and the scene string that used to carry
+                        # them is no longer re-sent.
+                        prompt_log=log.recording(result.tool_calls).as_json(),
+                    )
+                except BaseException:
+                    persist_span.end(
+                        status="failed", error="finish persistence raised",
+                    )
+                    persist_span.__exit__()
+                    raise
+                persist_span.end(status="ok", outputs={"tutor_text_chars": len(result.text)})
+                persist_span.__exit__()
                 usage = result.usage or {}
                 cached, written = cache_tokens(usage)
                 yield sse(DoneEvent(
@@ -1447,6 +1656,7 @@ async def create_turn(
                     usage.get("output_tokens"),
                     (usage.get("output_tokens_details") or {}).get("reasoning_tokens"),
                 )
+                end_root("ok")
         except APIStatusError as error:
             decision = classify(error.status_code, error.body)
             event = await _fail_turn_and_report(
@@ -1458,6 +1668,9 @@ async def create_turn(
                 # 429 and a rate-limit 429 are the same status and opposite
                 # verdicts, and the row could not previously say which it read.
                 diagnostics={**diagnostics(), "classified": decision.reason},
+                observability=obsv_handle,
+                root_span=root_span,
+                end_root=end_root,
             )
             yield sse(event)
         except APIConnectionError as error:
@@ -1469,6 +1682,9 @@ async def create_turn(
                 retryable=True, result=result, request_body=request_body,
                 image_blob_key=image_ref.key if image_ref else None,
                 diagnostics=diagnostics(),
+                observability=obsv_handle,
+                root_span=root_span,
+                end_root=end_root,
             )
             yield sse(event)
         except APIError as error:
@@ -1501,6 +1717,9 @@ async def create_turn(
                 retryable=decision.retry, result=result, request_body=request_body,
                 image_blob_key=image_ref.key if image_ref else None,
                 diagnostics={**diagnostics(), "classified": decision.reason},
+                observability=obsv_handle,
+                root_span=root_span,
+                end_root=end_root,
             )
             yield sse(event)
         except Exception as error:
@@ -1541,6 +1760,9 @@ async def create_turn(
                 diagnostics=diagnostics() if decision is None else {
                     **diagnostics(), "classified": decision.reason,
                 },
+                observability=obsv_handle,
+                root_span=root_span,
+                end_root=end_root,
             )
             yield sse(event)
         finally:
@@ -1597,11 +1819,36 @@ async def create_turn(
                         # someone closing the app. The row could not previously
                         # distinguish those, and neither could anyone reading it.
                         diagnostics=diagnostics(),
+                        observability=obsv_handle,
+                        root_span=root_span,
+                        end_root=end_root,
+                    )
+                else:
+                    # A classified exception or an in-stream failure already
+                    # ended the root via `end_root`; a success path ended it
+                    # too. This is the disconnect-with-cleanup fallback where
+                    # the DB check found the turn already resolved but the
+                    # span may not have been closed.
+                    end_root(
+                        "ended",
+                        error=(
+                            None if status_now == "ok" else
+                            "turn ended without a completed status"
+                        ),
+                        failed=status_now != "ok",
                     )
             # Deliberately not caught anywhere above: re-raising is what
             # tells the ASGI server the connection is really gone, and
             # swallowing a BaseException here would be exactly the kind of
             # silent failure this whole guard exists to prevent.
+            # Unconditional root close: runs even if the shielded block above
+            # timed out or was cancelled before end_root, so the tracing
+            # context can never leak past the stream task.
+            end_root(
+                "ended",
+                error="turn stream ended without a completed close",
+                failed=True,
+            )
 
     return StreamingResponse(stream(), media_type="text/event-stream",
                              headers=SSE_HEADERS)

@@ -524,6 +524,7 @@ async def test_search_sessions_answers_cards_with_dates_and_counts(db, monkeypat
     (sparse), an unrelated session excluded by both bars — and the total says
     how many matched beyond the cards shown."""
     monkeypatch.setattr("app.memory.retrieve.embed_texts", _Embedder(_axis(0)))
+    monkeypatch.setattr("app.memory.dispatch._today", lambda: TODAY)
     await _learner(db)
     db.add_all([
         _episode(_at(TODAY - timedelta(days=1)), title="Kinetic energy",
