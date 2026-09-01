@@ -1,6 +1,15 @@
-# Math Tutor iPad MVP
+# Learn AI iPad prototype
 
-Math Tutor is a SwiftUI/PencilKit iPad app for learning math by writing and talking through the next step. An infinite Apple Pencil board sits between a tool rail and a docked tutor, and the tutor can look at the student's actual handwriting and coach the next smallest useful move.
+Learn AI (working name; the codebase still uses `MathTutor`) is a shared
+whiteboard for learning and working through problems with an intelligent tutor.
+The learner writes and thinks with Apple Pencil, can talk with the tutor live,
+and works in the same board context the tutor can inspect and add to. The aim is
+to help the learner build their own understanding, not replace the process with
+a finished answer.
+
+[`docs/product-vision.md`](docs/product-vision.md) is the source of truth for
+product direction and language. The rest of this README documents the current
+prototype and its implementation.
 
 It is built from a finished design system rather than styled by hand. The design lives in Paper; [`docs/design-system/`](docs/design-system/) is its exact transcription, [`design/`](design/) is the machine-readable export that the token and icon layers are generated from, and [`design/reference/`](design/reference/) holds the four screens at 1×, so the built app can be pixel-diffed against the design instead of eyeballed.
 

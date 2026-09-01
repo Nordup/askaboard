@@ -1,5 +1,10 @@
 # Shared ChatGPT transcript
 
+> **Historical research record.** This transcript evaluates the project's
+> original course-and-planning-centered concept and is preserved for provenance.
+> It does not define the current product. See
+> [`product-vision.md`](product-vision.md) for current direction.
+
 > Source: [https://chatgpt.com/share/6a6f1efe-0b80-83ec-a2f1-8c5089ec960f](https://chatgpt.com/share/6a6f1efe-0b80-83ec-a2f1-8c5089ec960f)  
 > Captured: `2026-08-02T13:06:29+00:00`  
 > Title: **AI Math Tutor**  
@@ -9,7 +14,9 @@
 
 - The RSC payload contains 62 linear conversation nodes, including hidden system/rebase messages, reasoning summaries, tool calls, and widget plumbing. This transcript follows the visible conversational order rather than exposing hidden model reasoning.
 - Several internal tool/reasoning nodes were exposed only as **“The output of this plugin was redacted.”** Those unavailable internals are omitted; every visible user and assistant turn is retained.
-- The first uploaded source is preserved verbatim as [`learn-ai-the-idea.md`](learn-ai-the-idea.md), recovered from the authenticated original chat.
+- The body of the first uploaded source is preserved verbatim below its
+  supersession notice in [`learn-ai-the-idea.md`](learn-ai-the-idea.md),
+  recovered from the authenticated original chat.
 
 ## Turn 1 — User
 
