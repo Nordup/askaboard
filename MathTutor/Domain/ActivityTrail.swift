@@ -63,6 +63,66 @@ struct ActivityTrail: Codable, Equatable, Sendable {
         items[index] = .step(merged)
     }
 
+    /// Adds search results at the point where the matching web-search tool
+    /// call appeared. Search results arrive after the generic tool step, so
+    /// replacing that row (instead of appending another one) keeps the trail
+    /// chronological and avoids showing the same operation twice.
+    mutating func upsertSearch(id: String, query: String, sources: [TutorSource]) {
+        let incoming = TrailSearch(id: id, query: query, sources: sources)
+        guard let index = items.firstIndex(where: { $0.id == id }) else {
+            items.append(.search(incoming))
+            return
+        }
+
+        if case let .search(existing) = items[index] {
+            var merged = existing
+            merged.query = query
+            merged.sources = Self.mergedSources(existing.sources, with: sources)
+            items[index] = .search(merged)
+        } else {
+            items[index] = .search(incoming)
+        }
+    }
+
+    /// Returns a display copy that includes sources saved by app versions
+    /// predating search rows. Sources already represented in the trail are
+    /// not repeated.
+    func includingLegacySources(_ legacySources: [TutorSource]) -> ActivityTrail {
+        guard !legacySources.isEmpty else { return self }
+        var copy = self
+        let represented = Set(items.flatMap { item -> [String] in
+            guard case let .search(search) = item else { return [] }
+            return search.sources.flatMap(Self.sourceKeys)
+        })
+        let missing = legacySources.filter { source in
+            Set(Self.sourceKeys(source)).isDisjoint(with: represented)
+        }
+        guard !missing.isEmpty else { return copy }
+        copy.items.append(.search(TrailSearch(id: "legacy-sources", query: "", sources: missing)))
+        return copy
+    }
+
+    static func mergedSources(_ existing: [TutorSource], with incoming: [TutorSource]) -> [TutorSource] {
+        var result = existing
+        var urls = Set(result.map(\.url))
+        for source in incoming {
+            if let index = result.firstIndex(where: { $0.id == source.id }) {
+                let previousURL = result[index].url
+                result[index] = source
+                urls.remove(previousURL)
+                urls.insert(source.url)
+            } else if !urls.contains(source.url) {
+                result.append(source)
+                urls.insert(source.url)
+            }
+        }
+        return result
+    }
+
+    private static func sourceKeys(_ source: TutorSource) -> [String] {
+        ["id:\(source.id)", "url:\(source.url)"]
+    }
+
     /// Attaches a rendered crop to the step that asked for it.
     mutating func setImage(_ imageID: UUID, forStep id: String) {
         let index = items.firstIndex { item in
@@ -81,13 +141,24 @@ enum TrailItem: Codable, Equatable, Sendable, Identifiable {
     /// A run of reasoning summary. Grows in place as deltas arrive.
     case reasoning(id: UUID, text: String)
     case step(TrailStep)
+    case search(TrailSearch)
 
     var id: String {
         switch self {
         case let .reasoning(id, _): return id.uuidString
         case let .step(step): return step.id
+        case let .search(search): return search.id
         }
     }
+}
+
+/// One grouped web-search operation. Results can grow in place while the
+/// operation runs, and the row owns its disclosure rather than rendering a
+/// second Sources section below the answer.
+struct TrailSearch: Codable, Equatable, Sendable, Identifiable {
+    let id: String
+    var query: String
+    var sources: [TutorSource]
 }
 
 /// One tool call, named for the learner.

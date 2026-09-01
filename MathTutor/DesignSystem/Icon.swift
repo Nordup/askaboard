@@ -42,6 +42,8 @@ enum Icon: String, CaseIterable, Sendable {
     case trailSearch = "trail/search"
     case trailPlan = "trail/plan"
     case trailNote = "trail/note"
+    case trailTerminal = "trail/terminal"
+    case trailGlobe = "trail/globe"
     // The chat header's leading control — board 17's replacement for the gear that
     // used to sit there. Drawn inside `btn/sidebar-toggle` rather than as a specimen
     // on board 04, the same route `ui/chevron-down` and `ui/plus` took.

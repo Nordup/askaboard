@@ -9,7 +9,8 @@
       "10 \u2014 Settings (3KT-0) \u2014 ui/chevron-down, drawn inside row/setting rather than as a specimen",
       "15a \u2014 Sessions \u00b7 header menu (530-0) \u2014 ui/plus, drawn inside row/new-session rather than as a specimen",
       "04 \u2014 Icons (1IF-0) section 07 \u2014 the four added for the activity trail",
-      "note/17 \u2014 header crop (652-0), 07 \u2014 Tutor \u00b7 full screen (ZU-0) and 19 \u2014 Sessions drawer \u00b7 full screen (69J-0) \u2014 ui/sidebar-toggle, drawn inside btn/sidebar-toggle in the chat header rather than as a specimen"
+      "note/17 \u2014 header crop (652-0), 07 \u2014 Tutor \u00b7 full screen (ZU-0) and 19 \u2014 Sessions drawer \u00b7 full screen (69J-0) \u2014 ui/sidebar-toggle, drawn inside btn/sidebar-toggle in the chat header rather than as a specimen",
+      "34 \u2014 Tutor \u00b7 unified activity \u2014 trail/terminal and trail/globe, read directly from the approved activity rows"
     ],
     "readVia": "get_jsx, format inline-styles \u2014 never a screenshot",
     "prose": [
@@ -21,7 +22,7 @@
     "generates": "MathTutor/DesignSystem/Generated/IconPaths.swift"
   },
   "coverage": {
-    "productGlyphs": 27,
+    "productGlyphs": 29,
     "excluded": [
       {
         "name": "os/wifi",
@@ -1006,7 +1007,7 @@
         16,
         24
       ],
-      "renderSize": 24,
+      "renderSize": 16,
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-icon",
       "dashTexture": null,
@@ -1047,7 +1048,7 @@
       "productRenderSizes": [
         16
       ],
-      "renderSize": 24,
+      "renderSize": 16,
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-icon",
       "dashTexture": null,
@@ -1088,7 +1089,7 @@
       "productRenderSizes": [
         16
       ],
-      "renderSize": 24,
+      "renderSize": 16,
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-icon",
       "dashTexture": null,
@@ -1173,7 +1174,7 @@
       "productRenderSizes": [
         16
       ],
-      "renderSize": 24,
+      "renderSize": 16,
       "effectiveStrokeWidth": 2.0,
       "colorToken": "--color-icon",
       "dashTexture": null,
@@ -1189,6 +1190,86 @@
           "dashArray": null,
           "type": "path",
           "d": "M5.6 3.7H18.4V20.3L12 15.1L5.6 20.3Z"
+        }
+      ]
+    },
+    {
+      "name": "trail/terminal",
+      "swiftCase": "trailTerminal",
+      "viewBox": {
+        "width": 24,
+        "height": 24
+      },
+      "productRenderSizes": [20],
+      "renderSize": 20,
+      "effectiveStrokeWidth": 1.5,
+      "colorToken": "--color-icon",
+      "dashTexture": null,
+      "notes": "The unified activity row's tool-operation mark from Paper board 34: a rounded terminal frame containing a prompt chevron and baseline. Geometry is copied directly from the approved row.",
+      "designAnomaly": null,
+      "elements": [
+        {
+          "type": "rect",
+          "x": 3.25,
+          "y": 3.25,
+          "width": 17.5,
+          "height": 17.5,
+          "rx": 4,
+          "fill": "none",
+          "stroke": "var(--color-icon)",
+          "strokeWidth": 1.5,
+          "lineCap": null,
+          "lineJoin": null,
+          "dashArray": null
+        },
+        {
+          "type": "path",
+          "d": "M7.5 9l3 3-3 3M13 15h3.5",
+          "fill": "none",
+          "stroke": "var(--color-icon)",
+          "strokeWidth": 1.5,
+          "lineCap": "round",
+          "lineJoin": "round",
+          "dashArray": null
+        }
+      ]
+    },
+    {
+      "name": "trail/globe",
+      "swiftCase": "trailGlobe",
+      "viewBox": {
+        "width": 24,
+        "height": 24
+      },
+      "productRenderSizes": [20],
+      "renderSize": 20,
+      "effectiveStrokeWidth": 1.5,
+      "colorToken": "--color-brand",
+      "dashTexture": null,
+      "notes": "The unified activity row's web-search mark from Paper board 34: an outer globe, equator, and longitude arcs in brand violet. Geometry is copied directly from the approved row.",
+      "designAnomaly": null,
+      "elements": [
+        {
+          "type": "circle",
+          "cx": 12,
+          "cy": 12,
+          "r": 8.5,
+          "fill": "none",
+          "stroke": "var(--color-brand)",
+          "strokeWidth": 1.5,
+          "lineCap": null,
+          "lineJoin": null,
+          "dashArray": null
+        },
+        {
+          "type": "path",
+          "d": "M3.8 12h16.4M12 3.5c2.1 2.3 3.2 5.1 3.2 8.5s-1.1 6.2-3.2 8.5M12 3.5C9.9 5.8 8.8 8.6 8.8 12s1.1 6.2 3.2 8.5",
+          "fill": "none",
+          "stroke": "var(--color-brand)",
+          "strokeWidth": 1.35,
+          "lineCap": "round",
+          "lineJoin": null,
+          "dashArray": null
         }
       ]
     },

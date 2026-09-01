@@ -10,6 +10,10 @@ final class MathTutorUITests: XCTestCase {
     /// cannot import the app target to read `ScreenLayout`, and it is the number every
     /// geometry assertion below is measured against.
     private static let designSize = CGSize(width: 1376, height: 1032)
+    /// The paired 9.7-inch iPad's native landscape point size. The activity
+    /// regression is relative geometry rather than a screenshot-spec test, so
+    /// it deliberately runs at both real device sizes.
+    private static let pairedIPadSize = CGSize(width: 1024, height: 768)
 
     /// The tutor has to be reachable for any of the four screens to be the thing on screen —
     /// without a key the panel is board 11 instead, which is its own test.
@@ -34,6 +38,311 @@ final class MathTutorUITests: XCTestCase {
     }
 
     // MARK: - The four screens
+
+    func testCompletedActivityTrailOpensSearchesAndClosesAgain() {
+        let app = launch(
+            [
+                "--ui-state", "docked-active", "--ui-activity-fixture",
+                "--ui-activity-anchor-logs"
+            ],
+            acceptedWindowSizes: [Self.designSize, Self.pairedIPadSize]
+        )
+
+        let summary = app.buttons["Worked for 30s"]
+        XCTAssertTrue(summary.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Searched 5 websites"].isHittable)
+        let collapsedSummaryY = summary.frame.midY
+        let messageAbove = app.staticTexts["Is my vector label right?"]
+        let messageBelow = app.staticTexts
+            .matching(NSPredicate(format: "label CONTAINS %@", "Your label is right"))
+            .firstMatch
+        XCTAssertTrue(messageAbove.waitForExistence(timeout: 2))
+        XCTAssertTrue(messageBelow.waitForExistence(timeout: 2))
+        let collapsedAboveY = messageAbove.frame.midY
+        let collapsedBelowY = messageBelow.frame.midY
+        let allAboveFrames = absoluteFrames(
+            app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Earlier vector discussion"))
+                .allElementsBoundByIndex
+                .filter { $0.exists && $0.frame.maxY <= summary.frame.minY }
+            + [messageAbove]
+        )
+        logActivityFrames("collapsed", summary, messageAbove, messageBelow)
+
+        summary.tap()
+        let search = app.buttons["Searched 5 websites"]
+        XCTAssertTrue(search.waitForExistence(timeout: 2))
+        XCTContext.runActivity(named: "Activity diagnostics: \(summary.value as? String ?? "missing")") { _ in }
+        XCTAssertEqual(
+            summary.frame.midY, collapsedSummaryY, accuracy: 2,
+            "Opening activity reveals rows below the summary without moving the summary itself"
+        )
+        assertActivityAnchorDidNotDrift(summary)
+        logActivityFrames("trail expanded", summary, messageAbove, search, messageBelow)
+        XCTAssertEqual(
+            messageAbove.frame.midY, collapsedAboveY, accuracy: 2,
+            "A message above the activity does not move"
+        )
+        assertAbsoluteFramesUnchanged(allAboveFrames)
+        XCTAssertEqual(
+            messageBelow.frame.midY, collapsedBelowY + 120, accuracy: 2,
+            "The message below moves by the three revealed 40-point operation rows"
+        )
+        XCTAssertGreaterThan(
+            search.frame.midY, summary.frame.midY,
+            "Revealed operations are laid out below the stationary worked-for marker"
+        )
+        let reasoning = app.staticTexts["Reviewed the question and identified the relevant definition"]
+        let tool = app.staticTexts["Compared the definition with the learner's drawing"]
+        XCTAssertTrue(reasoning.exists)
+        XCTAssertTrue(tool.exists)
+        logActivityFrames("complete expanded hierarchy", summary, reasoning, search, tool, messageBelow)
+        assertOrderedWithoutOverlap([summary, reasoning, search, tool, messageBelow])
+
+        let collapsedSearchY = search.frame.midY
+        search.tap()
+        var firstSource = app.descendants(matching: .any)["Vector analysis, britannica.com"]
+        XCTAssertTrue(firstSource.waitForExistence(timeout: 2))
+        XCTAssertEqual(
+            summary.frame.midY, collapsedSummaryY, accuracy: 2,
+            "Opening a nested search keeps the trail summary anchored too"
+        )
+        XCTAssertEqual(
+            search.frame.midY, collapsedSearchY, accuracy: 2,
+            "The clicked search row stays at the same absolute screen position"
+        )
+        assertActivityAnchorDidNotDrift(summary)
+        XCTAssertTrue(firstSource.isHittable)
+        logActivityFrames("search expanded", summary, search, firstSource, messageBelow)
+        let expandedAttachment = XCTAttachment(screenshot: app.screenshot())
+        expandedAttachment.name = "Activity trail fully expanded"
+        expandedAttachment.lifetime = .keepAlways
+        add(expandedAttachment)
+        XCTAssertGreaterThanOrEqual(
+            firstSource.frame.minY, search.frame.maxY - 1,
+            "Sources begin below their search row instead of painting over it"
+        )
+
+        search.tap()
+        XCTAssertEqual(
+            summary.frame.midY, collapsedSummaryY, accuracy: 2,
+            "Closing a nested search keeps the trail summary anchored"
+        )
+        XCTAssertEqual(search.frame.midY, collapsedSearchY, accuracy: 2)
+        assertActivityAnchorDidNotDrift(summary)
+
+        // Collapse the outer trail while the nested row is closed. That keeps the
+        // next chat message visible throughout the transition, so the frame probe
+        // verifies the complete lower sibling group moving upward coherently.
+        let expandedSummary = app.buttons["Worked for 30s"]
+        XCTAssertTrue(expandedSummary.waitForExistence(timeout: 2))
+        expandedSummary.tap()
+        Thread.sleep(forTimeInterval: 0.5)
+        XCTAssertFalse(app.buttons["Searched 5 websites"].isHittable)
+        let collapsedAgain = app.buttons["Worked for 30s"]
+        XCTAssertTrue(collapsedAgain.waitForExistence(timeout: 2))
+        XCTAssertEqual(
+            collapsedAgain.frame.midY, collapsedSummaryY, accuracy: 2,
+            "Closing activity returns the lower content without moving the summary itself"
+        )
+        assertActivityAnchorDidNotDrift(collapsedAgain)
+        XCTAssertEqual(messageAbove.frame.midY, collapsedAboveY, accuracy: 2)
+        XCTAssertEqual(messageBelow.frame.midY, collapsedBelowY, accuracy: 2)
+
+        collapsedAgain.tap()
+        XCTAssertTrue(app.buttons["Searched 5 websites"].waitForExistence(timeout: 2))
+        XCTAssertEqual(
+            collapsedAgain.frame.midY, collapsedSummaryY, accuracy: 2,
+            "Reopening after a collapse does not retain a stale scroll offset"
+        )
+        assertActivityAnchorDidNotDrift(collapsedAgain)
+
+        let reopenedSearch = app.buttons["Searched 5 websites"]
+        reopenedSearch.tap()
+        firstSource = app.descendants(matching: .any)["Vector analysis, britannica.com"]
+        XCTAssertTrue(firstSource.waitForExistence(timeout: 2))
+        XCTAssertTrue(firstSource.isHittable)
+        let chat = app.descendants(matching: .any)["chat-scroll"]
+        XCTAssertTrue(chat.exists)
+
+        // This regression used to pass a single tap and still fail immediately
+        // afterward. Exercise three complete nested + outer cycles before the
+        // scroll round-trip. Every transition is sampled by the in-app
+        // CADisplayLink probe, not only checked after it settles.
+        for cycle in 1...3 {
+            XCTAssertTrue(summary.isHittable, "Cycle \(cycle): worked-for row must remain reachable")
+            XCTAssertTrue(search.isHittable, "Cycle \(cycle): expanded search row must be reachable")
+
+            var summaryY = summary.frame.midY
+            var searchY = search.frame.midY
+            var lowerY = messageBelow.frame.midY
+            search.tap()
+            XCTAssertEqual(summary.frame.midY, summaryY, accuracy: 0.75)
+            XCTAssertEqual(search.frame.midY, searchY, accuracy: 0.75)
+            XCTAssertEqual(messageBelow.frame.midY, lowerY - 150, accuracy: 1)
+            assertActivityAnchorDidNotDrift(summary)
+
+            summaryY = summary.frame.midY
+            lowerY = messageBelow.frame.midY
+            summary.tap()
+            XCTAssertFalse(search.isHittable)
+            XCTAssertEqual(summary.frame.midY, summaryY, accuracy: 0.75)
+            XCTAssertEqual(messageBelow.frame.midY, lowerY - 120, accuracy: 1)
+            assertActivityAnchorDidNotDrift(summary)
+
+            summaryY = summary.frame.midY
+            lowerY = messageBelow.frame.midY
+            summary.tap()
+            XCTAssertTrue(search.waitForExistence(timeout: 2))
+            XCTAssertTrue(search.isHittable)
+            XCTAssertEqual(summary.frame.midY, summaryY, accuracy: 0.75)
+            XCTAssertEqual(messageBelow.frame.midY, lowerY + 120, accuracy: 1)
+            assertActivityAnchorDidNotDrift(summary)
+
+            summaryY = summary.frame.midY
+            searchY = search.frame.midY
+            lowerY = messageBelow.frame.midY
+            search.tap()
+            firstSource = app.descendants(matching: .any)["Vector analysis, britannica.com"]
+            XCTAssertTrue(firstSource.waitForExistence(timeout: 2))
+            XCTAssertTrue(firstSource.isHittable)
+            XCTAssertEqual(summary.frame.midY, summaryY, accuracy: 0.75)
+            XCTAssertEqual(search.frame.midY, searchY, accuracy: 0.75)
+            XCTAssertEqual(messageBelow.frame.midY, lowerY + 150, accuracy: 1)
+            assertActivityAnchorDidNotDrift(summary)
+            assertOrderedWithoutOverlap([summary, reasoning, search, firstSource, tool, messageBelow])
+        }
+
+        for _ in 0..<4 where messageBelow.frame.maxY > chat.frame.maxY {
+            chat.swipeUp()
+        }
+        XCTAssertGreaterThanOrEqual(messageBelow.frame.minY, chat.frame.minY)
+        XCTAssertLessThanOrEqual(
+            messageBelow.frame.maxY, chat.frame.maxY,
+            "The newest tutor answer must remain reachable after repeated disclosure cycles"
+        )
+
+        // Exercise the reverse scroll direction as well, then return to the
+        // newest answer a second time. No disclosure is toggled at the hard
+        // scroll boundary because preserving a point there would require
+        // visible overscroll whitespace.
+        chat.swipeDown()
+        XCTAssertTrue(summary.isHittable, "The activity summary must remain reachable when scrolling into history")
+        for _ in 0..<4 where messageBelow.frame.maxY > chat.frame.maxY {
+            chat.swipeUp()
+        }
+        XCTAssertLessThanOrEqual(messageBelow.frame.maxY, chat.frame.maxY)
+    }
+
+    /// The app samples the marker's presentation layer on every display frame.
+    /// XCUITest itself waits for animations to become idle after a tap, so a
+    /// settled-frame assertion alone cannot catch the one-frame jump this
+    /// regression originally had.
+    private func assertActivityAnchorDidNotDrift(
+        _ summary: XCUIElement,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let value = summary.value as? String ?? ""
+        XCTContext.runActivity(named: "Raw frame diagnostics: \(value)") { _ in }
+        guard let drift = activityMetric("anchor drift", in: value),
+              let aboveDrift = activityMetric("above drift", in: value),
+              let belowSpread = activityMetric("below spread", in: value),
+              let reversals = activityMetric("reversals", in: value),
+              let maxStep = activityMetric("max step", in: value),
+              let samples = activityMetric("samples", in: value)
+        else {
+            XCTFail("Missing activity anchor drift measurement in accessibility value: \(value)", file: file, line: line)
+            return
+        }
+        XCTContext.runActivity(
+            named: "Frame diagnostics: anchor=\(drift), above=\(aboveDrift), spread=\(belowSpread), reversals=\(reversals), maxStep=\(maxStep), samples=\(samples)"
+        ) { _ in }
+        XCTAssertLessThanOrEqual(
+            drift, 0.75,
+            "Worked-for marker moved \(drift) points during the rendered transition",
+            file: file,
+            line: line
+        )
+        XCTAssertLessThanOrEqual(
+            aboveDrift, 0.75,
+            "At least one visible row above the clicked disclosure moved in absolute window coordinates: \(value)",
+            file: file,
+            line: line
+        )
+        XCTAssertLessThanOrEqual(
+            belowSpread, 0.75,
+            "Rows below the disclosure did not translate as one coherent group",
+            file: file,
+            line: line
+        )
+        XCTAssertEqual(
+            reversals, 0,
+            "Rows below the disclosure reversed direction during a single transition",
+            file: file,
+            line: line
+        )
+        XCTAssertLessThanOrEqual(
+            maxStep, 40,
+            "A lower row jumped more than 40 points in one rendered frame",
+            file: file,
+            line: line
+        )
+        XCTAssertGreaterThanOrEqual(
+            samples, 5,
+            "The transition was not sampled across enough rendered frames",
+            file: file,
+            line: line
+        )
+    }
+
+    private func activityMetric(_ name: String, in value: String) -> Double? {
+        value.components(separatedBy: "; ")
+            .first { $0.hasPrefix("\(name) ") }
+            .flatMap { Double($0.dropFirst(name.count + 1)) }
+    }
+
+    private func absoluteFrames(_ elements: [XCUIElement]) -> [String: CGRect] {
+        Dictionary(uniqueKeysWithValues: elements.map { ($0.label, $0.frame) })
+    }
+
+    private func assertAbsoluteFramesUnchanged(
+        _ baseline: [String: CGRect],
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        for (label, frame) in baseline {
+            let element = XCUIApplication().staticTexts[label]
+            XCTAssertTrue(element.exists, "Missing stationary row \(label)", file: file, line: line)
+            XCTAssertEqual(
+                element.frame.midY, frame.midY, accuracy: 0.75,
+                "\(label) changed absolute screen position",
+                file: file,
+                line: line
+            )
+        }
+    }
+
+    private func logActivityFrames(_ state: String, _ elements: XCUIElement...) {
+        let frames = elements.map {
+            $0.exists ? "\($0.label)=\($0.frame)" : "offscreen element"
+        }.joined(separator: "; ")
+        XCTContext.runActivity(named: "Activity frames [\(state)]: \(frames)") { _ in }
+    }
+
+    private func assertOrderedWithoutOverlap(
+        _ elements: [XCUIElement],
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        for (upper, lower) in zip(elements, elements.dropFirst()) {
+            XCTAssertGreaterThanOrEqual(
+                lower.frame.minY, upper.frame.maxY - 1,
+                "\(lower.label) must be below \(upper.label), not overlap it",
+                file: file,
+                line: line
+            )
+        }
+    }
 
     func testDockedStartRendersScreen05() {
         let app = launch(["--ui-state", "docked-start", "--ui-fixture", "--ui-freeze"])
@@ -985,9 +1294,11 @@ final class MathTutorUITests: XCTestCase {
         _ arguments: [String] = [],
         resetting: Bool = true,
         environment: [String: String] = [:],
+        acceptedWindowSizes requestedWindowSizes: [CGSize]? = nil,
         file: StaticString = #filePath,
         line: UInt = #line
     ) -> XCUIApplication {
+        let acceptedWindowSizes = requestedWindowSizes ?? [Self.designSize]
         var lastFrame: CGRect = .zero
         for attempt in 1...3 {
             XCUIDevice.shared.orientation = .landscapeLeft
@@ -1008,7 +1319,9 @@ final class MathTutorUITests: XCTestCase {
             // it. Measured on a portrait device the window is (0, 301, 1032, 774) — the
             // rectangle between two 301pt black bars — which is what this catches.
             lastFrame = app.windows.firstMatch.frame
-            if Self.isDesignSized(lastFrame) { return app }
+            if acceptedWindowSizes.contains(where: { Self.frame(lastFrame, matches: $0) }) {
+                return app
+            }
 
             XCTContext.runActivity(named: "Launch \(attempt) came up at \(lastFrame.size), rotating again") { _ in }
             app.terminate()
@@ -1017,7 +1330,7 @@ final class MathTutorUITests: XCTestCase {
         XCTFail(
             """
             The device did not rotate to landscape: the app came up at \(lastFrame.size) \
-            rather than the design's \(Self.designSize). Every geometry assertion in this \
+            rather than one of the accepted landscape sizes \(acceptedWindowSizes). Every geometry assertion in this \
             suite measures against that frame, so the run is stopped rather than reported \
             against a letterboxed screen.
             """,
@@ -1027,8 +1340,12 @@ final class MathTutorUITests: XCTestCase {
         return XCUIApplication()
     }
 
+    private static func frame(_ frame: CGRect, matches size: CGSize) -> Bool {
+        abs(frame.width - size.width) < 1 && abs(frame.height - size.height) < 1
+    }
+
     private static func isDesignSized(_ frame: CGRect) -> Bool {
-        abs(frame.width - designSize.width) < 1 && abs(frame.height - designSize.height) < 1
+        self.frame(frame, matches: designSize)
     }
 
     /// The board on the **reference** screen — a `--ui-fixture` run, which is laid out from

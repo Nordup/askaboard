@@ -245,18 +245,18 @@ struct ChatScrollColumn<Content: View>: View {
                     // Centres the column in the bled box, so the scroll content is exactly
                     // as wide as the scroll view and nothing offers to scroll sideways.
                     .frame(width: clipWidth)
-            }
-            .scrollBounceBehavior(.basedOnSize)
-            // The inversion itself — see `Anchor.newestFirst`. Applied to the scroll view,
-            // not inside it, so the scroller's own machinery never sees the flip.
-            .scaleEffect(x: 1, y: anchor == .newestFirst ? -1 : 1)
-            // A scroll view clips to its bounds, and that is the whole reason this frame is
-            // here: clipping to the column would cut the halos and shadows down their edges.
-            .frame(width: clipWidth, height: proxy.size.height)
-            // Back to the column for layout. A frame does not clip, so the bleed hangs
-            // symmetrically outside this one and the content keeps the x it had.
-            .frame(width: proxy.size.width, height: proxy.size.height)
-            .accessibilityIdentifier("chat-scroll")
+                }
+                .scrollBounceBehavior(.basedOnSize)
+                // The inversion itself — see `Anchor.newestFirst`. Applied to the scroll view,
+                // not inside it, so the scroller's own machinery never sees the flip.
+                .scaleEffect(x: 1, y: anchor == .newestFirst ? -1 : 1)
+                // A scroll view clips to its bounds, and that is the whole reason this frame is
+                // here: clipping to the column would cut the halos and shadows down their edges.
+                .frame(width: clipWidth, height: proxy.size.height)
+                // Back to the column for layout. A frame does not clip, so the bleed hangs
+                // symmetrically outside this one and the content keeps the x it had.
+                .frame(width: proxy.size.width, height: proxy.size.height)
+                .accessibilityIdentifier("chat-scroll")
         }
         .frame(width: width)
     }
@@ -319,27 +319,36 @@ struct MessageThread<Accessory: View>: View {
     /// The scroller is flipped (`ChatScrollColumn.Anchor.newestFirst`), so layout-top is the
     /// visual bottom: the newest message is the first row, the rest position — offset zero,
     /// no anchor, no estimate — shows it, and the lazy stack realizes from the newest
-    /// *backwards*. History is built only when the learner scrolls for it, which is what
-    /// keeps a long session scrolling on an iPad: every row here carries a SwiftUI hosting
-    /// bridge per formula, and a stack that materializes them all keeps every formula-backed
-    /// `MTMathUILabel` alive and re-measured on layout passes while offscreen. It is also
-    /// what makes the white mount structurally impossible — the rows the lazy stack builds
-    /// first are the rows the rest position shows, on every mount, whatever the history's
-    /// heights turn out to be.
+    /// *backwards*. The recent twelve turns are one eager block: those are the rows whose
+    /// height can change while work streams or a disclosure opens, and iPadOS 17's
+    /// `LazyVStack` can otherwise publish an estimated intermediate height that visibly
+    /// shifts the whole inverted thread for one frame. Older history remains a nested lazy
+    /// stack, so formula-backed rows are still realized only when the learner scrolls to
+    /// them instead of keeping every `MTMathUILabel` alive and remeasuring offscreen.
     ///
-    /// Each row is counter-flipped individually. It must be the row and not a group: a row
-    /// has to stay a direct child of the lazy stack to be lazily realized, and a single flip
-    /// per direct child is what puts every glyph upright while the reversed `ForEach` sets
-    /// the reading order.
+    /// Each row is counter-flipped individually. That keeps every glyph upright while the
+    /// reversed collections set the reading order; the recent group changes only
+    /// realization policy, not orientation or chronology.
     private var threadContent: some View {
-        LazyVStack(alignment: .leading, spacing: metrics.gap) {
+        VStack(alignment: .leading, spacing: metrics.gap) {
             accessoryBlock
-            ForEach(items.reversed()) { item in
-                MessageRow(
-                    item: item, scale: scale, width: column, crop: crop,
-                    onEditMessage: onEditMessage
-                )
-                .scaleEffect(x: 1, y: -1)
+            // The active end is one eagerly laid-out child of the lazy history.
+            // A self-sizing lazy row whose activity height changes can briefly
+            // publish an estimated height on iPadOS 17, moving every rendered
+            // row for one frame. Keeping the recent conversation in a stable
+            // eager block removes that estimate while older formula-heavy
+            // history remains lazy and is realized only when scrolled to.
+            VStack(alignment: .leading, spacing: metrics.gap) {
+                ForEach(recentItems) { item in
+                    threadRow(item)
+                }
+            }
+            if !olderItems.isEmpty {
+                LazyVStack(alignment: .leading, spacing: metrics.gap) {
+                    ForEach(olderItems) { item in
+                        threadRow(item)
+                    }
+                }
             }
         }
         // The metrics keep their visual meaning; the flip decides which layout edge carries
@@ -349,6 +358,24 @@ struct MessageThread<Accessory: View>: View {
         .padding(.top, metrics.bottomPadding)
         .padding(.bottom, metrics.topPadding)
     }
+
+    private var recentItems: [ChatThreadItem] {
+        Array(items.reversed().prefix(Self.eagerRecentLimit))
+    }
+
+    private var olderItems: [ChatThreadItem] {
+        Array(items.reversed().dropFirst(Self.eagerRecentLimit))
+    }
+
+    private func threadRow(_ item: ChatThreadItem) -> some View {
+                MessageRow(
+                    item: item, scale: scale, width: column, crop: crop,
+                    onEditMessage: onEditMessage
+                )
+                .scaleEffect(x: 1, y: -1)
+    }
+
+    private static var eagerRecentLimit: Int { 12 }
 
     /// The accessory, counter-flipped as one block.
     ///
@@ -396,7 +423,6 @@ struct MessageRow: View {
     var crop: (UUID) -> Data? = { _ in nil }
     /// See `MessageThread`'s property of the same name — threaded straight through.
     var onEditMessage: ((UUID) -> Void)? = nil
-
     private var metrics: MessageMetrics { .for(scale, width: width ?? scale.contentWidth) }
 
     /// The chips a sent turn carried — `sentMessage`'s stack rather than the thread's own
@@ -408,19 +434,20 @@ struct MessageRow: View {
     private var chipsAlone: AttachmentStackMetrics { .sentChipsAlone(in: metrics.rowWidth) }
 
     var body: some View {
-        switch item.message.role {
-        case .learner:
+        Group {
+            switch item.message.role {
+            case .learner:
             // Board 14: a marqueed region is an image the learner sent, so it sits
             // on their turn, against the same trailing edge as their bubble and
             // joined to it by `replyGap` rather than the thread's message gap.
-            VStack(alignment: .trailing, spacing: BoardViewsMetrics.replyGap) {
-                if let selectionView = item.selectionView {
-                    BoardViewThumbnail(view: selectionView)
+                VStack(alignment: .trailing, spacing: BoardViewsMetrics.replyGap) {
+                    if let selectionView = item.selectionView {
+                        BoardViewThumbnail(view: selectionView)
+                    }
+                    sentAttachments
                 }
-                sentAttachments
-            }
-            .frame(width: metrics.rowWidth, alignment: .trailing)
-        case .tutor, .system:
+                .frame(width: metrics.rowWidth, alignment: .trailing)
+            case .tutor, .system:
             // The design has two authors and the domain has three. A system line is the
             // surface talking, not the student, so it takes the tutor's register rather
             // than being dropped — dropping it would hide content the caller chose to add.
@@ -432,17 +459,25 @@ struct MessageRow: View {
             // itself and persists with it, unlike a photo of a board region a moment ago,
             // so every tutor message in history draws its own trail here, not only the
             // most recent one.
-            VStack(alignment: .leading, spacing: BoardViewsMetrics.replyGap) {
-                if let activity = item.message.activity, !activity.isEmpty {
-                    ActivityTrailView(trail: activity, width: metrics.rowWidth, crop: crop)
+                VStack(alignment: .leading, spacing: BoardViewsMetrics.replyGap) {
+                    let activity = (item.message.activity ?? ActivityTrail())
+                        .includingLegacySources(item.message.sources)
+                    if !activity.isEmpty {
+                        ActivityTrailView(
+                            trail: activity,
+                            width: metrics.rowWidth,
+                            crop: crop,
+                            diagnosticNamespace: "message:\(item.message.text.prefix(32)):\(item.id.uuidString):activity"
+                        )
+                    }
+                    TutorMessageText(markdown: item.message.text, metrics: metrics)
                 }
-                TutorMessageText(markdown: item.message.text, metrics: metrics)
-                if !item.message.sources.isEmpty {
-                    SourcesView(sources: item.message.sources, width: metrics.rowWidth)
-                }
+                .frame(width: metrics.rowWidth, alignment: .leading)
             }
-            .frame(width: metrics.rowWidth, alignment: .leading)
         }
+        .background(ActivityLayoutFrameMarker(
+            id: "message:\(item.message.text.prefix(32)):\(item.id.uuidString)"
+        ))
     }
 
     /// The chips this turn was sent with, above the words.

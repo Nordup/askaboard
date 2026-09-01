@@ -15,7 +15,9 @@
 //           note/17 — header crop (652-0), 07 — Tutor · full screen (ZU-0) and 19 — Sessions
 //           drawer · full screen (69J-0) — ui/sidebar-toggle, drawn inside btn/sidebar-toggle
 //           in the chat header rather than as a specimen
-// Glyphs:   27 product glyphs.
+//           34 — Tutor · unified activity — trail/terminal and trail/globe, read directly from
+//           the approved activity rows
+// Glyphs:   29 product glyphs.
 // Prose:    docs/design-system/04-icons.md
 //           docs/design-system/06-states-and-settings.md
 //           docs/design-system/02-shell-components.md
@@ -890,7 +892,7 @@ enum IconPaths {
     )
 
 
-    /// `trail/eye` — renders 24 (product draws it at 16, 24) on a 24×24 viewBox, 2.0pt
+    /// `trail/eye` — renders 16 (product draws it at 16, 24) on a 24×24 viewBox, 2.0pt
     /// effective stroke, --color-icon.
     ///
     /// The tutor looked at the board — the `view_board` row in the activity trail. A lens of
@@ -910,7 +912,7 @@ enum IconPaths {
     static let trailEye = IconGlyph(
         name: "trail/eye",
         viewBox: CGSize(width: 24, height: 24),
-        renderSize: 24,
+        renderSize: 16,
         productRenderSizes: [16, 24],
         strokeWidth: 2,
         colorToken: "--color-icon",
@@ -937,7 +939,7 @@ enum IconPaths {
     )
 
 
-    /// `trail/search` — renders 24 on a 24×24 viewBox, 2.0pt effective stroke, --color-icon.
+    /// `trail/search` — renders 16 on a 24×24 viewBox, 2.0pt effective stroke, --color-icon.
     ///
     /// Memory was searched — the `search_memory` and `recent_sessions` rows, which share one
     /// glyph because the learner does not care which of the two the tutor reached for. Ring r7
@@ -951,7 +953,7 @@ enum IconPaths {
     static let trailSearch = IconGlyph(
         name: "trail/search",
         viewBox: CGSize(width: 24, height: 24),
-        renderSize: 24,
+        renderSize: 16,
         productRenderSizes: [16],
         strokeWidth: 2,
         colorToken: "--color-icon",
@@ -978,7 +980,7 @@ enum IconPaths {
     )
 
 
-    /// `trail/plan` — renders 24 on a 24×24 viewBox, 2.0pt effective stroke, --color-icon.
+    /// `trail/plan` — renders 16 on a 24×24 viewBox, 2.0pt effective stroke, --color-icon.
     ///
     /// The plan and board exercise were replaced — the `set_workspace` row. Three rules at y
     /// 6.5/12/17.5 with a bullet each, spanning 2.45 to 21.6 (80%), the widest of the four and
@@ -993,7 +995,7 @@ enum IconPaths {
     static let trailPlan = IconGlyph(
         name: "trail/plan",
         viewBox: CGSize(width: 24, height: 24),
-        renderSize: 24,
+        renderSize: 16,
         productRenderSizes: [16],
         strokeWidth: 2,
         colorToken: "--color-icon",
@@ -1056,7 +1058,7 @@ enum IconPaths {
     )
 
 
-    /// `trail/note` — renders 24 on a 24×24 viewBox, 2.0pt effective stroke, --color-icon.
+    /// `trail/note` — renders 16 on a 24×24 viewBox, 2.0pt effective stroke, --color-icon.
     ///
     /// Something was saved for a future session — the `remember` row. One closed polygon, 12.8
     /// wide by 16.6 tall, whose notch rises to 15.1 and leaves the tails 5.2 units proud. It is
@@ -1071,7 +1073,7 @@ enum IconPaths {
     static let trailNote = IconGlyph(
         name: "trail/note",
         viewBox: CGSize(width: 24, height: 24),
-        renderSize: 24,
+        renderSize: 16,
         productRenderSizes: [16],
         strokeWidth: 2,
         colorToken: "--color-icon",
@@ -1084,6 +1086,75 @@ enum IconPaths {
                 lineJoin: .round,
                 dash: nil,
                 designStrokeWidth: 2
+            ),
+        ]
+    )
+
+
+    /// `trail/terminal` — renders 20 on a 24×24 viewBox, 1.5pt effective stroke, --color-icon.
+    ///
+    /// The unified activity row's tool-operation mark from Paper board 34: a rounded terminal
+    /// frame containing a prompt chevron and baseline. Geometry is copied directly from the
+    /// approved row.
+    static let trailTerminal = IconGlyph(
+        name: "trail/terminal",
+        viewBox: CGSize(width: 24, height: 24),
+        renderSize: 20,
+        productRenderSizes: [20],
+        strokeWidth: 1.5,
+        colorToken: "--color-icon",
+        elements: [
+            IconElement(
+                geometry: .rect(x: 3.25, y: 3.25, width: 17.5, height: 17.5, cornerRadius: 4),
+                isFilled: false,
+                isStroked: true,
+                lineCap: .butt,
+                lineJoin: .miter,
+                dash: nil,
+                designStrokeWidth: 1.5
+            ),
+            IconElement(
+                geometry: .path("M7.5 9l3 3-3 3M13 15h3.5"),
+                isFilled: false,
+                isStroked: true,
+                lineCap: .round,
+                lineJoin: .round,
+                dash: nil,
+                designStrokeWidth: 1.5
+            ),
+        ]
+    )
+
+
+    /// `trail/globe` — renders 20 on a 24×24 viewBox, 1.5pt effective stroke, --color-brand.
+    ///
+    /// The unified activity row's web-search mark from Paper board 34: an outer globe, equator,
+    /// and longitude arcs in brand violet. Geometry is copied directly from the approved row.
+    static let trailGlobe = IconGlyph(
+        name: "trail/globe",
+        viewBox: CGSize(width: 24, height: 24),
+        renderSize: 20,
+        productRenderSizes: [20],
+        strokeWidth: 1.5,
+        colorToken: "--color-brand",
+        elements: [
+            IconElement(
+                geometry: .circle(centerX: 12, centerY: 12, radius: 8.5),
+                isFilled: false,
+                isStroked: true,
+                lineCap: .butt,
+                lineJoin: .miter,
+                dash: nil,
+                designStrokeWidth: 1.5
+            ),
+            IconElement(
+                geometry: .path("M3.8 12h16.4M12 3.5c2.1 2.3 3.2 5.1 3.2 8.5s-1.1 6.2-3.2 8.5M12 3.5C9.9 5.8 8.8 8.6 8.8 12s1.1 6.2 3.2 8.5"),
+                isFilled: false,
+                isStroked: true,
+                lineCap: .round,
+                lineJoin: .miter,
+                dash: nil,
+                designStrokeWidth: 1.35
             ),
         ]
     )
@@ -1166,6 +1237,8 @@ enum IconPaths {
         case .trailSearch: Self.trailSearch
         case .trailPlan: Self.trailPlan
         case .trailNote: Self.trailNote
+        case .trailTerminal: Self.trailTerminal
+        case .trailGlobe: Self.trailGlobe
         case .uiSidebarToggle: Self.uiSidebarToggle
         }
     }

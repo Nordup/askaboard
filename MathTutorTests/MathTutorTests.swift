@@ -1374,6 +1374,38 @@ final class MathTutorTests: XCTestCase {
         XCTAssertEqual(step.imageID, first.imageID)
     }
 
+    func testSearchResultsReplaceTheirToolStepInPlaceAndMerge() {
+        let first = TutorSource(id: "a", title: "First", url: "https://www.example.com/a", snippet: nil)
+        let refined = TutorSource(id: "a", title: "First", url: "https://www.example.com/a", snippet: "Updated")
+        let second = TutorSource(id: "b", title: "Second", url: "https://example.org/b", snippet: nil)
+        var trail = ActivityTrail()
+        trail.appendReasoning("Checking sources")
+        trail.upsert(TrailStep(id: "call_search", tool: "web_search", label: "Searching the web"))
+        trail.upsertSearch(id: "call_search", query: "vectors", sources: [first])
+        trail.upsertSearch(id: "call_search", query: "vectors", sources: [refined, second])
+
+        XCTAssertEqual(trail.items.count, 2)
+        guard case let .search(search) = trail.items[1] else {
+            return XCTFail("expected the generic web-search step to become one search group")
+        }
+        XCTAssertEqual(search.id, "call_search")
+        XCTAssertEqual(search.sources, [refined, second])
+    }
+
+    func testLegacySourcesOnlyAddRowsMissingFromTheTrail() {
+        let represented = TutorSource(id: "a", title: "First", url: "https://example.com/a", snippet: nil)
+        let missing = TutorSource(id: "b", title: "Second", url: "https://example.org/b", snippet: nil)
+        var trail = ActivityTrail()
+        trail.upsertSearch(id: "search", query: "vectors", sources: [represented])
+
+        let display = trail.includingLegacySources([represented, missing])
+        XCTAssertEqual(display.items.count, 2)
+        guard case let .search(legacy) = display.items[1] else {
+            return XCTFail("expected one compatibility search group")
+        }
+        XCTAssertEqual(legacy.sources, [missing])
+    }
+
     func testATutorMessageWrittenBeforeTrailsExistedStillDecodes() throws {
         let json = Data("""
         {"id":"\(UUID().uuidString)","role":"tutor","text":"Hello","createdAt":0}
@@ -1401,6 +1433,11 @@ final class MathTutorTests: XCTestCase {
         var trail = ActivityTrail()
         trail.appendReasoning("Checking the domain")
         trail.upsert(TrailStep(id: "call_a", tool: "view_board", label: "Looked at the top left of the board"))
+        trail.upsertSearch(
+            id: "call_search",
+            query: "radical equations",
+            sources: [TutorSource(id: "source", title: "A source", url: "https://example.com", snippet: nil)]
+        )
         trail.duration = 75
         var message = TutorMessage(role: .tutor, text: "Try squaring both sides.")
         message.activity = trail

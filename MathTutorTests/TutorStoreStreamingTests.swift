@@ -582,6 +582,12 @@ final class TutorStoreStreamingTests: XCTestCase {
                 url: "https://example.com/radical", snippet: nil
             ),
         ])
+        guard case let .search(search)? = tutor?.activity?.items.last else {
+            return XCTFail("expected sources to be grouped into the activity trail")
+        }
+        XCTAssertEqual(search.id, "s_1")
+        XCTAssertEqual(search.query, "radical equations")
+        XCTAssertEqual(search.sources, tutor?.sources)
     }
 
     /// The server repeats `searching` while its focused web request has no

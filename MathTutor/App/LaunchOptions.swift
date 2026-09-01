@@ -14,6 +14,7 @@ import Foundation
 struct LaunchOptions: Sendable {
     static let stateArgument = "--ui-state"
     static let fixtureArgument = "--ui-fixture"
+    static let activityFixtureArgument = "--ui-activity-fixture"
     static let freezeArgument = "--ui-freeze"
     /// `--ui-window 1024x768` — the window `BoardScreen` must lay itself out in.
     static let windowArgument = "--ui-window"
@@ -32,6 +33,7 @@ struct LaunchOptions: Sendable {
 
     let screen: Screen?
     let usesFixtureCopy: Bool
+    let usesActivityFixture: Bool
     /// Disables animation and the orb's idle motion so a screenshot is stable.
     let isFrozen: Bool
 
@@ -50,6 +52,7 @@ struct LaunchOptions: Sendable {
     init(arguments: [String]) {
         screen = Self.value(after: Self.stateArgument, in: arguments).flatMap(Screen.init(rawValue:))
         usesFixtureCopy = arguments.contains(Self.fixtureArgument)
+        usesActivityFixture = arguments.contains(Self.activityFixtureArgument)
         isFrozen = arguments.contains(Self.freezeArgument)
         window = Self.value(after: Self.windowArgument, in: arguments).flatMap(Self.size(from:))
     }
@@ -97,7 +100,8 @@ struct LaunchOptions: Sendable {
     /// draws at its tail in every state rather than only mid-turn, so the fixture has nothing
     /// left to say about it.
     var fixtureThread: [ChatThreadItem]? {
-        usesFixtureCopy ? Self.screen08Thread : nil
+        if usesActivityFixture { return Self.activityThread }
+        return usesFixtureCopy ? Self.screen08Thread : nil
     }
 
     private static func value(after flag: String, in arguments: [String]) -> String? {
@@ -120,5 +124,39 @@ struct LaunchOptions: Sendable {
         ChatThreadItem(TutorMessage(role: .learner, text: "is my (x, y) label right?"), hasSelection: true),
         ChatThreadItem(TutorMessage(role: .tutor, text: "Yes — that point is the head of the vector, so (x, y) are exactly its components.")),
     ]
+
+    /// A focused fixture for the unified activity trail. It uses the same
+    /// production domain objects and view path as a streamed turn; only the
+    /// events have already settled so disclosure can be exercised without a
+    /// network dependency.
+    private static let activityThread: [ChatThreadItem] = {
+        var trail = ActivityTrail()
+        trail.appendReasoning("Reviewed the question and identified the relevant definition")
+        trail.upsertSearch(
+            id: "search_1",
+            query: "vector definition",
+            sources: [
+                TutorSource(id: "britannica", title: "Vector analysis", url: "https://www.britannica.com/science/vector-analysis", snippet: nil),
+                TutorSource(id: "mathworld", title: "Vector", url: "https://mathworld.wolfram.com/Vector.html", snippet: nil),
+                TutorSource(id: "khan", title: "Vectors", url: "https://www.khanacademy.org/math/linear-algebra/vectors-and-spaces", snippet: nil),
+                TutorSource(id: "openstax", title: "Vectors in two dimensions", url: "https://openstax.org/books/physics/pages/5-1-vector-addition-and-subtraction-graphical-methods", snippet: nil),
+                TutorSource(id: "mit", title: "Vectors and matrices", url: "https://ocw.mit.edu/courses/18-06-linear-algebra-spring-2010/", snippet: nil),
+            ]
+        )
+        trail.upsert(TrailStep(id: "tool_2", tool: "view_board", label: "Compared the definition with the learner's drawing"))
+        trail.duration = 30
+        var response = TutorMessage(role: .tutor, text: "Your label is right: the arrow's head records its x and y components.")
+        response.activity = trail
+        let olderHistory = (1...12).map { index in
+            ChatThreadItem(TutorMessage(
+                role: index.isMultiple(of: 2) ? .tutor : .learner,
+                text: "Earlier vector discussion \(index)"
+            ))
+        }
+        return olderHistory + [
+            ChatThreadItem(TutorMessage(role: .learner, text: "Is my vector label right?")),
+            ChatThreadItem(response),
+        ]
+    }()
 }
 #endif

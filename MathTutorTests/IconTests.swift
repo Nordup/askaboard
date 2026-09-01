@@ -449,11 +449,12 @@ final class IconTests: XCTestCase {
     /// `design/icons.json` is the source of truth and names the board each glyph came from.
     /// `ui/sidebar-toggle` is the twenty-seventh and arrived the same way: board 17 takes the
     /// gear out of the chat header and puts this in the slot it leaves, and it is drawn inside
-    /// `btn/sidebar-toggle` rather than as a specimen.
-    func testTheSetIsTheTwentySevenProductGlyphs() {
-        XCTAssertEqual(Icon.allCases.count, 27)
+    /// `btn/sidebar-toggle` rather than as a specimen. Board 34's unified activity row adds
+    /// the terminal and globe marks as twenty-eight and twenty-nine.
+    func testTheSetIsTheTwentyNineProductGlyphs() {
+        XCTAssertEqual(Icon.allCases.count, 29)
         XCTAssertTrue(Icon.allCases.allSatisfy { !$0.rawValue.hasPrefix("os/") })
-        XCTAssertEqual(Set(Icon.allCases.map(\.rawValue)).count, 27)
+        XCTAssertEqual(Set(Icon.allCases.map(\.rawValue)).count, 29)
     }
 
     // MARK: - Transcription
@@ -659,6 +660,10 @@ final class IconTests: XCTestCase {
                 // At 2.4 the frame closes on its six r=1 interior dots and the
                 // mark reads as a blob at true size.
                 XCTAssertEqual(icon.glyph.strokeWidth, 1.9, accuracy: 0.0001)
+            case .trailTerminal, .trailGlobe:
+                // Board 34 authors these compact 20pt activity marks at the
+                // lighter weight visible in the approved reference.
+                XCTAssertEqual(icon.glyph.strokeWidth, 1.5, accuracy: 0.0001)
             default:
                 XCTAssertEqual(
                     icon.glyph.strokeWidth, 2, accuracy: 0.0001,
@@ -809,7 +814,8 @@ final class IconTests: XCTestCase {
             .composerVoice: 26, .composerSend: 26, .composerDismiss: 14,
             .chipExplain: 24, .chipExample: 24, .chipExercise: 24, .chipConfused: 24,
             .boardHinge: 22, .uiPlus: 20,
-            .trailEye: 24, .trailSearch: 24, .trailPlan: 24, .trailNote: 24
+            .trailEye: 16, .trailSearch: 16, .trailPlan: 16, .trailNote: 16,
+            .trailTerminal: 20, .trailGlobe: 20, .uiSidebarToggle: 28
         ]
 
         for icon in Icon.allCases {

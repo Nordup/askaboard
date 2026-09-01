@@ -1809,7 +1809,7 @@ final class TutorStore: ObservableObject {
                         // Answered inside the service, which owns the network and
                         // the renderer. It reaches here only as `.boardViewed`.
                         break
-                    case .searchSources(_, _, let incoming):
+                    case .searchSources(let searchID, let query, let incoming):
                         // Sources are evidence, not token deltas: they arrive as
                         // discrete batches and must be visible even when the turn
                         // only updates the board and writes little or no prose.
@@ -1819,6 +1819,9 @@ final class TutorStore: ObservableObject {
                             message.sources = Self.mergedSources(
                                 existing: message.sources, incoming: incoming
                             )
+                            var trail = message.activity ?? ActivityTrail()
+                            trail.upsertSearch(id: searchID, query: query, sources: incoming)
+                            message.activity = trail
                         }
                     case .workspace(let plan, let exercise):
                         self.mutateSession(turnSession) {

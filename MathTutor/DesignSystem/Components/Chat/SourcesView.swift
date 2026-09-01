@@ -18,7 +18,70 @@ extension TutorSource {
     /// send a search-engine result whose `url` field is not parseable.
     var displayDomain: String {
         guard let host = destinationURL?.host, !host.isEmpty else { return url }
-        return host
+        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    }
+}
+
+/// The compact source line used inside an expanded search operation. It stays
+/// in the same icon and text columns as every operation row — no nested inset,
+/// card, snippet, or second vertical hierarchy.
+struct TrailSourceRow: View {
+    @Environment(\.openURL) private var openURL
+
+    let source: TutorSource
+    var diagnosticID: String? = nil
+    var isAccessibilityHidden = false
+    static let rowHeight: CGFloat = 30
+
+    var body: some View {
+        row
+            .onTapGesture {
+                if let url = source.destinationURL {
+                    openURL(url)
+                }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(
+                isAccessibilityHidden ? "" : SourcesView.cardLabel(for: source)
+            )
+            .accessibilityHint(source.destinationURL == nil ? "" : "Opens this source in your browser")
+            .accessibilityAddTraits(source.destinationURL == nil ? [] : .isLink)
+            .accessibilityHidden(isAccessibilityHidden)
+            .background {
+                if let diagnosticID {
+                    ActivityLayoutFrameMarker(id: diagnosticID)
+                }
+            }
+    }
+
+    private var row: some View {
+        HStack(spacing: 9) {
+            ZStack {
+                Circle().fill(DS.Color.surfaceBubble)
+                Text(monogram)
+                    .textStyle(.label)
+                    .foregroundStyle(DS.Color.inkSecondary)
+            }
+            .frame(width: 20, height: 20)
+            HStack(spacing: DS.Space.s2) {
+                Text(source.title)
+                    .textStyle(.trailLabel)
+                    .foregroundStyle(DS.Color.ink)
+                    .lineLimit(1)
+                Text(source.displayDomain)
+                    .textStyle(.trailReasoning)
+                    .foregroundStyle(DS.Color.inkTertiary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(height: Self.rowHeight)
+        .contentShape(Rectangle())
+    }
+
+    private var monogram: String {
+        let seed = source.displayDomain.first ?? source.title.first
+        return seed.map { String($0).uppercased() } ?? "•"
     }
 }
 

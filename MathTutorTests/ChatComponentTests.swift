@@ -35,6 +35,42 @@ final class ChatComponentTests: XCTestCase {
         XCTAssertEqual(SourcesView.sectionLabel(count: 3), "3 sources")
     }
 
+    func testASourceDisplayDomainDropsTheDecorativeWWWPrefix() {
+        let source = TutorSource(
+            id: "w", title: "BIPM", url: "https://www.bipm.org/si-units", snippet: nil
+        )
+        XCTAssertEqual(source.displayDomain, "bipm.org")
+    }
+
+    func testSearchLabelsUseWebsiteGrammar() {
+        XCTAssertEqual(ActivityTrailView.searchLabel(count: 1), "Searched 1 website")
+        XCTAssertEqual(ActivityTrailView.searchLabel(count: 5), "Searched 5 websites")
+    }
+
+    func testNewOperationsCollapseThePreviousSearchAndCompletionCollapsesEverything() {
+        let source = TutorSource(id: "a", title: "A", url: "https://example.com", snippet: nil)
+        var first = ActivityTrail()
+        first.upsertSearch(id: "search", query: "vectors", sources: [source])
+        var disclosure = TrailDisclosureState(trail: first)
+        XCTAssertEqual(disclosure.expandedItemID, "search")
+
+        var next = first
+        next.upsert(TrailStep(id: "tool", tool: "view_board", label: "Reviewed the board"))
+        disclosure.update(from: first, to: next)
+        XCTAssertNil(disclosure.expandedItemID)
+        XCTAssertTrue(disclosure.isTrailExpanded)
+
+        var completed = next
+        completed.duration = 30
+        disclosure.update(from: next, to: completed)
+        XCTAssertFalse(disclosure.isTrailExpanded)
+        XCTAssertNil(disclosure.expandedItemID)
+
+        disclosure.toggleTrail()
+        XCTAssertTrue(disclosure.isTrailExpanded)
+        XCTAssertNil(disclosure.expandedItemID)
+    }
+
     func testASourceCardOnlyOpensHTTPURLs() {
         let web = TutorSource(
             id: "w", title: "Radical equations",
