@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run the backend service locally with auto-reload.
+# Run the backend service locally without replacing a process mid-turn.
 #
 # Binds 0.0.0.0, not 127.0.0.1, on purpose: the Simulator can reach
 # 127.0.0.1, but a physical iPad on the same Wi-Fi network cannot — it needs
@@ -8,4 +8,4 @@
 # break the physical-device path documented in server/README.md.
 set -euo pipefail
 cd "$(dirname "$0")/../server"
-exec uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8080
+exec uv run uvicorn app.main:app --host 0.0.0.0 --port 8080

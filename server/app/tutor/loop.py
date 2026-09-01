@@ -899,10 +899,14 @@ class _BoardGate:
       provider round is forced to call exactly `view_board`, and that call is
       answered by rendering the **full** board (0,0,100,100) however the model
       wrote its crop — so the model cannot end a turn in prose the moment its
-      draw lands without seeing how it rendered. Only a successfully delivered
-      full-board render clears the pending flag; `BoardUnavailable` keeps it
-      set. A mutation refused `inspect_first`, refused `must_reposition`, a
-      malformed one, or any other tool call does not clear it.
+      draw lands without seeing how it rendered. A successfully delivered
+      full-board render clears the pending flag and records a fresh look. If
+      the device cannot deliver that mandatory review, the force is abandoned
+      after that one failed attempt so the model can report the failure in
+      prose; it is still blind, so no fresh look is recorded and a later
+      mutation remains refused. A mutation refused `inspect_first`, refused
+      `must_reposition`, a malformed one, or any other tool call does not clear
+      it.
 
     Only *valid* mutations are decided here: a malformed call never lands and is
     not recorded, so it neither consumes an inspection nor is counted. On an
@@ -939,6 +943,16 @@ class _BoardGate:
         # board, so any render delivered here while pending is that full-board
         # review render. Delivering it proves the model saw how its draw
         # rendered, so it clears the pending flag.
+        self._pending_review = False
+
+    def abandon_pending_review(self) -> None:
+        """Stop forcing a post-draw view that the device could not deliver.
+
+        This is not a successful look: `_looked` deliberately remains false,
+        so the gate still refuses any later blind mutation. It only prevents
+        one unavailable render from forcing the same doomed tool call forever,
+        allowing the model's next round to tell the learner what failed.
+        """
         self._pending_review = False
 
     @property
@@ -1898,6 +1912,8 @@ async def run_turn(
                         "view_board unanswered | call_id=%s region=%s waited=%.1fs",
                         call_id, request.detail, time.monotonic() - started,
                     )
+                    if board_gate.pending_review:
+                        board_gate.abandon_pending_review()
                     items = [provider.tool_output(
                         call_id=call_id, name=call.get("name") or "",
                         output=UNAVAILABLE_ACK,

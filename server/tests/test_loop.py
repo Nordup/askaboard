@@ -760,19 +760,15 @@ async def test_a_landed_mutation_forces_a_tool_round_until_a_delivered_view():
 
 
 @respx.mock
-async def test_a_failed_view_does_not_clear_the_post_draw_review():
-    """An unanswered `view_board` (BoardUnavailable) does not prove the model
-    saw how its draw rendered, so the forced tool requirement must survive it
-    and apply again to the next round."""
+async def test_a_failed_post_draw_review_is_forced_only_once():
+    """An unavailable mandatory review must not become an endless tool loop.
 
-    tries = 0
+    The failed render is not a look and therefore cannot unlock another board
+    mutation, but the next round is free to report the failure in prose.
+    """
 
-    async def flaky(call_id: str, region):
-        nonlocal tries
-        tries += 1
-        if tries == 1:
-            raise BoardUnavailable()
-        return b"\x89PNG-ish"
+    async def unavailable(call_id: str, region):
+        raise BoardUnavailable()
 
     route = respx.post("https://api.openai.com/v1/responses").mock(
         side_effect=[
@@ -781,9 +777,7 @@ async def test_a_failed_view_does_not_clear_the_post_draw_review():
             Response(200, headers={"Content-Type": "text/event-stream"},
                      content=sse_stream(*_view_board_turn("call_view_fail"))),
             Response(200, headers={"Content-Type": "text/event-stream"},
-                     content=sse_stream(*_view_board_turn("call_view_ok"))),
-            Response(200, headers={"Content-Type": "text/event-stream"},
-                     content=sse_stream(*_message_turn("Seen now."))),
+                     content=sse_stream(*_message_turn("I could not inspect it."))),
         ]
     )
     bundle = ContextBundle(system="s", input=[{"role": "user", "content": "draw"}])
@@ -793,7 +787,7 @@ async def test_a_failed_view_does_not_clear_the_post_draw_review():
     async for event, running in run_turn(
         provider=OpenAIProvider(client=AsyncOpenAI(api_key="sk-test")),
         model="gpt-5.6-sol", effort="high", bundle=bundle,
-        fetch_board=flaky,
+        fetch_board=unavailable,
     ):
         events.append(event)
         result = running
@@ -801,10 +795,11 @@ async def test_a_failed_view_does_not_clear_the_post_draw_review():
     bodies = [json.loads(call.request.content) for call in route.calls]
     assert [body.get("tool_choice") for body in bodies] == [
         None, {"type": "function", "name": "view_board"},
-        {"type": "function", "name": "view_board"}, None,
+        None,
     ]
+    assert len([event for event in events if isinstance(event, BoardRequestEvent)]) == 1
     assert json.loads(result.tool_calls[1]["result"])["status"] == "unavailable"
-    assert result.text == "Seen now."
+    assert result.text == "I could not inspect it."
 
 
 @respx.mock

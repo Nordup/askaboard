@@ -119,14 +119,15 @@ bounded flush window, then releases the client without waiting indefinitely.
 scripts/run-server.sh
 ```
 
-This starts `uvicorn` with `--reload` on port 8080, bound to `0.0.0.0`
-rather than `127.0.0.1`. That's deliberate, not an oversight: the iOS
+This starts `uvicorn` without auto-reload on port 8080, bound to `0.0.0.0`
+rather than `127.0.0.1`. Both choices are deliberate: keeping one process alive
+protects streaming turns, while the iOS
 Simulator can reach `127.0.0.1`, but a physical iPad on the same Wi-Fi
 network cannot — it needs the Mac's actual LAN address, which only resolves
 if the server is listening on every interface. Don't "fix" this to
 `127.0.0.1`; that quietly breaks the physical-device path described next.
 
-**The tutor prompt ships from the backend, not from the app.** The production system prompt is [`app/tutor/prompt.py`](app/tutor/prompt.py); installing or rebuilding the iPad app does not update it. `scripts/run-server.sh` starts uvicorn with `--reload`, so a process started that way picks up `prompt.py` edits automatically. Any backend process started without `--reload` (for example the tailnet host) must be restarted before a prompt change takes effect. Verify against a real trace, not by reading code: run one `POST /v1/turn`, then `GET /v1/turns/{id}` with the same `DEVICE_TOKEN` and inspect `llm_calls[].request` — that endpoint records the exact request JSON the provider received.
+**The tutor prompt ships from the backend, not from the app.** The production system prompt is [`app/tutor/prompt.py`](app/tutor/prompt.py); installing or rebuilding the iPad app does not update it. Restart `scripts/run-server.sh` after changing the prompt. `scripts/run-server-reload.sh` is available for short editing sessions, but do not use it while testing a live tutor turn: replacing the process strands that turn's image and board-render requests. Verify against a real trace, not by reading code: run one `POST /v1/turn`, then `GET /v1/turns/{id}` with the same `DEVICE_TOKEN` and inspect `llm_calls[].request` — that endpoint records the exact request JSON the provider received.
 
 ### Reaching the service
 
@@ -238,7 +239,9 @@ gets no render within 20 s, the turn answers the model with `UNAVAILABLE_ACK`
 ([`app/tutor/loop.py`](app/tutor/loop.py)), and that ack instructs the model
 to say it could not see the board and to ask the learner to try again.
 
-The known cause is a dev-server reload during a live turn. `uvicorn --reload`
+The known cause is a dev-server reload during a live turn. The safe default
+launcher, `scripts/run-server.sh`, therefore does not enable reload. The
+explicit `scripts/run-server-reload.sh` development launcher
 restarts the app on every file save. The graceful shutdown keeps the open SSE
 stream alive, so the turn continues — but the dying process refuses new
 connections, so the iPad cannot POST its render to `/v1/turn/{id}/board`. The
@@ -259,7 +262,8 @@ Application startup complete.
 A `max_silence_ms` a little over 20 000, together with a restart inside the
 turn window, is this failure — not a slow iPad and not a network drop. The
 device's POST landed the instant a listener came back; before that it had
-nowhere to connect.
+nowhere to connect. After one unavailable mandatory post-draw review, the turn
+now stops forcing further board looks and can report the failure in prose.
 
 **No restart in the window?** Then the device refused, and it says so in its
 own line rather than leaving you to read timings:
