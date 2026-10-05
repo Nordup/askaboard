@@ -4,12 +4,15 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from app.api.attachments import router as attachments_router
 from app.api.dictation import router as dictation_router
+from app.api.live import router as live_router
 from app.api.realtime import router as realtime_router
 from app.api.sessions import router as sessions_router
 from app.api.turn import router as turn_router
+from app.api.web_auth import router as web_auth_router
 from app.config import get_settings
 from app.learner.kcs import seed_curriculum
 from app.logging_config import configure_logging
@@ -88,6 +91,14 @@ def create_app() -> FastAPI:
     app.include_router(sessions_router)
     app.include_router(attachments_router)
     app.include_router(realtime_router)
+    app.include_router(live_router)
+    app.include_router(web_auth_router)
+
+    # Optional same-origin production/preview serving. The API routers are
+    # registered first so /v1 endpoints keep their normal behavior.
+    web_dist = get_settings().web_dist_dir
+    if web_dist is not None and (web_dist / "index.html").is_file():
+        app.mount("/", StaticFiles(directory=web_dist, html=True), name="web")
 
     return app
 

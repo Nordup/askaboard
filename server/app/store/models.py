@@ -62,6 +62,20 @@ class Session(Base):
     turns: Mapped[list[Turn]] = relationship(back_populates="session")
 
 
+class WebWorkspace(Base):
+    """Portable, versioned browser workspace kept separate from turn logs."""
+
+    __tablename__ = "web_workspaces"
+
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE"), primary_key=True
+    )
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    title: Mapped[str] = mapped_column(String(255), nullable=False, default="Untitled session")
+    workspace: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
+
+
 class Message(Base):
     __tablename__ = "messages"
 
@@ -255,6 +269,29 @@ class RealtimeUsage(Base):
     #: Priced at write time from `config.REALTIME_PRICES_PER_1M`; NULL when
     #: the model has no price row, which is a visible gap, not a zero.
     cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class LiveUsage(Base):
+    """One cumulative GPT-Live duration snapshot per upstream session."""
+
+    __tablename__ = "live_usage"
+    live_session_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    session_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
+    model: Mapped[str] = mapped_column(String(64), nullable=False)
+    duration_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    cost_usd: Mapped[float] = mapped_column(Float, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
+
+
+class LiveSession(Base):
+    """Provider session IDs issued by this server, used to bind usage reports."""
+
+    __tablename__ = "live_sessions"
+    live_session_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    session_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
+    model: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
 

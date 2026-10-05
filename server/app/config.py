@@ -282,6 +282,16 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = None
     database_url: str
     device_token: str
+    # Browser access is bootstrapped with a code never embedded in JavaScript.
+    # A separate signing secret lets operators rotate the code independently
+    # from active browser sessions.
+    web_bootstrap_code: str | None = None
+    web_session_secret: str | None = None
+    web_session_ttl_seconds: int = 43_200
+    web_session_secure: bool = False
+    web_allowed_hosts: tuple[str, ...] = ("localhost:5173", "127.0.0.1:5173", "localhost:8000", "127.0.0.1:8000", "localhost:8080", "127.0.0.1:8080")
+    openai_live_model: str = "gpt-live-1"
+    web_dist_dir: Path | None = None
     blob_dir: Path = Path("./blobs")
     #: The OpenAI model used for the app-owned `web_search` function tool.
     #:

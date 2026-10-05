@@ -14,7 +14,7 @@ from app.attachments.convert import Converted
 from app.pricing import realtime_cost_usd, turn_cost_usd
 from app.store.blobs import BlobRef, BlobStore
 from app.store.models import (
-    Attachment, LLMCall, Message, RealtimeUsage, Session, ToolCall, Turn,
+    Attachment, LLMCall, LiveUsage, Message, RealtimeUsage, Session, ToolCall, Turn,
 )
 
 #: What an uploaded file's *original* bytes are recorded as, in the blob store
@@ -577,7 +577,7 @@ class Recorder:
     async def spend_today(self) -> float:
         """Today's recorded dollars: turns plus voice, since UTC midnight.
 
-        Two sums, one *statement*. Voice rows counted in because the realtime
+        Three sums, one *statement*. Voice rows counted in because the realtime
         path used to record nothing at all — the day this fix was written,
         voice was ~$4.70 of a $7 day and `DAILY_SPEND_CAP_USD` saw none of it.
 
@@ -591,7 +591,7 @@ class Recorder:
             hour=0, minute=0, second=0, microsecond=0
         )
         async with self._sessionmaker() as session:
-            turns, voice = (await session.execute(
+            turns, voice, live = (await session.execute(
                 select(
                     select(func.coalesce(func.sum(Turn.cost_usd), 0.0))
                     .where(Turn.started_at >= midnight)
@@ -599,6 +599,9 @@ class Recorder:
                     select(func.coalesce(func.sum(RealtimeUsage.cost_usd), 0.0))
                     .where(RealtimeUsage.created_at >= midnight)
                     .scalar_subquery(),
+                    select(func.coalesce(func.sum(LiveUsage.cost_usd), 0.0))
+                    .where(LiveUsage.updated_at >= midnight)
+                    .scalar_subquery(),
                 )
             )).one()
-        return float(turns or 0.0) + float(voice or 0.0)
+        return float(turns or 0.0) + float(voice or 0.0) + float(live or 0.0)

@@ -24,3 +24,16 @@ server/.pytest_cache/
 server/**/__pycache__/
 server/logs/
 server/server.log
+
+# Web client local artifacts
+web/node_modules/
+web/dist/
+/.env.web
+/.playwright-cli/
+/output/playwright/
+/server/blobs-web/
+/server/logs-web/
+web/.env*
+!web/.env.example
+web/*.tsbuildinfo
+scripts/__pycache__/

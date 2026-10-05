@@ -14,19 +14,23 @@ import re
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.auth import require_device_token
-from app.config import DEFAULT_MODEL, DEFAULT_REASONING_EFFORT, get_settings
+from app.config import (
+    DEFAULT_MODEL, DEFAULT_REASONING_EFFORT, EFFORTS_FOR_MODEL, MODEL_ALLOWLIST,
+    get_settings,
+)
 from app.memory.jobs import schedule_session_close
 from app.store.blobs import LocalBlobStore
 from app.store.db import db_session
 from app.store.models import (
     Attachment, Episode, LLMCall, Message, Observation, Session, ToolCall, Turn,
+    WebWorkspace,
 )
 
 router = APIRouter(prefix="/v1", dependencies=[Depends(require_device_token)])
@@ -54,6 +58,48 @@ def _session_summary(session: Session) -> dict:
         "started_at": session.started_at,
         "updated_at": session.updated_at,
     }
+
+
+def _empty_workspace(session_id: uuid.UUID, title: str, model: str, effort: str) -> dict:
+    from datetime import datetime, timezone
+    return {
+        "version": 1, "id": str(session_id), "title": title,
+        "strokes": [], "scene": {"elements": []},
+        "camera": {"center": [0, 0], "zoom": 1}, "messages": [],
+        "model": model, "reasoningEffort": effort, "plan": None,
+        "exercise": None, "updatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+class CreateSessionBody(BaseModel):
+    title: str = Field(default="Untitled session", min_length=1, max_length=255)
+    model: str = DEFAULT_MODEL
+    reasoning_effort: str = DEFAULT_REASONING_EFFORT
+
+
+class WorkspaceBody(BaseModel):
+    workspace: dict
+    expected_revision: int = Field(ge=0)
+
+    @field_validator("workspace")
+    @classmethod
+    def _valid_workspace(cls, value: dict) -> dict:
+        if value.get("version") != 1:
+            raise ValueError("workspace.version must be 1")
+        if not isinstance(value.get("id"), str):
+            raise ValueError("workspace.id is required")
+        title = value.get("title")
+        if not isinstance(title, str) or not title.strip() or len(title) > 255:
+            raise ValueError("workspace.title must contain 1 to 255 characters")
+        model = value.get("model", DEFAULT_MODEL)
+        effort = value.get("reasoningEffort", DEFAULT_REASONING_EFFORT)
+        if model not in MODEL_ALLOWLIST:
+            raise ValueError("workspace.model is not allowed")
+        if effort not in EFFORTS_FOR_MODEL[model]:
+            raise ValueError("workspace.reasoningEffort is not allowed for its model")
+        value.setdefault("model", model)
+        value.setdefault("reasoningEffort", effort)
+        return value
 
 
 def _message_dict(message: Message) -> dict:
@@ -137,13 +183,83 @@ async def list_sessions(
 ):
     rows = (
         await db.execute(
-            select(Session)
+            select(Session, WebWorkspace.title)
+            .outerjoin(WebWorkspace, WebWorkspace.session_id == Session.id)
             .order_by(Session.started_at.desc())
             .limit(limit)
             .offset(offset)
         )
-    ).scalars().all()
-    return {"sessions": [_session_summary(s) for s in rows]}
+    ).all()
+    return {"sessions": [{**_session_summary(row), "title": title} for row, title in rows]}
+
+
+@router.post("/sessions", status_code=status.HTTP_201_CREATED)
+async def create_session(body: CreateSessionBody, db: AsyncSession = Depends(db_session)):
+    if body.model not in MODEL_ALLOWLIST:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown model.")
+    if body.reasoning_effort not in EFFORTS_FOR_MODEL[body.model]:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown reasoning effort.")
+    session = Session(model=body.model, reasoning_effort=body.reasoning_effort)
+    db.add(session)
+    await db.flush()
+    workspace = _empty_workspace(session.id, body.title, body.model, body.reasoning_effort)
+    row = WebWorkspace(session_id=session.id, title=body.title, workspace=workspace, revision=1)
+    db.add(row)
+    await db.commit()
+    return {**_session_summary(session), "title": body.title, "workspace": workspace, "revision": 1}
+
+
+@router.get("/sessions/{session_id}/workspace")
+async def get_workspace(session_id: uuid.UUID, db: AsyncSession = Depends(db_session)):
+    row = await db.get(WebWorkspace, session_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Workspace not found.")
+    return {"workspace": row.workspace, "revision": row.revision}
+
+
+@router.put("/sessions/{session_id}/workspace")
+async def put_workspace(
+    session_id: uuid.UUID, body: WorkspaceBody, db: AsyncSession = Depends(db_session)
+):
+    if body.workspace["id"] != str(session_id):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "workspace.id must match the session id.")
+    session = await db.get(Session, session_id)
+    if session is None:
+        session = Session(
+            id=session_id,
+            model=body.workspace["model"],
+            reasoning_effort=body.workspace["reasoningEffort"],
+            plan=body.workspace.get("plan"),
+            exercise=body.workspace.get("exercise"),
+        )
+        db.add(session)
+        try:
+            await db.flush()
+        except IntegrityError:
+            await db.rollback()
+            raise HTTPException(status.HTTP_409_CONFLICT, "Session was created in another request.")
+    else:
+        session.plan = body.workspace.get("plan")
+        session.exercise = body.workspace.get("exercise")
+    row = await db.get(WebWorkspace, session_id, with_for_update=True)
+    current = row.revision if row else 0
+    if current != body.expected_revision:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail={"message": "Workspace revision conflict.", "revision": current})
+    revision = current + 1
+    workspace = body.workspace
+    if row is None:
+        row = WebWorkspace(session_id=session_id, revision=revision, title=workspace["title"], workspace=workspace)
+        db.add(row)
+    else:
+        row.revision = revision
+        row.title = workspace["title"]
+        row.workspace = workspace
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "Workspace was saved in another request.")
+    return {"workspace": workspace, "revision": revision}
 
 
 @router.get("/sessions/{session_id}")
@@ -359,6 +475,7 @@ async def delete_session(
     await db.execute(delete(Message).where(Message.session_id == session_id))
     await db.execute(delete(Turn).where(Turn.session_id == session_id))
     await db.execute(delete(Episode).where(Episode.session_id == session_id))
+    await db.execute(delete(WebWorkspace).where(WebWorkspace.session_id == session_id))
     if session is not None:
         await db.delete(session)
     await db.commit()

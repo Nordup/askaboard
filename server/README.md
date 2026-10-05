@@ -62,9 +62,15 @@ failed one logs why and the service still comes up.
 | `OPENAI_API_KEY` | The one OpenAI key. Never sent to the device. |
 | `DATABASE_URL` | The Postgres (Neon) connection string the app writes to. |
 | `DEVICE_TOKEN` | The bearer token the iPad app presents. Generate with `python -c "import secrets; print(secrets.token_urlsafe(32))"`. |
+| `WEB_BOOTSTRAP_CODE` | Optional local browser login code. Keep it outside the built JavaScript bundle. |
+| `WEB_SESSION_SECRET` | Optional distinct random key used to sign browser session cookies. |
+| `WEB_SESSION_TTL_SECONDS` | Browser cookie lifetime; defaults to 12 hours. |
+| `WEB_SESSION_SECURE` | Set `true` when the browser app is served over HTTPS. Localhost defaults to `false`. |
+| `WEB_ALLOWED_HOSTS` | JSON array of exact `Host` values accepted for same-origin mutations, including the Vite dev host. |
+| `WEB_DIST_DIR` | Optional path to a built frontend directory. When it contains `index.html`, FastAPI serves the web app and its assets from the same origin as the API. |
 | `BLOB_DIR` | *Optional*, defaults to `./blobs`. Local directory for the blob store (board PNGs, ink, dictation audio, raw event logs). |
 | `LOG_DIR` | *Optional*, defaults to `./logs`. Where the rotating `server.log` is written. See [When a turn goes wrong](#when-a-turn-goes-wrong). |
-| `DAILY_SPEND_CAP_USD` | *Optional*, defaults to `5.0`. Turns are refused with `402` once today's recorded spend — turns plus reported voice usage, priced from the tables in [`app/config.py`](app/config.py) — reaches this. See [Known limitations](#known-limitations) for what the sum still misses. |
+| `DAILY_SPEND_CAP_USD` | *Optional*, defaults to `5.0`. New turns and Live calls are refused with `402` once today's recorded spend — tutor turns plus reported Realtime and GPT-Live usage — reaches this. |
 | `PERSIST_DICTATION_AUDIO` | *Optional*, defaults to **`true`**. Whether dictation recordings are written to the blob store. Leaving this unset does not mean recordings are skipped — it means they're kept, same as if you'd set it to `true` explicitly. Retention below applies whenever this is `true`. |
 | `LANGSMITH_TRACING` | *Optional*, defaults to **`false`**. Enables LangSmith tracing only when `LANGSMITH_API_KEY` is also set. |
 | `LANGSMITH_API_KEY` | *Optional*. The LangSmith key used for traces and dataset commands. An empty key keeps runtime tracing inactive. |
@@ -395,27 +401,60 @@ logical `[left, top, right, bottom]` coordinates and are derived from the live
 viewport, so a compact diagram and immediately usable scratch space stay on
 screen together across iPad sizes and zoom levels.
 
-## Read-back endpoints
+## Session and workspace APIs
 
-This service is built to record everything about a session — that's the
-whole point of the recorder. These routes are how any of it actually
-gets read back out. **The four `GET`s are for the project owner and for agents
-debugging a bad tutoring turn, not for the iPad app** — the app never calls
-any of them; it only ever calls `POST /v1/turn`, `POST /v1/dictation`, and
-`POST /v1/sessions/{id}/close`. The one `POST` in the table is the exception
-and is meant for the device.
-Like every other route in this service, they sit behind the same bearer
-token (`Authorization: Bearer <DEVICE_TOKEN>`) — there's no separate,
-unauthenticated path to a student's handwriting or voice. Defined in
-[`app/api/sessions.py`](app/api/sessions.py).
+Tutor and workspace routes accept the iPad's existing bearer token or a valid
+browser session cookie. Browser access is enabled only when `WEB_BOOTSTRAP_CODE` and
+`WEB_SESSION_SECRET` are configured. `POST /v1/web/login` exchanges the
+server-side code for an HttpOnly, SameSite cookie; `GET /v1/web/status` returns
+safe model and authentication state; `POST /v1/web/logout` clears the cookie.
+Cookie-authenticated mutations require an exact same-origin `Origin` and
+`Host` match. Keep the bootstrap code and signing key out of browser assets.
+
+Browser workspaces are stored separately from recorded turn transcripts.
+`POST /v1/sessions` creates an empty titled workspace; `GET` and `PUT
+/v1/sessions/{id}/workspace` load and save the versioned JSON document. A save
+must include `expected_revision`; a stale tab receives `409` and the current
+revision so it can reconcile instead of overwriting newer work. The first PUT
+may create a locally minted session id and workspace at revision 1, which lets
+offline-first clients sync as soon as they reconnect. The session list includes
+the stored workspace title. Workspace saves keep the portable board and web
+message timeline separate from the tutor's server-recorded transcript.
+
+The `GET` routes also expose owner diagnostics, including full provider traces.
+Defined in [`app/api/sessions.py`](app/api/sessions.py) and
+[`app/api/web_auth.py`](app/api/web_auth.py).
 
 | Route | Returns |
 | --- | --- |
+| `POST /v1/web/login` | `{ "authenticated": true, "expires_at": ... }` and a short-lived HttpOnly cookie. Requires `{ "code": "..." }` and a same-origin request. |
+| `GET /v1/web/status` | `{ authenticated, models, efforts_for_model, live_available }`; no private configuration values. |
+| `POST /v1/web/logout` | `204` and an expired browser cookie. |
+| `POST /v1/sessions` | Creates a session and empty version-1 workspace; accepts title, model, and reasoning effort. |
+| `GET /v1/sessions/{id}/workspace` | `{ "workspace": ..., "revision": n }`. |
+| `PUT /v1/sessions/{id}/workspace` | Accepts `{ "workspace": ..., "expected_revision": n }`; returns the saved document and incremented revision, or `409` for a stale write. |
 | `POST /v1/sessions/{id}/close` | `204`, immediately, reporting nothing about the work. The device saying it has left this session for good; it starts the memory pipeline for that session and then drains whatever else is waiting. **Call it on a session switch and on an explicit end, never on backgrounding** — a close freezes the transcript into the one `Episode` that session will ever get, so a close sent while the learner is coming back drops every turn after it, permanently. Safe to send twice. `404` for an unknown id, so a device with the wrong one finds out. See [Memory and the learner model](#memory-and-the-learner-model). |
 | `GET /v1/sessions` | `{"sessions": [...]}` — session summaries (id, model, reasoning effort, current plan/exercise, timestamps), newest-started first. Paginated with `limit` (default 50, max 200) and `offset`. |
 | `GET /v1/sessions/{id}` | One session's summary plus its full `messages` (ordered by `seq`) and `turns` (ordered by start time, summarised — status, timing, token counts, error if any). `404` if the id is unknown. |
 | `GET /v1/turns/{id}` | The full trace of one turn: its summary plus `llm_calls` (each with the *exact* request and response JSON sent to and received from OpenAI, the raw-event blob key, and usage), `tool_calls`, and `attachments` (kind, blob key, sha256, size). This is what makes a bad turn diagnosable after the fact — everything the model was told and everything it did, not a summary of it. `404` if the id is unknown. |
 | `GET /v1/blobs/{key}` | Streams the raw bytes back for a blob key referenced by an attachment or an `llm_call`'s `raw_events_blob` (board PNGs, ink, dictation audio, raw provider event logs) — `Content-Type` recovered from the matching attachment where one exists, `application/octet-stream` otherwise. `404` if the key is unknown. |
+
+`POST /v1/live/calls` accepts `{ "session_id": ..., "sdp": ... }` and returns
+the GPT-Live WebRTC `session` and `transport.sdp` objects while keeping the
+OpenAI key on the server. The browser owns the WebRTC connection and handles
+client delegation: it sends delegated learner requests through the existing
+`/v1/turn` tutor path, which can inspect and change the board. The server does
+not run a separate Live sideband tutor loop. Recent recorded session messages
+and standing memory are included when a session id is supplied. `POST
+/v1/live/usage` accepts the issued `live_session_id`, associated `session_id`,
+model, and cumulative `duration_seconds`; it validates the issued session and
+prices seconds at the server's fixed GPT-Live rate for the daily spend cap.
+Session creation reserves the documented 15-second minimum charge ($0.0125 at
+the current $0.05/minute rate). Later cumulative usage replaces that estimate
+only when it is greater, so a report below 15 seconds does not erase the
+minimum or double-charge it. The spend-cap check includes this reservation
+before creating a provider session. When an application session id is given,
+it must already exist before the paid Live session is initialized.
 
 ## Health
 

@@ -1,4 +1,18 @@
-# Learn AI iPad prototype
+# Math Tutor / Learn AI
+
+The active product is the [desktop web client](web/README.md). It follows the
+existing Paper Desktop product design and connects to the same FastAPI tutor.
+The iPad implementation is preserved below; Swift development is paused.
+
+Run the web product locally from the repository root:
+
+```sh
+python3 scripts/web-dev.py
+```
+
+The launcher prints the browser URL and local access code. It uses a separate
+Postgres database on port 55432 and preserves web work in its own Docker volume.
+See [web setup and controls](web/README.md) for prerequisites and verification.
 
 Learn AI (working name; the codebase still uses `MathTutor`) is a shared
 whiteboard for learning and working through problems with an intelligent tutor.

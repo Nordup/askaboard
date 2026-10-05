@@ -5,10 +5,11 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
 from app.config import DEFAULT_MODEL, DEFAULT_REASONING_EFFORT
+from app.api import live as live_api
 from app.store.blobs import LocalBlobStore
 from app.store.models import (
     KC, Attachment, Episode, Learner, LLMCall, MemoryAtom, Message, Observation,
-    Session, ToolCall, Turn,
+    LiveSession, LiveUsage, Session, ToolCall, Turn, WebWorkspace,
 )
 from tests.conftest import requires_db
 
@@ -45,6 +46,146 @@ async def test_fetching_a_session_includes_its_messages(db_app, db):
         response = await client.get(f"/v1/sessions/{session.id}", headers=AUTH)
 
     assert [m["text"] for m in response.json()["messages"]] == ["hello"]
+
+
+@requires_db
+async def test_workspace_revision_cas_rejects_stale_save(db_app, db):
+    session = Session(model=DEFAULT_MODEL, reasoning_effort=DEFAULT_REASONING_EFFORT)
+    db.add(session)
+    await db.commit()
+    workspace = {
+        "version": 1, "id": str(session.id), "title": "Algebra",
+        "strokes": [], "scene": {"elements": []},
+        "camera": {"center": [0, 0], "zoom": 1}, "messages": [],
+        "model": DEFAULT_MODEL, "reasoningEffort": DEFAULT_REASONING_EFFORT,
+        "plan": None, "exercise": None, "updatedAt": "2026-10-05T00:00:00Z",
+    }
+    async with AsyncClient(transport=ASGITransport(app=db_app), base_url="http://test") as client:
+        saved = await client.put(
+            f"/v1/sessions/{session.id}/workspace", headers=AUTH,
+            json={"workspace": workspace, "expected_revision": 0},
+        )
+        assert saved.status_code == 200
+        assert saved.json()["revision"] == 1
+        stale = await client.put(
+            f"/v1/sessions/{session.id}/workspace", headers=AUTH,
+            json={"workspace": {**workspace, "title": "stale"}, "expected_revision": 0},
+        )
+        current = await client.get(f"/v1/sessions/{session.id}/workspace", headers=AUTH)
+    assert stale.status_code == 409
+    assert current.json() == {"workspace": workspace, "revision": 1}
+
+
+@requires_db
+async def test_workspace_put_lazily_creates_session_and_round_trips(db_app, db):
+    session_id = uuid.uuid4()
+    workspace = {
+        "version": 1, "id": str(session_id), "title": "Fresh board",
+        "strokes": [], "scene": {"elements": []},
+        "camera": {"center": [0, 0], "zoom": 1}, "messages": [],
+        "model": DEFAULT_MODEL, "reasoningEffort": DEFAULT_REASONING_EFFORT,
+        "plan": None, "exercise": None, "updatedAt": "2026-10-05T00:00:00Z",
+    }
+    async with AsyncClient(transport=ASGITransport(app=db_app), base_url="http://test") as client:
+        saved = await client.put(
+            f"/v1/sessions/{session_id}/workspace", headers=AUTH,
+            json={"workspace": workspace, "expected_revision": 0},
+        )
+        fetched = await client.get(f"/v1/sessions/{session_id}/workspace", headers=AUTH)
+    assert saved.status_code == 200
+    assert fetched.json() == {"workspace": workspace, "revision": 1}
+    assert (await db.get(Session, session_id)).model == DEFAULT_MODEL
+    assert await db.get(WebWorkspace, session_id) is not None
+
+
+@requires_db
+async def test_live_usage_is_attributed_and_cumulative(db_app, db):
+    app_session = Session(model=DEFAULT_MODEL, reasoning_effort=DEFAULT_REASONING_EFFORT)
+    db.add(app_session)
+    await db.flush()
+    db.add(LiveSession(live_session_id="live_test_123", session_id=app_session.id, model="gpt-live-1"))
+    await db.commit()
+    body = {
+        "live_session_id": "live_test_123", "session_id": str(app_session.id),
+        "model": "gpt-live-1", "duration_seconds": 120,
+    }
+    async with AsyncClient(transport=ASGITransport(app=db_app), base_url="http://test") as client:
+        response = await client.post("/v1/live/usage", headers=AUTH, json=body)
+        retry = await client.post("/v1/live/usage", headers=AUTH, json=body)
+        rows = (await db.execute(select(LiveUsage))).scalars().all()
+    assert response.status_code == retry.status_code == 204
+    assert len(rows) == 1
+    assert rows[0].duration_seconds == 120
+    assert rows[0].cost_usd == 0.1
+
+
+@requires_db
+async def test_live_issue_reserves_minimum_and_reports_only_increase(db_app, db, monkeypatch):
+    class UpstreamResponse:
+        status_code = 201
+        is_error = False
+        def json(self):
+            return {"session": {"id": "live_reserved"}, "transport": {"type": "webrtc", "sdp": "v=0\r\nanswer"}}
+
+    class UpstreamClient:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_): return None
+        async def post(self, *_args, **_kwargs): return UpstreamResponse()
+
+    settings = type("Settings", (), {
+        "openai_live_model": "gpt-live-1", "openai_api_key": "test-key",
+        "openai_base_url": "https://api.openai.com/v1", "daily_spend_cap_usd": 5,
+    })()
+    monkeypatch.setattr(live_api, "get_settings", lambda: settings)
+    monkeypatch.setattr(live_api, "_client", UpstreamClient)
+    async with AsyncClient(transport=ASGITransport(app=db_app), base_url="http://test") as client:
+        issued = await client.post("/v1/live/calls", headers=AUTH, json={"sdp": "v=0\r\no=-"})
+        reservation = (await db.execute(select(LiveUsage.duration_seconds, LiveUsage.cost_usd))).one()
+        lower = await client.post("/v1/live/usage", headers=AUTH, json={
+            "live_session_id": "live_reserved", "model": "gpt-live-1", "duration_seconds": 5,
+        })
+        after_lower = (await db.execute(select(LiveUsage.duration_seconds, LiveUsage.cost_usd))).one()
+        higher = await client.post("/v1/live/usage", headers=AUTH, json={
+            "live_session_id": "live_reserved", "model": "gpt-live-1", "duration_seconds": 120,
+        })
+        after_higher = (await db.execute(select(LiveUsage.duration_seconds, LiveUsage.cost_usd))).one()
+        repeated_lower = await client.post("/v1/live/usage", headers=AUTH, json={
+            "live_session_id": "live_reserved", "model": "gpt-live-1", "duration_seconds": 30,
+        })
+        final = (await db.execute(select(LiveUsage.duration_seconds, LiveUsage.cost_usd))).one()
+    assert issued.status_code == 200
+    assert reservation.duration_seconds == 15
+    assert reservation.cost_usd == 0.0125
+    assert lower.status_code == higher.status_code == repeated_lower.status_code == 204
+    assert after_lower.duration_seconds == 15
+    assert after_higher.duration_seconds == 120
+    assert final.duration_seconds == 120
+    assert final.cost_usd == 0.1
+
+
+@requires_db
+async def test_live_rejects_unknown_app_session_before_provider_call(db_app, monkeypatch):
+    called = False
+    class UpstreamClient:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_): return None
+        async def post(self, *_args, **_kwargs):
+            nonlocal called
+            called = True
+            raise AssertionError("must not initialize a billed session")
+
+    settings = type("Settings", (), {
+        "openai_live_model": "gpt-live-1", "openai_api_key": "test-key",
+        "openai_base_url": "https://api.openai.com/v1", "daily_spend_cap_usd": 5,
+    })()
+    monkeypatch.setattr(live_api, "get_settings", lambda: settings)
+    monkeypatch.setattr(live_api, "_client", UpstreamClient)
+    async with AsyncClient(transport=ASGITransport(app=db_app), base_url="http://test") as client:
+        response = await client.post("/v1/live/calls", headers=AUTH, json={
+            "session_id": str(uuid.uuid4()), "sdp": "v=0\r\no=-",
+        })
+    assert response.status_code == 404
+    assert not called
 
 
 @requires_db
