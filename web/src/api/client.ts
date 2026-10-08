@@ -3,6 +3,12 @@ import type { Attachment, Capture, Workspace } from '../types';
 export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
+export class TutorTurnFailure extends Error {
+  constructor(public retryable: boolean) {
+    super(retryable ? 'The tutor is busy right now — try again in a moment.' : "I couldn't reach the tutor service just now.");
+    this.name = 'TutorTurnFailure';
+  }
+}
 export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(path, { credentials: 'same-origin', ...init });
   if (!response.ok) {
@@ -35,7 +41,7 @@ export const api = {
   }),
   sessions: async () => (await request<{ sessions: Array<Record<string, unknown>> }>('/v1/sessions')).sessions,
   transcript: (workspace: Workspace) => request<void>(`/v1/sessions/${workspace.id}/transcript`, {
-    ...json({ messages: workspace.messages.map(m => ({ role: m.role === 'user' ? 'learner' : 'tutor', text: m.text })) }),
+    ...json({ messages: workspace.messages.map(m => ({ role: m.role === 'user' ? 'learner' : 'tutor', text: m.text, ...(m.signal ? { signal: m.signal } : {}) })) }),
     method: 'PUT',
   }),
   close: (id: string) => request<void>(`/v1/sessions/${id}/close`, json({})),
@@ -78,7 +84,7 @@ export async function consumeSSE(response: Response, onEvent: (event: StreamEven
         const event = parseFrame(frame);
         if (!event) continue;
         await onEvent(event);
-        if (event.type === 'error') throw new Error(typeof event.message === 'string' ? event.message : 'The tutor could not finish.');
+        if (event.type === 'error') throw new TutorTurnFailure(event.retryable === true);
         if (event.type === 'done') terminal = true;
       }
       if (done) break;

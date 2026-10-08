@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { consumeSSE, parseFrame } from './client';
+import { consumeSSE, parseFrame, TutorTurnFailure } from './client';
 
 function streamed(chunks: Uint8Array[]) {
   return new Response(new ReadableStream({ start(c) { chunks.forEach(chunk => c.enqueue(chunk)); c.close(); } }));
@@ -16,9 +16,14 @@ describe('application SSE protocol', () => {
     await consumeSSE(streamed(chunks), e => { events.push(e); });
     expect(events).toEqual([{ type: 'text_delta', text: 'π 🖊' }, { type: 'done' }]);
   });
-  it('never treats truncated output or an error as a completed answer', async () => {
+  it('never treats truncated output or an error as a completed answer and never exposes provider text', async () => {
     const encoder = new TextEncoder();
     await expect(consumeSSE(streamed([encoder.encode('data: {"type":"text_delta","text":"partial"}\n\n')]), () => {})).rejects.toThrow('before finishing');
-    await expect(consumeSSE(streamed([encoder.encode('data: {"type":"error","message":"Failed"}\n\n')]), () => {})).rejects.toThrow('Failed');
+    await expect(consumeSSE(streamed([encoder.encode('data: {"type":"error","message":"provider account detail","retryable":true}\n\n')]), () => {})).rejects.toMatchObject({
+      name: 'TutorTurnFailure', retryable: true, message: 'The tutor is busy right now — try again in a moment.',
+    } satisfies Partial<TutorTurnFailure>);
+    await expect(consumeSSE(streamed([encoder.encode('data: {"type":"error","message":"provider account detail","retryable":false}\n\n')]), () => {})).rejects.toMatchObject({
+      name: 'TutorTurnFailure', retryable: false, message: "I couldn't reach the tutor service just now.",
+    });
   });
 });

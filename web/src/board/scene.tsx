@@ -2,6 +2,8 @@ import DOMPurify from 'dompurify';
 import katex from 'katex';
 import { createElement, type ReactNode } from 'react';
 import type { BoardElement, BoardScene, BoardRegion } from '../types';
+import type { BoardElementStyle } from './element-types';
+import shantellFontUrl from './assets/ShantellSans-Normal-Regular.otf?url';
 import { elementBounds, unionRegions } from './geometry';
 
 const num = (e: Record<string, unknown>, key: string, fallback = 0) => typeof e[key] === 'number' ? e[key] as number : fallback;
@@ -24,17 +26,25 @@ function arcD(cx:number,cy:number,radius:number,start:number,end:number,shortest
 }
 // Current Swift wire elements flatten BoardStyle keys beside geometry. Accept
 // nested style too for legacy/local fixtures, with the wire fields winning.
-const styleOf = (e: Record<string, unknown>) => ({
-  ...((e.style && typeof e.style === 'object' ? e.style : {}) as Record<string, unknown>),
-  ...Object.fromEntries(['stroke','fill','stroke_width','opacity','dash','rotation'].filter(key=>key in e).map(key=>[key,e[key]])),
+const styleOf = (element: BoardElement): BoardElementStyle => ({
+  ...(element.style ?? {}),
+  ...(element.stroke !== undefined ? { stroke: element.stroke } : {}),
+  ...(element.fill !== undefined ? { fill: element.fill } : {}),
+  ...(element.stroke_width !== undefined ? { stroke_width: element.stroke_width } : {}),
+  ...(element.opacity !== undefined ? { opacity: element.opacity } : {}),
+  ...(element.dash !== undefined ? { dash: element.dash } : {}),
+  ...(element.rotation !== undefined ? { rotation: element.rotation } : {}),
 });
 const styleAttrs = (e: BoardElement) => {
   const s = styleOf(e);
-  const bounds=elementBounds(e);const centerX=bounds?bounds.x+bounds.width/2:num(e,'x');const centerY=bounds?bounds.y+bounds.height/2:num(e,'y');
-  return { stroke: str(s, 'stroke', '#0A0A0A'), fill: str(s, 'fill', 'transparent'),
-    strokeWidth: num(s, 'stroke_width', 4), opacity: num(s, 'opacity', 1),
-    strokeDasharray: Array.isArray(s.dash) ? (s.dash as number[]).join(' ') : undefined,
-    transform: num(s, 'rotation') ? `rotate(${num(s, 'rotation')} ${centerX} ${centerY})` : undefined };
+  const bounds = elementBounds(e);
+  const centerX = bounds ? bounds.x + bounds.width / 2 : 'x' in e ? e.x : 'cx' in e ? e.cx : 0;
+  const centerY = bounds ? bounds.y + bounds.height / 2 : 'y' in e ? e.y : 'cy' in e ? e.cy : 0;
+  const rotation = s.rotation ?? 0;
+  return { stroke: s.stroke ?? '#0A0A0A', fill: s.fill ?? 'transparent',
+    strokeWidth: Math.max(0.5, s.stroke_width ?? 4), opacity: Math.max(0, Math.min(1, s.opacity ?? 1)),
+    strokeDasharray: s.dash?.join(' '), strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const,
+    transform: rotation ? `rotate(${rotation} ${centerX} ${centerY})` : undefined };
 };
 const escape = (s: string) => s.replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;' }[c]!));
 
@@ -72,6 +82,37 @@ export function katexCaptureStyles(): string {
   return rules.join('\n');
 }
 
+export interface MathRaster { href: string; width: number; height: number; offsetX: number; offsetY: number; }
+const mathRasterCache = new Map<string, Promise<Record<string, MathRaster>>>();
+
+let shantellFontData: Promise<string> | undefined;
+async function shantellFontBase64(): Promise<string> {
+  if (!shantellFontData) {
+    shantellFontData = (async () => {
+      const response = await fetch(shantellFontUrl);
+      if (!response.ok) throw new Error('Shantell Sans could not be loaded for board capture.');
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      let binary = '';
+      for (let start = 0; start < bytes.length; start += 0x8000) {
+        binary += String.fromCharCode(...bytes.subarray(start, Math.min(start + 0x8000, bytes.length)));
+      }
+      return btoa(binary);
+    })();
+    void shantellFontData.catch(() => { shantellFontData = undefined; });
+  }
+  return shantellFontData;
+}
+
+/** CSS needed to keep math and handwritten tutor text faithful in detached PNG captures. */
+export async function sceneCaptureStyles(scene: BoardScene): Promise<string> {
+  const styles = [katexCaptureStyles()];
+  if (scene.elements.some(element => element.kind === 'ink_text')) {
+    const font = await shantellFontBase64();
+    styles.push(`@font-face{font-family:'Shantell Sans';src:url(data:font/otf;base64,${font}) format('opentype');font-weight:400;font-style:normal}`);
+  }
+  return styles.join('\n');
+}
+
 function rawSvgBody(source: string): { body: string; width: number; height: number; viewBox: string } {
   const safe = sanitizeSvg(source);
   if (!safe) return { body: '', width: 0, height: 0, viewBox: '' };
@@ -95,12 +136,22 @@ function mathMarkup(latex: string, color: string, size: number, mathml = false):
 /** Render KaTeX HTML using text and rule primitives into origin-clean PNGs.
  * SVG foreignObject images taint Chromium canvases; this DOM measurement pass
  * preserves KaTeX's browser layout while keeping captures exportable. */
-export async function rasterizeMathElements(scene:BoardScene):Promise<Record<string,{href:string;width:number;height:number;offsetX:number;offsetY:number}>>{
+export function rasterizeMathElements(scene: BoardScene): Promise<Record<string, MathRaster>> {
+  const key = JSON.stringify(scene.elements.filter(element => element.kind === 'math_text'));
+  const cached = mathRasterCache.get(key); if (cached) return cached;
+  const pending = rasterizeMathElementsUncached(scene);
+  mathRasterCache.set(key, pending);
+  while (mathRasterCache.size > 32) mathRasterCache.delete(mathRasterCache.keys().next().value!);
+  void pending.catch(() => { if (mathRasterCache.get(key) === pending) mathRasterCache.delete(key); });
+  return pending;
+}
+
+async function rasterizeMathElementsUncached(scene:BoardScene):Promise<Record<string,MathRaster>>{
   if(typeof document==='undefined')return{};
   await document.fonts?.ready;
-  const out:Record<string,{href:string;width:number;height:number;offsetX:number;offsetY:number}>={};
+  const out:Record<string,MathRaster>={};
   for(const element of scene.elements){if(element.kind!=='math_text')continue;
-    const size=num(element,'font_size',24),color=str(styleOf(element),'stroke','#0A0A0A');
+    const size=num(element,'font_size',24),color=styleOf(element).stroke??'#0A0A0A';
     const host=document.createElement('div');host.style.cssText=`position:fixed;left:-10000px;top:0;display:inline-block;visibility:hidden;white-space:nowrap;color:${color};font-size:${size}px`;
     try{
       const markup=katex.renderToString(str(element,'latex').replace(/^\$+|\$+$/g,''),{throwOnError:false,output:'html'});
@@ -144,41 +195,69 @@ export async function rasterizeMathElements(scene:BoardScene):Promise<Record<str
   return out;
 }
 
-function ElementView({ element, images, mathImages }: { element: BoardElement; images: Record<string, string>; mathImages?:Record<string,{href:string;width:number;height:number;offsetX:number;offsetY:number}> }): ReactNode {
+function ElementView({ element, images, mathImages }: { element: BoardElement; images: Record<string, string>; mathImages?:Record<string,MathRaster> }): ReactNode {
   const s = styleAttrs(element); const x = num(element, 'x'); const y = num(element, 'y');
-  const color = str(styleOf(element), 'stroke', '#0A0A0A');
+  const color = styleOf(element).stroke ?? '#0A0A0A';
   const xy = pts(element).map(p => p.join(',')).join(' ');
   switch (element.kind) {
-    case 'text': {const size=Math.max(8,num(element,'font_size',24)),lines=textLines(str(element,'text'),size,num(element,'width'));return <text key={element.id} x={x} y={y+size*.9} fontSize={size} fontFamily="-apple-system, BlinkMacSystemFont, sans-serif" textAnchor={str(element, 'alignment') === 'center' ? 'middle' : str(element, 'alignment') === 'right' ? 'end' : 'start'} fill={s.stroke} opacity={s.opacity} transform={s.transform}>{lines.map((line,i)=><tspan key={i} x={x} dy={i===0?0:size*1.2}>{line}</tspan>)}</text>;}
-    case 'line': return <line key={element.id} x1={num(element,'x1')} y1={num(element,'y1')} x2={num(element,'x2')} y2={num(element,'y2')} {...s} />;
-    case 'arrow': { const x1=num(element,'x1'), y1=num(element,'y1'), x2=num(element,'x2'), y2=num(element,'y2'); const a=Math.atan2(y2-y1,x2-x1), h=num(element,'head_size',12); const p1=`${x2-h*Math.cos(a-Math.PI/6)},${y2-h*Math.sin(a-Math.PI/6)}`; const p2=`${x2-h*Math.cos(a+Math.PI/6)},${y2-h*Math.sin(a+Math.PI/6)}`; return <g key={element.id} opacity={s.opacity} transform={s.transform}><path d={`M${x1} ${y1} L${x2} ${y2} M${p1} L${x2} ${y2} L${p2}`} fill="none" stroke={s.stroke} strokeWidth={s.strokeWidth} strokeDasharray={s.strokeDasharray}/></g>; }
-    case 'rectangle': return <rect key={element.id} x={x} y={y} width={num(element,'width')} height={num(element,'height')} {...s} />;
-    case 'ellipse': return <ellipse key={element.id} cx={x+num(element,'width')/2} cy={y+num(element,'height')/2} rx={num(element,'width')/2} ry={num(element,'height')/2} {...s}/>;
-    case 'circle': return <circle key={element.id} cx={num(element,'cx')} cy={num(element,'cy')} r={num(element,'radius')} {...s}/>;
+    case 'text': {const size=Math.max(8,element.font_size),width=element.width??0,lines=textLines(element.text,size,width);return <text key={element.id} x={x} y={y+size*.9} fontSize={size} fontFamily="-apple-system, BlinkMacSystemFont, sans-serif" textAnchor={element.alignment==='center'?'middle':element.alignment==='right'?'end':'start'} fill={s.stroke} opacity={s.opacity} transform={s.transform}>{lines.map((line,i)=><tspan key={i} x={x} dy={i===0?0:size*1.2}>{line}</tspan>)}</text>;}
+    case 'line': return <line key={element.id} x1={element.x1} y1={element.y1} x2={element.x2} y2={element.y2} {...s} />;
+    case 'arrow': {
+      const dx=element.x2-element.x1,dy=element.y2-element.y1,length=Math.hypot(dx,dy)||1,ux=dx/length,uy=dy/length;
+      const head=Math.max(4,element.head_size??12),baseX=element.x2-ux*head,baseY=element.y2-uy*head,half=head*.5,px=-uy,py=ux;
+      return <g key={element.id} opacity={s.opacity} transform={s.transform}>
+        <line x1={element.x1} y1={element.y1} x2={element.x2} y2={element.y2} stroke={s.stroke} strokeWidth={s.strokeWidth} strokeDasharray={s.strokeDasharray} strokeLinecap="round" />
+        <path d={`M ${element.x2} ${element.y2} L ${baseX+px*half} ${baseY+py*half} L ${baseX-px*half} ${baseY-py*half} Z`} fill={s.stroke} />
+      </g>;
+    }
+    case 'rectangle': return <rect key={element.id} x={x} y={y} width={element.width} height={element.height} {...s} />;
+    case 'ellipse': return <ellipse key={element.id} cx={x+element.width/2} cy={y+element.height/2} rx={element.width/2} ry={element.height/2} {...s}/>;
+    case 'circle': return <circle key={element.id} cx={element.cx} cy={element.cy} r={element.radius} {...s}/>;
     case 'polygon': return <polygon key={element.id} points={xy} {...s}/>;
     case 'polyline': return <polyline key={element.id} points={xy} {...s} fill="none"/>;
-    case 'freehand': {const points=pts(element);let d='';if(points.length){d=`M ${points[0][0]} ${points[0][1]}`;if(points.length<=2)d+=points.slice(1).map(p=>` L ${p[0]} ${p[1]}`).join('');else{for(let i=1;i<points.length-1;i++){const a=points[i],b=points[i+1];d+=` Q ${a[0]} ${a[1]} ${(a[0]+b[0])/2} ${(a[1]+b[1])/2}`;}const last=points[points.length-1];d+=` L ${last[0]} ${last[1]}`;}}return <path key={element.id} d={d} {...s} fill="none"/>;}
-    case 'arc': { const cx=num(element,'cx'), cy=num(element,'cy'), r=Math.max(0,num(element,'radius')); return <path key={element.id} d={arcD(cx,cy,r,num(element,'start_angle'),num(element,'end_angle'),false)} {...s} fill="none"/>; }
-    case 'angle_marker': { const vx=num(element,'vertex_x'), vy=num(element,'vertex_y'), r=Math.max(4,num(element,'radius',40)); const ax=num(element,'ray1_x')-vx,ay=num(element,'ray1_y')-vy,bx=num(element,'ray2_x')-vx,by=num(element,'ray2_y')-vy,al=Math.hypot(ax,ay)||1,bl=Math.hypot(bx,by)||1,a=Math.atan2(ay,ax),b=Math.atan2(by,bx); const p1=`${vx+r*ax/al} ${vy+r*ay/al}`,p2=`${vx+r*bx/bl} ${vy+r*by/bl}`; const d=element.right_angle?`M ${p1} L ${vx+r*(ax/al+bx/bl)} ${vy+r*(ay/al+by/bl)} L ${p2}`:arcD(vx,vy,r,a*180/Math.PI,b*180/Math.PI,true);return <path key={element.id} d={d} {...s} fill="none"/>; }
-    case 'path': return <path key={element.id} d={str(element,'d')} fillRule={str(element,'fill_rule','nonzero') as 'nonzero'|'evenodd'} {...s}/>;
+    case 'freehand': {const points=element.points;let d='';if(points.length){d=`M ${points[0][0]} ${points[0][1]}`;if(points.length<=2)d+=points.slice(1).map(p=>` L ${p[0]} ${p[1]}`).join('');else{for(let i=1;i<points.length-1;i++){const a=points[i],b=points[i+1];d+=` Q ${a[0]} ${a[1]} ${(a[0]+b[0])/2} ${(a[1]+b[1])/2}`;}const last=points[points.length-1];d+=` L ${last[0]} ${last[1]}`;}}return <path key={element.id} d={d} {...s} fill="none"/>;}
+    case 'arc': { const radius=Math.max(0,element.radius); return <path key={element.id} d={arcD(element.cx,element.cy,radius,element.start_angle,element.end_angle,false)} {...s} fill="none"/>; }
+    case 'angle_marker': { const vx=element.vertex_x,vy=element.vertex_y,r=Math.max(4,element.radius??40),ax=element.ray1_x-vx,ay=element.ray1_y-vy,bx=element.ray2_x-vx,by=element.ray2_y-vy,al=Math.hypot(ax,ay)||1,bl=Math.hypot(bx,by)||1,a=Math.atan2(ay,ax),b=Math.atan2(by,bx); const p1=`${vx+r*ax/al} ${vy+r*ay/al}`,p2=`${vx+r*bx/bl} ${vy+r*by/bl}`; const d=element.right_angle?`M ${p1} L ${vx+r*(ax/al+bx/bl)} ${vy+r*(ay/al+by/bl)} L ${p2}`:arcD(vx,vy,r,a*180/Math.PI,b*180/Math.PI,true);return <path key={element.id} d={d} {...s} fill="none"/>; }
+    case 'path': return <path key={element.id} d={element.d} fillRule={element.fill_rule??'nonzero'} {...s}/>;
     case 'math_text': return mathImages?.[element.id]
       ? <image key={element.id} x={x+mathImages[element.id].offsetX} y={y+mathImages[element.id].offsetY} width={mathImages[element.id].width} height={mathImages[element.id].height} href={mathImages[element.id].href} opacity={s.opacity} transform={s.transform}/>
-      : <foreignObject key={element.id} x={x} y={y} width={Math.max(num(element,'width'),80,num(element,'font_size',24)*12)} height={Math.max(num(element,'height'),num(element,'font_size',24)*2.2)} opacity={s.opacity} transform={s.transform}>{createElement('div',{xmlns:'http://www.w3.org/1999/xhtml',style:{color,fontSize:num(element,'font_size',24)},dangerouslySetInnerHTML:{__html:mathMarkup(str(element,'latex'),color,num(element,'font_size',24))}})}</foreignObject>;
-    case 'ink_text': return <text key={element.id} x={x} y={y+num(element,'size',24)} fontFamily="Caveat, cursive" fontSize={num(element,'size',24)} fill={color} opacity={s.opacity} transform={s.transform}>{str(element,'text').split('\n').map((line,i)=><tspan key={i} x={x} dy={i===0?0:num(element,'size',24)*1.35}>{line}</tspan>)}</text>;
-    case 'image': { const href=images[str(element,'blob_id')] ?? ''; return <image key={element.id} x={x} y={y} width={num(element,'width')} height={num(element,'height')} href={href} preserveAspectRatio="none" opacity={s.opacity} transform={s.transform}/>; }
-    case 'svg': { const inner=rawSvgBody(str(element,'svg')); if (!inner.body) return null; const width=num(element,'width',inner.width), height=num(element,'height',inner.height); return <svg key={element.id} x={x} y={y} width={width || inner.width} height={height || inner.height} viewBox={inner.viewBox || undefined} opacity={s.opacity} transform={s.transform} dangerouslySetInnerHTML={{__html:inner.body}}/>; }
-    default: return null;
+      : <foreignObject key={element.id} x={x} y={y} width={Math.max(80,element.font_size*12)} height={element.font_size*2.2} opacity={s.opacity} transform={s.transform}>{createElement('div',{xmlns:'http://www.w3.org/1999/xhtml',style:{color,fontSize:element.font_size},dangerouslySetInnerHTML:{__html:mathMarkup(element.latex,color,element.font_size)}})}</foreignObject>;
+    case 'ink_text': {const size=element.size??24;return <text key={element.id} x={element.x} y={element.y+size} fontFamily="Shantell Sans, cursive" fontSize={size} fill={color} opacity={s.opacity} transform={s.transform}>{element.text.slice(0,400).split('\n').map((line,i)=><tspan key={i} x={element.x} dy={i===0?0:size*1.35}>{line}</tspan>)}</text>;}
+    case 'image': {
+      const href=images[element.blob_id]; const radius=Math.min(12,Math.min(element.width,element.height)/4);
+      return <g key={element.id} opacity={s.opacity} transform={s.transform}>
+        {!href && <rect x={element.x} y={element.y} width={element.width} height={element.height} rx={radius} fill="#E6E6E8" />}
+        {href && <image x={element.x} y={element.y} width={element.width} height={element.height} href={href} preserveAspectRatio="none" />}
+      </g>;
+    }
+    case 'svg': {
+      const inner=rawSvgBody(element.svg); if (!inner.body) return null;
+      const framed=Boolean(element.width&&element.width>0&&element.height&&element.height>0);
+      const width=framed?element.width!:inner.width,height=framed?element.height!:inner.height;
+      return <svg key={element.id} x={x} y={y} width={width} height={height} viewBox={inner.viewBox||undefined} preserveAspectRatio="xMidYMid meet" opacity={s.opacity} transform={s.transform} dangerouslySetInnerHTML={{__html:inner.body}}/>;
+    }
+    default: return assertNever(element);
   }
 }
 
-export function TutorScene({ scene, images = {}, viewBox, mathImages }: { scene: BoardScene; images?: Record<string, string>; viewBox?: string; mathImages?:Record<string,{href:string;width:number;height:number;offsetX:number;offsetY:number}> }) {
+function assertNever(element: never): never { throw new Error(`Unsupported board element: ${JSON.stringify(element)}`); }
+
+export function TutorScene({ scene, images = {}, viewBox, mathImages }: { scene: BoardScene; images?: Record<string, string>; viewBox?: string; mathImages?:Record<string,MathRaster> }) {
   return <svg className="board-scene" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox={viewBox} preserveAspectRatio="none">
     {scene.elements.map(element => <ElementView key={element.id} element={element} images={images} mathImages={mathImages}/>) }
   </svg>;
 }
 
-export function sceneBounds(scene: BoardScene): BoardRegion | null {
-  return unionRegions(scene.elements.map(element => elementBounds(element)));
+export function sceneBounds(scene: BoardScene, mathImages: Record<string, MathRaster> = {}): BoardRegion | null {
+  return unionRegions(scene.elements.map(element => {
+    if (element.kind !== 'math_text' || !mathImages[element.id]) return elementBounds(element);
+    const image = mathImages[element.id];
+    const base = { x: element.x + image.offsetX, y: element.y + image.offsetY, width: image.width, height: image.height };
+    const style = styleOf(element), rotation = style.rotation ?? 0;
+    if (!rotation) return base;
+    const side = Math.hypot(base.width, base.height), cx = base.x + base.width / 2, cy = base.y + base.height / 2;
+    return { x: cx - side / 2, y: cy - side / 2, width: side, height: side };
+  }));
 }
 
 /** Match the server's ordered/idempotent board_update semantics. */
@@ -192,9 +271,9 @@ export function applySceneUpdate(scene: BoardScene, update: {
 }
 
 export async function loadSceneImages(scene: BoardScene): Promise<Record<string, string>> {
-  const elements = scene.elements.filter(e => e.kind === 'image');
+  const elements = scene.elements.filter((e): e is Extract<BoardElement, {kind:'image'}> => e.kind === 'image');
   const pairs = await Promise.all(elements.map(async element => {
-    const id = str(element, 'blob_id');
+    const id = element.blob_id;
     if (!/^sha256:[a-f0-9]{64}$/.test(id)) return [id, ''] as const;
     try { return [id, await imageDataUrl(id)] as const;
     } catch { return [id, ''] as const; }

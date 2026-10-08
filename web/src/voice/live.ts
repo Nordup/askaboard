@@ -2,13 +2,30 @@ import { json, request } from '../api/client';
 import type { Message } from '../types';
 
 export interface LiveState {
-  phase: 'idle' | 'connecting' | 'live' | 'resting' | 'closing' | 'error';
+  phase: 'idle' | 'connecting' | 'live' | 'listening' | 'thinking' | 'talking' | 'resting' | 'closing' | 'error';
   muted: boolean; sessionId: string | null;
   inputTranscript: string; outputTranscript: string; error: string | null;
+  inputLevel?: number; outputLevel?: number;
 }
 interface Fragment { speaker: 'user' | 'assistant'; text: string; start: number; end: number; id: string; }
 const UTTERANCE_GAP_MS = 1800;
 const MAX_DELEGATION_CHARS = 100_000;
+// GPT-Live accepts at most 500 tokens per append. A 450-byte UTF-8 ceiling
+// stays under that limit even for token-dense text without adding a tokenizer.
+export const MAX_LIVE_APPEND_BYTES = 450;
+
+export function capLiveAppend(content: string, maxBytes = MAX_LIVE_APPEND_BYTES): string {
+  const encoder = new TextEncoder();
+  let usedBytes = 0;
+  let result = '';
+  for (const character of content) {
+    const size = encoder.encode(character).byteLength;
+    if (usedBytes + size > maxBytes) break;
+    result += character;
+    usedBytes += size;
+  }
+  return result;
+}
 export class TranscriptLedger {
   fragments: Fragment[] = [];
   seen = new Set<string>();
@@ -22,8 +39,8 @@ export class TranscriptLedger {
     return true;
   }
   caption(speaker: Fragment['speaker']) {
-    const parts = this.fragments.filter(f => f.speaker === speaker);
-    const end = parts.at(-1)?.end ?? 0;
+    const parts = this.fragments.filter(f => f.speaker === speaker).sort((a, b) => a.start - b.start || a.end - b.end);
+    const end = parts.reduce((latest, fragment) => Math.max(latest, fragment.end), 0);
     return parts.filter(f => f.end > end - 15000).map(f => f.text).join('');
   }
   private groups(speaker: Fragment['speaker'], offset = Infinity) {
@@ -48,7 +65,7 @@ export class TranscriptLedger {
   }
   messages(prefix: string): Message[] {
     return [...this.groups('user'), ...this.groups('assistant')].sort((a, b) => a.start - b.start)
-      .map(g => ({ id: `${prefix}-${g.speaker}-${g.start}`, role: g.speaker, text: g.text }));
+      .map(g => ({ id: `${prefix}-${g.speaker}-${g.start}`, role: g.speaker, text: g.text, isVoice: true }));
   }
 }
 
@@ -74,6 +91,9 @@ export class LiveCall {
   private tasks = Promise.resolve();
   private ending = false;
   private generation = 0;
+  private waitingForTutor = false;
+  private levelTimer?: ReturnType<typeof setInterval>;
+  private levelSnapshots = new Map<string, { energy: number; duration: number }>();
   constructor(private callbacks: LiveCallbacks) {}
   private update(patch: Partial<LiveState>) { this.state = { ...this.state, ...patch }; this.callbacks.state(this.state); }
   private send(type: string, content?: string, delegationId: string | null = null) {
@@ -84,19 +104,27 @@ export class LiveCall {
     if (this.peer || this.state.phase === 'connecting') return;
     const generation = ++this.generation;
     this.ledger = new TranscriptLedger(); this.seconds = 0; this.sequence = 0;
-    this.providerId = undefined; this.finalized = false; this.ending = false; this.seenDelegations.clear();
-    this.update({ phase: 'connecting', sessionId, error: null, muted: false, inputTranscript: '', outputTranscript: '' });
+    this.providerId = undefined; this.finalized = false; this.ending = false; this.waitingForTutor = false; this.seenDelegations.clear(); this.levelSnapshots.clear();
+    this.update({ phase: 'connecting', sessionId, error: null, muted: false, inputTranscript: '', outputTranscript: '', inputLevel: 0, outputLevel: 0 });
     try {
       const microphone = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
       if (generation !== this.generation) { microphone.getTracks().forEach(track => track.stop()); return; }
       this.microphone = microphone;
       const peer = new RTCPeerConnection(); this.peer = peer;
       const audio = new Audio(); audio.autoplay = true; this.audio = audio;
+      audio.addEventListener('playing', () => {
+        if (generation === this.generation && !this.ending && this.state.phase !== 'resting') this.update({ phase: 'talking' });
+      });
+      const notPlaying = () => {
+        if (generation === this.generation && !this.ending && this.state.phase !== 'resting') this.update({ phase: this.waitingForTutor ? 'thinking' : 'listening' });
+      };
+      audio.addEventListener('pause', notPlaying); audio.addEventListener('ended', notPlaying); audio.addEventListener('waiting', notPlaying);
       peer.addEventListener('track', event => {
         audio.srcObject = new MediaStream([event.track]);
         void audio.play().catch(() => this.callbacks.error('Your browser blocked voice playback. Start voice again from its button.'));
       });
       for (const track of microphone.getTracks()) peer.addTrack(track, microphone);
+      this.levelTimer = setInterval(() => { void this.sampleLevels(peer, generation); }, 150);
       const channel = peer.createDataChannel('oai-events'); this.channel = channel;
       channel.addEventListener('message', event => {
         if (generation !== this.generation || this.channel !== channel) return;
@@ -134,16 +162,21 @@ export class LiveCall {
   private receive(event: Record<string, unknown>) {
     switch (event.type) {
       case 'session.started':
-        clearTimeout(this.closeTimer); this.update({ phase: 'live' }); break;
+        clearTimeout(this.closeTimer); this.update({ phase: 'listening' }); break;
       case 'session.input_transcript.delta': case 'session.output_transcript.delta':
         if (this.ledger.add(event)) {
-          this.update({ inputTranscript: this.ledger.caption('user'), outputTranscript: this.ledger.caption('assistant') });
+          this.update({
+            inputTranscript: this.ledger.caption('user'), outputTranscript: this.ledger.caption('assistant'),
+            ...(event.type === 'session.input_transcript.delta' && this.state.phase !== 'talking' ? { phase: 'listening' as const } : {}),
+          });
           if (this.state.sessionId) this.callbacks.transcripts(this.state.sessionId, this.ledger.messages(this.providerId ?? 'voice'));
         }
         break;
       case 'session.delegation.created': {
         const d = event.delegation as { id?: string; target?: string } | undefined;
         if (!d?.id || d.target !== 'client' || this.seenDelegations.has(d.id) || this.ending) break;
+        this.waitingForTutor = true;
+        if (this.state.phase !== 'talking') this.update({ phase: 'thinking' });
         this.seenDelegations.add(d.id);
         const revision = ++this.sequence; const generation = this.generation;
         const sessionId = this.state.sessionId; const id = d.id;
@@ -155,9 +188,12 @@ export class LiveCall {
             if (!text.trim()) { this.send('session.commentary.append', 'I did not receive enough of your request. Please repeat it.', id); return; }
             const result = await this.callbacks.delegate(sessionId, text, id);
             if (generation === this.generation && revision === this.sequence && !this.ending && this.channel?.readyState === 'open') {
-              this.send('session.commentary.append', result.slice(0, 1100) || 'The board work is complete.', id);
+              this.send('session.commentary.append', capLiveAppend(result) || 'The board work is complete.', id);
+              this.waitingForTutor = false;
+              if (this.state.phase !== 'talking') this.update({ phase: 'listening' });
             }
           } catch (error) {
+            if (generation === this.generation && revision === this.sequence) { this.waitingForTutor = false; if (this.state.phase !== 'talking') this.update({ phase: 'listening' }); }
             if (generation === this.generation && !this.ending && this.channel?.readyState === 'open') this.send('session.commentary.append', 'The tutor could not finish that work. Your writing is saved. Please try again.', id);
             if (generation === this.generation && !this.ending) this.callbacks.error(error instanceof Error ? error.message : 'Delegated work failed.');
           }
@@ -191,7 +227,14 @@ export class LiveCall {
   }
   async wake() { const id = this.state.sessionId; if (id && this.state.phase === 'resting') await this.start(id); }
   context(content: string) {
-    if (this.state.phase === 'live') this.send('session.thinking.append', content.slice(0, 1000));
+    if (this.state.phase === 'live' || this.state.phase === 'listening' || this.state.phase === 'thinking' || this.state.phase === 'talking') {
+      this.send('session.thinking.append', capLiveAppend(content));
+    }
+  }
+  commentary(content: string) {
+    if (this.state.phase === 'live' || this.state.phase === 'listening' || this.state.phase === 'thinking' || this.state.phase === 'talking') {
+      this.send('session.commentary.append', capLiveAppend(content), null);
+    }
   }
   async end() {
     if (!this.peer) {
@@ -226,13 +269,38 @@ export class LiveCall {
     try { await request('/v1/live/usage', json({ session_id: this.state.sessionId, live_session_id: this.providerId, model: 'gpt-live-1', duration_seconds: Math.ceil(this.seconds) })); }
     catch { this.callbacks.error('Voice ended, but its usage report could not be saved.'); }
   }
+  private async sampleLevels(peer: RTCPeerConnection, generation: number) {
+    if (generation !== this.generation || peer !== this.peer) return;
+    try {
+      const stats = await peer.getStats();
+      let inputLevel = 0; let outputLevel = 0;
+      for (const item of stats.values()) {
+        if (item.type !== 'inbound-rtp' && item.type !== 'outbound-rtp') continue;
+        const report = item as RTCStats & {
+          kind?: string; mediaType?: string; totalAudioEnergy?: number; totalSamplesDuration?: number;
+        };
+        if (report.kind !== 'audio' && report.mediaType !== 'audio') continue;
+        const previous = this.levelSnapshots.get(report.id);
+        const energy = report.totalAudioEnergy;
+        const duration = report.totalSamplesDuration;
+        let level = 0;
+        if (typeof energy === 'number' && typeof duration === 'number' && previous && duration > previous.duration) {
+          level = Math.sqrt(Math.max(0, (energy - previous.energy) / (duration - previous.duration)));
+        }
+        if (typeof energy === 'number' && typeof duration === 'number') this.levelSnapshots.set(report.id, { energy, duration });
+        if (report.type === 'outbound-rtp') inputLevel = Math.max(inputLevel, level);
+        else outputLevel = Math.max(outputLevel, level);
+      }
+      if (generation === this.generation && peer === this.peer) this.update({ inputLevel: Math.min(1, inputLevel), outputLevel: Math.min(1, outputLevel) });
+    } catch { /* Some browsers expose no audio-energy stats; phase motion still follows playback. */ }
+  }
   private fail(message: string) {
     void this.reportUsage(); this.generation++; this.sequence++; this.ending = true; this.cleanup(); this.update({ phase: 'error', error: message }); this.callbacks.error(message);
   }
   private cleanup() {
-    clearTimeout(this.closeTimer); const peer = this.peer; this.peer = undefined;
+    clearTimeout(this.closeTimer); clearInterval(this.levelTimer); this.levelTimer = undefined; const peer = this.peer; this.peer = undefined;
     this.channel?.close(); peer?.close(); this.microphone?.getTracks().forEach(t => t.stop());
     if (this.audio) { this.audio.pause(); this.audio.srcObject = null; }
-    this.channel = undefined; this.microphone = undefined; this.audio = undefined;
+    this.channel = undefined; this.microphone = undefined; this.audio = undefined; this.levelSnapshots.clear(); this.waitingForTutor = false;
   }
 }

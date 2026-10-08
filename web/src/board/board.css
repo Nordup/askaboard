@@ -1,3 +1,11 @@
+@font-face {
+  font-family: 'Shantell Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./assets/ShantellSans-Normal-Regular.otf') format('opentype');
+}
+
 .board-surface {
   position: relative;
   width: 100%;
@@ -14,8 +22,6 @@
   -webkit-user-select: none;
 }
 
-.board-surface[data-board-tool='hand'] { cursor: grab; }
-.board-surface:active[data-board-tool='hand'] { cursor: grabbing; }
 .board-surface[data-board-tool='lasso'],
 .board-surface[data-board-tool='selection'] { cursor: crosshair; }
 .board-surface[data-board-tool='eraser'] { cursor: cell; }
@@ -48,6 +54,12 @@
   border-radius: 2px;
   background: rgba(96, 81, 220, 0.08);
   pointer-events: none;
+}
+.board-marquee--tutor {
+  box-sizing: border-box;
+  border: 4px dashed #6051dc;
+  border-radius: 4px;
+  background: rgb(230 227 249 / 30%);
 }
 .board-lasso {
   position: absolute;

@@ -1,10 +1,21 @@
 import { describe, expect, it, vi } from 'vitest';
-import { LiveCall, TranscriptLedger } from './live';
+import { LiveCall, TranscriptLedger, capLiveAppend, MAX_LIVE_APPEND_BYTES } from './live';
 import { request } from '../api/client';
 
 vi.mock('../api/client', () => ({ json: (body: unknown) => ({ body: JSON.stringify(body) }), request: vi.fn() }));
 
 describe('full duplex transcript context', () => {
+  it('caps Live append content by UTF-8 bytes without splitting non-ASCII codepoints', () => {
+    const dense = 'x'.repeat(MAX_LIVE_APPEND_BYTES + 80);
+    expect(capLiveAppend(dense)).toBe('x'.repeat(MAX_LIVE_APPEND_BYTES));
+
+    const unicode = '🙂'.repeat(200);
+    const capped = capLiveAppend(unicode);
+    expect(new TextEncoder().encode(capped).byteLength).toBeLessThanOrEqual(MAX_LIVE_APPEND_BYTES);
+    expect(capped).toBe('🙂'.repeat(112));
+    expect(capped).not.toContain('\uFFFD');
+  });
+
   it('keeps overlapping speakers separate and deduplicates retransmitted events', () => {
     const ledger = new TranscriptLedger();
     const a = { type: 'session.input_transcript.delta', event_id: '1', delta: 'Try ', start_ms: 100, end_ms: 200 };
@@ -14,6 +25,12 @@ describe('full duplex transcript context', () => {
     ledger.add(a);
     expect(ledger.messages('call').map(m => m.text)).toEqual(['Try another exercise', 'Okay']);
     expect(ledger.intent(450)).toBe('Try another exercise');
+  });
+  it('orders out-of-order caption deltas by their source timestamps and preserves their exact spaces', () => {
+    const ledger = new TranscriptLedger();
+    ledger.add({ type: 'session.input_transcript.delta', event_id: 'late', delta: 'there', start_ms: 220, end_ms: 310 });
+    ledger.add({ type: 'session.input_transcript.delta', event_id: 'early', delta: 'Hello ', start_ms: 100, end_ms: 200 });
+    expect(ledger.caption('user')).toBe('Hello there');
   });
   it('uses only context available at the delegation timeline position', () => {
     const ledger = new TranscriptLedger();
@@ -101,5 +118,35 @@ describe('full duplex transcript context', () => {
     vi.spyOn(call, 'end').mockImplementation(async () => {});
     await call.rest();
     expect(call.state.phase).toBe('error');
+  });
+
+  it('mirrors typed context through the current Live event family after the session starts', () => {
+    const call = new LiveCall({ state() {}, transcripts() {}, async delegate() { return ''; }, error() {} });
+    const channel = { readyState: 'open', send: vi.fn(), close() {} };
+    (call as unknown as { channel: typeof channel }).channel = channel;
+    call.state = { phase: 'listening', muted: false, sessionId: 'session-typed', inputTranscript: '', outputTranscript: '', error: null };
+    call.context('The learner typed: show the next step');
+    call.commentary('The next step is to isolate x.');
+    expect(channel.send.mock.calls.map(([message]) => JSON.parse(message as string))).toEqual([
+      { type: 'session.thinking.append', content: 'The learner typed: show the next step', delegation_id: null, event_id: expect.any(String) },
+      { type: 'session.commentary.append', content: 'The next step is to isolate x.', delegation_id: null, event_id: expect.any(String) },
+    ]);
+  });
+
+  it('keeps only the Live mirror under the transport byte ceiling', () => {
+    const call = new LiveCall({ state() {}, transcripts() {}, async delegate() { return ''; }, error() {} });
+    const channel = { readyState: 'open', send: vi.fn(), close() {} };
+    (call as unknown as { channel: typeof channel }).channel = channel;
+    call.state = { phase: 'listening', muted: false, sessionId: 'session-typed', inputTranscript: '', outputTranscript: '', error: null };
+    const typedText = '🙂'.repeat(200);
+    call.context(`The learner typed: ${typedText}`);
+    call.commentary(typedText);
+    const events = channel.send.mock.calls.map(([message]) => JSON.parse(message as string) as { content: string });
+    expect(events[0].content).toContain('The learner typed: ');
+    expect(events).toHaveLength(2);
+    for (const event of events) {
+      expect(new TextEncoder().encode(event.content).byteLength).toBeLessThanOrEqual(MAX_LIVE_APPEND_BYTES);
+      expect(event.content).not.toContain('\uFFFD');
+    }
   });
 });
