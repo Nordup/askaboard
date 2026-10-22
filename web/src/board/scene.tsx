@@ -4,7 +4,7 @@ import { createElement, type ReactNode } from 'react';
 import type { BoardElement, BoardScene, BoardRegion } from '../types';
 import type { BoardElementStyle } from './element-types';
 import shantellFontUrl from './assets/ShantellSans-Normal-Regular.otf?url';
-import { elementBounds, unionRegions } from './geometry';
+import { elementBounds, inkTextLayout, inkTextLines, unionRegions } from './geometry';
 
 const num = (e: Record<string, unknown>, key: string, fallback = 0) => typeof e[key] === 'number' ? e[key] as number : fallback;
 const str = (e: Record<string, unknown>, key: string, fallback = '') => typeof e[key] === 'string' ? e[key] as string : fallback;
@@ -222,7 +222,7 @@ function ElementView({ element, images, mathImages }: { element: BoardElement; i
     case 'math_text': return mathImages?.[element.id]
       ? <image key={element.id} x={x+mathImages[element.id].offsetX} y={y+mathImages[element.id].offsetY} width={mathImages[element.id].width} height={mathImages[element.id].height} href={mathImages[element.id].href} opacity={s.opacity} transform={s.transform}/>
       : <foreignObject key={element.id} x={x} y={y} width={Math.max(80,element.font_size*12)} height={element.font_size*2.2} opacity={s.opacity} transform={s.transform}>{createElement('div',{xmlns:'http://www.w3.org/1999/xhtml',style:{color,fontSize:element.font_size},dangerouslySetInnerHTML:{__html:mathMarkup(element.latex,color,element.font_size)}})}</foreignObject>;
-    case 'ink_text': {const size=element.size??24;return <text key={element.id} x={element.x} y={element.y+size} fontFamily="Shantell Sans, cursive" fontSize={size} fill={color} opacity={s.opacity} transform={s.transform}>{element.text.slice(0,400).split('\n').map((line,i)=><tspan key={i} x={element.x} dy={i===0?0:size*1.35}>{line}</tspan>)}</text>;}
+    case 'ink_text': {const ink=inkTextLayout(element.size);return <text key={element.id} x={element.x} y={element.y+ink.ascent} fontFamily="Shantell Sans, cursive" fontSize={ink.fontSize} fill={color} opacity={s.opacity} transform={s.transform}>{inkTextLines(element.text).map((line,i)=><tspan key={i} x={element.x} dy={i===0?0:ink.lineHeight}>{line}</tspan>)}</text>;}
     case 'image': {
       const href=images[element.blob_id]; const radius=Math.min(12,Math.min(element.width,element.height)/4);
       return <g key={element.id} opacity={s.opacity} transform={s.transform}>

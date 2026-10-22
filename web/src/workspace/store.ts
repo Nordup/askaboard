@@ -1,11 +1,14 @@
 import { api, ApiError, request } from '../api/client';
 import type { Workspace } from '../types';
 import { journal, type JournalEntry } from './journal';
+import { UNTITLED_SESSION, withDerivedTitle } from './title';
 
 export function blankWorkspace(id: string = crypto.randomUUID()): Workspace {
-  return { version: 1, id, title: 'New session', strokes: [], scene: { elements: [] }, camera: { center: [0, 0], zoom: 1 },
+  return { version: 1, id, title: UNTITLED_SESSION, customTitle: null, strokes: [], scene: { elements: [] }, camera: { center: [0, 0], zoom: 1 },
     messages: [], model: 'gpt-5.6-luna', reasoningEffort: 'high', plan: null, exercise: null, updatedAt: new Date().toISOString() };
 }
+/** Any workspace change except `title`, which is derived (see `./title`). */
+export type WorkspacePatch = Partial<Omit<Workspace, 'title'>>;
 export type SyncState = 'saved' | 'saving' | 'local' | 'conflict' | 'error';
 export class WorkspaceStore {
   entries = new Map<string, JournalEntry>();
@@ -30,7 +33,7 @@ export class WorkspaceStore {
   }
   async initialize() {
     try {
-      for (const entry of await journal.all()) this.entries.set(entry.workspace.id, entry);
+      for (const entry of await journal.all()) this.entries.set(entry.workspace.id, this.derivingTitle(entry));
       this.deletedIds = new Set(await journal.getDeletedIds());
       for (const id of this.deletedIds) this.entries.delete(id);
     }
@@ -53,9 +56,12 @@ export class WorkspaceStore {
       const id = String(session.id);
       if (this.deletedIds.has(id)) continue;
       if (!this.entries.has(id)) {
+        // A summary only: the server's cached derived title stands until the
+        // session is opened and its content can derive it again.
         const workspace = {
           ...blankWorkspace(id),
-          title: typeof session.title === 'string' ? session.title : 'New session',
+          customTitle: undefined,
+          title: typeof session.title === 'string' && session.title.trim() ? session.title : UNTITLED_SESSION,
           updatedAt: this.sessionTimestamp(session),
           model: typeof session.model === 'string' ? session.model : blankWorkspace(id).model,
           reasoningEffort: typeof session.reasoning_effort === 'string' ? session.reasoning_effort : blankWorkspace(id).reasoningEffort,
@@ -70,6 +76,15 @@ export class WorkspaceStore {
     this.notify();
     if (this.activeId) await this.open(this.activeId);
     for (const [id, entry] of this.entries) if (entry.dirty) void this.flush(id);
+  }
+  /** The entry on derived titles; dirty when that changed what was saved. */
+  private derivingTitle(entry: JournalEntry): JournalEntry {
+    // A server summary (revision -1) has no content to derive from and must
+    // never be saved over the real workspace; its cached title stands.
+    if (entry.revision < 0) return entry;
+    const workspace = withDerivedTitle(entry.workspace);
+    const changed = JSON.stringify(workspace) !== JSON.stringify(entry.workspace);
+    return { ...entry, workspace, dirty: entry.dirty || changed };
   }
   private mostRecentId(): string | null {
     return [...this.entries.values()]
@@ -123,12 +138,12 @@ export class WorkspaceStore {
     if (id) await this.remove(id);
     return this.create();
   }
-  patch(id: string, patch: Partial<Workspace>) {
+  patch(id: string, patch: WorkspacePatch) {
     if (this.deleting.has(id)) return;
     if (!Object.keys(patch).length) return;
     if (this.conflicts.has(id) && this.preservedConflicts.has(id)) this.preservedConflicts.delete(id);
     const entry = this.entries.get(id); if (!entry) return;
-    const next = { ...entry.workspace, ...patch, id };
+    const next = withDerivedTitle({ ...entry.workspace, ...patch, id });
     if (JSON.stringify(next) === JSON.stringify(entry.workspace)) return;
     const cameraOnly = Object.keys(patch).every(key => key === 'camera');
     entry.workspace = { ...next, updatedAt: cameraOnly ? entry.workspace.updatedAt : new Date().toISOString() };
@@ -169,8 +184,11 @@ export class WorkspaceStore {
       const remote = await api.workspace(id);
       // A board edit made while hydration was in flight wins locally.
       if (this.entries.get(id)?.dirty) return;
-      this.entries.set(id, { ...remote, dirty: false });
-      await this.persist({ ...remote, dirty: false });
+      const hydrated = this.derivingTitle({ ...remote, dirty: false });
+      this.entries.set(id, hydrated);
+      // A title derived differently from the saved one is saved back, so the
+      // server's session list stops showing an older client's name.
+      if (hydrated.dirty) this.changed(id); else await this.persist(hydrated);
       this.sync = this.conflicts.size ? 'conflict' : 'saved';
     } catch (error) {
       if (error instanceof ApiError && error.status === 404) {
@@ -178,7 +196,7 @@ export class WorkspaceStore {
         const w = local?.workspace ?? blankWorkspace(id);
         const rows = Array.isArray(session.messages) ? session.messages : [];
         w.messages = rows.filter(m => m.role === 'learner' || m.role === 'tutor').map(m => ({ id: String(m.id), role: m.role === 'learner' ? 'user' : 'assistant', text: String(m.text) }));
-        const restored = { workspace: w, revision: 0, dirty: false };
+        const restored = { workspace: withDerivedTitle(w), revision: 0, dirty: false };
         this.entries.set(id, restored);
         await this.persist(restored);
       } else this.error = error instanceof Error ? error.message : 'Could not open the session.';
@@ -221,8 +239,8 @@ export class WorkspaceStore {
     if (!source || !this.conflicts.has(id) || this.preservedConflicts.has(id)) return null;
     const workspace = structuredClone(source.workspace);
     workspace.id = crypto.randomUUID();
-    const prefix = `Copy of ${source.workspace.title}`;
-    workspace.title = prefix.slice(0, 255);
+    workspace.customTitle = `Copy of ${source.workspace.title}`.slice(0, 255);
+    Object.assign(workspace, withDerivedTitle(workspace));
     workspace.updatedAt = new Date().toISOString();
     // Message IDs identify rows in the copied transcript. Provider conversation
     // IDs are deliberately never copied; they live only in the LiveCall transport.

@@ -202,9 +202,9 @@ export function elementBounds(element: BoardElement): BoardRegion | null {
       break;
     }
     case 'ink_text': {
-      const size = Math.max(8, element.size ?? 24);
-      const lines = element.text.split('\n');
-      rect = { x: element.x, y: element.y, width: Math.max(0, ...lines.map(line => line.length * size * 0.57)), height: size * 1.35 * lines.length };
+      const layout = inkTextLayout(element.size), lines = inkTextLines(element.text);
+      rect = { x: element.x, y: element.y, width: Math.max(0, ...lines.map(line => measureInkLine(line, layout.fontSize))),
+        height: layout.lineHeight * lines.length };
       break;
     }
     case 'image':
@@ -227,6 +227,45 @@ export function elementBounds(element: BoardElement): BoardRegion | null {
   // rotated center, so drawing cache bounds and capture bounds cannot clip.
   const side = Math.hypot(rect.width, rect.height), cx = rect.x + rect.width / 2, cy = rect.y + rect.height / 2;
   return { x: cx - side / 2, y: cy - side / 2, width: side, height: side };
+}
+
+/**
+ * Shantell Sans Regular's vertical metrics, per em, measured from the bundled
+ * `assets/ShantellSans-Normal-Regular.otf` (the same file the iPad bundles).
+ */
+const SHANTELL = { capHeight: 0.709, ascent: 1.02, descent: 0.32, meanAdvance: 0.52 };
+const INK_TEXT_MAX_CHARACTERS = 400;
+
+/**
+ * How an `ink_text` element is set, mirroring iPad's `InkTextRenderer`:
+ * `size` is the cap height in board points (clamped to the schema's 8–256),
+ * not the em. The font is scaled so its capitals stand `size` tall, `(x, y)`
+ * is the top of the first line's ascent band, and lines advance by
+ * ascent + descent. The server's placement estimate assumes the same.
+ */
+export function inkTextLayout(rawSize: number | undefined) {
+  const size = Number.isFinite(rawSize) ? Math.min(256, Math.max(8, rawSize!)) : 24;
+  const fontSize = size / SHANTELL.capHeight;
+  return { fontSize, ascent: fontSize * SHANTELL.ascent, lineHeight: fontSize * (SHANTELL.ascent + SHANTELL.descent) };
+}
+
+/** The explicit lines iPad draws: the 400-character budget, split on newlines only. */
+export function inkTextLines(text: string): string[] {
+  return [...text].slice(0, INK_TEXT_MAX_CHARACTERS).join('').split('\n');
+}
+
+let inkMeasureContext: CanvasRenderingContext2D | null | undefined;
+function measureInkLine(line: string, fontSize: number): number {
+  if (inkMeasureContext === undefined) {
+    try { inkMeasureContext = typeof document !== 'undefined' ? document.createElement('canvas').getContext('2d') : null; }
+    catch { inkMeasureContext = null; }
+  }
+  const fontReady = typeof document !== 'undefined' && document.fonts?.check?.(`${fontSize}px "Shantell Sans"`);
+  if (inkMeasureContext && fontReady) {
+    inkMeasureContext.font = `${fontSize}px "Shantell Sans"`;
+    return inkMeasureContext.measureText(line).width;
+  }
+  return [...line].length * fontSize * SHANTELL.meanAdvance;
 }
 
 function assertNever(value: never): never { throw new Error(`Unsupported board element: ${JSON.stringify(value)}`); }

@@ -12,9 +12,9 @@ from app.tutor.board_scene import (
     BoardSceneUpdate, SVGElement, lint_svg, parse_board_update,
 )
 from app.tutor.board_geometry import (
-    FRAMED_KINDS, OVERLAP_THRESHOLD, element_logical_bounds,
-    learner_ink_bounds, overlap_fraction, scene_is_truncated,
-    scene_tutor_blocks,
+    FRAMED_KINDS, OVERLAP_THRESHOLD, UNMEASURED_KINDS, element_logical_bounds,
+    learner_ink_bounds, overflow_edges, overlap_fraction, scene_is_truncated,
+    scene_tutor_blocks, visible_bounds,
 )
 from app.tutor.context import ContextBundle
 from app.tutor.events import (
@@ -894,6 +894,15 @@ class _BoardGate:
       old tutor scene (it intentionally clears it) and checks only the
       learner's ink.
 
+    * **Never draw past the edge of the learner's view.** When the scene
+      carries `visible_logical_rect`, a new element — or an edit that moves an
+      element that was in view past an edge — whose estimated box crosses that
+      rectangle is refused `must_reposition` the same way, with the box and the
+      edge named so the model can move it, shrink it, or break the line.
+      Every kind is held to this except those whose box here is a placeholder
+      (`UNMEASURED_KINDS`). An element already out of view may be edited where
+      it is: the learner panned away from it, the tutor did not misplace it.
+
     * **Draw, then review what you drew.** An allowed mutation leaves a
       *pending post-draw review* on the gate. While it is pending the next
       provider round is forced to call exactly `view_board`, and that call is
@@ -933,8 +942,10 @@ class _BoardGate:
             for ident, box in scene_tutor_blocks(scene)
         }
         self._learner_ink = learner_ink_bounds(scene)
+        self._visible = visible_bounds(scene)
         self._scene_truncated = scene_is_truncated(scene)
         self._conflicts: dict[str, list[str]] = {}
+        self._overflows: dict[str, list[str]] = {}
 
     def mark_render_delivered(self) -> None:
         """Record that a board render reached the model's context this turn."""
@@ -963,6 +974,11 @@ class _BoardGate:
     def conflict_names(self, call_id: str) -> list[str]:
         """The ids/learner-work marker a `must_reposition` refusal names."""
         return self._conflicts.get(call_id, [])
+
+    def overflow_notes(self, call_id: str) -> list[str]:
+        """The elements a `must_reposition` refusal found past the visible
+        board, each with its estimated extent and the edge it crosses."""
+        return self._overflows.get(call_id, [])
 
     def decide_update(self, call_id: str, update: BoardSceneUpdate) -> str:
         """Decide a valid mutation: `allowed`, `inspect_first`, or
@@ -998,9 +1014,29 @@ class _BoardGate:
         """`must_reposition` when a new framed block stacks on existing geometry."""
         replace_all = update.mode == "replace_all"
         conflicts: list[str] = []
+        overflows: list[str] = []
         incoming: list[tuple[str, object]] = []
 
         for element in update.elements:
+            if element.kind in UNMEASURED_KINDS or self._visible is None:
+                box = None
+            else:
+                box = element_logical_bounds(element.model_dump())
+            if box is not None:
+                previous = (
+                    None if replace_all else self._tutor_blocks.get(element.id)
+                )
+                edges = overflow_edges(box, self._visible)
+                was_in_view = previous is None or not overflow_edges(
+                    previous, self._visible
+                )
+                if edges and was_in_view:
+                    overflows.append(
+                        f"`{element.id}` would span x {box.min_x:.0f} to "
+                        f"{box.max_x:.0f}, y {box.min_y:.0f} to {box.max_y:.0f}, "
+                        f"past the visible board's " + " and ".join(edges)
+                    )
+
             if element.kind not in FRAMED_KINDS:
                 continue
             box = element_logical_bounds(element.model_dump())
@@ -1035,9 +1071,10 @@ class _BoardGate:
                 conflicts.append("the learner's work")
             incoming.append((new_id, box))
 
-        if not conflicts:
+        if not conflicts and not overflows:
             return "allowed"
         self._conflicts[call_id] = sorted(set(conflicts))
+        self._overflows[call_id] = overflows
         return "must_reposition"
 
     def _apply_update(self, update: BoardSceneUpdate) -> None:
@@ -1063,6 +1100,32 @@ class _BoardGate:
     def decision_for(self, call_id: str) -> str | None:
         """The decision already recorded for one call, if any."""
         return self._decisions.get(call_id)
+
+
+def _reposition_detail(conflicts: list[str], overflows: list[str]) -> str:
+    """The `must_reposition` ack: every reason the placement was refused."""
+    reasons: list[str] = []
+    if conflicts:
+        reasons.append(
+            "the content you placed overlaps " + " and ".join(conflicts)
+            + ". Move it to clear space \u2014 do not cover an existing "
+            "object or the learner's working"
+        )
+    if overflows:
+        reasons.append(
+            "; ".join(overflows) + ", so the learner would not see all of it. "
+            "Keep it inside `visible_logical_rect`: move it, make it smaller, "
+            "or break long writing into shorter lines with \\n"
+        )
+    if not reasons:
+        reasons.append(
+            "the content you placed overlaps existing content. Move it to "
+            "clear space"
+        )
+    return (
+        "Nothing was drawn: " + ". Also, ".join(reasons)
+        + ". Then try again. Your fresh view of the board is unchanged."
+    )
 
 
 def _post_review_tool_choice(provider: Provider) -> dict:
@@ -1603,13 +1666,9 @@ async def run_turn(
                     ))
                     continue
                 if decision == "must_reposition":
-                    conflicts = board_gate.conflict_names(call_id)
-                    detail = (
-                        "Nothing was drawn: the content you placed overlaps "
-                        + (" and ".join(conflicts) if conflicts else "existing content")
-                        + ". Move it to clear space and try again \u2014 do not "
-                        "cover an existing object or the learner's working. "
-                        "Your fresh view of the board is unchanged."
+                    detail = _reposition_detail(
+                        board_gate.conflict_names(call_id),
+                        board_gate.overflow_notes(call_id),
                     )
                     outputs.append(provider.tool_output(
                         call_id=call_id, name=name,

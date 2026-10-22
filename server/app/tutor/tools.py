@@ -559,7 +559,7 @@ UPDATE_BOARD_TOOL: dict = {
                                     # the opposite of what it says.
                                     "description": "The words to write, drawn on the device as handwriting-look ink in your own hand; newlines make lines. Prose only, and every piece of notation still goes in `math_text`. Write it as plain text: em and en dashes, curly quotes and ellipses are normalised to their ASCII equivalents, and a non-Latin script has no glyph to draw and comes out as a placeholder. An emoji is not a placeholder: it draws as itself, in full colour, standing as tall as the writing around it, so a star beside a good step or a warning sign beside a trap is yours to use. Your writing looks handwritten in a board capture too, so when you read the board back, the learner's work is the writing you did not put there: every piece you did is listed, by id, in the scene you were given, plus whatever you have written this turn.",
                                 },
-                                "size": {"type": "number", "minimum": 8, "maximum": 256, "description": "Cap height: how tall one line of the writing stands."},
+                                "size": {"type": "number", "minimum": 8, "maximum": 256, "description": "Cap height: how tall one line of the writing stands. Lines never wrap on their own: each character runs about 0.75 x size wide and each line about 1.9 x size tall, so break long writing with newlines to keep it inside the visible board."},
                             },
                             required=["x", "y", "text", "size"],
                             # Handwriting is a filled pen outline rather than a

@@ -1286,6 +1286,130 @@ async def test_an_overlapping_image_is_refused_and_emits_no_mutation():
     assert all("tool_choice" not in body for body in bodies)
 
 
+VISIBLE_RECT = [-255.5, -356.0, 255.5, 356.0]
+
+
+def _ink_element(ident: str, x: float, y: float, text: str, size: float = 26) -> dict:
+    """A tutor `ink_text` note (defaults filled in for strict validation)."""
+    return {
+        "id": ident, "kind": "ink_text", "x": x, "y": y, "text": text,
+        "size": size, "role": "content", "stroke": "#2563EB",
+        "fill": "transparent", "stroke_width": 4, "opacity": 1, "dash": [],
+        "rotation": 0,
+    }
+
+
+@respx.mock
+async def test_ink_text_running_past_the_visible_board_is_refused():
+    """The reported web smoke-test turn: a 26pt two-line hint at x=-120 on a
+    511pt-wide view ran off the right edge. It must be refused before it
+    streams, with the edge named, and the same words broken into short lines
+    must land."""
+    scene = json.dumps({
+        "kind": "board_scene_context", "visible_logical_rect": VISIBLE_RECT,
+        "tutor_elements": [],
+    })
+    long_hint = _ink_element(
+        "guide-prompt", -120, -165,
+        "Your first move: what will undo the +6?\nWrite that operation on both sides.",
+    )
+    short_hint = _ink_element(
+        "guide-prompt", -230, -165,
+        "Your first move:\nwhat will undo the +6?\nWrite it on both sides.",
+    )
+    respx.post("https://api.openai.com/v1/responses").mock(
+        side_effect=[
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_mutation_turn({
+                         "mode": "upsert", "delete_ids": [],
+                         "elements": [long_hint],
+                     }, call_id="call_long", response_id="resp_long"))),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_mutation_turn({
+                         "mode": "upsert", "delete_ids": [],
+                         "elements": [short_hint],
+                     }, call_id="call_short", response_id="resp_short"))),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_view_board_turn())),
+            Response(200, headers={"Content-Type": "text/event-stream"},
+                     content=sse_stream(*_message_turn("Over to you."))),
+        ]
+    )
+    bundle = ContextBundle(
+        system="s", input=[{"role": "user", "content": "help me solve"}],
+        board_scene=scene,
+    )
+
+    events = []
+    result = None
+    async for event, running in run_turn(
+        provider=OpenAIProvider(client=AsyncOpenAI(api_key="sk-test")),
+        model="gpt-5.6-sol", effort="high", bundle=bundle,
+        fetch_board=_render_board(),
+    ):
+        events.append(event)
+        result = running
+
+    refused = json.loads(result.tool_calls[0]["result"])
+    assert refused["status"] == "must_reposition"
+    assert "`guide-prompt`" in refused["detail"]
+    assert "right edge (x 255.5)" in refused["detail"]
+    upserts = [
+        element.id
+        for e in events if isinstance(e, BoardUpdateEvent)
+        for element in e.payload.upserts
+    ]
+    assert upserts == ["guide-prompt"], "only the fitted retry may stream"
+    assert json.loads(result.tool_calls[1]["result"])["status"] != "must_reposition"
+
+
+def test_the_visible_board_rule_holds_on_every_edge_and_spares_panned_away_content():
+    """Sweep the four edges for a new note and a new framed image, and pin the
+    two exemptions: a scene without `visible_logical_rect` (offscreen
+    sessions) and an edit of an element that was already out of view."""
+    from app.tutor.board_scene import BoardSceneUpdate
+    from app.tutor.loop import _BoardGate
+
+    def gate(elements: list[dict] | None = None, visible=VISIBLE_RECT) -> _BoardGate:
+        root = {"kind": "board_scene_context", "tutor_elements": elements or []}
+        if visible is not None:
+            root["visible_logical_rect"] = visible
+        return _BoardGate(renderable=False, scene=json.dumps(root))
+
+    def decide(board: _BoardGate, element: dict, call_id: str = "c") -> str:
+        update = BoardSceneUpdate.model_validate({
+            "mode": "upsert", "delete_ids": [], "elements": [element],
+        })
+        return board.decide_update(call_id, update)
+
+    placements = {
+        "inside": ((-200, -300), "allowed"),
+        "left": ((-300, 0), "must_reposition"),
+        "right": ((200, 0), "must_reposition"),
+        "top": ((-100, -380), "must_reposition"),
+        "bottom": ((-100, 340), "must_reposition"),
+    }
+    for edge, ((x, y), expected) in placements.items():
+        for element in (_ink_element("note", x, y, "Check it"),
+                        _image_element("pic", x, y)):
+            board = gate()
+            assert decide(board, element) == expected, (edge, element["kind"])
+            if expected != "allowed":
+                notes = " ".join(board.overflow_notes("c"))
+                assert f"{edge} edge" in notes, (edge, notes)
+
+    # No visible rect: nothing to measure against, nothing refused.
+    assert decide(gate(visible=None), _ink_element("note", 200, 0, "Check it")) == "allowed"
+
+    # Already out of view (the learner panned away): its edit stays allowed.
+    offscreen = _ink_element("old", 900, 0, "Earlier note")
+    assert decide(gate([offscreen]), dict(offscreen, text="Earlier note, fixed")) == "allowed"
+    # In view before: an edit that pushes it past the edge is refused.
+    in_view = _ink_element("old", -200, 0, "Short")
+    pushed = dict(in_view, text="A much longer note that no longer fits on one line")
+    assert decide(gate([in_view]), pushed) == "must_reposition"
+
+
 @respx.mock
 async def test_two_overlapping_framed_elements_in_one_update_are_refused():
     """New batch members must be checked against each other, not just the scene."""

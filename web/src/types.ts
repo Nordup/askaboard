@@ -44,7 +44,10 @@ export interface Message {
 export interface Workspace {
   version: 1;
   id: string;
+  /** Derived (`workspace/title.ts`) and cached for the server's session list; never set directly. */
   title: string;
+  /** The learner's rename, if any; `null` once the workspace uses derived titles. */
+  customTitle?: string | null;
   strokes: Stroke[];
   scene: BoardScene;
   camera: Camera;

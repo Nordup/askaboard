@@ -19,6 +19,7 @@ placement slide under the check.
 from __future__ import annotations
 
 import json
+import math
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -76,6 +77,26 @@ class LogicalBox:
 FRAMED_KINDS = frozenset({
     "image", "svg", "rectangle", "ellipse", "circle", "polygon",
 })
+
+#: Shantell Sans Regular metrics per em, measured from the font both clients
+#: bundle: cap height, ascent + descent (the line pitch), and a slightly
+#: generous mean advance for prose. An `ink_text` box is estimated from these,
+#: so it matches what the device draws rather than a generic sans guess.
+INK_CAP_HEIGHT = 0.709
+INK_LINE_HEIGHT = 1.34
+INK_ADVANCE = 0.52
+
+#: Mean advance of the clients' system sans for typeset `text`, per em.
+TEXT_ADVANCE = 0.56
+
+#: Kinds whose box here is a placeholder rather than an estimate of the drawn
+#: extent (typeset LaTeX's width cannot be known without typesetting it), so
+#: they are not held to the visible-board rule.
+UNMEASURED_KINDS = frozenset({"math_text"})
+
+#: How far, in board points, an estimated box may cross the visible edge
+#: before a placement is refused. Absorbs estimate noise, not real overflow.
+VISIBLE_EDGE_TOLERANCE = 4.0
 
 #: The conservative threshold: a new framed block must overlap an existing
 #: tutor block or the learner's ink by at least this fraction of the *smaller*
@@ -246,12 +267,21 @@ def element_logical_bounds(element: dict) -> LogicalBox | None:
     # are never hard-blocked on their own. Returning None here is the safe
     # conservative choice for the gate: no geometry means no block.
     if kind == "text":
+        size = max(8.0, _number(element, "font_size"))
+        text = element.get("text")
+        lines = text.split("\n") if isinstance(text, str) and text else [""]
         width = _number(element, "width")
-        height = _number(element, "font_size") * 1.4
-        if width <= 0:
-            width = height * 6
+        if width > 0:
+            # Both clients wrap at `width`; count the wrapped lines.
+            count = sum(
+                max(1, math.ceil(len(line) * size * TEXT_ADVANCE / width))
+                for line in lines
+            )
+        else:
+            count = len(lines)
+            width = size * TEXT_ADVANCE * max(1, max(len(line) for line in lines))
         return _box(_number(element, "x"), _number(element, "y"),
-                    width, height)
+                    width, size * (0.3 + 1.2 * count))
     if kind == "line" or kind == "arrow":
         return _box(
             min(_number(element, "x1"), _number(element, "x2")),
@@ -268,9 +298,14 @@ def element_logical_bounds(element: dict) -> LogicalBox | None:
         text = element.get("text")
         if not isinstance(text, str) or not text:
             return None
-        lines = len(text.split("\n"))
-        width = size * max(1, len(max(text.split("\n"), key=len))) * 0.55
-        height = size * 1.3 * max(1, lines)
+        # `size` is the cap height; both clients scale Shantell Sans so its
+        # capitals stand that tall (iPad `InkTextRenderer.uiFont`, web
+        # `inkTextLayout`), draw only explicit `\n` lines, and advance each
+        # line by the font's ascent + descent.
+        em = min(256.0, max(8.0, size)) / INK_CAP_HEIGHT
+        lines = text[:400].split("\n")
+        width = em * INK_ADVANCE * max(1, max(len(line) for line in lines))
+        height = em * INK_LINE_HEIGHT * len(lines)
         return _box(_number(element, "x"), _number(element, "y"),
                     width, height)
     if kind == "math_text":
@@ -366,6 +401,45 @@ def learner_ink_bounds(scene: str | None) -> LogicalBox | None:
                 x=min_x, y=min_y, width=max_x - min_x, height=max_y - min_y,
             )
     return None
+
+
+def visible_bounds(scene: str | None) -> LogicalBox | None:
+    """The learner's visible board, `visible_logical_rect` from a
+    `board_scene_context` envelope, if present and well formed."""
+    if not scene:
+        return None
+    try:
+        root = json.loads(scene)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(root, dict):
+        return None
+    raw = root.get("visible_logical_rect")
+    if (
+        isinstance(raw, list) and len(raw) == 4
+        and all(_finite(v) and not isinstance(v, bool) for v in raw)
+    ):
+        min_x, min_y, max_x, max_y = (float(v) for v in raw)
+        if max_x > min_x and max_y > min_y:
+            return LogicalBox(
+                x=min_x, y=min_y, width=max_x - min_x, height=max_y - min_y,
+            )
+    return None
+
+
+def overflow_edges(box: LogicalBox, visible: LogicalBox) -> list[str]:
+    """Which edges of the visible board `box` crosses, beyond the tolerance."""
+    t = VISIBLE_EDGE_TOLERANCE
+    edges = []
+    if box.min_x < visible.min_x - t:
+        edges.append(f"left edge (x {visible.min_x:g})")
+    if box.max_x > visible.max_x + t:
+        edges.append(f"right edge (x {visible.max_x:g})")
+    if box.min_y < visible.min_y - t:
+        edges.append(f"top edge (y {visible.min_y:g})")
+    if box.max_y > visible.max_y + t:
+        edges.append(f"bottom edge (y {visible.max_y:g})")
+    return edges
 
 
 def overlap_fraction(new_box: LogicalBox, existing_box: LogicalBox) -> float:

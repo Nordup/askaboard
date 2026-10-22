@@ -6,7 +6,7 @@ import { Board } from './board/Board';
 import { applySceneUpdate } from './board/scene';
 import { api, ApiError, consumeSSE, json, type WebStatus } from './api/client';
 import type { Attachment, BoardElement, BoardHandle, BoardRegion, BoardTool, Capture, LearningSignal, Message, Source, Workspace } from './types';
-import { WorkspaceStore } from './workspace/store';
+import { WorkspaceStore, type WorkspacePatch } from './workspace/store';
 import { LiveCall, type LiveState } from './voice/live';
 import { Dictation } from './voice/dictation';
 import { deleteMedia, saveMedia } from './workspace/media';
@@ -15,6 +15,19 @@ import { appendAnswer, appendReasoning, finishTutorMessage, mergeSources, setSte
 const store = new WorkspaceStore();
 const nextFrame = () => new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
 const errorText = (error: unknown) => error instanceof Error ? error.message : 'Something went wrong.';
+
+/**
+ * Settles when the server takes the turn, not when the turn finishes — the
+ * moment iPad's `TutorStore.send` returns true and the composer gives up its
+ * words. A failure before that rejects, so the composer keeps the draft; one
+ * after it has already been reported by `runTurn` and belongs to the thread.
+ */
+function whenAccepted(run: (onAccepted: () => void) => Promise<unknown>): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let accepted = false;
+    run(() => { accepted = true; resolve(); }).then(() => resolve(), error => { if (!accepted) reject(error); });
+  });
+}
 
 interface TurnOptions {
   attachments?: Attachment[];
@@ -58,7 +71,7 @@ function Client() {
   function getBoard(id: string): BoardHandle | null {
     return id === store.activeId ? board.current : backgroundBoards.current.get(id) ?? null;
   }
-  function patch(id: string, value: Partial<Workspace>) { store.patch(id, value); }
+  function patch(id: string, value: WorkspacePatch) { store.patch(id, value); }
   function report(error: unknown) {
     if (error instanceof ApiError && error.status === 401) {
       store.authenticated = false;
@@ -270,11 +283,12 @@ function Client() {
     const options: TurnOptions = { attachments, capture: selected, signal: learningSignal };
     retry.current = null;
     retry.current = () => runTurn(id, trimmed, options);
-    try {
-      const answer = await runTurn(id, trimmed, options);
-      if (voiceIsHere && answer.trim()) voice.current?.commentary(answer.trim());
+    return whenAccepted(onAccepted => runTurn(id, trimmed, { ...options, onAccepted: () => {
       if (selected) { setCapture(null); setSelectionMode(false); }
-    } catch (e) { report(e); throw e; }
+      onAccepted();
+    } }).then(answer => {
+      if (voiceIsHere && answer.trim()) voice.current?.commentary(answer.trim());
+    }, e => { report(e); throw e; }));
   }
   async function selectSession(id: string) {
     if (dictationState !== 'idle') { setError('Finish dictation before changing sessions.'); return; }
@@ -311,8 +325,7 @@ function Client() {
     await api.transcript({ ...original, messages: baseMessages });
     let accepted = false;
     try {
-      await runTurn(id, text, { baseMessages, onAccepted: () => { accepted = true; setEditDraft(null); } });
-      setEditDraft(null);
+      await whenAccepted(onAccepted => runTurn(id, text, { baseMessages, onAccepted: () => { accepted = true; setEditDraft(null); onAccepted(); } }));
     } catch (error) {
       if (!accepted) await api.transcript(original).catch(report);
       throw error;
@@ -372,7 +385,7 @@ function Client() {
       selectionMode={selectionMode} canUndo={boardHistory.canUndo} canRedo={boardHistory.canRedo} canSelectBoard={Boolean(workspace && (workspace.strokes.length || workspace.scene.elements.length))} editDraft={editDraft}
       onCreateSession={createSession} onResetSession={resetSession}
       onSelectSession={selectSession}
-      onRenameSession={(id, title) => { if (title.trim()) patch(id, { title: title.trim() }); }}
+      onRenameSession={(id, title) => { if (title.trim()) patch(id, { customTitle: title.trim() }); }}
       onDeleteSession={async id => { try { if (running.current?.id === id) { running.current.controller.abort(); await running.current.done; } if (id === voiceState.sessionId) await voiceAction('end'); await store.remove(id); if (!store.active) store.create(); setCapture(null); setSelectionMode(false); setEditDraft(null); } catch (e) { report(e); } }}
       onSaveSettings={settings => { if (workspace) { const allowed = webStatus?.efforts_for_model[settings.model]; patch(workspace.id, { model: settings.model, reasoningEffort: allowed && !allowed.includes(settings.reasoningEffort) ? 'high' : settings.reasoningEffort }); } }}
       onSend={send}

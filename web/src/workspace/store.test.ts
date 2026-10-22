@@ -48,7 +48,7 @@ describe('workspace persistence', () => {
     });
     const store = new WorkspaceStore();
     const original = store.create();
-    store.patch(original.id, { title: 'Newest title' });
+    store.patch(original.id, { customTitle: 'Newest title' });
     const writes = (store as unknown as { journalWrites: Map<string, Promise<void>> }).journalWrites;
     const queued = writes.get(original.id)!;
     await Promise.resolve(); await Promise.resolve();
@@ -62,7 +62,7 @@ describe('workspace persistence', () => {
   it('restores unsynced edits after an offline reload without attempting a server write', async () => {
     const offline = new WorkspaceStore();
     const original = offline.create();
-    offline.patch(original.id, { title: 'Saved locally', scene: { elements: [{ id: 'shape-1', kind: 'line', x1: 0, y1: 0, x2: 12, y2: 12 }] } });
+    offline.patch(original.id, { customTitle: 'Saved locally', scene: { elements: [{ id: 'shape-1', kind: 'line', x1: 0, y1: 0, x2: 12, y2: 12 }] } });
     await (offline as unknown as { journalWrites: Map<string, Promise<void>> }).journalWrites.get(original.id);
 
     const reloaded = new WorkspaceStore();
@@ -82,7 +82,7 @@ describe('workspace persistence', () => {
     const firstFlush = store.flush(original.id);
     await nextTurn();
     expect(state.api.save).toHaveBeenCalledOnce();
-    store.patch(original.id, { title: 'Edit during request' });
+    store.patch(original.id, { customTitle: 'Edit during request' });
     const queuedFlush = store.flush(original.id);
     firstSave.resolve({ workspace: original, revision: 1 });
     await Promise.all([firstFlush, queuedFlush]);
@@ -143,7 +143,7 @@ describe('workspace persistence', () => {
   it('starts new sessions with defaults and reset removes only the active session', async () => {
     const store = new WorkspaceStore();
     const kept = store.create();
-    store.patch(kept.id, { title: 'Keep this', model: 'gpt-custom', reasoningEffort: 'medium' });
+    store.patch(kept.id, { customTitle: 'Keep this', model: 'gpt-custom', reasoningEffort: 'medium' });
     const active = store.create();
     expect(store.active?.model).toBe('gpt-5.6-luna');
     expect(store.active?.reasoningEffort).toBe('high');
