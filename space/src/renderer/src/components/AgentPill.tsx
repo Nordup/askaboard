@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertCircle, AlertTriangle, Check, ChevronRight, Copy, Loader2 } from 'lucide-react'
+import { AlertCircle, Check, ChevronLeft, ExternalLink, Loader2, Plus } from 'lucide-react'
 import type {
   AgentClientAction,
   AgentClientId,
@@ -22,32 +22,36 @@ interface AgentPillProps {
 }
 
 /**
- * An agent counts as connected when its session made a request this
- * recently. Short-lived clients (`claude -p`) exit without closing their
- * session, so open sessions overcount.
+ * An agent counts as active when its session made a request this recently.
+ * Short-lived clients (`claude -p`) exit without closing their session, so
+ * open sessions overcount.
  */
 const ACTIVE_WINDOW_MS = 90_000
 
-const KNOWN_CLIENTS: Record<string, string> = { 'claude-code': 'Claude Code', 'codex-mcp-client': 'Codex' }
+const MANUAL_SETUP_URL = 'https://github.com/Nordup/learning-space-plugins#manual-setup'
+
+/** The agent apps, in popover order. Internal ids stay as connect.ts names them. */
+const CLIENT_NAMES: Record<AgentClientId, string> = {
+  'claude-code': 'Claude Code',
+  'claude-app': 'Claude Desktop',
+  codex: 'ChatGPT and Codex'
+}
+const CLIENT_ORDER: AgentClientId[] = ['claude-code', 'claude-app', 'codex']
+
+/** MCP clientInfo names → the agent app they belong to. */
+const SESSION_CLIENTS: Record<string, AgentClientId> = {
+  'claude-code': 'claude-code',
+  'claude-ai': 'claude-app',
+  'codex-mcp-client': 'codex'
+}
+
+/** "Restart … to finish" after a plugin change. */
+const RESTART_NAMES: Partial<Record<AgentClientId, string>> = { 'claude-code': 'Claude Code', codex: 'ChatGPT' }
 
 /** A readable name for an MCP clientInfo name. */
 export function agentName(clientName: string): string {
-  return KNOWN_CLIENTS[clientName] ?? (clientName || 'Agent')
-}
-
-function recentSessions(status: AgentServerStatus | null, now: number): AgentSessionInfo[] {
-  return (status?.sessions ?? [])
-    .filter((session) => now - session.lastActiveAt < ACTIVE_WINDOW_MS)
-    .sort((a, b) => b.lastActiveAt - a.lastActiveAt)
-}
-
-function pillLabel(status: AgentServerStatus | null, recent: AgentSessionInfo[]): string {
-  if (!status || status.state === 'starting') return 'Starting agent server…'
-  if (status.state === 'error') return 'Agent server off'
-  const names = [...new Set(recent.map((session) => agentName(session.clientName)))]
-  if (names.length === 0) return 'No agent connected'
-  if (names.length === 1) return `${names[0]} connected`
-  return `${names.length} agents connected`
+  const id = SESSION_CLIENTS[clientName]
+  return id ? CLIENT_NAMES[id] : clientName || 'Agent'
 }
 
 function ago(at: number, now: number): string {
@@ -55,10 +59,12 @@ function ago(at: number, now: number): string {
   if (seconds < 60) return `${seconds} s ago`
   const minutes = Math.round(seconds / 60)
   if (minutes < 60) return `${minutes} min ago`
-  return new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) return `${hours} h ago`
+  return new Date(at).toLocaleDateString([], { month: 'short', day: 'numeric' })
 }
 
-/** Re-render on a timer, so "active 12 s ago" and the 90 s window stay current. */
+/** Re-render on a timer, so "12 s ago" and the 90 s window stay current. */
 function useNow(intervalMs: number): number {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
@@ -68,217 +74,108 @@ function useNow(intervalMs: number): number {
   return now
 }
 
-/**
- * Track whether a code line hides text to its right (for the edge fade), and
- * make sideways scrolling work with a trackpad or Shift + wheel.
- */
-function useSidewaysScroll(ref: React.RefObject<HTMLElement | null>): boolean {
-  const [hidden, setHidden] = useState(false)
-  useEffect(() => {
-    const element = ref.current
-    if (!element) return
-    const measure = (): void => setHidden(element.scrollLeft + element.clientWidth < element.scrollWidth - 1)
-    const wheel = (event: WheelEvent): void => {
-      if (element.scrollWidth <= element.clientWidth) return
-      const sideways = Math.abs(event.deltaX) > Math.abs(event.deltaY)
-      if (!sideways && !event.shiftKey) return
-      // Shift + wheel on a mouse sends deltaY only: turn it into a sideways scroll.
-      if (!sideways) {
-        event.preventDefault()
-        element.scrollLeft += event.deltaY
-      }
-      // Never let the gesture reach the board or the window.
-      event.stopPropagation()
-    }
-    measure()
-    const observer = new ResizeObserver(measure)
-    observer.observe(element)
-    element.addEventListener('scroll', measure, { passive: true })
-    element.addEventListener('wheel', wheel, { passive: false })
-    return () => {
-      observer.disconnect()
-      element.removeEventListener('scroll', measure)
-      element.removeEventListener('wheel', wheel)
-    }
-  }, [ref])
-  return hidden
+/** One agent in View 1: from detection, from sessions, or both. */
+interface AgentLine {
+  key: string
+  name: string
+  lastActiveAt: number | null
 }
 
-/** One command (or snippet) on one line: scrolls sideways, never wraps; copy pinned right. */
-function CodeLine({ value, label }: { value: string; label: string }) {
-  const [copied, setCopied] = useState(false)
-  const textRef = useRef<HTMLElement>(null)
-  const hiddenRight = useSidewaysScroll(textRef)
-  useEffect(() => {
-    if (!copied) return
-    const timer = setTimeout(() => setCopied(false), 1400)
-    return () => clearTimeout(timer)
-  }, [copied])
+function isInstalled(client: AgentClientStatus): boolean {
+  return client.state === 'plugin' || client.state === 'manual' || client.state === 'both' || client.state === 'connected'
+}
+
+/** Installed agents plus every agent a session came from, most recent first. */
+function agentLines(clients: AgentClientStatus[] | null, sessions: AgentSessionInfo[]): AgentLine[] {
+  const lines = new Map<string, AgentLine>()
+  for (const id of CLIENT_ORDER) {
+    const client = clients?.find((entry) => entry.id === id)
+    if (client && isInstalled(client)) lines.set(id, { key: id, name: CLIENT_NAMES[id], lastActiveAt: null })
+  }
+  for (const session of sessions) {
+    const key = SESSION_CLIENTS[session.clientName] ?? `raw:${session.clientName}`
+    const line = lines.get(key) ?? { key, name: agentName(session.clientName), lastActiveAt: null }
+    line.lastActiveAt = Math.max(line.lastActiveAt ?? 0, session.lastActiveAt)
+    lines.set(key, line)
+  }
+  return [...lines.values()].sort((a, b) => (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0))
+}
+
+function activeNames(sessions: AgentSessionInfo[], now: number): string[] {
+  const recent = sessions.filter((session) => now - session.lastActiveAt < ACTIVE_WINDOW_MS)
+  return [...new Set(recent.map((session) => agentName(session.clientName)))]
+}
+
+function pillLabel(status: AgentServerStatus | null, active: string[]): string {
+  if (!status || status.state === 'starting') return 'Starting…'
+  if (status.state === 'error') return 'Agent server off'
+  if (active.length === 0) return 'No agent'
+  if (active.length === 1) return active[0]
+  return `${active.length} agents`
+}
+
+// ---------- View 1: Agents ----------
+
+function AgentsView({ lines, checking, now, onConnect }: { lines: AgentLine[]; checking: boolean; now: number; onConnect(): void }) {
   return (
-    <div className={`agent-code${hiddenRight ? ' agent-code--more' : ''}`}>
-      <div className="agent-code__viewport">
-        <code ref={textRef} className="agent-code__text" title={hiddenRight ? 'Scroll sideways for more (Shift + wheel)' : undefined}>
-          {value}
-        </code>
-      </div>
-      <button
-        className="agent-code__copy"
-        title={copied ? 'Copied' : 'Copy'}
-        aria-label={`Copy ${label}`}
-        onClick={() => {
-          void navigator.clipboard.writeText(value).then(() => setCopied(true))
-        }}
-      >
-        {copied ? <Check size={13} strokeWidth={2} /> : <Copy size={13} strokeWidth={1.75} />}
+    <>
+      <div className="menu__heading">Agents</div>
+      {lines.map((line) => {
+        const active = line.lastActiveAt !== null && now - line.lastActiveAt < ACTIVE_WINDOW_MS
+        const meta = line.lastActiveAt === null ? 'not connected yet' : active ? 'active now' : ago(line.lastActiveAt, now)
+        return (
+          <div key={line.key} className="agent-row" data-agent={line.key}>
+            <span className={active ? 'status-dot status-dot--live' : 'status-dot'} />
+            <span className="agent-row__name">{line.name}</span>
+            <span className="agent-row__meta">{meta}</span>
+          </div>
+        )
+      })}
+      {lines.length === 0 && <div className="agent-row agent-row--empty">{checking ? 'Checking…' : 'No agent yet'}</div>}
+      <div className="menu__separator" />
+      <button className="menu__item agent-pop__link" data-nav="connect" onClick={onConnect}>
+        <span className="menu__icon">
+          <Plus size={14} strokeWidth={1.75} />
+        </span>
+        <span className="menu__label">Connect an agent</span>
+      </button>
+    </>
+  )
+}
+
+// ---------- View 2: Connect an agent ----------
+
+/** A problem line under a row: warning text and one inline text button. */
+function Problem({ text, fix, onFix }: { text: string; fix: string; onFix(): void }) {
+  return (
+    <div className="agent-line agent-line--warn">
+      <span className="agent-line__text" title={text}>
+        {text}
+      </span>
+      <button className="agent-line__fix" onClick={onFix}>
+        {fix}
       </button>
     </div>
   )
 }
 
-const SHIM = '~/.learning-space/bin/learning-space'
-const RELAY_COMMAND = `${SHIM} mcp`
-const PLUGIN_REPO = 'Nordup/learning-space-plugins'
-const STDIO_SNIPPET = `{"mcpServers":{"learning-space":{"command":"${SHIM}","args":["mcp"]}}}`
-
-/** One manual step: a sentence, and at most one command. */
-interface Step {
-  text?: string
-  command?: string
+/** The first line of an error, short enough for one row. */
+function shorten(message: string): string {
+  const line = message.split('\n')[0].trim()
+  return line.length > 72 ? `${line.slice(0, 71)}…` : line
 }
 
-/** "Install manually" for each row. */
-const MANUAL_STEPS: Record<AgentClientId, { steps: Step[]; note: string | null }> = {
-  'claude-code': {
-    steps: [
-      { command: `claude plugin marketplace add ${PLUGIN_REPO}` },
-      { command: 'claude plugin install learning-space@learning-space' },
-      { text: 'Restart Claude Code, or run /reload-plugins.' }
-    ],
-    note: 'Inside Claude Code you can use /plugin instead.'
-  },
-  'claude-app': {
-    steps: [
-      { text: `Download learning-space.mcpb from github.com/${PLUGIN_REPO}.` },
-      { text: 'Double-click it, or drag it into Claude Desktop.' }
-    ],
-    note: null
-  },
-  codex: {
-    steps: [
-      { command: `codex plugin marketplace add ${PLUGIN_REPO}` },
-      { command: 'codex plugin add learning-space@learning-space' },
-      { text: 'Restart the ChatGPT app or Codex.' }
-    ],
-    note: 'In the ChatGPT app: Settings → Plugins.'
-  }
-}
-
-/** The second line under each row name. */
-const SUBLABELS: Record<AgentClientId, string> = {
-  'claude-code': 'Terminal and the Code tab in Claude Desktop',
-  'claude-app': 'The Chat tab',
-  codex: 'The ChatGPT desktop app and Codex CLI share one setup'
-}
-
-/** Top to bottom: group label, then its rows. */
-const GROUPS: { label: string; ids: AgentClientId[] }[] = [
-  { label: 'Claude', ids: ['claude-code', 'claude-app'] },
-  { label: 'ChatGPT', ids: ['codex'] }
-]
-
-/** The rows before the first check answers. */
-const PLACEHOLDER_CLIENTS: AgentClientStatus[] = [
-  { id: 'claude-code', label: 'Claude Code', state: 'unknown', detail: null, action: null },
-  { id: 'claude-app', label: 'Claude Desktop — Chat', state: 'unknown', detail: null, action: null },
-  { id: 'codex', label: 'ChatGPT & Codex', state: 'unknown', detail: null, action: null }
-]
-
-function chipText(client: AgentClientStatus, checking: boolean): string {
-  if (checking) return 'Checking…'
-  switch (client.state) {
-    case 'plugin':
-      return 'Plugin installed'
-    case 'manual':
-      return 'Connected by hand'
-    case 'both':
-      return 'Both'
-    case 'connected':
-      return 'Extension installed'
-    case 'available':
-      return 'Not connected'
-    case 'missing':
-      return client.id === 'claude-app' ? 'Not found' : 'CLI not found'
-    default:
-      return 'Check failed'
-  }
-}
-
-/** live: the agent gets the tools; warn: it gets them twice; idle: it does not. */
-function chipTone(client: AgentClientStatus, checking: boolean): 'live' | 'warn' | 'idle' {
-  if (checking) return 'idle'
-  if (client.state === 'both') return 'warn'
-  return client.state === 'plugin' || client.state === 'manual' || client.state === 'connected' ? 'live' : 'idle'
-}
-
-const ACTION_LABELS: Record<AgentClientAction, string> = {
-  'install-plugin': 'Install plugin',
-  'switch-to-plugin': 'Switch to plugin',
-  'remove-manual': 'Remove manual entry',
-  'install-extension': 'Install extension'
-}
-
-function Steps({ steps, note }: { steps: Step[]; note: string | null }) {
-  return (
-    <div className="agent-steps">
-      <ol className="agent-steps__list">
-        {steps.map((step, index) => (
-          <li key={index} className="agent-steps__step">
-            <span className="agent-steps__number">{index + 1}</span>
-            <div className="agent-steps__body">
-              {step.text && <p className="agent-steps__text">{step.text}</p>}
-              {step.command && <CodeLine value={step.command} label={`step ${index + 1} command`} />}
-            </div>
-          </li>
-        ))}
-      </ol>
-      {note && <p className="agent-steps__note">{note}</p>}
-    </div>
-  )
-}
-
-/** A small text disclosure ("Install manually"). */
-function Disclosure({ label, open, onToggle }: { label: string; open: boolean; onToggle(): void }) {
-  return (
-    <button className="agent-disclosure" aria-expanded={open} onClick={onToggle}>
-      <ChevronRight size={12} strokeWidth={2} className={open ? 'agent-disclosure__chevron agent-disclosure__chevron--open' : 'agent-disclosure__chevron'} />
-      {label}
-    </button>
-  )
-}
-
-interface RowProps {
-  client: AgentClientStatus
-  checking: boolean
-  manualOpen: boolean
-  onToggleManual(): void
-  onChanged(): void
-}
-
-/** One agent app: name and sublabel left, state chip and the one button right. */
-function ClientRow({ client, checking, manualOpen, onToggleManual, onChanged }: RowProps) {
+function ConnectRow({ id, client, checking, onChanged }: { id: AgentClientId; client: AgentClientStatus | undefined; checking: boolean; onChanged(): void }) {
   const [busy, setBusy] = useState(false)
-  const [result, setResult] = useState<ConnectResult | null>(null)
-  const action = checking ? null : client.action
-  const tone = chipTone(client, checking)
-  const showDetail = !checking && client.detail && client.state !== 'both' && client.state !== 'plugin'
+  const [last, setLast] = useState<{ action: AgentClientAction; result: ConnectResult } | null>(null)
 
-  const act = (chosen: AgentClientAction): void => {
+  const run = (action: AgentClientAction): void => {
     setBusy(true)
-    setResult(null)
+    setLast(null)
     window.space
-      .connectAgentClient(client.id, chosen)
-      .then((value) => setResult(value))
-      .catch((error: unknown) => setResult({ ok: false, message: error instanceof Error ? error.message : String(error) }))
+      .connectAgentClient(id, action)
+      .then((result) => setLast({ action, result }))
+      .catch((error: unknown) => setLast({ action, result: { ok: false, message: error instanceof Error ? error.message : String(error) } }))
       .finally(() => {
         setBusy(false)
         // Re-detect after every action, also after a failure (a step can half succeed).
@@ -286,154 +183,109 @@ function ClientRow({ client, checking, manualOpen, onToggleManual, onChanged }: 
       })
   }
 
-  return (
-    <li className="agent-client" data-client={client.id} data-state={client.state}>
-      <div className="agent-client__line">
-        <div className="agent-client__text">
-          <div className="agent-client__name">{client.label}</div>
-          <div className="agent-client__sub">{SUBLABELS[client.id]}</div>
-        </div>
-        <div className="agent-client__side">
-          <span className={`agent-chip agent-chip--${tone}`} title={client.detail ?? undefined}>
-            {tone === 'live' && client.state === 'plugin' ? <Check size={11} strokeWidth={2.5} /> : <span className="agent-chip__dot" />}
-            {chipText(client, checking)}
-          </span>
-          {action && (
-            <button className="agent-client__action" data-action={action} onClick={() => act(action)} disabled={busy}>
-              {busy ? <Loader2 className="agent-client__spinner" size={13} strokeWidth={2} /> : ACTION_LABELS[action]}
-            </button>
-          )}
-        </div>
-      </div>
-      {!checking && client.state === 'both' && (
-        <div className="agent-client__note agent-client__note--warn">
-          <AlertTriangle size={12} strokeWidth={2} />
-          <span>Tools appear twice. Use either the plugin or a manual entry, not both: remove the manual entry and keep the plugin.</span>
-        </div>
-      )}
-      {showDetail && <div className="agent-client__note">{client.detail}</div>}
-      {result && (
-        <div className={`agent-client__note ${result.ok ? 'agent-client__note--ok' : 'agent-client__note--error'}`} role="status">
-          {result.ok ? <Check size={12} strokeWidth={2.25} /> : <AlertCircle size={12} strokeWidth={2} />}
-          <span>{result.message}</span>
-        </div>
-      )}
-      <Disclosure label="Install manually" open={manualOpen} onToggle={onToggleManual} />
-      {manualOpen && <Steps {...MANUAL_STEPS[client.id]} />}
-    </li>
-  )
-}
-
-/** "Other agents": the server URL, the relay command and a stdio config snippet. */
-function OtherAgents({ url, open, onToggle }: { url: string; open: boolean; onToggle(): void }) {
-  return (
-    <div className="agent-other">
-      <button className="agent-other__toggle" aria-expanded={open} onClick={onToggle}>
-        <div className="agent-client__text">
-          <div className="agent-client__name">Other agents</div>
-          <div className="agent-client__sub">For VS Code, Windsurf and other MCP clients</div>
-        </div>
-        <ChevronRight size={14} strokeWidth={2} className={open ? 'agent-disclosure__chevron agent-disclosure__chevron--open' : 'agent-disclosure__chevron'} />
+  const installed = client ? isInstalled(client) : false
+  let control: React.ReactNode
+  if (busy || (checking && !client)) control = <Loader2 className="agent-spinner" size={14} strokeWidth={2} aria-label="Working" />
+  else if (installed)
+    control = (
+      <span className="agent-installed">
+        <Check size={13} strokeWidth={2.25} />
+        Installed
+      </span>
+    )
+  else if (client?.state === 'missing') control = <span className="agent-row__meta">Not found</span>
+  else
+    control = (
+      <button className="button-small-secondary" data-action={client?.action ?? 'install'} disabled={!client?.action} onClick={() => client?.action && run(client.action)}>
+        Install
       </button>
-      {open && (
-        <div className="agent-other__body">
-          <div className="agent-other__label">Server URL</div>
-          <CodeLine value={url} label="server URL" />
-          <div className="agent-other__label">Relay command</div>
-          <CodeLine value={RELAY_COMMAND} label="relay command" />
-          <div className="agent-other__label">Config snippet</div>
-          <CodeLine value={STDIO_SNIPPET} label="config snippet" />
-          <p className="agent-steps__note">HTTP clients use the URL; stdio clients use the command.</p>
-        </div>
-      )}
+    )
+
+  const failed = last && !last.result.ok ? last : null
+  const restart = RESTART_NAMES[id]
+  const done = last?.result.ok && !busy ? last : null
+
+  return (
+    <div className="agent-connect" data-client={id} data-state={client?.state ?? 'unknown'}>
+      <div className="agent-row">
+        <span className="agent-row__name">{CLIENT_NAMES[id]}</span>
+        <span className="agent-row__control">{control}</span>
+      </div>
+      {!busy && failed && <Problem text={shorten(failed.result.message)} fix="Retry" onFix={() => run(failed.action)} />}
+      {!busy && !failed && client?.state === 'both' && <Problem text="Also added by hand, so tools appear twice" fix="Fix" onFix={() => run('remove-manual')} />}
+      {!busy && !failed && client?.state === 'manual' && <Problem text="Added by hand" fix="Fix" onFix={() => run('switch-to-plugin')} />}
+      {!busy && !failed && client?.state === 'unknown' && client.detail && <Problem text={shorten(client.detail)} fix="Retry" onFix={onChanged} />}
+      {done && restart && <div className="agent-line">Restart {restart} to finish</div>}
+      {done && !restart && <div className="agent-line">Confirm the install in Claude Desktop</div>}
     </div>
   )
 }
 
-/** The agent apps on this Mac, grouped, with one-click setup. Only one disclosure is open at a time. */
-function AgentClients({ open, url }: { open: boolean; url: string }) {
-  const [status, setStatus] = useState<AgentClientsStatus | null>(null)
+function ConnectView({ clients, checking, onBack, onChanged }: { clients: AgentClientStatus[] | null; checking: boolean; onBack(): void; onChanged(): void }) {
+  return (
+    <>
+      <button className="menu__item agent-pop__back" data-nav="back" onClick={onBack}>
+        <span className="menu__icon">
+          <ChevronLeft size={14} strokeWidth={2} />
+        </span>
+        <span className="menu__label">Connect an agent</span>
+      </button>
+      <div className="menu__separator" />
+      {CLIENT_ORDER.map((id) => (
+        <ConnectRow key={id} id={id} client={clients?.find((entry) => entry.id === id)} checking={checking} onChanged={onChanged} />
+      ))}
+      <div className="menu__separator" />
+      <button className="menu__item agent-pop__link" onClick={() => window.open(MANUAL_SETUP_URL, '_blank')}>
+        <span className="menu__icon">
+          <ExternalLink size={13} strokeWidth={1.75} />
+        </span>
+        <span className="menu__label">Manual setup and other agents</span>
+      </button>
+    </>
+  )
+}
+
+// ---------- The pill ----------
+
+/** The top-bar agent status, with the Agents / Connect an agent popover. */
+export function AgentPill({ status, activityAt, guideOverrides, onOpenOverride }: AgentPillProps) {
+  const [open, setOpen] = useState(false)
+  const [view, setView] = useState<'agents' | 'connect'>('agents')
+  /** The user picked a view this time, so detection must not switch it. */
+  const navigated = useRef(false)
+  const [clients, setClients] = useState<AgentClientsStatus | null>(null)
   const [checking, setChecking] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [expanded, setExpanded] = useState<string | null>(null)
+  const [checkError, setCheckError] = useState<string | null>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  const sessions = status?.sessions ?? []
+  const now = useNow(open ? 1000 : 5000)
 
   const refresh = (): void => {
     setChecking(true)
     window.space
       .getAgentClients()
       .then((value) => {
-        setStatus(value)
-        setError(null)
+        setClients(value)
+        setCheckError(null)
       })
-      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason)))
+      .catch((reason: unknown) => setCheckError(reason instanceof Error ? reason.message : String(reason)))
       .finally(() => setChecking(false))
   }
 
+  // Detection runs on every open; the last answer stays for the next open.
   useEffect(() => {
-    if (open) refresh()
+    if (!open) return
+    navigated.current = false
+    setView('agents')
+    refresh()
   }, [open])
 
-  const clients = status?.clients ?? PLACEHOLDER_CLIENTS
-  const toggle = (key: string): void => setExpanded((value) => (value === key ? null : key))
-  return (
-    <>
-      {GROUPS.map((group) => (
-        <section className="agent-group" key={group.label}>
-          <div className="agent-group__label">{group.label}</div>
-          <ul className="agent-clients">
-            {group.ids.map((id) => {
-              const client = clients.find((entry) => entry.id === id)
-              if (!client) return null
-              return (
-                <ClientRow
-                  key={id}
-                  client={client}
-                  checking={checking && !status}
-                  manualOpen={expanded === id}
-                  onToggleManual={() => toggle(id)}
-                  onChanged={refresh}
-                />
-              )
-            })}
-          </ul>
-        </section>
-      ))}
-      <section className="agent-group">
-        <OtherAgents url={url} open={expanded === 'other'} onToggle={() => toggle('other')} />
-      </section>
-      {error && <div className="agent-pop__empty">Could not check the agent apps: {error}</div>}
-    </>
-  )
-}
-
-function SessionList({ recent, all, now }: { recent: AgentSessionInfo[]; all: AgentSessionInfo[]; now: number }) {
-  if (!recent.length) {
-    const last = [...all].sort((a, b) => b.lastActiveAt - a.lastActiveAt)[0]
-    return (
-      <div className="agent-pop__empty">
-        {last ? `No agent active in the last 90 s. Last: ${agentName(last.clientName)}, ${ago(last.lastActiveAt, now)}.` : 'No agent has connected yet.'}
-      </div>
-    )
-  }
-  return (
-    <ul className="agent-pop__sessions">
-      {recent.map((session) => (
-        <li key={session.id}>
-          <span className="status-dot status-dot--live" />
-          <span className="agent-pop__name" title={session.clientName}>
-            {agentName(session.clientName)}
-          </span>
-          <span className="agent-pop__since">active {ago(session.lastActiveAt, now)}</span>
-        </li>
-      ))}
-    </ul>
-  )
-}
-
-/** The top-bar agent status, with the "Connect an agent" popover. */
-export function AgentPill({ status, activityAt, guideOverrides, onOpenOverride }: AgentPillProps) {
-  const [open, setOpen] = useState(false)
-  const rootRef = useRef<HTMLDivElement>(null)
+  const lines = agentLines(clients?.clients ?? null, sessions)
+  // Nothing installed and nothing seen: open straight into View 2.
+  useEffect(() => {
+    if (open && clients && !navigated.current && lines.length === 0) setView('connect')
+  }, [open, clients, lines.length])
 
   useEffect(() => {
     if (!open) return
@@ -455,46 +307,44 @@ export function AgentPill({ status, activityAt, guideOverrides, onOpenOverride }
     }
   }, [open])
 
-  const now = useNow(open ? 1000 : 5000)
-  const recent = recentSessions(status, now)
-  const live = status?.state === 'listening' && recent.length > 0
+  const go = (next: 'agents' | 'connect'): void => {
+    navigated.current = true
+    setView(next)
+  }
+
+  const active = activeNames(sessions, now)
+  const live = status?.state === 'listening' && active.length > 0
   const dotClass = status?.state === 'error' ? 'status-dot status-dot--error' : live ? 'status-dot status-dot--live' : 'status-dot'
-  const url = status?.url ?? 'http://127.0.0.1:47821/mcp'
 
   return (
     <div className="agent-pill" ref={rootRef}>
       <button className={`pill${open ? ' pill--open' : ''}`} onClick={() => setOpen((value) => !value)} aria-expanded={open}>
         {/* The key restarts the pulse animation on every tool call. */}
         <span key={activityAt ?? 0} className={`${dotClass}${activityAt && live ? ' status-dot--pulse' : ''}`} />
-        {pillLabel(status, recent)}
+        {pillLabel(status, active)}
       </button>
       {open && (
-        <div className="agent-pop" role="dialog" aria-label="Connect an agent">
-          <header className="agent-pop__header">
-            <div className="agent-pop__title">Connect an agent</div>
-            <p className="agent-pop__lede">Install once. Agents see this canvas while the app is open.</p>
-          </header>
-          <div className="agent-pop__body">
-            {status?.state === 'error' && (
-              <div className="agent-pop__error">
-                <AlertCircle size={14} strokeWidth={2} />
-                <span>{status.error}</span>
-              </div>
-            )}
-            <AgentClients open={open} url={url} />
-            <section className="agent-group">
-              <div className="agent-group__label">Active agents</div>
-              <SessionList recent={recent} all={status?.sessions ?? []} now={now} />
-            </section>
-            <GuideOverrideNote
-              className="agent-pop__overrides"
-              overrides={guideOverrides}
-              onOpen={(path) => {
-                setOpen(false)
-                onOpenOverride(path)
-              }}
-            />
-          </div>
+        <div className="menu agent-pop" role="dialog" aria-label={view === 'agents' ? 'Agents' : 'Connect an agent'} data-view={view}>
+          {status?.state === 'error' && (
+            <div className="agent-line agent-line--error agent-pop__server-error">
+              <AlertCircle size={12} strokeWidth={2} />
+              <span>{status.error}</span>
+            </div>
+          )}
+          {view === 'agents' ? (
+            <AgentsView lines={lines} checking={checking && !clients} now={now} onConnect={() => go('connect')} />
+          ) : (
+            <ConnectView clients={clients?.clients ?? null} checking={checking} onBack={() => go('agents')} onChanged={refresh} />
+          )}
+          {checkError && <div className="agent-line agent-line--error">Could not check the agent apps: {shorten(checkError)}</div>}
+          <GuideOverrideNote
+            className="agent-pop__overrides"
+            overrides={guideOverrides}
+            onOpen={(path) => {
+              setOpen(false)
+              onOpenOverride(path)
+            }}
+          />
         </div>
       )}
     </div>

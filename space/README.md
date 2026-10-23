@@ -33,27 +33,36 @@ The app serves MCP (Streamable HTTP) at `http://127.0.0.1:47821/mcp` while it
 is open. Agents connect through a stdio relay, so their config never holds the
 port and they still start when the app is closed.
 
-Click the agent pill in the top bar. The "Connect an agent" popover is
-plugin first. It has a fixed header and a scrolling body, top to bottom:
+The agent pill in the top bar shows a green dot and the active agent's name
+("Claude Code", or "2 agents") while an agent made a request in the last 90 s,
+and a grey "No agent" otherwise. Click it for a small popover in the style of
+the app's menus. It has two views:
 
-| Group | Row | Sublabel | Button |
-| --- | --- | --- | --- |
-| Claude | Claude Code | Terminal and the Code tab in Claude Desktop | Install plugin, Switch to plugin or Remove manual entry |
-| Claude | Claude Desktop — Chat | The Chat tab | Install extension |
-| ChatGPT | ChatGPT & Codex (id `codex`) | The ChatGPT desktop app and Codex CLI share one setup | Install plugin, Switch to plugin or Remove manual entry |
-| | Other agents | For VS Code, Windsurf and other MCP clients | an expander |
-| Active agents | the agents that made a request in the last 90 s | | |
+1. **Agents** (the default). One row per agent that is installed or that
+   connected since the app started: a dot (green when active in the last
+   90 s), the name, and "active now", "12 min ago" or "not connected yet".
+   Below a hairline, **Connect an agent** opens view 2. When nothing is
+   installed and no agent connected, the popover opens in view 2.
+2. **Connect an agent** (with a back chevron). Three rows: Claude Code, Claude
+   Desktop, ChatGPT and Codex (internal id `codex`; the ChatGPT desktop app and
+   Codex CLI share one setup). Each row has one control: **Install**, a green
+   check with "Installed", or a spinner. Below a hairline, **Manual setup and
+   other agents** opens
+   <https://github.com/Nordup/learning-space-plugins#manual-setup> in the
+   system browser. That page has the plugin commands, the `.mcpb` download,
+   and the server URL, relay command and JSON for other MCP clients.
 
-Each row shows a state chip and one button. Under each row, "Install
-manually" (collapsed) shows numbered steps with one copyable command each.
-Only one disclosure is open at a time.
+A problem shows as one short line under its row, with an inline text button:
 
-| Row | Install manually |
-| --- | --- |
-| Claude Code | 1. `claude plugin marketplace add Nordup/learning-space-plugins` 2. `claude plugin install learning-space@learning-space` 3. Restart Claude Code, or run `/reload-plugins`. Inside Claude Code, `/plugin` does the same. |
-| Claude Desktop — Chat | 1. Download `learning-space.mcpb` from github.com/Nordup/learning-space-plugins. 2. Double-click it, or drag it into Claude Desktop. |
-| ChatGPT & Codex | 1. `codex plugin marketplace add Nordup/learning-space-plugins` 2. `codex plugin add learning-space@learning-space` 3. Restart the ChatGPT app or Codex. In the ChatGPT app: Settings → Plugins. |
-| Other agents | The server URL (the live port, default `http://127.0.0.1:47821/mcp`), the relay command `~/.learning-space/bin/learning-space mcp`, and the stdio snippet `{"mcpServers":{"learning-space":{"command":"~/.learning-space/bin/learning-space","args":["mcp"]}}}`. HTTP clients use the URL; stdio clients use the command. |
+| Line | Button | Action |
+| --- | --- | --- |
+| Also added by hand, so tools appear twice | Fix | Remove manual entry |
+| Added by hand (counts as installed) | Fix | Switch to plugin |
+| The first line of the error, shortened | Retry | The failed action again |
+
+After a plugin change, a muted line says "Restart Claude Code to finish" or
+"Restart ChatGPT to finish". After **Install** for Claude Desktop, it says
+"Confirm the install in Claude Desktop".
 
 The plugin comes from the public marketplace `Nordup/learning-space-plugins`
 (marketplace `learning-space`, plugin `learning-space`, MCP server
@@ -67,27 +76,22 @@ The app finds `claude` and `codex` from the login shell
 
 | Row | Detection | States |
 | --- | --- | --- |
-| Claude Code | Plugin: `claude plugin list --json` has `learning-space@learning-space` with `enabled: true`. Manual entry: `claude mcp get learning-space` exits 0 (the plugin's server has another name, so it never matches). | Plugin installed, Connected by hand, Both, Not connected, CLI not found |
-| ChatGPT & Codex | Plugin: `codex plugin list --json` has `installed[].pluginId` `learning-space@learning-space` with `enabled: true`. Manual entry: `$CODEX_HOME/config.toml` (default `~/.codex`) has a `[mcp_servers.learning-space]` table. `codex mcp list` cannot tell the two apart. | Same as Claude Code. Without the CLI, the row reads config.toml only. |
-| Claude Desktop — Chat | `Claude.app` in `/Applications` or `~/Applications`; "Extension installed" when a `Claude Extensions` folder name holds `learning-space` (a heuristic) | Extension installed, Not connected, Not found |
+| Claude Code | Plugin: `claude plugin list --json` has `learning-space@learning-space` with `enabled: true`. Manual entry: `claude mcp get learning-space` exits 0 (the plugin's server has another name, so it never matches). | Installed (plugin), Added by hand, Both, Install, Not found |
+| ChatGPT and Codex | Plugin: `codex plugin list --json` has `installed[].pluginId` `learning-space@learning-space` with `enabled: true`. Manual entry: `$CODEX_HOME/config.toml` (default `~/.codex`) has a `[mcp_servers.learning-space]` table. `codex mcp list` cannot tell the two apart. | Same as Claude Code. Without the CLI, the row reads config.toml only. |
+| Claude Desktop | `Claude.app` in `/Applications` or `~/Applications`; "Extension installed" when a `Claude Extensions` folder name holds `learning-space` (a heuristic) | Installed, Install, Not found |
 
-| Button | Shown when | Claude Code | ChatGPT & Codex |
+| Action | Shown as | Claude Code | ChatGPT and Codex |
 | --- | --- | --- | --- |
-| **Install plugin** | Not connected | `claude plugin marketplace add Nordup/learning-space-plugins` (only when `claude plugin marketplace list --json` lacks it), then `claude plugin install learning-space@learning-space --scope user` (`claude plugin enable …` when it is installed but disabled) | `codex plugin marketplace add Nordup/learning-space-plugins` (only when `codex plugin marketplace list --json` lacks it), then `codex plugin add learning-space@learning-space` |
-| **Switch to plugin** | Connected by hand | Install plugin, then `claude mcp remove learning-space --scope <scope>` (the scope comes from `claude mcp get`) | Install plugin, then `codex mcp remove learning-space` |
-| **Remove manual entry** | Both ("Tools appear twice") | `claude mcp remove learning-space --scope <scope>` | `codex mcp remove learning-space` (exits 0 when the entry is missing, so the app reads config.toml back) |
-| **Install extension** (Claude Desktop — Chat) | Not connected | opens `resources/learning-space.mcpb` with `shell.openPath`; Claude shows its install dialog | |
+| Install plugin | **Install** | `claude plugin marketplace add Nordup/learning-space-plugins` (only when `claude plugin marketplace list --json` lacks it), then `claude plugin install learning-space@learning-space --scope user` (`claude plugin enable …` when it is installed but disabled) | `codex plugin marketplace add Nordup/learning-space-plugins` (only when `codex plugin marketplace list --json` lacks it), then `codex plugin add learning-space@learning-space` |
+| Switch to plugin | **Fix** on "Added by hand" | Install plugin, then `claude mcp remove learning-space --scope <scope>` (the scope comes from `claude mcp get`) | Install plugin, then `codex mcp remove learning-space` |
+| Remove manual entry | **Fix** on "Also added by hand" | `claude mcp remove learning-space --scope <scope>` | `codex mcp remove learning-space` (exits 0 when the entry is missing, so the app reads config.toml back) |
+| Install extension (Claude Desktop) | **Install** | opens `resources/learning-space.mcpb` with `shell.openPath`; Claude shows its install dialog | |
 
-Each button shows a spinner, then a check mark and a hint ("Restart Claude
-Code or run /reload-plugins", "Restart Codex (or the Codex app) to load the
-plugin"), or the first line of the failed command's error output. The
-commands run with a fixed argv (no shell string), the login shell's `PATH`, a
-timeout (90 s for an install, which clones the marketplace) and one action at
-a time per CLI. The popover checks the state again after every action and
-every time it opens.
-
-Use either the plugin or a manual entry, not both: with both, the agent sees
-every tool twice. The "Both" row says so and offers **Remove manual entry**.
+The commands run with a fixed argv (no shell string), the login shell's
+`PATH`, a timeout (90 s for an install, which clones the marketplace) and one
+action at a time per CLI. The popover checks the state again after every
+action and every time it opens. Use either the plugin or a manual entry, not
+both: with both, the agent sees every tool twice.
 
 ### The relay and `~/.learning-space/`
 

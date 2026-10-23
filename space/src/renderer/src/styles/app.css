@@ -312,443 +312,149 @@ button:focus-visible {
   position: relative;
 }
 
-/* The popover: a fixed header, a scrolling body. 8px grid. */
-.agent-pop {
+/* The agent popover: the app's .menu, anchored under the pill. */
+.menu.agent-pop {
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  z-index: 100;
-  display: flex;
-  flex-direction: column;
-  width: 440px;
+  width: 290px;
   max-height: calc(100vh - var(--topbar-height) - 24px);
-  background: var(--bg-elevated-2);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-float);
-  color: var(--text-secondary);
-  font-size: var(--text-sm);
-  line-height: var(--leading);
-  -webkit-app-region: no-drag;
-  overflow: hidden;
-}
-
-.agent-pop__header {
-  flex-shrink: 0;
-  padding: var(--space-4) var(--space-4) var(--space-3);
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.agent-pop__body {
-  min-height: 0;
-  padding: 0 var(--space-4) var(--space-4);
   overflow-y: auto;
-}
-
-.agent-pop__title {
-  color: var(--text-primary);
   font-size: var(--text-base);
-  font-weight: 600;
+  -webkit-app-region: no-drag;
 }
 
-.agent-pop__lede {
-  margin: var(--space-1) 0 0;
-  color: var(--text-tertiary);
+.agent-pop .menu__item {
+  color: var(--text-secondary);
 }
 
-.agent-pop__error {
-  display: flex;
-  gap: var(--space-2);
-  align-items: flex-start;
-  margin-top: var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-md);
-  background: rgba(255, 107, 139, 0.1);
-  color: var(--ink-pink);
+.agent-pop .menu__item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
-.agent-pop__error svg {
-  flex-shrink: 0;
-  margin-top: 2px;
-}
-
-.agent-pop__empty {
-  color: var(--text-tertiary);
-}
-
-.agent-pop__sessions {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.agent-pop__sessions li {
+/* One agent: sidebar row height, name left, meta or one control right. */
+.agent-row {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  height: 24px;
+  height: 30px;
+  padding: 0 var(--space-2);
 }
 
-.agent-pop__name {
+.agent-row__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
   color: var(--text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.agent-pop__since {
-  margin-left: auto;
+.agent-row__meta {
+  flex-shrink: 0;
   color: var(--text-tertiary);
+  font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
 }
 
-/* A group: small uppercase label, 12px gap, a hairline between groups only. */
-.agent-group {
-  padding: var(--space-3) 0;
-}
-
-.agent-group + .agent-group {
-  border-top: 1px solid var(--border-subtle);
-}
-
-.agent-group:last-of-type {
-  padding-bottom: 0;
-}
-
-.agent-group__label {
-  margin-bottom: var(--space-3);
+.agent-row--empty {
   color: var(--text-tertiary);
-  font-size: var(--text-xs);
-  font-weight: 560;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
-.agent-clients {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-/* Row: name + sublabel left; chip + button right, centred. */
-.agent-client__line {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-}
-
-.agent-client__text {
-  flex: 1;
-  min-width: 0;
-}
-
-.agent-client__name {
-  color: var(--text-primary);
-  font-size: var(--text-base);
-  font-weight: 560;
-  line-height: 1.35;
-}
-
-.agent-client__sub {
-  color: var(--text-tertiary);
-  font-size: var(--text-sm);
-  line-height: 1.35;
-}
-
-.agent-client__side {
-  display: flex;
+.agent-row__control {
+  display: inline-flex;
   flex-shrink: 0;
   align-items: center;
-  gap: var(--space-2);
 }
 
-.agent-chip {
+.agent-installed {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  height: 22px;
-  padding: 0 var(--space-2);
-  border-radius: var(--radius-pill);
-  background: var(--bg-active);
+  gap: 4px;
   color: var(--text-secondary);
-  font-size: var(--text-xs);
-  font-weight: 560;
-  white-space: nowrap;
+  font-size: var(--text-sm);
 }
 
-.agent-chip__dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--status-idle);
-}
-
-.agent-chip--live {
-  background: rgba(74, 222, 128, 0.12);
+.agent-installed svg {
   color: var(--status-live);
 }
 
-.agent-chip--live .agent-chip__dot {
-  background: var(--status-live);
-}
-
-.agent-chip--warn {
-  background: rgba(255, 159, 69, 0.14);
-  color: var(--ink-orange);
-}
-
-.agent-chip--warn .agent-chip__dot {
-  background: var(--ink-orange);
-}
-
-.agent-client__action {
-  display: inline-grid;
-  flex-shrink: 0;
-  place-items: center;
-  min-width: 64px;
-  height: 28px;
-  padding: 0 var(--space-3);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background: var(--bg-active);
-  color: var(--text-primary);
-  font-weight: 560;
-  white-space: nowrap;
-  transition: background 120ms ease, border-color 120ms ease;
-}
-
-.agent-client__action:hover:not(:disabled) {
-  border-color: var(--accent-ring);
-  background: var(--accent-soft);
-}
-
-.agent-client__action:disabled {
-  cursor: default;
-}
-
-.agent-client__spinner {
-  animation: agent-client-spin 800ms linear infinite;
+.agent-spinner {
+  margin-right: var(--space-2);
+  animation: agent-spin 800ms linear infinite;
   color: var(--text-secondary);
 }
 
-@keyframes agent-client-spin {
+@keyframes agent-spin {
   to {
     transform: rotate(360deg);
   }
 }
 
-.agent-client__note {
+/* The small secondary button, next to .button-ghost and .button-small-primary. */
+.button-small-secondary {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: 560;
+  transition: background 120ms ease;
+}
+
+.button-small-secondary:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.button-small-secondary:disabled {
+  opacity: 0.5;
+}
+
+/* One short line under a row: muted, or a problem with an inline text button. */
+.agent-line {
   display: flex;
+  align-items: baseline;
   gap: 6px;
-  align-items: flex-start;
-  margin-top: var(--space-2);
+  margin: -4px 0 var(--space-1);
+  padding: 0 var(--space-2);
   color: var(--text-tertiary);
-  font-size: var(--text-xs);
-  overflow-wrap: anywhere;
+  font-size: var(--text-sm);
 }
 
-.agent-client__note svg {
-  flex-shrink: 0;
-  margin-top: 2px;
+.agent-line__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.agent-client__note--warn {
+.agent-line--warn {
   color: var(--ink-orange);
 }
 
-.agent-client__note--ok {
-  color: var(--status-live);
-}
-
-.agent-client__note--error {
+.agent-line--error {
+  align-items: flex-start;
+  margin: var(--space-1) 0;
   color: var(--ink-pink);
 }
 
-/* "Install manually": a small text disclosure under the row. */
-.agent-disclosure {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-top: var(--space-1);
-  padding: 2px 0;
-  color: var(--text-tertiary);
-  font-size: var(--text-xs);
+.agent-line--error svg {
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+
+.agent-line__fix {
+  flex-shrink: 0;
+  color: var(--text-primary);
   font-weight: 560;
 }
 
-.agent-disclosure:hover {
-  color: var(--text-secondary);
-}
-
-.agent-disclosure__chevron {
-  flex-shrink: 0;
-  transition: transform 120ms ease;
-}
-
-.agent-disclosure__chevron--open {
-  transform: rotate(90deg);
-}
-
-.agent-steps {
-  margin-top: var(--space-2);
-  padding: var(--space-3);
-  border-radius: var(--radius-md);
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-subtle);
-}
-
-.agent-steps__list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-/* Numbers in a fixed-width column. */
-.agent-steps__step {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr);
-  gap: var(--space-2);
-  align-items: start;
-}
-
-.agent-steps__number {
-  color: var(--text-tertiary);
-  font-size: var(--text-xs);
-  font-variant-numeric: tabular-nums;
-  line-height: 28px;
-  text-align: right;
-}
-
-.agent-steps__body {
-  display: flex;
-  min-width: 0;
-  min-height: 28px;
-  flex-direction: column;
-  justify-content: center;
-}
-
-.agent-steps__text {
-  margin: 0;
-  color: var(--text-secondary);
-}
-
-.agent-steps__note {
-  margin: var(--space-2) 0 0;
-  color: var(--text-tertiary);
-  font-size: var(--text-xs);
-}
-
-/* One command per line: no wrapping, sideways scroll inside, copy pinned right. */
-.agent-code {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  height: 28px;
-  background: var(--bg-app);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-}
-
-/* The fade sits over the right edge of the text, left of the copy button. */
-.agent-code__viewport {
-  position: relative;
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  height: 100%;
-}
-
-.agent-code__viewport::after {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 28px;
-  background: linear-gradient(to right, transparent, var(--bg-app));
-  content: '';
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 120ms ease;
-}
-
-.agent-code--more .agent-code__viewport::after {
-  opacity: 1;
-}
-
-.agent-code__text {
-  flex: 1;
-  min-width: 0;
-  overscroll-behavior-x: contain;
-  padding: 0 var(--space-2);
-  overflow-x: auto;
-  color: var(--text-primary);
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
-  line-height: 26px;
-  white-space: pre;
-  user-select: text;
-  scrollbar-width: none;
-}
-
-.agent-code__text::-webkit-scrollbar {
-  display: none;
-}
-
-.agent-code__copy {
-  display: grid;
-  flex-shrink: 0;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  border-left: 1px solid var(--border-subtle);
-  color: var(--text-secondary);
-}
-
-.agent-code__copy:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-/* "Other agents": a quiet expander row. */
-.agent-other__toggle {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  width: 100%;
-  color: var(--text-tertiary);
-  text-align: left;
-}
-
-.agent-other__toggle:hover .agent-client__name {
-  color: var(--text-primary);
-}
-
-.agent-other__toggle .agent-client__name {
-  color: var(--text-secondary);
-}
-
-.agent-other__body {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  margin-top: var(--space-2);
-  padding: var(--space-3);
-  border-radius: var(--radius-md);
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-subtle);
-}
-
-.agent-other__label {
-  color: var(--text-tertiary);
-  font-size: var(--text-xs);
-  font-weight: 560;
-}
-
-.agent-other__label:not(:first-child) {
-  margin-top: var(--space-2);
+.agent-line__fix:hover {
+  text-decoration: underline;
 }
 
 .zoom {
