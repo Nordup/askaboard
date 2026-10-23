@@ -9,9 +9,13 @@
  *   node scripts/drive.mjs [--port 9339] draw <strokes.json | -> [--tool pen|highlighter] [--no-pan]
  *   node scripts/drive.mjs draw --strokes '[[[x,y,p],...],...]'
  *   node scripts/drive.mjs key <combo>          e.g. v, Delete, Escape, Meta+z, Shift+Meta+z
- *   node scripts/drive.mjs click <x> <y>        window CSS pixels
+ *   node scripts/drive.mjs click <x> <y> [--shift]  window CSS pixels
+ *   node scripts/drive.mjs dblclick <x> <y>
+ *   node scripts/drive.mjs drag <x1> <y1> <x2> <y2> [--shift] [--steps N]   mouse drag
+ *   node scripts/drive.mjs type "<text>"        insert text into the focused field
+ *   node scripts/drive.mjs node-rect <id>       a node's window rect (JSON), from the layout cache
  *   node scripts/drive.mjs screenshot <out.png> the whole window
- *   node scripts/drive.mjs eval-state           board path, item count, zoom, tool (JSON)
+ *   node scripts/drive.mjs eval-state           board, zoom, tool, selection, nodes with bounds (JSON)
  *
  * Strokes are in board coordinates (points, origin at the centre, +y down);
  * p is pen pressure 0..1. Each stroke is sent as pen input
@@ -26,9 +30,13 @@ const USAGE = `usage: node scripts/drive.mjs [--port N] <command>
                                                  pans the board first so every point is on screen
   draw --strokes '<json>'
   key <combo>                                    v, Delete, Escape, Meta+z, Shift+Meta+z
-  click <x> <y>                                  window CSS pixels
+  click <x> <y> [--shift]                        window CSS pixels
+  dblclick <x> <y>
+  drag <x1> <y1> <x2> <y2> [--shift] [--steps N] mouse drag in window CSS pixels
+  type "<text>"                                  insert text into the focused field
+  node-rect <id>                                 {x, y, width, height, cx, cy} in window CSS pixels
   screenshot <out.png>
-  eval-state
+  eval-state                                     board, tool, selection, nodes (id, kind, parent, bounds)
 The port defaults to $SPACE_REMOTE_DEBUG, then 9339.`
 
 class Failure extends Error {}
@@ -237,11 +245,52 @@ async function pressKey(cdp, combo) {
   console.log(JSON.stringify({ key: combo }))
 }
 
-async function click(cdp, x, y) {
+async function click(cdp, x, y, modifiers = 0) {
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none', buttons: 0, modifiers })
   for (const type of ['mousePressed', 'mouseReleased']) {
-    await cdp.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1 })
+    await cdp.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1, modifiers })
   }
   console.log(JSON.stringify({ click: [x, y] }))
+}
+
+async function dblclick(cdp, x, y) {
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none', buttons: 0 })
+  for (const clickCount of [1, 2]) {
+    for (const type of ['mousePressed', 'mouseReleased']) {
+      await cdp.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount })
+    }
+  }
+  await sleep(50)
+  console.log(JSON.stringify({ dblclick: [x, y] }))
+}
+
+async function drag(cdp, from, to, modifiers, steps) {
+  const at = (t) => [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t]
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: from[0], y: from[1], button: 'none', buttons: 0, modifiers })
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: from[0], y: from[1], button: 'left', buttons: 1, clickCount: 1, modifiers })
+  for (let i = 1; i <= steps; i++) {
+    const [x, y] = at(i / steps)
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'left', buttons: 1, modifiers })
+    await sleep(8)
+  }
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: to[0], y: to[1], button: 'left', buttons: 0, clickCount: 1, modifiers })
+  await sleep(50)
+  console.log(JSON.stringify({ drag: [from, to] }))
+}
+
+async function typeText(cdp, text) {
+  await cdp.send('Input.insertText', { text })
+  console.log(JSON.stringify({ typed: text }))
+}
+
+async function nodeRect(cdp, id) {
+  await requireDevHook(cdp)
+  const rect = await evaluate(cdp, `window.__spaceDev.nodeRect(${JSON.stringify(id)})`)
+  if (!rect) throw new Failure(`No node "${id}" with a known layout on the open board.`)
+  const r1 = (value) => Math.round(value * 10) / 10
+  console.log(
+    JSON.stringify({ x: r1(rect.x), y: r1(rect.y), width: r1(rect.width), height: r1(rect.height), cx: r1(rect.x + rect.width / 2), cy: r1(rect.y + rect.height / 2) })
+  )
 }
 
 async function screenshot(cdp, out) {
@@ -258,9 +307,14 @@ async function main() {
   const tool = takeOption('--tool') ?? 'pen'
   if (tool !== 'pen' && tool !== 'highlighter') throw new Failure('--tool must be pen or highlighter.')
   const inline = takeOption('--strokes')
+  const steps = Number(takeOption('--steps') ?? 12)
+  if (!Number.isInteger(steps) || steps < 1) throw new Failure('--steps must be a positive integer.')
   const noPanIndex = args.indexOf('--no-pan')
   const noPan = noPanIndex !== -1
   if (noPan) args.splice(noPanIndex, 1)
+  const shiftIndex = args.indexOf('--shift')
+  const modifiers = shiftIndex !== -1 ? 8 : 0
+  if (shiftIndex !== -1) args.splice(shiftIndex, 1)
   const [command, ...rest] = args
   if (!command || command === 'help' || command === '--help') {
     console.log(USAGE)
@@ -280,7 +334,21 @@ async function main() {
   } else if (command === 'click') {
     const [x, y] = rest.map(Number)
     if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Failure('click needs <x> <y> in window CSS pixels.')
-    run = (cdp) => click(cdp, x, y)
+    run = (cdp) => click(cdp, x, y, modifiers)
+  } else if (command === 'dblclick') {
+    const [x, y] = rest.map(Number)
+    if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Failure('dblclick needs <x> <y> in window CSS pixels.')
+    run = (cdp) => dblclick(cdp, x, y)
+  } else if (command === 'drag') {
+    const [x1, y1, x2, y2] = rest.map(Number)
+    if (![x1, y1, x2, y2].every(Number.isFinite)) throw new Failure('drag needs <x1> <y1> <x2> <y2> in window CSS pixels.')
+    run = (cdp) => drag(cdp, [x1, y1], [x2, y2], modifiers, steps)
+  } else if (command === 'type') {
+    if (rest[0] === undefined) throw new Failure('type needs the text to insert.')
+    run = (cdp) => typeText(cdp, rest[0])
+  } else if (command === 'node-rect') {
+    if (!rest[0]) throw new Failure('node-rect needs a node id.')
+    run = (cdp) => nodeRect(cdp, rest[0])
   } else if (command === 'screenshot') {
     if (!rest[0]) throw new Failure('screenshot needs an output path.')
     run = (cdp) => screenshot(cdp, rest[0])

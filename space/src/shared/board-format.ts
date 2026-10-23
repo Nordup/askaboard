@@ -1,29 +1,129 @@
 /**
  * The board file format: `*.board.json` in the learning folder.
  *
- * The file must stay small in Git diffs, so the serializer writes one item per
- * line, rounds coordinates to 1 decimal and pressure to 2 decimals, and keeps
- * a fixed key order. Board coordinates are logical points, origin at the
- * centre, +y down. The camera is NOT stored here (see state.json).
+ * Version 2: the board is one document of nodes (ink, frame, text, svg,
+ * image). The file must stay small in Git diffs, so the serializer writes one
+ * node per line, rounds coordinates to 1 decimal and pressure to 2 decimals,
+ * and keeps a fixed key order. Board coordinates are logical points, origin at
+ * the centre, +y down. The camera is NOT stored here (see state.json).
+ *
+ * Version 1 files (ink strokes in "items") load as v2 ink nodes and save as v2.
+ * Unknown node kinds, unknown node fields and unknown style keys survive a
+ * load/save round trip untouched.
  *
  * This module has no DOM or Node imports: the main process and the renderer
  * both use it.
  */
 
 export const BOARD_FORMAT = 'learning-space.board'
-export const BOARD_VERSION = 1
+export const BOARD_VERSION = 2
 export const BOARD_SUFFIX = '.board.json'
 /** New boards go to this folder, relative to the learning folder root. */
 export const BOARDS_DIR = 'boards'
 
-/** One ink sample: x, y (board points) and pressure (0..1). */
+/** One ink sample: x, y (board points, relative to the node's x, y) and pressure (0..1). */
 export type InkPoint = [x: number, y: number, pressure: number]
 
-export interface StrokeItem {
+export type Author = 'learner' | 'agent'
+
+/**
+ * The style whitelist: CSS inline-style properties in camelCase, mapped 1:1 to
+ * CSS. Values are CSS strings ("240px", "flex", "#222"). No margin, no grid,
+ * no position or transform: the app owns positions (node x, y).
+ */
+export const STYLE_KEYS = [
+  'width',
+  'height',
+  'minWidth',
+  'minHeight',
+  'maxWidth',
+  'maxHeight',
+  'padding',
+  'paddingTop',
+  'paddingRight',
+  'paddingBottom',
+  'paddingLeft',
+  'gap',
+  'rowGap',
+  'columnGap',
+  'display',
+  'flexDirection',
+  'flexWrap',
+  'alignItems',
+  'alignContent',
+  'justifyContent',
+  'alignSelf',
+  'flexGrow',
+  'flexShrink',
+  'flexBasis',
+  'background',
+  'backgroundColor',
+  'color',
+  'opacity',
+  'borderRadius',
+  'border',
+  'borderTop',
+  'borderRight',
+  'borderBottom',
+  'borderLeft',
+  'borderColor',
+  'borderWidth',
+  'borderStyle',
+  'boxShadow',
+  'fontSize',
+  'fontWeight',
+  'fontStyle',
+  'fontFamily',
+  'lineHeight',
+  'letterSpacing',
+  'textAlign',
+  'textDecoration',
+  'textTransform',
+  'whiteSpace',
+  'overflow',
+  'objectFit'
+] as const
+
+export type StyleKey = (typeof STYLE_KEYS)[number]
+/** A node's style. Keys outside STYLE_KEYS are kept in the file but never rendered. */
+export type NodeStyle = Partial<Record<StyleKey, string>> & Record<string, string>
+
+const STYLE_KEY_SET: ReadonlySet<string> = new Set(STYLE_KEYS)
+/** `display` values the content layer renders. */
+const DISPLAY_VALUES = new Set(['flex', 'block', 'none'])
+
+/** Only whitelisted keys with plain string values. For rendering. */
+export function renderableStyle(style: NodeStyle | undefined): Partial<Record<StyleKey, string>> {
+  const out: Partial<Record<StyleKey, string>> = {}
+  if (!style) return out
+  for (const [key, value] of Object.entries(style)) {
+    if (!STYLE_KEY_SET.has(key) || typeof value !== 'string') continue
+    // No external resources from a style value (url(...)), no expressions.
+    if (/url\s*\(|expression\s*\(|javascript:/i.test(value)) continue
+    if (key === 'display' && !DISPLAY_VALUES.has(value.trim())) continue
+    out[key as StyleKey] = value
+  }
+  return out
+}
+
+interface NodeBase {
   id: string
-  kind: 'stroke'
-  /** The board's sequence number when this item was created or last changed. */
+  /** The parent node (a frame), or none for a top-level node. */
+  parent?: string
+  /** Board points. Relative to the parent's padding box (the CSS containing block) when parented. */
+  x: number
+  y: number
+  /** Order among siblings: higher draws later (on top). */
+  z: number
+  author: Author
+  /** The board's sequence number when this node was created or last changed. */
   seq: number
+  /** Locked nodes can be selected, but not moved, resized or deleted by hand. */
+  locked?: boolean
+}
+
+export interface InkNode extends NodeBase {
+  kind: 'ink'
   tool: 'pen' | 'highlighter'
   color: string
   /** Nominal width in board points. Pen pressure scales it. */
@@ -31,33 +131,58 @@ export interface StrokeItem {
   points: InkPoint[]
 }
 
-/** An item of a kind this version does not know. It survives load/save untouched. */
-export interface ForeignItem {
+/**
+ * A box. Children: with `display: flex` the browser lays them out (their x, y
+ * are ignored); otherwise each child is absolutely placed at its x, y.
+ */
+export interface FrameNode extends NodeBase {
+  kind: 'frame'
+  style: NodeStyle
+}
+
+/** Text with light inline markup: `**bold**`, `*italic*`, `$inline math$`. */
+export interface TextNode extends NodeBase {
+  kind: 'text'
+  text: string
+  style: NodeStyle
+}
+
+/** A sanitized SVG drawing with a viewBox. Element ids inside are kept. */
+export interface SvgNode extends NodeBase {
+  kind: 'svg'
+  markup: string
+  style: NodeStyle
+}
+
+/** A picture file in the learning folder, e.g. `assets/earth.png`. */
+export interface ImageNode extends NodeBase {
+  kind: 'image'
+  src: string
+  style: NodeStyle
+}
+
+/** A node of a kind this version does not know (or an invalid one). It survives load/save untouched. */
+export interface ForeignNode {
   id: string
   kind: string
   seq: number
   [key: string]: unknown
 }
 
-export type BoardItem = StrokeItem | ForeignItem
+export type KnownNode = InkNode | FrameNode | TextNode | SvgNode | ImageNode
+export type ContentNode = FrameNode | TextNode | SvgNode | ImageNode
+export type BoardNode = KnownNode | ForeignNode
 
 export interface BoardDoc {
-  /** The next free sequence number. Always greater than every item's seq. */
+  /** The next free sequence number. Always greater than every node's seq. */
   nextSeq: number
-  items: BoardItem[]
+  /** File order (stable for diffs). Draw order comes from parent + z. */
+  nodes: BoardNode[]
   /** Unknown top-level keys from the file, kept for the round trip. */
   extra: Record<string, unknown>
 }
 
-export function isStroke(item: BoardItem): item is StrokeItem {
-  return item.kind === 'stroke'
-}
-
-export function emptyBoard(): BoardDoc {
-  return { nextSeq: 1, items: [], extra: {} }
-}
-
-const KNOWN_TOP_KEYS = new Set(['format', 'version', 'nextSeq', 'items'])
+// ---------- Validation (cached per object) ----------
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -67,19 +192,85 @@ function finite(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)
 }
 
-/** Read a stroke, or return null when the item is not a valid stroke. */
-function readStroke(raw: Record<string, unknown>): StrokeItem | null {
-  if (raw.tool !== 'pen' && raw.tool !== 'highlighter') return null
-  if (typeof raw.color !== 'string' || !finite(raw.width) || !Array.isArray(raw.points)) return null
-  const points: InkPoint[] = []
-  for (const point of raw.points) {
-    if (!Array.isArray(point) || !finite(point[0]) || !finite(point[1])) return null
-    points.push([point[0], point[1], finite(point[2]) ? Math.min(1, Math.max(0, point[2])) : 0.5])
-  }
-  return { ...(raw as object), points } as StrokeItem
+function validStyle(value: unknown): boolean {
+  return isRecord(value) && Object.values(value).every((entry) => typeof entry === 'string')
 }
 
-/** Parse board text. Throws an Error with a readable message on bad input. */
+function validBase(node: Record<string, unknown>): boolean {
+  return (
+    finite(node.x) &&
+    finite(node.y) &&
+    finite(node.z) &&
+    (node.parent === undefined || typeof node.parent === 'string') &&
+    (node.author === 'learner' || node.author === 'agent')
+  )
+}
+
+function validKnown(node: BoardNode): boolean {
+  const raw = node as Record<string, unknown>
+  if (!validBase(raw)) return false
+  switch (node.kind) {
+    case 'ink':
+      return (
+        (raw.tool === 'pen' || raw.tool === 'highlighter') &&
+        typeof raw.color === 'string' &&
+        finite(raw.width) &&
+        Array.isArray(raw.points) &&
+        raw.points.every((point) => Array.isArray(point) && finite(point[0]) && finite(point[1]) && finite(point[2]))
+      )
+    case 'frame':
+      return validStyle(raw.style)
+    case 'text':
+      return typeof raw.text === 'string' && validStyle(raw.style)
+    case 'svg':
+      return typeof raw.markup === 'string' && validStyle(raw.style)
+    case 'image':
+      return typeof raw.src === 'string' && validStyle(raw.style)
+    default:
+      return false
+  }
+}
+
+const validity = new WeakMap<object, boolean>()
+
+/** True when the node is of a known kind and has every field that kind needs. */
+export function isKnown(node: BoardNode): node is KnownNode {
+  let ok = validity.get(node)
+  if (ok === undefined) {
+    ok = validKnown(node)
+    validity.set(node, ok)
+  }
+  return ok
+}
+
+export function isInk(node: BoardNode): node is InkNode {
+  return node.kind === 'ink' && isKnown(node)
+}
+
+export function isContent(node: BoardNode): node is ContentNode {
+  return node.kind !== 'ink' && isKnown(node)
+}
+
+export function isFrame(node: BoardNode): node is FrameNode {
+  return node.kind === 'frame' && isKnown(node)
+}
+
+export function emptyBoard(): BoardDoc {
+  return { nextSeq: 1, nodes: [], extra: {} }
+}
+
+// ---------- Parse ----------
+
+const KNOWN_TOP_KEYS = new Set(['format', 'version', 'nextSeq', 'nodes', 'items'])
+
+/** A v1 stroke item becomes a v2 ink node: x = y = 0, the points stay absolute. */
+function migrateV1Item(entry: Record<string, unknown>, index: number): Record<string, unknown> {
+  if (entry.kind !== 'stroke') return entry
+  const { id, kind: _kind, seq, tool, color, width, points, ...rest } = entry
+  return { id, kind: 'ink', x: 0, y: 0, z: index + 1, author: 'learner', seq, tool, color, width, ...rest, points }
+}
+
+/** Parse board text (v1 or v2). Throws an Error with a readable message on bad input. */
 export function parseBoard(text: string): BoardDoc {
   let raw: unknown
   try {
@@ -92,31 +283,37 @@ export function parseBoard(text: string): BoardDoc {
     throw new Error(`The file format is "${String(raw.format)}", not "${BOARD_FORMAT}".`)
   }
   if (finite(raw.version) && raw.version > BOARD_VERSION) {
-    throw new Error(`The board uses format version ${raw.version}. This app reads version ${BOARD_VERSION}.`)
+    throw new Error(`The board uses format version ${raw.version}. This app reads up to version ${BOARD_VERSION}.`)
   }
-  const sourceItems = raw.items === undefined ? [] : raw.items
-  if (!Array.isArray(sourceItems)) throw new Error('The "items" field is not a list.')
+  const v1 = raw.nodes === undefined && raw.items !== undefined
+  const source = v1 ? raw.items : raw.nodes === undefined ? [] : raw.nodes
+  if (!Array.isArray(source)) throw new Error(`The "${v1 ? 'items' : 'nodes'}" field is not a list.`)
 
-  const items: BoardItem[] = []
+  const nodes: BoardNode[] = []
   let maxSeq = 0
-  for (const entry of sourceItems) {
+  source.forEach((entry, index) => {
     if (!isRecord(entry) || typeof entry.id !== 'string' || typeof entry.kind !== 'string') {
-      throw new Error('A board item has no string "id" or "kind".')
+      throw new Error('A board node has no string "id" or "kind".')
     }
     const seq = finite(entry.seq) ? entry.seq : 0
-    const base = { ...entry, seq }
-    // An invalid stroke is kept as foreign data, so a save never destroys it.
-    const item: BoardItem = entry.kind === 'stroke' ? (readStroke(base) ?? (base as ForeignItem)) : (base as ForeignItem)
-    items.push(item)
+    const migrated = v1 ? migrateV1Item(entry, index) : entry
+    let node = { ...migrated, seq } as BoardNode
+    if (node.kind === 'ink' && isKnown(node)) {
+      // Clamp pressure; an invalid ink node stays foreign data, so a save never destroys it.
+      node = { ...node, points: node.points.map(([x, y, p]) => [x, y, Math.min(1, Math.max(0, p))] as InkPoint) }
+    }
+    nodes.push(node)
     maxSeq = Math.max(maxSeq, seq)
-  }
+  })
 
   const extra: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(raw)) if (!KNOWN_TOP_KEYS.has(key)) extra[key] = value
 
   const nextSeq = Math.max(finite(raw.nextSeq) ? Math.floor(raw.nextSeq) : 1, maxSeq + 1)
-  return { nextSeq, items, extra }
+  return { nextSeq, nodes, extra }
 }
+
+// ---------- Serialize ----------
 
 const round = (value: number, digits: number): number => {
   const factor = 10 ** digits
@@ -124,38 +321,43 @@ const round = (value: number, digits: number): number => {
   return Object.is(result, -0) ? 0 : result
 }
 
-function serializeItem(item: BoardItem): string {
-  if (!isStroke(item)) return JSON.stringify(item)
-  const { id, kind, seq, tool, color, width, points, ...rest } = item
-  return JSON.stringify({
-    id,
-    kind,
-    seq,
-    tool,
-    color,
-    width: round(width, 2),
-    ...rest,
-    points: points.map(([x, y, p]) => [round(x, 1), round(y, 1), round(p, 2)])
-  })
+/** Fixed key order: common fields, kind fields, unknown fields, points last. */
+const COMMON_KEYS = ['id', 'kind', 'parent', 'x', 'y', 'z', 'author', 'seq', 'locked'] as const
+const KIND_KEYS: Record<string, readonly string[]> = {
+  ink: ['tool', 'color', 'width'],
+  frame: ['style'],
+  text: ['text', 'style'],
+  svg: ['style', 'markup'],
+  image: ['src', 'style']
 }
 
-/** Serialize with one item per line, so Git diffs stay small. */
+function serializeNode(node: BoardNode): string {
+  if (!isKnown(node)) return JSON.stringify(node)
+  const raw = node as unknown as Record<string, unknown>
+  const out: Record<string, unknown> = {}
+  for (const key of COMMON_KEYS) {
+    const value = raw[key]
+    if (value === undefined) continue
+    out[key] = key === 'x' || key === 'y' ? round(value as number, 1) : value
+  }
+  for (const key of KIND_KEYS[node.kind]) out[key] = key === 'width' ? round(raw[key] as number, 2) : raw[key]
+  for (const [key, value] of Object.entries(raw)) if (!(key in out) && key !== 'points') out[key] = value
+  if (node.kind === 'ink') out.points = node.points.map(([x, y, p]) => [round(x, 1), round(y, 1), round(p, 2)])
+  return JSON.stringify(out)
+}
+
+/** Serialize with one node per line, so Git diffs stay small. */
 export function serializeBoard(doc: BoardDoc): string {
-  const lines = [
-    '{',
-    `  "format": ${JSON.stringify(BOARD_FORMAT)},`,
-    `  "version": ${BOARD_VERSION},`,
-    `  "nextSeq": ${doc.nextSeq},`
-  ]
+  const lines = ['{', `  "format": ${JSON.stringify(BOARD_FORMAT)},`, `  "version": ${BOARD_VERSION},`, `  "nextSeq": ${doc.nextSeq},`]
   for (const [key, value] of Object.entries(doc.extra)) {
     if (!KNOWN_TOP_KEYS.has(key)) lines.push(`  ${JSON.stringify(key)}: ${JSON.stringify(value)},`)
   }
-  if (doc.items.length === 0) {
-    lines.push('  "items": []')
+  if (doc.nodes.length === 0) {
+    lines.push('  "nodes": []')
   } else {
-    lines.push('  "items": [')
-    doc.items.forEach((item, index) => {
-      lines.push(`    ${serializeItem(item)}${index < doc.items.length - 1 ? ',' : ''}`)
+    lines.push('  "nodes": [')
+    doc.nodes.forEach((node, index) => {
+      lines.push(`    ${serializeNode(node)}${index < doc.nodes.length - 1 ? ',' : ''}`)
     })
     lines.push('  ]')
   }
@@ -163,54 +365,66 @@ export function serializeBoard(doc: BoardDoc): string {
   return `${lines.join('\n')}\n`
 }
 
-/** An item that left the board, with the seq of its removal. */
+// ---------- Change tracking ----------
+
+/** A rectangle in board points. */
+export interface BoardBounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/** A node that left the board, with the seq of its removal. */
 export interface Removal {
-  item: BoardItem
+  node: BoardNode
   seq: number
+  /** World bounds at the time of removal, when the renderer knew them. */
+  bounds?: BoardBounds | null
 }
 
 /**
- * Give a new seq to every item in `next` that is not in `previous`
- * (by object identity). Created, moved or restored items count as changed.
+ * Give a new seq to every node in `next` that is not in `previous`
+ * (by object identity). Created, moved or restored nodes count as changed.
  * Every id in `previous` that is not in `next` is a removal: it also takes a
  * seq, so an agent's change cursor sees erasing as a change.
  */
 export function stampChanged(
-  previous: readonly BoardItem[],
-  next: readonly BoardItem[],
+  previous: readonly BoardNode[],
+  next: readonly BoardNode[],
   nextSeq: number
-): { items: BoardItem[]; nextSeq: number; removed: Removal[] } {
+): { nodes: BoardNode[]; nextSeq: number; removed: Removal[] } {
   const known = new Set(previous)
   let seq = nextSeq
-  const items = next.map((item) => (known.has(item) ? item : { ...item, seq: seq++ }))
-  const kept = new Set(next.map((item) => item.id))
+  const nodes = next.map((node) => (known.has(node) ? node : { ...node, seq: seq++ }))
+  const kept = new Set(next.map((node) => node.id))
   const removed: Removal[] = []
-  for (const item of previous) if (!kept.has(item.id)) removed.push({ item, seq: seq++ })
-  return { items, nextSeq: seq, removed }
+  for (const node of previous) if (!kept.has(node.id)) removed.push({ node, seq: seq++ })
+  return { nodes, nextSeq: seq, removed }
 }
 
 /**
  * Compare a board with a new version of it from disk (Git, an agent, another
- * editor). Items that are new or different by content get a fresh seq; ids
- * that are gone are removals. Items equal by content keep their old object,
- * so the result has the same seqs as before for unchanged ink.
+ * editor). Nodes that are new or different by content get a fresh seq; ids
+ * that are gone are removals. Nodes equal by content keep their old object,
+ * so the result has the same seqs as before for unchanged nodes.
  */
 export function reconcileBoard(previous: BoardDoc, incoming: BoardDoc): { doc: BoardDoc; removed: Removal[] } {
-  const before = new Map(previous.items.map((item) => [item.id, item]))
-  const contentKey = (item: BoardItem): string => serializeItem({ ...item, seq: 0 })
+  const before = new Map(previous.nodes.map((node) => [node.id, node]))
+  const contentKey = (node: BoardNode): string => serializeNode({ ...node, seq: 0 })
   let seq = Math.max(previous.nextSeq, incoming.nextSeq)
-  const items = incoming.items.map((item) => {
-    const old = before.get(item.id)
-    if (old && contentKey(old) === contentKey(item)) return old
-    return { ...item, seq: seq++ }
+  const nodes = incoming.nodes.map((node) => {
+    const old = before.get(node.id)
+    if (old && contentKey(old) === contentKey(node)) return old
+    return { ...node, seq: seq++ }
   })
-  const kept = new Set(incoming.items.map((item) => item.id))
+  const kept = new Set(incoming.nodes.map((node) => node.id))
   const removed: Removal[] = []
-  for (const item of previous.items) if (!kept.has(item.id)) removed.push({ item, seq: seq++ })
-  return { doc: { nextSeq: seq, items, extra: incoming.extra }, removed }
+  for (const node of previous.nodes) if (!kept.has(node.id)) removed.push({ node, seq: seq++ })
+  return { doc: { nextSeq: seq, nodes, extra: incoming.extra }, removed }
 }
 
-/** A short random item id, for example `s_k3j2x9qa`. */
+/** A short random node id, for example `s_k3j2x9qa`. */
 export function newItemId(prefix = 's'): string {
   const alphabet = '0123456789abcdefghijklmnopqrstuvwxyz'
   const bytes = new Uint8Array(8)

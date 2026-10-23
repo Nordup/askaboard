@@ -1,7 +1,10 @@
-import { isStroke } from '@shared/board-format'
-import type { BoardItem, Camera, Point, Region, StrokeItem } from './types'
+import type { Camera, InkNode, Point, Region } from './types'
 
-/** Ported from web/src/board/geometry.ts (the ink parts only). */
+/**
+ * Camera maths and ink geometry. Ink points are relative to the node: every
+ * ink function takes the ink's world `offset` (the world position of local
+ * point 0,0: the parent origin plus the node's x, y).
+ */
 
 export const MIN_ZOOM = 0.1
 export const MAX_ZOOM = 8
@@ -38,10 +41,10 @@ export function pressureWidth(pressure: number): number {
   return 0.35 + 1.3 * Math.min(1, Math.max(0, pressure))
 }
 
-const boundsCache = new WeakMap<StrokeItem, Region>()
+const boundsCache = new WeakMap<InkNode, Region>()
 
-/** Stroke bounds including the drawn nib radius. Cached per stroke object. */
-export function strokeBounds(stroke: StrokeItem): Region | null {
+/** Ink bounds in the node's local coordinates, including the drawn nib radius. Cached per node object. */
+export function inkLocalBounds(stroke: InkNode): Region | null {
   if (!stroke.points.length) return null
   const cached = boundsCache.get(stroke)
   if (cached) return cached
@@ -64,11 +67,35 @@ export function strokeBounds(stroke: StrokeItem): Region | null {
   return region
 }
 
+/** Ink bounds in world coordinates. */
+export function inkBounds(stroke: InkNode, offset: Point): Region | null {
+  const local = inkLocalBounds(stroke)
+  return local ? { ...local, x: local.x + offset[0], y: local.y + offset[1] } : null
+}
+
 export function regionsIntersect(a: Region, b: Region): boolean {
   return a.x <= b.x + b.width && b.x <= a.x + a.width && a.y <= b.y + b.height && b.y <= a.y + a.height
 }
 
-function pointInPolygon(point: Point, polygon: Point[]): boolean {
+export function regionContains(region: Region, point: Point, pad = 0): boolean {
+  return (
+    point[0] >= region.x - pad &&
+    point[0] <= region.x + region.width + pad &&
+    point[1] >= region.y - pad &&
+    point[1] <= region.y + region.height + pad
+  )
+}
+
+/** The share (0..1) of `inner`'s area that lies inside `outer`. */
+export function overlapShare(inner: Region, outer: Region): number {
+  const width = Math.min(inner.x + inner.width, outer.x + outer.width) - Math.max(inner.x, outer.x)
+  const height = Math.min(inner.y + inner.height, outer.y + outer.height) - Math.max(inner.y, outer.y)
+  if (width <= 0 || height <= 0) return 0
+  const area = Math.max(1e-6, inner.width) * Math.max(1e-6, inner.height)
+  return Math.min(1, (width * height) / area)
+}
+
+export function pointInPolygon(point: Point, polygon: readonly Point[]): boolean {
   let inside = false
   for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
     const a = polygon[i]
@@ -86,42 +113,11 @@ export function distanceToSegment(p: Point, a: Point, b: Point): number {
   return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy)
 }
 
-function segmentDistance(a: Point, b: Point, c: Point, d: Point): number {
-  const cross = (p: Point, q: Point, r: Point): number => (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
-  const on = (p: Point, q: Point, r: Point): boolean =>
-    Math.min(p[0], q[0]) <= r[0] && r[0] <= Math.max(p[0], q[0]) && Math.min(p[1], q[1]) <= r[1] && r[1] <= Math.max(p[1], q[1])
-  const c1 = cross(a, b, c)
-  const c2 = cross(a, b, d)
-  const c3 = cross(c, d, a)
-  const c4 = cross(c, d, b)
-  if (
-    (c1 === 0 && on(a, b, c)) ||
-    (c2 === 0 && on(a, b, d)) ||
-    (c3 === 0 && on(c, d, a)) ||
-    (c4 === 0 && on(c, d, b)) ||
-    (c1 > 0 !== c2 > 0 && c3 > 0 !== c4 > 0)
-  )
-    return 0
-  return Math.min(distanceToSegment(a, c, d), distanceToSegment(b, c, d), distanceToSegment(c, a, b), distanceToSegment(d, a, b))
-}
-
-/** Whole-stroke lasso hit test; the tolerance includes the drawn nib radius. */
-export function strokeIntersectsPolygon(stroke: StrokeItem, polygon: Point[]): boolean {
-  if (polygon.length < 3 || stroke.points.length === 0) return false
-  const tolerance = Math.max(0, stroke.width / 2)
-  const points = stroke.points.map(([x, y]) => [x, y] as Point)
-  if (points.some((point) => pointInPolygon(point, polygon))) return true
-  const strokeSegments: [Point, Point][] =
-    points.length === 1 ? [[points[0], points[0]]] : points.slice(1).map((point, i) => [points[i], point])
-  const lassoSegments: [Point, Point][] = polygon.map((point, i) => [point, polygon[(i + 1) % polygon.length]])
-  return strokeSegments.some(([a, b]) => lassoSegments.some(([c, d]) => segmentDistance(a, b, c, d) <= tolerance))
-}
-
 /**
  * Points along the stroke, at most `step` apart, so a long straight segment
  * (two samples) counts by its length and not by its two end points.
  */
-function densePoints(stroke: StrokeItem, step: number, cap = 600): Point[] {
+function densePoints(stroke: InkNode, step: number, cap = 600): Point[] {
   const points = stroke.points
   if (points.length === 0) return []
   let length = 0
@@ -137,60 +133,57 @@ function densePoints(stroke: StrokeItem, step: number, cap = 600): Point[] {
   return out
 }
 
-/**
- * Lasso rule: a stroke is selected when at least `share` of its length lies
- * inside the polygon. Both are in board coordinates.
- */
-export function strokeInsidePolygon(stroke: StrokeItem, polygon: Point[], share = 0.6): boolean {
-  if (polygon.length < 3 || stroke.points.length === 0) return false
+function polygonBounds(polygon: readonly Point[]): Region {
   const xs = polygon.map((point) => point[0])
   const ys = polygon.map((point) => point[1])
-  const lasso: Region = { x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) }
-  const bounds = strokeBounds(stroke)
-  if (bounds && !regionsIntersect(bounds, lasso)) return false
+  return { x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) }
+}
+
+/**
+ * Lasso rule for ink: selected when at least `share` of its length lies
+ * inside the polygon (world coordinates).
+ */
+export function strokeInsidePolygon(stroke: InkNode, offset: Point, polygon: readonly Point[], share = 0.6): boolean {
+  if (polygon.length < 3 || stroke.points.length === 0) return false
+  const bounds = inkBounds(stroke, offset)
+  if (bounds && !regionsIntersect(bounds, polygonBounds(polygon))) return false
   const samples = densePoints(stroke, 4)
   let inside = 0
-  for (const point of samples) if (pointInPolygon(point, polygon)) inside++
+  for (const [x, y] of samples) if (pointInPolygon([x + offset[0], y + offset[1]], polygon)) inside++
   return inside / samples.length >= share
 }
 
-/** The topmost stroke under a point: pen ink above highlighters, later above earlier. */
-export function topStrokeAt(items: readonly BoardItem[], point: Point, radius: number): StrokeItem | null {
-  const strokes = items.filter(isStroke)
-  for (const tool of ['pen', 'highlighter'] as const) {
-    for (let i = strokes.length - 1; i >= 0; i--) {
-      const stroke = strokes[i]
-      if (stroke.tool === tool && strokeHitByCircle(stroke, point, radius)) return stroke
+/** Lasso rule for boxes: selected when at least `share` of the box area lies inside the polygon. */
+export function regionInsidePolygon(region: Region, polygon: readonly Point[], share = 0.6): boolean {
+  if (polygon.length < 3) return false
+  if (!regionsIntersect(region, polygonBounds(polygon))) return false
+  const steps = 10
+  let inside = 0
+  for (let i = 0; i < steps; i++) {
+    for (let j = 0; j < steps; j++) {
+      const point: Point = [region.x + (region.width * (i + 0.5)) / steps, region.y + (region.height * (j + 0.5)) / steps]
+      if (pointInPolygon(point, polygon)) inside++
     }
   }
-  return null
+  return inside / (steps * steps) >= share
 }
 
-/** True when a circle of `radius` around `point` touches the drawn stroke. */
-export function strokeHitByCircle(stroke: StrokeItem, point: Point, radius: number): boolean {
+/** True when a circle of `radius` around the world `point` touches the drawn stroke. */
+export function strokeHitByCircle(stroke: InkNode, offset: Point, point: Point, radius: number): boolean {
   const reach = radius + stroke.width / 2
-  const bounds = strokeBounds(stroke)
-  if (bounds && !regionsIntersect(bounds, { x: point[0] - reach, y: point[1] - reach, width: reach * 2, height: reach * 2 })) return false
+  const local: Point = [point[0] - offset[0], point[1] - offset[1]]
+  const bounds = inkLocalBounds(stroke)
+  if (bounds && !regionsIntersect(bounds, { x: local[0] - reach, y: local[1] - reach, width: reach * 2, height: reach * 2 })) return false
   const points = stroke.points
   for (let i = 0; i < points.length; i++) {
     const current: Point = [points[i][0], points[i][1]]
-    if (Math.hypot(current[0] - point[0], current[1] - point[1]) <= reach) return true
-    if (i > 0 && distanceToSegment(point, [points[i - 1][0], points[i - 1][1]], current) <= reach) return true
+    if (Math.hypot(current[0] - local[0], current[1] - local[1]) <= reach) return true
+    if (i > 0 && distanceToSegment(local, [points[i - 1][0], points[i - 1][1]], current) <= reach) return true
   }
   return false
 }
 
-/** Shift the selected strokes. Unselected items keep their identity. */
-export function translateItems(items: BoardItem[], ids: ReadonlySet<string>, delta: Point): BoardItem[] {
-  if (!ids.size || (!delta[0] && !delta[1])) return items
-  return items.map((item) =>
-    isStroke(item) && ids.has(item.id)
-      ? { ...item, points: item.points.map(([x, y, p]) => [x + delta[0], y + delta[1], p] as StrokeItem['points'][number]) }
-      : item
-  )
-}
-
-export function unionRegions(regions: Array<Region | null>): Region | null {
+export function unionRegions(regions: ReadonlyArray<Region | null | undefined>): Region | null {
   const valid = regions.filter(
     (r): r is Region =>
       !!r && Number.isFinite(r.x) && Number.isFinite(r.y) && Number.isFinite(r.width) && Number.isFinite(r.height) && r.width >= 0 && r.height >= 0
@@ -201,10 +194,4 @@ export function unionRegions(regions: Array<Region | null>): Region | null {
   const right = Math.max(...valid.map((r) => r.x + r.width))
   const bottom = Math.max(...valid.map((r) => r.y + r.height))
   return { x, y, width: right - x, height: bottom - y }
-}
-
-/** Bounds of the selected strokes. */
-export function selectionBounds(items: BoardItem[], ids: readonly string[]): Region | null {
-  const selected = new Set(ids)
-  return unionRegions(items.filter((item): item is StrokeItem => isStroke(item) && selected.has(item.id)).map(strokeBounds))
 }

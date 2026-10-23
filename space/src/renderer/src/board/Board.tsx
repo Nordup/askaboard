@@ -1,40 +1,60 @@
-import { useCallback, useEffect, useImperativeHandle, useRef, useState, type CSSProperties, type Ref } from 'react'
-import { isStroke, newItemId, stampChanged, type BoardDoc, type Removal } from '@shared/board-format'
+import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type CSSProperties, type Ref } from 'react'
+import { isContent, isFrame, isInk, isKnown, newItemId, stampChanged, type BoardDoc, type NodeStyle, type Removal } from '@shared/board-format'
 import { isEditableTarget } from '../lib/keys'
 import type { ToolId } from '../tools'
-import {
-  boardKeyAction,
-  copySelectedStrokes,
-  duplicateStrokes,
-  hasInkClipboard,
-  pasteStrokes,
-  readInkClipboard,
-  removeSelected,
-  writeInkClipboard,
-  type BoardKeyAction
-} from './clipboard'
+import { boardKeyAction, hasNodeClipboard, readNodeClipboard, writeNodeClipboard, type BoardKeyAction } from './clipboard'
+import { ContentLayer, type ContentContext } from './content'
 import {
   boardToScreen,
   clampZoom,
+  inkBounds,
+  inkLocalBounds,
+  overlapShare,
+  regionContains,
+  regionInsidePolygon,
   screenToBoard,
-  selectionBounds as boundsOfSelection,
-  strokeBounds,
   strokeHitByCircle,
   strokeInsidePolygon,
-  topStrokeAt,
-  translateItems,
-  unionRegions,
   zoomAt
 } from './geometry'
 import type { BoardHistory } from './history'
-import { paintActive, paintItems } from './paint'
-import type { BoardItem, Camera, Point, Region, StrokeItem } from './types'
+import { paintActive, paintItems, type PaintInk } from './paint'
+import {
+  addInkLayout,
+  boundsOf,
+  buildIndex,
+  contentAt,
+  copySubtrees,
+  inkAt,
+  inkOffset,
+  inkPaintOrder,
+  isFlowed,
+  moveNodes,
+  normalizeInk,
+  outermost,
+  parentKey,
+  removeNodes,
+  ROOT,
+  selectTarget,
+  topLevelOf,
+  zAbove,
+  type LayoutMap,
+  type SceneIndex
+} from './scene'
+import type { BoardNode, Camera, ContentNode, InkNode, LayoutBox, Point, Region, TextNode } from './types'
 import './board.css'
 
 /**
- * The ink board. Ported from web/src/board/Board.tsx: the same pointer
- * routing (pen / mouse / touch, coalesced events, pressure, the pen's eraser
- * end, lasso, pan with Space or the middle button, wheel), without the tutor.
+ * The board: one document of nodes. Content nodes (frames, text, svg,
+ * images) are DOM in the content layer; ink is on the canvas above it, with
+ * the same camera. Pointer routing (pen / mouse / touch, coalesced events,
+ * pressure, the pen's eraser end, lasso, pan with Space or the middle button,
+ * wheel) is ported from web/src/board/Board.tsx.
+ *
+ * The layout cache (`layoutRef`: id → world box) is the one source for hit
+ * testing, selection boxes, lasso, ink parenting and agent bounds. Content
+ * entries are measured from the DOM after each render; ink entries come from
+ * the points.
  */
 
 export type ZoomStep = 'in' | 'out' | 'reset'
@@ -48,7 +68,7 @@ export interface BoardHandle {
    * a step that the other source made a moment ago is not repeated.
    */
   zoomStep(step: ZoomStep, source: 'menu' | 'key'): void
-  /** Show all ink. */
+  /** Show all nodes. */
   fit(): void
   /** The live board, with edits that are not saved yet. For the agent bridge. */
   liveState(): LiveBoardState
@@ -60,15 +80,23 @@ export interface BoardHandle {
   clientRect(): Region | null
   /** Pan (and zoom out if needed) so the board rect is in view with a margin. Keeps the camera when it already is. */
   reveal(rect: Region): void
+  /** Restyle the selection with a palette colour. Returns false when nothing is selected. */
+  applyColor(color: string): boolean
+  /** Restyle selected ink with a palette width. Returns false when no ink is selected. */
+  applyWidth(width: number): boolean
 }
 
 export interface LiveBoardState {
-  items: readonly BoardItem[]
+  nodes: readonly BoardNode[]
   nextSeq: number
   camera: Camera
   /** The canvas size in CSS pixels. */
   viewport: Point
   selectedIds: readonly string[]
+  /** World bounds of a node, from the layout cache. */
+  bounds(id: string): Region | null
+  /** Every ink node with its world offset, in draw order. */
+  inks(): PaintInk[]
 }
 
 export interface BoardProps {
@@ -83,21 +111,30 @@ export interface BoardProps {
   width: number
   onDocChange(doc: BoardDoc): void
   onCameraChange(camera: Camera): void
-  /** Items left the board (erase, cut, delete, undo). Each removal has its own seq. */
+  /** Nodes left the board (erase, cut, delete, undo). Each removal has its own seq. */
   onRemoved?(removed: Removal[]): void
   ref?: Ref<BoardHandle>
 }
 
 /** Highlighter strokes are this many times wider than pen strokes. */
-const HIGHLIGHTER_SCALE = 4
+export const HIGHLIGHTER_SCALE = 4
 /** Stroke eraser radius in screen pixels. */
 const ERASE_RADIUS = 10
 /** Grid pitch in board points. */
 const GRID_PITCH = 24
 /** How long the "an agent looked here" outline shows. */
 const FLASH_MS = 1400
+/** Share of a new stroke's bounds that must lie inside a frame to join it. */
+const PARENT_SHARE = 0.6
+/** Duplicates land this far from the original (board points). */
+const DUPLICATE_OFFSET = 20
+/** The smallest size a resize makes (board points). */
+const MIN_SIZE = 8
+/** Font size of a new text node (board points). */
+const NEW_TEXT_SIZE = 20
 
-type DragKind = 'pan' | 'lasso' | 'move' | 'ink' | 'erase'
+type DragKind = 'pan' | 'lasso' | 'move' | 'ink' | 'erase' | 'resize' | 'none'
+type Handle = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
 
 interface DragState {
   kind: DragKind
@@ -105,22 +142,38 @@ interface DragState {
   start: Point
   last: Point
   points: Point[]
-  startItems: BoardItem[]
+  startNodes: BoardNode[]
   startCamera: Camera
   startSelectedIds: string[]
-  startSelection: Region | null
   changed: boolean
   /** Lasso only: every pointer sample, in board coordinates. */
   lasso: Point[]
+  /** Move: the ids that move. */
+  moveIds?: Set<string>
+  /** Move: the clicked node, to select alone when the press was a click. */
+  clicked?: string
+  /** Lasso with Shift: add to the selection. */
+  additive?: boolean
+  /** Resize: the node, the handle and the start box. */
+  resize?: { id: string; handle: Handle; box: LayoutBox }
+}
+
+interface EditingState {
+  id: string
+  /** The nodes before editing started (a new text node is not in them). */
+  snapshot: BoardNode[]
+  initial: string
 }
 
 const cssPoint = (event: { clientX: number; clientY: number }, rect: DOMRect): Point => [event.clientX - rect.left, event.clientY - rect.top]
 
 const sampleScreenDistance = 0.5
 /** Selection box padding, in screen pixels. The padded box is the move handle. */
-const SELECTION_PAD = 8
+const SELECTION_PAD = 6
 /** A lasso path smaller than this (screen pixels) is a tap. */
 const TAP_SIZE = 6
+
+const px = (value: number): string => `${Math.round(value * 10) / 10}px`
 
 function pressureOf(pointerType: string, pressure: number): number {
   if (pointerType !== 'pen') return 0.5
@@ -142,30 +195,76 @@ function gridStyle(camera: Camera, viewport: Point): CSSProperties {
   } as CSSProperties
 }
 
+/** Which handles a node shows. Text resizes its width only; flowed nodes keep their place. */
+function handlesFor(node: BoardNode | undefined): Handle[] {
+  if (!node || !isKnown(node) || node.locked) return []
+  if (node.kind === 'text') return ['e', 'w']
+  return ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
+}
+
+/** The box after dragging a handle by a world delta. */
+function resizedBox(box: Region, handle: Handle, delta: Point, keepAspect: boolean): Region {
+  let left = box.x
+  let top = box.y
+  let right = box.x + box.width
+  let bottom = box.y + box.height
+  if (handle.includes('w')) left = Math.min(right - MIN_SIZE, left + delta[0])
+  if (handle.includes('e')) right = Math.max(left + MIN_SIZE, right + delta[0])
+  if (handle.includes('n')) top = Math.min(bottom - MIN_SIZE, top + delta[1])
+  if (handle.includes('s')) bottom = Math.max(top + MIN_SIZE, bottom + delta[1])
+  if (keepAspect && handle.length === 2 && box.width > 0 && box.height > 0) {
+    const ratio = box.width / box.height
+    const width = right - left
+    const height = bottom - top
+    if (width / height > ratio) {
+      const next = height * ratio
+      if (handle.includes('w')) left = right - next
+      else right = left + next
+    } else {
+      const next = width / ratio
+      if (handle.includes('n')) top = bottom - next
+      else bottom = top + next
+    }
+  }
+  return { x: left, y: top, width: right - left, height: bottom - top }
+}
+
 export function Board({ doc, history, initialCamera, tool, color, width, onDocChange, onCameraChange, onRemoved, ref }: BoardProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const inkRef = useRef<HTMLCanvasElement>(null)
   const activeInkRef = useRef<HTMLCanvasElement>(null)
   const eraserRef = useRef<HTMLDivElement>(null)
+  const contentRootRef = useRef<HTMLDivElement>(null)
+  const editorRef = useRef<HTMLTextAreaElement>(null)
 
-  const itemsRef = useRef<BoardItem[]>(doc.items)
+  const nodesRef = useRef<BoardNode[]>(doc.nodes)
+  const indexRef = useRef<SceneIndex>(buildIndex(doc.nodes))
+  const layoutRef = useRef<LayoutMap>(new Map())
+  const elementsRef = useRef(new Map<string, HTMLElement>())
   const nextSeqRef = useRef(doc.nextSeq)
   const extraRef = useRef(doc.extra)
   const cameraRef = useRef<Camera>(initialCamera ?? { center: [0, 0], zoom: 1 })
+  /** The camera the content layer's transform shows now. */
+  const domCameraRef = useRef<Camera>(cameraRef.current)
   const needsFitRef = useRef(initialCamera === null)
   const viewportRef = useRef<Point>([1, 1])
-  const activeRef = useRef<StrokeItem | null>(null)
+  const activeRef = useRef<InkNode | null>(null)
   const dragRef = useRef<DragState | null>(null)
   const selectedIdsRef = useRef<string[]>([])
   const pasteAnchorRef = useRef<Point | null>(null)
   const spaceRef = useRef(false)
   const paintFrameRef = useRef<number | null>(null)
   const dirtyLayersRef = useRef({ committed: false, active: false })
+  const editingRef = useRef<EditingState | null>(null)
+  const measureFrameRef = useRef<number | null>(null)
 
   const [camera, setCamera] = useState<Camera>(cameraRef.current)
   const [viewport, setViewport] = useState<Point>([1, 1])
+  const [index, setIndex] = useState<SceneIndex>(indexRef.current)
+  const [layoutVersion, setLayoutVersion] = useState(0)
+  const [selectedIds, setSelectedIdsState] = useState<string[]>([])
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [lassoPoints, setLassoPoints] = useState<Point[] | null>(null)
-  const [selection, setSelection] = useState<Region | null>(null)
   const [panReady, setPanReady] = useState(false)
   const [panning, setPanning] = useState(false)
   const [flashRect, setFlashRect] = useState<{ rect: Region; id: number } | null>(null)
@@ -180,24 +279,121 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
 
   // ---------- Painting (batched to one frame) ----------
 
-  const requestPaint = useCallback((layers: { committed?: boolean; active?: boolean }) => {
-    if (layers.committed) dirtyLayersRef.current.committed = true
-    if (layers.active) dirtyLayersRef.current.active = true
-    if (paintFrameRef.current !== null) return
-    paintFrameRef.current = requestAnimationFrame(() => {
-      paintFrameRef.current = null
-      const dirty = dirtyLayersRef.current
-      dirtyLayersRef.current = { committed: false, active: false }
-      if (dirty.committed)
-        paintItems(inkRef.current, itemsRef.current, viewportRef.current, cameraRef.current, new Set(selectedIdsRef.current))
-      if (dirty.active) paintActive(activeInkRef.current, activeRef.current, viewportRef.current, cameraRef.current)
+  const paintInks = useCallback((): PaintInk[] => {
+    const layout = layoutRef.current
+    const index = indexRef.current
+    return inkPaintOrder(index).map((node) => {
+      const box = layout.get(node.id)
+      return { node, offset: box ? [box.ox, box.oy] : inkOffset(node, index.byId, layout) }
     })
   }, [])
+
+  const applyContentTransform = useCallback(() => {
+    const root = contentRootRef.current
+    if (!root) return
+    const cam = cameraRef.current
+    const [vw, vh] = viewportRef.current
+    root.style.transform = `translate(${vw / 2 - cam.center[0] * cam.zoom}px, ${vh / 2 - cam.center[1] * cam.zoom}px) scale(${cam.zoom})`
+    domCameraRef.current = cam
+  }, [])
+
+  const requestPaint = useCallback(
+    (layers: { committed?: boolean; active?: boolean }) => {
+      if (layers.committed) dirtyLayersRef.current.committed = true
+      if (layers.active) dirtyLayersRef.current.active = true
+      if (paintFrameRef.current !== null) return
+      paintFrameRef.current = requestAnimationFrame(() => {
+        paintFrameRef.current = null
+        const dirty = dirtyLayersRef.current
+        dirtyLayersRef.current = { committed: false, active: false }
+        if (dirty.committed) {
+          applyContentTransform()
+          paintItems(inkRef.current, paintInks(), viewportRef.current, cameraRef.current, new Set(selectedIdsRef.current))
+        }
+        if (dirty.active) paintActive(activeInkRef.current, activeRef.current, viewportRef.current, cameraRef.current)
+      })
+    },
+    [applyContentTransform, paintInks]
+  )
   useEffect(
     () => () => {
       if (paintFrameRef.current !== null) cancelAnimationFrame(paintFrameRef.current)
+      if (measureFrameRef.current !== null) cancelAnimationFrame(measureFrameRef.current)
     },
     []
+  )
+
+  // ---------- Layout cache ----------
+
+  /** Measure every content element into the layout cache, then add ink. */
+  const measure = useCallback(() => {
+    const root = contentRootRef.current
+    const layout: LayoutMap = new Map()
+    if (root) {
+      const rootRect = root.getBoundingClientRect()
+      const zoom = domCameraRef.current.zoom
+      for (const [id, element] of elementsRef.current) {
+        if (!element.isConnected) continue
+        const rect = element.getBoundingClientRect()
+        if (rect.width === 0 && rect.height === 0 && getComputedStyle(element).display === 'none') continue
+        const x = (rect.left - rootRect.left) / zoom
+        const y = (rect.top - rootRect.top) / zoom
+        layout.set(id, {
+          x,
+          y,
+          width: rect.width / zoom,
+          height: rect.height / zoom,
+          ox: x + element.clientLeft,
+          oy: y + element.clientTop
+        })
+      }
+    }
+    addInkLayout(indexRef.current, layout)
+    layoutRef.current = layout
+    setLayoutVersion((version) => version + 1)
+    requestPaint({ committed: true })
+  }, [requestPaint])
+
+  /** Measure on the next frame (images, fonts and math settle late). */
+  const requestMeasure = useCallback(() => {
+    if (measureFrameRef.current !== null) return
+    measureFrameRef.current = requestAnimationFrame(() => {
+      measureFrameRef.current = null
+      measure()
+    })
+  }, [measure])
+
+  const resizeObserverRef = useRef<ResizeObserver | null>(null)
+  if (!resizeObserverRef.current && typeof ResizeObserver !== 'undefined') {
+    resizeObserverRef.current = new ResizeObserver(() => requestMeasure())
+  }
+  useEffect(() => () => resizeObserverRef.current?.disconnect(), [])
+
+  // Measure after every content render, before the browser paints.
+  useLayoutEffect(() => {
+    applyContentTransform()
+    measure()
+  }, [index, editingId, applyContentTransform, measure])
+
+  useEffect(() => {
+    void document.fonts?.ready.then(() => requestMeasure())
+  }, [requestMeasure])
+
+  /** Replace the live nodes (no history, no save). Renders the content layer. */
+  const setNodes = useCallback(
+    (next: BoardNode[]) => {
+      nodesRef.current = next
+      const nextIndex = buildIndex(next)
+      indexRef.current = nextIndex
+      // Ink layout now, so hit tests right after an edit are right; content is measured after render.
+      const layout = new Map(layoutRef.current)
+      for (const id of layout.keys()) if (!nextIndex.byId.has(id)) layout.delete(id)
+      addInkLayout(nextIndex, layout)
+      layoutRef.current = layout
+      setIndex(nextIndex)
+      requestPaint({ committed: true })
+    },
+    [requestPaint]
   )
 
   // ---------- Camera ----------
@@ -214,7 +410,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
 
   const fit = useCallback(() => {
     const [vw, vh] = viewportRef.current
-    const content = unionRegions(itemsRef.current.filter(isStroke).map(strokeBounds))
+    const content = boundsOf(layoutRef.current.keys(), layoutRef.current)
     if (!content) {
       applyCamera({ center: [0, 0], zoom: 1 })
       return
@@ -242,6 +438,639 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     [applyCamera]
   )
 
+  useEffect(() => {
+    const host = hostRef.current
+    if (!host) return
+    const observer = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect
+      if (!rect) return
+      const next: Point = [Math.max(1, rect.width), Math.max(1, rect.height)]
+      viewportRef.current = next
+      setViewport(next)
+      applyContentTransform()
+      if (needsFitRef.current) {
+        needsFitRef.current = false
+        measure()
+        fit()
+      }
+      requestPaint({ committed: true, active: true })
+    })
+    observer.observe(host)
+    return () => observer.disconnect()
+  }, [applyContentTransform, fit, measure, requestPaint])
+
+  // ---------- Nodes ----------
+
+  const emit = useCallback(() => {
+    onDocChangeRef.current({ nextSeq: nextSeqRef.current, nodes: nodesRef.current, extra: extraRef.current })
+  }, [])
+
+  /** Select nodes by id. Ids that are not on the board are dropped. */
+  const setSelectedIds = useCallback(
+    (ids: string[]) => {
+      const byId = indexRef.current.byId
+      const kept = [...new Set(ids)].filter((id) => byId.has(id))
+      if (kept.length === 0 && selectedIdsRef.current.length === 0) return
+      selectedIdsRef.current = kept
+      setSelectedIdsState(kept)
+      requestPaint({ committed: true })
+    },
+    [requestPaint]
+  )
+
+  /** Commit an edit: record undo, stamp seq on new or changed nodes, notify. */
+  const commitNodes = useCallback(
+    (next: BoardNode[], snapshot: BoardNode[] = nodesRef.current) => {
+      if (next.length === snapshot.length && next.every((node, i) => node === snapshot[i])) {
+        if (nodesRef.current !== snapshot) setNodes(snapshot)
+        return
+      }
+      history.record(snapshot)
+      const stamped = stampChanged(snapshot, next, nextSeqRef.current)
+      nextSeqRef.current = stamped.nextSeq
+      const removed = stamped.removed.map((removal) => ({ ...removal, bounds: layoutRef.current.get(removal.node.id) ?? null }))
+      setNodes(stamped.nodes)
+      if (removed.length) onRemovedRef.current?.(removed)
+      emit()
+    },
+    [emit, history, setNodes]
+  )
+
+  /** Undo or redo: the restored nodes count as changed, so they get a new seq. */
+  const restore = useCallback(
+    (snapshot: BoardNode[] | null) => {
+      if (!snapshot) return
+      const stamped = stampChanged(nodesRef.current, snapshot, nextSeqRef.current)
+      nextSeqRef.current = stamped.nextSeq
+      const removed = stamped.removed.map((removal) => ({ ...removal, bounds: layoutRef.current.get(removal.node.id) ?? null }))
+      setNodes(stamped.nodes)
+      if (removed.length) onRemovedRef.current?.(removed)
+      setSelectedIds([])
+      emit()
+    },
+    [emit, setNodes, setSelectedIds]
+  )
+  const undo = useCallback(() => restore(history.undo(nodesRef.current)), [history, restore])
+  const redo = useCallback(() => restore(history.redo(nodesRef.current)), [history, restore])
+
+  /** Replace nodes by id with new versions, as one edit. */
+  const replaceNodes = useCallback(
+    (changes: Map<string, BoardNode>) => {
+      if (!changes.size) return
+      commitNodes(nodesRef.current.map((node) => changes.get(node.id) ?? node))
+    },
+    [commitNodes]
+  )
+
+  const eraseAt = useCallback(
+    (screen: Point) => {
+      const point = screenToBoard(screen, viewportRef.current, cameraRef.current)
+      const radius = ERASE_RADIUS / cameraRef.current.zoom
+      const layout = layoutRef.current
+      const kept = nodesRef.current.filter((node) => {
+        if (!isInk(node)) return true
+        const box = layout.get(node.id)
+        const offset: Point = box ? [box.ox, box.oy] : inkOffset(node, indexRef.current.byId, layout)
+        return !strokeHitByCircle(node, offset, point, radius)
+      })
+      if (kept.length !== nodesRef.current.length) {
+        setNodes(kept)
+        if (dragRef.current) dragRef.current.changed = true
+        if (selectedIdsRef.current.length) setSelectedIds([])
+      }
+    },
+    [setNodes, setSelectedIds]
+  )
+
+  // ---------- Text editing ----------
+
+  const startEditing = useCallback(
+    (id: string, snapshot: BoardNode[] = nodesRef.current) => {
+      const node = indexRef.current.byId.get(id)
+      if (!node || node.kind !== 'text' || !isKnown(node)) return
+      editingRef.current = { id, snapshot, initial: (node as TextNode).text }
+      setSelectedIds([id])
+      setEditingId(id)
+    },
+    [setSelectedIds]
+  )
+
+  /** Commit the open text editor: empty text deletes the node. One history step. */
+  const commitEditing = useCallback(() => {
+    const editing = editingRef.current
+    if (!editing) return
+    editingRef.current = null
+    const value = editorRef.current?.value ?? editing.initial
+    setEditingId(null)
+    const node = indexRef.current.byId.get(editing.id)
+    let next = nodesRef.current
+    if (!node || node.kind !== 'text') {
+      // The node is gone (undo, reload): nothing to save.
+    } else if (!value.trim()) {
+      next = nodesRef.current.filter((entry) => entry.id !== editing.id)
+    } else if (value !== (node as TextNode).text) {
+      next = nodesRef.current.map((entry) => (entry.id === editing.id ? ({ ...entry, text: value } as BoardNode) : entry))
+    }
+    commitNodes(next, editing.snapshot)
+    setSelectedIds(value.trim() ? [editing.id] : [])
+  }, [commitNodes, setSelectedIds])
+
+  /** Create a text node at a board point and edit it. Not in history until it has text. */
+  const createText = useCallback(
+    (point: Point) => {
+      const snapshot = nodesRef.current
+      const node: TextNode = {
+        id: newItemId('n'),
+        kind: 'text',
+        x: Math.round(point[0] * 10) / 10,
+        y: Math.round((point[1] - NEW_TEXT_SIZE * 0.7) * 10) / 10,
+        z: zAbove(indexRef.current.children.get(ROOT) ?? []),
+        author: 'learner',
+        seq: 0,
+        text: '',
+        style: { color, fontSize: `${NEW_TEXT_SIZE}px` }
+      }
+      setNodes([...snapshot, node])
+      editingRef.current = { id: node.id, snapshot, initial: '' }
+      setSelectedIds([node.id])
+      setEditingId(node.id)
+    },
+    [color, setNodes, setSelectedIds]
+  )
+
+  const contentCtx = useRef<ContentContext>(null as unknown as ContentContext)
+  contentCtx.current = {
+    index,
+    editingId,
+    editorRef,
+    editorInitial: editingRef.current?.initial ?? '',
+    onEditorCommit: commitEditing,
+    register: (id, element) => {
+      const elements = elementsRef.current
+      const previous = elements.get(id)
+      if (element) {
+        if (previous && previous !== element) resizeObserverRef.current?.unobserve(previous)
+        elements.set(id, element)
+        resizeObserverRef.current?.observe(element)
+      } else if (previous) {
+        resizeObserverRef.current?.unobserve(previous)
+        elements.delete(id)
+      }
+    },
+    onMedia: requestMeasure
+  }
+
+  // Leaving the select tool clears the selection; leaving the eraser hides its cursor.
+  useEffect(() => {
+    if (tool !== 'select' && tool !== 'text') setSelectedIds([])
+    if (tool !== 'eraser' && eraserRef.current) eraserRef.current.style.opacity = '0'
+  }, [tool, setSelectedIds])
+
+  // ---------- Selection helpers ----------
+
+  /** The scope for click selection: the parent of the current selection (ROOT when top level). */
+  const selectionScope = (): string => {
+    const byId = indexRef.current.byId
+    const first = selectedIdsRef.current.map((id) => byId.get(id)).find((node) => node && !isInk(node))
+    return first ? parentKey(first, byId) : ROOT
+  }
+
+  /** The ids a drag moves: flowed nodes move their top-level frame; no locked nodes. */
+  const movableIds = (ids: readonly string[]): Set<string> => {
+    const byId = indexRef.current.byId
+    const mapped = ids.map((id) => {
+      const node = byId.get(id)
+      if (!node) return id
+      return isFlowed(node, byId) ? topLevelOf(node, byId).id : id
+    })
+    return new Set(
+      outermost(mapped, byId).filter((id) => {
+        const node = byId.get(id)
+        return node && isKnown(node) && !node.locked
+      })
+    )
+  }
+
+  const selectionBox = (ids: readonly string[]): Region | null => boundsOf(ids, layoutRef.current)
+
+  const inSelectionBox = (screen: Point): boolean => {
+    const box = selectionBox(selectedIdsRef.current)
+    if (!box) return false
+    const point = screenToBoard(screen, viewportRef.current, cameraRef.current)
+    return regionContains(box, point, SELECTION_PAD / cameraRef.current.zoom)
+  }
+
+  /** The node a click at a board point hits: ink first (it is on top), then content. */
+  const hitAt = (point: Point): BoardNode | null => {
+    const index = indexRef.current
+    const layout = layoutRef.current
+    return inkAt(index, layout, point, TAP_SIZE / cameraRef.current.zoom) ?? contentAt(index, layout, point)
+  }
+
+  // ---------- Pointer input ----------
+
+  const moveEraserCursor = (screen: Point | null): void => {
+    const cursor = eraserRef.current
+    if (!cursor) return
+    if (!screen) {
+      cursor.style.opacity = '0'
+      return
+    }
+    cursor.style.opacity = '1'
+    cursor.style.transform = `translate(${screen[0] - ERASE_RADIUS}px, ${screen[1] - ERASE_RADIUS}px)`
+  }
+
+  const pointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
+    // The text editor handles its own pointer input.
+    if (event.target instanceof HTMLTextAreaElement) return
+    const penEraser = event.pointerType === 'pen' && (event.button === 5 || (event.buttons & 32) !== 0)
+    if (event.button === 2 && !penEraser) return
+    const host = hostRef.current
+    if (!host) return
+    if (dragRef.current) {
+      // A second finger or pen during a drag is ignored; a stale drag of the same pointer is dropped.
+      if (dragRef.current.pointerId !== event.pointerId) return
+      cancelDrag()
+    }
+    // A press outside the editor commits it (blur); it also ends other text editing (a board rename).
+    if (document.activeElement instanceof HTMLElement && document.activeElement !== host) document.activeElement.blur()
+    if (editingRef.current) commitEditing()
+    const rect = host.getBoundingClientRect()
+    const screen = cssPoint(event, rect)
+    const startBoard = screenToBoard(screen, viewportRef.current, cameraRef.current)
+    pasteAnchorRef.current = startBoard
+
+    const shouldPan = !penEraser && (event.button === 1 || spaceRef.current || event.pointerType === 'touch')
+    let kind: DragKind
+    let moveIds: Set<string> | undefined
+    let clicked: string | undefined
+    let resize: DragState['resize']
+    let additive = false
+
+    if (shouldPan) kind = 'pan'
+    else if (penEraser || tool === 'eraser') kind = 'erase'
+    else if (tool === 'text') {
+      const hit = contentAt(indexRef.current, layoutRef.current, startBoard)
+      if (hit && hit.kind === 'text' && !hit.locked) startEditing(hit.id)
+      else createText(startBoard)
+      event.preventDefault()
+      return
+    } else if (tool === 'select') {
+      const handle = event.target instanceof HTMLElement ? (event.target.dataset.handle as Handle | undefined) : undefined
+      const selected = selectedIdsRef.current
+      const box = selected.length === 1 ? layoutRef.current.get(selected[0]) : undefined
+      if (handle && box) {
+        kind = 'resize'
+        resize = { id: selected[0], handle, box }
+      } else {
+        const hit = hitAt(startBoard)
+        const target = hit ? selectTarget(hit, selectionScope(), indexRef.current.byId) : null
+        if (target && event.shiftKey) {
+          // Shift-click adds or removes; no drag.
+          const ids = selected.includes(target.id) ? selected.filter((id) => id !== target.id) : [...selected, target.id]
+          setSelectedIds(ids)
+          kind = 'none'
+        } else if (target) {
+          if (!selected.includes(target.id)) setSelectedIds([target.id])
+          else clicked = target.id
+          kind = 'move'
+          moveIds = movableIds(selectedIdsRef.current)
+        } else if (!event.shiftKey && inSelectionBox(screen)) {
+          kind = 'move'
+          moveIds = movableIds(selected)
+        } else {
+          kind = 'lasso'
+          additive = event.shiftKey
+        }
+      }
+    } else kind = 'ink'
+
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId)
+    } catch {
+      // Pointer capture may be unavailable.
+    }
+    dragRef.current = {
+      kind,
+      pointerId: event.pointerId,
+      start: screen,
+      last: screen,
+      points: [screen],
+      startNodes: nodesRef.current,
+      startCamera: cameraRef.current,
+      startSelectedIds: [...selectedIdsRef.current],
+      changed: false,
+      lasso: [startBoard],
+      moveIds,
+      clicked,
+      additive,
+      resize
+    }
+    event.preventDefault()
+
+    if (kind === 'pan') setPanning(true)
+    else if (kind === 'ink') {
+      const highlighter = tool === 'highlighter'
+      activeRef.current = {
+        id: newItemId(),
+        kind: 'ink',
+        x: 0,
+        y: 0,
+        z: 0,
+        author: 'learner',
+        seq: 0,
+        tool: highlighter ? 'highlighter' : 'pen',
+        color,
+        width: width * (highlighter ? HIGHLIGHTER_SCALE : 1),
+        points: [[startBoard[0], startBoard[1], pressureOf(event.pointerType, event.pressure)]]
+      }
+      requestPaint({ active: true })
+    } else if (kind === 'erase') {
+      moveEraserCursor(screen)
+      eraseAt(screen)
+    } else if (kind === 'lasso') {
+      setLassoPoints([startBoard])
+    }
+  }
+
+  /** Apply a resize drag to the start nodes. */
+  const resizeTo = (drag: DragState, delta: Point, keepAspect: boolean): BoardNode[] => {
+    const info = drag.resize
+    if (!info) return drag.startNodes
+    const startById = new Map(drag.startNodes.map((node) => [node.id, node]))
+    const node = startById.get(info.id)
+    if (!node || !isKnown(node)) return drag.startNodes
+    const byId = indexRef.current.byId
+    const aspect = keepAspect || (node.kind === 'image' && info.handle.length === 2)
+    const next = resizedBox(info.box, info.handle, delta, aspect)
+    const dx = next.x - info.box.x
+    const dy = next.y - info.box.y
+    let updated: BoardNode
+    if (isInk(node)) {
+      const sx = next.width / Math.max(1e-6, info.box.width)
+      const sy = next.height / Math.max(1e-6, info.box.height)
+      // World point → scaled about the box origin → back to local.
+      const ox = info.box.ox
+      const oy = info.box.oy
+      const points = node.points.map(([x, y, p]) => {
+        const wx = next.x + (ox + x - info.box.x) * sx
+        const wy = next.y + (oy + y - info.box.y) * sy
+        return [wx - ox, wy - oy, p] as InkNode['points'][number]
+      })
+      updated = { ...node, points }
+    } else {
+      const content = node as ContentNode
+      const style: NodeStyle = { ...content.style, width: px(next.width) }
+      if (content.kind === 'text') delete style.height
+      else style.height = px(next.height)
+      const flowed = isFlowed(content, byId)
+      updated = { ...content, style, ...(flowed ? {} : { x: content.x + dx, y: content.y + dy }) } as BoardNode
+    }
+    return drag.startNodes.map((entry) => (entry.id === info.id ? updated : entry))
+  }
+
+  const pointerMove = (event: React.PointerEvent<HTMLDivElement>): void => {
+    const host = hostRef.current
+    if (!host) return
+    const rect = host.getBoundingClientRect()
+    const screen = cssPoint(event, rect)
+    const drag = dragRef.current
+    const penEraserHover = event.pointerType === 'pen' && (event.buttons & 32) !== 0
+    if ((tool === 'eraser' || penEraserHover || drag?.kind === 'erase') && event.pointerType !== 'touch') moveEraserCursor(screen)
+
+    if (!drag && tool === 'select') host.dataset.overSelection = inSelectionBox(screen) ? 'true' : 'false'
+    if (!drag || drag.pointerId !== event.pointerId) return
+    const delta: Point = [screen[0] - drag.last[0], screen[1] - drag.last[1]]
+    drag.last = screen
+    const zoom = cameraRef.current.zoom
+
+    if (drag.kind === 'pan') {
+      const current = cameraRef.current
+      applyCamera({ ...current, center: [current.center[0] - delta[0] / current.zoom, current.center[1] - delta[1] / current.zoom] })
+    } else if (drag.kind === 'ink' && activeRef.current) {
+      const stroke = activeRef.current
+      const native = event.nativeEvent
+      const samples = typeof native.getCoalescedEvents === 'function' ? native.getCoalescedEvents() : []
+      const minDistance = sampleScreenDistance / zoom
+      for (const sample of samples.length ? samples : [native]) {
+        const point = screenToBoard(cssPoint(sample, rect), viewportRef.current, cameraRef.current)
+        const last = stroke.points[stroke.points.length - 1]
+        if (Math.hypot(point[0] - last[0], point[1] - last[1]) < minDistance) continue
+        stroke.points.push([point[0], point[1], pressureOf(event.pointerType, sample.pressure)])
+      }
+      requestPaint({ active: true })
+    } else if (drag.kind === 'erase') {
+      eraseAt(screen)
+    } else if (drag.kind === 'move' && drag.moveIds) {
+      const boardDelta: Point = [(screen[0] - drag.start[0]) / zoom, (screen[1] - drag.start[1]) / zoom]
+      const moved = Math.hypot(screen[0] - drag.start[0], screen[1] - drag.start[1]) >= 2
+      if (!drag.changed && !moved) return
+      drag.changed = true
+      setNodes(moveNodes(drag.startNodes, drag.moveIds, boardDelta))
+    } else if (drag.kind === 'resize') {
+      const boardDelta: Point = [(screen[0] - drag.start[0]) / zoom, (screen[1] - drag.start[1]) / zoom]
+      drag.changed = true
+      setNodes(resizeTo(drag, boardDelta, event.shiftKey))
+    } else if (drag.kind === 'lasso') {
+      const native = event.nativeEvent
+      const samples = typeof native.getCoalescedEvents === 'function' ? native.getCoalescedEvents() : []
+      for (const sample of samples.length ? samples : [native]) {
+        const sampleScreen = cssPoint(sample, rect)
+        drag.points.push(sampleScreen)
+        drag.lasso.push(screenToBoard(sampleScreen, viewportRef.current, cameraRef.current))
+      }
+      setLassoPoints([...drag.lasso])
+    }
+    event.preventDefault()
+  }
+
+  /** Commit a finished learner stroke; it joins the top-most top-level frame that holds most of it. */
+  const commitStroke = (stroke: InkNode): void => {
+    const index = indexRef.current
+    const layout = layoutRef.current
+    const bounds = inkBounds(stroke, [0, 0])
+    let node = normalizeInk(stroke)
+    const frames = (index.children.get(ROOT) ?? []).filter(isFrame).filter((frame) => frame.style.display !== 'none')
+    const host = bounds ? [...frames].reverse().find((frame) => {
+      const box = layout.get(frame.id)
+      return box ? overlapShare(bounds, box) >= PARENT_SHARE : false
+    }) : undefined
+    const hostBox = host ? layout.get(host.id) : undefined
+    if (host && hostBox) {
+      node = { ...node, parent: host.id, x: node.x - hostBox.ox, y: node.y - hostBox.oy, z: zAbove(index.children.get(host.id) ?? []) }
+    } else {
+      node = { ...node, z: zAbove(index.children.get(ROOT) ?? []) }
+    }
+    commitNodes([...nodesRef.current, node])
+  }
+
+  const pointerUp = (event: React.PointerEvent<HTMLDivElement>): void => {
+    const drag = dragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    dragRef.current = null
+    const host = hostRef.current
+    const screen = host ? cssPoint(event, host.getBoundingClientRect()) : drag.last
+
+    if (drag.kind === 'ink' && activeRef.current) {
+      const stroke = activeRef.current
+      const end = screenToBoard(screen, viewportRef.current, cameraRef.current)
+      const last = stroke.points[stroke.points.length - 1]
+      if (last[0] !== end[0] || last[1] !== end[1]) stroke.points.push([end[0], end[1], last[2]])
+      activeRef.current = null
+      // A fresh object: the one drawn into was mutated while drawing.
+      commitStroke({ ...stroke, points: [...stroke.points] })
+      requestPaint({ active: true })
+    } else if (drag.kind === 'pan') {
+      setPanning(false)
+    } else if ((drag.kind === 'erase' || drag.kind === 'move' || drag.kind === 'resize') && drag.changed) {
+      const ids = selectedIdsRef.current
+      commitNodes(nodesRef.current, drag.startNodes)
+      if (drag.kind !== 'erase') setSelectedIds(ids)
+    } else if (drag.kind === 'move' && !drag.changed && drag.clicked && selectedIdsRef.current.length > 1) {
+      // A click (no drag) on a node of a multi-selection selects it alone.
+      setSelectedIds([drag.clicked])
+    } else if (drag.kind === 'lasso') {
+      drag.points.push(screen)
+      drag.lasso.push(screenToBoard(screen, viewportRef.current, cameraRef.current))
+      const xs = drag.points.map((point) => point[0])
+      const ys = drag.points.map((point) => point[1])
+      const isTap = Math.max(...xs) - Math.min(...xs) < TAP_SIZE && Math.max(...ys) - Math.min(...ys) < TAP_SIZE
+      if (isTap) {
+        // A tap on empty canvas clears the selection (a tap on a node selected it on press).
+        if (!drag.additive) setSelectedIds([])
+      } else {
+        const polygon = drag.lasso
+        const index = indexRef.current
+        const layout = layoutRef.current
+        const picked: string[] = []
+        // Top-level content by box, ink anywhere by length; ink inside a picked frame moves with it.
+        for (const node of index.children.get(ROOT) ?? []) {
+          if (!isContent(node)) continue
+          const box = layout.get(node.id)
+          if (box && regionInsidePolygon(box, polygon)) picked.push(node.id)
+        }
+        for (const node of inkPaintOrder(index)) {
+          const box = layout.get(node.id)
+          const offset: Point = box ? [box.ox, box.oy] : inkOffset(node, index.byId, layout)
+          if (strokeInsidePolygon(node, offset, polygon)) picked.push(node.id)
+        }
+        const ids = outermost(picked, index.byId)
+        setSelectedIds(drag.additive ? [...drag.startSelectedIds, ...ids] : ids)
+      }
+      setLassoPoints(null)
+    }
+    if (drag.kind === 'erase' && tool !== 'eraser') moveEraserCursor(null)
+  }
+
+  const pointerCancel = (event: React.PointerEvent<HTMLDivElement>): void => {
+    const drag = dragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    cancelDrag()
+  }
+
+  const cancelDrag = (): void => {
+    const drag = dragRef.current
+    if (!drag) return
+    dragRef.current = null
+    activeRef.current = null
+    if (drag.kind === 'move' || drag.kind === 'erase' || drag.kind === 'resize') setNodes(drag.startNodes)
+    if (drag.kind === 'move' || drag.kind === 'lasso' || drag.kind === 'resize') setSelectedIds(drag.startSelectedIds)
+    if (drag.kind === 'pan') {
+      applyCamera(drag.startCamera)
+      setPanning(false)
+    }
+    setLassoPoints(null)
+    requestPaint({ active: true })
+  }
+
+  /** Double-click: drill into a frame (Figma style); on text, edit it. */
+  const doubleClick = (event: React.MouseEvent<HTMLDivElement>): void => {
+    if (tool !== 'select' || event.target instanceof HTMLTextAreaElement) return
+    const host = hostRef.current
+    if (!host) return
+    const point = screenToBoard(cssPoint(event, host.getBoundingClientRect()), viewportRef.current, cameraRef.current)
+    const index = indexRef.current
+    if (inkAt(index, layoutRef.current, point, TAP_SIZE / cameraRef.current.zoom)) return
+    const hit = contentAt(index, layoutRef.current, point)
+    if (!hit) return
+    const selected = selectedIdsRef.current.length === 1 ? index.byId.get(selectedIdsRef.current[0]) : undefined
+    let target: BoardNode
+    if (selected && selected.id === hit.id) target = hit
+    else if (selected && isFrame(selected)) target = selectTarget(hit, selected.id, index.byId)
+    else target = selectTarget(hit, selectionScope(), index.byId)
+    if (target.kind === 'text' && target.id === hit.id && isKnown(target) && !target.locked) startEditing(target.id)
+    else setSelectedIds([target.id])
+  }
+
+  // ---------- Wheel: trackpad pan, pinch zoom, ⌘ + scroll zoom ----------
+
+  useEffect(() => {
+    const host = hostRef.current
+    if (!host) return
+    const wheel = (event: WheelEvent): void => {
+      event.preventDefault()
+      const scale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewportRef.current[1] : 1
+      let dx = event.deltaX * scale
+      let dy = event.deltaY * scale
+      const current = cameraRef.current
+      if (event.ctrlKey || event.metaKey) {
+        // A trackpad pinch arrives as ctrl + wheel with small deltas.
+        const speed = event.ctrlKey && !event.metaKey ? 0.01 : 0.002
+        const point = cssPoint(event, host.getBoundingClientRect())
+        applyCamera(zoomAt(current, point, viewportRef.current, current.zoom * Math.exp(-dy * speed)))
+        return
+      }
+      if (event.shiftKey && dx === 0) {
+        dx = dy
+        dy = 0
+      }
+      applyCamera({ ...current, center: [current.center[0] + dx / current.zoom, current.center[1] + dy / current.zoom] })
+    }
+    host.addEventListener('wheel', wheel, { passive: false })
+    return () => host.removeEventListener('wheel', wheel)
+  }, [applyCamera])
+
+  // ---------- Restyle (palette) ----------
+
+  const applyColor = useCallback(
+    (value: string): boolean => {
+      const byId = indexRef.current.byId
+      const changes = new Map<string, BoardNode>()
+      for (const id of selectedIdsRef.current) {
+        const node = byId.get(id)
+        if (!node || !isKnown(node) || node.locked) continue
+        if (node.kind === 'ink' && node.color !== value) changes.set(id, { ...node, color: value })
+        else if (node.kind === 'text' && node.style.color !== value) changes.set(id, { ...node, style: { ...node.style, color: value } })
+        else if (node.kind === 'frame' && node.style.backgroundColor !== value) {
+          const style: NodeStyle = { ...node.style, backgroundColor: value }
+          delete style.background
+          changes.set(id, { ...node, style })
+        }
+      }
+      replaceNodes(changes)
+      return selectedIdsRef.current.length > 0
+    },
+    [replaceNodes]
+  )
+
+  const applyWidth = useCallback(
+    (value: number): boolean => {
+      const byId = indexRef.current.byId
+      const changes = new Map<string, BoardNode>()
+      for (const id of selectedIdsRef.current) {
+        const node = byId.get(id)
+        if (!node || !isInk(node) || node.locked) continue
+        const next = value * (node.tool === 'highlighter' ? HIGHLIGHTER_SCALE : 1)
+        if (node.width !== next) changes.set(id, { ...node, width: next })
+      }
+      replaceNodes(changes)
+      return changes.size > 0
+    },
+    [replaceNodes]
+  )
+
+  // ---------- Handle ----------
+
   useImperativeHandle(
     ref,
     () => ({
@@ -256,11 +1085,16 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       },
       fit,
       liveState: () => ({
-        items: itemsRef.current,
+        nodes: nodesRef.current,
         nextSeq: nextSeqRef.current,
         camera: cameraRef.current,
         viewport: viewportRef.current,
-        selectedIds: selectedIdsRef.current
+        selectedIds: selectedIdsRef.current,
+        bounds: (id) => {
+          const box = layoutRef.current.get(id)
+          return box ? { x: box.x, y: box.y, width: box.width, height: box.height } : null
+        },
+        inks: paintInks
       }),
       boardToClient: (point) => {
         const host = hostRef.current
@@ -292,9 +1126,11 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         if (flashTimerRef.current) clearTimeout(flashTimerRef.current)
         setFlashRect({ rect, id: performance.now() })
         flashTimerRef.current = setTimeout(() => setFlashRect(null), FLASH_MS)
-      }
+      },
+      applyColor,
+      applyWidth
     }),
-    [applyCamera, fit, zoomStep]
+    [applyCamera, applyColor, applyWidth, fit, paintInks, zoomStep]
   )
   useEffect(
     () => () => {
@@ -303,390 +1139,90 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     []
   )
 
-  useEffect(() => {
-    const host = hostRef.current
-    if (!host) return
-    const observer = new ResizeObserver((entries) => {
-      const rect = entries[0]?.contentRect
-      if (!rect) return
-      const next: Point = [Math.max(1, rect.width), Math.max(1, rect.height)]
-      viewportRef.current = next
-      setViewport(next)
-      if (needsFitRef.current) {
-        needsFitRef.current = false
-        fit()
-      }
-      requestPaint({ committed: true, active: true })
-    })
-    observer.observe(host)
-    return () => observer.disconnect()
-  }, [fit, requestPaint])
-
-  // ---------- Items ----------
-
-  const emit = useCallback(() => {
-    onDocChangeRef.current({ nextSeq: nextSeqRef.current, items: itemsRef.current, extra: extraRef.current })
-  }, [])
-
-  /** Select strokes by id. Ids that are not on the board are dropped. */
-  const setSelectedIds = useCallback(
-    (ids: string[]) => {
-      const present = new Set(itemsRef.current.filter(isStroke).map((stroke) => stroke.id))
-      const kept = ids.filter((id) => present.has(id))
-      if (kept.length === 0 && selectedIdsRef.current.length === 0) return
-      selectedIdsRef.current = kept
-      setSelection(kept.length ? boundsOfSelection(itemsRef.current, kept) : null)
-      requestPaint({ committed: true })
-    },
-    [requestPaint]
-  )
-
-  /** Commit an edit: record undo, stamp seq on new or changed items, notify. */
-  const commitItems = useCallback(
-    (next: BoardItem[], snapshot: BoardItem[] = itemsRef.current) => {
-      if (next.length === snapshot.length && next.every((item, i) => item === snapshot[i])) {
-        itemsRef.current = snapshot
-        return
-      }
-      history.record(snapshot)
-      const stamped = stampChanged(snapshot, next, nextSeqRef.current)
-      itemsRef.current = stamped.items
-      nextSeqRef.current = stamped.nextSeq
-      if (stamped.removed.length) onRemovedRef.current?.(stamped.removed)
-      requestPaint({ committed: true })
-      emit()
-    },
-    [emit, history, requestPaint]
-  )
-
-  /** Undo or redo: the restored items count as changed, so they get a new seq. */
-  const restore = useCallback(
-    (snapshot: BoardItem[] | null) => {
-      if (!snapshot) return
-      const stamped = stampChanged(itemsRef.current, snapshot, nextSeqRef.current)
-      itemsRef.current = stamped.items
-      nextSeqRef.current = stamped.nextSeq
-      if (stamped.removed.length) onRemovedRef.current?.(stamped.removed)
-      setSelectedIds([])
-      requestPaint({ committed: true })
-      emit()
-    },
-    [emit, requestPaint, setSelectedIds]
-  )
-  const undo = useCallback(() => restore(history.undo(itemsRef.current)), [history, restore])
-  const redo = useCallback(() => restore(history.redo(itemsRef.current)), [history, restore])
-
-  const eraseAt = useCallback(
-    (screen: Point) => {
-      const point = screenToBoard(screen, viewportRef.current, cameraRef.current)
-      const radius = ERASE_RADIUS / cameraRef.current.zoom
-      const kept = itemsRef.current.filter((item) => !(isStroke(item) && strokeHitByCircle(item, point, radius)))
-      if (kept.length !== itemsRef.current.length) {
-        itemsRef.current = kept
-        if (dragRef.current) dragRef.current.changed = true
-        if (selectedIdsRef.current.length) setSelectedIds([])
-        requestPaint({ committed: true })
-      }
-    },
-    [requestPaint, setSelectedIds]
-  )
-
-  // Leaving the select tool clears the selection; leaving the eraser hides its cursor.
-  useEffect(() => {
-    if (tool !== 'select') setSelectedIds([])
-    if (tool !== 'eraser' && eraserRef.current) eraserRef.current.style.opacity = '0'
-  }, [tool, setSelectedIds])
-
-  // ---------- Pointer input ----------
-
-  const moveEraserCursor = (screen: Point | null): void => {
-    const cursor = eraserRef.current
-    if (!cursor) return
-    if (!screen) {
-      cursor.style.opacity = '0'
-      return
-    }
-    cursor.style.opacity = '1'
-    cursor.style.transform = `translate(${screen[0] - ERASE_RADIUS}px, ${screen[1] - ERASE_RADIUS}px)`
-  }
-
-  const pointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
-    const penEraser = event.pointerType === 'pen' && (event.button === 5 || (event.buttons & 32) !== 0)
-    if (event.button === 2 && !penEraser) return
-    const host = hostRef.current
-    if (!host) return
-    if (dragRef.current) {
-      // A second finger or pen during a drag is ignored; a stale drag of the same pointer is dropped.
-      if (dragRef.current.pointerId !== event.pointerId) return
-      cancelDrag()
-    }
-    // Drawing ends any text editing (for example a board rename).
-    if (document.activeElement instanceof HTMLElement && document.activeElement !== host) document.activeElement.blur()
-    const rect = host.getBoundingClientRect()
-    const screen = cssPoint(event, rect)
-    const viewportNow = viewportRef.current
-    const startBoard = screenToBoard(screen, viewportNow, cameraRef.current)
-    pasteAnchorRef.current = startBoard
-
-    const shouldPan = !penEraser && (event.button === 1 || spaceRef.current || event.pointerType === 'touch')
-    const bounds = selectedIdsRef.current.length ? boundsOfSelection(itemsRef.current, selectedIdsRef.current) : null
-    const topLeft = bounds ? boardToScreen([bounds.x, bounds.y], viewportNow, cameraRef.current) : null
-    const zoom = cameraRef.current.zoom
-    const inSelection = Boolean(
-      bounds &&
-        topLeft &&
-        screen[0] >= topLeft[0] - SELECTION_PAD &&
-        screen[0] <= topLeft[0] + bounds.width * zoom + SELECTION_PAD &&
-        screen[1] >= topLeft[1] - SELECTION_PAD &&
-        screen[1] <= topLeft[1] + bounds.height * zoom + SELECTION_PAD
-    )
-    const kind: DragKind = shouldPan
-      ? 'pan'
-      : penEraser || tool === 'eraser'
-        ? 'erase'
-        : tool === 'select'
-          ? inSelection
-            ? 'move'
-            : 'lasso'
-          : 'ink'
-
-    try {
-      event.currentTarget.setPointerCapture(event.pointerId)
-    } catch {
-      // Pointer capture may be unavailable.
-    }
-    dragRef.current = {
-      kind,
-      pointerId: event.pointerId,
-      start: screen,
-      last: screen,
-      points: [screen],
-      startItems: itemsRef.current,
-      startCamera: cameraRef.current,
-      startSelectedIds: [...selectedIdsRef.current],
-      startSelection: bounds,
-      changed: false,
-      lasso: [startBoard]
-    }
-    event.preventDefault()
-
-    if (kind === 'pan') setPanning(true)
-    else if (kind === 'ink') {
-      const highlighter = tool === 'highlighter'
-      activeRef.current = {
-        id: newItemId(),
-        kind: 'stroke',
-        seq: 0,
-        tool: highlighter ? 'highlighter' : 'pen',
-        color,
-        width: width * (highlighter ? HIGHLIGHTER_SCALE : 1),
-        points: [[startBoard[0], startBoard[1], pressureOf(event.pointerType, event.pressure)]]
-      }
-      requestPaint({ active: true })
-    } else if (kind === 'erase') {
-      moveEraserCursor(screen)
-      eraseAt(screen)
-    } else if (kind === 'lasso') {
-      setLassoPoints([startBoard])
-    }
-  }
-
-  const pointerMove = (event: React.PointerEvent<HTMLDivElement>): void => {
-    const host = hostRef.current
-    if (!host) return
-    const rect = host.getBoundingClientRect()
-    const screen = cssPoint(event, rect)
-    const drag = dragRef.current
-    const penEraserHover = event.pointerType === 'pen' && (event.buttons & 32) !== 0
-    if ((tool === 'eraser' || penEraserHover || drag?.kind === 'erase') && event.pointerType !== 'touch') moveEraserCursor(screen)
-
-    if (!drag && tool === 'select') {
-      const bounds = selectedIdsRef.current.length ? boundsOfSelection(itemsRef.current, selectedIdsRef.current) : null
-      const topLeft = bounds ? boardToScreen([bounds.x, bounds.y], viewportRef.current, cameraRef.current) : null
-      const zoom = cameraRef.current.zoom
-      const over = Boolean(
-        bounds &&
-          topLeft &&
-          screen[0] >= topLeft[0] - SELECTION_PAD &&
-          screen[0] <= topLeft[0] + bounds.width * zoom + SELECTION_PAD &&
-          screen[1] >= topLeft[1] - SELECTION_PAD &&
-          screen[1] <= topLeft[1] + bounds.height * zoom + SELECTION_PAD
-      )
-      host.dataset.overSelection = over ? 'true' : 'false'
-    }
-    if (!drag || drag.pointerId !== event.pointerId) return
-    const delta: Point = [screen[0] - drag.last[0], screen[1] - drag.last[1]]
-    drag.last = screen
-
-    if (drag.kind === 'pan') {
-      const current = cameraRef.current
-      applyCamera({ ...current, center: [current.center[0] - delta[0] / current.zoom, current.center[1] - delta[1] / current.zoom] })
-    } else if (drag.kind === 'ink' && activeRef.current) {
-      const stroke = activeRef.current
-      const native = event.nativeEvent
-      const samples = typeof native.getCoalescedEvents === 'function' ? native.getCoalescedEvents() : []
-      const minDistance = sampleScreenDistance / cameraRef.current.zoom
-      for (const sample of samples.length ? samples : [native]) {
-        const point = screenToBoard(cssPoint(sample, rect), viewportRef.current, cameraRef.current)
-        const last = stroke.points[stroke.points.length - 1]
-        if (Math.hypot(point[0] - last[0], point[1] - last[1]) < minDistance) continue
-        stroke.points.push([point[0], point[1], pressureOf(event.pointerType, sample.pressure)])
-      }
-      requestPaint({ active: true })
-    } else if (drag.kind === 'erase') {
-      eraseAt(screen)
-    } else if (drag.kind === 'move') {
-      const zoom = cameraRef.current.zoom
-      const boardDelta: Point = [(screen[0] - drag.start[0]) / zoom, (screen[1] - drag.start[1]) / zoom]
-      drag.changed = drag.changed || boardDelta[0] !== 0 || boardDelta[1] !== 0
-      itemsRef.current = translateItems(drag.startItems, new Set(selectedIdsRef.current), boardDelta)
-      setSelection(boundsOfSelection(itemsRef.current, selectedIdsRef.current))
-      requestPaint({ committed: true })
-    } else if (drag.kind === 'lasso') {
-      const native = event.nativeEvent
-      const samples = typeof native.getCoalescedEvents === 'function' ? native.getCoalescedEvents() : []
-      for (const sample of samples.length ? samples : [native]) {
-        const sampleScreen = cssPoint(sample, rect)
-        drag.points.push(sampleScreen)
-        drag.lasso.push(screenToBoard(sampleScreen, viewportRef.current, cameraRef.current))
-      }
-      setLassoPoints([...drag.lasso])
-    }
-    event.preventDefault()
-  }
-
-  const pointerUp = (event: React.PointerEvent<HTMLDivElement>): void => {
-    const drag = dragRef.current
-    if (!drag || drag.pointerId !== event.pointerId) return
-    dragRef.current = null
-    const host = hostRef.current
-    const screen = host ? cssPoint(event, host.getBoundingClientRect()) : drag.last
-
-    if (drag.kind === 'ink' && activeRef.current) {
-      const stroke = activeRef.current
-      const end = screenToBoard(screen, viewportRef.current, cameraRef.current)
-      const last = stroke.points[stroke.points.length - 1]
-      if (last[0] !== end[0] || last[1] !== end[1]) stroke.points.push([end[0], end[1], last[2]])
-      activeRef.current = null
-      commitItems([...itemsRef.current, stroke])
-      requestPaint({ active: true })
-    } else if (drag.kind === 'pan') {
-      setPanning(false)
-    } else if ((drag.kind === 'erase' || drag.kind === 'move') && drag.changed) {
-      const ids = selectedIdsRef.current
-      commitItems(itemsRef.current, drag.startItems)
-      // Moved strokes got a new seq (new objects): keep them selected by id.
-      if (drag.kind === 'move') setSelectedIds(ids)
-    } else if (drag.kind === 'lasso') {
-      drag.points.push(screen)
-      drag.lasso.push(screenToBoard(screen, viewportRef.current, cameraRef.current))
-      const xs = drag.points.map((point) => point[0])
-      const ys = drag.points.map((point) => point[1])
-      const isTap = Math.max(...xs) - Math.min(...xs) < TAP_SIZE && Math.max(...ys) - Math.min(...ys) < TAP_SIZE
-      if (isTap) {
-        // A tap selects the stroke under it, or clears the selection on empty canvas.
-        const hit = topStrokeAt(itemsRef.current, drag.lasso[0], TAP_SIZE / cameraRef.current.zoom)
-        setSelectedIds(hit ? [hit.id] : [])
-      } else {
-        const polygon = drag.lasso
-        const selected = itemsRef.current.filter((item): item is StrokeItem => isStroke(item) && strokeInsidePolygon(item, polygon))
-        setSelectedIds(selected.map((stroke) => stroke.id))
-      }
-      setLassoPoints(null)
-    }
-    if (drag.kind === 'erase' && tool !== 'eraser') moveEraserCursor(null)
-  }
-
-  const pointerCancel = (event: React.PointerEvent<HTMLDivElement>): void => {
-    const drag = dragRef.current
-    if (!drag || drag.pointerId !== event.pointerId) return
-    cancelDrag()
-  }
-
-  const cancelDrag = (): void => {
-    const drag = dragRef.current
-    if (!drag) return
-    dragRef.current = null
-    activeRef.current = null
-    if (drag.kind === 'move' || drag.kind === 'erase') {
-      itemsRef.current = drag.startItems
-      requestPaint({ committed: true })
-    }
-    if (drag.kind === 'move' || drag.kind === 'lasso') {
-      selectedIdsRef.current = drag.startSelectedIds
-      setSelection(drag.startSelection)
-      requestPaint({ committed: true })
-    }
-    if (drag.kind === 'pan') {
-      applyCamera(drag.startCamera)
-      setPanning(false)
-    }
-    setLassoPoints(null)
-    requestPaint({ active: true })
-  }
-
-  // ---------- Wheel: trackpad pan, pinch zoom, ⌘ + scroll zoom ----------
-
-  useEffect(() => {
-    const host = hostRef.current
-    if (!host) return
-    const wheel = (event: WheelEvent): void => {
-      event.preventDefault()
-      const scale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewportRef.current[1] : 1
-      let dx = event.deltaX * scale
-      let dy = event.deltaY * scale
-      const current = cameraRef.current
-      if (event.ctrlKey || event.metaKey) {
-        // A trackpad pinch arrives as ctrl + wheel with small deltas.
-        const speed = event.ctrlKey && !event.metaKey ? 0.01 : 0.002
-        const point = cssPoint(event, host.getBoundingClientRect())
-        applyCamera(zoomAt(current, point, viewportRef.current, current.zoom * Math.exp(-dy * speed)))
-        return
-      }
-      if (event.shiftKey && dx === 0) {
-        dx = dy
-        dy = 0
-      }
-      applyCamera({ ...current, center: [current.center[0] + dx / current.zoom, current.center[1] + dy / current.zoom] })
-    }
-    host.addEventListener('wheel', wheel, { passive: false })
-    return () => host.removeEventListener('wheel', wheel)
-  }, [applyCamera])
-
   // ---------- Keyboard ----------
 
   const applyAction = (action: BoardKeyAction): void => {
     const ids = [...selectedIdsRef.current]
+    const index = indexRef.current
+    const layout = layoutRef.current
     if (action === 'undo') undo()
     else if (action === 'redo') redo()
     else if (action === 'copy' || action === 'cut') {
-      const copied = copySelectedStrokes(itemsRef.current, ids)
-      if (copied.length) writeInkClipboard(copied)
-      if (action === 'cut' && copied.length) {
-        commitItems(removeSelected(itemsRef.current, ids))
+      const copied = copySubtrees(ids, index, layout, { detach: true })
+      if (copied.roots.length) writeNodeClipboard(copied)
+      if (action === 'cut' && copied.roots.length) {
+        commitNodes(removeNodes(nodesRef.current, ids, index))
         setSelectedIds([])
       }
     } else if (action === 'delete') {
-      commitItems(removeSelected(itemsRef.current, ids))
+      commitNodes(removeNodes(nodesRef.current, ids, index))
       setSelectedIds([])
-    } else if (action === 'duplicate' || action === 'paste') {
-      const result =
-        action === 'duplicate'
-          ? duplicateStrokes(itemsRef.current, ids)
-          : pasteStrokes(itemsRef.current, readInkClipboard(), pasteAnchorRef.current ?? cameraRef.current.center)
-      if (result.insertedIds.length) {
-        commitItems(result.items)
-        setSelectedIds(result.insertedIds)
-        if (action === 'paste') pasteAnchorRef.current = null
+    } else if (action === 'duplicate') {
+      const copied = copySubtrees(ids, index, layout, { detach: false })
+      const roots = new Set(copied.roots)
+      // Each copy goes on top of its siblings; free copies shift a little.
+      const zNext = new Map<string, number>()
+      const nodes = copied.nodes.map((node) => {
+        if (!roots.has(node.id) || !isKnown(node)) return node
+        const key = parentKey(node, index.byId)
+        const z = zNext.get(key) ?? zAbove(index.children.get(key) ?? [])
+        zNext.set(key, z + 1)
+        const flowed = isFlowed(node, index.byId)
+        return { ...node, z, ...(flowed ? {} : { x: node.x + DUPLICATE_OFFSET, y: node.y + DUPLICATE_OFFSET }) } as BoardNode
+      })
+      if (copied.roots.length) {
+        commitNodes([...nodesRef.current, ...nodes])
+        setSelectedIds(copied.roots)
       }
+    } else if (action === 'paste') {
+      const clip = readNodeClipboard()
+      if (!clip.roots.length) return
+      // Fresh ids again, so a second paste does not collide.
+      const idMap = new Map(clip.nodes.map((node) => [node.id, newItemId(node.kind === 'ink' ? 's' : 'n')]))
+      const roots = new Set(clip.roots)
+      const rootNodes = clip.nodes.filter((node) => roots.has(node.id) && isKnown(node)) as (BoardNode & { x: number; y: number })[]
+      const anchor = pasteAnchorRef.current ?? cameraRef.current.center
+      // The roots' world top-left: ink points may sit far from the node's x, y (v1 ink has x = y = 0).
+      const left = (node: BoardNode & { x: number; y: number }): Point => {
+        const local = isInk(node) ? inkLocalBounds(node) : null
+        return [node.x + (local?.x ?? 0), node.y + (local?.y ?? 0)]
+      }
+      const minX = Math.min(...rootNodes.map((node) => left(node)[0]))
+      const minY = Math.min(...rootNodes.map((node) => left(node)[1]))
+      let z = zAbove(index.children.get(ROOT) ?? [])
+      const nodes = clip.nodes.map((node) => {
+        const copy = { ...node, id: idMap.get(node.id) as string } as BoardNode & { parent?: string }
+        if (typeof node.parent === 'string' && idMap.has(node.parent)) copy.parent = idMap.get(node.parent)
+        if (roots.has(node.id) && isKnown(node)) {
+          return { ...copy, x: node.x - minX + anchor[0], y: node.y - minY + anchor[1], z: z++ } as BoardNode
+        }
+        return copy as BoardNode
+      })
+      commitNodes([...nodesRef.current, ...nodes])
+      setSelectedIds(clip.roots.map((id) => idMap.get(id) as string))
+      pasteAnchorRef.current = null
     }
   }
+
+  const nudge = (dx: number, dy: number): void => {
+    const ids = movableIds(selectedIdsRef.current)
+    if (!ids.size) return
+    const selection = [...selectedIdsRef.current]
+    commitNodes(moveNodes(nodesRef.current, ids, [dx, dy]))
+    setSelectedIds(selection)
+  }
+
   const keyHandlerRef = useRef<(event: KeyboardEvent) => void>(() => undefined)
   keyHandlerRef.current = (event: KeyboardEvent) => {
     if (event.key === 'Escape') {
       if (dragRef.current) cancelDrag()
-      else if (selectedIdsRef.current.length) setSelectedIds([])
-      else return
+      else if (selectedIdsRef.current.length) {
+        // Go up one level, or clear at the top.
+        const byId = indexRef.current.byId
+        const first = byId.get(selectedIdsRef.current[0])
+        const key = first ? parentKey(first, byId) : ROOT
+        setSelectedIds(key === ROOT ? [] : [key])
+      } else return
       event.preventDefault()
       return
     }
@@ -697,7 +1233,14 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       return
     }
     if (dragRef.current) return
-    const action = boardKeyAction(event, { hasSelection: selectedIdsRef.current.length > 0, hasClipboard: hasInkClipboard() })
+    const arrows: Record<string, Point> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }
+    if (!modified && !event.altKey && arrows[event.key] && selectedIdsRef.current.length) {
+      event.preventDefault()
+      const step = event.shiftKey ? 10 : 1
+      nudge(arrows[event.key][0] * step, arrows[event.key][1] * step)
+      return
+    }
+    const action = boardKeyAction(event, { hasSelection: selectedIdsRef.current.length > 0, hasClipboard: hasNodeClipboard() })
     if (action) {
       event.preventDefault()
       applyAction(action)
@@ -739,7 +1282,11 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
 
   // ---------- Render ----------
 
+  void layoutVersion // the selection box reads the layout cache, which this version tracks
+  const selection = editingId ? null : selectionBox(selectedIds)
   const selectionTopLeft = selection ? boardToScreen([selection.x, selection.y], viewport, camera) : null
+  const single = selectedIds.length === 1 ? index.byId.get(selectedIds[0]) : undefined
+  const handles = selection && single && tool === 'select' ? handlesFor(single) : []
   const flashTopLeft = flashRect ? boardToScreen([flashRect.rect.x, flashRect.rect.y], viewport, camera) : null
   const cursorTool = panning ? 'panning' : panReady ? 'pan' : tool
 
@@ -753,12 +1300,14 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       onPointerMove={pointerMove}
       onPointerUp={pointerUp}
       onPointerCancel={pointerCancel}
+      onDoubleClick={doubleClick}
       onPointerLeave={() => {
         if (!dragRef.current) moveEraserCursor(null)
       }}
       onContextMenu={(event) => event.preventDefault()}
       aria-label="Board canvas"
     >
+      <ContentLayer index={index} editingId={editingId} ctx={contentCtx} rootRef={contentRootRef} />
       <canvas className="board__ink" ref={inkRef} />
       <canvas className="board__active" ref={activeInkRef} aria-hidden="true" />
       {lassoPoints && lassoPoints.length > 1 && (
@@ -770,13 +1319,18 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       {selection && selectionTopLeft && (
         <div
           className="board__selection"
+          data-single={single ? 'true' : undefined}
           style={{
             left: selectionTopLeft[0] - SELECTION_PAD,
             top: selectionTopLeft[1] - SELECTION_PAD,
             width: selection.width * camera.zoom + SELECTION_PAD * 2,
             height: selection.height * camera.zoom + SELECTION_PAD * 2
           }}
-        />
+        >
+          {handles.map((handle) => (
+            <span key={handle} className="board__handle" data-handle={handle} />
+          ))}
+        </div>
       )}
       {flashRect && flashTopLeft && (
         <div

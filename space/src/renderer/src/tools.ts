@@ -1,9 +1,9 @@
 /** Canvas tools and ink settings. */
 
-export type ToolId = 'select' | 'pen' | 'highlighter' | 'eraser'
+export type ToolId = 'select' | 'pen' | 'highlighter' | 'eraser' | 'text'
 
 /** Single-key shortcuts (no modifier). */
-export const TOOL_KEYS: Record<string, ToolId> = { v: 'select', p: 'pen', h: 'highlighter', e: 'eraser' }
+export const TOOL_KEYS: Record<string, ToolId> = { v: 'select', p: 'pen', h: 'highlighter', e: 'eraser', t: 'text' }
 
 export interface InkColor {
   id: string

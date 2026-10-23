@@ -1,20 +1,25 @@
 import type { CSSProperties } from 'react'
-import { Eraser, Highlighter, Lasso, PenLine, type LucideIcon } from 'lucide-react'
+import { Eraser, Highlighter, Lasso, PenLine, Type, type LucideIcon } from 'lucide-react'
 import { INK_COLORS, STROKE_WIDTHS, type ToolId, type ToolState } from '../tools'
 
 const TOOLS: readonly { id: ToolId; label: string; key: string; Icon: LucideIcon }[] = [
   { id: 'select', label: 'Select', key: 'V', Icon: Lasso },
   { id: 'pen', label: 'Pen', key: 'P', Icon: PenLine },
   { id: 'highlighter', label: 'Highlighter', key: 'H', Icon: Highlighter },
-  { id: 'eraser', label: 'Eraser', key: 'E', Icon: Eraser }
+  { id: 'eraser', label: 'Eraser', key: 'E', Icon: Eraser },
+  { id: 'text', label: 'Text', key: 'T', Icon: Type }
 ]
 
 interface ToolPaletteProps {
   state: ToolState
   onChange: (next: ToolState) => void
+  /** A colour swatch was clicked (it also restyles the selection). */
+  onColor?: (value: string) => void
+  /** A width button was clicked (it also restyles selected ink). */
+  onWidth?: (px: number) => void
 }
 
-export function ToolPalette({ state, onChange }: ToolPaletteProps) {
+export function ToolPalette({ state, onChange, onColor, onWidth }: ToolPaletteProps) {
   return (
     <div className="palette" role="toolbar" aria-label="Canvas tools">
       {TOOLS.map(({ id, label, key, Icon }) => (
@@ -41,7 +46,10 @@ export function ToolPalette({ state, onChange }: ToolPaletteProps) {
             aria-label={`${color.label} ink`}
             aria-pressed={state.colorId === color.id}
             style={{ '--swatch': color.value } as CSSProperties}
-            onClick={() => onChange({ ...state, colorId: color.id })}
+            onClick={() => {
+              onChange({ ...state, colorId: color.id })
+              onColor?.(color.value)
+            }}
           >
             <span className="swatch__dot" />
           </button>
@@ -58,7 +66,10 @@ export function ToolPalette({ state, onChange }: ToolPaletteProps) {
             title={`${width.label} stroke`}
             aria-label={`${width.label} stroke`}
             aria-pressed={state.widthId === width.id}
-            onClick={() => onChange({ ...state, widthId: width.id })}
+            onClick={() => {
+              onChange({ ...state, widthId: width.id })
+              onWidth?.(width.px)
+            }}
           >
             <span className="width__bar" style={{ height: Math.max(1.5, width.px / 2) }} />
           </button>

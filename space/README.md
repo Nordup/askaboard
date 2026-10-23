@@ -114,12 +114,22 @@ reaches the page while the window is behind other windows.
 | `draw <file.json \| -> [--tool pen\|highlighter] [--no-pan]` | Draws strokes given in board coordinates, `[[[x, y, pressure], ...], ...]`, as pen input with pressure. It pans the board first so every point is on screen. |
 | `draw --strokes '<json>'` | The same, with the strokes inline. |
 | `key <combo>` | Sends a key to the page: `v`, `Delete`, `Escape`, `Meta+z`, `Shift+Meta+z`. |
-| `click <x> <y>` | Clicks at window CSS pixels. With the pen tool, a click on the canvas draws a dot. |
+| `click <x> <y> [--shift]` | Clicks at window CSS pixels. With the pen tool, a click on the canvas draws a dot. |
+| `dblclick <x> <y>` | Double-clicks (drills into a frame; edits a text node). |
+| `drag <x1> <y1> <x2> <y2> [--shift] [--steps N]` | A mouse drag: move, resize (start on a handle), lasso (a straight drag has no area: use several points for a lasso). |
+| `type "<text>"` | Inserts text into the focused field (the text editor). |
+| `node-rect <id>` | A node's window rect `{x, y, width, height, cx, cy}`, from the layout cache. |
 | `screenshot <out.png>` | Captures the whole window (for UI checks). |
-| `eval-state` | Prints the board path, item count, zoom, camera centre, tool and selection count as JSON. |
+| `eval-state` | Prints the board path, node count, zoom, camera centre, tool, selection ids, whether a text editor is open, and every node (id, kind, parent, text, colour, world bounds) as JSON. |
 
 The port comes from `--port`, else `$SPACE_REMOTE_DEBUG`, else 9339. The exit
 code is 0 on success and 1 on error (for example, no app on the port).
+A demo learning folder for checks: `node scripts/boards/make-demo-folder.mjs <folder>`
+writes `boards/demo-v2.board.json` (a v2 board: a flex card with text, math, an SVG
+and ink inside it, a free-layout frame, an image, loose ink), `assets/earth.png`
+and `boards/old-v1.board.json` (a step 1 ink-only board). Open it with
+`SPACE_FOLDER=<folder>`. To use the demo board in another folder, copy
+`scripts/boards/demo-v2.board.json` into it and put any PNG at `assets/earth.png`.
 Reusable strokes are in `scripts/strokes/`: `two-plus-two.json` and
 `equals-four.json` (handwriting about 100 pt tall, left of the board centre).
 

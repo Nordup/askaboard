@@ -1,6 +1,13 @@
-import { isStroke } from '@shared/board-format'
-import { pressureWidth, regionsIntersect, strokeBounds } from './geometry'
-import type { BoardItem, Camera, Point, Region, StrokeItem } from './types'
+import { inkBounds, pressureWidth, regionsIntersect } from './geometry'
+import type { Camera, InkNode, Point, Region } from './types'
+
+type StrokeItem = InkNode
+
+/** An ink node with its world offset (the world position of its local 0,0). */
+export interface PaintInk {
+  node: InkNode
+  offset: Point
+}
 
 /** Highlighter ink is translucent and sits under pen ink. */
 export const HIGHLIGHTER_ALPHA = 0.55
@@ -66,6 +73,14 @@ function tracePath(context: CanvasRenderingContext2D, points: StrokeItem['points
   context.lineTo(last[0], last[1])
 }
 
+/** Draw one ink node at its world offset. */
+function drawInk(context: CanvasRenderingContext2D, ink: PaintInk, minWidth = 0): void {
+  context.save()
+  context.translate(ink.offset[0], ink.offset[1])
+  drawStroke(context, ink.node, minWidth)
+  context.restore()
+}
+
 /** `minWidth`: the thinnest line to draw, in board points (offscreen export only). */
 function drawStroke(context: CanvasRenderingContext2D, stroke: StrokeItem, minWidth = 0): void {
   const points = stroke.points
@@ -118,9 +133,12 @@ function drawStroke(context: CanvasRenderingContext2D, stroke: StrokeItem, minWi
 const SELECTION_GLOW = '#6e8bff'
 
 /** A soft accent band under a selected stroke, a few screen pixels wider than its ink. */
-function drawGlow(context: CanvasRenderingContext2D, stroke: StrokeItem, zoom: number): void {
+function drawGlow(context: CanvasRenderingContext2D, ink: PaintInk, zoom: number): void {
+  const stroke = ink.node
   const points = stroke.points
   if (!points.length) return
+  context.save()
+  context.translate(ink.offset[0], ink.offset[1])
   const maxPressure = Math.max(...points.map((point) => point[2]))
   const inkWidth = stroke.width * (stroke.tool === 'highlighter' ? 1 : pressureWidth(maxPressure))
   context.strokeStyle = SELECTION_GLOW
@@ -136,6 +154,7 @@ function drawGlow(context: CanvasRenderingContext2D, stroke: StrokeItem, zoom: n
     context.stroke()
   }
   context.globalAlpha = 1
+  context.restore()
 }
 
 /**
@@ -144,7 +163,7 @@ function drawGlow(context: CanvasRenderingContext2D, stroke: StrokeItem, zoom: n
  */
 export function paintItems(
   canvas: HTMLCanvasElement | null,
-  items: readonly BoardItem[],
+  inks: readonly PaintInk[],
   viewport: Point,
   camera: Camera,
   selected: ReadonlySet<string> = new Set()
@@ -153,13 +172,13 @@ export function paintItems(
   const context = prepare(canvas, viewport, camera)
   if (!context) return
   const visible = visibleRegion(viewport, camera)
-  const strokes = items.filter(isStroke).filter((stroke) => {
-    const bounds = strokeBounds(stroke)
+  const strokes = inks.filter((ink) => {
+    const bounds = inkBounds(ink.node, ink.offset)
     return bounds !== null && regionsIntersect(bounds, visible)
   })
-  if (selected.size) for (const stroke of strokes) if (selected.has(stroke.id)) drawGlow(context, stroke, camera.zoom)
-  for (const stroke of strokes) if (stroke.tool === 'highlighter') drawStroke(context, stroke)
-  for (const stroke of strokes) if (stroke.tool !== 'highlighter') drawStroke(context, stroke)
+  if (selected.size) for (const ink of strokes) if (selected.has(ink.node.id)) drawGlow(context, ink, camera.zoom)
+  for (const ink of strokes) if (ink.node.tool === 'highlighter') drawInk(context, ink)
+  for (const ink of strokes) if (ink.node.tool !== 'highlighter') drawInk(context, ink)
 }
 
 /** Paint the stroke in progress on the overlay layer. */
@@ -191,12 +210,11 @@ const MIN_EXPORT_INK_PX = 1.5
  * MIN_EXPORT_INK_PX, so thin strokes stay legible at a small scale.
  * Outlines are thin dashed boxes on top (the "changes" view).
  *
- * Step 3 (HTML frames): frames cannot draw into a 2D canvas. That step will
- * composite a webContents.capturePage() crop of each visible frame here, or
- * switch the whole capture to capturePage for boards with frames.
+ * Content nodes (frames, text, svg, images) are not drawn here yet.
+ * Step 3a part 2 replaces this with a pixel capture of the content layer.
  */
 export function renderRegion(
-  items: readonly BoardItem[],
+  inks: readonly PaintInk[],
   rect: Region,
   scale: number,
   background: string,
@@ -215,12 +233,12 @@ export function renderRegion(
   context.lineCap = 'round'
   context.lineJoin = 'round'
   const minWidth = MIN_EXPORT_INK_PX / scale
-  const strokes = items.filter(isStroke).filter((stroke) => {
-    const bounds = strokeBounds(stroke)
+  const strokes = inks.filter((ink) => {
+    const bounds = inkBounds(ink.node, ink.offset)
     return bounds !== null && regionsIntersect(bounds, rect)
   })
-  for (const stroke of strokes) if (stroke.tool === 'highlighter') drawStroke(context, stroke, minWidth)
-  for (const stroke of strokes) if (stroke.tool !== 'highlighter') drawStroke(context, stroke, minWidth)
+  for (const ink of strokes) if (ink.node.tool === 'highlighter') drawInk(context, ink, minWidth)
+  for (const ink of strokes) if (ink.node.tool !== 'highlighter') drawInk(context, ink, minWidth)
 
   // Outlines in image pixels, so they stay thin at any scale.
   context.setTransform(1, 0, 0, 1, 0, 0)

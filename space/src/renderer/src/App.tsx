@@ -395,7 +395,7 @@ export function App() {
     // Diff against the live board, so agents see the external edit as changes.
     const previous = boardRef.current?.liveState()
     const reconciled = reconcileBoard(
-      previous ? { nextSeq: previous.nextSeq, items: [...previous.items], extra: doc.extra } : (entry?.doc ?? current.doc),
+      previous ? { nextSeq: previous.nextSeq, nodes: [...previous.nodes], extra: doc.extra } : (entry?.doc ?? current.doc),
       doc
     )
     log.record(reconciled.removed)
@@ -498,14 +498,38 @@ export function App() {
       state: () => {
         const current = openRef.current
         const live = boardRef.current?.liveState()
+        const r1 = (value: number): number => Math.round(value * 10) / 10
         return {
           board: current?.path ?? null,
-          itemCount: live?.items.length ?? null,
+          itemCount: live?.nodes.length ?? null,
           zoom: live ? Math.round(live.camera.zoom * 1000) / 1000 : null,
           center: live?.camera.center ?? null,
           tool: toolRef.current,
-          selected: live?.selectedIds.length ?? 0
+          selected: live?.selectedIds.length ?? 0,
+          selectedIds: live ? [...live.selectedIds] : [],
+          editing: document.activeElement instanceof HTMLTextAreaElement && document.activeElement.classList.contains('node-text__editor'),
+          nodes: (live?.nodes ?? []).map((node) => {
+            const bounds = live?.bounds(node.id)
+            return {
+              id: node.id,
+              kind: node.kind,
+              parent: typeof node.parent === 'string' ? node.parent : null,
+              ...(node.kind === 'text' ? { text: node.text } : {}),
+              ...(node.kind === 'ink' || node.kind === 'text' ? { color: node.kind === 'ink' ? node.color : (node as { style?: Record<string, string> }).style?.color } : {}),
+              bounds: bounds ? { x: r1(bounds.x), y: r1(bounds.y), width: r1(bounds.width), height: r1(bounds.height) } : null
+            }
+          })
         }
+      },
+      /** A node's rect in window CSS pixels, from the layout cache. */
+      nodeRect: (id: string) => {
+        const board = boardRef.current
+        const bounds = board?.liveState().bounds(id)
+        if (!board || !bounds) return null
+        const topLeft = board.boardToClient([bounds.x, bounds.y])
+        const bottomRight = board.boardToClient([bounds.x + bounds.width, bounds.y + bounds.height])
+        if (!topLeft || !bottomRight) return null
+        return { x: topLeft[0], y: topLeft[1], width: bottomRight[0] - topLeft[0], height: bottomRight[1] - topLeft[1] }
       }
     }
     return () => {
@@ -635,7 +659,14 @@ export function App() {
               />
             )}
             {canvasContent}
-            {open && <ToolPalette state={tools} onChange={setTools} />}
+            {open && (
+              <ToolPalette
+                state={tools}
+                onChange={setTools}
+                onColor={(value) => boardRef.current?.applyColor(value)}
+                onWidth={(px) => boardRef.current?.applyWidth(px)}
+              />
+            )}
             {toast && <Toast message={toast} onDone={clearToast} />}
           </div>
           {previewPath && <PreviewPanel path={previewPath} version={previewVersion} onClose={() => setPreviewPath(null)} />}

@@ -1,7 +1,7 @@
 import { join, resolve } from 'node:path'
 import { statSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
-import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, protocol, shell, type IpcMainInvokeEvent } from 'electron'
 import { IPC, type Camera, type MenuCommand, type Snapshot } from '@shared/space-api'
 import { FolderSession } from './folder'
 import { AgentServer } from './mcp'
@@ -45,6 +45,28 @@ if (remoteDebugPort !== null) {
   app.commandLine.appendSwitch('disable-renderer-backgrounding')
   app.commandLine.appendSwitch('disable-background-timer-throttling')
   console.log(`remote debugging on 127.0.0.1:${remoteDebugPort} (dev hook)`)
+}
+
+/**
+ * Image nodes load learning-folder files as space-asset://folder/<relative path>.
+ * The handler resolves the path through the folder's path guard, so a URL can
+ * never read outside the open folder.
+ */
+const ASSET_SCHEME = 'space-asset'
+protocol.registerSchemesAsPrivileged([{ scheme: ASSET_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }])
+
+function registerAssetProtocol(): void {
+  protocol.handle(ASSET_SCHEME, async (request) => {
+    try {
+      if (!session) return new Response('No learning folder is open.', { status: 404 })
+      const url = new URL(request.url)
+      const rel = url.pathname.split('/').filter(Boolean).map(decodeURIComponent).join('/')
+      const { data, type } = await session.readAsset(rel)
+      return new Response(new Uint8Array(data), { headers: { 'content-type': type, 'cache-control': 'no-cache' } })
+    } catch (error) {
+      return new Response(error instanceof Error ? error.message : 'Not found', { status: 404 })
+    }
+  })
 }
 
 let mainWindow: BrowserWindow | null = null
@@ -302,6 +324,7 @@ void app.whenReady().then(async () => {
     newBoard: () => sendMenuCommand('new-board'),
     zoom: (step) => sendMenuCommand(step === 'in' ? 'zoom-in' : step === 'out' ? 'zoom-out' : 'zoom-reset')
   })
+  registerAssetProtocol()
   await openInitialFolder()
   agentServer.start()
   mainWindow = createWindow()

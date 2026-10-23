@@ -1,4 +1,4 @@
-import { boardName, isStroke } from '@shared/board-format'
+import { boardName, isInk } from '@shared/board-format'
 import type {
   AgentMethods,
   AgentRequest,
@@ -9,9 +9,9 @@ import type {
 } from '@shared/space-api'
 import type { BoardHandle, LiveBoardState } from '../board/Board'
 import type { ChangeLog } from '../board/changes'
-import { strokeBounds, unionRegions } from '../board/geometry'
+import { unionRegions } from '../board/geometry'
 import { renderRegion, type RenderOutline } from '../board/paint'
-import type { BoardItem, Region } from '../board/types'
+import type { Region } from '../board/types'
 
 /**
  * Answers the MCP server's requests (see AgentMethods in space-api.ts).
@@ -51,8 +51,9 @@ function pad(region: Region, amount: number): Region {
   return { x: region.x - amount, y: region.y - amount, width: region.width + amount * 2, height: region.height + amount * 2 }
 }
 
-function itemBounds(item: BoardItem): Region | null {
-  return isStroke(item) ? strokeBounds(item) : null
+/** World bounds of every node, from the Board's layout cache. */
+function allBounds(state: LiveBoardState): Array<Region | null> {
+  return state.nodes.map((node) => state.bounds(node.id))
 }
 
 function viewportRect(state: LiveBoardState): Region {
@@ -99,11 +100,11 @@ function canvasInfo(context: AgentContext): CanvasInfo {
     ...base,
     board: { path: context.openPath, name: boardName(context.openPath) },
     viewport: rect(viewportRect(state)),
-    contentBounds: rect(unionRegions(state.items.map(itemBounds))),
-    itemCount: state.items.length,
+    contentBounds: rect(unionRegions(allBounds(state))),
+    itemCount: state.nodes.length,
     selection: {
       ids: [...state.selectedIds],
-      bounds: rect(unionRegions(state.items.filter((item) => selected.has(item.id)).map(itemBounds)))
+      bounds: rect(unionRegions(state.nodes.filter((node) => selected.has(node.id)).map((node) => state.bounds(node.id))))
     },
     zoom: Math.round(state.camera.zoom * 1000) / 1000,
     cursor: seenCursor(state)
@@ -120,15 +121,15 @@ function changeSet(context: AgentContext, since: number | null): ChangeSet {
   const { path, board, log } = requireBoard(context)
   const state = board.liveState()
   const from = since ?? seenCursor(state)
-  const present = new Set(state.items.map((item) => item.id))
-  const changed = state.items
-    .filter((item) => item.seq > from)
-    .map((item) => ({
-      id: item.id,
-      kind: item.kind,
-      ...(isStroke(item) ? { tool: item.tool, color: item.color } : {}),
-      bounds: rect(itemBounds(item)),
-      seq: item.seq
+  const present = new Set(state.nodes.map((node) => node.id))
+  const changed = state.nodes
+    .filter((node) => node.seq > from)
+    .map((node) => ({
+      id: node.id,
+      kind: node.kind,
+      ...(isInk(node) ? { tool: node.tool, color: node.color } : {}),
+      bounds: rect(state.bounds(node.id)),
+      seq: node.seq
     }))
   const removed = (log?.after(from) ?? [])
     .filter((tombstone) => !present.has(tombstone.id))
@@ -149,14 +150,14 @@ function screenshot(context: AgentContext, params: AgentMethods['screenshot']['p
       target = viewportRect(state)
       break
     case 'content': {
-      const content = unionRegions(state.items.map(itemBounds))
-      if (!content) return empty('The board is empty: there is no ink to show.')
+      const content = unionRegions(allBounds(state))
+      if (!content) return empty('The board is empty: there is nothing to show.')
       target = pad(content, CONTENT_PAD)
       break
     }
     case 'selection': {
       const selected = new Set(state.selectedIds)
-      const bounds = unionRegions(state.items.filter((item) => selected.has(item.id)).map(itemBounds))
+      const bounds = unionRegions(state.nodes.filter((node) => selected.has(node.id)).map((node) => state.bounds(node.id)))
       if (!bounds) return empty('The learner has nothing selected.')
       target = pad(bounds, CONTENT_PAD)
       break
@@ -194,7 +195,8 @@ function screenshot(context: AgentContext, params: AgentMethods['screenshot']['p
   }
 
   const scale = Math.min(MAX_SCALE, params.maxSize / Math.max(target.width, target.height))
-  const render = renderRegion(state.items, target, scale, canvasBackground(), outlines)
+  // Ink only for now: part 2 replaces this with a pixel capture that includes the content layer.
+  const render = renderRegion(state.inks(), target, scale, canvasBackground(), outlines)
   if (!render) throw new Error('The renderer could not create a 2D canvas.')
   const png = render.canvas.toDataURL('image/png').replace(/^data:image\/png;base64,/, '')
   return {

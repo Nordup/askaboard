@@ -1,0 +1,19 @@
+{
+  "format": "learning-space.board",
+  "version": 2,
+  "nextSeq": 13,
+  "nodes": [
+    {"id":"card","kind":"frame","x":-440,"y":-240,"z":1,"author":"agent","seq":1,"style":{"display":"flex","flexDirection":"column","gap":"12px","width":"380px","padding":"20px","backgroundColor":"#1f2433","borderRadius":"14px","border":"1px solid #2e3550"}},
+    {"id":"card-title","kind":"text","parent":"card","x":0,"y":0,"z":1,"author":"agent","seq":2,"text":"Kepler's third law","style":{"fontSize":"22px","fontWeight":"600","color":"#ececef"}},
+    {"id":"card-body","kind":"text","parent":"card","x":0,"y":0,"z":2,"author":"agent","seq":3,"text":"The square of the period is **proportional** to the cube of the orbit size: $T^2 \\propto a^3$. *Try it* with two planets.","style":{"fontSize":"15px","lineHeight":"22px","color":"#c9c9d1"}},
+    {"id":"card-atoms","kind":"svg","parent":"card","x":0,"y":0,"z":3,"author":"agent","seq":4,"style":{"width":"340px","height":"120px"},"markup":"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 340 120\"><defs><marker id=\"arrowhead\" viewBox=\"0 0 10 10\" refX=\"8\" refY=\"5\" markerWidth=\"8\" markerHeight=\"8\" orient=\"auto\"><path d=\"M0,0 L10,5 L0,10 z\" fill=\"#f5d76e\"/></marker></defs><circle id=\"atom-a\" cx=\"60\" cy=\"60\" r=\"34\" fill=\"#6ea8ff\"/><circle id=\"atom-b\" cx=\"280\" cy=\"60\" r=\"22\" fill=\"#ff9f45\"/><line id=\"force\" x1=\"100\" y1=\"60\" x2=\"250\" y2=\"60\" stroke=\"#f5d76e\" stroke-width=\"4\" marker-end=\"url(#arrowhead)\"/></svg>"},
+    {"id":"free","kind":"frame","x":20,"y":-240,"z":2,"author":"agent","seq":5,"style":{"width":"320px","height":"220px","backgroundColor":"#22262b","borderRadius":"10px","border":"1px dashed #3a3f48"}},
+    {"id":"free-a","kind":"text","parent":"free","x":20,"y":20,"z":1,"author":"agent","seq":6,"text":"Sun","style":{"fontSize":"18px","fontWeight":"600","color":"#f5d76e"}},
+    {"id":"free-b","kind":"text","parent":"free","x":150,"y":150,"z":2,"author":"agent","seq":7,"text":"Earth, $a = 1$ AU","style":{"fontSize":"16px","color":"#6ea8ff"}},
+    {"id":"earth","kind":"image","x":380,"y":-240,"z":3,"author":"agent","seq":8,"src":"assets/earth.png","style":{"width":"120px","height":"120px"}},
+    {"id":"s_cardink1","kind":"ink","parent":"card","x":20,"y":50,"z":4,"author":"learner","seq":9,"tool":"pen","color":"#ff6b8b","width":3.5,"points":[[0,4,0.5],[40,2,0.5],[80,1,0.5],[120,0,0.5],[160,1,0.5],[200,3,0.5]]},
+    {"id":"s_cardink2","kind":"ink","parent":"card","x":240,"y":160,"z":5,"author":"learner","seq":10,"tool":"highlighter","color":"#f5d76e","width":14,"points":[[0,0,0.5],[60,0,0.5],[110,2,0.5]]},
+    {"id":"s_loose1","kind":"ink","x":-420,"y":180,"z":4,"author":"learner","seq":11,"tool":"pen","color":"#5fd38d","width":3.5,"points":[[0,30,0.5],[20,0,0.5],[40,30,0.5],[60,0,0.5],[80,30,0.5],[100,0,0.5]]},
+    {"id":"s_loose2","kind":"ink","x":-260,"y":180,"z":5,"author":"learner","seq":12,"tool":"pen","color":"#ececef","width":2,"points":[[0,0,0.5],[30,30,0.5],[60,0,0.5]]}
+  ]
+}

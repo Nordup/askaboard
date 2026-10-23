@@ -1,0 +1,85 @@
+/* The content layer: board points are CSS pixels inside .board__content. */
+.board__content {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  z-index: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+  color: var(--text-primary, #ececef);
+  font-family: var(--font-ui);
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.board__content .node {
+  box-sizing: border-box;
+}
+
+.node-text {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.node-math .katex {
+  font-size: 1.1em;
+}
+
+.node-svg > svg {
+  display: block;
+  overflow: visible;
+}
+
+.node-svg[data-w] > svg {
+  width: 100%;
+}
+
+.node-svg[data-h] > svg {
+  height: 100%;
+}
+
+.node-svg[data-w]:not([data-h]) > svg {
+  height: auto;
+}
+
+img.node-image {
+  display: block;
+}
+
+.node-image--missing {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 80px;
+  min-height: 60px;
+  border: 1px dashed rgba(255, 255, 255, 0.25);
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 12px;
+}
+
+.node-text__editor {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 1em;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: inherit;
+  text-transform: inherit;
+  white-space: pre-wrap;
+  field-sizing: content;
+  caret-color: var(--accent, #6e8bff);
+  pointer-events: auto;
+  user-select: text;
+  -webkit-user-select: text;
+}

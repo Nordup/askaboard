@@ -296,6 +296,20 @@ export class FolderSession {
     }
   }
 
+  /**
+   * An image file for an image node (served to <img> by the space-asset:
+   * protocol). Same path guard as every other read; images only.
+   */
+  async readAsset(rel: string): Promise<{ data: Buffer; type: string }> {
+    const full = await this.resolvePath(rel)
+    const type = IMAGE_TYPES[extname(full).toLowerCase()]
+    if (!type) throw new Error(`Not an image: ${rel}`)
+    const info = await stat(full)
+    if (!info.isFile()) throw new Error(`Not a file: ${rel}`)
+    if (info.size > MAX_IMAGE_PREVIEW) throw new Error(`Image too large: ${rel}`)
+    return { data: await readFile(full), type }
+  }
+
   /** Show a file in Finder. `.` opens the folder itself. */
   async reveal(rel: string): Promise<void> {
     if (rel === '.') {
