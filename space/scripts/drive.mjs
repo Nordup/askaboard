@@ -13,7 +13,8 @@
  *   node scripts/drive.mjs dblclick <x> <y>
  *   node scripts/drive.mjs drag <x1> <y1> <x2> <y2> [--shift] [--steps N]   mouse drag
  *   node scripts/drive.mjs type "<text>"        insert text into the focused field
- *   node scripts/drive.mjs node-rect <id>       a node's window rect (JSON), from the layout cache
+ *   node scripts/drive.mjs wheel <x> <y> <dx> <dy> [--ctrl]   a wheel / trackpad scroll; --ctrl is a pinch
+ *   node scripts/drive.mjs node-rect <id>       a node's window rect (JSON), from the layout cache and the DOM
  *   node scripts/drive.mjs screenshot <out.png> the whole window
  *   node scripts/drive.mjs eval-state           board, zoom, tool, selection, nodes with bounds (JSON)
  *
@@ -34,7 +35,8 @@ const USAGE = `usage: node scripts/drive.mjs [--port N] <command>
   dblclick <x> <y>
   drag <x1> <y1> <x2> <y2> [--shift] [--steps N] mouse drag in window CSS pixels
   type "<text>"                                  insert text into the focused field
-  node-rect <id>                                 {x, y, width, height, cx, cy} in window CSS pixels
+  wheel <x> <y> <dx> <dy> [--ctrl]               a wheel at window CSS pixels; --ctrl sends a trackpad pinch
+  node-rect <id>                                 {x, y, width, height, cx, cy, dom} in window CSS pixels
   screenshot <out.png>
   eval-state                                     board, tool, selection, nodes (id, kind, parent, bounds)
 The port defaults to $SPACE_REMOTE_DEBUG, then 9339.`
@@ -294,6 +296,14 @@ async function drag(cdp, from, to, modifiers, steps) {
   console.log(JSON.stringify({ drag: [from, to] }))
 }
 
+async function wheel(cdp, x, y, dx, dy, ctrl) {
+  const modifiers = ctrl ? 2 : 0
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none', buttons: 0 })
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX: dx, deltaY: dy, modifiers, pointerType: 'mouse' })
+  await sleep(80) // let the next frame apply the camera
+  console.log(JSON.stringify({ wheel: [x, y, dx, dy], ctrl }))
+}
+
 async function typeText(cdp, text) {
   await cdp.send('Input.insertText', { text })
   console.log(JSON.stringify({ typed: text }))
@@ -303,9 +313,22 @@ async function nodeRect(cdp, id) {
   await requireDevHook(cdp)
   const rect = await evaluate(cdp, `window.__spaceDev.nodeRect(${JSON.stringify(id)})`)
   if (!rect) throw new Failure(`No node "${id}" with a known layout on the open board.`)
+  // The element's real on-screen rect: it must match the layout rect, or the DOM and the camera disagree.
+  const dom = await evaluate(
+    cdp,
+    `(() => { const el = document.querySelector('.board__content [data-node-id=' + JSON.stringify(${JSON.stringify(id)}) + ']'); if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height } })()`
+  )
   const r1 = (value) => Math.round(value * 10) / 10
   console.log(
-    JSON.stringify({ x: r1(rect.x), y: r1(rect.y), width: r1(rect.width), height: r1(rect.height), cx: r1(rect.x + rect.width / 2), cy: r1(rect.y + rect.height / 2) })
+    JSON.stringify({
+      x: r1(rect.x),
+      y: r1(rect.y),
+      width: r1(rect.width),
+      height: r1(rect.height),
+      cx: r1(rect.x + rect.width / 2),
+      cy: r1(rect.y + rect.height / 2),
+      ...(dom ? { dom: { x: r1(dom.x), y: r1(dom.y), width: r1(dom.width), height: r1(dom.height) } } : {})
+    })
   )
 }
 
@@ -331,6 +354,9 @@ async function main() {
   const shiftIndex = args.indexOf('--shift')
   const modifiers = shiftIndex !== -1 ? 8 : 0
   if (shiftIndex !== -1) args.splice(shiftIndex, 1)
+  const ctrlIndex = args.indexOf('--ctrl')
+  const ctrl = ctrlIndex !== -1
+  if (ctrl) args.splice(ctrlIndex, 1)
   const [command, ...rest] = args
   if (!command || command === 'help' || command === '--help') {
     console.log(USAGE)
@@ -359,6 +385,10 @@ async function main() {
     const [x1, y1, x2, y2] = rest.map(Number)
     if (![x1, y1, x2, y2].every(Number.isFinite)) throw new Failure('drag needs <x1> <y1> <x2> <y2> in window CSS pixels.')
     run = (cdp) => drag(cdp, [x1, y1], [x2, y2], modifiers, steps)
+  } else if (command === 'wheel') {
+    const [x, y, dx, dy] = rest.map(Number)
+    if (![x, y, dx, dy].every(Number.isFinite)) throw new Failure('wheel needs <x> <y> <dx> <dy> in window CSS pixels.')
+    run = (cdp) => wheel(cdp, x, y, dx, dy, ctrl)
   } else if (command === 'type') {
     if (rest[0] === undefined) throw new Failure('type needs the text to insert.')
     run = (cdp) => typeText(cdp, rest[0])

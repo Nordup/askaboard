@@ -1,7 +1,9 @@
 .board {
   position: absolute;
   inset: 0;
-  overflow: hidden;
+  /* clip, not hidden: a hidden box can still be scrolled by focus() or scrollIntoView, which would shift every layer. */
+  overflow: clip;
+  overscroll-behavior: none;
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;

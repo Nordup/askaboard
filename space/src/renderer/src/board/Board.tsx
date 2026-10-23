@@ -211,6 +211,23 @@ function pressureOf(pointerType: string, pressure: number): number {
   return pressure > 0 ? pressure : 0.5
 }
 
+/** True when `target` is a text editor that can still scroll by (dx, dy). */
+function canScroll(target: EventTarget | null, dx: number, dy: number): boolean {
+  if (!(target instanceof HTMLTextAreaElement)) return false
+  const { scrollTop, scrollLeft, scrollHeight, scrollWidth, clientHeight, clientWidth } = target
+  if (dy > 0 && scrollTop + clientHeight < scrollHeight - 1) return true
+  if (dy < 0 && scrollTop > 0) return true
+  if (dx > 0 && scrollLeft + clientWidth < scrollWidth - 1) return true
+  if (dx < 0 && scrollLeft > 0) return true
+  return false
+}
+
+/** Cancel a pending animation frame and clear its slot, so the next request schedules a new one. */
+function cancelFrame(slot: { current: number | null }): void {
+  if (slot.current !== null) cancelAnimationFrame(slot.current)
+  slot.current = null
+}
+
 /** Dot grid style: pans and scales with the camera, fades when zoomed far out. */
 function gridStyle(camera: Camera, viewport: Point): CSSProperties {
   let size = GRID_PITCH * camera.zoom
@@ -354,10 +371,13 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     },
     [applyContentTransform, paintInks]
   )
+  // A cancelled frame must also clear its slot. React runs this cleanup and then
+  // mounts again (StrictMode in dev, Fast Refresh): a slot left set says "a frame
+  // is pending" forever, so the ink and the content layer never move again.
   useEffect(
     () => () => {
-      if (paintFrameRef.current !== null) cancelAnimationFrame(paintFrameRef.current)
-      if (measureFrameRef.current !== null) cancelAnimationFrame(measureFrameRef.current)
+      cancelFrame(paintFrameRef)
+      cancelFrame(measureFrameRef)
     },
     []
   )
@@ -383,11 +403,19 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     })
   }, [measure])
 
+  // The observer lives exactly as long as the mount: created here, observing every
+  // element already registered, and gone after cleanup (a remount makes a new one).
   const resizeObserverRef = useRef<ResizeObserver | null>(null)
-  if (!resizeObserverRef.current && typeof ResizeObserver !== 'undefined') {
-    resizeObserverRef.current = new ResizeObserver(() => requestMeasure())
-  }
-  useEffect(() => () => resizeObserverRef.current?.disconnect(), [])
+  useEffect(() => {
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => requestMeasure())
+    for (const element of elementsRef.current.values()) observer.observe(element)
+    resizeObserverRef.current = observer
+    return () => {
+      observer.disconnect()
+      if (resizeObserverRef.current === observer) resizeObserverRef.current = null
+    }
+  }, [requestMeasure])
 
   // Measure after every content render, before the browser paints.
   useLayoutEffect(() => {
@@ -1037,6 +1065,8 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     const host = hostRef.current
     if (!host) return
     const wheel = (event: WheelEvent): void => {
+      // An open text editor that can scroll this way scrolls; everything else on the board pans or zooms.
+      if (!event.ctrlKey && !event.metaKey && canScroll(event.target, event.deltaX, event.deltaY)) return
       event.preventDefault()
       glideRef.current++
       const scale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewportRef.current[1] : 1
@@ -1056,8 +1086,9 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       }
       applyCamera({ ...current, center: [current.center[0] + dx / current.zoom, current.center[1] + dy / current.zoom] })
     }
-    host.addEventListener('wheel', wheel, { passive: false })
-    return () => host.removeEventListener('wheel', wheel)
+    // Capture phase on the board root: every layer under the pointer (ink, content, selection) pans alike.
+    host.addEventListener('wheel', wheel, { passive: false, capture: true })
+    return () => host.removeEventListener('wheel', wheel, { capture: true })
   }, [applyCamera])
 
   // ---------- Restyle (palette) ----------
@@ -1199,6 +1230,8 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   useEffect(
     () => () => {
       if (flashTimerRef.current) clearTimeout(flashTimerRef.current)
+      flashTimerRef.current = null
+      glideRef.current++ // stop a running camera glide
     },
     []
   )

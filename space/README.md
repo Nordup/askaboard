@@ -135,7 +135,8 @@ reaches the page while the window is behind other windows.
 | `dblclick <x> <y>` | Double-clicks (drills into a frame; edits a text node). |
 | `drag <x1> <y1> <x2> <y2> [--shift] [--steps N]` | A mouse drag: move, resize (start on a handle), lasso (a straight drag has no area: use several points for a lasso). |
 | `type "<text>"` | Inserts text into the focused field (the text editor). |
-| `node-rect <id>` | A node's window rect `{x, y, width, height, cx, cy}`, from the layout cache. |
+| `wheel <x> <y> <dx> <dy> [--ctrl]` | A wheel / trackpad scroll at window CSS pixels (pans the board). With `--ctrl` it is a trackpad pinch (zoom). |
+| `node-rect <id>` | A node's window rect `{x, y, width, height, cx, cy}`, from the layout cache, plus `dom`: the element's real on-screen rect. The two must match; a difference means the content layer did not follow the camera. |
 | `screenshot <out.png>` | Captures the whole window (for UI checks). |
 | `eval-state` | Prints the board path, node count, zoom, camera centre, tool, selection ids, whether a text editor is open, and every node (id, kind, parent, text, colour, world bounds) as JSON. |
 
