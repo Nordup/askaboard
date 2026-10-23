@@ -14,6 +14,9 @@ positioning source.
 - [`../server/README.md`](../server/README.md) — current backend behavior and
   operations.
 - [`TODO.md`](TODO.md) — known engineering and product debt that remains open.
+- [`learning-space/`](learning-space/) — proposed experiment (2026-10-23): a
+  desktop canvas with no AI inside, which any agent drives over MCP. Read
+  `idea.md` before `plan.md`. Not yet the product direction.
 
 ## Exact design records
 
