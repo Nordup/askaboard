@@ -4,6 +4,7 @@ import { IPC, type SpaceApi, type Unsubscribe } from '@shared/space-api'
 // The preload runs sandboxed, so it cannot read package.json. The main
 // process answers this one synchronous call before the page script runs.
 const version = ipcRenderer.sendSync(IPC.appVersion) as string
+const devHooks = ipcRenderer.sendSync(IPC.devHooks) === true
 
 function listen<T>(channel: string, listener: (payload: T) => void): Unsubscribe {
   const handler = (_event: IpcRendererEvent, payload: T): void => listener(payload)
@@ -16,6 +17,7 @@ function listen<T>(channel: string, listener: (payload: T) => void): Unsubscribe
 const api: SpaceApi = {
   platform: process.platform,
   version,
+  devHooks,
 
   getInitialState: () => ipcRenderer.invoke(IPC.getInitialState),
   openFolderDialog: () => ipcRenderer.invoke(IPC.openFolderDialog),
@@ -40,7 +42,13 @@ const api: SpaceApi = {
   onBoardChanged: (listener) => listen(IPC.boardChanged, listener),
   onMenuCommand: (listener) => listen(IPC.menuCommand, listener),
   onFlushRequest: (listener) => listen<void>(IPC.flushRequest, () => listener()),
-  flushDone: () => ipcRenderer.send(IPC.flushDone)
+  flushDone: () => ipcRenderer.send(IPC.flushDone),
+
+  getAgentStatus: () => ipcRenderer.invoke(IPC.getAgentStatus),
+  onAgentStatus: (listener) => listen(IPC.agentStatus, listener),
+  onAgentActivity: (listener) => listen(IPC.agentActivity, listener),
+  onAgentRequest: (listener) => listen(IPC.agentRequest, listener),
+  replyAgent: (reply) => ipcRenderer.send(IPC.agentReply, reply)
 }
 
 contextBridge.exposeInMainWorld('space', api)

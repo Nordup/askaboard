@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useImperativeHandle, useRef, useState, type CSSProperties, type Ref } from 'react'
-import { isStroke, newItemId, stampChanged, type BoardDoc } from '@shared/board-format'
+import { isStroke, newItemId, stampChanged, type BoardDoc, type Removal } from '@shared/board-format'
 import { isEditableTarget } from '../lib/keys'
 import type { ToolId } from '../tools'
 import {
@@ -50,6 +50,25 @@ export interface BoardHandle {
   zoomStep(step: ZoomStep, source: 'menu' | 'key'): void
   /** Show all ink. */
   fit(): void
+  /** The live board, with edits that are not saved yet. For the agent bridge. */
+  liveState(): LiveBoardState
+  /** Briefly outline a board region, so the learner sees what an agent looked at. */
+  flash(rect: Region): void
+  /** Window (client) CSS coordinates of a board point. Dev hook for scripts/drive.mjs. */
+  boardToClient(point: Point): Point | null
+  /** The canvas rect in window CSS pixels. Dev hook. */
+  clientRect(): Region | null
+  /** Pan (and zoom out if needed) so the board rect is in view with a margin. Keeps the camera when it already is. */
+  reveal(rect: Region): void
+}
+
+export interface LiveBoardState {
+  items: readonly BoardItem[]
+  nextSeq: number
+  camera: Camera
+  /** The canvas size in CSS pixels. */
+  viewport: Point
+  selectedIds: readonly string[]
 }
 
 export interface BoardProps {
@@ -64,6 +83,8 @@ export interface BoardProps {
   width: number
   onDocChange(doc: BoardDoc): void
   onCameraChange(camera: Camera): void
+  /** Items left the board (erase, cut, delete, undo). Each removal has its own seq. */
+  onRemoved?(removed: Removal[]): void
   ref?: Ref<BoardHandle>
 }
 
@@ -73,6 +94,8 @@ const HIGHLIGHTER_SCALE = 4
 const ERASE_RADIUS = 10
 /** Grid pitch in board points. */
 const GRID_PITCH = 24
+/** How long the "an agent looked here" outline shows. */
+const FLASH_MS = 1400
 
 type DragKind = 'pan' | 'lasso' | 'move' | 'ink' | 'erase'
 
@@ -119,7 +142,7 @@ function gridStyle(camera: Camera, viewport: Point): CSSProperties {
   } as CSSProperties
 }
 
-export function Board({ doc, history, initialCamera, tool, color, width, onDocChange, onCameraChange, ref }: BoardProps) {
+export function Board({ doc, history, initialCamera, tool, color, width, onDocChange, onCameraChange, onRemoved, ref }: BoardProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const inkRef = useRef<HTMLCanvasElement>(null)
   const activeInkRef = useRef<HTMLCanvasElement>(null)
@@ -145,11 +168,15 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const [selection, setSelection] = useState<Region | null>(null)
   const [panReady, setPanReady] = useState(false)
   const [panning, setPanning] = useState(false)
+  const [flashRect, setFlashRect] = useState<{ rect: Region; id: number } | null>(null)
+  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const onDocChangeRef = useRef(onDocChange)
   const onCameraChangeRef = useRef(onCameraChange)
   onDocChangeRef.current = onDocChange
   onCameraChangeRef.current = onCameraChange
+  const onRemovedRef = useRef(onRemoved)
+  onRemovedRef.current = onRemoved
 
   // ---------- Painting (batched to one frame) ----------
 
@@ -227,9 +254,53 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         const [vw, vh] = viewportRef.current
         applyCamera(zoomAt(cameraRef.current, [vw / 2, vh / 2], viewportRef.current, cameraRef.current.zoom * factor))
       },
-      fit
+      fit,
+      liveState: () => ({
+        items: itemsRef.current,
+        nextSeq: nextSeqRef.current,
+        camera: cameraRef.current,
+        viewport: viewportRef.current,
+        selectedIds: selectedIdsRef.current
+      }),
+      boardToClient: (point) => {
+        const host = hostRef.current
+        if (!host) return null
+        const rect = host.getBoundingClientRect()
+        const screen = boardToScreen(point, viewportRef.current, cameraRef.current)
+        return [rect.left + screen[0], rect.top + screen[1]]
+      },
+      clientRect: () => {
+        const rect = hostRef.current?.getBoundingClientRect()
+        return rect ? { x: rect.left, y: rect.top, width: rect.width, height: rect.height } : null
+      },
+      reveal: (rect) => {
+        const [vw, vh] = viewportRef.current
+        const current = cameraRef.current
+        const margin = 80 / current.zoom
+        const halfW = vw / 2 / current.zoom
+        const halfH = vh / 2 / current.zoom
+        const inView =
+          rect.x - margin >= current.center[0] - halfW &&
+          rect.x + rect.width + margin <= current.center[0] + halfW &&
+          rect.y - margin >= current.center[1] - halfH &&
+          rect.y + rect.height + margin <= current.center[1] + halfH
+        if (inView) return
+        const zoom = clampZoom(Math.min(current.zoom, (vw - 160) / Math.max(1, rect.width), (vh - 160) / Math.max(1, rect.height)))
+        applyCamera({ center: [rect.x + rect.width / 2, rect.y + rect.height / 2], zoom })
+      },
+      flash: (rect) => {
+        if (flashTimerRef.current) clearTimeout(flashTimerRef.current)
+        setFlashRect({ rect, id: performance.now() })
+        flashTimerRef.current = setTimeout(() => setFlashRect(null), FLASH_MS)
+      }
     }),
     [applyCamera, fit, zoomStep]
+  )
+  useEffect(
+    () => () => {
+      if (flashTimerRef.current) clearTimeout(flashTimerRef.current)
+    },
+    []
   )
 
   useEffect(() => {
@@ -281,6 +352,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       const stamped = stampChanged(snapshot, next, nextSeqRef.current)
       itemsRef.current = stamped.items
       nextSeqRef.current = stamped.nextSeq
+      if (stamped.removed.length) onRemovedRef.current?.(stamped.removed)
       requestPaint({ committed: true })
       emit()
     },
@@ -294,6 +366,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       const stamped = stampChanged(itemsRef.current, snapshot, nextSeqRef.current)
       itemsRef.current = stamped.items
       nextSeqRef.current = stamped.nextSeq
+      if (stamped.removed.length) onRemovedRef.current?.(stamped.removed)
       setSelectedIds([])
       requestPaint({ committed: true })
       emit()
@@ -667,6 +740,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   // ---------- Render ----------
 
   const selectionTopLeft = selection ? boardToScreen([selection.x, selection.y], viewport, camera) : null
+  const flashTopLeft = flashRect ? boardToScreen([flashRect.rect.x, flashRect.rect.y], viewport, camera) : null
   const cursorTool = panning ? 'panning' : panReady ? 'pan' : tool
 
   return (
@@ -702,6 +776,20 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
             width: selection.width * camera.zoom + SELECTION_PAD * 2,
             height: selection.height * camera.zoom + SELECTION_PAD * 2
           }}
+        />
+      )}
+      {flashRect && flashTopLeft && (
+        <div
+          key={flashRect.id}
+          className="board__flash"
+          style={{
+            left: flashTopLeft[0],
+            top: flashTopLeft[1],
+            width: flashRect.rect.width * camera.zoom,
+            height: flashRect.rect.height * camera.zoom,
+            animationDuration: `${FLASH_MS}ms`
+          }}
+          aria-hidden="true"
         />
       )}
       <div className="board__eraser" ref={eraserRef} style={{ width: ERASE_RADIUS * 2, height: ERASE_RADIUS * 2 }} />

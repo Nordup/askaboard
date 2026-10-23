@@ -1,4 +1,6 @@
 import { AlertCircle, Check } from 'lucide-react'
+import type { AgentServerStatus } from '@shared/space-api'
+import { AgentPill } from './AgentPill'
 
 export type SaveStatus = 'saved' | 'saving' | 'unsaved' | 'error'
 
@@ -9,6 +11,9 @@ interface TopBarProps {
   /** The canvas zoom factor, where 1 is 100%. Null when no board is open. */
   zoom: number | null
   onResetZoom(): void
+  agentStatus: AgentServerStatus | null
+  /** Time (ms) of the last agent tool call. */
+  agentActivityAt: number | null
 }
 
 const SAVE_LABEL: Record<SaveStatus, string> = {
@@ -18,7 +23,7 @@ const SAVE_LABEL: Record<SaveStatus, string> = {
   error: 'Not saved'
 }
 
-export function TopBar({ folderName, boardName, saveStatus, zoom, onResetZoom }: TopBarProps) {
+export function TopBar({ folderName, boardName, saveStatus, zoom, onResetZoom, agentStatus, agentActivityAt }: TopBarProps) {
   return (
     <header className="topbar">
       <div className="topbar__title">
@@ -45,10 +50,7 @@ export function TopBar({ folderName, boardName, saveStatus, zoom, onResetZoom }:
         )}
       </div>
       <div className="topbar__right">
-        <button className="pill" title="Agent connection arrives in step 2">
-          <span className="status-dot" />
-          No agent connected
-        </button>
+        <AgentPill status={agentStatus} activityAt={agentActivityAt} />
         {zoom !== null && (
           <button className="zoom" title="Reset zoom to 100% (⌘0)" onClick={onResetZoom}>
             {Math.round(zoom * 100)}%

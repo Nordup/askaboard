@@ -66,7 +66,8 @@ function tracePath(context: CanvasRenderingContext2D, points: StrokeItem['points
   context.lineTo(last[0], last[1])
 }
 
-function drawStroke(context: CanvasRenderingContext2D, stroke: StrokeItem): void {
+/** `minWidth`: the thinnest line to draw, in board points (offscreen export only). */
+function drawStroke(context: CanvasRenderingContext2D, stroke: StrokeItem, minWidth = 0): void {
   const points = stroke.points
   if (!points.length) return
   context.strokeStyle = stroke.color
@@ -76,7 +77,7 @@ function drawStroke(context: CanvasRenderingContext2D, stroke: StrokeItem): void
 
   if (points.length === 1) {
     const [x, y, p] = points[0]
-    const radius = (stroke.width * (highlighter ? 1 : pressureWidth(p))) / 2
+    const radius = Math.max(minWidth, stroke.width * (highlighter ? 1 : pressureWidth(p))) / 2
     context.beginPath()
     context.arc(x, y, radius, 0, Math.PI * 2)
     context.fill()
@@ -88,7 +89,7 @@ function drawStroke(context: CanvasRenderingContext2D, stroke: StrokeItem): void
   // must not darken where its own segments overlap.
   const uniform = highlighter || points.every((point) => point[2] === points[0][2])
   if (uniform) {
-    context.lineWidth = stroke.width * (highlighter ? 1 : pressureWidth(points[0][2]))
+    context.lineWidth = Math.max(minWidth, stroke.width * (highlighter ? 1 : pressureWidth(points[0][2])))
     context.beginPath()
     tracePath(context, points)
     context.stroke()
@@ -104,7 +105,7 @@ function drawStroke(context: CanvasRenderingContext2D, stroke: StrokeItem): void
     const [x, y, p] = points[i]
     const start: Point = i === 0 ? [x, y] : mid(points[i - 1], points[i])
     const end: Point = i === last ? [x, y] : mid(points[i], points[i + 1])
-    context.lineWidth = stroke.width * pressureWidth(p)
+    context.lineWidth = Math.max(minWidth, stroke.width * pressureWidth(p))
     context.beginPath()
     context.moveTo(start[0], start[1])
     context.quadraticCurveTo(x, y, end[0], end[1])
@@ -166,4 +167,73 @@ export function paintActive(canvas: HTMLCanvasElement | null, stroke: StrokeItem
   if (!canvas) return
   const context = prepare(canvas, viewport, camera)
   if (context && stroke) drawStroke(context, stroke)
+}
+
+/** A box drawn over an offscreen render, in board coordinates. */
+export interface RenderOutline {
+  rect: Region
+  color: string
+}
+
+export interface RegionRender {
+  canvas: HTMLCanvasElement
+  width: number
+  height: number
+}
+
+/** The thinnest ink line in an offscreen render, in image pixels. */
+const MIN_EXPORT_INK_PX = 1.5
+
+/**
+ * Draw the items inside `rect` onto a new canvas at `scale` image pixels per
+ * board point: the same stroke code as the board, on `background`, with no dot
+ * grid, no selection glow and no UI. Ink never draws thinner than
+ * MIN_EXPORT_INK_PX, so thin strokes stay legible at a small scale.
+ * Outlines are thin dashed boxes on top (the "changes" view).
+ *
+ * Step 3 (HTML frames): frames cannot draw into a 2D canvas. That step will
+ * composite a webContents.capturePage() crop of each visible frame here, or
+ * switch the whole capture to capturePage for boards with frames.
+ */
+export function renderRegion(
+  items: readonly BoardItem[],
+  rect: Region,
+  scale: number,
+  background: string,
+  outlines: readonly RenderOutline[] = []
+): RegionRender | null {
+  const width = Math.max(1, Math.round(rect.width * scale))
+  const height = Math.max(1, Math.round(rect.height * scale))
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const context = canvas.getContext('2d')
+  if (!context) return null
+  context.fillStyle = background
+  context.fillRect(0, 0, width, height)
+  context.setTransform(scale, 0, 0, scale, -rect.x * scale, -rect.y * scale)
+  context.lineCap = 'round'
+  context.lineJoin = 'round'
+  const minWidth = MIN_EXPORT_INK_PX / scale
+  const strokes = items.filter(isStroke).filter((stroke) => {
+    const bounds = strokeBounds(stroke)
+    return bounds !== null && regionsIntersect(bounds, rect)
+  })
+  for (const stroke of strokes) if (stroke.tool === 'highlighter') drawStroke(context, stroke, minWidth)
+  for (const stroke of strokes) if (stroke.tool !== 'highlighter') drawStroke(context, stroke, minWidth)
+
+  // Outlines in image pixels, so they stay thin at any scale.
+  context.setTransform(1, 0, 0, 1, 0, 0)
+  context.lineWidth = 1.5
+  context.setLineDash([6, 4])
+  for (const outline of outlines) {
+    context.strokeStyle = outline.color
+    context.strokeRect(
+      Math.round((outline.rect.x - rect.x) * scale) + 0.5,
+      Math.round((outline.rect.y - rect.y) * scale) + 0.5,
+      Math.max(2, Math.round(outline.rect.width * scale)),
+      Math.max(2, Math.round(outline.rect.height * scale))
+    )
+  }
+  return { canvas, width, height }
 }

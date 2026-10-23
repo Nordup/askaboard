@@ -1,8 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertCircle, LayoutDashboard, Plus } from 'lucide-react'
-import { BOARDS_DIR, boardName, isBoardPath, parseBoard, serializeBoard, type BoardDoc } from '@shared/board-format'
-import type { Camera, FileNode, FileTree, Snapshot } from '@shared/space-api'
+import {
+  BOARDS_DIR,
+  boardName,
+  isBoardPath,
+  parseBoard,
+  reconcileBoard,
+  serializeBoard,
+  type BoardDoc,
+  type Removal
+} from '@shared/board-format'
+import type { AgentActivity, AgentServerStatus, Camera, FileNode, FileTree, Snapshot } from '@shared/space-api'
+import { handleAgentRequest, type AgentContext } from './agent/handler'
 import { Board, type BoardHandle } from './board/Board'
+import { ChangeLog } from './board/changes'
 import { BoardHistory } from './board/history'
 import { CanvasNotice } from './components/CanvasNotice'
 import { PreviewPanel } from './components/PreviewPanel'
@@ -13,7 +24,7 @@ import { TopBar, type SaveStatus } from './components/TopBar'
 import { WelcomeCard } from './components/WelcomeCard'
 import { errorMessage } from './lib/errors'
 import { isEditableTarget } from './lib/keys'
-import { colorValue, TOOL_KEYS, widthValue, type ToolState } from './tools'
+import { colorValue, TOOL_KEYS, widthValue, type ToolId, type ToolState } from './tools'
 
 const space = window.space
 const SAVE_DELAY_MS = 400
@@ -31,6 +42,10 @@ interface OpenBoard {
 interface CacheEntry {
   doc: BoardDoc
   history: BoardHistory
+  /** Removals, for the agents' get_changes. */
+  log: ChangeLog
+  /** The file changed on disk while the board was closed: diff it on the next open. */
+  stale?: boolean
 }
 
 function collectBoards(nodes: FileNode[], out: BoardEntry[] = []): BoardEntry[] {
@@ -64,6 +79,8 @@ export function App() {
   const [renaming, setRenaming] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [tools, setTools] = useState<ToolState>({ tool: 'pen', colorId: 'white', widthId: 'medium' })
+  const [agentStatus, setAgentStatus] = useState<AgentServerStatus | null>(null)
+  const [agentActivity, setAgentActivity] = useState<AgentActivity & { at: number } | null>(null)
 
   const clearToast = useCallback(() => setToast(null), [])
   const folder = snapshot?.folder ?? null
@@ -160,7 +177,7 @@ export function App() {
         await flushSave()
         flushCamera()
         let entry = cacheRef.current.get(path)
-        if (!entry) {
+        if (!entry || entry.stale) {
           let doc: BoardDoc
           try {
             doc = parseBoard(await space.readBoard(path))
@@ -171,8 +188,17 @@ export function App() {
             space.setLastBoard(path)
             return
           }
-          entry = { doc, history: new BoardHistory() }
-          cacheRef.current.set(path, entry)
+          if (entry) {
+            // Changed on disk while closed: diff, so agents see the change.
+            const reconciled = reconcileBoard(entry.doc, doc)
+            entry.log.record(reconciled.removed)
+            entry.history.clear()
+            entry.doc = reconciled.doc
+            entry.stale = false
+          } else {
+            entry = { doc, history: new BoardHistory(), log: new ChangeLog() }
+            cacheRef.current.set(path, entry)
+          }
         }
         const camera = await space.getCamera(path).catch(() => null)
         if (token !== openTokenRef.current) return
@@ -187,6 +213,11 @@ export function App() {
     },
     [flushCamera, flushSave]
   )
+
+  const onRemoved = useCallback((removed: Removal[]) => {
+    const current = openRef.current
+    if (current) cacheRef.current.get(current.path)?.log.record(removed)
+  }, [])
 
   const onDocChange = useCallback(
     (doc: BoardDoc) => {
@@ -326,7 +357,11 @@ export function App() {
   onBoardChangeRef.current = async (path, deleted) => {
     const current = openRef.current
     if (current?.path !== path) {
-      cacheRef.current.delete(path) // reload from disk next time it opens
+      const entry = cacheRef.current.get(path)
+      if (entry) {
+        if (deleted) cacheRef.current.delete(path)
+        else entry.stale = true // reload (and diff) from disk next time it opens
+      }
       if (boardError?.path === path && !deleted) await openBoard(path)
       return
     }
@@ -355,7 +390,17 @@ export function App() {
     if (openRef.current?.path !== path || pendingRef.current?.path === path) return
     const history = current.history
     history.clear()
-    cacheRef.current.set(path, { doc, history })
+    const entry = cacheRef.current.get(path)
+    const log = entry?.log ?? new ChangeLog()
+    // Diff against the live board, so agents see the external edit as changes.
+    const previous = boardRef.current?.liveState()
+    const reconciled = reconcileBoard(
+      previous ? { nextSeq: previous.nextSeq, items: [...previous.items], extra: doc.extra } : (entry?.doc ?? current.doc),
+      doc
+    )
+    log.record(reconciled.removed)
+    doc = reconciled.doc
+    cacheRef.current.set(path, { doc, history, log })
     console.log(`${path} reloaded from disk`)
     setOpen({ path, key: ++keyRef.current, doc, history, camera: cameraRef.current?.camera ?? current.camera })
   }
@@ -396,6 +441,98 @@ export function App() {
 
   const createBoardRef = useRef(createBoard)
   createBoardRef.current = createBoard
+
+  // ---------- Agents (MCP) ----------
+
+  // The key of the Board that is mounted now: set after React attaches boardRef.
+  const mountedKeyRef = useRef<number | null>(null)
+  useEffect(() => {
+    mountedKeyRef.current = open?.key ?? null
+  }, [open])
+
+  const toolRef = useRef(tools.tool)
+  toolRef.current = tools.tool
+  const boardsRef = useRef(boards)
+  boardsRef.current = boards
+  const folderRef = useRef(folder)
+  folderRef.current = folder
+
+  const agentContext = useCallback((): AgentContext => {
+    const current = openRef.current
+    const mounted = current && mountedKeyRef.current === current.key ? boardRef.current : null
+    const currentFolder = folderRef.current
+    return {
+      folder: currentFolder ? { name: currentFolder.name, root: currentFolder.root } : null,
+      boards: boardsRef.current.map((board) => board.path),
+      openPath: mounted && current ? current.path : null,
+      board: mounted,
+      changeLog: current ? (cacheRef.current.get(current.path)?.log ?? null) : null,
+      tool: toolRef.current,
+      openBoard: async (path) => {
+        if (openRef.current?.path !== path) await openBoardRef.current(path)
+        // Wait for the Board to mount (one or two frames).
+        const deadline = performance.now() + 3000
+        while (performance.now() < deadline) {
+          const now = openRef.current
+          if (now?.path === path && mountedKeyRef.current === now.key && boardRef.current) return
+          await new Promise((resolve) => setTimeout(resolve, 30))
+        }
+        throw new Error(`"${path}" did not open in time.`)
+      }
+    }
+  }, [])
+
+  const openBoardRef = useRef(openBoard)
+  openBoardRef.current = openBoard
+
+  // Dev hook (SPACE_REMOTE_DEBUG only): scripts/drive.mjs maps board points to
+  // window points and reads a little state through window.__spaceDev.
+  useEffect(() => {
+    if (!space.devHooks) return
+    const target = window as unknown as { __spaceDev?: unknown }
+    target.__spaceDev = {
+      boardToClient: (x: number, y: number) => boardRef.current?.boardToClient([x, y]) ?? null,
+      canvasRect: () => boardRef.current?.clientRect() ?? null,
+      reveal: (x: number, y: number, width: number, height: number) => boardRef.current?.reveal({ x, y, width, height }),
+      setTool: (tool: ToolId) => setTools((current) => ({ ...current, tool })),
+      state: () => {
+        const current = openRef.current
+        const live = boardRef.current?.liveState()
+        return {
+          board: current?.path ?? null,
+          itemCount: live?.items.length ?? null,
+          zoom: live ? Math.round(live.camera.zoom * 1000) / 1000 : null,
+          center: live?.camera.center ?? null,
+          tool: toolRef.current,
+          selected: live?.selectedIds.length ?? 0
+        }
+      }
+    }
+    return () => {
+      delete target.__spaceDev
+    }
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    void space.getAgentStatus().then((status) => {
+      if (active) setAgentStatus(status)
+    })
+    const offs = [
+      space.onAgentStatus(setAgentStatus),
+      space.onAgentActivity((activity) => setAgentActivity({ ...activity, at: Date.now() })),
+      space.onAgentRequest((request) => {
+        handleAgentRequest(request, agentContext).then(
+          (result) => space.replyAgent({ requestId: request.requestId, ok: true, result }),
+          (error: unknown) => space.replyAgent({ requestId: request.requestId, ok: false, error: errorMessage(error) })
+        )
+      })
+    ]
+    return () => {
+      active = false
+      offs.forEach((off) => off())
+    }
+  }, [agentContext])
 
   // ---------- Tool shortcuts: V P H E ----------
 
@@ -477,6 +614,8 @@ export function App() {
           saveStatus={open ? saveStatus : null}
           zoom={open ? zoom : null}
           onResetZoom={() => boardRef.current?.zoomTo(1)}
+          agentStatus={agentStatus}
+          agentActivityAt={agentActivity?.at ?? null}
         />
         <div className="workspace">
           <div className="canvas">
@@ -492,6 +631,7 @@ export function App() {
                 width={widthValue(tools)}
                 onDocChange={onDocChange}
                 onCameraChange={onCameraChange}
+                onRemoved={onRemoved}
               />
             )}
             {canvasContent}

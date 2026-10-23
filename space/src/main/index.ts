@@ -4,6 +4,7 @@ import { writeFile } from 'node:fs/promises'
 import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
 import { IPC, type Camera, type MenuCommand, type Snapshot } from '@shared/space-api'
 import { FolderSession } from './folder'
+import { AgentServer } from './mcp'
 import { installMenu } from './menu'
 import * as store from './state'
 
@@ -21,9 +22,40 @@ const launchFolder = process.env.SPACE_FOLDER
 /** Dev hook: a file (relative to the folder) to show in the preview at launch. */
 const launchOpen = process.env.SPACE_OPEN ?? null
 
+/**
+ * Dev hook: Chromium remote debugging on 127.0.0.1:<port>, plus the page hook
+ * window.__spaceDev, for scripts/drive.mjs. Ignored in packaged builds.
+ */
+const remoteDebugPort = (() => {
+  const raw = process.env.SPACE_REMOTE_DEBUG
+  if (!raw || app.isPackaged) return null
+  const port = Number(raw)
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+    console.error(`SPACE_REMOTE_DEBUG="${raw}" is not a valid port; remote debugging is off`)
+    return null
+  }
+  return port
+})()
+if (remoteDebugPort !== null) {
+  app.commandLine.appendSwitch('remote-debugging-port', String(remoteDebugPort))
+  app.commandLine.appendSwitch('remote-debugging-address', '127.0.0.1')
+  // Check scripts drive the window while the learner works in front of it. A
+  // covered window must keep rendering, or CDP input waits forever for a frame.
+  app.commandLine.appendSwitch('disable-backgrounding-occluded-windows')
+  app.commandLine.appendSwitch('disable-renderer-backgrounding')
+  app.commandLine.appendSwitch('disable-background-timer-throttling')
+  console.log(`remote debugging on 127.0.0.1:${remoteDebugPort} (dev hook)`)
+}
+
 let mainWindow: BrowserWindow | null = null
 let session: FolderSession | null = null
 let quitting = false
+
+const agentServer = new AgentServer({
+  webContents: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null),
+  status: (status) => send(IPC.agentStatus, status),
+  activity: (activity) => send(IPC.agentActivity, activity)
+})
 
 function send(channel: string, payload?: unknown): void {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload)
@@ -126,8 +158,12 @@ function registerIpc(): void {
   ipcMain.on(IPC.appVersion, (event) => {
     event.returnValue = app.getVersion()
   })
+  ipcMain.on(IPC.devHooks, (event) => {
+    event.returnValue = remoteDebugPort !== null
+  })
 
   handle(IPC.getInitialState, () => snapshot(true))
+  handle(IPC.getAgentStatus, () => agentServer.status())
   handle(IPC.openFolderDialog, () => showOpenDialog())
   handle(IPC.openRecent, async (path: unknown) => {
     if (typeof path !== 'string' || !store.isRecent(path)) throw new Error('That folder is not in the recent list.')
@@ -188,7 +224,9 @@ function createWindow(): BrowserWindow {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true
+      sandbox: true,
+      // Dev hook: see remoteDebugPort.
+      backgroundThrottling: remoteDebugPort === null
     }
   })
 
@@ -265,6 +303,7 @@ void app.whenReady().then(async () => {
     zoom: (step) => sendMenuCommand(step === 'in' ? 'zoom-in' : step === 'out' ? 'zoom-out' : 'zoom-reset')
   })
   await openInitialFolder()
+  agentServer.start()
   mainWindow = createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) mainWindow = createWindow()
@@ -282,4 +321,5 @@ app.on('window-all-closed', () => {
 app.on('will-quit', () => {
   session?.stopWatching()
   store.saveStateNow()
+  void agentServer.stop()
 })

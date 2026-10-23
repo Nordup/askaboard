@@ -90,3 +90,30 @@
   opacity: 0;
   pointer-events: none;
 }
+
+/* An agent just took a "changes" screenshot of this region. */
+.board__flash {
+  position: absolute;
+  pointer-events: none;
+  border: 1.5px dashed var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  animation-name: board-flash;
+  animation-timing-function: ease-out;
+  animation-fill-mode: forwards;
+}
+
+@keyframes board-flash {
+  0% {
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}

@@ -163,19 +163,51 @@ export function serializeBoard(doc: BoardDoc): string {
   return `${lines.join('\n')}\n`
 }
 
+/** An item that left the board, with the seq of its removal. */
+export interface Removal {
+  item: BoardItem
+  seq: number
+}
+
 /**
  * Give a new seq to every item in `next` that is not in `previous`
  * (by object identity). Created, moved or restored items count as changed.
+ * Every id in `previous` that is not in `next` is a removal: it also takes a
+ * seq, so an agent's change cursor sees erasing as a change.
  */
 export function stampChanged(
   previous: readonly BoardItem[],
   next: readonly BoardItem[],
   nextSeq: number
-): { items: BoardItem[]; nextSeq: number } {
+): { items: BoardItem[]; nextSeq: number; removed: Removal[] } {
   const known = new Set(previous)
   let seq = nextSeq
   const items = next.map((item) => (known.has(item) ? item : { ...item, seq: seq++ }))
-  return { items, nextSeq: seq }
+  const kept = new Set(next.map((item) => item.id))
+  const removed: Removal[] = []
+  for (const item of previous) if (!kept.has(item.id)) removed.push({ item, seq: seq++ })
+  return { items, nextSeq: seq, removed }
+}
+
+/**
+ * Compare a board with a new version of it from disk (Git, an agent, another
+ * editor). Items that are new or different by content get a fresh seq; ids
+ * that are gone are removals. Items equal by content keep their old object,
+ * so the result has the same seqs as before for unchanged ink.
+ */
+export function reconcileBoard(previous: BoardDoc, incoming: BoardDoc): { doc: BoardDoc; removed: Removal[] } {
+  const before = new Map(previous.items.map((item) => [item.id, item]))
+  const contentKey = (item: BoardItem): string => serializeItem({ ...item, seq: 0 })
+  let seq = Math.max(previous.nextSeq, incoming.nextSeq)
+  const items = incoming.items.map((item) => {
+    const old = before.get(item.id)
+    if (old && contentKey(old) === contentKey(item)) return old
+    return { ...item, seq: seq++ }
+  })
+  const kept = new Set(incoming.items.map((item) => item.id))
+  const removed: Removal[] = []
+  for (const item of previous.items) if (!kept.has(item.id)) removed.push({ item, seq: seq++ })
+  return { doc: { nextSeq: seq, items, extra: incoming.extra }, removed }
 }
 
 /** A short random item id, for example `s_k3j2x9qa`. */
