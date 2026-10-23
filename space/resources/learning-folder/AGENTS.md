@@ -20,7 +20,7 @@ instructions as they learn what works.
 The learner has a shared canvas open in the Learning Space app. If the
 `learning-space` MCP tools are available:
 
-- Call `get_guide` once per session before you write to the board.
+- Call `get_guide` once, before your first write to the board.
 - Look before you answer about the learner's work: `get_changes`, then
   `get_screenshot`. Never guess what the learner wrote.
 - Use the board for anything visual: diagrams, worked steps, comparisons,
@@ -44,7 +44,7 @@ If the tools are not available, say so once and continue in the chat.
 | `topics/<topic>/` | Notes per subject or topic: `notes.md` with what the learner now understands, in their words where possible. | You and the learner. |
 | `materials/` | Sources and readings: files, and `materials/sources.md` with links and one line on each. | You, when you use a source. |
 | `boards/` | Learning Space boards. | The app. |
-| `assets/` | Images placed on boards. | The app. |
+| `assets/` | Images placed on boards. The app creates it when the first image is added. | The app. |
 
 Create a folder or file from this table when you first need it.
 

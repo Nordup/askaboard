@@ -1,350 +1,146 @@
 # Learning Space
 
-A desktop app (Electron) with no AI inside. It gives the learner a shared canvas
-and a local learning folder. External agents (Codex, Claude Code) connect to it
-over MCP and see the canvas. Read [`../docs/learning-space/idea.md`](../docs/learning-space/idea.md)
-and [`../docs/learning-space/plan.md`](../docs/learning-space/plan.md).
+Learning Space is a desktop app (Electron) for macOS. It gives the learner a
+shared canvas and a local learning folder. The app has no AI inside: external
+agents (Claude Code, Codex, Claude Desktop) connect to it over MCP and work on
+the board with the learner.
 
-Step 1: open a learning folder, keep many boards in it, and draw real ink
-(pen, highlighter, stroke eraser, lasso select, undo/redo, pan and zoom).
-A board is any `*.board.json` file in the folder; new boards go to `boards/`.
-The app autosaves 400 ms after a change and reloads a board when another
-program (Git, an agent) changes it on disk.
+**Status:** an experiment on the branch `learning-space`. Steps 0–5 are done.
 
-Step 2: the app runs an MCP server, so an agent can look at the canvas
-(see "Connect an agent").
-
-Step 4: the sidebar offers to set up a folder for learning, and the board guide
-is a markdown file that a learning folder can extend (see "Learning folder").
+- [`../docs/learning-space/README.md`](../docs/learning-space/README.md): start here.
+- [`architecture.md`](../docs/learning-space/architecture.md): processes, data flow and where the code lives.
+- [`design-system.md`](../docs/learning-space/design-system.md): UI tokens and rules.
+- [`working-guide.md`](../docs/learning-space/working-guide.md): how to build and check the app.
 
 ## Run
 
 ```sh
 cd space
 npm install      # postinstall downloads the Electron binary
-npm run dev      # electron-vite dev server + app window
-npm run build    # type-check main/preload and renderer, then bundle to out/
+npm run dev      # build the relay, then start the dev app window
+npm run build    # type-check, bundle to out/, build the relay
 npm start        # run the built app from out/
 ```
 
-## Connect an agent
+Do not run test suites. Check a change with `npm run build`. The rules are in
+[`../AGENTS.md`](../AGENTS.md).
 
-The app serves MCP (Streamable HTTP) at `http://127.0.0.1:47821/mcp` while it
-is open. Agents connect through a stdio relay, so their config never holds the
-port and they still start when the app is closed.
+## What the app does today
 
-The agent pill in the top bar shows a green dot and the active agent's name
-("Claude Code", or "2 agents") while an agent made a request in the last 90 s,
-and a grey "No agent" otherwise. Click it for a small popover in the style of
-the app's menus. It has two views:
+- **Learning folder and boards.** Open a folder. Any `*.board.json` file in it
+  is a board. New boards go to `boards/`. The app autosaves and reloads a
+  board when another program changes it on disk.
+- **Ink with pressure.** Pen, highlighter, stroke eraser, lasso select,
+  undo and redo, pan and zoom.
+- **Editable document.** A board holds ink, frames, text with math, SVG and
+  images. The learner can select, move and edit all of them.
+- **Agents see and edit the board over MCP.** Every agent write is one undo
+  step for the learner. An outline with the agent name marks its work.
+- **Ink groups and placement.** The app clusters learner ink into groups
+  (`g1`, `g2`, …). Agents place material beside the learner's work, not over it.
+- **Folder setup and an editable board guide.** The sidebar offers to set up
+  a folder for learning. A folder can extend or replace the board guide in
+  `.learning-space/guide.md`.
+- **Connect popover and plugin.** The agent pill in the top bar installs the
+  plugin for each agent.
 
-1. **Agents** (the default). One row per agent that is installed or that
-   connected since the app started: a dot (green when active in the last
-   90 s), the name, and "active now", "12 min ago" or "not connected yet".
-   Below a hairline, **Connect an agent** opens view 2. When nothing is
-   installed and no agent connected, the popover opens in view 2.
-2. **Connect an agent** (with a back chevron). Three rows: Claude Code, Claude
-   Desktop, ChatGPT and Codex (internal id `codex`; the ChatGPT desktop app and
-   Codex CLI share one setup). Each row has one control: **Install**, a green
-   check with "Installed", or a spinner. Below a hairline, **Manual setup and
-   other agents** opens
-   <https://github.com/Nordup/learning-space-plugins#manual-setup> in the
-   system browser. That page has the plugin commands, the `.mcpb` download,
-   and the server URL, relay command and JSON for other MCP clients.
+## Connect agents
 
-A problem shows as one short line under its row, with an inline text button:
+The agent pill in the top bar opens a popover with two views:
 
-| Line | Button | Action |
+1. **Agents.** One row per agent that is installed or that connected. A green
+   dot shows an agent that was active in the last 90 s.
+2. **Connect an agent.** Rows for Claude Code, Claude Desktop, and ChatGPT and
+   Codex. Each row has an **Install** button. **Manual setup and other agents**
+   opens the plugin repo.
+
+The plugin is in [`github.com/Nordup/learning-space-plugins`](https://github.com/Nordup/learning-space-plugins)
+(marketplace `learning-space`, plugin `learning-space`). The README there has
+the manual steps for each agent.
+
+- **Relay command (stdio):** `~/.learning-space/bin/learning-space mcp`. The app
+  writes this command on every launch. The relay lists the tools also when the
+  app is closed.
+- **Claude Desktop extension:** `resources/learning-space.mcpb`. **Install**
+  opens it in Claude Desktop. `npm run build:mcpb` copies the plugin repo's
+  `.mcpb` when the sibling repo is present. Otherwise it builds a minimal one.
+
+Use the plugin or a manual MCP entry, not both. With both, the agent sees
+every tool twice. The popover shows this problem and offers **Fix**.
+
+## MCP
+
+- **Endpoint:** `http://127.0.0.1:47821/mcp` (Streamable HTTP), while the app is open.
+- **Port:** `SPACE_MCP_PORT` changes it. The relay reads `LEARNING_SPACE_PORT`.
+- **Agent text:** `resources/instructions.md` (server instructions) and
+  `resources/guide.md` (what `get_guide` returns).
+
+| Tool | Main parameters | What it does |
 | --- | --- | --- |
-| Also added by hand, so tools appear twice | Fix | Remove manual entry |
-| Added by hand (counts as installed) | Fix | Switch to plugin |
-| The first line of the error, shortened | Retry | The failed action again |
-
-After a plugin change, a muted line says "Restart Claude Code to finish" or
-"Restart ChatGPT to finish". After **Install** for Claude Desktop, it says
-"Confirm the install in Claude Desktop".
-
-The plugin comes from the public marketplace `Nordup/learning-space-plugins`
-(marketplace `learning-space`, plugin `learning-space`, MCP server
-`learning-space`). Claude Code's plugin runs the stdio shim (server name
-`plugin:learning-space:learning-space`); the Codex plugin uses
-`http://127.0.0.1:47821/mcp`.
-
-The app finds `claude` and `codex` from the login shell
-(`/bin/zsh -lc 'command -v claude'`), then in `~/.local/bin`,
-`/opt/homebrew/bin` and `/usr/local/bin`.
-
-| Row | Detection | States |
-| --- | --- | --- |
-| Claude Code | Plugin: `claude plugin list --json` has `learning-space@learning-space` with `enabled: true`. Manual entry: `claude mcp get learning-space` exits 0 (the plugin's server has another name, so it never matches). | Installed (plugin), Added by hand, Both, Install, Not found |
-| ChatGPT and Codex | Plugin: `codex plugin list --json` has `installed[].pluginId` `learning-space@learning-space` with `enabled: true`. Manual entry: `$CODEX_HOME/config.toml` (default `~/.codex`) has a `[mcp_servers.learning-space]` table. `codex mcp list` cannot tell the two apart. | Same as Claude Code. Without the CLI, the row reads config.toml only. |
-| Claude Desktop | `Claude.app` in `/Applications` or `~/Applications`; "Extension installed" when a `Claude Extensions` folder name holds `learning-space` (a heuristic) | Installed, Install, Not found |
-
-| Action | Shown as | Claude Code | ChatGPT and Codex |
-| --- | --- | --- | --- |
-| Install plugin | **Install** | `claude plugin marketplace add Nordup/learning-space-plugins` (only when `claude plugin marketplace list --json` lacks it), then `claude plugin install learning-space@learning-space --scope user` (`claude plugin enable …` when it is installed but disabled) | `codex plugin marketplace add Nordup/learning-space-plugins` (only when `codex plugin marketplace list --json` lacks it), then `codex plugin add learning-space@learning-space` |
-| Switch to plugin | **Fix** on "Added by hand" | Install plugin, then `claude mcp remove learning-space --scope <scope>` (the scope comes from `claude mcp get`) | Install plugin, then `codex mcp remove learning-space` |
-| Remove manual entry | **Fix** on "Also added by hand" | `claude mcp remove learning-space --scope <scope>` | `codex mcp remove learning-space` (exits 0 when the entry is missing, so the app reads config.toml back) |
-| Install extension (Claude Desktop) | **Install** | opens `resources/learning-space.mcpb` with `shell.openPath`; Claude shows its install dialog | |
-
-The commands run with a fixed argv (no shell string), the login shell's
-`PATH`, a timeout (90 s for an install, which clones the marketplace) and one
-action at a time per CLI. The popover checks the state again after every
-action and every time it opens. Use either the plugin or a manual entry, not
-both: with both, the agent sees every tool twice.
-
-### The relay and `~/.learning-space/`
-
-On every launch the app writes (atomically, temp file + rename):
-
-| File | Content |
-| --- | --- |
-| `~/.learning-space/bin/learning-space` | The shim (`#!/bin/sh`, mode 0755). `learning-space mcp` runs `exec env ELECTRON_RUN_AS_NODE=1 "<Electron binary>" "<app>/out/relay/index.js" "$@"`; `--version` prints the app version; anything else prints usage. The paths come from `process.execPath` and the app's own folder, so the shim follows the app that ran last (dev or packaged). |
-| `~/.learning-space/relay.json` | `{ "port", "appVersion", "updatedAt" }`, written when the MCP server owns its port |
-| `~/.learning-space/tools.json` | `{ "appVersion", "updatedAt", "instructions", "tools" }`: the `tools/list` result and the built-in server instructions, read in process (no agent session) |
-
-The relay (`src/relay/index.ts`, bundled with the MCP SDK into
-`out/relay/index.js` by `scripts/build-relay.mjs`; `npm run build` and
-`npm run dev` run it) is a stdio MCP server. It forwards each JSON-RPC message
-to `http://127.0.0.1:<port>/mcp` and back, without its own tool code. The port
-comes from `LEARNING_SPACE_PORT`, else `relay.json`, else 47821. It connects on
-the client's `initialize` and replays the client's initialize parameters for
-every new upstream session.
-
-- **App closed:** the relay answers `initialize` itself (the cached
-  instructions plus "Learning Space is not running — ask the learner to open
-  the app."), `tools/list` from `tools.json`, and `tools/call` with a tool
-  error: "Learning Space is not running. Ask the learner to open the app, then
-  try again." Each later request tries the app again.
-- **App opened or restarted mid-session:** the next request opens a new
-  upstream session (a 404 for the old session id also triggers this). The
-  client keeps its own session. When the relay answered `initialize`
-  offline, it sends `notifications/tools/list_changed`.
-- **App stops mid-request:** the waiting requests get the offline answer.
-- **stdin closes:** the relay lets the last answers out, ends the app session
-  (HTTP DELETE) and exits. It logs to stderr only.
-
-The Claude Desktop extension `resources/learning-space.mcpb` comes from
-`npm run build:mcpb` (`scripts/build-mcpb.mjs`): a deterministic zip of a
-manifest (`manifest_version` 0.3, `server.type` `binary`, command
-`${HOME}/.learning-space/bin/learning-space`, args `["mcp"]`, darwin only) and
-`resources/icon.png` when it exists. The plugin repo will own this file later.
-
-Dev hook: `SPACE_CONNECT_DRY_RUN=1` makes **Install** log the `.mcpb` path
-instead of opening it. To check the buttons without your real agent config,
-start the app with `HOME`, `CLAUDE_CONFIG_DIR` and `CODEX_HOME` set to scratch
-folders (the real CLIs then write only there), plus `SPACE_MCP_PORT` and
-`--user-data-dir` of its own.
-
-The agent pill shows the agents that made a request in the
-last 90 s, grouped by client name (short runs such as `claude -p` exit
-without closing their session). `SPACE_MCP_PORT=<port>` changes the port. If the port is busy (for
-example a second copy of the app), the app logs it and the pill shows
-"Agent server off"; it does not pick another port, because the agent config
-holds the port.
-
-There is no token. The server binds to 127.0.0.1 only, refuses any request
-whose `Host` is not `127.0.0.1:<port>` or `localhost:<port>` (DNS rebinding),
-and refuses any request with an `Origin` header (a web page). Each agent gets
-its own session (`Mcp-Session-Id`); a session with no open stream and no
-request for 10 minutes is closed.
-
-| Tool | Parameters | Result |
-| --- | --- | --- |
-| `get_canvas_info` | none | JSON: folder, open board, all boards, viewport rect, content bounds, node counts by kind, top-level nodes (id, kind, name, author, bounds; loose ink grouped), selection, tool, zoom, cursor |
-| `get_guide` | `topic?` | The agent guide (markdown): HTML subset, markup and math, SVG, images, tokens, placement, workflow, an example; then the folder's own guidance (see "Learning folder") |
-| `get_tree` | `node_id?`, `depth?` (3) | Indented outline: kind, name, id, world bounds; ink as `ink ×N (learner)` groups |
-| `get_node_info` | `node_id` | JSON: bounds, position in parent, parent, children, style, text, svg ids, src or ink details, author |
-| `get_html` | `node_id`, `include_ids?` (true) | The subtree as the write_html subset, `data-id` on every element |
-| `get_screenshot` | `node_id?` \| `region?` \| `target?` (`viewport` default, `content`, `selection`, `changes`); `scale?` (1); `max_size?` (1600) | PNG of content and ink (hidden offscreen render, any area) + a note with the board rect and scale. `changes` outlines what is new and advances the cursor |
-| `get_changes` | `since` (optional cursor; 0 = everything) | JSON: changed nodes (id, kind, name, `by`, bounds, seq), removed nodes, new cursor. Advances the cursor |
-| `open_board` | `path` (relative `*.board.json`) | Opens the board in the app; returns the canvas info |
-| `create_frame` | `name?`, `style?`, `x?`, `y?`, `near?` | A top-level card, auto-placed in empty space when x, y are omitted; id + bounds |
-| `write_html` | `html`, `target_id` (frame id or `root`), `mode?` (`insert_children` \| `replace`) | Created ids, layer-name map, measured bounds, `ignored` |
-| `update_styles` | `updates: [{node_ids, styles}]` | Updated ids, `ignored_styles` |
-| `set_text` | `updates: [{node_id, text}]` | Updated ids |
-| `move_nodes` | `moves: [{node_id, x,y \| dx,dy \| parent_id,index? \| before \| after}]` | New parent and bounds per node |
-| `duplicate_nodes` | `node_ids` | Original → copy ids (descendants too); top-level copies auto-placed |
-| `delete_nodes` | `node_ids` | Removed nodes (subtrees included) |
-| `finish_working` | `node_ids?` | Clears this agent's "working" outline (all when omitted) |
-
-Every write tool is one undo step for the learner. While an agent writes, the
-top-level nodes it touched show an outline with its name, until
-`finish_working` or 20 s after its last write.
-
-Board coordinates are logical points, origin at the centre, +y down.
-Screenshots render the requested region in a hidden offscreen window with
-the app's own content layer and ink painter (no grid, no UI), so they work for
-any region, also off screen and while the app window is in the background. The cursor is
-a board `seq`: every new, moved or restored item takes the next seq, and so
-does every removal (removals are kept in memory as tombstones, not in the
-file). A board changed on disk is diffed against the live board, so an
-external edit also shows up as changes. Cursors are per session and per
-board; the first tool call starts the cursor at "now". `since` is exclusive
-(changes with seq > since), and a returned cursor is the highest seq seen, so
-passing it back never repeats an item.
+| `get_canvas_info` | none | Folder, boards, viewport, selection, top-level nodes and ink groups |
+| `get_screenshot` | `node_id` \| `region` \| `target`, `scale`, `max_size`, `labels`, `grid` | PNG of a node, a region, the view, all content, the selection or the changes |
+| `get_changes` | `since` | Changed and removed nodes since the agent's cursor; advances the cursor |
+| `open_board` | `path` | Opens a board in the app |
+| `get_guide` | `topic` | The board guide: HTML subset, math, SVG, tokens, placement |
+| `get_tree` | `node_id`, `depth` | Indented outline of nodes with ids and bounds |
+| `get_node_info` | `node_id` | One node: bounds, parent, children, style, text, author |
+| `get_html` | `node_id`, `include_ids` | A subtree as the `write_html` subset |
+| `create_frame` | `name`, `style`, `x`, `y`, `near`, `place` | A top-level frame, placed in empty space when `x` and `y` are omitted |
+| `write_html` | `html`, `target_id`, `mode`, `near`, `place` | Writes HTML into a frame or onto the board |
+| `update_styles` | `updates: [{node_ids, styles}]` | Changes styles of nodes |
+| `set_text` | `updates: [{node_id, text}]` | Replaces the text of text nodes |
+| `move_nodes` | `moves: [{node_id, x,y \| dx,dy \| parent_id, index \| before \| after \| place}]` | Moves or reparents nodes |
+| `duplicate_nodes` | `node_ids`, `place` | Copies nodes with their children |
+| `delete_nodes` | `node_ids` | Deletes nodes or ink groups |
+| `draw_ink` | `shape`, `target`, `strokes` \| `svg_path`, `place`, `color`, `tool` | Draws ink: circle, underline, tick, cross, arrow, or free strokes |
+| `find_space` | `width`, `height`, `near`, `inside_view` | An empty rect for new material |
+| `focus` | `node_id` \| `region`, `padding`, `zoom` | Moves the learner's view to a target |
+| `finish_working` | `node_ids` | Clears the agent's "working" outline |
 
 ## Learning folder
 
-A folder is **set up for learning** when `AGENTS.md` exists at its root. While
-a folder is not set up (and "Don't ask" is off), the sidebar shows a quiet row
-under the folder header: a graduation cap, "Set up for learning" and an accent
-dot. A click opens a small menu in the app's menu style, "Set up this folder":
+A folder is set up for learning when `AGENTS.md` exists at its root. Setup
+copies the templates in `resources/learning-folder/` and never overwrites a
+file. Edit the templates to change what new folders get.
 
-- The file list: `AGENTS.md`, `plan.md`, `learner.md`, and
-  `sessions/ topics/ materials/` on one line, each tagged "new" or "kept".
-  `boards/` and `.learning-space/` are not listed, but setup still creates
-  them.
-- **Set up** creates only the missing items and never overwrites a file. The
-  menu closes, the row goes away, a toast confirms and the file tree
-  refreshes. With nothing missing, the button reads "Nothing to add" and
-  closes the menu.
-- **Don't ask for this folder** hides the row and is remembered in
-  `state.json` (`setupDontAsk`).
-- A click outside or Escape closes the menu. The row stays.
+## Dev automation
 
-**File → Set Up Folder for Learning…** and "Set Up for Learning…" in the
-sidebar folder menu open the same menu, also in a folder that is set up (then
-every item is "kept").
-
-Setup creates:
-
-| Path | From |
-| --- | --- |
-| `AGENTS.md`, `plan.md`, `learner.md` | Copies of the templates in `resources/learning-folder/` |
-| `sessions/`, `topics/`, `materials/` | Empty folders, each with a `.gitkeep` |
-| `boards/` | An empty folder (the canvas offers "New board") |
-| `.learning-space/guide.md` | A stub: one HTML comment that explains the overrides |
-
-Edit the templates in `resources/learning-folder/` to change what new folders
-get. Folders that are set up already keep their own copies.
-
-### Board guide and server instructions
-
-The agent text lives in `resources/guide.md` (what `get_guide` returns) and
-`resources/instructions.md` (the MCP server instructions). The app reads them
-fresh on every use, so an edit needs no rebuild.
-
-A learning folder can change both:
-
-| File | Effect | Applies |
-| --- | --- | --- |
-| `.learning-space/guide.md` | Appended to the built-in guide under "## Guidance for this learning folder" | On the agent's next `get_guide` call |
-| `.learning-space/instructions.md` | Appended to the built-in instructions | To new MCP sessions (read at `initialize`) |
-
-A file that starts with front matter `mode: replace` replaces the built-in
-text instead:
-
-```markdown
----
-mode: replace
----
-# My own board guide
-```
-
-HTML comments (`<!-- … -->`) never reach the agent; a file with only comments
-changes nothing. In `guide.md`, `<!-- topic: name -->` under a `## ` heading
-names the section for `get_guide`'s `topic` parameter (otherwise the topic is
-the heading as a slug); the folder guidance is appended only when `topic` is
-omitted. The sidebar folder menu → **Edit Board Guide…** shows the folder's
-guide in the preview panel and reveals it in Finder.
-
-### Packaging
-
-The app reads `resources/` from the `space/` folder in dev and `npm start`
-(`resourcesDir()` in `src/main/resources.ts`). A packaged build must ship the
-folder as `extraResources` (`{ "from": "resources", "to": "resources" }`), so
-it sits at `process.resourcesPath/resources`.
-The shim runs `out/relay/index.js` with Electron as Node, so a packaged build
-must also unpack it from the asar (`asarUnpack: ["out/relay/**"]`);
-`relayScriptPath()` in `src/main/agent-home.ts` then points at
-`app.asar.unpacked`.
-
-## Layout
-
-| Path | What |
-| --- | --- |
-| `src/main/` | Electron main process: window, menu, dev hooks, folder access (`folder.ts`), `state.json` (`state.ts`), the MCP server (`mcp.ts`), folder setup (`setup.ts`), agent text loading (`guide.ts`) |
-| `resources/` | Bundled at runtime: `guide.md`, `instructions.md`, `learning-folder/` templates |
-| `src/preload/` | Sandboxed preload; exposes `window.space` |
-| `src/shared/space-api.ts` | The `window.space` type and IPC channel names, shared by both sides |
-| `src/shared/board-format.ts` | Board file parse/serialize (one item per line), seq stamping |
-| `src/renderer/src/board/` | Ink board, ported from `web/src/board/`; offscreen export in `paint.ts`, removal log in `changes.ts` |
-| `src/renderer/src/agent/` | Answers the MCP server's requests from the live board (`handler.ts`) |
-| `src/renderer/` | React UI; tokens in `src/renderer/src/styles/tokens.css` |
-
-The window runs with `contextIsolation: true`, `nodeIntegration: false` and
-`sandbox: true`.
-
-## Dev automation hooks
-
-These environment variables let an agent check the UI without computer use.
-They work with `npm run dev` and `npm start`.
+These environment variables work with `npm run dev`:
 
 | Variable | Effect |
 | --- | --- |
-| `SPACE_CAPTURE=/abs/path.png` | After the renderer loads, wait 1 s, capture the window, write the PNG, log `captured <path>`. |
-| `SPACE_CAPTURE_QUIT=1` | With `SPACE_CAPTURE`: quit the app after the capture. |
-| `SPACE_CAPTURE_DELAY=ms` | Wait this long after load before the capture (default 1000). |
-| `SPACE_FOLDER=/abs/dir` | Open this learning folder at launch (overrides the last folder). |
-| `SPACE_OPEN=rel/path` | With a folder open: show this file in the preview panel at launch. |
+| `SPACE_FOLDER=/abs/dir` | Open this learning folder at launch. |
+| `SPACE_OPEN=rel/path` | Show this file in the preview panel at launch. |
+| `SPACE_CAPTURE=/abs/path.png` | Capture the window to a PNG after load. `SPACE_CAPTURE_QUIT=1` quits after it; `SPACE_CAPTURE_DELAY=ms` sets the wait (default 1000). |
 | `SPACE_MCP_PORT=port` | Serve MCP on this port instead of 47821. |
-| `SPACE_REMOTE_DEBUG=port` | Dev builds only: Chromium remote debugging on 127.0.0.1:`port`, the page hook `window.__spaceDev`, and no background throttling, so `scripts/drive.mjs` can drive a covered window. |
+| `SPACE_REMOTE_DEBUG=port` | Dev builds only: Chromium debug port for `scripts/drive.mjs`. |
+| `SPACE_CONNECT_DRY_RUN=1` | **Install** for Claude Desktop logs the `.mcpb` path and does not open it. |
 
-Example:
+To check the Connect buttons without your real agent config, set `HOME`,
+`CLAUDE_CONFIG_DIR` and `CODEX_HOME` to scratch folders.
 
-```sh
-SPACE_FOLDER=~/learn/orbits SPACE_OPEN=notes/kepler.md \
-  SPACE_CAPTURE=/tmp/space.png SPACE_CAPTURE_QUIT=1 npm run dev
-```
-
-### Drive the canvas: `scripts/drive.mjs`
-
-A check agent must not use computer use for input: macOS refuses drags into a
-background window, and the learner keeps working in front. Start the app with
-`SPACE_REMOTE_DEBUG=<port>`, then drive it over the DevTools protocol. Input
-reaches the page while the window is behind other windows.
+`scripts/drive.mjs` drives a running dev app over the debug port. The input
+reaches the window also when it is behind other windows. Do not use computer
+use for input.
 
 | Command | Effect |
 | --- | --- |
-| `draw <file.json \| -> [--tool pen\|highlighter] [--no-pan]` | Draws strokes given in board coordinates, `[[[x, y, pressure], ...], ...]`, as pen input with pressure. It pans the board first so every point is on screen. |
-| `draw --strokes '<json>'` | The same, with the strokes inline. |
-| `key <combo>` | Sends a key to the page: `v`, `Delete`, `Escape`, `Meta+z`, `Shift+Meta+z`. |
-| `click <x> <y> [--shift]` | Clicks at window CSS pixels. With the pen tool, a click on the canvas draws a dot. |
-| `dblclick <x> <y>` | Double-clicks (drills into a frame; edits a text node). |
-| `drag <x1> <y1> <x2> <y2> [--shift] [--steps N]` | A mouse drag: move, resize (start on a handle), lasso (a straight drag has no area: use several points for a lasso). |
-| `type "<text>"` | Inserts text into the focused field (the text editor). |
-| `wheel <x> <y> <dx> <dy> [--ctrl]` | A wheel / trackpad scroll at window CSS pixels (pans the board). With `--ctrl` it is a trackpad pinch (zoom). |
-| `node-rect <id>` | A node's window rect `{x, y, width, height, cx, cy}`, from the layout cache, plus `dom`: the element's real on-screen rect. The two must match; a difference means the content layer did not follow the camera. |
-| `screenshot <out.png>` | Captures the whole window (for UI checks). |
-| `eval-state` | Prints the board path, node count, zoom, camera centre, tool, selection ids, whether a text editor is open, and every node (id, kind, parent, text, colour, world bounds) as JSON. |
+| `draw <file.json \| -> [--tool pen\|highlighter]`, `draw --strokes '<json>'` | Draws pen strokes with pressure, in board coordinates |
+| `key <combo>` | Sends a key, for example `Meta+z` |
+| `click`, `dblclick`, `drag`, `wheel` | Mouse input at window CSS pixels |
+| `type "<text>"` | Types into the focused field |
+| `node-rect <id>` | A node's window rect, from the layout cache and the DOM |
+| `screenshot <out.png>` | Captures the window |
+| `eval-state` | Board, zoom, tool, selection and nodes as JSON |
 
-The port comes from `--port`, else `$SPACE_REMOTE_DEBUG`, else 9339. The exit
-code is 0 on success and 1 on error (for example, no app on the port).
-A demo learning folder for checks: `node scripts/boards/make-demo-folder.mjs <folder>`
-writes `boards/demo-v2.board.json` (a v2 board: a flex card with text, math, an SVG
-and ink inside it, a free-layout frame, an image, loose ink), `assets/earth.png`
-and `boards/old-v1.board.json` (a step 1 ink-only board). Open it with
-`SPACE_FOLDER=<folder>`. To use the demo board in another folder, copy
-`scripts/boards/demo-v2.board.json` into it and put any PNG at `assets/earth.png`.
-Reusable strokes are in `scripts/strokes/`: `two-plus-two.json` and
-`equals-four.json` (handwriting about 100 pt tall, left of the board centre).
+The port comes from `--port`, else `$SPACE_REMOTE_DEBUG`, else 9339.
+
+- `node scripts/boards/make-demo-folder.mjs <folder>` makes a demo learning
+  folder with a v2 board (frames, text, math, SVG, an image, ink) and an old v1 board.
+- `scripts/strokes/` holds sample handwriting: `two-plus-two.json` and `equals-four.json`.
 
 ```sh
-# 1. Start the app, then draw "2 + 2" as pen strokes
 SPACE_REMOTE_DEBUG=9339 SPACE_FOLDER=~/learn/demo npm run dev
 node scripts/drive.mjs draw scripts/strokes/two-plus-two.json
-
-# 2. Undo the last stroke
-node scripts/drive.mjs key Meta+z
-
-# 3. Capture the window
 node scripts/drive.mjs screenshot /tmp/space-window.png
 ```
-
-App state (last folder, recent folders, the camera per board) lives in
-`~/Library/Application Support/Learning Space/state.json`, not in the board
-files, so panning never changes a file that Git tracks.
-
-The capture has the window's real size. On a small screen macOS shrinks the
-1440×900 default to fit.

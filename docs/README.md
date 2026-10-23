@@ -6,17 +6,21 @@ positioning source.
 
 ## Current sources
 
-- [`product-vision.md`](product-vision.md) — current product direction,
-  experience principles, positioning boundaries, and unresolved terminology.
-  Use this for product and landing-page decisions.
-- [`../README.md`](../README.md) — current iPad implementation, setup,
-  architecture, capabilities, and prototype limitations.
-- [`../server/README.md`](../server/README.md) — current backend behavior and
-  operations.
-- [`TODO.md`](TODO.md) — known engineering and product debt that remains open.
-- [`learning-space/`](learning-space/) — proposed experiment (2026-10-23): a
-  desktop canvas with no AI inside, which any agent drives over MCP. Read
-  `idea.md` before `plan.md`. Not yet the product direction.
+- [`learning-space/README.md`](learning-space/README.md) — **the active line
+  of work** (branch `learning-space`): a desktop canvas with no AI inside,
+  which any agent uses over MCP. Start there: status, reading order
+  (idea, architecture, design system, decisions, working guide, research,
+  plan) and glossary.
+- [`product-vision.md`](product-vision.md) — product language, experience
+  principles and positioning. Written for the built-in tutor; it still holds
+  the learning principles. Use it for product and landing-page decisions.
+- [`TODO.md`](TODO.md) — known debt of the paused tutor stack.
+
+## Paused stack (reference)
+
+- [`../README.md`](../README.md) — the iPad client (paused): setup,
+  architecture, capabilities, limitations.
+- [`../server/README.md`](../server/README.md) — the tutor backend (paused).
 
 ## Exact design records
 
