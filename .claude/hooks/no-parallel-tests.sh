@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Blocks test-suite runs from Claude sessions.
 #
+# Since 2026-10-23 the project also writes no tests at all (AGENTS.md): the
+# founder verifies end to end and iterates fast.
+#
 # Reason: several Claude sessions share this Mac. Concurrent `xcodebuild test`
 # and `pytest` runs saturate the CPU, contend on DerivedData, and contend on
 # the shared Neon test branch. Every build/code cycle gets much slower.
@@ -58,8 +61,14 @@ while IFS= read -r seg; do
   [ $# -eq 0 ] && continue
 
   case "$(basename -- "$1")" in
-    pytest | py.test | xctest)
+    pytest | py.test | xctest | vitest | jest)
       is_test=1
+      ;;
+    npm | pnpm | yarn | bun)
+      printf '%s' "$*" | grep -Eq '^[^[:space:]]+[[:space:]]+((run|run-script)[[:space:]]+)?(test|t)([[:space:]:]|$)' && is_test=1
+      ;;
+    playwright)
+      [ "${2:-}" = "test" ] && is_test=1
       ;;
     python | python3)
       printf '%s' "$*" | grep -Eq '(^|[[:space:]])-m[[:space:]]+py\.?test([[:space:]]|$)' && is_test=1
@@ -81,7 +90,7 @@ if [ "$is_test" -eq 1 ]; then
   "hookSpecificOutput": {
     "hookEventName": "PreToolUse",
     "permissionDecision": "deny",
-    "permissionDecisionReason": "BLOCKED: test-suite runs are disabled in this project. Several Claude sessions share this Mac, and parallel test runs make every build/code cycle far slower for the user. Do NOT retry this command. Do NOT work around it by calling the test binary, xctest, or a runner script directly. Write the tests, then hand the user the exact command in a bash code block and let them run it themselves."
+    "permissionDecisionReason": "BLOCKED: test-suite runs are disabled in this project. Several Claude sessions share this Mac, and parallel test runs make every build/code cycle far slower for the user. Do NOT retry this command. Do NOT work around it by calling the test binary, xctest, or a runner script directly. This project also writes no new tests (see AGENTS.md): verify by building and by using the real app end to end."
   }
 }
 JSON

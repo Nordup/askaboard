@@ -9,6 +9,7 @@ truth for product direction and language.
 
 | Path | What | Status |
 | --- | --- | --- |
+| `space/` | Learning Space: Electron canvas app with no AI inside; agents drive it over MCP | **Experiment** on branch `learning-space` — read `docs/learning-space/idea.md`, then `plan.md` |
 | `web/` | React/TypeScript/Vite desktop client | **Active product** — see `web/README.md` |
 | `server/` | FastAPI tutor backend (Python, `uv`, Postgres/Neon) — the only thing that holds provider keys | Active — see `server/README.md` |
 | `MathTutor/`, `MathTutorTests/`, `MathTutorUITests/` | SwiftUI iPad client | **Paused**, preserved; its behavior is the reference the web port follows |
@@ -29,12 +30,12 @@ python3 scripts/web-dev.py --qa   # same, with dummy provider keys (no paid call
 
 ## Hard rules
 
-- **Do not run test suites.** A hook blocks `pytest`, `xcodebuild test`/`build-for-testing` and `swift test`. Write the tests, verify by building/importing (`uv run python -c "import …"`, `npm run build`, `xcrun swiftc -parse`), and give the user the exact command to run. The server suite is DB-bound and takes ~1 h; slow is not hung.
-- **The prompt is append-only within a session.** Turn N+1 must be a byte-prefix extension of turn N. Never re-inject memory, profile, mastery or board state mid-session: state a fact once, then append deltas. Pin changes here with a multi-turn prefix-sweep test.
+- **No tests: do not write them and do not run them** (rule from 2026-10-23). The founder chose this for iteration speed (about 10x). Do not add test files, test scripts or test dependencies, and do not update existing tests. A hook blocks `pytest`, `vitest`, `jest`, `npm test`, `playwright test`, `xcodebuild test`/`build-for-testing` and `swift test`. Verify by building (`npm run build`, `uv run python -c "import …"`, `xcrun swiftc -parse`) and by using the real app end to end (computer use, the built-in browser, the app's own MCP tools). The founder tests by hand and iterates fast.
+- **The prompt is append-only within a session.** Turn N+1 must be a byte-prefix extension of turn N. Never re-inject memory, profile, mastery or board state mid-session: state a fact once, then append deltas.
 - **Never fence the live turn.** Replayed text (history, memory, files) is quoted as data by `app/tutor/quoting.py`; the learner's current message goes as its own `user` message, or the model sees no request and calls no tools.
 - **Memory writes stay the model's job.** No regex/code-side "remember this" detectors. If the tutor fails to save something, fix propensity (read `llm_calls.request` and the reasoning summary), not plumbing. Read `docs/superpowers/specs/2026-08-15-memory-redesign-design.md` before touching memory code.
-- **Fix the bug class, not the instance.** Point guards get reverted. Restructure the unit so the failure is impossible and add a sweep/invariant test over the failing dimension.
-- **Visual changes start in Paper** (file `01KZAH9BZ4FRZXKG2309B7SSRG`), then get re-extracted to code. Never code-first.
+- **Fix the bug class, not the instance.** Point guards get reverted. Restructure the unit so the failure is impossible.
+- **Visual changes start in Paper** (file `01KZAH9BZ4FRZXKG2309B7SSRG`), then get re-extracted to code. Never code-first. **Exception:** the Learning Space app (`space/`) is designed in code for now. The founder has no Paper subscription; the design iterates later.
 - **Voice cost is a product constraint** (~$0.28/min unoptimized). Prefer caching, truncation and metering. Do not propose routing to cheaper models — they were rejected because they misread intent and break board output.
 - **Run exactly one backend process.** The `view_board` rendezvous is in-process; a `--reload` restart mid-turn makes the board POST 404 and the tutor says it can't see the board. Check `logs/server.log` for a restart before blaming the client.
 - **The working tree is often dirty with the user's own work.** Never `git checkout`/`git restore`/`stash` a file to undo your edits — remove your own change with an edit. Re-read files before editing; the user edits and builds concurrently.
