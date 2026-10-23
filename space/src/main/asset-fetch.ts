@@ -1,31 +1,41 @@
 import { lookup } from 'node:dns/promises'
+import { Agent, request as httpsRequest } from 'node:https'
+import type { IncomingMessage } from 'node:http'
+import type { LookupFunction } from 'node:net'
 import { BlockList, isIP } from 'node:net'
-import { net, session } from 'electron'
 
 /**
  * Image downloads for agent-chosen URLs (write_html <img src="https://…">).
  * The URL comes from an agent, so treat it as hostile (SSRF):
  * - https only; the host is normalized (lowercase, no trailing dot);
  * - every resolved address must be public: no loopback, private, link-local,
- *   CGNAT, unspecified, multicast or reserved ranges (IPv4-mapped IPv6 too);
+ *   CGNAT, unspecified, multicast, documentation or reserved ranges, and no
+ *   IPv6 address that embeds an IPv4 address (mapped, compatible, NAT64,
+ *   6to4, Teredo);
+ * - the connection is pinned to the address that passed the check: a custom
+ *   `lookup` returns it, so the name is never resolved a second time (no DNS
+ *   rebinding). SNI and the Host header carry the original name, and the
+ *   certificate is verified against it as usual;
+ * - after connect, the socket's remote address is checked again;
  * - redirects are followed by hand, at most MAX_HOPS, each one checked again;
- * - the request goes through an in-memory session with no cookies or cache
- *   shared with the app;
- * - size cap and an image/* content type.
+ * - Node https: no cookies, no cache, a private agent (no proxy from env);
+ * - size cap while streaming, an image/* content type, one total deadline.
  * Errors stay generic: no upstream detail goes back to the agent.
- *
- * Known gap: the check resolves the name, then the request resolves it again,
- * so a DNS answer that changes between the two (rebinding) is not caught.
  */
 
 const MAX_HOPS = 3
-const TIMEOUT_MS = 20_000
+const TIMEOUT_MS = 15_000
 
 export class DownloadError extends Error {}
 const refused = (): DownloadError => new DownloadError('Image download refused: that address is not allowed.')
 const failed = (): DownloadError => new DownloadError('Image download failed.')
+const tooLarge = (maxBytes: number): DownloadError =>
+  new DownloadError(`Image download failed: larger than ${maxBytes / 1024 / 1024} MB.`)
 
-const blocked = new BlockList()
+// One list per family: Node's BlockList matches an IPv4 query against IPv6
+// rules such as ::ffff:0:0/96, so a shared list would block every IPv4 address.
+const blocked4 = new BlockList()
+const blocked6 = new BlockList()
 for (const [network, prefix] of [
   ['0.0.0.0', 8], // "this network", unspecified
   ['10.0.0.0', 8],
@@ -34,51 +44,52 @@ for (const [network, prefix] of [
   ['169.254.0.0', 16],
   ['172.16.0.0', 12],
   ['192.0.0.0', 24],
+  ['192.0.2.0', 24], // documentation
   ['192.168.0.0', 16],
   ['198.18.0.0', 15], // benchmarking
+  ['198.51.100.0', 24], // documentation
+  ['203.0.113.0', 24], // documentation
   ['224.0.0.0', 4], // multicast
-  ['240.0.0.0', 4] // reserved, broadcast
+  ['240.0.0.0', 4], // reserved
+  ['255.255.255.255', 32] // broadcast
 ] as const) {
-  blocked.addSubnet(network, prefix, 'ipv4')
+  blocked4.addSubnet(network, prefix, 'ipv4')
 }
 for (const [network, prefix] of [
   ['::', 128], // unspecified
   ['::1', 128],
+  ['::', 96], // IPv4-compatible (deprecated)
+  ['::ffff:0:0', 96], // IPv4-mapped
+  ['64:ff9b::', 96], // NAT64
+  ['64:ff9b:1::', 48], // local NAT64
+  ['2001::', 32], // Teredo
+  ['2001:db8::', 32], // documentation
+  ['2002::', 16], // 6to4
   ['fc00::', 7], // unique local
   ['fe80::', 10], // link-local
+  ['fec0::', 10], // site-local (deprecated)
   ['ff00::', 8] // multicast
 ] as const) {
-  blocked.addSubnet(network, prefix, 'ipv6')
+  blocked6.addSubnet(network, prefix, 'ipv6')
 }
 
-/** The IPv4 address inside an IPv4-mapped (::ffff:a.b.c.d) or NAT64 (64:ff9b::a.b.c.d) IPv6 address. */
-function embeddedIpv4(address: string): string | null {
-  const lower = address.toLowerCase()
-  const dotted = /^(?:::ffff:|64:ff9b::)(\d+\.\d+\.\d+\.\d+)$/.exec(lower)
-  if (dotted) return dotted[1]
-  const hex = /^(?:::ffff:|64:ff9b::)([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(lower)
-  if (hex) {
-    const high = parseInt(hex[1], 16)
-    const low = parseInt(hex[2], 16)
-    return `${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`
-  }
-  return null
-}
-
-/** True when an IP address must not be fetched. */
+/** True when an IP address must not be fetched. Anything that is not an IP address is blocked. */
 export function isBlockedAddress(address: string): boolean {
   const family = isIP(address)
-  if (family === 4) return blocked.check(address, 'ipv4')
-  if (family === 6) {
-    const inner = embeddedIpv4(address)
-    if (inner) return blocked.check(inner, 'ipv4')
-    return blocked.check(address, 'ipv6')
-  }
+  if (family === 4) return blocked4.check(address, 'ipv4')
+  if (family === 6) return blocked6.check(address, 'ipv6')
   return true
 }
 
-/** Check one URL: https, a normalized host, and only public addresses. Returns the normalized URL. */
-async function checkUrl(raw: string): Promise<URL> {
+interface Target {
+  url: URL
+  host: string // normalized, no brackets
+  address: string // the checked address the connection is pinned to
+  family: 4 | 6
+}
+
+/** Check one URL: https, a normalized host, and only public addresses. Returns the pinned target. */
+async function checkUrl(raw: string, resolve: typeof lookup): Promise<Target> {
   let url: URL
   try {
     url = new URL(raw)
@@ -89,68 +100,102 @@ async function checkUrl(raw: string): Promise<URL> {
   const host = url.hostname.toLowerCase().replace(/\.$/, '').replace(/^\[|\]$/g, '')
   if (!host || host === 'localhost' || host.endsWith('.localhost')) throw refused()
   url.hostname = isIP(host) === 6 ? `[${host}]` : host
-  let addresses: { address: string }[]
-  if (isIP(host)) addresses = [{ address: host }]
+  let addresses: { address: string; family: number }[]
+  if (isIP(host)) addresses = [{ address: host, family: isIP(host) }]
   else {
     try {
-      addresses = await lookup(host, { all: true, verbatim: true })
+      addresses = await resolve(host, { all: true, verbatim: true })
     } catch {
       throw failed()
     }
   }
   if (!addresses.length || addresses.some(({ address }) => isBlockedAddress(address))) throw refused()
-  return url
-}
-
-let fetchSession: Electron.Session | null = null
-function assetSession(): Electron.Session {
-  // No "persist:" prefix: in memory only, separate from the app's cookies and cache.
-  fetchSession ??= session.fromPartition('assets-fetch', { cache: false })
-  return fetchSession
+  const { address, family } = addresses[0]
+  if (family !== 4 && family !== 6) throw refused()
+  return { url, host, address, family }
 }
 
 type Hop =
   | { kind: 'redirect'; location: string }
-  | { kind: 'response'; status: number; headers: Record<string, string | string[]>; data: Buffer }
+  | { kind: 'response'; type: string; data: Buffer }
 
-/**
- * One request, no automatic redirects. Electron's fetch() throws on
- * redirect: 'manual', so this uses net.request, whose "redirect" event lets
- * us read the Location and stop.
- */
-function requestOnce(url: URL, maxBytes: number, check: (headers: Record<string, string | string[]>, status: number) => DownloadError | null): Promise<Hop> {
+const header = (response: IncomingMessage, name: string): string => {
+  const value = response.headers[name]
+  return (Array.isArray(value) ? value[0] : value) ?? ''
+}
+
+/** One GET to the pinned address, no automatic redirects. */
+function requestOnce(
+  target: Target,
+  maxBytes: number,
+  allowedTypes: Readonly<Record<string, string>>,
+  deadline: number
+): Promise<Hop> {
   return new Promise<Hop>((resolve, reject) => {
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) {
+      reject(failed())
+      return
+    }
+    // Answer every lookup with the checked address: no second resolution.
+    const pinned: LookupFunction = (_hostname, options, callback) => {
+      if (options.all) callback(null, [{ address: target.address, family: target.family }])
+      else callback(null, target.address, target.family)
+    }
+    const agent = new Agent({ keepAlive: false, maxCachedSessions: 0 })
+    const request = httpsRequest({
+      agent,
+      protocol: 'https:',
+      host: target.host,
+      port: target.url.port || 443,
+      path: `${target.url.pathname}${target.url.search}`,
+      method: 'GET',
+      lookup: pinned,
+      // SNI must be a name, never an IP literal; certificate checks stay on (rejectUnauthorized defaults to true).
+      servername: isIP(target.host) ? undefined : target.host,
+      headers: {
+        Host: target.url.host,
+        Accept: 'image/*',
+        'Accept-Encoding': 'identity',
+        // Some hosts (Wikimedia) refuse requests without a User-Agent.
+        'User-Agent': 'LearningSpace/0.0.1 (image download)'
+      }
+    })
     let settled = false
     const finish = (fn: () => void): void => {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      request.destroy()
+      agent.destroy()
       fn()
     }
-    const request = net.request({
-      url: url.toString(),
-      method: 'GET',
-      session: assetSession(),
-      redirect: 'manual',
-      credentials: 'omit',
-      useSessionCookies: false
-    })
-    const timer = setTimeout(() => {
-      request.abort()
-      finish(() => reject(failed()))
-    }, TIMEOUT_MS)
-    request.setHeader('Accept', 'image/*')
-    request.on('redirect', (_status, _method, redirectUrl) => {
-      request.abort()
-      finish(() => resolve({ kind: 'redirect', location: redirectUrl }))
-    })
+    const timer = setTimeout(() => finish(() => reject(failed())), remaining)
     request.on('error', () => finish(() => reject(failed())))
     request.on('response', (response) => {
-      const headers = response.headers as Record<string, string | string[]>
-      const problem = check(headers, response.statusCode)
-      if (problem) {
-        request.abort()
-        finish(() => reject(problem))
+      // Defence in depth: the peer we actually reached must also be public.
+      const remote = response.socket?.remoteAddress
+      if (!remote || isBlockedAddress(remote)) {
+        finish(() => reject(refused()))
+        return
+      }
+      const status = response.statusCode ?? 0
+      if ([301, 302, 303, 307, 308].includes(status)) {
+        const location = header(response, 'location')
+        finish(() => (location ? resolve({ kind: 'redirect', location }) : reject(failed())))
+        return
+      }
+      if (status < 200 || status >= 300) {
+        finish(() => reject(failed()))
+        return
+      }
+      const type = header(response, 'content-type').split(';')[0].trim().toLowerCase()
+      if (!allowedTypes[type]) {
+        finish(() => reject(new DownloadError('Image download failed: the address does not serve a supported image.')))
+        return
+      }
+      if (Number(header(response, 'content-length') || 0) > maxBytes) {
+        finish(() => reject(tooLarge(maxBytes)))
         return
       }
       const chunks: Buffer[] = []
@@ -158,46 +203,38 @@ function requestOnce(url: URL, maxBytes: number, check: (headers: Record<string,
       response.on('data', (chunk: Buffer) => {
         size += chunk.length
         if (size > maxBytes) {
-          request.abort()
-          finish(() => reject(new DownloadError(`Image download failed: larger than ${maxBytes / 1024 / 1024} MB.`)))
+          finish(() => reject(tooLarge(maxBytes)))
           return
         }
         chunks.push(chunk)
       })
-      response.on('end', () => finish(() => resolve({ kind: 'response', status: response.statusCode, headers, data: Buffer.concat(chunks) })))
+      response.on('end', () => finish(() => resolve({ kind: 'response', type, data: Buffer.concat(chunks) })))
       response.on('error', () => finish(() => reject(failed())))
+      response.on('aborted', () => finish(() => reject(failed())))
     })
     request.end()
   })
 }
 
-const header = (headers: Record<string, string | string[]>, name: string): string => {
-  const value = headers[name]
-  return (Array.isArray(value) ? value[0] : value) ?? ''
-}
-
-/** Download an image. Resolves the bytes and the content type (image/* only). */
+/**
+ * Download an image. Resolves the bytes and the content type (image/* only).
+ * `resolve` is the DNS lookup; it exists only so a check script can stub it.
+ */
 export async function downloadImage(
   raw: string,
   maxBytes: number,
-  allowedTypes: Readonly<Record<string, string>>
+  allowedTypes: Readonly<Record<string, string>>,
+  resolve: typeof lookup = lookup
 ): Promise<{ data: Buffer; type: string; url: URL }> {
-  let url = await checkUrl(raw)
-  const typeOf = (headers: Record<string, string | string[]>): string => header(headers, 'content-type').split(';')[0].trim().toLowerCase()
+  const deadline = Date.now() + TIMEOUT_MS
+  let target = await checkUrl(raw, resolve)
   for (let hop = 0; ; hop++) {
-    const result = await requestOnce(url, maxBytes, (headers, status) => {
-      if (status < 200 || status >= 300) return failed()
-      if (!allowedTypes[typeOf(headers)]) return new DownloadError('Image download failed: the address does not serve a supported image.')
-      if (Number(header(headers, 'content-length') || 0) > maxBytes) {
-        return new DownloadError(`Image download failed: larger than ${maxBytes / 1024 / 1024} MB.`)
-      }
-      return null
-    })
+    const result = await requestOnce(target, maxBytes, allowedTypes, deadline)
     if (result.kind === 'redirect') {
       if (hop >= MAX_HOPS) throw failed()
-      url = await checkUrl(new URL(result.location, url).toString())
+      target = await checkUrl(new URL(result.location, target.url).toString(), resolve)
       continue
     }
-    return { data: result.data, type: typeOf(result.headers), url }
+    return { data: result.data, type: result.type, url: target.url }
   }
 }
