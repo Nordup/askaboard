@@ -97,7 +97,7 @@ async function findTools(): Promise<Tools> {
 
 type Cli = 'claude' | 'codex'
 
-const LABELS: Record<Cli, string> = { claude: 'Claude Code', codex: 'Codex' }
+const LABELS: Record<Cli, string> = { claude: 'Claude Code', codex: 'ChatGPT & Codex' }
 const CLIENT_OF: Record<Cli, 'claude-code' | 'codex'> = { claude: 'claude-code', codex: 'codex' }
 
 /** What the config of one CLI holds. null: that part of the check failed. */
@@ -231,7 +231,7 @@ function claudeAppHasExtension(): boolean {
 }
 
 function claudeAppStatus(): AgentClientStatus {
-  const base = { id: 'claude-app' as const, label: 'Claude Desktop (chat)' }
+  const base = { id: 'claude-app' as const, label: 'Claude Desktop — Chat' }
   if (claudeAppHasExtension()) return { ...base, state: 'connected', detail: null, action: null }
   if (!claudeAppPath()) return { ...base, state: 'missing', detail: 'Claude Desktop was not found in Applications.', action: null }
   return { ...base, state: 'available', detail: null, action: 'install-extension' }
