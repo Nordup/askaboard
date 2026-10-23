@@ -21,6 +21,7 @@ Space) and the active line of work: branch `learning-space`, app code in
 | Folder setup (`AGENTS.md` template), editable board guide | Done |
 | Public plugin repo, stdio relay, plugin-first Connect popover | Done |
 | One shared design system for menus | Done |
+| **The agent–canvas loop works like a tutor** | **Current focus.** Problems found, causes unknown, no solution chosen: [`tutor-vision.md`](tutor-vision.md) |
 | Tutor quality (prompting, visual variety) | The founder iterates |
 | Plain chat apps (ChatGPT web, Claude chat) with folder file tools | Later |
 | App packaging, signing, auto-update | Later |
@@ -34,6 +35,9 @@ The web client (`web/`), the tutor backend (`server/`) and the iPad client
 
 1. [`idea.md`](idea.md) — the founder's original idea, part by part, in the
    founder's words. Why the app exists.
+   - [`tutor-vision.md`](tutor-vision.md) — the founder's second message
+     (2026-10-24), in the same form: the problems in the agent–canvas loop
+     and the tutor the founder wants. The current focus.
 2. [`architecture.md`](architecture.md) — how the app fits together and
    where each thing lives.
 3. [`design-system.md`](design-system.md) — the UI rules. Required before
