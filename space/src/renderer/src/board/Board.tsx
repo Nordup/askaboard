@@ -92,6 +92,11 @@ export interface BoardHandle {
    * so the layout cache has the new nodes' bounds.
    */
   agentCommit(next: BoardNode[]): void
+  /**
+   * Change the last agent commit without a new undo step (a post-layout
+   * correction of the same write), then lay it out before returning.
+   */
+  agentAmend(next: BoardNode[]): void
   /** Measure the content layer now (after images load). */
   remeasure(): void
   /** Show agent presence outlines on these top-level nodes. */
@@ -528,12 +533,12 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
 
   /** Commit an edit: record undo, stamp seq on new or changed nodes, notify. */
   const commitNodes = useCallback(
-    (next: BoardNode[], snapshot: BoardNode[] = nodesRef.current, by: Author = 'learner') => {
+    (next: BoardNode[], snapshot: BoardNode[] = nodesRef.current, by: Author = 'learner', record = true) => {
       if (next.length === snapshot.length && next.every((node, i) => node === snapshot[i])) {
         if (nodesRef.current !== snapshot) setNodes(snapshot)
         return
       }
-      history.record(snapshot)
+      if (record) history.record(snapshot)
       const firstSeq = nextSeqRef.current
       const stamped = stampChanged(snapshot, next, nextSeqRef.current)
       nextSeqRef.current = stamped.nextSeq
@@ -1220,6 +1225,11 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         measure()
         const present = new Set(next.map((node) => node.id))
         if (selectedIdsRef.current.some((id) => !present.has(id))) setSelectedIds(selectedIdsRef.current.filter((id) => present.has(id)))
+      },
+      agentAmend: (next) => {
+        if (editingRef.current) commitEditing()
+        flushSync(() => commitNodes(next, nodesRef.current, 'agent', false))
+        measure()
       },
       remeasure: measure,
       setPresence,

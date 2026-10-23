@@ -1,4 +1,5 @@
 import { ChevronRight, File, FileBraces, FileCode, FileImage, FileText, Folder, FolderOpen, LayoutDashboard } from 'lucide-react'
+import type { CSSProperties } from 'react'
 import { isBoardPath } from '@shared/board-format'
 import type { FileNode } from '@shared/space-api'
 
@@ -16,6 +17,20 @@ function FileIcon({ name }: { name: string }) {
   return <File {...ICON_PROPS} />
 }
 
+const INDENT = 14
+/** Chevron 12 + gap 6 + icon 14 + gap 6: the empty note lines up with the names of sibling rows. */
+const EMPTY_TEXT_OFFSET = 38
+
+/** Left padding of a row; the depth is the number of folders in the row's path. */
+function rowIndent(depth: number): number {
+  return 8 + depth * INDENT
+}
+
+/** A nested list draws a guide line under its parent's chevron, so the depth of a row is visible. */
+function guideStyle(depth: number): CSSProperties {
+  return { '--tree-guide-x': `${rowIndent(depth - 1) + 6}px` } as CSSProperties
+}
+
 interface FileTreeProps {
   nodes: FileNode[]
   expanded: ReadonlySet<string>
@@ -28,14 +43,14 @@ interface FileTreeProps {
 
 export function FileTree({ nodes, expanded, activePaths, onToggle, onOpen, depth = 0 }: FileTreeProps) {
   return (
-    <ul className="tree" role={depth === 0 ? 'tree' : 'group'}>
+    <ul className="tree" role={depth === 0 ? 'tree' : 'group'} style={depth > 0 ? guideStyle(depth) : undefined}>
       {nodes.map((node) => {
         const isOpen = node.kind === 'dir' && expanded.has(node.path)
         return (
           <li key={node.path} role="treeitem" aria-expanded={node.kind === 'dir' ? isOpen : undefined}>
             <button
               className={activePaths.has(node.path) ? 'tree__row tree__row--active' : 'tree__row'}
-              style={{ paddingLeft: 8 + depth * 14 }}
+              style={{ paddingLeft: rowIndent(depth) }}
               title={node.path}
               onClick={() => (node.kind === 'dir' ? onToggle(node.path) : onOpen(node))}
             >
@@ -47,16 +62,25 @@ export function FileTree({ nodes, expanded, activePaths, onToggle, onOpen, depth
               </span>
               <span className="tree__name">{node.name}</span>
             </button>
-            {isOpen && node.children && node.children.length > 0 && (
-              <FileTree
-                nodes={node.children}
-                expanded={expanded}
-                activePaths={activePaths}
-                onToggle={onToggle}
-                onOpen={onOpen}
-                depth={depth + 1}
-              />
-            )}
+            {isOpen &&
+              (node.children && node.children.length > 0 ? (
+                <FileTree
+                  nodes={node.children}
+                  expanded={expanded}
+                  activePaths={activePaths}
+                  onToggle={onToggle}
+                  onOpen={onOpen}
+                  depth={depth + 1}
+                />
+              ) : (
+                // An open folder always shows a row under it. Without this row, an open
+                // empty folder looks like the parent of the rows that follow it.
+                <ul className="tree" role="group" style={guideStyle(depth + 1)}>
+                  <li role="treeitem" aria-disabled="true" className="tree__empty" style={{ paddingLeft: rowIndent(depth + 1) + EMPTY_TEXT_OFFSET }}>
+                    empty
+                  </li>
+                </ul>
+              ))}
           </li>
         )
       })}

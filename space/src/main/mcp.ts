@@ -661,7 +661,7 @@ export class AgentServer {
         title: 'Write HTML as nodes',
         description:
           'Convert HTML (inline styles, flex, text with <b>/<i>/$math$, <svg>, <img>) into board nodes. mode "insert_children" (default) appends into the frame target_id ("root" = top level, auto-placed); ' +
-          'mode "replace" replaces the node target_id with the HTML. With target_id "root", place puts the new top-level nodes relative to a node or ink group. Returns the created top-level ids, a layer-name → id map, their measured bounds after layout, overlaps, and what was ignored. Call get_guide first for the subset. One undo step.',
+          'mode "replace" replaces the node target_id with the HTML. With target_id "root", place puts the new top-level nodes relative to a node or ink group. Auto-placed nodes move after layout so their measured size fits in the learner\'s view when a free spot exists. Returns the created top-level ids, a layer-name → id map, their measured bounds after layout, visible (every touched top-level node fully in the learner\'s view, from the measured bounds; else outside_view lists them), overlaps, and what was ignored. Call get_guide first for the subset. One undo step.',
         inputSchema: {
           html: z.string().max(MAX_HTML_CHARS, `html must be at most ${MAX_HTML_CHARS} characters; write it in smaller parts.`),
           target_id: z.string().describe('A frame id, or "root".'),

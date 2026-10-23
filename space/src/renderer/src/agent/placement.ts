@@ -317,9 +317,17 @@ export interface Placed {
 /**
  * Place a box beside (or over) a target box. When the spot is taken, slide
  * along that side to the nearest free spot, then try the next sides. `over`
- * never slides: covering the target is the point.
+ * never slides: covering the target is the point. With preferView, the same
+ * search first keeps only spots fully inside the learner's view.
  */
-export function placeRelative(spec: PlaceSpec, target: Region, size: { width: number; height: number }, blocked: readonly Region[], view: Region): Placed {
+export function placeRelative(
+  spec: PlaceSpec,
+  target: Region,
+  size: { width: number; height: number },
+  blocked: readonly Region[],
+  view: Region,
+  preferView = false
+): Placed {
   const round = (x: number, y: number, placed: string): Placed => ({
     x: Math.round(x * 10) / 10,
     y: Math.round(y * 10) / 10,
@@ -333,20 +341,28 @@ export function placeRelative(spec: PlaceSpec, target: Region, size: { width: nu
   }
   const margin = Math.min(16, Math.max(0, spec.gap / 2))
   const free = (x: number, y: number): boolean => !blocked.some((box) => overlaps({ x, y, ...size }, box, margin))
-  for (const side of NEXT_SIDES[spec.side]) {
-    const [bx, by] = sideSpot(side, target, size, spec.gap, spec.align)
-    const horizontal = side === 'right_of' || side === 'left_of'
-    for (let offset = 0; offset <= SLIDE_LIMIT; offset += SLIDE_STEP) {
-      for (const sign of offset ? [1, -1] : [1]) {
-        const x = horizontal ? bx : bx + sign * offset
-        const y = horizontal ? by + sign * offset : by
-        if (!free(x, y)) continue
-        const words = [side === spec.side ? name : `${SIDE_WORDS[side]} ${spec.target} (${SIDE_WORDS[spec.side]} was taken)`]
-        if (offset) words.push(`slid ${offset} pt ${horizontal ? (sign > 0 ? 'down' : 'up') : sign > 0 ? 'right' : 'left'} to free space`)
-        return round(x, y, words.join(', '))
+  const search = (accept: (x: number, y: number) => boolean): Placed | null => {
+    for (const side of NEXT_SIDES[spec.side as Exclude<Side, 'over'>]) {
+      const [bx, by] = sideSpot(side, target, size, spec.gap, spec.align)
+      const horizontal = side === 'right_of' || side === 'left_of'
+      for (let offset = 0; offset <= SLIDE_LIMIT; offset += SLIDE_STEP) {
+        for (const sign of offset ? [1, -1] : [1]) {
+          const x = horizontal ? bx : bx + sign * offset
+          const y = horizontal ? by + sign * offset : by
+          if (!accept(x, y)) continue
+          const words = [side === spec.side ? name : `${SIDE_WORDS[side]} ${spec.target} (${SIDE_WORDS[spec.side]} was taken)`]
+          if (offset) words.push(`slid ${offset} pt ${horizontal ? (sign > 0 ? 'down' : 'up') : sign > 0 ? 'right' : 'left'} to free space`)
+          return round(x, y, words.join(', '))
+        }
       }
     }
+    return null
   }
+  const shown = shrink(view, VIEW_MARGIN)
+  const inView = preferView ? search((x, y) => free(x, y) && inside({ x, y, ...size }, shown)) : null
+  if (inView) return inView
+  const spot = search(free)
+  if (spot) return spot
   const [x, y] = sideSpot(spec.side, target, size, spec.gap, spec.align)
   return round(x, y, `${name}; no free spot nearby, so it overlaps (see overlaps)`)
 }

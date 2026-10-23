@@ -374,9 +374,12 @@ function createFrame(ctx: EditContext, s: Scene, args: Record<string, unknown>):
   ctx.board.agentCommit([...s.nodes, ...id.nodes])
   const frameId = id.roots[0]
   ctx.presence.mark(ctx.agent, [frameId])
+  // The spot was chosen with an estimated size; report what the measured frame shows.
+  const measured = ctx.board.liveState().bounds(frameId)
+  if (measured) visible = inside(measured, viewOf(ctx.board))
   return {
     id: frameId,
-    bounds: rect(ctx.board.liveState().bounds(frameId)),
+    bounds: rect(measured),
     placed,
     visible,
     ...(visible ? {} : { note: 'The frame is outside the learner’s view. Tell the learner where it is, or use focus.' }),
@@ -404,6 +407,52 @@ async function resolveImages(ctx: EditContext, drafts: Draft[], ignored: Ignored
   return prune(drafts)
 }
 
+/**
+ * After layout: an auto-placed root that is not fully in the learner's view
+ * moves to a free spot that fits its measured size inside the view, with the
+ * same anchor (or `place` side preference) and no-overlap rules. When no such
+ * spot exists, it stays where it is (the result then says visible: false).
+ * The move amends the write's own undo step.
+ */
+function refitAfterLayout(
+  ctx: EditContext,
+  ids: readonly string[],
+  place: { spec: PlaceSpec; box: Region } | null,
+  anchor: Region,
+  placements: Map<string, string>
+): void {
+  const s = scene(ctx)
+  const view = viewOf(ctx.board)
+  const blocked = obstacles(s, new Set(ids))
+  const misfits: { id: string; box: Region }[] = []
+  for (const id of ids) {
+    const box = s.layout.get(id)
+    if (!box) continue
+    if (inside(box, view)) blocked.push(box)
+    else misfits.push({ id, box })
+  }
+  if (!misfits.length) return
+  const shifts = new Map<string, [number, number]>()
+  for (const { id, box } of misfits) {
+    const size = { width: box.width, height: box.height }
+    const spot = place ? placeRelative(place.spec, place.box, size, blocked, view, true) : findSpot(size, anchor, blocked, view)
+    if (!inside({ x: spot.x, y: spot.y, ...size }, view)) {
+      blocked.push(box)
+      continue
+    }
+    shifts.set(id, [spot.x - box.x, spot.y - box.y])
+    blocked.push({ x: spot.x, y: spot.y, ...size })
+    const measured = `${Math.round(size.width)}×${Math.round(size.height)}`
+    placements.set(id, `${'placed' in spot ? spot.placed : 'in empty space'}; moved after layout so its measured size (${measured}) fits in the learner’s view`)
+  }
+  if (!shifts.size) return
+  const nodes = ctx.board.liveState().nodes.map((node) => {
+    const shift = shifts.get(node.id)
+    return shift && isContent(node) ? ({ ...node, x: r1(node.x + shift[0]), y: r1(node.y + shift[1]) } as BoardNode) : node
+  })
+  ctx.board.agentAmend(nodes)
+}
+
 const settle = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
 async function writeHtml(ctx: EditContext, args: Record<string, unknown>): Promise<unknown> {
@@ -423,9 +472,12 @@ async function writeHtml(ctx: EditContext, args: Record<string, unknown>): Promi
   const target = toRoot ? null : requireNode(s, targetId, 'target_id')
   let next: BoardNode[]
   let created: ReturnType<typeof draftsToNodes>
-  /** Top-level nodes that were auto-placed outside the learner's view. */
-  const hidden: string[] = []
-  const placements: string[] = []
+  /** Top-level roots this write placed itself (no left/top in the HTML), in order. */
+  const autoPlaced: string[] = []
+  const placements = new Map<string, string>()
+  const place = mode === 'insert_children' && toRoot ? parsePlace(args.place) : null
+  const placeBox = place ? placeTarget(s, place) : null
+  const anchor = anchorFor(s, ctx.board, args.near)
 
   if (mode === 'insert_children') {
     if (target && !isFrame(target)) throw new Error(`target_id "${target.id}" is a ${target.kind}; insert_children needs a frame (or "root"). Use mode "replace" to replace it.`)
@@ -440,18 +492,16 @@ async function writeHtml(ctx: EditContext, args: Record<string, unknown>): Promi
     if (toRoot) {
       // Top-level material without left/top is placed in empty space (or by `place`), one root after another.
       const blocked = obstacles(s)
-      const place = parsePlace(args.place)
-      const placeBox = place ? placeTarget(s, place) : null
-      const anchor = anchorFor(s, ctx.board, args.near)
       const view = viewOf(ctx.board)
       next = next.map((node) => {
         if (!created.roots.includes(node.id) || !isContent(node)) return node
         const draft = drafts[created.roots.indexOf(node.id)]
         if (!place && (draft.x !== 0 || draft.y !== 0)) return node
+        // The size is an estimate before layout; refitAfterLayout corrects the spot with the measured size.
         const size = sizeOf(node.style, { width: 400, height: ASSUMED_HEIGHT })
         const spot: Placed | ReturnType<typeof findSpot> = place && placeBox ? placeRelative(place, placeBox, size, blocked, view) : findSpot(size, anchor, blocked, view)
-        if ('placed' in spot) placements.push(`${node.id}: ${spot.placed}`)
-        if (!spot.visible) hidden.push(node.id)
+        if ('placed' in spot && typeof spot.placed === 'string') placements.set(node.id, spot.placed)
+        autoPlaced.push(node.id)
         blocked.push({ x: spot.x, y: spot.y, ...size })
         return { ...node, x: spot.x, y: spot.y }
       })
@@ -501,10 +551,17 @@ async function writeHtml(ctx: EditContext, args: Record<string, unknown>): Promi
     await settle(250)
     ctx.board.remeasure()
   }
+  if (autoPlaced.length) refitAfterLayout(ctx, autoPlaced, place && placeBox ? { spec: place, box: placeBox } : null, anchor, placements)
   const state = ctx.board.liveState()
   const after = scene(ctx)
   const touchedTops = topLevels(after, [...created.roots, ...(target ? [target.id] : [])])
   ctx.presence.mark(ctx.agent, touchedTops)
+  // Visibility comes from the final measured bounds of every top-level node the write touched.
+  const view = viewOf(ctx.board)
+  const hidden = touchedTops.filter((id) => {
+    const box = after.layout.get(id)
+    return !box || !inside(box, view)
+  })
   const bounds: Record<string, BoardRect | null> = {}
   for (const id of [...created.roots, ...Object.values(created.named)]) bounds[id] = rect(state.bounds(id))
   const summary = ignored.summary()
@@ -513,8 +570,14 @@ async function writeHtml(ctx: EditContext, args: Record<string, unknown>): Promi
     ...(Object.keys(created.named).length ? { named: created.named } : {}),
     node_count: created.nodes.length,
     bounds,
-    ...(placements.length ? { placed: placements } : {}),
-    ...(hidden.length ? { outside_view: hidden } : {}),
+    ...(placements.size ? { placed: [...placements].map(([id, words]) => `${id}: ${words}`) } : {}),
+    visible: hidden.length === 0,
+    ...(hidden.length
+      ? {
+          outside_view: hidden,
+          note: 'Part of this material is outside the learner’s view (measured after layout). Use focus to show it, or tell the learner where it is.'
+        }
+      : {}),
     ...overlapReport(after, [...created.roots, ...touchedTops.filter((id) => !created.roots.includes(id))].map((id) => nodeSubject(after, id))),
     ...(summary ? { ignored: summary } : {})
   }
