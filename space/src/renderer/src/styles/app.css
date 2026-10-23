@@ -327,6 +327,8 @@ button:focus-visible {
   font-size: var(--text-sm);
   line-height: var(--leading);
   -webkit-app-region: no-drag;
+  max-height: calc(100vh - var(--topbar-height) - 24px);
+  overflow-y: auto;
 }
 
 .agent-pop__title {
@@ -436,6 +438,108 @@ button:focus-visible {
   margin-left: auto;
   color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;
+}
+
+.agent-pop__section {
+  margin-bottom: var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+/* One row per agent app: dot, name, state, Add / Install. */
+.agent-clients {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent-client__line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 30px;
+}
+
+.agent-client__name {
+  color: var(--text-primary);
+  font-weight: 560;
+}
+
+.agent-client__state {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-client__action {
+  display: inline-grid;
+  flex-shrink: 0;
+  place-items: center;
+  min-width: 64px;
+  height: 26px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-active);
+  color: var(--text-primary);
+  font-weight: 560;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.agent-client__action:hover:not(:disabled) {
+  border-color: var(--accent-ring);
+  background: var(--accent-soft);
+}
+
+.agent-client__action:disabled {
+  cursor: default;
+}
+
+.agent-client__spinner {
+  animation: agent-client-spin 800ms linear infinite;
+  color: var(--text-secondary);
+}
+
+@keyframes agent-client-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.agent-client__result {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin: 0 0 var(--space-1) 15px;
+  color: var(--ink-pink);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.agent-client__result svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.agent-client__result--ok {
+  color: var(--status-live);
+}
+
+.agent-client__hint {
+  margin: 0 0 var(--space-1) 15px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+.agent-client .agent-pop__row {
+  margin: 0 0 var(--space-2) 15px;
 }
 
 .zoom {

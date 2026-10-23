@@ -327,6 +327,36 @@ export interface AgentActivity {
   tool: string
 }
 
+/** An agent app the "Connect an agent" popover can set up. */
+export type AgentClientId = 'claude-code' | 'codex' | 'claude-app'
+
+/**
+ * One agent app in the popover.
+ * connected: Learning Space is in its config. available: the app is installed
+ * and can be connected. missing: the app was not found. unknown: the check failed.
+ */
+export interface AgentClientStatus {
+  id: AgentClientId
+  label: string
+  state: 'connected' | 'available' | 'missing' | 'unknown'
+  /** A short note for the row (where the CLI is, why the check failed). */
+  detail: string | null
+  /** The one-line command that does the same by hand (null for the Claude app). */
+  command: string | null
+}
+
+export interface AgentClientsStatus {
+  /** ~/.learning-space/bin/learning-space */
+  shimPath: string
+  clients: AgentClientStatus[]
+}
+
+export interface ConnectResult {
+  ok: boolean
+  /** "Connected", or the first line of the command's error output. */
+  message: string
+}
+
 export interface SpaceApi {
   /** The Node `process.platform` value, for example `darwin`. */
   readonly platform: string
@@ -386,6 +416,10 @@ export interface SpaceApi {
   /** Requests from the MCP server. Answer each one with replyAgent. */
   onAgentRequest(listener: (request: AgentRequest) => void): Unsubscribe
   replyAgent(reply: AgentReply): void
+  /** Which agent apps are installed and connected (runs their CLIs; can take seconds). */
+  getAgentClients(): Promise<AgentClientsStatus>
+  /** Add Learning Space to one agent app (claude/codex `mcp add`, or open the .mcpb). */
+  connectAgentClient(id: AgentClientId): Promise<ConnectResult>
 
   /**
    * Bring an image into the learning folder for an image node: an https URL
@@ -433,6 +467,8 @@ export const IPC = {
   agentActivity: 'space:agent-activity',
   agentRequest: 'space:agent-request',
   agentReply: 'space:agent-reply',
+  getAgentClients: 'space:get-agent-clients',
+  connectAgentClient: 'space:connect-agent-client',
   importAsset: 'space:import-asset',
   snapshotRequest: 'space:snapshot-request',
   snapshotReady: 'space:snapshot-ready'

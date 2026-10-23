@@ -30,16 +30,75 @@ npm start        # run the built app from out/
 ## Connect an agent
 
 The app serves MCP (Streamable HTTP) at `http://127.0.0.1:47821/mcp` while it
-is open. Run one command in a terminal:
+is open. Agents connect through a stdio relay, so their config never holds the
+port and they still start when the app is closed.
+
+Click the agent pill in the top bar. The "Connect an agent" popover has one
+row per agent app, with its status and one button:
+
+| Row | Status check | Button |
+| --- | --- | --- |
+| Claude Code | `claude` from the login shell (`/bin/zsh -lc 'command -v claude'`, then `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`); connected when `claude mcp get learning-space` exits 0 | **Add**: `claude mcp add --scope user learning-space -- ~/.learning-space/bin/learning-space mcp` |
+| Codex | `codex` found the same way; connected when `~/.codex/config.toml` (or `$CODEX_HOME`) has a `[mcp_servers.learning-space]` table (URL or command) | **Add**: `codex mcp add learning-space -- ~/.learning-space/bin/learning-space mcp` |
+| Claude app | `Claude.app` in `/Applications` or `~/Applications`; connected when a `Claude Extensions` folder name holds `learning-space` | **Install**: opens `resources/learning-space.mcpb` with `shell.openPath`; Claude shows its install dialog |
+
+Each button shows a spinner, then a check mark or the first line of the
+command's error output. The commands run with a fixed argv (no shell string),
+the login shell's `PATH` and a timeout. When a CLI is not installed, the row
+shows the command to copy. "Manual setup" below the rows lists the same
+commands and the HTTP server URL.
 
 ```sh
-claude mcp add --transport http learning-space http://127.0.0.1:47821/mcp   # Claude Code
-codex mcp add learning-space --url http://127.0.0.1:47821/mcp               # Codex
+claude mcp add --scope user learning-space -- ~/.learning-space/bin/learning-space mcp   # Claude Code
+codex mcp add learning-space -- ~/.learning-space/bin/learning-space mcp                 # Codex
+claude mcp add --transport http learning-space http://127.0.0.1:47821/mcp                # HTTP, app must be open
 ```
 
-The agent pill in the top bar shows the agents that made a request in the
+### The relay and `~/.learning-space/`
+
+On every launch the app writes (atomically, temp file + rename):
+
+| File | Content |
+| --- | --- |
+| `~/.learning-space/bin/learning-space` | The shim (`#!/bin/sh`, mode 0755). `learning-space mcp` runs `exec env ELECTRON_RUN_AS_NODE=1 "<Electron binary>" "<app>/out/relay/index.js" "$@"`; `--version` prints the app version; anything else prints usage. The paths come from `process.execPath` and the app's own folder, so the shim follows the app that ran last (dev or packaged). |
+| `~/.learning-space/relay.json` | `{ "port", "appVersion", "updatedAt" }`, written when the MCP server owns its port |
+| `~/.learning-space/tools.json` | `{ "appVersion", "updatedAt", "instructions", "tools" }`: the `tools/list` result and the built-in server instructions, read in process (no agent session) |
+
+The relay (`src/relay/index.ts`, bundled with the MCP SDK into
+`out/relay/index.js` by `scripts/build-relay.mjs`; `npm run build` and
+`npm run dev` run it) is a stdio MCP server. It forwards each JSON-RPC message
+to `http://127.0.0.1:<port>/mcp` and back, without its own tool code. The port
+comes from `LEARNING_SPACE_PORT`, else `relay.json`, else 47821. It connects on
+the client's `initialize` and replays the client's initialize parameters for
+every new upstream session.
+
+- **App closed:** the relay answers `initialize` itself (the cached
+  instructions plus "Learning Space is not running — ask the learner to open
+  the app."), `tools/list` from `tools.json`, and `tools/call` with a tool
+  error: "Learning Space is not running. Ask the learner to open the app, then
+  try again." Each later request tries the app again.
+- **App opened or restarted mid-session:** the next request opens a new
+  upstream session (a 404 for the old session id also triggers this). The
+  client keeps its own session. When the relay answered `initialize`
+  offline, it sends `notifications/tools/list_changed`.
+- **App stops mid-request:** the waiting requests get the offline answer.
+- **stdin closes:** the relay lets the last answers out, ends the app session
+  (HTTP DELETE) and exits. It logs to stderr only.
+
+The Claude app extension `resources/learning-space.mcpb` comes from
+`npm run build:mcpb` (`scripts/build-mcpb.mjs`): a deterministic zip of a
+manifest (`manifest_version` 0.3, `server.type` `binary`, command
+`${HOME}/.learning-space/bin/learning-space`, args `["mcp"]`, darwin only) and
+`resources/icon.png` when it exists. The plugin repo will own this file later.
+
+Dev hook: `SPACE_CONNECT_DRY_RUN=1` makes **Install** log the `.mcpb` path
+instead of opening it. To check the buttons without your real agent config,
+start the app with `HOME=<scratch dir>` and a `PATH` whose `claude` and `codex`
+are stubs.
+
+The agent pill shows the agents that made a request in the
 last 90 s, grouped by client name (short runs such as `claude -p` exit
-without closing their session). Click it for these commands. `SPACE_MCP_PORT=<port>` changes the port. If the port is busy (for
+without closing their session). `SPACE_MCP_PORT=<port>` changes the port. If the port is busy (for
 example a second copy of the app), the app logs it and the pill shows
 "Agent server off"; it does not pick another port, because the agent config
 holds the port.
@@ -149,6 +208,10 @@ The app reads `resources/` from the `space/` folder in dev and `npm start`
 (`resourcesDir()` in `src/main/resources.ts`). A packaged build must ship the
 folder as `extraResources` (`{ "from": "resources", "to": "resources" }`), so
 it sits at `process.resourcesPath/resources`.
+The shim runs `out/relay/index.js` with Electron as Node, so a packaged build
+must also unpack it from the asar (`asarUnpack: ["out/relay/**"]`);
+`relayScriptPath()` in `src/main/agent-home.ts` then points at
+`app.asar.unpacked`.
 
 ## Layout
 

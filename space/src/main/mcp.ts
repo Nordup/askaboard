@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
-import { ipcMain, type WebContents } from 'electron'
+import { app, ipcMain, type WebContents } from 'electron'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { isInitializeRequest, type CallToolResult } from '@modelcontextprotocol/sdk/types.js'
@@ -66,6 +68,8 @@ export interface AgentServerHooks {
   activity(activity: AgentActivity): void
   /** The open learning folder's real path, for its `.learning-space/` overrides. */
   folderRoot(): string | null
+  /** The server listens on its port (it owns the port; another instance does not). */
+  listening?(): void
 }
 
 interface Session {
@@ -254,6 +258,7 @@ export class AgentServer {
       this.error = null
       console.log(`mcp: listening on ${this.url}`)
       this.publish()
+      this.hooks.listening?.()
     })
     this.http = server
     this.pruneTimer = setInterval(() => this.prune(), PRUNE_INTERVAL_MS)
@@ -343,10 +348,42 @@ export class AgentServer {
     res.writeHead(405, { Allow: 'GET, POST, DELETE' }).end()
   }
 
+  /**
+   * The tools/list result and the built-in server instructions, as an agent
+   * sees them, for the relay's offline cache (~/.learning-space/tools.json).
+   * It runs the real registration in process, so it opens no agent session.
+   */
+  async catalog(): Promise<{ tools: unknown[]; instructions: string }> {
+    const instructions = serverInstructions(null)
+    const server = new McpServer({ name: 'learning-space', version: app.getVersion() }, { instructions })
+    const session: Session = {
+      id: 'catalog',
+      server,
+      transport: new StreamableHTTPServerTransport({ sessionIdGenerator: undefined }),
+      connectedAt: Date.now(),
+      lastActivity: Date.now(),
+      openStreams: 0,
+      cursors: new Map(),
+      listedFrom: new Map()
+    }
+    this.registerTools(session)
+    const [clientSide, serverSide] = InMemoryTransport.createLinkedPair()
+    const client = new Client({ name: 'learning-space-catalog', version: app.getVersion() })
+    try {
+      await server.connect(serverSide)
+      await client.connect(clientSide)
+      const { tools } = await client.listTools()
+      return { tools, instructions }
+    } finally {
+      await client.close().catch(() => undefined)
+      await server.close().catch(() => undefined)
+    }
+  }
+
   // ---------- Sessions ----------
 
   private createSession(): Session {
-    const server = new McpServer({ name: 'learning-space', version: '0.0.1' }, { instructions: serverInstructions(this.hooks.folderRoot()) })
+    const server = new McpServer({ name: 'learning-space', version: app.getVersion() }, { instructions: serverInstructions(this.hooks.folderRoot()) })
     const session: Session = {
       id: '',
       server,

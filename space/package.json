@@ -7,9 +7,10 @@
   "main": "./out/main/index.js",
   "scripts": {
     "postinstall": "install-electron",
-    "dev": "electron-vite dev",
+    "dev": "node scripts/build-relay.mjs && electron-vite dev",
     "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit",
-    "build": "npm run typecheck && electron-vite build",
+    "build": "npm run typecheck && electron-vite build && node scripts/build-relay.mjs",
+    "build:mcpb": "node scripts/build-mcpb.mjs",
     "start": "electron-vite preview"
   },
   "dependencies": {

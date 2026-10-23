@@ -9,6 +9,8 @@ import { SnapshotRenderer } from './snapshot'
 import { installMenu, setFolderOpen } from './menu'
 import { FOLDER_SETTINGS_DIR, folderOverrides, onOverridesRead } from './guide'
 import { applySetup, isSetUp, setupPlan } from './setup'
+import { installShim, writeRelayState } from './agent-home'
+import { agentClients, connectAgentClient, isAgentClientId } from './connect'
 import * as store from './state'
 
 /** The colour of the window before the renderer paints. Keep it equal to --bg-app. */
@@ -83,7 +85,14 @@ const agentServer = new AgentServer({
   webContents: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null),
   status: (status) => send(IPC.agentStatus, status),
   activity: (activity) => send(IPC.agentActivity, activity),
-  folderRoot: () => session?.root ?? null
+  folderRoot: () => session?.root ?? null,
+  // This instance owns the port: point the relay at it and refresh its offline tool list.
+  listening: () => {
+    void agentServer
+      .catalog()
+      .then((catalog) => writeRelayState(agentServer.port, catalog))
+      .catch((error) => console.error(`agent home: could not write relay.json/tools.json: ${String(error)}`))
+  }
 })
 
 function send(channel: string, payload?: unknown): void {
@@ -207,6 +216,11 @@ function registerIpc(): void {
 
   handle(IPC.getInitialState, () => snapshot(true))
   handle(IPC.getAgentStatus, () => agentServer.status())
+  handle(IPC.getAgentClients, () => agentClients())
+  handle(IPC.connectAgentClient, (id: unknown) => {
+    if (!isAgentClientId(id)) throw new Error('Unknown agent app.')
+    return connectAgentClient(id)
+  })
   handle(IPC.openFolderDialog, () => showOpenDialog())
   handle(IPC.openRecent, async (path: unknown) => {
     if (typeof path !== 'string' || !store.isRecent(path)) throw new Error('That folder is not in the recent list.')
@@ -371,6 +385,7 @@ void app.whenReady().then(async () => {
   registerAssetProtocol()
   await openInitialFolder()
   setFolderOpen(session !== null)
+  await installShim().catch((error) => console.error(`agent home: could not write the shim: ${String(error)}`))
   agentServer.start()
   mainWindow = createWindow()
   app.on('activate', () => {

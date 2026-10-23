@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertCircle, Check, Copy } from 'lucide-react'
-import type { AgentServerStatus, AgentSessionInfo, GuideOverrides } from '@shared/space-api'
+import { AlertCircle, Check, Copy, Loader2 } from 'lucide-react'
+import type {
+  AgentClientId,
+  AgentClientStatus,
+  AgentClientsStatus,
+  AgentServerStatus,
+  AgentSessionInfo,
+  ConnectResult,
+  GuideOverrides
+} from '@shared/space-api'
 import { GuideOverrideNote } from './GuideOverrideNote'
 
 interface AgentPillProps {
@@ -68,13 +76,13 @@ function CopyRow({ label, value }: { label: string; value: string }) {
   }, [copied])
   return (
     <div className="agent-pop__row">
-      <div className="agent-pop__label">{label}</div>
+      {label && <div className="agent-pop__label">{label}</div>}
       <div className="agent-pop__code">
         <code>{value}</code>
         <button
           className="agent-pop__copy"
           title={copied ? 'Copied' : 'Copy'}
-          aria-label={`Copy ${label}`}
+          aria-label={`Copy ${label || 'command'}`}
           onClick={() => {
             void navigator.clipboard.writeText(value).then(() => setCopied(true))
           }}
@@ -83,6 +91,113 @@ function CopyRow({ label, value }: { label: string; value: string }) {
         </button>
       </div>
     </div>
+  )
+}
+
+const SHIM = '~/.learning-space/bin/learning-space'
+
+/** The rows before the first check answers. */
+const PLACEHOLDER_CLIENTS: AgentClientStatus[] = [
+  { id: 'claude-code', label: 'Claude Code', state: 'unknown', detail: null, command: `claude mcp add --scope user learning-space -- ${SHIM} mcp` },
+  { id: 'codex', label: 'Codex', state: 'unknown', detail: null, command: `codex mcp add learning-space -- ${SHIM} mcp` },
+  { id: 'claude-app', label: 'Claude app', state: 'unknown', detail: null, command: null }
+]
+
+function stateText(client: AgentClientStatus, checking: boolean): string {
+  if (checking) return 'Checking…'
+  switch (client.state) {
+    case 'connected':
+      return 'Connected'
+    case 'available':
+      return 'Not connected'
+    case 'missing':
+      return client.id === 'claude-app' ? 'Not found' : 'Not installed'
+    default:
+      return client.detail ? `Check failed: ${client.detail}` : 'Status unknown'
+  }
+}
+
+/** One agent app: status, and Add / Install while it is not connected. */
+function ClientRow({ client, checking, onChanged }: { client: AgentClientStatus; checking: boolean; onChanged(): void }) {
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState<ConnectResult | null>(null)
+  const connected = client.state === 'connected'
+  const canAct = !checking && !connected && client.state !== 'missing'
+
+  const act = (): void => {
+    setBusy(true)
+    setResult(null)
+    window.space
+      .connectAgentClient(client.id as AgentClientId)
+      .then((value) => {
+        setResult(value)
+        if (value.ok) onChanged()
+      })
+      .catch((error: unknown) => setResult({ ok: false, message: error instanceof Error ? error.message : String(error) }))
+      .finally(() => setBusy(false))
+  }
+
+  return (
+    <li className="agent-client" data-client={client.id}>
+      <div className="agent-client__line">
+        <span className={connected ? 'status-dot status-dot--live' : 'status-dot'} />
+        <span className="agent-client__name">{client.label}</span>
+        <span className="agent-client__state" title={client.detail ?? undefined}>
+          {stateText(client, checking)}
+        </span>
+        {canAct && (
+          <button className="agent-client__action" onClick={act} disabled={busy}>
+            {busy ? <Loader2 className="agent-client__spinner" size={13} strokeWidth={2} /> : client.id === 'claude-app' ? 'Install' : 'Add'}
+          </button>
+        )}
+      </div>
+      {/* After a successful Add the row says Connected; the Claude app confirms in its own dialog. */}
+      {result && !(result.ok && connected) && (
+        <div className={`agent-client__result${result.ok ? ' agent-client__result--ok' : ''}`} role="status">
+          {result.ok ? <Check size={12} strokeWidth={2.25} /> : <AlertCircle size={12} strokeWidth={2} />}
+          <span>{result.ok && client.id === 'claude-app' ? 'Opened in Claude. Confirm the install there.' : result.message}</span>
+        </div>
+      )}
+      {!checking && client.state === 'missing' && client.command && (
+        <div className="agent-client__hint">Install it, then run:</div>
+      )}
+      {!checking && client.state === 'missing' && client.command && <CopyRow label="" value={client.command} />}
+    </li>
+  )
+}
+
+/** The agent apps on this Mac, with one-click setup. */
+function AgentClients({ open }: { open: boolean }) {
+  const [status, setStatus] = useState<AgentClientsStatus | null>(null)
+  const [checking, setChecking] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const refresh = (): void => {
+    setChecking(true)
+    window.space
+      .getAgentClients()
+      .then((value) => {
+        setStatus(value)
+        setError(null)
+      })
+      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason)))
+      .finally(() => setChecking(false))
+  }
+
+  useEffect(() => {
+    if (open) refresh()
+  }, [open])
+
+  const clients = status?.clients ?? PLACEHOLDER_CLIENTS
+  return (
+    <>
+      <ul className="agent-clients">
+        {clients.map((client) => (
+          <ClientRow key={client.id} client={client} checking={checking && !status} onChanged={refresh} />
+        ))}
+      </ul>
+      {error && <div className="agent-pop__empty">Could not check the agent apps: {error}</div>}
+    </>
   )
 }
 
@@ -151,18 +266,19 @@ export function AgentPill({ status, activityAt, guideOverrides, onOpenOverride }
       {open && (
         <div className="agent-pop" role="dialog" aria-label="Connect an agent">
           <div className="agent-pop__title">Connect an agent</div>
-          <p className="agent-pop__lede">
-            Run one command in a terminal. The agent then sees this canvas while the app is open.
-          </p>
+          <p className="agent-pop__lede">Connect once. The agent then sees this canvas while the app is open.</p>
           {status?.state === 'error' && (
             <div className="agent-pop__error">
               <AlertCircle size={14} strokeWidth={2} />
               <span>{status.error}</span>
             </div>
           )}
-          <CopyRow label="Claude Code" value={`claude mcp add --transport http learning-space ${url}`} />
-          <CopyRow label="Codex" value={`codex mcp add learning-space --url ${url}`} />
-          <CopyRow label="Server URL" value={url} />
+          <AgentClients open={open} />
+          <div className="agent-pop__divider" />
+          <div className="agent-pop__section">Manual setup</div>
+          <CopyRow label="Claude Code" value={PLACEHOLDER_CLIENTS[0].command ?? ''} />
+          <CopyRow label="Codex" value={PLACEHOLDER_CLIENTS[1].command ?? ''} />
+          <CopyRow label="Server URL (HTTP clients)" value={url} />
           <div className="agent-pop__divider" />
           <div className="agent-pop__label">Active agents</div>
           <SessionList recent={recent} all={status?.sessions ?? []} now={now} />
