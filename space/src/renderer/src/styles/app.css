@@ -595,8 +595,16 @@ button:focus-visible {
   margin-top: var(--space-2);
 }
 
+.agent-advanced__group + .agent-advanced__group {
+  margin-top: var(--space-3);
+}
+
+.agent-advanced__group .agent-pop__row + .agent-pop__row {
+  margin-top: var(--space-1);
+}
+
 .agent-advanced__note {
-  margin: 0 0 var(--space-3);
+  margin: var(--space-1) 0 0;
   color: var(--text-tertiary);
   font-size: var(--text-xs);
 }

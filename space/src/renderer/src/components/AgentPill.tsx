@@ -96,17 +96,20 @@ function CopyRow({ label, value }: { label: string; value: string }) {
 
 const SHIM = '~/.learning-space/bin/learning-space'
 
-/** The by-hand commands in "Advanced". */
-const MANUAL_COMMANDS = {
-  claude: `claude mcp add --scope user learning-space -- ${SHIM} mcp`,
-  codex: `codex mcp add learning-space -- ${SHIM} mcp`
+const RELAY_COMMAND = `${SHIM} mcp`
+const PLUGIN_REPO = 'Nordup/learning-space-plugins'
+
+/** The plugin commands in "Advanced", for a terminal. */
+const PLUGIN_COMMANDS = {
+  claude: [`claude plugin marketplace add ${PLUGIN_REPO}`, 'claude plugin install learning-space@learning-space'],
+  codex: [`codex plugin marketplace add ${PLUGIN_REPO}`, 'codex plugin add learning-space@learning-space']
 }
 
 /** The rows before the first check answers. */
 const PLACEHOLDER_CLIENTS: AgentClientStatus[] = [
   { id: 'claude-code', label: 'Claude Code', state: 'unknown', detail: null, action: null },
   { id: 'codex', label: 'Codex', state: 'unknown', detail: null, action: null },
-  { id: 'claude-app', label: 'Claude app', state: 'unknown', detail: null, action: null }
+  { id: 'claude-app', label: 'Claude Desktop (chat)', state: 'unknown', detail: null, action: null }
 ]
 
 function stateText(client: AgentClientStatus, checking: boolean): string {
@@ -179,7 +182,7 @@ function ClientRow({ client, checking, onChanged }: { client: AgentClientStatus;
       {!checking && client.state === 'both' && (
         <div className="agent-client__warn">
           <AlertTriangle size={12} strokeWidth={2} />
-          <span>Tools appear twice. Remove the manual entry and keep the plugin.</span>
+          <span>Tools appear twice. Use either the plugin or a manual entry, not both: remove the manual entry and keep the plugin.</span>
         </div>
       )}
       {result && (
@@ -230,7 +233,20 @@ function AgentClients({ open }: { open: boolean }) {
   )
 }
 
-/** The by-hand setup, collapsed by default. */
+/** One client in "Advanced": a heading, copyable commands, a note. */
+function AdvancedGroup({ title, commands, note }: { title: string; commands: string[]; note: string }) {
+  return (
+    <div className="agent-advanced__group">
+      <div className="agent-pop__label">{title}</div>
+      {commands.map((command) => (
+        <CopyRow key={command} label="" value={command} />
+      ))}
+      <p className="agent-advanced__note">{note}</p>
+    </div>
+  )
+}
+
+/** The setup by hand, collapsed by default. */
 function Advanced({ url }: { url: string }) {
   const [open, setOpen] = useState(false)
   return (
@@ -241,10 +257,18 @@ function Advanced({ url }: { url: string }) {
       </button>
       {open && (
         <div className="agent-advanced__body">
-          <p className="agent-advanced__note">Use either the plugin or a manual entry, not both.</p>
-          <CopyRow label="Claude Code" value={MANUAL_COMMANDS.claude} />
-          <CopyRow label="Codex" value={MANUAL_COMMANDS.codex} />
-          <CopyRow label="Server URL (HTTP clients)" value={url} />
+          <AdvancedGroup
+            title="Claude Code"
+            commands={PLUGIN_COMMANDS.claude}
+            note={`Or inside Claude Code: /plugin marketplace add ${PLUGIN_REPO}, then /plugin install learning-space@learning-space.`}
+          />
+          <AdvancedGroup title="Codex" commands={PLUGIN_COMMANDS.codex} note="Or in Codex: /plugins." />
+          <AdvancedGroup
+            title="Claude Desktop (chat)"
+            commands={[]}
+            note={`Install the extension above, or download learning-space.mcpb from github.com/${PLUGIN_REPO}.`}
+          />
+          <AdvancedGroup title="Other MCP clients" commands={[url, RELAY_COMMAND]} note="For clients without the plugin (VS Code, Windsurf, …)." />
         </div>
       )}
     </div>

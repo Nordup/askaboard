@@ -335,7 +335,7 @@ export type AgentClientId = 'claude-code' | 'codex' | 'claude-app'
  * plugin: the Learning Space plugin is installed and enabled.
  * manual: a hand-made `learning-space` MCP entry, no plugin.
  * both: the plugin and a manual entry (the tools appear twice).
- * connected: the Claude app has the extension (a folder-name heuristic).
+ * connected: Claude Desktop (chat) has the extension (a folder-name heuristic).
  * available: the app is installed and not connected. missing: the app was
  * not found. unknown: the check failed.
  */
@@ -346,7 +346,7 @@ export type AgentClientState = 'plugin' | 'manual' | 'both' | 'connected' | 'ava
  * install-plugin: add the marketplace (when it is missing), then install the plugin.
  * switch-to-plugin: install-plugin, then remove the manual entry.
  * remove-manual: remove the manual entry only.
- * install-extension: open the bundled .mcpb in the Claude app.
+ * install-extension:  open the bundled .mcpb in Claude Desktop.
  */
 export type AgentClientAction = 'install-plugin' | 'switch-to-plugin' | 'remove-manual' | 'install-extension'
 

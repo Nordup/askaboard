@@ -231,9 +231,9 @@ function claudeAppHasExtension(): boolean {
 }
 
 function claudeAppStatus(): AgentClientStatus {
-  const base = { id: 'claude-app' as const, label: 'Claude app' }
+  const base = { id: 'claude-app' as const, label: 'Claude Desktop (chat)' }
   if (claudeAppHasExtension()) return { ...base, state: 'connected', detail: null, action: null }
-  if (!claudeAppPath()) return { ...base, state: 'missing', detail: 'The Claude app was not found in Applications.', action: null }
+  if (!claudeAppPath()) return { ...base, state: 'missing', detail: 'Claude Desktop was not found in Applications.', action: null }
   return { ...base, state: 'available', detail: null, action: 'install-extension' }
 }
 
@@ -341,7 +341,7 @@ export async function connectAgentClient(id: AgentClientId, action: AgentClientA
     case 'codex':
       return cliAction('codex', action)
     case 'claude-app':
-      return action === 'install-extension' ? installExtension() : { ok: false, message: `The Claude app has no "${action}" action.` }
+      return action === 'install-extension' ? installExtension() : { ok: false, message: `Claude Desktop has no "${action}" action.` }
     default:
       return { ok: false, message: `Unknown agent app "${String(id)}".` }
   }

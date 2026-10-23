@@ -49,14 +49,14 @@ The app finds `claude` and `codex` from the login shell
 | --- | --- | --- |
 | Claude Code | Plugin: `claude plugin list --json` has `learning-space@learning-space` with `enabled: true`. Manual entry: `claude mcp get learning-space` exits 0 (the plugin's server has another name, so it never matches). | Plugin installed, Connected by hand, Both, Not connected, CLI not found |
 | Codex | Plugin: `codex plugin list --json` has `installed[].pluginId` `learning-space@learning-space` with `enabled: true`. Manual entry: `$CODEX_HOME/config.toml` (default `~/.codex`) has a `[mcp_servers.learning-space]` table. `codex mcp list` cannot tell the two apart. | Same as Claude Code. Without the CLI, the row reads config.toml only. |
-| Claude app | `Claude.app` in `/Applications` or `~/Applications`; "Extension installed" when a `Claude Extensions` folder name holds `learning-space` (a heuristic) | Extension installed, Not connected, Not found |
+| Claude Desktop (chat) | `Claude.app` in `/Applications` or `~/Applications`; "Extension installed" when a `Claude Extensions` folder name holds `learning-space` (a heuristic) | Extension installed, Not connected, Not found |
 
 | Button | Shown when | Claude Code | Codex |
 | --- | --- | --- | --- |
 | **Install plugin** | Not connected | `claude plugin marketplace add Nordup/learning-space-plugins` (only when `claude plugin marketplace list --json` lacks it), then `claude plugin install learning-space@learning-space --scope user` (`claude plugin enable …` when it is installed but disabled) | `codex plugin marketplace add Nordup/learning-space-plugins` (only when `codex plugin marketplace list --json` lacks it), then `codex plugin add learning-space@learning-space` |
 | **Switch to plugin** | Connected by hand | Install plugin, then `claude mcp remove learning-space --scope <scope>` (the scope comes from `claude mcp get`) | Install plugin, then `codex mcp remove learning-space` |
 | **Remove manual entry** | Both ("Tools appear twice") | `claude mcp remove learning-space --scope <scope>` | `codex mcp remove learning-space` (exits 0 when the entry is missing, so the app reads config.toml back) |
-| **Install** (Claude app) | Not connected | opens `resources/learning-space.mcpb` with `shell.openPath`; Claude shows its install dialog | |
+| **Install** (Claude Desktop) | Not connected | opens `resources/learning-space.mcpb` with `shell.openPath`; Claude shows its install dialog | |
 
 Each button shows a spinner, then a check mark and a hint ("Restart Claude
 Code or run /reload-plugins", "Restart Codex (or the Codex app) to load the
@@ -66,15 +66,17 @@ timeout (90 s for an install, which clones the marketplace) and one action at
 a time per CLI. The popover checks the state again after every action and
 every time it opens.
 
-"Advanced: connect by hand" (collapsed) lists the manual commands and the
-HTTP server URL. Use either the plugin or a manual entry, not both: with both,
-the agent sees every tool twice.
+"Advanced: connect by hand" (collapsed) shows, each command with a copy button:
 
-```sh
-claude mcp add --scope user learning-space -- ~/.learning-space/bin/learning-space mcp   # Claude Code
-codex mcp add learning-space -- ~/.learning-space/bin/learning-space mcp                 # Codex
-claude mcp add --transport http learning-space http://127.0.0.1:47821/mcp                # HTTP, app must be open
-```
+| Client | Content |
+| --- | --- |
+| Claude Code | `claude plugin marketplace add Nordup/learning-space-plugins` and `claude plugin install learning-space@learning-space`; or inside Claude Code, `/plugin marketplace add …` then `/plugin install …` |
+| Codex | `codex plugin marketplace add Nordup/learning-space-plugins` and `codex plugin add learning-space@learning-space`; or in Codex, `/plugins` |
+| Claude Desktop (chat) | Install the extension from its row, or download `learning-space.mcpb` from github.com/Nordup/learning-space-plugins |
+| Other MCP clients | The server URL (the live port, default `http://127.0.0.1:47821/mcp`) and the relay command `~/.learning-space/bin/learning-space mcp`, for clients without the plugin (VS Code, Windsurf, …) |
+
+Use either the plugin or a manual entry, not both: with both, the agent sees
+every tool twice. The "Both" row says so and offers **Remove manual entry**.
 
 ### The relay and `~/.learning-space/`
 
@@ -107,7 +109,7 @@ every new upstream session.
 - **stdin closes:** the relay lets the last answers out, ends the app session
   (HTTP DELETE) and exits. It logs to stderr only.
 
-The Claude app extension `resources/learning-space.mcpb` comes from
+The Claude Desktop extension `resources/learning-space.mcpb` comes from
 `npm run build:mcpb` (`scripts/build-mcpb.mjs`): a deterministic zip of a
 manifest (`manifest_version` 0.3, `server.type` `binary`, command
 `${HOME}/.learning-space/bin/learning-space`, args `["mcp"]`, darwin only) and
