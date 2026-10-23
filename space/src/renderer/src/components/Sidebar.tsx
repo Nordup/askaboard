@@ -4,6 +4,7 @@ import type { FileNode, FileTree as FileTreeData, GuideOverrides, RecentFolder }
 import { FileTree } from './FileTree'
 import { GuideOverrideNote } from './GuideOverrideNote'
 import { Menu, type MenuEntry } from './Menu'
+import { SetupMenu } from './SetupMenu'
 
 export interface BoardEntry {
   path: string
@@ -31,8 +32,17 @@ interface SidebarProps {
   onDeleteBoard(path: string): void
   onReveal(path: string): void
   onOpenFile(node: FileNode): void
-  /** Show the setup preview (File > Set Up Folder for Learning…). */
+  /** Show the "Set up for learning" row: the folder is not set up and the offer is not dismissed. */
+  setupOffer: boolean
+  /** The setup menu is open. */
+  setupOpen: boolean
+  /** Changes when the folder changes on disk, so the setup list reloads. */
+  setupVersion: number
+  /** Open the setup menu (the row, the folder menu, File > Set Up Folder for Learning…). */
   onSetUpFolder(): void
+  onCloseSetup(): void
+  onApplySetup(): Promise<void>
+  onDontAskSetup(): void
   /** Open the folder's board guide, .learning-space/guide.md. */
   onEditGuide(): void
   /** The folder's guide and instructions overrides, shown under the header. */
@@ -74,6 +84,8 @@ export function Sidebar(props: SidebarProps) {
   const { folderName, folderRoot, recent, boards, tree, openBoard, previewPath, renaming } = props
   const [menu, setMenu] = useState<{ x: number; y: number; entries: MenuEntry[] } | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const headerRef = useRef<HTMLButtonElement>(null)
+  const setupRowRef = useRef<HTMLButtonElement>(null)
 
   // A new folder starts with its top-level folders open.
   useEffect(() => {
@@ -129,6 +141,7 @@ export function Sidebar(props: SidebarProps) {
       <div className="sidebar__titlebar" />
 
       <button
+        ref={headerRef}
         className="folder-header"
         title={folderRoot ?? 'Open a learning folder'}
         onClick={(event) => {
@@ -147,6 +160,30 @@ export function Sidebar(props: SidebarProps) {
         </span>
         <ChevronDown className="folder-header__chevron" size={14} strokeWidth={1.75} />
       </button>
+      {folderRoot && props.setupOffer && (
+        <div className="setup-row-wrap">
+          <button
+            ref={setupRowRef}
+            className={props.setupOpen ? 'board-row setup-row board-row--active' : 'board-row setup-row'}
+            aria-expanded={props.setupOpen}
+            onClick={() => (props.setupOpen ? props.onCloseSetup() : props.onSetUpFolder())}
+          >
+            <GraduationCap className="setup-row__icon" {...ICON} />
+            <span className="board-row__name">Set up for learning</span>
+            <span className="setup-row__dot" />
+          </button>
+        </div>
+      )}
+      {folderRoot && props.setupOpen && (
+        <SetupMenu
+          anchor={props.setupOffer ? setupRowRef.current : headerRef.current}
+          anchorToggles={props.setupOffer}
+          version={props.setupVersion}
+          onSetUp={props.onApplySetup}
+          onClose={props.onCloseSetup}
+          onDontAsk={props.onDontAskSetup}
+        />
+      )}
       {folderRoot && <GuideOverrideNote className="folder-overrides" overrides={props.guideOverrides} onOpen={props.onOpenOverride} />}
 
       <div className="sidebar__scroll">

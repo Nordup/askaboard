@@ -14,7 +14,7 @@ program (Git, an agent) changes it on disk.
 Step 2: the app runs an MCP server, so an agent can look at the canvas
 (see "Connect an agent").
 
-Step 4: the app offers to set up a folder for learning, and the board guide
+Step 4: the sidebar offers to set up a folder for learning, and the board guide
 is a markdown file that a learning folder can extend (see "Learning folder").
 
 ## Run
@@ -186,19 +186,26 @@ passing it back never repeats an item.
 
 ## Learning folder
 
-A folder is **set up for learning** when `AGENTS.md` exists at its root. When
-a folder that is not set up opens, a small card at the top of the canvas asks
-"Set up this folder for learning?":
+A folder is **set up for learning** when `AGENTS.md` exists at its root. While
+a folder is not set up (and "Don't ask" is off), the sidebar shows a quiet row
+under the folder header: a graduation cap, "Set up for learning" and an accent
+dot. A click opens a small menu in the app's menu style, "Set up this folder":
 
-- **Preview** lists every item setup would create. Items that exist already
-  are marked "kept".
-- **Set up** creates only the missing items and never overwrites a file.
-- **Not now** hides the card until the folder opens again.
-- **Don't ask for this folder** is remembered in `state.json`
-  (`setupDontAsk`).
+- The file list: `AGENTS.md`, `plan.md`, `learner.md`, and
+  `sessions/ topics/ materials/` on one line, each tagged "new" or "kept".
+  `boards/` and `.learning-space/` are not listed, but setup still creates
+  them.
+- **Set up** creates only the missing items and never overwrites a file. The
+  menu closes, the row goes away, a toast confirms and the file tree
+  refreshes. With nothing missing, the button reads "Nothing to add" and
+  closes the menu.
+- **Don't ask for this folder** hides the row and is remembered in
+  `state.json` (`setupDontAsk`).
+- A click outside or Escape closes the menu. The row stays.
 
-**File → Set Up Folder for Learning…** (and the folder menu in the sidebar)
-opens the same card with the preview, also in a folder that is set up.
+**File → Set Up Folder for Learning…** and "Set Up for Learning…" in the
+sidebar folder menu open the same menu, also in a folder that is set up (then
+every item is "kept").
 
 Setup creates:
 

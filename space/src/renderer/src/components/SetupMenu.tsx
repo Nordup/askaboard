@@ -1,0 +1,163 @@
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import type { SetupItem, SetupPlan } from '@shared/space-api'
+import { errorMessage } from '../lib/errors'
+
+interface SetupMenuProps {
+  /** The element the menu hangs under (the sidebar setup row, or the folder header). */
+  anchor: HTMLElement | null
+  /** The anchor opens and closes the menu itself, so a click on it is not an outside click. */
+  anchorToggles: boolean
+  /** Changes when the folder changes on disk, so the list reloads. */
+  version: number
+  onSetUp(): Promise<void>
+  /** Outside click, Escape, or "Nothing to add". */
+  onClose(): void
+  /** "Don't ask for this folder". */
+  onDontAsk(): void
+}
+
+/** The three working folders share one line. */
+const GROUPED_DIRS = ['sessions', 'topics', 'materials']
+
+interface Line {
+  key: string
+  label: string
+  isNew: boolean
+}
+
+/**
+ * The lines the menu lists. boards/ and .learning-space/ are left out: setup
+ * still creates them, but they add noise here.
+ */
+function lines(items: SetupItem[]): Line[] {
+  const shown = items.filter((item) => item.path !== 'boards' && !item.path.startsWith('.learning-space'))
+  const result: Line[] = []
+  const grouped = shown.filter((item) => item.kind === 'dir' && GROUPED_DIRS.includes(item.path))
+  for (const item of shown) {
+    if (grouped.includes(item)) {
+      if (item === grouped[0])
+        result.push({ key: 'dirs', label: grouped.map((dir) => `${dir.path}/`).join(' '), isNew: grouped.some((dir) => !dir.exists) })
+      continue
+    }
+    result.push({ key: item.path, label: item.kind === 'dir' ? `${item.path}/` : item.path, isNew: !item.exists })
+  }
+  return result
+}
+
+/** "Set up this folder": the files setup adds, in the app's menu style. */
+export function SetupMenu({ anchor, anchorToggles, version, onSetUp, onClose, onDontAsk }: SetupMenuProps) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [plan, setPlan] = useState<SetupPlan | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [position, setPosition] = useState({ left: 8, top: 8 })
+
+  useEffect(() => {
+    let current = true
+    window.space.setupPlan().then(
+      (next) => {
+        if (!current) return
+        setPlan(next)
+        setError(null)
+      },
+      (reason: unknown) => current && setError(errorMessage(reason))
+    )
+    return () => {
+      current = false
+    }
+  }, [version])
+
+  // Hang under the anchor and stay inside the window.
+  useLayoutEffect(() => {
+    const element = ref.current
+    if (!element) return
+    const rect = element.getBoundingClientRect()
+    const base = anchor?.getBoundingClientRect()
+    const left = base ? base.left : 8
+    const top = base ? base.bottom + 4 : 8
+    setPosition({
+      left: Math.max(8, Math.min(left, window.innerWidth - rect.width - 8)),
+      top: Math.max(8, Math.min(top, window.innerHeight - rect.height - 8))
+    })
+  }, [anchor, plan])
+
+  useEffect(() => {
+    const down = (event: PointerEvent): void => {
+      const target = event.target as Node
+      if (ref.current?.contains(target)) return
+      if (anchorToggles && anchor?.contains(target)) return
+      onClose()
+    }
+    const key = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        event.stopPropagation()
+        onClose()
+      }
+    }
+    window.addEventListener('pointerdown', down, true)
+    window.addEventListener('keydown', key, true)
+    window.addEventListener('blur', onClose)
+    return () => {
+      window.removeEventListener('pointerdown', down, true)
+      window.removeEventListener('keydown', key, true)
+      window.removeEventListener('blur', onClose)
+    }
+  }, [anchor, anchorToggles, onClose])
+
+  const nothingToAdd = plan !== null && plan.items.every((item) => item.exists)
+
+  const setUp = async (): Promise<void> => {
+    if (nothingToAdd) {
+      onClose()
+      return
+    }
+    setBusy(true)
+    try {
+      await onSetUp()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return createPortal(
+    <div ref={ref} className="menu setup-menu" role="dialog" aria-label="Set up this folder" style={position}>
+      <div className="setup-menu__head">
+        <div className="setup-menu__title">Set up this folder</div>
+        <div className="setup-menu__lede">Agents use these files to plan and remember.</div>
+      </div>
+      {error && <div className="setup-menu__error">{error}</div>}
+      {!plan && !error && <div className="setup-menu__loading">Loading…</div>}
+      {plan && (
+        <ul className="setup-menu__list">
+          {lines(plan.items).map((line) => (
+            <li key={line.key} className="setup-menu__item">
+              <span className="setup-menu__name mono">{line.label}</span>
+              <span className={line.isNew ? 'setup-menu__tag setup-menu__tag--new' : 'setup-menu__tag'}>{line.isNew ? 'new' : 'kept'}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="menu__separator" />
+      <div className="setup-menu__footer">
+        {plan && !plan.setUp ? (
+          <button className="setup-menu__dont-ask" onClick={onDontAsk}>
+            Don’t ask for this folder
+          </button>
+        ) : (
+          <span />
+        )}
+        <button
+          className={nothingToAdd ? 'button-small-secondary button-small-secondary--quiet' : 'button-small-secondary'}
+          data-action="setup"
+          disabled={busy || (!plan && !error)}
+          onClick={() => void setUp()}
+        >
+          {nothingToAdd ? 'Nothing to add' : busy ? 'Setting up…' : 'Set up'}
+        </button>
+      </div>
+    </div>,
+    document.body
+  )
+}

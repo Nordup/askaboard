@@ -19,7 +19,6 @@ import { BoardHistory } from './board/history'
 import { CanvasNotice } from './components/CanvasNotice'
 import { PreviewPanel } from './components/PreviewPanel'
 import { Sidebar, type BoardEntry } from './components/Sidebar'
-import { SetupOffer } from './components/SetupOffer'
 import { Toast } from './components/Toast'
 import { ToolPalette } from './components/ToolPalette'
 import { TopBar, type SaveStatus } from './components/TopBar'
@@ -80,9 +79,9 @@ export function App() {
   const [previewVersion, setPreviewVersion] = useState(0)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [toast, setToast] = useState<{ text: string; kind: 'error' | 'info' } | null>(null)
-  /** File > Set Up Folder for Learning…: the setup card with its preview open. */
+  /** The "Set up this folder" menu is open (the sidebar row, the folder menu or File > Set Up Folder for Learning…). */
   const [menuSetup, setMenuSetup] = useState(false)
-  /** "Not now", "Don't ask" or a finished setup: no offer until the folder opens again. */
+  /** "Don't ask" or a finished setup: no setup row until the folder opens again. */
   const [offerDismissed, setOfferDismissed] = useState(false)
   const [tools, setTools] = useState<ToolState>({ tool: 'pen', colorId: 'white', widthId: 'medium' })
   const [agentStatus, setAgentStatus] = useState<AgentServerStatus | null>(null)
@@ -378,12 +377,11 @@ export function App() {
     }
   }, [refreshGuideOverrides])
 
-  const closeSetup = useCallback(() => {
-    setMenuSetup(false)
-    setOfferDismissed(true)
-  }, [])
+  /** Outside click or Escape: "not now". The quiet sidebar row stays. */
+  const closeSetup = useCallback(() => setMenuSetup(false), [])
 
   const dontAskSetup = useCallback(() => {
+    setMenuSetup(false)
     setOfferDismissed(true)
     space.setSetupDontAsk(true).catch((error: unknown) => showError(errorMessage(error)))
   }, [])
@@ -666,13 +664,7 @@ export function App() {
   const recent = snapshot?.recent ?? []
   const loading = snapshot === null
   const hasAgentsFile = tree?.nodes.some((node) => node.kind === 'file' && node.name === 'AGENTS.md') ?? false
-  const setupSource: 'offer' | 'menu' | null = !folder
-    ? null
-    : menuSetup
-      ? 'menu'
-      : !folder.setUp && !hasAgentsFile && !folder.setupDontAsk && !offerDismissed
-        ? 'offer'
-        : null
+  const setupOffer = !!folder && !folder.setUp && !hasAgentsFile && !folder.setupDontAsk && !offerDismissed
 
   let canvasContent = null
   if (!loading && !folder) {
@@ -727,7 +719,13 @@ export function App() {
         onDeleteBoard={(path) => void deleteBoard(path)}
         onReveal={reveal}
         onOpenFile={openFile}
+        setupOffer={setupOffer}
+        setupOpen={!!folder && menuSetup}
+        setupVersion={previewVersion}
         onSetUpFolder={() => setMenuSetup(true)}
+        onCloseSetup={closeSetup}
+        onApplySetup={applySetup}
+        onDontAskSetup={dontAskSetup}
         onEditGuide={() => void editGuide()}
         guideOverrides={guideOverrides}
         onOpenOverride={(path) => void editGuide(path)}
@@ -768,16 +766,6 @@ export function App() {
                 onChange={setTools}
                 onColor={(value) => boardRef.current?.applyColor(value)}
                 onWidth={(px) => boardRef.current?.applyWidth(px)}
-              />
-            )}
-            {setupSource && (
-              <SetupOffer
-                key={`${folder?.root}:${setupSource}`}
-                source={setupSource}
-                version={previewVersion}
-                onSetUp={applySetup}
-                onClose={closeSetup}
-                onDontAsk={dontAskSetup}
               />
             )}
             {toast && <Toast message={toast.text} kind={toast.kind} onDone={clearToast} />}
