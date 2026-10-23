@@ -465,8 +465,10 @@ button:focus-visible {
 }
 
 .agent-client__name {
+  flex-shrink: 0;
   color: var(--text-primary);
   font-weight: 560;
+  white-space: nowrap;
 }
 
 .agent-client__state {
@@ -540,6 +542,63 @@ button:focus-visible {
 
 .agent-client .agent-pop__row {
   margin: 0 0 var(--space-2) 15px;
+}
+
+.agent-client__check {
+  margin-right: 4px;
+  color: var(--status-live);
+  vertical-align: -2px;
+}
+
+.agent-client__warn {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin: 0 0 var(--space-1) 15px;
+  color: var(--ink-orange);
+  font-size: var(--text-xs);
+}
+
+.agent-client__warn svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+/* "Advanced": the by-hand commands, collapsed by default. */
+.agent-advanced {
+  margin-top: var(--space-3);
+}
+
+.agent-advanced__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  font-weight: 560;
+}
+
+.agent-advanced__toggle:hover {
+  color: var(--text-secondary);
+}
+
+.agent-advanced__chevron {
+  transition: transform 120ms ease;
+}
+
+.agent-advanced__chevron--open {
+  transform: rotate(90deg);
+}
+
+.agent-advanced__body {
+  margin-top: var(--space-2);
+}
+
+.agent-advanced__note {
+  margin: 0 0 var(--space-3);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
 }
 
 .zoom {

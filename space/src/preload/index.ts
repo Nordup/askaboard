@@ -57,7 +57,7 @@ const api: SpaceApi = {
   onAgentRequest: (listener) => listen(IPC.agentRequest, listener),
   replyAgent: (reply) => ipcRenderer.send(IPC.agentReply, reply),
   getAgentClients: () => ipcRenderer.invoke(IPC.getAgentClients),
-  connectAgentClient: (id) => ipcRenderer.invoke(IPC.connectAgentClient, id),
+  connectAgentClient: (id, action) => ipcRenderer.invoke(IPC.connectAgentClient, id, action),
 
   importAsset: (src) => ipcRenderer.invoke(IPC.importAsset, src),
   onSnapshotRequest: (listener) => listen(IPC.snapshotRequest, listener),

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertCircle, Check, Copy, Loader2 } from 'lucide-react'
+import { AlertCircle, AlertTriangle, Check, ChevronRight, Copy, Loader2 } from 'lucide-react'
 import type {
-  AgentClientId,
+  AgentClientAction,
   AgentClientStatus,
   AgentClientsStatus,
   AgentServerStatus,
@@ -96,72 +96,101 @@ function CopyRow({ label, value }: { label: string; value: string }) {
 
 const SHIM = '~/.learning-space/bin/learning-space'
 
+/** The by-hand commands in "Advanced". */
+const MANUAL_COMMANDS = {
+  claude: `claude mcp add --scope user learning-space -- ${SHIM} mcp`,
+  codex: `codex mcp add learning-space -- ${SHIM} mcp`
+}
+
 /** The rows before the first check answers. */
 const PLACEHOLDER_CLIENTS: AgentClientStatus[] = [
-  { id: 'claude-code', label: 'Claude Code', state: 'unknown', detail: null, command: `claude mcp add --scope user learning-space -- ${SHIM} mcp` },
-  { id: 'codex', label: 'Codex', state: 'unknown', detail: null, command: `codex mcp add learning-space -- ${SHIM} mcp` },
-  { id: 'claude-app', label: 'Claude app', state: 'unknown', detail: null, command: null }
+  { id: 'claude-code', label: 'Claude Code', state: 'unknown', detail: null, action: null },
+  { id: 'codex', label: 'Codex', state: 'unknown', detail: null, action: null },
+  { id: 'claude-app', label: 'Claude app', state: 'unknown', detail: null, action: null }
 ]
 
 function stateText(client: AgentClientStatus, checking: boolean): string {
   if (checking) return 'Checking…'
   switch (client.state) {
+    case 'plugin':
+      return 'Plugin installed'
+    case 'manual':
+      return 'Connected by hand'
+    case 'both':
+      return 'Both'
     case 'connected':
-      return 'Connected'
+      return 'Extension installed'
     case 'available':
-      return 'Not connected'
+      return client.detail ?? 'Not connected'
     case 'missing':
-      return client.id === 'claude-app' ? 'Not found' : 'Not installed'
+      return client.id === 'claude-app' ? 'Not found' : 'CLI not found'
     default:
       return client.detail ? `Check failed: ${client.detail}` : 'Status unknown'
   }
 }
 
-/** One agent app: status, and Add / Install while it is not connected. */
+const ACTION_LABELS: Record<AgentClientAction, string> = {
+  'install-plugin': 'Install plugin',
+  'switch-to-plugin': 'Switch to plugin',
+  'remove-manual': 'Remove manual entry',
+  'install-extension': 'Install'
+}
+
+/** Green dot: the agent gets the tools (one way or the other). */
+function isLinked(client: AgentClientStatus): boolean {
+  return client.state === 'plugin' || client.state === 'manual' || client.state === 'both' || client.state === 'connected'
+}
+
+/** One agent app: its state and the one button for that state. */
 function ClientRow({ client, checking, onChanged }: { client: AgentClientStatus; checking: boolean; onChanged(): void }) {
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<ConnectResult | null>(null)
-  const connected = client.state === 'connected'
-  const canAct = !checking && !connected && client.state !== 'missing'
+  const action = checking ? null : client.action
 
-  const act = (): void => {
+  const act = (chosen: AgentClientAction): void => {
     setBusy(true)
     setResult(null)
     window.space
-      .connectAgentClient(client.id as AgentClientId)
-      .then((value) => {
-        setResult(value)
-        if (value.ok) onChanged()
-      })
+      .connectAgentClient(client.id, chosen)
+      .then((value) => setResult(value))
       .catch((error: unknown) => setResult({ ok: false, message: error instanceof Error ? error.message : String(error) }))
-      .finally(() => setBusy(false))
+      .finally(() => {
+        setBusy(false)
+        // Re-detect after every action, also after a failure (a step can half succeed).
+        onChanged()
+      })
   }
 
   return (
-    <li className="agent-client" data-client={client.id}>
+    <li className="agent-client" data-client={client.id} data-state={client.state}>
       <div className="agent-client__line">
-        <span className={connected ? 'status-dot status-dot--live' : 'status-dot'} />
+        <span className={isLinked(client) ? 'status-dot status-dot--live' : 'status-dot'} />
         <span className="agent-client__name">{client.label}</span>
         <span className="agent-client__state" title={client.detail ?? undefined}>
+          {client.state === 'plugin' && !checking && <Check size={12} strokeWidth={2.25} className="agent-client__check" />}
           {stateText(client, checking)}
         </span>
-        {canAct && (
-          <button className="agent-client__action" onClick={act} disabled={busy}>
-            {busy ? <Loader2 className="agent-client__spinner" size={13} strokeWidth={2} /> : client.id === 'claude-app' ? 'Install' : 'Add'}
+        {action && (
+          <button className="agent-client__action" data-action={action} onClick={() => act(action)} disabled={busy}>
+            {busy ? <Loader2 className="agent-client__spinner" size={13} strokeWidth={2} /> : ACTION_LABELS[action]}
           </button>
         )}
       </div>
-      {/* After a successful Add the row says Connected; the Claude app confirms in its own dialog. */}
-      {result && !(result.ok && connected) && (
-        <div className={`agent-client__result${result.ok ? ' agent-client__result--ok' : ''}`} role="status">
-          {result.ok ? <Check size={12} strokeWidth={2.25} /> : <AlertCircle size={12} strokeWidth={2} />}
-          <span>{result.ok && client.id === 'claude-app' ? 'Opened in Claude. Confirm the install there.' : result.message}</span>
+      {!checking && client.state === 'both' && (
+        <div className="agent-client__warn">
+          <AlertTriangle size={12} strokeWidth={2} />
+          <span>Tools appear twice. Remove the manual entry and keep the plugin.</span>
         </div>
       )}
-      {!checking && client.state === 'missing' && client.command && (
-        <div className="agent-client__hint">Install it, then run:</div>
+      {result && (
+        <div className={`agent-client__result${result.ok ? ' agent-client__result--ok' : ''}`} role="status">
+          {result.ok ? <Check size={12} strokeWidth={2.25} /> : <AlertCircle size={12} strokeWidth={2} />}
+          <span>{result.message}</span>
+        </div>
       )}
-      {!checking && client.state === 'missing' && client.command && <CopyRow label="" value={client.command} />}
+      {!checking && client.state === 'missing' && client.id !== 'claude-app' && (
+        <div className="agent-client__hint">Install {client.label}, then open this popover again.</div>
+      )}
     </li>
   )
 }
@@ -198,6 +227,27 @@ function AgentClients({ open }: { open: boolean }) {
       </ul>
       {error && <div className="agent-pop__empty">Could not check the agent apps: {error}</div>}
     </>
+  )
+}
+
+/** The by-hand setup, collapsed by default. */
+function Advanced({ url }: { url: string }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="agent-advanced">
+      <button className="agent-advanced__toggle" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+        <ChevronRight size={13} strokeWidth={2} className={open ? 'agent-advanced__chevron agent-advanced__chevron--open' : 'agent-advanced__chevron'} />
+        Advanced: connect by hand
+      </button>
+      {open && (
+        <div className="agent-advanced__body">
+          <p className="agent-advanced__note">Use either the plugin or a manual entry, not both.</p>
+          <CopyRow label="Claude Code" value={MANUAL_COMMANDS.claude} />
+          <CopyRow label="Codex" value={MANUAL_COMMANDS.codex} />
+          <CopyRow label="Server URL (HTTP clients)" value={url} />
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -266,7 +316,7 @@ export function AgentPill({ status, activityAt, guideOverrides, onOpenOverride }
       {open && (
         <div className="agent-pop" role="dialog" aria-label="Connect an agent">
           <div className="agent-pop__title">Connect an agent</div>
-          <p className="agent-pop__lede">Connect once. The agent then sees this canvas while the app is open.</p>
+          <p className="agent-pop__lede">Install the plugin once. The agent then sees this canvas while the app is open.</p>
           {status?.state === 'error' && (
             <div className="agent-pop__error">
               <AlertCircle size={14} strokeWidth={2} />
@@ -274,11 +324,7 @@ export function AgentPill({ status, activityAt, guideOverrides, onOpenOverride }
             </div>
           )}
           <AgentClients open={open} />
-          <div className="agent-pop__divider" />
-          <div className="agent-pop__section">Manual setup</div>
-          <CopyRow label="Claude Code" value={PLACEHOLDER_CLIENTS[0].command ?? ''} />
-          <CopyRow label="Codex" value={PLACEHOLDER_CLIENTS[1].command ?? ''} />
-          <CopyRow label="Server URL (HTTP clients)" value={url} />
+          <Advanced url={url} />
           <div className="agent-pop__divider" />
           <div className="agent-pop__label">Active agents</div>
           <SessionList recent={recent} all={status?.sessions ?? []} now={now} />

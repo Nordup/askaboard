@@ -332,17 +332,32 @@ export type AgentClientId = 'claude-code' | 'codex' | 'claude-app'
 
 /**
  * One agent app in the popover.
- * connected: Learning Space is in its config. available: the app is installed
- * and can be connected. missing: the app was not found. unknown: the check failed.
+ * plugin: the Learning Space plugin is installed and enabled.
+ * manual: a hand-made `learning-space` MCP entry, no plugin.
+ * both: the plugin and a manual entry (the tools appear twice).
+ * connected: the Claude app has the extension (a folder-name heuristic).
+ * available: the app is installed and not connected. missing: the app was
+ * not found. unknown: the check failed.
  */
+export type AgentClientState = 'plugin' | 'manual' | 'both' | 'connected' | 'available' | 'missing' | 'unknown'
+
+/**
+ * A popover button.
+ * install-plugin: add the marketplace (when it is missing), then install the plugin.
+ * switch-to-plugin: install-plugin, then remove the manual entry.
+ * remove-manual: remove the manual entry only.
+ * install-extension: open the bundled .mcpb in the Claude app.
+ */
+export type AgentClientAction = 'install-plugin' | 'switch-to-plugin' | 'remove-manual' | 'install-extension'
+
 export interface AgentClientStatus {
   id: AgentClientId
   label: string
-  state: 'connected' | 'available' | 'missing' | 'unknown'
-  /** A short note for the row (where the CLI is, why the check failed). */
+  state: AgentClientState
+  /** A short note for the row (why the check failed). */
   detail: string | null
-  /** The one-line command that does the same by hand (null for the Claude app). */
-  command: string | null
+  /** The primary button for this state, or null when there is nothing to do. */
+  action: AgentClientAction | null
 }
 
 export interface AgentClientsStatus {
@@ -353,7 +368,7 @@ export interface AgentClientsStatus {
 
 export interface ConnectResult {
   ok: boolean
-  /** "Connected", or the first line of the command's error output. */
+  /** A short success text, or the first line of the failed command's error output. */
   message: string
 }
 
@@ -418,8 +433,8 @@ export interface SpaceApi {
   replyAgent(reply: AgentReply): void
   /** Which agent apps are installed and connected (runs their CLIs; can take seconds). */
   getAgentClients(): Promise<AgentClientsStatus>
-  /** Add Learning Space to one agent app (claude/codex `mcp add`, or open the .mcpb). */
-  connectAgentClient(id: AgentClientId): Promise<ConnectResult>
+  /** Run one popover action for one agent app (plugin install, manual-entry removal, or open the .mcpb). */
+  connectAgentClient(id: AgentClientId, action: AgentClientAction): Promise<ConnectResult>
 
   /**
    * Bring an image into the learning folder for an image node: an https URL

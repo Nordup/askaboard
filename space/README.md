@@ -33,20 +33,42 @@ The app serves MCP (Streamable HTTP) at `http://127.0.0.1:47821/mcp` while it
 is open. Agents connect through a stdio relay, so their config never holds the
 port and they still start when the app is closed.
 
-Click the agent pill in the top bar. The "Connect an agent" popover has one
-row per agent app, with its status and one button:
+Click the agent pill in the top bar. The "Connect an agent" popover is
+plugin first: it has one row per agent app, with a state and one button. The
+plugin comes from the public marketplace `Nordup/learning-space-plugins`
+(marketplace `learning-space`, plugin `learning-space`, MCP server
+`learning-space`). Claude Code's plugin runs the stdio shim (server name
+`plugin:learning-space:learning-space`); Codex's plugin uses
+`http://127.0.0.1:47821/mcp`.
 
-| Row | Status check | Button |
+The app finds `claude` and `codex` from the login shell
+(`/bin/zsh -lc 'command -v claude'`), then in `~/.local/bin`,
+`/opt/homebrew/bin` and `/usr/local/bin`.
+
+| Row | Detection | States |
 | --- | --- | --- |
-| Claude Code | `claude` from the login shell (`/bin/zsh -lc 'command -v claude'`, then `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`); connected when `claude mcp get learning-space` exits 0 | **Add**: `claude mcp add --scope user learning-space -- ~/.learning-space/bin/learning-space mcp` |
-| Codex | `codex` found the same way; connected when `~/.codex/config.toml` (or `$CODEX_HOME`) has a `[mcp_servers.learning-space]` table (URL or command) | **Add**: `codex mcp add learning-space -- ~/.learning-space/bin/learning-space mcp` |
-| Claude app | `Claude.app` in `/Applications` or `~/Applications`; connected when a `Claude Extensions` folder name holds `learning-space` | **Install**: opens `resources/learning-space.mcpb` with `shell.openPath`; Claude shows its install dialog |
+| Claude Code | Plugin: `claude plugin list --json` has `learning-space@learning-space` with `enabled: true`. Manual entry: `claude mcp get learning-space` exits 0 (the plugin's server has another name, so it never matches). | Plugin installed, Connected by hand, Both, Not connected, CLI not found |
+| Codex | Plugin: `codex plugin list --json` has `installed[].pluginId` `learning-space@learning-space` with `enabled: true`. Manual entry: `$CODEX_HOME/config.toml` (default `~/.codex`) has a `[mcp_servers.learning-space]` table. `codex mcp list` cannot tell the two apart. | Same as Claude Code. Without the CLI, the row reads config.toml only. |
+| Claude app | `Claude.app` in `/Applications` or `~/Applications`; "Extension installed" when a `Claude Extensions` folder name holds `learning-space` (a heuristic) | Extension installed, Not connected, Not found |
 
-Each button shows a spinner, then a check mark or the first line of the
-command's error output. The commands run with a fixed argv (no shell string),
-the login shell's `PATH` and a timeout. When a CLI is not installed, the row
-shows the command to copy. "Manual setup" below the rows lists the same
-commands and the HTTP server URL.
+| Button | Shown when | Claude Code | Codex |
+| --- | --- | --- | --- |
+| **Install plugin** | Not connected | `claude plugin marketplace add Nordup/learning-space-plugins` (only when `claude plugin marketplace list --json` lacks it), then `claude plugin install learning-space@learning-space --scope user` (`claude plugin enable …` when it is installed but disabled) | `codex plugin marketplace add Nordup/learning-space-plugins` (only when `codex plugin marketplace list --json` lacks it), then `codex plugin add learning-space@learning-space` |
+| **Switch to plugin** | Connected by hand | Install plugin, then `claude mcp remove learning-space --scope <scope>` (the scope comes from `claude mcp get`) | Install plugin, then `codex mcp remove learning-space` |
+| **Remove manual entry** | Both ("Tools appear twice") | `claude mcp remove learning-space --scope <scope>` | `codex mcp remove learning-space` (exits 0 when the entry is missing, so the app reads config.toml back) |
+| **Install** (Claude app) | Not connected | opens `resources/learning-space.mcpb` with `shell.openPath`; Claude shows its install dialog | |
+
+Each button shows a spinner, then a check mark and a hint ("Restart Claude
+Code or run /reload-plugins", "Restart Codex (or the Codex app) to load the
+plugin"), or the first line of the failed command's error output. The
+commands run with a fixed argv (no shell string), the login shell's `PATH`, a
+timeout (90 s for an install, which clones the marketplace) and one action at
+a time per CLI. The popover checks the state again after every action and
+every time it opens.
+
+"Advanced: connect by hand" (collapsed) lists the manual commands and the
+HTTP server URL. Use either the plugin or a manual entry, not both: with both,
+the agent sees every tool twice.
 
 ```sh
 claude mcp add --scope user learning-space -- ~/.learning-space/bin/learning-space mcp   # Claude Code
@@ -93,8 +115,9 @@ manifest (`manifest_version` 0.3, `server.type` `binary`, command
 
 Dev hook: `SPACE_CONNECT_DRY_RUN=1` makes **Install** log the `.mcpb` path
 instead of opening it. To check the buttons without your real agent config,
-start the app with `HOME=<scratch dir>` and a `PATH` whose `claude` and `codex`
-are stubs.
+start the app with `HOME`, `CLAUDE_CONFIG_DIR` and `CODEX_HOME` set to scratch
+folders (the real CLIs then write only there), plus `SPACE_MCP_PORT` and
+`--user-data-dir` of its own.
 
 The agent pill shows the agents that made a request in the
 last 90 s, grouped by client name (short runs such as `claude -p` exit

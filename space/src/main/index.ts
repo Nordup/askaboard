@@ -10,7 +10,7 @@ import { installMenu, setFolderOpen } from './menu'
 import { FOLDER_SETTINGS_DIR, folderOverrides, onOverridesRead } from './guide'
 import { applySetup, isSetUp, setupPlan } from './setup'
 import { installShim, writeRelayState } from './agent-home'
-import { agentClients, connectAgentClient, isAgentClientId } from './connect'
+import { agentClients, connectAgentClient, isAgentClientAction, isAgentClientId } from './connect'
 import * as store from './state'
 
 /** The colour of the window before the renderer paints. Keep it equal to --bg-app. */
@@ -217,9 +217,10 @@ function registerIpc(): void {
   handle(IPC.getInitialState, () => snapshot(true))
   handle(IPC.getAgentStatus, () => agentServer.status())
   handle(IPC.getAgentClients, () => agentClients())
-  handle(IPC.connectAgentClient, (id: unknown) => {
+  handle(IPC.connectAgentClient, (id: unknown, action: unknown) => {
     if (!isAgentClientId(id)) throw new Error('Unknown agent app.')
-    return connectAgentClient(id)
+    if (!isAgentClientAction(action)) throw new Error('Unknown connect action.')
+    return connectAgentClient(id, action)
   })
   handle(IPC.openFolderDialog, () => showOpenDialog())
   handle(IPC.openRecent, async (path: unknown) => {
