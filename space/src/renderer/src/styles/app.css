@@ -312,150 +312,17 @@ button:focus-visible {
   position: relative;
 }
 
-/* The agent popover: the app's .menu, anchored under the pill. */
+/* The agent popover: layout only (position and width); the content is shared .menu parts. */
 .menu.agent-pop {
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  width: 290px;
+  width: 300px;
   max-height: calc(100vh - var(--topbar-height) - 24px);
   overflow-y: auto;
-  font-size: var(--text-base);
   -webkit-app-region: no-drag;
 }
 
-.agent-pop .menu__item {
-  color: var(--text-secondary);
-}
-
-.agent-pop .menu__item:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-/* One agent: sidebar row height, name left, meta or one control right. */
-.agent-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  height: 30px;
-  padding: 0 var(--space-2);
-}
-
-.agent-row__name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-primary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-row__meta {
-  flex-shrink: 0;
-  color: var(--text-tertiary);
-  font-size: var(--text-sm);
-  font-variant-numeric: tabular-nums;
-}
-
-.agent-row--empty {
-  color: var(--text-tertiary);
-}
-
-.agent-row__control {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-}
-
-.agent-installed {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--text-secondary);
-  font-size: var(--text-sm);
-}
-
-.agent-installed svg {
-  color: var(--status-live);
-}
-
-.agent-spinner {
-  margin-right: var(--space-2);
-  animation: agent-spin 800ms linear infinite;
-  color: var(--text-secondary);
-}
-
-@keyframes agent-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-/* The small secondary button, next to .button-ghost and .button-small-primary. */
-.button-small-secondary {
-  display: inline-flex;
-  align-items: center;
-  height: 22px;
-  padding: 0 var(--space-2);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  font-size: var(--text-sm);
-  font-weight: 560;
-  transition: background 120ms ease;
-}
-
-.button-small-secondary:hover:not(:disabled) {
-  background: var(--bg-hover);
-}
-
-.button-small-secondary:disabled {
-  opacity: 0.5;
-}
-
-/* One short line under a row: muted, or a problem with an inline text button. */
-.agent-line {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  margin: -4px 0 var(--space-1);
-  padding: 0 var(--space-2);
-  color: var(--text-tertiary);
-  font-size: var(--text-sm);
-}
-
-.agent-line__text {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-line--warn {
-  color: var(--ink-orange);
-}
-
-.agent-line--error {
-  align-items: flex-start;
-  margin: var(--space-1) 0;
-  color: var(--ink-pink);
-}
-
-.agent-line--error svg {
-  flex-shrink: 0;
-  margin-top: 3px;
-}
-
-.agent-line__fix {
-  flex-shrink: 0;
-  color: var(--text-primary);
-  font-weight: 560;
-}
-
-.agent-line__fix:hover {
-  text-decoration: underline;
-}
 
 .zoom {
   min-width: 52px;
@@ -860,14 +727,62 @@ button:focus-visible {
 
 /* ---------- Menu ---------- */
 
+/*
+ * One menu system for every popup: Menu.tsx (sidebar folder and board menus),
+ * the agent popover and the setup flyout. A menu sets only its position and
+ * width; spacing and type come from the custom properties below.
+ *
+ *   .menu__heading         small uppercase section label
+ *   .menu__title/__lede    a title and one muted line
+ *   .menu__item            clickable row: .menu__icon, .menu__label, .menu__hint (right)
+ *   .menu__row             plain row: .menu__name left, .menu__meta or .menu__control right
+ *   .menu__line            one short line under a row (--warn, --error), with a .menu__fix text button
+ *   .menu__status          inline status: green check + text, or .menu__spinner
+ *   .menu__separator       hairline
+ *   .menu__footer          quiet text action left, a .btn-sm right
+ *   .btn-sm, .btn-text     the one small button, and its quiet text variant
+ */
 .menu {
+  --menu-pad: 6px;
+  --menu-radius: 10px;
+  --menu-item-pad: 4px 8px;
+  --menu-row-pad: 4px 8px;
+  --menu-item-radius: 6px;
+  --menu-font: 13px;
+  --menu-meta-font: 12px;
+  --menu-heading-font: 11px;
+  --menu-separator-margin: 8px 4px;
   position: fixed;
   z-index: 100;
-  padding: var(--space-1);
-  background: var(--bg-elevated-2);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-lg);
+  padding: var(--menu-pad);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--menu-radius);
   box-shadow: var(--shadow-float);
+  color: var(--text-secondary);
+  font-size: var(--menu-font);
+  line-height: 1.4;
+}
+
+.menu__heading {
+  padding: 6px 8px 2px;
+  color: var(--text-tertiary);
+  font-size: var(--menu-heading-font);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.menu__title {
+  padding: 6px 8px 2px;
+  color: var(--text-primary);
+  font-weight: 560;
+}
+
+.menu__lede {
+  padding: 0 8px 8px;
+  color: var(--text-tertiary);
+  font-size: var(--menu-meta-font);
 }
 
 .menu__item {
@@ -875,16 +790,15 @@ button:focus-visible {
   align-items: center;
   gap: var(--space-2);
   width: 100%;
-  height: 28px;
-  padding: 0 var(--space-2);
-  border-radius: var(--radius-sm);
+  padding: var(--menu-item-pad);
+  border-radius: var(--menu-item-radius);
   color: var(--text-primary);
+  font-size: var(--menu-font);
   text-align: left;
 }
 
 .menu__item:hover:not(:disabled) {
-  background: var(--accent);
-  color: var(--text-on-accent);
+  background: var(--bg-hover);
 }
 
 .menu__item:disabled {
@@ -895,8 +809,17 @@ button:focus-visible {
   color: var(--ink-pink);
 }
 
+.menu__item--quiet {
+  color: var(--text-secondary);
+}
+
+.menu__item--quiet:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
 .menu__icon {
   display: grid;
+  flex-shrink: 0;
   place-items: center;
   width: 16px;
   opacity: 0.85;
@@ -908,23 +831,168 @@ button:focus-visible {
 }
 
 .menu__hint {
-  font-size: var(--text-xs);
-  opacity: 0.6;
+  color: var(--text-tertiary);
+  font-size: var(--menu-meta-font);
+}
+
+.menu__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.menu__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--menu-row-pad);
+  line-height: 1.2;
+}
+
+.menu__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menu__name--mono {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--menu-meta-font);
+}
+
+.menu__meta {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-size: var(--menu-meta-font);
+  font-variant-numeric: tabular-nums;
+}
+
+.menu__meta--accent {
+  color: var(--accent);
+}
+
+.menu__control {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  min-height: 24px;
+}
+
+.menu__line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 0 8px 4px;
+  color: var(--text-tertiary);
+  font-size: var(--menu-meta-font);
+}
+
+.menu__line-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menu__line--warn {
+  color: var(--ink-orange);
+}
+
+.menu__line--error {
+  align-items: flex-start;
+  color: var(--ink-pink);
+}
+
+.menu__line--error svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.menu__fix {
+  flex-shrink: 0;
+  color: var(--text-primary);
+  font-weight: 560;
+}
+
+.menu__fix:hover {
+  text-decoration: underline;
+}
+
+.menu__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: var(--menu-meta-font);
+}
+
+.menu__status svg {
+  color: var(--status-live);
+}
+
+.menu__spinner {
+  animation: menu-spin 800ms linear infinite;
+  color: var(--text-secondary);
+}
+
+@keyframes menu-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .menu__separator {
   height: 1px;
-  margin: var(--space-1) var(--space-1);
+  margin: var(--menu-separator-margin);
   background: var(--border-subtle);
 }
 
-.menu__heading {
-  padding: var(--space-1) var(--space-2) 2px;
-  font-size: var(--text-xs);
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+.menu__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 2px 8px 4px;
+}
+
+/* The one small button, in menus and anywhere else a compact action is needed. */
+.btn-sm {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.btn-sm:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.btn-sm:disabled {
+  opacity: 0.5;
+}
+
+.btn-sm--quiet {
   color: var(--text-tertiary);
+}
+
+/* The quiet text button ("Don't ask for this folder"). */
+.btn-text {
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.btn-text:hover {
+  color: var(--text-secondary);
 }
 
 /* ---------- Save status ---------- */
@@ -1231,39 +1299,6 @@ button:focus-visible {
   color: var(--ink-pink);
 }
 
-.button-ghost,
-.button-small-primary {
-  display: inline-flex;
-  align-items: center;
-  height: 28px;
-  padding: 0 var(--space-3);
-  border-radius: var(--radius-md);
-  font-weight: 560;
-  transition: background 120ms ease, color 120ms ease;
-}
-
-.button-ghost {
-  color: var(--text-secondary);
-}
-
-.button-ghost:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.button-small-primary {
-  background: var(--accent);
-  color: var(--text-on-accent);
-  font-weight: 600;
-}
-
-.button-small-primary:hover:not(:disabled) {
-  background: var(--accent-hover);
-}
-
-.button-small-primary:disabled {
-  opacity: 0.5;
-}
 
 .toast--info svg {
   color: var(--status-live);
@@ -1346,119 +1381,7 @@ button:focus-visible {
   background: var(--accent);
 }
 
-/* The "Set up this folder" menu: the app's .menu, with the mockup's compact spacing (this menu only). */
+/* The "Set up this folder" flyout: layout only (width); the content is shared .menu parts. */
 .menu.setup-menu {
   width: 270px;
-  padding: 6px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  background: var(--bg-elevated);
-  font-size: var(--text-base);
 }
-
-.setup-menu__head {
-  padding: 0;
-}
-
-.setup-menu__title {
-  padding: 6px 8px 2px;
-  color: var(--text-primary);
-  font-size: var(--text-base);
-  font-weight: 560;
-}
-
-.setup-menu__lede {
-  padding: 0 8px 8px;
-  color: var(--text-tertiary);
-  font-size: var(--text-sm);
-  line-height: 1.4;
-}
-
-.setup-menu__list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.setup-menu__item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 4px 8px;
-  line-height: 1.2;
-}
-
-.setup-menu__name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-secondary);
-  font-size: var(--text-sm);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.setup-menu__tag {
-  flex-shrink: 0;
-  color: var(--text-tertiary);
-  font-size: var(--text-sm);
-}
-
-.setup-menu__tag--new {
-  color: var(--accent);
-}
-
-.setup-menu__loading,
-.setup-menu__error {
-  padding: 4px 8px;
-  color: var(--text-tertiary);
-  font-size: var(--text-sm);
-}
-
-.setup-menu__error {
-  color: var(--ink-pink);
-}
-
-.setup-menu .menu__separator {
-  margin: 8px 4px;
-}
-
-.setup-menu__footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding: 2px 8px 4px;
-}
-
-.setup-menu__dont-ask {
-  color: var(--text-tertiary);
-  font-size: var(--text-sm);
-}
-
-.setup-menu__dont-ask:hover {
-  color: var(--text-secondary);
-}
-
-.setup-menu__button {
-  padding: 4px 12px;
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-primary);
-  font-size: var(--text-sm);
-  line-height: 1.4;
-}
-
-.setup-menu__button:hover:not(:disabled) {
-  background: var(--bg-hover);
-}
-
-.setup-menu__button:disabled {
-  opacity: 0.5;
-}
-
-.setup-menu__button--quiet {
-  color: var(--text-tertiary);
-}
-

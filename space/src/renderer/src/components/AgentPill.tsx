@@ -124,16 +124,16 @@ function AgentsView({ lines, checking, now, onConnect }: { lines: AgentLine[]; c
         const active = line.lastActiveAt !== null && now - line.lastActiveAt < ACTIVE_WINDOW_MS
         const meta = line.lastActiveAt === null ? 'not connected yet' : active ? 'active now' : ago(line.lastActiveAt, now)
         return (
-          <div key={line.key} className="agent-row" data-agent={line.key}>
+          <div key={line.key} className="menu__row" data-agent={line.key}>
             <span className={active ? 'status-dot status-dot--live' : 'status-dot'} />
-            <span className="agent-row__name">{line.name}</span>
-            <span className="agent-row__meta">{meta}</span>
+            <span className="menu__name">{line.name}</span>
+            <span className="menu__meta">{meta}</span>
           </div>
         )
       })}
-      {lines.length === 0 && <div className="agent-row agent-row--empty">{checking ? 'Checking…' : 'No agent yet'}</div>}
+      {lines.length === 0 && <div className="menu__row menu__meta">{checking ? 'Checking…' : 'No agent yet'}</div>}
       <div className="menu__separator" />
-      <button className="menu__item agent-pop__link" data-nav="connect" onClick={onConnect}>
+      <button className="menu__item menu__item--quiet" data-nav="connect" onClick={onConnect}>
         <span className="menu__icon">
           <Plus size={14} strokeWidth={1.75} />
         </span>
@@ -148,11 +148,11 @@ function AgentsView({ lines, checking, now, onConnect }: { lines: AgentLine[]; c
 /** A problem line under a row: warning text and one inline text button. */
 function Problem({ text, fix, onFix }: { text: string; fix: string; onFix(): void }) {
   return (
-    <div className="agent-line agent-line--warn">
-      <span className="agent-line__text" title={text}>
+    <div className="menu__line menu__line--warn">
+      <span className="menu__line-text" title={text}>
         {text}
       </span>
-      <button className="agent-line__fix" onClick={onFix}>
+      <button className="menu__fix" onClick={onFix}>
         {fix}
       </button>
     </div>
@@ -185,18 +185,18 @@ function ConnectRow({ id, client, checking, onChanged }: { id: AgentClientId; cl
 
   const installed = client ? isInstalled(client) : false
   let control: React.ReactNode
-  if (busy || (checking && !client)) control = <Loader2 className="agent-spinner" size={14} strokeWidth={2} aria-label="Working" />
+  if (busy || (checking && !client)) control = <Loader2 className="menu__spinner" size={14} strokeWidth={2} aria-label="Working" />
   else if (installed)
     control = (
-      <span className="agent-installed">
+      <span className="menu__status">
         <Check size={13} strokeWidth={2.25} />
         Installed
       </span>
     )
-  else if (client?.state === 'missing') control = <span className="agent-row__meta">Not found</span>
+  else if (client?.state === 'missing') control = <span className="menu__meta">Not found</span>
   else
     control = (
-      <button className="button-small-secondary" data-action={client?.action ?? 'install'} disabled={!client?.action} onClick={() => client?.action && run(client.action)}>
+      <button className="btn-sm" data-action={client?.action ?? 'install'} disabled={!client?.action} onClick={() => client?.action && run(client.action)}>
         Install
       </button>
     )
@@ -207,16 +207,16 @@ function ConnectRow({ id, client, checking, onChanged }: { id: AgentClientId; cl
 
   return (
     <div className="agent-connect" data-client={id} data-state={client?.state ?? 'unknown'}>
-      <div className="agent-row">
-        <span className="agent-row__name">{CLIENT_NAMES[id]}</span>
-        <span className="agent-row__control">{control}</span>
+      <div className="menu__row">
+        <span className="menu__name">{CLIENT_NAMES[id]}</span>
+        <span className="menu__control">{control}</span>
       </div>
       {!busy && failed && <Problem text={shorten(failed.result.message)} fix="Retry" onFix={() => run(failed.action)} />}
       {!busy && !failed && client?.state === 'both' && <Problem text="Also added by hand, so tools appear twice" fix="Fix" onFix={() => run('remove-manual')} />}
       {!busy && !failed && client?.state === 'manual' && <Problem text="Added by hand" fix="Fix" onFix={() => run('switch-to-plugin')} />}
       {!busy && !failed && client?.state === 'unknown' && client.detail && <Problem text={shorten(client.detail)} fix="Retry" onFix={onChanged} />}
-      {done && restart && <div className="agent-line">Restart {restart} to finish</div>}
-      {done && !restart && <div className="agent-line">Confirm the install in Claude Desktop</div>}
+      {done && restart && <div className="menu__line">Restart {restart} to finish</div>}
+      {done && !restart && <div className="menu__line">Confirm the install in Claude Desktop</div>}
     </div>
   )
 }
@@ -224,7 +224,7 @@ function ConnectRow({ id, client, checking, onChanged }: { id: AgentClientId; cl
 function ConnectView({ clients, checking, onBack, onChanged }: { clients: AgentClientStatus[] | null; checking: boolean; onBack(): void; onChanged(): void }) {
   return (
     <>
-      <button className="menu__item agent-pop__back" data-nav="back" onClick={onBack}>
+      <button className="menu__item" data-nav="back" onClick={onBack}>
         <span className="menu__icon">
           <ChevronLeft size={14} strokeWidth={2} />
         </span>
@@ -235,7 +235,7 @@ function ConnectView({ clients, checking, onBack, onChanged }: { clients: AgentC
         <ConnectRow key={id} id={id} client={clients?.find((entry) => entry.id === id)} checking={checking} onChanged={onChanged} />
       ))}
       <div className="menu__separator" />
-      <button className="menu__item agent-pop__link" onClick={() => window.open(MANUAL_SETUP_URL, '_blank')}>
+      <button className="menu__item menu__item--quiet" onClick={() => window.open(MANUAL_SETUP_URL, '_blank')}>
         <span className="menu__icon">
           <ExternalLink size={13} strokeWidth={1.75} />
         </span>
@@ -326,7 +326,7 @@ export function AgentPill({ status, activityAt, guideOverrides, onOpenOverride }
       {open && (
         <div className="menu agent-pop" role="dialog" aria-label={view === 'agents' ? 'Agents' : 'Connect an agent'} data-view={view}>
           {status?.state === 'error' && (
-            <div className="agent-line agent-line--error agent-pop__server-error">
+            <div className="menu__line menu__line--error">
               <AlertCircle size={12} strokeWidth={2} />
               <span>{status.error}</span>
             </div>
@@ -336,7 +336,7 @@ export function AgentPill({ status, activityAt, guideOverrides, onOpenOverride }
           ) : (
             <ConnectView clients={clients?.clients ?? null} checking={checking} onBack={() => go('agents')} onChanged={refresh} />
           )}
-          {checkError && <div className="agent-line agent-line--error">Could not check the agent apps: {shorten(checkError)}</div>}
+          {checkError && <div className="menu__line menu__line--error">Could not check the agent apps: {shorten(checkError)}</div>}
           <GuideOverrideNote
             className="agent-pop__overrides"
             overrides={guideOverrides}

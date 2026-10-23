@@ -127,33 +127,31 @@ export function SetupMenu({ anchor, anchorToggles, version, onSetUp, onClose, on
 
   return createPortal(
     <div ref={ref} className="menu setup-menu" role="dialog" aria-label="Set up this folder" style={position}>
-      <div className="setup-menu__head">
-        <div className="setup-menu__title">Set up this folder</div>
-        <div className="setup-menu__lede">Agents use these files to plan and remember.</div>
-      </div>
-      {error && <div className="setup-menu__error">{error}</div>}
-      {!plan && !error && <div className="setup-menu__loading">Loading…</div>}
+      <div className="menu__title">Set up this folder</div>
+      <div className="menu__lede">Agents use these files to plan and remember.</div>
+      {error && <div className="menu__line menu__line--error">{error}</div>}
+      {!plan && !error && <div className="menu__line">Loading…</div>}
       {plan && (
-        <ul className="setup-menu__list">
+        <ul className="menu__list">
           {lines(plan.items).map((line) => (
-            <li key={line.key} className="setup-menu__item">
-              <span className="setup-menu__name mono">{line.label}</span>
-              <span className={line.isNew ? 'setup-menu__tag setup-menu__tag--new' : 'setup-menu__tag'}>{line.isNew ? 'new' : 'kept'}</span>
+            <li key={line.key} className="menu__row">
+              <span className="menu__name menu__name--mono">{line.label}</span>
+              <span className={line.isNew ? 'menu__meta menu__meta--accent' : 'menu__meta'}>{line.isNew ? 'new' : 'kept'}</span>
             </li>
           ))}
         </ul>
       )}
       <div className="menu__separator" />
-      <div className="setup-menu__footer">
+      <div className="menu__footer">
         {plan && !plan.setUp ? (
-          <button className="setup-menu__dont-ask" onClick={onDontAsk}>
+          <button className="btn-text" onClick={onDontAsk}>
             Don’t ask for this folder
           </button>
         ) : (
           <span />
         )}
         <button
-          className={nothingToAdd ? 'setup-menu__button setup-menu__button--quiet' : 'setup-menu__button'}
+          className={nothingToAdd ? 'btn-sm btn-sm--quiet' : 'btn-sm'}
           data-action="setup"
           disabled={busy || (!plan && !error)}
           onClick={() => void setUp()}

@@ -41,6 +41,12 @@ python3 scripts/web-dev.py --qa   # same, with dummy provider keys (no paid call
 - **The working tree is often dirty with the user's own work.** Never `git checkout`/`git restore`/`stash` a file to undo your edits — remove your own change with an edit. Re-read files before editing; the user edits and builds concurrently.
 - Ask before pushing.
 
+## Learning Space UI (`space/`)
+
+- **Dark only, one design system.** Colours, spacing and radii come from `space/src/renderer/src/styles/tokens.css`. Never hard-code a colour or a spacing value in a component.
+- **Every menu and popover uses the shared menu system** in `styles/app.css` (comment block above `.menu`): the `--menu-*` custom properties set all spacing and type, and screens are built from the shared parts (`.menu__heading`, `.menu__title`/`.menu__lede`, `.menu__item`, `.menu__row`, `.menu__line`, `.menu__status`, `.menu__separator`, `.menu__footer`) and the one small button (`.btn-sm`, `.btn-text`). A menu component may set only its own position and width. A missing part is added to the shared system, not to one menu.
+- **Keep it quiet:** one primary action per view, short labels, details behind a link or a second view. Mock up new UI first and get the founder's approval before building it.
+
 ## iPad client (paused)
 
 - The Xcode project is generated: after adding or renaming Swift files, run `xcodegen generate` and commit the regenerated `project.pbxproj`. No two Swift files may share a basename.
