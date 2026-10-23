@@ -42,3 +42,6 @@ scripts/__pycache__/
 space/node_modules/
 space/out/
 space/dist/
+
+# Third-party reference material (Paper agent interface), local only
+docs/learning-space/reference/
