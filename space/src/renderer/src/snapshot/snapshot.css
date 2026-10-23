@@ -44,18 +44,18 @@ body,
 }
 
 .snapshot__grid line {
-  stroke: rgba(255, 255, 255, 0.14);
+  stroke: var(--snapshot-grid);
   stroke-width: 1;
 }
 
 .snapshot__grid line.snapshot__axis {
-  stroke: rgba(255, 255, 255, 0.32);
+  stroke: var(--snapshot-axis);
 }
 
 .snapshot__grid text {
   font: 600 10px/1 ui-monospace, Menlo, monospace;
-  fill: rgba(255, 255, 255, 0.75);
-  stroke: #000;
+  fill: var(--snapshot-label);
+  stroke: var(--snapshot-label-outline);
   stroke-width: 2.5px;
   paint-order: stroke;
 }
@@ -74,7 +74,7 @@ body,
   border-radius: 3px;
   font: 700 11px/14px ui-monospace, Menlo, monospace;
   white-space: nowrap;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
+  box-shadow: 0 0 0 1px var(--snapshot-tag-outline);
 }
 
 /* One pixel below the image: tells the main process which request a frame shows. */

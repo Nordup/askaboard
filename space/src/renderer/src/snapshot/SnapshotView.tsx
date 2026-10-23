@@ -95,6 +95,15 @@ function Overlays({ req, overlays }: { req: SnapshotRequest; overlays: SnapshotO
   )
 }
 
+/**
+ * The frame marker for a request id, as a CSS hex colour. This encodes data, not a design colour:
+ * it must match `markerColor` in main/snapshot.ts (r = id % 256, g = (id / 256) % 256, b = 255).
+ */
+function markerColour(id: number): string {
+  const channels = [id % 256, Math.floor(id / 256) % 256, 255]
+  return '#' + channels.map((value) => value.toString(16).padStart(2, '0')).join('')
+}
+
 export function SnapshotView() {
   const [request, setRequest] = useState<{ request: SnapshotRequest; index: SceneIndex } | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -159,7 +168,7 @@ export function SnapshotView() {
       if (cancelled) return
       // The frame marker (see main/snapshot.ts): set in the same task as the ink, so a frame that shows it shows the ink.
       const marker = markerRef.current
-      if (marker) marker.style.background = `rgb(${req.requestId % 256}, ${Math.floor(req.requestId / 256) % 256}, 255)`
+      if (marker) marker.style.background = markerColour(req.requestId)
       await frame()
       if (!cancelled) window.space.snapshotReady({ requestId: req.requestId, ok: true, missingImages })
     }

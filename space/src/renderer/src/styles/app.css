@@ -271,7 +271,7 @@ button:focus-visible {
   height: 7px;
   border-radius: 50%;
   background: var(--status-idle);
-  box-shadow: 0 0 0 2px rgba(92, 92, 100, 0.18);
+  box-shadow: 0 0 0 2px var(--status-idle-ring);
 }
 
 .pill--open {
@@ -281,12 +281,12 @@ button:focus-visible {
 
 .status-dot--live {
   background: var(--status-live);
-  box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.18);
+  box-shadow: 0 0 0 2px var(--status-live-ring);
 }
 
 .status-dot--error {
   background: var(--ink-pink);
-  box-shadow: 0 0 0 2px rgba(255, 107, 139, 0.18);
+  box-shadow: 0 0 0 2px var(--status-error-ring);
 }
 
 /* One pulse per agent tool call. */
@@ -296,13 +296,13 @@ button:focus-visible {
 
 @keyframes status-pulse {
   0% {
-    box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.18);
+    box-shadow: 0 0 0 2px var(--status-live-ring);
   }
   35% {
-    box-shadow: 0 0 0 6px rgba(74, 222, 128, 0.35);
+    box-shadow: 0 0 0 6px var(--status-live-pulse);
   }
   100% {
-    box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.18);
+    box-shadow: 0 0 0 2px var(--status-live-ring);
   }
 }
 
@@ -419,7 +419,7 @@ button:focus-visible {
   height: 16px;
   border-radius: 50%;
   background: var(--swatch);
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25);
+  box-shadow: inset 0 0 0 1px var(--swatch-edge);
   transition: transform 120ms ease;
 }
 
@@ -492,8 +492,8 @@ button:focus-visible {
   height: 40px;
   margin-bottom: var(--space-5);
   border-radius: var(--radius-lg);
-  background: linear-gradient(145deg, rgba(110, 139, 255, 0.28), rgba(110, 139, 255, 0.08));
-  border: 1px solid rgba(110, 139, 255, 0.35);
+  background: linear-gradient(145deg, var(--accent-tile-from), var(--accent-tile-to));
+  border: 1px solid var(--accent-tile-border);
   color: var(--accent);
 }
 
@@ -704,7 +704,7 @@ button:focus-visible {
   bottom: 0;
   left: var(--tree-guide-x, 14px);
   width: 1px;
-  background: var(--border-subtle, rgba(127, 127, 127, 0.18));
+  background: var(--border-subtle);
   pointer-events: none;
 }
 
@@ -1180,7 +1180,7 @@ button:focus-visible {
   place-items: center;
   padding: var(--space-4);
   border-radius: var(--radius-md);
-  background: repeating-conic-gradient(#1c1c1f 0% 25%, #222226 0% 50%) 50% / 16px 16px;
+  background: repeating-conic-gradient(var(--bg-elevated) 0% 25%, var(--preview-checker) 0% 50%) 50% / 16px 16px;
 }
 
 .preview__image img {

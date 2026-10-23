@@ -6,8 +6,9 @@
 // The zip is deterministic: fixed file order, fixed mtimes, no extra fields
 // (TZ=UTC zip -X). Usage: node scripts/build-mcpb.mjs  (npm run build:mcpb)
 //
-// The plugin repo (learning-space-plugins) will own this artifact later; this
-// script is the stand-in until the app copies that file instead.
+// The plugin repo (learning-space-plugins) owns the real artifact. When it is
+// checked out next to this repo, the script copies that file; otherwise it
+// builds this stand-in.
 import { execFileSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'

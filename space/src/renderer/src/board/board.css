@@ -11,7 +11,7 @@
   background-color: var(--bg-canvas);
   background-image: radial-gradient(
     circle at center,
-    rgba(255, 255, 255, var(--grid-alpha, 0.07)) 1px,
+    color-mix(in srgb, var(--canvas-dot-solid) calc(var(--grid-alpha, 0.07) * 100%), transparent) 1px,
     transparent 1.4px
   );
   background-size: var(--grid-size, 24px) var(--grid-size, 24px);
@@ -60,7 +60,7 @@
 }
 
 .board__lasso polygon {
-  fill: rgba(110, 139, 255, 0.08);
+  fill: var(--lasso-fill);
   stroke: var(--accent);
   stroke-width: 1.5px;
   stroke-dasharray: 5 4;
@@ -73,7 +73,7 @@
   z-index: 3;
   border: 1.5px dashed var(--accent);
   border-radius: var(--radius-md);
-  background: rgba(110, 139, 255, 0.05);
+  background: var(--selection-fill);
   pointer-events: none;
 }
 
@@ -86,9 +86,9 @@
   left: 0;
   top: 0;
   z-index: 4;
-  border: 1px solid rgba(255, 255, 255, 0.6);
+  border: 1px solid var(--eraser-ring);
   border-radius: 50%;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 0 0 1px var(--eraser-halo);
   opacity: 0;
   pointer-events: none;
 }
@@ -178,11 +178,11 @@
 @keyframes board-presence {
   0%,
   100% {
-    box-shadow: 0 0 0 0 rgba(110, 139, 255, 0.35);
-    border-color: rgba(110, 139, 255, 0.95);
+    box-shadow: 0 0 0 0 var(--presence-glow);
+    border-color: var(--presence-border);
   }
   50% {
-    box-shadow: 0 0 0 4px rgba(110, 139, 255, 0.12);
-    border-color: rgba(110, 139, 255, 0.55);
+    box-shadow: 0 0 0 4px var(--presence-glow-peak);
+    border-color: var(--presence-border-peak);
   }
 }

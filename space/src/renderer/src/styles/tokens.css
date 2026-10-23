@@ -19,6 +19,9 @@
   --border-strong: rgba(255, 255, 255, 0.13);
   --canvas-dot: rgba(255, 255, 255, 0.07);
   --canvas-dot-pitch: 24px;
+  /* The board dot grid's opaque colour; Board.tsx fades it with --grid-alpha per zoom. */
+  --canvas-dot-solid: #ffffff;
+  --preview-checker: #222226; /* second checker square behind image previews (first: --bg-elevated) */
 
   /* Text */
   --text-primary: #ececef;
@@ -31,10 +34,37 @@
   --accent-hover: #8299ff;
   --accent-soft: rgba(110, 139, 255, 0.14);
   --accent-ring: rgba(110, 139, 255, 0.45);
+  --accent-tile-from: rgba(110, 139, 255, 0.28); /* empty-state icon tile gradient */
+  --accent-tile-to: rgba(110, 139, 255, 0.08);
+  --accent-tile-border: rgba(110, 139, 255, 0.35);
 
   /* Status */
   --status-idle: #5c5c64;
   --status-live: #4ade80;
+  /* The halo around a status dot, and the peak of the live pulse */
+  --status-idle-ring: rgba(92, 92, 100, 0.18);
+  --status-live-ring: rgba(74, 222, 128, 0.18);
+  --status-live-pulse: rgba(74, 222, 128, 0.35);
+  --status-error-ring: rgba(255, 107, 139, 0.18);
+
+  /* Canvas tools: selection, lasso, eraser, agent presence */
+  --selection-fill: rgba(110, 139, 255, 0.05);
+  --lasso-fill: rgba(110, 139, 255, 0.08);
+  --eraser-ring: rgba(255, 255, 255, 0.6);
+  --eraser-halo: rgba(0, 0, 0, 0.5);
+  /* Agent presence pulse: border and glow at rest (0%) and at the peak (50%) */
+  --presence-border: rgba(110, 139, 255, 0.95);
+  --presence-glow: rgba(110, 139, 255, 0.35);
+  --presence-border-peak: rgba(110, 139, 255, 0.55);
+  --presence-glow-peak: rgba(110, 139, 255, 0.12);
+  --swatch-edge: rgba(0, 0, 0, 0.25); /* inset line around an ink colour swatch */
+
+  /* Snapshot: the grid, labels and tags drawn into the image agents see */
+  --snapshot-grid: rgba(255, 255, 255, 0.14);
+  --snapshot-axis: rgba(255, 255, 255, 0.32);
+  --snapshot-label: rgba(255, 255, 255, 0.75);
+  --snapshot-label-outline: #000000;
+  --snapshot-tag-outline: rgba(0, 0, 0, 0.55);
 
   /* Ink colours, tuned for the dark canvas */
   --ink-white: #ececef;
