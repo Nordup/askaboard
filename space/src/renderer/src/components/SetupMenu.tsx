@@ -153,7 +153,7 @@ export function SetupMenu({ anchor, anchorToggles, version, onSetUp, onClose, on
           <span />
         )}
         <button
-          className={nothingToAdd ? 'button-small-secondary button-small-secondary--quiet' : 'button-small-secondary'}
+          className={nothingToAdd ? 'setup-menu__button setup-menu__button--quiet' : 'setup-menu__button'}
           data-action="setup"
           disabled={busy || (!plan && !error)}
           onClick={() => void setUp()}
