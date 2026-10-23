@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { BoardNode } from '@shared/board-format'
-import type { SnapshotRequest } from '@shared/space-api'
+import type { SnapshotOverlays, SnapshotRequest } from '@shared/space-api'
 import { ContentLayer, measureContent, type ContentContext } from '../board/content'
 import { paintItems } from '../board/paint'
 import { addInkLayout, buildIndex, inkOffset, inkPaintOrder, type SceneIndex } from '../board/scene'
@@ -33,6 +33,66 @@ async function imagesSettled(root: HTMLElement): Promise<number> {
     new Promise((resolve) => setTimeout(resolve, IMAGE_WAIT_MS))
   ])
   return images.filter((image) => !image.complete || image.naturalWidth === 0).length
+}
+
+/** The agent-only overlays: a board-coordinate grid and id tags. Clipped to the image. */
+function Overlays({ req, overlays }: { req: SnapshotRequest; overlays: SnapshotOverlays }) {
+  const toX = (x: number): number => (x - req.rect.x) * req.scale
+  const toY = (y: number): number => (y - req.rect.y) * req.scale
+  const pitch = overlays.grid
+  const xs: number[] = []
+  const ys: number[] = []
+  if (pitch > 0) {
+    for (let x = Math.ceil(req.rect.x / pitch) * pitch; x <= req.rect.x + req.rect.width; x += pitch) xs.push(x)
+    for (let y = Math.ceil(req.rect.y / pitch) * pitch; y <= req.rect.y + req.rect.height; y += pitch) ys.push(y)
+  }
+  return (
+    <div className="snapshot__overlays" style={{ width: req.width, height: req.height }}>
+      {pitch > 0 && (
+        <svg className="snapshot__grid" width={req.width} height={req.height}>
+          {xs.map((x) => (
+            <line key={`x${x}`} x1={toX(x)} x2={toX(x)} y1={0} y2={req.height} className={x === 0 ? 'snapshot__axis' : undefined} />
+          ))}
+          {ys.map((y) => (
+            <line key={`y${y}`} y1={toY(y)} y2={toY(y)} x1={0} x2={req.width} className={y === 0 ? 'snapshot__axis' : undefined} />
+          ))}
+          {xs.map((x) => (
+            <text key={`tx${x}`} x={toX(x) + 3} y={11}>
+              {x}
+            </text>
+          ))}
+          {ys.map((y) => (
+            <text key={`ty${y}`} x={3} y={toY(y) - 3}>
+              {y}
+            </text>
+          ))}
+        </svg>
+      )}
+      {overlays.labels.map((label, i) => {
+        const left = Math.round(toX(label.rect.x))
+        const top = Math.round(toY(label.rect.y))
+        // The tag sits just above the box, or inside its top-left when there is no room above.
+        const tagTop = top >= 16 ? top - 16 : Math.max(0, top)
+        return (
+          <div key={i}>
+            <div
+              className="snapshot__label-box"
+              style={{
+                left,
+                top,
+                width: Math.max(2, Math.round(label.rect.width * req.scale)),
+                height: Math.max(2, Math.round(label.rect.height * req.scale)),
+                borderColor: label.color
+              }}
+            />
+            <div className="snapshot__tag" style={{ left: Math.max(0, left), top: tagTop, background: label.color, color: label.textColor }}>
+              {label.text}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
 }
 
 export function SnapshotView() {
@@ -116,6 +176,7 @@ export function SnapshotView() {
     <div className="snapshot" style={req ? { width: req.width, height: req.height + 1, background: req.background } : undefined}>
       {request && <ContentLayer index={request.index} editingId={null} ctx={ctx} rootRef={rootRef} />}
       <img className="snapshot__ink" ref={inkRef} alt="" />
+      {req?.overlays && <Overlays req={req} overlays={req.overlays} />}
       <div className="snapshot__marker" ref={markerRef} style={req ? { top: req.height } : undefined} />
       {req?.outlines.map((outline, i) => (
         <div

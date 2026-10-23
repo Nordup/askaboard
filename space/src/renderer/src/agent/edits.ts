@@ -1,9 +1,34 @@
-import { isContent, isFrame, isInk, isKnown, renderableStyle, STYLE_KEYS, type BoardNode, type ContentNode, type NodeStyle } from '@shared/board-format'
+import { isContent, isFrame, isInk, isKnown, newItemId, renderableStyle, STYLE_KEYS, type BoardNode, type ContentNode, type InkNode, type NodeStyle } from '@shared/board-format'
 import type { AgentRef, AgentToolName, BoardRect } from '@shared/space-api'
 import type { BoardHandle, PresenceEntry } from '../board/Board'
+import { clampZoom, overlapShare, unionRegions } from '../board/geometry'
 import { draftsToNodes, htmlToDrafts, Ignored, nodesToHtml, walkDrafts, type Draft } from '../board/html'
-import { ancestorIds, buildIndex, copySubtrees, isFlowed, parentKey, removeNodes, ROOT, topLevelOf, withDescendants, zAbove, type SceneIndex } from '../board/scene'
-import type { LayoutBox, Region } from '../board/types'
+import { ancestorIds, copySubtrees, isFlowed, normalizeInk, parentKey, removeNodes, ROOT, topLevelOf, withDescendants, zAbove } from '../board/scene'
+import type { Point, Region } from '../board/types'
+import { isGroupId, type InkGroup, type InkGroupTracker } from './groups'
+import { humanize, shapeLines, SHAPES, svgPathPolylines, type ArrowSide, type Shape } from './ink'
+import {
+  anchorFor,
+  ASSUMED_HEIGHT,
+  expandIds,
+  findSpace,
+  findSpot,
+  groupSubject,
+  inside,
+  nodeSubject,
+  obstacles,
+  overlapReport,
+  parsePlace,
+  placeRelative,
+  resolveTarget,
+  sceneOf,
+  sizeOf,
+  viewOf,
+  type PlaceSpec,
+  type Placed,
+  type Scene,
+  type Subject
+} from './placement'
 
 /**
  * The agent's board tools (write_html, get_tree, update_styles, …), run in
@@ -17,12 +42,11 @@ export interface EditContext {
   agent: AgentRef
   importAsset(src: string): Promise<string>
   presence: AgentPresence
+  /** The open board's ink groups, computed now. */
+  groups(): InkGroup[]
+  tracker: InkGroupTracker
 }
 
-/** Space kept around agent material when it is placed automatically (board points). */
-const PLACE_GAP = 48
-/** Height assumed for a new frame whose height follows its content. */
-const ASSUMED_HEIGHT = 360
 const PRESENCE_MS = 20_000
 
 const r1 = (value: number): number => Math.round(value * 10) / 10
@@ -85,15 +109,8 @@ export class AgentPresence {
 
 // ---------- Helpers ----------
 
-interface Scene {
-  nodes: readonly BoardNode[]
-  index: SceneIndex
-  layout: ReadonlyMap<string, LayoutBox>
-}
-
-function scene(board: BoardHandle): Scene {
-  const state = board.liveState()
-  return { nodes: state.nodes, index: buildIndex(state.nodes), layout: state.layout() }
+function scene(ctx: EditContext): Scene {
+  return sceneOf(ctx.board, ctx.groups)
 }
 
 function requireNode(s: Scene, id: unknown, what = 'node_id'): BoardNode {
@@ -171,122 +188,19 @@ function applyStyles(style: NodeStyle, changes: Record<string, string | null>): 
   return next
 }
 
-// ---------- Placement ----------
+// ---------- Placement helpers ----------
 
-function overlaps(a: Region, b: Region, gap: number): boolean {
-  return a.x < b.x + b.width + gap && b.x < a.x + a.width + gap && a.y < b.y + b.height + gap && b.y < a.y + a.height + gap
+/** The world box a `place` spec points at. */
+function placeTarget(s: Scene, spec: PlaceSpec): Region {
+  const target = resolveTarget(s, spec.target, `place.${spec.side}`)
+  if (!target.box) throw new Error(`"${spec.target}" has no layout (it may be hidden), so nothing can be placed relative to it.`)
+  return target.box
 }
 
-/** Boxes agent material must not cover: top-level content and all ink. */
-function obstacles(s: Scene, skip: ReadonlySet<string> = new Set()): Region[] {
-  const out: Region[] = []
-  for (const node of s.index.children.get(ROOT) ?? []) {
-    if (skip.has(node.id)) continue
-    const box = s.layout.get(node.id)
-    if (box) out.push(box)
-  }
-  for (const node of s.index.byId.values()) {
-    if (!isInk(node) || skip.has(node.id) || ancestorIds(node, s.index.byId).some((id) => skip.has(id))) continue
-    const box = s.layout.get(node.id)
-    if (box && !(s.index.children.get(ROOT) ?? []).some((top) => top.id === node.id)) out.push(box)
-  }
-  return out
-}
-
-/** Margin kept inside the learner's view when a spot must be visible (board points). */
-const VIEW_MARGIN = 16
-
-function inside(box: Region, view: Region): boolean {
-  return box.x >= view.x && box.y >= view.y && box.x + box.width <= view.x + view.width && box.y + box.height <= view.y + view.height
-}
-
-/**
- * The best empty spot for a box of `size` near `anchor`: right of it, then
- * below, then left, then above, moving outward, with PLACE_GAP to everything
- * in `blocked`. Spots fully inside `view` (the learner's viewport) win; only
- * when none fits does the box go outside the view (visible: false).
- */
-export function findSpot(
-  size: { width: number; height: number },
-  anchor: Region,
-  blocked: readonly Region[],
-  view?: Region
-): { x: number; y: number; visible: boolean } {
-  const free = (x: number, y: number): boolean => !blocked.some((box) => overlaps({ x, y, ...size }, box, PLACE_GAP))
-  const right = anchor.x + anchor.width + PLACE_GAP
-  const below = anchor.y + anchor.height + PLACE_GAP
-  const left = anchor.x - size.width - PLACE_GAP
-  const above = anchor.y - size.height - PLACE_GAP
-  const ring = (step: number): [number, number][] => [
-    [right + step, anchor.y],
-    [right, anchor.y + step],
-    [anchor.x, below + step],
-    [left - step, anchor.y],
-    [right, anchor.y - step],
-    [anchor.x + step, below],
-    [anchor.x, above - step]
-  ]
-  const shown = view
-    ? { x: view.x + VIEW_MARGIN, y: view.y + VIEW_MARGIN, width: view.width - VIEW_MARGIN * 2, height: view.height - VIEW_MARGIN * 2 }
-    : null
-  const isVisible = (x: number, y: number): boolean => !!shown && inside({ x, y, ...size }, shown)
-  if (shown && size.width <= shown.width && size.height <= shown.height) {
-    // 1. The usual spots around the anchor, kept only when fully in view.
-    for (let step = 0; step < 60; step++) {
-      for (const [x, y] of ring(step * 64)) if (isVisible(x, y) && free(x, y)) return { x: Math.round(x), y: Math.round(y), visible: true }
-    }
-    // 2. Any free spot in view, nearest to the anchor first.
-    const spots: [number, number, number][] = []
-    const cx = anchor.x + anchor.width / 2
-    const cy = anchor.y + anchor.height / 2
-    for (let x = shown.x; x + size.width <= shown.x + shown.width; x += 24) {
-      for (let y = shown.y; y + size.height <= shown.y + shown.height; y += 24) {
-        spots.push([x, y, Math.hypot(x + size.width / 2 - cx, y + size.height / 2 - cy)])
-      }
-    }
-    spots.sort((a, b) => a[2] - b[2])
-    for (const [x, y] of spots) if (free(x, y)) return { x: Math.round(x), y: Math.round(y), visible: true }
-  }
-  // 3. Outside the view.
-  for (let step = 0; step < 60; step++) {
-    for (const [x, y] of ring(step * 64)) if (free(x, y)) return { x: Math.round(x), y: Math.round(y), visible: isVisible(x, y) }
-  }
-  return { x: Math.round(right), y: Math.round(anchor.y), visible: isVisible(right, anchor.y) }
-}
-
-/** The learner's viewport in board points. */
-function viewOf(board: BoardHandle): Region {
-  const state = board.liveState()
-  const width = state.viewport[0] / state.camera.zoom
-  const height = state.viewport[1] / state.camera.zoom
-  return { x: state.camera.center[0] - width / 2, y: state.camera.center[1] - height / 2, width, height }
-}
-
-/** Where agent material goes by default: beside `near`, else beside the learner's latest ink, else the view centre. */
-function anchorFor(s: Scene, board: BoardHandle, near: unknown): Region {
-  if (typeof near === 'string' && near) {
-    const node = requireNode(s, near, 'near')
-    const box = s.layout.get(node.id)
-    if (box) return box
-  }
-  let latest: BoardNode | null = null
-  for (const node of s.nodes) if (isInk(node) && node.author === 'learner' && (!latest || node.seq > latest.seq)) latest = node
-  const state = board.liveState()
-  const viewW = state.viewport[0] / state.camera.zoom
-  const viewH = state.viewport[1] / state.camera.zoom
-  const view = { x: state.camera.center[0] - viewW / 2, y: state.camera.center[1] - viewH / 2, width: viewW, height: viewH }
-  const latestBox = latest ? s.layout.get(latest.id) : undefined
-  if (latestBox && overlaps(latestBox, view, 0)) {
-    // The learner's work near the latest stroke: its top-level frame when it is inside one.
-    const top = latest ? topLevelOf(latest, s.index.byId) : null
-    return (top && s.layout.get(top.id)) ?? latestBox
-  }
-  return { x: state.camera.center[0] - 1, y: state.camera.center[1] - 1, width: 2, height: 2 }
-}
-
-function sizeOf(style: NodeStyle, fallback: { width: number; height: number }): { width: number; height: number } {
-  const px = (value: string | undefined): number | null => (value && /^-?[\d.]+px$/.test(value.trim()) ? parseFloat(value) : null)
-  return { width: px(style.width) ?? fallback.width, height: px(style.height) ?? fallback.height }
+/** Overlaps of top-level ancestors and given nodes, read after a commit. */
+function overlapsOf(ctx: EditContext, ids: Iterable<string>): ReturnType<typeof overlapReport> {
+  const after = scene(ctx)
+  return overlapReport(after, [...new Set(ids)].map((id) => nodeSubject(after, id)))
 }
 
 // ---------- z order ----------
@@ -327,17 +241,11 @@ function getTree(s: Scene, args: Record<string, unknown>): string {
   const depth = Math.max(1, Math.min(10, typeof args.depth === 'number' ? Math.floor(args.depth) : 3))
   const lines: string[] = []
   const inkGroups = (key: string, indent: string): void => {
-    const ink = (s.index.children.get(key) ?? []).filter(isInk)
-    for (const author of ['learner', 'agent'] as const) {
-      const group = ink.filter((stroke) => stroke.author === author)
-      if (!group.length) continue
-      const boxes = group.map((stroke) => s.layout.get(stroke.id)).filter((box): box is LayoutBox => !!box)
-      const x = Math.min(...boxes.map((b) => b.x))
-      const y = Math.min(...boxes.map((b) => b.y))
-      const w = Math.max(...boxes.map((b) => b.x + b.width)) - x
-      const h = Math.max(...boxes.map((b) => b.y + b.height)) - y
-      const ids = group.length <= 5 ? `  [${group.map((stroke) => stroke.id).join(', ')}]` : ''
-      lines.push(`${indent}ink ×${group.length} (${author})  ${boxes.length ? `${Math.round(x)},${Math.round(y)} ${Math.round(w)}×${Math.round(h)}` : ''}${ids}`)
+    for (const group of s.groups) {
+      if (group.parent !== key) continue
+      const b = group.bounds
+      const count = `${group.strokes.length} stroke${group.strokes.length === 1 ? '' : 's'}`
+      lines.push(`${indent}ink group ${group.id}  ${Math.round(b.x)},${Math.round(b.y)} ${Math.round(b.width)}×${Math.round(b.height)}  ${count}  (${group.author})`)
     }
   }
   const walk = (key: string, level: number, indent: string): void => {
@@ -363,7 +271,7 @@ function getTree(s: Scene, args: Record<string, unknown>): string {
       inkGroups(node.id, '  ')
     }
   } else {
-    lines.push(`board: ${s.nodes.length} node(s); x,y w×h are world bounds in board points`)
+    lines.push(`board: ${s.nodes.length} node(s); x,y w×h are world bounds in board points; ink shows as groups (g1, g2, …): use a group id like a node id`)
     walk(ROOT, 1, '')
     inkGroups(ROOT, '')
   }
@@ -371,6 +279,13 @@ function getTree(s: Scene, args: Record<string, unknown>): string {
 }
 
 function getNodeInfo(s: Scene, args: Record<string, unknown>): unknown {
+  if (isGroupId(args.node_id)) {
+    const target = resolveTarget(s, args.node_id)
+    if (target.kind === 'group') {
+      const g = target.group
+      return { id: g.id, kind: 'ink group', author: g.author, parent: g.parent || null, bounds: rect(g.bounds), strokes: g.strokes, seq: g.seq }
+    }
+  }
   const node = requireNode(s, args.node_id)
   const key = parentKey(node, s.index.byId)
   const box = s.layout.get(node.id)
@@ -425,7 +340,10 @@ function createFrame(ctx: EditContext, s: Scene, args: Record<string, unknown>):
   let placed: string
   const view = viewOf(ctx.board)
   let visible: boolean
-  if (typeof args.x === 'number' && typeof args.y === 'number') {
+  const place = parsePlace(args.place)
+  if (place) {
+    ;({ x, y, visible, placed } = placeRelative(place, placeTarget(s, place), size, obstacles(s), view))
+  } else if (typeof args.x === 'number' && typeof args.y === 'number') {
     x = args.x
     y = args.y
     placed = 'at the given x, y'
@@ -448,7 +366,8 @@ function createFrame(ctx: EditContext, s: Scene, args: Record<string, unknown>):
     bounds: rect(ctx.board.liveState().bounds(frameId)),
     placed,
     visible,
-    ...(visible ? {} : { note: 'No empty spot fits in the learner’s view, so the frame is outside it. Tell the learner where it is.' }),
+    ...(visible ? {} : { note: 'The frame is outside the learner’s view. Tell the learner where it is, or use focus.' }),
+    ...overlapsOf(ctx, [frameId]),
     ...(ignored.size ? { ignored_styles: [...ignored] } : {})
   }
 }
@@ -484,7 +403,7 @@ async function writeHtml(ctx: EditContext, args: Record<string, unknown>): Promi
   if (!drafts.length) throw new Error(`Nothing to write: the HTML had no supported content.${ignored.summary() ? ` Ignored: ${JSON.stringify(ignored.summary())}` : ''}`)
 
   // Read the board after the downloads: the learner may have drawn meanwhile.
-  const s = scene(ctx.board)
+  const s = scene(ctx)
   const targetId = args.target_id
   const toRoot = targetId === 'root'
   const target = toRoot ? null : requireNode(s, targetId, 'target_id')
@@ -492,6 +411,7 @@ async function writeHtml(ctx: EditContext, args: Record<string, unknown>): Promi
   let created: ReturnType<typeof draftsToNodes>
   /** Top-level nodes that were auto-placed outside the learner's view. */
   const hidden: string[] = []
+  const placements: string[] = []
 
   if (mode === 'insert_children') {
     if (target && !isFrame(target)) throw new Error(`target_id "${target.id}" is a ${target.kind}; insert_children needs a frame (or "root"). Use mode "replace" to replace it.`)
@@ -504,16 +424,19 @@ async function writeHtml(ctx: EditContext, args: Record<string, unknown>): Promi
     })
     next = [...s.nodes, ...created.nodes]
     if (toRoot) {
-      // Top-level material without left/top is placed in empty space, one root after another.
+      // Top-level material without left/top is placed in empty space (or by `place`), one root after another.
       const blocked = obstacles(s)
+      const place = parsePlace(args.place)
+      const placeBox = place ? placeTarget(s, place) : null
       const anchor = anchorFor(s, ctx.board, args.near)
       const view = viewOf(ctx.board)
       next = next.map((node) => {
         if (!created.roots.includes(node.id) || !isContent(node)) return node
         const draft = drafts[created.roots.indexOf(node.id)]
-        if (draft.x !== 0 || draft.y !== 0) return node
+        if (!place && (draft.x !== 0 || draft.y !== 0)) return node
         const size = sizeOf(node.style, { width: 400, height: ASSUMED_HEIGHT })
-        const spot = findSpot(size, anchor, blocked, view)
+        const spot: Placed | ReturnType<typeof findSpot> = place && placeBox ? placeRelative(place, placeBox, size, blocked, view) : findSpot(size, anchor, blocked, view)
+        if ('placed' in spot) placements.push(`${node.id}: ${spot.placed}`)
         if (!spot.visible) hidden.push(node.id)
         blocked.push({ x: spot.x, y: spot.y, ...size })
         return { ...node, x: spot.x, y: spot.y }
@@ -565,8 +488,9 @@ async function writeHtml(ctx: EditContext, args: Record<string, unknown>): Promi
     ctx.board.remeasure()
   }
   const state = ctx.board.liveState()
-  const after = scene(ctx.board)
-  ctx.presence.mark(ctx.agent, topLevels(after, [...created.roots, ...(target ? [target.id] : [])]))
+  const after = scene(ctx)
+  const touchedTops = topLevels(after, [...created.roots, ...(target ? [target.id] : [])])
+  ctx.presence.mark(ctx.agent, touchedTops)
   const bounds: Record<string, BoardRect | null> = {}
   for (const id of [...created.roots, ...Object.values(created.named)]) bounds[id] = rect(state.bounds(id))
   const summary = ignored.summary()
@@ -575,7 +499,9 @@ async function writeHtml(ctx: EditContext, args: Record<string, unknown>): Promi
     ...(Object.keys(created.named).length ? { named: created.named } : {}),
     node_count: created.nodes.length,
     bounds,
+    ...(placements.length ? { placed: placements } : {}),
     ...(hidden.length ? { outside_view: hidden } : {}),
+    ...overlapReport(after, [...created.roots, ...touchedTops.filter((id) => !created.roots.includes(id))].map((id) => nodeSubject(after, id))),
     ...(summary ? { ignored: summary } : {})
   }
 }
@@ -585,7 +511,7 @@ function updateStyles(ctx: EditContext, s: Scene, args: Record<string, unknown>)
   const ignored = new Set<string>()
   const changed = new Map<string, BoardNode>()
   for (const update of args.updates as Record<string, unknown>[]) {
-    const ids = stringList(update?.node_ids, 'node_ids')
+    const ids = expandIds(s, stringList(update?.node_ids, 'node_ids'))
     const styles = normalizeStyles(update?.styles, ignored)
     for (const id of ids) {
       const node = changed.get(id) ?? requireNode(s, id)
@@ -602,7 +528,7 @@ function updateStyles(ctx: EditContext, s: Scene, args: Record<string, unknown>)
   }
   ctx.board.agentCommit(s.nodes.map((node) => changed.get(node.id) ?? node))
   ctx.presence.mark(ctx.agent, topLevels(s, changed.keys()))
-  return { updated: [...changed.keys()], ...(ignored.size ? { ignored_styles: [...ignored] } : {}) }
+  return { updated: [...changed.keys()], ...overlapsOf(ctx, topLevels(s, changed.keys())), ...(ignored.size ? { ignored_styles: [...ignored] } : {}) }
 }
 
 function setText(ctx: EditContext, s: Scene, args: Record<string, unknown>): unknown {
@@ -616,19 +542,66 @@ function setText(ctx: EditContext, s: Scene, args: Record<string, unknown>): unk
   }
   ctx.board.agentCommit(s.nodes.map((node) => changed.get(node.id) ?? node))
   ctx.presence.mark(ctx.agent, topLevels(s, changed.keys()))
-  return { updated: [...changed.keys()] }
+  return { updated: [...changed.keys()], ...overlapsOf(ctx, topLevels(s, changed.keys())) }
 }
 
 function moveNodes(ctx: EditContext, s: Scene, args: Record<string, unknown>): unknown {
   if (!Array.isArray(args.moves) || !args.moves.length) throw new Error('moves must be a non-empty list.')
   const work = new Map<string, BoardNode>(s.nodes.map((node) => [node.id, node]))
   const touched: string[] = []
+  const movedGroups: string[] = []
+  const placements: string[] = []
+  const view = viewOf(ctx.board)
   const sorted = (key: string, except: string): BoardNode[] =>
     [...work.values()]
       .filter((node) => isKnown(node) && node.id !== except && parentKey(node, work) === key)
       .sort((a, b) => (a.z as number) - (b.z as number))
+  const shift = (ids: readonly string[], delta: Point): void => {
+    for (const id of ids) {
+      const node = work.get(id)
+      if (node && isKnown(node) && !node.locked) work.set(id, { ...node, x: node.x + delta[0], y: node.y + delta[1] } as BoardNode)
+    }
+  }
 
+  // A group moved into a frame is its strokes moved one by one.
+  const moves: Record<string, unknown>[] = []
   for (const move of args.moves as Record<string, unknown>[]) {
+    if (isGroupId(move?.node_id) && typeof move.parent_id === 'string') {
+      const target = resolveTarget(s, move.node_id)
+      if (target.kind === 'group') {
+        movedGroups.push(target.id)
+        for (const id of target.group.strokes) moves.push({ ...move, node_id: id })
+        continue
+      }
+    }
+    moves.push(move)
+  }
+
+  for (const move of moves) {
+    const place = parsePlace(move?.place)
+    if (isGroupId(move?.node_id)) {
+      const target = resolveTarget(s, move.node_id)
+      if (target.kind === 'group') {
+        const g = target.group
+        let delta: Point
+        if (place) {
+          const spot = placeRelative(place, placeTarget(s, place), { width: g.bounds.width, height: g.bounds.height }, obstacles(s, new Set(g.strokes)), view)
+          placements.push(`${g.id}: ${spot.placed}`)
+          delta = [spot.x - g.bounds.x, spot.y - g.bounds.y]
+        } else if (typeof move.x === 'number' && typeof move.y === 'number') {
+          const origin = originOf(s, g.parent)
+          delta = [move.x + origin[0] - g.bounds.x, move.y + origin[1] - g.bounds.y]
+        } else if (typeof move.dx === 'number' || typeof move.dy === 'number') {
+          delta = [Number(move.dx) || 0, Number(move.dy) || 0]
+        } else {
+          throw new Error(`An ink group moves with {node_id, place}, {node_id, x, y}, {node_id, dx, dy} or {node_id, parent_id}; "${g.id}" cannot be reordered with before/after.`)
+        }
+        shift(g.strokes, delta)
+        touched.push(...g.strokes)
+        movedGroups.push(g.id)
+        continue
+      }
+    }
     const original = requireNode(s, move?.node_id)
     const node = work.get(original.id) as BoardNode
     if (!isKnown(node)) throw new Error(`Node "${node.id}" is of an unknown kind.`)
@@ -638,6 +611,14 @@ function moveNodes(ctx: EditContext, s: Scene, args: Record<string, unknown>): u
     const flowed = isFlowed(node, work)
     touched.push(node.id)
 
+    if (place) {
+      if (flowed) throw new Error(`"${node.id}" is placed by its flex parent; move it to "root" first (parent_id) to place it freely.`)
+      if (!box) throw new Error(`"${node.id}" has no layout, so it cannot be placed.`)
+      const spot = placeRelative(place, placeTarget(s, place), { width: box.width, height: box.height }, obstacles(s, new Set([node.id])), view)
+      placements.push(`${node.id}: ${spot.placed}`)
+      shift([node.id], [spot.x - box.x, spot.y - box.y])
+      continue
+    }
     if (typeof move.x === 'number' && typeof move.y === 'number') {
       if (flowed) throw new Error(`"${node.id}" is placed by its flex parent; use parent_id/index or before/after to reorder it.`)
       const origin = originOf(s, key)
@@ -668,7 +649,7 @@ function moveNodes(ctx: EditContext, s: Scene, args: Record<string, unknown>): u
       }
       index = typeof move.index === 'number' ? Math.floor(move.index) : null
     } else {
-      throw new Error('Each move needs {node_id, x, y}, {node_id, dx, dy}, {node_id, parent_id, index?} or {node_id, before|after}.')
+      throw new Error('Each move needs {node_id, place}, {node_id, x, y}, {node_id, dx, dy}, {node_id, parent_id, index?} or {node_id, before|after}.')
     }
     const list = sorted(newKey, node.id)
     const z = zAt(list, index ?? list.length, work)
@@ -689,19 +670,44 @@ function moveNodes(ctx: EditContext, s: Scene, args: Record<string, unknown>): u
     work.set(node.id, moved)
   }
   ctx.board.agentCommit(s.nodes.map((node) => work.get(node.id) ?? node))
-  const after = scene(ctx.board)
+  const after = scene(ctx)
   ctx.presence.mark(ctx.agent, topLevels(after, touched))
-  return {
-    moved: [...new Set(touched)].map((id) => {
-      const node = after.index.byId.get(id)
-      return { node_id: id, parent: node ? (parentKey(node, after.index.byId) || 'root') : null, bounds: rect(after.layout.get(id)) }
+  const groupIds = [...new Set(movedGroups)]
+  const groupStrokes = new Set(groupIds.flatMap((id) => s.groupById.get(id)?.strokes ?? []))
+  const nodeIds = [...new Set(touched)].filter((id) => !groupStrokes.has(id))
+  const subjects: (Subject | null)[] = [
+    ...nodeIds.map((id) => nodeSubject(after, id)),
+    ...groupIds.map((id) => {
+      const group = after.groupById.get(id)
+      return group ? groupSubject(group) : null
     })
+  ]
+  return {
+    moved: [
+      ...nodeIds.map((id) => {
+        const node = after.index.byId.get(id)
+        return { node_id: id, parent: node ? (parentKey(node, after.index.byId) || 'root') : null, bounds: rect(after.layout.get(id)) }
+      }),
+      ...groupIds.map((id) => {
+        const group = after.groupById.get(id)
+        return { node_id: id, parent: group ? group.parent || 'root' : null, bounds: rect(group?.bounds) }
+      })
+    ],
+    ...(placements.length ? { placed: placements } : {}),
+    ...overlapReport(after, subjects)
   }
 }
 
 function duplicateNodes(ctx: EditContext, s: Scene, args: Record<string, unknown>): unknown {
-  const ids = stringList(args.node_ids, 'node_ids')
-  for (const id of ids) requireNode(s, id)
+  const asked = stringList(args.node_ids, 'node_ids')
+  // A unit is placed as one piece: a node, or all strokes of an ink group.
+  const units = asked.map((id) => {
+    const target = resolveTarget(s, id)
+    return { id, ids: target.kind === 'group' ? target.group.strokes : [id], box: target.box }
+  })
+  const ids = [...new Set(units.flatMap((unit) => unit.ids))]
+  const place = parsePlace(args.place)
+  const placeBox = place ? placeTarget(s, place) : null
   const copied = copySubtrees(ids, s.index, s.layout, { detach: false })
   const idMap = copied.idMap ?? new Map<string, string>()
   const reverse = new Map([...idMap].map(([from, to]) => [to, from]))
@@ -709,51 +715,82 @@ function duplicateNodes(ctx: EditContext, s: Scene, args: Record<string, unknown
   const blocked = obstacles(s)
   const view = viewOf(ctx.board)
   const hidden: string[] = []
+  const placements: string[] = []
+  // The world shift of each unit that is placed freely, decided once per unit.
+  const unitDelta = new Map<string, Point | null>()
+  const deltaFor = (sourceId: string): Point | null => {
+    const unit = units.find((entry) => entry.ids.includes(sourceId))
+    if (!unit) return null
+    if (unitDelta.has(unit.id)) return unitDelta.get(unit.id) ?? null
+    let delta: Point | null = null
+    const box = unit.box
+    const topLevelUnit = unit.ids.every((id) => {
+      const node = s.index.byId.get(id)
+      return !!node && parentKey(node, s.index.byId) === ROOT
+    })
+    if (box && (place || topLevelUnit)) {
+      const size = { width: box.width, height: box.height }
+      const spot = place && placeBox ? placeRelative(place, placeBox, size, blocked, view) : findSpot(size, box, blocked, view)
+      if ('placed' in spot) placements.push(`${unit.id}: ${spot.placed}`)
+      if (!spot.visible) hidden.push(unit.id)
+      blocked.push({ x: spot.x, y: spot.y, ...size })
+      delta = [spot.x - box.x, spot.y - box.y]
+    }
+    unitDelta.set(unit.id, delta)
+    return delta
+  }
   const zNext = new Map<string, number>()
   const nodes = copied.nodes.map((node) => {
     if (!roots.has(node.id) || !isKnown(node)) return node
-    const source = s.index.byId.get(reverse.get(node.id) ?? '') as BoardNode
+    const sourceId = reverse.get(node.id) ?? ''
+    const source = s.index.byId.get(sourceId) as BoardNode
     const key = parentKey(node, s.index.byId)
     if (isFlowed(node, s.index.byId)) {
       // Right after the original in the flex order.
       const siblings = (s.index.children.get(key) ?? []).filter((sibling) => sibling.id !== source.id)
-      const at = (s.index.children.get(key) ?? []).findIndex((sibling) => sibling.id === source.id)
       const z = typeof source.z === 'number' ? source.z + 0.5 / (1 + (zNext.get(key) ?? 0)) : zAbove(siblings)
       zNext.set(key, (zNext.get(key) ?? 0) + 1)
-      void at
       return { ...node, z } as BoardNode
     }
     const z = zNext.get(key) ?? zAbove(s.index.children.get(key) ?? [])
     zNext.set(key, z + 1)
-    if (key === ROOT) {
-      const box = s.layout.get(source.id)
-      if (box) {
-        const spot = findSpot({ width: box.width, height: box.height }, box, blocked, view)
-        if (!spot.visible) hidden.push(node.id)
-        blocked.push({ x: spot.x, y: spot.y, width: box.width, height: box.height })
-        return { ...node, z, x: node.x + (spot.x - box.x), y: node.y + (spot.y - box.y) } as BoardNode
-      }
-    }
+    const delta = deltaFor(sourceId)
+    if (delta) return { ...node, z, x: node.x + delta[0], y: node.y + delta[1] } as BoardNode
     return { ...node, z, x: node.x + 20, y: node.y + 20 } as BoardNode
   })
   ctx.board.agentCommit([...s.nodes, ...nodes])
-  const after = scene(ctx.board)
+  const after = scene(ctx)
   ctx.presence.mark(ctx.agent, topLevels(after, copied.roots))
-  const top: Record<string, string> = {}
-  for (const id of ids) if (idMap.has(id)) top[id] = idMap.get(id) as string
+  const top: Record<string, string | string[]> = {}
+  const unitCopies = units.map((unit) => ({ unit, copies: unit.ids.map((id) => idMap.get(id)).filter((id): id is string => !!id) }))
+  for (const { unit, copies } of unitCopies) {
+    if (isGroupId(unit.id)) {
+      // The copy of a group is a new group: name it by its id when the strokes cluster together.
+      const group = after.groups.find((entry) => copies.length && copies.every((id) => entry.strokes.includes(id)))
+      top[unit.id] = group ? group.id : copies
+    } else if (copies.length) top[unit.id] = copies[0]
+  }
   const descendants: Record<string, string> = {}
   for (const [from, to] of idMap) if (!ids.includes(from)) descendants[from] = to
   return {
     duplicates: top,
     ...(Object.keys(descendants).length ? { descendant_ids: descendants } : {}),
     bounds: Object.fromEntries(copied.roots.map((id) => [id, rect(after.layout.get(id))])),
-    ...(hidden.length ? { outside_view: hidden } : {})
+    ...(placements.length ? { placed: placements } : {}),
+    ...(hidden.length ? { outside_view: hidden } : {}),
+    ...overlapReport(
+      after,
+      unitCopies.map(({ unit, copies }) => {
+        if (!isGroupId(unit.id)) return copies.length ? nodeSubject(after, copies[0]) : null
+        const box = unionRegions(copies.map((id) => after.layout.get(id)))
+        return box ? { box, own: new Set(copies) } : null
+      })
+    )
   }
 }
 
 function deleteNodes(ctx: EditContext, s: Scene, args: Record<string, unknown>): unknown {
-  const ids = stringList(args.node_ids, 'node_ids')
-  for (const id of ids) requireNode(s, id)
+  const ids = expandIds(s, stringList(args.node_ids, 'node_ids'))
   const next = removeNodes(s.nodes, ids, s.index)
   const left = new Set(next.map((node) => node.id))
   const removed = s.nodes.filter((node) => !left.has(node.id)).map((node) => ({ id: node.id, kind: node.kind, author: node.author }))
@@ -764,32 +801,272 @@ function deleteNodes(ctx: EditContext, s: Scene, args: Record<string, unknown>):
   return { removed, ...(locked.length ? { not_removed_locked: locked } : {}) }
 }
 
+// ---------- Agent ink ----------
+
+/** Named colours draw_ink accepts (palette names and the agent tokens). */
+const INK_NAMES: Record<string, string> = {
+  white: '#ececef',
+  yellow: '#f5d76e',
+  blue: '#6ea8ff',
+  green: '#5fd38d',
+  pink: '#ff6b8b',
+  orange: '#ff9f45',
+  red: '#ff6b8b',
+  accent: '#6e8bff',
+  good: '#5fd38d',
+  bad: '#ff6b8b',
+  warn: '#f5d76e',
+  text: '#ececef'
+}
+/** Defaults by intent, then fallbacks when the learner writes in a close colour. */
+const DEFAULT_INK = ['#6e8bff', '#ff9f45', '#ff6b8b', '#5fd38d', '#f5d76e']
+const MAX_INK_POINTS = 20_000
+const MAX_INK_LINES = 200
+
+function hexRgb(color: string): [number, number, number] | null {
+  const match = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(color.trim())
+  if (!match) return null
+  const hex = match[1].length === 3 ? [...match[1]].map((c) => c + c).join('') : match[1]
+  return [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16)]
+}
+
+function closeColors(a: string, b: string): boolean {
+  const x = hexRgb(a)
+  const y = hexRgb(b)
+  if (!x || !y) return a.trim().toLowerCase() === b.trim().toLowerCase()
+  return Math.hypot(x[0] - y[0], x[1] - y[1], x[2] - y[2]) < 70
+}
+
+function inkColor(value: unknown, shape: Shape | undefined, learner: string): string {
+  if (typeof value === 'string' && value.trim()) {
+    const raw = value.trim()
+    const token = /^var\(--ls-([a-z-]+)\)$/i.exec(raw)?.[1] ?? raw.toLowerCase()
+    if (INK_NAMES[token]) return INK_NAMES[token]
+    if (/^#([0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(raw) || /^(rgb|hsl)a?\([^()]*\)$/i.test(raw)) return raw
+    throw new Error(`color "${raw}" is not a hex colour, rgb()/hsl(), or one of: ${Object.keys(INK_NAMES).join(', ')}.`)
+  }
+  const preferred = shape === 'circle' || shape === 'cross' ? INK_NAMES.pink : shape === 'tick' ? INK_NAMES.green : INK_NAMES.accent
+  return [preferred, ...DEFAULT_INK].find((color) => !closeColors(color, learner)) ?? preferred
+}
+
+function readStrokes(value: unknown): Point[][] {
+  if (!Array.isArray(value) || !value.length) throw new Error('strokes must be a non-empty list of strokes, each a list of [x, y] points.')
+  return value.map((stroke, i) => {
+    if (!Array.isArray(stroke) || !stroke.length) throw new Error(`strokes[${i}] must be a non-empty list of [x, y] points.`)
+    const line = stroke.map((point, j) => {
+      if (!Array.isArray(point) || point.length < 2 || !Number.isFinite(point[0]) || !Number.isFinite(point[1])) {
+        throw new Error(`strokes[${i}][${j}] must be [x, y] with numbers.`)
+      }
+      return [Number(point[0]), Number(point[1])] as Point
+    })
+    // A single point is a dot.
+    return line.length === 1 ? [line[0], [line[0][0] + 0.5, line[0][1] + 0.5] as Point] : line
+  })
+}
+
+function linesBounds(lines: Point[][]): Region {
+  let x = Infinity
+  let y = Infinity
+  let right = -Infinity
+  let bottom = -Infinity
+  for (const line of lines) {
+    for (const [px, py] of line) {
+      x = Math.min(x, px)
+      y = Math.min(y, py)
+      right = Math.max(right, px)
+      bottom = Math.max(bottom, py)
+    }
+  }
+  return { x, y, width: right - x, height: bottom - y }
+}
+
+function drawInk(ctx: EditContext, s: Scene, args: Record<string, unknown>): unknown {
+  const tool = args.tool === undefined || args.tool === 'pen' ? 'pen' : args.tool === 'highlighter' ? 'highlighter' : null
+  if (!tool) throw new Error('tool must be "pen" or "highlighter".')
+  const width = typeof args.width === 'number' && Number.isFinite(args.width) ? Math.max(0.5, Math.min(40, args.width)) : 3.5
+  const jitter = typeof args.jitter === 'number' && Number.isFinite(args.jitter) ? Math.max(0, Math.min(1, args.jitter)) : 0.3
+  const view = viewOf(ctx.board)
+  let lines: Point[][]
+  let placed: string | undefined
+  let shape: Shape | undefined
+  let anchorBox: Region | null = null
+
+  if (args.shape !== undefined) {
+    if (typeof args.shape !== 'string' || !SHAPES.includes(args.shape as Shape)) throw new Error(`shape must be one of ${SHAPES.join(', ')}.`)
+    shape = args.shape as Shape
+    if (args.strokes !== undefined || args.svg_path !== undefined) throw new Error('Give shape (with target), or strokes, or svg_path: one of them.')
+    const target = resolveTarget(s, args.target, 'target')
+    if (!target.box) throw new Error(`"${target.id}" has no layout, so nothing can be drawn around it.`)
+    const from = args.from_id === undefined ? null : resolveTarget(s, args.from_id, 'from_id').box
+    const side = args.side === undefined ? undefined : (args.side as ArrowSide)
+    if (side !== undefined && !['left', 'right', 'above', 'below'].includes(side)) throw new Error('side must be "left", "right", "above" or "below".')
+    lines = shapeLines(shape, target.box, { from, side })
+    anchorBox = target.box
+    placed = `${shape} ${shape === 'circle' ? 'around' : shape === 'underline' ? 'under' : shape === 'arrow' ? 'to' : 'next to'} ${target.id}${from ? ` from ${String(args.from_id)}` : ''}`
+  } else {
+    if ((args.strokes === undefined) === (args.svg_path === undefined)) throw new Error('Give exactly one of strokes, svg_path or shape.')
+    lines = args.strokes !== undefined ? readStrokes(args.strokes) : svgPathPolylines(String(args.svg_path ?? ''))
+    if (!lines.length) throw new Error('The ink has no strokes.')
+    const place = parsePlace(args.place)
+    if (place) {
+      // The drawing's own bounds are placed; its coordinates only give the shape.
+      const box = linesBounds(lines)
+      const size = { width: Math.max(1, box.width), height: Math.max(1, box.height) }
+      anchorBox = placeTarget(s, place)
+      const spot = placeRelative(place, anchorBox, size, obstacles(s), view)
+      placed = spot.placed
+      lines = lines.map((line) => line.map(([x, y]) => [x - box.x + spot.x, y - box.y + spot.y] as Point))
+    } else if (typeof args.x === 'number' || typeof args.y === 'number') {
+      const ox = Number(args.x) || 0
+      const oy = Number(args.y) || 0
+      lines = lines.map((line) => line.map(([x, y]) => [x + ox, y + oy] as Point))
+    }
+  }
+  if (lines.length > MAX_INK_LINES) throw new Error(`Too many strokes (${lines.length}); the limit is ${MAX_INK_LINES}.`)
+  const inkLines = lines.map((line) => humanize(line, jitter))
+  if (inkLines.reduce((sum, line) => sum + line.length, 0) > MAX_INK_POINTS) throw new Error(`Too many points; the limit is ${MAX_INK_POINTS}. Use fewer or shorter strokes.`)
+  const box = linesBounds(inkLines.map((line) => line.map(([x, y]) => [x, y] as Point)))
+
+  // The parent: as given, else the top-level frame that holds most of the drawing (the learner's rule).
+  let parent: string | undefined
+  if (args.parent_id !== undefined && args.parent_id !== 'root') {
+    const node = requireNode(s, args.parent_id, 'parent_id')
+    if (!isFrame(node)) throw new Error(`parent_id "${node.id}" is a ${node.kind}; only frames hold ink.`)
+    parent = node.id
+  } else if (args.parent_id === undefined) {
+    const frames = (s.index.children.get(ROOT) ?? []).filter(isFrame).filter((frame) => frame.style.display !== 'none')
+    const host = [...frames].reverse().find((frame) => {
+      const frameBox = s.layout.get(frame.id)
+      return frameBox ? overlapShare({ ...box, width: Math.max(1, box.width), height: Math.max(1, box.height) }, frameBox) >= 0.6 : false
+    })
+    parent = host?.id
+  }
+  const parentBox = parent ? s.layout.get(parent) : undefined
+  const origin: Point = parentBox ? [parentBox.ox, parentBox.oy] : [0, 0]
+  const z0 = zAbove(s.index.children.get(parent ?? ROOT) ?? [])
+  const color = inkColor(args.color, shape, ctx.board.liveState().inkColor)
+  const strokes: InkNode[] = inkLines.map((points, i) =>
+    normalizeInk({
+      id: newItemId('s'),
+      kind: 'ink',
+      x: -origin[0],
+      y: -origin[1],
+      z: z0 + i,
+      author: 'agent',
+      seq: 0,
+      tool,
+      color,
+      width: Math.round(width * (tool === 'highlighter' ? 4 : 1) * 100) / 100,
+      points,
+      ...(parent ? { parent } : {})
+    })
+  )
+  ctx.board.agentCommit([...s.nodes, ...strokes])
+  const ids = strokes.map((stroke) => stroke.id)
+  const groupId = ctx.tracker.pin(ids)
+  const after = scene(ctx)
+  ctx.presence.mark(ctx.agent, topLevels(after, ids))
+  const group = after.groupById.get(groupId)
+  return {
+    group: groupId,
+    strokes: ids,
+    bounds: rect(group?.bounds),
+    color,
+    parent: parent ?? 'root',
+    ...(placed ? { placed } : {}),
+    visible: group ? inside(group.bounds, view) : false,
+    ...overlapReport(after, [group ? groupSubject(group) : null])
+  }
+}
+
+// ---------- Space and view ----------
+
+function findSpaceTool(ctx: EditContext, s: Scene, args: Record<string, unknown>): unknown {
+  const width = Number(args.width)
+  const height = Number(args.height)
+  if (!(width > 0) || !(height > 0)) throw new Error('width and height must be positive numbers (board points).')
+  const view = viewOf(ctx.board)
+  const near = args.near === undefined ? null : resolveTarget(s, args.near, 'near')
+  const anchor = near?.box ?? { x: view.x + view.width / 2 - 1, y: view.y + view.height / 2 - 1, width: 2, height: 2 }
+  const spot = findSpace({ width, height }, anchor, obstacles(s), view, args.inside_view !== false)
+  if (!spot) throw new Error('No empty space of that size was found near the target. Try a smaller size or another target.')
+  return {
+    ...spot,
+    near: near ? near.id : 'the centre of the learner’s view',
+    ...(spot.visible ? {} : { note: 'No free spot of that size is inside the learner’s view; this one is outside it.' })
+  }
+}
+
+/** The learner wrote this recently (ms): focus waits. */
+const FOCUS_QUIET_MS = 2000
+
+function focus(ctx: EditContext, s: Scene, args: Record<string, unknown>): unknown {
+  const state = ctx.board.liveState()
+  const view = viewOf(ctx.board)
+  if (state.drawing || Date.now() - state.learnerInkAt < FOCUS_QUIET_MS) {
+    return { skipped: true, reason: 'The learner is writing right now, so the view was not moved. Try again later, or tell them where to look.', viewport: rect(view) }
+  }
+  let region: Region
+  if (args.node_id !== undefined) {
+    const target = resolveTarget(s, args.node_id)
+    if (!target.box) throw new Error(`"${target.id}" has no layout.`)
+    region = target.box
+  } else if (args.region && typeof args.region === 'object') {
+    const r = args.region as Record<string, unknown>
+    region = { x: Number(r.x), y: Number(r.y), width: Number(r.width), height: Number(r.height) }
+    if (![region.x, region.y, region.width, region.height].every(Number.isFinite) || region.width <= 0 || region.height <= 0) {
+      throw new Error('region needs {x, y, width, height} with width and height > 0.')
+    }
+  } else {
+    throw new Error('Give node_id (a node or ink group) or region.')
+  }
+  const padding = typeof args.padding === 'number' && Number.isFinite(args.padding) ? Math.max(0, args.padding) : 48
+  const padded = { x: region.x - padding, y: region.y - padding, width: region.width + padding * 2, height: region.height + padding * 2 }
+  const [vw, vh] = state.viewport
+  const current = state.camera.zoom
+  const asked = typeof args.zoom === 'number' && Number.isFinite(args.zoom) ? clampZoom(args.zoom) : null
+  if (asked === null && inside(padded, view)) return { moved: false, note: 'That is already in the learner’s view.', viewport: rect(view), zoom: current }
+  const fits = padded.width * current <= vw && padded.height * current <= vh
+  const zoom = asked ?? (fits ? current : clampZoom(Math.min(vw / padded.width, vh / padded.height)))
+  const center: Point = [padded.x + padded.width / 2, padded.y + padded.height / 2]
+  ctx.board.animateTo({ center, zoom })
+  const width = vw / zoom
+  const height = vh / zoom
+  return { moved: true, viewport: rect({ x: center[0] - width / 2, y: center[1] - height / 2, width, height }), zoom: Math.round(zoom * 1000) / 1000 }
+}
+
 /** Run one board tool. Throws an Error with an agent-readable message. */
 export async function runEditTool(ctx: EditContext, tool: AgentToolName, args: Record<string, unknown>): Promise<unknown> {
   switch (tool) {
     case 'getTree':
-      return getTree(scene(ctx.board), args)
+      return getTree(scene(ctx), args)
     case 'getNodeInfo':
-      return getNodeInfo(scene(ctx.board), args)
+      return getNodeInfo(scene(ctx), args)
     case 'getHtml': {
-      const s = scene(ctx.board)
+      const s = scene(ctx)
       const node = requireNode(s, args.node_id)
       return nodesToHtml(node.id, s.index, args.include_ids !== false)
     }
     case 'createFrame':
-      return createFrame(ctx, scene(ctx.board), args)
+      return createFrame(ctx, scene(ctx), args)
     case 'writeHtml':
       return writeHtml(ctx, args)
     case 'updateStyles':
-      return updateStyles(ctx, scene(ctx.board), args)
+      return updateStyles(ctx, scene(ctx), args)
     case 'setText':
-      return setText(ctx, scene(ctx.board), args)
+      return setText(ctx, scene(ctx), args)
     case 'moveNodes':
-      return moveNodes(ctx, scene(ctx.board), args)
+      return moveNodes(ctx, scene(ctx), args)
     case 'duplicateNodes':
-      return duplicateNodes(ctx, scene(ctx.board), args)
+      return duplicateNodes(ctx, scene(ctx), args)
     case 'deleteNodes':
-      return deleteNodes(ctx, scene(ctx.board), args)
+      return deleteNodes(ctx, scene(ctx), args)
+    case 'drawInk':
+      return drawInk(ctx, scene(ctx), args)
+    case 'findSpace':
+      return findSpaceTool(ctx, scene(ctx), args)
+    case 'focus':
+      return focus(ctx, scene(ctx), args)
     case 'finishWorking': {
       const ids = args.node_ids === undefined ? undefined : stringList(args.node_ids, 'node_ids')
       return { released: ctx.presence.finish(ctx.agent.sessionId, ids) }

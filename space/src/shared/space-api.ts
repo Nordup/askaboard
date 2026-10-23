@@ -98,6 +98,18 @@ export interface ChangedItem {
   seq: number
 }
 
+/** An ink group: strokes clustered by distance and time, addressed as "g3". */
+export interface InkGroupSummary {
+  id: string
+  author: string
+  /** The frame the strokes belong to, or "root". */
+  parent: string
+  strokes: number
+  bounds: BoardRect
+  /** The highest seq among its strokes. */
+  seq: number
+}
+
 export interface RemovedItem {
   id: string
   bounds: BoardRect | null
@@ -112,6 +124,8 @@ export interface ChangeSet {
   removed: RemovedItem[]
   /** The highest seq seen now (nextSeq - 1). Pass it back as `since`: nothing repeats. */
   cursor: number
+  /** Ink groups that hold changed strokes. */
+  groups_changed?: InkGroupSummary[]
 }
 
 export interface CanvasInfo {
@@ -128,8 +142,10 @@ export interface CanvasInfo {
   cursor: number | null
   /** Node counts by kind. */
   counts?: Record<string, number>
-  /** Top-level nodes (content and loose ink grouped), in draw order. */
+  /** Top-level content nodes, in draw order. */
   topLevel?: TopLevelSummary[]
+  /** Every ink group (top level and inside frames). */
+  inkGroups?: InkGroupSummary[]
 }
 
 /** Which agent session made a request (for presence and change attribution). */
@@ -152,11 +168,31 @@ export type AgentToolName =
   | 'duplicateNodes'
   | 'deleteNodes'
   | 'finishWorking'
+  | 'drawInk'
+  | 'findSpace'
+  | 'focus'
 
 /** A box drawn over a snapshot (the "changes" view), in board coordinates. */
 export interface SnapshotOutline {
   rect: BoardRect
   color: string
+}
+
+/** An id tag drawn over a snapshot at the item's top-left, with a thin outline. */
+export interface SnapshotLabel {
+  rect: BoardRect
+  text: string
+  /** Tag background and outline colour. */
+  color: string
+  /** Tag text colour. */
+  textColor: string
+}
+
+/** The overlays only the agent's image gets (never the learner's canvas). */
+export interface SnapshotOverlays {
+  labels: SnapshotLabel[]
+  /** Board-coordinate grid pitch in points, or 0 for no grid. */
+  grid: number
 }
 
 /** What a screenshot shows: the main renderer plans it, the snapshot window draws it. */
@@ -172,6 +208,7 @@ export type ScreenshotPlan =
       width: number
       height: number
       outlines: SnapshotOutline[]
+      overlays: SnapshotOverlays
       changes?: { changed: number; removed: number }
       cursor: number
       background: string
@@ -186,6 +223,7 @@ export interface SnapshotRequest {
   width: number
   height: number
   outlines: SnapshotOutline[]
+  overlays?: SnapshotOverlays
   background: string
 }
 
@@ -206,6 +244,8 @@ export interface AgentMethods {
       scale: number
       maxSize: number
       since: number | null
+      labels?: boolean
+      grid?: boolean
     }
     result: ScreenshotPlan
   }

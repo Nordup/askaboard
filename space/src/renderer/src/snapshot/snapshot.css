@@ -27,11 +27,61 @@ body,
   border-radius: 3px;
 }
 
+/* Agent-only overlays: grid and id tags, clipped to the image. */
+.snapshot__overlays {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 3;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.snapshot__grid {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+.snapshot__grid line {
+  stroke: rgba(255, 255, 255, 0.14);
+  stroke-width: 1;
+}
+
+.snapshot__grid line.snapshot__axis {
+  stroke: rgba(255, 255, 255, 0.32);
+}
+
+.snapshot__grid text {
+  font: 600 10px/1 ui-monospace, Menlo, monospace;
+  fill: rgba(255, 255, 255, 0.75);
+  stroke: #000;
+  stroke-width: 2.5px;
+  paint-order: stroke;
+}
+
+.snapshot__label-box {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid;
+  border-radius: 2px;
+  opacity: 0.8;
+}
+
+.snapshot__tag {
+  position: absolute;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font: 700 11px/14px ui-monospace, Menlo, monospace;
+  white-space: nowrap;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
+}
+
 /* One pixel below the image: tells the main process which request a frame shows. */
 .snapshot__marker {
   position: absolute;
   left: 0;
   width: 1px;
   height: 1px;
-  z-index: 3;
+  z-index: 10;
 }

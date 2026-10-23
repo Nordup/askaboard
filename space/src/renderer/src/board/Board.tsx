@@ -81,6 +81,8 @@ export interface BoardHandle {
   clientRect(): Region | null
   /** Pan (and zoom out if needed) so the board rect is in view with a margin. Keeps the camera when it already is. */
   reveal(rect: Region): void
+  /** Glide the camera to `camera` over `ms`. Any learner pan, zoom or pointer input stops the glide. */
+  animateTo(camera: Camera, ms?: number): void
   /** Restyle the selection with a palette colour. Returns false when nothing is selected. */
   applyColor(color: string): boolean
   /** Restyle selected ink with a palette width. Returns false when no ink is selected. */
@@ -118,6 +120,14 @@ export interface LiveBoardState {
   layout(): ReadonlyMap<string, LayoutBox>
   /** Who last changed a node in this app session ("learner" or "agent"), when known. */
   editor(id: string): Author | undefined
+  /** When a node was last committed in this app session (epoch ms), when known. */
+  changedAt(id: string): number | undefined
+  /** When the learner last finished a stroke (epoch ms, 0 = not in this session). */
+  learnerInkAt: number
+  /** True while the learner draws a stroke. */
+  drawing: boolean
+  /** The learner's current pen colour. */
+  inkColor: string
 }
 
 export interface BoardProps {
@@ -291,6 +301,12 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const [flashRect, setFlashRect] = useState<{ rect: Region; id: number } | null>(null)
   const [presence, setPresence] = useState<PresenceEntry[]>([])
   const editorsRef = useRef(new Map<string, Author>())
+  const timesRef = useRef(new Map<string, number>())
+  const lastStrokeAtRef = useRef(0)
+  /** Bumped by learner input: a running camera glide stops when it changes. */
+  const glideRef = useRef(0)
+  const colorRef = useRef(color)
+  colorRef.current = color
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const onDocChangeRef = useRef(onDocChange)
@@ -493,7 +509,12 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       const firstSeq = nextSeqRef.current
       const stamped = stampChanged(snapshot, next, nextSeqRef.current)
       nextSeqRef.current = stamped.nextSeq
-      for (const node of stamped.nodes) if (node.seq >= firstSeq) editorsRef.current.set(node.id, by)
+      const now = Date.now()
+      for (const node of stamped.nodes) {
+        if (node.seq < firstSeq) continue
+        editorsRef.current.set(node.id, by)
+        timesRef.current.set(node.id, now)
+      }
       const removed = stamped.removed.map((removal) => ({ ...removal, bounds: layoutRef.current.get(removal.node.id) ?? null }))
       setNodes(stamped.nodes)
       if (removed.length) onRemovedRef.current?.(removed)
@@ -693,6 +714,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     if (event.button === 2 && !penEraser) return
     const host = hostRef.current
     if (!host) return
+    glideRef.current++
     if (dragRef.current) {
       // A second finger or pen during a drag is ignored; a stale drag of the same pointer is dropped.
       if (dragRef.current.pointerId !== event.pointerId) return
@@ -907,6 +929,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     } else {
       node = { ...node, z: zAbove(index.children.get(ROOT) ?? []) }
     }
+    lastStrokeAtRef.current = Date.now()
     commitNodes([...nodesRef.current, node])
   }
 
@@ -1015,6 +1038,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     if (!host) return
     const wheel = (event: WheelEvent): void => {
       event.preventDefault()
+      glideRef.current++
       const scale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewportRef.current[1] : 1
       let dx = event.deltaX * scale
       let dy = event.deltaY * scale
@@ -1102,8 +1126,29 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         },
         inks: paintInks,
         layout: () => layoutRef.current,
-        editor: (id) => editorsRef.current.get(id)
+        editor: (id) => editorsRef.current.get(id),
+        changedAt: (id) => timesRef.current.get(id),
+        learnerInkAt: lastStrokeAtRef.current,
+        drawing: dragRef.current?.kind === 'ink',
+        inkColor: colorRef.current
       }),
+      animateTo: (target, ms = 420) => {
+        const token = ++glideRef.current
+        const from = cameraRef.current
+        const start = performance.now()
+        // Zoom moves in log space, so the glide feels even at every scale.
+        const step = (): void => {
+          if (glideRef.current !== token) return
+          const t = Math.min(1, (performance.now() - start) / Math.max(1, ms))
+          const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
+          applyCamera({
+            center: [from.center[0] + (target.center[0] - from.center[0]) * e, from.center[1] + (target.center[1] - from.center[1]) * e],
+            zoom: Math.exp(Math.log(from.zoom) + (Math.log(target.zoom) - Math.log(from.zoom)) * e)
+          })
+          if (t < 1) requestAnimationFrame(step)
+        }
+        requestAnimationFrame(step)
+      },
       boardToClient: (point) => {
         const host = hostRef.current
         if (!host) return null

@@ -1,11 +1,23 @@
 import { boardName, isContent, isInk } from '@shared/board-format'
-import type { AgentMethods, AgentRequest, BoardRect, CanvasInfo, ChangeSet, ScreenshotPlan, SnapshotOutline, TopLevelSummary } from '@shared/space-api'
+import type {
+  AgentMethods,
+  AgentRequest,
+  BoardRect,
+  CanvasInfo,
+  ChangeSet,
+  InkGroupSummary,
+  ScreenshotPlan,
+  SnapshotLabel,
+  SnapshotOutline,
+  TopLevelSummary
+} from '@shared/space-api'
 import type { BoardHandle, LiveBoardState } from '../board/Board'
 import type { ChangeLog } from '../board/changes'
 import { unionRegions } from '../board/geometry'
 import { buildIndex, ROOT } from '../board/scene'
 import type { Region } from '../board/types'
 import { AgentPresence, runEditTool } from './edits'
+import { isGroupId, trackerFor, type InkGroup } from './groups'
 
 /**
  * Answers the MCP server's requests (see AgentMethods in space-api.ts).
@@ -39,6 +51,10 @@ const MAX_SCALE = 4
 const NODE_PAD = 16
 const CHANGED_COLOR = '#6e8bff' // --accent
 const REMOVED_COLOR = '#ff6b8b' // --ink-pink
+/** Label tags: learner ink, agent ink, content. High contrast on the dark canvas. */
+const LABEL_LEARNER = { color: '#f5d76e', textColor: '#151517' }
+const LABEL_AGENT = { color: '#5fd38d', textColor: '#151517' }
+const LABEL_NODE = { color: '#6e8bff', textColor: '#ffffff' }
 
 const r1 = (value: number): number => Math.round(value * 10) / 10
 
@@ -59,6 +75,21 @@ function viewportRect(state: LiveBoardState): Region {
   const width = state.viewport[0] / state.camera.zoom
   const height = state.viewport[1] / state.camera.zoom
   return { x: state.camera.center[0] - width / 2, y: state.camera.center[1] - height / 2, width, height }
+}
+
+function groupsOf(path: string, board: BoardHandle): InkGroup[] {
+  return trackerFor(path).compute(board.liveState())
+}
+
+function groupSummary(group: InkGroup): InkGroupSummary {
+  return {
+    id: group.id,
+    author: group.author,
+    parent: group.parent || 'root',
+    strokes: group.strokes.length,
+    bounds: rect(group.bounds) as BoardRect,
+    seq: group.seq
+  }
 }
 
 function canvasBackground(): string {
@@ -104,17 +135,7 @@ function canvasInfo(context: AgentContext): CanvasInfo {
     if (!isContent(node)) continue
     topLevel.push({ id: node.id, kind: node.kind, ...(node.name ? { name: node.name } : {}), author: node.author, bounds: rect(state.bounds(node.id)) })
   }
-  for (const author of ['learner', 'agent'] as const) {
-    const ink = top.filter((node) => isInk(node) && node.author === author)
-    if (ink.length) {
-      topLevel.push({
-        id: `(${ink.length} loose ink stroke${ink.length === 1 ? '' : 's'})`,
-        kind: 'ink',
-        author,
-        bounds: rect(unionRegions(ink.map((node) => state.bounds(node.id))))
-      })
-    }
-  }
+  const groups = groupsOf(context.openPath, context.board)
   return {
     ...base,
     board: { path: context.openPath, name: boardName(context.openPath) },
@@ -128,7 +149,8 @@ function canvasInfo(context: AgentContext): CanvasInfo {
     zoom: Math.round(state.camera.zoom * 1000) / 1000,
     cursor: seenCursor(state),
     counts,
-    topLevel
+    topLevel,
+    inkGroups: groups.map(groupSummary)
   }
 }
 
@@ -157,7 +179,9 @@ function changeSet(context: AgentContext, since: number | null): ChangeSet {
   const removed = (log?.after(from) ?? [])
     .filter((tombstone) => !present.has(tombstone.id))
     .map((tombstone) => ({ id: tombstone.id, bounds: rect(tombstone.bounds), seq: tombstone.seq }))
-  return { board: path, changed, removed, cursor: seenCursor(state) }
+  const changedIds = new Set(changed.map((item) => item.id))
+  const groups = groupsOf(path, board).filter((group) => group.strokes.some((id) => changedIds.has(id)))
+  return { board: path, changed, removed, cursor: seenCursor(state), ...(groups.length ? { groups_changed: groups.map(groupSummary) } : {}) }
 }
 
 function screenshotPlan(context: AgentContext, params: AgentMethods['screenshotPlan']['params']): ScreenshotPlan {
@@ -171,6 +195,12 @@ function screenshotPlan(context: AgentContext, params: AgentMethods['screenshotP
   switch (params.target) {
     case 'node': {
       const id = params.nodeId ?? ''
+      if (isGroupId(id)) {
+        const group = groupsOf(path, board).find((entry) => entry.id === id)
+        if (!group) throw new Error(`No ink group "${id}" on the open board. get_canvas_info lists the groups.`)
+        target = pad(group.bounds, NODE_PAD)
+        break
+      }
       if (!state.nodes.some((node) => node.id === id)) throw new Error(`No node "${id}" on the open board. Call get_tree to see the node ids.`)
       const bounds = state.bounds(id)
       if (!bounds) throw new Error(`Node "${id}" has no layout (it may be hidden with display: none).`)
@@ -231,6 +261,27 @@ function screenshotPlan(context: AgentContext, params: AgentMethods['screenshotP
   const scale = Math.max(0.02, Math.min(MAX_SCALE, params.scale, params.maxSize / Math.max(1, longEdge)))
   const width = Math.max(1, Math.round(target.width * scale))
   const height = Math.max(1, Math.round(target.height * scale))
+  const shown = target
+  const labels: SnapshotLabel[] = []
+  if (params.labels) {
+    const visible = (box: Region | null): box is Region =>
+      !!box && box.x < shown.x + shown.width && box.x + box.width > shown.x && box.y < shown.y + shown.height && box.y + box.height > shown.y
+    const index = buildIndex(state.nodes)
+    const ids = new Set((index.children.get(ROOT) ?? []).filter(isContent).map((node) => node.id))
+    // A node screenshot also labels the node's direct children.
+    if (params.target === 'node' && params.nodeId && !isGroupId(params.nodeId)) {
+      for (const child of index.children.get(params.nodeId) ?? []) if (isContent(child)) ids.add(child.id)
+    }
+    for (const id of ids) {
+      const box = state.bounds(id)
+      if (visible(box)) labels.push({ rect: rect(box) as BoardRect, text: id, ...LABEL_NODE })
+    }
+    for (const group of groupsOf(path, board)) {
+      if (visible(group.bounds)) labels.push({ rect: rect(group.bounds) as BoardRect, text: group.id, ...(group.author === 'agent' ? LABEL_AGENT : LABEL_LEARNER) })
+    }
+  }
+  // Grid pitch: 100 board points, coarser when the lines would be closer than ~40 px.
+  const grid = params.grid ? ([100, 200, 500, 1000, 2000, 5000].find((pitch) => pitch * scale >= 40) ?? 10000) : 0
   return {
     kind: 'plan',
     board: path,
@@ -240,6 +291,7 @@ function screenshotPlan(context: AgentContext, params: AgentMethods['screenshotP
     width,
     height,
     outlines,
+    overlays: { labels, grid },
     changes: changeCounts,
     cursor: seenCursor(state),
     background: canvasBackground()
@@ -270,7 +322,13 @@ export async function handleAgentRequest(request: AgentRequest, getContext: () =
       const params = request.params as AgentMethods['agentTool']['params']
       const { board } = requireBoard(context)
       context.presence.attach(board)
-      return runEditTool({ board, agent: params.agent, importAsset: context.importAsset, presence: context.presence }, params.tool, params.args ?? {})
+      const { path } = requireBoard(context)
+      const tracker = trackerFor(path)
+      return runEditTool(
+        { board, agent: params.agent, importAsset: context.importAsset, presence: context.presence, tracker, groups: () => tracker.compute(board.liveState()) },
+        params.tool,
+        params.args ?? {}
+      )
     }
     case 'openBoard': {
       await openBoard(context, (request.params as AgentMethods['openBoard']['params']).path)
