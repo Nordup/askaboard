@@ -7,7 +7,7 @@ import { FolderSession } from './folder'
 import { AgentServer } from './mcp'
 import { SnapshotRenderer } from './snapshot'
 import { installMenu, setFolderOpen } from './menu'
-import { FOLDER_SETTINGS_DIR } from './guide'
+import { FOLDER_SETTINGS_DIR, folderOverrides, onOverridesRead } from './guide'
 import { applySetup, isSetUp, setupPlan } from './setup'
 import * as store from './state'
 
@@ -89,6 +89,12 @@ const agentServer = new AgentServer({
 function send(channel: string, payload?: unknown): void {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload)
 }
+
+// The watcher skips hidden folders, so .learning-space changes reach the UI
+// when an agent reads the guide or connects (and when the folder opens).
+onOverridesRead((root) => {
+  if (root && session?.root === root) send(IPC.guideOverrides, folderOverrides(root))
+})
 
 function requireSession(): FolderSession {
   if (!session) throw new Error('No learning folder is open.')
@@ -243,6 +249,8 @@ function registerIpc(): void {
     const full = await requireSession().resolvePath(rel, { allowMissing: true })
     return statSync(full, { throwIfNoEntry: false })?.isFile() ? rel : null
   })
+
+  handle(IPC.getGuideOverrides, () => folderOverrides(session?.root ?? null))
 
   handle(IPC.getCamera, async (path: string) => {
     const current = requireSession()

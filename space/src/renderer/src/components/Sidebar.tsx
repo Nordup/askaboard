@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { BookOpen, ChevronDown, Ellipsis, ExternalLink, Folder, FolderOpen, GraduationCap, LayoutDashboard, Pencil, Plus, Trash } from 'lucide-react'
-import type { FileNode, FileTree as FileTreeData, RecentFolder } from '@shared/space-api'
+import type { FileNode, FileTree as FileTreeData, GuideOverrides, RecentFolder } from '@shared/space-api'
 import { FileTree } from './FileTree'
+import { GuideOverrideNote } from './GuideOverrideNote'
 import { Menu, type MenuEntry } from './Menu'
 
 export interface BoardEntry {
@@ -34,6 +35,10 @@ interface SidebarProps {
   onSetUpFolder(): void
   /** Open the folder's board guide, .learning-space/guide.md. */
   onEditGuide(): void
+  /** The folder's guide and instructions overrides, shown under the header. */
+  guideOverrides: GuideOverrides | null
+  /** Open an override file (the same flow as Edit Board Guide…). */
+  onOpenOverride(path: string): void
 }
 
 const ICON = { size: 14, strokeWidth: 1.75 }
@@ -142,6 +147,7 @@ export function Sidebar(props: SidebarProps) {
         </span>
         <ChevronDown className="folder-header__chevron" size={14} strokeWidth={1.75} />
       </button>
+      {folderRoot && <GuideOverrideNote className="folder-overrides" overrides={props.guideOverrides} onOpen={props.onOpenOverride} />}
 
       <div className="sidebar__scroll">
         <section className="section">

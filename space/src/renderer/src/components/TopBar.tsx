@@ -1,5 +1,5 @@
 import { AlertCircle, Check } from 'lucide-react'
-import type { AgentServerStatus } from '@shared/space-api'
+import type { AgentServerStatus, GuideOverrides } from '@shared/space-api'
 import { AgentPill } from './AgentPill'
 
 export type SaveStatus = 'saved' | 'saving' | 'unsaved' | 'error'
@@ -14,6 +14,8 @@ interface TopBarProps {
   agentStatus: AgentServerStatus | null
   /** Time (ms) of the last agent tool call. */
   agentActivityAt: number | null
+  guideOverrides: GuideOverrides | null
+  onOpenOverride(path: string): void
 }
 
 const SAVE_LABEL: Record<SaveStatus, string> = {
@@ -23,7 +25,7 @@ const SAVE_LABEL: Record<SaveStatus, string> = {
   error: 'Not saved'
 }
 
-export function TopBar({ folderName, boardName, saveStatus, zoom, onResetZoom, agentStatus, agentActivityAt }: TopBarProps) {
+export function TopBar({ folderName, boardName, saveStatus, zoom, onResetZoom, agentStatus, agentActivityAt, guideOverrides, onOpenOverride }: TopBarProps) {
   return (
     <header className="topbar">
       <div className="topbar__title">
@@ -50,7 +52,7 @@ export function TopBar({ folderName, boardName, saveStatus, zoom, onResetZoom, a
         )}
       </div>
       <div className="topbar__right">
-        <AgentPill status={agentStatus} activityAt={agentActivityAt} />
+        <AgentPill status={agentStatus} activityAt={agentActivityAt} guideOverrides={guideOverrides} onOpenOverride={onOpenOverride} />
         {zoom !== null && (
           <button className="zoom" title="Reset zoom to 100% (⌘0)" onClick={onResetZoom}>
             {Math.round(zoom * 100)}%

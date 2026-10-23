@@ -1,11 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import { AlertCircle, Check, Copy } from 'lucide-react'
-import type { AgentServerStatus, AgentSessionInfo } from '@shared/space-api'
+import type { AgentServerStatus, AgentSessionInfo, GuideOverrides } from '@shared/space-api'
+import { GuideOverrideNote } from './GuideOverrideNote'
 
 interface AgentPillProps {
   status: AgentServerStatus | null
   /** Time (ms) of the last tool call from any agent; the dot pulses when it changes. */
   activityAt: number | null
+  /** The open folder's guide and instructions overrides. */
+  guideOverrides: GuideOverrides | null
+  onOpenOverride(path: string): void
 }
 
 /**
@@ -107,7 +111,7 @@ function SessionList({ recent, all, now }: { recent: AgentSessionInfo[]; all: Ag
 }
 
 /** The top-bar agent status, with the "Connect an agent" popover. */
-export function AgentPill({ status, activityAt }: AgentPillProps) {
+export function AgentPill({ status, activityAt, guideOverrides, onOpenOverride }: AgentPillProps) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
 
@@ -162,6 +166,14 @@ export function AgentPill({ status, activityAt }: AgentPillProps) {
           <div className="agent-pop__divider" />
           <div className="agent-pop__label">Active agents</div>
           <SessionList recent={recent} all={status?.sessions ?? []} now={now} />
+          <GuideOverrideNote
+            className="agent-pop__overrides"
+            overrides={guideOverrides}
+            onOpen={(path) => {
+              setOpen(false)
+              onOpenOverride(path)
+            }}
+          />
         </div>
       )}
     </div>

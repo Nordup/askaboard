@@ -37,6 +37,8 @@ const api: SpaceApi = {
   applySetup: () => ipcRenderer.invoke(IPC.applySetup),
   setSetupDontAsk: (value) => ipcRenderer.invoke(IPC.setSetupDontAsk, value),
   boardGuidePath: () => ipcRenderer.invoke(IPC.boardGuidePath),
+  getGuideOverrides: () => ipcRenderer.invoke(IPC.getGuideOverrides),
+  onGuideOverrides: (listener) => listen(IPC.guideOverrides, listener),
 
   getCamera: (path) => ipcRenderer.invoke(IPC.getCamera, path),
   setCamera: (path, camera) => ipcRenderer.send(IPC.setCamera, path, camera),

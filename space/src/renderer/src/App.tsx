@@ -10,7 +10,7 @@ import {
   type BoardDoc,
   type Removal
 } from '@shared/board-format'
-import type { AgentActivity, AgentServerStatus, Camera, FileNode, FileTree, Snapshot } from '@shared/space-api'
+import type { AgentActivity, AgentServerStatus, Camera, FileNode, FileTree, GuideOverrides, Snapshot } from '@shared/space-api'
 import { AgentPresence } from './agent/edits'
 import { handleAgentRequest, type AgentContext } from './agent/handler'
 import { Board, type BoardHandle } from './board/Board'
@@ -86,6 +86,7 @@ export function App() {
   const [offerDismissed, setOfferDismissed] = useState(false)
   const [tools, setTools] = useState<ToolState>({ tool: 'pen', colorId: 'white', widthId: 'medium' })
   const [agentStatus, setAgentStatus] = useState<AgentServerStatus | null>(null)
+  const [guideOverrides, setGuideOverrides] = useState<GuideOverrides | null>(null)
   const [agentActivity, setAgentActivity] = useState<AgentActivity & { at: number } | null>(null)
 
   const clearToast = useCallback(() => setToast(null), [])
@@ -354,9 +355,15 @@ export function App() {
 
   // ---------- Learning-folder setup ----------
 
+  /** Ask the main process what the folder's guide files change. The watcher skips .learning-space. */
+  const refreshGuideOverrides = useCallback(() => {
+    space.getGuideOverrides().then(setGuideOverrides, (error: unknown) => console.error(errorMessage(error)))
+  }, [])
+
   const applySetup = useCallback(async () => {
     try {
       const { created } = await space.applySetup()
+      refreshGuideOverrides()
       setTree(await space.listFiles())
       setMenuSetup(false)
       setOfferDismissed(true)
@@ -369,7 +376,7 @@ export function App() {
     } catch (error) {
       showError(`Could not set up the folder: ${errorMessage(error)}`)
     }
-  }, [])
+  }, [refreshGuideOverrides])
 
   const closeSetup = useCallback(() => {
     setMenuSetup(false)
@@ -381,9 +388,11 @@ export function App() {
     space.setSetupDontAsk(true).catch((error: unknown) => showError(errorMessage(error)))
   }, [])
 
-  const editGuide = useCallback(async () => {
+  /** Open the board guide, or another override file (path), in the preview and in Finder. */
+  const editGuide = useCallback(async (overridePath?: string) => {
     try {
-      const path = await space.boardGuidePath()
+      const path = overridePath ?? (await space.boardGuidePath())
+      refreshGuideOverrides()
       if (!path) {
         setMenuSetup(true)
         setToast({ text: 'No board guide yet. Set up the folder to create .learning-space/guide.md.', kind: 'info' })
@@ -395,7 +404,18 @@ export function App() {
     } catch (error) {
       showError(errorMessage(error))
     }
-  }, [])
+  }, [refreshGuideOverrides])
+
+  // Poll on folder open; the main process pushes after get_guide and agent connects.
+  const folderRoot = folder?.root ?? null
+  useEffect(() => {
+    if (!folderRoot) {
+      setGuideOverrides(null)
+      return
+    }
+    refreshGuideOverrides()
+    return space.onGuideOverrides(setGuideOverrides)
+  }, [folderRoot, refreshGuideOverrides])
 
   const openFile = useCallback(
     (node: FileNode) => {
@@ -709,6 +729,8 @@ export function App() {
         onOpenFile={openFile}
         onSetUpFolder={() => setMenuSetup(true)}
         onEditGuide={() => void editGuide()}
+        guideOverrides={guideOverrides}
+        onOpenOverride={(path) => void editGuide(path)}
       />
       <main className="main">
         <TopBar
@@ -719,6 +741,8 @@ export function App() {
           onResetZoom={() => boardRef.current?.zoomTo(1)}
           agentStatus={agentStatus}
           agentActivityAt={agentActivity?.at ?? null}
+          guideOverrides={folder ? guideOverrides : null}
+          onOpenOverride={(path) => void editGuide(path)}
         />
         <div className="workspace">
           <div className="canvas">

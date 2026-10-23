@@ -806,6 +806,32 @@ button:focus-visible {
   color: var(--text-tertiary);
 }
 
+.tree .tree {
+  position: relative;
+}
+
+/* The guide line of a nested list, under the chevron of its folder. */
+.tree .tree::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--tree-guide-x, 14px);
+  width: 1px;
+  background: var(--border-subtle, rgba(127, 127, 127, 0.18));
+  pointer-events: none;
+}
+
+.tree__empty {
+  display: flex;
+  align-items: center;
+  height: 24px;
+  font-size: var(--text-sm);
+  font-style: italic;
+  color: var(--text-tertiary);
+  user-select: none;
+}
+
 .tree__name {
   min-width: 0;
   overflow: hidden;
@@ -1360,4 +1386,51 @@ button:focus-visible {
 
 .toast--info svg {
   color: var(--status-live);
+}
+
+/* ---------- Folder guide overrides (.learning-space/guide.md, instructions.md) ---------- */
+
+.folder-overrides {
+  display: flex;
+  flex-direction: column;
+  margin: calc(-1 * var(--space-1)) var(--space-2) var(--space-2);
+}
+
+.agent-pop__overrides {
+  display: flex;
+  flex-direction: column;
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.guide-override {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  text-align: left;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.guide-override span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.guide-override svg {
+  flex-shrink: 0;
+}
+
+.guide-override:hover {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.guide-override--warn {
+  color: var(--ink-orange);
 }

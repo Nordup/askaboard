@@ -60,6 +60,20 @@ export interface SetupResult {
   created: string[]
 }
 
+/** A folder file that changes what agents read (.learning-space/guide.md or instructions.md). */
+export interface FolderOverride {
+  /** Relative path, for example ".learning-space/guide.md". */
+  path: string
+  /** append: added after the built-in text. replace: used instead of it. too-large: ignored. */
+  mode: 'append' | 'replace' | 'too-large'
+}
+
+/** The folder's agent-text overrides. null: the file is missing or holds only comments. */
+export interface GuideOverrides {
+  guide: FolderOverride | null
+  instructions: FolderOverride | null
+}
+
 export interface RecentFolder {
   path: string
   name: string
@@ -349,6 +363,10 @@ export interface SpaceApi {
   setSetupDontAsk(value: boolean): Promise<void>
   /** The folder's board guide (.learning-space/guide.md), or null when it does not exist. */
   boardGuidePath(): Promise<string | null>
+  /** What the folder's guide and instructions files change for agents now. */
+  getGuideOverrides(): Promise<GuideOverrides>
+  /** The overrides after an agent read the guide or connected. */
+  onGuideOverrides(listener: (overrides: GuideOverrides) => void): Unsubscribe
 
   getCamera(path: string): Promise<Camera | null>
   setCamera(path: string, camera: Camera): void
@@ -399,6 +417,8 @@ export const IPC = {
   applySetup: 'space:apply-setup',
   setSetupDontAsk: 'space:set-setup-dont-ask',
   boardGuidePath: 'space:board-guide-path',
+  getGuideOverrides: 'space:get-guide-overrides',
+  guideOverrides: 'space:guide-overrides',
   getCamera: 'space:get-camera',
   setCamera: 'space:set-camera',
   setLastBoard: 'space:set-last-board',

@@ -59,16 +59,20 @@ Create a folder or file from this table when you first need it.
 
 When the learner says they are done, or the session reaches a natural end:
 
-1. Write `sessions/YYYY-MM-DD-short-topic.md`:
+1. Find out what happened, even if this conversation started late: read
+   today's files in `sessions/`, and look at the boards (`get_changes` with
+   `since: 0`, `get_tree`, `get_screenshot`). The boards hold the learner's
+   work.
+2. Write `sessions/YYYY-MM-DD-short-topic.md` (or update today's file):
    - what we worked on, and which boards;
    - what the learner now understands (concrete, in their words if possible);
    - mistakes and misconceptions that came up;
    - open questions;
    - the next step.
-2. Update `plan.md` (current focus, next steps) and `learner.md` (only
+3. Update `plan.md` (current focus, next steps) and `learner.md` (only
    durable facts).
-3. Update `topics/<topic>/notes.md` with what settled.
-4. Keep every file short and current. Rewrite stale lines instead of adding
+4. Update `topics/<topic>/notes.md` with what settled.
+5. Keep every file short and current. Rewrite stale lines instead of adding
    new ones below them.
 
 ## Rules
