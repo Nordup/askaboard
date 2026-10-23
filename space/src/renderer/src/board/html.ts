@@ -1,3 +1,4 @@
+import { MAX_COORD, MAX_HTML_DEPTH, MAX_HTML_ELEMENTS, MAX_STYLE_CHARS } from '@shared/limits'
 import { isContent, isInk, isKnown, newItemId, STYLE_KEYS, type BoardNode, type NodeStyle } from '@shared/board-format'
 import { sanitizeSvg } from './content'
 import { parseMarkup, type Run } from './markup'
@@ -67,9 +68,13 @@ function readStyle(raw: string | null, ignored: Ignored): { style: NodeStyle; po
       position.absolute = value === 'absolute'
       continue
     }
+    if (value.length > MAX_STYLE_CHARS) {
+      ignored.styles.add(`${key} (value over ${MAX_STYLE_CHARS} characters)`)
+      continue
+    }
     if (key === 'left' || key === 'top') {
       const number = parseFloat(value)
-      if (Number.isFinite(number) && /px$|^-?[\d.]+$/.test(value)) position[key] = number
+      if (Number.isFinite(number) && Math.abs(number) <= MAX_COORD && /px$|^-?[\d.]+$/.test(value)) position[key] = number
       else ignored.styles.add(`${key}: ${value}`)
       continue
     }
@@ -316,9 +321,22 @@ function convertBlock(element: Element, ignored: Ignored): { draft: Draft; absol
   return result
 }
 
+/** Refuse HTML with too many elements or too deep a nesting, before the recursive conversion. */
+function checkSize(body: HTMLElement): void {
+  const count = body.getElementsByTagName('*').length
+  if (count > MAX_HTML_ELEMENTS) throw new Error(`The HTML has ${count} elements; the limit is ${MAX_HTML_ELEMENTS}. Write it in smaller parts.`)
+  const stack: [Element, number][] = [[body, 0]]
+  while (stack.length) {
+    const [element, depth] = stack.pop() as [Element, number]
+    if (depth > MAX_HTML_DEPTH) throw new Error(`The HTML is nested more than ${MAX_HTML_DEPTH} elements deep.`)
+    for (const child of element.children) stack.push([child, depth + 1])
+  }
+}
+
 /** Parse agent HTML into drafts. Nothing in it runs or loads. */
 export function htmlToDrafts(html: string, ignored: Ignored): Draft[] {
   const doc = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html')
+  checkSize(doc.body)
   const drafts: Draft[] = []
   let loose = ''
   for (const child of doc.body.childNodes) {

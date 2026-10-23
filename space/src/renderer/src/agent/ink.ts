@@ -1,4 +1,5 @@
 import type { InkPoint } from '@shared/board-format'
+import { MAX_COORD, MAX_INK_POINTS, MAX_SVG_PATH_CHARS } from '@shared/limits'
 import type { Point, Region } from '../board/types'
 
 /**
@@ -9,9 +10,32 @@ import type { Point, Region } from '../board/types'
 
 /** Points closer than this are merged; longer segments are split (board points). */
 const SAMPLE_STEP = 2.5
+/** The longest svg_path: its samples, SAMPLE_STEP apart, fit within MAX_INK_POINTS. */
+const MAX_SVG_LENGTH = MAX_INK_POINTS * SAMPLE_STEP
+
+/**
+ * The points humanize() makes from these polylines, without making them:
+ * the raw points plus one point every SAMPLE_STEP along each segment.
+ * Throws when a coordinate is not finite or is outside ±MAX_COORD.
+ */
+export function inkPointBudget(lines: readonly Point[][]): number {
+  let budget = 0
+  for (const line of lines) {
+    budget += line.length
+    for (let i = 0; i < line.length; i++) {
+      const [x, y] = line[i]
+      if (!Number.isFinite(x) || !Number.isFinite(y) || Math.abs(x) > MAX_COORD || Math.abs(y) > MAX_COORD) {
+        throw new Error(`Ink coordinates must be finite and within ±${MAX_COORD} board points.`)
+      }
+      if (i > 0) budget += Math.hypot(x - line[i - 1][0], y - line[i - 1][1]) / SAMPLE_STEP
+    }
+  }
+  return budget
+}
 
 /** Sample an SVG path `d` into polylines (one per subpath), using the browser's own path geometry. */
 export function svgPathPolylines(d: string): Point[][] {
+  if (d.length > MAX_SVG_PATH_CHARS) throw new Error(`svg_path is too long (over ${MAX_SVG_PATH_CHARS} characters).`)
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
   svg.setAttribute('width', '0')
   svg.setAttribute('height', '0')
@@ -24,7 +48,8 @@ export function svgPathPolylines(d: string): Point[][] {
   try {
     const total = path.getTotalLength()
     if (!Number.isFinite(total) || total <= 0) throw new Error('svg_path has no length. Give a path "d" string such as "M0 0 L40 0".')
-    if (total > 50_000) throw new Error('svg_path is too long (over 50 000 board points).')
+    if (total > MAX_SVG_LENGTH) throw new Error(`svg_path is too long (over ${MAX_SVG_LENGTH} board points of length).`)
+    // Sampled finer than SAMPLE_STEP, then simplified; the count stays below 2 × MAX_INK_POINTS.
     const count = Math.max(2, Math.ceil(total / 1.5))
     const out: Point[][] = []
     let current: Point[] = []

@@ -1,4 +1,5 @@
 import { isContent, isFrame, isInk, isKnown, newItemId, renderableStyle, STYLE_KEYS, type BoardNode, type ContentNode, type InkNode, type NodeStyle } from '@shared/board-format'
+import { MAX_BOX_SIZE, MAX_COORD, MAX_HTML_CHARS, MAX_INK_LINES, MAX_INK_POINTS, MAX_STYLE_CHARS, MAX_TEXT_CHARS } from '@shared/limits'
 import type { AgentRef, AgentToolName, BoardRect } from '@shared/space-api'
 import type { BoardHandle, PresenceEntry } from '../board/Board'
 import { clampZoom, overlapShare, unionRegions } from '../board/geometry'
@@ -6,7 +7,7 @@ import { draftsToNodes, htmlToDrafts, Ignored, nodesToHtml, walkDrafts, type Dra
 import { ancestorIds, copySubtrees, isFlowed, normalizeInk, parentKey, removeNodes, ROOT, topLevelOf, withDescendants, zAbove } from '../board/scene'
 import type { Point, Region } from '../board/types'
 import { isGroupId, type InkGroup, type InkGroupTracker } from './groups'
-import { humanize, shapeLines, SHAPES, svgPathPolylines, type ArrowSide, type Shape } from './ink'
+import { humanize, inkPointBudget, shapeLines, SHAPES, svgPathPolylines, type ArrowSide, type Shape } from './ink'
 import {
   anchorFor,
   ASSUMED_HEIGHT,
@@ -52,6 +53,15 @@ const PRESENCE_MS = 20_000
 const r1 = (value: number): number => Math.round(value * 10) / 10
 const rect = (region: Region | null | undefined): BoardRect | null =>
   region ? { x: r1(region.x), y: r1(region.y), width: r1(region.width), height: r1(region.height) } : null
+
+
+/** A board coordinate or offset from an agent: finite and within ±MAX_COORD. */
+function coordArg(value: unknown, what: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || Math.abs(value) > MAX_COORD) {
+    throw new Error(`${what} must be a finite number within ±${MAX_COORD} board points.`)
+  }
+  return value
+}
 
 // ---------- Presence ----------
 
@@ -164,7 +174,10 @@ function normalizeStyles(input: unknown, ignored: Set<string>): Record<string, s
       out[key] = null
       continue
     }
-    const value = typeof rawValue === 'number' ? (UNITLESS.has(key) ? String(rawValue) : `${rawValue}px`) : typeof rawValue === 'string' ? rawValue.trim() : null
+    const value =
+      typeof rawValue === 'number' && Number.isFinite(rawValue) && Math.abs(rawValue) <= MAX_COORD
+        ? UNITLESS.has(key) ? String(rawValue) : `${rawValue}px`
+        : typeof rawValue === 'string' && rawValue.length <= MAX_STYLE_CHARS ? rawValue.trim() : null
     if (value === null) {
       ignored.add(rawKey)
       continue
@@ -344,8 +357,8 @@ function createFrame(ctx: EditContext, s: Scene, args: Record<string, unknown>):
   if (place) {
     ;({ x, y, visible, placed } = placeRelative(place, placeTarget(s, place), size, obstacles(s), view))
   } else if (typeof args.x === 'number' && typeof args.y === 'number') {
-    x = args.x
-    y = args.y
+    x = coordArg(args.x, 'x')
+    y = coordArg(args.y, 'y')
     placed = 'at the given x, y'
     visible = inside({ x, y, ...size }, view)
   } else {
@@ -395,6 +408,7 @@ const settle = (ms: number): Promise<void> => new Promise((resolve) => setTimeou
 
 async function writeHtml(ctx: EditContext, args: Record<string, unknown>): Promise<unknown> {
   if (typeof args.html !== 'string' || !args.html.trim()) throw new Error('html is required.')
+  if (args.html.length > MAX_HTML_CHARS) throw new Error(`html is too long (over ${MAX_HTML_CHARS} characters). Write it in smaller parts.`)
   const mode = args.mode === 'replace' ? 'replace' : args.mode === 'insert_children' || args.mode === undefined ? 'insert_children' : null
   if (!mode) throw new Error('mode must be "insert_children" or "replace".')
   const ignored = new Ignored()
@@ -538,6 +552,7 @@ function setText(ctx: EditContext, s: Scene, args: Record<string, unknown>): unk
     const node = requireNode(s, update?.node_id)
     if (node.kind !== 'text' || !isKnown(node)) throw new Error(`Node "${node.id}" is a ${node.kind}, not text.`)
     if (typeof update.text !== 'string') throw new Error(`text for "${node.id}" must be a string.`)
+    if (update.text.length > MAX_TEXT_CHARS) throw new Error(`text for "${node.id}" is too long (over ${MAX_TEXT_CHARS} characters).`)
     changed.set(node.id, { ...node, text: update.text } as BoardNode)
   }
   ctx.board.agentCommit(s.nodes.map((node) => changed.get(node.id) ?? node))
@@ -590,9 +605,9 @@ function moveNodes(ctx: EditContext, s: Scene, args: Record<string, unknown>): u
           delta = [spot.x - g.bounds.x, spot.y - g.bounds.y]
         } else if (typeof move.x === 'number' && typeof move.y === 'number') {
           const origin = originOf(s, g.parent)
-          delta = [move.x + origin[0] - g.bounds.x, move.y + origin[1] - g.bounds.y]
+          delta = [coordArg(move.x, 'x') + origin[0] - g.bounds.x, coordArg(move.y, 'y') + origin[1] - g.bounds.y]
         } else if (typeof move.dx === 'number' || typeof move.dy === 'number') {
-          delta = [Number(move.dx) || 0, Number(move.dy) || 0]
+          delta = [move.dx === undefined ? 0 : coordArg(move.dx, 'dx'), move.dy === undefined ? 0 : coordArg(move.dy, 'dy')]
         } else {
           throw new Error(`An ink group moves with {node_id, place}, {node_id, x, y}, {node_id, dx, dy} or {node_id, parent_id}; "${g.id}" cannot be reordered with before/after.`)
         }
@@ -623,12 +638,12 @@ function moveNodes(ctx: EditContext, s: Scene, args: Record<string, unknown>): u
       if (flowed) throw new Error(`"${node.id}" is placed by its flex parent; use parent_id/index or before/after to reorder it.`)
       const origin = originOf(s, key)
       const current = box ? [box.x - origin[0], box.y - origin[1]] : [node.x, node.y]
-      work.set(node.id, { ...node, x: node.x + (move.x - current[0]), y: node.y + (move.y - current[1]) })
+      work.set(node.id, { ...node, x: node.x + (coordArg(move.x, 'x') - current[0]), y: node.y + (coordArg(move.y, 'y') - current[1]) })
       continue
     }
     if (typeof move.dx === 'number' || typeof move.dy === 'number') {
       if (flowed) throw new Error(`"${node.id}" is placed by its flex parent; it cannot be shifted.`)
-      work.set(node.id, { ...node, x: node.x + (Number(move.dx) || 0), y: node.y + (Number(move.dy) || 0) })
+      work.set(node.id, { ...node, x: node.x + (move.dx === undefined ? 0 : coordArg(move.dx, 'dx')), y: node.y + (move.dy === undefined ? 0 : coordArg(move.dy, 'dy')) })
       continue
     }
     let newKey: string
@@ -820,8 +835,6 @@ const INK_NAMES: Record<string, string> = {
 }
 /** Defaults by intent, then fallbacks when the learner writes in a close colour. */
 const DEFAULT_INK = ['#6e8bff', '#ff9f45', '#ff6b8b', '#5fd38d', '#f5d76e']
-const MAX_INK_POINTS = 20_000
-const MAX_INK_LINES = 200
 
 function hexRgb(color: string): [number, number, number] | null {
   const match = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(color.trim())
@@ -917,14 +930,15 @@ function drawInk(ctx: EditContext, s: Scene, args: Record<string, unknown>): unk
       placed = spot.placed
       lines = lines.map((line) => line.map(([x, y]) => [x - box.x + spot.x, y - box.y + spot.y] as Point))
     } else if (typeof args.x === 'number' || typeof args.y === 'number') {
-      const ox = Number(args.x) || 0
-      const oy = Number(args.y) || 0
+      const ox = args.x === undefined ? 0 : coordArg(args.x, 'x')
+      const oy = args.y === undefined ? 0 : coordArg(args.y, 'y')
       lines = lines.map((line) => line.map(([x, y]) => [x + ox, y + oy] as Point))
     }
   }
   if (lines.length > MAX_INK_LINES) throw new Error(`Too many strokes (${lines.length}); the limit is ${MAX_INK_LINES}.`)
+  // Checked before humanize() densifies the lines, so a long segment cannot allocate millions of points.
+  if (inkPointBudget(lines) > MAX_INK_POINTS) throw new Error(`The ink is too long: over ${MAX_INK_POINTS} points (one every 2.5 board points). Use fewer or shorter strokes.`)
   const inkLines = lines.map((line) => humanize(line, jitter))
-  if (inkLines.reduce((sum, line) => sum + line.length, 0) > MAX_INK_POINTS) throw new Error(`Too many points; the limit is ${MAX_INK_POINTS}. Use fewer or shorter strokes.`)
   const box = linesBounds(inkLines.map((line) => line.map(([x, y]) => [x, y] as Point)))
 
   // The parent: as given, else the top-level frame that holds most of the drawing (the learner's rule).
@@ -984,7 +998,9 @@ function drawInk(ctx: EditContext, s: Scene, args: Record<string, unknown>): unk
 function findSpaceTool(ctx: EditContext, s: Scene, args: Record<string, unknown>): unknown {
   const width = Number(args.width)
   const height = Number(args.height)
-  if (!(width > 0) || !(height > 0)) throw new Error('width and height must be positive numbers (board points).')
+  if (!(width > 0) || !(height > 0) || !(width <= MAX_BOX_SIZE) || !(height <= MAX_BOX_SIZE)) {
+    throw new Error(`width and height must be positive numbers up to ${MAX_BOX_SIZE} board points.`)
+  }
   const view = viewOf(ctx.board)
   const near = args.near === undefined ? null : resolveTarget(s, args.near, 'near')
   const anchor = near?.box ?? { x: view.x + view.width / 2 - 1, y: view.y + view.height / 2 - 1, width: 2, height: 2 }
@@ -1020,7 +1036,7 @@ function focus(ctx: EditContext, s: Scene, args: Record<string, unknown>): unkno
   } else {
     throw new Error('Give node_id (a node or ink group) or region.')
   }
-  const padding = typeof args.padding === 'number' && Number.isFinite(args.padding) ? Math.max(0, args.padding) : 48
+  const padding = typeof args.padding === 'number' && Number.isFinite(args.padding) ? Math.max(0, Math.min(MAX_COORD, args.padding)) : 48
   const padded = { x: region.x - padding, y: region.y - padding, width: region.width + padding * 2, height: region.height + padding * 2 }
   const [vw, vh] = state.viewport
   const current = state.camera.zoom

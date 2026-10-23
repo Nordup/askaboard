@@ -258,7 +258,8 @@ function screenshotPlan(context: AgentContext, params: AgentMethods['screenshotP
 
   // The asked scale, capped so the long edge stays within maxSize.
   const longEdge = Math.max(target.width, target.height)
-  const scale = Math.max(0.02, Math.min(MAX_SCALE, params.scale, params.maxSize / Math.max(1, longEdge)))
+  // max_size always wins, so a huge region gives a small image, never a huge canvas.
+  const scale = Math.min(MAX_SCALE, params.scale, params.maxSize / Math.max(1, longEdge))
   const width = Math.max(1, Math.round(target.width * scale))
   const height = Math.max(1, Math.round(target.height * scale))
   const shown = target

@@ -5,6 +5,19 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { isInitializeRequest, type CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
+import {
+  MAX_BOX_SIZE,
+  MAX_COORD,
+  MAX_HTML_CHARS,
+  MAX_INK_LINES,
+  MAX_INK_POINTS,
+  MAX_LIST_ITEMS,
+  MAX_NAME_CHARS,
+  MAX_REGION_SIZE,
+  MAX_STYLE_CHARS,
+  MAX_SVG_PATH_CHARS,
+  MAX_TEXT_CHARS
+} from '@shared/limits'
 import { guideText, GUIDE_SECTIONS, SERVER_INSTRUCTIONS } from './guide'
 import type { SnapshotRenderer } from './snapshot'
 import {
@@ -135,13 +148,21 @@ function clientLabel(raw: string | undefined): string {
   return raw && raw.length <= 24 ? raw : 'Agent'
 }
 
-const nodeIds = z.array(z.string()).min(1)
+const nodeIds = z.array(z.string()).min(1).max(MAX_LIST_ITEMS, `At most ${MAX_LIST_ITEMS} ids per call.`)
+
+/** A board coordinate or offset (z.number() already refuses NaN and Infinity). */
+const coord = (): z.ZodNumber =>
+  z.number().min(-MAX_COORD, `Coordinates must be within ±${MAX_COORD} board points.`).max(MAX_COORD, `Coordinates must be within ±${MAX_COORD} board points.`)
+/** A width or height in board points. */
+const boxSize = (max: number): z.ZodNumber => z.number().positive().max(max, `Sizes must be at most ${max} board points.`)
+/** A style object: camelCase CSS, numbers mean px. */
+const styleValue = z.union([z.string().max(MAX_STYLE_CHARS, `Style values must be at most ${MAX_STYLE_CHARS} characters.`), coord()])
 
 const rectSchema = z.object({
-  x: z.number().describe('Left edge, board points'),
-  y: z.number().describe('Top edge, board points'),
-  width: z.number().positive(),
-  height: z.number().positive()
+  x: coord().describe('Left edge, board points'),
+  y: coord().describe('Top edge, board points'),
+  width: boxSize(MAX_REGION_SIZE),
+  height: boxSize(MAX_REGION_SIZE)
 })
 
 const IDS_NOTE = 'Ids: node ids, or ink group ids (g1, g2, …) from get_canvas_info / get_tree.'
@@ -153,7 +174,7 @@ const placeSchema = z
     below: z.string().optional(),
     above: z.string().optional(),
     over: z.string().optional().describe('On top of the target, centred (for marks on the learner\'s work).'),
-    gap: z.number().optional().describe('Distance to the target in board points (default 32; 0 for over).'),
+    gap: coord().optional().describe('Distance to the target in board points (default 32; 0 for over).'),
     align: z.enum(['start', 'center', 'end']).optional().describe('Alignment along the side (default "start"; "center" for over).')
   })
   .describe(
@@ -286,7 +307,8 @@ export class AgentServer {
       try {
         body = await readJson(req)
       } catch (error) {
-        this.jsonError(res, 400, -32700, `Parse error: ${error instanceof Error ? error.message : String(error)}`)
+        if (error instanceof BodyTooLarge) this.jsonError(res, 413, -32600, error.message)
+        else this.jsonError(res, 400, -32700, `Parse error: ${error instanceof Error ? error.message : String(error)}`)
         return
       }
       if (session) {
@@ -620,10 +642,10 @@ export class AgentServer {
           'Make a new top-level frame (a card) to write into. Default style: flex column, gap 12px, padding 24px, width 480px, height fit-content, card background, rounded corners. ' +
           'Position: place (relative to a node or ink group), or x and y, or neither: then the best empty spot beside `near` if given, else beside the learner\'s latest handwriting, else at the view centre, never over nodes or ink. Spots inside the learner\'s view come first; visible: false says it is outside. Returns the id, bounds, how it was placed and overlaps.',
         inputSchema: {
-          name: z.string().optional(),
-          style: z.record(z.string(), z.union([z.string(), z.number()])).optional().describe('camelCase CSS, overrides the defaults.'),
-          x: z.number().optional(),
-          y: z.number().optional(),
+          name: z.string().max(MAX_NAME_CHARS).optional(),
+          style: z.record(z.string(), styleValue).optional().describe('camelCase CSS, overrides the defaults.'),
+          x: coord().optional(),
+          y: coord().optional(),
           near: z.string().optional().describe('A node or ink group id to place the frame beside (automatic spot).'),
           place: placeSchema.optional()
         }
@@ -639,7 +661,7 @@ export class AgentServer {
           'Convert HTML (inline styles, flex, text with <b>/<i>/$math$, <svg>, <img>) into board nodes. mode "insert_children" (default) appends into the frame target_id ("root" = top level, auto-placed); ' +
           'mode "replace" replaces the node target_id with the HTML. With target_id "root", place puts the new top-level nodes relative to a node or ink group. Returns the created top-level ids, a layer-name → id map, their measured bounds after layout, overlaps, and what was ignored. Call get_guide first for the subset. One undo step.',
         inputSchema: {
-          html: z.string(),
+          html: z.string().max(MAX_HTML_CHARS, `html must be at most ${MAX_HTML_CHARS} characters; write it in smaller parts.`),
           target_id: z.string().describe('A frame id, or "root".'),
           mode: z.enum(['insert_children', 'replace']).optional(),
           near: z.string().optional().describe('target_id "root" only: a node or ink group id for the automatic spot.'),
@@ -656,7 +678,7 @@ export class AgentServer {
         description:
           'Set style keys on nodes: updates is a list of {node_ids, styles}; styles are camelCase CSS (numbers mean px; "" or null removes a key). Ink and ink groups take color only. Positions are not styles: use move_nodes. Returns ignored_styles and overlaps. One undo step.',
         inputSchema: {
-          updates: z.array(z.object({ node_ids: nodeIds, styles: z.record(z.string(), z.union([z.string(), z.number(), z.null()])) })).min(1)
+          updates: z.array(z.object({ node_ids: nodeIds, styles: z.record(z.string(), z.union([styleValue, z.null()])) })).min(1).max(MAX_LIST_ITEMS)
         }
       },
       this.tool(session, 'update_styles', async (args) => text(json(await this.board(session, 'updateStyles', args))))
@@ -667,7 +689,12 @@ export class AgentServer {
       {
         title: 'Set text',
         description: 'Replace the text of text nodes: updates is a list of {node_id, text}. text uses the markup **bold**, *italic*, $math$. One undo step.',
-        inputSchema: { updates: z.array(z.object({ node_id: z.string(), text: z.string() })).min(1) }
+        inputSchema: {
+          updates: z
+            .array(z.object({ node_id: z.string(), text: z.string().max(MAX_TEXT_CHARS, `text must be at most ${MAX_TEXT_CHARS} characters.`) }))
+            .min(1)
+            .max(MAX_LIST_ITEMS)
+        }
       },
       this.tool(session, 'set_text', async (args) => text(json(await this.board(session, 'setText', args))))
     )
@@ -684,10 +711,10 @@ export class AgentServer {
             .array(
               z.object({
                 node_id: z.string(),
-                x: z.number().optional(),
-                y: z.number().optional(),
-                dx: z.number().optional(),
-                dy: z.number().optional(),
+                x: coord().optional(),
+                y: coord().optional(),
+                dx: coord().optional(),
+                dy: coord().optional(),
                 parent_id: z.string().optional(),
                 index: z.number().int().min(0).optional(),
                 before: z.string().optional(),
@@ -696,6 +723,7 @@ export class AgentServer {
               })
             )
             .min(1)
+            .max(MAX_LIST_ITEMS)
         }
       },
       this.tool(session, 'move_nodes', async (args) => text(json(await this.board(session, 'moveNodes', args))))
@@ -736,10 +764,18 @@ export class AgentServer {
           target: z.string().optional().describe('shape: the node or ink group to mark.'),
           from_id: z.string().optional().describe('arrow: start at this node or group.'),
           side: z.enum(['left', 'right', 'above', 'below']).optional().describe('arrow without from_id: come in from this side (default left).'),
-          strokes: z.array(z.array(z.array(z.number()).min(2).max(3)).min(1)).optional().describe('Polylines of [x, y] points.'),
-          svg_path: z.string().optional().describe('An SVG path "d" (M, L, C, Q, A, Z …); each subpath is one stroke.'),
-          x: z.number().optional(),
-          y: z.number().optional(),
+          strokes: z
+            .array(z.array(z.array(coord()).min(2).max(3)).min(1).max(MAX_INK_POINTS, `At most ${MAX_INK_POINTS} points.`))
+            .max(MAX_INK_LINES, `At most ${MAX_INK_LINES} strokes.`)
+            .optional()
+            .describe('Polylines of [x, y] points.'),
+          svg_path: z
+            .string()
+            .max(MAX_SVG_PATH_CHARS, `svg_path must be at most ${MAX_SVG_PATH_CHARS} characters.`)
+            .optional()
+            .describe('An SVG path "d" (M, L, C, Q, A, Z …); each subpath is one stroke.'),
+          x: coord().optional(),
+          y: coord().optional(),
           place: placeSchema.optional(),
           parent_id: z.string().optional().describe('A frame to hold the ink, or "root". Default: the frame under most of it.'),
           color: z.string().optional().describe('Hex, rgb(), or a name: accent, good, bad, warn, white, yellow, blue, green, pink, orange.'),
@@ -759,8 +795,8 @@ export class AgentServer {
           'An empty rect of the given size: no overlap with any top-level node or ink, with a 32 pt margin, nearest to `near` (a node or ink group) or to the centre of the learner\'s view. ' +
           'inside_view (default true) prefers spots fully inside the learner\'s view. Returns {x, y, width, height, visible}. Use it before x, y writes.',
         inputSchema: {
-          width: z.number().positive(),
-          height: z.number().positive(),
+          width: boxSize(MAX_BOX_SIZE),
+          height: boxSize(MAX_BOX_SIZE),
           near: z.string().optional(),
           inside_view: z.boolean().optional()
         },
@@ -779,8 +815,8 @@ export class AgentServer {
         inputSchema: {
           node_id: z.string().optional(),
           region: rectSchema.optional(),
-          padding: z.number().min(0).optional().describe('Board points around the target (default 48).'),
-          zoom: z.number().positive().optional()
+          padding: z.number().min(0).max(MAX_COORD).optional().describe('Board points around the target (default 48).'),
+          zoom: z.number().positive().max(100).optional()
         }
       },
       this.tool(session, 'focus', async (args) => text(json(await this.board(session, 'focus', args))))
@@ -792,27 +828,30 @@ export class AgentServer {
         title: 'Finish working',
         description:
           'Say you are done with some material: removes your "working" outline from those top-level nodes (all of yours when node_ids is omitted). Outlines also fade 20 s after your last write.',
-        inputSchema: { node_ids: z.array(z.string()).optional() }
+        inputSchema: { node_ids: z.array(z.string()).max(MAX_LIST_ITEMS).optional() }
       },
       this.tool(session, 'finish_working', async (args) => text(json(await this.board(session, 'finishWorking', args))))
     )
   }
 }
 
+class BodyTooLarge extends Error {}
+
+/** The JSON body. Past MAX_BODY_BYTES the rest is read and dropped, so the client still gets a clear answer. */
 function readJson(req: IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = []
     let size = 0
     req.on('data', (chunk: Buffer) => {
       size += chunk.length
-      if (size > MAX_BODY_BYTES) {
-        reject(new Error('the body is too large'))
-        req.destroy()
-        return
-      }
-      chunks.push(chunk)
+      if (size <= MAX_BODY_BYTES) chunks.push(chunk)
+      else chunks.length = 0
     })
     req.on('end', () => {
+      if (size > MAX_BODY_BYTES) {
+        reject(new BodyTooLarge(`The request is larger than ${MAX_BODY_BYTES / 1024 / 1024} MB. Send less per call (write_html takes at most ${MAX_HTML_CHARS} characters).`))
+        return
+      }
       try {
         resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')))
       } catch (error) {

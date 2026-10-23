@@ -75,7 +75,7 @@ const mathCache = new Map<string, string>()
 function renderMath(tex: string): string {
   let html = mathCache.get(tex)
   if (html === undefined) {
-    html = katex.renderToString(tex, { throwOnError: false, output: 'html', trust: false, strict: 'ignore' })
+    html = katex.renderToString(tex, { throwOnError: false, output: 'html', trust: false, strict: 'ignore', maxSize: 100, maxExpand: 500 })
     if (mathCache.size > 2000) mathCache.clear()
     mathCache.set(tex, html)
   }

@@ -4,6 +4,8 @@
  * literal text. Part 2 (HTML conversion) maps runs to <b>, <i> and math.
  */
 
+import { MAX_MARKUP_DEPTH } from '@shared/limits'
+
 export type Run =
   | { kind: 'text'; text: string }
   | { kind: 'math'; tex: string }
@@ -25,7 +27,7 @@ export function parseMarkup(source: string): Run[] {
     return -1
   }
 
-  const parse = (close: '**' | '*' | null): { runs: Run[]; closed: boolean } => {
+  const parse = (close: '**' | '*' | null, depth: number): { runs: Run[]; closed: boolean } => {
     const runs: Run[] = []
     let buffer = ''
     const flush = (): void => {
@@ -59,11 +61,12 @@ export function parseMarkup(source: string): Run[] {
           continue
         }
       }
-      if (char === '*') {
+      // Deeper than MAX_MARKUP_DEPTH, markers stay literal text (no deep recursion).
+      if (char === '*' && depth < MAX_MARKUP_DEPTH) {
         const marker = source.startsWith('**', i) ? '**' : '*'
         flush()
         i += marker.length
-        const inner = parse(marker)
+        const inner = parse(marker, depth + 1)
         if (inner.closed) runs.push(marker === '**' ? { kind: 'bold', children: inner.runs } : { kind: 'italic', children: inner.runs })
         else runs.push({ kind: 'text', text: marker }, ...inner.runs)
         continue
@@ -75,7 +78,7 @@ export function parseMarkup(source: string): Run[] {
     return { runs, closed: close === null }
   }
 
-  return parse(null).runs
+  return parse(null, 0).runs
 }
 
 /**

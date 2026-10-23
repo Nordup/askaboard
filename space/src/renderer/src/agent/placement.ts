@@ -171,22 +171,35 @@ export function findSpot(
   return { x: Math.round(right), y: Math.round(anchor.y), visible: isVisible(right, anchor.y) }
 }
 
-/** The free top-left inside `area` whose box centre is nearest the anchor's centre. */
+/** Most grid columns (and rows) nearestFree tries in one area. */
+const GRID_CELLS = 200
+
+/**
+ * The free top-left inside `area` whose box centre is nearest the anchor's
+ * centre. The grid has at most GRID_CELLS × GRID_CELLS candidates; each is
+ * tested as it is made, keeping the best so far.
+ */
 function nearestFree(size: { width: number; height: number }, anchor: Region, blocked: readonly Region[], margin: number, area: Region): { x: number; y: number } | null {
-  const step = Math.max(12, Math.min(48, Math.round(Math.max(area.width, area.height) / 160)))
+  const spanX = area.width - size.width
+  const spanY = area.height - size.height
+  if (!(spanX >= 0) || !(spanY >= 0) || !Number.isFinite(spanX) || !Number.isFinite(spanY)) return null
+  const step = Math.max(12, Math.min(48, Math.round(Math.max(area.width, area.height) / 160)), Math.max(spanX, spanY) / GRID_CELLS)
   const cx = anchor.x + anchor.width / 2
   const cy = anchor.y + anchor.height / 2
-  const spots: [number, number, number][] = []
-  for (let x = area.x; x + size.width <= area.x + area.width; x += step) {
-    for (let y = area.y; y + size.height <= area.y + area.height; y += step) {
-      spots.push([x, y, Math.hypot(x + size.width / 2 - cx, y + size.height / 2 - cy)])
+  let best: { x: number; y: number } | null = null
+  let bestDistance = Infinity
+  for (let x = area.x; x <= area.x + spanX; x += step) {
+    for (let y = area.y; y <= area.y + spanY; y += step) {
+      const distance = Math.hypot(x + size.width / 2 - cx, y + size.height / 2 - cy)
+      if (distance >= bestDistance) continue
+      if (blocked.some((box) => overlaps({ x, y, ...size }, box, margin))) continue
+      best = { x: Math.round(x), y: Math.round(y) }
+      bestDistance = distance
+      // No grid point can be much nearer than one step: stop.
+      if (distance <= step / 2) return best
     }
   }
-  spots.sort((a, b) => a[2] - b[2])
-  for (const [x, y] of spots) {
-    if (!blocked.some((box) => overlaps({ x, y, ...size }, box, margin))) return { x: Math.round(x), y: Math.round(y) }
-  }
-  return null
+  return best
 }
 
 /**
