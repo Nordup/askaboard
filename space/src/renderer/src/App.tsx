@@ -11,6 +11,7 @@ import {
   type Removal
 } from '@shared/board-format'
 import type { AgentActivity, AgentServerStatus, Camera, FileNode, FileTree, Snapshot } from '@shared/space-api'
+import { AgentPresence } from './agent/edits'
 import { handleAgentRequest, type AgentContext } from './agent/handler'
 import { Board, type BoardHandle } from './board/Board'
 import { ChangeLog } from './board/changes'
@@ -428,6 +429,13 @@ export function App() {
         else if (command === 'zoom-in') boardRef.current?.zoomStep('in', 'menu')
         else if (command === 'zoom-out') boardRef.current?.zoomStep('out', 'menu')
         else if (command === 'zoom-reset') boardRef.current?.zoomStep('reset', 'menu')
+        else if (command === 'select-all') {
+          // A focused text field selects its own text; otherwise the board selects all nodes.
+          const active = document.activeElement
+          if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) active.select()
+          else if (isEditableTarget(active)) document.execCommand('selectAll')
+          else boardRef.current?.selectAll()
+        }
       }),
       space.onFlushRequest(() => {
         void flushRef.current().finally(() => space.flushDone())
@@ -446,8 +454,12 @@ export function App() {
 
   // The key of the Board that is mounted now: set after React attaches boardRef.
   const mountedKeyRef = useRef<number | null>(null)
+  const presenceRef = useRef<AgentPresence>(null as unknown as AgentPresence)
+  if (!presenceRef.current) presenceRef.current = new AgentPresence()
   useEffect(() => {
     mountedKeyRef.current = open?.key ?? null
+    // A remounted board shows the agents' presence again.
+    presenceRef.current.attach(boardRef.current)
   }, [open])
 
   const toolRef = useRef(tools.tool)
@@ -478,7 +490,9 @@ export function App() {
           await new Promise((resolve) => setTimeout(resolve, 30))
         }
         throw new Error(`"${path}" did not open in time.`)
-      }
+      },
+      importAsset: (src) => space.importAsset(src),
+      presence: presenceRef.current
     }
   }, [])
 
@@ -513,6 +527,7 @@ export function App() {
             return {
               id: node.id,
               kind: node.kind,
+              author: typeof node.author === 'string' ? node.author : null,
               parent: typeof node.parent === 'string' ? node.parent : null,
               ...(node.kind === 'text' ? { text: node.text } : {}),
               ...(node.kind === 'ink' || node.kind === 'text' ? { color: node.kind === 'ink' ? node.color : (node as { style?: Record<string, string> }).style?.color } : {}),

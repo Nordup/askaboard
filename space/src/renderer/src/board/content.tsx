@@ -4,7 +4,7 @@ import katex from 'katex'
 import { isContent, renderableStyle, type ContentNode } from '@shared/board-format'
 import { parseMarkup, toggleMarker, type Run } from './markup'
 import { ROOT, type SceneIndex } from './scene'
-import type { BoardNode } from './types'
+import type { BoardNode, LayoutBox } from './types'
 import '../../../../node_modules/katex/dist/katex.min.css'
 import './content.css'
 
@@ -42,6 +42,32 @@ export function sanitizeSvg(markup: string): string {
   if (svgCache.size > 500) svgCache.clear()
   svgCache.set(markup, clean)
   return clean
+}
+
+const scopedCache = new Map<string, string>()
+
+/**
+ * Prefix every id inside one svg node with the node id, and rewrite its
+ * references (url(#x), href="#x"), so two drawings that both use "arrow" never
+ * point at each other's elements. The stored markup keeps the agent's ids.
+ */
+export function scopeSvgIds(markup: string, nodeId: string): string {
+  const key = `${nodeId}\u0000${markup}`
+  const cached = scopedCache.get(key)
+  if (cached !== undefined) return cached
+  const prefix = `ls-${nodeId.replace(/[^\w-]/g, '')}-`
+  const ids = new Set<string>()
+  for (const match of markup.matchAll(/\sid="([^"]+)"/g)) ids.add(match[1])
+  let out = markup
+  if (ids.size) {
+    out = out
+      .replace(/(\sid=")([^"]+)"/g, (_, head: string, id: string) => `${head}${prefix}${id}"`)
+      .replace(/url\(\s*(['"]?)#([^'")\s]+)\1\s*\)/g, (whole, quote: string, id: string) => (ids.has(id) ? `url(${quote}#${prefix}${id}${quote})` : whole))
+      .replace(/(\s(?:xlink:)?href=")#([^"]+)"/g, (whole, head: string, id: string) => (ids.has(id) ? `${head}#${prefix}${id}"` : whole))
+  }
+  if (scopedCache.size > 500) scopedCache.clear()
+  scopedCache.set(key, out)
+  return out
 }
 
 const mathCache = new Map<string, string>()
@@ -195,7 +221,7 @@ const NodeView = memo(function NodeView({ node, placement, editing, ctx }: NodeV
       )
     case 'svg': {
       const sized = { 'data-w': node.style.width ? '1' : undefined, 'data-h': node.style.height ? '1' : undefined }
-      return <div {...common} {...sized} className="node node-svg" style={style} dangerouslySetInnerHTML={{ __html: sanitizeSvg(node.markup) }} />
+      return <div {...common} {...sized} className="node node-svg" style={style} dangerouslySetInnerHTML={{ __html: scopeSvgIds(sanitizeSvg(node.markup), node.id) }} />
     }
     case 'image': {
       const url = assetUrl(node.src)
@@ -255,4 +281,22 @@ export function ContentLayer({ index, editingId, ctx, rootRef }: ContentLayerPro
       ))}
     </div>
   )
+}
+
+/**
+ * Measure node elements into world boxes (board points). `root` is the
+ * transformed content root (board origin); `zoom` is the scale its transform shows.
+ */
+export function measureContent(root: HTMLElement, elements: ReadonlyMap<string, HTMLElement>, zoom: number): Map<string, LayoutBox> {
+  const layout = new Map<string, LayoutBox>()
+  const rootRect = root.getBoundingClientRect()
+  for (const [id, element] of elements) {
+    if (!element.isConnected) continue
+    const rect = element.getBoundingClientRect()
+    if (rect.width === 0 && rect.height === 0 && getComputedStyle(element).display === 'none') continue
+    const x = (rect.left - rootRect.left) / zoom
+    const y = (rect.top - rootRect.top) / zoom
+    layout.set(id, { x, y, width: rect.width / zoom, height: rect.height / zoom, ox: x + element.clientLeft, oy: y + element.clientTop })
+  }
+  return layout
 }

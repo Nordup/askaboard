@@ -5,6 +5,7 @@ import { app, BrowserWindow, dialog, ipcMain, protocol, shell, type IpcMainInvok
 import { IPC, type Camera, type MenuCommand, type Snapshot } from '@shared/space-api'
 import { FolderSession } from './folder'
 import { AgentServer } from './mcp'
+import { SnapshotRenderer } from './snapshot'
 import { installMenu } from './menu'
 import * as store from './state'
 
@@ -73,7 +74,10 @@ let mainWindow: BrowserWindow | null = null
 let session: FolderSession | null = null
 let quitting = false
 
+const snapshots = new SnapshotRenderer()
+
 const agentServer = new AgentServer({
+  snapshots,
   webContents: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null),
   status: (status) => send(IPC.agentStatus, status),
   activity: (activity) => send(IPC.agentActivity, activity)
@@ -193,6 +197,10 @@ function registerIpc(): void {
     return snapshot()
   })
   handle(IPC.listFiles, () => requireSession().listFiles())
+  handle(IPC.importAsset, (src: unknown) => {
+    if (typeof src !== 'string' || !src.trim()) throw new Error('An image src is required.')
+    return requireSession().importAsset(src)
+  })
 
   handle(IPC.readBoard, (path: string) => requireSession().readBoard(path))
   handle(IPC.writeBoard, (path: string, text: string) => requireSession().writeBoard(path, text))
@@ -282,6 +290,8 @@ function createWindow(): BrowserWindow {
   })
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null
+    // The hidden snapshot window must not keep the app alive without its main window.
+    snapshots.dispose()
   })
 
   if (capturePath) {
@@ -322,14 +332,15 @@ void app.whenReady().then(async () => {
         .catch((error) => console.error(`open folder failed: ${String(error)}`))
     },
     newBoard: () => sendMenuCommand('new-board'),
-    zoom: (step) => sendMenuCommand(step === 'in' ? 'zoom-in' : step === 'out' ? 'zoom-out' : 'zoom-reset')
+    zoom: (step) => sendMenuCommand(step === 'in' ? 'zoom-in' : step === 'out' ? 'zoom-out' : 'zoom-reset'),
+    selectAll: () => sendMenuCommand('select-all')
   })
   registerAssetProtocol()
   await openInitialFolder()
   agentServer.start()
   mainWindow = createWindow()
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) mainWindow = createWindow()
+    if (!mainWindow || mainWindow.isDestroyed()) mainWindow = createWindow()
   })
 })
 
@@ -345,4 +356,5 @@ app.on('will-quit', () => {
   session?.stopWatching()
   store.saveStateNow()
   void agentServer.stop()
+  snapshots.dispose()
 })

@@ -49,14 +49,31 @@ request for 10 minutes is closed.
 
 | Tool | Parameters | Result |
 | --- | --- | --- |
-| `get_canvas_info` | none | JSON: folder (name, absolute path), open board, all boards, viewport rect, content bounds, item count, selection (ids, bounds), tool, zoom, cursor |
-| `get_screenshot` | `target`: `viewport` \| `content` \| `selection` \| `changes` \| `region`; `region` `{x,y,width,height}` (for `region`); `max_size` px (default 1600) | PNG + a note with the board rect and scale. `changes` crops to the ink that is new since the agent's last look, outlines it, and advances the cursor |
-| `get_changes` | `since` (optional cursor; 0 = everything) | JSON: changed items (id, kind, tool, colour, bounds, seq), removed items (id, bounds, seq), new cursor. Advances the cursor |
+| `get_canvas_info` | none | JSON: folder, open board, all boards, viewport rect, content bounds, node counts by kind, top-level nodes (id, kind, name, author, bounds; loose ink grouped), selection, tool, zoom, cursor |
+| `get_guide` | `topic?` | The agent guide (markdown): HTML subset, markup and math, SVG, images, tokens, placement, workflow, an example |
+| `get_tree` | `node_id?`, `depth?` (3) | Indented outline: kind, name, id, world bounds; ink as `ink ×N (learner)` groups |
+| `get_node_info` | `node_id` | JSON: bounds, position in parent, parent, children, style, text, svg ids, src or ink details, author |
+| `get_html` | `node_id`, `include_ids?` (true) | The subtree as the write_html subset, `data-id` on every element |
+| `get_screenshot` | `node_id?` \| `region?` \| `target?` (`viewport` default, `content`, `selection`, `changes`); `scale?` (1); `max_size?` (1600) | PNG of content and ink (hidden offscreen render, any area) + a note with the board rect and scale. `changes` outlines what is new and advances the cursor |
+| `get_changes` | `since` (optional cursor; 0 = everything) | JSON: changed nodes (id, kind, name, `by`, bounds, seq), removed nodes, new cursor. Advances the cursor |
 | `open_board` | `path` (relative `*.board.json`) | Opens the board in the app; returns the canvas info |
+| `create_frame` | `name?`, `style?`, `x?`, `y?`, `near?` | A top-level card, auto-placed in empty space when x, y are omitted; id + bounds |
+| `write_html` | `html`, `target_id` (frame id or `root`), `mode?` (`insert_children` \| `replace`) | Created ids, layer-name map, measured bounds, `ignored` |
+| `update_styles` | `updates: [{node_ids, styles}]` | Updated ids, `ignored_styles` |
+| `set_text` | `updates: [{node_id, text}]` | Updated ids |
+| `move_nodes` | `moves: [{node_id, x,y \| dx,dy \| parent_id,index? \| before \| after}]` | New parent and bounds per node |
+| `duplicate_nodes` | `node_ids` | Original → copy ids (descendants too); top-level copies auto-placed |
+| `delete_nodes` | `node_ids` | Removed nodes (subtrees included) |
+| `finish_working` | `node_ids?` | Clears this agent's "working" outline (all when omitted) |
+
+Every write tool is one undo step for the learner. While an agent writes, the
+top-level nodes it touched show an outline with its name, until
+`finish_working` or 20 s after its last write.
 
 Board coordinates are logical points, origin at the centre, +y down.
-Screenshots render the board's items offscreen with the board's own paint
-code (no grid, no UI), so they work for any region at any zoom. The cursor is
+Screenshots render the requested region in a hidden offscreen window with
+the app's own content layer and ink painter (no grid, no UI), so they work for
+any region, also off screen and while the app window is in the background. The cursor is
 a board `seq`: every new, moved or restored item takes the next seq, and so
 does every removal (removals are kept in memory as tombstones, not in the
 file). A board changed on disk is diffed against the live board, so an

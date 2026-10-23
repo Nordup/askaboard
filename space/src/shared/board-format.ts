@@ -108,6 +108,8 @@ export function renderableStyle(style: NodeStyle | undefined): Partial<Record<St
 
 interface NodeBase {
   id: string
+  /** A label for agents and people (HTML layer-name). Optional. */
+  name?: string
   /** The parent node (a frame), or none for a top-level node. */
   parent?: string
   /** Board points. Relative to the parent's padding box (the CSS containing block) when parented. */
@@ -202,6 +204,7 @@ function validBase(node: Record<string, unknown>): boolean {
     finite(node.y) &&
     finite(node.z) &&
     (node.parent === undefined || typeof node.parent === 'string') &&
+    (node.name === undefined || typeof node.name === 'string') &&
     (node.author === 'learner' || node.author === 'agent')
   )
 }
@@ -322,7 +325,7 @@ const round = (value: number, digits: number): number => {
 }
 
 /** Fixed key order: common fields, kind fields, unknown fields, points last. */
-const COMMON_KEYS = ['id', 'kind', 'parent', 'x', 'y', 'z', 'author', 'seq', 'locked'] as const
+const COMMON_KEYS = ['id', 'kind', 'name', 'parent', 'x', 'y', 'z', 'author', 'seq', 'locked'] as const
 const KIND_KEYS: Record<string, readonly string[]> = {
   ink: ['tool', 'color', 'width'],
   frame: ['style'],

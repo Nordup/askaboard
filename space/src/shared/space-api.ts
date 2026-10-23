@@ -59,7 +59,7 @@ export interface BoardChange {
   deleted: boolean
 }
 
-export type MenuCommand = 'new-board' | 'zoom-in' | 'zoom-out' | 'zoom-reset'
+export type MenuCommand = 'new-board' | 'zoom-in' | 'zoom-out' | 'zoom-reset' | 'select-all'
 
 /** Call the returned function to stop listening. */
 export type Unsubscribe = () => void
@@ -76,12 +76,24 @@ export interface BoardRect {
 
 export type ScreenshotTarget = 'viewport' | 'content' | 'selection' | 'changes' | 'region'
 
+/** A top-level node in get_canvas_info. */
+export interface TopLevelSummary {
+  id: string
+  kind: string
+  name?: string
+  author?: string
+  bounds: BoardRect | null
+}
+
 /** One item in a get_changes answer. */
 export interface ChangedItem {
   id: string
   kind: string
   tool?: string
   color?: string
+  name?: string
+  /** Who made this change: "learner" or "agent" (agent edits since the app started). */
+  by?: string
   bounds: BoardRect | null
   seq: number
 }
@@ -114,24 +126,70 @@ export interface CanvasInfo {
   zoom: number | null
   /** The highest seq on the board (nextSeq - 1): the change cursor value for "now". */
   cursor: number | null
+  /** Node counts by kind. */
+  counts?: Record<string, number>
+  /** Top-level nodes (content and loose ink grouped), in draw order. */
+  topLevel?: TopLevelSummary[]
 }
 
-export type ScreenshotResult =
+/** Which agent session made a request (for presence and change attribution). */
+export interface AgentRef {
+  sessionId: string
+  /** A display name: "Claude Code", "Codex", or the raw client name. */
+  client: string
+}
+
+/** The board tools the renderer runs (see agent/edits.ts). Results are plain JSON. */
+export type AgentToolName =
+  | 'getTree'
+  | 'getNodeInfo'
+  | 'getHtml'
+  | 'createFrame'
+  | 'writeHtml'
+  | 'updateStyles'
+  | 'setText'
+  | 'moveNodes'
+  | 'duplicateNodes'
+  | 'deleteNodes'
+  | 'finishWorking'
+
+/** A box drawn over a snapshot (the "changes" view), in board coordinates. */
+export interface SnapshotOutline {
+  rect: BoardRect
+  color: string
+}
+
+/** What a screenshot shows: the main renderer plans it, the snapshot window draws it. */
+export type ScreenshotPlan =
   | { kind: 'empty'; board: string; message: string; cursor: number }
   | {
-      kind: 'image'
+      kind: 'plan'
       board: string
-      /** Base64 PNG, without the data: prefix. */
-      png: string
+      /** The board's nodes (BoardNode[]), unsaved edits included. */
+      nodes: unknown[]
       rect: BoardRect
-      /** Image pixels per board point. */
       scale: number
       width: number
       height: number
-      /** For target "changes": what the outlines mark. */
+      outlines: SnapshotOutline[]
       changes?: { changed: number; removed: number }
       cursor: number
+      background: string
     }
+
+/** Main → snapshot window: draw this, then answer snapshotReady. */
+export interface SnapshotRequest {
+  requestId: number
+  nodes: unknown[]
+  rect: BoardRect
+  scale: number
+  width: number
+  height: number
+  outlines: SnapshotOutline[]
+  background: string
+}
+
+export type SnapshotReply = { requestId: number; ok: true; missingImages: number } | { requestId: number; ok: false; error: string }
 
 /**
  * The requests the main process sends to the renderer, which owns the live
@@ -140,11 +198,19 @@ export type ScreenshotResult =
 export interface AgentMethods {
   canvasInfo: { params: Record<string, never>; result: CanvasInfo }
   changes: { params: { since: number | null }; result: ChangeSet }
-  screenshot: {
-    params: { target: ScreenshotTarget; region?: BoardRect; maxSize: number; since: number | null }
-    result: ScreenshotResult
+  screenshotPlan: {
+    params: {
+      target: ScreenshotTarget | 'node'
+      region?: BoardRect
+      nodeId?: string
+      scale: number
+      maxSize: number
+      since: number | null
+    }
+    result: ScreenshotPlan
   }
   openBoard: { params: { path: string }; result: CanvasInfo }
+  agentTool: { params: { tool: AgentToolName; args: Record<string, unknown>; agent: AgentRef }; result: unknown }
 }
 
 export type AgentMethod = keyof AgentMethods
@@ -227,6 +293,16 @@ export interface SpaceApi {
   /** Requests from the MCP server. Answer each one with replyAgent. */
   onAgentRequest(listener: (request: AgentRequest) => void): Unsubscribe
   replyAgent(reply: AgentReply): void
+
+  /**
+   * Bring an image into the learning folder for an image node: an https URL
+   * is downloaded into assets/, a data: URL is saved there, a folder-relative
+   * path is checked. Resolves the folder-relative path.
+   */
+  importAsset(src: string): Promise<string>
+  /** Snapshot window only: draw requests from the main process. */
+  onSnapshotRequest(listener: (request: SnapshotRequest) => void): Unsubscribe
+  snapshotReady(reply: SnapshotReply): void
 }
 
 /** IPC channel names. The main process and the preload share them. */
@@ -257,5 +333,8 @@ export const IPC = {
   agentStatus: 'space:agent-status',
   agentActivity: 'space:agent-activity',
   agentRequest: 'space:agent-request',
-  agentReply: 'space:agent-reply'
+  agentReply: 'space:agent-reply',
+  importAsset: 'space:import-asset',
+  snapshotRequest: 'space:snapshot-request',
+  snapshotReady: 'space:snapshot-ready'
 } as const

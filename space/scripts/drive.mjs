@@ -65,7 +65,8 @@ async function connect(port) {
       `No app with remote debugging on 127.0.0.1:${port}. Start it with SPACE_REMOTE_DEBUG=${port} npm run dev (dev builds only).`
     )
   }
-  const page = targets.find((target) => target.type === 'page' && !target.url.startsWith('devtools://'))
+  // Skip the hidden window that renders agent screenshots (?snapshot=1).
+  const page = targets.find((target) => target.type === 'page' && !target.url.startsWith('devtools://') && !target.url.includes('snapshot=1'))
   if (!page) throw new Failure(`Port ${port} answers, but it has no app page. Is the window open?`)
 
   const socket = new WebSocket(page.webSocketDebuggerUrl)
@@ -237,10 +238,25 @@ function parseCombo(combo) {
   return { key, code, keyCode, text, modifiers }
 }
 
+/**
+ * The editing commands a real ⌘ key runs in a focused text field (macOS key
+ * bindings). CDP key events do not run them on their own, so a drive-sent
+ * ⌘A would otherwise not select the text.
+ */
+const EDIT_COMMANDS = { a: 'selectAll', c: 'copy', x: 'cut', v: 'paste', z: 'undo' }
+
 async function pressKey(cdp, combo) {
   const { key, code, keyCode, text, modifiers } = parseCombo(combo)
   const base = { key, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode, modifiers }
-  await cdp.send('Input.dispatchKeyEvent', { type: text ? 'keyDown' : 'rawKeyDown', ...base, ...(text ? { text, unmodifiedText: text } : {}) })
+  const meta = (modifiers & 4) !== 0 || (modifiers & 2) !== 0
+  const command = meta ? EDIT_COMMANDS[key.toLowerCase()] : undefined
+  const commands = command ? [command === 'undo' && modifiers & 8 ? 'redo' : command] : undefined
+  await cdp.send('Input.dispatchKeyEvent', {
+    type: text ? 'keyDown' : 'rawKeyDown',
+    ...base,
+    ...(text ? { text, unmodifiedText: text } : {}),
+    ...(commands ? { commands } : {})
+  })
   await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...base })
   console.log(JSON.stringify({ key: combo }))
 }

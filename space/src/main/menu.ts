@@ -4,6 +4,8 @@ export interface MenuActions {
   openFolder(): void
   newBoard(): void
   zoom(step: 'in' | 'out' | 'reset'): void
+  /** ⌘A: the focused text field's text, or all nodes on the board. */
+  selectAll(): void
 }
 
 /**
@@ -33,7 +35,8 @@ export function installMenu(actions: MenuActions): void {
         { role: 'cut' },
         { role: 'copy' },
         { role: 'paste' },
-        { role: 'selectAll' }
+        // Not the selectAll role: on the canvas ⌘A selects nodes; in a text field the renderer selects its text.
+        { label: 'Select All', accelerator: 'CmdOrCtrl+A', click: () => actions.selectAll() }
       ]
     },
     {

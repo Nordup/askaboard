@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type CSSProperties, type Ref } from 'react'
-import { isContent, isFrame, isInk, isKnown, newItemId, stampChanged, type BoardDoc, type NodeStyle, type Removal } from '@shared/board-format'
+import { flushSync } from 'react-dom'
+import { isContent, isFrame, isInk, isKnown, newItemId, stampChanged, type Author, type BoardDoc, type NodeStyle, type Removal } from '@shared/board-format'
 import { isEditableTarget } from '../lib/keys'
 import type { ToolId } from '../tools'
 import { boardKeyAction, hasNodeClipboard, readNodeClipboard, writeNodeClipboard, type BoardKeyAction } from './clipboard'
-import { ContentLayer, type ContentContext } from './content'
+import { ContentLayer, measureContent, type ContentContext } from './content'
 import {
   boardToScreen,
   clampZoom,
@@ -84,6 +85,22 @@ export interface BoardHandle {
   applyColor(color: string): boolean
   /** Restyle selected ink with a palette width. Returns false when no ink is selected. */
   applyWidth(width: number): boolean
+  /**
+   * Commit an agent edit as one undo step, then lay it out before returning,
+   * so the layout cache has the new nodes' bounds.
+   */
+  agentCommit(next: BoardNode[]): void
+  /** Measure the content layer now (after images load). */
+  remeasure(): void
+  /** Show agent presence outlines on these top-level nodes. */
+  setPresence(entries: PresenceEntry[]): void
+  /** Select every top-level node and all loose ink (⌘A on the canvas). */
+  selectAll(): void
+}
+
+export interface PresenceEntry {
+  id: string
+  label: string
 }
 
 export interface LiveBoardState {
@@ -97,6 +114,10 @@ export interface LiveBoardState {
   bounds(id: string): Region | null
   /** Every ink node with its world offset, in draw order. */
   inks(): PaintInk[]
+  /** The layout cache: world boxes and child origins. */
+  layout(): ReadonlyMap<string, LayoutBox>
+  /** Who last changed a node in this app session ("learner" or "agent"), when known. */
+  editor(id: string): Author | undefined
 }
 
 export interface BoardProps {
@@ -268,6 +289,8 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const [panReady, setPanReady] = useState(false)
   const [panning, setPanning] = useState(false)
   const [flashRect, setFlashRect] = useState<{ rect: Region; id: number } | null>(null)
+  const [presence, setPresence] = useState<PresenceEntry[]>([])
+  const editorsRef = useRef(new Map<string, Author>())
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const onDocChangeRef = useRef(onDocChange)
@@ -328,26 +351,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   /** Measure every content element into the layout cache, then add ink. */
   const measure = useCallback(() => {
     const root = contentRootRef.current
-    const layout: LayoutMap = new Map()
-    if (root) {
-      const rootRect = root.getBoundingClientRect()
-      const zoom = domCameraRef.current.zoom
-      for (const [id, element] of elementsRef.current) {
-        if (!element.isConnected) continue
-        const rect = element.getBoundingClientRect()
-        if (rect.width === 0 && rect.height === 0 && getComputedStyle(element).display === 'none') continue
-        const x = (rect.left - rootRect.left) / zoom
-        const y = (rect.top - rootRect.top) / zoom
-        layout.set(id, {
-          x,
-          y,
-          width: rect.width / zoom,
-          height: rect.height / zoom,
-          ox: x + element.clientLeft,
-          oy: y + element.clientTop
-        })
-      }
-    }
+    const layout: LayoutMap = root ? measureContent(root, elementsRef.current, domCameraRef.current.zoom) : new Map()
     addInkLayout(indexRef.current, layout)
     layoutRef.current = layout
     setLayoutVersion((version) => version + 1)
@@ -480,14 +484,16 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
 
   /** Commit an edit: record undo, stamp seq on new or changed nodes, notify. */
   const commitNodes = useCallback(
-    (next: BoardNode[], snapshot: BoardNode[] = nodesRef.current) => {
+    (next: BoardNode[], snapshot: BoardNode[] = nodesRef.current, by: Author = 'learner') => {
       if (next.length === snapshot.length && next.every((node, i) => node === snapshot[i])) {
         if (nodesRef.current !== snapshot) setNodes(snapshot)
         return
       }
       history.record(snapshot)
+      const firstSeq = nextSeqRef.current
       const stamped = stampChanged(snapshot, next, nextSeqRef.current)
       nextSeqRef.current = stamped.nextSeq
+      for (const node of stamped.nodes) if (node.seq >= firstSeq) editorsRef.current.set(node.id, by)
       const removed = stamped.removed.map((removal) => ({ ...removal, bounds: layoutRef.current.get(removal.node.id) ?? null }))
       setNodes(stamped.nodes)
       if (removed.length) onRemovedRef.current?.(removed)
@@ -1094,7 +1100,9 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
           const box = layoutRef.current.get(id)
           return box ? { x: box.x, y: box.y, width: box.width, height: box.height } : null
         },
-        inks: paintInks
+        inks: paintInks,
+        layout: () => layoutRef.current,
+        editor: (id) => editorsRef.current.get(id)
       }),
       boardToClient: (point) => {
         const host = hostRef.current
@@ -1128,9 +1136,20 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         flashTimerRef.current = setTimeout(() => setFlashRect(null), FLASH_MS)
       },
       applyColor,
-      applyWidth
+      applyWidth,
+      agentCommit: (next) => {
+        // An agent edit ends a learner's text editing first, so the two never mix.
+        if (editingRef.current) commitEditing()
+        flushSync(() => commitNodes(next, nodesRef.current, 'agent'))
+        measure()
+        const present = new Set(next.map((node) => node.id))
+        if (selectedIdsRef.current.some((id) => !present.has(id))) setSelectedIds(selectedIdsRef.current.filter((id) => present.has(id)))
+      },
+      remeasure: measure,
+      setPresence,
+      selectAll: () => selectAllRef.current()
     }),
-    [applyCamera, applyColor, applyWidth, fit, paintInks, zoomStep]
+    [applyCamera, applyColor, applyWidth, commitEditing, commitNodes, fit, measure, paintInks, setSelectedIds, zoomStep]
   )
   useEffect(
     () => () => {
@@ -1141,11 +1160,17 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
 
   // ---------- Keyboard ----------
 
+  const selectAll = useCallback(() => {
+    if (editingRef.current) return
+    setSelectedIds((indexRef.current.children.get(ROOT) ?? []).map((node) => node.id))
+  }, [setSelectedIds])
+
   const applyAction = (action: BoardKeyAction): void => {
     const ids = [...selectedIdsRef.current]
     const index = indexRef.current
     const layout = layoutRef.current
-    if (action === 'undo') undo()
+    if (action === 'selectAll') selectAll()
+    else if (action === 'undo') undo()
     else if (action === 'redo') redo()
     else if (action === 'copy' || action === 'cut') {
       const copied = copySubtrees(ids, index, layout, { detach: true })
@@ -1211,6 +1236,9 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     commitNodes(moveNodes(nodesRef.current, ids, [dx, dy]))
     setSelectedIds(selection)
   }
+
+  const selectAllRef = useRef(selectAll)
+  selectAllRef.current = selectAll
 
   const keyHandlerRef = useRef<(event: KeyboardEvent) => void>(() => undefined)
   keyHandlerRef.current = (event: KeyboardEvent) => {
@@ -1332,6 +1360,21 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
           ))}
         </div>
       )}
+      {presence.map((entry) => {
+        const box = layoutRef.current.get(entry.id)
+        if (!box) return null
+        const topLeft = boardToScreen([box.x, box.y], viewport, camera)
+        return (
+          <div
+            key={entry.id}
+            className="board__presence"
+            style={{ left: topLeft[0] - 4, top: topLeft[1] - 4, width: box.width * camera.zoom + 8, height: box.height * camera.zoom + 8 }}
+            aria-hidden="true"
+          >
+            <span className="board__presence-label">{entry.label}</span>
+          </div>
+        )
+      })}
       {flashRect && flashTopLeft && (
         <div
           key={flashRect.id}

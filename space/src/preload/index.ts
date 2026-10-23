@@ -48,7 +48,11 @@ const api: SpaceApi = {
   onAgentStatus: (listener) => listen(IPC.agentStatus, listener),
   onAgentActivity: (listener) => listen(IPC.agentActivity, listener),
   onAgentRequest: (listener) => listen(IPC.agentRequest, listener),
-  replyAgent: (reply) => ipcRenderer.send(IPC.agentReply, reply)
+  replyAgent: (reply) => ipcRenderer.send(IPC.agentReply, reply),
+
+  importAsset: (src) => ipcRenderer.invoke(IPC.importAsset, src),
+  onSnapshotRequest: (listener) => listen(IPC.snapshotRequest, listener),
+  snapshotReady: (reply) => ipcRenderer.send(IPC.snapshotReady, reply)
 }
 
 contextBridge.exposeInMainWorld('space', api)

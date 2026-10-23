@@ -1,17 +1,11 @@
-import { boardName, isInk } from '@shared/board-format'
-import type {
-  AgentMethods,
-  AgentRequest,
-  BoardRect,
-  CanvasInfo,
-  ChangeSet,
-  ScreenshotResult
-} from '@shared/space-api'
+import { boardName, isContent, isInk } from '@shared/board-format'
+import type { AgentMethods, AgentRequest, BoardRect, CanvasInfo, ChangeSet, ScreenshotPlan, SnapshotOutline, TopLevelSummary } from '@shared/space-api'
 import type { BoardHandle, LiveBoardState } from '../board/Board'
 import type { ChangeLog } from '../board/changes'
 import { unionRegions } from '../board/geometry'
-import { renderRegion, type RenderOutline } from '../board/paint'
+import { buildIndex, ROOT } from '../board/scene'
 import type { Region } from '../board/types'
+import { AgentPresence, runEditTool } from './edits'
 
 /**
  * Answers the MCP server's requests (see AgentMethods in space-api.ts).
@@ -30,14 +24,19 @@ export interface AgentContext {
   tool: string
   /** Open a board and resolve when it is on screen. */
   openBoard(path: string): Promise<void>
+  /** See SpaceApi.importAsset. */
+  importAsset(src: string): Promise<string>
+  presence: AgentPresence
 }
 
 /** Padding around the "changes" view, in board points. */
 const CHANGES_PAD = 48
 /** Padding around the content and selection views, in board points. */
 const CONTENT_PAD = 24
-/** The largest scale, in image pixels per board point. Small regions stay sharp but not huge. */
-const MAX_SCALE = 2
+/** The largest scale, in image pixels per board point. */
+const MAX_SCALE = 4
+/** Padding around a node screenshot, in board points. */
+const NODE_PAD = 16
 const CHANGED_COLOR = '#6e8bff' // --accent
 const REMOVED_COLOR = '#ff6b8b' // --ink-pink
 
@@ -96,6 +95,26 @@ function canvasInfo(context: AgentContext): CanvasInfo {
   if (!context.openPath || !context.board) return base
   const state = context.board.liveState()
   const selected = new Set(state.selectedIds)
+  const counts: Record<string, number> = {}
+  for (const node of state.nodes) counts[node.kind] = (counts[node.kind] ?? 0) + 1
+  const index = buildIndex(state.nodes)
+  const topLevel: TopLevelSummary[] = []
+  const top = index.children.get(ROOT) ?? []
+  for (const node of top) {
+    if (!isContent(node)) continue
+    topLevel.push({ id: node.id, kind: node.kind, ...(node.name ? { name: node.name } : {}), author: node.author, bounds: rect(state.bounds(node.id)) })
+  }
+  for (const author of ['learner', 'agent'] as const) {
+    const ink = top.filter((node) => isInk(node) && node.author === author)
+    if (ink.length) {
+      topLevel.push({
+        id: `(${ink.length} loose ink stroke${ink.length === 1 ? '' : 's'})`,
+        kind: 'ink',
+        author,
+        bounds: rect(unionRegions(ink.map((node) => state.bounds(node.id))))
+      })
+    }
+  }
   return {
     ...base,
     board: { path: context.openPath, name: boardName(context.openPath) },
@@ -107,7 +126,9 @@ function canvasInfo(context: AgentContext): CanvasInfo {
       bounds: rect(unionRegions(state.nodes.filter((node) => selected.has(node.id)).map((node) => state.bounds(node.id))))
     },
     zoom: Math.round(state.camera.zoom * 1000) / 1000,
-    cursor: seenCursor(state)
+    cursor: seenCursor(state),
+    counts,
+    topLevel
   }
 }
 
@@ -128,6 +149,8 @@ function changeSet(context: AgentContext, since: number | null): ChangeSet {
       id: node.id,
       kind: node.kind,
       ...(isInk(node) ? { tool: node.tool, color: node.color } : {}),
+      ...(typeof node.name === 'string' ? { name: node.name } : {}),
+      ...(state.editor(node.id) ? { by: state.editor(node.id) } : {}),
       bounds: rect(state.bounds(node.id)),
       seq: node.seq
     }))
@@ -137,15 +160,23 @@ function changeSet(context: AgentContext, since: number | null): ChangeSet {
   return { board: path, changed, removed, cursor: seenCursor(state) }
 }
 
-function screenshot(context: AgentContext, params: AgentMethods['screenshot']['params']): ScreenshotResult {
+function screenshotPlan(context: AgentContext, params: AgentMethods['screenshotPlan']['params']): ScreenshotPlan {
   const { path, board } = requireBoard(context)
   const state = board.liveState()
-  const empty = (message: string): ScreenshotResult => ({ kind: 'empty', board: path, message, cursor: seenCursor(state) })
+  const empty = (message: string): ScreenshotPlan => ({ kind: 'empty', board: path, message, cursor: seenCursor(state) })
   let target: Region | null = null
-  let outlines: RenderOutline[] = []
+  let outlines: SnapshotOutline[] = []
   let changeCounts: { changed: number; removed: number } | undefined
 
   switch (params.target) {
+    case 'node': {
+      const id = params.nodeId ?? ''
+      if (!state.nodes.some((node) => node.id === id)) throw new Error(`No node "${id}" on the open board. Call get_tree to see the node ids.`)
+      const bounds = state.bounds(id)
+      if (!bounds) throw new Error(`Node "${id}" has no layout (it may be hidden with display: none).`)
+      target = pad(bounds, NODE_PAD)
+      break
+    }
     case 'viewport':
       target = viewportRect(state)
       break
@@ -166,7 +197,7 @@ function screenshot(context: AgentContext, params: AgentMethods['screenshot']['p
       const changes = changeSet(context, params.since)
       const changedBounds = changes.changed.map((item) => item.bounds).filter((b): b is BoardRect => b !== null)
       const removedBounds = changes.removed.map((item) => item.bounds).filter((b): b is BoardRect => b !== null)
-      // Crop to the new ink; erased areas set the crop only when nothing is new.
+      // Crop to the new material; erased areas set the crop only when nothing is new.
       const all = unionRegions(changedBounds) ?? unionRegions(removedBounds)
       if (!all) {
         return empty(
@@ -187,28 +218,31 @@ function screenshot(context: AgentContext, params: AgentMethods['screenshot']['p
     case 'region': {
       const region = params.region
       if (!region || ![region.x, region.y, region.width, region.height].every(Number.isFinite) || region.width <= 0 || region.height <= 0) {
-        throw new Error('target "region" needs region: {x, y, width, height} in board coordinates, with width and height > 0.')
+        throw new Error('region needs {x, y, width, height} in board coordinates, with width and height > 0.')
       }
       target = region
       break
     }
   }
+  if (!target) throw new Error('Nothing to capture.')
 
-  const scale = Math.min(MAX_SCALE, params.maxSize / Math.max(target.width, target.height))
-  // Ink only for now: part 2 replaces this with a pixel capture that includes the content layer.
-  const render = renderRegion(state.inks(), target, scale, canvasBackground(), outlines)
-  if (!render) throw new Error('The renderer could not create a 2D canvas.')
-  const png = render.canvas.toDataURL('image/png').replace(/^data:image\/png;base64,/, '')
+  // The asked scale, capped so the long edge stays within maxSize.
+  const longEdge = Math.max(target.width, target.height)
+  const scale = Math.max(0.02, Math.min(MAX_SCALE, params.scale, params.maxSize / Math.max(1, longEdge)))
+  const width = Math.max(1, Math.round(target.width * scale))
+  const height = Math.max(1, Math.round(target.height * scale))
   return {
-    kind: 'image',
+    kind: 'plan',
     board: path,
-    png,
+    nodes: state.nodes as unknown[],
     rect: rect(target) as BoardRect,
     scale: Math.round(scale * 1000) / 1000,
-    width: render.width,
-    height: render.height,
+    width,
+    height,
+    outlines,
     changes: changeCounts,
-    cursor: seenCursor(state)
+    cursor: seenCursor(state),
+    background: canvasBackground()
   }
 }
 
@@ -230,8 +264,14 @@ export async function handleAgentRequest(request: AgentRequest, getContext: () =
       return canvasInfo(context)
     case 'changes':
       return changeSet(context, (request.params as AgentMethods['changes']['params']).since)
-    case 'screenshot':
-      return screenshot(context, request.params as AgentMethods['screenshot']['params'])
+    case 'screenshotPlan':
+      return screenshotPlan(context, request.params as AgentMethods['screenshotPlan']['params'])
+    case 'agentTool': {
+      const params = request.params as AgentMethods['agentTool']['params']
+      const { board } = requireBoard(context)
+      context.presence.attach(board)
+      return runEditTool({ board, agent: params.agent, importAsset: context.importAsset, presence: context.presence }, params.tool, params.args ?? {})
+    }
     case 'openBoard': {
       await openBoard(context, (request.params as AgentMethods['openBoard']['params']).path)
       return canvasInfo(getContext())

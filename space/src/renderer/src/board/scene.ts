@@ -234,6 +234,8 @@ export function removeNodes(nodes: readonly BoardNode[], ids: Iterable<string>, 
 export interface Copied {
   nodes: BoardNode[]
   roots: string[]
+  /** Old id → new id, descendants included. */
+  idMap?: Map<string, string>
 }
 
 export function copySubtrees(
@@ -274,7 +276,7 @@ export function copySubtrees(
     }
     out.push(copy)
   }
-  return { nodes: out, roots: roots.map((id) => idMap.get(id) as string) }
+  return { nodes: out, roots: roots.map((id) => idMap.get(id) as string), idMap }
 }
 
 /** The union of the layout boxes of some ids. */

@@ -3,6 +3,7 @@ import { watch, type FSWatcher } from 'node:fs'
 import { mkdir, open, readdir, readFile, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path'
 import { shell } from 'electron'
+import { downloadImage } from './asset-fetch'
 import { BOARD_SUFFIX, BOARDS_DIR, emptyBoard, isBoardPath, serializeBoard } from '@shared/board-format'
 import type { BoardChange, FileNode, FilePreview, FileTree } from '@shared/space-api'
 
@@ -12,6 +13,17 @@ const MAX_TEXT_PREVIEW = 1024 * 1024
 const MAX_IMAGE_PREVIEW = 20 * 1024 * 1024
 const MAX_BOARD_BYTES = 64 * 1024 * 1024
 const WATCH_DEBOUNCE_MS = 150
+/** Images that agents bring in (downloads, data: URLs) are capped at this size. */
+const MAX_ASSET_BYTES = 10 * 1024 * 1024
+const ASSETS_DIR = 'assets'
+const EXT_FOR_TYPE: Record<string, string> = {
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/gif': '.gif',
+  'image/webp': '.webp',
+  'image/avif': '.avif',
+  'image/svg+xml': '.svg'
+}
 
 const IMAGE_TYPES: Record<string, string> = {
   '.png': 'image/png',
@@ -308,6 +320,53 @@ export class FolderSession {
     if (!info.isFile()) throw new Error(`Not a file: ${rel}`)
     if (info.size > MAX_IMAGE_PREVIEW) throw new Error(`Image too large: ${rel}`)
     return { data: await readFile(full), type }
+  }
+
+  /**
+   * Bring an image into the folder for an image node. Returns the
+   * folder-relative path. https URLs are downloaded into assets/ through the
+   * SSRF-checked downloader (public addresses, size cap, image types only); data: URLs are decoded into assets/; a relative
+   * path must be an existing image inside the folder.
+   */
+  async importAsset(src: string): Promise<string> {
+    const value = src.trim()
+    if (/^data:/i.test(value)) {
+      const match = /^data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=\s]+)$/i.exec(value)
+      if (!match) throw new Error('A data: image must be base64 with an image/* type.')
+      const ext = EXT_FOR_TYPE[match[1].toLowerCase()]
+      if (!ext) throw new Error(`Image type ${match[1]} is not supported.`)
+      const data = Buffer.from(match[2].replace(/\s+/g, ''), 'base64')
+      if (data.length > MAX_ASSET_BYTES) throw new Error(`The image is larger than ${MAX_ASSET_BYTES / 1024 / 1024} MB.`)
+      return this.saveAsset(data, 'image', ext)
+    }
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) {
+      // Agent-chosen URL: https only, public addresses only (see asset-fetch.ts).
+      const { data, type, url } = await downloadImage(value, MAX_ASSET_BYTES, EXT_FOR_TYPE)
+      const stem = basename(url.pathname).replace(/\.[^.]*$/, '')
+      return this.saveAsset(data, stem, EXT_FOR_TYPE[type])
+    }
+    if (/^[a-z][a-z0-9+.-]*:/i.test(value)) throw new Error('Images must be https URLs, data: URLs or paths inside the learning folder.')
+    const rel = value.replace(/^\.\//, '')
+    const full = await this.resolvePath(rel)
+    if (!IMAGE_TYPES[extname(full).toLowerCase()]) throw new Error(`Not an image file: ${rel}`)
+    const info = await stat(full)
+    if (!info.isFile()) throw new Error(`Not a file: ${rel}`)
+    return this.relOf(full)
+  }
+
+  /** Write image bytes to assets/<safe stem>-<hash>.<ext>; the same bytes reuse one file. */
+  private async saveAsset(data: Buffer, stem: string, ext: string): Promise<string> {
+    const safe = (stem.normalize('NFKD').replace(/[^\w-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'image').toLowerCase()
+    const hash = createHash('sha1').update(data).digest('hex').slice(0, 8)
+    const rel = `${ASSETS_DIR}/${safe}-${hash}${ext}`
+    const full = await this.resolvePath(rel, { allowMissing: true })
+    await mkdir(dirname(full), { recursive: true })
+    try {
+      await stat(full)
+    } catch {
+      await writeFile(full, data)
+    }
+    return rel
   }
 
   /** Show a file in Finder. `.` opens the folder itself. */

@@ -1,4 +1,20 @@
 /* The content layer: board points are CSS pixels inside .board__content. */
+/* Theme tokens for agent material (var(--ls-…) in node styles). Keep in sync with tokens.css. */
+.board__content,
+.snapshot__content {
+  --ls-card: #1f2230;
+  --ls-card-2: #262a3a;
+  --ls-text: #ececef;
+  --ls-muted: #a0a0a8;
+  --ls-accent: #6e8bff;
+  --ls-good: #5fd38d;
+  --ls-bad: #ff6b8b;
+  --ls-warn: #f5d76e;
+  --ls-border: #2e3448;
+  --ls-font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', sans-serif;
+  --ls-mono: ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
 .board__content {
   position: absolute;
   left: 0;
@@ -21,6 +37,10 @@
 .node-text {
   white-space: pre-wrap;
   overflow-wrap: break-word;
+}
+
+.node-math {
+  white-space: nowrap;
 }
 
 .node-math .katex {

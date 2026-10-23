@@ -18,7 +18,7 @@ export function hasNodeClipboard(): boolean {
   return internalClipboard.roots.length > 0
 }
 
-export type BoardKeyAction = 'undo' | 'redo' | 'cut' | 'copy' | 'paste' | 'duplicate' | 'delete'
+export type BoardKeyAction = 'undo' | 'redo' | 'cut' | 'copy' | 'paste' | 'duplicate' | 'delete' | 'selectAll'
 
 /** Map a key event to a board action. The caller rejects editable targets first. */
 export function boardKeyAction(
@@ -34,6 +34,7 @@ export function boardKeyAction(
   if (modified && key === 'c') return options.hasSelection ? 'copy' : null
   if (modified && key === 'v') return options.hasClipboard ? 'paste' : null
   if (modified && key === 'd') return options.hasSelection ? 'duplicate' : null
+  if (modified && key === 'a') return 'selectAll'
   if (!modified && (event.key === 'Delete' || event.key === 'Backspace') && options.hasSelection) return 'delete'
   return null
 }

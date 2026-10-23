@@ -5,9 +5,13 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { isInitializeRequest, type CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
+import { guideText, GUIDE_SECTIONS, SERVER_INSTRUCTIONS } from './guide'
+import type { SnapshotRenderer } from './snapshot'
 import {
   IPC,
   type AgentActivity,
+  type AgentRef,
+  type AgentToolName,
   type AgentMethod,
   type AgentMethods,
   type AgentReply,
@@ -29,23 +33,20 @@ import {
 
 export const DEFAULT_MCP_PORT = 47821
 const BRIDGE_TIMEOUT_MS = 10_000
+/** Writes can download images first. */
+const WRITE_TIMEOUT_MS = 45_000
 const MAX_BODY_BYTES = 4 * 1024 * 1024
 /** A session with no open stream and no request for this long is closed. */
 const IDLE_SESSION_MS = 10 * 60_000
 const PRUNE_INTERVAL_MS = 30_000
 const PUBLISH_THROTTLE_MS = 2000
 
-const INSTRUCTIONS = `Learning Space is a desktop app with a shared canvas. The learner writes and draws on it by hand (pen, highlighter); the ink is on "boards" in a local learning folder.
-Look at the board before you answer anything about it. Do not guess what the learner wrote.
-To see new work, call get_changes, then get_screenshot with target "changes": it shows only the ink that is new since your last look, with each new item in a dashed box. Your first call starts your change cursor, so call get_canvas_info once when you connect.
-Use get_screenshot with target "content" for the whole board, "viewport" for what the learner sees now, or "region" for an exact area.
-Coordinates are board points: origin at the centre, +x right, +y down.
-The learner does the thinking. Point at their own work on the board, ask questions, and give hints. Do not hand over the full answer unless the learner asks for it.`
-
 const COORDINATES_NOTE =
   'Board coordinates are logical points with the origin at the board centre, +x to the right and +y down. Rects are {x, y, width, height} with (x, y) the top-left corner.'
 
 export interface AgentServerHooks {
+  /** Draws pixel screenshots (content and ink). */
+  snapshots: SnapshotRenderer
   /** The window that owns the live board, or null when it is closed. */
   webContents(): WebContents | null
   status(status: AgentServerStatus): void
@@ -96,7 +97,7 @@ class RendererBridge {
     })
   }
 
-  request<M extends AgentMethod>(method: M, params: AgentMethods[M]['params']): Promise<AgentMethods[M]['result']> {
+  request<M extends AgentMethod>(method: M, params: AgentMethods[M]['params'], timeoutMs = BRIDGE_TIMEOUT_MS): Promise<AgentMethods[M]['result']> {
     const contents = this.target()
     if (!contents || contents.isDestroyed()) {
       return Promise.reject(new Error('The Learning Space window is closed. Ask the learner to open it.'))
@@ -105,8 +106,8 @@ class RendererBridge {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(requestId)
-        reject(new Error(`Learning Space did not answer "${method}" within ${BRIDGE_TIMEOUT_MS / 1000} s. The window may be loading or busy.`))
-      }, BRIDGE_TIMEOUT_MS)
+        reject(new Error(`Learning Space did not answer "${method}" within ${timeoutMs / 1000} s. The window may be loading or busy.`))
+      }, timeoutMs)
       this.pending.set(requestId, { resolve: resolve as (value: unknown) => void, reject, timer })
       contents.send(IPC.agentRequest, { requestId, method, params })
     })
@@ -124,6 +125,17 @@ function failure(error: unknown): CallToolResult {
 }
 
 const json = (value: unknown): string => JSON.stringify(value, null, 2)
+
+/** A readable name for an MCP client, for the presence label. */
+function clientLabel(raw: string | undefined): string {
+  const name = (raw ?? '').toLowerCase()
+  if (name.includes('claude')) return 'Claude Code'
+  if (name.includes('codex')) return 'Codex'
+  if (name.includes('cursor')) return 'Cursor'
+  return raw && raw.length <= 24 ? raw : 'Agent'
+}
+
+const nodeIds = z.array(z.string()).min(1)
 
 const rectSchema = z.object({
   x: z.number().describe('Left edge, board points'),
@@ -294,7 +306,7 @@ export class AgentServer {
   // ---------- Sessions ----------
 
   private createSession(): Session {
-    const server = new McpServer({ name: 'learning-space', version: '0.0.1' }, { instructions: INSTRUCTIONS })
+    const server = new McpServer({ name: 'learning-space', version: '0.0.1' }, { instructions: SERVER_INSTRUCTIONS })
     const session: Session = {
       id: '',
       server,
@@ -372,6 +384,12 @@ export class AgentServer {
     }
   }
 
+  /** Run a board tool in the renderer, as this session. */
+  private board(session: Session, tool: AgentToolName, args: Record<string, unknown>, timeoutMs?: number): Promise<unknown> {
+    const agent: AgentRef = { sessionId: session.id, client: clientLabel(session.server.server.getClientVersion()?.name) }
+    return this.bridge.request('agentTool', { tool, args, agent }, timeoutMs)
+  }
+
   private infoText(info: CanvasInfo): string {
     return json({ ...info, coordinates: COORDINATES_NOTE })
   }
@@ -385,7 +403,8 @@ export class AgentServer {
         title: 'Canvas info',
         description:
           "Describe the learner's canvas: the learning folder (name, absolute path), the open board (relative path, name), " +
-          'all boards in the folder, the visible viewport and the bounds of all ink as board-coordinate rects, the item count, ' +
+          'all boards in the folder, the visible viewport and the bounds of all content as board-coordinate rects, node counts by kind, ' +
+          'the top-level nodes (id, kind, name, author, bounds; loose ink grouped), ' +
           "the learner's selection (ids and bounds), the current tool, and the change cursor. " +
           COORDINATES_NOTE,
         inputSchema: {},
@@ -403,55 +422,70 @@ export class AgentServer {
       {
         title: 'Screenshot of the board',
         description:
-          'Render part of the open board to a PNG (ink only, on the canvas background, no UI). Returns the image and a note with the board rect it covers and its scale. ' +
-          'target: "changes" = only what is new since your last look (seq > your cursor), cropped to the new ink with padding, each new item in a dashed blue box and erased items in dashed pink boxes; it advances your change cursor to the highest seq seen. ' +
-          '"viewport" = what the learner sees now. "content" = all ink on the board. "selection" = what the learner selected. ' +
-          '"region" = the rect in `region` (board coordinates). Use "changes" to answer "what did I just write?". ' +
+          'Render part of the open board to a PNG: content (frames, text, math, SVG, images) and ink together, on the canvas background, without app UI. ' +
+          'Works for any area, also off screen. Give node_id for one node (with a small margin), region for an exact board rect, or target: ' +
+          '"viewport" (what the learner sees now), "content" (everything), "selection" (what the learner selected), "changes" (only what is new since your last look, ' +
+          'each new item in a dashed blue box and erased items in dashed pink boxes; it advances your change cursor). The default is "viewport". ' +
+          'The text part says which board rect the image covers and its scale. ' +
           COORDINATES_NOTE,
         inputSchema: {
-          target: z
-            .enum(['viewport', 'content', 'selection', 'changes', 'region'])
-            .describe('What to capture. "changes" shows only new ink since your last look.'),
-          region: rectSchema.optional().describe('Required when target is "region": the board rect to capture.'),
-          max_size: z
-            .number()
-            .int()
-            .min(256)
-            .max(4096)
-            .optional()
-            .describe('The longest image side in pixels (default 1600). Small areas render at up to 2 px per board point.')
+          node_id: z.string().optional().describe('Capture this node (frame, text, svg, image or ink).'),
+          region: rectSchema.optional().describe('Capture this board rect.'),
+          target: z.enum(['viewport', 'content', 'selection', 'changes', 'region']).optional().describe('What to capture when there is no node_id or region.'),
+          scale: z.number().positive().max(4).optional().describe('Image pixels per board point (default 1). Lowered when the image would exceed max_size.'),
+          max_size: z.number().int().min(256).max(4096).optional().describe('The longest image side in pixels (default 1600).')
         },
         annotations: { readOnlyHint: true }
       },
-      this.tool(session, 'get_screenshot', async ({ target, region, max_size }) => {
+      this.tool(session, 'get_screenshot', async ({ node_id, region, target, scale, max_size }) => {
+        const kind = node_id ? 'node' : region && (!target || target === 'region') ? 'region' : (target ?? 'viewport')
         let since: number | null = null
-        if (target === 'changes') {
+        if (kind === 'changes') {
           const info = await this.bridge.request('canvasInfo', {})
           if (session.cursors.has(info.board?.path ?? '')) this.touchCursor(session, info)
           const board = info.board?.path
           since = board ? (session.listedFrom.get(board) ?? session.cursors.get(board) ?? null) : null
         }
-        const shot = await this.bridge.request('screenshot', { target, region, maxSize: max_size ?? 1600, since })
-        if (target === 'changes') {
-          session.cursors.set(shot.board, shot.cursor)
-          session.listedFrom.delete(shot.board)
-        } else if (!session.cursors.has(shot.board)) {
-          session.cursors.set(shot.board, shot.cursor)
+        const plan = await this.bridge.request('screenshotPlan', {
+          target: kind,
+          region,
+          nodeId: node_id,
+          scale: scale ?? 1,
+          maxSize: max_size ?? 1600,
+          since
+        })
+        if (kind === 'changes') {
+          session.cursors.set(plan.board, plan.cursor)
+          session.listedFrom.delete(plan.board)
+        } else if (!session.cursors.has(plan.board)) {
+          session.cursors.set(plan.board, plan.cursor)
         }
-        if (shot.kind === 'empty') return text(shot.message)
+        if (plan.kind === 'empty') return text(plan.message)
+        const shot = await this.hooks.snapshots.capture({
+          nodes: plan.nodes,
+          rect: plan.rect,
+          scale: plan.scale,
+          width: plan.width,
+          height: plan.height,
+          outlines: plan.outlines,
+          background: plan.background
+        })
+        const what = node_id ? `node ${node_id}` : `target "${kind}"`
         const lines = [
-          `Board "${shot.board}", target "${target}".`,
-          `The image (${shot.width}×${shot.height} px) covers the board rect ${json(shot.rect).replace(/\s+/g, ' ')} at ${shot.scale} px per board point.`,
+          `Board "${plan.board}", ${what}.`,
+          `The image (${shot.width}×${shot.height} px) covers the board rect ${json(plan.rect).replace(/\s+/g, ' ')} at ${plan.scale} px per board point.`,
           'Image pixel (px, py) is board point (x + px / scale, y + py / scale).'
         ]
-        if (shot.changes) {
+        if (shot.missingImages) lines.push(`${shot.missingImages} image(s) did not load and show as empty.`)
+        if (plan.changes) {
           lines.push(
-            `Dashed blue boxes: ${shot.changes.changed} new or changed item(s). Dashed pink boxes: erased items (${shot.changes.removed} in all; the image is cropped to the new ink, so get_changes lists erased items outside it). Your change cursor is now ${shot.cursor}.`
+            `Dashed blue boxes: ${plan.changes.changed} new or changed item(s). Dashed pink boxes: erased items (${plan.changes.removed} in all; the image is cropped to the new material, so get_changes lists erased items outside it). Your change cursor is now ${plan.cursor}.`
           )
         }
+        console.log(`mcp: screenshot ${what} ${shot.width}x${shot.height} in ${shot.ms} ms`)
         return {
           content: [
-            { type: 'image', data: shot.png, mimeType: 'image/png' },
+            { type: 'image', data: shot.png.toString('base64'), mimeType: 'image/png' },
             { type: 'text', text: lines.join('\n') }
           ]
         }
@@ -501,6 +535,171 @@ export class AgentServer {
         this.touchCursor(session, info)
         return text(this.infoText(info))
       })
+    )
+
+    server.registerTool(
+      'get_guide',
+      {
+        title: 'The agent guide',
+        description: `How to write material on the board: the HTML subset, text markup and math, SVG, images, colour tokens, placement and the workflow. Read it once before your first write. topic: one of ${GUIDE_SECTIONS.map((section) => section.topic).join(', ')}; omit for all.`,
+        inputSchema: { topic: z.string().optional() },
+        annotations: { readOnlyHint: true }
+      },
+      this.tool(session, 'get_guide', async ({ topic }) => text(guideText(topic)))
+    )
+
+    server.registerTool(
+      'get_tree',
+      {
+        title: 'Node tree',
+        description:
+          'A compact outline of the board (or of one node): one line per node with kind, name, id and world bounds "x,y w×h"; text shows its first words; ink shows as "ink ×N (learner)" groups per parent. ' +
+          'Cheap: use it to orient yourself and to find ids. depth limits how far into frames it goes (default 3).',
+        inputSchema: { node_id: z.string().optional(), depth: z.number().int().min(1).max(10).optional() },
+        annotations: { readOnlyHint: true }
+      },
+      this.tool(session, 'get_tree', async (args) => text(String(await this.board(session, 'getTree', args))))
+    )
+
+    server.registerTool(
+      'get_node_info',
+      {
+        title: 'Node details',
+        description:
+          'Everything about one node: kind, name, author, parent, children ids, world bounds, position inside the parent, z, style, text (markup), svg element ids, image src, or ink tool/colour/width/point count.',
+        inputSchema: { node_id: z.string() },
+        annotations: { readOnlyHint: true }
+      },
+      this.tool(session, 'get_node_info', async (args) => text(json(await this.board(session, 'getNodeInfo', args))))
+    )
+
+    server.registerTool(
+      'get_html',
+      {
+        title: 'Node as HTML',
+        description:
+          'A node and its subtree as the same HTML subset write_html takes (inline styles, data-id on every element when include_ids is true). Edit it and write it back with write_html mode "replace": ids in data-id are kept. Ink is not HTML: it shows as a comment and is kept on replace.',
+        inputSchema: { node_id: z.string(), include_ids: z.boolean().optional() },
+        annotations: { readOnlyHint: true }
+      },
+      this.tool(session, 'get_html', async (args) => text(String(await this.board(session, 'getHtml', args))))
+    )
+
+    server.registerTool(
+      'create_frame',
+      {
+        title: 'Create a frame',
+        description:
+          'Make a new top-level frame (a card) to write into. Default style: flex column, gap 12px, padding 24px, width 480px, height fit-content, card background, rounded corners. ' +
+          'Without x and y it goes to the best empty spot: beside `near` (a node id) if given, else beside the learner\'s latest handwriting, else at the view centre; it never overlaps existing nodes or ink. Spots fully inside the learner\'s view come first; only when none fits does it go outside the view, and the result says visible: false. Returns the id and bounds.',
+        inputSchema: {
+          name: z.string().optional(),
+          style: z.record(z.string(), z.union([z.string(), z.number()])).optional().describe('camelCase CSS, overrides the defaults.'),
+          x: z.number().optional(),
+          y: z.number().optional(),
+          near: z.string().optional().describe('A node id to place the frame beside.')
+        }
+      },
+      this.tool(session, 'create_frame', async (args) => text(json(await this.board(session, 'createFrame', args, WRITE_TIMEOUT_MS))))
+    )
+
+    server.registerTool(
+      'write_html',
+      {
+        title: 'Write HTML as nodes',
+        description:
+          'Convert HTML (inline styles, flex, text with <b>/<i>/$math$, <svg>, <img>) into board nodes. mode "insert_children" (default) appends into the frame target_id ("root" = top level, auto-placed); ' +
+          'mode "replace" replaces the node target_id with the HTML. Returns the created top-level ids, a layer-name → id map, their measured bounds after layout, and what was ignored. Call get_guide first for the subset. One undo step.',
+        inputSchema: {
+          html: z.string(),
+          target_id: z.string().describe('A frame id, or "root".'),
+          mode: z.enum(['insert_children', 'replace']).optional()
+        }
+      },
+      this.tool(session, 'write_html', async (args) => text(json(await this.board(session, 'writeHtml', args, WRITE_TIMEOUT_MS))))
+    )
+
+    server.registerTool(
+      'update_styles',
+      {
+        title: 'Update styles',
+        description:
+          'Set style keys on nodes: updates is a list of {node_ids, styles}; styles are camelCase CSS (numbers mean px; "" or null removes a key). Ink takes color only. Positions are not styles: use move_nodes. Returns ignored_styles. One undo step.',
+        inputSchema: {
+          updates: z.array(z.object({ node_ids: nodeIds, styles: z.record(z.string(), z.union([z.string(), z.number(), z.null()])) })).min(1)
+        }
+      },
+      this.tool(session, 'update_styles', async (args) => text(json(await this.board(session, 'updateStyles', args))))
+    )
+
+    server.registerTool(
+      'set_text',
+      {
+        title: 'Set text',
+        description: 'Replace the text of text nodes: updates is a list of {node_id, text}. text uses the markup **bold**, *italic*, $math$. One undo step.',
+        inputSchema: { updates: z.array(z.object({ node_id: z.string(), text: z.string() })).min(1) }
+      },
+      this.tool(session, 'set_text', async (args) => text(json(await this.board(session, 'setText', args))))
+    )
+
+    server.registerTool(
+      'move_nodes',
+      {
+        title: 'Move nodes',
+        description:
+          'Move or reorder nodes, learner ink included. Each move is one of: {node_id, x, y} (the node\'s top-left in its parent\'s space; board space at top level), {node_id, dx, dy}, ' +
+          '{node_id, parent_id, index?} (into another frame, or "root"; keeps the world position for free placement), {node_id, before: sibling_id} or {node_id, after: sibling_id}. Children of flex frames are reordered, not placed. Returns the new bounds. One undo step.',
+        inputSchema: {
+          moves: z
+            .array(
+              z.object({
+                node_id: z.string(),
+                x: z.number().optional(),
+                y: z.number().optional(),
+                dx: z.number().optional(),
+                dy: z.number().optional(),
+                parent_id: z.string().optional(),
+                index: z.number().int().min(0).optional(),
+                before: z.string().optional(),
+                after: z.string().optional()
+              })
+            )
+            .min(1)
+        }
+      },
+      this.tool(session, 'move_nodes', async (args) => text(json(await this.board(session, 'moveNodes', args))))
+    )
+
+    server.registerTool(
+      'duplicate_nodes',
+      {
+        title: 'Duplicate nodes',
+        description:
+          'Copy nodes with their subtrees. A top-level copy goes to empty space beside its original, inside the learner\'s view when it fits (else listed in outside_view); a copy inside a flex frame comes right after its original. Returns original → copy ids, including descendants. One undo step.',
+        inputSchema: { node_ids: nodeIds }
+      },
+      this.tool(session, 'duplicate_nodes', async (args) => text(json(await this.board(session, 'duplicateNodes', args))))
+    )
+
+    server.registerTool(
+      'delete_nodes',
+      {
+        title: 'Delete nodes',
+        description: 'Delete nodes and everything inside them, learner ink included (only when that is what the learner wants). Returns what was removed. The learner can undo it.',
+        inputSchema: { node_ids: nodeIds }
+      },
+      this.tool(session, 'delete_nodes', async (args) => text(json(await this.board(session, 'deleteNodes', args))))
+    )
+
+    server.registerTool(
+      'finish_working',
+      {
+        title: 'Finish working',
+        description:
+          'Say you are done with some material: removes your "working" outline from those top-level nodes (all of yours when node_ids is omitted). Outlines also fade 20 s after your last write.',
+        inputSchema: { node_ids: z.array(z.string()).optional() }
+      },
+      this.tool(session, 'finish_working', async (args) => text(json(await this.board(session, 'finishWorking', args))))
     )
   }
 }
