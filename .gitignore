@@ -37,3 +37,8 @@ web/.env*
 !web/.env.example
 web/*.tsbuildinfo
 scripts/__pycache__/
+
+# Learning Space desktop app
+space/node_modules/
+space/out/
+space/dist/

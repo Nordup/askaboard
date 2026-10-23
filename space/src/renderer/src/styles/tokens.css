@@ -1,0 +1,83 @@
+/*
+ * Design tokens for Learning Space. Dark only.
+ * Every colour, size, radius and shadow in the app comes from this file.
+ */
+:root {
+  color-scheme: dark;
+
+  /* Surfaces, from back to front */
+  --bg-app: #111113;
+  --bg-sidebar: #111113;
+  --bg-canvas: #161618;
+  --bg-elevated: #1c1c1f;
+  --bg-elevated-2: #232327;
+  --bg-hover: rgba(255, 255, 255, 0.05);
+  --bg-active: rgba(255, 255, 255, 0.08);
+
+  /* Lines */
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.13);
+  --canvas-dot: rgba(255, 255, 255, 0.07);
+  --canvas-dot-pitch: 24px;
+
+  /* Text */
+  --text-primary: #ececef;
+  --text-secondary: #a0a0a8;
+  --text-tertiary: #6b6b73;
+  --text-on-accent: #0d0f1a;
+
+  /* Accent */
+  --accent: #6e8bff;
+  --accent-hover: #8299ff;
+  --accent-soft: rgba(110, 139, 255, 0.14);
+  --accent-ring: rgba(110, 139, 255, 0.45);
+
+  /* Status */
+  --status-idle: #5c5c64;
+  --status-live: #4ade80;
+
+  /* Ink colours, tuned for the dark canvas */
+  --ink-white: #f2f2f4;
+  --ink-yellow: #f5d547;
+  --ink-blue: #6ea8ff;
+  --ink-green: #5fd38d;
+  --ink-pink: #ff6b8b;
+  --ink-orange: #ff9f45;
+
+  /* Type */
+  --font-ui: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, monospace;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-lg: 15px;
+  --text-xl: 20px;
+  --leading: 1.45;
+
+  /* Spacing (4px grid) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* Radii */
+  --radius-sm: 5px;
+  --radius-md: 7px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+  --radius-pill: 999px;
+
+  /* Shadows */
+  --shadow-float: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 8px 24px rgba(0, 0, 0, 0.45),
+    0 2px 6px rgba(0, 0, 0, 0.35);
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 24px 64px rgba(0, 0, 0, 0.5),
+    0 4px 12px rgba(0, 0, 0, 0.3);
+
+  /* Layout */
+  --sidebar-width: 248px;
+  --topbar-height: 44px;
+  --titlebar-height: 44px;
+}
