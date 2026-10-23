@@ -1,0 +1,92 @@
+.board {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: crosshair;
+  background-color: var(--bg-canvas);
+  background-image: radial-gradient(
+    circle at center,
+    rgba(255, 255, 255, var(--grid-alpha, 0.07)) 1px,
+    transparent 1.4px
+  );
+  background-size: var(--grid-size, 24px) var(--grid-size, 24px);
+  background-position: var(--grid-x, 0) var(--grid-y, 0);
+}
+
+.board[data-tool='select'] {
+  cursor: default;
+}
+
+.board[data-tool='eraser'] {
+  cursor: none;
+}
+
+.board[data-tool='pan'] {
+  cursor: grab;
+}
+
+.board[data-tool='panning'] {
+  cursor: grabbing;
+}
+
+.board__ink,
+.board__active {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.board__ink {
+  z-index: 1;
+}
+
+.board__active {
+  z-index: 2;
+}
+
+.board__lasso {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.board__lasso polygon {
+  fill: rgba(110, 139, 255, 0.08);
+  stroke: var(--accent);
+  stroke-width: 1.5px;
+  stroke-dasharray: 5 4;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.board__selection {
+  position: absolute;
+  z-index: 3;
+  border: 1.5px dashed var(--accent);
+  border-radius: var(--radius-md);
+  background: rgba(110, 139, 255, 0.05);
+  pointer-events: none;
+}
+
+.board[data-tool='select'][data-over-selection='true'] {
+  cursor: move;
+}
+
+.board__eraser {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 4;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  pointer-events: none;
+}

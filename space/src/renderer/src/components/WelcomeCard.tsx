@@ -1,10 +1,17 @@
-import { FolderOpen, PenLine } from 'lucide-react'
+import { Folder, FolderOpen, PenLine } from 'lucide-react'
+import type { RecentFolder } from '@shared/space-api'
 
-export function WelcomeCard() {
+interface WelcomeCardProps {
+  recent: RecentFolder[]
+  onOpenFolder(): void
+  onOpenRecent(path: string): void
+}
+
+export function WelcomeCard({ recent, onOpenFolder, onOpenRecent }: WelcomeCardProps) {
   const isMac = window.space.platform === 'darwin'
 
   return (
-    <div className="welcome">
+    <div className="overlay-center">
       <div className="welcome__card">
         <div className="welcome__mark">
           <PenLine size={20} strokeWidth={1.75} />
@@ -12,7 +19,7 @@ export function WelcomeCard() {
         <h1 className="welcome__title">Learning Space</h1>
         <p className="welcome__lede">A shared canvas for you and your AI agent.</p>
 
-        <button className="button-primary" onClick={() => console.log('open folder: arrives in step 1')}>
+        <button className="button-primary" onClick={onOpenFolder}>
           <FolderOpen size={15} strokeWidth={2} />
           Open learning folder…
           <span className="kbd">{isMac ? '⌘O' : 'Ctrl O'}</span>
@@ -20,7 +27,21 @@ export function WelcomeCard() {
 
         <div className="welcome__recent">
           <div className="welcome__recent-title">Recent</div>
-          <div className="welcome__recent-empty">No recent folders</div>
+          {recent.length === 0 ? (
+            <div className="welcome__recent-empty">No recent folders</div>
+          ) : (
+            <ul className="recent-list">
+              {recent.map((entry) => (
+                <li key={entry.path}>
+                  <button className="recent-row" title={entry.path} onClick={() => onOpenRecent(entry.path)}>
+                    <Folder size={14} strokeWidth={1.75} />
+                    <span className="recent-row__name">{entry.name}</span>
+                    <span className="recent-row__path">{entry.path.replace(/^\/Users\/[^/]+/, '~')}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </div>
     </div>

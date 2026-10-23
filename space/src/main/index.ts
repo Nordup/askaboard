@@ -1,7 +1,11 @@
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
+import { statSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
-import { IPC } from '@shared/space-api'
+import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
+import { IPC, type Camera, type MenuCommand, type Snapshot } from '@shared/space-api'
+import { FolderSession } from './folder'
+import { installMenu } from './menu'
+import * as store from './state'
 
 /** The colour of the window before the renderer paints. Keep it equal to --bg-app. */
 const BACKGROUND = '#111113'
@@ -10,12 +14,164 @@ const BACKGROUND = '#111113'
 const capturePath = process.env.SPACE_CAPTURE
 /** Dev hook: quit after the capture. */
 const captureQuit = process.env.SPACE_CAPTURE_QUIT === '1'
-/** Dev hook (step 1): open this learning folder at launch. Read only for now. */
+/** Dev hook: milliseconds between page load and capture (default 1000). */
+const captureDelay = Number(process.env.SPACE_CAPTURE_DELAY ?? 1000) || 1000
+/** Dev hook: open this learning folder at launch (overrides the last folder). */
 const launchFolder = process.env.SPACE_FOLDER
+/** Dev hook: a file (relative to the folder) to show in the preview at launch. */
+const launchOpen = process.env.SPACE_OPEN ?? null
 
-ipcMain.on(IPC.appVersion, (event) => {
-  event.returnValue = app.getVersion()
-})
+let mainWindow: BrowserWindow | null = null
+let session: FolderSession | null = null
+let quitting = false
+
+function send(channel: string, payload?: unknown): void {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload)
+}
+
+function requireSession(): FolderSession {
+  if (!session) throw new Error('No learning folder is open.')
+  return session
+}
+
+/** The app state for the renderer. Only the initial state carries SPACE_OPEN. */
+async function snapshot(initial = false): Promise<Snapshot> {
+  const folder = session
+    ? await (async () => {
+        const tree = await session.listFiles()
+        const last = store.getLastBoard(session.root)
+        const lastExists = last ? await session.resolvePath(last).then(() => true, () => false) : false
+        return { root: session.root, name: session.name, tree, lastBoard: lastExists ? last : null }
+      })()
+    : null
+  return { folder, recent: store.recentFolders(), devOpen: initial && folder ? launchOpen : null }
+}
+
+async function openFolder(path: string): Promise<void> {
+  const next = await FolderSession.open(path)
+  session?.stopWatching()
+  session = next
+  store.rememberFolder(next.root)
+  next.startWatching({
+    filesChanged: (tree) => send(IPC.filesChanged, tree),
+    boardChanged: (change) => send(IPC.boardChanged, change)
+  })
+}
+
+async function showOpenDialog(): Promise<Snapshot | null> {
+  const options: Electron.OpenDialogOptions = {
+    title: 'Open Learning Folder',
+    buttonLabel: 'Open',
+    properties: ['openDirectory', 'createDirectory']
+  }
+  const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options)
+  if (result.canceled || !result.filePaths[0]) return null
+  await openFolder(result.filePaths[0])
+  return snapshot()
+}
+
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory()
+  } catch {
+    return false
+  }
+}
+
+/** Open SPACE_FOLDER, or else the last folder, if it still exists. */
+async function openInitialFolder(): Promise<void> {
+  const candidates = [launchFolder ? resolve(launchFolder) : null, store.lastFolder()]
+  for (const candidate of candidates) {
+    if (!candidate) continue
+    if (!isDirectory(candidate)) {
+      console.error(`folder not found: ${candidate}`)
+      continue
+    }
+    try {
+      await openFolder(candidate)
+      console.log(`opened folder ${session?.root}`)
+      return
+    } catch (error) {
+      console.error(`could not open ${candidate}: ${String(error)}`)
+    }
+  }
+}
+
+/** Every invoke handler runs through this, so errors reach the renderer as plain messages. */
+function handle<A extends unknown[], R>(channel: string, fn: (...args: A) => Promise<R> | R): void {
+  ipcMain.handle(channel, async (_event: IpcMainInvokeEvent, ...args: unknown[]) => {
+    try {
+      return await fn(...(args as A))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`${channel} failed: ${message}`)
+      throw new Error(message)
+    }
+  })
+}
+
+function isCamera(value: unknown): value is Camera {
+  const camera = value as Camera
+  return (
+    !!camera &&
+    Array.isArray(camera.center) &&
+    camera.center.length === 2 &&
+    camera.center.every((n) => Number.isFinite(n)) &&
+    Number.isFinite(camera.zoom) &&
+    camera.zoom > 0
+  )
+}
+
+function registerIpc(): void {
+  ipcMain.on(IPC.appVersion, (event) => {
+    event.returnValue = app.getVersion()
+  })
+
+  handle(IPC.getInitialState, () => snapshot(true))
+  handle(IPC.openFolderDialog, () => showOpenDialog())
+  handle(IPC.openRecent, async (path: unknown) => {
+    if (typeof path !== 'string' || !store.isRecent(path)) throw new Error('That folder is not in the recent list.')
+    await openFolder(path)
+    return snapshot()
+  })
+  handle(IPC.listFiles, () => requireSession().listFiles())
+
+  handle(IPC.readBoard, (path: string) => requireSession().readBoard(path))
+  handle(IPC.writeBoard, (path: string, text: string) => requireSession().writeBoard(path, text))
+  handle(IPC.createBoard, () => requireSession().createBoard())
+  handle(IPC.renameBoard, async (path: string, newName: string) => {
+    const current = requireSession()
+    const target = await current.renameBoard(path, newName)
+    store.renameBoardState(current.root, path, target)
+    return target
+  })
+  handle(IPC.deleteBoard, async (path: string) => {
+    const current = requireSession()
+    await current.deleteBoard(path)
+    store.forgetBoardState(current.root, path)
+  })
+
+  handle(IPC.readFile, (path: string) => requireSession().readPreview(path))
+  handle(IPC.revealInFinder, (path: string) => requireSession().reveal(path))
+
+  handle(IPC.getCamera, async (path: string) => {
+    const current = requireSession()
+    await current.resolvePath(path, { allowMissing: true })
+    return store.getCamera(current.root, path)
+  })
+  ipcMain.on(IPC.setCamera, (_event, path: unknown, camera: unknown) => {
+    if (!session || typeof path !== 'string' || !isCamera(camera)) return
+    store.setCamera(session.root, path, { center: [camera.center[0], camera.center[1]], zoom: camera.zoom })
+  })
+  ipcMain.on(IPC.setLastBoard, (_event, path: unknown) => {
+    if (!session) return
+    store.setLastBoard(session.root, typeof path === 'string' ? path : null)
+  })
+}
+
+function sendMenuCommand(command: MenuCommand): void {
+  send(IPC.menuCommand, command)
+}
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -43,10 +199,34 @@ function createWindow(): BrowserWindow {
     if (url.startsWith('https:') || url.startsWith('http:')) void shell.openExternal(url)
     return { action: 'deny' }
   })
+  // The page itself never navigates away.
+  win.webContents.on('will-navigate', (event, url) => {
+    if (url !== win.webContents.getURL()) event.preventDefault()
+  })
+
+  // Before the window closes, the renderer saves its open board.
+  let flushed = false
+  win.on('close', (event) => {
+    if (flushed) return
+    event.preventDefault()
+    const finish = (): void => {
+      if (flushed) return
+      flushed = true
+      clearTimeout(timer)
+      ipcMain.removeListener(IPC.flushDone, finish)
+      win.destroy()
+    }
+    const timer = setTimeout(finish, 2000)
+    ipcMain.on(IPC.flushDone, finish)
+    win.webContents.send(IPC.flushRequest)
+  })
+  win.on('closed', () => {
+    if (mainWindow === win) mainWindow = null
+  })
 
   if (capturePath) {
     win.webContents.once('did-finish-load', () => {
-      setTimeout(() => void capture(win, capturePath), 1000)
+      setTimeout(() => void capture(win, capturePath), captureDelay)
     })
   }
 
@@ -71,14 +251,35 @@ async function capture(win: BrowserWindow, path: string): Promise<void> {
   if (captureQuit) app.quit()
 }
 
-void app.whenReady().then(() => {
-  if (launchFolder) console.log(`SPACE_FOLDER=${launchFolder} (folder support arrives in step 1)`)
-  createWindow()
+store.loadState()
+registerIpc()
+
+void app.whenReady().then(async () => {
+  installMenu({
+    openFolder: () => {
+      void showOpenDialog()
+        .then((result) => result && send(IPC.folderOpened, result))
+        .catch((error) => console.error(`open folder failed: ${String(error)}`))
+    },
+    newBoard: () => sendMenuCommand('new-board'),
+    zoom: (step) => sendMenuCommand(step === 'in' ? 'zoom-in' : step === 'out' ? 'zoom-out' : 'zoom-reset')
+  })
+  await openInitialFolder()
+  mainWindow = createWindow()
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (BrowserWindow.getAllWindows().length === 0) mainWindow = createWindow()
   })
 })
 
+app.on('before-quit', () => {
+  quitting = true
+})
+
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin' || captureQuit) app.quit()
+  if (quitting || process.platform !== 'darwin' || captureQuit) app.quit()
+})
+
+app.on('will-quit', () => {
+  session?.stopWatching()
+  store.saveStateNow()
 })
