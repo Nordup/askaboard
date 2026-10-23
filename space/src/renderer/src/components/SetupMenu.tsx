@@ -68,14 +68,15 @@ export function SetupMenu({ anchor, anchorToggles, version, onSetUp, onClose, on
     }
   }, [version])
 
-  // Hang under the anchor and stay inside the window.
+  // A flyout beside the sidebar: 12px right of its edge, top aligned with the anchor, inside the window.
   useLayoutEffect(() => {
     const element = ref.current
     if (!element) return
     const rect = element.getBoundingClientRect()
     const base = anchor?.getBoundingClientRect()
-    const left = base ? base.left : 8
-    const top = base ? base.bottom + 4 : 8
+    const sidebar = anchor?.closest('.sidebar')?.getBoundingClientRect()
+    const left = sidebar ? sidebar.right + 12 : base ? base.right + 12 : 8
+    const top = base ? base.top : 8
     setPosition({
       left: Math.max(8, Math.min(left, window.innerWidth - rect.width - 8)),
       top: Math.max(8, Math.min(top, window.innerHeight - rect.height - 8))
@@ -88,12 +89,15 @@ export function SetupMenu({ anchor, anchorToggles, version, onSetUp, onClose, on
       if (ref.current?.contains(target)) return
       if (anchorToggles && anchor?.contains(target)) return
       onClose()
+      // Focus goes back to the anchor unless the click lands on something that takes focus.
+      if (!(target instanceof Element && target.closest('button, input, textarea, select, a, [tabindex]'))) anchor?.focus({ preventScroll: true })
     }
     const key = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
         event.preventDefault()
         event.stopPropagation()
         onClose()
+        anchor?.focus()
       }
     }
     window.addEventListener('pointerdown', down, true)
