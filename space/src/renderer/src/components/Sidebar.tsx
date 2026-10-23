@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ChevronDown, Ellipsis, ExternalLink, Folder, FolderOpen, LayoutDashboard, Pencil, Plus, Trash } from 'lucide-react'
+import { BookOpen, ChevronDown, Ellipsis, ExternalLink, Folder, FolderOpen, GraduationCap, LayoutDashboard, Pencil, Plus, Trash } from 'lucide-react'
 import type { FileNode, FileTree as FileTreeData, RecentFolder } from '@shared/space-api'
 import { FileTree } from './FileTree'
 import { Menu, type MenuEntry } from './Menu'
@@ -30,6 +30,10 @@ interface SidebarProps {
   onDeleteBoard(path: string): void
   onReveal(path: string): void
   onOpenFile(node: FileNode): void
+  /** Show the setup preview (File > Set Up Folder for Learning…). */
+  onSetUpFolder(): void
+  /** Open the folder's board guide, .learning-space/guide.md. */
+  onEditGuide(): void
 }
 
 const ICON = { size: 14, strokeWidth: 1.75 }
@@ -89,7 +93,12 @@ export function Sidebar(props: SidebarProps) {
             )
           : []),
         ...(folderRoot
-          ? (['separator', { label: 'Reveal in Finder', icon: <ExternalLink {...ICON} />, onSelect: () => props.onReveal('.') }] as MenuEntry[])
+          ? ([
+              'separator',
+              { label: 'Set Up for Learning…', icon: <GraduationCap {...ICON} />, onSelect: props.onSetUpFolder },
+              { label: 'Edit Board Guide…', icon: <BookOpen {...ICON} />, onSelect: props.onEditGuide },
+              { label: 'Reveal in Finder', icon: <ExternalLink {...ICON} />, onSelect: () => props.onReveal('.') }
+            ] as MenuEntry[])
           : [])
       ]
     })

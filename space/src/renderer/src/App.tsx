@@ -19,6 +19,7 @@ import { BoardHistory } from './board/history'
 import { CanvasNotice } from './components/CanvasNotice'
 import { PreviewPanel } from './components/PreviewPanel'
 import { Sidebar, type BoardEntry } from './components/Sidebar'
+import { SetupOffer } from './components/SetupOffer'
 import { Toast } from './components/Toast'
 import { ToolPalette } from './components/ToolPalette'
 import { TopBar, type SaveStatus } from './components/TopBar'
@@ -78,12 +79,17 @@ export function App() {
   const [previewPath, setPreviewPath] = useState<string | null>(null)
   const [previewVersion, setPreviewVersion] = useState(0)
   const [renaming, setRenaming] = useState<string | null>(null)
-  const [toast, setToast] = useState<string | null>(null)
+  const [toast, setToast] = useState<{ text: string; kind: 'error' | 'info' } | null>(null)
+  /** File > Set Up Folder for Learning…: the setup card with its preview open. */
+  const [menuSetup, setMenuSetup] = useState(false)
+  /** "Not now", "Don't ask" or a finished setup: no offer until the folder opens again. */
+  const [offerDismissed, setOfferDismissed] = useState(false)
   const [tools, setTools] = useState<ToolState>({ tool: 'pen', colorId: 'white', widthId: 'medium' })
   const [agentStatus, setAgentStatus] = useState<AgentServerStatus | null>(null)
   const [agentActivity, setAgentActivity] = useState<AgentActivity & { at: number } | null>(null)
 
   const clearToast = useCallback(() => setToast(null), [])
+  const showError = (text: string): void => setToast({ text, kind: 'error' })
   const folder = snapshot?.folder ?? null
   const boards = useMemo(() => sortBoards(collectBoards(tree?.nodes ?? [])), [tree])
 
@@ -120,7 +126,7 @@ export function App() {
         console.error(`save failed for ${pending.path}: ${errorMessage(error)}`)
         pendingRef.current ??= pending // keep it for the next try
         setSaveStatus('error')
-        setToast(`Could not save the board: ${errorMessage(error)}`)
+        showError(`Could not save the board: ${errorMessage(error)}`)
       }
     })
     return saveChainRef.current
@@ -242,6 +248,8 @@ export function App() {
       setOpen(null)
       setBoardError(null)
       setRenaming(null)
+      setMenuSetup(false)
+      setOfferDismissed(false)
       setPreviewPath(next.devOpen ?? null)
       preferredBoardRef.current = next.folder?.lastBoard ?? null
       setTree(next.folder?.tree ?? null)
@@ -266,7 +274,7 @@ export function App() {
       const next = await space.openFolderDialog()
       if (next) await applySnapshot(next)
     } catch (error) {
-      setToast(errorMessage(error))
+      showError(errorMessage(error))
     }
   }, [applySnapshot])
 
@@ -275,7 +283,7 @@ export function App() {
       try {
         await applySnapshot(await space.openRecent(path))
       } catch (error) {
-        setToast(errorMessage(error))
+        showError(errorMessage(error))
       }
     },
     [applySnapshot]
@@ -291,7 +299,7 @@ export function App() {
       await openBoard(path)
       setRenaming(path)
     } catch (error) {
-      setToast(errorMessage(error))
+      showError(errorMessage(error))
     }
   }, [openBoard, snapshot])
 
@@ -312,7 +320,7 @@ export function App() {
         if (boardError?.path === path) setBoardError({ ...boardError, path: target })
         setTree(await space.listFiles())
       } catch (error) {
-        setToast(errorMessage(error))
+        showError(errorMessage(error))
       }
     },
     [boardError, flushCamera, flushSave]
@@ -334,14 +342,59 @@ export function App() {
         if (boardError?.path === path) setBoardError(null)
         setTree(await space.listFiles())
       } catch (error) {
-        setToast(errorMessage(error))
+        showError(errorMessage(error))
       }
     },
     [boardError]
   )
 
   const reveal = useCallback((path: string) => {
-    space.revealInFinder(path).catch((error: unknown) => setToast(errorMessage(error)))
+    space.revealInFinder(path).catch((error: unknown) => showError(errorMessage(error)))
+  }, [])
+
+  // ---------- Learning-folder setup ----------
+
+  const applySetup = useCallback(async () => {
+    try {
+      const { created } = await space.applySetup()
+      setTree(await space.listFiles())
+      setMenuSetup(false)
+      setOfferDismissed(true)
+      const text = created.includes('AGENTS.md')
+        ? 'Folder set up — AGENTS.md created'
+        : created.length
+          ? `Folder set up — ${created.length} ${created.length === 1 ? 'item' : 'items'} created`
+          : 'Nothing to add — the folder is already set up'
+      setToast({ text, kind: 'info' })
+    } catch (error) {
+      showError(`Could not set up the folder: ${errorMessage(error)}`)
+    }
+  }, [])
+
+  const closeSetup = useCallback(() => {
+    setMenuSetup(false)
+    setOfferDismissed(true)
+  }, [])
+
+  const dontAskSetup = useCallback(() => {
+    setOfferDismissed(true)
+    space.setSetupDontAsk(true).catch((error: unknown) => showError(errorMessage(error)))
+  }, [])
+
+  const editGuide = useCallback(async () => {
+    try {
+      const path = await space.boardGuidePath()
+      if (!path) {
+        setMenuSetup(true)
+        setToast({ text: 'No board guide yet. Set up the folder to create .learning-space/guide.md.', kind: 'info' })
+        return
+      }
+      setPreviewPath(path)
+      setPreviewVersion((version) => version + 1)
+      await space.revealInFinder(path)
+    } catch (error) {
+      showError(errorMessage(error))
+    }
   }, [])
 
   const openFile = useCallback(
@@ -385,7 +438,7 @@ export function App() {
       doc = parseBoard(await space.readBoard(path))
     } catch (error) {
       console.error(`${path} changed on disk but cannot be read: ${errorMessage(error)}`)
-      setToast(`“${boardName(path)}” changed on disk but cannot be read. Showing the last good version.`)
+      showError(`“${boardName(path)}” changed on disk but cannot be read. Showing the last good version.`)
       return
     }
     if (openRef.current?.path !== path || pendingRef.current?.path === path) return
@@ -426,6 +479,7 @@ export function App() {
       space.onBoardChanged((change) => void onBoardChangeRef.current(change.path, change.deleted)),
       space.onMenuCommand((command) => {
         if (command === 'new-board') void createBoardRef.current()
+        else if (command === 'setup-folder') setMenuSetup(folderRef.current !== null)
         else if (command === 'zoom-in') boardRef.current?.zoomStep('in', 'menu')
         else if (command === 'zoom-out') boardRef.current?.zoomStep('out', 'menu')
         else if (command === 'zoom-reset') boardRef.current?.zoomStep('reset', 'menu')
@@ -591,6 +645,14 @@ export function App() {
 
   const recent = snapshot?.recent ?? []
   const loading = snapshot === null
+  const hasAgentsFile = tree?.nodes.some((node) => node.kind === 'file' && node.name === 'AGENTS.md') ?? false
+  const setupSource: 'offer' | 'menu' | null = !folder
+    ? null
+    : menuSetup
+      ? 'menu'
+      : !folder.setUp && !hasAgentsFile && !folder.setupDontAsk && !offerDismissed
+        ? 'offer'
+        : null
 
   let canvasContent = null
   if (!loading && !folder) {
@@ -645,6 +707,8 @@ export function App() {
         onDeleteBoard={(path) => void deleteBoard(path)}
         onReveal={reveal}
         onOpenFile={openFile}
+        onSetUpFolder={() => setMenuSetup(true)}
+        onEditGuide={() => void editGuide()}
       />
       <main className="main">
         <TopBar
@@ -682,7 +746,17 @@ export function App() {
                 onWidth={(px) => boardRef.current?.applyWidth(px)}
               />
             )}
-            {toast && <Toast message={toast} onDone={clearToast} />}
+            {setupSource && (
+              <SetupOffer
+                key={`${folder?.root}:${setupSource}`}
+                source={setupSource}
+                version={previewVersion}
+                onSetUp={applySetup}
+                onClose={closeSetup}
+                onDontAsk={dontAskSetup}
+              />
+            )}
+            {toast && <Toast message={toast.text} kind={toast.kind} onDone={clearToast} />}
           </div>
           {previewPath && <PreviewPanel path={previewPath} version={previewVersion} onClose={() => setPreviewPath(null)} />}
         </div>

@@ -18,7 +18,7 @@ import {
   MAX_SVG_PATH_CHARS,
   MAX_TEXT_CHARS
 } from '@shared/limits'
-import { guideText, GUIDE_SECTIONS, SERVER_INSTRUCTIONS } from './guide'
+import { guideText, guideTopics, serverInstructions } from './guide'
 import type { SnapshotRenderer } from './snapshot'
 import {
   IPC,
@@ -64,6 +64,8 @@ export interface AgentServerHooks {
   webContents(): WebContents | null
   status(status: AgentServerStatus): void
   activity(activity: AgentActivity): void
+  /** The open learning folder's real path, for its `.learning-space/` overrides. */
+  folderRoot(): string | null
 }
 
 interface Session {
@@ -344,7 +346,7 @@ export class AgentServer {
   // ---------- Sessions ----------
 
   private createSession(): Session {
-    const server = new McpServer({ name: 'learning-space', version: '0.0.1' }, { instructions: SERVER_INSTRUCTIONS })
+    const server = new McpServer({ name: 'learning-space', version: '0.0.1' }, { instructions: serverInstructions(this.hooks.folderRoot()) })
     const session: Session = {
       id: '',
       server,
@@ -590,11 +592,11 @@ export class AgentServer {
       'get_guide',
       {
         title: 'The agent guide',
-        description: `How to write material on the board: the HTML subset, text markup and math, SVG, images, colour tokens, placement and the workflow. Read it once before your first write. topic: one of ${GUIDE_SECTIONS.map((section) => section.topic).join(', ')}; omit for all.`,
+        description: `How to write material on the board: the HTML subset, text markup and math, SVG, images, colour tokens, placement and the workflow. Read it once before your first write. topic: one of ${guideTopics(this.hooks.folderRoot()).join(', ')}; omit for all (the learning folder's own guidance comes last).`,
         inputSchema: { topic: z.string().optional() },
         annotations: { readOnlyHint: true }
       },
-      this.tool(session, 'get_guide', async ({ topic }) => text(guideText(topic)))
+      this.tool(session, 'get_guide', async ({ topic }) => text(guideText(this.hooks.folderRoot(), topic)))
     )
 
     server.registerTool(

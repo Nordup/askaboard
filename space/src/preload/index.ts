@@ -33,6 +33,11 @@ const api: SpaceApi = {
   readFile: (path) => ipcRenderer.invoke(IPC.readFile, path),
   revealInFinder: (path) => ipcRenderer.invoke(IPC.revealInFinder, path),
 
+  setupPlan: () => ipcRenderer.invoke(IPC.setupPlan),
+  applySetup: () => ipcRenderer.invoke(IPC.applySetup),
+  setSetupDontAsk: (value) => ipcRenderer.invoke(IPC.setSetupDontAsk, value),
+  boardGuidePath: () => ipcRenderer.invoke(IPC.boardGuidePath),
+
   getCamera: (path) => ipcRenderer.invoke(IPC.getCamera, path),
   setCamera: (path, camera) => ipcRenderer.send(IPC.setCamera, path, camera),
   setLastBoard: (path) => ipcRenderer.send(IPC.setLastBoard, path),

@@ -6,7 +6,9 @@ import { IPC, type Camera, type MenuCommand, type Snapshot } from '@shared/space
 import { FolderSession } from './folder'
 import { AgentServer } from './mcp'
 import { SnapshotRenderer } from './snapshot'
-import { installMenu } from './menu'
+import { installMenu, setFolderOpen } from './menu'
+import { FOLDER_SETTINGS_DIR } from './guide'
+import { applySetup, isSetUp, setupPlan } from './setup'
 import * as store from './state'
 
 /** The colour of the window before the renderer paints. Keep it equal to --bg-app. */
@@ -80,7 +82,8 @@ const agentServer = new AgentServer({
   snapshots,
   webContents: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null),
   status: (status) => send(IPC.agentStatus, status),
-  activity: (activity) => send(IPC.agentActivity, activity)
+  activity: (activity) => send(IPC.agentActivity, activity),
+  folderRoot: () => session?.root ?? null
 })
 
 function send(channel: string, payload?: unknown): void {
@@ -99,7 +102,14 @@ async function snapshot(initial = false): Promise<Snapshot> {
         const tree = await session.listFiles()
         const last = store.getLastBoard(session.root)
         const lastExists = last ? await session.resolvePath(last).then(() => true, () => false) : false
-        return { root: session.root, name: session.name, tree, lastBoard: lastExists ? last : null }
+        return {
+          root: session.root,
+          name: session.name,
+          tree,
+          lastBoard: lastExists ? last : null,
+          setUp: await isSetUp(session),
+          setupDontAsk: store.getSetupDontAsk(session.root)
+        }
       })()
     : null
   return { folder, recent: store.recentFolders(), devOpen: initial && folder ? launchOpen : null }
@@ -110,6 +120,7 @@ async function openFolder(path: string): Promise<void> {
   session?.stopWatching()
   session = next
   store.rememberFolder(next.root)
+  setFolderOpen(true)
   next.startWatching({
     filesChanged: (tree) => send(IPC.filesChanged, tree),
     boardChanged: (change) => send(IPC.boardChanged, change)
@@ -219,6 +230,19 @@ function registerIpc(): void {
 
   handle(IPC.readFile, (path: string) => requireSession().readPreview(path))
   handle(IPC.revealInFinder, (path: string) => requireSession().reveal(path))
+
+  handle(IPC.setupPlan, () => setupPlan(requireSession()))
+  handle(IPC.applySetup, async () => {
+    const result = await applySetup(requireSession())
+    console.log(`setup: created ${result.created.join(', ') || 'nothing'}`)
+    return result
+  })
+  handle(IPC.setSetupDontAsk, (value: unknown) => store.setSetupDontAsk(requireSession().root, value === true))
+  handle(IPC.boardGuidePath, async () => {
+    const rel = `${FOLDER_SETTINGS_DIR}/guide.md`
+    const full = await requireSession().resolvePath(rel, { allowMissing: true })
+    return statSync(full, { throwIfNoEntry: false })?.isFile() ? rel : null
+  })
 
   handle(IPC.getCamera, async (path: string) => {
     const current = requireSession()
@@ -332,11 +356,13 @@ void app.whenReady().then(async () => {
         .catch((error) => console.error(`open folder failed: ${String(error)}`))
     },
     newBoard: () => sendMenuCommand('new-board'),
+    setupFolder: () => sendMenuCommand('setup-folder'),
     zoom: (step) => sendMenuCommand(step === 'in' ? 'zoom-in' : step === 'out' ? 'zoom-out' : 'zoom-reset'),
     selectAll: () => sendMenuCommand('select-all')
   })
   registerAssetProtocol()
   await openInitialFolder()
+  setFolderOpen(session !== null)
   agentServer.start()
   mainWindow = createWindow()
   app.on('activate', () => {

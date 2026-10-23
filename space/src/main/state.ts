@@ -15,6 +15,8 @@ interface PersistedState {
   cameras: Record<string, Camera>
   /** Key: folder root. Value: relative board path. */
   lastBoards: Record<string, string>
+  /** Folder roots where the learner chose "Don't ask" for the setup offer. */
+  setupDontAsk: string[]
 }
 
 const MAX_RECENT = 8
@@ -22,7 +24,7 @@ const MAX_CAMERAS = 500
 
 const statePath = (): string => join(app.getPath('userData'), 'state.json')
 
-let state: PersistedState = { lastFolder: null, recent: [], cameras: {}, lastBoards: {} }
+let state: PersistedState = { lastFolder: null, recent: [], cameras: {}, lastBoards: {}, setupDontAsk: [] }
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 
 export function loadState(): void {
@@ -32,7 +34,8 @@ export function loadState(): void {
       lastFolder: typeof raw.lastFolder === 'string' ? raw.lastFolder : null,
       recent: Array.isArray(raw.recent) ? raw.recent.filter((entry) => typeof entry === 'string') : [],
       cameras: raw.cameras && typeof raw.cameras === 'object' ? raw.cameras : {},
-      lastBoards: raw.lastBoards && typeof raw.lastBoards === 'object' ? raw.lastBoards : {}
+      lastBoards: raw.lastBoards && typeof raw.lastBoards === 'object' ? raw.lastBoards : {},
+      setupDontAsk: Array.isArray(raw.setupDontAsk) ? raw.setupDontAsk.filter((entry) => typeof entry === 'string') : []
     }
   } catch {
     // A missing or broken state file means a fresh start.
@@ -119,4 +122,15 @@ export function forgetBoardState(root: string, rel: string): void {
   delete state.cameras[cameraKey(root, rel)]
   if (state.lastBoards[root] === rel) delete state.lastBoards[root]
   scheduleSave()
+}
+
+export function getSetupDontAsk(root: string): boolean {
+  return state.setupDontAsk.includes(root)
+}
+
+export function setSetupDontAsk(root: string, value: boolean): void {
+  state.setupDontAsk = state.setupDontAsk.filter((entry) => entry !== root)
+  if (value) state.setupDontAsk.push(root)
+  // A rare, deliberate choice: write it now, so a crash cannot lose it.
+  saveStateNow()
 }

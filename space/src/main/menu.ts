@@ -3,6 +3,8 @@ import { Menu, type MenuItemConstructorOptions } from 'electron'
 export interface MenuActions {
   openFolder(): void
   newBoard(): void
+  /** File > Set Up Folder for Learning…: the renderer shows the setup preview. */
+  setupFolder(): void
   zoom(step: 'in' | 'out' | 'reset'): void
   /** ⌘A: the focused text field's text, or all nodes on the board. */
   selectAll(): void
@@ -13,6 +15,14 @@ export interface MenuActions {
  * the page (there are no zoom roles). The Edit roles make text editing work in inputs;
  * the canvas handles ⌘Z / ⌘C / ⌘V itself when no input has focus.
  */
+const SETUP_ITEM = 'setup-folder'
+
+/** Folder-only menu items are enabled while a learning folder is open. */
+export function setFolderOpen(open: boolean): void {
+  const item = Menu.getApplicationMenu()?.getMenuItemById(SETUP_ITEM)
+  if (item) item.enabled = open
+}
+
 export function installMenu(actions: MenuActions): void {
   const isMac = process.platform === 'darwin'
   const template: MenuItemConstructorOptions[] = [
@@ -22,6 +32,7 @@ export function installMenu(actions: MenuActions): void {
       submenu: [
         { label: 'Open Learning Folder…', accelerator: 'CmdOrCtrl+O', click: () => actions.openFolder() },
         { label: 'New Board', accelerator: 'CmdOrCtrl+N', click: () => actions.newBoard() },
+        { id: SETUP_ITEM, label: 'Set Up Folder for Learning…', enabled: false, click: () => actions.setupFolder() },
         { type: 'separator' },
         isMac ? { role: 'close' } : { role: 'quit' }
       ]

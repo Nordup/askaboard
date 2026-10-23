@@ -14,6 +14,9 @@ program (Git, an agent) changes it on disk.
 Step 2: the app runs an MCP server, so an agent can look at the canvas
 (see "Connect an agent").
 
+Step 4: the app offers to set up a folder for learning, and the board guide
+is a markdown file that a learning folder can extend (see "Learning folder").
+
 ## Run
 
 ```sh
@@ -50,7 +53,7 @@ request for 10 minutes is closed.
 | Tool | Parameters | Result |
 | --- | --- | --- |
 | `get_canvas_info` | none | JSON: folder, open board, all boards, viewport rect, content bounds, node counts by kind, top-level nodes (id, kind, name, author, bounds; loose ink grouped), selection, tool, zoom, cursor |
-| `get_guide` | `topic?` | The agent guide (markdown): HTML subset, markup and math, SVG, images, tokens, placement, workflow, an example |
+| `get_guide` | `topic?` | The agent guide (markdown): HTML subset, markup and math, SVG, images, tokens, placement, workflow, an example; then the folder's own guidance (see "Learning folder") |
 | `get_tree` | `node_id?`, `depth?` (3) | Indented outline: kind, name, id, world bounds; ink as `ink ×N (learner)` groups |
 | `get_node_info` | `node_id` | JSON: bounds, position in parent, parent, children, style, text, svg ids, src or ink details, author |
 | `get_html` | `node_id`, `include_ids?` (true) | The subtree as the write_html subset, `data-id` on every element |
@@ -82,11 +85,77 @@ board; the first tool call starts the cursor at "now". `since` is exclusive
 (changes with seq > since), and a returned cursor is the highest seq seen, so
 passing it back never repeats an item.
 
+## Learning folder
+
+A folder is **set up for learning** when `AGENTS.md` exists at its root. When
+a folder that is not set up opens, a small card at the top of the canvas asks
+"Set up this folder for learning?":
+
+- **Preview** lists every item setup would create. Items that exist already
+  are marked "kept".
+- **Set up** creates only the missing items and never overwrites a file.
+- **Not now** hides the card until the folder opens again.
+- **Don't ask for this folder** is remembered in `state.json`
+  (`setupDontAsk`).
+
+**File → Set Up Folder for Learning…** (and the folder menu in the sidebar)
+opens the same card with the preview, also in a folder that is set up.
+
+Setup creates:
+
+| Path | From |
+| --- | --- |
+| `AGENTS.md`, `plan.md`, `learner.md` | Copies of the templates in `resources/learning-folder/` |
+| `sessions/`, `topics/`, `materials/` | Empty folders, each with a `.gitkeep` |
+| `boards/` | An empty folder (the canvas offers "New board") |
+| `.learning-space/guide.md` | A stub: one HTML comment that explains the overrides |
+
+Edit the templates in `resources/learning-folder/` to change what new folders
+get. Folders that are set up already keep their own copies.
+
+### Board guide and server instructions
+
+The agent text lives in `resources/guide.md` (what `get_guide` returns) and
+`resources/instructions.md` (the MCP server instructions). The app reads them
+fresh on every use, so an edit needs no rebuild.
+
+A learning folder can change both:
+
+| File | Effect | Applies |
+| --- | --- | --- |
+| `.learning-space/guide.md` | Appended to the built-in guide under "## Guidance for this learning folder" | On the agent's next `get_guide` call |
+| `.learning-space/instructions.md` | Appended to the built-in instructions | To new MCP sessions (read at `initialize`) |
+
+A file that starts with front matter `mode: replace` replaces the built-in
+text instead:
+
+```markdown
+---
+mode: replace
+---
+# My own board guide
+```
+
+HTML comments (`<!-- … -->`) never reach the agent; a file with only comments
+changes nothing. In `guide.md`, `<!-- topic: name -->` under a `## ` heading
+names the section for `get_guide`'s `topic` parameter (otherwise the topic is
+the heading as a slug); the folder guidance is appended only when `topic` is
+omitted. The sidebar folder menu → **Edit Board Guide…** shows the folder's
+guide in the preview panel and reveals it in Finder.
+
+### Packaging
+
+The app reads `resources/` from the `space/` folder in dev and `npm start`
+(`resourcesDir()` in `src/main/resources.ts`). A packaged build must ship the
+folder as `extraResources` (`{ "from": "resources", "to": "resources" }`), so
+it sits at `process.resourcesPath/resources`.
+
 ## Layout
 
 | Path | What |
 | --- | --- |
-| `src/main/` | Electron main process: window, menu, dev hooks, folder access (`folder.ts`), `state.json` (`state.ts`), the MCP server (`mcp.ts`) |
+| `src/main/` | Electron main process: window, menu, dev hooks, folder access (`folder.ts`), `state.json` (`state.ts`), the MCP server (`mcp.ts`), folder setup (`setup.ts`), agent text loading (`guide.ts`) |
+| `resources/` | Bundled at runtime: `guide.md`, `instructions.md`, `learning-folder/` templates |
 | `src/preload/` | Sandboxed preload; exposes `window.space` |
 | `src/shared/space-api.ts` | The `window.space` type and IPC channel names, shared by both sides |
 | `src/shared/board-format.ts` | Board file parse/serialize (one item per line), seq stamping |

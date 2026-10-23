@@ -32,6 +32,32 @@ export interface FolderInfo {
   tree: FileTree
   /** The board that was open the last time, if it still exists. */
   lastBoard: string | null
+  /** AGENTS.md exists at the root when the folder opened. */
+  setUp: boolean
+  /** The learner chose "Don't ask for this folder" for the setup offer. */
+  setupDontAsk: boolean
+}
+
+/** One item "Set up this folder for learning" would create. */
+export interface SetupItem {
+  /** Relative path, for example "AGENTS.md" or "sessions". */
+  path: string
+  kind: 'file' | 'dir'
+  /** It exists already: setup keeps it as it is. */
+  exists: boolean
+  /** A few words on what it is for. */
+  note: string
+}
+
+export interface SetupPlan {
+  items: SetupItem[]
+  /** AGENTS.md exists. */
+  setUp: boolean
+}
+
+export interface SetupResult {
+  /** What was created, dirs with a trailing "/". */
+  created: string[]
 }
 
 export interface RecentFolder {
@@ -59,7 +85,7 @@ export interface BoardChange {
   deleted: boolean
 }
 
-export type MenuCommand = 'new-board' | 'zoom-in' | 'zoom-out' | 'zoom-reset' | 'select-all'
+export type MenuCommand = 'new-board' | 'setup-folder' | 'zoom-in' | 'zoom-out' | 'zoom-reset' | 'select-all'
 
 /** Call the returned function to stop listening. */
 export type Unsubscribe = () => void
@@ -315,6 +341,15 @@ export interface SpaceApi {
   readFile(path: string): Promise<FilePreview>
   revealInFinder(path: string): Promise<void>
 
+  /** What "Set up this folder for learning" would create, and what exists. */
+  setupPlan(): Promise<SetupPlan>
+  /** Create the missing setup items. Never overwrites. */
+  applySetup(): Promise<SetupResult>
+  /** Remember (or forget) "Don't ask for this folder". */
+  setSetupDontAsk(value: boolean): Promise<void>
+  /** The folder's board guide (.learning-space/guide.md), or null when it does not exist. */
+  boardGuidePath(): Promise<string | null>
+
   getCamera(path: string): Promise<Camera | null>
   setCamera(path: string, camera: Camera): void
   setLastBoard(path: string | null): void
@@ -360,6 +395,10 @@ export const IPC = {
   deleteBoard: 'space:delete-board',
   readFile: 'space:read-file',
   revealInFinder: 'space:reveal-in-finder',
+  setupPlan: 'space:setup-plan',
+  applySetup: 'space:apply-setup',
+  setSetupDontAsk: 'space:set-setup-dont-ask',
+  boardGuidePath: 'space:board-guide-path',
   getCamera: 'space:get-camera',
   setCamera: 'space:set-camera',
   setLastBoard: 'space:set-last-board',
