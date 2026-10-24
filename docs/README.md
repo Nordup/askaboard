@@ -6,14 +6,15 @@ positioning source.
 
 ## Current sources
 
-- [`learning-space/README.md`](learning-space/README.md) — **the active line
-  of work** (branch `learning-space`): a desktop canvas with no AI inside,
-  which any agent uses over MCP. Start there: status, reading order
-  (idea, architecture, design system, decisions, working guide, research,
-  plan) and glossary.
-- [`product-vision.md`](product-vision.md) — product language, experience
-  principles and positioning. Written for the built-in tutor; it still holds
-  the learning principles. Use it for product and landing-page decisions.
+- [`learning-space/README.md`](learning-space/README.md) — **the main
+  product** (since 2026-10-24, on `main`): a desktop canvas with no AI
+  inside, which any agent uses over MCP. Start there: status, reading order
+  and glossary.
+- [`product-vision.md`](product-vision.md) — product language and learning
+  principles, written for the paused built-in tutor. Its shared-board idea
+  continues in Learning Space, but some of it is replaced there (for
+  example "the learner does the thinking" as a fixed rule; see decision P7
+  in `learning-space/decisions.md`).
 - [`TODO.md`](TODO.md) — known debt of the paused tutor stack.
 
 ## Paused stack (reference)

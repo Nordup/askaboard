@@ -13,10 +13,12 @@ Dates are 2026-10-23 to 2026-10-24 unless stated otherwise.
 | --- | --- | --- | --- |
 | P1 | The app has **no AI inside**. External agents (Codex, Claude Code, Claude Desktop, later ChatGPT) connect over MCP. | The founder observed that the agent apps already do conversation, research, voice and writing well. The missing part is a shared visual space. | Keep the built-in tutor backend (paused, not deleted). |
 | P2 | **Paper (paper.design) is the reference product.** Copy its proven patterns instead of inventing new ones. | Paper is a canvas built for humans and agents together, and it has iterated on agent tools for a long time. | Designing the agent interface from scratch. |
-| P3 | **The learner does the thinking.** Agents give hints and questions first, and point at the exact step. | Carried over from `../product-vision.md`. It is in the board guide, the skill and the `AGENTS.md` template. | An answer-giving assistant. |
+| P3 | **Replaced by P7.** **The learner does the thinking.** Agents give hints and questions first, and point at the exact step. | Carried over from `../product-vision.md`. It is in the board guide, the skill and the `AGENTS.md` template. | An answer-giving assistant. |
 | P4 | **One learning folder holds all learning,** local first, synced with Git by the founder. The folder is the memory. | The founder already works this way with Codex in a folder. Files are portable and readable by any agent. | A database, as in the old tutor; cloud storage now. |
 | P5 | **Any subject.** No subject-specific features. | The founder learns many subjects (astronomy, nuclear physics, maths). | A maths-only tool. |
-| P6 | **Experiment on its own branch** `learning-space`, cut from `codex/web-client`. | The founder asked for an experiment. The web board code was on that branch. | Working on `main` or on `codex/web-client`. |
+| P6 | **Replaced by P8.** **Experiment on its own branch** `learning-space`, cut from `codex/web-client`. | The founder asked for an experiment. The web board code was on that branch. | Working on `main` or on `codex/web-client`. |
+| P7 | **A shared space for learning with a smart model; the role follows the learner's intent** (2026-10-24). A tutor that holds back answers is one role. Others are an explainer that gives material, a partner to argue or reason with, or a judge of a drawing. The agent reads which one the learner wants. | The founder: "we shouldn't always say that you're a teacher … there are different roles what a person could want." The goal is a space to learn with a model that draws and explains what is easier to see than to hear. | A fixed tutor role with hints first (P3). |
+| P8 | **Learning Space is the main product** (2026-10-24). The branch `learning-space` merges into `main`; work continues on `main`. The iPad, web and server tutor stay paused, not deleted. | After the brief (fix 1) the founder watched an agent draw and explain a sphere step by step and judged it far better than anything the iPad tutor did. | Keeping Learning Space as an experiment beside the built-in tutor (P6). |
 
 ## Platform
 
@@ -65,6 +67,15 @@ Dates are 2026-10-23 to 2026-10-24 unless stated otherwise.
 | F4 | **Dropped:** `save_snapshot` (board images into files). | The founder did not want it. | — |
 | F5 | **Deferred:** folder file tools (`list_files`, `read_file`, `write_file`) for agents outside the folder. | Codex and Claude Code already have file access in the folder. Needed only for plain chat apps. | Building them now. |
 
+## Talking to agents
+
+| # | Decision | Why | Rejected alternatives |
+| --- | --- | --- | --- |
+| I1 | **Agent-facing text explains intent and purpose to an intelligent agent; it does not set limits** (2026-10-24). No word budgets, no "allowed / not allowed" lists, no warnings in tool results that police style. The text says what the space is for, what each medium is good for, and why, as one would brief a capable person. | The founder: the agent writes text-heavy cards because "we haven't explained it correctly" (the guide's workflow starts with a card), not because models need control. Models act on intent, and they get more capable every few months, so the wording matters more over time. Hard rules make the space inflexible. | Word limits and style reports in write results (proposed for fix 1 and rejected). |
+| I2 | **One story across every agent-facing surface:** the brief (`brief.md`, see I3), the server instructions (`instructions.md`), the board guide (`guide.md`), the tool descriptions (`mcp.ts`), the plugin skill and the folder `AGENTS.md` template. | The agent reads all of them; mixed messages (for example a card-first workflow next to "do not reuse one card layout") confuse it. | Fixing one file at a time. |
+
+| I3 | **The brief has one source, `space/resources/brief.md`, and reaches agents two ways** (2026-10-24): as a managed block in the learning folder's `AGENTS.md` (always in context for Codex and Claude Code) and as `get_guide` topic `brief` (agents outside a folder). The block's start line carries a hash of the body the app wrote; the app rewrites the block when the folder opens and the brief is newer, and leaves it alone when the learner edited it. Server instructions stay a short orientation; tool descriptions hold facts only. | Claude Code cuts server instructions at 4,096 characters; Codex loads `AGENTS.md` up to 32 KiB. A copy made once at setup would go stale in every existing folder. The learner keeps everything outside the block. | The brief in server instructions (cut); a one-time copy in `AGENTS.md` (stale); an import (Codex has none). |
+
 ## Distribution
 
 | # | Decision | Why | Rejected alternatives |
@@ -91,3 +102,4 @@ Dates are 2026-10-23 to 2026-10-24 unless stated otherwise.
 | W3 | **The main session never runs hands-on checks.** A failing check gets its cause fixed or reported. | A main-session click-through cost about 50k tokens of main-model input. |
 | W4 | **Checks run in dev mode too** (React StrictMode). | A dev-only bug once passed every built-app check. |
 | W5 | **Agents drive the app with `space/scripts/drive.mjs`,** not computer use. | Background computer use cannot drag on a window that is not in front, and subagents cannot approve full-screen control. |
+| W6 | **Measure changes to agent behaviour** (2026-10-24): an always-on session trace (`~/.learning-space/traces/`, every MCP call with timing, the screenshots agents received, the learner's edits) and a bench of 4 fixed scenarios run by a headless agent, twice, before and after a change. Results in `baseline.md`. | The founder could not tell why the product felt bad; numbers and board images made the effect of the brief visible. The trace stays on the founder's machine; nothing is sent anywhere. |

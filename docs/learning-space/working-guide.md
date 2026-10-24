@@ -20,8 +20,12 @@ and what went wrong before.
   including spacing.
 - Prefers small, finished steps that work in the real app over large plans.
 - Says "commit and push" explicitly when wanted; `AGENTS.md` says to ask
-  before pushing otherwise. The `learning-space` branch and the public
-  `learning-space-plugins` repo are pushed.
+  before pushing otherwise. Work happens on `main`; the public
+  `learning-space-plugins` repo is a separate checkout.
+
+- Wants to talk through **how** a fix will be built before it is built:
+  propose the design, listen, and let the founder's picture decide.
+- For text that agents read, follow [`writing-agent-text.md`](writing-agent-text.md).
 
 ## The workflow that worked
 
@@ -35,8 +39,12 @@ and what went wrong before.
 4. **Check with a Haiku agent** against the real app, ideally with a real
    agent client (see below). The main session reads at most one or two
    screenshots for design judgment.
-5. **Commit per step** with a clear message; push when the founder asks.
-6. Resume the same implementer with `SendMessage` for follow-ups on its own
+5. **Measure behaviour changes:** for anything that changes how agents act
+   (the brief, tool descriptions, perception), run the bench twice before and
+   after (see [`baseline.md`](baseline.md)), and let the founder try a real
+   session.
+6. **Commit per step** with a clear message; push when the founder asks.
+7. Resume the same implementer with `SendMessage` for follow-ups on its own
    code; start a fresh agent when its context has grown very large.
 
 ## Checking the app without touching the founder's setup
@@ -52,6 +60,7 @@ and what went wrong before.
 | CLI installs (plugins, `mcp add`) | Redirect `HOME`, `CLAUDE_CONFIG_DIR` and `CODEX_HOME` to scratch folders. Compare hashes of the founder's real configs before and after. |
 | The relay | Set `HOME` to a scratch folder for the app and pass `LEARNING_SPACE_PORT` in the client's MCP config env. |
 | Cleanup | Record the PIDs you start and stop only those. Never `pkill -f` a pattern: it once killed another check's instance. |
+| Measure agent behaviour | `node scripts/bench/run.mjs --scenarios S1,S2,S3,S4 --model opus --out <dir>` (after `npm run build`; ports 47870/9470; `--dev` for the dev renderer). One trace: `node scripts/trace-report.mjs <file or folder>`. |
 | Keep the founder's focus | After launching, `osascript -e 'tell application "Claude" to activate'`. |
 
 ## Pitfalls we hit

@@ -7,8 +7,8 @@ creates and edits material on it. The app has no AI inside. All learning
 lives in one local folder that the learner owns.
 
 It is the third form of this project (iPad app → web client → Learning
-Space) and the active line of work: branch `learning-space`, app code in
-[`../../space/`](../../space/).
+Space) and, since 2026-10-24, **the main product** (decision P8). App code
+in [`../../space/`](../../space/); work happens on `main`.
 
 ## Status (2026-10-24)
 
@@ -21,8 +21,11 @@ Space) and the active line of work: branch `learning-space`, app code in
 | Folder setup (`AGENTS.md` template), editable board guide | Done |
 | Public plugin repo, stdio relay, plugin-first Connect popover | Done |
 | One shared design system for menus | Done |
-| **The agent–canvas loop works like a tutor** | **Current focus.** Problems found, causes unknown, no solution chosen: [`tutor-vision.md`](tutor-vision.md) |
-| Tutor quality (prompting, visual variety) | The founder iterates |
+| Measurement: session trace, trace report, bench (4 scenarios) | Done: [`baseline.md`](baseline.md) |
+| Fix 1: the brief (`space/resources/brief.md`, managed block in `AGENTS.md`), new tool descriptions | Done and measured: agents draw and explain step by step |
+| **The agent–canvas loop works like a tutor** ([`tutor-vision.md`](tutor-vision.md)) | **Current focus.** Next: fix 2, the agent knows what the learner changed (design talk with the founder first) |
+| Improving the brief | Ongoing: [`writing-agent-text.md`](writing-agent-text.md) |
+| Live drawing by code, played in sequences ([`live-drawing-idea.md`](live-drawing-idea.md)) | Idea; an experiment after fix 2 |
 | Plain chat apps (ChatGPT web, Claude chat) with folder file tools | Later |
 | App packaging, signing, auto-update | Later |
 | Interactive embeds (live HTML simulations) | Much later |
@@ -38,6 +41,15 @@ The web client (`web/`), the tutor backend (`server/`) and the iPad client
    - [`tutor-vision.md`](tutor-vision.md) — the founder's second message
      (2026-10-24), in the same form: the problems in the agent–canvas loop
      and the tutor the founder wants. The current focus.
+   - [`live-drawing-idea.md`](live-drawing-idea.md) — the founder's third
+     message (2026-10-24): the choice of the first fixes, and the idea that
+     agents draw with JavaScript strokes, played in sequences by a voice
+     model.
+   - [`baseline.md`](baseline.md) — how we measure agent behaviour on the
+     board (trace, bench, scenarios) and the results.
+   - [`writing-agent-text.md`](writing-agent-text.md) — how to write and
+     improve what agents read (the brief, instructions, tool descriptions),
+     with the founder's own words. Read it before you touch any of them.
 2. [`architecture.md`](architecture.md) — how the app fits together and
    where each thing lives.
 3. [`design-system.md`](design-system.md) — the UI rules. Required before
@@ -62,7 +74,7 @@ the live-frame idea was rejected).
 | `space/` | The Electron app. Its README covers running and dev automation. |
 | `github.com/Nordup/learning-space-plugins` (checkout `../learning-space-plugins`) | Plugins for Claude Code, ChatGPT and Codex, Cursor; the Claude Desktop extension. |
 | `space/resources/learning-folder/` | The template copied into a learning folder at setup (`AGENTS.md`, `plan.md`, `learner.md`). |
-| `space/resources/guide.md`, `instructions.md` | The board guide and server instructions every agent reads. |
+| `space/resources/brief.md`, `guide.md`, `instructions.md` | The brief, the board reference and the server instructions that agents read. |
 | `docs/learning-space/reference/paper/` | Paper's agent interface, captured live. Local only (git-ignored). |
 | `~/Projects/learning/learning-space` | The founder's own learning folder. Never use it for checks. |
 
@@ -80,3 +92,8 @@ the live-frame idea was rejected).
 | Relay | The command `~/.learning-space/bin/learning-space mcp` that connects stdio clients to the app. |
 | Agent pill | The status control in the top bar; it opens the agents list and the connect view. |
 | Plugin | The package in the plugin repo that installs the connection (and a small skill) into an agent client. |
+| Brief | `space/resources/brief.md`: what the space is for and how agents think about their part. The main text agents read. |
+| Managed block | The part of a folder's `AGENTS.md` between the "learning-space brief" markers. The app keeps it equal to the brief unless the learner edits it. |
+| Trace | The JSONL record of one agent session's MCP calls, in `~/.learning-space/traces/`. |
+| Bench | `space/scripts/bench/run.mjs`: 4 fixed scenarios (S1–S4) run by a headless agent, to measure a change. |
+| Look ratio | Learner ink area ÷ the area of the agent's screenshot of it; 1.0 is a perfect crop. |

@@ -2,18 +2,21 @@
 
 A shared space where a learner works through problems with an AI agent that
 can see the board, draw on it, and talk. The goal is the learner's own
-understanding, not finished answers. `docs/product-vision.md` holds the
-product language; the active line of work is **Learning Space**.
+understanding, not finished answers. **Learning Space is the main product**
+(decision P8, 2026-10-24); work happens on `main`. `docs/product-vision.md`
+was written for the paused built-in tutor; for Learning Space, the founder's
+own words in `docs/learning-space/` come first.
 
 **Start at [`docs/learning-space/README.md`](docs/learning-space/README.md).**
-It gives the status, the reading order (idea, architecture, design system,
-decisions, working guide, research, plan) and a glossary.
+It gives the status, the reading order and a glossary. Before you change
+any text that agents read (the brief, instructions, tool descriptions), read
+`docs/learning-space/writing-agent-text.md`.
 
 ## Where things live
 
 | Path | What | Status |
 | --- | --- | --- |
-| `space/` | Learning Space: Electron canvas app with no AI inside; agents connect over MCP | **Active** (branch `learning-space`). Docs in `docs/learning-space/` |
+| `space/` | Learning Space: Electron canvas app with no AI inside; agents connect over MCP | **Main product.** Docs in `docs/learning-space/` |
 | `../learning-space-plugins` | Public plugin repo (`github.com/Nordup/learning-space-plugins`): Claude Code, ChatGPT and Codex, Cursor plugins; Claude Desktop extension | Active, separate repo |
 | `web/` | React/TypeScript/Vite client for the built-in tutor | **Paused** |
 | `server/` | FastAPI tutor backend (Python, `uv`, Postgres/Neon); holds provider keys | **Paused** |

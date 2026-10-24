@@ -29,7 +29,7 @@ it points to. All paths are under `space/` unless stated otherwise.
 
 | Process | Code | Role |
 | --- | --- | --- |
-| Main | `src/main/` | App lifecycle, window, menu, IPC handlers, MCP server, folder session, snapshot window, agent home, connect actions. |
+| Main | `src/main/` | App lifecycle, window, menu, IPC handlers, MCP server, folder session, snapshot window, agent home, connect actions, the session trace (`trace.ts`), the brief block in `AGENTS.md` (`brief-block.ts`). |
 | Preload | `src/preload/` | Exposes one typed API, `window.space` (calls plus `on…` events). Types in `src/shared/space-api.ts`. |
 | Renderer | `src/renderer/` | React app: canvas, content layer, sidebar, top bar, menus, agent request handler. |
 | Snapshot window | `src/main/snapshot.ts` + `src/renderer/src/snapshot/` | A hidden offscreen window that loads the renderer with `?snapshot=1`, draws a requested region, and is captured to PNG. Closed when idle. |
@@ -105,10 +105,22 @@ limits scripts and images.
     `set_text`, `move_nodes`, `duplicate_nodes`, `delete_nodes`, `draw_ink`.
   - *Place and view:* `find_space`, `focus`, `open_board`.
   - *Presence:* `finish_working`.
-- **Instructions and guide** come from `resources/instructions.md` and
-  `resources/guide.md`, extended or replaced per folder by
-  `.learning-space/instructions.md` and `.learning-space/guide.md`
-  (`src/main/guide.ts`, read fresh per call, 64 KB cap).
+- **What agents read** (decision I3; how to write it:
+  [`writing-agent-text.md`](writing-agent-text.md)):
+  - the brief, `resources/brief.md`: as a managed block in the folder's
+    `AGENTS.md` (`src/main/brief-block.ts` refreshes it when a folder opens,
+    unless the learner edited it) and as `get_guide` topic `brief`;
+  - server instructions, `resources/instructions.md` (a short orientation);
+  - the board reference, `resources/guide.md` (topics model, html, math,
+    svg, images, tokens, placement, ink, view);
+  - folder overrides `.learning-space/instructions.md` and
+    `.learning-space/guide.md` (`src/main/guide.ts`, read fresh per call,
+    64 KB cap);
+  - tool descriptions in `src/main/mcp.ts` (facts only).
+- **Session trace** (`src/main/trace.ts`, always on): every MCP call, the
+  screenshots agents received and the learner's edits, as JSONL in
+  `~/.learning-space/traces/<date>/` (or `SPACE_TRACE_DIR`). Read with
+  `scripts/trace-report.mjs`.
 - **Limits** for every agent-controlled size: `src/shared/limits.ts`.
 
 ## Folder access (main)
@@ -122,8 +134,9 @@ limits scripts and images.
 - Agent image downloads: `src/main/asset-fetch.ts` (https only, public
   addresses only, pinned IP, size and type checks).
 - Folder setup: `src/main/setup.ts` copies `resources/learning-folder/`
-  (`AGENTS.md`, `plan.md`, `learner.md`, folders, guide stub) and never
-  overwrites.
+  (`AGENTS.md` with the brief block filled in, `plan.md`, `learner.md`,
+  folders, guide stub) and never overwrites a file. Afterwards only the brief
+  block in `AGENTS.md` is refreshed by the app.
 
 ## Agent home and connecting clients
 
@@ -140,6 +153,8 @@ limits scripts and images.
 
 ## UI
 
+- Components live in `src/renderer/src/components/` (the snapshot view in
+  `src/renderer/src/snapshot/`).
 - Shell: `App.tsx` (state and wiring), `TopBar.tsx`, `Sidebar.tsx`
   (`FileTree.tsx`), `ToolPalette.tsx`, `PreviewPanel.tsx`, `WelcomeCard.tsx`,
   `CanvasNotice.tsx`, `Toast.tsx`.
@@ -156,9 +171,12 @@ limits scripts and images.
 - Environment switches (dev): `SPACE_FOLDER` (open a folder),
   `SPACE_MCP_PORT`, `SPACE_REMOTE_DEBUG` (Chromium debug port + dev hooks),
   `SPACE_OPEN` (preview a file), `SPACE_CAPTURE*` (window PNG on load),
-  `SPACE_CONNECT_DRY_RUN`. The relay reads `LEARNING_SPACE_PORT`.
+  `SPACE_CONNECT_DRY_RUN`, `SPACE_TRACE_DIR` (where traces go). The relay
+  reads `LEARNING_SPACE_PORT`.
 - `scripts/drive.mjs` drives a running dev app over the debug port: draw
   pen strokes, keys, clicks, drags, wheel, node rects, screenshots, state.
+- `scripts/trace-report.mjs` summarises traces; `scripts/bench/run.mjs` runs
+  the fixed agent scenarios (see [`baseline.md`](baseline.md)).
 - `scripts/boards/make-demo-folder.mjs` makes a demo learning folder;
   `scripts/strokes/*.json` hold sample handwriting.
 - Packaging (later) must ship `resources/` as extra resources and unpack
