@@ -10,7 +10,7 @@ It is the third form of this project (iPad app → web client → Learning
 Space) and, since 2026-10-24, **the main product** (decision P8). App code
 in [`../../space/`](../../space/); work happens on `main`.
 
-## Status (2026-10-24)
+## Status (2026-10-25)
 
 | Area | State |
 | --- | --- |
@@ -23,9 +23,9 @@ in [`../../space/`](../../space/); work happens on `main`.
 | One shared design system for menus | Done |
 | Measurement: session trace, trace report, bench (4 scenarios) | Done: [`baseline.md`](baseline.md) |
 | Fix 1: the brief (`space/resources/brief.md`, managed block in `AGENTS.md`), new tool descriptions | Done and measured: agents draw and explain step by step |
-| **The agent–canvas loop works like a tutor** ([`tutor-vision.md`](tutor-vision.md)) | **Current focus.** Next: fix 2, the agent knows what the learner changed (design talk with the founder first) |
+| **The agent–canvas loop works like a tutor** ([`tutor-vision.md`](tutor-vision.md)) | **Current focus.** Fix 2 (perception) deferred. First real voice sessions analysed: [`sessions-2026-10-24.md`](sessions-2026-10-24.md) |
 | Improving the brief | Ongoing: [`writing-agent-text.md`](writing-agent-text.md) |
-| Live drawing by code, played in sequences ([`live-drawing-idea.md`](live-drawing-idea.md)) | Idea; an experiment after fix 2 |
+| Live drawing by code, played in sequences ([`live-drawing-idea.md`](live-drawing-idea.md)) | **Next: the experiment** |
 | Plain chat apps (ChatGPT web, Claude chat) with folder file tools | Later |
 | App packaging, signing, auto-update | Later |
 | Interactive embeds (live HTML simulations) | Much later |
@@ -47,6 +47,9 @@ The web client (`web/`), the tutor backend (`server/`) and the iPad client
      model.
    - [`baseline.md`](baseline.md) — how we measure agent behaviour on the
      board (trace, bench, scenarios) and the results.
+   - [`sessions-2026-10-24.md`](sessions-2026-10-24.md) — the founder's
+     first real voice sessions after the brief: how the ChatGPT voice path
+     works, what went well, and why the step-by-step drawing did not appear.
    - [`writing-agent-text.md`](writing-agent-text.md) — how to write and
      improve what agents read (the brief, instructions, tool descriptions),
      with the founder's own words. Read it before you touch any of them.
