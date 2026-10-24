@@ -1,8 +1,9 @@
 import { constants } from 'node:fs'
-import { copyFile, lstat, mkdir, writeFile } from 'node:fs/promises'
+import { copyFile, lstat, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { BOARDS_DIR } from '@shared/board-format'
 import type { SetupItem, SetupPlan, SetupResult } from '@shared/space-api'
+import { fillTemplate } from './brief-block'
 import type { FolderSession } from './folder'
 import { FOLDER_SETTINGS_DIR } from './guide'
 import { resourcePath } from './resources'
@@ -20,13 +21,15 @@ interface Spec {
   kind: 'file' | 'dir'
   /** Files: the template, relative to resources/learning-folder/. */
   template?: string
+  /** Files: put the brief block (brief-block.ts) in place of the template's placeholder. */
+  brief?: boolean
   /** Dirs: add an empty .gitkeep, so Git keeps the empty folder. */
   gitkeep?: boolean
   note: string
 }
 
 const SPECS: Spec[] = [
-  { path: SETUP_MARKER, kind: 'file', template: 'AGENTS.md', note: 'Instructions for Codex and Claude Code' },
+  { path: SETUP_MARKER, kind: 'file', template: 'AGENTS.md', brief: true, note: 'Instructions for Codex and Claude Code' },
   { path: 'plan.md', kind: 'file', template: 'plan.md', note: 'Goals, current focus, next steps' },
   { path: 'learner.md', kind: 'file', template: 'learner.md', note: 'What the agent knows about you' },
   { path: 'sessions', kind: 'dir', gitkeep: true, note: 'One log per session' },
@@ -82,7 +85,9 @@ export async function applySetup(session: FolderSession): Promise<SetupResult> {
     // Re-check the parent after mkdir: a link created in between must not lead outside.
     await session.resolvePath(spec.path, { allowMissing: true })
     try {
-      await copyFile(resourcePath('learning-folder', spec.template ?? spec.path), full, constants.COPYFILE_EXCL)
+      const template = resourcePath('learning-folder', spec.template ?? spec.path)
+      if (spec.brief) await writeFile(full, fillTemplate(await readFile(template, 'utf8')), { flag: 'wx' })
+      else await copyFile(template, full, constants.COPYFILE_EXCL)
       created.push(spec.path)
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error

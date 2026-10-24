@@ -5,7 +5,7 @@ shared canvas and a local learning folder. The app has no AI inside: external
 agents (Claude Code, Codex, Claude Desktop) connect to it over MCP and work on
 the board with the learner.
 
-**Status:** an experiment on the branch `learning-space`. Steps 0–5 are done.
+**Status:** the main product of this repository (since 2026-10-24). Steps 0–5 and fixes 0–1 are done.
 
 - [`../docs/learning-space/README.md`](../docs/learning-space/README.md): start here.
 - [`architecture.md`](../docs/learning-space/architecture.md): processes, data flow and where the code lives.
@@ -72,8 +72,11 @@ every tool twice. The popover shows this problem and offers **Fix**.
 
 - **Endpoint:** `http://127.0.0.1:47821/mcp` (Streamable HTTP), while the app is open.
 - **Port:** `SPACE_MCP_PORT` changes it. The relay reads `LEARNING_SPACE_PORT`.
-- **Agent text:** `resources/instructions.md` (server instructions) and
-  `resources/guide.md` (what `get_guide` returns).
+- **Agent text:** `resources/brief.md` (the brief: the managed block in a
+  folder's `AGENTS.md`, and `get_guide` topic `brief`),
+  `resources/instructions.md` (server instructions) and `resources/guide.md`
+  (the reference topics of `get_guide`). Before you change any of them, read
+  [`writing-agent-text.md`](../docs/learning-space/writing-agent-text.md).
 
 | Tool | Main parameters | What it does |
 | --- | --- | --- |
@@ -81,7 +84,7 @@ every tool twice. The popover shows this problem and offers **Fix**.
 | `get_screenshot` | `node_id` \| `region` \| `target`, `scale`, `max_size`, `labels`, `grid` | PNG of a node, a region, the view, all content, the selection or the changes |
 | `get_changes` | `since` | Changed and removed nodes since the agent's cursor; advances the cursor |
 | `open_board` | `path` | Opens a board in the app |
-| `get_guide` | `topic` | The board guide: HTML subset, math, SVG, tokens, placement |
+| `get_guide` | `topic` | The brief, or the reference: model, html, math, svg, images, tokens, placement, ink, view |
 | `get_tree` | `node_id`, `depth` | Indented outline of nodes with ids and bounds |
 | `get_node_info` | `node_id` | One node: bounds, parent, children, style, text, author |
 | `get_html` | `node_id`, `include_ids` | A subtree as the `write_html` subset |
@@ -101,7 +104,9 @@ every tool twice. The popover shows this problem and offers **Fix**.
 
 A folder is set up for learning when `AGENTS.md` exists at its root. Setup
 copies the templates in `resources/learning-folder/` and never overwrites a
-file. Edit the templates to change what new folders get.
+file. Edit the templates to change what new folders get. The brief block in
+`AGENTS.md` is the one exception: the app refreshes it when the folder opens,
+unless the learner edited it.
 
 ## Dev automation
 
@@ -115,6 +120,7 @@ These environment variables work with `npm run dev`:
 | `SPACE_MCP_PORT=port` | Serve MCP on this port instead of 47821. |
 | `SPACE_REMOTE_DEBUG=port` | Dev builds only: Chromium debug port for `scripts/drive.mjs`. |
 | `SPACE_CONNECT_DRY_RUN=1` | **Install** for Claude Desktop logs the `.mcpb` path and does not open it. |
+| `SPACE_TRACE_DIR=/abs/dir` | Write session traces here instead of `~/.learning-space/traces/`. |
 
 To check the Connect buttons without your real agent config, set `HOME`,
 `CLAUDE_CONFIG_DIR` and `CODEX_HOME` to scratch folders.
@@ -138,6 +144,10 @@ The port comes from `--port`, else `$SPACE_REMOTE_DEBUG`, else 9339.
 - `node scripts/boards/make-demo-folder.mjs <folder>` makes a demo learning
   folder with a v2 board (frames, text, math, SVG, an image, ink) and an old v1 board.
 - `scripts/strokes/` holds sample handwriting: `two-plus-two.json` and `equals-four.json`.
+- `node scripts/trace-report.mjs <file|dir>` summarises session traces.
+- `node scripts/bench/run.mjs --scenarios S1,S2,S3,S4 --model opus` runs the
+  fixed agent scenarios on its own instance (port 47870). See
+  [`baseline.md`](../docs/learning-space/baseline.md).
 
 ```sh
 SPACE_REMOTE_DEBUG=9339 SPACE_FOLDER=~/learn/demo npm run dev

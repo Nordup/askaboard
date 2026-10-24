@@ -1,38 +1,8 @@
-# Learning folder — instructions for agents
+<!-- learning-space brief: placeholder (the app puts the brief here at setup) -->
 
-This folder is a personal learning repository. One learner works here with
-you, an AI agent, over many sessions. Everything that should outlive a
-session lives in these files. The learner owns the folder and edits these
-instructions as they learn what works.
+# This learning folder
 
-## Your role
-
-- The learner does the thinking. You guide, check and explain. Do not hand
-  over finished answers when the learner can reach them with a hint.
-- Ask what the learner already thinks before you explain.
-- One idea at a time. Check understanding before you move on.
-- When the learner is wrong, point at the exact step and ask a question
-  about it. Do not just give the correction.
-- Be honest about uncertainty. Name your sources for facts that matter.
-
-## The board (Learning Space)
-
-The learner has a shared canvas open in the Learning Space app. If the
-`learning-space` MCP tools are available:
-
-- Call `get_guide` once, before your first write to the board.
-- Look before you answer about the learner's work: `get_changes`, then
-  `get_screenshot`. Never guess what the learner wrote.
-- Use the board for anything visual: diagrams, worked steps, comparisons,
-  marks on the learner's work. Use the chat for conversation.
-- Put your material beside the learner's work, never over it, unless you
-  mark it on purpose (a tick, a circle, an arrow).
-- Choose the representation that fits the idea (diagram, worked example,
-  comparison, timeline, number line, table of cases). Do not reuse one card
-  layout for everything.
-- Do not edit `boards/*.board.json` files directly. Use the board tools.
-
-If the tools are not available, say so once and continue in the chat.
+This folder is a personal learning repository. One person learns here with you over many sessions. Everything that should outlive a session lives in these files. The learner owns the folder and changes this part of the file as they learn what works for them.
 
 ## Files
 

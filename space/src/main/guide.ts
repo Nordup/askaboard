@@ -9,6 +9,9 @@ import { resourcePath } from './resources'
  * prompt experiments need no rebuild:
  *
  * - built in: `resources/guide.md` and `resources/instructions.md`;
+ * - the brief, `resources/brief.md`: get_guide topic "brief" (also the managed
+ *   block in a learning folder's AGENTS.md, see brief-block.ts). It is not a
+ *   reference topic, so get_guide without a topic leaves it out;
  * - per learning folder: `.learning-space/guide.md` and
  *   `.learning-space/instructions.md`. Their text is appended to the built-in
  *   text, or replaces it when the file starts with front matter `mode: replace`.
@@ -27,6 +30,8 @@ const MAX_OVERRIDE_BYTES = 64 * 1024
 const FOLDER_HEADING = 'Guidance for this learning folder'
 const FOLDER_PREFIX = "The following guidance comes from the learner's folder."
 const REPLACED_LINE = "Learning Space: the learner's folder replaced these instructions."
+/** The get_guide topic that serves resources/brief.md. */
+const BRIEF_TOPIC = 'brief'
 
 type FolderFileName = 'guide.md' | 'instructions.md'
 
@@ -203,7 +208,7 @@ function notify(root: string | null): void {
 /** The topic names get_guide accepts now. */
 export function guideTopics(root: string | null): string[] {
   try {
-    return splitSections(guideBase(root).base).map((section) => section.topic)
+    return [BRIEF_TOPIC, ...splitSections(guideBase(root).base).map((section) => section.topic).filter((topic) => topic !== BRIEF_TOPIC)]
   } catch {
     return []
   } finally {
@@ -211,14 +216,18 @@ export function guideTopics(root: string | null): string[] {
   }
 }
 
-/** The get_guide text. With a topic: only that section. Without: everything, folder guidance last. */
+/** The get_guide text. With a topic: only that section (or the brief). Without: every reference topic, folder guidance last. */
 export function guideText(root: string | null, topic?: string): string {
   try {
+    if (topic === BRIEF_TOPIC) return `${clean(readBuiltIn('brief.md'))}\n`
     const { base, local } = guideBase(root)
     if (topic) {
       const sections = splitSections(base)
       const found = sections.filter((section) => section.topic === topic)
-      if (!found.length) throw new Error(`No guide topic "${topic}". Topics: ${sections.map((section) => section.topic).join(', ')}.`)
+      if (!found.length) {
+        const topics = [BRIEF_TOPIC, ...sections.map((section) => section.topic)]
+        throw new Error(`No guide topic "${topic}". Topics: ${topics.join(', ')}.`)
+      }
       return `${clean(found.map((section) => section.text).join('\n\n'))}\n`
     }
     const parts = [clean(base)]

@@ -22,6 +22,7 @@ import {
 } from '@shared/limits'
 import { guideText, guideTopics, serverInstructions } from './guide'
 import type { SnapshotRenderer } from './snapshot'
+import { LearnerEditLog, SessionTrace, writeLearnerEdit } from './trace'
 import {
   IPC,
   type AgentActivity,
@@ -88,6 +89,8 @@ interface Session {
    * get_screenshot("changes") shows the ink that get_changes listed.
    */
   listedFrom: Map<string, number>
+  /** The session trace (see trace.ts); opened when the client says who it is. */
+  trace?: SessionTrace
 }
 
 function configuredPort(): number {
@@ -171,8 +174,6 @@ const rectSchema = z.object({
   height: boxSize(MAX_REGION_SIZE)
 })
 
-const IDS_NOTE = 'Ids: node ids, or ink group ids (g1, g2, …) from get_canvas_info / get_tree.'
-
 const placeSchema = z
   .object({
     right_of: z.string().optional(),
@@ -199,6 +200,7 @@ export class AgentServer {
   private pruneTimer: NodeJS.Timeout | null = null
   private publishTimer: NodeJS.Timeout | null = null
   private lastPublish = 0
+  private readonly learnerEdits = new LearnerEditLog()
 
   constructor(private readonly hooks: AgentServerHooks) {
     this.bridge = new RendererBridge(hooks.webContents)
@@ -405,11 +407,13 @@ export class AgentServer {
     }
     session.transport.onclose = () => {
       if (!session.id || !this.sessions.delete(session.id)) return
+      session.trace?.close()
       console.log(`mcp: session ${session.id} (${server.server.getClientVersion()?.name ?? 'agent'}) closed`)
       this.publish()
     }
     server.server.oninitialized = () => {
       console.log(`mcp: session ${session.id} is ${server.server.getClientVersion()?.name ?? 'an unnamed client'}`)
+      this.traceOf(session)
       this.publish()
     }
     this.registerTools(session)
@@ -430,17 +434,66 @@ export class AgentServer {
 
   // ---------- Tools ----------
 
-  /** Wrap a tool body: activity pulse, logging, errors as tool errors. */
+  /** The session's trace, opened on first use. Never throws; null for the in-process catalog session. */
+  private traceOf(session: Session): SessionTrace | null {
+    if (session.trace) return session.trace
+    if (!session.id || session.id === 'catalog') return null
+    try {
+      const client = session.server.server.getClientVersion()
+      const board = Promise.race([
+        this.bridge.request('canvasInfo', {}).then((info) => info.board?.path ?? null),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000))
+      ])
+      session.trace = new SessionTrace({
+        sessionId: session.id,
+        clientName: client?.name ?? 'agent',
+        clientVersion: client?.version ?? null,
+        folder: this.hooks.folderRoot(),
+        board
+      })
+      return session.trace
+    } catch (error) {
+      console.warn(`trace: could not open a trace for session ${session.id}: ${String(error)}`)
+      return null
+    }
+  }
+
+  /** The renderer read a board (sets the baseline for learner edits). */
+  boardRead(board: string, text: string): void {
+    const folder = this.hooks.folderRoot()
+    if (folder) this.learnerEdits.read(folder, board, text)
+  }
+
+  /** The renderer saved a board: trace the learner's new or changed nodes, if any. Never throws. */
+  boardSaved(board: string, text: string): void {
+    try {
+      const folder = this.hooks.folderRoot()
+      const edit = folder ? this.learnerEdits.saved(folder, board, text) : null
+      if (!edit) return
+      writeLearnerEdit(edit)
+      for (const session of this.sessions.values()) session.trace?.write({ ...edit })
+    } catch (error) {
+      console.warn(`trace: learner edit not recorded: ${String(error)}`)
+    }
+  }
+
+  /** Wrap a tool body: activity pulse, logging, errors as tool errors, the session trace. */
   private tool<A>(session: Session, name: string, body: (args: A) => Promise<CallToolResult>) {
     return async (args: A): Promise<CallToolResult> => {
       session.lastActivity = Date.now()
       this.hooks.activity({ sessionId: session.id, tool: name })
+      const start = Date.now()
+      let result: CallToolResult
+      let thrown: unknown = null
       try {
-        return await body(args)
+        result = await body(args)
       } catch (error) {
         console.warn(`mcp: ${name} failed: ${error instanceof Error ? error.message : String(error)}`)
-        return failure(error)
+        thrown = error
+        result = failure(error)
       }
+      this.traceOf(session)?.call(name, args, start, Date.now(), thrown === null ? result : null, thrown)
+      return result
     }
   }
 
@@ -479,11 +532,7 @@ export class AgentServer {
       {
         title: 'Canvas info',
         description:
-          "Describe the learner's canvas: the learning folder (name, absolute path), the open board (relative path, name), " +
-          'all boards in the folder, the visible viewport and the bounds of all content as board-coordinate rects, node counts by kind, ' +
-          'the top-level nodes (id, kind, name, author, bounds), the ink groups (inkGroups: id like "g3", author, parent, stroke count, bounds), ' +
-          "the learner's selection (ids and bounds), the current tool, and the change cursor. " +
-          COORDINATES_NOTE,
+          "Describe the current state of Learning Space: the learning folder (name and absolute path), the open board and all boards in the folder, the learner's visible viewport and the bounds of all content (board rects), node counts by kind, the top-level nodes (id, kind, name, author, bounds), the ink groups (id such as \"g3\", author, parent, stroke count, bounds), the learner's selection (ids and bounds), the learner's current tool, and your change cursor. Use it to orient yourself on a board and to find ids and free areas. It returns structured data, not an image: to see what is written or drawn, use get_screenshot. Coordinates are board points (origin at the centre, +x right, +y down).",
         inputSchema: {},
         annotations: { readOnlyHint: true }
       },
@@ -499,13 +548,7 @@ export class AgentServer {
       {
         title: 'Screenshot of the board',
         description:
-          'Render part of the open board to a PNG: content (frames, text, math, SVG, images) and ink together, on the canvas background, without app UI. ' +
-          'Works for any area, also off screen. Give node_id for one node (with a small margin), region for an exact board rect, or target: ' +
-          '"viewport" (what the learner sees now), "content" (everything), "selection" (what the learner selected), "changes" (only what is new since your last look, ' +
-          'each new item in a dashed blue box and erased items in dashed pink boxes; it advances your change cursor). The default is "viewport". ' +
-          'The text part says which board rect the image covers and its scale. ' +
-          'labels: true draws id tags (ink groups g1…, top-level node ids) with thin outlines; grid: true draws board-coordinate lines every 100 pt with numbers on the edges. Both are only in your image. ' +
-          COORDINATES_NOTE,
+          "Render part of the open board to a PNG image, the same way the learner sees it (ink, text, math, drawings, images; no app interface). It works for any area, also outside the learner's view. Choose what to capture with node_id (one node or ink group, with a small margin), region (an exact board rect), or target: \"viewport\" (what the learner sees now; the default), \"content\" (the whole board), \"selection\" (what the learner selected), or \"changes\" (only what is new since your last \"changes\" screenshot: new items in dashed blue boxes, erased items in dashed pink boxes; this moves your change cursor). labels: true adds id tags and outlines, and grid: true adds board coordinates every 100 points; both appear only in your image. The text part of the result gives the board rect the image covers and the pixel-to-board conversion. Large areas at a high scale make large images; a node_id or a small region gives a sharper view of handwriting.",
         inputSchema: {
           node_id: z.string().optional().describe('Capture this node (frame, text, svg, image or ink) or ink group ("g3").'),
           region: rectSchema.optional().describe('Capture this board rect.'),
@@ -584,14 +627,9 @@ export class AgentServer {
       {
         title: 'Changes since the last look',
         description:
-          'List what changed on the open board since your change cursor: items added or changed (id, kind, tool, colour, bounds, seq) and items removed (id, bounds, seq), ' +
-          'plus the new cursor. Changes are those with seq > since; the cursor is the highest seq seen, so passing it back as since never repeats an item. ' +
-          'Advances your cursor. Your cursor starts at your first call to any tool, so the first call returns nothing new; pass since: 0 for the whole history. ' +
-          'groups_changed lists the ink groups (g1, g2, …) that hold changed strokes: refer to the learner\'s work by these ids. ' +
-          'Then call get_screenshot with target "changes" to SEE that ink: it shows everything listed by get_changes since your last "changes" screenshot. ' +
-          COORDINATES_NOTE,
+          "List what changed on the open board since your change cursor: items added or changed (id, kind, tool, colour, author of the change, bounds, seq), items removed (id, bounds, seq), the ink groups that hold changed strokes (groups_changed), and your new cursor. It returns data, not an image; use get_screenshot with target \"changes\" or a node_id to see the items. Your cursor starts at your first look at a board (get_canvas_info, get_changes, get_screenshot or open_board), so the first call lists nothing new; since: 0 lists the whole history of the board. The list includes your own writes; the author field tells them apart from the learner's.",
         inputSchema: {
-          since: z.number().int().min(0).optional().describe('A cursor value to diff from instead of your own cursor. 0 = everything on the board.')
+          since: z.number().int().min(0).optional().describe("A cursor value to compare against instead of your own cursor; 0 means everything on the board.")
         },
         annotations: { readOnlyHint: true }
       },
@@ -615,7 +653,7 @@ export class AgentServer {
       {
         title: 'Open a board',
         description:
-          'Open another board in the app, so the learner and you both see it. `path` is relative to the learning folder and ends in .board.json (see "boards" in get_canvas_info). Returns the canvas info.',
+          "Open another board of the learning folder in the app, so that the learner and you both see it. The learner's view switches to it. path is relative to the learning folder and ends in .board.json (the boards are listed in get_canvas_info). Returns the canvas info of the opened board.",
         inputSchema: { path: z.string().describe('For example "boards/Fractions.board.json".') }
       },
       this.tool(session, 'open_board', async ({ path }) => {
@@ -629,7 +667,8 @@ export class AgentServer {
       'get_guide',
       {
         title: 'The agent guide',
-        description: `How to write material on the board: the HTML subset, text markup and math, SVG, images, colour tokens, placement and the workflow. Read it once before your first write. topic: one of ${guideTopics(this.hooks.folderRoot()).join(', ')}; omit for all (the learning folder's own guidance comes last).`,
+        description:
+          `Read the Learning Space guide. Topic "brief" explains what the space is for and how the person and you work together in it; it is the same text as the brief in a learning folder's AGENTS.md, so skip it when that is already in your context. The reference topics describe the board's model and the details of every write: html, math, svg, images, tokens, placement, ink and view. topic: one of ${guideTopics(this.hooks.folderRoot()).join(', ')}; omit for every reference topic. The learning folder's own guidance, if any, comes last.`,
         inputSchema: { topic: z.string().optional() },
         annotations: { readOnlyHint: true }
       },
@@ -641,8 +680,7 @@ export class AgentServer {
       {
         title: 'Node tree',
         description:
-          'A compact outline of the board (or of one node): one line per node with kind, name, id and world bounds "x,y w×h"; text shows its first words; ink shows as ink groups ("ink group g3 … 5 strokes (learner)") under their parent. ' +
-          'Cheap: use it to orient yourself and to find ids. depth limits how far into frames it goes (default 3).',
+          "A compact text outline of the open board, or of one node and its children: one line per node with kind, name, id and bounds (\"x,y w×h\"); text nodes show their first words, and ink shows as ink groups with author and stroke count under their parent. Use it to find ids and to see how material is grouped; it is much smaller than a screenshot and shows no pixels. depth sets how many levels inside frames it lists (default 3).",
         inputSchema: { node_id: z.string().optional(), depth: z.number().int().min(1).max(10).optional() },
         annotations: { readOnlyHint: true }
       },
@@ -654,7 +692,7 @@ export class AgentServer {
       {
         title: 'Node details',
         description:
-          'Everything about one node: kind, name, author, parent, children ids, world bounds, position inside the parent, z, style, text (markup), svg element ids, image src, or ink tool/colour/width/point count. For an ink group id: its strokes and bounds.',
+          "Every stored detail of one node or ink group: kind, name, author, parent, children ids, bounds on the board and inside the parent, z order, style, text with markup, SVG element ids, image source, or for ink the tool, colour, width and point count. For an ink group id it lists the group's strokes and bounds. Use it when you need exact values before you change a node.",
         inputSchema: { node_id: z.string() },
         annotations: { readOnlyHint: true }
       },
@@ -666,7 +704,7 @@ export class AgentServer {
       {
         title: 'Node as HTML',
         description:
-          'A node and its subtree as the same HTML subset write_html takes (inline styles, data-id on every element when include_ids is true). Edit it and write it back with write_html mode "replace": ids in data-id are kept. Ink is not HTML: it shows as a comment and is kept on replace.',
+          "A node and everything inside it as the HTML subset that write_html accepts, with inline styles; include_ids adds data-id attributes. Use it to restructure existing material: edit the HTML and write it back with write_html mode \"replace\", and nodes whose data-id you keep keep their ids. Ink is not HTML: it appears as a comment and stays in place on replace.",
         inputSchema: { node_id: z.string(), include_ids: z.boolean().optional() },
         annotations: { readOnlyHint: true }
       },
@@ -678,8 +716,7 @@ export class AgentServer {
       {
         title: 'Create a frame',
         description:
-          'Make a new top-level frame (a card) to write into. Default style: flex column, gap 12px, padding 24px, width 480px, height fit-content, card background, rounded corners. ' +
-          'Position: place (relative to a node or ink group), or x and y, or neither: then the best empty spot beside `near` if given, else beside the learner\'s latest handwriting, else at the view centre, never over nodes or ink. Spots inside the learner\'s view come first; visible: false says it is outside. Returns the id, bounds, how it was placed and overlaps.',
+          "Create an empty top-level frame: a box that holds other nodes and moves with them, such as a page of reading, a worked example or a set of exercises. Fill it afterwards with write_html (target_id = the frame's id). Default style: a 480 px wide flex column with padding, a gap, a card background and rounded corners; style overrides any of it. Position: place (relative to a node or ink group), or x and y, or neither, in which case the app picks an empty spot beside near, else beside the learner's latest handwriting, else in the middle of their view. Returns the id, the bounds, how it was placed, whether it is in the learner's view, and what it overlaps.",
         inputSchema: {
           name: z.string().max(MAX_NAME_CHARS).optional(),
           style: z.record(z.string(), styleValue).optional().describe('camelCase CSS, overrides the defaults.'),
@@ -697,8 +734,7 @@ export class AgentServer {
       {
         title: 'Write HTML as nodes',
         description:
-          'Convert HTML (inline styles, flex, text with <b>/<i>/$math$, <svg>, <img>) into board nodes. mode "insert_children" (default) appends into the frame target_id ("root" = top level, auto-placed); ' +
-          'mode "replace" replaces the node target_id with the HTML. With target_id "root", place puts the new top-level nodes relative to a node or ink group. Auto-placed nodes move after layout so their measured size fits in the learner\'s view when a free spot exists. Returns the created top-level ids, a layer-name → id map, their measured bounds after layout, visible (every touched top-level node fully in the learner\'s view, from the measured bounds; else outside_view lists them), overlaps, and what was ignored. Call get_guide first for the subset. One undo step.',
+          "Add material to the board as nodes, written in a small HTML subset: text and formulas (<p>, <h1>–<h6>, <b>, <i>, $math$), SVG drawings (<svg>), images (<img>), and boxes (<div>, which become frames). mode \"insert_children\" (default) adds the HTML inside the frame target_id, or at the top level for target_id \"root\"; mode \"replace\" replaces the node target_id. For \"root\", place puts the new nodes relative to a node or ink group, and near picks an automatic spot beside one. Returns the new top-level ids, a map from layer-name to id, the measured bounds after layout, whether everything is in the learner's view, what the new nodes overlap, and any HTML or styles that were ignored. The supported tags and styles are in get_guide topic \"html\". One undo step for the learner.",
         inputSchema: {
           html: z.string().max(MAX_HTML_CHARS, `html must be at most ${MAX_HTML_CHARS} characters; write it in smaller parts.`),
           target_id: z.string().describe('A frame id, or "root".'),
@@ -715,7 +751,7 @@ export class AgentServer {
       {
         title: 'Update styles',
         description:
-          'Set style keys on nodes: updates is a list of {node_ids, styles}; styles are camelCase CSS (numbers mean px; "" or null removes a key). Ink and ink groups take color only. Positions are not styles: use move_nodes. Returns ignored_styles and overlaps. One undo step.',
+          "Change style properties of existing nodes, such as colour, size, padding, border or font. updates is a list of {node_ids, styles}; styles are camelCase CSS, numbers mean px, and \"\" or null removes a property. Ink nodes and ink groups accept only color. Positions are not styles: use move_nodes. Returns the properties that were ignored and what the nodes now overlap. One undo step for the learner.",
         inputSchema: {
           updates: z.array(z.object({ node_ids: nodeIds, styles: z.record(z.string(), z.union([styleValue, z.null()])) })).min(1).max(MAX_LIST_ITEMS)
         }
@@ -727,7 +763,8 @@ export class AgentServer {
       'set_text',
       {
         title: 'Set text',
-        description: 'Replace the text of text nodes: updates is a list of {node_id, text}. text uses the markup **bold**, *italic*, $math$. One undo step.',
+        description:
+          "Replace the text of existing text nodes and keep their ids, styles and places. updates is a list of {node_id, text}; text uses the markup **bold**, *italic* and $math$ (write a literal * or $ as \\* or \\$). One undo step for the learner.",
         inputSchema: {
           updates: z
             .array(z.object({ node_id: z.string(), text: z.string().max(MAX_TEXT_CHARS, `text must be at most ${MAX_TEXT_CHARS} characters.`) }))
@@ -743,8 +780,7 @@ export class AgentServer {
       {
         title: 'Move nodes',
         description:
-          'Move or reorder nodes and ink groups (a group moves all its strokes), learner ink included. Each move is one of: {node_id, place} (relative to another node or group), {node_id, x, y} (the top-left in the parent\'s space; board space at top level), {node_id, dx, dy}, ' +
-          '{node_id, parent_id, index?} (into another frame, or "root"; keeps the world position), {node_id, before: sibling_id} or {node_id, after: sibling_id}. Children of flex frames are reordered, not placed. Returns the new bounds and overlaps (what each moved item now covers). One undo step.',
+          "Move or reorder nodes and ink groups; moving a group moves all its strokes, and learner ink can be moved too. Each move is one of: {node_id, place} (relative to another node or group), {node_id, x, y} (top-left in the parent's space, board space at the top level), {node_id, dx, dy}, {node_id, parent_id, index?} (into another frame, or \"root\"; the position on the board stays), or {node_id, before | after: sibling_id}. Children of a flex frame are reordered, not placed. Returns the new bounds and what each moved item now overlaps. One undo step for the learner.",
         inputSchema: {
           moves: z
             .array(
@@ -773,7 +809,7 @@ export class AgentServer {
       {
         title: 'Duplicate nodes',
         description:
-          'Copy nodes (with their subtrees) or ink groups. A top-level copy goes to empty space beside its original (or by place), inside the learner\'s view when it fits (else listed in outside_view); a copy inside a flex frame comes right after its original. Returns original → copy ids, including descendants, and overlaps. One undo step.',
+          "Copy nodes (with everything inside them) or ink groups. A top-level copy goes to empty space beside its original, or where place says; a copy inside a flex frame goes right after its original. Returns a map from each original id to its copy, children included, whether the copies are in the learner's view, and what they overlap. One undo step for the learner.",
         inputSchema: { node_ids: nodeIds, place: placeSchema.optional() }
       },
       this.tool(session, 'duplicate_nodes', async (args) => text(json(await this.board(session, 'duplicateNodes', args))))
@@ -783,7 +819,8 @@ export class AgentServer {
       'delete_nodes',
       {
         title: 'Delete nodes',
-        description: `Delete nodes and everything inside them, or ink groups (all their strokes); learner ink only when that is what the learner wants. Returns what was removed. The learner can undo it. ${IDS_NOTE}`,
+        description:
+          "Delete nodes with everything inside them, or ink groups with all their strokes. This works on any node, including the learner's own ink. Returns what was removed. The learner can undo it. Ids are node ids or ink group ids (g1, g2, …) from get_canvas_info or get_tree.",
         inputSchema: { node_ids: nodeIds }
       },
       this.tool(session, 'delete_nodes', async (args) => text(json(await this.board(session, 'deleteNodes', args))))
@@ -794,10 +831,7 @@ export class AgentServer {
       {
         title: 'Draw ink',
         description:
-          'Draw by hand on the board: marks on the learner\'s work (circle a mistake, tick, cross, underline, arrow) or sketches. The ink gets a natural pen pressure and a slight wobble. ' +
-          'Give one of: shape + target (circle | underline | tick | cross | arrow, built from the target\'s bounds; arrow from from_id or from side), strokes ([[[x,y],…],…]), or svg_path (one path "d"). ' +
-          'strokes and svg_path are board coordinates; with x, y they are relative to (x, y); with place their bounds are placed relative to a node or ink group (place {over: "g3"} centres them on it). ' +
-          'Default colour: pink for circle/cross, green for tick, else the accent, never the learner\'s pen colour. Ink over a frame joins the frame. Returns the new group id, bounds and overlaps. One undo step.',
+          "Draw pen strokes on the board: the same kind of ink as the learner's handwriting, with natural pressure and a slight hand wobble, which the learner can erase, lasso or move like their own. Give one of: shape + target (circle, underline, tick, cross or arrow, built from the bounds of a node or ink group; an arrow starts at from_id or comes in from side), strokes (lists of [x, y] points), or svg_path (an SVG path \"d\" with M, L, C, Q, A, Z; each subpath becomes one stroke). Coordinates in strokes and svg_path are board points, or relative to x, y when given, or placed as a whole with place. Ink drawn over a frame becomes part of it. Ink cannot fill shapes and is not suited to words; use write_html for text and filled drawings. Each call makes one ink group and one undo step. Default colour: pink for circle and cross, green for tick, otherwise the accent, never the learner's pen colour. Returns the group id, its bounds and what it overlaps.",
         inputSchema: {
           shape: z.enum(['circle', 'underline', 'tick', 'cross', 'arrow']).optional(),
           target: z.string().optional().describe('shape: the node or ink group to mark.'),
@@ -831,8 +865,7 @@ export class AgentServer {
       {
         title: 'Find empty space',
         description:
-          'An empty rect of the given size: no overlap with any top-level node or ink, with a 32 pt margin, nearest to `near` (a node or ink group) or to the centre of the learner\'s view. ' +
-          'inside_view (default true) prefers spots fully inside the learner\'s view. Returns {x, y, width, height, visible}. Use it before x, y writes.',
+          "Find an empty rect of a given size on the open board: no overlap with any top-level node or ink, with a 32-point margin, nearest to near (a node or ink group) or to the centre of the learner's view. inside_view (default true) prefers spots fully inside the learner's view. Returns {x, y, width, height, visible}. Use it before a write that takes x and y; writes with place or near find their own space.",
         inputSchema: {
           width: boxSize(MAX_BOX_SIZE),
           height: boxSize(MAX_BOX_SIZE),
@@ -849,8 +882,7 @@ export class AgentServer {
       {
         title: "Move the learner's view",
         description:
-          "Glide the learner's view to a node, ink group or region; it zooms out only when the target does not fit (or to `zoom` if given). Use sparingly, for something the learner must see now. " +
-          'It does nothing when the target is already in view, and it is skipped while the learner writes (a stroke in progress or one in the last 2 s). Returns the new viewport, or skipped with the reason.',
+          "Move the learner's view to a node, ink group or region, with a short glide; it zooms out only when the target does not fit, or to zoom when given. It does nothing when the target is already fully in view, and it is skipped while the learner is writing (a stroke in progress or one in the last 2 seconds). Returns the new viewport, or that it was skipped and why.",
         inputSchema: {
           node_id: z.string().optional(),
           region: rectSchema.optional(),
@@ -866,7 +898,7 @@ export class AgentServer {
       {
         title: 'Finish working',
         description:
-          'Say you are done with some material: removes your "working" outline from those top-level nodes (all of yours when node_ids is omitted). Outlines also fade 20 s after your last write.',
+          "Remove the \"agent working\" outline that the learner sees around the top-level nodes you are changing: for node_ids, or for all of yours when node_ids is omitted. Outlines also fade 20 seconds after your last write.",
         inputSchema: { node_ids: z.array(z.string()).max(MAX_LIST_ITEMS).optional() }
       },
       this.tool(session, 'finish_working', async (args) => text(json(await this.board(session, 'finishWorking', args))))

@@ -8,7 +8,8 @@ import { AgentServer } from './mcp'
 import { SnapshotRenderer } from './snapshot'
 import { installMenu, setFolderOpen } from './menu'
 import { FOLDER_SETTINGS_DIR, folderOverrides, onOverridesRead } from './guide'
-import { applySetup, isSetUp, setupPlan } from './setup'
+import { SETUP_MARKER, applySetup, isSetUp, setupPlan } from './setup'
+import { refreshBriefBlock } from './brief-block'
 import { installShim, writeRelayState } from './agent-home'
 import { agentClients, connectAgentClient, isAgentClientAction, isAgentClientId } from './connect'
 import * as store from './state'
@@ -140,6 +141,11 @@ async function openFolder(path: string): Promise<void> {
     filesChanged: (tree) => send(IPC.filesChanged, tree),
     boardChanged: (change) => send(IPC.boardChanged, change)
   })
+  // Keep the brief block in AGENTS.md current (an edited block stays as it is).
+  await next
+    .resolvePath(SETUP_MARKER, { allowMissing: true })
+    .then(refreshBriefBlock)
+    .catch((error) => console.error(`brief block: ${String(error)}`))
 }
 
 async function showOpenDialog(): Promise<Snapshot | null> {
@@ -234,8 +240,15 @@ function registerIpc(): void {
     return requireSession().importAsset(src)
   })
 
-  handle(IPC.readBoard, (path: string) => requireSession().readBoard(path))
-  handle(IPC.writeBoard, (path: string, text: string) => requireSession().writeBoard(path, text))
+  handle(IPC.readBoard, async (path: string) => {
+    const text = await requireSession().readBoard(path)
+    agentServer.boardRead(path, text)
+    return text
+  })
+  handle(IPC.writeBoard, async (path: string, text: string) => {
+    await requireSession().writeBoard(path, text)
+    agentServer.boardSaved(path, text)
+  })
   handle(IPC.createBoard, () => requireSession().createBoard())
   handle(IPC.renameBoard, async (path: string, newName: string) => {
     const current = requireSession()

@@ -68,12 +68,11 @@
 ## Drawing ink (marks on the learner's work)
 <!-- topic: ink -->
 
-- draw_ink draws like a pen: natural pressure, a slight wobble. Use it for marks, not for text: write text with write_html.
+- draw_ink draws like a pen: natural pressure, a slight wobble.
 - Shapes from a target's bounds: draw_ink({shape: "circle", target: "g3"}) circles a mistake; {shape: "tick", target: "g2"} or "cross" goes just right of it; {shape: "underline", target: "g4"}; {shape: "arrow", target: "g3", from_id: "n_hint"} points from your note to their work.
 - Free drawing: strokes [[[x, y], …], …] or svg_path "M0 0 C 20 -30, 60 -30, 80 0"; place {over: "g3"} centres it on the target, {right_of: "g3"} puts it beside. Example arrow: svg_path "M0 0 L80 0 M66 -10 L80 0 L66 10", place {left_of: "g2"}.
 - Colours: pink (bad) circles and crosses, green (good) ticks, accent otherwise. The default never matches the learner's pen colour.
 - Each call is one undo step and one ink group: delete_nodes(["g7"]) removes that mark.
-- Marks are feedback, so keep them few and clear. Prefer a question in a card over many marks.
 
 ## Moving the learner's view
 <!-- topic: view -->
@@ -81,28 +80,3 @@
 - focus({node_id}) glides the learner's view to a node or ink group; it zooms out only when needed. It does nothing when the target is already visible.
 - Use it rarely: only when the learner must see something now (for example material you placed outside their view).
 - Do not move the view while they write. focus skips itself while a stroke is in progress or within 2 s of the last one, and says so; then tell the learner where to look instead.
-
-## Workflow
-<!-- topic: workflow -->
-
-1. Look: get_canvas_info (ink groups), get_tree, get_screenshot (target "viewport" or a node_id; labels: true to see the ids).
-2. Make room: create_frame with place: {right_of: "g3"} (name it, for example "Kepler hint").
-3. Fill it in small steps: write_html into the frame (insert_children), one group per call.
-4. Check: get_screenshot with node_id of the frame. Fix what is wrong.
-5. Edit, do not rewrite: update_styles, set_text and move_nodes keep ids and are cheap. Use get_html + write_html (mode "replace") for a bigger restructure; ids in data-id are kept.
-6. finish_working when the piece is done (it removes your "working" outline).
-- Each write is one undo step for the learner. They may change or delete your material: read get_changes before you edit it again.
-
-## Example: an explanation card
-<!-- topic: example -->
-
-create_frame({ name: "Kepler hint", place: { right_of: "g3" } }) → { id: "n_abc", overlaps: [] }
-write_html({ target_id: "n_abc", mode: "insert_children", html: `
-<h2 style="color: var(--ls-text)">Why does the period grow?</h2>
-<p style="font-size: 16px; color: var(--ls-muted)">Compare two orbits: the outer planet travels <b>farther</b> and <i>slower</i>. Kepler found $T^2 \propto a^3$.</p>
-<div layer-name="Try it" style="display: flex; gap: 8px; padding: 12px; border-radius: 8px; background: var(--ls-card-2)">
-  <p style="font-size: 15px">If $a$ doubles, by what factor does $T$ grow?</p>
-</div>` })
-get_screenshot({ node_id: "n_abc" }) → check
-draw_ink({ shape: "arrow", from_id: "n_abc", target: "g3" }) → points the card at their work
-finish_working({ node_ids: ["n_abc"] })
