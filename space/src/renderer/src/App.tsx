@@ -404,7 +404,7 @@ export function App() {
     }
   }, [refreshGuideOverrides])
 
-  // Poll on folder open; the main process pushes after get_guide and agent connects.
+  // Poll on folder open; the main process pushes after get_brief and agent connects.
   const folderRoot = folder?.root ?? null
   useEffect(() => {
     if (!folderRoot) {

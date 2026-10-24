@@ -2,7 +2,7 @@
 
 > **For:** any agent (or person) who improves what external agents read when
 > they work in Learning Space: the brief, the server instructions, the tool
-> descriptions, the board guide, the plugin skill and the `AGENTS.md`
+> descriptions, the plugin skill and the `AGENTS.md`
 > template. Written 2026-10-24, at the end of the session that produced the
 > first real brief. The founder's own words from that session are in
 > [the appendix](#appendix--the-founders-words); read them, they matter more
@@ -27,13 +27,12 @@ difference, so the next writer starts from the second draft's approach.
 
 | Text | File | Who reads it, when | Limit |
 | --- | --- | --- | --- |
-| **The brief** (what the space is, the person, the board, talking, time) | `space/resources/brief.md` (the one source) | Agents in a learning folder: always, through the managed block in `AGENTS.md`. Other agents: `get_guide({topic: "brief"})`. | Codex loads `AGENTS.md` up to 32 KiB (`project_doc_max_bytes = 32768`, Codex CLI 0.149), and the folder part shares that space. |
+| **The brief** (what the space is, the person, the board, talking, time) | `space/resources/brief.md` (the one source) | Agents in a learning folder: always, through the managed block in `AGENTS.md`. Other agents: `get_brief` (no parameters). | Codex loads `AGENTS.md` up to 32 KiB (`project_doc_max_bytes = 32768`, Codex CLI 0.149), and the folder part shares that space. |
 | The folder's own conventions | `AGENTS.md` outside the managed block (template: `space/resources/learning-folder/AGENTS.md`) | Agents in the folder | Same file as above |
 | Server instructions (short orientation) | `space/resources/instructions.md` | Every agent at connect | Claude Code cuts at 4,096 characters (2.1.296+; 2,048 before). Codex asks that the first 512 characters stand alone. |
-| Board reference (model, HTML, math, SVG, images, tokens, placement, ink, view) | `space/resources/guide.md`, topics | Agents that call `get_guide` | Claude Code tool output: about 25,000 tokens by default |
-| Tool descriptions | `space/src/main/mcp.ts` | Every agent | 4,096 characters each in Claude Code when loaded up front |
+| Tool and parameter descriptions, including the board reference (decision T10): HTML subset, styles, math, SVG, images and colour tokens in `write_html`; ink in `draw_ink`; placement in `PLACE_NOTE` (the `place` parameter); ink groups in `get_canvas_info` | `space/src/main/mcp.ts` | Every agent, on every request | 4,096 characters per tool description in Claude Code when loaded up front (16,384 when deferred); `write_html` is the longest, about 3,900. Parameter descriptions are not cut. |
 | Plugin skill | `learning-space-plugins/plugins/learning-space/skills/learning-space/SKILL.md` | Agents with the plugin, when it applies | Under 500 lines recommended |
-| Per-folder overrides | `.learning-space/guide.md`, `.learning-space/instructions.md` | As above, appended or replacing | — |
+| Per-folder overrides | `.learning-space/guide.md` (added to the brief from `get_brief`), `.learning-space/instructions.md` (added to the server instructions) | As above, appended or replacing | — |
 
 The managed block: `<!-- learning-space brief: start … sha=… -->` …
 `<!-- learning-space brief: end -->`. The app rewrites the block when a
@@ -81,8 +80,13 @@ I2 and P7 in [`decisions.md`](decisions.md) record them.
    the tool does, when it fits and when it does not, what each parameter
    means, what comes back, the caveats. Usually 3–4 sentences or more. No
    behaviour ("be sparing", "the learner does the thinking"); behaviour
-   belongs in the brief. This follows Anthropic's guidance (below).
-8. **One story everywhere (I2).** The brief, the instructions, the guide,
+   belongs in the brief. This follows Anthropic's guidance (below). The
+   descriptions also hold every fact an agent needs to write correctly (the
+   HTML subset, styles, ink, placement; decision T10), so no agent needs a
+   second tool call to learn them. MCP has no `input_examples` field: put a
+   short example value inside the description where the format is not
+   obvious (as in `place` and `draw_ink`).
+8. **One story everywhere (I2).** The brief, the instructions,
    the descriptions, the skill and the template must not contradict each
    other. Keep the brief in one file and point to it; do not copy it.
 
@@ -124,7 +128,7 @@ Follow the same steps to improve it.
    by the founder in the first person: intent, kinds of objectives, the
    board). Also this file's appendix.
 2. **Read what the agent reads now:** `space/resources/brief.md`,
-   `instructions.md`, `guide.md`, the tool descriptions in `mcp.ts`, the
+   `instructions.md`, the tool descriptions in `mcp.ts`, the
    skill, the `AGENTS.md` template.
 3. **Look at real behaviour:** [`baseline.md`](baseline.md) and later bench
    runs; the founder's own traces in `~/.learning-space/traces/` (read with

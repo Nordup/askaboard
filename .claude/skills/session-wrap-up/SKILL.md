@@ -32,7 +32,7 @@ Start one `Explore` subagent with `model: "haiku"` and this brief, filled in:
 
 > Read-only audit of `docs/learning-space/*.md`, `AGENTS.md`, `CLAUDE.md`,
 > `docs/README.md`, `space/README.md`, `space/resources/learning-folder/AGENTS.md`,
-> `space/resources/guide.md`, `space/resources/instructions.md`, and
+> `space/resources/instructions.md`, `space/src/main/mcp.ts` (tool descriptions), and
 > `../learning-space-plugins/README.md`. CURRENT STATE: <the list from step 1>.
 > Report outdated or contradictory lines with file:line and what is true now,
 > and missing sections a newcomer would need. Check tool names against

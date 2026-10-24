@@ -20,7 +20,7 @@ import {
   MAX_SVG_PATH_CHARS,
   MAX_TEXT_CHARS
 } from '@shared/limits'
-import { guideText, guideTopics, serverInstructions } from './guide'
+import { briefText, serverInstructions } from './guide'
 import { BoardNews, type LookCoverage } from './news'
 import { getAgentLook } from './state'
 import type { SnapshotRenderer } from './snapshot'
@@ -184,19 +184,21 @@ const rectSchema = z.object({
   height: boxSize(MAX_REGION_SIZE)
 })
 
+/** What place does; also used where a parameter adds its own condition before it. */
+const PLACE_NOTE =
+  'Position relative to a node or ink group, instead of x and y. Give exactly one of right_of, left_of, below, above or over, set to the target\'s id (a node id, or an ink group id such as "g3"). gap is the distance from the target in board points. align is where the item sits along that side: "start" lines up the top edges (right_of, left_of) or the left edges (above, below), "end" the bottom or right edges, "center" the middles. over centres the item on the target, for a mark on the learner\'s work. When other material takes the spot, the item slides along that side, then tries the other sides; the result\'s "placed" says where it went ("below g3, slid 40 pt right to free space"). When no spot is free, it overlaps and the result lists the overlaps. Example: {"below": "g3", "gap": 24, "align": "center"}.'
+
 const placeSchema = z
   .object({
-    right_of: z.string().optional(),
-    left_of: z.string().optional(),
-    below: z.string().optional(),
-    above: z.string().optional(),
-    over: z.string().optional().describe('On top of the target, centred (for marks on the learner\'s work).'),
+    right_of: z.string().optional().describe('Id of the node or ink group to the left of the item.'),
+    left_of: z.string().optional().describe('Id of the node or ink group to the right of the item.'),
+    below: z.string().optional().describe('Id of the node or ink group above the item.'),
+    above: z.string().optional().describe('Id of the node or ink group below the item.'),
+    over: z.string().optional().describe('Id of the node or ink group to centre the item on.'),
     gap: coord().optional().describe('Distance to the target in board points (default 32; 0 for over).'),
     align: z.enum(['start', 'center', 'end']).optional().describe('Alignment along the side (default "start"; "center" for over).')
   })
-  .describe(
-    'Place relative to a node or ink group: exactly one of right_of, left_of, below, above, over with its id. If the spot is taken it slides along that side, then tries the next side; the result says where it went.'
-  )
+  .describe(PLACE_NOTE)
 
 // ---------- The server ----------
 
@@ -604,7 +606,7 @@ export class AgentServer {
       {
         title: 'Canvas info',
         description:
-          "Describe the current state of Learning Space: the learning folder (name and absolute path), the open board and all boards in the folder, the learner's visible viewport and the bounds of all content (board rects), node counts by kind, the top-level nodes (id, kind, name, author, bounds), the ink groups (id such as \"g3\", author, parent, stroke count, bounds), the learner's selection (ids and bounds), the learner's current tool, and your change cursor. Use it to orient yourself on a board and to find ids and free areas. It returns structured data, not an image: to see what is written or drawn, use get_screenshot. Coordinates are board points (origin at the centre, +x right, +y down).",
+          "Describe the current state of Learning Space: the learning folder (name and absolute path), the open board and all boards in the folder, the learner's visible viewport and the bounds of all content (board rects), node counts by kind, the top-level nodes (id, kind, name, author, bounds), the ink groups (id such as \"g3\", author, parent, stroke count, bounds), the learner's selection (ids and bounds), the learner's current tool, and your change cursor. Use it to orient yourself on a board and to find ids and free areas. It returns structured data, not an image: to see what is written or drawn, use get_screenshot. Coordinates are board points (origin at the centre, +x right, +y down).\n\nInk groups: the app groups pen strokes by distance and time, separately per parent frame and per author, and each draw_ink call is a group of its own. A group keeps its id while the learner adds strokes to it; when two groups merge, the older id stays. A group id works wherever a node id does: get_screenshot node_id, near, place, move_nodes, duplicate_nodes, delete_nodes, draw_ink target.",
         inputSchema: {},
         annotations: { readOnlyHint: true }
       },
@@ -738,15 +740,15 @@ export class AgentServer {
     )
 
     server.registerTool(
-      'get_guide',
+      'get_brief',
       {
-        title: 'The agent guide',
+        title: 'The Learning Space brief',
         description:
-          `Read the Learning Space guide. Topic "brief" explains what the space is for and how the person and you work together in it; it is the same text as the brief in a learning folder's AGENTS.md, so skip it when that is already in your context. The reference topics describe the board's model and the details of every write: html, math, svg, images, tokens, placement, ink and view. topic: one of ${guideTopics(this.hooks.folderRoot()).join(', ')}. Without a topic, one call returns every reference topic (about 7,000 characters). The learning folder's own guidance, if any, comes last.`,
-        inputSchema: { topic: z.string().optional() },
+          "Read the Learning Space brief: what the space is for, why a person comes here and how to read what they want, how to treat their work on the board, what the board and each material (ink, drawings, text, images) are good for, how one board grows over a conversation, talking by text and by voice, time, research and the learning folder as memory. It is the same text as the managed brief block in a learning folder's AGENTS.md, so an agent that has that file in its context already has it. The learning folder's own guidance (.learning-space/guide.md), if it exists, follows the brief under the heading \"Guidance for this learning folder\". No parameters. Returns markdown, about 16,000 characters. It holds no technical reference: the HTML subset, styles, math, SVG, images and colour tokens are in write_html's description, ink in draw_ink's, and placement in the place parameter's.",
+        inputSchema: {},
         annotations: { readOnlyHint: true }
       },
-      this.tool(session, 'get_guide', async ({ topic }) => text(guideText(this.hooks.folderRoot(), topic)))
+      this.tool(session, 'get_brief', async () => text(briefText(this.hooks.folderRoot())))
     )
 
     server.registerTool(
@@ -808,13 +810,13 @@ export class AgentServer {
       {
         title: 'Write HTML as nodes',
         description:
-          "Add material to the board as nodes, written in a small HTML subset: text and formulas (<p>, <h1>–<h6>, <b>, <i>, $math$), SVG drawings (<svg>), images (<img>), and boxes (<div>, which become frames). mode \"insert_children\" (default) adds the HTML inside the frame target_id, or at the top level for target_id \"root\"; mode \"replace\" replaces the node target_id, and the first new top-level node keeps target_id's id. For \"root\", place puts the new nodes relative to a node or ink group, and near picks an automatic spot beside one. Returns the new top-level ids, a map from layer-name to id, the measured bounds after layout, whether everything is in the learner's view, what the new nodes overlap, and any HTML or styles that were ignored. The supported tags and styles are in get_guide topic \"html\". One undo step for the learner.",
+          "Add material to the open board, written in a small HTML subset that the app converts into editable nodes. Returns the new top-level ids (created), a map from layer-name to id (named), the measured bounds after layout, how the nodes were placed and whether they are in the learner's view, what they now overlap (overlaps: [{id, kind, author, area_pct}], plus warnings such as \"covers learner ink g3\"), and ignored: the tags, attributes and styles the board did not use, with notes. One call is one undo step for the learner.\n\nWhere it goes: mode \"insert_children\" (default) adds the HTML inside the frame target_id, or at the top level for target_id \"root\"; mode \"replace\" replaces the node target_id, and the first new top-level node keeps its id (get_html returns a node's current HTML). For \"root\", place puts the nodes beside a node or ink group; without place the app picks an empty spot near near (or the learner's latest work).\n\nHow HTML becomes nodes: an element whose children are all inline (text, <b>/<strong>, <i>/<em>, <br>, $math$) becomes one text node; an element with block children becomes a frame, a box that holds and moves its children; <svg> becomes a drawing; <img> an image. layer-name=\"Hint 1\" on any element names its node. <h1>\u2013<h6> default to 28, 22, 18, 16, 15 and 14 px. <ul>/<ol> become a column of lines prefixed \"\u2022 \" or \"1. \". <pre> keeps whitespace, monospace, no markup. Styles on <span> and <b> are dropped: style the whole block. Tables become plain boxes without column alignment: build rows with flex. <style>, <script>, classes and event attributes are dropped.\n\nMath: $\u2026$ in KaTeX syntax inside any text, for example <p>Kepler: $T^2 \\propto a^3$</p>. Math is inline only ($$\u2026$$ is not display math). A literal dollar sign is \\$.\n\nLayout is flexbox. A frame without display:flex becomes a flex column, except one whose children use position:absolute; left:\u2026px; top:\u2026px, which places them freely. No margin, grid, float or tables: space with gap and padding. Sizing is border-box; height:fit-content lets a frame grow with its content.\n\nStyles: inline style=\"\u2026\" only, with CSS property names in kebab-case (font-size; fontSize is ignored). Accepted: width, height, min-/max-width, min-/max-height, padding and its sides, gap, row-gap, column-gap, display (flex, block, none), flex-direction, flex-wrap, align-items, align-content, justify-content, align-self, flex-grow, flex-shrink, flex-basis, background, background-color, color, opacity, border-radius, border and its sides, border-color, border-width, border-style, box-shadow, font-size, font-weight, font-style, font-family, line-height, letter-spacing, text-align, text-decoration, text-transform, white-space, overflow, object-fit. Sizes in px; line-height in px or a plain number. url() values are dropped.\n\nColours: the board is dark. Tokens that match the app, usable in any style or SVG fill/stroke: var(--ls-card) #1f2230 and var(--ls-card-2) #262a3a (backgrounds), var(--ls-text) #ececef, var(--ls-muted) #a0a0a8, var(--ls-accent) #6e8bff (blue), var(--ls-good) #5fd38d (green), var(--ls-bad) #ff6b8b (pink-red), var(--ls-warn) #f5d76e (yellow), var(--ls-border) #2e3448, var(--ls-font), var(--ls-mono). Literal colours also work.\n\nSVG: inline <svg viewBox=\"\u2026\"> with a width and height (default: the viewBox size in px). Element ids stay, scoped to the drawing, and get_node_info lists them; markers and gradients work with url(#id) inside the same svg. Scripts, <foreignObject>, <image>, <style>, <a> and external references are removed.\n\nImages: <img src> with an https URL is downloaded into the folder's assets/ (png, jpeg, gif, webp, avif or svg, up to 10 MB); data: URLs are saved there too; a path inside the learning folder (assets/orbit.png) is used as is. Give a width and height. An image that fails to load is left out and named in ignored.notes.",
         inputSchema: {
           html: z.string().max(MAX_HTML_CHARS, `html must be at most ${MAX_HTML_CHARS} characters; write it in smaller parts.`),
-          target_id: z.string().describe('A frame id, or "root".'),
-          mode: z.enum(['insert_children', 'replace']).optional(),
-          near: z.string().optional().describe('target_id "root" only: a node or ink group id for the automatic spot.'),
-          place: placeSchema.optional().describe('target_id "root" only: place the new nodes relative to a node or ink group.')
+          target_id: z.string().describe('A frame id to write into (or the node to replace), or "root" for the top level of the board.'),
+          mode: z.enum(['insert_children', 'replace']).optional().describe('"insert_children" (default) or "replace".'),
+          near: z.string().optional().describe('target_id "root" only: a node or ink group id; the app picks an empty spot beside it.'),
+          place: placeSchema.optional().describe(`target_id "root" only. ${PLACE_NOTE}`)
         }
       },
       this.tool(session, 'write_html', async (args) => text(json(await this.board(session, 'writeHtml', args, WRITE_TIMEOUT_MS))))
@@ -825,7 +827,7 @@ export class AgentServer {
       {
         title: 'Update styles',
         description:
-          "Change style properties of existing nodes, such as colour, size, padding, border or font. updates is a list of {node_ids, styles}; styles are camelCase CSS, numbers mean px, and \"\" or null removes a property. Ink nodes and ink groups accept only color. Positions are not styles: use move_nodes. Returns the properties that were ignored and what the nodes now overlap. One undo step for the learner.",
+          "Change style properties of existing nodes, such as colour, size, padding, border or font. updates is a list of {node_ids, styles}; styles are CSS properties in camelCase or kebab-case (fontSize or font-size; the accepted properties are listed in write_html), numbers mean px, and \"\" or null removes a property. Ink nodes and ink groups accept only color. Positions are not styles: use move_nodes. Returns the properties that were ignored and what the nodes now overlap. One undo step for the learner.",
         inputSchema: {
           updates: z.array(z.object({ node_ids: nodeIds, styles: z.record(z.string(), z.union([styleValue, z.null()])) })).min(1).max(MAX_LIST_ITEMS)
         }
@@ -905,9 +907,9 @@ export class AgentServer {
       {
         title: 'Draw ink',
         description:
-          "Draw pen strokes on the board: the same kind of ink as the learner's handwriting, with natural pressure and a slight hand wobble, which the learner can erase, lasso or move like their own. Give one of: shape + target (circle, underline, tick, cross or arrow, built from the bounds of a node or ink group; an arrow starts at from_id or comes in from side), strokes (lists of [x, y] points), or svg_path (an SVG path \"d\" with M, L, C, Q, A, Z; each subpath becomes one stroke). Coordinates in strokes and svg_path are board points, or relative to x, y when given, or placed as a whole with place. Ink drawn over a frame becomes part of it. Ink cannot fill shapes and is not suited to words; use write_html for text and filled drawings. Each call makes one ink group and one undo step. Default colour: pink for circle and cross, green for tick, otherwise the accent, never the learner's pen colour. Returns the group id, its bounds and what it overlaps.",
+          "Draw pen strokes on the open board: the same kind of ink as the learner's handwriting, with natural pressure and a slight hand wobble, which the learner can erase, lasso or move like their own. Each call makes one ink group (its id, such as \"g7\", comes back) and one undo step; delete_nodes([\"g7\"]) removes it. Returns the group id, its bounds, how it was placed and what it overlaps.\n\nGive exactly one of:\n- shape + target: a mark built from the bounds of a node or ink group. circle goes around the target, underline under it, tick and cross just right of it, arrow points at it from from_id (a node or group) or comes in from side. Example: {\"shape\": \"circle\", \"target\": \"g3\"}.\n- strokes: polylines of [x, y] points, one list per stroke. Example arrow: [[[0, 0], [80, 0]], [[66, -10], [80, 0], [66, 10]]].\n- svg_path: an SVG path \"d\" with any path command (M, L, H, V, C, S, Q, T, A, Z, and relative forms); each subpath is one stroke. Example: \"M0 0 C 20 -30, 60 -30, 80 0\".\n\nPosition of strokes and svg_path: board points; or offsets from x, y when given; or placed as a whole with place (place {over: \"g3\"} centres the drawing on g3, {right_of: \"g3\"} puts it beside). Ink drawn over a frame becomes part of that frame and moves with it, unless parent_id says otherwise.\n\nInk is strokes only: it cannot fill a shape and holds no text; text and filled shapes go through write_html.\n\nColour: default pink (bad) for circle and cross, green (good) for tick, the accent blue otherwise, and never close to the learner's current pen colour. The highlighter is 4 times wider than the width and half transparent.",
         inputSchema: {
-          shape: z.enum(['circle', 'underline', 'tick', 'cross', 'arrow']).optional(),
+          shape: z.enum(['circle', 'underline', 'tick', 'cross', 'arrow']).optional().describe('A mark built from the bounds of target.'),
           target: z.string().optional().describe('shape: the node or ink group to mark.'),
           from_id: z.string().optional().describe('arrow: start at this node or group.'),
           side: z.enum(['left', 'right', 'above', 'below']).optional().describe('arrow without from_id: come in from this side (default left).'),
@@ -915,19 +917,19 @@ export class AgentServer {
             .array(z.array(z.array(coord()).min(2).max(3)).min(1).max(MAX_INK_POINTS, `At most ${MAX_INK_POINTS} points.`))
             .max(MAX_INK_LINES, `At most ${MAX_INK_LINES} strokes.`)
             .optional()
-            .describe('Polylines of [x, y] points.'),
+            .describe('Polylines of [x, y] points, one list per stroke.'),
           svg_path: z
             .string()
             .max(MAX_SVG_PATH_CHARS, `svg_path must be at most ${MAX_SVG_PATH_CHARS} characters.`)
             .optional()
-            .describe('An SVG path "d" (M, L, C, Q, A, Z …); each subpath is one stroke.'),
-          x: coord().optional(),
-          y: coord().optional(),
+            .describe('An SVG path "d", such as "M0 0 L80 0"; each subpath is one stroke.'),
+          x: coord().optional().describe('Origin for strokes and svg_path, in board points.'),
+          y: coord().optional().describe('Origin for strokes and svg_path, in board points.'),
           place: placeSchema.optional(),
           parent_id: z.string().optional().describe('A frame to hold the ink, or "root". Default: the frame under most of it.'),
-          color: z.string().optional().describe('Hex, rgb(), or a name: accent, good, bad, warn, white, yellow, blue, green, pink, orange.'),
+          color: z.string().optional().describe('A name (accent, good, bad, warn, text, white, yellow, blue, green, pink, orange, red), a token such as var(--ls-good), hex (#ff6b8b), rgb() or hsl().'),
           width: z.number().positive().max(40).optional().describe('Pen width in board points (default 3.5; the highlighter is 4 times wider).'),
-          tool: z.enum(['pen', 'highlighter']).optional(),
+          tool: z.enum(['pen', 'highlighter']).optional().describe('"pen" (default) or "highlighter".'),
           jitter: z.number().min(0).max(1).optional().describe('Hand wobble, 0 = none (default 0.3).')
         }
       },

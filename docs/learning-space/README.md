@@ -18,7 +18,7 @@ in [`../../space/`](../../space/); work happens on `main`.
 | Agents see the canvas (MCP server, screenshots, changes) | Done |
 | One editable document: ink, frames, text with math, SVG, images; HTML ⇄ nodes | Done |
 | Agent tools in Paper's style, ink groups, relative placement, agent ink, focus | Done |
-| Folder setup (`AGENTS.md` template), editable board guide | Done |
+| Folder setup (`AGENTS.md` template), editable folder guide | Done |
 | Public plugin repo, stdio relay, plugin-first Connect popover | Done |
 | One shared design system for menus | Done |
 | Measurement: session trace, trace report, bench (4 scenarios) | Done: [`baseline.md`](baseline.md) |
@@ -77,7 +77,7 @@ the live-frame idea was rejected).
 | `space/` | The Electron app. Its README covers running and dev automation. |
 | `github.com/Nordup/learning-space-plugins` (checkout `../learning-space-plugins`) | Plugins for Claude Code, ChatGPT and Codex, Cursor; the Claude Desktop extension. |
 | `space/resources/learning-folder/` | The template copied into a learning folder at setup (`AGENTS.md`, `plan.md`, `learner.md`). |
-| `space/resources/brief.md`, `guide.md`, `instructions.md` | The brief, the board reference and the server instructions that agents read. |
+| `space/resources/brief.md`, `instructions.md`; tool descriptions in `space/src/main/mcp.ts` | The brief, the server instructions, and the tool descriptions that hold the board reference (decision T10). |
 | `docs/learning-space/reference/paper/` | Paper's agent interface, captured live. Local only (git-ignored). |
 | `~/Projects/learning/learning-space` | The founder's own learning folder. Never use it for checks. |
 
@@ -91,11 +91,11 @@ the live-frame idea was rejected).
 | Node | One object on a board: `ink`, `frame`, `text`, `svg` or `image`. |
 | Frame | A box node that holds other nodes (a card, a page). |
 | Ink group | A cluster of the learner's strokes with a short id (`g1`, `g2`). Agents place things relative to it. |
-| Board guide | The instructions agents read with `get_guide`; extendable per folder in `.learning-space/guide.md`. |
+| Folder guide | `.learning-space/guide.md` in a learning folder: text that `get_brief` adds to the brief (or puts in its place with `mode: replace`). |
 | Relay | The command `~/.learning-space/bin/learning-space mcp` that connects stdio clients to the app. |
 | Agent pill | The status control in the top bar; it opens the agents list and the connect view. |
 | Plugin | The package in the plugin repo that installs the connection (and a small skill) into an agent client. |
-| Brief | `space/resources/brief.md`: what the space is for and how agents think about their part. The main text agents read. |
+| Brief | `space/resources/brief.md`: what the space is for and how agents think about their part. The main text agents read: in a learning folder's `AGENTS.md`, or with `get_brief` for agents without it. |
 | Managed block | The part of a folder's `AGENTS.md` between the "learning-space brief" markers. The app keeps it equal to the brief unless the learner edits it. |
 | Trace | The JSONL record of one agent session's MCP calls, in `~/.learning-space/traces/`. |
 | Bench | `space/scripts/bench/run.mjs`: 4 fixed scenarios (S1–S4) run by a headless agent, to measure a change. |

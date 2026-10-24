@@ -4,21 +4,23 @@ import type { FolderOverride, GuideOverrides } from '@shared/space-api'
 import { resourcePath } from './resources'
 
 /**
- * What agents read: the server instructions (sent at connect) and the guide
- * (get_guide). The text lives in markdown files, read fresh on every use, so
- * prompt experiments need no rebuild:
+ * What agents read from this file: the server instructions (sent at connect)
+ * and the brief (get_brief). The text lives in markdown files, read fresh on
+ * every use, so prompt experiments need no rebuild:
  *
- * - built in: `resources/guide.md` and `resources/instructions.md`;
- * - the brief, `resources/brief.md`: get_guide topic "brief" (also the managed
- *   block in a learning folder's AGENTS.md, see brief-block.ts). It is not a
- *   reference topic, so get_guide without a topic leaves it out;
- * - per learning folder: `.learning-space/guide.md` and
- *   `.learning-space/instructions.md`. Their text is appended to the built-in
- *   text, or replaces it when the file starts with front matter `mode: replace`.
+ * - built in: `resources/instructions.md` and `resources/brief.md` (the brief
+ *   is also the managed block in a learning folder's AGENTS.md, see
+ *   brief-block.ts, so agents in a learning folder never need get_brief);
+ * - per learning folder: `.learning-space/guide.md` (added to the brief that
+ *   get_brief returns) and `.learning-space/instructions.md`. Their text is
+ *   appended to the built-in text, or replaces it when the file starts with
+ *   front matter `mode: replace`.
  *
- * HTML comments are notes for people and never reach the agent. In guide.md,
- * `<!-- topic: name -->` under a `## ` heading names the section for
- * get_guide's `topic` parameter.
+ * The board reference (HTML subset, styles, math, SVG, images, tokens, ink,
+ * placement) is not here: it lives in the tool and parameter descriptions in
+ * mcp.ts (decision T10).
+ *
+ * HTML comments are notes for people and never reach the agent.
  *
  * Folder files are untrusted input: every text pass here is linear in the
  * file size (indexOf scans and per-line work, no backtracking regexes).
@@ -30,19 +32,12 @@ const MAX_OVERRIDE_BYTES = 64 * 1024
 const FOLDER_HEADING = 'Guidance for this learning folder'
 const FOLDER_PREFIX = "The following guidance comes from the learner's folder."
 const REPLACED_LINE = "Learning Space: the learner's folder replaced these instructions."
-/** The get_guide topic that serves resources/brief.md. */
-const BRIEF_TOPIC = 'brief'
 
 type FolderFileName = 'guide.md' | 'instructions.md'
 
 type FolderText =
   | { kind: 'text'; mode: 'append' | 'replace'; body: string }
   | { kind: 'too-large'; size: number }
-
-interface Section {
-  topic: string
-  text: string
-}
 
 /** Remove `<!-- … -->`. An unterminated `<!--` drops the rest of the text. */
 function stripComments(text: string): string {
@@ -154,44 +149,6 @@ function readBuiltIn(name: string): string {
   }
 }
 
-/** The topic marker `<!-- topic: name -->` in a section, or null. */
-function topicMarker(text: string): string | null {
-  let from = 0
-  for (;;) {
-    const open = text.indexOf('<!--', from)
-    if (open < 0) return null
-    const close = text.indexOf('-->', open + 4)
-    if (close < 0) return null
-    const inner = text.slice(open + 4, close).trim()
-    if (inner.startsWith('topic:')) {
-      const name = inner.slice(6).trim()
-      if (name && [...name].every((ch) => /[\w-]/.test(ch))) return name
-    }
-    from = close + 3
-  }
-}
-
-/** Split markdown at `## ` headings. The topic is the section's topic marker, else its slugged title. */
-function splitSections(markdown: string): Section[] {
-  const sections: { title: string; lines: string[] }[] = []
-  for (const line of markdown.replace(/\r\n?/g, '\n').split('\n')) {
-    const title = line.startsWith('##') && /\s/.test(line.charAt(2)) ? line.slice(3).trim() : ''
-    if (title) sections.push({ title, lines: [line] })
-    else sections.at(-1)?.lines.push(line)
-  }
-  return sections.map(({ title, lines }) => {
-    const text = lines.join('\n')
-    const topic = topicMarker(text) ?? title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
-    return { topic, text }
-  })
-}
-
-/** The guide's base text: the built-in guide, or the folder's guide in replace mode. */
-function guideBase(root: string | null): { base: string; local: FolderText | null } {
-  const local = readFolderText(root, 'guide.md')
-  return { base: local?.kind === 'text' && local.mode === 'replace' ? local.body : readBuiltIn('guide.md'), local }
-}
-
 /** Called after agent text is built, so the UI can show the folder's overrides. */
 let overridesRead: ((root: string | null) => void) | null = null
 export function onOverridesRead(listener: (root: string | null) => void): void {
@@ -205,33 +162,17 @@ function notify(root: string | null): void {
   }
 }
 
-/** The topic names get_guide accepts now. */
-export function guideTopics(root: string | null): string[] {
+/**
+ * The get_brief text: the built-in brief, then the learning folder's own
+ * guidance (.learning-space/guide.md). In replace mode the folder's text is
+ * the whole brief.
+ */
+export function briefText(root: string | null): string {
   try {
-    return [BRIEF_TOPIC, ...splitSections(guideBase(root).base).map((section) => section.topic).filter((topic) => topic !== BRIEF_TOPIC)]
-  } catch {
-    return []
-  } finally {
-    notify(root)
-  }
-}
-
-/** The get_guide text. With a topic: only that section (or the brief). Without: every reference topic, folder guidance last. */
-export function guideText(root: string | null, topic?: string): string {
-  try {
-    if (topic === BRIEF_TOPIC) return `${clean(readBuiltIn('brief.md'))}\n`
-    const { base, local } = guideBase(root)
-    if (topic) {
-      const sections = splitSections(base)
-      const found = sections.filter((section) => section.topic === topic)
-      if (!found.length) {
-        const topics = [BRIEF_TOPIC, ...sections.map((section) => section.topic)]
-        throw new Error(`No guide topic "${topic}". Topics: ${topics.join(', ')}.`)
-      }
-      return `${clean(found.map((section) => section.text).join('\n\n'))}\n`
-    }
-    const parts = [clean(base)]
-    if (local?.kind === 'text' && local.mode === 'append') parts.push(`## ${FOLDER_HEADING}\n\n${FOLDER_PREFIX}\n\n${local.body}`)
+    const local = readFolderText(root, 'guide.md')
+    if (local?.kind === 'text' && local.mode === 'replace') return `${local.body}\n`
+    const parts = [clean(readBuiltIn('brief.md'))]
+    if (local?.kind === 'text') parts.push(`## ${FOLDER_HEADING}\n\n${FOLDER_PREFIX}\n\n${local.body}`)
     if (local?.kind === 'too-large') parts.push(tooLargeNote('guide.md', local.size))
     return `${parts.join('\n\n')}\n`
   } finally {
@@ -249,7 +190,7 @@ export function serverInstructions(root: string | null): string {
       builtIn = clean(readBuiltIn('instructions.md'))
     } catch (error) {
       console.error(String(error))
-      builtIn = 'Learning Space is a shared canvas. Call get_guide before your first write.'
+      builtIn = 'Learning Space is a shared board where a person learns with you. If the Learning Space brief is not in your context, read it with get_brief.'
     }
     if (local?.kind === 'too-large') return `${builtIn}\n\n${tooLargeNote('instructions.md', local.size)}`
     return local ? `${builtIn}\n\n## ${FOLDER_HEADING}\n\n${FOLDER_PREFIX}\n\n${local.body}` : builtIn
