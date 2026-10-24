@@ -5,6 +5,7 @@
  * This is a measurement, not a test: nothing passes or fails.
  *
  *   node scripts/bench/run.mjs [--scenarios S1,S2,S3,S4,P1,P2,P3] [--model opus] [--client claude|codex]
+ *                              [--effort medium] [--codex-home <dir>]
  *                              [--out <dir>] [--dev] [--mcp-port 47870] [--debug-port 9470]
  *                              [--timeout-min 15]
  *
@@ -24,24 +25,33 @@
  * --model haiku, not measured), draws the learner's new work, then measures a
  * NEW agent run (turn 1). See PERCEPTION in scenarios.mjs.
  *
+ * --client codex runs `codex exec --json` (the founder's model, gpt-6.1-sol at
+ * reasoning effort medium, unless --model / --effort say otherwise) with a
+ * scratch CODEX_HOME (--codex-home) whose config.toml holds only the bench's
+ * learning-space server. Its auth.json is a symlink to ~/.codex/auth.json (the
+ * runner makes it when it is missing). Follow-ups resume the thread by its id;
+ * turn 0 of P scenarios uses the same model at effort low. Codex reports no
+ * cost: the metrics hold its token usage, and brief_loaded says whether the
+ * learning folder's AGENTS.md brief was in the agent's context.
+ *
  * Built mode needs `npm run build` first. The ports must be free: the runner
  * never stops a process it did not start.
  */
 import { spawn, execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, writeFileSync, closeSync } from 'node:fs'
+import { copyFileSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, symlinkSync, writeFileSync, closeSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { createConnection } from 'node:net'
 import { createRequire } from 'node:module'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ALL_SCENARIOS, CONVERSATIONS, PERCEPTION, S_SCENARIOS, TURN0_MODEL, TURN0_PROMPT } from './scenarios.mjs'
+import { ALL_SCENARIOS, CONVERSATIONS, PERCEPTION, S_SCENARIOS, TURN0_CODEX_EFFORT, TURN0_MODEL, TURN0_PROMPT } from './scenarios.mjs'
 import { seedBusy } from './busy.mjs'
 import { analyzeFile, readJsonl, totalOf, rectText, LOOK_TOOLS } from '../trace-report.mjs'
 
 const SPACE = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const DRIVE = join(SPACE, 'scripts/drive.mjs')
 const TEMPLATE = join(SPACE, 'resources/learning-folder')
-const CODEX_HOME = '/private/tmp/claude-501/ls-bench/codex-home'
 
 // ---------- Arguments ----------
 
@@ -63,6 +73,8 @@ const opts = {
     .filter(Boolean),
   client: option('--client', 'claude'),
   model: option('--model', null),
+  effort: option('--effort', null),
+  codexHome: resolve(option('--codex-home', '/private/tmp/claude-501/ls-bench-codex/codex-home')),
   out: resolve(option('--out', `/private/tmp/claude-501/ls-bench/runs/${stamp}`)),
   dev: flag('--dev'),
   mcpPort: Number(option('--mcp-port', '47870')),
@@ -70,6 +82,9 @@ const opts = {
   timeoutMs: Number(option('--timeout-min', '15')) * 60_000
 }
 if (opts.client === 'claude' && !opts.model) opts.model = 'opus'
+// The founder's Codex setup (Codex Desktop): gpt-6.1-sol at reasoning effort medium.
+if (opts.client === 'codex' && !opts.model) opts.model = 'gpt-6.1-sol'
+if (opts.client === 'codex' && !opts.effort) opts.effort = 'medium'
 
 const pids = { started: [], stopped: [] }
 const log = (...parts) => console.log(`[bench ${new Date().toISOString().slice(11, 19)}]`, ...parts)
@@ -243,7 +258,7 @@ function runProcess(command, args, { cwd, env, stdoutFile, stderrFile }) {
   })
 }
 
-async function runAgent(scenario, work, dir, model = opts.model) {
+async function runAgent(scenario, work, dir, model = opts.model, effort = opts.effort) {
   const mcpUrl = `http://127.0.0.1:${opts.mcpPort}/mcp`
   const stdoutFile = join(dir, 'agent-stdout.txt')
   const stderrFile = join(dir, 'agent-stderr.txt')
@@ -268,26 +283,174 @@ async function runAgent(scenario, work, dir, model = opts.model) {
       client_duration_ms: parsed?.duration_ms ?? null
     }
   }
-  // Codex: a scratch CODEX_HOME so the founder's config (and its learning-space entry) stays out.
-  if (!existsSync(join(CODEX_HOME, 'auth.json'))) {
-    throw new Error(`Codex needs a login in the scratch CODEX_HOME. Run once: CODEX_HOME=${CODEX_HOME} codex login`)
+  return runCodex(scenario, work, dir, model, effort)
+}
+
+/**
+ * The scratch CODEX_HOME: auth.json is a symlink to the founder's login (never a copy),
+ * and config.toml holds only the bench's own learning-space server, so none of the
+ * founder's plugins or MCP servers load.
+ */
+function prepareCodexHome() {
+  const home = opts.codexHome
+  mkdirSync(home, { recursive: true })
+  const auth = join(home, 'auth.json')
+  let present = false
+  try {
+    lstatSync(auth)
+    present = true
+  } catch {
+    // Missing: link it below.
   }
+  if (!present) {
+    const real = join(homedir(), '.codex/auth.json')
+    if (!existsSync(real)) throw new Error(`No Codex login at ${real}. Log in with \`codex login\` first.`)
+    symlinkSync(real, auth)
+    log(`linked ${auth} -> ${real}`)
+  }
+  try {
+    execFileSync('codex', ['login', 'status'], { env: { ...process.env, CODEX_HOME: home }, stdio: 'pipe' })
+  } catch (error) {
+    throw new Error(`\`codex login status\` failed with CODEX_HOME=${home}: ${String(error.stderr ?? error.message ?? error).trim()}`)
+  }
+  const mcpUrl = `http://127.0.0.1:${opts.mcpPort}/mcp`
+  // Model, effort and features as in the founder's ~/.codex/config.toml. The sandbox is read-only
+  // (the founder runs danger-full-access): the agent writes only through MCP, whose tools are pre-approved.
   writeFileSync(
-    join(CODEX_HOME, 'config.toml'),
-    `approval_policy = "never"\nsandbox_mode = "read-only"\n${opts.model ? `model = ${JSON.stringify(opts.model)}\n` : ''}\n[mcp_servers.learning-space]\nurl = ${JSON.stringify(mcpUrl)}\n`
+    join(home, 'config.toml'),
+    [
+      'approval_policy = "never"',
+      'sandbox_mode = "read-only"',
+      `model = ${JSON.stringify(opts.model)}`,
+      `model_reasoning_effort = ${JSON.stringify(opts.effort)}`,
+      'service_tier = "default"',
+      '',
+      '[features]',
+      'js_repl = false',
+      'multi_agent_v2 = true',
+      '',
+      '[mcp_servers.learning-space]',
+      `url = ${JSON.stringify(mcpUrl)}`,
+      // Without this, a read-only sandbox with approval "never" declines every write tool
+      // ("writes require approval"), so the agent can only look.
+      'default_tools_approval_mode = "approve"',
+      ''
+    ].join('\n')
   )
+}
+
+/** The rollout file of a Codex thread in the scratch CODEX_HOME, or null. */
+function codexRollout(threadId) {
+  if (!threadId) return null
+  const found = []
+  const walk = (d) => {
+    if (!existsSync(d)) return
+    for (const entry of readdirSync(d, { withFileTypes: true })) {
+      const path = join(d, entry.name)
+      if (entry.isDirectory()) walk(path)
+      else if (entry.name.startsWith('rollout-') && entry.name.endsWith(`${threadId}.jsonl`)) found.push(path)
+    }
+  }
+  walk(join(opts.codexHome, 'sessions'))
+  return found[0] ?? null
+}
+
+/** Was the learning folder's brief (AGENTS.md) in the agent's context? Looks at the context items, not at tool results. */
+function briefInRollout(file) {
+  if (!file) return null
+  const marker = 'learning-space brief: start'
+  for (const line of readFileSync(file, 'utf8').split('\n')) {
+    if (!line.includes(marker)) continue
+    try {
+      const entry = JSON.parse(line)
+      const p = entry.payload ?? {}
+      if (entry.type === 'world_state' || entry.type === 'turn_context') return true
+      if (entry.type === 'response_item' && p.type === 'message' && p.role !== 'assistant') return true
+    } catch {
+      // A partial line.
+    }
+  }
+  return false
+}
+
+async function runCodex(scenario, work, dir, model, effort) {
+  const stdoutFile = join(dir, 'agent-stdout.jsonl')
+  const stderrFile = join(dir, 'agent-stderr.txt')
   const lastMessage = join(dir, 'reply.txt')
-  const args = scenario.followUp
-    ? ['exec', 'resume', '--last', '--skip-git-repo-check', '--output-last-message', lastMessage, scenario.prompt]
-    : ['exec', '--skip-git-repo-check', '--output-last-message', lastMessage, scenario.prompt]
-  const code = await runProcess('codex', args, { cwd: work.folder, env: { ...process.env, CODEX_HOME }, stdoutFile, stderrFile })
+  const common = ['--json', '--skip-git-repo-check', '-m', model, '-c', `model_reasoning_effort=${JSON.stringify(effort)}`, '-o', lastMessage]
+  // A follow-up resumes this conversation's thread by id; anything else is a new `codex exec`.
+  const resume = scenario.followUp && work.codexThread
+  if (scenario.followUp && !work.codexThread) throw new Error(`${scenario.id} is a follow-up, but the conversation has no Codex thread.`)
+  const args = resume ? ['exec', 'resume', ...common, work.codexThread, scenario.prompt] : ['exec', ...common, scenario.prompt]
+  const code = await runProcess('codex', args, { cwd: work.folder, env: { ...process.env, CODEX_HOME: opts.codexHome }, stdoutFile, stderrFile })
+
+  let threadId = resume ? work.codexThread : null
+  const tokens = { input: 0, cached_input: 0, output: 0, reasoning_output: 0 }
+  let turns = 0
+  let failed = false
+  const errors = []
+  const declined = []
+  for (const line of readFileSync(stdoutFile, 'utf8').split('\n')) {
+    let event
+    try {
+      event = JSON.parse(line)
+    } catch {
+      continue
+    }
+    if (event.type === 'thread.started') threadId = event.thread_id
+    if (event.type === 'turn.completed') {
+      turns += 1
+      const u = event.usage ?? {}
+      tokens.input += u.input_tokens ?? 0
+      tokens.cached_input += u.cached_input_tokens ?? 0
+      tokens.output += u.output_tokens ?? 0
+      tokens.reasoning_output += u.reasoning_output_tokens ?? 0
+    }
+    // A tool call Codex failed itself (for example a declined approval) never reaches the app trace.
+    if (event.type === 'item.completed' && event.item?.type === 'mcp_tool_call' && event.item.status === 'failed') {
+      declined.push(`${event.item.tool}: ${event.item.error?.message ?? 'failed'}`)
+    }
+    if (event.type === 'turn.failed' || event.type === 'error') {
+      failed = true
+      errors.push(event.error?.message ?? event.message ?? JSON.stringify(event))
+    }
+  }
+  // On a resumed thread, turn.completed reports the thread's running total: keep this run's share.
+  const totals = { ...tokens }
+  if (resume && work.codexTokens) for (const key of Object.keys(tokens)) tokens[key] = Math.max(0, tokens[key] - work.codexTokens[key])
+  if (!String(scenario.id).endsWith('-turn0') && threadId && (resume || !scenario.followUp)) {
+    work.codexThread = threadId
+    work.codexTokens = totals
+  }
+
+  const rollout = codexRollout(threadId)
+  if (rollout) copyFileSync(rollout, join(dir, 'codex-rollout.jsonl'))
+  let clientMs = null
+  if (rollout) {
+    // The duration of this run's last task in the thread.
+    for (const line of readFileSync(rollout, 'utf8').split('\n')) {
+      if (!line.includes('"task_complete"')) continue
+      try {
+        clientMs = JSON.parse(line).payload?.duration_ms ?? clientMs
+      } catch {
+        // A partial line.
+      }
+    }
+  }
   return {
     exit_code: code,
     reply: existsSync(lastMessage) ? readFileSync(lastMessage, 'utf8') : '',
-    is_error: code !== 0,
+    is_error: code !== 0 || failed,
+    ...(errors.length ? { client_errors: errors } : {}),
+    client_failed_tool_calls: declined,
+    effort,
+    codex_thread: threadId,
+    resumed: Boolean(resume),
+    brief_loaded: briefInRollout(rollout),
+    tokens,
     cost_usd: null,
-    num_turns: null,
-    client_duration_ms: null
+    num_turns: turns || null,
+    client_duration_ms: clientMs
   }
 }
 
@@ -483,11 +646,11 @@ function copyTraces(files, dir) {
 }
 
 /** One agent turn: run it, then collect the trace files it wrote and the agent sessions in them. */
-async function agentTurn(scenario, work, dir, model) {
+async function agentTurn(scenario, work, dir, model, effort) {
   mkdirSync(dir, { recursive: true })
   const before = new Set(traceFiles(work.traces))
   const t0 = Date.now()
-  const agent = await runAgent(scenario, work, dir, model)
+  const agent = await runAgent(scenario, work, dir, model, effort)
   const t1 = Date.now()
   await sleep(1000) // trace writes and images are queued
   const files = traceFiles(work.traces).filter((f) => !before.has(f))
@@ -534,7 +697,13 @@ async function runPerception(p, work) {
   writeFileSync(join(dir, 'seed.json'), JSON.stringify({ ctx, busy, camera_at: cameraAt }, null, 2))
 
   // 2. Turn 0: the agent app looks once. Not measured; its trace is kept in turn0/.
-  const turn0 = await agentTurn({ id: `${p.id}-turn0`, prompt: TURN0_PROMPT }, work, join(dir, 'turn0'), opts.client === 'claude' ? TURN0_MODEL : opts.model)
+  const turn0 = await agentTurn(
+    { id: `${p.id}-turn0`, prompt: TURN0_PROMPT },
+    work,
+    join(dir, 'turn0'),
+    opts.client === 'claude' ? TURN0_MODEL : opts.model,
+    opts.client === 'codex' ? TURN0_CODEX_EFFORT : opts.effort
+  )
   log(`${p.id} turn 0 done: ${((turn0.t1 - turn0.t0) / 1000).toFixed(1)} s, exit ${turn0.agent.exit_code}`)
 
   // 3. The learner's new work, in the learner's view (drawing does not move a camera that already shows it).
@@ -646,7 +815,7 @@ async function runPerception(p, work) {
     chat_words: wordCount(reply),
     per_tool: total.per_tool,
     trace_files: files.map((f) => basename(f)),
-    turn0: { wall_ms: turn0.t1 - turn0.t0, exit_code: turn0.agent.exit_code, cost_usd: turn0.agent.cost_usd, trace_files: turn0.files.map((f) => basename(f)) },
+    turn0: { wall_ms: turn0.t1 - turn0.t0, exit_code: turn0.agent.exit_code, cost_usd: turn0.agent.cost_usd, tokens: turn0.agent.tokens ?? null, calls: totalOf(turn0.sessions).calls, trace_files: turn0.files.map((f) => basename(f)) },
     ...agent
   }
   delete metrics.reply
@@ -665,6 +834,9 @@ function wordCount(text) {
 }
 
 const s1 = (v) => (v === null || v === undefined ? '-' : (v / 1000).toFixed(1))
+/** Codex token usage in thousands: input / cached input / output. */
+const tok = (t) => (t ? `${(t.input / 1000).toFixed(1)}/${(t.cached_input / 1000).toFixed(1)}/${(t.output / 1000).toFixed(1)}` : '-')
+const cost = (r) => (r.cost_usd === null || r.cost_usd === undefined ? '-' : r.cost_usd.toFixed(3))
 
 function gitState() {
   try {
@@ -680,19 +852,20 @@ function summary(results) {
   const lines = [
     `# Bench run ${stamp}`,
     '',
-    `- Client: ${opts.client}${opts.model ? `, model ${opts.model}` : ''}; app: ${opts.dev ? 'dev renderer' : 'built'}; commit ${gitState()}`,
+    `- Client: ${opts.client}${opts.model ? `, model ${opts.model}` : ''}${opts.effort ? `, effort ${opts.effort}` : ''}; app: ${opts.dev ? 'dev renderer' : 'built'}; commit ${gitState()}`,
     `- Times are seconds from the prompt. "agent" is the sum of gaps between tool calls (model time); "tool" is the sum of tool durations. "words" are words written on the board; "chat words" are the words of the agent's final reply.`,
     `- Look ratio: area of the learner's new ink ÷ area of the tightest screenshot that holds all of it (1.0 = a perfect crop; - = no screenshot held it).`,
+    `- tokens k: the client's token usage in thousands, input/cached input/output (Codex only; Claude reports cost instead).`,
     '',
-    '| Scenario | wall | 1st write | 1st shot | calls | shots | image KB | agent | tool | words | chat words | new frames | look ratio | ink seen | ink→look | turns | cost $ |',
-    '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: |'
+    '| Scenario | wall | 1st write | 1st shot | calls | shots | image KB | agent | tool | words | chat words | new frames | look ratio | ink seen | ink→look | turns | cost $ | tokens k |',
+    '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: |'
   ]
   const sResults = results.filter((r) => r.kind !== 'perception')
   const pResults = results.filter((r) => r.kind === 'perception')
   for (const r of sResults) {
     const look = r.look
     lines.push(
-      `| ${r.scenario} ${r.title} | ${s1(r.wall_ms)} | ${s1(r.first_write_ms)} | ${s1(r.first_screenshot_ms)} | ${r.calls} | ${r.screenshots} | ${(r.image_bytes / 1024).toFixed(0)} | ${s1(r.agent_ms)} | ${s1(r.tool_ms)} | ${r.words} | ${r.chat_words ?? '-'} | ${r.new_top_level} | ${look ? (look.best_ratio === null ? '-' : look.best_ratio.toFixed(2)) : ''} | ${look ? (look.any_contains ? 'all' : look.any_overlap ? 'part' : 'no') : ''} | ${r.ink_to_first_look_ms !== undefined ? s1(r.ink_to_first_look_ms) : ''} | ${r.num_turns ?? '-'} | ${r.cost_usd === null || r.cost_usd === undefined ? '-' : r.cost_usd.toFixed(3)} |`
+      `| ${r.scenario} ${r.title} | ${s1(r.wall_ms)} | ${s1(r.first_write_ms)} | ${s1(r.first_screenshot_ms)} | ${r.calls} | ${r.screenshots} | ${(r.image_bytes / 1024).toFixed(0)} | ${s1(r.agent_ms)} | ${s1(r.tool_ms)} | ${r.words} | ${r.chat_words ?? '-'} | ${r.new_top_level} | ${look ? (look.best_ratio === null ? '-' : look.best_ratio.toFixed(2)) : ''} | ${look ? (look.any_contains ? 'all' : look.any_overlap ? 'part' : 'no') : ''} | ${r.ink_to_first_look_ms !== undefined ? s1(r.ink_to_first_look_ms) : ''} | ${r.num_turns ?? '-'} | ${cost(r)} | ${tok(r.tokens)} |`
     )
   }
   if (pResults.length) {
@@ -704,19 +877,22 @@ function summary(results) {
       '',
       '- board: the content bounds of the whole board (board points); ink share: the new ink\'s area ÷ the content area (a whole-board screenshot has a look ratio near this).',
       '',
-      '| Scenario | found | look ratio | ink share | board | shots | calls before | to shot | 1st get_changes | checks | chat words | wall | agent | cost $ |',
-      '| --- | --- | ---: | ---: | --- | ---: | ---: | ---: | --- | --- | ---: | ---: | ---: | ---: |'
+      '| Scenario | found | look ratio | ink share | board | shots | calls before | to shot | 1st get_changes | checks | chat words | wall | agent | cost $ | tokens k |',
+      '| --- | --- | ---: | ---: | --- | ---: | ---: | ---: | --- | --- | ---: | ---: | ---: | ---: | ---: |'
     )
     for (const r of pResults) {
       const checks = r.checks.map((c) => `${c.name}${c.soft ? ' (soft)' : ''}: ${c.pass ? 'pass' : 'FAIL'}`).join('; ')
       lines.push(
-        `| ${r.scenario} ${r.title} | ${r.found ? 'yes' : 'no'} | ${r.look.best_ratio === null ? '-' : r.look.best_ratio.toFixed(2)} | ${r.ink_share === null ? '-' : r.ink_share.toFixed(4)} | ${r.content_bounds ? `${Math.round(r.content_bounds.width)}×${Math.round(r.content_bounds.height)}` : '-'} | ${r.screenshots} | ${r.calls_before_ink_shot ?? '-'} | ${s1(r.ink_shot_ms)} | ${r.first_get_changes} | ${checks} | ${r.chat_words} | ${s1(r.wall_ms)} | ${s1(r.agent_ms)} | ${r.cost_usd === null || r.cost_usd === undefined ? '-' : r.cost_usd.toFixed(3)} |`
+        `| ${r.scenario} ${r.title} | ${r.found ? 'yes' : 'no'} | ${r.look.best_ratio === null ? '-' : r.look.best_ratio.toFixed(2)} | ${r.ink_share === null ? '-' : r.ink_share.toFixed(4)} | ${r.content_bounds ? `${Math.round(r.content_bounds.width)}×${Math.round(r.content_bounds.height)}` : '-'} | ${r.screenshots} | ${r.calls_before_ink_shot ?? '-'} | ${s1(r.ink_shot_ms)} | ${r.first_get_changes} | ${checks} | ${r.chat_words} | ${s1(r.wall_ms)} | ${s1(r.agent_ms)} | ${cost(r)} | ${tok(r.tokens)} |`
       )
     }
   }
   for (const r of results) {
     lines.push('', `## ${r.scenario} — ${r.title}`, '', `Prompt: ${r.prompt}`, '')
     if (r.exit_code !== 0 || r.is_error) lines.push(`**Agent exit code ${r.exit_code}${r.is_error ? ', error result' : ''}.**`, '')
+    if (r.client_errors) lines.push(`Client errors: ${r.client_errors.join(' | ')}`, '')
+    if (r.client_failed_tool_calls?.length) lines.push(`**Tool calls the client failed (not in the trace): ${r.client_failed_tool_calls.join(' | ')}**`, '')
+    if (r.brief_loaded !== undefined) lines.push(`Brief (AGENTS.md) in context: ${r.brief_loaded === null ? 'unknown' : r.brief_loaded ? 'yes' : 'no'}${r.resumed ? ' (resumed thread)' : ''}`, '')
     lines.push(`Tools: ${Object.entries(r.per_tool).map(([tool, e]) => `${tool} ×${e.calls}`).join(', ') || 'none'}`, '')
     if (r.look) {
       lines.push(`Learner ink: ${rectText(r.look.ink_bounds)}`)
@@ -733,6 +909,7 @@ function summary(results) {
 
 async function main() {
   validate()
+  if (opts.client === 'codex') prepareCodexHome()
   mkdirSync(opts.out, { recursive: true })
   log(`out: ${opts.out}`)
   const results = []

@@ -206,5 +206,7 @@ export const PERCEPTION = [
 /** Turn 0: the agent app's one earlier look at the board. */
 export const TURN0_PROMPT = 'Call the learning-space tool get_changes once, then reply OK.'
 export const TURN0_MODEL = 'haiku'
+/** Codex turn 0: the measured model at a lower reasoning effort. */
+export const TURN0_CODEX_EFFORT = 'low'
 
 export const ALL_SCENARIOS = [...S_SCENARIOS, ...PERCEPTION.map((p) => p.id)]
