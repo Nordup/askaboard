@@ -4,7 +4,7 @@
  * client against an own Learning Space instance, and write the measurements.
  * This is a measurement, not a test: nothing passes or fails.
  *
- *   node scripts/bench/run.mjs [--scenarios S1,S2,S3,S4] [--model opus] [--client claude|codex]
+ *   node scripts/bench/run.mjs [--scenarios S1,S2,S3,S4,P1,P2,P3] [--model opus] [--client claude|codex]
  *                              [--out <dir>] [--dev] [--mcp-port 47870] [--debug-port 9470]
  *                              [--timeout-min 15]
  *
@@ -18,6 +18,12 @@
  * window and whole-board screenshots, and metrics.json. All scenarios go into
  * results.json and summary.md in --out.
  *
+ * The perception scenarios P1-P3 (not in the default selection) each get a
+ * fresh folder and app: the bench seeds agent material over its own MCP
+ * client and the learner's earlier ink, lets the agent look once (turn 0,
+ * --model haiku, not measured), draws the learner's new work, then measures a
+ * NEW agent run (turn 1). See PERCEPTION in scenarios.mjs.
+ *
  * Built mode needs `npm run build` first. The ports must be free: the runner
  * never stops a process it did not start.
  */
@@ -28,7 +34,8 @@ import { createConnection } from 'node:net'
 import { createRequire } from 'node:module'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ALL_SCENARIOS, CONVERSATIONS } from './scenarios.mjs'
+import { ALL_SCENARIOS, CONVERSATIONS, PERCEPTION, S_SCENARIOS, TURN0_MODEL, TURN0_PROMPT } from './scenarios.mjs'
+import { seedBusy } from './busy.mjs'
 import { analyzeFile, readJsonl, totalOf, rectText, LOOK_TOOLS } from '../trace-report.mjs'
 
 const SPACE = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
@@ -50,7 +57,7 @@ const flag = (name) => argv.includes(name)
 
 const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
 const opts = {
-  scenarios: option('--scenarios', ALL_SCENARIOS.join(','))
+  scenarios: option('--scenarios', S_SCENARIOS.join(','))
     .split(',')
     .map((s) => s.trim().toUpperCase())
     .filter(Boolean),
@@ -236,7 +243,7 @@ function runProcess(command, args, { cwd, env, stdoutFile, stderrFile }) {
   })
 }
 
-async function runAgent(scenario, work, dir) {
+async function runAgent(scenario, work, dir, model = opts.model) {
   const mcpUrl = `http://127.0.0.1:${opts.mcpPort}/mcp`
   const stdoutFile = join(dir, 'agent-stdout.txt')
   const stderrFile = join(dir, 'agent-stderr.txt')
@@ -244,7 +251,7 @@ async function runAgent(scenario, work, dir) {
     const config = join(work.dir, 'mcp.json')
     writeFileSync(config, JSON.stringify({ mcpServers: { 'learning-space': { type: 'http', url: mcpUrl } } }, null, 2))
     // The prompt goes before --allowedTools: that flag takes every word after it.
-    const args = ['-p', scenario.prompt, ...(scenario.followUp ? ['--continue'] : []), '--model', opts.model, '--mcp-config', config, '--strict-mcp-config', '--setting-sources', 'project,local', '--output-format', 'json', '--allowedTools', 'mcp__learning-space__*']
+    const args = ['-p', scenario.prompt, ...(scenario.followUp ? ['--continue'] : []), '--model', model, '--mcp-config', config, '--strict-mcp-config', '--setting-sources', 'project,local', '--output-format', 'json', '--allowedTools', 'mcp__learning-space__*']
     const code = await runProcess('claude', args, { cwd: work.folder, env: process.env, stdoutFile, stderrFile })
     let parsed = null
     try {
@@ -354,8 +361,8 @@ function lookAccuracy(ink, sessions) {
   }
 }
 
-/** A picture of the whole board through MCP, as the bench client (trace-report skips its session). */
-async function contentScreenshot(file) {
+/** Run fn(client) on a new MCP connection as the bench client "ls-bench" (trace-report skips its sessions). */
+async function withBenchClient(fn) {
   const require = createRequire(join(SPACE, 'package.json'))
   const { Client } = await import(require.resolve('@modelcontextprotocol/sdk/client/index.js'))
   const { StreamableHTTPClientTransport } = await import(require.resolve('@modelcontextprotocol/sdk/client/streamableHttp.js'))
@@ -363,14 +370,21 @@ async function contentScreenshot(file) {
   const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${opts.mcpPort}/mcp`))
   await client.connect(transport)
   try {
-    const result = await client.callTool({ name: 'get_screenshot', arguments: { target: 'content', max_size: 2400 } })
-    const image = result.content?.find((part) => part.type === 'image')
-    if (image) writeFileSync(file, Buffer.from(image.data, 'base64'))
-    return Boolean(image)
+    return await fn(client)
   } finally {
     await transport.terminateSession().catch(() => undefined)
     await client.close().catch(() => undefined)
   }
+}
+
+/** A picture of the whole board through MCP, as the bench client. */
+async function contentScreenshot(file) {
+  return withBenchClient(async (client) => {
+    const result = await client.callTool({ name: 'get_screenshot', arguments: { target: 'content', max_size: 2400 } })
+    const image = result.content?.find((part) => part.type === 'image')
+    if (image) writeFileSync(file, Buffer.from(image.data, 'base64'))
+    return Boolean(image)
+  })
 }
 
 async function runScenario(scenario, work) {
@@ -456,6 +470,193 @@ async function runScenario(scenario, work) {
   return { ...metrics, reply: agent.reply }
 }
 
+// ---------- Perception scenarios ----------
+
+/** Copy trace files (and their images) into dir/trace. */
+function copyTraces(files, dir) {
+  mkdirSync(join(dir, 'trace'), { recursive: true })
+  for (const file of files) {
+    copyFileSync(file, join(dir, 'trace', basename(file)))
+    const stem = basename(file, '.jsonl')
+    for (const png of readdirSync(dirname(file)).filter((n) => n.startsWith(`${stem}-`) && n.endsWith('.png'))) copyFileSync(join(dirname(file), png), join(dir, 'trace', png))
+  }
+}
+
+/** One agent turn: run it, then collect the trace files it wrote and the agent sessions in them. */
+async function agentTurn(scenario, work, dir, model) {
+  mkdirSync(dir, { recursive: true })
+  const before = new Set(traceFiles(work.traces))
+  const t0 = Date.now()
+  const agent = await runAgent(scenario, work, dir, model)
+  const t1 = Date.now()
+  await sleep(1000) // trace writes and images are queued
+  const files = traceFiles(work.traces).filter((f) => !before.has(f))
+  copyTraces(files, dir)
+  writeFileSync(join(dir, 'reply.txt'), agent.reply ?? '')
+  const sessions = files.map(analyzeFile).filter((s) => s.client?.name !== 'ls-bench')
+  return { agent, t0, t1, files, sessions }
+}
+
+async function runPerception(p, work) {
+  const dir = join(opts.out, p.id)
+  mkdirSync(dir, { recursive: true })
+  log(`${p.id} (${p.title}): ${p.prompt}`)
+
+  // 1. Seed: the busy background round the scenario's area (agent material over the bench's
+  // own MCP client, learner pieces with drive.mjs), the scenario's agent material, then the
+  // learner's earlier ink.
+  const drawLearner = (strokes) => drive('draw', '--strokes', JSON.stringify(strokes))
+  const { ctx, busy } = await withBenchClient(async (client) => {
+    const mcp = async (name, args) => {
+      const result = await client.callTool({ name, arguments: args })
+      const body = result.content?.find((part) => part.type === 'text')?.text ?? ''
+      if (result.isError) throw new Error(`seed ${name} failed: ${body}`)
+      try {
+        return JSON.parse(body)
+      } catch {
+        return body
+      }
+    }
+    const busy = await seedBusy(p.area, mcp)
+    return { busy, ctx: await p.seed(mcp) }
+  })
+  // Drawn after the MCP session closes: a session held open through long drawing drops.
+  for (const strokes of busy.learner) drawLearner(strokes)
+  delete busy.learner
+  if (p.earlier) drawLearner(p.earlier(ctx))
+  await sleep(1500) // the autosave records the learner edits
+
+  // The learner's view: the new work up and left of the centre, with neighbours round it, not the whole board.
+  const plannedInk = strokeBounds(p.work(ctx).flatMap((a) => a.draw ?? a.erase))
+  const cameraAt = [Math.round(plannedInk.x + plannedInk.width / 2 + 220), Math.round(plannedInk.y + plannedInk.height / 2 + 110)]
+  const setCamera = () => JSON.parse(drive('camera', String(cameraAt[0]), String(cameraAt[1])))
+  setCamera()
+  writeFileSync(join(dir, 'seed.json'), JSON.stringify({ ctx, busy, camera_at: cameraAt }, null, 2))
+
+  // 2. Turn 0: the agent app looks once. Not measured; its trace is kept in turn0/.
+  const turn0 = await agentTurn({ id: `${p.id}-turn0`, prompt: TURN0_PROMPT }, work, join(dir, 'turn0'), opts.client === 'claude' ? TURN0_MODEL : opts.model)
+  log(`${p.id} turn 0 done: ${((turn0.t1 - turn0.t0) / 1000).toFixed(1)} s, exit ${turn0.agent.exit_code}`)
+
+  // 3. The learner's new work, in the learner's view (drawing does not move a camera that already shows it).
+  const camera = setCamera()
+  const workStart = Date.now()
+  const actions = p.work(ctx)
+  for (const action of actions) {
+    if (action.erase) drive('draw', '--tool', 'eraser', '--strokes', JSON.stringify(action.erase))
+    else drive('draw', '--strokes', JSON.stringify(action.draw))
+  }
+  await sleep(1500) // the autosave (400 ms) records the learner edit
+  const cameraAfter = JSON.parse(drive('eval-state'))
+  if (Math.hypot(cameraAfter.center[0] - camera.center[0], cameraAfter.center[1] - camera.center[1]) > 1 || cameraAfter.zoom !== camera.zoom) {
+    log(`${p.id}: the camera moved while drawing (${JSON.stringify(camera.center)} → ${JSON.stringify(cameraAfter.center)}, zoom ${camera.zoom} → ${cameraAfter.zoom})`)
+  }
+  const edits = learnerEditsSince(work.traces, workStart - 50)
+  const drawn = actions.flatMap((a) => a.draw ?? [])
+  const ink = union(edits.map((e) => e.bounds)) ?? strokeBounds(drawn)
+  const newIds = [...new Set(edits.flatMap((e) => e.ids ?? []))]
+  const lastEditAt = edits.length ? edits[edits.length - 1].t : new Date().toISOString()
+
+  // 4. Turn 1: a new connection with the scenario prompt. Measured.
+  const turn = await agentTurn(p, work, dir, opts.model)
+  const { agent, t0, t1, files, sessions } = turn
+  writeFileSync(join(dir, 'report.json'), JSON.stringify({ sessions, total: totalOf(sessions) }, null, 2))
+  try {
+    drive('screenshot', join(dir, 'window.png'))
+  } catch (error) {
+    log(`window screenshot failed: ${String(error.message ?? error)}`)
+  }
+  try {
+    await contentScreenshot(join(dir, 'board-content.png'))
+  } catch (error) {
+    log(`board screenshot failed: ${String(error.message ?? error)}`)
+  }
+  let canvas = null
+  try {
+    canvas = await withBenchClient(async (client) => JSON.parse((await client.callTool({ name: 'get_canvas_info', arguments: {} })).content.find((c) => c.type === 'text').text))
+  } catch (error) {
+    log(`canvas info failed: ${String(error.message ?? error)}`)
+  }
+
+  const total = totalOf(sessions)
+  const inkRect = { x: ink.x, y: ink.y, width: ink.width, height: ink.height }
+  const look = lookAccuracy(inkRect, sessions)
+  // One trace file per MCP session: the agent's calls are those in the files of its sessions.
+  const agentFiles = new Set(sessions.map((s) => s.file))
+  const calls = files
+    .filter((f) => agentFiles.has(basename(f)))
+    .flatMap((f) => readJsonl(f))
+    .filter((e) => e.type === 'tool_call')
+    .sort((a, b) => ms(a.t) - ms(b.t))
+  const holding = sessions
+    .flatMap((s) => s.screenshot_list)
+    .filter((shot) => shot.rect && area(inkRect) && area(intersection(inkRect, shot.rect)) / area(inkRect) >= 0.99)
+    .sort((a, b) => ms(a.t) - ms(b.t))[0]
+
+  // Did the first get_changes list the learner's new items?
+  const firstChanges = calls.find((c) => c.tool === 'get_changes')
+  let firstGetChanges = 'no call'
+  let firstGetChangesListed = null
+  if (firstChanges) {
+    let listed = []
+    try {
+      const result = JSON.parse(firstChanges.result_text ?? '')
+      listed = (result.changed ?? []).filter((item) => item.by === 'learner').map((item) => item.id)
+    } catch {
+      // Not JSON (an error): it listed nothing.
+    }
+    const hits = newIds.filter((id) => listed.includes(id)).length
+    firstGetChangesListed = { new_ids: newIds.length, listed: hits, args: firstChanges.args ?? null }
+    firstGetChanges = (newIds.length && hits === newIds.length ? 'yes' : hits ? 'part' : 'no') + (firstChanges.args?.since !== undefined ? ` (since ${firstChanges.args.since})` : '')
+  }
+
+  const reply = agent.reply ?? ''
+  const checks = p.checks.map((c) => ({ name: c.name, soft: Boolean(c.soft), pass: Boolean(c.test(reply)) }))
+  const metrics = {
+    scenario: p.id,
+    kind: 'perception',
+    title: p.title,
+    prompt: p.prompt,
+    client: opts.client,
+    model: opts.model,
+    mode: opts.dev ? 'dev' : 'built',
+    found: look.any_contains,
+    look,
+    content_bounds: canvas?.contentBounds ?? null,
+    content_area: canvas?.contentBounds ? Math.round(area(canvas.contentBounds)) : null,
+    ink_share: canvas?.contentBounds ? Math.round((area(inkRect) / area(canvas.contentBounds)) * 1e5) / 1e5 : null,
+    learner_view: { center: cameraAfter.center, zoom: cameraAfter.zoom, canvas: camera.canvas, viewport: canvas?.viewport ?? null },
+    board_items: canvas?.counts ?? null,
+    new_learner_ids: newIds,
+    screenshots: total.screenshots,
+    calls: total.calls,
+    calls_before_ink_shot: holding ? calls.filter((c) => ms(c.t) < ms(holding.t)).length : null,
+    ink_shot_ms: holding ? ms(holding.t) - t0 : null,
+    ink_to_first_look_ms: (() => {
+      const looks = calls.filter((c) => LOOK_TOOLS.has(c.tool) && ms(c.t) >= ms(lastEditAt)).map((c) => ms(c.t))
+      return looks.length ? Math.min(...looks) - ms(lastEditAt) : null
+    })(),
+    first_get_changes: firstGetChanges,
+    first_get_changes_detail: firstGetChangesListed,
+    checks,
+    wall_ms: t1 - t0,
+    agent_ms: total.gap_ms,
+    tool_ms: total.tool_ms,
+    image_bytes: total.image_bytes,
+    errors: total.errors,
+    chat_words: wordCount(reply),
+    per_tool: total.per_tool,
+    trace_files: files.map((f) => basename(f)),
+    turn0: { wall_ms: turn0.t1 - turn0.t0, exit_code: turn0.agent.exit_code, cost_usd: turn0.agent.cost_usd, trace_files: turn0.files.map((f) => basename(f)) },
+    ...agent
+  }
+  delete metrics.reply
+  writeFileSync(join(dir, 'metrics.json'), JSON.stringify(metrics, null, 2))
+  log(
+    `${p.id} done: ${(metrics.wall_ms / 1000).toFixed(1)} s, found ${metrics.found ? 'yes' : 'no'}, ${metrics.screenshots} screenshots, first get_changes ${firstGetChanges}, checks ${checks.map((c) => `${c.name} ${c.pass ? 'pass' : 'fail'}`).join(', ')}`
+  )
+  return { ...metrics, reply }
+}
+
 // ---------- Summary ----------
 
 /** Words in the agent's final chat reply. */
@@ -486,11 +687,32 @@ function summary(results) {
     '| Scenario | wall | 1st write | 1st shot | calls | shots | image KB | agent | tool | words | chat words | new frames | look ratio | ink seen | ink→look | turns | cost $ |',
     '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: |'
   ]
-  for (const r of results) {
+  const sResults = results.filter((r) => r.kind !== 'perception')
+  const pResults = results.filter((r) => r.kind === 'perception')
+  for (const r of sResults) {
     const look = r.look
     lines.push(
       `| ${r.scenario} ${r.title} | ${s1(r.wall_ms)} | ${s1(r.first_write_ms)} | ${s1(r.first_screenshot_ms)} | ${r.calls} | ${r.screenshots} | ${(r.image_bytes / 1024).toFixed(0)} | ${s1(r.agent_ms)} | ${s1(r.tool_ms)} | ${r.words} | ${r.chat_words ?? '-'} | ${r.new_top_level} | ${look ? (look.best_ratio === null ? '-' : look.best_ratio.toFixed(2)) : ''} | ${look ? (look.any_contains ? 'all' : look.any_overlap ? 'part' : 'no') : ''} | ${r.ink_to_first_look_ms !== undefined ? s1(r.ink_to_first_look_ms) : ''} | ${r.num_turns ?? '-'} | ${r.cost_usd === null || r.cost_usd === undefined ? '-' : r.cost_usd.toFixed(3)} |`
     )
+  }
+  if (pResults.length) {
+    lines.push(
+      '',
+      '## Perception scenarios (turn 1, a new connection)',
+      '',
+      '- found: a screenshot held all of the learner\'s new ink. "calls before" / "to shot": tool calls and seconds before the first such screenshot. "1st get_changes": whether the first get_changes call listed all the new learner items (part = some; "since N" = the agent passed its own since, so the cursor was not used).',
+      '',
+      '- board: the content bounds of the whole board (board points); ink share: the new ink\'s area ÷ the content area (a whole-board screenshot has a look ratio near this).',
+      '',
+      '| Scenario | found | look ratio | ink share | board | shots | calls before | to shot | 1st get_changes | checks | chat words | wall | agent | cost $ |',
+      '| --- | --- | ---: | ---: | --- | ---: | ---: | ---: | --- | --- | ---: | ---: | ---: | ---: |'
+    )
+    for (const r of pResults) {
+      const checks = r.checks.map((c) => `${c.name}${c.soft ? ' (soft)' : ''}: ${c.pass ? 'pass' : 'FAIL'}`).join('; ')
+      lines.push(
+        `| ${r.scenario} ${r.title} | ${r.found ? 'yes' : 'no'} | ${r.look.best_ratio === null ? '-' : r.look.best_ratio.toFixed(2)} | ${r.ink_share === null ? '-' : r.ink_share.toFixed(4)} | ${r.content_bounds ? `${Math.round(r.content_bounds.width)}×${Math.round(r.content_bounds.height)}` : '-'} | ${r.screenshots} | ${r.calls_before_ink_shot ?? '-'} | ${s1(r.ink_shot_ms)} | ${r.first_get_changes} | ${checks} | ${r.chat_words} | ${s1(r.wall_ms)} | ${s1(r.agent_ms)} | ${r.cost_usd === null || r.cost_usd === undefined ? '-' : r.cost_usd.toFixed(3)} |`
+      )
+    }
   }
   for (const r of results) {
     lines.push('', `## ${r.scenario} — ${r.title}`, '', `Prompt: ${r.prompt}`, '')
@@ -514,13 +736,17 @@ async function main() {
   mkdirSync(opts.out, { recursive: true })
   log(`out: ${opts.out}`)
   const results = []
-  for (const conv of CONVERSATIONS) {
-    const scenarios = conv.scenarios.filter((s) => opts.scenarios.includes(s.id))
-    if (!scenarios.length) continue
-    const dir = join(opts.out, 'work', conv.id)
+  const newWork = (id) => {
+    const dir = join(opts.out, 'work', id)
     const work = { dir, folder: join(dir, 'folder'), home: join(dir, 'home'), userData: join(dir, 'user-data'), traces: join(dir, 'traces') }
     for (const path of [work.home, work.userData, work.traces]) mkdirSync(path, { recursive: true })
     setupFolder(work.folder)
+    return work
+  }
+  for (const conv of CONVERSATIONS) {
+    const scenarios = conv.scenarios.filter((s) => opts.scenarios.includes(s.id))
+    if (!scenarios.length) continue
+    const work = newWork(conv.id)
     const app = await startApp(work)
     try {
       for (const scenario of scenarios) {
@@ -531,6 +757,17 @@ async function main() {
           break // a follow-up makes no sense without its first turn
         }
       }
+    } finally {
+      await stopApp(app)
+    }
+  }
+  for (const p of PERCEPTION.filter((p) => opts.scenarios.includes(p.id))) {
+    const work = newWork(p.id)
+    const app = await startApp(work)
+    try {
+      results.push(await runPerception(p, work))
+    } catch (error) {
+      log(`${p.id} failed: ${error instanceof Error ? error.stack : String(error)}`)
     } finally {
       await stopApp(app)
     }

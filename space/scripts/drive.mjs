@@ -6,7 +6,7 @@
  *
  * Start the app with SPACE_REMOTE_DEBUG=<port> (dev builds only), then:
  *
- *   node scripts/drive.mjs [--port 9339] draw <strokes.json | -> [--tool pen|highlighter] [--no-pan]
+ *   node scripts/drive.mjs [--port 9339] draw <strokes.json | -> [--tool pen|highlighter|eraser] [--no-pan]
  *   node scripts/drive.mjs draw --strokes '[[[x,y,p],...],...]'
  *   node scripts/drive.mjs key <combo>          e.g. v, Delete, Escape, Meta+z, Shift+Meta+z
  *   node scripts/drive.mjs click <x> <y> [--shift]  window CSS pixels
@@ -17,6 +17,7 @@
  *   node scripts/drive.mjs node-rect <id>       a node's window rect (JSON), from the layout cache and the DOM
  *   node scripts/drive.mjs screenshot <out.png> the whole window
  *   node scripts/drive.mjs eval-state           board, zoom, tool, selection, nodes with bounds (JSON)
+ *   node scripts/drive.mjs camera <x> <y>       centre the learner's view on a board point (zoom kept)
  *
  * Strokes are in board coordinates (points, origin at the centre, +y down);
  * p is pen pressure 0..1. Each stroke is sent as pen input
@@ -26,9 +27,10 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 
 const USAGE = `usage: node scripts/drive.mjs [--port N] <command>
-  draw <file.json|-> [--tool pen|highlighter] [--no-pan]
+  draw <file.json|-> [--tool pen|highlighter|eraser] [--no-pan]
                                                  strokes in board coordinates: [[[x,y,p],...],...];
-                                                 pans the board first so every point is on screen
+                                                 pans the board first so every point is on screen;
+                                                 --tool eraser drags the eraser along the strokes
   draw --strokes '<json>'
   key <combo>                                    v, Delete, Escape, Meta+z, Shift+Meta+z
   click <x> <y> [--shift]                        window CSS pixels
@@ -39,6 +41,7 @@ const USAGE = `usage: node scripts/drive.mjs [--port N] <command>
   node-rect <id>                                 {x, y, width, height, cx, cy, dom} in window CSS pixels
   screenshot <out.png>
   eval-state                                     board, tool, selection, nodes (id, kind, parent, bounds)
+  camera <x> <y>                                 centre the view on board point (x, y); prints zoom, centre, canvas
 The port defaults to $SPACE_REMOTE_DEBUG, then 9339.`
 
 class Failure extends Error {}
@@ -344,7 +347,7 @@ async function main() {
   const port = Number(takeOption('--port') ?? process.env.SPACE_REMOTE_DEBUG ?? 9339)
   if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new Failure('The port is not valid.')
   const tool = takeOption('--tool') ?? 'pen'
-  if (tool !== 'pen' && tool !== 'highlighter') throw new Failure('--tool must be pen or highlighter.')
+  if (!['pen', 'highlighter', 'eraser'].includes(tool)) throw new Failure('--tool must be pen, highlighter or eraser.')
   const inline = takeOption('--strokes')
   const steps = Number(takeOption('--steps') ?? 12)
   if (!Number.isInteger(steps) || steps < 1) throw new Failure('--steps must be a positive integer.')
@@ -398,6 +401,20 @@ async function main() {
   } else if (command === 'screenshot') {
     if (!rest[0]) throw new Failure('screenshot needs an output path.')
     run = (cdp) => screenshot(cdp, rest[0])
+  } else if (command === 'camera') {
+    const [x, y] = rest.map(Number)
+    if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Failure('camera needs <x> <y> in board points.')
+    run = async (cdp) => {
+      await requireDevHook(cdp)
+      // reveal() only moves when the rect is out of view: go far away first, then come back centred on (x, y).
+      await evaluate(cdp, 'window.__spaceDev.reveal(1e6, 1e6, 1, 1)')
+      await sleep(50)
+      await evaluate(cdp, `window.__spaceDev.reveal(${x - 0.5}, ${y - 0.5}, 1, 1)`)
+      await sleep(80)
+      const state = await evaluate(cdp, 'window.__spaceDev.state()')
+      const canvas = await evaluate(cdp, 'window.__spaceDev.canvasRect()')
+      console.log(JSON.stringify({ zoom: state.zoom, center: state.center, canvas }))
+    }
   } else if (command === 'eval-state') {
     run = async (cdp) => {
       await requireDevHook(cdp)

@@ -8,6 +8,9 @@
  * [x, y, pressure] per point, as scripts/drive.mjs takes them.
  */
 
+import { readFileSync } from 'node:fs'
+import { eraseBox, loop, text, textWidth } from './handwriting.mjs'
+
 const P = 0.55
 
 function circle(cx, cy, r, steps = 40) {
@@ -81,4 +84,127 @@ export const CONVERSATIONS = [
   }
 ]
 
-export const ALL_SCENARIOS = CONVERSATIONS.flatMap((c) => c.scenarios.map((s) => s.id))
+/** The S scenarios: the default selection. */
+export const S_SCENARIOS = CONVERSATIONS.flatMap((c) => c.scenarios.map((s) => s.id))
+
+/**
+ * Perception scenarios: does an agent on a NEW connection notice and read
+ * what the learner just did? Each runs on a fresh folder and board:
+ *
+ * 1. seed(mcp): the bench's own MCP client ("ls-bench") writes the agent
+ *    material, so it is authored "agent"; it returns a context object.
+ *    earlier(ctx): the learner's earlier strokes (drawn with drive.mjs).
+ * 2. Turn 0: the agent app looks once (get_changes), not measured.
+ * 3. work(ctx): the learner's new work, a list of { draw } or { erase }
+ *    strokes in board coordinates (erase = an eraser pass).
+ * 4. Turn 1: a new agent connection with the prompt; this turn is measured.
+ *
+ * checks run on the turn-1 reply; a "soft" check is recorded only.
+ * area holds the scenario's own material and new work; the busy background
+ * (busy.mjs) is seeded round it, the same for every scenario.
+ */
+const SIZE = 44
+const has = (re) => (reply) => re.test(reply)
+const SAYS_RIGHT = /\b(correct|right|yes|exactly|well done)\b/i
+
+/** The first id of a write_html result and its bounds. */
+function created(result) {
+  const id = result.created?.[0]
+  const bounds = id && result.bounds?.[id]
+  if (!bounds) throw new Error(`write_html returned no bounds: ${JSON.stringify(result).slice(0, 300)}`)
+  return { id, bounds }
+}
+
+const P3_LINES = { x: -160, y: [-150, -70, 10] }
+
+export const PERCEPTION = [
+  {
+    id: 'P1',
+    title: 'check my answer',
+    prompt: 'Check this.',
+    area: { x: -565, y: -60, width: 810, height: 120 },
+    async seed(mcp) {
+      const task = created(await mcp('write_html', { target_id: 'root', html: '<p style="left:-120px; top:-30px; font-size:40px">Try: 3 + 5 = ?</p>' }))
+      return { task }
+    },
+    earlier: () => JSON.parse(readFileSync(new URL('../strokes/two-plus-two.json', import.meta.url), 'utf8')),
+    work: ({ task }) => {
+      const b = task.bounds
+      return [{ draw: text('8', b.x + b.width + 24, b.y + (b.height - SIZE) / 2, SIZE) }]
+    },
+    checks: [
+      { name: 'mentions 8', test: has(/\b8\b/) },
+      { name: 'says correct', test: has(SAYS_RIGHT) }
+    ]
+  },
+  {
+    id: 'P2',
+    title: "question on the agent's drawing",
+    prompt: 'Why?',
+    area: { x: -160, y: -230, width: 330, height: 340 },
+    async seed(mcp) {
+      // A right triangle (right angle bottom-left): a = left side, b = bottom, c = hypotenuse.
+      const svg =
+        '<svg width="300" height="240" viewBox="0 0 300 240" style="left:-150px; top:-220px">' +
+        '<polygon points="50,200 260,200 50,40" fill="none" stroke="white" stroke-width="3"/>' +
+        '<polyline points="50,180 70,180 70,200" fill="none" stroke="white" stroke-width="2"/>' +
+        '<text x="22" y="128" fill="white" font-size="28">a</text>' +
+        '<text x="148" y="232" fill="white" font-size="28">b</text>' +
+        '<text x="168" y="108" fill="white" font-size="28">c</text>' +
+        '</svg>'
+      const triangle = created(await mcp('write_html', { target_id: 'root', html: svg }))
+      const formula = created(await mcp('write_html', { target_id: 'root', html: '<p style="left:-110px; top:50px; font-size:36px">a² + b² = c²</p>' }))
+      return { triangle, formula }
+    },
+    work: ({ triangle }) => {
+      const b = triangle.bounds
+      const s = b.width / 300
+      // The "c" label sits at about (176, 98) in the drawing; the loop also takes in the middle of the hypotenuse.
+      const cx = b.x + 170 * s
+      const cy = b.y + 106 * s
+      return [{ draw: loop(cx, cy, 38 * s, 30 * s) }, { draw: text('?', cx + 48 * s, cy - 62 * s, 40) }]
+    },
+    checks: [
+      { name: 'names c or hypotenuse', test: has(/\bc\b|hypotenuse/i) },
+      {
+        name: 'not a/b as circled',
+        soft: true,
+        test: (reply) => !/\b(circled|circle|marked|pointing at|point at)\b[^.\n]{0,40}\b(side\s+)?[ab]\b(?![²^])/i.test(reply)
+      }
+    ]
+  },
+  {
+    id: 'P3',
+    title: 'a correction',
+    prompt: 'Is it right now?',
+    area: { x: -175, y: -165, width: 520, height: 235 },
+    async seed() {
+      return {}
+    },
+    earlier: () => [
+      ...text('2x + 3 = 11', P3_LINES.x, P3_LINES.y[0], SIZE),
+      ...text('2x = 14', P3_LINES.x, P3_LINES.y[1], SIZE),
+      ...text('x = 7', P3_LINES.x, P3_LINES.y[2], SIZE)
+    ],
+    work: () => {
+      const pad = 10
+      const box = (y, str) => ({ x: P3_LINES.x - pad, y: y - pad, width: textWidth(str, SIZE) + 2 * pad, height: SIZE + 2 * pad })
+      return [
+        { erase: eraseBox(box(P3_LINES.y[1], '2x = 14')) },
+        { erase: eraseBox(box(P3_LINES.y[2], 'x = 7')) },
+        { draw: text('2x = 8', P3_LINES.x, P3_LINES.y[1], SIZE) },
+        { draw: text('x = 4', P3_LINES.x, P3_LINES.y[2], SIZE) }
+      ]
+    },
+    checks: [
+      { name: 'mentions 8 or x = 4', test: has(/\b8\b|x\s*=\s*4|\b4\b/i) },
+      { name: 'says right now', test: has(SAYS_RIGHT) }
+    ]
+  }
+]
+
+/** Turn 0: the agent app's one earlier look at the board. */
+export const TURN0_PROMPT = 'Call the learning-space tool get_changes once, then reply OK.'
+export const TURN0_MODEL = 'haiku'
+
+export const ALL_SCENARIOS = [...S_SCENARIOS, ...PERCEPTION.map((p) => p.id)]
