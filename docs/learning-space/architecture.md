@@ -97,10 +97,10 @@ limits scripts and images.
 - Streamable HTTP, path `/mcp`, bound to `127.0.0.1`, port 47821
   (`SPACE_MCP_PORT`). One session per client. Requests with a browser
   `Origin`, or a Host other than localhost, are refused. No token.
-- **Tools** (19), in four groups:
+- **Tools** (20), in four groups:
   - *Look:* `get_canvas_info`, `get_tree`, `get_node_info`, `get_html`,
     `get_screenshot` (node, region, viewport, content, selection, changes;
-    optional labels and grid), `get_changes`, `get_brief`.
+    optional labels and grid), `get_changes`, `get_brief`, `get_guide`.
   - *Make and edit:* `create_frame`, `write_html`, `update_styles`,
     `set_text`, `move_nodes`, `duplicate_nodes`, `delete_nodes`, `draw_ink`.
   - *Place and view:* `find_space`, `focus`, `open_board`.
@@ -110,16 +110,19 @@ limits scripts and images.
   - the brief, `resources/brief.md`: as a managed block in the folder's
     `AGENTS.md` (`src/main/brief-block.ts` refreshes it when a folder opens,
     unless the learner edited it) and as `get_brief` for agents without it;
-  - server instructions, `resources/instructions.md` (a short orientation);
+  - the board reference, `resources/guide.md`: `get_guide`, one topic per
+    call (model, html, math, svg, images, tokens, placement, ink, view; the
+    description lists them with one line each from the file's
+    `<!-- summary: … -->` markers); without a topic, all of it (decision T11);
+  - server instructions, `resources/instructions.md` (a short orientation
+    that points to `get_brief` and `get_guide`);
   - folder overrides `.learning-space/instructions.md` (added to or
     replacing the server instructions) and `.learning-space/guide.md`
-    (added to or replacing the brief that `get_brief` returns)
-    (`src/main/guide.ts`, read fresh per call, 64 KB cap);
-  - tool and parameter descriptions in `src/main/mcp.ts` (facts only). They
-    also hold the board reference (decision T10): the HTML subset, styles,
-    math, SVG, images and colour tokens in `write_html`, ink in `draw_ink`,
-    placement in the shared `place` parameter (`PLACE_NOTE`), ink groups in
-    `get_canvas_info`. Each stays under 4,096 characters.
+    (the reference's topic `folder`, or with `mode: replace` the whole
+    reference) (`src/main/guide.ts`, read fresh per call, 64 KB cap);
+  - tool and parameter descriptions in `src/main/mcp.ts` (facts only: what
+    the tool does, when it fits, each parameter, what it returns; they point
+    to the `get_guide` topic for details). Each stays under 4,096 characters.
 - **Session trace** (`src/main/trace.ts`, always on): every MCP call, the
   screenshots agents received and the learner's edits, as JSONL in
   `~/.learning-space/traces/<date>/` (or `SPACE_TRACE_DIR`). Read with

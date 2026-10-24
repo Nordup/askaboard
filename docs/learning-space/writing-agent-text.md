@@ -30,9 +30,10 @@ difference, so the next writer starts from the second draft's approach.
 | **The brief** (what the space is, the person, the board, talking, time) | `space/resources/brief.md` (the one source) | Agents in a learning folder: always, through the managed block in `AGENTS.md`. Other agents: `get_brief` (no parameters). | Codex loads `AGENTS.md` up to 32 KiB (`project_doc_max_bytes = 32768`, Codex CLI 0.149), and the folder part shares that space. |
 | The folder's own conventions | `AGENTS.md` outside the managed block (template: `space/resources/learning-folder/AGENTS.md`) | Agents in the folder | Same file as above |
 | Server instructions (short orientation) | `space/resources/instructions.md` | Every agent at connect | Claude Code cuts at 4,096 characters (2.1.296+; 2,048 before). Codex asks that the first 512 characters stand alone. |
-| Tool and parameter descriptions, including the board reference (decision T10): HTML subset, styles, math, SVG, images and colour tokens in `write_html`; ink in `draw_ink`; placement in `PLACE_NOTE` (the `place` parameter); ink groups in `get_canvas_info` | `space/src/main/mcp.ts` | Every agent, on every request | 4,096 characters per tool description in Claude Code when loaded up front (16,384 when deferred); `write_html` is the longest, about 3,900. Parameter descriptions are not cut. |
+| **The board reference** (decision T11): the board model, the HTML subset and styles, math, SVG, images, colour tokens, placement, ink, the view | `space/resources/guide.md`; each `## ` section is a topic (`<!-- topic: … -->`) with a one-line `<!-- summary: … -->` that `get_guide`'s description lists | Every agent: `get_guide` with one topic, when a write needs it; without a topic, all of it (about 7,000 characters) | Each topic about 300–1,800 characters |
+| Tool and parameter descriptions | `space/src/main/mcp.ts` | Every agent, on every request | 4,096 characters per tool description in Claude Code when loaded up front (16,384 when deferred). Parameter descriptions are not cut. |
 | Plugin skill | `learning-space-plugins/plugins/learning-space/skills/learning-space/SKILL.md` | Agents with the plugin, when it applies | Under 500 lines recommended |
-| Per-folder overrides | `.learning-space/guide.md` (added to the brief from `get_brief`), `.learning-space/instructions.md` (added to the server instructions) | As above, appended or replacing | — |
+| Per-folder overrides | `.learning-space/guide.md` (`get_guide` topic `folder`, or the whole reference with `mode: replace`), `.learning-space/instructions.md` (added to the server instructions) | As above, appended or replacing | — |
 
 The managed block: `<!-- learning-space brief: start … sha=… -->` …
 `<!-- learning-space brief: end -->`. The app rewrites the block when a
@@ -81,9 +82,9 @@ I2 and P7 in [`decisions.md`](decisions.md) record them.
    means, what comes back, the caveats. Usually 3–4 sentences or more. No
    behaviour ("be sparing", "the learner does the thinking"); behaviour
    belongs in the brief. This follows Anthropic's guidance (below). The
-   descriptions also hold every fact an agent needs to write correctly (the
-   HTML subset, styles, ink, placement; decision T10), so no agent needs a
-   second tool call to learn them. MCP has no `input_examples` field: put a
+   details of each write (the HTML subset, styles, ink, placement) are in the
+   board reference, `get_guide`, by topic (decision T11); a description names
+   the topic. MCP has no `input_examples` field: put a
    short example value inside the description where the format is not
    obvious (as in `place` and `draw_ink`).
 8. **One story everywhere (I2).** The brief, the instructions,

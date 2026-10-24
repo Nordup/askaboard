@@ -77,7 +77,7 @@ the live-frame idea was rejected).
 | `space/` | The Electron app. Its README covers running and dev automation. |
 | `github.com/Nordup/learning-space-plugins` (checkout `../learning-space-plugins`) | Plugins for Claude Code, ChatGPT and Codex, Cursor; the Claude Desktop extension. |
 | `space/resources/learning-folder/` | The template copied into a learning folder at setup (`AGENTS.md`, `plan.md`, `learner.md`). |
-| `space/resources/brief.md`, `instructions.md`; tool descriptions in `space/src/main/mcp.ts` | The brief, the server instructions, and the tool descriptions that hold the board reference (decision T10). |
+| `space/resources/brief.md`, `guide.md`, `instructions.md`; tool descriptions in `space/src/main/mcp.ts` | The brief (`get_brief`), the board reference in topics (`get_guide`, decision T11), the server instructions and the tool descriptions. |
 | `docs/learning-space/reference/paper/` | Paper's agent interface, captured live. Local only (git-ignored). |
 | `~/Projects/learning/learning-space` | The founder's own learning folder. Never use it for checks. |
 
@@ -91,7 +91,7 @@ the live-frame idea was rejected).
 | Node | One object on a board: `ink`, `frame`, `text`, `svg` or `image`. |
 | Frame | A box node that holds other nodes (a card, a page). |
 | Ink group | A cluster of the learner's strokes with a short id (`g1`, `g2`). Agents place things relative to it. |
-| Folder guide | `.learning-space/guide.md` in a learning folder: text that `get_brief` adds to the brief (or puts in its place with `mode: replace`). |
+| Folder guide | `.learning-space/guide.md` in a learning folder: `get_guide` topic `folder` (or, with `mode: replace`, the whole board reference). |
 | Relay | The command `~/.learning-space/bin/learning-space mcp` that connects stdio clients to the app. |
 | Agent pill | The status control in the top bar; it opens the agents list and the connect view. |
 | Plugin | The package in the plugin repo that installs the connection (and a small skill) into an agent client. |

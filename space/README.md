@@ -39,8 +39,8 @@ Do not run test suites. Check a change with `npm run build`. The rules are in
 - **Ink groups and placement.** The app clusters learner ink into groups
   (`g1`, `g2`, …). Agents place material beside the learner's work, not over it.
 - **Folder setup and an editable folder guide.** The sidebar offers to set up
-  a folder for learning. A folder can extend or replace the brief that
-  `get_brief` returns in `.learning-space/guide.md`.
+  a folder for learning. A folder can add a topic to the board reference that
+  `get_guide` returns, or replace the reference, in `.learning-space/guide.md`.
 - **Connect popover and plugin.** The agent pill in the top bar installs the
   plugin for each agent.
 
@@ -74,10 +74,9 @@ every tool twice. The popover shows this problem and offers **Fix**.
 - **Port:** `SPACE_MCP_PORT` changes it. The relay reads `LEARNING_SPACE_PORT`.
 - **Agent text:** `resources/brief.md` (the brief: the managed block in a
   folder's `AGENTS.md`, and `get_brief` for agents without it),
-  `resources/instructions.md` (server instructions) and the tool and
-  parameter descriptions in `src/main/mcp.ts` (the board reference: the HTML
-  subset, styles, math, SVG, images and tokens in `write_html`, ink in
-  `draw_ink`, placement in `place`; decision T10). Before you change any of them, read
+  `resources/guide.md` (the board reference in topics, `get_guide`; decision
+  T11), `resources/instructions.md` (server instructions) and the tool and
+  parameter descriptions in `src/main/mcp.ts`. Before you change any of them, read
   [`writing-agent-text.md`](../docs/learning-space/writing-agent-text.md).
 
 | Tool | Main parameters | What it does |
@@ -86,7 +85,8 @@ every tool twice. The popover shows this problem and offers **Fix**.
 | `get_screenshot` | `node_id` \| `region` \| `target`, `scale`, `max_size`, `labels`, `grid` | PNG of a node, a region, the view, all content, the selection or the changes |
 | `get_changes` | `since` | Changed and removed nodes since the agent's cursor; advances the cursor |
 | `open_board` | `path` | Opens a board in the app |
-| `get_brief` | none | The brief (for agents without the folder's `AGENTS.md`), then the folder's `.learning-space/guide.md` |
+| `get_brief` | none | The brief, for agents without the folder's `AGENTS.md` |
+| `get_guide` | `topic` | One topic of the board reference (model, html, math, svg, images, tokens, placement, ink, view, and `folder` when the folder has `.learning-space/guide.md`); without a topic, all of it |
 | `get_tree` | `node_id`, `depth` | Indented outline of nodes with ids and bounds |
 | `get_node_info` | `node_id` | One node: bounds, parent, children, style, text, author |
 | `get_html` | `node_id`, `include_ids` | A subtree as the `write_html` subset |
