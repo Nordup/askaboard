@@ -203,6 +203,66 @@ export const PERCEPTION = [
   }
 ]
 
+/**
+ * A spectrum-like bump that peaks at fraction tp of the width (value 1 there):
+ * points (0..1, 0..1) for a curve that rises fast and falls slowly.
+ */
+function bump(tp, steps = 32) {
+  const points = []
+  for (let i = 0; i <= steps; i++) {
+    const t = Math.max(0.001, i / steps)
+    const u = t / tp
+    points.push([t, Math.pow(u, 3) * Math.exp(3 * (1 - u))])
+  }
+  return points
+}
+
+/** V1: the learner's sketch box (board points): a curve and an arrow above it. */
+const V1_SKETCH = { width: 280, height: 210 }
+
+/**
+ * V1 is a continuation, as in the founder's first real session: turn 0 is a
+ * real turn of the measured model in a thread the bench keeps (its writes are
+ * the agent material); the learner then sketches beside the agent's drawing,
+ * and turn 1 resumes the SAME thread with a question that does not mention
+ * the board. The bench gives work() the empty spot it found beside the
+ * agent's newest drawing (ctx.spot, from find_space near ctx.anchor).
+ */
+PERCEPTION.push({
+  id: 'V1',
+  title: 'drew while talking',
+  lesson: { prompt: 'Explain why light from a hotter star looks bluer. Use the board.' },
+  prompt: "Doesn't that mean the colour depends on where the peak is?",
+  // The hole the busy board leaves free for the agent's explanation; the learner's view starts on it.
+  area: { x: -560, y: -240, width: 1120, height: 480 },
+  sketch: V1_SKETCH,
+  async seed() {
+    return {}
+  },
+  // A pure sketch: a curve whose peak sits left of centre, and an arrow pointing left over the peak.
+  work: ({ spot }) => {
+    const x0 = spot.x + 15
+    const base = spot.y + spot.height - 10
+    const w = 250
+    const h = 150
+    const curve = bump(0.28).map(([t, v]) => [Math.round((x0 + t * w) * 10) / 10, Math.round((base - v * h) * 10) / 10, P])
+    const ay = base - h - 22
+    const arrow = line(x0 + 0.62 * w, ay, x0 + 0.3 * w, ay)
+    const head = [
+      [x0 + 0.3 * w + 14, ay - 11, P],
+      [x0 + 0.3 * w, ay, P],
+      [x0 + 0.3 * w + 14, ay + 11, P]
+    ]
+    return [{ draw: [curve] }, { draw: [arrow, head] }]
+  },
+  checks: [
+    {
+      name: 'refers to the sketch',
+      test: has(/your (sketch|curve|drawing)|you drew|you(['’]ve| have) drawn|the curve you|your (version|peak)/i)
+    }
+  ]
+})
+
 /** Turn 0: the agent app's one earlier look at the board. */
 export const TURN0_PROMPT = 'Call the learning-space tool get_changes once, then reply OK.'
 export const TURN0_MODEL = 'haiku'

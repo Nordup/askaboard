@@ -23,7 +23,10 @@
  * fresh folder and app: the bench seeds agent material over its own MCP
  * client and the learner's earlier ink, lets the agent look once (turn 0,
  * --model haiku, not measured), draws the learner's new work, then measures a
- * NEW agent run (turn 1). See PERCEPTION in scenarios.mjs.
+ * NEW agent run (turn 1). See PERCEPTION in scenarios.mjs. V1 is a
+ * continuation instead: turn 0 is a real turn of the measured model ("explain
+ * … use the board"), the learner sketches beside its drawing, and turn 1
+ * resumes the same thread (codex exec resume / claude -p --continue).
  *
  * --client codex runs `codex exec --json` (the founder's model, gpt-6.1-sol at
  * reasoning effort medium, unless --model / --effort say otherwise) with a
@@ -418,7 +421,7 @@ async function runCodex(scenario, work, dir, model, effort) {
   // On a resumed thread, turn.completed reports the thread's running total: keep this run's share.
   const totals = { ...tokens }
   if (resume && work.codexTokens) for (const key of Object.keys(tokens)) tokens[key] = Math.max(0, tokens[key] - work.codexTokens[key])
-  if (!String(scenario.id).endsWith('-turn0') && threadId && (resume || !scenario.followUp)) {
+  if ((!String(scenario.id).endsWith('-turn0') || scenario.keepThread) && threadId && (resume || !scenario.followUp)) {
     work.codexThread = threadId
     work.codexTokens = totals
   }
@@ -660,6 +663,29 @@ async function agentTurn(scenario, work, dir, model, effort) {
   return { agent, t0, t1, files, sessions }
 }
 
+/** get_tree as text, through the bench client. */
+async function treeText(client) {
+  const result = await client.callTool({ name: 'get_tree', arguments: {} })
+  return result.content.find((c) => c.type === 'text')?.text ?? ''
+}
+
+/** The top-level items of a get_tree text: nodes ("svg n_x  x,y w×h …") and ink groups ("ink group g3  x,y w×h … (agent)"). */
+function topLevel(tree) {
+  const items = []
+  for (const line of tree.split('\n')) {
+    if (/^\s/.test(line)) continue
+    const group = /^ink group (g\d+)\s+(-?[\d.]+),(-?[\d.]+) ([\d.]+)×([\d.]+).*\((agent|learner)\)/.exec(line)
+    if (group) {
+      items.push({ kind: 'ink', id: group[1], x: +group[2], y: +group[3], width: +group[4], height: +group[5], author: group[6] })
+      continue
+    }
+    // A named node: 'frame "Star colours" n_x  …'.
+    const node = /^(\w+)(?: ".*?")? (n_\w+)\s+(-?[\d.]+),(-?[\d.]+) ([\d.]+)×([\d.]+)/.exec(line)
+    if (node) items.push({ kind: node[1], id: node[2], x: +node[3], y: +node[4], width: +node[5], height: +node[6], author: /\(learner\)$/.test(line) ? 'learner' : 'agent' })
+  }
+  return items
+}
+
 async function runPerception(p, work) {
   const dir = join(opts.out, p.id)
   mkdirSync(dir, { recursive: true })
@@ -690,21 +716,49 @@ async function runPerception(p, work) {
   await sleep(1500) // the autosave records the learner edits
 
   // The learner's view: the new work up and left of the centre, with neighbours round it, not the whole board.
-  const plannedInk = strokeBounds(p.work(ctx).flatMap((a) => a.draw ?? a.erase))
-  const cameraAt = [Math.round(plannedInk.x + plannedInk.width / 2 + 220), Math.round(plannedInk.y + plannedInk.height / 2 + 110)]
+  const viewOn = (r) => [Math.round(r.x + r.width / 2 + 220), Math.round(r.y + r.height / 2 + 110)]
+  let cameraAt
   const setCamera = () => JSON.parse(drive('camera', String(cameraAt[0]), String(cameraAt[1])))
-  setCamera()
-  writeFileSync(join(dir, 'seed.json'), JSON.stringify({ ctx, busy, camera_at: cameraAt }, null, 2))
+  let turn0
+  if (p.lesson) {
+    // 2. Turn 0 of a continuation: a real turn of the measured model, in a thread the bench keeps.
+    // The learner's view is on the free hole, so the agent's material lands there.
+    cameraAt = [Math.round(p.area.x + p.area.width / 2), Math.round(p.area.y + p.area.height / 2)]
+    setCamera()
+    const before = await withBenchClient(async (client) => topLevel(await treeText(client)))
+    turn0 = await agentTurn({ id: `${p.id}-turn0`, prompt: p.lesson.prompt, keepThread: true }, work, join(dir, 'turn0'), opts.model, opts.effort)
+    log(`${p.id} turn 0 (lesson) done: ${((turn0.t1 - turn0.t0) / 1000).toFixed(1)} s, exit ${turn0.agent.exit_code}, ${totalOf(turn0.sessions).calls} calls`)
+    // The learner sketches beside the agent's newest drawing: an empty spot next to it.
+    Object.assign(
+      ctx,
+      await withBenchClient(async (client) => {
+        const known = new Set(before.map((item) => item.id))
+        const added = topLevel(await treeText(client)).filter((item) => !known.has(item.id) && item.author !== 'learner')
+        if (!added.length) throw new Error(`${p.id}: turn 0 put nothing on the board`)
+        const anchor = [...added].reverse().find((item) => item.kind === 'svg') ?? added[added.length - 1]
+        const result = await client.callTool({ name: 'find_space', arguments: { ...p.sketch, near: anchor.id, inside_view: false } })
+        const spot = JSON.parse(result.content.find((c) => c.type === 'text').text)
+        return { added, anchor, spot }
+      })
+    )
+    cameraAt = viewOn(strokeBounds(p.work(ctx).flatMap((a) => a.draw ?? a.erase)))
+    setCamera()
+    writeFileSync(join(dir, 'seed.json'), JSON.stringify({ ctx, busy, camera_at: cameraAt }, null, 2))
+  } else {
+    cameraAt = viewOn(strokeBounds(p.work(ctx).flatMap((a) => a.draw ?? a.erase)))
+    setCamera()
+    writeFileSync(join(dir, 'seed.json'), JSON.stringify({ ctx, busy, camera_at: cameraAt }, null, 2))
 
-  // 2. Turn 0: the agent app looks once. Not measured; its trace is kept in turn0/.
-  const turn0 = await agentTurn(
-    { id: `${p.id}-turn0`, prompt: TURN0_PROMPT },
-    work,
-    join(dir, 'turn0'),
-    opts.client === 'claude' ? TURN0_MODEL : opts.model,
-    opts.client === 'codex' ? TURN0_CODEX_EFFORT : opts.effort
-  )
-  log(`${p.id} turn 0 done: ${((turn0.t1 - turn0.t0) / 1000).toFixed(1)} s, exit ${turn0.agent.exit_code}`)
+    // 2. Turn 0: the agent app looks once. Not measured; its trace is kept in turn0/.
+    turn0 = await agentTurn(
+      { id: `${p.id}-turn0`, prompt: TURN0_PROMPT },
+      work,
+      join(dir, 'turn0'),
+      opts.client === 'claude' ? TURN0_MODEL : opts.model,
+      opts.client === 'codex' ? TURN0_CODEX_EFFORT : opts.effort
+    )
+    log(`${p.id} turn 0 done: ${((turn0.t1 - turn0.t0) / 1000).toFixed(1)} s, exit ${turn0.agent.exit_code}`)
+  }
 
   // 3. The learner's new work, in the learner's view (drawing does not move a camera that already shows it).
   const camera = setCamera()
@@ -725,8 +779,8 @@ async function runPerception(p, work) {
   const newIds = [...new Set(edits.flatMap((e) => e.ids ?? []))]
   const lastEditAt = edits.length ? edits[edits.length - 1].t : new Date().toISOString()
 
-  // 4. Turn 1: a new connection with the scenario prompt. Measured.
-  const turn = await agentTurn(p, work, dir, opts.model)
+  // 4. Turn 1: the scenario prompt, measured. A new agent run, or for a continuation the same thread resumed.
+  const turn = await agentTurn(p.lesson ? { ...p, followUp: true } : p, work, dir, opts.model)
   const { agent, t0, t1, files, sessions } = turn
   writeFileSync(join(dir, 'report.json'), JSON.stringify({ sessions, total: totalOf(sessions) }, null, 2))
   try {
@@ -815,7 +869,26 @@ async function runPerception(p, work) {
     chat_words: wordCount(reply),
     per_tool: total.per_tool,
     trace_files: files.map((f) => basename(f)),
-    turn0: { wall_ms: turn0.t1 - turn0.t0, exit_code: turn0.agent.exit_code, cost_usd: turn0.agent.cost_usd, tokens: turn0.agent.tokens ?? null, calls: totalOf(turn0.sessions).calls, trace_files: turn0.files.map((f) => basename(f)) },
+    continuation: Boolean(p.lesson),
+    turn0: (() => {
+      const t0Total = totalOf(turn0.sessions)
+      const firstWrites = turn0.sessions.filter((s) => s.first_write_ms !== null).map((s) => ms(s.start) + s.first_write_ms)
+      return {
+        prompt: p.lesson?.prompt ?? TURN0_PROMPT,
+        wall_ms: turn0.t1 - turn0.t0,
+        exit_code: turn0.agent.exit_code,
+        cost_usd: turn0.agent.cost_usd,
+        tokens: turn0.agent.tokens ?? null,
+        calls: t0Total.calls,
+        screenshots: t0Total.screenshots,
+        words: t0Total.words,
+        new_top_level: t0Total.new_top_level,
+        first_write_ms: firstWrites.length ? Math.min(...firstWrites) - turn0.t0 : null,
+        per_tool: t0Total.per_tool,
+        codex_thread: turn0.agent.codex_thread ?? null,
+        trace_files: turn0.files.map((f) => basename(f))
+      }
+    })(),
     ...agent
   }
   delete metrics.reply
@@ -871,7 +944,7 @@ function summary(results) {
   if (pResults.length) {
     lines.push(
       '',
-      '## Perception scenarios (turn 1, a new connection)',
+      '## Perception scenarios (turn 1: a new connection; V1: the same thread resumed)',
       '',
       '- found: a screenshot held all of the learner\'s new ink. "calls before" / "to shot": tool calls and seconds before the first such screenshot. "1st get_changes": whether the first get_changes call listed all the new learner items (part = some; "since N" = the agent passed its own since, so the cursor was not used).',
       '',
@@ -893,6 +966,14 @@ function summary(results) {
     if (r.client_errors) lines.push(`Client errors: ${r.client_errors.join(' | ')}`, '')
     if (r.client_failed_tool_calls?.length) lines.push(`**Tool calls the client failed (not in the trace): ${r.client_failed_tool_calls.join(' | ')}**`, '')
     if (r.brief_loaded !== undefined) lines.push(`Brief (AGENTS.md) in context: ${r.brief_loaded === null ? 'unknown' : r.brief_loaded ? 'yes' : 'no'}${r.resumed ? ' (resumed thread)' : ''}`, '')
+    if (r.continuation) {
+      const t0 = r.turn0
+      lines.push(
+        `Turn 0 (lesson, "${t0.prompt}"): ${s1(t0.wall_ms)} s, ${t0.calls} calls, first write ${s1(t0.first_write_ms)} s, ${t0.words} words on the board. Tools: ${Object.entries(t0.per_tool).map(([tool, e]) => `${tool} ×${e.calls}`).join(', ') || 'none'}`,
+        ''
+      )
+      lines.push(`Turn 1 (same thread${r.resumed ? ', resumed' : ''}):`, '')
+    }
     lines.push(`Tools: ${Object.entries(r.per_tool).map(([tool, e]) => `${tool} ×${e.calls}`).join(', ') || 'none'}`, '')
     if (r.look) {
       lines.push(`Learner ink: ${rectText(r.look.ink_bounds)}`)

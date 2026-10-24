@@ -282,7 +282,8 @@ export interface AgentMethods {
       region?: BoardRect
       nodeId?: string
       scale: number
-      maxSize: number
+      /** The longest image side in px; null picks the default for the shot's size. */
+      maxSize: number | null
       since: number | null
       labels?: boolean
       grid?: boolean

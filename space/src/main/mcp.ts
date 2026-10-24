@@ -553,7 +553,7 @@ export class AgentServer {
           region: rectSchema.optional().describe('Capture this board rect.'),
           target: z.enum(['viewport', 'content', 'selection', 'changes', 'region']).optional().describe('What to capture when there is no node_id or region.'),
           scale: z.number().positive().max(4).optional().describe('Image pixels per board point (default 1). Lowered when the image would exceed max_size.'),
-          max_size: z.number().int().min(256).max(4096).optional().describe('The longest image side in pixels (default 1600).'),
+          max_size: z.number().int().min(256).max(4096).optional().describe('The longest image side in pixels. Default: 1024 for target "viewport" and "content" and for any area longer than 1000 board points; 1600 for smaller node and region crops.'),
           labels: z.boolean().optional().describe('Draw id tags and outlines on the image (default false).'),
           grid: z.boolean().optional().describe('Draw a board-coordinate grid on the image (default false).')
         },
@@ -573,7 +573,7 @@ export class AgentServer {
           region,
           nodeId: node_id,
           scale: scale ?? 1,
-          maxSize: max_size ?? 1600,
+          maxSize: max_size ?? null,
           since,
           labels: labels ?? false,
           grid: grid ?? false
@@ -667,7 +667,7 @@ export class AgentServer {
       {
         title: 'The agent guide',
         description:
-          `Read the Learning Space guide. Topic "brief" explains what the space is for and how the person and you work together in it; it is the same text as the brief in a learning folder's AGENTS.md, so skip it when that is already in your context. The reference topics describe the board's model and the details of every write: html, math, svg, images, tokens, placement, ink and view. topic: one of ${guideTopics(this.hooks.folderRoot()).join(', ')}; omit for every reference topic. The learning folder's own guidance, if any, comes last.`,
+          `Read the Learning Space guide. Topic "brief" explains what the space is for and how the person and you work together in it; it is the same text as the brief in a learning folder's AGENTS.md, so skip it when that is already in your context. The reference topics describe the board's model and the details of every write: html, math, svg, images, tokens, placement, ink and view. topic: one of ${guideTopics(this.hooks.folderRoot()).join(', ')}. Without a topic, one call returns every reference topic (about 7,000 characters). The learning folder's own guidance, if any, comes last.`,
         inputSchema: { topic: z.string().optional() },
         annotations: { readOnlyHint: true }
       },

@@ -2,4 +2,4 @@ Learning Space is a shared board where a person learns with you: they talk with 
 
 The person's handwriting is grouped into ink groups (g1, g2, …), which you can use like node ids. get_changes lists what is new since you last looked, and get_screenshot shows any part of the board as an image.
 
-Before your first write, read the reference topics of get_guide you need (html, svg, ink, placement, …). Everything on the board is editable by both of you, and each of your writes is one undo step for them. Coordinates are board points: origin at the centre, +x right, +y down.
+get_guide without a topic returns the whole reference in one call (about 7,000 characters): the HTML subset and its allowed styles, math markup, SVG, images, colour tokens, placement and ink. Write results also list any HTML or styles the board ignored. Everything on the board is editable by both of you, and each of your writes is one undo step for them. Coordinates are board points: origin at the centre, +x right, +y down.

@@ -47,6 +47,12 @@ const CHANGES_PAD = 48
 const CONTENT_PAD = 24
 /** The largest scale, in image pixels per board point. */
 const MAX_SCALE = 4
+// Default longest image side: wide shots are for orientation and stay in the agent's context
+// for the whole session, so they are smaller; small crops keep detail for reading handwriting.
+const WIDE_MAX_SIZE = 1024
+const CROP_MAX_SIZE = 1600
+/** A shot whose long side is above this many board points is a wide shot. */
+const WIDE_EDGE = 1000
 /** Padding around a node screenshot, in board points. */
 const NODE_PAD = 16
 const CHANGED_COLOR = '#6e8bff' // --accent
@@ -259,7 +265,9 @@ function screenshotPlan(context: AgentContext, params: AgentMethods['screenshotP
   // The asked scale, capped so the long edge stays within maxSize.
   const longEdge = Math.max(target.width, target.height)
   // max_size always wins, so a huge region gives a small image, never a huge canvas.
-  const scale = Math.min(MAX_SCALE, params.scale, params.maxSize / Math.max(1, longEdge))
+  const wide = params.target === 'viewport' || params.target === 'content' || longEdge > WIDE_EDGE
+  const maxSize = params.maxSize ?? (wide ? WIDE_MAX_SIZE : CROP_MAX_SIZE)
+  const scale = Math.min(MAX_SCALE, params.scale, maxSize / Math.max(1, longEdge))
   const width = Math.max(1, Math.round(target.width * scale))
   const height = Math.max(1, Math.round(target.height * scale))
   const shown = target
