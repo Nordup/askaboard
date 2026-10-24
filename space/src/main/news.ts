@@ -1,23 +1,26 @@
-import type { BoardRect, LearnerNews, NewsStroke } from '@shared/space-api'
+import type { BoardRect, LearnerNews } from '@shared/space-api'
 import { getAgentLook, setAgentLook } from './state'
 
 /**
- * Board news: what the learner drew or erased on the open board since an
- * agent app's last look at it.
+ * Board news: what the learner drew or erased on the open board, delivered
+ * once to each agent app.
  *
- * A "look" is a get_screenshot or get_changes call. The last look is kept per
- * agent app (the client label: "Codex", "Claude Code", …), learning folder and
- * board, in memory and in userData/state.json, so it survives a new MCP
- * connection and an app restart. It holds the board seq at that look; strokes
- * with a higher seq are news until the agent sees them: a screenshot whose
- * rect holds at least half of a stroke, or a get_changes call that lists it.
+ * Per agent app (the client label: "Codex", "Claude Code", …), learning folder
+ * and board, the app keeps the board seq up to which the learner's changes
+ * were delivered, in memory and in userData/state.json, so it survives a new
+ * MCP connection and an app restart. News is delivered when it is sent: as the
+ * first line of a tool result, or through GET /news (the `learning-space news`
+ * prompt hook). A look (get_screenshot, get_changes) also counts as delivered.
+ * The next news covers only the learner's changes after that. So the hook,
+ * which runs before the prompt, and the tool results of the same turn never
+ * send the same news twice.
  *
- * The news line goes at the start of every tool result of that agent app, and
- * the read-only GET /news route serves it to `learning-space news` (the hooks
- * that run before each prompt). It states facts only.
+ * The state also keeps the seq of the app's last look, where a new
+ * connection's change cursor starts (see AgentServer.startCursor), so
+ * get_changes after a hook still lists the strokes the news named.
  */
 
-type NewsRequest = (since: number, seen: Record<string, number>) => Promise<LearnerNews | null>
+type NewsRequest = (since: number) => Promise<LearnerNews | null>
 
 export interface BoardNewsDeps {
   request: NewsRequest
@@ -26,68 +29,56 @@ export interface BoardNewsDeps {
   shownBoard(): string | null
 }
 
-/** What a look showed: a board rect (a screenshot), or every change after a seq (get_changes; null = none). */
-export type LookCoverage = { rect: BoardRect } | { after: number | null }
-
 export class BoardNews {
+  /** Per app label: one delivery at a time, so two concurrent calls cannot both send the same news. */
+  private readonly busy = new Map<string, Promise<unknown>>()
+
   constructor(private readonly deps: BoardNewsDeps) {}
 
-  /** The news line for an agent app on the open board, or '' when nothing is new (or nothing is known). */
-  async line(client: string): Promise<string> {
-    const root = this.deps.folderRoot()
-    const board = this.deps.shownBoard()
-    if (!root || !board) return ''
-    const look = getAgentLook(client, root, board)
-    if (!look) return ''
-    const news = await this.deps.request(look.seq, look.seen)
-    if (!news || news.board !== board) return ''
-    const unseen = news.added.length + news.erased.length
-    // The board's seq went back (the window reloaded and lost unsaved strokes), or the
-    // seen strokes are all that was new: start again from now.
-    if (news.cursor < look.seq || (unseen === 0 && Object.keys(look.seen).length > 0)) {
-      setAgentLook(client, root, board, { seq: Math.min(look.seq, news.cursor), at: look.at, seen: {} })
-    }
-    if (unseen === 0 || news.cursor < look.seq) return ''
-    return formatNews(news, look.at, Date.now())
+  private serial<T>(client: string, work: () => Promise<T>): Promise<T> {
+    const previous = this.busy.get(client) ?? Promise.resolve()
+    const next = previous.then(work, work)
+    const settled = next.catch(() => undefined)
+    this.busy.set(client, settled)
+    void settled.then(() => {
+      if (this.busy.get(client) === settled) this.busy.delete(client)
+    })
+    return next
   }
 
-  /** An agent app looked at `board` (cursor = the board seq at the look). */
-  async looked(client: string, board: string, cursor: number, coverage: LookCoverage): Promise<void> {
-    const root = this.deps.folderRoot()
-    if (!root || board !== this.deps.shownBoard()) return
-    const now = Date.now()
-    const look = getAgentLook(client, root, board)
-    if (!look || cursor < look.seq) {
-      setAgentLook(client, root, board, { seq: cursor, at: now, seen: {} })
-      return
-    }
-    const news = await this.deps.request(look.seq, look.seen)
-    if (!news || news.board !== board) return
-    const seen = { ...look.seen }
-    let left = 0
-    for (const stroke of [...news.added, ...news.erased]) {
-      if (covers(coverage, stroke)) seen[stroke.id] = stroke.seq
-      else left++
-    }
-    // Everything new was seen: this look is the new baseline. Otherwise keep the old one and remember what was seen.
-    if (left === 0) setAgentLook(client, root, board, { seq: news.cursor, at: now, seen: {} })
-    else setAgentLook(client, root, board, { seq: look.seq, at: look.at, seen })
+  /**
+   * Deliver the news for an agent app on the open board: the line, or '' when
+   * nothing is new (or the app has never looked at this board). Marks it delivered.
+   */
+  deliver(client: string): Promise<string> {
+    return this.serial(client, async () => {
+      const root = this.deps.folderRoot()
+      const board = this.deps.shownBoard()
+      if (!root || !board) return ''
+      const state = getAgentLook(client, root, board)
+      if (!state) return ''
+      const news = await this.deps.request(state.seq)
+      if (!news || news.board !== board) return ''
+      // The board's seq went back (the window reloaded and lost unsaved strokes): start again from now.
+      if (news.cursor < state.seq) {
+        setAgentLook(client, root, board, { seq: news.cursor, at: state.at, lookSeq: Math.min(state.lookSeq, news.cursor) })
+        return ''
+      }
+      if (!news.added.length && !news.erased.length) return ''
+      const now = Date.now()
+      setAgentLook(client, root, board, { seq: news.cursor, at: now, lookSeq: state.lookSeq })
+      return formatNews(news, state.at, now)
+    })
   }
-}
 
-function covers(coverage: LookCoverage, stroke: NewsStroke): boolean {
-  if ('after' in coverage) return coverage.after !== null && stroke.seq > coverage.after
-  const b = stroke.bounds
-  if (!b) return false
-  const r = coverage.rect
-  const width = Math.min(b.x + b.width, r.x + r.width) - Math.max(b.x, r.x)
-  const height = Math.min(b.y + b.height, r.y + r.height) - Math.max(b.y, r.y)
-  if (b.width <= 0 || b.height <= 0) {
-    const cx = b.x + b.width / 2
-    const cy = b.y + b.height / 2
-    return cx >= r.x && cx <= r.x + r.width && cy >= r.y && cy <= r.y + r.height
+  /** An agent app looked at `board` (cursor = the board seq at the look): everything up to it counts as delivered. */
+  looked(client: string, board: string, cursor: number): Promise<void> {
+    return this.serial(client, async () => {
+      const root = this.deps.folderRoot()
+      if (!root || board !== this.deps.shownBoard()) return
+      setAgentLook(client, root, board, { seq: cursor, at: Date.now(), lookSeq: cursor })
+    })
   }
-  return width > 0 && height > 0 && width * height >= 0.5 * b.width * b.height
 }
 
 function ago(ms: number): string {
@@ -107,11 +98,10 @@ const MAX_GROUPS = 4
 
 /**
  * One line, facts only. For example:
- * Board news: since your last look at "Stars" (2 min ago) the learner drew 9 strokes: ink group g12
- * (280×210 at 310, -40) right of your SVG "Thermal spectra". The last change was 40 s ago. You have
- * not looked at these changes yet.
+ * Board news for "Stars", since your last look or news 2 min ago: the learner drew 9 strokes:
+ * ink group g12 (280×210 at 310, -40) right of your SVG "Thermal spectra". The last change was 40 s ago.
  */
-export function formatNews(news: LearnerNews, lookAt: number, now: number): string {
+export function formatNews(news: LearnerNews, since: number, now: number): string {
   const clauses: string[] = []
   if (news.added.length) {
     const many = news.groups.length > 1
@@ -127,9 +117,8 @@ export function formatNews(news: LearnerNews, lookAt: number, now: number): stri
   const times = [...news.added, ...news.erased].map((stroke) => stroke.at ?? 0).filter((at) => at > 0)
   const last = times.length ? Math.max(...times) : null
   return [
-    `Board news: since your last look at "${news.boardName}" (${ago(now - lookAt)} ago) the learner ${clauses.join(', and ')}.`,
-    last ? `The last change was ${ago(now - last)} ago.` : null,
-    'You have not looked at these changes yet.'
+    `Board news for "${news.boardName}", since your last look or news ${ago(now - since)} ago: the learner ${clauses.join(', and ')}.`,
+    last ? `The last change was ${ago(now - last)} ago.` : null
   ]
     .filter(Boolean)
     .join(' ')

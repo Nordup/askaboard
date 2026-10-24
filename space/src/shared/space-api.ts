@@ -218,7 +218,7 @@ export interface LearnerNews {
   cursor: number
   added: NewsStroke[]
   erased: NewsStroke[]
-  /** The groups of the added strokes (only the strokes not seen). */
+  /** The groups of the added strokes. */
   groups: NewsGroup[]
   /** Where the erased strokes were, relative to the nearest material. */
   erasedWhere: string | null
@@ -327,11 +327,8 @@ export interface AgentMethods {
     result: ScreenshotPlan
   }
   openBoard: { params: { path: string }; result: CanvasInfo }
-  /**
-   * The learner's ink changes after `since`, without the ones in `seen`
-   * (id → the seq that was seen); null when no board is open.
-   */
-  learnerNews: { params: { since: number; seen: Record<string, number> }; result: LearnerNews | null }
+  /** The learner's ink changes after `since`; null when no board is open. */
+  learnerNews: { params: { since: number }; result: LearnerNews | null }
   agentTool: { params: { tool: AgentToolName; args: Record<string, unknown>; agent: AgentRef }; result: unknown }
 }
 

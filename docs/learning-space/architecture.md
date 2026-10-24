@@ -124,18 +124,21 @@ limits scripts and images.
   screenshots agents received and the learner's edits, as JSONL in
   `~/.learning-space/traces/<date>/` (or `SPACE_TRACE_DIR`). Read with
   `scripts/trace-report.mjs`.
-- **Board news** (`src/main/news.ts`, decision I4): each agent app's last
-  look (`get_screenshot`, `get_changes`) per folder and board, in memory and
-  `userData/state.json` (`agentLooks`; key: client label as in
-  `clientLabel()`, folder root, board path). The renderer's `learnerNews`
-  request lists the learner's ink strokes added or erased after that seq
-  (agent edits left out; erasures are known for the current app run only),
-  with their ink groups and the nearest material. While any are unseen,
-  every tool result for that app starts with the "Board news:" line; a
-  screenshot whose rect holds at least half of a stroke, or a `get_changes`
-  that lists it, marks it seen. A new session's change cursor starts at the
-  app's last look. `GET /news?client=<label>` (same Host and Origin checks)
-  returns the line as plain text, empty when nothing is new.
+- **Board news** (`src/main/news.ts`, decision I4), delivered once: per
+  agent app (client label as in `clientLabel()`), folder and board, the app
+  keeps the board seq up to which the learner's changes were delivered and
+  the seq of the app's last look, in memory and `userData/state.json`
+  (`agentLooks`). The renderer's `learnerNews` request lists the learner's
+  ink strokes added or erased after the delivered seq (agent edits left
+  out; erasures are known for the current app run only), with their ink
+  groups and the nearest material. The news is delivered when it is sent:
+  as the first line of the app's next tool result (computed before the tool
+  runs; `get_changes` gets none, it lists the changes itself), or through
+  `GET /news?client=<label>` (same Host and Origin checks, plain text, empty
+  when nothing is new). A look (`get_screenshot`, `get_changes`) also counts
+  as delivered. So the prompt hook and the tool results of one turn never
+  repeat a change. A new session's change cursor starts at the app's last
+  look, so `get_changes` after a hook still lists what the news named.
 - **Limits** for every agent-controlled size: `src/shared/limits.ts`.
 
 ## Folder access (main)

@@ -21,7 +21,7 @@ import {
   MAX_TEXT_CHARS
 } from '@shared/limits'
 import { briefText, serverInstructions } from './guide'
-import { BoardNews, type LookCoverage } from './news'
+import { BoardNews } from './news'
 import { getAgentLook } from './state'
 import type { SnapshotRenderer } from './snapshot'
 import { LearnerEditLog, SessionTrace, writeLearnerEdit } from './trace'
@@ -50,7 +50,8 @@ import {
  *
  * GET /news?client=<label> is the one other route: the board news line for
  * that agent app (see news.ts), as plain text, empty when nothing is new. It
- * is read-only and passes the same Host and Origin checks.
+ * changes no board, marks the news delivered, and passes the same Host and
+ * Origin checks.
  */
 
 export const DEFAULT_MCP_PORT = 47821
@@ -218,7 +219,7 @@ export class AgentServer {
   constructor(private readonly hooks: AgentServerHooks) {
     this.bridge = new RendererBridge(hooks.webContents)
     this.news = new BoardNews({
-      request: (since, seen) => this.bridge.request('learnerNews', { since, seen }, NEWS_TIMEOUT_MS),
+      request: (since) => this.bridge.request('learnerNews', { since }, NEWS_TIMEOUT_MS),
       folderRoot: () => hooks.folderRoot(),
       shownBoard: () => hooks.shownBoard()
     })
@@ -372,7 +373,7 @@ export class AgentServer {
     res.writeHead(405, { Allow: 'GET, POST, DELETE' }).end()
   }
 
-  /** GET /news?client=<label>: the board news line for that agent app, or an empty body. Never an error for a valid GET. */
+  /** GET /news?client=<label>: deliver the board news line for that agent app, or an empty body. Never an error for a valid GET. */
   private async serveNews(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {
       res.writeHead(405, { Allow: 'GET' }).end()
@@ -381,7 +382,7 @@ export class AgentServer {
     const client = new URL(req.url ?? '/news', 'http://127.0.0.1').searchParams.get('client')?.trim() ?? ''
     let line = ''
     try {
-      if (client) line = await this.news.line(clientLabel(client))
+      if (client) line = await this.news.deliver(clientLabel(client))
     } catch (error) {
       console.warn(`mcp: news for "${client}" failed: ${error instanceof Error ? error.message : String(error)}`)
     }
@@ -519,6 +520,9 @@ export class AgentServer {
       session.lastActivity = Date.now()
       this.hooks.activity({ sessionId: session.id, tool: name })
       const start = Date.now()
+      // The board news goes out once, before the tool runs (a screenshot then counts as a look after it).
+      // get_changes gets none: it lists the same changes itself.
+      const news = name === 'get_changes' ? '' : await this.newsLine(session)
       let result: CallToolResult
       let thrown: unknown = null
       try {
@@ -528,23 +532,22 @@ export class AgentServer {
         thrown = error
         result = failure(error)
       }
-      const news = await this.newsLine(session)
       if (news) result = { ...result, content: [{ type: 'text', text: news }, ...result.content] }
       this.traceOf(session)?.call(name, args, start, Date.now(), this.hooks.shownBoard(), thrown === null ? result : null, thrown)
       return result
     }
   }
 
-  /** The session's agent app label ("Codex", "Claude Code", …), the key of its last look. */
+  /** The session's agent app label ("Codex", "Claude Code", …), the key of its news state. */
   private label(session: Session): string {
     return clientLabel(session.server.server.getClientVersion()?.name)
   }
 
-  /** The board news line for this session's agent app, or ''. Never throws. */
+  /** Deliver the board news for this session's agent app: the line, or ''. Never throws. */
   private async newsLine(session: Session): Promise<string> {
     if (!session.id || session.id === 'catalog') return ''
     try {
-      return await this.news.line(this.label(session))
+      return await this.news.deliver(this.label(session))
     } catch {
       return ''
     }
@@ -558,14 +561,14 @@ export class AgentServer {
   private startCursor(session: Session, board: string, now: number): number {
     const root = this.hooks.folderRoot()
     const look = root && session.id && session.id !== 'catalog' ? getAgentLook(this.label(session), root, board) : null
-    return look ? Math.min(look.seq, now) : now
+    return look ? Math.min(look.lookSeq, now) : now
   }
 
   /** Record a look (get_screenshot, get_changes) for this session's agent app. Never throws. */
-  private async looked(session: Session, board: string, cursor: number, coverage: LookCoverage): Promise<void> {
+  private async looked(session: Session, board: string, cursor: number): Promise<void> {
     if (!session.id || session.id === 'catalog') return
     try {
-      await this.news.looked(this.label(session), board, cursor, coverage)
+      await this.news.looked(this.label(session), board, cursor)
     } catch (error) {
       console.warn(`mcp: last look not recorded: ${error instanceof Error ? error.message : String(error)}`)
     }
@@ -659,7 +662,7 @@ export class AgentServer {
         } else if (!session.cursors.has(plan.board)) {
           session.cursors.set(plan.board, this.startCursor(session, plan.board, plan.cursor))
         }
-        await this.looked(session, plan.board, plan.cursor, plan.kind === 'empty' ? { after: null } : { rect: plan.rect })
+        await this.looked(session, plan.board, plan.cursor)
         if (plan.kind === 'empty') return text(plan.message)
         const shot = await this.hooks.snapshots.capture({
           nodes: plan.nodes,
@@ -702,7 +705,7 @@ export class AgentServer {
       {
         title: 'Changes since the last look',
         description:
-          "List what changed on the open board since your change cursor: items added or changed (id, kind, tool, colour, author of the change, bounds, seq), items removed (id, bounds, seq), the ink groups that hold changed strokes (groups_changed), and your new cursor. It returns data, not an image; use get_screenshot with target \"changes\" or a node_id to see the items. Your cursor starts at your app's last look at a board in an earlier connection, else at your first look in this one (get_canvas_info, get_changes, get_screenshot or open_board), when the first call lists nothing new; since: 0 lists the whole history of the board. The list includes your own writes; the author field tells them apart from the learner's. get_changes and get_screenshot are your app's looks at the board: while the learner has drawn or erased strokes that your app has not seen since its last look (kept per agent app and board, across connections), every tool result starts with a \"Board news:\" line that lists them by ink group and place; a screenshot that holds them, or get_changes, removes it.",
+          "List what changed on the open board since your change cursor: items added or changed (id, kind, tool, colour, author of the change, bounds, seq), items removed (id, bounds, seq), the ink groups that hold changed strokes (groups_changed), and your new cursor. It returns data, not an image; use get_screenshot with target \"changes\" or a node_id to see the items. Your cursor starts at your app's last look at a board in an earlier connection, else at your first look in this one (get_canvas_info, get_changes, get_screenshot or open_board), when the first call lists nothing new; since: 0 lists the whole history of the board. The list includes your own writes; the author field tells them apart from the learner's. When the learner drew or erased strokes since your app's last look (get_changes, get_screenshot) or last board news (kept per agent app and board, across connections), the next tool result starts with a \"Board news\" line that lists them by ink group and place, once; the next news covers only later changes.",
         inputSchema: {
           since: z.number().int().min(0).optional().describe("A cursor value to compare against instead of your own cursor; 0 means everything on the board.")
         },
@@ -719,7 +722,7 @@ export class AgentServer {
         const changes = await this.bridge.request('changes', { since: from })
         if (from !== null && !session.listedFrom.has(changes.board)) session.listedFrom.set(changes.board, from)
         session.cursors.set(changes.board, changes.cursor)
-        await this.looked(session, changes.board, changes.cursor, { after: from })
+        await this.looked(session, changes.board, changes.cursor)
         return text(json(changes))
       })
     )
@@ -810,7 +813,7 @@ export class AgentServer {
       {
         title: 'Write HTML as nodes',
         description:
-          "Add material to the open board, written in a small HTML subset that the app converts into editable nodes. Returns the new top-level ids (created), a map from layer-name to id (named), the measured bounds after layout, how the nodes were placed and whether they are in the learner's view, what they now overlap (overlaps: [{id, kind, author, area_pct}], plus warnings such as \"covers learner ink g3\"), and ignored: the tags, attributes and styles the board did not use, with notes. One call is one undo step for the learner.\n\nWhere it goes: mode \"insert_children\" (default) adds the HTML inside the frame target_id, or at the top level for target_id \"root\"; mode \"replace\" replaces the node target_id, and the first new top-level node keeps its id (get_html returns a node's current HTML). For \"root\", place puts the nodes beside a node or ink group; without place the app picks an empty spot near near (or the learner's latest work).\n\nHow HTML becomes nodes: an element whose children are all inline (text, <b>/<strong>, <i>/<em>, <br>, $math$) becomes one text node; an element with block children becomes a frame, a box that holds and moves its children; <svg> becomes a drawing; <img> an image. layer-name=\"Hint 1\" on any element names its node. <h1>\u2013<h6> default to 28, 22, 18, 16, 15 and 14 px. <ul>/<ol> become a column of lines prefixed \"\u2022 \" or \"1. \". <pre> keeps whitespace, monospace, no markup. Styles on <span> and <b> are dropped: style the whole block. Tables become plain boxes without column alignment: build rows with flex. <style>, <script>, classes and event attributes are dropped.\n\nMath: $\u2026$ in KaTeX syntax inside any text, for example <p>Kepler: $T^2 \\propto a^3$</p>. Math is inline only ($$\u2026$$ is not display math). A literal dollar sign is \\$.\n\nLayout is flexbox. A frame without display:flex becomes a flex column, except one whose children use position:absolute; left:\u2026px; top:\u2026px, which places them freely. No margin, grid, float or tables: space with gap and padding. Sizing is border-box; height:fit-content lets a frame grow with its content.\n\nStyles: inline style=\"\u2026\" only, with CSS property names in kebab-case (font-size; fontSize is ignored). Accepted: width, height, min-/max-width, min-/max-height, padding and its sides, gap, row-gap, column-gap, display (flex, block, none), flex-direction, flex-wrap, align-items, align-content, justify-content, align-self, flex-grow, flex-shrink, flex-basis, background, background-color, color, opacity, border-radius, border and its sides, border-color, border-width, border-style, box-shadow, font-size, font-weight, font-style, font-family, line-height, letter-spacing, text-align, text-decoration, text-transform, white-space, overflow, object-fit. Sizes in px; line-height in px or a plain number. url() values are dropped.\n\nColours: the board is dark. Tokens that match the app, usable in any style or SVG fill/stroke: var(--ls-card) #1f2230 and var(--ls-card-2) #262a3a (backgrounds), var(--ls-text) #ececef, var(--ls-muted) #a0a0a8, var(--ls-accent) #6e8bff (blue), var(--ls-good) #5fd38d (green), var(--ls-bad) #ff6b8b (pink-red), var(--ls-warn) #f5d76e (yellow), var(--ls-border) #2e3448, var(--ls-font), var(--ls-mono). Literal colours also work.\n\nSVG: inline <svg viewBox=\"\u2026\"> with a width and height (default: the viewBox size in px). Element ids stay, scoped to the drawing, and get_node_info lists them; markers and gradients work with url(#id) inside the same svg. Scripts, <foreignObject>, <image>, <style>, <a> and external references are removed.\n\nImages: <img src> with an https URL is downloaded into the folder's assets/ (png, jpeg, gif, webp, avif or svg, up to 10 MB); data: URLs are saved there too; a path inside the learning folder (assets/orbit.png) is used as is. Give a width and height. An image that fails to load is left out and named in ignored.notes.",
+          "Add material to the open board, written in a small HTML subset that the app converts into editable nodes. Returns the new top-level ids (created), a map from layer-name to id (named), the measured bounds after layout, how the nodes were placed and whether they are in the learner's view, what they now overlap (overlaps: [{id, kind, author, area_pct}], plus warnings such as \"covers learner ink g3\"), and ignored: the tags, attributes and styles the board did not use, with notes. One call is one undo step for the learner.\n\nWhere it goes: mode \"insert_children\" (default) adds the HTML inside the frame target_id, or at the top level for target_id \"root\"; mode \"replace\" replaces the node target_id, and the first new top-level node keeps its id (get_html returns a node's current HTML). For \"root\", place puts the nodes beside a node or ink group; without place the app picks an empty spot near near (or the learner's latest work).\n\nHow HTML becomes nodes: an element whose children are all inline (text, <b>/<strong>, <i>/<em>, <br>, $math$) becomes one text node; an element with block children becomes a frame, a box that holds and moves its children; <svg> becomes a drawing; <img> an image. layer-name=\"Hint 1\" on any element names its node. <h1>\u2013<h6> default to 28, 22, 18, 16, 15 and 14 px. <ul>/<ol> become a column of lines prefixed \"\u2022 \" or \"1. \". <pre> keeps whitespace, monospace, no markup. Styles on <span> and <b> are dropped: style the whole block. Tables become plain boxes without column alignment: build rows with flex. <style>, <script>, classes and event attributes are dropped.\n\nMath: $\u2026$ in KaTeX syntax inside any text, for example <p>Kepler: $T^2 \\propto a^3$</p>. Math is inline only ($$\u2026$$ is not display math). A literal dollar sign is \\$.\n\nLayout is flexbox. A frame without display:flex becomes a flex column, except one whose children use position:absolute; left:\u2026px; top:\u2026px, which places them freely. No margin, grid, float or tables: space with gap and padding. Sizing is border-box; height:fit-content lets a frame grow with its content.\n\nStyles: inline style=\"\u2026\" only, with CSS property names in kebab-case or camelCase (font-size or fontSize). Accepted: width, height, min-/max-width, min-/max-height, padding and its sides, gap, row-gap, column-gap, display (flex, block, none), flex-direction, flex-wrap, align-items, align-content, justify-content, align-self, flex-grow, flex-shrink, flex-basis, background, background-color, color, opacity, border-radius, border and its sides, border-color, border-width, border-style, box-shadow, font-size, font-weight, font-style, font-family, line-height, letter-spacing, text-align, text-decoration, text-transform, white-space, overflow, object-fit. Sizes in px; line-height in px or a plain number. url() values are dropped.\n\nColours: the board is dark. Tokens that match the app, usable in any style or SVG fill/stroke: var(--ls-card) #1f2230 and var(--ls-card-2) #262a3a (backgrounds), var(--ls-text) #ececef, var(--ls-muted) #a0a0a8, var(--ls-accent) #6e8bff (blue), var(--ls-good) #5fd38d (green), var(--ls-bad) #ff6b8b (pink-red), var(--ls-warn) #f5d76e (yellow), var(--ls-border) #2e3448, var(--ls-font), var(--ls-mono). Literal colours also work.\n\nSVG: inline <svg viewBox=\"\u2026\"> with a width and height (default: the viewBox size in px). Element ids stay, scoped to the drawing, and get_node_info lists them; markers and gradients work with url(#id) inside the same svg. Scripts, <foreignObject>, <image>, <style>, <a> and external references are removed.\n\nImages: <img src> with an https URL is downloaded into the folder's assets/ (png, jpeg, gif, webp, avif or svg, up to 10 MB); data: URLs are saved there too; a path inside the learning folder (assets/orbit.png) is used as is. Give a width and height. An image that fails to load is left out and named in ignored.notes.",
         inputSchema: {
           html: z.string().max(MAX_HTML_CHARS, `html must be at most ${MAX_HTML_CHARS} characters; write it in smaller parts.`),
           target_id: z.string().describe('A frame id to write into (or the node to replace), or "root" for the top level of the board.'),

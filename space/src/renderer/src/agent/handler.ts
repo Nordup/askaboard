@@ -241,8 +241,8 @@ function whereText(state: LiveBoardState, groups: InkGroup[], region: Region, pa
   return (best as { gap: number; text: string } | null)?.text ?? null
 }
 
-/** The learner's ink strokes added or erased after `since`, minus the ones already seen. */
-function learnerNews(context: AgentContext, since: number, seen: Record<string, number>): LearnerNews | null {
+/** The learner's ink strokes added or erased after `since`. */
+function learnerNews(context: AgentContext, since: number): LearnerNews | null {
   if (!context.folder || !context.openPath || !context.board) return null
   const path = context.openPath
   const state = context.board.liveState()
@@ -252,7 +252,7 @@ function learnerNews(context: AgentContext, since: number, seen: Record<string, 
 
   const added: NewsStroke[] = []
   for (const node of state.nodes) {
-    if (!isInk(node) || node.seq <= since || seen[node.id] === node.seq) continue
+    if (!isInk(node) || node.seq <= since) continue
     if ((state.editor(node.id) ?? node.author) !== 'learner') continue
     const at = state.changedAt(node.id)
     const group = groupOf.get(node.id)
@@ -260,7 +260,7 @@ function learnerNews(context: AgentContext, since: number, seen: Record<string, 
   }
   const present = new Set(state.nodes.map((node) => node.id))
   const erased: NewsStroke[] = (context.changeLog?.after(since) ?? [])
-    .filter((tombstone) => tombstone.kind === 'ink' && tombstone.by === 'learner' && !present.has(tombstone.id) && seen[tombstone.id] !== tombstone.seq)
+    .filter((tombstone) => tombstone.kind === 'ink' && tombstone.by === 'learner' && !present.has(tombstone.id))
     .map((tombstone) => ({ id: tombstone.id, seq: tombstone.seq, bounds: rect(tombstone.bounds), at: tombstone.at }))
 
   const newsGroupIds = new Set(added.flatMap((stroke) => (stroke.group ? [stroke.group] : [])))
@@ -416,7 +416,7 @@ export async function handleAgentRequest(request: AgentRequest, getContext: () =
       return changeSet(context, (request.params as AgentMethods['changes']['params']).since)
     case 'learnerNews': {
       const params = request.params as AgentMethods['learnerNews']['params']
-      return learnerNews(context, params.since, params.seen ?? {})
+      return learnerNews(context, params.since)
     }
     case 'screenshotPlan':
       return screenshotPlan(context, request.params as AgentMethods['screenshotPlan']['params'])

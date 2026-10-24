@@ -17,16 +17,20 @@ interface PersistedState {
   lastBoards: Record<string, string>
   /** Folder roots where the learner chose "Don't ask" for the setup offer. */
   setupDontAsk: string[]
-  /** Each agent app's last look at a board (see news.ts). Key: `<client label>::<folder root>::<board path>`. */
+  /** Each agent app's news state per board (see news.ts). Key: `<client label>::<folder root>::<board path>`. */
   agentLooks: Record<string, AgentLook>
 }
 
-/** An agent app's last look at a board: the board seq and time, and the learner strokes it saw after that seq. */
+/**
+ * An agent app's news state on a board: the board seq up to which the learner's
+ * changes were delivered (in a "Board news" line or by a look), when, and the seq
+ * of its last look (get_screenshot, get_changes), where a new connection's change
+ * cursor starts.
+ */
 export interface AgentLook {
   seq: number
   at: number
-  /** Stroke id → the seq it had when the agent saw it. */
-  seen: Record<string, number>
+  lookSeq: number
 }
 
 const MAX_RECENT = 8
@@ -157,7 +161,8 @@ const lookKey = (client: string, root: string, rel: string): string => `${client
 
 export function getAgentLook(client: string, root: string, rel: string): AgentLook | null {
   const look = state.agentLooks[lookKey(client, root, rel)]
-  return look && typeof look.seq === 'number' && typeof look.at === 'number' ? { ...look, seen: look.seen ?? {} } : null
+  if (!look || typeof look.seq !== 'number' || typeof look.at !== 'number') return null
+  return { seq: look.seq, at: look.at, lookSeq: typeof look.lookSeq === 'number' ? look.lookSeq : look.seq }
 }
 
 export function setAgentLook(client: string, root: string, rel: string, look: AgentLook): void {

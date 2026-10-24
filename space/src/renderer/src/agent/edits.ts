@@ -1,4 +1,4 @@
-import { isContent, isFrame, isInk, isKnown, newItemId, renderableStyle, STYLE_KEYS, type BoardNode, type ContentNode, type InkNode, type NodeStyle } from '@shared/board-format'
+import { isContent, isFrame, isInk, isKnown, newItemId, renderableStyle, STYLE_KEYS, styleKey, type BoardNode, type ContentNode, type InkNode, type NodeStyle } from '@shared/board-format'
 import { MAX_BOX_SIZE, MAX_COORD, MAX_HTML_CHARS, MAX_INK_LINES, MAX_INK_POINTS, MAX_STYLE_CHARS, MAX_TEXT_CHARS } from '@shared/limits'
 import type { AgentRef, AgentToolName, BoardRect } from '@shared/space-api'
 import type { BoardHandle, PresenceEntry } from '../board/Board'
@@ -161,7 +161,7 @@ function normalizeStyles(input: unknown, ignored: Set<string>): Record<string, s
   if (!input || typeof input !== 'object') return out
   const allowed = new Set<string>(STYLE_KEYS)
   for (const [rawKey, rawValue] of Object.entries(input as Record<string, unknown>)) {
-    const key = rawKey.includes('-') ? rawKey.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase()) : rawKey
+    const key = styleKey(rawKey)
     if (POSITION_KEYS.has(key)) {
       ignored.add(`${rawKey} (positions go through move_nodes)`)
       continue

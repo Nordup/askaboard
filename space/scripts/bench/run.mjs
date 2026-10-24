@@ -406,7 +406,7 @@ function newsInRollout(file, startedMs) {
     try {
       const entry = JSON.parse(line)
       if (Date.parse(entry.timestamp) < startedMs) continue
-      for (const part of entry.payload?.content ?? []) if (typeof part.text === 'string' && part.text.includes('Board news:')) texts.push(part.text)
+      for (const part of entry.payload?.content ?? []) if (typeof part.text === 'string' && part.text.startsWith('Board news')) texts.push(part.text)
     } catch {
       // A partial line.
     }

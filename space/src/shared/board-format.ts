@@ -31,6 +31,16 @@ export type Author = 'learner' | 'agent'
  * CSS. Values are CSS strings ("240px", "flex", "#222"). No margin, no grid,
  * no position or transform: the app owns positions (node x, y).
  */
+/**
+ * A CSS property name as a style key. Both forms work: kebab-case (as in a
+ * style="" attribute; case-insensitive, like CSS) and camelCase (as in a
+ * style object): "font-size", "Font-Size" and "fontSize" all give "fontSize".
+ */
+export function styleKey(name: string): string {
+  const key = name.trim()
+  return key.includes('-') ? key.toLowerCase().replace(/-([a-z])/g, (_, c: string) => c.toUpperCase()) : key
+}
+
 export const STYLE_KEYS = [
   'width',
   'height',

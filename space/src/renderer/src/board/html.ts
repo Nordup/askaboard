@@ -1,5 +1,5 @@
 import { MAX_COORD, MAX_HTML_DEPTH, MAX_HTML_ELEMENTS, MAX_STYLE_CHARS } from '@shared/limits'
-import { isContent, isInk, isKnown, newItemId, STYLE_KEYS, type BoardNode, type NodeStyle } from '@shared/board-format'
+import { isContent, isInk, isKnown, newItemId, STYLE_KEYS, styleKey, type BoardNode, type NodeStyle } from '@shared/board-format'
 import { sanitizeSvg } from './content'
 import { parseMarkup, type Run } from './markup'
 import type { SceneIndex } from './scene'
@@ -47,7 +47,6 @@ export class Ignored {
 
 // ---------- Styles ----------
 
-const camel = (name: string): string => name.trim().toLowerCase().replace(/-([a-z])/g, (_, c: string) => c.toUpperCase())
 const kebab = (name: string): string => name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)
 
 /** Read a style attribute as written (shorthands kept). Position keys go to `position`. */
@@ -58,7 +57,7 @@ function readStyle(raw: string | null, ignored: Ignored): { style: NodeStyle; po
   for (const declaration of raw.split(';')) {
     const colon = declaration.indexOf(':')
     if (colon < 0) continue
-    const key = camel(declaration.slice(0, colon))
+    const key = styleKey(declaration.slice(0, colon))
     const value = declaration
       .slice(colon + 1)
       .replace(/!important/i, '')
