@@ -69,6 +69,8 @@ export interface AgentServerHooks {
   activity(activity: AgentActivity): void
   /** The open learning folder's real path, for its `.learning-space/` overrides. */
   folderRoot(): string | null
+  /** The board the window shows (folder-relative path), or null; for the session trace. */
+  shownBoard(): string | null
   /** The server listens on its port (it owns the port; another instance does not). */
   listening?(): void
 }
@@ -440,16 +442,12 @@ export class AgentServer {
     if (!session.id || session.id === 'catalog') return null
     try {
       const client = session.server.server.getClientVersion()
-      const board = Promise.race([
-        this.bridge.request('canvasInfo', {}).then((info) => info.board?.path ?? null),
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000))
-      ])
       session.trace = new SessionTrace({
         sessionId: session.id,
         clientName: client?.name ?? 'agent',
         clientVersion: client?.version ?? null,
         folder: this.hooks.folderRoot(),
-        board
+        board: this.hooks.shownBoard()
       })
       return session.trace
     } catch (error) {
@@ -464,14 +462,15 @@ export class AgentServer {
     if (folder) this.learnerEdits.read(folder, board, text)
   }
 
-  /** The renderer saved a board: trace the learner's new or changed nodes, if any. Never throws. */
+  /**
+   * The renderer saved a board: log the learner's new or changed nodes, if any, to the day's
+   * learner-edits.jsonl only (trace-report joins them to sessions by board and time). Never throws.
+   */
   boardSaved(board: string, text: string): void {
     try {
       const folder = this.hooks.folderRoot()
       const edit = folder ? this.learnerEdits.saved(folder, board, text) : null
-      if (!edit) return
-      writeLearnerEdit(edit)
-      for (const session of this.sessions.values()) session.trace?.write({ ...edit })
+      if (edit) writeLearnerEdit(edit)
     } catch (error) {
       console.warn(`trace: learner edit not recorded: ${String(error)}`)
     }
@@ -492,7 +491,7 @@ export class AgentServer {
         thrown = error
         result = failure(error)
       }
-      this.traceOf(session)?.call(name, args, start, Date.now(), thrown === null ? result : null, thrown)
+      this.traceOf(session)?.call(name, args, start, Date.now(), this.hooks.shownBoard(), thrown === null ? result : null, thrown)
       return result
     }
   }
@@ -734,7 +733,7 @@ export class AgentServer {
       {
         title: 'Write HTML as nodes',
         description:
-          "Add material to the board as nodes, written in a small HTML subset: text and formulas (<p>, <h1>–<h6>, <b>, <i>, $math$), SVG drawings (<svg>), images (<img>), and boxes (<div>, which become frames). mode \"insert_children\" (default) adds the HTML inside the frame target_id, or at the top level for target_id \"root\"; mode \"replace\" replaces the node target_id. For \"root\", place puts the new nodes relative to a node or ink group, and near picks an automatic spot beside one. Returns the new top-level ids, a map from layer-name to id, the measured bounds after layout, whether everything is in the learner's view, what the new nodes overlap, and any HTML or styles that were ignored. The supported tags and styles are in get_guide topic \"html\". One undo step for the learner.",
+          "Add material to the board as nodes, written in a small HTML subset: text and formulas (<p>, <h1>–<h6>, <b>, <i>, $math$), SVG drawings (<svg>), images (<img>), and boxes (<div>, which become frames). mode \"insert_children\" (default) adds the HTML inside the frame target_id, or at the top level for target_id \"root\"; mode \"replace\" replaces the node target_id, and the first new top-level node keeps target_id's id. For \"root\", place puts the new nodes relative to a node or ink group, and near picks an automatic spot beside one. Returns the new top-level ids, a map from layer-name to id, the measured bounds after layout, whether everything is in the learner's view, what the new nodes overlap, and any HTML or styles that were ignored. The supported tags and styles are in get_guide topic \"html\". One undo step for the learner.",
         inputSchema: {
           html: z.string().max(MAX_HTML_CHARS, `html must be at most ${MAX_HTML_CHARS} characters; write it in smaller parts.`),
           target_id: z.string().describe('A frame id, or "root".'),

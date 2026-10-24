@@ -87,6 +87,7 @@ const agentServer = new AgentServer({
   status: (status) => send(IPC.agentStatus, status),
   activity: (activity) => send(IPC.agentActivity, activity),
   folderRoot: () => session?.root ?? null,
+  shownBoard: () => (session ? store.getLastBoard(session.root) : null),
   // This instance owns the port: point the relay at it and refresh its offline tool list.
   listening: () => {
     void agentServer

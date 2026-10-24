@@ -511,6 +511,10 @@ async function writeHtml(ctx: EditContext, args: Record<string, unknown>): Promi
     if (isInk(target)) throw new Error('Ink cannot be replaced with HTML. Use delete_nodes, or move_nodes.')
     const key = parentKey(target, s.index.byId)
     const replaced = withDescendants([target.id], s.index)
+    // The replacement keeps the target's identity: its first top-level node takes target_id's id, so
+    // everything that names the target (focus, screenshots, place, presence) still finds it. It is
+    // built first, so no other node in the HTML can claim that id.
+    drafts = [{ ...drafts[0], wantedId: target.id }, ...drafts.slice(1)]
     created = draftsToNodes(drafts, {
       parent: key === ROOT ? undefined : key,
       zStart: 0,
@@ -567,6 +571,9 @@ async function writeHtml(ctx: EditContext, args: Record<string, unknown>): Promi
   const summary = ignored.summary()
   return {
     created: created.roots,
+    ...(target && mode === 'replace' && created.roots.length > 1
+      ? { kept_id: `${target.id} is now the first of the ${created.roots.length} new top-level nodes; the others have new ids.` }
+      : {}),
     ...(Object.keys(created.named).length ? { named: created.named } : {}),
     node_count: created.nodes.length,
     bounds,

@@ -10,21 +10,32 @@ import { agentHomeDir } from './agent-home'
  *
  *   <root>/<YYYY-MM-DD>/<HHMMSS>-<client>-<shortSessionId>.jsonl
  *   <root>/<YYYY-MM-DD>/<HHMMSS>-<client>-<shortSessionId>-<n>.png   screenshots the agent received
- *   <root>/<YYYY-MM-DD>/learner-edits.jsonl                          learner edits, for all sessions
+ *   <root>/<YYYY-MM-DD>/learner-edits.jsonl                          learner edits, for all sessions and boards
  *
  * The root is ~/.learning-space/traces, or $SPACE_TRACE_DIR. Events (one JSON
  * object per line, `type` first):
  *
  *   session_open   t, session_id, client {name, version}, folder, board
- *   tool_call      t (start), end, duration_ms, gap_ms, tool, args, ok,
+ *   tool_call      t (start), end, duration_ms, gap_ms, board, tool, args, ok,
  *                  result_text, images [{file, bytes}], error
- *   learner_edit   t, board, ids, strokes, bounds   (also in learner-edits.jsonl)
  *   session_close  t, session_id, calls, wall_ms
  *
+ * and in learner-edits.jsonl only:
+ *
+ *   learner_edit   t, folder, board, ids, strokes, bounds
+ *
+ * session_open's board is the board shown when the client connected; the
+ * person can switch boards later, so each tool_call names the board shown when
+ * the call ended (for open_board, the board it opened). A session's learner
+ * edits are not copied into its file: trace-report joins learner-edits.jsonl to
+ * a session by folder, board and time. (Older session files hold copies of
+ * learner_edit events; trace-report reads them and drops duplicates.)
+ *
  * gap_ms is the time from the end of the previous call in this session (from
- * session_open for the first call) to the start of this one: the agent's own
- * time. Writes are queued and never awaited by a tool call; a failed write
- * logs one warning and never fails the call.
+ * session_open for the first call) to the start of this one: the model's time,
+ * or the person thinking or talking (MCP has no turn boundaries). Writes are
+ * queued and never awaited by a tool call; a failed write logs one warning and
+ * never fails the call.
  */
 
 /** Any single string in args (HTML, SVG paths) is cut at this length. */
@@ -88,8 +99,8 @@ export interface TraceOpen {
   clientName: string
   clientVersion: string | null
   folder: string | null
-  /** The open board, when known. Resolves to null on failure. */
-  board: Promise<string | null>
+  /** The board shown when the client connected, when known. */
+  board: string | null
 }
 
 export class SessionTrace {
@@ -110,20 +121,14 @@ export class SessionTrace {
     this.base = `${localTime(now)}-${slug(open.clientName)}-${open.sessionId.slice(0, 8)}`
     this.file = join(this.dir, `${this.base}.jsonl`)
     this.lastEnd = this.openedAt
-    const t = now.toISOString()
-    // session_open waits for the board name; later events queue behind it.
-    this.chain = open.board
-      .catch(() => null)
-      .then((board) =>
-        this.append({
-          type: 'session_open',
-          t,
-          session_id: open.sessionId,
-          client: { name: open.clientName, version: open.clientVersion },
-          folder: open.folder,
-          board
-        })
-      )
+    this.chain = this.append({
+      type: 'session_open',
+      t: now.toISOString(),
+      session_id: open.sessionId,
+      client: { name: open.clientName, version: open.clientVersion },
+      folder: open.folder,
+      board: open.board
+    })
   }
 
   private append(event: Record<string, unknown>): Promise<void> {
@@ -139,13 +144,13 @@ export class SessionTrace {
       .catch(warnOnce)
   }
 
-  write(event: Record<string, unknown>): void {
+  private write(event: Record<string, unknown>): void {
     if (this.closed) return
     this.chain = this.chain.then(() => this.append(event))
   }
 
-  /** Record one tool call. Never throws. */
-  call(tool: string, args: unknown, start: number, end: number, result: CallToolResult | null, error: unknown): void {
+  /** Record one tool call; `board` is the board shown when it ended. Never throws. */
+  call(tool: string, args: unknown, start: number, end: number, board: string | null, result: CallToolResult | null, error: unknown): void {
     try {
       if (this.closed) return
       this.calls++
@@ -165,6 +170,7 @@ export class SessionTrace {
         end: new Date(end).toISOString(),
         duration_ms: end - start,
         gap_ms: gap,
+        board,
         tool,
         args: capStrings(args ?? {}),
         ok: !failed,
@@ -209,6 +215,7 @@ interface Rect {
 export interface LearnerEdit {
   type: 'learner_edit'
   t: string
+  folder: string
   board: string
   ids: string[]
   strokes: number
@@ -272,7 +279,7 @@ export class LearnerEditLog {
     }
     if (!ids.length) return null
     const bounds = strokes && Number.isFinite(minX) ? { x: Math.round(minX), y: Math.round(minY), width: Math.round(maxX - minX), height: Math.round(maxY - minY) } : null
-    return { type: 'learner_edit', t: new Date().toISOString(), board, ids, strokes, bounds }
+    return { type: 'learner_edit', t: new Date().toISOString(), folder, board, ids, strokes, bounds }
   }
 }
 
