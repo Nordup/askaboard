@@ -258,7 +258,7 @@ PERCEPTION.push({
   checks: [
     {
       name: 'refers to the sketch',
-      test: has(/your (sketch|curve|drawing)|you drew|you(['’]ve| have) drawn|the curve you|your (version|peak)/i)
+      test: has(/your (\w+ )?(sketch|curve|drawing|arrow|graph|line)|you (drew|sketched)|you(['’]ve| have) (drawn|sketched)|the curve you|your (version|peak)/i)
     }
   ]
 })

@@ -121,6 +121,18 @@ limits scripts and images.
   screenshots agents received and the learner's edits, as JSONL in
   `~/.learning-space/traces/<date>/` (or `SPACE_TRACE_DIR`). Read with
   `scripts/trace-report.mjs`.
+- **Board news** (`src/main/news.ts`, decision I4): each agent app's last
+  look (`get_screenshot`, `get_changes`) per folder and board, in memory and
+  `userData/state.json` (`agentLooks`; key: client label as in
+  `clientLabel()`, folder root, board path). The renderer's `learnerNews`
+  request lists the learner's ink strokes added or erased after that seq
+  (agent edits left out; erasures are known for the current app run only),
+  with their ink groups and the nearest material. While any are unseen,
+  every tool result for that app starts with the "Board news:" line; a
+  screenshot whose rect holds at least half of a stroke, or a `get_changes`
+  that lists it, marks it seen. A new session's change cursor starts at the
+  app's last look. `GET /news?client=<label>` (same Host and Origin checks)
+  returns the line as plain text, empty when nothing is new.
 - **Limits** for every agent-controlled size: `src/shared/limits.ts`.
 
 ## Folder access (main)
@@ -142,7 +154,11 @@ limits scripts and images.
 
 - `src/main/agent-home.ts` writes `~/.learning-space/bin/learning-space` (the
   relay shim), `relay.json` (port) and `tools.json` (tool catalogue for the
-  offline relay) on every launch.
+  offline relay) on every launch. `learning-space news --client <label>`
+  prints the board news line (from `GET /news`; nothing when nothing is new,
+  the app is closed or anything fails; exit 0; about 0.1 s). The plugins run
+  it as a `UserPromptSubmit` hook: `hooks/claude.json` (Claude Code) and
+  `hooks/codex.json` (Codex), named in each client's manifest.
 - `src/main/connect.ts` detects and installs: the plugin for Claude Code and
   for ChatGPT and Codex (through their CLIs), the `.mcpb` for Claude Desktop.
   It detects hand-made entries and duplicates.

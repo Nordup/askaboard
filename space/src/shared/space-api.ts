@@ -188,6 +188,42 @@ export interface CanvasInfo {
   inkGroups?: InkGroupSummary[]
 }
 
+/** One learner stroke (added or erased) in the board news. */
+export interface NewsStroke {
+  id: string
+  seq: number
+  bounds: BoardRect | null
+  /** The ink group that holds it now (added strokes only). */
+  group?: string
+  /** When the learner drew or erased it (epoch ms), when the app saw it happen. */
+  at?: number
+}
+
+/** An ink group that holds new learner strokes. */
+export interface NewsGroup {
+  id: string
+  bounds: BoardRect
+  /** Where it is, relative to the nearest material: 'right of your SVG "Thermal spectra"'. */
+  where: string | null
+}
+
+/**
+ * The learner's ink changes on the open board after a seq (the board news;
+ * see main/news.ts). Only the learner's strokes; the agents' edits are left out.
+ */
+export interface LearnerNews {
+  board: string
+  boardName: string
+  /** The highest seq on the board now. */
+  cursor: number
+  added: NewsStroke[]
+  erased: NewsStroke[]
+  /** The groups of the added strokes (only the strokes not seen). */
+  groups: NewsGroup[]
+  /** Where the erased strokes were, relative to the nearest material. */
+  erasedWhere: string | null
+}
+
 /** Which agent session made a request (for presence and change attribution). */
 export interface AgentRef {
   sessionId: string
@@ -291,6 +327,11 @@ export interface AgentMethods {
     result: ScreenshotPlan
   }
   openBoard: { params: { path: string }; result: CanvasInfo }
+  /**
+   * The learner's ink changes after `since`, without the ones in `seen`
+   * (id → the seq that was seen); null when no board is open.
+   */
+  learnerNews: { params: { since: number; seen: Record<string, number> }; result: LearnerNews | null }
   agentTool: { params: { tool: AgentToolName; args: Record<string, unknown>; agent: AgentRef }; result: unknown }
 }
 

@@ -7,7 +7,9 @@ import { app } from 'electron'
  * ~/.learning-space/: what an agent needs to reach the app (the contract with
  * the learning-space-plugins repo).
  *
- *   bin/learning-space  the shim; `learning-space mcp` starts the stdio relay
+ *   bin/learning-space  the shim; `learning-space mcp` starts the stdio relay;
+ *                       `learning-space news --client <label>` prints the board
+ *                       news line (for the plugins' prompt hooks)
  *   relay.json          { port, appVersion, updatedAt }: where the app listens
  *   tools.json          the tools/list result plus the server instructions, so
  *                       the relay can answer while the app is closed
@@ -58,9 +60,10 @@ function shimText(): string {
     '# Learning Space agent shim. The app rewrites this file on every launch.',
     `# App ${version}, written ${new Date().toISOString()}.`,
     'case "$1" in',
-    `  mcp) exec env ELECTRON_RUN_AS_NODE=1 ${shellQuote(process.execPath)} ${shellQuote(relayScriptPath())} "$@" ;;`,
+    `  mcp|news) exec env ELECTRON_RUN_AS_NODE=1 ${shellQuote(process.execPath)} ${shellQuote(relayScriptPath())} "$@" ;;`,
     `  --version|-v) echo ${shellQuote(`learning-space ${version}`)} ;;`,
     '  *) echo "usage: learning-space mcp     start the MCP relay (stdio) to the Learning Space app" >&2',
+    '     echo "       learning-space news --client <Codex|Claude Code>   print what the learner drew since that agent app last looked" >&2',
     '     echo "       learning-space --version" >&2',
     '     exit 2 ;;',
     'esac',

@@ -21,6 +21,8 @@ import {
   MAX_TEXT_CHARS
 } from '@shared/limits'
 import { guideText, guideTopics, serverInstructions } from './guide'
+import { BoardNews, type LookCoverage } from './news'
+import { getAgentLook } from './state'
 import type { SnapshotRenderer } from './snapshot'
 import { LearnerEditLog, SessionTrace, writeLearnerEdit } from './trace'
 import {
@@ -45,10 +47,16 @@ import {
  * Safety without a token: the socket binds to loopback, every request must
  * name 127.0.0.1:<port> or localhost:<port> as its Host (DNS rebinding), and a
  * request with an Origin header (a web page) is refused (CSRF).
+ *
+ * GET /news?client=<label> is the one other route: the board news line for
+ * that agent app (see news.ts), as plain text, empty when nothing is new. It
+ * is read-only and passes the same Host and Origin checks.
  */
 
 export const DEFAULT_MCP_PORT = 47821
 const BRIDGE_TIMEOUT_MS = 10_000
+/** The board news is a small in-memory scan; a busy window must not hold a tool result or a prompt hook long. */
+const NEWS_TIMEOUT_MS = 1500
 /** Writes can download images first. */
 const WRITE_TIMEOUT_MS = 45_000
 const MAX_BODY_BYTES = 4 * 1024 * 1024
@@ -203,9 +211,15 @@ export class AgentServer {
   private publishTimer: NodeJS.Timeout | null = null
   private lastPublish = 0
   private readonly learnerEdits = new LearnerEditLog()
+  private readonly news: BoardNews
 
   constructor(private readonly hooks: AgentServerHooks) {
     this.bridge = new RendererBridge(hooks.webContents)
+    this.news = new BoardNews({
+      request: (since, seen) => this.bridge.request('learnerNews', { since, seen }, NEWS_TIMEOUT_MS),
+      folderRoot: () => hooks.folderRoot(),
+      shownBoard: () => hooks.shownBoard()
+    })
   }
 
   get url(): string {
@@ -299,6 +313,10 @@ export class AgentServer {
       return
     }
     const path = (req.url ?? '').split('?')[0]
+    if (path === '/news') {
+      await this.serveNews(req, res)
+      return
+    }
     if (path !== '/mcp') {
       this.jsonError(res, 404, -32000, 'Not found. The MCP endpoint is /mcp.')
       return
@@ -350,6 +368,23 @@ export class AgentServer {
     }
 
     res.writeHead(405, { Allow: 'GET, POST, DELETE' }).end()
+  }
+
+  /** GET /news?client=<label>: the board news line for that agent app, or an empty body. Never an error for a valid GET. */
+  private async serveNews(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405, { Allow: 'GET' }).end()
+      return
+    }
+    const client = new URL(req.url ?? '/news', 'http://127.0.0.1').searchParams.get('client')?.trim() ?? ''
+    let line = ''
+    try {
+      if (client) line = await this.news.line(clientLabel(client))
+    } catch (error) {
+      console.warn(`mcp: news for "${client}" failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' })
+    res.end(line)
   }
 
   /**
@@ -491,8 +526,46 @@ export class AgentServer {
         thrown = error
         result = failure(error)
       }
+      const news = await this.newsLine(session)
+      if (news) result = { ...result, content: [{ type: 'text', text: news }, ...result.content] }
       this.traceOf(session)?.call(name, args, start, Date.now(), this.hooks.shownBoard(), thrown === null ? result : null, thrown)
       return result
+    }
+  }
+
+  /** The session's agent app label ("Codex", "Claude Code", …), the key of its last look. */
+  private label(session: Session): string {
+    return clientLabel(session.server.server.getClientVersion()?.name)
+  }
+
+  /** The board news line for this session's agent app, or ''. Never throws. */
+  private async newsLine(session: Session): Promise<string> {
+    if (!session.id || session.id === 'catalog') return ''
+    try {
+      return await this.news.line(this.label(session))
+    } catch {
+      return ''
+    }
+  }
+
+  /**
+   * Where a session's change cursor starts on a board: at its agent app's last look there
+   * (from an earlier connection), else now. So a new connection's get_changes lists what the
+   * learner did since the app last looked.
+   */
+  private startCursor(session: Session, board: string, now: number): number {
+    const root = this.hooks.folderRoot()
+    const look = root && session.id && session.id !== 'catalog' ? getAgentLook(this.label(session), root, board) : null
+    return look ? Math.min(look.seq, now) : now
+  }
+
+  /** Record a look (get_screenshot, get_changes) for this session's agent app. Never throws. */
+  private async looked(session: Session, board: string, cursor: number, coverage: LookCoverage): Promise<void> {
+    if (!session.id || session.id === 'catalog') return
+    try {
+      await this.news.looked(this.label(session), board, cursor, coverage)
+    } catch (error) {
+      console.warn(`mcp: last look not recorded: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
@@ -505,7 +578,7 @@ export class AgentServer {
     if (!info.board || info.cursor === null) return
     const path = info.board.path
     const current = session.cursors.get(path)
-    if (current === undefined) session.cursors.set(path, info.cursor)
+    if (current === undefined) session.cursors.set(path, this.startCursor(session, path, info.cursor))
     else if (current > info.cursor) {
       console.warn(`mcp: ${path} seq went back from ${current} to ${info.cursor}; resetting the cursor`)
       session.cursors.set(path, info.cursor)
@@ -564,7 +637,7 @@ export class AgentServer {
         let since: number | null = null
         if (kind === 'changes') {
           const info = await this.bridge.request('canvasInfo', {})
-          if (session.cursors.has(info.board?.path ?? '')) this.touchCursor(session, info)
+          this.touchCursor(session, info)
           const board = info.board?.path
           since = board ? (session.listedFrom.get(board) ?? session.cursors.get(board) ?? null) : null
         }
@@ -582,8 +655,9 @@ export class AgentServer {
           session.cursors.set(plan.board, plan.cursor)
           session.listedFrom.delete(plan.board)
         } else if (!session.cursors.has(plan.board)) {
-          session.cursors.set(plan.board, plan.cursor)
+          session.cursors.set(plan.board, this.startCursor(session, plan.board, plan.cursor))
         }
+        await this.looked(session, plan.board, plan.cursor, plan.kind === 'empty' ? { after: null } : { rect: plan.rect })
         if (plan.kind === 'empty') return text(plan.message)
         const shot = await this.hooks.snapshots.capture({
           nodes: plan.nodes,
@@ -626,7 +700,7 @@ export class AgentServer {
       {
         title: 'Changes since the last look',
         description:
-          "List what changed on the open board since your change cursor: items added or changed (id, kind, tool, colour, author of the change, bounds, seq), items removed (id, bounds, seq), the ink groups that hold changed strokes (groups_changed), and your new cursor. It returns data, not an image; use get_screenshot with target \"changes\" or a node_id to see the items. Your cursor starts at your first look at a board (get_canvas_info, get_changes, get_screenshot or open_board), so the first call lists nothing new; since: 0 lists the whole history of the board. The list includes your own writes; the author field tells them apart from the learner's.",
+          "List what changed on the open board since your change cursor: items added or changed (id, kind, tool, colour, author of the change, bounds, seq), items removed (id, bounds, seq), the ink groups that hold changed strokes (groups_changed), and your new cursor. It returns data, not an image; use get_screenshot with target \"changes\" or a node_id to see the items. Your cursor starts at your app's last look at a board in an earlier connection, else at your first look in this one (get_canvas_info, get_changes, get_screenshot or open_board), when the first call lists nothing new; since: 0 lists the whole history of the board. The list includes your own writes; the author field tells them apart from the learner's. get_changes and get_screenshot are your app's looks at the board: while the learner has drawn or erased strokes that your app has not seen since its last look (kept per agent app and board, across connections), every tool result starts with a \"Board news:\" line that lists them by ink group and place; a screenshot that holds them, or get_changes, removes it.",
         inputSchema: {
           since: z.number().int().min(0).optional().describe("A cursor value to compare against instead of your own cursor; 0 means everything on the board.")
         },
@@ -637,12 +711,13 @@ export class AgentServer {
         let from: number | null = since === undefined ? null : since === 0 ? -1 : since
         if (from === null) {
           const info = await this.bridge.request('canvasInfo', {})
-          if (session.cursors.has(info.board?.path ?? '')) this.touchCursor(session, info)
+          this.touchCursor(session, info)
           from = info.board ? (session.cursors.get(info.board.path) ?? null) : null
         }
         const changes = await this.bridge.request('changes', { since: from })
         if (from !== null && !session.listedFrom.has(changes.board)) session.listedFrom.set(changes.board, from)
         session.cursors.set(changes.board, changes.cursor)
+        await this.looked(session, changes.board, changes.cursor, { after: from })
         return text(json(changes))
       })
     )

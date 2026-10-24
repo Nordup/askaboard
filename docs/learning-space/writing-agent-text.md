@@ -142,6 +142,22 @@ Follow the same steps to improve it.
    the founder try a real session by voice. Record the results in
    `baseline.md`.
 
+## What went wrong in the brief v3 drafts (2026-10-25, do not repeat)
+
+- **Too specific becomes rigid.** A section that walked through one drawing
+  step by step ("first the half sphere, then the disc…") and said how small
+  each step should be read like a method. The founder: it "might start only
+  using one by one changes even when I don't want to … it's too specific and
+  detailed and that's why it becomes rigid, compared to other sections."
+  Give the agent the forces at play and the choices (a drawing made live
+  and a finished figure are both sometimes right), not the one right way.
+- **A summary of a subagent's draft is not a rewrite.** When the founder
+  asks for text in the brief's own voice, write it fresh from the brief's
+  style, not by rephrasing another draft.
+- **Do not turn normal conversation into failures.** Remarks like "too much
+  information" in a good session are the person steering; they are not
+  material for a section of corrections.
+
 ## What went wrong in draft v1 (do not repeat)
 
 - **The server instructions carried the story,** in about 300 words of

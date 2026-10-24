@@ -384,6 +384,8 @@ export interface Removal {
   seq: number
   /** World bounds at the time of removal, when the renderer knew them. */
   bounds?: BoardBounds | null
+  /** Who removed it ("learner" or "agent"), when the renderer knew it. */
+  by?: Author
 }
 
 /**

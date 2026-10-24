@@ -1,4 +1,4 @@
-import { isInk, type Removal } from '@shared/board-format'
+import { isInk, type Author, type Removal } from '@shared/board-format'
 import { inkBounds } from './geometry'
 import type { Region } from './types'
 
@@ -8,6 +8,10 @@ export interface Tombstone {
   kind: string
   bounds: Region | null
   seq: number
+  /** Who removed it, when known. */
+  by?: Author
+  /** When it was removed (epoch ms). */
+  at: number
 }
 
 /** The tombstones a board keeps. Older ones drop off first. */
@@ -22,10 +26,11 @@ export class ChangeLog {
   private tombstones: Tombstone[] = []
 
   record(removed: readonly Removal[]): void {
-    for (const { node, seq, bounds } of removed) {
+    const at = Date.now()
+    for (const { node, seq, bounds, by } of removed) {
       // The Board passes world bounds; a reload from disk does not, so top-level ink falls back to its own position.
       const fallback = isInk(node) ? inkBounds(node, [node.x, node.y]) : null
-      this.tombstones.push({ id: node.id, kind: node.kind, bounds: bounds ?? fallback, seq })
+      this.tombstones.push({ id: node.id, kind: node.kind, bounds: bounds ?? fallback, seq, at, ...(by ? { by } : {}) })
     }
     if (this.tombstones.length > MAX_TOMBSTONES) this.tombstones.splice(0, this.tombstones.length - MAX_TOMBSTONES)
   }

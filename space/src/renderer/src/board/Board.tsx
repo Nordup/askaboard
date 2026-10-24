@@ -548,7 +548,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         editorsRef.current.set(node.id, by)
         timesRef.current.set(node.id, now)
       }
-      const removed = stamped.removed.map((removal) => ({ ...removal, bounds: layoutRef.current.get(removal.node.id) ?? null }))
+      const removed = stamped.removed.map((removal) => ({ ...removal, bounds: layoutRef.current.get(removal.node.id) ?? null, by }))
       setNodes(stamped.nodes)
       if (removed.length) onRemovedRef.current?.(removed)
       emit()
@@ -562,7 +562,8 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       if (!snapshot) return
       const stamped = stampChanged(nodesRef.current, snapshot, nextSeqRef.current)
       nextSeqRef.current = stamped.nextSeq
-      const removed = stamped.removed.map((removal) => ({ ...removal, bounds: layoutRef.current.get(removal.node.id) ?? null }))
+      // Undo and redo are the learner's own actions (agents have no undo).
+      const removed = stamped.removed.map((removal) => ({ ...removal, bounds: layoutRef.current.get(removal.node.id) ?? null, by: 'learner' as const }))
       setNodes(stamped.nodes)
       if (removed.length) onRemovedRef.current?.(removed)
       setSelectedIds([])

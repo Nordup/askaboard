@@ -1,4 +1,4 @@
-import { boardName, isContent, isInk } from '@shared/board-format'
+import { boardName, isContent, isInk, type BoardNode } from '@shared/board-format'
 import type {
   AgentMethods,
   AgentRequest,
@@ -6,6 +6,9 @@ import type {
   CanvasInfo,
   ChangeSet,
   InkGroupSummary,
+  LearnerNews,
+  NewsGroup,
+  NewsStroke,
   ScreenshotPlan,
   SnapshotLabel,
   SnapshotOutline,
@@ -190,6 +193,92 @@ function changeSet(context: AgentContext, since: number | null): ChangeSet {
   return { board: path, changed, removed, cursor: seenCursor(state), ...(groups.length ? { groups_changed: groups.map(groupSummary) } : {}) }
 }
 
+// ---------- Board news: the learner's ink since an agent's last look ----------
+
+const KIND_WORDS: Record<string, string> = { svg: 'SVG', frame: 'frame', text: 'text', image: 'image' }
+
+/** "your SVG \"Thermal spectra\"", "the learner's text \"Find x\"", or with the id when it has no name. */
+function materialLabel(node: BoardNode): string {
+  const owner = node.author === 'agent' ? 'your' : "the learner's"
+  const kind = KIND_WORDS[node.kind] ?? node.kind
+  let label = typeof node.name === 'string' ? node.name.trim() : ''
+  if (!label && node.kind === 'text') label = String((node as { text?: unknown }).text ?? '').replace(/[*$\\]/g, '').split(/\s+/).filter(Boolean).slice(0, 5).join(' ')
+  if (label.length > 40) label = `${label.slice(0, 39)}…`
+  return label ? `${owner} ${kind} "${label}"` : `${owner} ${kind} ${node.id}`
+}
+
+/** Where `a` is relative to `b`, and the gap between them (0 when they overlap). */
+function relation(a: Region, b: Region): { gap: number; side: string } {
+  const gapX = Math.max(b.x - (a.x + a.width), a.x - (b.x + b.width), 0)
+  const gapY = Math.max(b.y - (a.y + a.height), a.y - (b.y + b.height), 0)
+  if (gapX === 0 && gapY === 0) return { gap: 0, side: 'on' }
+  const side = gapX >= gapY ? (a.x >= b.x + b.width ? 'right of' : 'left of') : a.y >= b.y + b.height ? 'below' : 'above'
+  return { gap: Math.hypot(gapX, gapY), side }
+}
+
+/**
+ * Where a region is, in words: inside its frame, else relative to the nearest
+ * top-level node or other ink group ('right of your SVG "Thermal spectra"').
+ */
+function whereText(state: LiveBoardState, groups: InkGroup[], region: Region, parent: string, skip: Set<string>): string | null {
+  const byId = new Map(state.nodes.map((node) => [node.id, node]))
+  if (parent && parent !== ROOT) {
+    const frame = byId.get(parent)
+    if (frame) return `inside ${materialLabel(frame)}`
+  }
+  let best: { gap: number; text: string } | null = null
+  const consider = (bounds: Region | null, label: string): void => {
+    if (!bounds) return
+    const { gap, side } = relation(region, bounds)
+    if (!best || gap < best.gap) best = { gap, text: `${side} ${label}` }
+  }
+  const index = buildIndex(state.nodes)
+  for (const node of index.children.get(ROOT) ?? []) if (isContent(node)) consider(state.bounds(node.id), materialLabel(node))
+  for (const group of groups) {
+    if (skip.has(group.id)) continue
+    consider(group.bounds, `${group.author === 'agent' ? 'your' : "the learner's"} ink group ${group.id}`)
+  }
+  return (best as { gap: number; text: string } | null)?.text ?? null
+}
+
+/** The learner's ink strokes added or erased after `since`, minus the ones already seen. */
+function learnerNews(context: AgentContext, since: number, seen: Record<string, number>): LearnerNews | null {
+  if (!context.folder || !context.openPath || !context.board) return null
+  const path = context.openPath
+  const state = context.board.liveState()
+  const groups = groupsOf(path, context.board)
+  const groupOf = new Map<string, InkGroup>()
+  for (const group of groups) for (const stroke of group.strokes) groupOf.set(stroke, group)
+
+  const added: NewsStroke[] = []
+  for (const node of state.nodes) {
+    if (!isInk(node) || node.seq <= since || seen[node.id] === node.seq) continue
+    if ((state.editor(node.id) ?? node.author) !== 'learner') continue
+    const at = state.changedAt(node.id)
+    const group = groupOf.get(node.id)
+    added.push({ id: node.id, seq: node.seq, bounds: rect(state.bounds(node.id)), ...(group ? { group: group.id } : {}), ...(at ? { at } : {}) })
+  }
+  const present = new Set(state.nodes.map((node) => node.id))
+  const erased: NewsStroke[] = (context.changeLog?.after(since) ?? [])
+    .filter((tombstone) => tombstone.kind === 'ink' && tombstone.by === 'learner' && !present.has(tombstone.id) && seen[tombstone.id] !== tombstone.seq)
+    .map((tombstone) => ({ id: tombstone.id, seq: tombstone.seq, bounds: rect(tombstone.bounds), at: tombstone.at }))
+
+  const newsGroupIds = new Set(added.flatMap((stroke) => (stroke.group ? [stroke.group] : [])))
+  const newsGroups: NewsGroup[] = groups
+    .filter((group) => newsGroupIds.has(group.id))
+    .map((group) => ({ id: group.id, bounds: rect(group.bounds) as BoardRect, where: whereText(state, groups, group.bounds, group.parent, newsGroupIds) }))
+  const erasedRegion = unionRegions(erased.map((stroke) => stroke.bounds))
+  return {
+    board: path,
+    boardName: boardName(path),
+    cursor: seenCursor(state),
+    added,
+    erased,
+    groups: newsGroups,
+    erasedWhere: erasedRegion ? whereText(state, groups, erasedRegion, ROOT, new Set()) : null
+  }
+}
+
 function screenshotPlan(context: AgentContext, params: AgentMethods['screenshotPlan']['params']): ScreenshotPlan {
   const { path, board } = requireBoard(context)
   const state = board.liveState()
@@ -325,6 +414,10 @@ export async function handleAgentRequest(request: AgentRequest, getContext: () =
       return canvasInfo(context)
     case 'changes':
       return changeSet(context, (request.params as AgentMethods['changes']['params']).since)
+    case 'learnerNews': {
+      const params = request.params as AgentMethods['learnerNews']['params']
+      return learnerNews(context, params.since, params.seen ?? {})
+    }
     case 'screenshotPlan':
       return screenshotPlan(context, request.params as AgentMethods['screenshotPlan']['params'])
     case 'agentTool': {

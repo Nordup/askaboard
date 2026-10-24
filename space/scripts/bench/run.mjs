@@ -7,7 +7,7 @@
  *   node scripts/bench/run.mjs [--scenarios S1,S2,S3,S4,P1,P2,P3] [--model opus] [--client claude|codex]
  *                              [--effort medium] [--codex-home <dir>]
  *                              [--out <dir>] [--dev] [--mcp-port 47870] [--debug-port 9470]
- *                              [--timeout-min 15]
+ *                              [--timeout-min 15] [--no-news-hook]
  *
  * Per conversation (S1+S2, S3+S4) it makes a scratch learning folder from
  * resources/learning-folder/, starts the app on it (built app from out/, or
@@ -36,6 +36,12 @@
  * turn 0 of P scenarios uses the same model at effort low. Codex reports no
  * cost: the metrics hold its token usage, and brief_loaded says whether the
  * learning folder's AGENTS.md brief was in the agent's context.
+ *
+ * The agent gets the plugins' prompt hook (UserPromptSubmit runs `learning-space news
+ * --client <label>` from the run's own HOME, at --mcp-port), so the board news reaches
+ * each prompt as it does with the installed plugins; --no-news-hook leaves it out.
+ * Claude gets it through --settings, Codex through a -c hooks override with
+ * --dangerously-bypass-hook-trust (scratch config only).
  *
  * Built mode needs `npm run build` first. The ports must be free: the runner
  * never stops a process it did not start.
@@ -82,7 +88,9 @@ const opts = {
   dev: flag('--dev'),
   mcpPort: Number(option('--mcp-port', '47870')),
   debugPort: Number(option('--debug-port', '9470')),
-  timeoutMs: Number(option('--timeout-min', '15')) * 60_000
+  timeoutMs: Number(option('--timeout-min', '15')) * 60_000,
+  // The board-news prompt hook (`learning-space news`), as the plugins install it. --no-news-hook measures without it.
+  newsHook: !flag('--no-news-hook')
 }
 if (opts.client === 'claude' && !opts.model) opts.model = 'opus'
 // The founder's Codex setup (Codex Desktop): gpt-6.1-sol at reasoning effort medium.
@@ -261,6 +269,12 @@ function runProcess(command, args, { cwd, env, stdoutFile, stderrFile }) {
   })
 }
 
+/** The plugins' prompt hook command, pointed at this run's app (its HOME's shim and its port). */
+function newsHookCommand(work, label) {
+  const shim = join(work.home, '.learning-space/bin/learning-space')
+  return `LEARNING_SPACE_PORT=${opts.mcpPort} '${shim}' news --client '${label}' 2>/dev/null || true`
+}
+
 async function runAgent(scenario, work, dir, model = opts.model, effort = opts.effort) {
   const mcpUrl = `http://127.0.0.1:${opts.mcpPort}/mcp`
   const stdoutFile = join(dir, 'agent-stdout.txt')
@@ -269,7 +283,14 @@ async function runAgent(scenario, work, dir, model = opts.model, effort = opts.e
     const config = join(work.dir, 'mcp.json')
     writeFileSync(config, JSON.stringify({ mcpServers: { 'learning-space': { type: 'http', url: mcpUrl } } }, null, 2))
     // The prompt goes before --allowedTools: that flag takes every word after it.
-    const args = ['-p', scenario.prompt, ...(scenario.followUp ? ['--continue'] : []), '--model', model, '--mcp-config', config, '--strict-mcp-config', '--setting-sources', 'project,local', '--output-format', 'json', '--allowedTools', 'mcp__learning-space__*']
+    const hookArgs = []
+    if (opts.newsHook) {
+      const settings = join(work.dir, 'claude-settings.json')
+      const hook = { type: 'command', command: newsHookCommand(work, 'Claude Code'), timeout: 5 }
+      writeFileSync(settings, JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [hook] }] } }, null, 2))
+      hookArgs.push('--settings', settings)
+    }
+    const args = ['-p', scenario.prompt, ...(scenario.followUp ? ['--continue'] : []), '--model', model, '--mcp-config', config, '--strict-mcp-config', '--setting-sources', 'project,local', ...hookArgs, '--output-format', 'json', '--allowedTools', 'mcp__learning-space__*']
     const code = await runProcess('claude', args, { cwd: work.folder, env: process.env, stdoutFile, stderrFile })
     let parsed = null
     try {
@@ -376,15 +397,38 @@ function briefInRollout(file) {
   return false
 }
 
+/** The board news the prompt hook added in this run (hook context after startedMs), '' when none, null without a rollout. */
+function newsInRollout(file, startedMs) {
+  if (!file) return null
+  const texts = []
+  for (const line of readFileSync(file, 'utf8').split('\n')) {
+    if (!line.includes('hooks.additional_context')) continue
+    try {
+      const entry = JSON.parse(line)
+      if (Date.parse(entry.timestamp) < startedMs) continue
+      for (const part of entry.payload?.content ?? []) if (typeof part.text === 'string' && part.text.includes('Board news:')) texts.push(part.text)
+    } catch {
+      // A partial line.
+    }
+  }
+  return texts.join('\n')
+}
+
 async function runCodex(scenario, work, dir, model, effort) {
   const stdoutFile = join(dir, 'agent-stdout.jsonl')
   const stderrFile = join(dir, 'agent-stderr.txt')
   const lastMessage = join(dir, 'reply.txt')
   const common = ['--json', '--skip-git-repo-check', '-m', model, '-c', `model_reasoning_effort=${JSON.stringify(effort)}`, '-o', lastMessage]
+  if (opts.newsHook) {
+    // A JSON string is a valid TOML basic string. The hook is not trusted in the scratch home, hence the bypass.
+    const hook = `{type="command",command=${JSON.stringify(newsHookCommand(work, 'Codex'))},timeout=5}`
+    common.push('-c', `hooks.UserPromptSubmit=[{hooks=[${hook}]}]`, '--dangerously-bypass-hook-trust')
+  }
   // A follow-up resumes this conversation's thread by id; anything else is a new `codex exec`.
   const resume = scenario.followUp && work.codexThread
   if (scenario.followUp && !work.codexThread) throw new Error(`${scenario.id} is a follow-up, but the conversation has no Codex thread.`)
   const args = resume ? ['exec', 'resume', ...common, work.codexThread, scenario.prompt] : ['exec', ...common, scenario.prompt]
+  const startedMs = Date.now()
   const code = await runProcess('codex', args, { cwd: work.folder, env: { ...process.env, CODEX_HOME: opts.codexHome }, stdoutFile, stderrFile })
 
   let threadId = resume ? work.codexThread : null
@@ -450,6 +494,8 @@ async function runCodex(scenario, work, dir, model, effort) {
     codex_thread: threadId,
     resumed: Boolean(resume),
     brief_loaded: briefInRollout(rollout),
+    news_hook: opts.newsHook,
+    news_in_prompt: opts.newsHook ? newsInRollout(rollout, startedMs) : null,
     tokens,
     cost_usd: null,
     num_turns: turns || null,
@@ -966,6 +1012,7 @@ function summary(results) {
     if (r.client_errors) lines.push(`Client errors: ${r.client_errors.join(' | ')}`, '')
     if (r.client_failed_tool_calls?.length) lines.push(`**Tool calls the client failed (not in the trace): ${r.client_failed_tool_calls.join(' | ')}**`, '')
     if (r.brief_loaded !== undefined) lines.push(`Brief (AGENTS.md) in context: ${r.brief_loaded === null ? 'unknown' : r.brief_loaded ? 'yes' : 'no'}${r.resumed ? ' (resumed thread)' : ''}`, '')
+    if (r.news_hook !== undefined) lines.push(`Board news hook: ${r.news_hook ? (r.news_in_prompt ? `in the prompt: "${r.news_in_prompt}"` : r.news_in_prompt === null ? 'on (rollout missing)' : 'on, no news') : 'off'}`, '')
     if (r.continuation) {
       const t0 = r.turn0
       lines.push(

@@ -15,6 +15,9 @@
  *
  * It runs under Node (Electron's binary with ELECTRON_RUN_AS_NODE=1). stdout
  * carries protocol messages only; every log line goes to stderr.
+ *
+ * `learning-space news --client <label>` runs the same file for one request:
+ * it prints the board news line (see printNews below) and exits.
  */
 import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -344,7 +347,36 @@ class Relay {
   }
 }
 
-void new Relay().start().catch((error: unknown) => {
-  log(`could not start: ${String(error)}`)
-  process.exit(1)
-})
+const NEWS_TIMEOUT_MS = 1500
+
+/**
+ * `learning-space news --client <label>`: print the board news line for that
+ * agent app ("Codex", "Claude Code"; see main/news.ts), for a hook that runs
+ * before each prompt. It prints nothing when nothing is new, when the app is
+ * closed, or on any error, and always exits 0.
+ */
+async function printNews(args: string[]): Promise<void> {
+  const at = args.indexOf('--client')
+  const client = at >= 0 ? (args[at + 1] ?? '').trim() : ''
+  if (!client) return
+  try {
+    const url = endpoint()
+    url.pathname = '/news'
+    url.searchParams.set('client', client)
+    const response = await fetch(url, { signal: AbortSignal.timeout(NEWS_TIMEOUT_MS) })
+    if (!response.ok) return
+    const line = (await response.text()).trim()
+    if (line) process.stdout.write(`${line}\n`)
+  } catch {
+    // The app is closed or busy: no news.
+  }
+}
+
+if (process.argv[2] === 'news') {
+  void printNews(process.argv.slice(3)).finally(() => process.exit(0))
+} else {
+  void new Relay().start().catch((error: unknown) => {
+    log(`could not start: ${String(error)}`)
+    process.exit(1)
+  })
+}

@@ -17,14 +17,25 @@ interface PersistedState {
   lastBoards: Record<string, string>
   /** Folder roots where the learner chose "Don't ask" for the setup offer. */
   setupDontAsk: string[]
+  /** Each agent app's last look at a board (see news.ts). Key: `<client label>::<folder root>::<board path>`. */
+  agentLooks: Record<string, AgentLook>
+}
+
+/** An agent app's last look at a board: the board seq and time, and the learner strokes it saw after that seq. */
+export interface AgentLook {
+  seq: number
+  at: number
+  /** Stroke id → the seq it had when the agent saw it. */
+  seen: Record<string, number>
 }
 
 const MAX_RECENT = 8
 const MAX_CAMERAS = 500
+const MAX_LOOKS = 200
 
 const statePath = (): string => join(app.getPath('userData'), 'state.json')
 
-let state: PersistedState = { lastFolder: null, recent: [], cameras: {}, lastBoards: {}, setupDontAsk: [] }
+let state: PersistedState = { lastFolder: null, recent: [], cameras: {}, lastBoards: {}, setupDontAsk: [], agentLooks: {} }
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 
 export function loadState(): void {
@@ -35,7 +46,8 @@ export function loadState(): void {
       recent: Array.isArray(raw.recent) ? raw.recent.filter((entry) => typeof entry === 'string') : [],
       cameras: raw.cameras && typeof raw.cameras === 'object' ? raw.cameras : {},
       lastBoards: raw.lastBoards && typeof raw.lastBoards === 'object' ? raw.lastBoards : {},
-      setupDontAsk: Array.isArray(raw.setupDontAsk) ? raw.setupDontAsk.filter((entry) => typeof entry === 'string') : []
+      setupDontAsk: Array.isArray(raw.setupDontAsk) ? raw.setupDontAsk.filter((entry) => typeof entry === 'string') : [],
+      agentLooks: raw.agentLooks && typeof raw.agentLooks === 'object' ? raw.agentLooks : {}
     }
   } catch {
     // A missing or broken state file means a fresh start.
@@ -115,6 +127,12 @@ export function renameBoardState(root: string, from: string, to: string): void {
     state.cameras[cameraKey(root, to)] = camera
   }
   if (state.lastBoards[root] === from) state.lastBoards[root] = to
+  const suffix = `::${root}::${from}`
+  for (const key of Object.keys(state.agentLooks)) {
+    if (!key.endsWith(suffix)) continue
+    state.agentLooks[`${key.slice(0, -suffix.length)}::${root}::${to}`] = state.agentLooks[key]
+    delete state.agentLooks[key]
+  }
   scheduleSave()
 }
 
@@ -133,4 +151,20 @@ export function setSetupDontAsk(root: string, value: boolean): void {
   if (value) state.setupDontAsk.push(root)
   // A rare, deliberate choice: write it now, so a crash cannot lose it.
   saveStateNow()
+}
+
+const lookKey = (client: string, root: string, rel: string): string => `${client}::${root}::${rel}`
+
+export function getAgentLook(client: string, root: string, rel: string): AgentLook | null {
+  const look = state.agentLooks[lookKey(client, root, rel)]
+  return look && typeof look.seq === 'number' && typeof look.at === 'number' ? { ...look, seen: look.seen ?? {} } : null
+}
+
+export function setAgentLook(client: string, root: string, rel: string, look: AgentLook): void {
+  const key = lookKey(client, root, rel)
+  delete state.agentLooks[key] // re-insert, so the newest entries are last
+  state.agentLooks[key] = look
+  const keys = Object.keys(state.agentLooks)
+  for (const old of keys.slice(0, Math.max(0, keys.length - MAX_LOOKS))) delete state.agentLooks[old]
+  scheduleSave()
 }
