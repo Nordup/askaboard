@@ -20,7 +20,7 @@ import {
 } from './geometry'
 import type { BoardHistory } from './history'
 import { paintActive, paintItems, type PaintInk } from './paint'
-import { setLivePlayback } from '../live-pixels/registry'
+import { enterLive, enteredLive, liveInput, setLivePlayback } from '../live-pixels/registry'
 import { applyElementOverride, clearElementOverride, type PlaybackFrame } from './playback'
 import {
   addInkLayout,
@@ -824,6 +824,8 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const pointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
     // The text editor handles its own pointer input.
     if (event.target instanceof HTMLTextAreaElement) return
+    // A press on the board (outside the entered item's frame) leaves the item.
+    if (enteredLive()) enterLive(null)
     const penEraser = event.pointerType === 'pen' && (event.button === 5 || (event.buttons & 32) !== 0)
     if (event.button === 2 && !penEraser) return
     const host = hostRef.current
@@ -1146,7 +1148,11 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     else if (selected && isFrame(selected)) target = selectTarget(hit, selected.id, index.byId)
     else target = selectTarget(hit, selectionScope(), index.byId)
     if (target.kind === 'text' && target.id === hit.id && isKnown(target) && !target.locked) startEditing(target.id)
-    else setSelectedIds([target.id])
+    else {
+      setSelectedIds([target.id])
+      // A program item that takes input on entering gets the pointer and keys until Escape or a press outside.
+      if (target.kind === 'live' && liveInput(target.id) === 'enter') enterLive(target.id)
+    }
   }
 
   // ---------- Wheel: trackpad pan, pinch zoom, ⌘ + scroll zoom ----------
@@ -1432,7 +1438,8 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const keyHandlerRef = useRef<(event: KeyboardEvent) => void>(() => undefined)
   keyHandlerRef.current = (event: KeyboardEvent) => {
     if (event.key === 'Escape') {
-      if (dragRef.current) cancelDrag()
+      if (enteredLive()) enterLive(null)
+      else if (dragRef.current) cancelDrag()
       else if (selectedIdsRef.current.length) {
         // Go up one level, or clear at the top.
         const byId = indexRef.current.byId

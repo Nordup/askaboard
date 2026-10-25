@@ -6,6 +6,7 @@ import { paintItems } from '../board/paint'
 import { applyElementOverride, clearElementOverride, type NodeOverride, type PlaybackTip } from '../board/playback'
 import { addInkLayout, buildIndex, inkOffset, inkPaintOrder, type SceneIndex } from '../board/scene'
 import '../board/board.css'
+import { setSnapshotPlayback, stillsSettled } from '../live-pixels/snapshot-stills'
 import './snapshot.css'
 
 /**
@@ -117,6 +118,7 @@ export function SnapshotView() {
   useEffect(
     () =>
       window.space.onSnapshotRequest((next) => {
+        setSnapshotPlayback(next.playback)
         setRequest({ request: next, index: buildIndex(next.nodes as BoardNode[]) })
       }),
     []
@@ -146,6 +148,7 @@ export function SnapshotView() {
     const run = async (): Promise<void> => {
       if (!root) throw new Error('The snapshot page has no content root.')
       await document.fonts.ready
+      await stillsSettled()
       const missingImages = await imagesSettled(root)
       await frame()
       if (cancelled) return

@@ -1,7 +1,9 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import type { LiveNode } from '@shared/board-format'
-import { LiveItem, observe, unobserve, type LiveStatus } from './registry'
+import { LiveItem, enteredLive, observe, subscribeEntered, unobserve, type LiveStatus } from './registry'
 import { shaderEngine } from './shader'
+import { ProgramHost } from './program'
+import { snapshotClock, snapshotParams, trackStill } from './snapshot-stills'
 import './live.css'
 
 /**
@@ -30,6 +32,7 @@ function LiveRunner({ node, style, common }: Props) {
   const box = useRef<HTMLDivElement | null>(null)
   const item = useRef<LiveItem | null>(null)
   const [status, setStatus] = useState<LiveStatus>({ state: 'starting', frames: 0 })
+  const entered = useSyncExternalStore(subscribeEntered, enteredLive) === node.id
 
   useLayoutEffect(() => {
     const element = box.current
@@ -52,10 +55,11 @@ function LiveRunner({ node, style, common }: Props) {
 
   const note =
     status.state === 'error'
-      ? { title: node.mode === 'shader' ? 'Shader error' : 'Canvas error', detail: firstLine(status.error) }
+      ? { title: node.mode === 'shader' ? 'Shader error' : node.mode === 'program' ? 'Program error' : 'Canvas error', detail: firstLine(status.error) }
       : status.state === 'stalled'
-        ? { title: 'Not responding', detail: 'The canvas code has not finished a frame.' }
+        ? { title: 'Not responding', detail: node.mode === 'program' ? 'The program is busy and does not answer.' : 'The canvas code has not finished a frame.' }
         : null
+  const input = entered ? ' node-live--entered' : status.input === 'direct' && !note ? ' node-live--direct' : ''
 
   return (
     <div
@@ -64,7 +68,7 @@ function LiveRunner({ node, style, common }: Props) {
         box.current = element as HTMLDivElement | null
         common.ref(element)
       }}
-      className={`node node-live${note ? ' node-live--note' : ''}`}
+      className={`node node-live${note ? ' node-live--note' : ''}${input}`}
       style={style}
     >
       {note && (
@@ -79,11 +83,15 @@ function LiveRunner({ node, style, common }: Props) {
 
 function LiveStill({ node, style, common }: Props) {
   const given = (node as unknown as { still?: unknown }).still
-  const url = useMemo(() => {
-    if (typeof given === 'string' && given.startsWith('data:image/')) return given
-    if (node.mode !== 'shader') return null
-    // One frame at t = 0, drawn synchronously into an image (the snapshot waits for images).
-    const result = shaderEngine.compile(node.code, node.params)
+  const clock = snapshotClock(node.id)
+  const atParams = snapshotParams(node.id)
+  const params = useMemo(() => (atParams ? { ...node.params, ...atParams } : node.params), [atParams, node.params])
+  const time = clock ? Math.max(0, clock.t) : 0
+  const givenUrl = typeof given === 'string' && given.startsWith('data:image/') && !clock ? given : null
+  const shaderUrl = useMemo(() => {
+    if (givenUrl || node.mode !== 'shader') return null
+    // One frame at the scene's moment (or t = 0), drawn synchronously into an image (the snapshot waits for images).
+    const result = shaderEngine.compile(node.code, params)
     if (!result.ok) return null
     const pw = Math.max(1, Math.round(node.w * 2))
     const ph = Math.max(1, Math.round(node.h * 2))
@@ -91,15 +99,70 @@ function LiveStill({ node, style, common }: Props) {
     canvas.width = pw
     canvas.height = ph
     const ctx = canvas.getContext('2d')
-    if (!ctx || !shaderEngine.render(result.program, pw, ph, 0, 0, node.params, ctx)) return null
+    if (!ctx || !shaderEngine.render(result.program, pw, ph, time, 0, params, ctx)) return null
     return canvas.toDataURL('image/png')
-  }, [given, node])
+  }, [givenUrl, node, params, time])
+
+  // A program item: run it in a hidden frame at this moment until it paints, then show its picture.
+  const runner = useRef<HTMLDivElement | null>(null)
+  const runKey = node.mode === 'program' && !givenUrl ? `${node.id}|${node.code}|${time}|${clock?.step ?? ''}|${JSON.stringify(params)}|${node.w}x${node.h}` : ''
+  const [ran, setRan] = useState<{ key: string; url: string | null } | null>(null)
+  useLayoutEffect(() => {
+    const element = runner.current
+    if (!runKey || !element) return
+    let settled = false
+    let host: ProgramHost | null = null
+    let timer = 0
+    let release = (): void => undefined
+    const work = new Promise<void>((resolve) => {
+      release = resolve
+      let asked = false
+      const finish = (url: string | null): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        host?.dispose()
+        setRan({ key: runKey, url })
+        resolve()
+      }
+      const ask = (): void => {
+        if (asked || !host) return
+        asked = true
+        void host.still(1500).then(finish)
+      }
+      const pw = Math.max(1, Math.round(node.w * 2))
+      const ph = Math.max(1, Math.round(node.h * 2))
+      host = new ProgramHost(
+        element,
+        { code: node.code, size: { w: node.w, h: node.h, pw, ph }, params, start: performance.timeOrigin + performance.now() - time * 1000, visible: true, clock },
+        { onTick: (frames) => frames >= 3 && ask(), onError: () => finish(null), onInput: () => undefined, onReport: () => undefined, onEscape: () => undefined }
+      )
+      timer = window.setTimeout(ask, 3000)
+    })
+    trackStill(work)
+    return () => {
+      // A run that ends early (a new request, StrictMode's second mount) no longer holds the snapshot.
+      settled = true
+      clearTimeout(timer)
+      host?.dispose()
+      release()
+    }
+    // runKey holds everything the run depends on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runKey])
+
+  const url = givenUrl ?? shaderUrl ?? (ran && ran.key === runKey ? ran.url : null)
+  const waiting = !!runKey && !(ran && ran.key === runKey)
   if (!url) {
     return (
-      <div {...common} className="node node-live node-live--note" style={style}>
-        <div className="node-live__note">
-          <span className="node-live__note-title">{node.mode === 'shader' ? 'Shader' : 'Live canvas'}</span>
-        </div>
+      <div {...common} className={`node node-live${waiting ? '' : ' node-live--note'}`} style={style}>
+        {waiting ? (
+          <div ref={runner} className="node-live__runner" />
+        ) : (
+          <div className="node-live__note">
+            <span className="node-live__note-title">{node.mode === 'shader' ? 'Shader' : node.mode === 'program' ? 'Program' : 'Live canvas'}</span>
+          </div>
+        )}
       </div>
     )
   }

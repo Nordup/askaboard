@@ -126,7 +126,7 @@ export interface SceneNodeObject extends SceneObjectBase {
 /** Live pixels: a fragment shader or a 2D canvas program, drawn every frame by the board. */
 export interface SceneLiveObject extends SceneObjectBase {
   kind: 'live'
-  mode: 'shader' | 'canvas'
+  mode: 'shader' | 'canvas' | 'program'
   code: string
   width: number
   height: number

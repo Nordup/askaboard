@@ -6,6 +6,7 @@ import { IPC, type Camera, type MenuCommand, type Snapshot } from '@shared/space
 import { FolderSession } from './folder'
 import { AgentServer } from './mcp'
 import { SnapshotRenderer } from './snapshot'
+import { LIVE_SCHEME_PRIVILEGES, registerLiveItemProtocol } from './live-item-protocol'
 import { installMenu, setFolderOpen } from './menu'
 import { FOLDER_SETTINGS_DIR, folderOverrides, onOverridesRead } from './guide'
 import { SETUP_MARKER, applySetup, isSetUp, setupPlan } from './setup'
@@ -59,7 +60,7 @@ if (remoteDebugPort !== null) {
  * never read outside the open folder.
  */
 const ASSET_SCHEME = 'space-asset'
-protocol.registerSchemesAsPrivileged([{ scheme: ASSET_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }])
+protocol.registerSchemesAsPrivileged([{ scheme: ASSET_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }, LIVE_SCHEME_PRIVILEGES])
 
 function registerAssetProtocol(): void {
   protocol.handle(ASSET_SCHEME, async (request) => {
@@ -398,6 +399,7 @@ void app.whenReady().then(async () => {
     selectAll: () => sendMenuCommand('select-all')
   })
   registerAssetProtocol()
+  registerLiveItemProtocol()
   await openInitialFolder()
   setFolderOpen(session !== null)
   await installShim().catch((error) => console.error(`agent home: could not write the shim: ${String(error)}`))

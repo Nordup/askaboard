@@ -546,12 +546,16 @@ export class ScenePlayer {
       return
     }
     const out: SceneFrame = { overrides: new Map(), tips: [], inks: [] }
+    const clocks = new Map<string, { t: number; playing: boolean; step: string | null; end: number }>()
     // Later scenes first, so an earlier scene's look of a node it animates wins.
     for (let i = this.scenes.length - 1; i >= 0; i--) {
       const scene = this.scenes[i]
-      sceneFrame(scene.play, this.timeOf(scene, now), this.inkPoints, out)
+      const t = this.timeOf(scene, now)
+      sceneFrame(scene.play, t, this.inkPoints, out)
+      const clock = { t, playing: scene.origin !== null && scene.pausedAt === null, step: this.stepNameAt(scene.play, t), end: scene.play.duration }
+      for (const object of scene.play.objects) for (const target of object.targets) clocks.set(target.nodeId, clock)
     }
-    const frame: PlaybackFrame = { overrides: out.overrides, ghosts: this.ghostList(this.scenes), tips: out.tips, inks: out.inks }
+    const frame: PlaybackFrame = { overrides: out.overrides, ghosts: this.ghostList(this.scenes), tips: out.tips, inks: out.inks, clocks }
     this.latest.frame = frame
     board.setPlayback(frame)
     this.publish(now)

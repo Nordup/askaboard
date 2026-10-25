@@ -6,7 +6,7 @@ import { clampZoom, overlapShare, unionRegions } from '../board/geometry'
 import { draftsToNodes, htmlToDrafts, Ignored, nodesToHtml, walkDrafts, type Draft } from '../board/html'
 import { ancestorIds, copySubtrees, isFlowed, normalizeInk, parentKey, removeNodes, ROOT, topLevelOf, withDescendants, zAbove } from '../board/scene'
 import type { Point, Region } from '../board/types'
-import { liveStatus, liveSummary } from '../live-pixels/registry'
+import { liveReport, liveStatus, liveSummary } from '../live-pixels/registry'
 import { runScene, previewScene, sceneControl, sceneContext } from '../live/run'
 import { warmSpeech } from '../live/player'
 import { isGroupId, type InkGroup, type InkGroupTracker } from './groups'
@@ -337,7 +337,9 @@ function getNodeInfo(s: Scene, args: Record<string, unknown>): unknown {
         params: node.params,
         code_length: node.code.length,
         state: status ? status.state : 'not shown',
-        ...(status?.error ? { error: status.error } : {})
+        ...(status?.error ? { error: status.error } : {}),
+        ...(node.mode === 'program' ? { input: status?.input ?? 'none' } : {}),
+        ...(liveReport(node.id) !== undefined ? { report: liveReport(node.id) } : {})
       })
     }
     if (node.kind === 'svg') {

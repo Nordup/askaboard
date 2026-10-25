@@ -50,6 +50,8 @@ export interface PlaybackFrame {
   tips: readonly PlaybackTip[]
   /** Ink that exists only now (changing ink objects): top-level, in world coordinates, painted on the canvas. */
   inks?: readonly BoardNode[]
+  /** The scene clock of each node a scene plays (program items follow it): scene time, playing or held, step name, duration. */
+  clocks?: ReadonlyMap<string, { t: number; playing: boolean; step: string | null; end: number }>
 }
 
 // ---------- Ink: the drawn share of a stroke ----------
