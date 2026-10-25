@@ -1,0 +1,19 @@
+{
+  "sphere": {
+    "title": "Sphere volume",
+    "text": "Explain why the volume of a sphere is 4/3 π r³. Use the board."
+  },
+  "fusion": {
+    "title": "The learner's fusion drawing",
+    "text": "I drew something on the board. Is this how fusion works?",
+    "learner": "S3"
+  },
+  "em-wave": {
+    "title": "Electromagnetic wave in 3D",
+    "text": "Show me how an electromagnetic wave travels in 3D."
+  },
+  "free": {
+    "title": "Free choice",
+    "text": "Make the most beautiful explanation you can of an idea you love."
+  }
+}

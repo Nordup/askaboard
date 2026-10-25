@@ -45,3 +45,6 @@ space/dist/
 
 # Third-party reference material (Paper agent interface), local only
 docs/learning-space/reference/
+
+# Live-drawing lab runs (space/scripts/lab)
+space/.lab/
