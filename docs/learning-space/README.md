@@ -21,11 +21,14 @@ in [`../../space/`](../../space/); work happens on `main`.
 | Folder setup (`AGENTS.md` template), editable folder guide | Done |
 | Public plugin repo, stdio relay, plugin-first Connect popover | Done |
 | One shared design system for menus | Done |
-| Measurement: session trace, trace report, bench (4 scenarios) | Done: [`baseline.md`](baseline.md) |
-| Fix 1: the brief (`space/resources/brief.md`, managed block in `AGENTS.md`), new tool descriptions | Done and measured: agents draw and explain step by step |
-| **The agent–canvas loop works like a tutor** ([`tutor-vision.md`](tutor-vision.md)) | **Current focus.** Fix 2 (perception) deferred. First real voice sessions analysed: [`sessions-2026-10-24.md`](sessions-2026-10-24.md) |
-| Improving the brief | Ongoing: [`writing-agent-text.md`](writing-agent-text.md) |
-| Live drawing by code, played in sequences ([`live-drawing-idea.md`](live-drawing-idea.md)) | **Next: the experiment** |
+| Measurement: session trace, trace report, bench (S1–S4; P1–P3 on a busy board; V1 "drew while talking"; Claude or the Codex/GPT client; `--no-news-hook`) | Done: [`baseline.md`](baseline.md) |
+| Fix 1: the brief (`space/resources/brief.md`, managed block in `AGENTS.md`), new tool descriptions | Done and measured |
+| Board news: the agent app gets one line about what the learner drew since its last look, delivered once (decision I4) | Done and measured: in V1 the agent looked at the sketch in 4 of 4 runs (0 of 2 before) |
+| `get_brief` and `get_guide`, one job each (decision T11) | Done and measured |
+| Brief v3: the section "Thinking with a pen" (decision I5) | Done and measured: GPT still builds a drawing in 2–3 SVG pieces, with no ink |
+| **The animated build-up:** the app draws agent material in front of the learner (decision P9, [`plan.md`](plan.md) item 1) | **Next.** The founder must approve the mockup in detail first |
+| Live drawing by code, played in sequences ([`live-drawing-idea.md`](live-drawing-idea.md)) | After the animated build-up ([`plan.md`](plan.md) item 2) |
+| Perception (the old fix 2) | Mostly answered by board news; the rest deferred |
 | Plain chat apps (ChatGPT web, Claude chat) with folder file tools | Later |
 | App packaging, signing, auto-update | Later |
 | Interactive embeds (live HTML simulations) | Much later |
@@ -34,13 +37,16 @@ in [`../../space/`](../../space/); work happens on `main`.
 The web client (`web/`), the tutor backend (`server/`) and the iPad client
 (`MathTutor/`) are paused, not deleted.
 
+Numbered work: "fix 1/2", "improvement 1–4" and plan "item" numbers name
+work that [`plan.md`](plan.md) and [`baseline.md`](baseline.md) describe.
+
 ## Read in this order
 
 1. [`idea.md`](idea.md) — the founder's original idea, part by part, in the
    founder's words. Why the app exists.
    - [`tutor-vision.md`](tutor-vision.md) — the founder's second message
      (2026-10-24), in the same form: the problems in the agent–canvas loop
-     and the tutor the founder wants. The current focus.
+     and the tutor the founder wants.
    - [`live-drawing-idea.md`](live-drawing-idea.md) — the founder's third
      message (2026-10-24): the choice of the first fixes, and the idea that
      agents draw with JavaScript strokes, played in sequences by a voice
@@ -65,6 +71,8 @@ The web client (`web/`), the tutor backend (`server/`) and the iPad client
    clients, placement, and security.
 7. [`plan.md`](plan.md) — the step plan, what each step delivered, and the
    "later" list.
+8. [`drafts/`](drafts/README.md) — drafts of agent-facing text: the approved
+   drafts and their history. They are not the live text.
 
 Historical detail: [`step-3-research.md`](step-3-research.md) and
 [`step-3-design.md`](step-3-design.md) (the editable-document design and how
@@ -98,5 +106,9 @@ the live-frame idea was rejected).
 | Brief | `space/resources/brief.md`: what the space is for and how agents think about their part. The main text agents read: in a learning folder's `AGENTS.md`, or with `get_brief` for agents without it. |
 | Managed block | The part of a folder's `AGENTS.md` between the "learning-space brief" markers. The app keeps it equal to the brief unless the learner edits it. |
 | Trace | The JSONL record of one agent session's MCP calls, in `~/.learning-space/traces/`. |
-| Bench | `space/scripts/bench/run.mjs`: 4 fixed scenarios (S1–S4) run by a headless agent, to measure a change. |
+| Bench | `space/scripts/bench/run.mjs`: fixed scenarios (S1–S4, P1–P3, V1, …) run by a headless agent (Claude or Codex), to measure a change. |
 | Look ratio | Learner ink area ÷ the area of the agent's screenshot of it; 1.0 is a perfect crop. |
+| Board news | One factual line that tells an agent app what the learner drew or erased on a board since its last look. Each change is delivered once (decision I4). |
+| Change cursor | The point up to which an agent app knows the board's changes. Board news reports only the changes after it. |
+| Last look | The agent app's last `get_screenshot` or `get_changes` on a board. It moves the change cursor. |
+| Animated build-up | The planned app feature: the app draws agent material (SVG lines, ink strokes) in front of the learner, in the order it was written (decision P9). |

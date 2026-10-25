@@ -5,7 +5,7 @@ shared canvas and a local learning folder. The app has no AI inside: external
 agents (Claude Code, Codex, Claude Desktop) connect to it over MCP and work on
 the board with the learner.
 
-**Status:** the main product of this repository (since 2026-10-24). Steps 0–5 and fixes 0–1 are done.
+**Status (2026-10-25):** the main product of this repository (since 2026-10-24). Steps 0–5, fix 1, board news (decision I4), `get_brief` and `get_guide` (decision T11) and brief v3 are done. Next: the animated build-up ([`plan.md`](../docs/learning-space/plan.md)).
 
 - [`../docs/learning-space/README.md`](../docs/learning-space/README.md): start here.
 - [`architecture.md`](../docs/learning-space/architecture.md): processes, data flow and where the code lives.
@@ -133,7 +133,7 @@ use for input.
 
 | Command | Effect |
 | --- | --- |
-| `draw <file.json \| -> [--tool pen\|highlighter]`, `draw --strokes '<json>'` | Draws pen strokes with pressure, in board coordinates |
+| `draw <file.json \| -> [--tool pen\|highlighter\|eraser] [--no-pan]`, `draw --strokes '<json>'` | Draws strokes with pressure, in board coordinates. It pans the board first so that every point is on screen; `--no-pan` keeps the view. `--tool eraser` drags the eraser along the strokes |
 | `key <combo>` | Sends a key, for example `Meta+z` |
 | `click`, `dblclick`, `drag`, `wheel` | Mouse input at window CSS pixels |
 | `type "<text>"` | Types into the focused field |
@@ -148,7 +148,10 @@ The port comes from `--port`, else `$SPACE_REMOTE_DEBUG`, else 9339.
 - `scripts/strokes/` holds sample handwriting: `two-plus-two.json` and `equals-four.json`.
 - `node scripts/trace-report.mjs <file|dir>` summarises session traces.
 - `node scripts/bench/run.mjs --scenarios S1,S2,S3,S4 --model opus` runs the
-  fixed agent scenarios on its own instance (port 47870). See
+  fixed agent scenarios on its own instance (port 47870). Scenarios: S1–S4,
+  P1–P3 (a busy board) and V1 ("drew while talking"). `--client codex` runs
+  GPT through Codex instead of Claude; `--no-news-hook` turns off the board
+  news hook; `--dev` uses the dev renderer. See
   [`baseline.md`](../docs/learning-space/baseline.md).
 
 ```sh

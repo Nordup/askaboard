@@ -45,7 +45,8 @@ limits scripts and images.
    relay). The server (`src/main/mcp.ts`) checks Host and Origin, finds the
    session, validates arguments with zod against the shared limits.
 2. The tool sends an IPC request (`canvasInfo`, `changes`, `screenshotPlan`,
-   `openBoard` or `agentTool`) to the renderer and waits for the reply.
+   `openBoard`, `agentTool` or `learnerNews`) to the renderer and waits for
+   the reply.
 3. The renderer (`src/renderer/src/agent/handler.ts`, `edits.ts`) reads or
    changes the live board as **one undo step**, stamps `seq`, records
    removals, updates presence, and returns ids, measured bounds and overlap
@@ -85,7 +86,7 @@ limits scripts and images.
 
 | Module | Job |
 | --- | --- |
-| `agent/handler.ts` | Answers requests from main: canvas info, changes, screenshot plans, tool calls. |
+| `agent/handler.ts` | Answers requests from main: canvas info, changes, screenshot plans, tool calls, learner news. |
 | `agent/edits.ts` | All agent writes: frames, HTML, styles, text, moves, duplicates, deletes, ink, focus; presence outline. |
 | `board/html.ts` | HTML subset ⇄ nodes, both directions; reports what was dropped. |
 | `agent/groups.ts` | Clusters learner ink into groups `g1`, `g2`, … with stable ids. |
