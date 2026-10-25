@@ -66,6 +66,28 @@ and what went wrong before.
 | Read a real session of the founder | Learning Space trace: `~/.learning-space/traces/<date>/` (`node scripts/trace-report.mjs <file>`). ChatGPT voice sessions run as Codex threads: `~/.codex/sessions/<y>/<m>/<d>/rollout-*.jsonl`, names in `~/.codex/session_index.jsonl`; voice requests arrive as `<realtime_delegation>` user messages. The files hold base64 images: parse line by line, never print them. Read only. |
 | Keep the founder's focus | After launching, `osascript -e 'tell application "Claude" to activate'`. |
 
+## Choosing lab tests (live drawing)
+
+The council tasks are in `space/scripts/lab/council/tasks.json`; each has a
+`covers` list. The founder's rule (2026-10-25): **keep the same tests so runs
+can be compared, and run only the tests that show what changed** — not the
+whole set every time, and one run per model is usually enough.
+
+| What changed | Run |
+| --- | --- |
+| Drawing engine, timeline, values, labels | `sphere` (and `em-wave` for motion) |
+| Program items, 3D, interaction | `em-wave` (and `heart`) |
+| The brief or other agent text | `seasons` and `fusion`, with `--brief-only` |
+| Reading the learner's work | `fusion` |
+| Pages, frames, images, HTML in scenes | `fractions`, `rome` |
+| Style, painting, colour | `sunset` |
+| Charts and data | `stddev` |
+
+Use `--brief-only` to measure what a real session sees (the brief through
+`AGENTS.md`, no council purpose text); without it the prompt starts with
+`council/purpose.md`, which says the purpose out loud. Compare with the
+earlier runs of the same task in `live-drawing-log.md`.
+
 ## Pitfalls we hit
 
 - **StrictMode double mount:** a cleanup cancelled animation frames without

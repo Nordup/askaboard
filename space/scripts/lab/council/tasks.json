@@ -1,23 +1,92 @@
 {
   "sphere": {
     "title": "Sphere volume",
-    "text": "Explain why the volume of a sphere is 4/3 π r³. Use the board."
+    "text": "Explain why the volume of a sphere is 4/3 π r³. Use the board.",
+    "covers": [
+      "geometry",
+      "step-by-step build",
+      "values driving a figure"
+    ]
   },
   "fusion": {
     "title": "The learner's fusion drawing",
     "text": "I drew something on the board. Is this how fusion works?",
-    "learner": "S3"
+    "learner": "S3",
+    "covers": [
+      "reading the learner's drawing",
+      "correcting a misconception",
+      "acting on learner ink"
+    ]
   },
   "em-wave": {
     "title": "Electromagnetic wave in 3D",
-    "text": "Show me how an electromagnetic wave travels in 3D."
+    "text": "Show me how an electromagnetic wave travels in 3D.",
+    "covers": [
+      "3D",
+      "motion",
+      "program items"
+    ]
   },
   "free": {
     "title": "Free choice",
-    "text": "Make the most beautiful explanation you can of an idea you love."
+    "text": "Make the most beautiful explanation you can of an idea you love.",
+    "covers": [
+      "open choice",
+      "taste"
+    ]
   },
   "seasons": {
     "title": "Why seasons",
-    "text": "Why is it summer in Australia when it's winter here in Europe? I always thought it was because the Earth is closer to the Sun in summer."
+    "text": "Why is it summer in Australia when it's winter here in Europe? I always thought it was because the Earth is closer to the Sun in summer.",
+    "covers": [
+      "misconception",
+      "reading intent",
+      "brief only"
+    ]
+  },
+  "sunset": {
+    "title": "Paint a sunset",
+    "text": "Paint me a sunset over the sea, the way an artist would, and show me why the sky turns orange and red.",
+    "covers": [
+      "painting",
+      "art style",
+      "colour",
+      "science behind a picture"
+    ]
+  },
+  "heart": {
+    "title": "How the heart pumps",
+    "text": "How does the heart pump blood around the body?",
+    "covers": [
+      "biology",
+      "a cycle in motion",
+      "labels on a complex shape"
+    ]
+  },
+  "stddev": {
+    "title": "Standard deviation",
+    "text": "What does standard deviation actually mean? I can compute it but I don't get it.",
+    "covers": [
+      "data and charts",
+      "intuition behind a formula"
+    ]
+  },
+  "fractions": {
+    "title": "Practice sheet",
+    "text": "Give me five practice problems on adding fractions with different denominators, from easy to harder.",
+    "covers": [
+      "pages and frames",
+      "exercises",
+      "text-heavy material"
+    ]
+  },
+  "rome": {
+    "title": "Rome grows",
+    "text": "How did the Roman Empire grow from a city to an empire? Show me.",
+    "covers": [
+      "maps",
+      "time",
+      "images"
+    ]
   }
 }
