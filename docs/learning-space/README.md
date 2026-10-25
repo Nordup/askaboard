@@ -26,7 +26,7 @@ in [`../../space/`](../../space/); work happens on `main`.
 | Board news: the agent app gets one line about what the learner drew since its last look, delivered once (decision I4) | Done and measured: in V1 the agent looked at the sketch in 4 of 4 runs (0 of 2 before) |
 | `get_brief` and `get_guide`, one job each (decision T11) | Done and measured |
 | Brief v3: the section "Thinking with a pen" (decision I5) | Done and measured: GPT still builds a drawing in 2–3 SVG pieces, with no ink |
-| Live drawing: one drawing medium in code ([`live-drawing-plan.md`](live-drawing-plan.md), decision P11) | Stages 1–2 done and in `main` (run_scene, scene_control, live pixels, speech and captions; [`live-drawing-log.md`](live-drawing-log.md)). Stage 3 next, on the branch `live-drawing` |
+| Live drawing: one drawing medium in code ([`live-drawing-plan.md`](live-drawing-plan.md), decision P11) | Stages 1–2 done and in `main` (run_scene, scene_control, live pixels, speech and captions; [`live-drawing-log.md`](live-drawing-log.md)). Stage 3 in progress on the branch `live-drawing`: beats and speech as the clock, three fixes, full-power code items (decision P12) |
 | The animated build-up: the app draws agent material in front of the learner (decision P9) | After live drawing, on its engine ([`plan.md`](plan.md) item 2) |
 | Perception (the old fix 2) | Mostly answered by board news; the rest deferred |
 | Plain chat apps (ChatGPT web, Claude chat) with folder file tools | Later |
