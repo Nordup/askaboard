@@ -168,8 +168,10 @@ panel header's controls). `.status-dot` is 7 px; `.status-dot--small` is
   the rest in tertiary; lines ahead are hidden. At the end every line is
   primary, step titles are secondary, and a click on a step title replays
   the script from that step. The script is the scenes that play back to
-  back without a stop; collapsing is the one way to put it away (it stays
-  until another script starts).
+  back without a stop, and a scene that continues it after a stop: one that
+  acts on the script's material, or one that starts within 30 s of its end
+  with no learner work on the board in between (decision T15); collapsing
+  is the one way to put it away (it stays until another script starts).
 
 ## Words
 

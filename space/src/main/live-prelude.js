@@ -2,9 +2,11 @@
  * The live-scene API inside the sandbox (QuickJS). This file runs once per
  * stage (main/live-scene.ts): one QuickJS context that every scene program of a
  * board runs in, so objects, values and `stage` live on between programs.
- * The host sets globalThis.__fontText before this runs. For each program it
- * sets globalThis.__ctxText (JSON: {nodes, names, view, viewport, seed,
- * stage, cutAt}) and calls __begin(), runs the program, drives the
+ * The host sets globalThis.__fontText and __measure before this runs. It
+ * keeps the four host functions this file defines (__begin, __advance,
+ * __result, __bake) from right after it ran, and calls those, never a global
+ * of the moment. For each program it calls __begin(ctxText) (JSON: {nodes,
+ * names, view, viewport, seed, stage, cutAt}), runs the program, drives the
  * clock (drains the job queue and calls __advance() until it returns false),
  * reads __result() and calls __bake(), which turns the end of this scene into
  * the start of the next one.
@@ -24,8 +26,12 @@
  */
 'use strict'
 ;(() => {
-  const FONT = JSON.parse(globalThis.__fontText)
-  delete globalThis.__fontText
+  // This file's own code uses the built-ins as they are now, whatever a program does to the globals.
+  const G = globalThis
+  const { Object, Array, Function, String, Number, Boolean, Symbol, Math, JSON, Reflect, Promise, Map, Set, WeakMap, WeakSet, Date, RegExp, Error, TypeError, RangeError, SyntaxError, ReferenceError, EvalError, URIError, Int8Array, Float32Array, Float64Array, Uint8Array, Uint16Array, Uint32Array, Int16Array, Int32Array, isFinite, isNaN, parseFloat, parseInt } = G
+  const hostMeasure = typeof G.__measure === 'function' ? G.__measure : null
+  const FONT = JSON.parse(G.__fontText)
+  delete G.__fontText
   let CTX = { nodes: {}, names: {}, view: { x: -600, y: -400, width: 1200, height: 800 }, viewport: [1200, 800], seed: 1 }
   const MAX_COORD = 100000
 
@@ -970,9 +976,9 @@
     const key = `${math ? 'm' : 't'}|${size}|${text}`
     if (textSizes.has(key)) return textSizes.get(key)
     let size2 = null
-    if (typeof globalThis.__measure === 'function') {
+    if (hostMeasure) {
       try {
-        const got = JSON.parse(globalThis.__measure(JSON.stringify({ kind: 'text', items: [{ math, text, size }] })))
+        const got = JSON.parse(hostMeasure(JSON.stringify({ kind: 'text', items: [{ math, text, size }] })))
         const s = got && Array.isArray(got.sizes) ? got.sizes[0] : null
         if (Array.isArray(s) && s[0] > 0) size2 = [s[0], s[1]]
       } catch {
@@ -1227,10 +1233,10 @@
 
   /** Ask the board (the app) a question: the layout of HTML, a picture, an empty place, an item's content. Blocks until it answers. */
   function ask(request, what) {
-    if (typeof globalThis.__measure !== 'function') fail(`${what}: the board cannot answer here`)
+    if (!hostMeasure) fail(`${what}: the board cannot answer here`)
     let got
     try {
-      got = JSON.parse(globalThis.__measure(JSON.stringify(request)))
+      got = JSON.parse(hostMeasure(JSON.stringify(request)))
     } catch (error) {
       fail(`${what}: no answer from the board (${error && error.message ? error.message : String(error)})`)
     }
@@ -2269,11 +2275,11 @@
   const log = (...items) => {
     logs.push(items.map(show).join(' '))
   }
-  globalThis.console = Object.freeze({ log, info: log, warn: log, error: log })
+  G.console = Object.freeze({ log, info: log, warn: log, error: log })
 
   // ---------- Host interface ----------
 
-  globalThis.__advance = () => {
+  G.__advance = () => {
     if (!waiters.length) return false
     let best = 0
     for (let k = 1; k < waiters.length; k++) {
@@ -2578,7 +2584,7 @@
 
   const touched = (e) => Object.keys(e.tracks).some((key) => e.tracks[key].length > 0)
 
-  globalThis.__result = () => {
+  G.__result = () => {
     if (asyncErrors.length) throw asyncErrors[0]
     for (const e of objects) if (e.born === sceneNo && e.vis === undefined) e.vis = 'shown'
     if (cutAt !== null) applyCut(Math.min(cutAt, endTime))
@@ -2652,7 +2658,7 @@
   }
 
   /** The end of this scene becomes the start of the next: each object's state at the end is its base, values keep their end value. */
-  globalThis.__bake = () => {
+  G.__bake = () => {
     for (const e of objects) if (e.born === sceneNo && e.vis === undefined) e.vis = 'shown'
     for (const e of objects) e.edited = false
     const hidden = { opacity: 1, draw: 0, fill: 0 }
@@ -2720,9 +2726,9 @@
 
   let cutAt = null
   /** A new scene: its context, its own time from 0, nothing on its timeline yet. */
-  globalThis.__begin = () => {
-    CTX = JSON.parse(globalThis.__ctxText)
-    delete globalThis.__ctxText
+  G.__begin = (ctxText) => {
+    restoreGlobals()
+    CTX = JSON.parse(ctxText)
     sceneNo++
     programRandom = mulberry32(CTX.seed || 1)
     cutAt = typeof CTX.cutAt === 'number' ? CTX.cutAt : null
@@ -2814,5 +2820,112 @@
     mark,
     stage
   }
-  for (const [key, value] of Object.entries(api)) Object.defineProperty(globalThis, key, { value, enumerable: true, writable: false, configurable: false })
+  for (const [key, value] of Object.entries(api)) Object.defineProperty(G, key, { value, enumerable: true, writable: false, configurable: false })
+
+  // ---------- Lock the stage ----------
+  // Every program of a board runs in this one context. So that no program can
+  // change the scene API or a built-in (JSON.stringify, Array.prototype.map, …)
+  // for the programs after it, or for this file's own code: every object
+  // reachable from a global is frozen, every global is locked, and each
+  // program starts with the globals as they are here (QuickJS lets
+  // Object.defineProperty replace even a locked property of the global
+  // object, so __begin puts back any that a program replaced or deleted).
+  // Only `stage` stays a free, writable object; programs may still add
+  // globals of their own.
+
+  // A frozen prototype makes a plain assignment like `obj.toString = f` or
+  // `this.name = "MyError"` fail (the "override mistake"). For the properties
+  // that programs commonly assign, an accessor keeps that working: the
+  // assignment defines an own property on the object instead.
+  const tame = (proto, names) => {
+    for (const name of names) {
+      const d = Object.getOwnPropertyDescriptor(proto, name)
+      if (!d || !('value' in d) || !d.configurable) continue
+      const value = d.value
+      Object.defineProperty(proto, name, {
+        get() {
+          return value
+        },
+        set(next) {
+          if (this === proto) throw new TypeError(`The built-in ${name} cannot be changed`)
+          Object.defineProperty(this, name, { value: next, writable: true, enumerable: true, configurable: true })
+        },
+        enumerable: d.enumerable,
+        configurable: false
+      })
+    }
+  }
+  tame(Object.prototype, ['constructor', 'toString', 'valueOf', 'toLocaleString'])
+  tame(Function.prototype, ['constructor', 'toString'])
+  tame(Array.prototype, ['constructor', 'toString'])
+  for (const E of [Error, TypeError, RangeError, SyntaxError, ReferenceError, EvalError, URIError]) {
+    tame(E.prototype, ['constructor', 'name', 'message', 'toString'])
+  }
+
+  const frozen = new Set()
+  const freezeAll = (root) => {
+    const todo = [root]
+    while (todo.length) {
+      const obj = todo.pop()
+      if (obj === null || (typeof obj !== 'object' && typeof obj !== 'function')) continue
+      if (obj === stage || obj === G || frozen.has(obj)) continue
+      frozen.add(obj)
+      Object.freeze(obj)
+      todo.push(Object.getPrototypeOf(obj))
+      for (const key of Reflect.ownKeys(obj)) {
+        const d = Object.getOwnPropertyDescriptor(obj, key)
+        if (!d) continue
+        if ('value' in d) todo.push(d.value)
+        else todo.push(d.get, d.set)
+      }
+    }
+  }
+  // Intrinsics that no global names directly.
+  const hidden = [
+    [][Symbol.iterator](),
+    new Map()[Symbol.iterator](),
+    new Set()[Symbol.iterator](),
+    ''[Symbol.iterator](),
+    function* () {},
+    (function* () {})(),
+    async function () {},
+    async function* () {},
+    (async function* () {})(),
+    Object.getPrototypeOf(Int8Array)
+  ]
+  if (typeof ''.matchAll === 'function') hidden.push(''.matchAll(/(?:)/g))
+  for (const item of hidden) freezeAll(item)
+  /** Every global as this file leaves it: key → its locked descriptor. */
+  const globals = new Map()
+  for (const key of Reflect.ownKeys(G)) {
+    const d = Object.getOwnPropertyDescriptor(G, key)
+    if (!d) continue
+    let locked
+    if ('value' in d) {
+      if (d.value !== stage) freezeAll(d.value)
+      locked = { value: d.value, writable: false, enumerable: d.enumerable, configurable: false }
+    } else {
+      freezeAll(d.get)
+      freezeAll(d.set)
+      locked = { get: d.get, set: d.set, enumerable: d.enumerable, configurable: false }
+    }
+    if (d.configurable) Object.defineProperty(G, key, locked)
+    globals.set(key, locked)
+  }
+  const sameDescriptor = (a, b) => ('value' in b ? Object.is(a.value, b.value) : a.get === b.get && a.set === b.set)
+  /** Put back each global that the program before replaced or deleted. */
+  function restoreGlobals() {
+    for (const [key, locked] of globals) {
+      const now = Reflect.getOwnPropertyDescriptor(G, key)
+      if (now && sameDescriptor(now, locked)) continue
+      try {
+        Reflect.deleteProperty(G, key)
+        Object.defineProperty(G, key, locked)
+      } catch {
+        // QuickJS replaces it anyway; the check below names a failure.
+      }
+      const back = Reflect.getOwnPropertyDescriptor(G, key)
+      if (!back || !sameDescriptor(back, locked)) throw new Error(`The scene library could not restore the global ${String(key)}`)
+    }
+  }
 })()

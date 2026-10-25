@@ -116,6 +116,8 @@ export interface ScenePlay {
   edits?: PlayEdit[]
   /** A replay: board nodes hidden while it plays (their look of then shows as ghosts). */
   hidden?: string[]
+  /** Ghosts of items that html() replaces: they show until `at`, when the new material appears. */
+  vanish?: Array<{ ids: string[]; at: number }>
 }
 
 /** What a scene's commit changed, to undo it when a queued scene is skipped. */
@@ -279,6 +281,9 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
   }
   const changed = new Map<string, BoardNode>()
   const removed = new Set<string>()
+  /** Ink inside a replaced item: it stays on the board, on the new material (see html replace). */
+  const rescued = new Set<string>()
+  const vanish: NonNullable<ScenePlay['vanish']> = []
   let z = zAbove(s.index.children.get(ROOT) ?? [])
   /** The root node and the part nodes (the root's children, in order) of each html object. */
   const htmlNodes = new Map<number, { root: string; parts: string[] }>()
@@ -323,6 +328,51 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
       next = { ...next, parent: old.parent, x: r1((next.x as number) - (box?.x ?? 0)), y: r1((next.y as number) - (box?.y ?? 0)) } as BoardNode
     }
     changed.set(node.id, next)
+  }
+
+  /** When an object first shows: at `created` when shown, else when its first draw or fade starts. */
+  const appearsAt = (object: SceneObjectDesc): number => {
+    if (object.vis === 'shown') return object.created
+    const tracks = timeline.tracks[object.id]
+    let at = Infinity
+    for (const prop of ['draw', 'fill', 'opacity'] as const) for (const track of tracks[prop] ?? []) if (track.start < at) at = track.start
+    return at === Infinity ? object.created : at
+  }
+  /**
+   * html() in place of an item: the item shows (as a ghost) until the new
+   * material appears, and the ink drawn on it (the learner's notes, the
+   * agent's marks) stays where it is, on the new material when that is a
+   * frame, else beside it in the item's parent.
+   */
+  const replaceItem = (item: ContentNode, root: ContentNode, parent: string | undefined, object: SceneObjectDesc): void => {
+    const inside = [...withDescendants([item.id], s.index)].filter((id) => id !== item.id).map((id) => s.index.byId.get(id) as BoardNode)
+    const box = s.layout.get(item.id)
+    const ghostIds = [item.id]
+    ghosts.push({ ...item, parent: undefined, x: box?.x ?? item.x, y: box?.y ?? item.y, style: { ...item.style, ...(box ? { width: `${box.width}px` } : {}) } } as BoardNode)
+    for (const node of inside) {
+      if (isContent(node)) {
+        ghosts.push(node)
+        ghostIds.push(node.id)
+      }
+    }
+    vanish.push({ ids: ghostIds, at: appearsAt(object) })
+    // The new root takes the item's place: a frame's content origin sits where the item's did.
+    const onRoot = isFrame(root)
+    const base: Point = onRoot ? (box ? [box.ox, box.oy] : [item.x, item.y]) : originOf(parent)
+    for (const node of inside) {
+      if (!isInk(node)) continue
+      const [wx, wy] = inkOffset(node, s.index.byId, s.layout)
+      changed.set(node.id, { ...node, parent: onRoot ? root.id : parent, x: r1(wx - base[0]), y: r1(wy - base[1]) } as BoardNode)
+      rescued.add(node.id)
+    }
+  }
+  /** A parent's content origin in world points (top level: 0, 0). */
+  const originOf = (id: string | undefined): Point => {
+    if (!id) return [0, 0]
+    const box = s.layout.get(id)
+    if (box) return [box.ox, box.oy]
+    const made = created.find((node) => node.id === id) as ContentNode | undefined
+    return made && !made.parent ? [made.x, made.y] : [0, 0]
   }
 
   for (const object of desc.objects) {
@@ -591,6 +641,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
       const [x, y] = apply(end, anchor)
       const baked: Matrix = [1, 0, 0, 1, x - anchor[0], y - anchor[1]]
       const place = html.place
+      let replacedItem: ContentNode | null = null
       let parent: string | undefined
       let zRoot = z++
       let position: Point = [r1(x), r1(y)]
@@ -606,6 +657,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
         if (replacing) {
           zRoot = target.z as number
           removed.add(target.id)
+          replacedItem = target as ContentNode
         } else zRoot = typeof place.index === 'number' && siblings[place.index] ? (siblings[place.index].z as number) - 0.5 : zAbove(siblings)
         const origin = parent ? (s.layout.get(parent) ? [s.layout.get(parent)!.ox, s.layout.get(parent)!.oy] : [0, 0]) : [0, 0]
         position = replacing ? [(target as ContentNode).x, (target as ContentNode).y] : [r1(x - origin[0]), r1(y - origin[1])]
@@ -641,6 +693,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
       const rootNode = nodes.find((node) => node.id === rootId) as ContentNode
       const partNodes = nodes.filter((node) => node.parent === rootId && isContent(node)).sort((a, b) => (a.z as number) - (b.z as number))
       htmlNodes.set(object.id, { root: rootId, parts: partNodes.map((node) => node.id) })
+      if (replacedItem && !isRemoved) replaceItem(replacedItem, rootNode, parent, object)
       if (isRemoved) {
         for (const node of nodes) ghosts.push(node.id === rootId ? ({ ...node, parent: undefined, x: r1(x), y: r1(y) } as BoardNode) : node)
       } else {
@@ -952,13 +1005,6 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
 
   // move(…, {into}): items become children of a frame; they keep their world place in a free frame and join the flow of a flex one.
   const reparented: CompiledScene['reparented'] = []
-  const originOf = (id: string | undefined): Point => {
-    if (!id) return [0, 0]
-    const box = s.layout.get(id)
-    if (box) return [box.ox, box.oy]
-    const made = created.find((node) => node.id === id) as ContentNode | undefined
-    return made && !made.parent ? [made.x, made.y] : [0, 0]
-  }
   for (const change of desc.reparents ?? []) {
     const frameId = 'ref' in change.into ? change.into.ref : itemNodes(change.into.obj)[0]
     const frame = frameId ? currentNode(frameId) : undefined
@@ -995,7 +1041,9 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
   // The board after the scene: existing nodes changed or removed, then the new ones on top.
   let next: BoardNode[] = s.nodes.map((node) => changed.get(node.id) ?? node)
   if (removed.size) next = removeNodes(next, removed, s.index)
-  next = [...next, ...created]
+  // Ink saved from a replaced item: it now belongs to the new material.
+  const kept = new Set(next.map((node) => node.id))
+  next = [...next, ...created, ...[...rescued].filter((id) => !kept.has(id)).map((id) => changed.get(id) as BoardNode)]
   // Program items keep the scene clock they rest at when the scene has ended, so a reopened board
   // shows them as the learner last saw them (program.ts: scene.t, scene.step, scene.ended).
   const played = new Set(objects.flatMap((object) => object.targets.map((target) => target.nodeId)))
@@ -1004,10 +1052,10 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
   const rest = { t: Math.round(desc.duration * 1000) / 1000, ...(endStep !== undefined ? { step: endStep } : {}) }
   next = next.map((node) => (node.kind === 'live' && (node as LiveNode).mode === 'program' && played.has(node.id) ? ({ ...node, rest } as LiveNode) : node))
   for (const ghost of ghosts) if (isFrame(ghost)) warn(`A frame faded out with everything in it`)
-  const removedAll = removed.size ? [...withDescendants(removed, s.index)].map((id) => s.index.byId.get(id) as BoardNode).filter(Boolean) : []
+  const removedAll = removed.size ? [...withDescendants(removed, s.index)].filter((id) => !rescued.has(id)).map((id) => s.index.byId.get(id) as BoardNode).filter(Boolean) : []
   return {
     next,
-    play: { id: sceneId, name, timeline, duration: desc.duration, steps: desc.steps, objects, ghosts, camera: desc.camera ?? [], pointer: desc.pointer ?? [], cues: desc.cues ?? [], ...(playEdits.length ? { edits: playEdits } : {}) },
+    play: { id: sceneId, name, timeline, duration: desc.duration, steps: desc.steps, objects, ghosts, camera: desc.camera ?? [], pointer: desc.pointer ?? [], cues: desc.cues ?? [], ...(playEdits.length ? { edits: playEdits } : {}), ...(vanish.length ? { vanish } : {}) },
     inkGroups,
     contentIds,
     centers,

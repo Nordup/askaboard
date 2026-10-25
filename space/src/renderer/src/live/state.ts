@@ -43,6 +43,8 @@ export interface SceneListEntry {
   name: string | null
   cues: SceneCueEntry[]
   steps: SceneStepEntry[]
+  /** The board items (node ids) it draws, moves or changes: its own and earlier material it acts on. */
+  items: string[]
 }
 
 export interface SceneUiState {
@@ -79,11 +81,13 @@ export interface SceneUiActions {
   nextStep(): void
   /** End what plays and waits, then play these committed scenes again in order, the first from one of its steps. False when one can no longer be replayed. */
   replay(list: Array<{ scene: string; step?: string }>): boolean
+  /** The learner wrote, drew or changed something on the board after this time (epoch ms). */
+  learnerActedSince(ms: number): boolean
 }
 
 let state: SceneUiState = IDLE
 const listeners = new Set<() => void>()
-let actions: SceneUiActions = { pause: () => undefined, resume: () => undefined, nextStep: () => undefined, replay: () => false }
+let actions: SceneUiActions = { pause: () => undefined, resume: () => undefined, nextStep: () => undefined, replay: () => false, learnerActedSince: () => false }
 
 function same(a: SceneUiState, b: SceneUiState): boolean {
   return (
@@ -133,16 +137,24 @@ export function subscribeSceneUi(listener: () => void): () => void {
 /** The playback state, re-rendering when it changes; with the UI's actions. */
 export function useSceneState(): SceneUiState & SceneUiActions {
   const value = useSyncExternalStore(subscribeSceneUi, getSceneUiState)
-  return { ...value, pause: () => actions.pause(), resume: () => actions.resume(), nextStep: () => actions.nextStep(), replay: (list) => actions.replay(list) }
+  return { ...value, pause: () => actions.pause(), resume: () => actions.resume(), nextStep: () => actions.nextStep(), replay: (list) => actions.replay(list), learnerActedSince: (ms) => actions.learnerActedSince(ms) }
 }
 
 /**
  * The script: the scenes that played as one explanation, for the script
  * panel. Scenes that follow each other without a stop (beats queued back to
- * back) are one script. A new script starts when nothing played and a scene
- * starts that is not part of the last script (a replay of one of its scenes
- * keeps it). It stays after the end, until another script starts or the
- * board changes.
+ * back) are one script. When the script has ended, a scene that starts
+ * continues it (a correction, or the next part) when:
+ *
+ * - it replays one of the script's scenes;
+ * - it acts on the script's material (moves, changes, erases or reuses an
+ *   item that a scene of the script drew), at any time; or
+ * - it starts within CONTINUE_MS of the script's end, and the learner did
+ *   not write, draw or change anything on the board in between.
+ *
+ * Any other scene starts a new script: a new explanation that comes after a
+ * longer pause, or after the learner's own work on the board. The script
+ * stays after its end, until another script starts or the board changes.
  */
 export interface SceneScript {
   /** Grows by one for each new script. */
@@ -153,19 +165,34 @@ export interface SceneScript {
   current: number
   /** Nothing plays now: the script played to its end (or was stopped). */
   finished: boolean
+  /** When it finished (epoch ms; 0 while it plays). */
+  endedAt: number
 }
+
+/** A scene that starts this soon after the script ended, with no learner work in between, continues it. */
+const CONTINUE_MS = 30_000
 
 let script: SceneScript | null = null
 let scriptIds = 0
 
+/** A scene that starts now continues the finished script (see SceneScript). */
+function continuesScript(done: SceneScript, entry: SceneListEntry | undefined): boolean {
+  if (done.scenes.some((known) => known.of === entry?.of)) return true
+  if (entry) {
+    const material = new Set(done.scenes.flatMap((known) => known.items))
+    if (entry.items.some((item) => material.has(item))) return true
+  }
+  return Date.now() - done.endedAt <= CONTINUE_MS && !actions.learnerActedSince(done.endedAt)
+}
+
 function updateScript(value: SceneUiState): void {
   if (!value.playing || !value.sceneOf) {
-    if (script && !script.finished) script = { ...script, current: -1, finished: true }
+    if (script && !script.finished) script = { ...script, current: -1, finished: true, endedAt: Date.now() }
     return
   }
   let scenes = script?.scenes ?? []
   let id = script?.id ?? 0
-  if (!script || (script.finished && !scenes.some((entry) => entry.of === value.sceneOf))) {
+  if (!script || (script.finished && !continuesScript(script, value.scenes.find((entry) => entry.of === value.sceneOf)))) {
     scenes = []
     id = ++scriptIds
   }
@@ -182,7 +209,7 @@ function updateScript(value: SceneUiState): void {
     }
   }
   const current = scenes.findIndex((entry) => entry.of === value.sceneOf)
-  if (changed || !script || script.current !== current || script.finished) script = { id, scenes, current, finished: false }
+  if (changed || !script || script.current !== current || script.finished) script = { id, scenes, current, finished: false, endedAt: 0 }
 }
 
 /** The board changed or went away: its script goes. */

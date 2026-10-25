@@ -24,6 +24,8 @@ export const FOUNDER_PORT = 47821
 /** Tools that change the board. The first one is the first visible mark. */
 // run_scene is the one write tool since stage 4; the others are in traces from before.
 export const WRITE_TOOLS = new Set(['run_scene', 'create_frame', 'write_html', 'update_styles', 'set_text', 'move_nodes', 'duplicate_nodes', 'delete_nodes', 'draw_ink'])
+/** A call that changed the board: a write tool, except a run_scene preview (it draws nothing). */
+export const isWrite = (c) => WRITE_TOOLS.has(c.tool) && !(c.tool === 'run_scene' && c.args?.preview)
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 export const log = (tag, ...parts) => console.log(`[${tag} ${new Date().toISOString().slice(11, 19)}]`, ...parts)
@@ -458,7 +460,7 @@ export function traceLabels(calls, { from, opened = null, turnEnd = null }) {
   for (const c of [...calls].sort((a, b) => Date.parse(a.t) - Date.parse(b.t))) {
     const start = Date.parse(c.t)
     const end = Date.parse(c.end ?? c.t)
-    if (start > previous) labels.push({ from: previous, to: start, label: WRITE_TOOLS.has(c.tool) ? `model writing ${c.tool}` : 'model thinking' })
+    if (start > previous) labels.push({ from: previous, to: start, label: isWrite(c) ? `model writing ${c.tool}` : 'model thinking' })
     if (end > start) labels.push({ from: start, to: end, label: `${c.tool} running` })
     previous = Math.max(previous, end)
   }

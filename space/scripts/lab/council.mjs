@@ -36,7 +36,7 @@ import { basename, join } from 'node:path'
 import {
   LAB,
   SCRATCH,
-  WRITE_TOOLS,
+  isWrite,
   args,
   canvasRect,
   cdpConnect,
@@ -388,7 +388,7 @@ async function main() {
     }
 
     // The filmstrip: the board after each write (at most 12), or 8 evenly spaced frames.
-    const writes = calls.filter((c) => WRITE_TOOLS.has(c.tool))
+    const writes = calls.filter((c) => isWrite(c))
     const rel = (iso) => (Date.parse(iso) - t0) / 1000
     let times = writes.map((c) => ({ t: rel(c.end ?? c.t) + 0.5, label: `${rel(c.t).toFixed(1)} s  ${c.tool}${c.ok ? '' : ' (error)'}` }))
     const span = (tEnd - t0) / 1000
