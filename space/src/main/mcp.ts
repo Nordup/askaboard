@@ -19,7 +19,6 @@ import { LearnerEditLog, SessionTrace, writeLearnerEdit } from './trace'
 import {
   IPC,
   type AgentActivity,
-  type AgentRef,
   type AgentToolName,
   type AgentMethod,
   type AgentMethods,
@@ -165,7 +164,7 @@ function publicStatus(status: unknown): Record<string, unknown> {
   return rest
 }
 
-/** A readable name for an MCP client, for the presence label. */
+/** A readable name for an MCP client (the agent pill and learner news). */
 function clientLabel(raw: string | undefined): string {
   const name = (raw ?? '').toLowerCase()
   if (name.includes('claude')) return 'Claude Code'
@@ -611,8 +610,8 @@ export class AgentServer {
    * takes its place, then the waiting scenes after it run again on the new
    * stage. Runs inside stage.exclusive.
    */
-  private async restage(session: Session, sceneId: string, waiting: string[], change: { code?: string; cutAt?: number }): Promise<CallToolResult> {
-    const control = (args: Record<string, unknown>): Promise<unknown> => this.board(session, 'sceneControl', args, SCENE_TIMEOUT_MS)
+  private async restage(sceneId: string, waiting: string[], change: { code?: string; cutAt?: number }): Promise<CallToolResult> {
+    const control = (args: Record<string, unknown>): Promise<unknown> => this.board('sceneControl', args, SCENE_TIMEOUT_MS)
     const cut = this.stage.truncateBefore(sceneId)
     if (!cut) return failure(new Error(`Scene ${sceneId} is not part of the current stage (it ran before the stage started new).`))
     const later = cut.later
@@ -621,9 +620,9 @@ export class AgentServer {
     const step = `restage-${sceneId}-${Date.now()}`
     await control({ action: 'revert', scenes: affected, step })
     const commit = async (id: string, desc: SceneDescription, name: string | null): Promise<SceneResult & { ends_in_s: number }> =>
-      (await this.board(session, 'runScene', { scene: desc, sceneId: id, slot: true, step, ...(name ? { name } : {}) }, SCENE_TIMEOUT_MS)) as SceneResult & { ends_in_s: number }
+      (await this.board('runScene', { scene: desc, sceneId: id, slot: true, step, ...(name ? { name } : {}) }, SCENE_TIMEOUT_MS)) as SceneResult & { ends_in_s: number }
     const runOne = async (code: string, options: { seed?: number; cutAt?: number; original?: string; name: string | null; answers?: Map<string, string> }): Promise<StageRun> => {
-      const context = options.original ? (JSON.parse(options.original) as SceneContext) : ((await this.board(session, 'sceneContext', {})) as SceneContext)
+      const context = options.original ? (JSON.parse(options.original) as SceneContext) : ((await this.board('sceneContext', {})) as SceneContext)
       // The same program on the same context gets the board's answers of its first run (html sizes, empty places).
       const run = await this.stage.run(code, context, { mode: 'scene', seed: options.seed, cutAt: options.cutAt ?? null, name: options.name, answers: options.original ? options.answers : undefined })
       const liveError = await this.checkLivePrograms(run.desc)
@@ -686,9 +685,8 @@ export class AgentServer {
     return new SceneProgramError(failed.map((entry) => (entry.live.line ? `Line ${entry.live.line}: ${what(entry)}` : what(entry))).join('\n'), null)
   }
 
-  private board(session: Session, tool: AgentToolName, args: Record<string, unknown>, timeoutMs?: number): Promise<unknown> {
-    const agent: AgentRef = { sessionId: session.id, client: clientLabel(session.server.server.getClientVersion()?.name) }
-    return this.bridge.request('agentTool', { tool, args, agent }, timeoutMs)
+  private board(tool: AgentToolName, args: Record<string, unknown>, timeoutMs?: number): Promise<unknown> {
+    return this.bridge.request('agentTool', { tool, args }, timeoutMs)
   }
 
   private infoText(info: CanvasInfo): string {
@@ -877,7 +875,7 @@ export class AgentServer {
         inputSchema: { node_id: z.string().optional(), depth: z.number().int().min(1).max(10).optional() },
         annotations: { readOnlyHint: true }
       },
-      this.tool(session, 'get_tree', async (args) => text(String(await this.board(session, 'getTree', args))))
+      this.tool(session, 'get_tree', async (args) => text(String(await this.board('getTree', args))))
     )
 
     server.registerTool(
@@ -889,7 +887,7 @@ export class AgentServer {
         inputSchema: { node_id: z.string() },
         annotations: { readOnlyHint: true }
       },
-      this.tool(session, 'get_node_info', async (args) => text(json(await this.board(session, 'getNodeInfo', args))))
+      this.tool(session, 'get_node_info', async (args) => text(json(await this.board('getNodeInfo', args))))
     )
 
     server.registerTool(
@@ -901,7 +899,7 @@ export class AgentServer {
         inputSchema: { node_id: z.string(), include_ids: z.boolean().optional() },
         annotations: { readOnlyHint: true }
       },
-      this.tool(session, 'get_html', async (args) => text(String(await this.board(session, 'getHtml', args))))
+      this.tool(session, 'get_html', async (args) => text(String(await this.board('getHtml', args))))
     )
 
     server.registerTool(
@@ -932,7 +930,7 @@ export class AgentServer {
           this.programs.set(program, session.id)
           let run: StageRun
           try {
-            const context = (await this.board(session, 'sceneContext', {})) as SceneContext
+            const context = (await this.board('sceneContext', {})) as SceneContext
             run = await this.stage.run(code, context, { mode: preview ? 'preview' : 'scene', name: name ?? null, signal: program.signal })
             const liveError = await this.checkLivePrograms(run.desc)
             if (program.signal.aborted) {
@@ -952,7 +950,7 @@ export class AgentServer {
           }
           const scene = run.desc
           if (preview) {
-            const plan = (await this.board(session, 'previewScene', { scene }, SCENE_TIMEOUT_MS)) as StoryboardInput & {
+            const plan = (await this.board('previewScene', { scene }, SCENE_TIMEOUT_MS)) as StoryboardInput & {
               scene: string
               duration_s: number
               steps: unknown[]
@@ -981,7 +979,7 @@ export class AgentServer {
           }
           let result: SceneResult & { ends_in_s: number; stage?: string }
           try {
-            result = (await this.board(session, 'runScene', { scene, when: when ?? 'queue', ...(name ? { name } : {}) }, SCENE_TIMEOUT_MS)) as SceneResult & { ends_in_s: number }
+            result = (await this.board('runScene', { scene, when: when ?? 'queue', ...(name ? { name } : {}) }, SCENE_TIMEOUT_MS)) as SceneResult & { ends_in_s: number }
           } catch (error) {
             this.stage.discard(run.entry)
             throw error
@@ -994,7 +992,7 @@ export class AgentServer {
         if ('content' in outcome) return outcome as CallToolResult
         if (wait === 'end') {
           // Returns at the scene's end, or where playback stops at a pause before it (a pause step, the learner's drawing, scene_control pause).
-          const status = (await this.board(session, 'sceneControl', { action: 'waitPlayed', scene: outcome.scene }, SCENE_TIMEOUT_MS)) as Record<string, unknown>
+          const status = (await this.board('sceneControl', { action: 'waitPlayed', scene: outcome.scene }, SCENE_TIMEOUT_MS)) as Record<string, unknown>
           const { ended, ...rest } = status
           return text(json({ ...outcome, played: ended === true, status: publicStatus(rest) }))
         }
@@ -1020,7 +1018,7 @@ export class AgentServer {
       this.tool(session, 'scene_control', async ({ action, scene, code, step, after_step, when }) => {
         let cancelled = 0
         if (action === 'stop' || action === 'skip' || action === 'cancel') cancelled = this.cancelPrograms(null)
-        const control = async (args: Record<string, unknown>): Promise<Record<string, unknown>> => (await this.board(session, 'sceneControl', args, SCENE_TIMEOUT_MS)) as Record<string, unknown>
+        const control = async (args: Record<string, unknown>): Promise<Record<string, unknown>> => (await this.board('sceneControl', args, SCENE_TIMEOUT_MS)) as Record<string, unknown>
         if (action === 'cancel') return text(json({ ...publicStatus(await control({ action: 'status' })), cancelled_programs: cancelled }))
         if (action === 'wait') return text(json(publicStatus(await control({ action: 'wait' }))))
         if (action === 'replay') return text(json(await control({ action: 'replay', scene, step, when })))
@@ -1040,13 +1038,13 @@ export class AgentServer {
             const status = await control({ action: 'status' })
             const waiting = (status.waiting as string[]) ?? []
             if (!waiting.includes(scene)) return failure(new Error(`Scene ${scene} is not waiting in the queue (waiting: ${waiting.join(', ') || 'none'}); a scene that has started can be cut, or a new scene sent.`))
-            return this.restage(session, scene, waiting, { code })
+            return this.restage(scene, waiting, { code })
           }
           if (action === 'cut') {
             const at = (await control({ action: 'cutTime', ...(after_step ? { after_step } : {}) })) as { scene: string; at: number; duration: number }
             if (at.at >= at.duration - 1e-3) return text(json({ ...publicStatus(await control({ action: 'status' })), note: 'Nothing comes after that point: nothing was cut.' }))
             const status = await control({ action: 'status' })
-            return this.restage(session, at.scene, (status.waiting as string[]) ?? [], { cutAt: at.at })
+            return this.restage(at.scene, (status.waiting as string[]) ?? [], { cutAt: at.at })
           }
           return text(json({ ...publicStatus(await control({ action })), cancelled_programs: cancelled }))
         })

@@ -51,8 +51,7 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
   `--status-idle-ring`, `--status-live-ring`, `--status-live-pulse`,
   `--status-error-ring`, `--status-play`, `--status-play-ring`
 - Canvas tools: `--selection-fill`, `--lasso-fill`, `--eraser-ring`,
-  `--eraser-halo`, `--presence-border`, `--presence-glow`,
-  `--presence-border-peak`, `--presence-glow-peak`, `--swatch-edge`
+  `--eraser-halo`, `--swatch-edge`
 - Snapshot (the image agents see): `--snapshot-grid`, `--snapshot-axis`,
   `--snapshot-label`, `--snapshot-label-outline`, `--snapshot-tag-outline`.
   The frame marker colour in `SnapshotView.tsx` encodes the request id; it

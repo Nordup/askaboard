@@ -109,6 +109,7 @@ Dates are 2026-10-23 to 2026-10-24 unless stated otherwise.
 | --- | --- | --- | --- |
 | U1 | **One shared menu system** (`--menu-*` properties, shared parts, one small button). Every menu and popover is built from it. | Separate menus drifted apart; the founder wants one consistent look. | Per-menu CSS. |
 | U2 | **Quiet UI:** one primary action per view, short labels, details behind a link or a second view. **Mock up first,** build after approval. | Two rejected designs had too much text and too many buttons. The mockup-first flow produced designs the founder approved. | Building first and fixing after. |
+| U3 | **No agent presence on the board** (2026-10-25). Board items get no outline and no agent name tag, not while a scene plays or waits and not after. The scene pill and the agent pill in the top bar show that an agent is working. The presence outline code and its `--presence-*` tokens are removed. | Since stage 4 (P13) every item of a playing scene had its own outline and tag, and a rich scene was covered with boxes, also for items not yet shown. The founder: "I don't think I want to see this at all." | One quiet mark per scene on the board; outlines only on items already shown. |
 
 ## How we work
 

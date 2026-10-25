@@ -20,7 +20,7 @@ import { unionRegions } from '../board/geometry'
 import { buildIndex, ROOT } from '../board/scene'
 import type { Region } from '../board/types'
 import { liveStill, validateLiveCode } from '../live-pixels/registry'
-import { AgentPresence, runEditTool } from './edits'
+import { runEditTool } from './edits'
 import { isGroupId, trackerFor, type InkGroup } from './groups'
 import { scenePlayer } from '../live/player'
 import { measureSceneTexts } from '../live/measure'
@@ -46,7 +46,6 @@ export interface AgentContext {
   openBoard(path: string): Promise<void>
   /** See SpaceApi.importAsset. */
   importAsset(src: string): Promise<string>
-  presence: AgentPresence
 }
 
 /** Padding around the "changes" view, in board points. */
@@ -461,11 +460,10 @@ export async function handleAgentRequest(request: AgentRequest, getContext: () =
     case 'agentTool': {
       const params = request.params as AgentMethods['agentTool']['params']
       const { board } = requireBoard(context)
-      context.presence.attach(board)
       const { path } = requireBoard(context)
       const tracker = trackerFor(path)
       return runEditTool(
-        { board, agent: params.agent, importAsset: context.importAsset, presence: context.presence, tracker, groups: () => tracker.compute(board.liveState()), path },
+        { board, importAsset: context.importAsset, tracker, groups: () => tracker.compute(board.liveState()), path },
         params.tool,
         params.args ?? {}
       )

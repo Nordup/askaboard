@@ -1,27 +1,23 @@
 import { isFrame, isInk, isKnown, isLive, type BoardNode } from '@shared/board-format'
-import type { AgentRef, AgentToolName, BoardRect } from '@shared/space-api'
-import type { BoardHandle, PresenceEntry } from '../board/Board'
+import type { AgentToolName, BoardRect } from '@shared/space-api'
+import type { BoardHandle } from '../board/Board'
 import { nodesToHtml } from '../board/html'
-import { parentKey, ROOT, topLevelOf, withDescendants, isFlowed } from '../board/scene'
+import { parentKey, ROOT, withDescendants, isFlowed } from '../board/scene'
 import type { Region } from '../board/types'
 import { liveReport, liveStatus, liveSummary } from '../live-pixels/registry'
 import { runScene, previewScene, sceneControl, sceneContext } from '../live/run'
-import { scenePlayer } from '../live/player'
 import { isGroupId, type InkGroup, type InkGroupTracker } from './groups'
 import { resolveTarget, sceneOf, type Scene } from './placement'
 
 /**
  * The agent's board tools that run in the renderer against the live board:
  * the reads (get_tree, get_node_info, get_html) and live scenes (run_scene,
- * scene_control), the one way agents write. A scene marks the agent's
- * presence on the top-level items it makes or changes until it has played.
+ * scene_control), the one way agents write.
  */
 
 export interface EditContext {
   board: BoardHandle
-  agent: AgentRef
   importAsset(src: string): Promise<string>
-  presence: AgentPresence
   /** The open board's ink groups, computed now. */
   groups(): InkGroup[]
   tracker: InkGroupTracker
@@ -32,49 +28,6 @@ export interface EditContext {
 const r1 = (value: number): number => Math.round(value * 10) / 10
 const rect = (region: Region | null | undefined): BoardRect | null =>
   region ? { x: r1(region.x), y: r1(region.y), width: r1(region.width), height: r1(region.height) } : null
-
-// ---------- Presence ----------
-
-/**
- * Which agent is working on which top-level node: an outline with the client
- * name. A scene holds it on its items until it has played (or left the queue).
- */
-export class AgentPresence {
-  private entries = new Map<string, { sessionId: string; client: string; holds: number }>()
-  private board: BoardHandle | null = null
-
-  attach(board: BoardHandle | null): void {
-    if (board === this.board) return
-    this.board = board
-    this.push()
-  }
-
-  /** Show the agent on these nodes until `until` resolves. */
-  hold(agent: AgentRef, ids: Iterable<string>, until: Promise<unknown>): void {
-    const list = [...new Set(ids)]
-    if (!list.length) return
-    for (const id of list) {
-      const entry = this.entries.get(id)
-      if (entry && entry.sessionId === agent.sessionId) entry.holds++
-      else this.entries.set(id, { sessionId: agent.sessionId, client: agent.client, holds: 1 })
-    }
-    this.push()
-    void until.finally(() => {
-      for (const id of list) {
-        const entry = this.entries.get(id)
-        if (!entry || entry.sessionId !== agent.sessionId) continue
-        entry.holds--
-        if (entry.holds <= 0) this.entries.delete(id)
-      }
-      this.push()
-    })
-  }
-
-  private push(): void {
-    const list: PresenceEntry[] = [...this.entries].map(([id, entry]) => ({ id, label: entry.client }))
-    this.board?.setPresence(list)
-  }
-}
 
 // ---------- Helpers ----------
 
@@ -94,21 +47,6 @@ function originOf(s: Scene, key: string): [number, number] {
   if (key === ROOT) return [0, 0]
   const box = s.layout.get(key)
   return box ? [box.ox, box.oy] : [0, 0]
-}
-
-/** The top-level content nodes that hold some items (node ids or ink group ids), for presence. */
-function topLevels(s: Scene, ids: Iterable<string>): string[] {
-  const out = new Set<string>()
-  for (const id of ids) {
-    const nodes = isGroupId(id) ? (s.groupById.get(id)?.strokes ?? []) : [id]
-    for (const nodeId of nodes) {
-      const node = s.index.byId.get(nodeId)
-      if (!node) continue
-      const top = topLevelOf(node, s.index.byId)
-      if (!isInk(top)) out.add(top.id)
-    }
-  }
-  return [...out]
 }
 
 // ---------- Read tools ----------
@@ -240,10 +178,7 @@ export async function runEditTool(ctx: EditContext, tool: AgentToolName, args: R
     case 'sceneContext':
       return sceneContext(ctx.board, scene(ctx), ctx.path)
     case 'runScene': {
-      const result = runScene({ board: ctx.board, scene: () => scene(ctx), tracker: ctx.tracker }, args)
-      // The agent shows on what the scene makes or changes until the scene has played.
-      ctx.presence.hold(ctx.agent, topLevels(scene(ctx), result.items.map((item) => item.id)), scenePlayer.untilGone(result.scene))
-      return result
+      return runScene({ board: ctx.board, scene: () => scene(ctx), tracker: ctx.tracker }, args)
     }
     case 'previewScene':
       return previewScene({ board: ctx.board, scene: () => scene(ctx), tracker: ctx.tracker }, args)

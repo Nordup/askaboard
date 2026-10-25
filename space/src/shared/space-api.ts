@@ -234,13 +234,6 @@ export interface SnapshotPlayback {
   clocks?: Array<[string, unknown]>
 }
 
-/** Which agent session made a request (for presence and change attribution). */
-export interface AgentRef {
-  sessionId: string
-  /** A display name: "Claude Code", "Codex", or the raw client name. */
-  client: string
-}
-
 /** The board tools the renderer runs (see agent/edits.ts). Results are plain JSON. */
 export type AgentToolName =
   | 'getTree'
@@ -336,7 +329,7 @@ export interface AgentMethods {
   openBoard: { params: { path: string }; result: CanvasInfo }
   /** The learner's ink changes after `since`; null when no board is open. */
   learnerNews: { params: { since: number }; result: LearnerNews | null }
-  agentTool: { params: { tool: AgentToolName; args: Record<string, unknown>; agent: AgentRef }; result: unknown }
+  agentTool: { params: { tool: AgentToolName; args: Record<string, unknown> }; result: unknown }
   /** Check live pixel code (shader compile log, canvas syntax error); error null when it is fine. */
   validateLive: { params: { mode: 'shader' | 'canvas' | 'program'; code: string; params?: Record<string, number>; size?: [number, number] }; result: { error: string | null } }
   /** The rendered size (board points) of scene text nodes (tex: math; text: markup), as the board lays them out. */

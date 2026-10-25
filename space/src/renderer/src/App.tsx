@@ -14,7 +14,6 @@ import {
 } from '@shared/board-format'
 import { liveItems, validateLiveCode } from './live-pixels/registry'
 import type { AgentActivity, AgentServerStatus, Camera, FileNode, FileTree, GuideOverrides, Snapshot } from '@shared/space-api'
-import { AgentPresence } from './agent/edits'
 import { scenePlayer } from './live/player'
 import { handleAgentRequest, type AgentContext } from './agent/handler'
 import { Board, type BoardHandle } from './board/Board'
@@ -531,12 +530,8 @@ export function App() {
 
   // The key of the Board that is mounted now: set after React attaches boardRef.
   const mountedKeyRef = useRef<number | null>(null)
-  const presenceRef = useRef<AgentPresence>(null as unknown as AgentPresence)
-  if (!presenceRef.current) presenceRef.current = new AgentPresence()
   useEffect(() => {
     mountedKeyRef.current = open?.key ?? null
-    // A remounted board shows the agents' presence again.
-    presenceRef.current.attach(boardRef.current)
   }, [open])
 
   const toolRef = useRef(tools.tool)
@@ -568,8 +563,7 @@ export function App() {
         }
         throw new Error(`"${path}" did not open in time.`)
       },
-      importAsset: (src) => space.importAsset(src),
-      presence: presenceRef.current
+      importAsset: (src) => space.importAsset(src)
     }
   }, [])
 
