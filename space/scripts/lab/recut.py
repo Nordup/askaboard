@@ -80,13 +80,19 @@ def add(real_start, real_len, video_len, label):
 
 
 def label_for(a, b):
-    """The label that covers most of [a, b] (ms)."""
-    best, best_overlap = None, 0
+    """What happened in [a, b] (ms): the labels that fill a real share of it, in time order,
+    e.g. "session starting → model writing run_scene" (at most 3, the longest)."""
+    parts = []
     for entry in labels:
         overlap = min(b, entry["to"]) - max(a, entry["from"])
-        if overlap > best_overlap:
-            best, best_overlap = entry["label"], overlap
-    return best if best_overlap >= 0.3 * (b - a) else None
+        if overlap >= max(1000, 0.1 * (b - a)):
+            parts.append((max(a, entry["from"]), overlap, entry["label"]))
+    parts = sorted(sorted(parts, key=lambda p: -p[1])[:3])
+    names = []
+    for _, _, name in parts:
+        if not names or names[-1] != name:
+            names.append(name)
+    return " → ".join(names) or None
 
 
 cuts = []
