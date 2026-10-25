@@ -4,16 +4,17 @@
  *
  *   node scripts/lab/play.mjs <program.js> [--name <scene>] [--title <text>] [--task <text>] [--model <who wrote it>]
  *   node scripts/lab/play.mjs --tool <name> --args '<json>' [--title <text>]    any other tool, for example draw_ink
- *   common options: [--lab lab] [--seconds N] [--no-crop] [--no-gallery]
+ *   common options: [--lab lab] [--seconds N] [--pause-hold S] [--no-crop] [--no-gallery]
  *
  * It calls run_scene ({ code, name }) on the lab app (lab.mjs start), records
  * the window with CDP Page.startScreencast from the call until the playback
- * ends (duration_s + 1 s, or --seconds N after the call returns), and writes
- * a run folder in space/.lab/runs/: program.js, result.json, video.mp4 (H.264
- * at real speed), filmstrip.png (a frame at each step, or 8 frames), final.png
+ * ends (followed through the dev hook window.__spaceDev.scene; pause steps are
+ * resumed with scene_control after --pause-hold s, default 2; --seconds N is a
+ * minimum after the call returns), and writes a run folder in
+ * space/.lab/runs/: program.js, result.json, video.mp4 (the watch video),
+ * video-real.mp4 (real speed, from the scene's start), filmstrip.png (the
+ * frame on screen when the scene reached each step, or 8 frames), final.png
  * and meta.json. Then it rebuilds space/.lab/index.html (the gallery).
- * When the dev hook window.__spaceDev.scene has seek(t), the filmstrip frames
- * are taken by seeking (crisp); otherwise they come from the screencast.
  * Exit code 1 when the tool returns an error (the run folder is still written).
  */
 import { readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -34,7 +35,6 @@ import {
   runFolder,
   SCRATCH,
   sceneHook,
-  sceneSeek,
   sleep,
   startRecording,
   withMcp
@@ -90,21 +90,49 @@ async function main() {
   const steps = Array.isArray(parsed?.steps) ? parsed.steps : []
   say(isError ? `error: ${thrown ?? text.slice(0, 400)}` : `returned in ${tReturn - tCall} ms${duration !== null ? `, duration ${duration} s, ${steps.length} steps` : ''}`)
 
-  // Record until the playback ends.
+  // Record until the playback ends: follow the scene through the dev hook (its time, pauses), log
+  // wall time against scene time (for the filmstrip), and resume pause steps after --pause-hold s.
   const seconds = option('--seconds', null)
-  const holdMs = seconds !== null ? Number(seconds) * 1000 : isError ? 1000 : duration !== null ? duration * 1000 + 1000 : 3000
-  let tEnd = tReturn + holdMs
-  while (Date.now() < tEnd) await sleep(100)
-  // The scene hook may say playback runs longer than the result said: wait up to 10 s more.
-  for (let i = 0; i < 100; i++) {
-    const hook = await sceneHook(cdp)
-    if (!hook?.playing) break
-    await sleep(100)
-    tEnd = Date.now() + 500
+  const minEnd = tReturn + (seconds !== null ? Number(seconds) * 1000 : 0)
+  const pauseHoldMs = Number(option('--pause-hold', '2')) * 1000
+  const sceneId = !isError && typeof parsed?.scene === 'string' ? parsed.scene : null
+  const timeLog = [] // [{ wall, t }] while this scene is the current one
+  let tEnd
+  if (sceneId && hookBefore) {
+    let seen = false
+    let pausedSince = null
+    for (;;) {
+      const hook = await sceneHook(cdp)
+      const now = Date.now()
+      if (hook?.current === sceneId) {
+        seen = true
+        if (typeof hook.time === 'number') timeLog.push({ wall: now, t: hook.time })
+        if (hook.paused) {
+          pausedSince ??= now
+          if (now - pausedSince >= pauseHoldMs) {
+            say(`resume after a pause at ${hook.time} s`)
+            await withMcp(state.mcpPort, (call) => call('scene_control', { action: 'resume' }))
+            pausedSince = null
+          }
+        } else pausedSince = null
+      } else if (seen || !hook?.playing) break
+      await sleep(50)
+    }
+    tEnd = Math.max(Date.now() + 1000, minEnd)
+  } else {
+    // No scene hook (or not a scene): hold for the result's duration.
+    const holdMs = seconds !== null ? Number(seconds) * 1000 : isError ? 1000 : duration !== null ? duration * 1000 + 1000 : 3000
+    tEnd = tReturn + holdMs
   }
   while (Date.now() < tEnd) await sleep(50)
   const frames = await recording.stop()
   say(`${frames.length} frames over ${((tEnd - tCall) / 1000).toFixed(1)} s`)
+  /** The wall time at which the scene reached time t (the first log entry at or after it), or null. */
+  const wallAt = (t) => {
+    const hit = timeLog.find((entry) => entry.t >= t - 1e-3)
+    return hit ? hit.wall : timeLog.length ? timeLog[timeLog.length - 1].wall : null
+  }
+  const sceneStart = timeLog.length ? timeLog[0].wall - (timeLog[0].t * 1000) : null
 
   const rect = flag('--no-crop') ? null : await canvasRect(cdp)
   const crop = frames.length ? cropFilter(frames[0].file, rect, frames[0].w) : ''
@@ -116,40 +144,35 @@ async function main() {
   writeFileSync(join(dir, 'result.json'), JSON.stringify({ tool, args: shownArgs, ok: !isError, error: thrown, isError: Boolean(result?.isError), text, parsed, call_ms: tReturn - tCall }, null, 2))
   if (code === null) writeFileSync(join(dir, 'program.js'), `// ${tool}\n${JSON.stringify(toolArgs, null, 2)}\n`)
 
-  encodeVideo(frames, join(dir, 'video-real.mp4'), { from: tCall, to: tEnd, crop })
+  // The real-speed video starts with the scene (a moment before it); the watch video also shows the call.
+  encodeVideo(frames, join(dir, 'video-real.mp4'), { from: sceneStart !== null ? Math.max(tCall, sceneStart - 300) : tCall, to: tEnd, crop })
   const watch = encodeWatchVideo(frames, join(dir, 'video.mp4'), { from: tCall, to: tEnd, crop, labels: [{ from: tCall, to: tReturn, label: `${tool} running` }] })
 
   const finalRaw = join(framesDir, 'final.png')
   await cdp.screenshot(finalRaw)
   cropImage(finalRaw, join(dir, 'final.png'), crop)
 
-  // The filmstrip: a frame at each step and at the end, or 8 evenly spaced frames.
-  const tPlay = tReturn // playback starts when run_scene returns
+  // The filmstrip: a frame at each step and at the end, or 8 evenly spaced frames. Each tile is the
+  // screencast frame on screen when the scene reached that time (from the time log, so pauses and a
+  // late start count); without a log, the time after the call returned.
   let times
   if (steps.length) times = [...steps.map((s) => ({ t: s.at_s, label: `${Number(s.at_s).toFixed(1)} s  ${s.name}` })), { t: duration, label: `${Number(duration).toFixed(1)} s  end` }]
   else {
-    const span = duration ?? (tEnd - tPlay) / 1000
+    const span = duration ?? (tEnd - tReturn) / 1000
     times = Array.from({ length: 8 }, (_, i) => {
       const t = (span * (i + 1)) / 8
       return { t, label: `${t.toFixed(1)} s` }
     })
   }
-  const hook = await sceneHook(cdp)
-  const useSeek = Boolean(hook?.hasSeek && duration !== null)
+  // A frame shows a little after the scene time is reached (the next paint).
+  const PAINT_MS = 120
   const tiles = []
   for (let i = 0; i < times.length; i++) {
     const out = join(framesDir, `strip-${i}.png`)
-    if (useSeek) {
-      const raw = join(framesDir, `seek-${i}.png`)
-      await sceneSeek(cdp, times[i].t)
-      await cdp.screenshot(raw)
-      cropImage(raw, out, crop)
-    } else {
-      cropImage(frameAt(frames, tPlay + times[i].t * 1000).file, out, crop)
-    }
+    const wall = timeLog.length ? wallAt(times[i].t) : tReturn + times[i].t * 1000
+    cropImage(frameAt(frames, wall + PAINT_MS).file, out, crop)
     tiles.push({ file: out, label: times[i].label })
   }
-  if (useSeek) await sceneSeek(cdp, duration)
   filmstrip(tiles, join(dir, 'filmstrip.png'))
   cdp.close()
 
@@ -177,7 +200,7 @@ async function main() {
       warnings: Array.isArray(parsed?.warnings) ? parsed.warnings.length : null
     },
     cuts: watch.cuts,
-    filmstrip_source: useSeek ? 'seek' : 'screencast',
+    filmstrip_source: timeLog.length ? 'screencast at scene times' : 'screencast after the call',
     scene_hook: Boolean(hookBefore)
   }
   writeFileSync(join(dir, 'meta.json'), JSON.stringify(meta, null, 2))

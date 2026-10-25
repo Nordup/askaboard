@@ -329,10 +329,10 @@ export async function canvasRect(cdp) {
   }
 }
 
-/** The scene dev hook ({ playing, current, hasSeek }) or null when the app has none. */
+/** The scene dev hook ({ playing, current, time, duration, paused, hasSeek }) or null when the app has none. */
 export async function sceneHook(cdp) {
   try {
-    return await cdp.evaluate('(() => { const s = window.__spaceDev && window.__spaceDev.scene; if (!s) return null; const v = typeof s === "function" ? s() : s; return { playing: Boolean(v.playing), current: v.current ?? null, hasSeek: typeof v.seek === "function" } })()')
+    return await cdp.evaluate('(() => { const s = window.__spaceDev && window.__spaceDev.scene; if (!s) return null; const v = typeof s === "function" ? s() : s; return { playing: Boolean(v.playing), current: v.current ?? null, time: v.time ?? null, duration: v.duration ?? null, paused: Boolean(v.paused), hasSeek: typeof v.seek === "function" } })()')
   } catch {
     return null
   }
@@ -384,7 +384,9 @@ export function encodeVideo(frames, out, { from, to, crop = '', fps = 30 }) {
     const end = i + 1 < used.length ? Math.max(from, used[i + 1].t) : to
     const duration = Math.max(0, (end - start) / 1000)
     if (duration <= 0 && i + 1 < used.length) continue
-    lines.push(`file '${used[i].file}'`, `duration ${Math.max(duration, 1 / fps).toFixed(4)}`)
+    // Exact durations: the screencast sends up to 60 frames a second, and padding each to 1/fps
+    // stretched the video (content ran slow and the end was cut off by -t). fps=30 resamples.
+    lines.push(`file '${used[i].file}'`, `duration ${Math.max(duration, 0.0005).toFixed(4)}`)
   }
   // The concat demuxer ignores the last duration unless the last file is repeated.
   lines.push(`file '${used[used.length - 1].file}'`)

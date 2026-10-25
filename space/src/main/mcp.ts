@@ -21,7 +21,7 @@ import {
   MAX_TEXT_CHARS
 } from '@shared/limits'
 import { briefText, guideText, guideTopics, serverInstructions } from './guide'
-import { runSceneProgram, SceneProgramError } from './live-scene'
+import { runSceneProgram, SceneCancelled, SceneProgramError } from './live-scene'
 import type { SceneContext, SceneDescription, SceneLiveObject, SceneResult, SceneStatus } from '@shared/live-scene'
 import { speechOn, speechVoice } from './speech'
 import { renderStoryboard, type StoryboardInput } from './storyboard'
@@ -90,6 +90,9 @@ export interface AgentServerHooks {
   /** The server listens on its port (it owns the port; another instance does not). */
   listening?(): void
 }
+
+/** What the MCP SDK passes a tool handler besides its arguments (the part used here). */
+type ToolExtra = { signal?: AbortSignal }
 
 interface Session {
   id: string
@@ -212,6 +215,8 @@ const placeSchema = z
 // ---------- The server ----------
 
 export class AgentServer {
+  /** Scene programs still running (run_scene before it returns), with their session id. */
+  private readonly programs = new Map<AbortController, string>()
   readonly port = configuredPort()
   private readonly bridge: RendererBridge
   private readonly sessions = new Map<string, Session>()
@@ -455,6 +460,7 @@ export class AgentServer {
     }
     session.transport.onclose = () => {
       if (!session.id || !this.sessions.delete(session.id)) return
+      this.cancelPrograms(session.id)
       session.trace?.close()
       console.log(`mcp: session ${session.id} (${server.server.getClientVersion()?.name ?? 'agent'}) closed`)
       this.publish()
@@ -523,8 +529,8 @@ export class AgentServer {
   }
 
   /** Wrap a tool body: activity pulse, logging, errors as tool errors, the session trace. */
-  private tool<A>(session: Session, name: string, body: (args: A) => Promise<CallToolResult>) {
-    return async (args: A): Promise<CallToolResult> => {
+  private tool<A>(session: Session, name: string, body: (args: A, extra: ToolExtra) => Promise<CallToolResult>) {
+    return async (args: A, extra?: ToolExtra): Promise<CallToolResult> => {
       session.lastActivity = Date.now()
       this.hooks.activity({ sessionId: session.id, tool: name })
       const start = Date.now()
@@ -534,7 +540,7 @@ export class AgentServer {
       let result: CallToolResult
       let thrown: unknown = null
       try {
-        result = await body(args)
+        result = await body(args, extra ?? {})
       } catch (error) {
         console.warn(`mcp: ${name} failed: ${error instanceof Error ? error.message : String(error)}`)
         thrown = error
@@ -600,6 +606,19 @@ export class AgentServer {
   }
 
   /** Run a board tool in the renderer, as this session. */
+  /** End running scene programs (all, or one session's). Returns how many were running. */
+  private cancelPrograms(sessionId: string | null): number {
+    let count = 0
+    for (const [program, owner] of this.programs) {
+      if (sessionId !== null && owner !== sessionId) continue
+      if (!program.signal.aborted) count++
+      program.abort()
+      this.programs.delete(program)
+    }
+    if (count) console.log(`mcp: cancelled ${count} running scene program(s)`)
+    return count
+  }
+
   /**
    * Compile every shader()/canvas() program of a scene with the board's own
    * compiler before anything plays. A failing one is a program error at the
@@ -1015,17 +1034,27 @@ export class AgentServer {
           preview: z.boolean().optional().describe('true: return a storyboard image and warnings; draw and commit nothing.')
         }
       },
-      this.tool(session, 'run_scene', async ({ code, name, when, preview }) => {
-        const context = (await this.board(session, 'sceneContext', {})) as SceneContext
+      this.tool(session, 'run_scene', async ({ code, name, when, preview }, extra) => {
+        // A running program stops (its worker ends) on scene_control stop/skip/cancel, when the client cancels the call, or when its session closes.
+        const program = new AbortController()
+        const clientCancel = (): void => program.abort()
+        extra.signal?.addEventListener('abort', clientCancel, { once: true })
+        if (extra.signal?.aborted) program.abort()
+        this.programs.set(program, session.id)
         let scene
         try {
-          scene = await runSceneProgram(code, context)
+          const context = (await this.board(session, 'sceneContext', {})) as SceneContext
+          scene = await runSceneProgram(code, context, program.signal)
+          const liveError = await this.checkLivePrograms(scene)
+          if (program.signal.aborted) throw new SceneCancelled()
+          if (liveError) return failure(liveError)
         } catch (error) {
-          if (error instanceof SceneProgramError) return failure(error)
+          if (error instanceof SceneProgramError || error instanceof SceneCancelled) return failure(error)
           throw error
+        } finally {
+          this.programs.delete(program)
+          extra.signal?.removeEventListener('abort', clientCancel)
         }
-        const liveError = await this.checkLivePrograms(scene)
-        if (liveError) return failure(liveError)
         if (preview) {
           const plan = (await this.board(session, 'previewScene', { scene }, SCENE_TIMEOUT_MS)) as StoryboardInput & {
             scene: string
@@ -1066,12 +1095,17 @@ export class AgentServer {
       {
         title: 'Control live scenes',
         description:
-          'Controls the playback of live scenes (run_scene). action "status" changes nothing; "pause" holds the playing scene where it is; "resume" continues a paused scene (after a pause step, after the learner\'s drawing paused it, or after "pause"); "stop" jumps the playing scene to its end state (what it leaves on the board) and the next waiting scene starts; "skip" drops the scenes that wait in the queue and takes their items off the board again (one undo step). Returns {playing, scene, name, t, duration, step, paused, queue: [{scene, name, duration_s}]} after the action.',
+          'Controls the playback of live scenes (run_scene). action "status" changes nothing; "pause" holds the playing scene where it is; "resume" continues a paused scene (after a pause step, after the learner\'s drawing paused it, or after "pause"); "stop" jumps the playing scene to its end state (what it leaves on the board) and the next waiting scene starts; "skip" drops the scenes that wait in the queue and takes their items off the board again (one undo step); "cancel" ends the scene programs that are still running (run_scene calls that have not returned yet) and changes no playback. "stop" and "skip" also end those programs. A program has no time limit, so this is how one that never ends is stopped: its worker ends at once, its run_scene call returns an error that starts with "Cancelled", and nothing of it is drawn. Returns {playing, scene, name, t, duration, step, paused, queue: [{scene, name, duration_s}], cancelled_programs} after the action.',
         inputSchema: {
-          action: z.enum(['status', 'pause', 'resume', 'stop', 'skip'])
+          action: z.enum(['status', 'pause', 'resume', 'stop', 'skip', 'cancel'])
         }
       },
-      this.tool(session, 'scene_control', async ({ action }) => text(json((await this.board(session, 'sceneControl', { action })) as SceneStatus)))
+      this.tool(session, 'scene_control', async ({ action }) => {
+        let cancelled = 0
+        if (action === 'stop' || action === 'skip' || action === 'cancel') cancelled = this.cancelPrograms(null)
+        const status = (await this.board(session, 'sceneControl', { action: action === 'cancel' ? 'status' : action })) as SceneStatus
+        return text(json({ ...status, cancelled_programs: cancelled }))
+      })
     )
 
     server.registerTool(

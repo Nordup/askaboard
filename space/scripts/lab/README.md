@@ -25,12 +25,14 @@ node scripts/lab/play.mjs --tool draw_ink --args '{"svg_path":"M 100 0 A 100 100
 ```
 
 It calls `run_scene` (or any tool with `--tool`/`--args`) on the lab app and
-records the board with the CDP screencast until the scene has played
-(`duration_s` + 1 s, or `--seconds N`). The run folder gets `program.js`,
-`result.json`, `video.mp4` (H.264, max 1280 px wide; see "Videos" below),
-`video-real.mp4` (real speed),
-`filmstrip.png` (a frame at each step, by `scene.seek` when the dev hook has
-it), `final.png` and `meta.json`. `--no-crop` keeps the whole window.
+records the board with the CDP screencast until the scene has played: it
+follows the scene through the dev hook and resumes each pause step with
+scene_control after `--pause-hold S` seconds (default 2); `--seconds N` is a
+minimum. The run folder gets `program.js`, `result.json`, `video.mp4` (H.264,
+max 1280 px wide; see "Videos" below), `video-real.mp4` (real speed, from the
+scene's start to its end), `filmstrip.png` (the screencast frame when the
+scene reached each step, and the end), `final.png` and `meta.json`.
+`--no-crop` keeps the whole window.
 
 ## Run a council
 
