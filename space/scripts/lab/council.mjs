@@ -81,7 +81,9 @@ const opts = {
   newsHook: !flag('--no-news-hook'),
   keepApp: flag('--keep-app'),
   // Only the task as the prompt, as in a real session: the brief reaches the agent through the folder's AGENTS.md.
-  briefOnly: flag('--brief-only')
+  briefOnly: flag('--brief-only'),
+  // Web search and fetch, as the agent apps have in real sessions; --no-web turns them off.
+  web: !flag('--no-web')
 }
 if (!['claude', 'codex'].includes(opts.client)) throw new Error('--client is claude or codex')
 if (!opts.task) throw new Error('--task <id|text> is required')
@@ -159,7 +161,7 @@ async function claudeTurn(state, dir, prompt, phase, resume = null) {
     hookArgs.push('--settings', settings)
   }
   // The prompt goes before --allowedTools: that flag takes every word after it.
-  const argv = ['-p', prompt, ...(resume ? ['--resume', resume] : []), '--model', opts.model, ...(opts.effort ? ['--effort', opts.effort] : []), '--mcp-config', config, '--strict-mcp-config', '--setting-sources', 'project,local', ...hookArgs, '--output-format', 'json', '--allowedTools', 'mcp__learning-space__*']
+  const argv = ['-p', prompt, ...(resume ? ['--resume', resume] : []), '--model', opts.model, ...(opts.effort ? ['--effort', opts.effort] : []), '--mcp-config', config, '--strict-mcp-config', '--setting-sources', 'project,local', ...hookArgs, '--output-format', 'json', '--allowedTools', 'mcp__learning-space__*', ...(opts.web ? ['WebSearch', 'WebFetch'] : [])]
   const stdoutFile = join(dir, `${phase}-claude.json`)
   const code = await runProcess('claude', argv, { cwd: state.folder, env: process.env, stdoutFile, stderrFile: join(dir, `${phase}-stderr.txt`) })
   let parsed = null
@@ -247,7 +249,8 @@ async function codexTurn(state, dir, prompt, phase, thread = null) {
     const hook = `{type="command",command=${JSON.stringify(newsHookCommand(state)('Codex'))},timeout=5}`
     common.push('-c', `hooks.UserPromptSubmit=[{hooks=[${hook}]}]`, '--dangerously-bypass-hook-trust')
   }
-  const argv = thread ? ['exec', 'resume', ...common, thread, prompt] : ['exec', ...common, prompt]
+  const web = opts.web ? ['--search'] : []
+  const argv = thread ? [...web, 'exec', 'resume', ...common, thread, prompt] : [...web, 'exec', ...common, prompt]
   const code = await runProcess('codex', argv, { cwd: state.folder, env: { ...process.env, CODEX_HOME: opts.codexHome }, stdoutFile, stderrFile: join(dir, `${phase}-stderr.txt`) })
   let threadId = thread
   const tokens = { input: 0, cached_input: 0, output: 0, reasoning_output: 0 }
