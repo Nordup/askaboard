@@ -5,7 +5,7 @@ shared canvas and a local learning folder. The app has no AI inside: external
 agents (Claude Code, Codex, Claude Desktop) connect to it over MCP and work on
 the board with the learner.
 
-**Status (2026-10-26):** the main product of this repository (since 2026-10-24). Steps 0–5, fix 1, board news (decision I4), `get_brief` and `get_guide` (decision T11), live drawing stages 1–4 (scenes as the one way to write, program items, the script panel), brief v18 and the agent texts in Anthropic's style (decisions I18–I22) are done. Next: the founder's own testing in real sessions ([`plan.md`](../docs/learning-space/plan.md)).
+**Status (2026-10-26):** the main product of this repository (since 2026-10-24). Steps 0–5, fix 1, board news (decision I4), `get_brief` and `get_guide` (decision T11), live drawing stages 1–4 (scenes as the one way to write, program items, the script panel), brief v18 and the agent texts in Anthropic's style (decisions I18–I22) are done. Feature freeze: the founder's own testing first, then the voice loop ([`plan.md`](../docs/learning-space/plan.md)).
 
 - [`../docs/learning-space/README.md`](../docs/learning-space/README.md): start here.
 - [`architecture.md`](../docs/learning-space/architecture.md): processes, data flow and where the code lives.

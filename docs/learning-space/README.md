@@ -29,6 +29,7 @@ in [`../../space/`](../../space/); work happens on `main`.
 | Tool descriptions, server instructions, plugin skill and the board reference (`guide.md`) in Anthropic's tool style (decision I19) | Done (2026-10-26); dev-mode smoke check passed |
 | Live drawing: one drawing medium in code ([`live-drawing-plan.md`](live-drawing-plan.md), decisions P11–P13) | Stages 1–4 done: `run_scene` and `scene_control` are the one way to write (11 tools); values, labels, named groups, preview, camera, pointer, the stage and beats, program items (WebGL, three.js, any library), `html()`, `image()`, edits, a floating script panel (the app does not speak, T13). Measured (2026-10-26, everything on): both GPT and Claude draw the EM wave in ink, step by step, with handwritten labels; GPT previews; Claude explains fully, then asks; practice sheets still use HTML |
 | Lab switches for experiments: `council.mjs --no-code`, `--no-html`, `--brief <draft>` (`space/src/main/lab-switch.ts`) | Done; see [`working-guide.md`](working-guide.md), "Choosing lab tests" |
+| Feature freeze (2026-10-26) | On: the founder tests everything by hand (code items, shaders, the other media) and fixes what gets in the way. Next direction: the voice loop, a voice model and the scene driving each other ([`plan.md`](plan.md), "Current focus") |
 | Perception (the old fix 2) | Mostly answered by board news; the rest deferred |
 | Plain chat apps (ChatGPT web, Claude chat) with folder file tools | Later |
 | App packaging, signing, auto-update | Later |
