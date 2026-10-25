@@ -13,7 +13,9 @@
 
 ## HTML material
 <!-- topic: html -->
-<!-- summary: The HTML subset that html() accepts: tags, layout, names, parts, style keys and units. -->
+<!-- summary: html(): material to read and keep (pages, exercises, tables, cards) as board nodes: the HTML subset, tags, layout, names, parts, style keys and units. -->
+
+Use html() for material the learner reads and keeps: pages, exercises, tables, cards. Drawings and explanations are ink and shapes in a scene (topic "scene").
 
 html(markup, o) in a scene (topic "scene") turns a small HTML subset into board nodes. get_html returns an existing node in the same subset.
 
@@ -182,7 +184,9 @@ await tween(stage.k, 3, 2)   // the curve drawn by the earlier call gets shorter
 
 ## Program items (program())
 <!-- topic: scene-code -->
-<!-- summary: program(src, o): a live item that runs your own JavaScript: canvas, 2D/WebGL 2/WebGPU, three.js and any library, scene clock, params, steps, learner input, report(). -->
+<!-- summary: program(src, o): a live item that runs your own JavaScript and keeps running, for what ink cannot do: the learner's own hands on it (turn, drag, slide), or heavy computation (particles, fluids, simulations). Canvas, WebGL 2, WebGPU, three.js and any library; scene clock, params, steps, learner input, report(). -->
+
+Use a live item for what a scene of ink and shapes cannot do: input from the learner's own hands, or computation such as particles, fluids and simulations. A drawing that turns or moves, in two dimensions or three, is ink and shapes in a scene (topic "scene").
 
 `program(src, o)` in a scene makes a live item whose pixels come from your own program. Options as `canvas()`: o.at (top-left) or o.center, o.size [w, h] in board points (default [320, 200]), o.params {name: number}.
 
