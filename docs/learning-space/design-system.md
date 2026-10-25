@@ -19,7 +19,10 @@ also in [`../../AGENTS.md`](../../AGENTS.md) ("Learning Space UI").
    mockup, spacing included.
 5. **The canvas belongs to the learner.** UI does not cover the board: menus
    open beside the sidebar or under the top bar, never as cards on the
-   canvas.
+   canvas. **One exception** (the founder's request, 2026-10-25): the script
+   panel floats over the board, because the learner reads the scene's lines
+   next to the drawing. The learner drags it where it is in the way least,
+   and collapses it to its header.
 
 ## Where the design lives
 
@@ -41,7 +44,7 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
 - Borders and canvas: `--border-subtle`, `--border-strong`, `--canvas-dot`,
   `--canvas-dot-pitch`, `--canvas-dot-solid`, `--preview-checker`
 - Text: `--text-primary`, `--text-secondary`, `--text-tertiary`,
-  `--text-on-accent`
+  `--text-faint` (not reached yet), `--text-on-accent`
 - Accent and status: `--accent`, `--accent-hover`, `--accent-soft`,
   `--accent-ring`, `--accent-tile-from`, `--accent-tile-to`,
   `--accent-tile-border`, `--status-idle`, `--status-live`,
@@ -57,15 +60,16 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
 - Ink colours: `--ink-white`, `--ink-yellow`, `--ink-blue`, `--ink-green`,
   `--ink-pink`, `--ink-orange`
 - Type: `--font-ui`, `--font-mono`, `--text-xs` … `--text-xl`, `--leading`,
-  `--text-caption` (scene captions only)
+  `--leading-read` (lines read as prose)
 - Space: `--space-1` … `--space-6`, `--space-8`
 - Radius: `--radius-sm`, `--radius-md`, `--radius-lg`, `--radius-xl`,
   `--radius-pill`
-- Shadow: `--shadow-float`, `--shadow-card`, `--caption-halo` (a text
-  shadow in the canvas colour: text on the canvas without a card)
+- Shadow: `--shadow-float`, `--shadow-card`
 - Layout: `--sidebar-width`, `--topbar-height`, `--titlebar-height`,
   `--palette-height`, `--pill-height`, `--pill-gap`, `--pill-action-size`,
-  `--pill-label-max`, `--caption-width`
+  `--pill-label-max`, `--icon-button-size`, `--status-dot-size`,
+  `--status-dot-size-small`, `--script-panel-width`, `--script-panel-header`,
+  `--script-panel-body-max`
 - Motion: `--fade` (the quiet fade in and out). Every fade turns off under
   `prefers-reduced-motion`.
 
@@ -115,9 +119,18 @@ The top bar's status pills share `.pill` in `app.css` (the comment block
 above `.pill--static`). The agent pill is a `.pill` button. The scene pill is
 a `.pill.pill--static` holder of one control. Parts: `.status-dot`
 (`--live`, `--play`, `--error`), `.pill__label` (ends with an ellipsis),
-`.pill__count` with `.pill__sep`, `.pill__time` (mono, tabular figures) and
-`.pill__action` (the one small icon button, 12 px lucide icon). A new pill
-uses these parts; a missing part goes into the same block.
+`.pill__count` with `.pill__sep`, `.pill__time` (mono, tabular figures),
+`.pill__action` (the one small icon button, 12 px lucide icon) and
+`.pill__toggle` (a plain button around the dot and text of a static pill;
+the pill hovers with it). A new pill uses these parts; a missing part goes
+into the same block.
+
+## Icon buttons and status dots
+
+`.icon-button` is the one square icon button (`--icon-button-size`, 24 px,
+tertiary, primary on hover); `.icon-button--strong` starts in secondary (a
+panel header's controls). `.status-dot` is 7 px; `.status-dot--small` is
+6 px (a panel header).
 
 ## Approved screens (reference)
 
@@ -131,16 +144,32 @@ uses these parts; a missing part goes into the same block.
   a "Don't ask for this folder" text action.
 - **Sidebar.** Folder header, boards list, file tree; rows share one height
   and type scale.
-- **Scene pill and captions** (mockup A, 2026-10-25,
+- **Scene pill** (mockup A, 2026-10-25,
   `images/2026-10-25-scene-captions-mockup.png`). While a scene plays or is
   paused, a pill left of the agent pill shows the status dot (accent while
   playing, idle grey when paused), "<step> · 2/5", the time (m:ss) and one
   pause / resume button. In a top bar narrower than 760 px the step name
-  goes. The tutor's words show as one or two centred lines 12 px above the
-  tool palette: spoken words in primary text, the rest in tertiary, no card,
-  `--caption-halo` for contrast. A longer line shows as two-line pages, like
-  film subtitles. The line fades in, stays 1.2 s after its cue ends, then
-  fades out.
+  goes. A click on its dot or text opens a collapsed script panel, or
+  collapses an open one.
+- **Script panel** (approved 2026-10-25; replaced the captions above the
+  tool palette). A 296 px frame over the board (`--bg-elevated`, 1 px
+  `--border-strong`, `--radius-lg`, `--shadow-float`), top right of the
+  canvas by default. The learner drags it by its header; it keeps the
+  place (localStorage, measured from the nearer side), stays inside the
+  canvas and ends above the tool palette. Header, 34 px with a hairline:
+  6 px status dot, the script's title (12 px, primary; the first scene's
+  name), the step count (11 px mono, tertiary), then 24 px icon buttons:
+  Restart, Pause / Play and Next step (while a scene plays), Collapse /
+  Expand. Body: 13 px at 1.5, padding 8 12 12 px, scrolls past 330 px and
+  keeps the current line in view unless the learner scrolled away. Each
+  step has a title row "1 · Two solids" (11 px): tertiary when done,
+  accent for the current step, `--text-faint` ahead. Lines of done steps
+  are secondary; the line being read shows its read words in primary and
+  the rest in tertiary; lines ahead are hidden. At the end every line is
+  primary, step titles are secondary, and a click on a step title replays
+  the script from that step. The script is the scenes that play back to
+  back without a stop; collapsing is the one way to put it away (it stays
+  until another script starts).
 
 ## Words
 
