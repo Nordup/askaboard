@@ -22,6 +22,7 @@ export const RUNS = join(SPACE, '.lab/runs')
 export const FFMPEG = existsSync('/opt/homebrew/bin/ffmpeg') ? '/opt/homebrew/bin/ffmpeg' : 'ffmpeg'
 export const FOUNDER_PORT = 47821
 /** Tools that change the board. The first one is the first visible mark. */
+// run_scene is the one write tool since stage 4; the others are in traces from before.
 export const WRITE_TOOLS = new Set(['run_scene', 'create_frame', 'write_html', 'update_styles', 'set_text', 'move_nodes', 'duplicate_nodes', 'delete_nodes', 'draw_ink'])
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms))

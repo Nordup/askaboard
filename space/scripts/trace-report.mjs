@@ -28,7 +28,8 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-export const WRITE_TOOLS = new Set(['create_frame', 'write_html', 'update_styles', 'set_text', 'move_nodes', 'duplicate_nodes', 'delete_nodes', 'draw_ink'])
+// The write tools of traces before 2026-10-25 (stage 4 retired them; run_scene writes now).
+export const WRITE_TOOLS = new Set(['run_scene', 'create_frame', 'write_html', 'update_styles', 'set_text', 'move_nodes', 'duplicate_nodes', 'delete_nodes', 'draw_ink'])
 export const LOOK_TOOLS = new Set(['get_screenshot', 'get_changes', 'get_canvas_info', 'get_tree'])
 export const BENCH_CLIENT = 'ls-bench'
 /** A gap up to this long counts as the model's time; a longer one as idle or long thinking. */

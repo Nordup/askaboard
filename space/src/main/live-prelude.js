@@ -403,6 +403,16 @@
     get name() {
       return objects[this.id].name
     }
+    /** html objects: their parts (the root's children), each an object of its own. */
+    get parts() {
+      const entry = objects[this.id]
+      return entry.kind === 'html' ? entry.parts.map((_, k) => partOf(entry, k)) : undefined
+    }
+    part(key) {
+      const entry = objects[this.id]
+      if (entry.kind !== 'html') fail(`part(): ${entry.api} ${this.id} has no parts; only html(), image() and copies of material have`)
+      return partOf(entry, key)
+    }
     toString() {
       return `[${this.kind} object ${this.id}]`
     }
@@ -1074,6 +1084,7 @@
     if (members.length === 1 && Array.isArray(members[0])) members = members[0]
     if (!members.length) fail('group(...objects) needs at least one object')
     const entries = members.map((m, k) => entryOf(m, `group member ${k}`))
+    for (const e of entries) if (e.kind === 'part') fail(`object ${e.id} is a part of an html object; it moves with that object`)
     for (const e of entries) if (e.parent !== undefined) fail(`object ${e.id} is already in a group`)
     for (const key of Object.keys(opts)) if (key !== 'name') warnings.add(`group: the option "${key}" is unknown and was ignored`)
     const handle = register({ kind: 'group', api: 'group', name: nameOf(opts), members: entries.map((e) => e.id), bounds: union(entries.map((e) => worldBounds(e, T))) })
@@ -1207,6 +1218,323 @@
   const canvas = (code, opts) => liveObject('canvas', 'canvas', code, opts)
   const program = (code, opts) => liveObject('program', 'program', code, opts)
 
+  // ---------- Board material: html(), image(), space(), copy(), edit() ----------
+
+  /** edit() records of this scene: text and style changes of board items at a time. */
+  const edits = []
+  /** move(…, {into}) records of this scene: items that go into a frame. */
+  const reparents = []
+
+  /** Ask the board (the app) a question: the layout of HTML, a picture, an empty place, an item's content. Blocks until it answers. */
+  function ask(request, what) {
+    if (typeof globalThis.__measure !== 'function') fail(`${what}: the board cannot answer here`)
+    let got
+    try {
+      got = JSON.parse(globalThis.__measure(JSON.stringify(request)))
+    } catch (error) {
+      fail(`${what}: no answer from the board (${error && error.message ? error.message : String(error)})`)
+    }
+    if (!got || typeof got !== 'object') fail(`${what}: no answer from the board`)
+    if (typeof got.error === 'string') fail(`${what}: ${got.error}`)
+    return got
+  }
+
+  /** A rect from an object (its bounds now), a point [x, y], [x, y, w, h] or {x, y, width, height}. */
+  function rectArg(value, what) {
+    if (value && typeof value === 'object' && handles.has(value)) return worldBounds(handles.get(value), T)
+    if (Array.isArray(value) && value.length === 4) return { x: coord(value[0], `${what}[0]`), y: coord(value[1], `${what}[1]`), width: num(value[2], `${what}[2]`), height: num(value[3], `${what}[3]`) }
+    if (plain(value) && ['x', 'y', 'width', 'height'].every((key) => typeof value[key] === 'number')) return { x: value.x, y: value.y, width: value.width, height: value.height }
+    if (Array.isArray(value) && value.length === 2) {
+      const [x, y] = pair(value, what)
+      return { x, y, width: 0, height: 0 }
+    }
+    fail(`${what} must be an object, a point [x, y], a rect [x, y, width, height] or {x, y, width, height}, got ${describe(value)}`)
+  }
+
+  /** Where this scene's own objects are now (they are not on the board yet), for space(). */
+  function sceneBoxes() {
+    const out = []
+    for (const e of objects) {
+      if (e.kind === 'group' || e.kind === 'node' || e.kind === 'part' || e.gone || e.dropped || e.removed) continue
+      if (e.born !== sceneNo && !Object.keys(e.tracks).some((key) => e.tracks[key].length > 0)) continue
+      const b = worldBounds(e, T)
+      out.push({ x: f2(b.x), y: f2(b.y), width: f2(b.width), height: f2(b.height) })
+    }
+    return out
+  }
+
+  function space(w, h, opts) {
+    num(w, 'space width')
+    num(h, 'space height')
+    if (w <= 0 || h <= 0) fail('space(width, height, options) needs a positive width and height')
+    opts = options(opts, 'space options')
+    for (const key of Object.keys(opts)) if (key !== 'near' && key !== 'inView') warnings.add(`space: the option "${key}" is unknown and was ignored`)
+    const near = opts.near === undefined ? null : rectArg(opts.near, 'space near')
+    const got = ask({ kind: 'space', width: f2(w), height: f2(h), near, avoid: sceneBoxes(), inView: opts.inView !== false }, 'space')
+    return Object.freeze({ x: got.x, y: got.y, width: got.width, height: got.height, at: [got.x, got.y], center: [f2(got.x + got.width / 2), f2(got.y + got.height / 2)], visible: !!got.visible })
+  }
+
+  /** The board items (node ids, and the ink group id last) an object of this stage shows through, or null. */
+  function stageIds(entry) {
+    const items = CTX.stage && CTX.stage.items
+    const ids = items && items[String(entry.id)]
+    return ids && ids.length ? ids : null
+  }
+
+  /** A frame for into: a node id or name, board.node(…), or an html object (or part) of this stage. */
+  function frameArg(value, what) {
+    if (typeof value === 'string') {
+      const ref = CTX.nodes[value] ? value : CTX.names && CTX.names[value]
+      if (!ref || !CTX.nodes[ref]) fail(`${what}: there is no node "${value}" on the board`)
+      if (CTX.nodes[ref].kind !== 'frame') fail(`${what}: "${value}" is a ${CTX.nodes[ref].kind}, not a frame`)
+      return { ref }
+    }
+    const e = entryOf(value, what)
+    if (e.kind === 'node') {
+      if (e.nodeKind !== 'frame') fail(`${what}: board.node("${e.ref}") is a ${e.nodeKind}, not a frame`)
+      return { ref: e.ref }
+    }
+    if (e.kind === 'html' || e.kind === 'part') {
+      if (e.born === sceneNo || !stageIds(e)) return { obj: e }
+      return { ref: stageIds(e)[0] }
+    }
+    fail(`${what} must be a frame: a node id, board.node(id), or an html() object, got ${who(e)}`)
+  }
+
+  const HTML_KEYS = ['at', 'center', 'near', 'into', 'mode', 'index', 'name', 'opacity']
+
+  /** Material from drafts (html(), image(), copies): measured by the board, placed at o.at, o.center, into a frame, or in empty space. */
+  function htmlFrom(api, source, opts) {
+    for (const key of Object.keys(opts)) if (!HTML_KEYS.includes(key)) warnings.add(`${api}: the option "${key}" is unknown and was ignored`)
+    let place
+    if (opts.into !== undefined) {
+      const target = frameArg(opts.into, `${api} into`)
+      if (target.obj) fail(`${api} into: ${who(target.obj)} is made by this scene; write this inside its own html(), or put it in from a later scene`)
+      const mode = opts.mode === undefined ? 'insert' : opts.mode
+      if (mode !== 'insert' && mode !== 'replace') fail(`${api} mode must be "insert" or "replace"`)
+      place = { ref: target.ref, mode }
+      if (opts.index !== undefined) place.index = Math.max(0, Math.floor(num(opts.index, `${api} index`)))
+    } else if (opts.mode !== undefined || opts.index !== undefined) warnings.add(`${api}: mode and index work with into only; they were ignored`)
+    const answer = ask({ kind: 'html', ...source, ...(place ? { into: place } : {}) }, api)
+    if (answer.ignored) warnings.add(`${api}: ${answer.ignored}`)
+    const [w, h] = answer.size
+    let x
+    let y
+    if (place) ({ x, y } = answer.box)
+    else if (opts.center !== undefined) {
+      const [cx, cy] = pair(opts.center, `${api} center`)
+      x = cx - w / 2
+      y = cy - h / 2
+    } else if (opts.at !== undefined) [x, y] = pair(opts.at, `${api} at`)
+    else {
+      const r = space(w, h, opts.near === undefined ? {} : { near: opts.near })
+      x = r.x
+      y = r.y
+    }
+    return make({
+      kind: 'html',
+      api,
+      name: nameOf(opts),
+      drafts: answer.drafts,
+      place,
+      parts: (answer.parts || []).map((p) => ({ x: p.x, y: p.y, width: p.width, height: p.height, ...(p.name ? { name: p.name } : {}) })),
+      partObjects: [],
+      style: { color: 'text', width: 0, opacity: opts.opacity === undefined ? 1 : Math.max(0, Math.min(1, num(opts.opacity, `${api} opacity`))) },
+      bounds: { x: f2(x), y: f2(y), width: f2(w), height: f2(h) }
+    })
+  }
+
+  function html(markup, opts) {
+    if (typeof markup !== 'string' || !markup.trim()) fail(`html(markup, options) needs HTML as a string, got ${describe(markup)}`)
+    return htmlFrom('html', { markup }, options(opts, 'html options'))
+  }
+
+  function image(src, opts) {
+    if (typeof src !== 'string' || !src.trim()) fail(`image(src, options) needs an https:// or data: URL or a file path in the learning folder, got ${describe(src)}`)
+    opts = options(opts, 'image options')
+    const { size, ...rest } = opts
+    let wanted
+    if (size !== undefined) {
+      if (typeof size === 'number') {
+        if (!(size > 0)) fail('image size must be positive')
+        wanted = num(size, 'image size')
+      } else {
+        wanted = pair(size, 'image size')
+        if (!(wanted[0] > 0) || !(wanted[1] > 0)) fail('image size must be positive')
+      }
+    }
+    return htmlFrom('image', { image: { src: src.trim(), ...(wanted !== undefined ? { size: wanted } : {}) } }, rest)
+  }
+
+  /** Part k (an index or a layer-name) of an html object: an object of its own (made once). */
+  function partOf(entry, key) {
+    let k = key
+    if (typeof key === 'string') {
+      k = entry.parts.findIndex((p) => p.name === key)
+      if (k < 0) fail(`part("${key}"): ${who(entry)} has no part with layer-name "${key}"; its parts: ${entry.parts.map((p, i) => p.name || String(i)).join(', ') || 'none'}`)
+    } else if (typeof key !== 'number' || !Number.isInteger(key) || key < 0 || key >= entry.parts.length) {
+      fail(`part(index or layer-name): ${who(entry)} has ${entry.parts.length} part(s) (indexes 0 to ${entry.parts.length - 1}), got ${describe(key)}`)
+    }
+    const known = entry.partObjects[k]
+    if (known !== undefined && objects[known] && !objects[known].dropped) return objects[known].handle
+    const p = entry.parts[k]
+    const handle = register({
+      kind: 'part',
+      api: 'part',
+      parent: entry.id,
+      index: k,
+      ...(p.name ? { name: p.name } : {}),
+      style: { color: 'text', width: 0, opacity: 1 },
+      bounds: { x: f2(entry.bounds.x + p.x), y: f2(entry.bounds.y + p.y), width: p.width, height: p.height }
+    })
+    entry.partObjects[k] = handle.id
+    return handle
+  }
+
+  /** A copy of an object, shifted by dx, dy (its own state now: place, size, angle, colour). */
+  function copyEntry(e, dx, dy, name) {
+    if (e.kind === 'group') {
+      const members = e.members.map((id) => copyEntry(objects[id], dx, dy))
+      return group(...members, name === undefined ? {} : { name })
+    }
+    const named = name === undefined ? {} : { name }
+    if (e.kind === 'node' || ((e.kind === 'html' || e.kind === 'part') && e.born < sceneNo && stageIds(e))) {
+      // An item on the board: the board says what it holds now.
+      const ref = e.kind === 'node' ? e.ref : stageIds(e)[0]
+      const got = ask({ kind: 'item', ref }, 'copy')
+      const box = worldBounds(e, T)
+      if (got.kind === 'ink') {
+        const lines = got.strokes.map((s) => s.points.map((p) => [p[0] + dx, p[1] + dy, p[2]]))
+        const first = got.strokes[0]
+        return inkObject('copy', lines, { color: first.color, width: first.width, tool: first.tool, ...named }, { jitter: 0 })
+      }
+      return htmlFrom('copy', { drafts: got.drafts }, { at: [box.x + dx, box.y + dy], ...named })
+    }
+    if (e.kind === 'part') {
+      const owner = objects[e.parent]
+      const draft = owner.drafts[0] && owner.drafts[0].children[e.index]
+      if (!draft) fail(`copy: ${who(e)} cannot be copied`)
+      const box = worldBounds(e, T)
+      return htmlFrom('copy', { drafts: [draft], width: e.bounds.width }, { at: [box.x + dx, box.y + dy], ...named })
+    }
+    const spec = specAt(e, T)
+    const clone = {}
+    for (const key of ['kind', 'api', 'lines', 'd', 'pressure', 'length', 'speed', 'text', 'math', 'at', 'center', 'mode', 'code', 'width', 'height', 'params', 'line', 'drafts', 'parts']) {
+      if (spec[key] !== undefined && spec[key] !== null) clone[key] = JSON.parse(JSON.stringify(spec[key]))
+      else if (spec[key] === null) clone[key] = null
+    }
+    // A copy of material in a frame sits at the top level.
+    if (e.kind === 'html') clone.partObjects = []
+    clone.style = { ...spec.style }
+    const color = valueAt(e, 'color', T)
+    if (typeof color === 'string') clone.style.color = color
+    clone.bounds = { ...spec.bounds }
+    clone.pivot = [...e.pivot]
+    if (name !== undefined) clone.name = name
+    else if (e.name !== undefined) clone.name = e.name
+    const handle = register(clone)
+    const c = objects[handle.id]
+    let ox = valueAt(e, 'x', T) + dx
+    let oy = valueAt(e, 'y', T) + dy
+    for (let p = e.parent !== undefined ? objects[e.parent] : null; p; p = p.parent !== undefined ? objects[p.parent] : null) {
+      // In a group: the group's move comes along (its turn and scale do not).
+      ox += valueAt(p, 'x', T)
+      oy += valueAt(p, 'y', T)
+      if (valueAt(p, 'scale', T) !== 1 || valueAt(p, 'rotate', T) !== 0) warnings.add(`copy: ${who(e)} is in a scaled or turned group; the copy keeps its own size and angle`)
+    }
+    const base = {}
+    if (ox) base.x = f3(ox)
+    if (oy) base.y = f3(oy)
+    const scale = valueAt(e, 'scale', T)
+    const rotate = valueAt(e, 'rotate', T)
+    if (scale !== 1) base.scale = f3(scale)
+    if (rotate) base.rotate = f3(rotate)
+    c.base = Object.keys(base).length ? base : undefined
+    return handle
+  }
+
+  function copy(target, opts) {
+    const e = entryOf(target, 'copy(item)')
+    opts = options(opts, 'copy options')
+    for (const key of Object.keys(opts)) if (!['at', 'center', 'by', 'near', 'name'].includes(key)) warnings.add(`copy: the option "${key}" is unknown and was ignored`)
+    const box = worldBounds(e, T)
+    let dx
+    let dy
+    if (opts.at !== undefined) {
+      const [x, y] = pair(opts.at, 'copy at')
+      dx = x - box.x
+      dy = y - box.y
+    } else if (opts.center !== undefined) {
+      const [x, y] = pair(opts.center, 'copy center')
+      dx = x - (box.x + box.width / 2)
+      dy = y - (box.y + box.height / 2)
+    } else if (opts.by !== undefined) [dx, dy] = pair(opts.by, 'copy by')
+    else {
+      const r = space(Math.max(1, box.width), Math.max(1, box.height), { near: opts.near === undefined ? box : opts.near })
+      dx = r.x - box.x
+      dy = r.y - box.y
+    }
+    return copyEntry(e, dx, dy, opts.name === undefined ? undefined : nameOf(opts))
+  }
+
+  function edit(target, change, timing) {
+    const entry = entryOf(target, 'edit(item)')
+    change = options(change, 'edit change')
+    for (const key of Object.keys(change)) if (!['text', 'style', 'dur', 'ease'].includes(key)) warnings.add(`edit: "${key}" is unknown and was ignored; edit takes {text, style}`)
+    if (timing === undefined && (change.dur !== undefined || change.ease !== undefined)) timing = { dur: change.dur, ease: change.ease }
+    let text
+    if (change.text !== undefined) {
+      if (typeof change.text !== 'string' && typeof change.text !== 'number') fail(`edit text must be a string, got ${describe(change.text)}`)
+      text = String(change.text)
+    }
+    let style
+    if (change.style !== undefined) {
+      if (!plain(change.style)) fail('edit style must be an object of CSS properties, like {color: "var(--ls-good)", fontSize: 20}')
+      style = {}
+      for (const [key, v] of Object.entries(change.style)) {
+        if (v !== null && typeof v !== 'string' && !(typeof v === 'number' && Number.isFinite(v))) fail(`edit style.${key} must be a string, a number or null, got ${describe(v)}`)
+        style[key] = v
+      }
+    }
+    if (text === undefined && style === undefined) fail('edit(item, {text, style}) needs text or style')
+    const { dur, ease } = durationArg(timing, 'edit', style ? 0.5 : 0)
+    for (const e of leaves(entry)) {
+      if (e.kind === 'node' || e.kind === 'html' || e.kind === 'part') {
+        edits.push({ obj: e.id, at: f3(T), dur: f3(dur), ease: ease || 'inOut', ...(text !== undefined ? { text } : {}), ...(style ? { style } : {}) })
+        e.edited = true
+        continue
+      }
+      if (text !== undefined) {
+        if (e.kind !== 'text') fail(`edit text: ${who(e)} has no text of its own (text(), tex(), html() and text nodes have)`)
+        if (e.dynamic) fail(`edit text: the text of ${who(e)} follows its functions; change the values it reads instead`)
+        const before = e.text
+        e.text = text
+        if (e.recipe) e.recipe.args = [text, ...e.recipe.args.slice(1)]
+        const measured = measureText(e.math, text, e.style.size)
+        if (measured) {
+          const cx = e.bounds.x + e.bounds.width / 2
+          const cy = e.bounds.y + e.bounds.height / 2
+          e.bounds = e.center ? { x: cx - measured[0] / 2, y: cy - measured[1] / 2, width: measured[0], height: measured[1] } : { x: e.bounds.x, y: e.bounds.y, width: measured[0], height: measured[1] }
+        }
+        edits.push({ obj: e.id, at: f3(T), dur: 0, ease: 'linear', text, before })
+        e.edited = true
+      }
+      if (style) {
+        for (const [raw, v] of Object.entries(style)) {
+          const key = raw.replace(/-([a-z])/g, (_, c) => c.toUpperCase())
+          if (key === 'color' && typeof v === 'string') addTrack(e, 'color', T, dur, colorArg(v, 'edit color'), ease || 'inOut')
+          else if (key === 'opacity' && v !== null) {
+            firstVisibility(e, false)
+            addTrack(e, 'opacity', T, dur, Math.max(0, Math.min(1, Number(v))), ease || 'inOut')
+          } else if (key === 'fontSize' && e.kind === 'text' && v !== null && parseFloat(v) > 0) addValueTrack(values[optionValue(e, 'size').id], T, dur, parseFloat(v), ease || 'inOut')
+          else warnings.add(`edit: the style "${raw}" does not apply to ${who(e)}; tween its options instead`)
+        }
+      }
+    }
+    endTime = Math.max(endTime, T + dur)
+    return new Action(T, T + dur)
+  }
+
   // ---------- Labels ----------
 
   const SIDES = {
@@ -1272,10 +1600,10 @@
     let score = 0
     const shrunk = { x: box.x + box.width * 0.06, y: box.y + box.height * 0.06, width: box.width * 0.88, height: box.height * 0.88 }
     for (const e of objects) {
-      if (exclude.has(e.id) || e.kind === 'group' || e.kind === 'node' || e.removed || e.gone || e.dropped) continue
+      if (exclude.has(e.id) || e.kind === 'group' || e.kind === 'node' || e.kind === 'part' || e.removed || e.gone || e.dropped) continue
       const b = worldBounds(e, t)
       if (!rectsOverlap(b, box)) continue
-      if (isTextLike(e) || e.kind === 'live') {
+      if (isTextLike(e) || e.kind === 'live' || e.kind === 'html') {
         score += 60 * (rectsOverlap(b, box) / Math.max(1, box.width * box.height))
         continue
       }
@@ -1519,6 +1847,7 @@
     if (entry.kind === 'text') return Math.max(0.4, Math.min(2.5, entry.bounds.width / 260))
     if (entry.kind === 'node') return 1
     if (entry.kind === 'live') return 0.8
+    if (entry.kind === 'html') return Math.max(0.5, Math.min(8, 0.5 + 0.45 * entry.parts.length))
     return 0.6
   }
 
@@ -1551,7 +1880,7 @@
       revealSet(e, at)
       const from = valueAt(e, 'draw', at)
       addTrack(e, 'draw', at, share, 1, ease || (e.kind === 'ink' ? 'linear' : 'inOut'), from >= 1 ? 0 : from)
-      if (e.kind === 'shape' || e.kind === 'text' || e.kind === 'node' || e.kind === 'live') {
+      if (e.kind === 'shape' || e.kind === 'text' || e.kind === 'node' || e.kind === 'live' || e.kind === 'html' || e.kind === 'part') {
         if (hasFill(e)) addTrack(e, 'fill', at + share * 0.6, share * 0.4 + 0.25, 1, 'out', valueAt(e, 'fill', at + share * 0.6))
         else addTrack(e, 'fill', at, 0, 1, 'linear')
       }
@@ -1612,8 +1941,25 @@
   function move(target, spec, timing) {
     const entry = entryOf(target, 'move(object)')
     spec = options(spec, 'move spec')
+    if (entry.kind === 'part') fail(`move: ${who(entry)} is a part of an html object; move the html object, or edit the part`)
     if (timing === undefined && (spec.dur !== undefined || spec.ease !== undefined)) timing = { dur: spec.dur, ease: spec.ease }
     const { dur, ease } = durationArg(timing, 'move', 0.8)
+    if (spec.into !== undefined) {
+      if (entry.kind === 'group') fail('move into: a group cannot go into a frame; move its objects one by one')
+      for (const key of Object.keys(spec)) if (!['into', 'index', 'to', 'by', 'dur', 'ease'].includes(key)) warnings.add(`move: the option "${key}" is unknown and was ignored`)
+      const target = frameArg(spec.into, 'move into')
+      if (target.obj === entry) fail('move into: an object cannot go into itself')
+      if (target.obj) target.obj.edited = true
+      const record = { obj: entry.id, into: target.obj ? { obj: target.obj.id } : { ref: target.ref }, start: f3(T), dur: f3(dur), ease: ease || 'inOut' }
+      if (spec.index !== undefined) record.index = Math.max(0, Math.floor(num(spec.index, 'move index')))
+      reparents.push(record)
+      entry.edited = true
+      if (spec.to === undefined && spec.by === undefined) {
+        endTime = Math.max(endTime, T + dur)
+        activeSpans.push([f3(T), f3(T + dur)])
+        return new Action(T, T + dur)
+      }
+    }
     const x = valueAt(entry, 'x', T)
     const y = valueAt(entry, 'y', T)
     let tx
@@ -1694,6 +2040,7 @@
       }
       any = true
       const groupOwn = key === 'x' || key === 'y' || key === 'scale' || key === 'rotate'
+      if (groupOwn && entry.kind === 'part') fail(`tween ${key}: ${who(entry)} is a part of an html object; it moves with that object`)
       const targets = groupOwn ? [entry] : leaves(entry)
       for (const e of targets) {
         if (key === 'color') addTrack(e, 'color', T, dur, colorArg(value, 'tween color'), ease || 'inOut')
@@ -2009,7 +2356,7 @@
 
   /** Visible at t: made (or revealed) by then and not gone. */
   function visibleAt(e, t) {
-    if (e.kind === 'group' || e.kind === 'node') return false
+    if (e.kind === 'group' || e.kind === 'node' || e.kind === 'part') return false
     if (e.vis === 'hidden') {
       const reveal = (e.tracks.draw || []).concat(e.tracks.opacity || []).find((a) => a.to > 0)
       if (!reveal || reveal.start > t) return false
@@ -2125,9 +2472,9 @@
           if (!rectsOverlap(ob, inner)) continue
           let hit = false
           let what = 'outline'
-          if (isTextLike(o) || o.kind === 'live') {
+          if (isTextLike(o) || o.kind === 'live' || o.kind === 'html') {
             hit = rectsOverlap(ob, inner) > 0.12 * Math.min(inner.width * inner.height, ob.width * ob.height)
-            what = o.kind === 'live' ? 'box' : 'text'
+            what = o.kind === 'live' || o.kind === 'html' ? 'box' : 'text'
           } else {
             // The stroke itself: a line, curve, outline or ink that runs through the text (at least 5 points of it).
             hit = strokeInBox(o, t, inner) >= 5
@@ -2154,7 +2501,7 @@
     // Outside the learner's view when it appears (this scene's camera moves count).
     for (const e of list) {
       if (e.born < sceneNo && !e.revealed) continue
-      if (e.kind === 'group' || e.kind === 'node' || e.removed) continue
+      if (e.kind === 'group' || e.kind === 'node' || e.kind === 'part' || e.removed) continue
       const t = revealEnd(e)
       if (!visibleAt(e, t) && !visibleAt(e, endTime)) continue
       const b = worldBounds(e, t)
@@ -2213,6 +2560,12 @@
       if (cue.marks) cue.marks = cue.marks.filter((m) => m.at < c - 1e-9)
       cues.push(cue)
     }
+    const keepEdits = edits.filter((x) => x.at < c - 1e-9 && !objects[x.obj].dropped)
+    edits.length = 0
+    for (const x of keepEdits) edits.push(x)
+    const keepMoves = reparents.filter((x) => x.start < c - 1e-9 && !objects[x.obj].dropped)
+    reparents.length = 0
+    for (const x of keepMoves) reparents.push(x)
     const keepCam = cameraActions.filter((a) => a.start < c - 1e-9)
     cameraActions.length = 0
     for (const a of keepCam) cameraActions.push(a)
@@ -2243,7 +2596,7 @@
         else if (touched(e) && e.kind !== 'group') warnings.add(`${who(e)} is not on the board any more (erased, or removed by an earlier scene); draw it or fade it in to bring it back`)
         continue
       }
-      if (touched(e) || changed.has(e)) emit.add(e)
+      if (touched(e) || changed.has(e) || e.edited) emit.add(e)
     }
     // An object moves with its groups; a group that moves moves its members.
     for (let grew = true; grew; ) {
@@ -2286,15 +2639,22 @@
       if (e.kind === 'live') Object.assign(o, { style: e.style, mode: e.mode, code: e.code, width: e.width, height: e.height, params: e.params, line: e.line })
       if (e.kind === 'group') o.members = e.members.filter((id) => local.has(id)).map((id) => local.get(id))
       if (e.kind === 'node') o.ref = e.ref
+      if (e.kind === 'html') Object.assign(o, { style: e.style, drafts: e.drafts, ...(e.place ? { place: e.place } : {}) })
+      if (e.kind === 'part') Object.assign(o, { style: e.style, index: e.index })
       return o
     })
     const acts = actions.filter((a) => local.has(a.obj)).map((a) => ({ ...a, obj: local.get(a.obj) }))
-    return JSON.stringify({ objects: out, actions: acts, steps, duration: f3(endTime), logs, warnings: [...warnings], camera: cameraActions, pointer: pointerActions, cues })
+    const editList = edits.filter((x) => local.has(x.obj)).map((x) => ({ ...x, obj: local.get(x.obj) }))
+    const moveList = reparents
+      .filter((x) => local.has(x.obj) && (!x.into.obj || local.has(x.into.obj)))
+      .map((x) => ({ ...x, obj: local.get(x.obj), into: x.into.obj !== undefined ? { obj: local.get(x.into.obj) } : x.into }))
+    return JSON.stringify({ objects: out, actions: acts, edits: editList, reparents: moveList, steps, duration: f3(endTime), logs, warnings: [...warnings], camera: cameraActions, pointer: pointerActions, cues })
   }
 
   /** The end of this scene becomes the start of the next: each object's state at the end is its base, values keep their end value. */
   globalThis.__bake = () => {
     for (const e of objects) if (e.born === sceneNo && e.vis === undefined) e.vis = 'shown'
+    for (const e of objects) e.edited = false
     const hidden = { opacity: 1, draw: 0, fill: 0 }
     for (const e of objects) {
       if (e.dropped) {
@@ -2376,6 +2736,8 @@
     cameraActions.length = 0
     pointerActions.length = 0
     cues.length = 0
+    edits.length = 0
+    reparents.length = 0
     activeSpans.length = 0
     sampleErrors.clear()
     markTimes.clear()
@@ -2428,6 +2790,10 @@
     shader: creator('shader', shader, { optIndex: 1 }),
     canvas: creator('canvas', canvas, { optIndex: 1 }),
     program: creator('program', program, { optIndex: 1 }),
+    html,
+    image,
+    copy,
+    space,
     group,
     board,
     value,
@@ -2438,6 +2804,7 @@
     erase: collecting(erase),
     move: collecting(move),
     tween: collecting(tween),
+    edit: collecting(edit),
     wait,
     step,
     all,

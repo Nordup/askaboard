@@ -246,17 +246,6 @@ export type AgentToolName =
   | 'getTree'
   | 'getNodeInfo'
   | 'getHtml'
-  | 'createFrame'
-  | 'writeHtml'
-  | 'updateStyles'
-  | 'setText'
-  | 'moveNodes'
-  | 'duplicateNodes'
-  | 'deleteNodes'
-  | 'finishWorking'
-  | 'drawInk'
-  | 'findSpace'
-  | 'focus'
   | 'sceneContext'
   | 'runScene'
   | 'previewScene'
@@ -352,6 +341,8 @@ export interface AgentMethods {
   validateLive: { params: { mode: 'shader' | 'canvas' | 'program'; code: string; params?: Record<string, number>; size?: [number, number] }; result: { error: string | null } }
   /** The rendered size (board points) of scene text nodes (tex: math; text: markup), as the board lays them out. */
   measureText: { params: { items: Array<{ math: boolean; text: string; size: number }> }; result: { sizes: Array<[number, number]> } }
+  /** A scene program's question to the board while it runs (html, image, space, copy: renderer/live/host.ts). */
+  sceneHost: { params: { request: Record<string, unknown> }; result: unknown }
 }
 
 export type AgentMethod = keyof AgentMethods

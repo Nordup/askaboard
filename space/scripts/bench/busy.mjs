@@ -1,4 +1,9 @@
 /**
+ * NOTE (2026-10-25, live drawing stage 4, decision P13): the app no longer has
+ * the write tools this file calls (write_html, draw_ink, find_space, …); scenes
+ * (run_scene) are the one way to write. Port the set-up to run_scene programs
+ * before the next bench run.
+ *
  * A busy board for the perception scenarios: about an hour of earlier work
  * (agent notes, drawings, a frame, agent ink marks, and learner handwriting,
  * sketches and crossed-out lines) spread over about 3000 × 2000 board points.

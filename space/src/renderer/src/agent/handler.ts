@@ -24,6 +24,8 @@ import { AgentPresence, runEditTool } from './edits'
 import { isGroupId, trackerFor, type InkGroup } from './groups'
 import { scenePlayer } from '../live/player'
 import { measureSceneTexts } from '../live/measure'
+import { sceneHost } from '../live/host'
+import { sceneOf } from './placement'
 
 /**
  * Answers the MCP server's requests (see AgentMethods in space-api.ts).
@@ -445,6 +447,12 @@ export async function handleAgentRequest(request: AgentRequest, getContext: () =
     case 'measureText': {
       const params = request.params as AgentMethods['measureText']['params']
       return { sizes: await measureSceneTexts(params.items) }
+    }
+    case 'sceneHost': {
+      const params = request.params as AgentMethods['sceneHost']['params']
+      const { board, path } = requireBoard(context)
+      const tracker = trackerFor(path)
+      return sceneHost({ board, scene: () => sceneOf(board, () => tracker.compute(board.liveState())), importAsset: context.importAsset }, params.request)
     }
     case 'validateLive': {
       const params = request.params as AgentMethods['validateLive']['params']

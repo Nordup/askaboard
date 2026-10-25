@@ -157,6 +157,20 @@ function settleLayout(board: BoardHandle, compiled: CompiledScene): void {
   }
 }
 
+/** Items that went into a frame glide from where they were to where the frame put them (measured now). */
+function measureGlides(board: BoardHandle, compiled: CompiledScene): void {
+  if (!compiled.reparented.length) return
+  const layout = board.liveState().layout()
+  for (const entry of compiled.reparented) {
+    const object = compiled.play.objects.find((play) => play.id === entry.object)
+    const box = layout.get(entry.nodeId)
+    if (!object?.glide || !box) continue
+    const now: Point = entry.ink ? [box.ox, box.oy] : [box.x, box.y]
+    // The first node of the item decides (an ink group moves as one).
+    if (object.glide.from[0] === 0 && object.glide.from[1] === 0) object.glide.from = [r1(entry.before[0] - now[0]), r1(entry.before[1] - now[1])]
+  }
+}
+
 /**
  * The renderer's record of the stage (main/live-scene.ts): for each stage
  * object, the board items it shows through. A scene that carries an object
@@ -215,6 +229,7 @@ function commitScene(ctx: RunSceneContext, desc: SceneDescription, sceneId: stri
   const compiled = compileScene(desc, s, sceneId, name, stageLookup)
   ctx.board.agentCommit(compiled.next, step ? { step } : undefined)
   settleLayout(ctx.board, compiled)
+  measureGlides(ctx.board, compiled)
 
   // A scene that changes a node an earlier scene still shows: the earlier scene's look of it starts from the new geometry.
   const earlier = scenePlayer.playingScenes().filter((play) => play.id !== sceneId)
@@ -242,7 +257,7 @@ function commitScene(ctx: RunSceneContext, desc: SceneDescription, sceneId: stri
     }
   }
 
-  // Each ink object is one ink group, as one draw_ink call is; a carried one keeps its group.
+  // Each ink object is one ink group; a carried one keeps its group.
   const groupOf = new Map<number, string>()
   for (const { object, strokes, group } of compiled.inkGroups) groupOf.set(object, group ? ctx.tracker.repin(group, strokes) : ctx.tracker.pin(strokes))
 
@@ -279,7 +294,7 @@ function commitScene(ctx: RunSceneContext, desc: SceneDescription, sceneId: stri
     const desc = timeline.object(object.id)
     if (desc.sid !== undefined && desc.kind !== 'node' && desc.kind !== 'group') {
       if (object.ghost) stageRecord.items.delete(desc.sid)
-      else stageRecord.items.set(desc.sid, { nodeIds: object.targets.map((target) => target.nodeId), ...(groupOf.has(object.id) ? { group: groupOf.get(object.id) } : {}) })
+      else stageRecord.items.set(desc.sid, { nodeIds: object.records ?? object.targets.map((target) => target.nodeId), ...(groupOf.has(object.id) ? { group: groupOf.get(object.id) } : {}) })
     }
     if (object.ghost) continue
     if (desc.kind === 'node' || framed(object.id)) continue

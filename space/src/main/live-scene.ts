@@ -42,6 +42,8 @@ export interface StageEntry {
   name: string | null
   seed: number
   ctxText: string
+  /** The board's answers to the program's host requests (html, image, space, copy), by request: a replay gets the same ones. */
+  answers: Map<string, string>
 }
 
 export interface StageRun {
@@ -58,12 +60,23 @@ export interface TextItem {
   size: number
 }
 
+/** A request from the sandbox that the board answers (html(), image(), space(), copy()): plain JSON in and out. */
+export type HostRequest = { kind: 'html' | 'space' | 'item' } & Record<string, unknown>
+
 export class SceneStage {
   /** Measured text sizes (board points) by math, size and source; null: could not be measured. */
   private textCache = new Map<string, [number, number] | null>()
+  /** The answers of the program that runs now: recorded (and, for a replay, given back) by request. */
+  private answers: { record: Map<string, string>; given: Map<string, string> | null } = { record: new Map(), given: null }
 
-  /** measureText: the renderer lays the text out as the board does (renderer/live/measure.ts). */
-  constructor(private readonly measureText: (items: TextItem[]) => Promise<Array<[number, number]>>) {
+  /**
+   * measureText: the renderer lays the text out as the board does (renderer/live/measure.ts).
+   * host: the renderer answers html(), image(), space() and copy() requests (renderer/live/host.ts).
+   */
+  constructor(
+    private readonly measureText: (items: TextItem[]) => Promise<Array<[number, number]>>,
+    private readonly host: (request: HostRequest) => Promise<unknown>
+  ) {
     // The sandbox's first start is slow (WebAssembly, the scene library): do it now, not in the first scene.
     setTimeout(() => {
       void this.exclusive(() => this.ensure()).catch(() => undefined)
@@ -168,7 +181,11 @@ export class SceneStage {
    * scene id with entry.scene after the commit, or discard it); "preview"
    * leaves the stage as it was. seed and cutAt repeat an earlier run (cut).
    */
-  async run(code: string, context: SceneContext, options: { mode: 'scene' | 'preview'; seed?: number; cutAt?: number | null; name?: string | null; signal?: AbortSignal }): Promise<StageRun> {
+  async run(
+    code: string,
+    context: SceneContext,
+    options: { mode: 'scene' | 'preview'; seed?: number; cutAt?: number | null; name?: string | null; signal?: AbortSignal; answers?: Map<string, string> }
+  ): Promise<StageRun> {
     const { signal } = options
     if (signal?.aborted) throw new SceneCancelled()
     this.adopt(context)
@@ -184,7 +201,10 @@ export class SceneStage {
       })
       const tReady = Date.now()
       if (signal?.aborted) throw new SceneCancelled()
+      const record = new Map<string, string>()
+      this.answers = { record, given: options.answers ?? null }
       const reply = await this.send({ type: 'run', id: this.nextId++, code, ctxText, mode: options.mode })
+      this.answers = { record: new Map(), given: null }
       console.log(`stage: ${options.mode} program: stage ready ${tReady - tStart} ms, program ${Date.now() - tReady} ms`)
       if (signal?.aborted) throw new SceneCancelled()
       if (!reply.ok) {
@@ -204,7 +224,7 @@ export class SceneStage {
         throw new SceneProgramError(`The scene could not be read: ${error instanceof Error ? error.message : String(error)}`, null)
       }
       desc.stage = this.epoch
-      const entry: StageEntry = { scene: null, code, name: options.name ?? null, seed, ctxText }
+      const entry: StageEntry = { scene: null, code, name: options.name ?? null, seed, ctxText, answers: record }
       if (options.mode === 'scene') {
         this.log.push(entry)
         this.freshReason = null
@@ -222,7 +242,9 @@ export class SceneStage {
     const reset = await this.send({ type: 'reset', id: this.nextId++ })
     if (!reset.ok) throw new SceneProgramError(reset.error, null)
     for (const entry of [...this.log]) {
+      this.answers = { record: new Map(), given: entry.answers }
       const reply = await this.send({ type: 'run', id: this.nextId++, code: entry.code, ctxText: entry.ctxText, mode: 'replay' })
+      this.answers = { record: new Map(), given: null }
       if (!reply.ok) {
         // A program that ran before and fails now (it read something that changed): it leaves the stage.
         console.warn(`stage: a program of scene ${entry.scene ?? '?'} failed when the stage was rebuilt: ${reply.error}`)
@@ -242,8 +264,21 @@ export class SceneStage {
       void (async () => {
         let answer = '{}'
         try {
-          const request = JSON.parse(String(raw)) as { kind?: 'text'; items?: TextItem[] }
+          const request = JSON.parse(String(raw)) as { kind?: string; items?: TextItem[] }
           if (request.kind === 'text') answer = JSON.stringify({ sizes: await this.textSizes(request.items ?? []) })
+          else if (request.kind === 'html' || request.kind === 'space' || request.kind === 'item') {
+            const key = String(raw)
+            const given = this.answers.given?.get(key)
+            if (given !== undefined) answer = given
+            else {
+              try {
+                answer = JSON.stringify(await this.host(request as HostRequest))
+              } catch (error) {
+                answer = JSON.stringify({ error: (error instanceof Error ? error.message : String(error)).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') })
+              }
+            }
+            this.answers.record.set(key, answer)
+          }
         } catch {
           answer = '{}'
         }

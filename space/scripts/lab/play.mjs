@@ -3,7 +3,7 @@
  * Play a program on the lab app and record it.
  *
  *   node scripts/lab/play.mjs <program.js> [--name <scene>] [--title <text>] [--task <text>] [--model <who wrote it>]
- *   node scripts/lab/play.mjs --tool <name> --args '<json>' [--title <text>]    any other tool, for example draw_ink
+ *   node scripts/lab/play.mjs --tool <name> --args '<json>' [--title <text>]    any other tool, for example get_screenshot
  *   common options: [--lab lab] [--seconds N] [--pause-hold S] [--no-crop] [--no-gallery]
  *
  * It calls run_scene ({ code, name }) on the lab app (lab.mjs start), records

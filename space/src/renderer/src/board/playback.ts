@@ -30,6 +30,8 @@ export interface NodeOverride {
   html?: string
   /** Live pixel items: param values now, merged over the node's own params. */
   params?: Record<string, number>
+  /** Content: inline style values now (an edit() on its way), camelCase keys. */
+  style?: Record<string, string>
 }
 
 /** The pen tip: where a stroke is being drawn now. */
@@ -103,6 +105,8 @@ interface Saved {
   overflow: string
   /** The markup before a d or html override. */
   html: string | null
+  /** Inline style values before a style override, by camelCase key. */
+  styles: Record<string, string> | null
 }
 const savedStyles = new WeakMap<HTMLElement, Saved>()
 const savedShapes = new WeakMap<SVGGeometryElement, { dash: string; offset: string; fillOpacity: string; length: number; pattern: number[] | null; baseFill: number }>()
@@ -198,7 +202,8 @@ export function applyElementOverride(element: HTMLElement, override: NodeOverrid
       clipPath: element.style.clipPath,
       color: element.style.color,
       overflow: element.style.overflow,
-      html: null
+      html: null,
+      styles: null
     }
     savedStyles.set(element, saved)
   }
@@ -224,7 +229,27 @@ export function applyElementOverride(element: HTMLElement, override: NodeOverrid
     const hidden = Math.max(0, Math.min(100, (1 - override.reveal) * 100))
     element.style.clipPath = `inset(-30% ${hidden}% -30% -10%)`
   } else element.style.clipPath = saved.clipPath
+  applyStyleOverride(element, saved, override.style)
   applyContentOverride(element, saved, override)
+}
+
+const kebab = (name: string): string => name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)
+
+/** Inline styles of now (edit()): set over the node's own; keys no longer overridden go back. */
+function applyStyleOverride(element: HTMLElement, saved: Saved, style: Record<string, string> | undefined): void {
+  const before = saved.styles ?? {}
+  for (const key of Object.keys(before)) {
+    if (style && key in style) continue
+    element.style.setProperty(kebab(key), before[key])
+    delete before[key]
+  }
+  if (style) {
+    for (const [key, value] of Object.entries(style)) {
+      if (!(key in before)) before[key] = element.style.getPropertyValue(kebab(key))
+      element.style.setProperty(kebab(key), value)
+    }
+  }
+  saved.styles = Object.keys(before).length ? before : null
 }
 
 /**
@@ -315,6 +340,7 @@ function restoreMarkup(element: HTMLElement, saved: Saved): void {
 export function clearElementOverride(element: HTMLElement): void {
   const saved = savedStyles.get(element)
   if (!saved) return
+  applyStyleOverride(element, saved, undefined)
   restoreMarkup(element, saved)
   element.style.transform = saved.transform
   element.style.transformOrigin = saved.transformOrigin

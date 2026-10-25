@@ -28,7 +28,7 @@ in [`../../space/`](../../space/); work happens on `main`.
 | Brief v3: the section "Thinking with a pen" (decision I5) | Done and measured: GPT still builds a drawing in 2–3 SVG pieces, with no ink |
 | Brief v4: scenes, living code items, the words beside the drawing (decision I6) | Done (2026-10-25); not yet measured with the brief alone |
 | Live drawing: one drawing medium in code ([`live-drawing-plan.md`](live-drawing-plan.md), decisions P11, P12) | Stages 1–3 done (2026-10-25): `run_scene` and `scene_control`, values, labels, named groups, preview, camera, pointer, the stage and beats, live pixels and program items (WebGL, three.js, any library), text lines at a reading pace in a floating script panel (the app does not speak, decision T13). Results: [`live-drawing-log.md`](live-drawing-log.md). Next: the founder's testing, a feature freeze, polish |
-| The animated build-up: older material (`draw_ink`, SVG) also builds up in front of the learner (decision P9) | Part of live drawing stage 4 |
+| One way to write (live drawing stage 4, decision P13; replaces P9's animated build-up): scenes gain `html()`, `image()`, `edit()`, `copy()`, `space()` and moves into frames; the ten write tools and `finish_working` are retired (11 tools left) | Built (2026-10-25), checked in the lab; not pushed; the brief's paragraph on direct writes still needs the founder's new text |
 | Perception (the old fix 2) | Mostly answered by board news; the rest deferred |
 | Plain chat apps (ChatGPT web, Claude chat) with folder file tools | Later |
 | App packaging, signing, auto-update | Later |
@@ -117,7 +117,7 @@ the live-frame idea was rejected).
 | Board news | One factual line that tells an agent app what the learner drew or erased on a board since its last look. Each change is delivered once (decision I4). |
 | Change cursor | The point up to which an agent app knows the board's changes. Board news reports only the changes after it. |
 | Last look | The agent app's last `get_screenshot` or `get_changes` on a board. It moves the change cursor. |
-| Animated build-up | The planned stage 4 feature: older agent material (`draw_ink`, SVG from `write_html`) also builds up in front of the learner, through the scene engine (decision P9). |
+| HTML material | What a scene's `html()` and `image()` make: the HTML converter's nodes (a root with its subtree). Drawn, its root fades in and its parts (the root's children) appear one after another. |
 | Scene | A JavaScript program an agent sends with `run_scene`: it makes board items and a timeline of how they appear and change; the board plays it, and the items stay. |
 | Stage | The one sandbox per board in which every scene program runs; the global `stage` keeps values and objects between programs. |
 | Beat | A short scene (one sentence and its drawing) sent while another plays; scenes queue and follow each other without a gap. |

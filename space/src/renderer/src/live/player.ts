@@ -1,11 +1,12 @@
 import type { BoardNode, InkNode, InkPoint } from '@shared/board-format'
-import type { SceneStatus } from '@shared/live-scene'
+import { SCENE_EASES, type SceneStatus } from '@shared/live-scene'
 import type { BoardHandle } from '../board/Board'
 import { clampZoom } from '../board/geometry'
 import { revealPoints, type NodeOverride, type PlaybackFrame, type PlaybackTip } from '../board/playback'
 import type { Point } from '../board/types'
 import { sceneColor, withOpacity } from './colors'
-import type { DynSample, PlayObject, ScenePlay } from './compile'
+import type { DynSample, PlayEdit, PlayObject, ScenePlay } from './compile'
+import { blendStyle } from '../board/style-edits'
 import { clearSceneScript, setSceneUiActions, setSceneUiState, type SceneCueState, type SceneListEntry } from './state'
 import { apply, isIdentity, multiply, type Matrix } from './timeline'
 
@@ -218,6 +219,12 @@ export function sceneFrame(play: ScenePlay, t: number, inkIndex: InkIndex | null
     const fill = clamp01(timeline.number(object.id, 'fill', t))
     const opacity = before ? 0 : clamp01(timeline.number(object.id, 'opacity', t)) / object.finalOpacity
     let world = timeline.matrix(object.id, t)
+    if (object.glide) {
+      // move(…, {into}): from its old place to its place in the frame.
+      const g = object.glide
+      const k = t <= g.start ? 0 : t >= g.start + g.dur || g.dur <= 0 ? 1 : SCENE_EASES[g.ease]((t - g.start) / g.dur)
+      if (k < 1) world = multiply([1, 0, 0, 1, g.from[0] * (1 - k), g.from[1] * (1 - k)], world)
+    }
     const colorChanging = timeline.hasTrack(object.id, 'color')
     const color = colorChanging ? timeline.color(object.id, t) : undefined
     const drawing = object.drawn && drawingNow(play, object, t)
@@ -260,17 +267,30 @@ export function sceneFrame(play: ScenePlay, t: number, inkIndex: InkIndex | null
     for (const target of object.targets) {
       const matrix: Matrix = multiply(world, target.inverseBaked)
       const override: NodeOverride = {}
-      if (!isIdentity(matrix)) override.matrix = matrix
-      if (Math.abs(opacity - 1) > 0.001) override.opacity = draw <= 0 && fill <= 0 ? 0 : opacity
-      else if (draw <= 0 && fill <= 0) override.opacity = 0
-      if (color) override.color = color
-      if (target.ink) {
-        const [a, b] = target.range ?? [0, 1]
+      if (!target.inner && !isIdentity(matrix)) override.matrix = matrix
+      if (!target.ink && target.range) {
+        // Material: the root, then its parts one after another, as the object is drawn.
+        const [a, b] = target.range
         const share = b > a ? clamp01((draw - a) / (b - a)) : draw >= b ? 1 : 0
-        if (share < 1) override.reveal = share
+        const own = target.inherit ? 1 : opacity
+        const shown = target.look === 'fade' ? own * share : own
+        if (share <= 0 || shown <= 0.001) override.opacity = 0
+        else if (Math.abs(shown - 1) > 0.001) override.opacity = shown
+        if (share > 0 && share < 1 && target.look !== 'fade') override.reveal = share
+        if (color && !target.inherit) override.color = color
       } else {
-        if (draw < 1) override.reveal = draw
-        if (fill < 1) override.fill = fill
+        if (Math.abs(opacity - 1) > 0.001) override.opacity = draw <= 0 && fill <= 0 ? 0 : opacity
+        else if (draw <= 0 && fill <= 0) override.opacity = 0
+        if (color) override.color = color
+        if (target.ink) {
+          const [a, b] = target.range ?? [0, 1]
+          const share = b > a ? clamp01((draw - a) / (b - a)) : draw >= b ? 1 : 0
+          if (share < 1) override.reveal = share
+        } else {
+          if (draw < 1) override.reveal = target.look === 'fade' ? undefined : draw
+          if (draw < 1 && target.look === 'fade') override.opacity = (override.opacity ?? 1) * draw
+          if (fill < 1) override.fill = fill
+        }
       }
       if (dyn && now) {
         if (dyn.kind === 'shape') {
@@ -307,8 +327,47 @@ export function sceneFrame(play: ScenePlay, t: number, inkIndex: InkIndex | null
       }
     }
   }
+  if (play.edits) editFrame(play.edits, t, out)
   const pointer = pointerAt(play, t)
   if (pointer) out.tips.push(pointer)
+}
+
+/** edit(): each edited node shows its text and styles of the moment (the board holds the end state). */
+function editFrame(edits: readonly PlayEdit[], t: number, out: SceneFrame): void {
+  const byNode = new Map<string, PlayEdit[]>()
+  for (const edit of edits) {
+    const list = byNode.get(edit.nodeId)
+    if (list) list.push(edit)
+    else byNode.set(edit.nodeId, [edit])
+  }
+  for (const [nodeId, list] of byNode) {
+    const last = list[list.length - 1]
+    if (t >= last.at + last.dur && list.every((edit) => t >= edit.at + edit.dur)) continue
+    const override: NodeOverride = {}
+    // The words of now: before the first text change that has not happened yet.
+    const pending = list.find((edit) => edit.before.html !== undefined && t < edit.at)
+    if (pending) override.html = pending.before.html
+    const style: Record<string, string> = {}
+    const keys = new Set(list.flatMap((edit) => Object.keys(edit.after.style ?? {})))
+    for (const key of keys) {
+      let value: string | undefined
+      for (const edit of list) {
+        const to = edit.after.style?.[key]
+        if (to === undefined) continue
+        const from = edit.before.style?.[key] ?? ''
+        if (t < edit.at) {
+          value ??= from
+          break
+        }
+        value = t >= edit.at + edit.dur || edit.dur <= 0 ? to : blendStyle(from, to, SCENE_EASES[edit.ease]((t - edit.at) / edit.dur))
+      }
+      if (value !== undefined) style[key] = value
+    }
+    if (list[0].ink) {
+      if (style.color) override.color = style.color
+    } else if (Object.keys(style).length) override.style = style
+    if (override.html !== undefined || override.color || override.style) setOverride(out, nodeId, override)
+  }
 }
 
 /** Ink points of a scene's ink targets, from a node list (the board, or a preview's nodes). */
@@ -931,6 +990,11 @@ export class ScenePlayer {
     const gone = (): boolean => !this.scenes.some((scene) => scene.play.id === id)
     await this.waitFor(() => gone() || this.pausedScene() !== null)
     return gone()
+  }
+
+  /** Resolves when this scene has left the queue: played to its end, stopped, skipped or dropped. */
+  untilGone(id: string): Promise<void> {
+    return this.waitFor(() => !this.scenes.some((scene) => scene.play.id === id))
   }
 
   /** Resolves when nothing plays or waits, or a scene stands paused (a pause step, the learner, scene_control pause). */

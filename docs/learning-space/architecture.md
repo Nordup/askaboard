@@ -87,26 +87,28 @@ limits scripts and images.
 | Module | Job |
 | --- | --- |
 | `agent/handler.ts` | Answers requests from main: canvas info, changes, screenshot plans, tool calls, learner news. |
-| `agent/edits.ts` | All agent writes: frames, HTML, styles, text, moves, duplicates, deletes, ink, focus; presence outline. |
+| `agent/edits.ts` | The renderer's tools: reads (tree, node info, HTML), scene requests; presence outline while a scene plays. |
 | `board/html.ts` | HTML subset ⇄ nodes, both directions; reports what was dropped. |
 | `agent/groups.ts` | Clusters learner ink into groups `g1`, `g2`, … with stable ids. |
-| `agent/placement.ts` | Automatic placement, `place` (right_of, below, over, …), `find_space`, overlap reports. |
-| `agent/ink.ts` | Agent ink: shapes (circle, tick, cross, underline, arrow), SVG path sampling, a hand-drawn pressure profile. |
+| `agent/placement.ts` | The board as a scene sees it, obstacles, an empty place near an anchor (`space()`, html() without a place). |
+| `agent/ink.ts` | SVG path sampling and a hand-drawn pressure profile for scene ink. |
 
 ## MCP server
 
 - Streamable HTTP, path `/mcp`, bound to `127.0.0.1`, port 47821
   (`SPACE_MCP_PORT`). One session per client. Requests with a browser
   `Origin`, or a Host other than localhost, are refused. No token.
-- **Tools** (22), in five groups:
+- **Tools** (11), in three groups (decision P13: scenes are the one way to
+  write; the ten write tools and `finish_working` retired in stage 4):
   - *Look:* `get_canvas_info`, `get_tree`, `get_node_info`, `get_html`,
     `get_screenshot` (node, region, viewport, content, selection, changes;
     optional labels and grid), `get_changes`, `get_brief`, `get_guide`.
-  - *Make and edit:* `create_frame`, `write_html`, `update_styles`,
-    `set_text`, `move_nodes`, `duplicate_nodes`, `delete_nodes`, `draw_ink`.
-  - *Place and view:* `find_space`, `focus`, `open_board`.
-  - *Presence:* `finish_working`.
-  - *Live scenes:* `run_scene`, `scene_control` (see "Live scenes" below).
+  - *Board:* `open_board`.
+  - *Live scenes (all writes):* `run_scene`, `scene_control` (see "Live
+    scenes" below).
+- **Presence:** a scene's top-level items show the agent's name while the
+  scene plays or waits (`AgentPresence.hold` in `agent/edits.ts`, released
+  when `scenePlayer.untilGone` resolves).
 - **What agents read** (decision I3; how to write it:
   [`writing-agent-text.md`](writing-agent-text.md)):
   - the brief, `resources/brief.md`: as a managed block in the folder's
@@ -190,6 +192,14 @@ P12, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
   `live-prelude.js` (creators, actions, values, `say`, `stage`, …). The
   program returns a description (objects and a timeline,
   `src/shared/live-scene.ts`); it cannot reach the app, files or network.
+  It asks the board questions synchronously through `__measure` (the worker
+  blocks on an Atomics flag): text sizes, and through `sceneHost` html
+  layout (`html()`, `image()`, copies of board material), empty space
+  (`space()`) and an item's content (`copy()`), answered by
+  `renderer/live/host.ts` (the HTML converter, image import into
+  `assets/`, a hidden copy of the content layer for layout). Each program's
+  answers are recorded in its stage log entry, so a rebuild of the stage,
+  a cut or a replay gets the same answers.
   `storyboard.ts` builds preview images. `live-item-protocol.ts` serves the
   `live-item://` origin for program items, with bundled libraries listed in
   `src/shared/live-libs.ts` (three.js, `ls/interact`).
@@ -197,7 +207,13 @@ P12, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
   items and plays it: `run.ts` (requests from main), `compile.ts` (objects
   to nodes), `timeline.ts`, `player.ts` (the clock, the queue, pauses,
   replay), `measure.ts` (exact text bounds for the sandbox), `colors.ts`,
-  `state.ts` (the store for the scene pill and the script panel).
+  `state.ts` (the store for the scene pill and the script panel),
+  `host.ts` (the board's answers to the sandbox). Object kinds beyond
+  drawing: `html` (material from drafts: a root node and its subtree; drawn
+  root first, then its parts one after another), `part` (one child of an
+  html root, an object of its own), and the description's `edits` (text and
+  style changes at a time; style values glide, `board/style-edits.ts`) and
+  `reparents` (move into a frame; the item glides from its old place).
   `board/playback.ts` holds per-node playback looks (reveal, transform,
   params) that the board applies while a scene plays; the board file always
   holds the final state.

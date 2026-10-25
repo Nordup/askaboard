@@ -21,7 +21,7 @@ one board under `/private/tmp/claude-501/ls-lab/<name>/` (`--name`, default
 
 ```sh
 node scripts/lab/play.mjs scripts/lab/programs/sphere-sketch.js [--name sphere] [--title "Sphere"]
-node scripts/lab/play.mjs --tool draw_ink --args '{"svg_path":"M 100 0 A 100 100 0 1 1 -100 0 A 100 100 0 1 1 100 0"}'
+node scripts/lab/play.mjs --tool get_screenshot --args '{"target":"content"}'
 ```
 
 It calls `run_scene` (or any tool with `--tool`/`--args`) on the lab app and

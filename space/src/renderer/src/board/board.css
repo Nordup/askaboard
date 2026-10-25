@@ -149,7 +149,7 @@
   cursor: text;
 }
 
-/* An agent is working on this node (write tools, until finish_working). */
+/* An agent is working on this node (its scene is playing or waiting). */
 .board__presence {
   position: absolute;
   z-index: 3;

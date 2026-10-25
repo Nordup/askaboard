@@ -14,7 +14,7 @@ import type { InkNode, LayoutBox, Region } from '../board/types'
  * - Ids are never reused.
  *
  * Strokes cluster only with strokes of the same parent (top level or one
- * frame) and the same author. Agent ink from one draw_ink call is "pinned":
+ * frame) and the same author. Agent ink from one scene ink object is "pinned":
  * it forms its own group, so a circle and a tick stay separate marks.
  */
 
@@ -111,7 +111,7 @@ export class InkGroupTracker {
   private next = 1
   /** Spatial groups from the last compute: id → stroke ids. */
   private previous = new Map<string, Set<string>>()
-  /** Agent groups from draw_ink: id → stroke ids. Kept when empty, so redo brings the id back. */
+  /** Agent groups from scene ink objects: id → stroke ids. Kept when empty, so redo brings the id back. */
   private pinned = new Map<string, Set<string>>()
 
   /** A new group id for strokes an agent just drew. */
