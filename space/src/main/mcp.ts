@@ -884,7 +884,7 @@ export class AgentServer {
       'get_guide',
       {
         title: 'The board reference',
-        description: `Returns one topic of the board reference as markdown: the technical details of the board and of each kind of write. It fits before a write whose details are not in your context yet, for example topic "html" before the first write_html, or topic "ink" before the first draw_ink. Each topic is short (about 300 to 1,800 characters). Topics:\n${guideTopics(this.hooks.folderRoot())}\nWithout topic, it returns all topics in one text (about 26,000 characters). An unknown topic returns an error that lists the topic names. It does not hold the brief (what the space is for and how you work with the person): that is get_brief.`,
+        description: `Returns one topic of the board reference as markdown: the technical details of the board and of each kind of write. It fits before a write whose details are not in your context yet, for example topic "html" before the first write_html, or topic "ink" before the first draw_ink. Each topic is short (about 300 to 12,000 characters (the scene topics are the longest)). Topics:\n${guideTopics(this.hooks.folderRoot())}\nWithout topic, it returns all topics in one text (about 26,000 characters). An unknown topic returns an error that lists the topic names. It does not hold the brief (what the space is for and how you work with the person): that is get_brief.`,
         inputSchema: {
           topic: z.string().optional().describe('A topic name from the list in the description, such as "html" or "placement". Without it, all topics.')
         },
