@@ -8,7 +8,7 @@
  *        [--model M] [--effort E] [--title T] [--timeout-min 20]
  *        [--name council] [--mcp-port 47891] [--debug-port 9491] [--built]
  *        [--codex-home /private/tmp/claude-501/ls-lab/codex-home] [--no-news-hook] [--keep-app]
- *        [--brief-only] [--no-code] [--no-web] [--interview] [--wait-media]
+ *        [--brief-only] [--no-code] [--no-html] [--brief <file>] [--no-web] [--interview] [--wait-media]
  *
  * Tasks: council/tasks.json (id → text; "learner": "S3" draws the bench's S3
  * strokes before the session), or any text. The prompt is council/purpose.md
@@ -16,6 +16,9 @@
  * --no-code starts the app with LS_LAB_NO_CODE=1 (src/main/lab-switch.ts): no
  * shader(), canvas() or program() in scenes, and no word of them in the brief,
  * the guide or the tool descriptions. meta.json records it as no_code.
+ * --no-html (LS_LAB_NO_HTML=1) does the same for html() and HTML material.
+ * --brief <file> (LS_LAB_BRIEF) serves that file as the brief (AGENTS.md block,
+ * get_brief), with the switches' markers applied. meta.json: no_html, brief.
  *
  * Phase 1 (work): `claude -p` (MCP config for the lab only, Learning Space tools
  * allowed) or `codex exec --json` (scratch CODEX_HOME, Learning Space tools
@@ -44,7 +47,7 @@
 import { spawn, execFileSync } from 'node:child_process'
 import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import {
   LAB,
   SCRATCH,
@@ -97,10 +100,15 @@ const opts = {
   briefOnly: flag('--brief-only'),
   // The lab switch LS_LAB_NO_CODE: code items do not exist for the agent.
   noCode: flag('--no-code'),
+  // The lab switch LS_LAB_NO_HTML: HTML material does not exist for the agent.
+  noHtml: flag('--no-html'),
+  // LS_LAB_BRIEF: a draft brief served instead of resources/brief.md (absolute path).
+  brief: option('--brief', null) ? resolve(option('--brief', null)) : null,
   // Web search and fetch, as the agent apps have in real sessions; --no-web turns them off.
   web: !flag('--no-web')
 }
 if (!['claude', 'codex'].includes(opts.client)) throw new Error('--client is claude or codex')
+if (opts.brief && !existsSync(opts.brief)) throw new Error(`--brief: no file ${opts.brief}`)
 if (!opts.task) throw new Error('--task <id|text> is required')
 if (opts.client === 'claude' && !opts.model) opts.model = 'opus'
 if (opts.client === 'codex' && !opts.model) opts.model = 'gpt-6.1-sol'
@@ -315,7 +323,7 @@ async function main() {
   const tasks = JSON.parse(readFileSync(join(LAB, 'council/tasks.json'), 'utf8'))
   const known = tasks[opts.task]
   const task = known ? { id: opts.task, ...known } : { id: 'custom', title: opts.task.slice(0, 60), text: opts.task }
-  const title = opts.title ?? `${task.title} — ${opts.client} ${opts.model}${opts.effort ? ` ${opts.effort}` : ''}${opts.noCode ? ' — no code items' : ''}`
+  const title = opts.title ?? `${task.title} — ${opts.client} ${opts.model}${opts.effort ? ` ${opts.effort}` : ''}${opts.noCode ? ' — no code items' : ''}${opts.noHtml ? ' — no HTML' : ''}${opts.brief ? ` — brief ${basename(opts.brief)}` : ''}`
   const purpose = stripComments(readFileSync(join(LAB, 'council/purpose.md'), 'utf8'))
   const interview = stripComments(readFileSync(join(LAB, 'council/interview.md'), 'utf8'))
   const prompt = opts.briefOnly ? task.text : `${purpose}\n\n## The task\n\n${task.text}`
@@ -327,6 +335,10 @@ async function main() {
 
   if (opts.noCode) process.env.LS_LAB_NO_CODE = '1'
   else delete process.env.LS_LAB_NO_CODE
+  if (opts.noHtml) process.env.LS_LAB_NO_HTML = '1'
+  else delete process.env.LS_LAB_NO_HTML
+  if (opts.brief) process.env.LS_LAB_BRIEF = opts.brief
+  else delete process.env.LS_LAB_BRIEF
   const state = await startInstance({ name: opts.name, mcpPort: opts.mcpPort, debugPort: opts.debugPort, built: opts.built, fresh: true })
   say(`app ${state.mode} on MCP ${state.mcpPort}, debug ${state.debugPort}, PIDs ${state.pids.join(', ')}`)
   let cdp = null
@@ -458,6 +470,8 @@ async function main() {
       effort: opts.effort,
       brief_only: opts.briefOnly,
       no_code: opts.noCode,
+      no_html: opts.noHtml,
+      brief: opts.brief,
       started: new Date(t0).toISOString(),
       ok: work.exit_code === 0 && !work.is_error,
       error: work.is_error ? (work.errors?.join(' | ') || `exit ${work.exit_code}`) : null,

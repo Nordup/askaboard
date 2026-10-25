@@ -4,15 +4,17 @@
  * live-drawing experiments, with a scratch HOME, user-data-dir, traces and a
  * learning folder with one board under /private/tmp/claude-501/ls-lab/<name>/.
  *
- *   node scripts/lab/lab.mjs start [--name lab] [--built] [--fresh] [--no-code] [--mcp-port 47890] [--debug-port 9490]
+ *   node scripts/lab/lab.mjs start [--name lab] [--built] [--fresh] [--no-code] [--no-html] [--brief <file>] [--mcp-port 47890] [--debug-port 9490]
  *   node scripts/lab/lab.mjs stop [--name lab]
  *   node scripts/lab/lab.mjs status [--name lab]
  *
  * Default: the dev renderer (electron-vite dev, React StrictMode). --built runs
  * `electron .` on out/ (run `npm run build` first). --fresh starts with an empty
  * folder and board. --no-code sets the lab switch LS_LAB_NO_CODE=1 (no code
- * items for agents; src/main/lab-switch.ts). stop kills only the PIDs in the state file.
+ * items for agents; src/main/lab-switch.ts), --no-html LS_LAB_NO_HTML=1 (no HTML
+ * material), --brief <file> LS_LAB_BRIEF (a draft brief). stop kills only the PIDs in the state file.
  */
+import { resolve } from 'node:path'
 import { args, alive, portInUse, readState, startInstance, stopInstance } from './common.mjs'
 
 const { option, flag, positional } = args()
@@ -23,6 +25,11 @@ async function main() {
   if (command === 'start') {
     if (flag('--no-code')) process.env.LS_LAB_NO_CODE = '1'
     else delete process.env.LS_LAB_NO_CODE
+    if (flag('--no-html')) process.env.LS_LAB_NO_HTML = '1'
+    else delete process.env.LS_LAB_NO_HTML
+    const brief = option('--brief', null)
+    if (brief) process.env.LS_LAB_BRIEF = resolve(brief)
+    else delete process.env.LS_LAB_BRIEF
     const state = await startInstance({
       name,
       mcpPort: Number(option('--mcp-port', '47890')),

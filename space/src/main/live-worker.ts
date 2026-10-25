@@ -23,6 +23,8 @@ interface Init {
   fontText: string
   /** Lab switch LS_LAB_NO_CODE (lab-switch.ts): the prelude leaves out shader(), canvas() and program(). */
   noCodeItems: boolean
+  /** Lab switch LS_LAB_NO_HTML: the prelude leaves out html(). */
+  noHtml: boolean
   port: MessagePort
   flag: SharedArrayBuffer
 }
@@ -95,6 +97,7 @@ async function newContext(): Promise<string | null> {
   ctx.setProp(ctx.global, '__fontText', font)
   font.dispose()
   if (init.noCodeItems) ctx.setProp(ctx.global, '__noCodeItems', ctx.true)
+  if (init.noHtml) ctx.setProp(ctx.global, '__noHtml', ctx.true)
   const measure = ctx.newFunction('__measure', (arg) => ctx.newString(measureSync(ctx.getString(arg))))
   ctx.setProp(ctx.global, '__measure', measure)
   measure.dispose()

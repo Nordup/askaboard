@@ -35,6 +35,10 @@
   // Lab switch LS_LAB_NO_CODE (main/lab-switch.ts): no shader(), canvas() or program(), and no word of them.
   const NO_CODE_ITEMS = G.__noCodeItems === true
   delete G.__noCodeItems
+  // Lab switch LS_LAB_NO_HTML: no html(), and no word of HTML material in messages. H(text, without) picks the words.
+  const NO_HTML = G.__noHtml === true
+  delete G.__noHtml
+  const H = (text, without = '') => (NO_HTML ? without : text)
   let CTX = { nodes: {}, names: {}, view: { x: -600, y: -400, width: 1200, height: 800 }, viewport: [1200, 800], seed: 1 }
   const MAX_COORD = 100000
 
@@ -419,7 +423,7 @@
     }
     part(key) {
       const entry = objects[this.id]
-      if (entry.kind !== 'html') fail(`part(): ${entry.api} ${this.id} has no parts; only html(), image() and copies of material have`)
+      if (entry.kind !== 'html') fail(`part(): ${entry.api} ${this.id} has no parts; only ${H('html(), ')}image() and copies of material have`)
       return partOf(entry, key)
     }
     toString() {
@@ -1093,7 +1097,7 @@
     if (members.length === 1 && Array.isArray(members[0])) members = members[0]
     if (!members.length) fail('group(...objects) needs at least one object')
     const entries = members.map((m, k) => entryOf(m, `group member ${k}`))
-    for (const e of entries) if (e.kind === 'part') fail(`object ${e.id} is a part of an html object; it moves with that object`)
+    for (const e of entries) if (e.kind === 'part') fail(`object ${e.id} is a part of ${H('an html object', 'material')}; it moves with that object`)
     for (const e of entries) if (e.parent !== undefined) fail(`object ${e.id} is already in a group`)
     for (const key of Object.keys(opts)) if (key !== 'name') warnings.add(`group: the option "${key}" is unknown and was ignored`)
     const handle = register({ kind: 'group', api: 'group', name: nameOf(opts), members: entries.map((e) => e.id), bounds: union(entries.map((e) => worldBounds(e, T))) })
@@ -1307,7 +1311,7 @@
       if (e.born === sceneNo || !stageIds(e)) return { obj: e }
       return { ref: stageIds(e)[0] }
     }
-    fail(`${what} must be a frame: a node id, board.node(id), or an html() object, got ${who(e)}`)
+    fail(`${what} must be a frame: a node id${H(', board.node(id), or an html() object', ' or board.node(id)')}, got ${who(e)}`)
   }
 
   const HTML_KEYS = ['at', 'center', 'near', 'into', 'mode', 'index', 'name', 'opacity']
@@ -1318,7 +1322,7 @@
     let place
     if (opts.into !== undefined) {
       const target = frameArg(opts.into, `${api} into`)
-      if (target.obj) fail(`${api} into: ${who(target.obj)} is made by this scene; write this inside its own html(), or put it in from a later scene`)
+      if (target.obj) fail(`${api} into: ${who(target.obj)} is made by this scene; ${H('write this inside its own html(), or ')}put it in from a later scene`)
       const mode = opts.mode === undefined ? 'insert' : opts.mode
       if (mode !== 'insert' && mode !== 'replace') fail(`${api} mode must be "insert" or "replace"`)
       place = { ref: target.ref, mode }
@@ -1514,7 +1518,7 @@
         continue
       }
       if (text !== undefined) {
-        if (e.kind !== 'text') fail(`edit text: ${who(e)} has no text of its own (text(), tex(), html() and text nodes have)`)
+        if (e.kind !== 'text') fail(`edit text: ${who(e)} has no text of its own (${H('text(), tex(), html()', 'text(), tex()')} and text nodes have)`)
         if (e.dynamic) fail(`edit text: the text of ${who(e)} follows its functions; change the values it reads instead`)
         const before = e.text
         e.text = text
@@ -1950,7 +1954,7 @@
   function move(target, spec, timing) {
     const entry = entryOf(target, 'move(object)')
     spec = options(spec, 'move spec')
-    if (entry.kind === 'part') fail(`move: ${who(entry)} is a part of an html object; move the html object, or edit the part`)
+    if (entry.kind === 'part') fail(`move: ${who(entry)} is a part of ${H('an html object; move the html object', 'material; move the material')}, or edit the part`)
     if (timing === undefined && (spec.dur !== undefined || spec.ease !== undefined)) timing = { dur: spec.dur, ease: spec.ease }
     const { dur, ease } = durationArg(timing, 'move', 0.8)
     if (spec.into !== undefined) {
@@ -2049,7 +2053,7 @@
       }
       any = true
       const groupOwn = key === 'x' || key === 'y' || key === 'scale' || key === 'rotate'
-      if (groupOwn && entry.kind === 'part') fail(`tween ${key}: ${who(entry)} is a part of an html object; it moves with that object`)
+      if (groupOwn && entry.kind === 'part') fail(`tween ${key}: ${who(entry)} is a part of ${H('an html object', 'material')}; it moves with that object`)
       const targets = groupOwn ? [entry] : leaves(entry)
       for (const e of targets) {
         if (key === 'color') addTrack(e, 'color', T, dur, colorArg(value, 'tween color'), ease || 'inOut')
@@ -2824,6 +2828,7 @@
     stage
   }
   if (NO_CODE_ITEMS) for (const key of ['shader', 'canvas', 'program']) delete api[key]
+  if (NO_HTML) delete api.html
   for (const [key, value] of Object.entries(api)) Object.defineProperty(G, key, { value, enumerable: true, writable: false, configurable: false })
 
   // ---------- Lock the stage ----------
