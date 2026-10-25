@@ -6,7 +6,7 @@ import type { Scene } from '../agent/placement'
 import { inkOffset, isFlowed, normalizeInk, removeNodes, ROOT, withDescendants, zAbove } from '../board/scene'
 import type { Point, Region } from '../board/types'
 import { textHtml } from '../board/content'
-import { draftsToNodes, type Draft } from '../board/html'
+import { checkDrafts, draftsToNodes, Ignored } from '../board/html'
 import { applyStyles, normalizeStyles } from '../board/style-edits'
 import { sceneColor, withOpacity } from './colors'
 import { apply, IDENTITY, invert, isIdentity, multiply, scaleOf, Timeline, type Matrix } from './timeline'
@@ -610,7 +610,18 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
         const origin = parent ? (s.layout.get(parent) ? [s.layout.get(parent)!.ox, s.layout.get(parent)!.oy] : [0, 0]) : [0, 0]
         position = replacing ? [(target as ContentNode).x, (target as ContentNode).y] : [r1(x - origin[0]), r1(y - origin[1])]
       }
-      const built = draftsToNodes(html.drafts as unknown as Draft[], { parent, zStart: zRoot, canUse: () => false, author: 'agent' })
+      // The description is the program's data: its drafts pass the HTML whitelist again before they become nodes.
+      const ignoredDrafts = new Ignored()
+      let drafts
+      try {
+        drafts = checkDrafts(html.drafts, ignoredDrafts).slice(0, 1)
+      } catch (error) {
+        warn(`${html.api} ${object.id}: ${error instanceof Error ? error.message : String(error)}; left out`)
+        continue
+      }
+      const dropped = ignoredDrafts.summary()
+      if (dropped) warn(`${html.api} ${object.id}: ignored ${JSON.stringify(dropped)}`)
+      const built = draftsToNodes(drafts, { parent, zStart: zRoot, canUse: () => false, author: 'agent' })
       const rootId = built.roots[0]
       if (!rootId) continue
       const opacity = isRemoved ? html.style.opacity : finalOpacity(object.id, html.style)
@@ -892,7 +903,8 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
       if (!node || !isKnown(node) || removed.has(id)) continue
       let after: BoardNode = node
       const edit: PlayEdit = { nodeId: id, at: change.at, dur: change.dur, ease: change.ease, ink: isInk(node), before: {}, after: {} }
-      if (change.text !== undefined) {
+      if (change.text !== undefined && typeof change.text !== 'string') warn(`edit: the text must be a string; it was ignored`)
+      else if (change.text !== undefined) {
         if (node.kind !== 'text') warn(`edit: ${object.api}${object.name ? ` "${object.name}"` : ''} is a ${node.kind}; only text has text to change`)
         else if (object.kind === 'text') {
           // A text() or tex() object: its node already holds the new text.

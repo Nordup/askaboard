@@ -362,6 +362,71 @@ export function walkDrafts(drafts: readonly Draft[], visit: (draft: Draft) => vo
   }
 }
 
+/** An image src that names a file inside the learning folder: relative, no scheme, no `..`. */
+export function isFolderPath(src: string): boolean {
+  if (!src || src.length > 1024 || /^[a-z][a-z0-9+.-]*:/i.test(src) || /^[/\\]/.test(src) || src.includes('\\') || src.includes('\0')) return false
+  return !src.split('/').some((segment) => segment === '..')
+}
+
+/**
+ * Drafts that come from outside this module (a scene program's data, which
+ * the program controls) pass the same whitelist as HTML: known kinds only,
+ * styles through readStyle, SVG through htmlToDrafts (and so sanitizeSvg),
+ * image src only as a learning-folder path, the same size and depth limits.
+ * Ids are never taken over. Drafts made by htmlToDrafts come out unchanged.
+ */
+export function checkDrafts(input: unknown, ignored: Ignored): Draft[] {
+  let count = 0
+  const check = (raw: unknown, depth: number): Draft | null => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+    if (++count > MAX_HTML_ELEMENTS) throw new Error(`The material has more than ${MAX_HTML_ELEMENTS} elements.`)
+    if (depth > MAX_HTML_DEPTH) throw new Error(`The material is nested more than ${MAX_HTML_DEPTH} elements deep.`)
+    const value = raw as Record<string, unknown>
+    const kind = value.kind
+    if (kind !== 'frame' && kind !== 'text' && kind !== 'svg' && kind !== 'image') {
+      ignored.tags.add(`kind ${String(kind).slice(0, 40)}`)
+      return null
+    }
+    // The style object as a style attribute, read by the HTML whitelist.
+    const declarations: string[] = []
+    if (value.style && typeof value.style === 'object') {
+      for (const [key, v] of Object.entries(value.style as Record<string, unknown>)) {
+        if (typeof v === 'string' && v !== '') declarations.push(`${kebab(key)}: ${v}`)
+      }
+    }
+    const { style } = readStyle(declarations.join('; '), ignored)
+    const coord = (n: unknown): number => (typeof n === 'number' && Number.isFinite(n) && Math.abs(n) <= MAX_COORD ? n : 0)
+    const draft: Draft = { kind, style, x: coord(value.x), y: coord(value.y), children: [] }
+    if (typeof value.name === 'string' && value.name && value.name.length <= 200) draft.name = value.name
+    if (kind === 'text') draft.text = typeof value.text === 'string' ? value.text : ''
+    if (kind === 'svg') {
+      const parsed = typeof value.markup === 'string' ? htmlToDrafts(value.markup, ignored) : []
+      if (parsed.length !== 1 || parsed[0].kind !== 'svg' || !parsed[0].markup) {
+        ignored.tags.add('svg (nothing safe was left)')
+        return null
+      }
+      draft.markup = parsed[0].markup
+    }
+    if (kind === 'image') {
+      const src = typeof value.src === 'string' ? value.src.trim() : ''
+      if (!isFolderPath(src)) {
+        ignored.notes.add(`image src ${JSON.stringify(src.slice(0, 80))} is not a file in the learning folder; left out`)
+        return null
+      }
+      draft.src = src
+    }
+    if (kind === 'frame' && Array.isArray(value.children)) {
+      for (const child of value.children) {
+        const checked = check(child, depth + 1)
+        if (checked) draft.children.push(checked)
+      }
+    }
+    return draft
+  }
+  if (!Array.isArray(input)) return []
+  return input.map((raw) => check(raw, 0)).filter((draft): draft is Draft => draft !== null)
+}
+
 /**
  * Turn drafts into nodes under `parent` (undefined = top level). Ids from
  * data-id are reused when `canUse(id)` says they are free.

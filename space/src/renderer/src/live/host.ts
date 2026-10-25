@@ -5,7 +5,7 @@ import { isContent, isFrame, isInk, isKnown, type BoardNode, type ContentNode, t
 import type { SceneDraft } from '@shared/live-scene'
 import type { BoardHandle } from '../board/Board'
 import { ContentLayer, measureContent, type ContentContext } from '../board/content'
-import { draftsToNodes, htmlToDrafts, Ignored, nodesToHtml, walkDrafts, type Draft } from '../board/html'
+import { checkDrafts, draftsToNodes, htmlToDrafts, Ignored, nodesToHtml, walkDrafts, type Draft } from '../board/html'
 import { buildIndex, inkOffset, isFlowed, ROOT, topLevelOf, withDescendants, zAbove } from '../board/scene'
 import type { LayoutBox } from '../board/types'
 import { anchorFor, findSpace, obstacles, viewOf, type Scene } from '../agent/placement'
@@ -170,7 +170,12 @@ async function htmlAnswer(ctx: HostContext, request: Record<string, unknown>): P
     const [w, h] = imageSize(natural, picture.size)
     drafts[0].style = { width: `${r2(w)}px`, height: `${r2(h)}px` }
   } else if (Array.isArray(request.drafts)) {
-    drafts = oneRoot(structuredClone(request.drafts) as Draft[], ignored)
+    // Drafts from the program (copy()) are its data: they pass the HTML whitelist again.
+    try {
+      drafts = oneRoot(checkDrafts(request.drafts, ignored), ignored)
+    } catch (error) {
+      return { error: message(error) }
+    }
     if (typeof request.width === 'number' && drafts[0] && !drafts[0].style.width) drafts[0].style = { ...drafts[0].style, width: `${r2(request.width)}px` }
     drafts = await resolveImages(ctx, drafts, ignored)
   } else {
