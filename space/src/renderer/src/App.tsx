@@ -12,6 +12,7 @@ import {
 } from '@shared/board-format'
 import type { AgentActivity, AgentServerStatus, Camera, FileNode, FileTree, GuideOverrides, Snapshot } from '@shared/space-api'
 import { AgentPresence } from './agent/edits'
+import { scenePlayer } from './live/player'
 import { handleAgentRequest, type AgentContext } from './agent/handler'
 import { Board, type BoardHandle } from './board/Board'
 import { ChangeLog } from './board/changes'
@@ -571,6 +572,10 @@ export function App() {
   const openBoardRef = useRef(openBoard)
   openBoardRef.current = openBoard
 
+  // A live scene plays on one mounted board: a board switch or a reload ends it (its items are already final).
+  const openKey = open?.key
+  useEffect(() => () => scenePlayer.detach(null), [openKey])
+
   // Dev hook (SPACE_REMOTE_DEBUG only): scripts/drive.mjs maps board points to
   // window points and reads a little state through window.__spaceDev.
   useEffect(() => {
@@ -607,6 +612,10 @@ export function App() {
             }
           })
         }
+      },
+      /** Live-scene playback (run_scene): what plays now; seek(t) holds the current scene at t s, seek(null) lets it run; finish() ends all. */
+      get scene() {
+        return { ...scenePlayer.state(), seek: (t: number | null) => scenePlayer.seek(t), finish: () => scenePlayer.finish() }
       },
       /** A node's rect in window CSS pixels, from the layout cache. */
       nodeRect: (id: string) => {

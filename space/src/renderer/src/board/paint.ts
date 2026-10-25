@@ -1,4 +1,5 @@
 import { inkBounds, pressureWidth, regionsIntersect } from './geometry'
+import { revealPoints, type NodeOverride, type PlaybackFrame } from './playback'
 import type { Camera, InkNode, Point, Region } from './types'
 
 type StrokeItem = InkNode
@@ -73,22 +74,26 @@ function tracePath(context: CanvasRenderingContext2D, points: StrokeItem['points
   context.lineTo(last[0], last[1])
 }
 
-/** Draw one ink node at its world offset. */
-function drawInk(context: CanvasRenderingContext2D, ink: PaintInk, minWidth = 0): void {
+/** Draw one ink node at its world offset; a playback override moves, fades, recolours or partly draws it. */
+function drawInk(context: CanvasRenderingContext2D, ink: PaintInk, minWidth = 0, override?: NodeOverride): void {
   context.save()
+  if (override?.matrix) context.transform(...override.matrix)
   context.translate(ink.offset[0], ink.offset[1])
-  drawStroke(context, ink.node, minWidth)
+  if (override && (override.reveal !== undefined || override.color !== undefined)) {
+    const points = override.reveal === undefined ? ink.node.points : revealPoints(ink.node.points, override.reveal)
+    drawStroke(context, { ...ink.node, points, color: override.color ?? ink.node.color }, minWidth, override.opacity ?? 1)
+  } else drawStroke(context, ink.node, minWidth, override?.opacity ?? 1)
   context.restore()
 }
 
-/** `minWidth`: the thinnest line to draw, in board points (offscreen export only). */
-function drawStroke(context: CanvasRenderingContext2D, stroke: StrokeItem, minWidth = 0): void {
+/** `minWidth`: the thinnest line to draw, in board points (offscreen export only). `alpha` multiplies the ink's own. */
+function drawStroke(context: CanvasRenderingContext2D, stroke: StrokeItem, minWidth = 0, alpha = 1): void {
   const points = stroke.points
-  if (!points.length) return
+  if (!points.length || alpha <= 0) return
   context.strokeStyle = stroke.color
   context.fillStyle = stroke.color
   const highlighter = stroke.tool === 'highlighter'
-  context.globalAlpha = highlighter ? HIGHLIGHTER_ALPHA : 1
+  context.globalAlpha = (highlighter ? HIGHLIGHTER_ALPHA : 1) * Math.min(1, alpha)
 
   if (points.length === 1) {
     const [x, y, p] = points[0]
@@ -157,28 +162,52 @@ function drawGlow(context: CanvasRenderingContext2D, ink: PaintInk, zoom: number
   context.restore()
 }
 
+/** The pen tip of a live scene: a small dot with a soft halo where the stroke is drawn now. */
+function drawTip(context: CanvasRenderingContext2D, point: Point, color: string, size: number, zoom: number): void {
+  const radius = Math.max(size / 2 + 1.5, 3 / zoom)
+  context.save()
+  context.globalAlpha = 0.22
+  context.fillStyle = color
+  context.beginPath()
+  context.arc(point[0], point[1], radius * 2.6, 0, Math.PI * 2)
+  context.fill()
+  context.globalAlpha = 0.95
+  context.beginPath()
+  context.arc(point[0], point[1], radius, 0, Math.PI * 2)
+  context.fill()
+  context.restore()
+}
+
 /**
  * Paint the committed items: selection glow first, then highlighters, then
- * pen ink on top.
+ * pen ink on top. During live-scene playback, overrides change how nodes
+ * show, ghost ink (removed by the scene) shows too, and pen tips go on top.
  */
 export function paintItems(
   canvas: HTMLCanvasElement | null,
   inks: readonly PaintInk[],
   viewport: Point,
   camera: Camera,
-  selected: ReadonlySet<string> = new Set()
+  selected: ReadonlySet<string> = new Set(),
+  playback: PlaybackFrame | null = null,
+  ghostInks: readonly PaintInk[] = []
 ): void {
   if (!canvas) return
   const context = prepare(canvas, viewport, camera)
   if (!context) return
   const visible = visibleRegion(viewport, camera)
-  const strokes = inks.filter((ink) => {
+  const overrides = playback?.overrides
+  const all = ghostInks.length ? [...inks, ...ghostInks] : inks
+  const strokes = all.filter((ink) => {
+    // A moving stroke is drawn wherever it is now: skip only unmoved strokes outside the view.
+    if (overrides?.get(ink.node.id)?.matrix) return true
     const bounds = inkBounds(ink.node, ink.offset)
     return bounds !== null && regionsIntersect(bounds, visible)
   })
-  if (selected.size) for (const ink of strokes) if (selected.has(ink.node.id)) drawGlow(context, ink, camera.zoom)
-  for (const ink of strokes) if (ink.node.tool === 'highlighter') drawInk(context, ink)
-  for (const ink of strokes) if (ink.node.tool !== 'highlighter') drawInk(context, ink)
+  if (selected.size) for (const ink of strokes) if (selected.has(ink.node.id) && !overrides?.has(ink.node.id)) drawGlow(context, ink, camera.zoom)
+  for (const ink of strokes) if (ink.node.tool === 'highlighter') drawInk(context, ink, 0, overrides?.get(ink.node.id))
+  for (const ink of strokes) if (ink.node.tool !== 'highlighter') drawInk(context, ink, 0, overrides?.get(ink.node.id))
+  for (const tip of playback?.tips ?? []) drawTip(context, tip.point, tip.color, tip.size, camera.zoom)
 }
 
 /** Paint the stroke in progress on the overlay layer. */

@@ -6,6 +6,7 @@ import { clampZoom, overlapShare, unionRegions } from '../board/geometry'
 import { draftsToNodes, htmlToDrafts, Ignored, nodesToHtml, walkDrafts, type Draft } from '../board/html'
 import { ancestorIds, copySubtrees, isFlowed, normalizeInk, parentKey, removeNodes, ROOT, topLevelOf, withDescendants, zAbove } from '../board/scene'
 import type { Point, Region } from '../board/types'
+import { runScene, sceneContext } from '../live/run'
 import { isGroupId, type InkGroup, type InkGroupTracker } from './groups'
 import { humanize, inkPointBudget, shapeLines, SHAPES, svgPathPolylines, type ArrowSide, type Shape } from './ink'
 import {
@@ -314,7 +315,8 @@ function getNodeInfo(s: Scene, args: Record<string, unknown>): unknown {
     placed_by: isFlowed(node, s.index.byId) ? 'flex layout of the parent' : 'x, y',
     z: node.z,
     children: (s.index.children.get(node.id) ?? []).map((child) => child.id),
-    seq: node.seq
+    seq: node.seq,
+    ...(typeof (node as { scene?: unknown }).scene === 'string' ? { scene: (node as { scene?: string }).scene } : {})
   }
   if (isKnown(node)) {
     if (node.locked) info.locked = true
@@ -1153,6 +1155,10 @@ export async function runEditTool(ctx: EditContext, tool: AgentToolName, args: R
       return findSpaceTool(ctx, scene(ctx), args)
     case 'focus':
       return focus(ctx, scene(ctx), args)
+    case 'sceneContext':
+      return sceneContext(ctx.board, scene(ctx))
+    case 'runScene':
+      return runScene({ board: ctx.board, scene: () => scene(ctx), tracker: ctx.tracker }, args)
     case 'finishWorking': {
       const ids = args.node_ids === undefined ? undefined : stringList(args.node_ids, 'node_ids')
       return { released: ctx.presence.finish(ctx.agent.sessionId, ids) }

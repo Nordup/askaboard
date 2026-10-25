@@ -247,6 +247,8 @@ export type AgentToolName =
   | 'drawInk'
   | 'findSpace'
   | 'focus'
+  | 'sceneContext'
+  | 'runScene'
 
 /** A box drawn over a snapshot (the "changes" view), in board coordinates. */
 export interface SnapshotOutline {

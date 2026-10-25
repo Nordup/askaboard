@@ -21,6 +21,8 @@ import {
   MAX_TEXT_CHARS
 } from '@shared/limits'
 import { briefText, guideText, guideTopics, serverInstructions } from './guide'
+import { runSceneProgram, SceneProgramError } from './live-scene'
+import type { SceneContext, SceneResult } from '@shared/live-scene'
 import { BoardNews } from './news'
 import { getAgentLook } from './state'
 import type { SnapshotRenderer } from './snapshot'
@@ -60,7 +62,9 @@ const BRIDGE_TIMEOUT_MS = 10_000
 const NEWS_TIMEOUT_MS = 1500
 /** Writes can download images first. */
 const WRITE_TIMEOUT_MS = 45_000
-const MAX_BODY_BYTES = 4 * 1024 * 1024
+/** A large scene can take a while to turn into board items; this only frees a renderer that never answers. */
+const SCENE_TIMEOUT_MS = 10 * 60_000
+const MAX_BODY_BYTES = 64 * 1024 * 1024
 /** A session with no open stream and no request for this long is closed. */
 const IDLE_SESSION_MS = 10 * 60_000
 const PRUNE_INTERVAL_MS = 30_000
@@ -958,6 +962,35 @@ export class AgentServer {
         }
       },
       this.tool(session, 'draw_ink', async (args) => text(json(await this.board(session, 'drawInk', args))))
+    )
+
+    server.registerTool(
+      'run_scene',
+      {
+        title: 'Run a live scene',
+        description:
+          "Runs a JavaScript program that draws on the open board over time, in front of the learner: shapes and ink drawn on stroke by stroke, handwriting, typeset maths, fills, fades, moves, erasing, and changes to items already on the board (the learner's ink groups and your nodes). The program runs once, in a sandbox with no access to the app, files or network, and builds a timeline; it may compute for as long as it needs (a program still running after 10 minutes is stopped). The app then plays the timeline, by default at the speed of a hand. The tool returns when playback starts, not when it ends.\n\nThe program uses a small set of globals: creators (stroke, line, arrow, circle, ellipse, rect, polygon, path, plot, write, tex, text, around, group, board.node), actions (draw, fillIn, fadeIn, fadeOut, erase, move, tween, wait, step, all) and console.log. `await` on an action makes the next one start after it ends; an action without await runs at the same time as the next one. The complete reference is get_guide topic \"scene\". Coordinates are board points (origin at the centre, +x right, +y down).\n\nWhen it has played, everything stays on the board as ordinary items the learner can edit: ink (strokes and handwriting, one ink group per object), svg nodes (vector shapes) and text nodes (tex, text). Items that the scene erased or faded out are gone. The whole scene is one undo step for the learner, and the board file holds the final state from the start.\n\nReturns JSON: scene (its id), duration_s, steps ([{name, at_s}] from step()), items (the new ink group ids and node ids), log (console.log output) and warnings. A program error returns an error with its message and line number, and nothing is drawn.",
+        inputSchema: {
+          code: z
+            .string()
+            .min(1)
+            .describe('The program: the body of an async function, so top-level await works. Example: const c = circle(0, 0, 80); await draw(c); await write("r", { at: [90, -10] })'),
+          name: z.string().max(MAX_NAME_CHARS).optional().describe('A label for this scene in logs and traces.')
+        }
+      },
+      this.tool(session, 'run_scene', async ({ code, name }) => {
+        const context = (await this.board(session, 'sceneContext', {})) as SceneContext
+        let scene
+        try {
+          scene = await runSceneProgram(code, context)
+        } catch (error) {
+          if (error instanceof SceneProgramError) return failure(error)
+          throw error
+        }
+        const result = (await this.board(session, 'runScene', { scene, ...(name ? { name } : {}) }, SCENE_TIMEOUT_MS)) as SceneResult
+        console.log(`mcp: run_scene ${name ?? result.scene}: ${scene.objects.length} objects, ${scene.actions.length} actions, ${result.duration_s} s`)
+        return text(json(result))
+      })
     )
 
     server.registerTool(

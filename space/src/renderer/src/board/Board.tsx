@@ -20,6 +20,7 @@ import {
 } from './geometry'
 import type { BoardHistory } from './history'
 import { paintActive, paintItems, type PaintInk } from './paint'
+import { applyElementOverride, clearElementOverride, type PlaybackFrame } from './playback'
 import {
   addInkLayout,
   boundsOf,
@@ -103,6 +104,12 @@ export interface BoardHandle {
   setPresence(entries: PresenceEntry[]): void
   /** Select every top-level node and all loose ink (⌘A on the canvas). */
   selectAll(): void
+  /**
+   * Show a moment of live-scene playback (see playback.ts), or end it with
+   * null. Content elements change before this returns, so a scene committed
+   * in the same task never shows its final state first.
+   */
+  setPlayback(frame: PlaybackFrame | null): void
 }
 
 export interface PresenceEntry {
@@ -310,6 +317,13 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const dirtyLayersRef = useRef({ committed: false, active: false })
   const editingRef = useRef<EditingState | null>(null)
   const measureFrameRef = useRef<number | null>(null)
+  /** Live-scene playback: the frame shown now, the ghost layer, and the elements it changed. */
+  const playbackRef = useRef<PlaybackFrame | null>(null)
+  const ghostRootRef = useRef<HTMLDivElement>(null)
+  const ghostElementsRef = useRef(new Map<string, HTMLElement>())
+  const ghostNodesRef = useRef<readonly BoardNode[]>([])
+  const playbackTouchedRef = useRef(new Set<HTMLElement>())
+  const [ghostIndex, setGhostIndex] = useState<SceneIndex | null>(null)
 
   const [camera, setCamera] = useState<Camera>(cameraRef.current)
   const [viewport, setViewport] = useState<Point>([1, 1])
@@ -355,8 +369,43 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     const cam = cameraRef.current
     const [vw, vh] = viewportRef.current
     root.style.transform = `translate(${vw / 2 - cam.center[0] * cam.zoom}px, ${vh / 2 - cam.center[1] * cam.zoom}px) scale(${cam.zoom})`
+    if (ghostRootRef.current) ghostRootRef.current.style.transform = root.style.transform
     domCameraRef.current = cam
   }, [])
+
+  /** Ghost ink of the playing scene, at its world position (ghosts are top level). */
+  const ghostInks = useCallback((): PaintInk[] => {
+    const out: PaintInk[] = []
+    for (const node of ghostNodesRef.current) if (isInk(node)) out.push({ node, offset: [node.x, node.y] })
+    return out
+  }, [])
+
+  const applyPlaybackRef = useRef<() => void>(() => undefined)
+
+  /** Put the playback overrides on content elements (and take them off the ones it no longer covers). */
+  const applyPlaybackToDom = useCallback(() => {
+    const frame = playbackRef.current
+    const touched = new Set<HTMLElement>()
+    if (frame) {
+      const byId = indexRef.current.byId
+      const ghosts = new Map(ghostNodesRef.current.map((node) => [node.id, node]))
+      for (const [id, override] of frame.overrides) {
+        const live = elementsRef.current.get(id)
+        const element = live ?? ghostElementsRef.current.get(id)
+        if (!element || !element.isConnected) continue
+        const node = live ? byId.get(id) : ghosts.get(id)
+        if (!node || isInk(node)) continue
+        const box = live ? layoutRef.current.get(id) : null
+        const origin: Point = box ? [box.x, box.y] : [(node as ContentNode).x, (node as ContentNode).y]
+        const own = Number((node as ContentNode).style?.opacity ?? '1')
+        applyElementOverride(element, override, origin, Number.isFinite(own) ? own : 1)
+        touched.add(element)
+      }
+    }
+    for (const element of playbackTouchedRef.current) if (!touched.has(element)) clearElementOverride(element)
+    playbackTouchedRef.current = touched
+  }, [])
+  applyPlaybackRef.current = applyPlaybackToDom
 
   const requestPaint = useCallback(
     (layers: { committed?: boolean; active?: boolean }) => {
@@ -369,12 +418,12 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         dirtyLayersRef.current = { committed: false, active: false }
         if (dirty.committed) {
           applyContentTransform()
-          paintItems(inkRef.current, paintInks(), viewportRef.current, cameraRef.current, new Set(selectedIdsRef.current))
+          paintItems(inkRef.current, paintInks(), viewportRef.current, cameraRef.current, new Set(selectedIdsRef.current), playbackRef.current, ghostInks())
         }
         if (dirty.active) paintActive(activeInkRef.current, activeRef.current, viewportRef.current, cameraRef.current)
       })
     },
-    [applyContentTransform, paintInks]
+    [applyContentTransform, ghostInks, paintInks]
   )
   // A cancelled frame must also clear its slot. React runs this cleanup and then
   // mounts again (StrictMode in dev, Fast Refresh): a slot left set says "a frame
@@ -392,7 +441,14 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   /** Measure every content element into the layout cache, then add ink. */
   const measure = useCallback(() => {
     const root = contentRootRef.current
+    // Playback transforms are only a look: measure the final layout without them.
+    const playing = playbackTouchedRef.current.size > 0
+    if (playing) for (const element of playbackTouchedRef.current) clearElementOverride(element)
     const layout: LayoutMap = root ? measureContent(root, elementsRef.current, domCameraRef.current.zoom) : new Map()
+    if (playing) {
+      playbackTouchedRef.current = new Set()
+      applyPlaybackRef.current()
+    }
     addInkLayout(indexRef.current, layout)
     layoutRef.current = layout
     setLayoutVersion((version) => version + 1)
@@ -426,7 +482,9 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   useLayoutEffect(() => {
     applyContentTransform()
     measure()
-  }, [index, editingId, applyContentTransform, measure])
+    // A re-rendered element lost nothing it needs, but a new one (a ghost) needs its override now.
+    if (playbackRef.current) applyPlaybackToDom()
+  }, [index, editingId, ghostIndex, applyContentTransform, measure, applyPlaybackToDom])
 
   useEffect(() => {
     void document.fonts?.ready.then(() => requestMeasure())
@@ -679,6 +737,20 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       }
     },
     onMedia: requestMeasure
+  }
+
+  const ghostCtx = useRef<ContentContext>(null as unknown as ContentContext)
+  ghostCtx.current = {
+    index: ghostIndex ?? buildIndex([]),
+    editingId: null,
+    editorRef,
+    editorInitial: '',
+    onEditorCommit: () => undefined,
+    register: (id, element) => {
+      if (element) ghostElementsRef.current.set(id, element)
+      else ghostElementsRef.current.delete(id)
+    },
+    onMedia: () => undefined
   }
 
   // Leaving the select tool clears the selection; leaving the eraser hides its cursor.
@@ -1234,9 +1306,23 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       },
       remeasure: measure,
       setPresence,
-      selectAll: () => selectAllRef.current()
+      selectAll: () => selectAllRef.current(),
+      setPlayback: (frame) => {
+        const ghosts = frame?.ghosts ?? []
+        if (ghosts !== ghostNodesRef.current) {
+          ghostNodesRef.current = ghosts
+          const content = ghosts.filter((node) => !isInk(node))
+          // The ghost layer renders before this returns, so its elements get their overrides now.
+          flushSync(() => setGhostIndex(content.length ? buildIndex(content) : null))
+        }
+        playbackRef.current = frame
+        applyPlaybackToDom()
+        requestPaint({ committed: true })
+        // The end of playback: measure the final layout once more.
+        if (!frame) requestMeasure()
+      }
     }),
-    [applyCamera, applyColor, applyWidth, commitEditing, commitNodes, fit, measure, paintInks, setSelectedIds, zoomStep]
+    [applyCamera, applyColor, applyPlaybackToDom, applyWidth, commitEditing, commitNodes, fit, measure, paintInks, requestMeasure, requestPaint, setSelectedIds, zoomStep]
   )
   useEffect(
     () => () => {
@@ -1425,6 +1511,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       aria-label="Board canvas"
     >
       <ContentLayer index={index} editingId={editingId} ctx={contentCtx} rootRef={contentRootRef} />
+      {ghostIndex && <ContentLayer index={ghostIndex} editingId={null} ctx={ghostCtx} rootRef={ghostRootRef} />}
       <canvas className="board__ink" ref={inkRef} />
       <canvas className="board__active" ref={activeInkRef} aria-hidden="true" />
       {lassoPoints && lassoPoints.length > 1 && (

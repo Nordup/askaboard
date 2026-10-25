@@ -17,6 +17,7 @@
  *   node scripts/drive.mjs node-rect <id>       a node's window rect (JSON), from the layout cache and the DOM
  *   node scripts/drive.mjs screenshot <out.png> the whole window
  *   node scripts/drive.mjs eval-state           board, zoom, tool, selection, nodes with bounds (JSON)
+ *   node scripts/drive.mjs scene [seek <t> | play | finish]   live-scene playback: state, hold at t s, run on, end
  *   node scripts/drive.mjs camera <x> <y>       centre the learner's view on a board point (zoom kept)
  *
  * Strokes are in board coordinates (points, origin at the centre, +y down);
@@ -41,6 +42,8 @@ const USAGE = `usage: node scripts/drive.mjs [--port N] <command>
   node-rect <id>                                 {x, y, width, height, cx, cy, dom} in window CSS pixels
   screenshot <out.png>
   eval-state                                     board, tool, selection, nodes (id, kind, parent, bounds)
+  scene [seek <t> | play | finish]               live-scene playback (run_scene): print its state; hold the
+                                                 current scene at t seconds; let it run on; end every scene
   camera <x> <y>                                 centre the view on board point (x, y); prints zoom, centre, canvas
 The port defaults to $SPACE_REMOTE_DEBUG, then 9339.`
 
@@ -414,6 +417,21 @@ async function main() {
       const state = await evaluate(cdp, 'window.__spaceDev.state()')
       const canvas = await evaluate(cdp, 'window.__spaceDev.canvasRect()')
       console.log(JSON.stringify({ zoom: state.zoom, center: state.center, canvas }))
+    }
+  } else if (command === 'scene') {
+    const [action, value] = rest
+    if (action && !['seek', 'play', 'finish'].includes(action)) throw new Failure('scene takes no argument, or seek <t>, play or finish.')
+    const t = Number(value)
+    if (action === 'seek' && !Number.isFinite(t)) throw new Failure('scene seek needs a time in seconds.')
+    run = async (cdp) => {
+      await requireDevHook(cdp)
+      if (action === 'seek') await evaluate(cdp, `window.__spaceDev.scene.seek(${t})`)
+      else if (action === 'play') await evaluate(cdp, 'window.__spaceDev.scene.seek(null)')
+      else if (action === 'finish') await evaluate(cdp, 'window.__spaceDev.scene.finish()')
+      // Two frames, so a screenshot taken next shows the new moment.
+      await sleep(50)
+      const state = await evaluate(cdp, '(({ seek, finish, ...state }) => state)(window.__spaceDev.scene)')
+      console.log(JSON.stringify(state))
     }
   } else if (command === 'eval-state') {
     run = async (cdp) => {
