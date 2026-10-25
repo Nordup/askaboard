@@ -1,10 +1,5 @@
 #!/usr/bin/env node
 /**
- * NOTE (2026-10-25, live drawing stage 4, decision P13): the app no longer has
- * the write tools this file calls (write_html, draw_ink, find_space, …); scenes
- * (run_scene) are the one way to write. Port the set-up to run_scene programs
- * before the next bench run.
- *
  * The agent bench: run the fixed scenarios (scenarios.mjs) with a real agent
  * client against an own Learning Space instance, and write the measurements.
  * This is a measurement, not a test: nothing passes or fails.
@@ -737,6 +732,21 @@ function topLevel(tree) {
   return items
 }
 
+/**
+ * An empty rect of `size` ({width, height}) near the board item `near`, from
+ * the scene API's space(), asked with a run_scene preview: nothing is drawn
+ * or committed.
+ */
+async function emptySpot(client, size, near) {
+  const code = `const r = space(${size.width}, ${size.height}, { near: board.node(${JSON.stringify(near)}), inView: false })\nconsole.log(JSON.stringify({ x: r.x, y: r.y, width: r.width, height: r.height }))`
+  const result = await client.callTool({ name: 'run_scene', arguments: { code, preview: true, name: 'bench empty spot' } })
+  const body = result.content?.find((part) => part.type === 'text')?.text ?? ''
+  if (result.isError) throw new Error(`empty spot near ${near} failed: ${body}`)
+  const line = JSON.parse(body).log?.at(-1)
+  if (!line) throw new Error(`empty spot near ${near}: no answer in ${body.slice(0, 300)}`)
+  return JSON.parse(line)
+}
+
 async function runPerception(p, work) {
   const dir = join(opts.out, p.id)
   mkdirSync(dir, { recursive: true })
@@ -787,8 +797,7 @@ async function runPerception(p, work) {
         const added = topLevel(await treeText(client)).filter((item) => !known.has(item.id) && item.author !== 'learner')
         if (!added.length) throw new Error(`${p.id}: turn 0 put nothing on the board`)
         const anchor = [...added].reverse().find((item) => item.kind === 'svg') ?? added[added.length - 1]
-        const result = await client.callTool({ name: 'find_space', arguments: { ...p.sketch, near: anchor.id, inside_view: false } })
-        const spot = JSON.parse(result.content.find((c) => c.type === 'text').text)
+        const spot = await emptySpot(client, p.sketch, anchor.id)
         return { added, anchor, spot }
       })
     )

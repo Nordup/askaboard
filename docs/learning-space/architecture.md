@@ -192,6 +192,12 @@ P12, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
   `live-prelude.js` (creators, actions, values, `say`, `stage`, …). The
   program returns a description (objects and a timeline,
   `src/shared/live-scene.ts`); it cannot reach the app, files or network.
+  After the prelude has run, the stage is locked (decision T14): every
+  object reachable from a global is frozen (the scene API, `JSON`, `Math`,
+  the prototypes), only `stage` stays writable, the prelude keeps its own
+  references to the built-ins, the worker calls the prelude's host functions
+  through handles it took at the start, and `__begin` puts back any global
+  that the program before replaced.
   It asks the board questions synchronously through `__measure` (the worker
   blocks on an Atomics flag): text sizes, and through `sceneHost` html
   layout (`html()`, `image()`, copies of board material), empty space
@@ -207,13 +213,17 @@ P12, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
   items and plays it: `run.ts` (requests from main), `compile.ts` (objects
   to nodes), `timeline.ts`, `player.ts` (the clock, the queue, pauses,
   replay), `measure.ts` (exact text bounds for the sandbox), `colors.ts`,
-  `state.ts` (the store for the scene pill and the script panel),
+  `state.ts` (the store for the scene pill and the script panel; which
+  scenes form one script, decision T15),
   `host.ts` (the board's answers to the sandbox). Object kinds beyond
   drawing: `html` (material from drafts: a root node and its subtree; drawn
   root first, then its parts one after another), `part` (one child of an
   html root, an object of its own), and the description's `edits` (text and
   style changes at a time; style values glide, `board/style-edits.ts`) and
   `reparents` (move into a frame; the item glides from its old place).
+  `html()` with mode "replace": the replaced item stays as a ghost until
+  the new material first shows (`ScenePlay.vanish`), and ink inside it moves
+  onto the new material (a frame), or into the item's parent.
   `board/playback.ts` holds per-node playback looks (reveal, transform,
   params) that the board applies while a scene plays; the board file always
   holds the final state.

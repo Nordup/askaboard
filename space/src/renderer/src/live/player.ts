@@ -210,6 +210,8 @@ export function sceneFrame(play: ScenePlay, t: number, inkIndex: InkIndex | null
   const timeline = play.timeline
   // A replay hides the items that changed since the scene: their look of then shows as ghosts.
   if (play.hidden && t <= play.duration) for (const id of play.hidden) setOverride(out, id, { opacity: 0 })
+  // An item that html() replaces shows until the new material appears.
+  if (play.vanish) for (const entry of play.vanish) if (t >= entry.at) for (const id of entry.ids) setOverride(out, id, { opacity: 0 })
   for (const object of play.objects) {
     const desc = timeline.object(object.id)
     if (t >= object.settled && !object.ghost && t >= desc.created) continue
@@ -421,6 +423,17 @@ function readAt(text: string, elapsed: number, dur: number): { text: string; pro
   return { text: out.trimEnd(), progress: Math.round(Math.max(0, Math.min(1, elapsed / Math.max(0.001, dur))) * 1000) / 1000 }
 }
 
+/** The board items a scene draws, moves or changes (its objects' nodes, and the nodes its edits change). */
+function playItems(play: ScenePlay): string[] {
+  const items = new Set<string>()
+  for (const object of play.objects) {
+    for (const target of object.targets) items.add(target.nodeId)
+    for (const id of object.records ?? []) items.add(id)
+  }
+  for (const edit of play.edits ?? []) items.add(edit.nodeId)
+  return [...items]
+}
+
 /** A scene for the UI store (its id, the scene it plays, name, lines and steps), made once per play (the store compares them by reference). */
 const listCache = new WeakMap<ScenePlay, SceneListEntry>()
 function sceneLists(play: ScenePlay): SceneListEntry {
@@ -431,7 +444,8 @@ function sceneLists(play: ScenePlay): SceneListEntry {
       of: play.id.replace(/~r\d+$/, ''),
       name: play.name ?? null,
       cues: play.cues.map((cue) => ({ text: cue.text, at_s: cue.at, dur_s: cue.dur, ...(cue.marks?.length ? { marks: Object.fromEntries(cue.marks.map((mark) => [mark.name, mark.at])) } : {}) })),
-      steps: play.steps.map((step) => ({ name: step.name, at_s: step.at, ...(step.pause ? { pause: true } : {}) }))
+      steps: play.steps.map((step) => ({ name: step.name, at_s: step.at, ...(step.pause ? { pause: true } : {}) })),
+      items: playItems(play)
     }
     listCache.set(play, lists)
   }
@@ -464,8 +478,18 @@ export class ScenePlayer {
       pause: () => void this.control('pause'),
       resume: () => void this.control('resume'),
       nextStep: () => this.nextStep(),
-      replay: (list) => this.replayList(list)
+      replay: (list) => this.replayList(list),
+      learnerActedSince: (ms) => this.learnerActedSince(ms)
     })
+  }
+
+  /** The learner wrote, drew or changed something on this board after `ms` (epoch ms). */
+  private learnerActedSince(ms: number): boolean {
+    const board = this.board
+    if (!board) return true
+    const state = board.liveState()
+    if (state.learnerInkAt > ms || state.drawing) return true
+    return state.nodes.some((node) => state.editor(node.id) === 'learner' && (state.changedAt(node.id) ?? 0) > ms)
   }
 
   /**

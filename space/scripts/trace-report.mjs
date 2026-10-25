@@ -30,6 +30,8 @@ import { fileURLToPath } from 'node:url'
 
 // The write tools of traces before 2026-10-25 (stage 4 retired them; run_scene writes now).
 export const WRITE_TOOLS = new Set(['run_scene', 'create_frame', 'write_html', 'update_styles', 'set_text', 'move_nodes', 'duplicate_nodes', 'delete_nodes', 'draw_ink'])
+/** A call that changed the board: a write tool, except a run_scene preview (it draws nothing). */
+export const isWrite = (call) => WRITE_TOOLS.has(call.tool) && !(call.tool === 'run_scene' && call.args?.preview)
 export const LOOK_TOOLS = new Set(['get_screenshot', 'get_changes', 'get_canvas_info', 'get_tree'])
 export const BENCH_CLIENT = 'ls-bench'
 /** A gap up to this long counts as the model's time; a longer one as idle or long thinking. */
@@ -166,6 +168,13 @@ export function countWords(text) {
 export function wordsOfCall(call) {
   if (!call.ok) return 0
   const args = call.args ?? {}
+  if (call.tool === 'run_scene') {
+    // An estimate from the program's text: the literal text it puts on the board (html(), text(), write(), label(), edit()).
+    if (args.preview || typeof args.code !== 'string') return 0
+    let words = 0
+    for (const match of args.code.matchAll(/\b(?:html|text|write|label|edit)\(\s*(?:[\w.]+\s*,\s*)?(?:\{\s*text:\s*)?(['"`])((?:\\.|(?!\1)[\s\S])*)\1/g)) words += countWords(match[2].replace(/\$\{[^}]*\}/g, ' '))
+    return words
+  }
   if (call.tool === 'write_html') return countWords(args.html)
   if (call.tool === 'set_text') return (args.updates ?? []).reduce((sum, update) => sum + countWords(update?.text), 0)
   return 0
@@ -179,9 +188,26 @@ function parseResult(call) {
   }
 }
 
-/** New top-level frames/nodes made by a call: create_frame, or write_html into "root". */
-export function newTopLevel(call) {
+/**
+ * New frames made by a call: run_scene's material whose root is a frame
+ * (items of kind "frame", and "group" frames of named groups) that no
+ * earlier call of the session listed (`seen` holds the ids already counted);
+ * in traces from before stage 4, create_frame, or write_html into "root".
+ */
+export function newTopLevel(call, seen = new Set()) {
   if (!call.ok) return 0
+  if (call.tool === 'run_scene') {
+    if (call.args?.preview) return 0
+    const items = parseResult(call)?.items
+    if (!Array.isArray(items)) return 0
+    let count = 0
+    for (const item of items) {
+      if ((item?.kind !== 'frame' && item?.kind !== 'group') || seen.has(item.id)) continue
+      seen.add(item.id)
+      count++
+    }
+    return count
+  }
   if (call.tool === 'create_frame') return 1
   if (call.tool === 'write_html' && call.args?.target_id === 'root' && (call.args?.mode ?? 'insert_children') === 'insert_children') {
     const created = parseResult(call)?.created
@@ -245,6 +271,7 @@ export function analyzeSession(events, { file = null, learnerEdits = [] } = {}) 
   let imageBytes = 0
   let words = 0
   let frames = 0
+  const framesSeen = new Set()
   let firstWrite = null
   const screenshots = []
   for (const call of calls) {
@@ -262,8 +289,8 @@ export function analyzeSession(events, { file = null, learnerEdits = [] } = {}) 
       gaps.model_count++
     }
     words += wordsOfCall(call)
-    frames += newTopLevel(call)
-    if (firstWrite === null && WRITE_TOOLS.has(call.tool) && call.ok) firstWrite = call
+    frames += newTopLevel(call, framesSeen)
+    if (firstWrite === null && isWrite(call) && call.ok) firstWrite = call
     for (const image of call.images ?? []) imageBytes += image.bytes ?? 0
     if (call.tool === 'get_screenshot') {
       screenshots.push({

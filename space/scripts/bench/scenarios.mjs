@@ -1,9 +1,4 @@
 /**
- * NOTE (2026-10-25, live drawing stage 4, decision P13): the app no longer has
- * the write tools this file calls (write_html, draw_ink, find_space, …); scenes
- * (run_scene) are the one way to write. Port the set-up to run_scene programs
- * before the next bench run.
- *
  * The fixed bench scenarios. Keep them the same between runs, or results
  * stop being comparable. A conversation is one app instance, one learning
  * folder, one board and one agent conversation; its scenarios run in order,
@@ -14,6 +9,7 @@
  */
 
 import { readFileSync } from 'node:fs'
+import { htmlScene, seedScene } from './busy.mjs'
 import { eraseBox, loop, text, textWidth } from './handwriting.mjs'
 
 const P = 0.55
@@ -112,12 +108,11 @@ const SIZE = 44
 const has = (re) => (reply) => re.test(reply)
 const SAYS_RIGHT = /\b(correct|right|yes|exactly|well done)\b/i
 
-/** The first id of a write_html result and its bounds. */
-function created(result) {
-  const id = result.created?.[0]
-  const bounds = id && result.bounds?.[id]
-  if (!bounds) throw new Error(`write_html returned no bounds: ${JSON.stringify(result).slice(0, 300)}`)
-  return { id, bounds }
+/** Set-up material written with one run_scene (html at its top-left [x, y]): its id and bounds. */
+async function created(mcp, markup, x, y) {
+  const item = await seedScene(mcp, htmlScene(markup, x, y))
+  if (!item.bounds) throw new Error(`run_scene returned no bounds: ${JSON.stringify(item).slice(0, 300)}`)
+  return { id: item.id, bounds: item.bounds }
 }
 
 const P3_LINES = { x: -160, y: [-150, -70, 10] }
@@ -129,7 +124,7 @@ export const PERCEPTION = [
     prompt: 'Check this.',
     area: { x: -565, y: -60, width: 810, height: 120 },
     async seed(mcp) {
-      const task = created(await mcp('write_html', { target_id: 'root', html: '<p style="left:-120px; top:-30px; font-size:40px">Try: 3 + 5 = ?</p>' }))
+      const task = await created(mcp, '<p style="font-size:40px">Try: 3 + 5 = ?</p>', -120, -30)
       return { task }
     },
     earlier: () => JSON.parse(readFileSync(new URL('../strokes/two-plus-two.json', import.meta.url), 'utf8')),
@@ -150,15 +145,15 @@ export const PERCEPTION = [
     async seed(mcp) {
       // A right triangle (right angle bottom-left): a = left side, b = bottom, c = hypotenuse.
       const svg =
-        '<svg width="300" height="240" viewBox="0 0 300 240" style="left:-150px; top:-220px">' +
+        '<svg width="300" height="240" viewBox="0 0 300 240">' +
         '<polygon points="50,200 260,200 50,40" fill="none" stroke="white" stroke-width="3"/>' +
         '<polyline points="50,180 70,180 70,200" fill="none" stroke="white" stroke-width="2"/>' +
         '<text x="22" y="128" fill="white" font-size="28">a</text>' +
         '<text x="148" y="232" fill="white" font-size="28">b</text>' +
         '<text x="168" y="108" fill="white" font-size="28">c</text>' +
         '</svg>'
-      const triangle = created(await mcp('write_html', { target_id: 'root', html: svg }))
-      const formula = created(await mcp('write_html', { target_id: 'root', html: '<p style="left:-110px; top:50px; font-size:36px">a² + b² = c²</p>' }))
+      const triangle = await created(mcp, svg, -150, -220)
+      const formula = await created(mcp, '<p style="font-size:36px">a² + b² = c²</p>', -110, 50)
       return { triangle, formula }
     },
     work: ({ triangle }) => {
@@ -231,7 +226,8 @@ const V1_SKETCH = { width: 280, height: 210 }
  * the agent material); the learner then sketches beside the agent's drawing,
  * and turn 1 resumes the SAME thread with a question that does not mention
  * the board. The bench gives work() the empty spot it found beside the
- * agent's newest drawing (ctx.spot, from find_space near ctx.anchor).
+ * agent's newest drawing (ctx.spot: an empty rect from space() near ctx.anchor,
+ * asked with a run_scene preview, so nothing is drawn).
  */
 PERCEPTION.push({
   id: 'V1',

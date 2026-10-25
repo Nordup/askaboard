@@ -1,5 +1,5 @@
 import { parentPort, receiveMessageOnPort, workerData, type MessagePort } from 'node:worker_threads'
-import { getQuickJS, type QuickJSContext, type QuickJSRuntime } from 'quickjs-emscripten'
+import { getQuickJS, type QuickJSContext, type QuickJSHandle, type QuickJSRuntime } from 'quickjs-emscripten'
 
 /**
  * The stage's sandbox: one QuickJS (WebAssembly) context in a worker thread,
@@ -72,9 +72,17 @@ function errorText(dumped: unknown): { message: string; line: number | null } {
 
 let runtime: QuickJSRuntime | null = null
 let vm: QuickJSContext | null = null
+/**
+ * The prelude's host functions, kept from right after it ran: a program can
+ * replace the globals of these names (QuickJS lets Object.defineProperty
+ * replace even a locked global), so the host never looks them up again.
+ */
+let host: Record<'begin' | 'advance' | 'result' | 'bake', QuickJSHandle> | null = null
 
 async function newContext(): Promise<string | null> {
   const QuickJS = await getQuickJS()
+  if (host) for (const handle of Object.values(host)) handle.dispose()
+  host = null
   vm?.dispose()
   runtime?.dispose()
   runtime = QuickJS.newRuntime()
@@ -94,12 +102,16 @@ async function newContext(): Promise<string | null> {
     return errorText(dumped).message
   }
   prelude.value.dispose()
+  const take = (name: string): QuickJSHandle => ctx.getProp(ctx.global, name)
+  host = { begin: take('__begin'), advance: take('__advance'), result: take('__result'), bake: take('__bake') }
+  for (const [name, handle] of Object.entries(host)) if (ctx.typeof(handle) !== 'function') return `the host function ${name} is missing`
   return null
 }
 
-function evalHost(code: string, file: string): { ok: true; value: unknown } | { ok: false; dumped: unknown } {
+/** Call one of the prelude's host functions (kept handles); its value dumped, or the error dumped. */
+function callHost(fn: QuickJSHandle, ...args: QuickJSHandle[]): { ok: true; value: unknown } | { ok: false; dumped: unknown } {
   const ctx = vm as QuickJSContext
-  const result = ctx.evalCode(code, file)
+  const result = ctx.callFunction(fn, ctx.undefined, ...args)
   if (result.error) {
     const dumped = ctx.dump(result.error)
     result.error.dispose()
@@ -118,10 +130,10 @@ function runProgram(input: WorkerRun): WorkerReply {
     const { message, line } = errorText(dumped)
     return { id: input.id, ok: false, error: /out of memory/i.test(message) ? 'The program ran out of memory.' : message, line, ms: Date.now() - started }
   }
+  const fns = host as NonNullable<typeof host>
   const ctxHandle = ctx.newString(input.ctxText)
-  ctx.setProp(ctx.global, '__ctxText', ctxHandle)
+  const begin = callHost(fns.begin, ctxHandle)
   ctxHandle.dispose()
-  const begin = evalHost('__begin()', 'live-host.js')
   if (!begin.ok) return fail(begin.dumped)
 
   // Same line numbers as the agent's program: the wrapper adds no line before it.
@@ -141,7 +153,7 @@ function runProgram(input: WorkerRun): WorkerReply {
         jobs.error.dispose()
         return fail(dumped)
       }
-      const step = evalHost('__advance()', 'live-clock.js')
+      const step = callHost(fns.advance)
       if (!step.ok) return fail(step.dumped)
       if (!step.value) break
     }
@@ -158,12 +170,12 @@ function runProgram(input: WorkerRun): WorkerReply {
   }
   let json: string | null = null
   if (input.mode !== 'replay') {
-    const result = evalHost('__result()', 'live-result.js')
+    const result = callHost(fns.result)
     if (!result.ok) return fail(result.dumped)
     json = result.value as string
   }
   if (input.mode !== 'preview') {
-    const bake = evalHost('__bake()', 'live-result.js')
+    const bake = callHost(fns.bake)
     if (!bake.ok) return fail(bake.dumped)
   }
   return { id: input.id, ok: true, json, ms: Date.now() - started }
