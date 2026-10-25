@@ -1,4 +1,4 @@
-import { isContent, isFrame, isInk, isKnown, newItemId, type BoardNode, type ContentNode, type FrameNode, type InkNode, type InkPoint, type SvgNode, type TextNode } from '@shared/board-format'
+import { isContent, isFrame, isInk, isKnown, newItemId, type BoardNode, type ContentNode, type FrameNode, type InkNode, type InkPoint, type LiveNode, type SvgNode, type TextNode } from '@shared/board-format'
 import type { SceneBounds, SceneDescription, SceneGroupObject, SceneInkObject, SceneLiveObject, SceneObjectDesc, SceneSample, SceneShapeObject, SceneStyle, SceneTextObject } from '@shared/live-scene'
 import { MAX_COORD } from '@shared/limits'
 import { humanize, svgPathPolylines } from '../agent/ink'
@@ -15,30 +15,6 @@ import { apply, IDENTITY, invert, isIdentity, multiply, scaleOf, Timeline, type 
  * that: which nodes each object made, what transform is baked into them, and
  * the share of the object's drawing each ink stroke takes.
  */
-
-/**
- * A live-pixels item on the board (shader or canvas program).
- * TODO(live pixels): replace with LiveNode from @shared/board-format when the board side lands; the fields are the agreed contract.
- */
-export interface LiveNode {
-  id: string
-  kind: 'live'
-  mode: 'shader' | 'canvas'
-  code: string
-  params: Record<string, number>
-  x: number
-  y: number
-  w: number
-  h: number
-  /** Required by board-format validation (else the node is a hidden foreign node). */
-  style: Record<string, string>
-  z: number
-  author: 'agent' | 'learner'
-  seq: number
-  name?: string
-  parent?: string
-  scene?: string
-}
 
 /** One sample of a changing object, ready to show (see SceneSample). */
 export interface DynSample {
@@ -485,6 +461,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
       const anchor: Point = [live.bounds.x, live.bounds.y]
       const [x, y] = apply(end, anchor)
       const upright: Matrix = [scale, 0, 0, scale, x - scale * anchor[0], y - scale * anchor[1]]
+      const liveOpacity = isRemoved ? (live.style?.opacity ?? 1) : finalOpacity(object.id, live.style)
       const node: LiveNode = {
         id: newItemId('n'),
         kind: 'live',
@@ -495,15 +472,14 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
         y: r1(y),
         w: r1(live.width * scale),
         h: r1(live.height * scale),
-        style: {},
+        style: liveOpacity < 1 ? { opacity: String(r2(liveOpacity)) } : {},
         z: z++,
         author: 'agent',
         seq: 0,
         ...(object.name ? { name: object.name } : {}),
-        scene: sceneId
+        ...({ scene: sceneId } as object)
       }
-      // TODO(live pixels): validate the program with the board's validateLive {mode, code, params} → {error} and return shader compile errors from run_scene.
-      out.push(node as unknown as BoardNode)
+      out.push(node)
       if (!isRemoved) {
         contentIds.push(node.id)
         madeBy(object.id, node.id)
@@ -620,13 +596,16 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
       warn(`group "${desc.objects[object.parent ?? 0]?.name ?? ''}": board.node("${object.ref}") is an item from before the scene; it moves with the group while the scene plays but stays its own item`)
       return []
     }
-    if (object.kind === 'live') return []
     return (nodesOf.get(object.id) ?? []).map((id) => byId.get(id)).filter((node): node is BoardNode => !!node)
   }
   const boxOf = (node: BoardNode): Region | null => {
     if (isInk(node)) {
       const box = linesBounds([node.points.map(([x, y]) => [node.x + x, node.y + y] as Point)])
       return { x: box.x - node.width, y: box.y - node.width, width: box.width + node.width * 2, height: box.height + node.width * 2 }
+    }
+    if (node.kind === 'live') {
+      const live = node as LiveNode
+      return { x: live.x, y: live.y, width: live.w, height: live.h }
     }
     if (node.kind === 'frame' || node.kind === 'svg') {
       const content = node as ContentNode

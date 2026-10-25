@@ -8,6 +8,7 @@ import { ancestorIds, copySubtrees, isFlowed, normalizeInk, parentKey, removeNod
 import type { Point, Region } from '../board/types'
 import { liveStatus, liveSummary } from '../live-pixels/registry'
 import { runScene, previewScene, sceneControl, sceneContext } from '../live/run'
+import { warmSpeech } from '../live/player'
 import { isGroupId, type InkGroup, type InkGroupTracker } from './groups'
 import { humanize, inkPointBudget, shapeLines, SHAPES, svgPathPolylines, type ArrowSide, type Shape } from './ink'
 import {
@@ -1171,6 +1172,7 @@ export async function runEditTool(ctx: EditContext, tool: AgentToolName, args: R
     case 'focus':
       return focus(ctx, scene(ctx), args)
     case 'sceneContext':
+      warmSpeech()
       return sceneContext(ctx.board, scene(ctx))
     case 'runScene':
       return runScene({ board: ctx.board, scene: () => scene(ctx), tracker: ctx.tracker }, args)

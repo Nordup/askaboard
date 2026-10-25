@@ -320,6 +320,23 @@ function speakLine(text: string, voiceName: string | null, onBoundary: (chars: n
   if (voice) utterance.voice = voice
   utterance.lang = voice?.lang ?? 'en-US'
   utterance.onboundary = (event) => onBoundary(event.charIndex + (event.charLength ?? 0))
+  // Checked 2026-10-25 (Electron, macOS): getVoices() lists the system voices, speaking is true during a line, and onstart/onboundary/onend fire.
+  const asked = performance.now()
+  utterance.onstart = () => console.info(`speech: start after ${Math.round(performance.now() - asked)} ms: ${text.slice(0, 40)}`)
+  utterance.onend = () => console.info(`speech: end after ${Math.round(performance.now() - asked)} ms`)
+  utterance.onerror = (event) => console.warn(`speech: ${event.error}: ${text.slice(0, 40)}`)
+  speechSynthesis.speak(utterance)
+}
+
+/**
+ * Load the system voice before a scene's first line (a silent utterance): a
+ * cold voice starts its first line 0.3 to 0.8 s late. Called when run_scene
+ * starts (sceneContext), seconds before the scene plays.
+ */
+export function warmSpeech(): void {
+  if (typeof speechSynthesis === 'undefined' || speechSynthesis.speaking) return
+  const utterance = new SpeechSynthesisUtterance(' ')
+  utterance.volume = 0
   speechSynthesis.speak(utterance)
 }
 
@@ -444,10 +461,11 @@ export class ScenePlayer {
     }
   }
 
-  private pauseNow(scene: Playing, t: number, byLearner: boolean): void {
+  /** keepSpeech: a pause step lets the line being spoken end (it ends at the step on the timeline, give or take the voice's lag). */
+  private pauseNow(scene: Playing, t: number, byLearner: boolean, keepSpeech = false): void {
     scene.pausedAt = Math.max(0, Math.min(scene.play.duration, t))
     scene.pauseAt = null
-    stopSpeech()
+    if (!keepSpeech) stopSpeech()
     scene.spoken = null
     if (byLearner) {
       const step = scene.play.steps.find((entry) => Math.abs(entry.at - scene.pausedAt!) < 1e-6)?.name ?? this.stepNameAt(scene.play, scene.pausedAt)
@@ -481,7 +499,7 @@ export class ScenePlayer {
         for (let i = 0; i < steps.length; i++) {
           if (!steps[i].pause || scene.passed.has(i) || t < steps[i].at) continue
           scene.passed.add(i)
-          this.pauseNow(scene, steps[i].at, false)
+          this.pauseNow(scene, steps[i].at, false, true)
           t = steps[i].at
           break
         }

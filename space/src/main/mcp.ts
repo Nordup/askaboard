@@ -22,7 +22,7 @@ import {
 } from '@shared/limits'
 import { briefText, guideText, guideTopics, serverInstructions } from './guide'
 import { runSceneProgram, SceneProgramError } from './live-scene'
-import type { SceneContext, SceneResult, SceneStatus } from '@shared/live-scene'
+import type { SceneContext, SceneDescription, SceneLiveObject, SceneResult, SceneStatus } from '@shared/live-scene'
 import { speechOn, speechVoice } from './speech'
 import { renderStoryboard, type StoryboardInput } from './storyboard'
 import { BoardNews } from './news'
@@ -65,7 +65,8 @@ const NEWS_TIMEOUT_MS = 1500
 /** Writes can download images first. */
 const WRITE_TIMEOUT_MS = 45_000
 /** A large scene can take a while to turn into board items; this only frees a renderer that never answers. */
-const SCENE_TIMEOUT_MS = 10 * 60_000
+/** Scenes have no cap on their size: the board takes as long as it needs to compile one. */
+const SCENE_TIMEOUT_MS = Infinity
 const MAX_BODY_BYTES = 64 * 1024 * 1024
 /** A session with no open stream and no request for this long is closed. */
 const IDLE_SESSION_MS = 10 * 60_000
@@ -123,7 +124,7 @@ function configuredPort(): number {
 
 class RendererBridge {
   private nextId = 1
-  private pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void; timer: NodeJS.Timeout }>()
+  private pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void; timer: NodeJS.Timeout | undefined }>()
 
   constructor(private readonly target: () => WebContents | null) {
     ipcMain.on(IPC.agentReply, (_event, reply: AgentReply) => {
@@ -143,10 +144,13 @@ class RendererBridge {
     }
     const requestId = this.nextId++
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(requestId)
-        reject(new Error(`Learning Space did not answer "${method}" within ${timeoutMs / 1000} s. The window may be loading or busy.`))
-      }, timeoutMs)
+      // An infinite timeout waits as long as the work takes (scenes: no cap on their size).
+      const timer = Number.isFinite(timeoutMs)
+        ? setTimeout(() => {
+            this.pending.delete(requestId)
+            reject(new Error(`Learning Space did not answer "${method}" within ${timeoutMs / 1000} s. The window may be loading or busy.`))
+          }, timeoutMs)
+        : undefined
       this.pending.set(requestId, { resolve: resolve as (value: unknown) => void, reject, timer })
       contents.send(IPC.agentRequest, { requestId, method, params })
     })
@@ -596,6 +600,28 @@ export class AgentServer {
   }
 
   /** Run a board tool in the renderer, as this session. */
+  /**
+   * Compile every shader()/canvas() program of a scene with the board's own
+   * compiler before anything plays. A failing one is a program error at the
+   * line of its shader()/canvas() call; the compile log keeps the line
+   * numbers of the agent's shader or canvas code.
+   */
+  private async checkLivePrograms(scene: SceneDescription): Promise<SceneProgramError | null> {
+    const lives = scene.objects.filter((object): object is SceneLiveObject => object.kind === 'live')
+    const failed: Array<{ live: SceneLiveObject; error: string }> = []
+    await Promise.all(
+      lives.map(async (live) => {
+        const { error } = await this.bridge.request('validateLive', { mode: live.mode, code: live.code, params: live.params })
+        if (error) failed.push({ live, error })
+      })
+    )
+    if (!failed.length) return null
+    failed.sort((a, b) => (a.live.line ?? 0) - (b.live.line ?? 0))
+    const what = (entry: { live: SceneLiveObject; error: string }): string => `the ${entry.live.api}() code does not compile: ${entry.error}`
+    if (failed.length === 1) return new SceneProgramError(what(failed[0]), failed[0].live.line ?? null)
+    return new SceneProgramError(failed.map((entry) => (entry.live.line ? `Line ${entry.live.line}: ${what(entry)}` : what(entry))).join('\n'), null)
+  }
+
   private board(session: Session, tool: AgentToolName, args: Record<string, unknown>, timeoutMs?: number): Promise<unknown> {
     const agent: AgentRef = { sessionId: session.id, client: clientLabel(session.server.server.getClientVersion()?.name) }
     return this.bridge.request('agentTool', { tool, args, agent }, timeoutMs)
@@ -978,7 +1004,7 @@ export class AgentServer {
       {
         title: 'Run a live scene',
         description:
-          "Runs a JavaScript program that draws on the open board over time, in front of the learner: shapes and ink drawn stroke by stroke, handwriting, typeset maths, fills, fades, moves, erasing, labels, live pixels (shaders and canvas programs), camera moves, a pointer, spoken lines, and changes to items already on the board (the learner's ink groups and your nodes). The program runs once, in a sandbox with no access to the app, files or network, and builds a timeline; it may compute for as long as it needs (a program still running after 10 minutes is stopped). Values (value(), tween()) and functions as arguments make objects that change as time passes. The complete reference is get_guide topic \"scene\". Coordinates are board points (origin at the centre, +x right, +y down).\n\nPlayback: a scene sent while another plays starts when that one ends (and after the scenes already waiting); with when \"now\" it starts at once, over the others. The tool returns when the scene is queued or starts, not when it ends. A step with {pause: true} stops playback until scene_control resumes it. When the learner starts drawing during playback, playback pauses at the next step (or at once when no step is left) and the board news says so. Spoken lines (say) are spoken with the system voice when speech is on; their timing on the timeline is the same either way.\n\nWhen it has played, everything stays on the board as ordinary items the learner can edit: ink (one ink group per ink object), svg nodes (vector shapes), text nodes (tex, text), live items (shader, canvas), and one frame item per named group, which the learner moves as a whole. Items the scene erased or faded out are gone. The whole scene is one undo step for the learner, and the board file holds the final state from the moment the tool returns. A name given to an object or group finds its item in later scenes with board.node(name).\n\nReturns JSON: scene (its id), duration_s, starts_in_s (seconds until it starts; pauses not counted), steps ([{name, at_s, pause?}]), items ([{id, kind, name, bounds, step}]: the board items it made), cues ([{text, at_s, dur_s}] from say), log (console.log output) and warnings (unknown options, text that overlaps shapes or other text, objects outside the learner's view). A program error returns an error with its message and line number, and nothing is drawn.\n\nWith preview: true, nothing is drawn or committed and the learner sees nothing: the result is a storyboard image (one frame at the end of each step, and the end, each labelled with its step and times; the grey outline is the learner's view now) with the same JSON fields except items and starts_in_s.",
+          "Runs a JavaScript program that draws on the open board over time, in front of the learner: shapes and ink drawn stroke by stroke, handwriting, typeset maths, fills, fades, moves, erasing, labels, live pixels (shaders and canvas programs), camera moves, a pointer, spoken lines, and changes to items already on the board (the learner's ink groups and your nodes). The program runs once, in a sandbox with no access to the app, files or network, and builds a timeline; it may compute for as long as it needs. Values (value(), tween()) and functions as arguments make objects that change as time passes. The complete reference is get_guide topic \"scene\". Coordinates are board points (origin at the centre, +x right, +y down).\n\nPlayback: a scene sent while another plays starts when that one ends (and after the scenes already waiting); with when \"now\" it starts at once, over the others. The tool returns when the scene is queued or starts, not when it ends. A step with {pause: true} stops playback until scene_control resumes it. When the learner starts drawing during playback, playback pauses at the next step (or at once when no step is left) and the board news says so. Spoken lines (say) are spoken with the system voice when speech is on; their timing on the timeline is the same either way.\n\nWhen it has played, everything stays on the board as ordinary items the learner can edit: ink (one ink group per ink object), svg nodes (vector shapes), text nodes (tex, text), live items (shader, canvas), and one frame item per named group, which the learner moves as a whole. Items the scene erased or faded out are gone. The whole scene is one undo step for the learner, and the board file holds the final state from the moment the tool returns. A name given to an object or group finds its item in later scenes with board.node(name).\n\nReturns JSON: scene (its id), duration_s, starts_in_s (seconds until it starts; pauses not counted), steps ([{name, at_s, pause?}]), items ([{id, kind, name, bounds, step}]: the board items it made), cues ([{text, at_s, dur_s}] from say), log (console.log output) and warnings (unknown options, text that overlaps shapes or other text, objects outside the learner's view). A program error returns an error with its message and line number, and nothing is drawn.\n\nWith preview: true, nothing is drawn or committed and the learner sees nothing: the result is a storyboard image (one frame at the end of each step, and the end, each labelled with its step and times; the grey outline is the learner's view now) with the same JSON fields except items and starts_in_s.",
         inputSchema: {
           code: z
             .string()
@@ -998,6 +1024,8 @@ export class AgentServer {
           if (error instanceof SceneProgramError) return failure(error)
           throw error
         }
+        const liveError = await this.checkLivePrograms(scene)
+        if (liveError) return failure(liveError)
         if (preview) {
           const plan = (await this.board(session, 'previewScene', { scene }, SCENE_TIMEOUT_MS)) as StoryboardInput & {
             scene: string

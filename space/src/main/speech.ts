@@ -84,6 +84,14 @@ async function measureOne(text: string, voice: string, dir: string, index: numbe
   }
 }
 
+/**
+ * The window's voice (Web Speech, player.ts) takes longer per line than the WAV
+ * `say` renders: 0.11 to 0.12 s more per line (start of the utterance and its end
+ * event; measured 2026-10-25 in Electron on macOS). Without it, queued lines
+ * fall behind the timeline by that much per line.
+ */
+const SPEAK_TAIL_S = 0.15
+
 /** Real speech durations for these lines (all at once); lines that could not be measured are left out. */
 export async function measureSpeech(texts: string[]): Promise<Record<string, number>> {
   const out: Record<string, number> = {}
@@ -96,7 +104,7 @@ export async function measureSpeech(texts: string[]): Promise<Record<string, num
       const results = await Promise.all(missing.map((text, i) => measureOne(text, voice, dir, i)))
       missing.forEach((text, i) => {
         const seconds = results[i]
-        if (seconds !== null) cache.set(`${voice}\n${text}`, seconds)
+        if (seconds !== null) cache.set(`${voice}\n${text}`, seconds + SPEAK_TAIL_S)
       })
     } finally {
       void rm(dir, { recursive: true, force: true })

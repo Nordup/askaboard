@@ -11,9 +11,6 @@ import { measureSpeech, speechOn } from './speech'
  * rejects with the program's error and its line number.
  */
 
-/** The worker stops a stuck program itself; this frees a worker that does not even answer then. */
-const HARD_STOP_MS = 11 * 60_000
-
 export class SceneProgramError extends Error {
   constructor(
     message: string,
@@ -53,11 +50,9 @@ function runOnce(code: string, context: SceneContext, run: SceneRunOptions): Pro
     const finish = (action: () => void): void => {
       if (settled) return
       settled = true
-      clearTimeout(timer)
       void worker.terminate()
       action()
     }
-    const timer = setTimeout(() => finish(() => reject(new SceneProgramError('The program ran for 11 minutes without ending and was stopped.', null))), HARD_STOP_MS)
     worker.on('message', (reply: WorkerReply) =>
       finish(() => {
         if (!reply.ok) {

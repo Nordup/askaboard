@@ -113,11 +113,3 @@ img.node-image {
   pointer-events: none;
 }
 
-/* A live item (shader, canvas) until the board can draw it. TODO(live pixels): remove with the real renderer. */
-.node-live-placeholder {
-  border: 1px dashed var(--ls-border);
-  border-radius: 6px;
-  color: var(--ls-muted);
-  font-size: 12px;
-  padding: 6px 8px;
-}

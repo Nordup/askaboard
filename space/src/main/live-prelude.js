@@ -1103,8 +1103,15 @@
 
   // ---------- Live pixels ----------
 
+  /** The line of the agent's program that called the API now (the innermost scene.js frame), or undefined. */
+  function callLine() {
+    const match = /scene\.js:(\d+)/.exec(new Error().stack || '')
+    return match ? Number(match[1]) : undefined
+  }
+
   function liveObject(api, mode, code, opts) {
     if (typeof code !== 'string' || !code.trim()) fail(`${api}(code, options) needs its program as a string`)
+    const line = callLine()
     opts = options(opts, `${api} options`)
     const [w, h] = opts.size === undefined ? [320, 200] : pair(opts.size, `${api} size`)
     if (w <= 0 || h <= 0) fail(`${api} size must be positive`)
@@ -1130,6 +1137,7 @@
       width: w,
       height: h,
       params,
+      line,
       style: { color: 'text', width: 0, opacity: opts.opacity === undefined ? 1 : num(opts.opacity, `${api} opacity`) },
       bounds: { x, y, width: w, height: h }
     })
@@ -1151,6 +1159,8 @@
   }
   /** The side a label chose when it was made: it keeps it while things move. */
   const labelChoice = new Map()
+  /** A label anchored at a point on an object: that point as a share of the object's bounds, fixed when the label is made. */
+  const labelAnchor = new Map()
 
   /** World polylines of an object at t (outlines and ink), for collisions and points along it. */
   function worldLines(entry, t) {
@@ -1243,9 +1253,18 @@
       exclude.add(entry.id)
       if (entry.kind === 'node') exclude.add(entry.ref)
       if (at !== undefined) {
-        if (typeof at === 'number') anchor = pointAlong(worldLines(entry, T), at)
-        else anchor = pair(at, 'label at')
         const b = worldBounds(entry, T)
+        if (typeof at === 'number') anchor = pointAlong(worldLines(entry, T), at)
+        else {
+          // A point on the object stays on the same spot of it as the object moves or scales.
+          const p = pair(at, 'label at')
+          let rel = labelKey !== null ? labelAnchor.get(labelKey) : undefined
+          if (!rel) {
+            rel = [b.width > 1e-9 ? (p[0] - b.x) / b.width : 0, b.height > 1e-9 ? (p[1] - b.y) / b.height : 0]
+            if (labelKey !== null) labelAnchor.set(labelKey, rel)
+          }
+          anchor = [b.x + rel[0] * b.width, b.y + rel[1] * b.height]
+        }
         const c = [b.x + b.width / 2, b.y + b.height / 2]
         const out = [anchor[0] - c[0], anchor[1] - c[1]]
         const len = Math.hypot(out[0], out[1])
@@ -1889,7 +1908,7 @@
       if (e.kind === 'ink') Object.assign(o, { style: e.style, lines: e.lines, d: e.d, pressure: e.pressure })
       if (e.kind === 'shape') Object.assign(o, { style: e.style, d: e.d })
       if (e.kind === 'text') Object.assign(o, { style: e.style, text: e.text, math: e.math, at: e.at, center: e.center })
-      if (e.kind === 'live') Object.assign(o, { style: e.style, mode: e.mode, code: e.code, width: e.width, height: e.height, params: e.params })
+      if (e.kind === 'live') Object.assign(o, { style: e.style, mode: e.mode, code: e.code, width: e.width, height: e.height, params: e.params, line: e.line })
       if (e.kind === 'group') o.members = e.members
       if (e.kind === 'node') o.ref = e.ref
       return o

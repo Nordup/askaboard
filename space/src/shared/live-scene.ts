@@ -131,6 +131,9 @@ export interface SceneLiveObject extends SceneObjectBase {
   width: number
   height: number
   params: Record<string, number>
+  style: SceneStyle
+  /** The program line of the shader()/canvas() call, for compile errors. */
+  line?: number
 }
 
 export type SceneObjectDesc = SceneInkObject | SceneShapeObject | SceneTextObject | SceneGroupObject | SceneNodeObject | SceneLiveObject

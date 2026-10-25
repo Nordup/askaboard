@@ -290,26 +290,6 @@ function ChildView({
   return <NodeView node={node} subtree={subtree} placement={placement} editing={editingWithin(node.id, subtree, editingId)} ctx={ctx} />
 }
 
-/** A live item (shader or canvas program) before the board can draw it: a box with its mode and parameters. */
-function LivePlaceholder({ node, ctx }: { node: BoardNode; ctx: RefObject<ContentContext> }) {
-  const live = node as unknown as { id: string; mode?: string; params?: Record<string, number>; x: number; y: number; w: number; h: number }
-  const params = Object.entries(live.params ?? {})
-    .map(([key, value]) => `${key} ${Math.round(value * 100) / 100}`)
-    .join(' · ')
-  return (
-    <div
-      ref={(element) => ctx.current.register(live.id, element)}
-      data-node-id={live.id}
-      data-kind="live"
-      className="node node-live-placeholder"
-      style={{ position: 'absolute', left: live.x, top: live.y, width: live.w, height: live.h }}
-    >
-      {live.mode ?? 'live'}
-      {params ? ` · ${params}` : ''}
-    </div>
-  )
-}
-
 interface ContentLayerProps {
   /** The live index. A new object means the nodes changed. */
   index: SceneIndex
@@ -321,15 +301,10 @@ interface ContentLayerProps {
 /** The transformed root. Its transform is set by the Board, never by React. */
 export function ContentLayer({ index, editingId, ctx, rootRef }: ContentLayerProps) {
   const top = (index.children.get(ROOT) ?? []).filter(isContent)
-  // TODO(live pixels): the board side renders live items; until it lands, a placeholder box shows where one is.
-  const live = [...index.byId.values()].filter((node) => node.kind === 'live' && !isContent(node))
   return (
     <div className="board__content" ref={rootRef} aria-hidden={editingId ? undefined : 'true'}>
       {top.map((node) => (
         <ChildView key={node.id} node={node} placement="absolute" ctx={ctx} editingId={editingId} />
-      ))}
-      {live.map((node) => (
-        <LivePlaceholder key={node.id} node={node} ctx={ctx} />
       ))}
     </div>
   )
