@@ -5,7 +5,7 @@ shared canvas and a local learning folder. The app has no AI inside: external
 agents (Claude Code, Codex, Claude Desktop) connect to it over MCP and work on
 the board with the learner.
 
-**Status (2026-10-25):** the main product of this repository (since 2026-10-24). Steps 0–5, fix 1, board news (decision I4), `get_brief` and `get_guide` (decision T11) and brief v3 are done. Next: the animated build-up ([`plan.md`](../docs/learning-space/plan.md)).
+**Status (2026-10-25):** the main product of this repository (since 2026-10-24). Steps 0–5, fix 1, board news (decision I4), `get_brief` and `get_guide` (decision T11), live drawing stages 1–3 (scenes, program items, the script panel) and brief v4 are done. Next: the founder's own testing, then a feature freeze and polish ([`plan.md`](../docs/learning-space/plan.md), [`live-drawing-plan.md`](../docs/learning-space/live-drawing-plan.md)).
 
 - [`../docs/learning-space/README.md`](../docs/learning-space/README.md): start here.
 - [`architecture.md`](../docs/learning-space/architecture.md): processes, data flow and where the code lives.
@@ -43,6 +43,19 @@ Do not run test suites. Check a change with `npm run build`. The rules are in
   `get_guide` returns, or replace the reference, in `.learning-space/guide.md`.
 - **Connect popover and plugin.** The agent pill in the top bar installs the
   plugin for each agent.
+- **Live scenes.** An agent sends a JavaScript program (`run_scene`) that
+  draws ink, handwriting, shapes, typeset text and program items and says how
+  they unfold in time; the board plays it, and the result stays as ordinary
+  items. Programs on a board share one sandbox (the stage), queue back to
+  back, can pause at steps, and pause when the learner starts drawing. A
+  scene's text lines (`say`) appear at a reading pace in a floating script
+  panel, where the learner can read them again and replay a step; the scene
+  pill in the top bar shows the step and opens the panel. The app does not
+  speak.
+- **Program items.** A scene can place a whole program of its own on the
+  board (Canvas 2D, WebGL 2, WebGPU, three.js bundled, any library from the
+  internet) that keeps running, follows the scene's clock and values, and
+  writes its own interaction. It runs in its own sandboxed origin.
 
 ## Connect agents
 
@@ -86,7 +99,7 @@ every tool twice. The popover shows this problem and offers **Fix**.
 | `get_changes` | `since` | Changed and removed nodes since the agent's cursor; advances the cursor |
 | `open_board` | `path` | Opens a board in the app |
 | `get_brief` | none | The brief, for agents without the folder's `AGENTS.md` |
-| `get_guide` | `topic` | One topic of the board reference (model, html, math, svg, images, tokens, placement, ink, view, and `folder` when the folder has `.learning-space/guide.md`); without a topic, all of it |
+| `get_guide` | `topic` | One topic of the board reference (scene, scene-code, scene-interact, model, html, math, svg, images, tokens, placement, ink, view, and `folder` when the folder has `.learning-space/guide.md`); without a topic, all of it |
 | `get_tree` | `node_id`, `depth` | Indented outline of nodes with ids and bounds |
 | `get_node_info` | `node_id` | One node: bounds, parent, children, style, text, author |
 | `get_html` | `node_id`, `include_ids` | A subtree as the `write_html` subset |
@@ -101,6 +114,8 @@ every tool twice. The popover shows this problem and offers **Fix**.
 | `find_space` | `width`, `height`, `near`, `inside_view` | An empty rect for new material |
 | `focus` | `node_id` \| `region`, `padding`, `zoom` | Moves the learner's view to a target |
 | `finish_working` | `node_ids` | Clears the agent's "working" outline |
+| `run_scene` | `code`, `name`, `when`, `wait`, `preview` | Runs a scene program on the board's stage and plays it (queued by default); returns steps, items, lines and timing; `preview` returns a storyboard without drawing |
+| `scene_control` | `action` (status, pause, resume, stop, skip, cancel, replace, replay, cut, reset, wait), `scene`, `step`, `code` | Controls playback and the stage |
 
 ## Learning folder
 
@@ -123,6 +138,8 @@ These environment variables work with `npm run dev`:
 | `SPACE_REMOTE_DEBUG=port` | Dev builds only: Chromium debug port for `scripts/drive.mjs`. |
 | `SPACE_CONNECT_DRY_RUN=1` | **Install** for Claude Desktop logs the `.mcpb` path and does not open it. |
 | `SPACE_TRACE_DIR=/abs/dir` | Write session traces here instead of `~/.learning-space/traces/`. |
+
+The live drawing lab (`scripts/lab/`, its own README) starts its own app instance, plays scene programs and records them (MP4 and filmstrip), sends beats, runs model councils, and builds a gallery at `space/.lab/index.html`.
 
 To check the Connect buttons without your real agent config, set `HOME`,
 `CLAUDE_CONFIG_DIR` and `CODEX_HOME` to scratch folders.

@@ -3,7 +3,7 @@ import { getQuickJS, type QuickJSContext, type QuickJSRuntime } from 'quickjs-em
 
 /**
  * The stage's sandbox: one QuickJS (WebAssembly) context in a worker thread,
- * kept alive across run_scene calls (main/stage.ts), so objects, values and
+ * kept alive across run_scene calls (main/live-scene.ts), so objects, values and
  * `stage` from one program are there for the next. A program sees only the
  * scene API of live-prelude.js: no app, no files, no network, no DOM. It may
  * compute as long as it needs: there is no time limit (founder's rule: no

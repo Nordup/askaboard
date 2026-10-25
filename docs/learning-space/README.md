@@ -26,12 +26,13 @@ in [`../../space/`](../../space/); work happens on `main`.
 | Board news: the agent app gets one line about what the learner drew since its last look, delivered once (decision I4) | Done and measured: in V1 the agent looked at the sketch in 4 of 4 runs (0 of 2 before) |
 | `get_brief` and `get_guide`, one job each (decision T11) | Done and measured |
 | Brief v3: the section "Thinking with a pen" (decision I5) | Done and measured: GPT still builds a drawing in 2–3 SVG pieces, with no ink |
-| Live drawing: one drawing medium in code ([`live-drawing-plan.md`](live-drawing-plan.md), decision P11) | Stages 1–2 done and in `main` (run_scene, scene_control, live pixels, speech and captions; [`live-drawing-log.md`](live-drawing-log.md)). Stage 3 in progress on the branch `live-drawing`: beats and speech as the clock, three fixes, full-power code items (decision P12) |
-| The animated build-up: the app draws agent material in front of the learner (decision P9) | After live drawing, on its engine ([`plan.md`](plan.md) item 2) |
+| Brief v4: scenes, living code items, the words beside the drawing (decision I6) | Done (2026-10-25); not yet measured with the brief alone |
+| Live drawing: one drawing medium in code ([`live-drawing-plan.md`](live-drawing-plan.md), decisions P11, P12) | Stages 1–3 done (2026-10-25): `run_scene` and `scene_control`, values, labels, named groups, preview, camera, pointer, the stage and beats, live pixels and program items (WebGL, three.js, any library), text lines at a reading pace in a floating script panel (the app does not speak, decision T13). Results: [`live-drawing-log.md`](live-drawing-log.md). Next: the founder's testing, a feature freeze, polish |
+| The animated build-up: older material (`draw_ink`, SVG) also builds up in front of the learner (decision P9) | Part of live drawing stage 4 |
 | Perception (the old fix 2) | Mostly answered by board news; the rest deferred |
 | Plain chat apps (ChatGPT web, Claude chat) with folder file tools | Later |
 | App packaging, signing, auto-update | Later |
-| Interactive embeds (live HTML simulations) | Much later |
+| Interactive embeds | Answered by program items (decision P12) |
 | Deeper editing (shapes inside SVG, style inspector) | Much later |
 
 The web client (`web/`), the tutor backend (`server/`) and the iPad client
@@ -50,10 +51,12 @@ work that [`plan.md`](plan.md) and [`baseline.md`](baseline.md) describe.
    - [`live-drawing-idea.md`](live-drawing-idea.md) — the founder's third
      message (2026-10-24): the choice of the first fixes, and the idea that
      agents draw with JavaScript strokes, played in sequences by a voice
-     model.
+     model (the idea that became live drawing; the app's own voice was later
+     removed, decision T13).
    - [`live-drawing-plan.md`](live-drawing-plan.md) — the expedition plan
      (2026-10-25): one drawing medium in code, four stages, the lab and the
-     model councils.
+     model councils. [`live-drawing-log.md`](live-drawing-log.md) has what
+     each stage built and measured, and the founder's reviews.
    - [`baseline.md`](baseline.md) — how we measure agent behaviour on the
      board (trace, bench, scenarios) and the results.
    - [`sessions-2026-10-24.md`](sessions-2026-10-24.md) — the founder's
@@ -114,4 +117,12 @@ the live-frame idea was rejected).
 | Board news | One factual line that tells an agent app what the learner drew or erased on a board since its last look. Each change is delivered once (decision I4). |
 | Change cursor | The point up to which an agent app knows the board's changes. Board news reports only the changes after it. |
 | Last look | The agent app's last `get_screenshot` or `get_changes` on a board. It moves the change cursor. |
-| Animated build-up | The planned app feature: the app draws agent material (SVG lines, ink strokes) in front of the learner, in the order it was written (decision P9). |
+| Animated build-up | The planned stage 4 feature: older agent material (`draw_ink`, SVG from `write_html`) also builds up in front of the learner, through the scene engine (decision P9). |
+| Scene | A JavaScript program an agent sends with `run_scene`: it makes board items and a timeline of how they appear and change; the board plays it, and the items stay. |
+| Stage | The one sandbox per board in which every scene program runs; the global `stage` keeps values and objects between programs. |
+| Beat | A short scene (one sentence and its drawing) sent while another plays; scenes queue and follow each other without a gap. |
+| Text line (`say`) | A sentence in a scene, shown to the learner at a reading pace in the script panel; nothing is spoken. |
+| Script panel | The floating, draggable panel over the board that shows a scene's steps and text lines and lets the learner replay a step. |
+| Program item | A board item (`program()` in a scene) that runs a whole program of its own: Canvas 2D, WebGL, WebGPU, three.js, any library; it follows the scene's clock and writes its own interaction (decision P12). |
+| Lab | `space/scripts/lab/`: an own app instance, scene recordings (MP4, filmstrip), beats, model councils and a gallery. |
+| Council | A lab run in which a model works on a task with the scene tools and is then interviewed; its answers are customer proposals, not specs (decision W8). |

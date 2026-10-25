@@ -5,7 +5,7 @@ import { LIVE_SCHEME, rewriteBareImports } from '@shared/live-libs'
 import { resourcePath } from './resources'
 
 /**
- * live-item://host/ — the origin of program() items (live-pixels/program.ts).
+ * live-item://host/ — the origin of program() items (renderer/src/live-pixels/program.ts).
  * Each item is a sandboxed iframe of /frame.html (an opaque origin of its own,
  * apart from the app's page, storage and files) whose worker runs the
  * agent's program. The frame has no Content-Security-Policy: a program may

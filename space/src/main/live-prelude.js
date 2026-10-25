@@ -1,6 +1,6 @@
 /*
  * The live-scene API inside the sandbox (QuickJS). This file runs once per
- * stage (main/stage.ts): one QuickJS context that every scene program of a
+ * stage (main/live-scene.ts): one QuickJS context that every scene program of a
  * board runs in, so objects, values and `stage` live on between programs.
  * The host sets globalThis.__fontText before this runs. For each program it
  * sets globalThis.__ctxText (JSON: {nodes, names, view, viewport, seed,

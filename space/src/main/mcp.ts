@@ -873,7 +873,7 @@ export class AgentServer {
       {
         title: 'The Learning Space brief',
         description:
-          "Returns the Learning Space brief as markdown (about 16,000 characters): what the space is for, why a person comes here and how to read what they want, how to treat their work on the board, what the board and each material (ink, drawings, text, images) are good for, how one board grows over a conversation, talking by text and by voice, time, research, and the learning folder as memory. It is the same text as the managed brief block in a learning folder's AGENTS.md, so an agent that has that file in its context already has the brief. It fits the start of work in a session without that file, such as Claude Desktop or an agent started outside the learning folder. It holds no technical details of the board: the HTML subset, styles, placement and ink are in get_guide. No parameters.",
+          "Returns the Learning Space brief as markdown (about 18,000 characters): what the space is for, why a person comes here and how to read what they want, how to treat their work on the board, what the board and each material (ink, drawings, text, images) are good for, how one board grows over a conversation, talking by text and by voice, time, research, and the learning folder as memory. It is the same text as the managed brief block in a learning folder's AGENTS.md, so an agent that has that file in its context already has the brief. It fits the start of work in a session without that file, such as Claude Desktop or an agent started outside the learning folder. It holds no technical details of the board: the HTML subset, styles, placement and ink are in get_guide. No parameters.",
         inputSchema: {},
         annotations: { readOnlyHint: true }
       },
@@ -884,7 +884,7 @@ export class AgentServer {
       'get_guide',
       {
         title: 'The board reference',
-        description: `Returns one topic of the board reference as markdown: the technical details of the board and of each kind of write. It fits before a write whose details are not in your context yet, for example topic "html" before the first write_html, or topic "ink" before the first draw_ink. Each topic is short (about 300 to 1,800 characters). Topics:\n${guideTopics(this.hooks.folderRoot())}\nWithout topic, it returns all topics in one text (about 8,000 characters). An unknown topic returns an error that lists the topic names. It does not hold the brief (what the space is for and how you work with the person): that is get_brief.`,
+        description: `Returns one topic of the board reference as markdown: the technical details of the board and of each kind of write. It fits before a write whose details are not in your context yet, for example topic "html" before the first write_html, or topic "ink" before the first draw_ink. Each topic is short (about 300 to 1,800 characters). Topics:\n${guideTopics(this.hooks.folderRoot())}\nWithout topic, it returns all topics in one text (about 26,000 characters). An unknown topic returns an error that lists the topic names. It does not hold the brief (what the space is for and how you work with the person): that is get_brief.`,
         inputSchema: {
           topic: z.string().optional().describe('A topic name from the list in the description, such as "html" or "placement". Without it, all topics.')
         },

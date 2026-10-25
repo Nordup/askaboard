@@ -77,7 +77,7 @@ limits scripts and images.
   session keeps its own cursor per board.
 - **Rendering:** the content layer is real DOM under one CSS camera transform
   (`src/renderer/src/board/content.tsx`); ink is drawn on a canvas above it
-  with the same camera (`paint.ts`). One layout cache (`scene.ts`) gives
+  with the same camera (`paint.ts`). One layout cache (`board/scene.ts`, the node-tree cache; not related to live scenes) gives
   every node's world bounds to hit testing, selection, placement and agents.
 - **Editing:** `src/renderer/src/board/Board.tsx` (tools, camera, selection,
   history). Undo snapshots: `history.ts`.
@@ -98,7 +98,7 @@ limits scripts and images.
 - Streamable HTTP, path `/mcp`, bound to `127.0.0.1`, port 47821
   (`SPACE_MCP_PORT`). One session per client. Requests with a browser
   `Origin`, or a Host other than localhost, are refused. No token.
-- **Tools** (20), in four groups:
+- **Tools** (22), in five groups:
   - *Look:* `get_canvas_info`, `get_tree`, `get_node_info`, `get_html`,
     `get_screenshot` (node, region, viewport, content, selection, changes;
     optional labels and grid), `get_changes`, `get_brief`, `get_guide`.
@@ -106,13 +106,15 @@ limits scripts and images.
     `set_text`, `move_nodes`, `duplicate_nodes`, `delete_nodes`, `draw_ink`.
   - *Place and view:* `find_space`, `focus`, `open_board`.
   - *Presence:* `finish_working`.
+  - *Live scenes:* `run_scene`, `scene_control` (see "Live scenes" below).
 - **What agents read** (decision I3; how to write it:
   [`writing-agent-text.md`](writing-agent-text.md)):
   - the brief, `resources/brief.md`: as a managed block in the folder's
     `AGENTS.md` (`src/main/brief-block.ts` refreshes it when a folder opens,
     unless the learner edited it) and as `get_brief` for agents without it;
   - the board reference, `resources/guide.md`: `get_guide`, one topic per
-    call (model, html, math, svg, images, tokens, placement, ink, view; the
+    call (scene, scene-code, scene-interact, model, html, math, svg, images,
+    tokens, placement, ink, view; the
     description lists them with one line each from the file's
     `<!-- summary: … -->` markers); without a topic, all of it (decision T11);
   - server instructions, `resources/instructions.md` (a short orientation
@@ -177,6 +179,37 @@ limits scripts and images.
   (`../learning-space-plugins`): per-client manifests, a small skill, the
   `.mcpb`, validators, CI, one version source.
 
+## Live scenes (live drawing)
+
+How an agent's scene program becomes drawing on the board (decisions P11,
+P12, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
+
+- **Main process.** `run_scene` (`src/main/mcp.ts`) sends the program to the
+  board's stage: one long-lived QuickJS context in a Node worker
+  (`live-worker.ts`, managed by `live-scene.ts`). The sandbox API is
+  `live-prelude.js` (creators, actions, values, `say`, `stage`, …). The
+  program returns a description (objects and a timeline,
+  `src/shared/live-scene.ts`); it cannot reach the app, files or network.
+  `storyboard.ts` builds preview images. `live-item-protocol.ts` serves the
+  `live-item://` origin for program items, with bundled libraries listed in
+  `src/shared/live-libs.ts` (three.js, `ls/interact`).
+- **Renderer.** `src/renderer/src/live/` turns the description into board
+  items and plays it: `run.ts` (requests from main), `compile.ts` (objects
+  to nodes), `timeline.ts`, `player.ts` (the clock, the queue, pauses,
+  replay), `measure.ts` (exact text bounds for the sandbox), `colors.ts`,
+  `state.ts` (the store for the scene pill and the script panel).
+  `board/playback.ts` holds per-node playback looks (reveal, transform,
+  params) that the board applies while a scene plays; the board file always
+  holds the final state.
+- **Program items** (`live` nodes, mode `program`, also `shader` and
+  `canvas`): `src/renderer/src/live-pixels/` — each item is a sandboxed
+  iframe of its own origin with a worker that owns an OffscreenCanvas
+  (`program.ts`, `sandbox.ts`, `shader.ts`, `registry.ts`, `LiveView.tsx`,
+  `snapshot-stills.ts`). Network is open for items; input reaches them only
+  in the mode the item declares.
+- **Requests** between main and renderer: `sceneContext`, `runScene`,
+  `previewScene`, `sceneControl`, `validateLive` (`src/shared/space-api.ts`).
+
 ## UI
 
 - Components live in `src/renderer/src/components/` (the snapshot view in
@@ -184,6 +217,7 @@ limits scripts and images.
 - Shell: `App.tsx` (state and wiring), `TopBar.tsx`, `Sidebar.tsx`
   (`FileTree.tsx`), `ToolPalette.tsx`, `PreviewPanel.tsx`, `WelcomeCard.tsx`,
   `CanvasNotice.tsx`, `Toast.tsx`.
+- Scenes: `ScenePill.tsx` (in `TopBar.tsx`) and the floating script panel.
 - Menus and popovers: `Menu.tsx`, `AgentPill.tsx`, `SetupMenu.tsx`,
   `GuideOverrideNote.tsx` — all built on the shared menu system.
 - Styles: `styles/tokens.css` (all design tokens), `styles/app.css` (all app

@@ -179,7 +179,7 @@ export interface ImageNode extends NodeBase {
  * `mainImage(out vec4, in vec2)`). `mode: 'canvas'`: `code` is the body of
  * `function (ctx, t, w, h, params)` that paints a 2D canvas in a sandbox.
  * `mode: 'program'`: `code` is a whole program that runs once in its own
- * worker and frame with the item's canvas (live-pixels/program.ts).
+ * worker and frame with the item's canvas (renderer/src/live-pixels/program.ts).
  * `params` become `uniform float <name>` (shader) or the `params` argument
  * (canvas); scene playback may override them. `w`, `h`: the size in board points.
  * Ink drawn on it becomes its child, as on a frame.

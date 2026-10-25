@@ -66,7 +66,7 @@ interface SceneObjectBase {
   name?: string
   /** The group that holds this object. */
   parent?: number
-  /** Stage object id: the same object in every scene of the stage (see main/stage.ts). */
+  /** Stage object id: the same object in every scene of the stage (see main/live-scene.ts). */
   sid?: number
   /** The object was made by an earlier scene of the stage: it is already on the board (its items are reused). */
   carry?: boolean
