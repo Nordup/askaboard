@@ -1,6 +1,7 @@
 import { readFileSync, realpathSync, statSync } from 'node:fs'
 import { join, sep } from 'node:path'
 import type { FolderOverride, GuideOverrides } from '@shared/space-api'
+import { codeItemText } from './lab-switch'
 import { resourcePath } from './resources'
 
 /**
@@ -152,12 +153,15 @@ function tooLargeNote(name: FolderFileName, size: number): string {
   return `Note: ${FOLDER_SETTINGS_DIR}/${name} is ${Math.ceil(size / 1024)} KB, larger than the ${MAX_OVERRIDE_BYTES / 1024} KB limit, so Learning Space ignored it.`
 }
 
+/** A built-in resource, with its code-item spans applied (lab-switch.ts). */
 function readBuiltIn(name: string): string {
+  let raw: string
   try {
-    return readFileSync(resourcePath(name), 'utf8')
+    raw = readFileSync(resourcePath(name), 'utf8')
   } catch (error) {
     throw new Error(`The built-in ${name} is missing from the app's resources: ${String(error)}`)
   }
+  return codeItemText(raw, name)
 }
 
 /** The value of the first `<!-- key: value -->` comment in a section, or null. */

@@ -88,6 +88,12 @@ Use `--brief-only` to measure what a real session sees (the brief through
 `council/purpose.md`, which says the purpose out loud. Compare with the
 earlier runs of the same task in `live-drawing-log.md`.
 
+Use `--no-code` (also on `lab.mjs start`) to measure a run without code
+items: the app starts with `LS_LAB_NO_CODE=1`, scenes have no `shader()`,
+`canvas()` or `program()`, and the brief, the guide and the tool
+descriptions leave out the spans marked `<!-- code-items -->` /
+`codeItems()` (`src/main/lab-switch.ts`). `meta.json` records `no_code`.
+
 ## Pitfalls we hit
 
 - **StrictMode double mount:** a cleanup cancelled animation frames without

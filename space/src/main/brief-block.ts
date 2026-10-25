@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { readFile, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
+import { codeItemText } from './lab-switch'
 import { resourcePath } from './resources'
 
 /**
@@ -30,9 +31,9 @@ function hash(body: string): string {
   return createHash('sha256').update(body, 'utf8').digest('hex').slice(0, 12)
 }
 
-/** The block body: brief.md as it is, ending in exactly one newline. */
+/** The block body: brief.md as it is (code-item spans applied, lab-switch.ts), ending in exactly one newline. */
 export function briefBody(): string {
-  const text = readFileSync(resourcePath('brief.md'), 'utf8').replace(/\r\n?/g, '\n')
+  const text = codeItemText(readFileSync(resourcePath('brief.md'), 'utf8'), 'brief.md').replace(/\r\n?/g, '\n')
   return `${text.replace(/\n+$/, '')}\n`
 }
 

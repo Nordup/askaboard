@@ -4,6 +4,7 @@ import prelude from './live-prelude.js?raw'
 import { HAND_FONT } from '@shared/hand-font'
 import type { SceneContext, SceneDescription } from '@shared/live-scene'
 import type { WorkerReply, WorkerReset, WorkerRun } from './live-worker'
+import { NO_CODE_ITEMS } from './lab-switch'
 
 /**
  * The stage: one long-lived sandbox per board in which every scene program
@@ -287,7 +288,7 @@ export class SceneStage {
         Atomics.notify(flag, 0)
       })()
     })
-    const worker = createWorker({ workerData: { prelude, fontText: JSON.stringify(HAND_FONT), port: channel.port2, flag: this.flag }, transferList: [channel.port2] })
+    const worker = createWorker({ workerData: { prelude, fontText: JSON.stringify(HAND_FONT), noCodeItems: NO_CODE_ITEMS, port: channel.port2, flag: this.flag }, transferList: [channel.port2] })
     worker.on('message', (reply: WorkerReply) => {
       const resolve = this.pending.get(reply.id)
       if (!resolve) return

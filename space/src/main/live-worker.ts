@@ -21,6 +21,8 @@ const PROGRAM_FILE = 'scene.js'
 interface Init {
   prelude: string
   fontText: string
+  /** Lab switch LS_LAB_NO_CODE (lab-switch.ts): the prelude leaves out shader(), canvas() and program(). */
+  noCodeItems: boolean
   port: MessagePort
   flag: SharedArrayBuffer
 }
@@ -92,6 +94,7 @@ async function newContext(): Promise<string | null> {
   const font = ctx.newString(init.fontText)
   ctx.setProp(ctx.global, '__fontText', font)
   font.dispose()
+  if (init.noCodeItems) ctx.setProp(ctx.global, '__noCodeItems', ctx.true)
   const measure = ctx.newFunction('__measure', (arg) => ctx.newString(measureSync(ctx.getString(arg))))
   ctx.setProp(ctx.global, '__measure', measure)
   measure.dispose()

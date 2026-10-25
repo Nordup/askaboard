@@ -8,11 +8,14 @@
  *        [--model M] [--effort E] [--title T] [--timeout-min 20]
  *        [--name council] [--mcp-port 47891] [--debug-port 9491] [--built]
  *        [--codex-home /private/tmp/claude-501/ls-lab/codex-home] [--no-news-hook] [--keep-app]
- *        [--brief-only] [--no-web] [--interview] [--wait-media]
+ *        [--brief-only] [--no-code] [--no-web] [--interview] [--wait-media]
  *
  * Tasks: council/tasks.json (id → text; "learner": "S3" draws the bench's S3
  * strokes before the session), or any text. The prompt is council/purpose.md
  * plus the task. Defaults: Claude opus; Codex gpt-6.1-sol at effort medium.
+ * --no-code starts the app with LS_LAB_NO_CODE=1 (src/main/lab-switch.ts): no
+ * shader(), canvas() or program() in scenes, and no word of them in the brief,
+ * the guide or the tool descriptions. meta.json records it as no_code.
  *
  * Phase 1 (work): `claude -p` (MCP config for the lab only, Learning Space tools
  * allowed) or `codex exec --json` (scratch CODEX_HOME, Learning Space tools
@@ -92,6 +95,8 @@ const opts = {
   waitMedia: flag('--wait-media'),
   // Only the task as the prompt, as in a real session: the brief reaches the agent through the folder's AGENTS.md.
   briefOnly: flag('--brief-only'),
+  // The lab switch LS_LAB_NO_CODE: code items do not exist for the agent.
+  noCode: flag('--no-code'),
   // Web search and fetch, as the agent apps have in real sessions; --no-web turns them off.
   web: !flag('--no-web')
 }
@@ -310,7 +315,7 @@ async function main() {
   const tasks = JSON.parse(readFileSync(join(LAB, 'council/tasks.json'), 'utf8'))
   const known = tasks[opts.task]
   const task = known ? { id: opts.task, ...known } : { id: 'custom', title: opts.task.slice(0, 60), text: opts.task }
-  const title = opts.title ?? `${task.title} — ${opts.client} ${opts.model}${opts.effort ? ` ${opts.effort}` : ''}`
+  const title = opts.title ?? `${task.title} — ${opts.client} ${opts.model}${opts.effort ? ` ${opts.effort}` : ''}${opts.noCode ? ' — no code items' : ''}`
   const purpose = stripComments(readFileSync(join(LAB, 'council/purpose.md'), 'utf8'))
   const interview = stripComments(readFileSync(join(LAB, 'council/interview.md'), 'utf8'))
   const prompt = opts.briefOnly ? task.text : `${purpose}\n\n## The task\n\n${task.text}`
@@ -320,6 +325,8 @@ async function main() {
   say(`run folder ${dir}`)
   writeFileSync(join(dir, 'prompt.md'), `${prompt}\n`)
 
+  if (opts.noCode) process.env.LS_LAB_NO_CODE = '1'
+  else delete process.env.LS_LAB_NO_CODE
   const state = await startInstance({ name: opts.name, mcpPort: opts.mcpPort, debugPort: opts.debugPort, built: opts.built, fresh: true })
   say(`app ${state.mode} on MCP ${state.mcpPort}, debug ${state.debugPort}, PIDs ${state.pids.join(', ')}`)
   let cdp = null
@@ -449,6 +456,8 @@ async function main() {
       client: opts.client,
       model: opts.model,
       effort: opts.effort,
+      brief_only: opts.briefOnly,
+      no_code: opts.noCode,
       started: new Date(t0).toISOString(),
       ok: work.exit_code === 0 && !work.is_error,
       error: work.is_error ? (work.errors?.join(' | ') || `exit ${work.exit_code}`) : null,

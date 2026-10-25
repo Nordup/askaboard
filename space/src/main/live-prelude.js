@@ -32,6 +32,9 @@
   const hostMeasure = typeof G.__measure === 'function' ? G.__measure : null
   const FONT = JSON.parse(G.__fontText)
   delete G.__fontText
+  // Lab switch LS_LAB_NO_CODE (main/lab-switch.ts): no shader(), canvas() or program(), and no word of them.
+  const NO_CODE_ITEMS = G.__noCodeItems === true
+  delete G.__noCodeItems
   let CTX = { nodes: {}, names: {}, view: { x: -600, y: -400, width: 1200, height: 800 }, viewport: [1200, 800], seed: 1 }
   const MAX_COORD = 100000
 
@@ -2030,7 +2033,7 @@
       if (key === 'params' && plain(value)) {
         for (const [k, v] of Object.entries(value)) {
           for (const e of leaves(entry)) {
-            if (e.kind !== 'live') fail(`tween: object ${e.id} (${e.api}) has no params; only shader(), canvas() and program() items do`)
+            if (e.kind !== 'live') fail(`tween: object ${e.id} (${e.api}) has no params${NO_CODE_ITEMS ? '' : '; only shader(), canvas() and program() items do'}`)
             addValueTrack(values[optionValue(e, `params.${k}`).id], T, dur, num(v, `tween params.${k}`), ease || 'inOut')
           }
         }
@@ -2820,6 +2823,7 @@
     mark,
     stage
   }
+  if (NO_CODE_ITEMS) for (const key of ['shader', 'canvas', 'program']) delete api[key]
   for (const [key, value] of Object.entries(api)) Object.defineProperty(G, key, { value, enumerable: true, writable: false, configurable: false })
 
   // ---------- Lock the stage ----------
