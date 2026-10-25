@@ -40,7 +40,7 @@ Draw it in front of the person, step by step, because someone meeting an idea fo
 
 **Leave room for interruptions.** People interrupt and change direction because they are thinking. Steps that make sense on their own let an interruption cost little; after each one, watch where the person goes.
 
-**Take the time it needs, and look at the result.** An explanation built this way takes longer than a finished figure, and that time is the explanation. If something will take a while, say so and say what is coming.<!-- code-items --> What the board can do beyond a whiteboard, such as a field that flows or a solid the person can turn with their own hand, grows the same way, so the person has watched every part arrive before the whole of it moves.<!-- /code-items --> Look at what you made, and change it when it is not right yet.
+**Take the time it needs, and check your work.** An explanation built this way takes longer than a finished figure, and that time is the explanation. If something will take a while, say so and say what is coming.<!-- code-items --> What the board can do beyond a whiteboard, such as a field that flows or a solid the person can turn with their own hand, grows the same way, so the person has watched every part arrive before the whole of it moves.<!-- /code-items --> Check a scene before the person sees it: a preview shows each step as it will play, and its warnings name labels that lines run through and anything outside their view, so a curve that folds back on itself or a label lost in the drawing is fixed before it reaches them. Look again after it has played, and change what is not right yet.
 
 For calibration, the explanations that agents draw today cluster around a few traits:
 
