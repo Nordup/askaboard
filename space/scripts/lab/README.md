@@ -27,7 +27,8 @@ node scripts/lab/play.mjs --tool draw_ink --args '{"svg_path":"M 100 0 A 100 100
 It calls `run_scene` (or any tool with `--tool`/`--args`) on the lab app and
 records the board with the CDP screencast until the scene has played
 (`duration_s` + 1 s, or `--seconds N`). The run folder gets `program.js`,
-`result.json`, `video.mp4` (H.264, real speed, max 1280 px wide),
+`result.json`, `video.mp4` (H.264, max 1280 px wide; see "Videos" below),
+`video-real.mp4` (real speed),
 `filmstrip.png` (a frame at each step, by `scene.seek` when the dev hook has
 it), `final.png` and `meta.json`. `--no-crop` keeps the whole window.
 
@@ -46,6 +47,31 @@ same session with `council/interview.md` and saves the answer as
 `feedback.md`. Tasks are in `council/tasks.json`. Codex uses its own scratch
 `CODEX_HOME` (`/private/tmp/claude-501/ls-lab/codex-home`); its `auth.json`
 is a symlink to the founder's login. Never read or print it.
+
+## Videos
+
+`video.mp4` is the watch video: a stretch with no visible change for more
+than 1.5 s plays in 0.6 s. During the cut a label shows the real wait and
+what happened, from the trace ("38 s  model writing run_scene", "model
+thinking", "get_screenshot running", "session starting", "model
+answering"), and a clock in the corner shows real time. `video-real.mp4`
+keeps real time. `recut.py` (Pillow, frames piped to ffmpeg) makes the watch
+video; `meta.json` has `numbers.watch_s`, `numbers.recorded_s` and `cuts`.
+
+## Live pixel items
+
+```sh
+node scripts/lab/live.mjs --port 9490 examples                 # the four programs in programs/live/
+node scripts/lab/live.mjs --port 9490 add programs/live/ripples.glsl --at 0,0 --param k=80
+node scripts/lab/live.mjs --port 9490 list                     # state and frame count of each item
+node scripts/lab/live.mjs --port 9490 validate my-shader.glsl  # compile log or "ok"
+node scripts/lab/mcp-call.mjs --port 47890 get_screenshot '{"target":"content"}' --out shot.png
+```
+
+`live.mjs` uses the dev hook `window.__spaceDev.live` (no scene API needed).
+A `.glsl` file is a shader (`mainImage`, Shadertoy style); a `.js` file is
+the body of `function (ctx, t, w, h, params, dt)`. The first line can set
+defaults: `// live: shader  size: 600x340  params: k=16 omega=3`.
 
 ## The gallery
 

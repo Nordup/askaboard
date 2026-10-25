@@ -104,6 +104,7 @@ function card(name) {
     n.write_calls !== undefined ? ['writes', n.write_calls] : null,
     n.duration_s !== undefined && n.duration_s !== null ? ['scene', `${n.duration_s} s`] : null,
     n.wall_ms !== undefined ? ['wall', secs(n.wall_ms)] : null,
+    n.watch_s !== undefined && n.watch_s !== null ? ['video', `${n.watch_s} s of ${n.recorded_s} s real`] : n.recorded_s !== undefined ? ['video', `${n.recorded_s} s real time`] : null,
     n.steps ? ['steps', n.steps] : null,
     n.errors ? ['errors', n.errors] : null
   ].filter(Boolean)
@@ -122,7 +123,7 @@ function card(name) {
   ${has('filmstrip.png') ? `<a href="${rel('filmstrip.png')}"><img class="strip" src="${rel('filmstrip.png')}" alt="filmstrip" loading="lazy"></a>` : ''}
   ${feedback ? `<details open><summary>Feedback</summary><div class="md">${markdown(feedback)}</div></details>` : ''}
   ${program ? `<details><summary>Program (${program.split('\n').length} lines)</summary><pre class="code"><code>${esc(program)}</code></pre></details>` : ''}
-  <p class="files"><a href="runs/${encodeURIComponent(name)}/">folder</a>${has('result.json') ? ` · <a href="${rel('result.json')}">result.json</a>` : ''} · <a href="${rel('meta.json')}">meta.json</a></p>
+  <p class="files"><a href="runs/${encodeURIComponent(name)}/">folder</a>${has('video-real.mp4') ? ` · <a href="${rel('video-real.mp4')}">real-time video</a>` : ''}${has('result.json') ? ` · <a href="${rel('result.json')}">result.json</a>` : ''} · <a href="${rel('meta.json')}">meta.json</a></p>
 </article>`
 }
 
