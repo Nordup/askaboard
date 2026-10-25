@@ -1,0 +1,12 @@
+// A drawing, then a copy of it in empty space beside it, then the copy changes.
+const tri = polygon([[0, -60], [70, 60], [-70, 60]], { color: 'accent', fill: 'accent', fillOpacity: 0.2, name: 'triangle' })
+const name = write('ABC', { at: [-30, 75], size: 22 })
+const drawing = group(tri, name, { name: 'drawing' })
+await draw(drawing, 2)
+const room = space(drawing.bounds.width, drawing.bounds.height, { near: drawing })
+console.log('room', JSON.stringify(room))
+step('copy')
+const twin = copy(drawing, { at: room.at })
+await fadeIn(twin, 0.6)
+say('The same triangle, turned.')
+await tween(twin, { rotate: 180 }, 1.2)

@@ -7,19 +7,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { isInitializeRequest, type CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
-import {
-  MAX_BOX_SIZE,
-  MAX_COORD,
-  MAX_HTML_CHARS,
-  MAX_INK_LINES,
-  MAX_INK_POINTS,
-  MAX_LIST_ITEMS,
-  MAX_NAME_CHARS,
-  MAX_REGION_SIZE,
-  MAX_STYLE_CHARS,
-  MAX_SVG_PATH_CHARS,
-  MAX_TEXT_CHARS
-} from '@shared/limits'
+import { MAX_COORD, MAX_NAME_CHARS, MAX_REGION_SIZE } from '@shared/limits'
 import { briefText, guideText, guideTopics, serverInstructions } from './guide'
 import { SceneCancelled, SceneProgramError, SceneStage, type StageRun } from './live-scene'
 import type { SceneContext, SceneDescription, SceneLiveObject, SceneResult } from '@shared/live-scene'
@@ -186,16 +174,11 @@ function clientLabel(raw: string | undefined): string {
   return raw && raw.length <= 24 ? raw : 'Agent'
 }
 
-const nodeIds = z.array(z.string()).min(1).max(MAX_LIST_ITEMS, `At most ${MAX_LIST_ITEMS} ids per call.`)
-
 /** A board coordinate or offset (z.number() already refuses NaN and Infinity). */
 const coord = (): z.ZodNumber =>
   z.number().min(-MAX_COORD, `Coordinates must be within ±${MAX_COORD} board points.`).max(MAX_COORD, `Coordinates must be within ±${MAX_COORD} board points.`)
 /** A width or height in board points. */
 const boxSize = (max: number): z.ZodNumber => z.number().positive().max(max, `Sizes must be at most ${max} board points.`)
-/** A style object: camelCase CSS, numbers mean px. */
-const styleValue = z.union([z.string().max(MAX_STYLE_CHARS, `Style values must be at most ${MAX_STYLE_CHARS} characters.`), coord()])
-
 const rectSchema = z.object({
   x: coord().describe('Left edge, board points'),
   y: coord().describe('Top edge, board points'),
@@ -203,27 +186,16 @@ const rectSchema = z.object({
   height: boxSize(MAX_REGION_SIZE)
 })
 
-const placeSchema = z
-  .object({
-    right_of: z.string().optional().describe('Id of the node or ink group to the left of the item.'),
-    left_of: z.string().optional().describe('Id of the node or ink group to the right of the item.'),
-    below: z.string().optional().describe('Id of the node or ink group above the item.'),
-    above: z.string().optional().describe('Id of the node or ink group below the item.'),
-    over: z.string().optional().describe('Id of the node or ink group to centre the item on, for a mark on the learner\'s work.'),
-    gap: coord().optional().describe('Distance to the target in board points (default 32; 0 for over).'),
-    align: z.enum(['start', 'center', 'end']).optional().describe('Alignment along the side (default "start"; "center" for over).')
-  })
-  .describe(
-    'Puts the item beside a node or ink group, instead of at x and y. Give exactly one of right_of, left_of, below, above or over, set to the target\'s id (a node id, or an ink group id such as "g3"). When other material takes the spot, the item slides along that side, then tries the other sides; the result\'s "placed" says where it went. Example: {"below": "g3", "gap": 24, "align": "center"}. Details: get_guide topic "placement".'
-  )
-
 // ---------- The server ----------
 
 export class AgentServer {
   /** Scene programs still running (run_scene before it returns), with their session id. */
   private readonly programs = new Map<AbortController, string>()
   /** The sandbox every scene program runs in, kept between programs (see live-scene.ts). */
-  private readonly stage = new SceneStage(async (items) => (await this.bridge.request('measureText', { items })).sizes)
+  private readonly stage = new SceneStage(
+    async (items) => (await this.bridge.request('measureText', { items })).sizes,
+    async (request) => this.bridge.request('sceneHost', { request }, WRITE_TIMEOUT_MS)
+  )
   readonly port = configuredPort()
   private readonly bridge: RendererBridge
   private readonly sessions = new Map<string, Session>()
@@ -650,9 +622,10 @@ export class AgentServer {
     await control({ action: 'revert', scenes: affected, step })
     const commit = async (id: string, desc: SceneDescription, name: string | null): Promise<SceneResult & { ends_in_s: number }> =>
       (await this.board(session, 'runScene', { scene: desc, sceneId: id, slot: true, step, ...(name ? { name } : {}) }, SCENE_TIMEOUT_MS)) as SceneResult & { ends_in_s: number }
-    const runOne = async (code: string, options: { seed?: number; cutAt?: number; original?: string; name: string | null }): Promise<StageRun> => {
+    const runOne = async (code: string, options: { seed?: number; cutAt?: number; original?: string; name: string | null; answers?: Map<string, string> }): Promise<StageRun> => {
       const context = options.original ? (JSON.parse(options.original) as SceneContext) : ((await this.board(session, 'sceneContext', {})) as SceneContext)
-      const run = await this.stage.run(code, context, { mode: 'scene', seed: options.seed, cutAt: options.cutAt ?? null, name: options.name })
+      // The same program on the same context gets the board's answers of its first run (html sizes, empty places).
+      const run = await this.stage.run(code, context, { mode: 'scene', seed: options.seed, cutAt: options.cutAt ?? null, name: options.name, answers: options.original ? options.answers : undefined })
       const liveError = await this.checkLivePrograms(run.desc)
       if (liveError) {
         this.stage.discard(run.entry)
@@ -667,13 +640,13 @@ export class AgentServer {
         change.code !== undefined
           ? await runOne(change.code, { name: cut.entry.name })
           : // A cut runs the same program with the same seed and context, so it is the same up to the cut.
-            await runOne(cut.entry.code, { seed: cut.entry.seed, cutAt: change.cutAt, original: cut.entry.ctxText, name: cut.entry.name })
+            await runOne(cut.entry.code, { seed: cut.entry.seed, cutAt: change.cutAt, original: cut.entry.ctxText, name: cut.entry.name, answers: cut.entry.answers })
       main = await commit(sceneId, run.desc, cut.entry.name)
       run.entry.scene = sceneId
     } catch (error) {
       // The scene stays as it was.
       failed = error instanceof Error ? error.message : String(error)
-      const run = await runOne(cut.entry.code, { seed: cut.entry.seed, original: cut.entry.ctxText, name: cut.entry.name })
+      const run = await runOne(cut.entry.code, { seed: cut.entry.seed, original: cut.entry.ctxText, name: cut.entry.name, answers: cut.entry.answers })
       main = await commit(sceneId, run.desc, cut.entry.name)
       run.entry.scene = sceneId
     }
@@ -682,7 +655,7 @@ export class AgentServer {
       const id = entry.scene
       const queued = !!id && waiting.includes(id)
       try {
-        const run = await runOne(entry.code, { seed: entry.seed, name: entry.name, ...(queued ? {} : { original: entry.ctxText }) })
+        const run = await runOne(entry.code, { seed: entry.seed, name: entry.name, ...(queued ? {} : { original: entry.ctxText, answers: entry.answers }) })
         run.entry.scene = id
         if (queued && id) {
           const result = await commit(id, run.desc, entry.name)
@@ -886,9 +859,9 @@ export class AgentServer {
       'get_guide',
       {
         title: 'The board reference',
-        description: `Returns one topic of the board reference as markdown: the technical details of the board and of each kind of write. It fits before a write whose details are not in your context yet, for example topic "html" before the first write_html, or topic "ink" before the first draw_ink. Each topic is short (about 300 to 12,000 characters (the scene topics are the longest)). Topics:\n${guideTopics(this.hooks.folderRoot())}\nWithout topic, it returns all topics in one text (about 26,000 characters). An unknown topic returns an error that lists the topic names. It does not hold the brief (what the space is for and how you work with the person): that is get_brief.`,
+        description: `Returns one topic of the board reference as markdown: the technical details of the board and of scenes, the one way to write on it (run_scene). It fits before a scene that uses something whose details are not in your context yet, for example topic "scene" before the first run_scene, or topic "html" before the first html() material. Topics are about 500 to 16,000 characters (scene is the longest; scene-interact holds about 12,000 characters of source). Topics:\n${guideTopics(this.hooks.folderRoot())}\nWithout topic, it returns all topics in one text (about 43,000 characters). An unknown topic returns an error that lists the topic names. It does not hold the brief (what the space is for and how you work with the person): that is get_brief.`,
         inputSchema: {
-          topic: z.string().optional().describe('A topic name from the list in the description, such as "html" or "placement". Without it, all topics.')
+          topic: z.string().optional().describe('A topic name from the list in the description, such as "scene" or "html". Without it, all topics.')
         },
         annotations: { readOnlyHint: true }
       },
@@ -924,7 +897,7 @@ export class AgentServer {
       {
         title: 'Node as HTML',
         description:
-          "A node and everything inside it as the HTML subset that write_html accepts, with inline styles; include_ids adds data-id attributes. Use it to restructure existing material: edit the HTML and write it back with write_html mode \"replace\", and nodes whose data-id you keep keep their ids. Ink is not HTML: it appears as a comment and stays in place on replace.",
+          "A node and everything inside it as the HTML subset that a scene's html() takes, with inline styles; include_ids (default true) adds data-id attributes, which html() does not reuse (new material gets new ids). Use it to restructure existing material: change the HTML and put it back in a scene with html(markup, {into: board.node(id), mode: \"replace\"}). Ink is not HTML: it appears as a comment, and a replace leaves it out.",
         inputSchema: { node_id: z.string(), include_ids: z.boolean().optional() },
         annotations: { readOnlyHint: true }
       },
@@ -932,170 +905,11 @@ export class AgentServer {
     )
 
     server.registerTool(
-      'create_frame',
-      {
-        title: 'Create a frame',
-        description:
-          "Create an empty top-level frame: a box that holds other nodes and moves with them, such as a page of reading, a worked example or a set of exercises. Fill it afterwards with write_html (target_id = the frame's id). Default style: a 480 px wide flex column with padding, a gap, a card background and rounded corners; style overrides any of it. Position: place (relative to a node or ink group), or x and y, or neither, in which case the app picks an empty spot beside near, else beside the learner's latest handwriting, else in the middle of their view. Returns the id, the bounds, how it was placed, whether it is in the learner's view, and what it overlaps.",
-        inputSchema: {
-          name: z.string().max(MAX_NAME_CHARS).optional(),
-          style: z.record(z.string(), styleValue).optional().describe('camelCase CSS, overrides the defaults.'),
-          x: coord().optional(),
-          y: coord().optional(),
-          near: z.string().optional().describe('A node or ink group id to place the frame beside (automatic spot).'),
-          place: placeSchema.optional()
-        }
-      },
-      this.tool(session, 'create_frame', async (args) => text(json(await this.board(session, 'createFrame', args, WRITE_TIMEOUT_MS))))
-    )
-
-    server.registerTool(
-      'write_html',
-      {
-        title: 'Write HTML as nodes',
-        description:
-          "Adds material to the open board, written in a small HTML subset that the app converts into nodes the learner can edit: text and formulas (<p>, <h1>–<h6>, <b>, <i>, $math$ in KaTeX syntax), SVG drawings (<svg>), images (<img>) and boxes (a <div> with block children becomes a frame, a box that holds and moves its children). It fits explanations, worked examples, formulas, diagrams and pictures. It does not fit pen marks on the learner's work (circles, ticks, arrows): draw_ink makes those. To change a few words of one text node, set_text is smaller; to change only colours or sizes, update_styles.\n\nStyles are inline only (style=\"…\"), with property names in kebab-case or camelCase (font-size or fontSize). Layout is flexbox with gap and padding; there is no margin, grid, float or table layout. The details are in get_guide: topic \"html\" (tags, layout, accepted styles, units), \"math\", \"svg\", \"images\" and \"tokens\" (the colour tokens of the dark board).\n\nReturns the new top-level ids, a map from layer-name to id, the measured bounds after layout, how the nodes were placed, whether they are in the learner's view, what they overlap, and the tags, attributes and styles that the board ignored. Each call is one undo step for the learner.",
-        inputSchema: {
-          html: z
-            .string()
-            .max(MAX_HTML_CHARS, `html must be at most ${MAX_HTML_CHARS} characters; write it in smaller parts.`)
-            .describe(`The HTML subset, at most ${MAX_HTML_CHARS} characters. Example: <div style="display:flex; flex-direction:column; gap:8px"><h2>Kepler's third law</h2><p>$T^2 \\propto a^3$</p></div>`),
-          target_id: z.string().describe('Where the HTML goes: a frame id (the new nodes go inside it), "root" (the top level of the board), or with mode "replace" the node to replace.'),
-          mode: z
-            .enum(['insert_children', 'replace'])
-            .optional()
-            .describe('"insert_children" (default) adds the HTML inside target_id. "replace" replaces the node target_id, and the first new top-level node keeps target_id\'s id; get_html returns a node\'s current HTML to edit.'),
-          near: z.string().optional().describe('target_id "root" without place only: a node or ink group id; the app picks an empty spot beside it. Without near and place, the spot is beside the learner\'s latest work.'),
-          place: placeSchema.optional().describe(`target_id "root" only. ${placeSchema.description ?? ''}`)
-        }
-      },
-      this.tool(session, 'write_html', async (args) => text(json(await this.board(session, 'writeHtml', args, WRITE_TIMEOUT_MS))))
-    )
-
-    server.registerTool(
-      'update_styles',
-      {
-        title: 'Update styles',
-        description:
-          "Changes style properties of existing nodes, such as colour, size, padding, border or font, and keeps their content and ids. It fits visual changes to material that is already on the board. A new structure or new content fits write_html mode \"replace\"; a new position fits move_nodes, because positions are not styles. Styles are CSS properties in camelCase or kebab-case (fontSize or font-size); numbers mean px; \"\" or null removes a property. The accepted properties are in get_guide topic \"html\". Ink nodes and ink groups accept only color. Returns the properties that were ignored and what the nodes now overlap. Each call is one undo step for the learner.",
-        inputSchema: {
-          updates: z
-            .array(z.object({ node_ids: nodeIds, styles: z.record(z.string(), z.union([styleValue, z.null()])) }))
-            .min(1)
-            .max(MAX_LIST_ITEMS)
-            .describe('A list of {node_ids, styles}; each entry sets the same styles on all its nodes. Example: [{"node_ids": ["g3"], "styles": {"color": "var(--ls-good)"}}].')
-        }
-      },
-      this.tool(session, 'update_styles', async (args) => text(json(await this.board(session, 'updateStyles', args))))
-    )
-
-    server.registerTool(
-      'set_text',
-      {
-        title: 'Set text',
-        description:
-          "Replace the text of existing text nodes and keep their ids, styles and places. updates is a list of {node_id, text}; text uses the markup **bold**, *italic* and $math$ (write a literal * or $ as \\* or \\$). One undo step for the learner.",
-        inputSchema: {
-          updates: z
-            .array(z.object({ node_id: z.string(), text: z.string().max(MAX_TEXT_CHARS, `text must be at most ${MAX_TEXT_CHARS} characters.`) }))
-            .min(1)
-            .max(MAX_LIST_ITEMS)
-        }
-      },
-      this.tool(session, 'set_text', async (args) => text(json(await this.board(session, 'setText', args))))
-    )
-
-    server.registerTool(
-      'move_nodes',
-      {
-        title: 'Move nodes',
-        description:
-          "Move or reorder nodes and ink groups; moving a group moves all its strokes, and learner ink can be moved too. Each move is one of: {node_id, place} (relative to another node or group), {node_id, x, y} (top-left in the parent's space, board space at the top level), {node_id, dx, dy}, {node_id, parent_id, index?} (into another frame, or \"root\"; the position on the board stays), or {node_id, before | after: sibling_id}. Children of a flex frame are reordered, not placed. Returns the new bounds and what each moved item now overlaps. One undo step for the learner.",
-        inputSchema: {
-          moves: z
-            .array(
-              z.object({
-                node_id: z.string(),
-                x: coord().optional(),
-                y: coord().optional(),
-                dx: coord().optional(),
-                dy: coord().optional(),
-                parent_id: z.string().optional(),
-                index: z.number().int().min(0).optional(),
-                before: z.string().optional(),
-                after: z.string().optional(),
-                place: placeSchema.optional()
-              })
-            )
-            .min(1)
-            .max(MAX_LIST_ITEMS)
-        }
-      },
-      this.tool(session, 'move_nodes', async (args) => text(json(await this.board(session, 'moveNodes', args))))
-    )
-
-    server.registerTool(
-      'duplicate_nodes',
-      {
-        title: 'Duplicate nodes',
-        description:
-          "Copy nodes (with everything inside them) or ink groups. A top-level copy goes to empty space beside its original, or where place says; a copy inside a flex frame goes right after its original. Returns a map from each original id to its copy, children included, whether the copies are in the learner's view, and what they overlap. One undo step for the learner.",
-        inputSchema: { node_ids: nodeIds, place: placeSchema.optional() }
-      },
-      this.tool(session, 'duplicate_nodes', async (args) => text(json(await this.board(session, 'duplicateNodes', args))))
-    )
-
-    server.registerTool(
-      'delete_nodes',
-      {
-        title: 'Delete nodes',
-        description:
-          "Delete nodes with everything inside them, or ink groups with all their strokes. This works on any node, including the learner's own ink. Returns what was removed. The learner can undo it. Ids are node ids or ink group ids (g1, g2, …) from get_canvas_info or get_tree.",
-        inputSchema: { node_ids: nodeIds }
-      },
-      this.tool(session, 'delete_nodes', async (args) => text(json(await this.board(session, 'deleteNodes', args))))
-    )
-
-    server.registerTool(
-      'draw_ink',
-      {
-        title: 'Draw ink',
-        description:
-          "Draws pen strokes on the open board: the same kind of ink as the learner's handwriting, with natural pressure and a slight hand wobble, which the learner can erase, lasso or move like their own. It fits marks on the learner's work (circle a mistake, tick a correct step, an arrow from your note to their line) and quick sketches. It does not fit words or filled shapes: ink cannot fill a shape and holds no text, so text and filled drawings go through write_html.\n\nGive exactly one of: shape + target (a mark built from the bounds of a node or ink group), strokes (polylines of points) or svg_path (an SVG path \"d\"). Ink drawn over a frame becomes part of that frame and moves with it, unless parent_id says otherwise. Default colour: pink for circle and cross, green for tick, the accent blue otherwise, and never close to the learner's current pen colour. Examples: get_guide topic \"ink\".\n\nReturns the new ink group's id (such as \"g7\"), its bounds, how it was placed and what it overlaps. Each call is one ink group and one undo step; delete_nodes([\"g7\"]) removes it.",
-        inputSchema: {
-          shape: z.enum(['circle', 'underline', 'tick', 'cross', 'arrow']).optional().describe('A mark built from the bounds of target: circle goes around it, underline under it, tick and cross just right of it, arrow points at it.'),
-          target: z.string().optional().describe('shape: the node or ink group to mark.'),
-          from_id: z.string().optional().describe('arrow: start at this node or group.'),
-          side: z.enum(['left', 'right', 'above', 'below']).optional().describe('arrow without from_id: come in from this side (default left).'),
-          strokes: z
-            .array(z.array(z.array(coord()).min(2).max(3)).min(1).max(MAX_INK_POINTS, `At most ${MAX_INK_POINTS} points.`))
-            .max(MAX_INK_LINES, `At most ${MAX_INK_LINES} strokes.`)
-            .optional()
-            .describe('Polylines of [x, y] points, one list per stroke. Example arrow: [[[0, 0], [80, 0]], [[66, -10], [80, 0], [66, 10]]].'),
-          svg_path: z
-            .string()
-            .max(MAX_SVG_PATH_CHARS, `svg_path must be at most ${MAX_SVG_PATH_CHARS} characters.`)
-            .optional()
-            .describe('An SVG path "d" with any path command (M, L, H, V, C, S, Q, T, A, Z and relative forms); each subpath is one stroke. Example: "M0 0 C 20 -30, 60 -30, 80 0".'),
-          x: coord().optional().describe('Origin for strokes and svg_path, in board points. Without x, y and place, the points are board points.'),
-          y: coord().optional().describe('Origin for strokes and svg_path, in board points.'),
-          place: placeSchema.optional(),
-          parent_id: z.string().optional().describe('A frame to hold the ink, or "root". Default: the frame under most of it.'),
-          color: z.string().optional().describe('A name (accent, good, bad, warn, text, white, yellow, blue, green, pink, orange, red), a token such as var(--ls-good), hex (#ff6b8b), rgb() or hsl().'),
-          width: z.number().positive().max(40).optional().describe('Pen width in board points (default 3.5; the highlighter is 4 times wider).'),
-          tool: z.enum(['pen', 'highlighter']).optional().describe('"pen" (default) or "highlighter" (4 times wider than width, half transparent).'),
-          jitter: z.number().min(0).max(1).optional().describe('Hand wobble, 0 = none (default 0.3).')
-        }
-      },
-      this.tool(session, 'draw_ink', async (args) => text(json(await this.board(session, 'drawInk', args))))
-    )
-
-    server.registerTool(
       'run_scene',
       {
         title: 'Run a live scene',
         description:
-          "Runs a JavaScript program that draws on the open board over time, in front of the learner: shapes and ink drawn stroke by stroke, handwriting, typeset maths, fills, fades, moves, erasing, labels, live pixels (shaders, canvas programs, and program() items: your own JavaScript with three.js, WebGL 2, WebGPU or any library), camera moves, a pointer, lines of text for the learner to read (say), and changes to items already on the board. The program runs in a sandbox with no access to the app, files or network, and builds a timeline; it may compute for as long as it needs. The complete reference is get_guide topic \"scene\". Coordinates are board points (origin at the centre, +x right, +y down).\n\nThe stage: every program on a board runs in the same sandbox, one after another. Objects, values and functions a program puts on the global `stage` object are there for later programs, and objects of earlier programs can be acted on again (a tween of an earlier value redraws the earlier objects that read it). The stage starts new when the board changes, on scene_control reset, and when the app starts.\n\nPlayback: a scene sent while another plays starts when that one ends (and after the scenes already waiting), with no gap between them; with when \"now\" it starts at once, over the others. The tool returns when the program has run and the scene is queued or starts; with wait \"end\" it returns when the scene has played to its end, or earlier when playback stops at a pause before that end. A step with {pause: true} stops playback until scene_control resumes it. When the learner starts drawing during playback, playback pauses at the next step (or at once when no step is left) and the board news says so. Lines (say) are shown to the learner as text at a reading pace; nothing is spoken.\n\nWhen it has played, everything stays on the board as ordinary items the learner can edit: ink (one ink group per ink object), svg nodes (vector shapes), text nodes (tex, text), live items (shader, canvas, program), and one frame item per named group. Items the scene erased or faded out are gone. The whole scene is one undo step for the learner, and the board file holds the final state from the moment the tool returns.\n\nReturns JSON: scene (its id, for scene_control), duration_s, starts_in_s and ends_in_s (seconds from now; pauses not counted), steps ([{name, at_s, pause?}]), items ([{id, kind, name, bounds, step}]: the board items it made or changed), cues ([{text, at_s, dur_s, marks?}] from say; dur_s is the line's reading time; marks: {name: at_s}), log (console.log output), warnings (unknown options, text that a line, outline or ink of the scene runs through, text over other text, objects outside the learner's view), stage (only when this program started a new stage: why), and with wait \"end\" played (true: the scene played to its end; false: playback stopped at a pause first) and the playback status (with paused_by: \"pause step\", \"learner drawing\" or \"scene_control pause\", paused_scene, paused_step and paused_t while a scene stands paused). A program error returns an error with its message and line number, nothing is drawn, and the stage is as before the program.\n\nWith preview: true, nothing is drawn or committed, the stage is as before, and the learner sees nothing: the result is a storyboard image (one frame at the end of each step, and the end, each labelled with its step and times; the grey outline is the learner's view now) with the same JSON fields except items, starts_in_s and ends_in_s.",
+          "Runs a JavaScript program that writes and draws on the open board over time, in front of the learner; it is the one way to write on the board. It has: shapes and ink drawn stroke by stroke, handwriting, typeset maths, fills, fades, moves, erasing, labels, HTML material (html(): pages, cards, frames with layout, exercises, inline SVG), pictures (image(): a URL or a file in the learning folder), copies (copy()), empty space for new material (space()), text and style changes (edit()), moves into frames and deletion of items and ink groups (the learner's too), live pixels (shaders, canvas programs, and program() items: your own JavaScript with three.js, WebGL 2, WebGPU or any library), camera moves, a pointer, and lines of text for the learner to read (say). The program runs in a sandbox with no access to the app, files or network, and builds a timeline; it may compute for as long as it needs. The complete reference is get_guide topic \"scene\". Coordinates are board points (origin at the centre, +x right, +y down).\n\nThe stage: every program on a board runs in the same sandbox, one after another. Objects, values and functions a program puts on the global `stage` object are there for later programs, and objects of earlier programs can be acted on again (a tween of an earlier value redraws the earlier objects that read it). The stage starts new when the board changes, on scene_control reset, and when the app starts.\n\nPlayback: a scene sent while another plays starts when that one ends (and after the scenes already waiting), with no gap between them; with when \"now\" it starts at once, over the others. The tool returns when the program has run and the scene is queued or starts; with wait \"end\" it returns when the scene has played to its end, or earlier when playback stops at a pause before that end. A step with {pause: true} stops playback until scene_control resumes it. When the learner starts drawing during playback, playback pauses at the next step (or at once when no step is left) and the board news says so. Lines (say) are shown to the learner as text at a reading pace; nothing is spoken.\n\nWhile it plays or waits, the learner sees your app's name on the items it makes or changes. When it has played, everything stays on the board as ordinary items the learner can edit: ink (one ink group per ink object), svg nodes (vector shapes), text nodes (tex, text), material from html() and image() (its root node with everything inside it), live items (shader, canvas, program), and one frame item per named group. Items the scene erased or faded out are gone. The whole scene is one undo step for the learner, and the board file holds the final state from the moment the tool returns.\n\nReturns JSON: scene (its id, for scene_control), duration_s, starts_in_s and ends_in_s (seconds from now; pauses not counted), steps ([{name, at_s, pause?}]), items ([{id, kind, name, bounds, step}]: the board items it made or changed), cues ([{text, at_s, dur_s, marks?}] from say; dur_s is the line's reading time; marks: {name: at_s}), log (console.log output), warnings (unknown options, text that a line, outline or ink of the scene runs through, text over other text, objects outside the learner's view), stage (only when this program started a new stage: why), and with wait \"end\" played (true: the scene played to its end; false: playback stopped at a pause first) and the playback status (with paused_by: \"pause step\", \"learner drawing\" or \"scene_control pause\", paused_scene, paused_step and paused_t while a scene stands paused). A program error returns an error with its message and line number, nothing is drawn, and the stage is as before the program.\n\nWith preview: true, nothing is drawn or committed, the stage is as before, and the learner sees nothing: the result is a storyboard image (one frame at the end of each step, and the end, each labelled with its step and times; the grey outline is the learner's view now) with the same JSON fields except items, starts_in_s and ends_in_s.",
         inputSchema: {
           code: z
             .string()
@@ -1238,50 +1052,6 @@ export class AgentServer {
         })
       })
     )
-
-    server.registerTool(
-      'find_space',
-      {
-        title: 'Find empty space',
-        description:
-          "Find an empty rect of a given size on the open board: no overlap with any top-level node or ink, with a 32-point margin, nearest to near (a node or ink group) or to the centre of the learner's view. inside_view (default true) prefers spots fully inside the learner's view. Returns {x, y, width, height, visible}. Use it before a write that takes x and y; writes with place or near find their own space.",
-        inputSchema: {
-          width: boxSize(MAX_BOX_SIZE),
-          height: boxSize(MAX_BOX_SIZE),
-          near: z.string().optional(),
-          inside_view: z.boolean().optional()
-        },
-        annotations: { readOnlyHint: true }
-      },
-      this.tool(session, 'find_space', async (args) => text(json(await this.board(session, 'findSpace', args))))
-    )
-
-    server.registerTool(
-      'focus',
-      {
-        title: "Move the learner's view",
-        description:
-          "Move the learner's view to a node, ink group or region, with a short glide; it zooms out only when the target does not fit, or to zoom when given. It does nothing when the target is already fully in view, and it is skipped while the learner is writing (a stroke in progress or one in the last 2 seconds). Returns the new viewport, or that it was skipped and why.",
-        inputSchema: {
-          node_id: z.string().optional(),
-          region: rectSchema.optional(),
-          padding: z.number().min(0).max(MAX_COORD).optional().describe('Board points around the target (default 48).'),
-          zoom: z.number().positive().max(100).optional()
-        }
-      },
-      this.tool(session, 'focus', async (args) => text(json(await this.board(session, 'focus', args))))
-    )
-
-    server.registerTool(
-      'finish_working',
-      {
-        title: 'Finish working',
-        description:
-          "Remove the \"agent working\" outline that the learner sees around the top-level nodes you are changing: for node_ids, or for all of yours when node_ids is omitted. Outlines also fade 20 seconds after your last write.",
-        inputSchema: { node_ids: z.array(z.string()).max(MAX_LIST_ITEMS).optional() }
-      },
-      this.tool(session, 'finish_working', async (args) => text(json(await this.board(session, 'finishWorking', args))))
-    )
   }
 }
 
@@ -1299,7 +1069,7 @@ function readJson(req: IncomingMessage): Promise<unknown> {
     })
     req.on('end', () => {
       if (size > MAX_BODY_BYTES) {
-        reject(new BodyTooLarge(`The request is larger than ${MAX_BODY_BYTES / 1024 / 1024} MB. Send less per call (write_html takes at most ${MAX_HTML_CHARS} characters).`))
+        reject(new BodyTooLarge(`The request is larger than ${MAX_BODY_BYTES / 1024 / 1024} MB. Send less per call.`))
         return
       }
       try {

@@ -146,7 +146,53 @@ export interface SceneLiveObject extends SceneObjectBase {
   line?: number
 }
 
-export type SceneObjectDesc = SceneInkObject | SceneShapeObject | SceneTextObject | SceneGroupObject | SceneNodeObject | SceneLiveObject
+/**
+ * A plain-data node draft (the HTML converter's output, renderer/board/html.ts
+ * Draft): kind, style, x, y (inside a free frame), text, markup, src, name, children.
+ */
+export interface SceneDraft {
+  kind: 'frame' | 'text' | 'svg' | 'image'
+  name?: string
+  style: Record<string, string>
+  x: number
+  y: number
+  text?: string
+  markup?: string
+  src?: string
+  children: SceneDraft[]
+}
+
+/** Where html() puts its nodes: at the top level (bounds), or into an existing frame, or in place of an item. */
+export interface SceneHtmlPlace {
+  /** A board item (node id) the html goes into (insert) or replaces (replace). */
+  ref: string
+  mode: 'insert' | 'replace'
+  /** insert: the position among the frame's children (default: last). */
+  index?: number
+}
+
+/**
+ * Board material from HTML (html(), image(), a copy of material): one root
+ * node with its subtree, made from drafts. Its parts (the root's children)
+ * reveal one after another when it is drawn.
+ */
+export interface SceneHtmlObject extends SceneObjectBase {
+  kind: 'html'
+  drafts: SceneDraft[]
+  /** Into an existing frame or in place of an item; else at bounds.x, bounds.y at the top level. */
+  place?: SceneHtmlPlace
+  style: SceneStyle
+}
+
+/** One part of an html object (a child of its root, by index): revealed, faded or recoloured on its own. */
+export interface ScenePartObject extends SceneObjectBase {
+  kind: 'part'
+  /** The html object (its parent) and the part's index among the root's children. */
+  index: number
+  style: SceneStyle
+}
+
+export type SceneObjectDesc = SceneInkObject | SceneShapeObject | SceneTextObject | SceneGroupObject | SceneNodeObject | SceneLiveObject | SceneHtmlObject | ScenePartObject
 
 /** Animatable properties. draw and fill are 0..1 shares; x, y are offsets; rotate is in degrees. */
 export type SceneProp = 'x' | 'y' | 'scale' | 'rotate' | 'opacity' | 'color' | 'draw' | 'fill'
@@ -199,9 +245,36 @@ export interface SceneStep {
   pause?: boolean
 }
 
+/**
+ * edit(): an item's text or style changes at `at` (styles glide over dur).
+ * style values are CSS strings (null removes the key); text is the text node's markup.
+ */
+export interface SceneEdit {
+  obj: number
+  at: number
+  dur: number
+  ease: SceneEase
+  text?: string
+  style?: Record<string, string | null>
+}
+
+/** move(item, {into}): the item becomes a child of a frame at `start` and glides to its new place over dur. */
+export interface SceneReparent {
+  obj: number
+  /** The frame: a board node id, or an object of this scene (an html object). */
+  into: { ref: string } | { obj: number }
+  /** The position among the frame's children (default: last). */
+  index?: number
+  start: number
+  dur: number
+  ease: SceneEase
+}
+
 export interface SceneDescription {
   objects: SceneObjectDesc[]
   actions: SceneTrack[]
+  edits?: SceneEdit[]
+  reparents?: SceneReparent[]
   steps: SceneStep[]
   duration: number
   logs: string[]

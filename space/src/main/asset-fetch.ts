@@ -5,7 +5,7 @@ import type { LookupFunction } from 'node:net'
 import { BlockList, isIP } from 'node:net'
 
 /**
- * Image downloads for agent-chosen URLs (write_html <img src="https://…">).
+ * Image downloads for agent-chosen URLs (a scene's image() and html() <img src="https://…">).
  * The URL comes from an agent, so treat it as hostile (SSRF):
  * - https only; the host is normalized (lowercase, no trailing dot);
  * - every resolved address must be public: no loopback, private, link-local,

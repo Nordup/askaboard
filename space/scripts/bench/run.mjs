@@ -1,5 +1,10 @@
 #!/usr/bin/env node
 /**
+ * NOTE (2026-10-25, live drawing stage 4, decision P13): the app no longer has
+ * the write tools this file calls (write_html, draw_ink, find_space, …); scenes
+ * (run_scene) are the one way to write. Port the set-up to run_scene programs
+ * before the next bench run.
+ *
  * The agent bench: run the fixed scenarios (scenarios.mjs) with a real agent
  * client against an own Learning Space instance, and write the measurements.
  * This is a measurement, not a test: nothing passes or fails.

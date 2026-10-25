@@ -102,19 +102,8 @@ every tool twice. The popover shows this problem and offers **Fix**.
 | `get_guide` | `topic` | One topic of the board reference (scene, scene-code, scene-interact, model, html, math, svg, images, tokens, placement, ink, view, and `folder` when the folder has `.learning-space/guide.md`); without a topic, all of it |
 | `get_tree` | `node_id`, `depth` | Indented outline of nodes with ids and bounds |
 | `get_node_info` | `node_id` | One node: bounds, parent, children, style, text, author |
-| `get_html` | `node_id`, `include_ids` | A subtree as the `write_html` subset |
-| `create_frame` | `name`, `style`, `x`, `y`, `near`, `place` | A top-level frame, placed in empty space when `x` and `y` are omitted |
-| `write_html` | `html`, `target_id`, `mode`, `near`, `place` | Writes HTML into a frame or onto the board |
-| `update_styles` | `updates: [{node_ids, styles}]` | Changes styles of nodes |
-| `set_text` | `updates: [{node_id, text}]` | Replaces the text of text nodes |
-| `move_nodes` | `moves: [{node_id, x,y \| dx,dy \| parent_id, index \| before \| after \| place}]` | Moves or reparents nodes |
-| `duplicate_nodes` | `node_ids`, `place` | Copies nodes with their children |
-| `delete_nodes` | `node_ids` | Deletes nodes or ink groups |
-| `draw_ink` | `shape`, `target`, `strokes` \| `svg_path`, `place`, `color`, `tool` | Draws ink: circle, underline, tick, cross, arrow, or free strokes |
-| `find_space` | `width`, `height`, `near`, `inside_view` | An empty rect for new material |
-| `focus` | `node_id` \| `region`, `padding`, `zoom` | Moves the learner's view to a target |
-| `finish_working` | `node_ids` | Clears the agent's "working" outline |
-| `run_scene` | `code`, `name`, `when`, `wait`, `preview` | Runs a scene program on the board's stage and plays it (queued by default); returns steps, items, lines and timing; `preview` returns a storyboard without drawing |
+| `get_html` | `node_id`, `include_ids` | A subtree as the HTML subset a scene's `html()` takes |
+| `run_scene` | `code`, `name`, `when`, `wait`, `preview` | The one way to write: runs a scene program on the board's stage and plays it (queued by default). Programs draw, write, place HTML material (`html()`), pictures (`image()`), copies (`copy()`), find room (`space()`), change text and styles (`edit()`), move items into frames and delete them. Returns steps, items, lines and timing; `preview` returns a storyboard without drawing. The agent's presence outline stays on its items until the scene has played |
 | `scene_control` | `action` (status, pause, resume, stop, skip, cancel, replace, replay, cut, reset, wait), `scene`, `step`, `code` | Controls playback and the stage |
 
 ## Learning folder

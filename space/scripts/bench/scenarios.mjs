@@ -1,4 +1,9 @@
 /**
+ * NOTE (2026-10-25, live drawing stage 4, decision P13): the app no longer has
+ * the write tools this file calls (write_html, draw_ink, find_space, …); scenes
+ * (run_scene) are the one way to write. Port the set-up to run_scene programs
+ * before the next bench run.
+ *
  * The fixed bench scenarios. Keep them the same between runs, or results
  * stop being comparable. A conversation is one app instance, one learning
  * folder, one board and one agent conversation; its scenarios run in order,

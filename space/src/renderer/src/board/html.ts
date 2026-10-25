@@ -9,7 +9,7 @@ import type { SceneIndex } from './scene'
  * becomes native nodes. DOMParser builds an inert document (no script runs,
  * no resource loads), and only whitelisted tags, attributes and style keys
  * survive. `nodesToHtml` writes the same subset back, so
- * write_html(get_html(x)) gives x again (ids kept with data-id).
+ * html(get_html(x)) in a scene gives x again (with new ids).
  */
 
 const STYLE_KEY_SET: ReadonlySet<string> = new Set(STYLE_KEYS)
@@ -407,7 +407,7 @@ function runsToHtml(runs: Run[]): string {
     .map((run) => {
       switch (run.kind) {
         case 'text':
-          // A literal * stays plain: write_html escapes plain text again on the way in.
+          // A literal * stays plain: html() escapes plain text again on the way in.
           return escapeHtml(run.text).replace(/\n/g, '<br>')
         case 'math':
           return `$${escapeHtml(run.tex)}$`
