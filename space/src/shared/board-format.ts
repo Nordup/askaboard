@@ -178,13 +178,15 @@ export interface ImageNode extends NodeBase {
  * `mode: 'shader'`: `code` is a GLSL ES 3.0 fragment shader (Shadertoy style,
  * `mainImage(out vec4, in vec2)`). `mode: 'canvas'`: `code` is the body of
  * `function (ctx, t, w, h, params)` that paints a 2D canvas in a sandbox.
+ * `mode: 'program'`: `code` is a whole program that runs once in its own
+ * worker and frame with the item's canvas (live-pixels/program.ts).
  * `params` become `uniform float <name>` (shader) or the `params` argument
  * (canvas); scene playback may override them. `w`, `h`: the size in board points.
  * Ink drawn on it becomes its child, as on a frame.
  */
 export interface LiveNode extends NodeBase {
   kind: 'live'
-  mode: 'shader' | 'canvas'
+  mode: 'shader' | 'canvas' | 'program'
   code: string
   params: Record<string, number>
   w: number
@@ -261,7 +263,7 @@ function validKnown(node: BoardNode): boolean {
       return typeof raw.src === 'string' && validStyle(raw.style)
     case 'live':
       return (
-        (raw.mode === 'shader' || raw.mode === 'canvas') &&
+        (raw.mode === 'shader' || raw.mode === 'canvas' || raw.mode === 'program') &&
         typeof raw.code === 'string' &&
         isRecord(raw.params) &&
         Object.values(raw.params).every(finite) &&

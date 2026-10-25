@@ -261,6 +261,8 @@ export interface PreviewFrame {
   nodes: BoardNode[]
   overrides: Array<[string, NodeOverride]>
   tips: PlaybackTip[]
+  /** The scene clock at t for each node the scene plays (program items draw that moment). */
+  clocks: Array<[string, { t: number; playing: boolean; step: string | null; end: number }]>
 }
 
 export interface PreviewResult {
@@ -355,7 +357,11 @@ export function previewScene(ctx: RunSceneContext, args: Record<string, unknown>
 function frameAt(play: CompiledScene['play'], t: number, label: string, nodes: BoardNode[], inkIndex: ReturnType<typeof inkIndexOf>): PreviewFrame {
   const out: SceneFrame = { overrides: new Map(), tips: [], inks: [] }
   sceneFrame(play, t, inkIndex, out)
-  return { t: Math.round(t * 1000) / 1000, label, nodes: [...nodes, ...out.inks], overrides: [...out.overrides], tips: out.tips.filter((tip) => tip.kind === 'pointer') }
+  let step: string | null = null
+  for (const entry of play.steps) if (entry.at <= t + 1e-6) step = entry.name
+  const clock = { t, playing: false, step, end: play.duration }
+  const clocks = play.objects.flatMap((object) => object.targets.map((target) => [target.nodeId, clock] as [string, typeof clock]))
+  return { t: Math.round(t * 1000) / 1000, label, nodes: [...nodes, ...out.inks], overrides: [...out.overrides], tips: out.tips.filter((tip) => tip.kind === 'pointer'), clocks }
 }
 
 /** scene_control. */

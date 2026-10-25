@@ -443,7 +443,7 @@ export async function handleAgentRequest(request: AgentRequest, getContext: () =
       return withLiveStills(screenshotPlan(context, request.params as AgentMethods['screenshotPlan']['params']))
     case 'validateLive': {
       const params = request.params as AgentMethods['validateLive']['params']
-      return { error: await validateLiveCode(params.mode, params.code, params.params ?? {}) }
+      return { error: await validateLiveCode(params.mode, params.code, params.params ?? {}, params.size) }
     }
     case 'agentTool': {
       const params = request.params as AgentMethods['agentTool']['params']

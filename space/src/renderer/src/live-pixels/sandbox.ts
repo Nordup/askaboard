@@ -28,7 +28,7 @@
  * `colors` (colors.accent, colors.text, … colors.bg), read once from content.css.
  */
 let colorCache: Record<string, string> | null = null
-function boardColors(): Record<string, string> {
+export function boardColors(): Record<string, string> {
   if (colorCache) return colorCache
   const probe = document.createElement('div')
   probe.className = 'board__content'

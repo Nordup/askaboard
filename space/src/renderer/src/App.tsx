@@ -659,7 +659,7 @@ export function App() {
           return true
         },
         items: () => liveItems(),
-        validate: (mode: 'shader' | 'canvas', code: string, params?: Record<string, number>) => validateLiveCode(mode, code, params)
+        validate: (mode: 'shader' | 'canvas' | 'program', code: string, params?: Record<string, number>) => validateLiveCode(mode, code, params)
       },
       /** A node's rect in window CSS pixels, from the layout cache. */
       nodeRect: (id: string) => {

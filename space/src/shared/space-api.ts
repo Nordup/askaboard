@@ -230,6 +230,8 @@ export interface LearnerNews {
 export interface SnapshotPlayback {
   overrides: Array<[string, unknown]>
   tips: unknown[]
+  /** The scene clock per node at this moment (program items draw it). */
+  clocks?: Array<[string, unknown]>
 }
 
 /** Which agent session made a request (for presence and change attribution). */
@@ -347,7 +349,7 @@ export interface AgentMethods {
   learnerNews: { params: { since: number }; result: LearnerNews | null }
   agentTool: { params: { tool: AgentToolName; args: Record<string, unknown>; agent: AgentRef }; result: unknown }
   /** Check live pixel code (shader compile log, canvas syntax error); error null when it is fine. */
-  validateLive: { params: { mode: 'shader' | 'canvas'; code: string; params?: Record<string, number> }; result: { error: string | null } }
+  validateLive: { params: { mode: 'shader' | 'canvas' | 'program'; code: string; params?: Record<string, number>; size?: [number, number] }; result: { error: string | null } }
 }
 
 export type AgentMethod = keyof AgentMethods

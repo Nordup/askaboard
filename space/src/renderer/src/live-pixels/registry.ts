@@ -1,6 +1,7 @@
 import type { LiveNode } from '@shared/board-format'
 import { CanvasHost, canvasSyntaxError, type CanvasSize } from './sandbox'
 import { shaderEngine, shaderError, type ShaderProgram } from './shader'
+import { ProgramHost, programError, type LiveClock, type LiveInput } from './program'
 
 /**
  * Live pixel items on the page: their runners, visibility, status and frame
@@ -16,6 +17,8 @@ export interface LiveStatus {
   error?: string
   /** Frames painted since the item appeared on this page. */
   frames: number
+  /** Program items: how the item takes pointer input (its program's input(mode)). */
+  input?: LiveInput
 }
 
 /** A canvas worker that paints nothing for this long while visible is shown as not responding. */
@@ -26,9 +29,19 @@ const MEASURE_EVERY = 12
 // ---------- Playback parameter overrides (scene playback, playback.ts) ----------
 
 let playbackParams: ReadonlyMap<string, Record<string, number>> = new Map()
+let playbackClocks: ReadonlyMap<string, LiveClock> = new Map()
 
-/** Scene playback (Board, each playback frame): the params each live item shows now, merged over its own. null ends it. */
-export function setLivePlayback(frame: { overrides: ReadonlyMap<string, { params?: Record<string, number> }> } | null): void {
+/**
+ * Scene playback (Board, each playback frame): the params each live item
+ * shows now, merged over its own, and the scene clock of each item a scene
+ * plays. null ends it.
+ */
+export function setLivePlayback(frame: { overrides: ReadonlyMap<string, { params?: Record<string, number> }>; clocks?: ReadonlyMap<string, LiveClock> } | null): void {
+  const clocks = frame?.clocks ?? new Map<string, LiveClock>()
+  if (clocks.size || playbackClocks.size) {
+    playbackClocks = clocks
+    for (const item of items.values()) item.clockChanged()
+  }
   const next = new Map<string, Record<string, number>>()
   if (frame) for (const [id, override] of frame.overrides) if (override.params) next.set(id, override.params)
   if (next.size === 0 && playbackParams.size === 0) return
@@ -37,6 +50,39 @@ export function setLivePlayback(frame: { overrides: ReadonlyMap<string, { params
   for (const item of items.values()) {
     if (before.get(item.id) !== playbackParams.get(item.id)) item.paramsChanged()
   }
+}
+
+// ---------- Input: the item the learner entered ----------
+
+let entered: string | null = null
+const enteredListeners = new Set<() => void>()
+
+/** The program item that gets the learner's pointer and keys now (input "enter"), or null. */
+export function enteredLive(): string | null {
+  return entered
+}
+
+export function subscribeEntered(listener: () => void): () => void {
+  enteredListeners.add(listener)
+  return () => enteredListeners.delete(listener)
+}
+
+/** Give the learner's input to a program item whose input is "enter" (double-click); null leaves it. Returns whether it entered. */
+export function enterLive(id: string | null): boolean {
+  const target = id ? items.get(id) : undefined
+  const next = target && target.status.input === 'enter' && target.status.state !== 'error' ? id : null
+  if (next === entered) return next !== null
+  const before = entered ? items.get(entered) : undefined
+  entered = next
+  before?.setEntered(false)
+  target?.setEntered(next !== null)
+  for (const listener of enteredListeners) listener()
+  return next !== null
+}
+
+/** The input mode of a live item: "none" unless its program asked for more. */
+export function liveInput(id: string): LiveInput {
+  return items.get(id)?.status.input ?? 'none'
 }
 
 // ---------- Items ----------
@@ -66,7 +112,9 @@ export class LiveItem {
   readonly start = performance.timeOrigin + performance.now()
   private visible = false
   private canvas: HTMLCanvasElement | null = null
-  private host: CanvasHost | null = null
+  private host: CanvasHost | ProgramHost | null = null
+  /** Program items: the last report() values. */
+  report: unknown = undefined
   private ctx2d: CanvasRenderingContext2D | null = null
   private program: ShaderProgram | null = null
   private programKey = ''
@@ -94,14 +142,15 @@ export class LiveItem {
     return override ? { ...this.node.params, ...override } : this.node.params
   }
 
-  private setStatus(state: LiveState, error?: string): void {
+  private setStatus(state: LiveState, error?: string, input = this.status.input): void {
     const frames = this.frameBase + this.frames
-    if (this.status.state === state && this.status.error === error) {
+    if (this.status.state === state && this.status.error === error && this.status.input === input) {
       this.status = { ...this.status, frames }
       return
     }
-    this.status = { state, error, frames }
+    this.status = { state, error, frames, input }
     this.onStatus(this.status)
+    if (entered === this.id && (state === 'error' || input !== 'enter')) enterLive(null)
   }
 
   /** A fresh <canvas> (a canvas can hand its control to a worker only once). */
@@ -119,16 +168,33 @@ export class LiveItem {
     if (this.node.mode === 'shader') {
       this.ctx2d = canvas.getContext('2d')
       this.compile()
+    } else if (this.node.mode === 'program') {
+      // The program draws in its own frame; this canvas only measures nothing and goes.
+      canvas.remove()
+      this.canvas = null
+      this.lastTickAt = performance.now()
+      this.report = undefined
+      const clock = playbackClocks.get(this.id) ?? null
+      this.host = new ProgramHost(
+        this.container,
+        { code: this.node.code, size: this.size, params: this.params(), start: this.start, visible: this.visible, clock },
+        {
+          onTick: (frames) => this.ticked(frames),
+          onError: (message) => this.setStatus('error', message),
+          onInput: (mode) => this.setStatus(this.status.state, this.status.error, mode),
+          onReport: (values) => {
+            this.report = values
+          },
+          onEscape: () => {
+            if (entered === this.id) enterLive(null)
+          }
+        }
+      )
     } else {
       this.lastTickAt = performance.now()
       try {
         this.host = new CanvasHost(canvas, this.node.code, this.size, this.params(), this.start, {
-          onTick: (frames) => {
-            this.frames = frames
-            this.lastTickAt = performance.now()
-            if (this.status.state === 'stalled' || this.status.state === 'starting') this.setStatus(this.visible ? 'running' : 'paused')
-            else this.status = { ...this.status, frames: this.frameBase + frames }
-          },
+          onTick: (frames) => this.ticked(frames),
           onError: (message) => this.setStatus('error', message)
         })
         this.host.run(this.visible)
@@ -138,7 +204,15 @@ export class LiveItem {
     }
   }
 
+  private ticked(frames: number): void {
+    this.frames = frames
+    this.lastTickAt = performance.now()
+    if (this.status.state === 'stalled' || this.status.state === 'starting') this.setStatus(this.visible ? 'running' : 'paused')
+    else this.status = { ...this.status, frames: this.frameBase + frames }
+  }
+
   private unmount(): void {
+    if (entered === this.id) enterLive(null)
     this.host?.dispose()
     this.host = null
     this.ctx2d = null
@@ -168,8 +242,8 @@ export class LiveItem {
   update(node: LiveNode): void {
     const before = this.node
     this.node = node
-    if (node.mode !== before.mode || (node.mode === 'canvas' && node.code !== before.code)) {
-      this.setStatus('starting')
+    if (node.mode !== before.mode || (node.mode !== 'shader' && node.code !== before.code)) {
+      this.setStatus('starting', undefined, undefined)
       this.mount()
       return
     }
@@ -179,14 +253,23 @@ export class LiveItem {
   }
 
   paramsChanged(): void {
-    if (this.node.mode === 'canvas') this.host?.setParams(this.params())
+    if (this.node.mode !== 'shader') this.host?.setParams(this.params())
+  }
+
+  /** The scene clock may have changed (each playback frame). */
+  clockChanged(): void {
+    if (this.host instanceof ProgramHost) this.host.setClock(playbackClocks.get(this.id) ?? null)
+  }
+
+  setEntered(on: boolean): void {
+    if (this.host instanceof ProgramHost) this.host.setEntered(on)
   }
 
   setVisible(visible: boolean): void {
     if (visible === this.visible) return
     this.visible = visible
     this.measureIn = 0
-    if (this.node.mode === 'canvas') {
+    if (this.node.mode !== 'shader') {
       if (!visible && this.host && this.status.state === 'stalled') {
         // A hung worker off screen: stop it; it starts again (fresh) when the item comes back.
         this.host.dispose()
@@ -298,7 +381,7 @@ export function unobserve(element: HTMLElement): void {
 }
 
 document.addEventListener('visibilitychange', () => {
-  for (const item of items.values()) if (item.node.mode === 'canvas') item.setVisible(item.isVisible)
+  for (const item of items.values()) if (item.node.mode !== 'shader') item.setVisible(item.isVisible)
 })
 
 // ---------- For agents, the snapshot path and dev checks ----------
@@ -328,7 +411,13 @@ export function liveItems(): Array<{ id: string; mode: string; visible: boolean 
   return [...items.values()].map((item) => ({ id: item.id, mode: item.node.mode, visible: item.isVisible, ...item.status }))
 }
 
-/** Check live code: the shader compile log or the canvas syntax error, or null when it is fine. */
-export async function validateLiveCode(mode: 'shader' | 'canvas', code: string, params: Record<string, number> = {}): Promise<string | null> {
+/** The last report() values of a program item on this page (get_node_info), or undefined. */
+export function liveReport(id: string): unknown {
+  return items.get(id)?.report
+}
+
+/** Check live code: the shader compile log, the canvas syntax error, or a program's first error; null when it is fine. */
+export async function validateLiveCode(mode: 'shader' | 'canvas' | 'program', code: string, params: Record<string, number> = {}, size?: [number, number]): Promise<string | null> {
+  if (mode === 'program') return programError(code, params, size)
   return mode === 'shader' ? shaderError(code, params) : canvasSyntaxError(code)
 }

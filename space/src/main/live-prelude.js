@@ -1144,6 +1144,7 @@
   }
   const shader = (code, opts) => liveObject('shader', 'shader', code, opts)
   const canvas = (code, opts) => liveObject('canvas', 'canvas', code, opts)
+  const program = (code, opts) => liveObject('program', 'program', code, opts)
 
   // ---------- Labels ----------
 
@@ -1559,7 +1560,7 @@
       if (key === 'params' && plain(value)) {
         for (const [k, v] of Object.entries(value)) {
           for (const e of leaves(entry)) {
-            if (e.kind !== 'live') fail(`tween: object ${e.id} (${e.api}) has no params; only shader() and canvas() items do`)
+            if (e.kind !== 'live') fail(`tween: object ${e.id} (${e.api}) has no params; only shader(), canvas() and program() items do`)
             addValueTrack(values[optionValue(e, `params.${k}`).id], T, dur, num(v, `tween params.${k}`), ease || 'inOut')
           }
         }
@@ -1939,6 +1940,7 @@
     trace: (fn, opts) => traceCreator(fn, T, opts),
     shader: creator('shader', shader, { optIndex: 1 }),
     canvas: creator('canvas', canvas, { optIndex: 1 }),
+    program: creator('program', program, { optIndex: 1 }),
     group,
     board,
     value,

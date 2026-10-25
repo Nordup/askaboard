@@ -11,6 +11,37 @@
   height: 100%;
 }
 
+/* Program items draw in their own frame (program.ts). It lets the pointer through to the board
+   (the pen draws on the item) unless the item takes input: always ("direct"), or while entered. */
+.node-live__frame {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  color-scheme: normal;
+  pointer-events: none;
+}
+
+.node-live--direct .node-live__frame,
+.node-live--entered .node-live__frame {
+  pointer-events: auto;
+}
+
+/* The snapshot window runs a program item here, unseen, until it has a picture. */
+.node-live__runner {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+}
+
+/* Entered: the learner's pointer and keys go to the item until Escape or a press outside. */
+.node-live--entered {
+  outline: 1.5px solid var(--accent);
+}
+
 /* A quiet note on a failed or hung item: the same look as a missing image. */
 .node-live--note {
   border: 1px dashed var(--border-strong);

@@ -1,0 +1,437 @@
+import { LIVE_ORIGIN, programBody } from '@shared/live-libs'
+import { boardColors, type CanvasSize } from './sandbox'
+
+/**
+ * Program mode of live pixel items: the agent's code is a whole program. It
+ * runs once, in a worker, with the item's OffscreenCanvas, and owns its loop
+ * (requestAnimationFrame), its contexts (2D, WebGL 2, WebGPU) and its state.
+ *
+ * Where it runs: a sandboxed iframe of live-item://host/frame.html
+ * (main/live-item-protocol.ts) per item. The frame is an opaque origin of its
+ * own, apart from the app's page, storage, files and other items, and has no
+ * Content-Security-Policy: the program may fetch and import from any URL.
+ * The frame creates the worker (a data: URL built here), hands it the canvas
+ * and a MessagePort to this page, and forwards the pointer, wheel and key
+ * events it receives. It receives them only while the item takes input
+ * (input "direct", or "enter" while entered); otherwise the frame lets the
+ * pointer through to the board (the learner's pen draws on the item).
+ *
+ * The page talks to the worker through the port: size, params, the scene
+ * clock, visibility, input state and stills; the worker answers with alive
+ * ticks, errors, stills, report() values and its input mode. The board's
+ * main thread never runs the agent's code and never waits for it.
+ */
+
+export type LiveInput = 'none' | 'enter' | 'direct'
+
+/** The scene clock of an item: the scene that plays it now (player.ts). */
+export interface LiveClock {
+  t: number
+  playing: boolean
+  step: string | null
+  /** The scene's duration. */
+  end: number
+}
+
+export interface ProgramHostEvents {
+  onTick(frames: number): void
+  onError(message: string): void
+  onInput(mode: LiveInput): void
+  onReport(values: unknown): void
+  onEscape(): void
+}
+
+/** The worker script. __CODE__ is the agent's program as an async function body (shared/live-libs.ts programBody). */
+const TEMPLATE = `'use strict';
+(() => {
+  const scope = self;
+  const nativeRaf = scope.requestAnimationFrame.bind(scope);
+  const perf = scope.performance;
+  const now = perf.now.bind(perf);
+  const toFrame = scope.postMessage.bind(scope);
+  let port = null;
+  const post = (m) => { if (port) { try { port.postMessage(m); } catch (e) { post({ type: 'error', message: 'report: values must be plain data' }); } } };
+  let canvas = null, w = 1, h = 1, pw = 1, ph = 1, start = 0;
+  let visible = false, failed = false, frames = 0;
+  const params = {};
+  const colors = {};
+  const clock = { t: 0, at: 0, playing: false, active: false, ended: true, step: null };
+  const scene = Object.freeze({
+    get t() { return clock.playing ? clock.t + (now() - clock.at) / 1000 : clock.t; },
+    get playing() { return clock.playing; },
+    get active() { return clock.active; },
+    get ended() { return clock.ended; },
+    get step() { return clock.step; }
+  });
+  const item = Object.freeze({
+    get w() { return w; },
+    get h() { return h; },
+    get dpr() { return pw / Math.max(1e-6, w); },
+    get t() { return (perf.timeOrigin + now() - start) / 1000; }
+  });
+  const fail = (error) => {
+    if (failed) return;
+    failed = true;
+    const message = error && error.stack ? String(error.stack) : error && error.message ? String(error.message) : String(error);
+    post({ type: 'error', message });
+  };
+  scope.addEventListener('error', (e) => { e.preventDefault(); fail(e.error || e.message); });
+  scope.addEventListener('unhandledrejection', (e) => { e.preventDefault(); fail(e.reason); });
+
+  // requestAnimationFrame: the program's callbacks wait while the item is off screen.
+  const pending = new Map();
+  let nextId = 1, scheduled = 0;
+  const stills = [];
+  const schedule = () => { if (!scheduled && visible && !failed && pending.size) scheduled = nativeRaf(runFrame); };
+  const takeStills = () => {
+    const ids = stills.splice(0);
+    if (!ids.length) return;
+    let promise;
+    try { promise = canvas.convertToBlob({ type: 'image/png' }); } catch (e) { promise = Promise.reject(e); }
+    promise.then((blob) => { for (const id of ids) post({ type: 'still', id, blob }); }, () => { for (const id of ids) post({ type: 'still', id, blob: null }); });
+  };
+  const runFrame = (ts) => {
+    scheduled = 0;
+    const list = [...pending.values()];
+    pending.clear();
+    for (const cb of list) { try { cb(ts); } catch (e) { fail(e); return; } }
+    if (list.length) frames++;
+    takeStills();
+    schedule();
+  };
+  scope.requestAnimationFrame = (cb) => { const id = nextId++; pending.set(id, cb); schedule(); return id; };
+  scope.cancelAnimationFrame = (id) => { pending.delete(id); };
+
+  const emit = (type, props) => {
+    if (!canvas) return;
+    const e = new Event(type, { cancelable: true });
+    for (const k in props) if (k !== 'type') { try { Object.defineProperty(e, k, { value: props[k], enumerable: true }); } catch (x) {} }
+    try { canvas.dispatchEvent(e); } catch (error) { fail(error); }
+  };
+  let lastReport = 0, reportTimer = 0, reportValue;
+  const sendReport = () => { reportTimer = 0; lastReport = now(); post({ type: 'report', values: reportValue }); };
+  const api = {
+    params, scene, item, colors,
+    input(mode) {
+      if (mode !== 'none' && mode !== 'enter' && mode !== 'direct') throw new Error('input(mode): mode is "none", "enter" or "direct"');
+      post({ type: 'input', mode });
+    },
+    report(values) {
+      let text;
+      try { text = JSON.stringify(values); } catch (e) { throw new Error('report(values): values must be plain data'); }
+      if (text && text.length > 4000) throw new Error('report(values): at most 4000 characters as JSON');
+      reportValue = text === undefined ? null : JSON.parse(text);
+      if (reportTimer) return;
+      const wait = 100 - (now() - lastReport);
+      if (wait <= 0) sendReport(); else reportTimer = setTimeout(sendReport, wait);
+    },
+    on(type, fn, options) { canvas.addEventListener(type, fn, options); return () => canvas.removeEventListener(type, fn, options); }
+  };
+  for (const key of Object.keys(api)) Object.defineProperty(scope, key, { value: api[key], enumerable: true, writable: false, configurable: false });
+
+  const shim = (c) => {
+    const style = {};
+    let cursor = '';
+    Object.defineProperty(style, 'cursor', { get: () => cursor, set: (v) => { cursor = String(v); toFrame({ type: 'cursor', value: cursor }); }, enumerable: true });
+    const rect = () => ({ left: 0, top: 0, x: 0, y: 0, right: w, bottom: h, width: w, height: h });
+    const noop = () => {};
+    Object.defineProperties(c, {
+      style: { value: style },
+      clientWidth: { get: () => w }, clientHeight: { get: () => h },
+      offsetWidth: { get: () => w }, offsetHeight: { get: () => h },
+      getBoundingClientRect: { value: rect },
+      setPointerCapture: { value: noop }, releasePointerCapture: { value: noop }, hasPointerCapture: { value: () => false },
+      getRootNode: { value: () => c }, ownerDocument: { get: () => c },
+      focus: { value: noop }, blur: { value: noop }
+    });
+    Object.defineProperty(scope, 'canvas', { value: c, enumerable: true, writable: false, configurable: false });
+  };
+
+  const setClock = (m) => {
+    const before = clock.step;
+    if (m.clock) {
+      clock.t = m.clock.t; clock.at = now(); clock.playing = !!m.clock.playing; clock.step = m.clock.step ?? null;
+      clock.active = true; clock.ended = false;
+    } else if (clock.active) {
+      clock.t = typeof m.end === 'number' ? m.end : clock.t; clock.playing = false; clock.active = false; clock.ended = true;
+    }
+    if (clock.step !== before) emit('step', { name: clock.step, previous: before });
+  };
+
+  const handle = (m) => {
+    if (!m || typeof m !== 'object') return;
+    if (m.type === 'size') {
+      const resized = m.pw !== pw || m.ph !== ph || m.w !== w || m.h !== h;
+      w = m.w; h = m.h; pw = m.pw; ph = m.ph;
+      if (canvas && (canvas.width !== pw || canvas.height !== ph)) { canvas.width = pw; canvas.height = ph; }
+      if (resized) emit('resize', { w, h, dpr: item.dpr });
+    } else if (m.type === 'params') {
+      Object.assign(params, m.params);
+    } else if (m.type === 'clock') {
+      setClock(m);
+    } else if (m.type === 'run') {
+      visible = !!m.on;
+      schedule();
+    } else if (m.type === 'entered') {
+      emit(m.on ? 'enter' : 'leave', {});
+    } else if (m.type === 'still') {
+      stills.push(m.id);
+      if (!pending.size || !visible) takeStills();
+    }
+  };
+
+  scope.addEventListener('message', (event) => {
+    const m = event.data;
+    if (!m || typeof m !== 'object') return;
+    if (m.type === 'input' && m.event && typeof m.event.type === 'string') { emit(m.event.type, m.event); return; }
+    if (m.type !== 'init' || canvas) return;
+    port = m.port;
+    port.onmessage = (e) => handle(e.data);
+    w = m.w; h = m.h; pw = m.pw; ph = m.ph; start = m.start;
+    Object.assign(params, m.params);
+    Object.assign(colors, m.colors);
+    Object.freeze(colors);
+    if (m.clock !== undefined) setClock({ clock: m.clock, end: m.clock ? m.clock.end : undefined });
+    visible = !!m.visible;
+    m.canvas.width = pw; m.canvas.height = ph;
+    shim(m.canvas);
+    canvas = m.canvas;
+    setInterval(() => post({ type: 'alive', frames }), 250);
+    post({ type: 'alive', frames });
+    if (m.check) return;
+    main().catch(fail);
+  });
+
+  const main = async function () {
+__CODE__
+  };
+})();
+`
+
+/** Lines before the agent's first line in the worker script. */
+const CODE_LINE = TEMPLATE.slice(0, TEMPLATE.indexOf('__CODE__')).split('\n').length
+
+function base64(text: string): string {
+  const bytes = new TextEncoder().encode(text)
+  let binary = ''
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+  return btoa(binary)
+}
+
+export function programUrl(code: string): string {
+  return `data:text/javascript;base64,${base64(TEMPLATE.replace('__CODE__', () => programBody(code)))}`
+}
+
+/** "…:LINE:COL" positions of the worker script in an error, as the agent's lines. */
+function mapLines(message: string): string {
+  return message
+    .replace(/data:text\/javascript;base64,[A-Za-z0-9+/=]+/g, 'code')
+    .replace(/code:(\d+):(\d+)/g, (_, line: string, col: string) => `line ${Number(line) - CODE_LINE + 1}:${col}`)
+    .split('\n')
+    .filter((line) => !/^\s+at (runFrame|emit|handle|Object\.dispatchEvent|<anonymous>|EventTarget\.dispatchEvent)\b/.test(line))
+    .slice(0, 6)
+    .join('\n')
+}
+
+function loadError(message: string, line: number): string {
+  const where = line ? ` (line ${line - CODE_LINE + 1})` : ''
+  return `${(message || 'The program failed to load.').replace(/^Uncaught /, '')}${where}`
+}
+
+// ---------- Frame messages: one listener for every item frame ----------
+
+const byWindow = new Map<Window, ProgramHost>()
+let listening = false
+
+function listen(): void {
+  if (listening) return
+  listening = true
+  window.addEventListener('message', (event) => {
+    const source = event.source as Window | null
+    const host = source ? byWindow.get(source) : undefined
+    if (host && event.origin === 'null') host.fromFrame(event.data)
+  })
+}
+
+export interface ProgramStart {
+  code: string
+  size: CanvasSize
+  params: Record<string, number>
+  start: number
+  visible: boolean
+  clock?: LiveClock | null
+  /** Load and set up only: the program does not run (the syntax check). */
+  check?: boolean
+}
+
+/** One item frame and its worker. */
+export class ProgramHost {
+  readonly frame: HTMLIFrameElement
+  private port: MessagePort | null
+  private channel = new MessageChannel()
+  private stills = new Map<number, (url: string | null) => void>()
+  private nextStill = 1
+  private started = false
+  private disposed = false
+  private hadClock = false
+  private clockEnd = 0
+
+  constructor(
+    container: HTMLElement,
+    private start: ProgramStart,
+    private events: ProgramHostEvents
+  ) {
+    listen()
+    const frame = document.createElement('iframe')
+    frame.className = 'node-live__frame'
+    frame.setAttribute('sandbox', 'allow-scripts allow-pointer-lock')
+    frame.setAttribute('tabindex', '-1')
+    frame.setAttribute('aria-hidden', 'true')
+    frame.src = `${LIVE_ORIGIN}/frame.html`
+    this.frame = frame
+    container.prepend(frame)
+    if (frame.contentWindow) byWindow.set(frame.contentWindow, this)
+    this.port = this.channel.port1
+    this.port.onmessage = (event) => this.receive(event.data)
+    this.hadClock = !!start.clock
+    if (start.clock) this.clockEnd = start.clock.end
+  }
+
+  /** A message from the frame (ready, load errors, Escape). */
+  fromFrame(data: unknown): void {
+    if (!data || typeof data !== 'object' || this.disposed) return
+    const m = data as { type?: unknown; message?: unknown; line?: unknown }
+    if (m.type === 'ready' && !this.started) {
+      this.started = true
+      const s = this.start
+      const init = { w: s.size.w, h: s.size.h, pw: s.size.pw, ph: s.size.ph, params: s.params, start: s.start, colors: boardColors(), visible: s.visible, clock: s.clock ?? null, check: !!s.check }
+      this.frame.contentWindow?.postMessage({ type: 'start', url: programUrl(s.code), port: this.channel.port2, init }, '*', [this.channel.port2])
+    } else if (m.type === 'load-error') {
+      this.events.onError(loadError(typeof m.message === 'string' ? m.message : '', typeof m.line === 'number' ? m.line : 0))
+      this.stop()
+    } else if (m.type === 'escape') this.events.onEscape()
+  }
+
+  private receive(data: unknown): void {
+    if (!data || typeof data !== 'object') return
+    const m = data as { type?: unknown; frames?: unknown; message?: unknown; id?: unknown; blob?: unknown; mode?: unknown; values?: unknown }
+    if (m.type === 'alive' && typeof m.frames === 'number') this.events.onTick(m.frames)
+    else if (m.type === 'error' && typeof m.message === 'string') {
+      this.events.onError(mapLines(m.message))
+      this.stop()
+    } else if (m.type === 'input' && (m.mode === 'none' || m.mode === 'enter' || m.mode === 'direct')) this.events.onInput(m.mode)
+    else if (m.type === 'report') this.events.onReport(m.values)
+    else if (m.type === 'still' && typeof m.id === 'number') {
+      const resolve = this.stills.get(m.id)
+      if (!resolve) return
+      this.stills.delete(m.id)
+      if (!(m.blob instanceof Blob)) return resolve(null)
+      const reader = new FileReader()
+      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null)
+      reader.onerror = () => resolve(null)
+      reader.readAsDataURL(m.blob)
+    }
+  }
+
+  get alive(): boolean {
+    return this.port !== null
+  }
+
+  run(on: boolean): void {
+    this.port?.postMessage({ type: 'run', on })
+  }
+
+  resize(size: CanvasSize): void {
+    this.port?.postMessage({ type: 'size', w: size.w, h: size.h, pw: size.pw, ph: size.ph })
+  }
+
+  setParams(params: Record<string, number>): void {
+    this.port?.postMessage({ type: 'params', params })
+  }
+
+  /** The scene clock now, or null when no scene plays the item. */
+  setClock(clock: LiveClock | null): void {
+    if (!clock && !this.hadClock) return
+    this.hadClock = !!clock
+    if (clock) this.clockEnd = clock.end
+    this.port?.postMessage({ type: 'clock', clock, end: this.clockEnd })
+  }
+
+  setEntered(on: boolean): void {
+    this.port?.postMessage({ type: 'entered', on })
+    if (on) {
+      this.frame.focus()
+      this.frame.contentWindow?.postMessage({ type: 'focus' }, '*')
+    }
+  }
+
+  /** The current pixels as a PNG data URL; null when the worker does not answer within `ms`. */
+  still(ms = 1500): Promise<string | null> {
+    const port = this.port
+    if (!port) return Promise.resolve(null)
+    const id = this.nextStill++
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.stills.delete(id)
+        resolve(null)
+      }, ms)
+      this.stills.set(id, (url) => {
+        clearTimeout(timer)
+        resolve(url)
+      })
+      port.postMessage({ type: 'still', id })
+    })
+  }
+
+  /** End the worker. The frame keeps its last picture. */
+  stop(): void {
+    this.frame.contentWindow?.postMessage({ type: 'stop' }, '*')
+    this.port?.close()
+    this.port = null
+    for (const resolve of this.stills.values()) resolve(null)
+    this.stills.clear()
+  }
+
+  dispose(): void {
+    if (this.disposed) return
+    this.stop()
+    this.disposed = true
+    for (const [win, host] of byWindow) if (host === this) byWindow.delete(win)
+    this.frame.remove()
+  }
+}
+
+/**
+ * Check a program before a scene plays it: run it for a moment in a hidden
+ * frame and return its first error (syntax, a failed import, a runtime error
+ * in its setup or first frames), or null.
+ */
+export function programError(code: string, params: Record<string, number>, size: [number, number] = [320, 200], ms = 3000): Promise<string | null> {
+  return new Promise((resolve) => {
+    const box = document.createElement('div')
+    box.style.cssText = 'position:fixed;left:0;top:0;width:64px;height:64px;opacity:0;pointer-events:none;z-index:-1;overflow:hidden'
+    document.body.appendChild(box)
+    let host: ProgramHost | null = null
+    const done = (result: string | null): void => {
+      clearTimeout(timer)
+      host?.dispose()
+      box.remove()
+      resolve(result)
+    }
+    const timer = setTimeout(() => done(null), ms)
+    host = new ProgramHost(
+      box,
+      { code, size: { w: size[0], h: size[1], pw: size[0], ph: size[1] }, params, start: performance.timeOrigin + performance.now(), visible: true, clock: null },
+      {
+        // Set up and a few frames painted: it runs. A program with no frame loop passes at the time limit.
+        onTick: (frames) => {
+          if (frames >= 3) done(null)
+        },
+        onError: (message) => done(message),
+        onInput: () => undefined,
+        onReport: () => undefined,
+        onEscape: () => undefined
+      }
+    )
+  })
+}

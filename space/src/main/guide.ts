@@ -198,11 +198,19 @@ function splitSections(markdown: string): Section[] {
   })
 }
 
+/** `<!-- include: path -->` in the built-in guide: that resources file, in full, as a code block (its source is the reference). */
+function withIncludes(text: string): string {
+  return text.replace(/<!--\s*include:\s*([\w./-]+)\s*-->/g, (_, path: string) => {
+    const lang = path.endsWith('.js') ? 'js' : ''
+    return `\`\`\`${lang}\n${readBuiltIn(path).trimEnd()}\n\`\`\``
+  })
+}
+
 /** The reference's topics: the built-in guide plus the folder's topic, or the folder's guide in replace mode. */
 function referenceSections(root: string | null): Section[] {
   const local = readFolderText(root, 'guide.md')
   if (local?.kind === 'text' && local.mode === 'replace') return splitSections(local.body)
-  const sections = splitSections(readBuiltIn('guide.md'))
+  const sections = splitSections(withIncludes(readBuiltIn('guide.md')))
   if (local?.kind === 'text') {
     sections.push({ topic: FOLDER_TOPIC, summary: FOLDER_SUMMARY, text: `## ${FOLDER_HEADING}\n\n${FOLDER_PREFIX}\n\n${local.body}` })
   }

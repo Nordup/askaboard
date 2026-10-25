@@ -13,6 +13,7 @@ export interface StoryboardFrame {
   nodes: unknown[]
   overrides: Array<[string, unknown]>
   tips: unknown[]
+  clocks?: Array<[string, unknown]>
 }
 
 export interface StoryboardInput {
@@ -62,7 +63,7 @@ export async function renderStoryboard(snapshots: SnapshotRenderer, input: Story
       height: shotH,
       outlines: [{ rect: input.view, color: 'rgba(160, 160, 168, 0.55)' }],
       background: input.background,
-      playback: { overrides: frame.overrides, tips: frame.tips }
+      playback: { overrides: frame.overrides, tips: frame.tips, clocks: frame.clocks }
     })
     bitmaps.push(nativeImage.createFromBuffer(shot.png).toBitmap())
   }
