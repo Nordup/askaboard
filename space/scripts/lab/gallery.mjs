@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 /**
  * Write space/.lab/index.html: one card per run in space/.lab/runs/, newest
- * first, with the video, the filmstrip, the program, the agent's feedback and
- * the numbers. Paths are relative, so the .lab folder can be opened or zipped.
+ * first, with the video, the filmstrip, the program, the agent's feedback
+ * (when the run had an interview) and the numbers. Paths are relative, so
+ * the .lab folder can be opened or zipped.
  *
  *   node scripts/lab/gallery.mjs
  *
  * play.mjs and council.mjs run it after each run.
  */
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { RUNS } from './common.mjs'
@@ -104,7 +105,7 @@ function card(name) {
     n.write_calls !== undefined ? ['writes', n.write_calls] : null,
     n.duration_s !== undefined && n.duration_s !== null ? ['scene', `${n.duration_s} s`] : null,
     n.wall_ms !== undefined ? ['wall', secs(n.wall_ms)] : null,
-    n.watch_s !== undefined && n.watch_s !== null ? ['video', `${n.watch_s} s of ${n.recorded_s} s real`] : n.recorded_s !== undefined ? ['video', `${n.recorded_s} s real time`] : null,
+    meta.media === 'pending' ? ['video', 'being made'] : n.watch_s !== undefined && n.watch_s !== null ? ['video', `${n.watch_s} s of ${n.recorded_s} s real`] : n.recorded_s !== undefined ? ['video', `${n.recorded_s} s real time`] : null,
     n.steps ? ['steps', n.steps] : null,
     n.errors ? ['errors', n.errors] : null
   ].filter(Boolean)
@@ -181,7 +182,10 @@ ${names.map(card).join('\n')}
 </html>
 `
   const out = join(RUNS, '..', 'index.html')
-  writeFileSync(out, html)
+  // Two runs can finish at once (council videos are made in the background): write, then rename.
+  const part = `${out}.${process.pid}.part`
+  writeFileSync(part, html)
+  renameSync(part, out)
   return out
 }
 

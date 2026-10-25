@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 /**
  * The model council: a real agent works on a task on a fresh lab app while the
- * board is recorded, then the same session is interviewed about the tool.
+ * board is recorded. With --interview, the same session is then interviewed
+ * about the tool.
  *
  *   node scripts/lab/council.mjs --client codex|claude --task <id|text>
  *        [--model M] [--effort E] [--title T] [--timeout-min 20]
  *        [--name council] [--mcp-port 47891] [--debug-port 9491] [--built]
  *        [--codex-home /private/tmp/claude-501/ls-lab/codex-home] [--no-news-hook] [--keep-app]
+ *        [--brief-only] [--no-web] [--interview] [--wait-media]
  *
  * Tasks: council/tasks.json (id → text; "learner": "S3" draws the bench's S3
  * strokes before the session), or any text. The prompt is council/purpose.md
@@ -16,18 +18,25 @@
  * allowed) or `codex exec --json` (scratch CODEX_HOME, Learning Space tools
  * approved), run from inside the lab's learning folder, so AGENTS.md loads. The
  * window is recorded with the screencast for the whole phase, until the last
- * scene has played.
- * Phase 2 (interview): the SAME session resumed (`claude -p --resume <id>`,
- * `codex exec resume <thread>`) with council/interview.md; the answer is feedback.md.
+ * scene has played, plus 1 s.
+ * Phase 2 (interview, only with --interview): the SAME session resumed
+ * (`claude -p --resume <id>`, `codex exec resume <thread>`) with
+ * council/interview.md; the answer is feedback.md.
+ *
+ * When the board is done, the script takes final.png and board.png from the
+ * live app and stops the app (exact PIDs) at once, unless --keep-app. Then it
+ * writes the filmstrip, program.js, calls.json and meta.json, and media.mjs
+ * makes the videos in the background (log: media.log in the run folder), so the
+ * next run can start. --wait-media waits for the videos before exiting.
  *
  * The run folder (space/.lab/runs/) gets video.mp4 (the watch video: stretches
  * with no visible change longer than 1.5 s play in 0.6 s, labelled with the real
  * wait and what happened, from the trace; a real-time clock in the corner),
- * video-real.mp4 (real time), filmstrip.png (a frame
- * after each board write), final.png, board.png (the whole board), program.js
- * (every run_scene program, or the write calls), calls.json, feedback.md,
- * the agent's output files and meta.json. The app instance starts fresh and
- * is stopped at the end (exact PIDs), unless --keep-app.
+ * video-real.mp4 (real time), filmstrip.png (a frame after each board write),
+ * final.png, board.png (the whole board), program.js (every run_scene program,
+ * or the write calls), calls.json, feedback.md (with --interview), the agent's
+ * output files and meta.json (numbers.after_agent_ms: the agent's end to the
+ * app stopped; media: "pending" until the videos are made, then "done").
  */
 import { spawn, execFileSync } from 'node:child_process'
 import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
@@ -43,13 +52,10 @@ import {
   cropFilter,
   cropImage,
   drive,
-  encodeVideo,
-  encodeWatchVideo,
   scenePlaySpans,
   filmstrip,
   frameAt,
   log,
-  resultText,
   runFolder,
   sceneHook,
   sleep,
@@ -80,6 +86,10 @@ const opts = {
   codexHome: option('--codex-home', join(SCRATCH, 'codex-home')),
   newsHook: !flag('--no-news-hook'),
   keepApp: flag('--keep-app'),
+  // Phase 2, the interview about the tool: off unless asked for.
+  interview: flag('--interview'),
+  // Wait for the videos before exiting (the old behaviour); by default they are made in the background.
+  waitMedia: flag('--wait-media'),
   // Only the task as the prompt, as in a real session: the brief reaches the agent through the folder's AGENTS.md.
   briefOnly: flag('--brief-only'),
   // Web search and fetch, as the agent apps have in real sessions; --no-web turns them off.
@@ -313,6 +323,8 @@ async function main() {
   const state = await startInstance({ name: opts.name, mcpPort: opts.mcpPort, debugPort: opts.debugPort, built: opts.built, fresh: true })
   say(`app ${state.mode} on MCP ${state.mcpPort}, debug ${state.debugPort}, PIDs ${state.pids.join(', ')}`)
   let cdp = null
+  let appStopped = false
+  let mediaJob = null
   try {
     if (opts.client === 'codex') prepareCodexHome(state)
     if (task.learner) {
@@ -331,29 +343,25 @@ async function main() {
     const t1 = Date.now()
     say(`phase 1 done in ${((t1 - t0) / 1000).toFixed(1)} s, exit ${work.exit_code}, session ${work.session}`)
 
-    // Record until the last scene has played: its run_scene end + duration_s, or the scene hook.
-    await sleep(1000)
+    // Record until the last scene has played: the end of each played scene from the trace
+    // (previews play nothing; starts_in_s counts), then the scene hook, then a short tail.
+    await sleep(1000) // the trace has the last calls
     const calls = traceCalls(state.traces, t0)
-    let tEnd = t1 + 1000
-    for (const c of calls.filter((c) => c.tool === 'run_scene' && c.ok)) {
-      try {
-        const d = JSON.parse(c.result_text).duration_s
-        if (typeof d === 'number') tEnd = Math.max(tEnd, Date.parse(c.end ?? c.t) + d * 1000 + 1000)
-      } catch {
-        // No duration.
-      }
-    }
+    let tEnd = Math.max(Date.now(), ...scenePlaySpans(calls).map((s) => s.to))
     while (Date.now() < tEnd) await sleep(100)
-    for (let i = 0; i < 300 && (await sceneHook(cdp))?.playing; i++) {
+    // A paused scene waits for the learner, and there is none: it counts as played.
+    for (let i = 0; i < 300; i++) {
+      const s = await sceneHook(cdp)
+      if (!s?.playing || s.paused) break
       await sleep(100)
-      tEnd = Date.now() + 500
     }
+    tEnd = Date.now() + 1000
     while (Date.now() < tEnd) await sleep(50)
     const frames = await recording.stop()
-    const rect = await canvasRect(cdp)
-    const crop = frames.length ? cropFilter(frames[0].file, rect, frames[0].w) : ''
-    say(`${frames.length} frames over ${((tEnd - t0) / 1000).toFixed(1)} s`)
-    // The videos and pictures never stop the run: a failure is recorded and the interview still runs.
+    say(`${frames.length} frames over ${((tEnd - t0) / 1000).toFixed(1)} s; board done ${((tEnd - t1) / 1000).toFixed(1)} s after the agent`)
+
+    // What needs the live app: the crop, the final picture and the whole board.
+    // The pictures never stop the run: a failure is recorded.
     const mediaErrors = []
     const media = async (what, fn) => {
       try {
@@ -365,27 +373,41 @@ async function main() {
         return null
       }
     }
-    let tv = Date.now()
-    await media('real-speed video', () => encodeVideo(frames, join(dir, 'video-real.mp4'), { from: t0, to: tEnd, crop }))
-    say(`real-speed video in ${((Date.now() - tv) / 1000).toFixed(1)} s`)
-    const labels = traceLabels(calls, { from: t0, opened: traceSessionOpen(state.traces, t0), turnEnd: t1 })
-    tv = Date.now()
-    const watch = (await media('watch video', () => encodeWatchVideo(frames, join(dir, 'video.mp4'), { from: t0, to: tEnd, crop, labels, playing: scenePlaySpans(calls) }))) ?? { watch_s: null, real_s: (tEnd - t0) / 1000, cuts: [] }
-    say(`watch video ${watch.watch_s} s of ${watch.real_s} s real (${watch.cuts.length} cuts), made in ${((Date.now() - tv) / 1000).toFixed(1)} s`)
+    const rect = await canvasRect(cdp)
+    const crop = frames.length ? cropFilter(frames[0].file, rect, frames[0].w) : ''
     const finalRaw = join(framesDir, 'final.png')
     await media('final picture', async () => {
       await cdp.screenshot(finalRaw)
       cropImage(finalRaw, join(dir, 'final.png'), crop)
     })
-    try {
-      await withMcp(state.mcpPort, async (call) => {
+    await media('board picture', () =>
+      withMcp(state.mcpPort, async (call) => {
         const shot = await call('get_screenshot', { target: 'content', max_size: 2400 })
         const image = shot.content?.find((p) => p.type === 'image')
         if (image) writeFileSync(join(dir, 'board.png'), Buffer.from(image.data, 'base64'))
       })
-    } catch (error) {
-      say(`board screenshot failed: ${error.message}`)
+    )
+    cdp.close()
+    cdp = null
+
+    // Phase 2 (only with --interview): the same session, while the app still runs.
+    let answer = null
+    let i0 = null
+    let i1 = null
+    if (opts.interview) {
+      say('phase 2: interview')
+      i0 = Date.now()
+      answer = work.session ? (opts.client === 'claude' ? await claudeTurn(state, dir, interview, 'interview', work.session) : await codexTurn(state, dir, interview, 'interview', work.session)) : null
+      i1 = Date.now()
+      writeFileSync(join(dir, 'feedback.md'), answer ? `${answer.reply.trim()}\n` : '_No session to resume: phase 1 failed._\n')
+      say(answer ? `phase 2 done in ${((i1 - i0) / 1000).toFixed(1)} s, exit ${answer.exit_code}` : 'phase 2 skipped')
     }
+
+    // The board is done: stop the app now. Everything below works on files.
+    if (!opts.keepApp) say(`app stopped (PIDs ${(await stopInstance(opts.name)).join(', ')})`)
+    appStopped = true
+    const tStop = Date.now()
+    say(`${opts.keepApp ? 'app kept' : 'app stopped'} ${((tStop - t1) / 1000).toFixed(1)} s after the agent finished`)
 
     // The filmstrip: the board after each write (at most 12), or 8 evenly spaced frames.
     const writes = calls.filter((c) => isWrite(c))
@@ -396,16 +418,15 @@ async function main() {
     if (times.length > 12) times = even(8)
     // Few writes: fill up to 8 frames with evenly spaced ones, in time order.
     else if (times.length < 8) times = [...times, ...even(8 - times.length)].sort((a, b) => a.t - b.t)
-    await media('filmstrip', () => {
-      const tiles = times.map((x, i) => {
-        const out = join(framesDir, `strip-${i}.png`)
-        cropImage(frameAt(frames, t0 + x.t * 1000).file, out, crop)
-        return { file: out, label: x.label }
+    if (frames.length)
+      await media('filmstrip', () => {
+        const tiles = times.map((x, i) => {
+          const out = join(framesDir, `strip-${i}.png`)
+          cropImage(frameAt(frames, t0 + x.t * 1000).file, out, crop)
+          return { file: out, label: x.label }
+        })
+        filmstrip(tiles, join(dir, 'filmstrip.png'))
       })
-      filmstrip(tiles, join(dir, 'filmstrip.png'))
-    })
-    cdp.close()
-    cdp = null
 
     // The programs.
     const scenes = calls.filter((c) => c.tool === 'run_scene')
@@ -414,14 +435,6 @@ async function main() {
       : writes.map((c) => `// ---- ${c.tool} at ${rel(c.t).toFixed(1)} s${c.ok ? '' : ' (error)'} ----\n${c.args?.html ?? c.args?.svg_path ?? JSON.stringify(c.args, null, 2)}\n`).join('\n')
     if (program) writeFileSync(join(dir, 'program.js'), program)
     writeFileSync(join(dir, 'calls.json'), JSON.stringify(calls.map((c) => ({ t_s: rel(c.t), tool: c.tool, ms: c.duration_ms, ok: c.ok, error: c.error ?? null, args: c.args, result: c.result_text })), null, 2))
-
-    // Phase 2: the interview, in the same session.
-    say('phase 2: interview')
-    const i0 = Date.now()
-    const answer = work.session ? (opts.client === 'claude' ? await claudeTurn(state, dir, interview, 'interview', work.session) : await codexTurn(state, dir, interview, 'interview', work.session)) : null
-    const i1 = Date.now()
-    writeFileSync(join(dir, 'feedback.md'), answer ? `${answer.reply.trim()}\n` : '_No session to resume: phase 1 failed._\n')
-    say(answer ? `phase 2 done in ${((i1 - i0) / 1000).toFixed(1)} s, exit ${answer.exit_code}` : 'phase 2 skipped')
 
     // A resumed Codex thread reports the thread's running total: keep the interview's own share.
     if (answer?.tokens && work.tokens) for (const key of Object.keys(answer.tokens)) answer.tokens[key] = Math.max(0, answer.tokens[key] - (work.tokens[key] ?? 0))
@@ -440,7 +453,7 @@ async function main() {
       ok: work.exit_code === 0 && !work.is_error,
       error: work.is_error ? (work.errors?.join(' | ') || `exit ${work.exit_code}`) : null,
       session: work.session,
-      resumed_same_session: Boolean(answer && answer.session === work.session),
+      resumed_same_session: answer ? answer.session === work.session : null,
       transcript: opts.client === 'claude' ? claudeTranscript(work.session) : codexRollout(work.session),
       lab: { name: state.name, mode: state.mode, mcpPort: state.mcpPort, folder: state.folder, traces: state.traces },
       numbers: {
@@ -451,12 +464,15 @@ async function main() {
         errors: calls.filter((c) => !c.ok).length,
         wall_ms: t1 - t0,
         recorded_s: Math.round((tEnd - t0) / 100) / 10,
-        watch_s: watch.watch_s,
+        watch_s: null,
+        // From the agent's end to the app stopped: the last scene playing, the pictures and the interview.
+        after_agent_ms: tStop - t1,
         interview_ms: answer ? i1 - i0 : null,
         frames: frames.length
       },
       per_tool: perTool,
-      cuts: watch.cuts,
+      cuts: [],
+      media: frames.length ? 'pending' : 'none',
       media_errors: mediaErrors,
       work: { exit_code: work.exit_code, is_error: work.is_error, cost_usd: work.cost_usd ?? null, num_turns: work.num_turns ?? null, tokens: work.tokens ?? null },
       interview: answer ? { exit_code: answer.exit_code, is_error: answer.is_error, session: answer.session, cost_usd: answer.cost_usd ?? null, tokens: answer.tokens ?? null } : null,
@@ -465,12 +481,35 @@ async function main() {
     writeFileSync(join(dir, 'meta.json'), JSON.stringify(meta, null, 2))
     writeFileSync(join(dir, 'reply.md'), `${work.reply ?? ''}\n`)
     say(`first mark ${meta.numbers.first_mark_ms ?? '-'} ms, ${calls.length} calls (${writes.length} writes), wall ${(meta.numbers.wall_ms / 1000).toFixed(1)} s`)
+
+    // The videos: after the app has stopped, in the background unless --wait-media.
+    if (frames.length) {
+      const labels = traceLabels(calls, { from: t0, opened: traceSessionOpen(state.traces, t0), turnEnd: t1 })
+      const jobFile = join(framesDir, 'job.json')
+      writeFileSync(jobFile, JSON.stringify({ dir, framesDir, frames, from: t0, to: tEnd, crop, labels, playing: scenePlaySpans(calls) }))
+      mediaJob = { jobFile, logFile: join(dir, 'media.log') }
+    }
   } finally {
     if (cdp) cdp.close()
-    rmSync(framesDir, { recursive: true, force: true })
-    if (!opts.keepApp) say(`app stopped (PIDs ${(await stopInstance(opts.name)).join(', ')})`)
+    if (!appStopped && !opts.keepApp) say(`app stopped (PIDs ${(await stopInstance(opts.name)).join(', ')})`)
+    // The media job owns the frames from here and deletes them; otherwise delete them now.
+    if (!mediaJob) rmSync(framesDir, { recursive: true, force: true })
   }
   say(`gallery ${writeGallery()}`)
+  if (mediaJob) {
+    const out = openSync(mediaJob.logFile, 'a')
+    // nice: the next run's app and screencast come first.
+    const child = spawn('nice', ['-n', '10', process.execPath, join(LAB, 'media.mjs'), mediaJob.jobFile], { stdio: ['ignore', out, out], detached: !opts.waitMedia })
+    closeSync(out)
+    if (opts.waitMedia) {
+      const tm = Date.now()
+      const code = await new Promise((done) => child.on('exit', done))
+      say(`videos made in ${((Date.now() - tm) / 1000).toFixed(1)} s (exit ${code}; log ${mediaJob.logFile})`)
+    } else {
+      child.unref()
+      say(`videos are being made in the background (PID ${child.pid}; log ${mediaJob.logFile})`)
+    }
+  }
   say(`done: ${dir}`)
 }
 
