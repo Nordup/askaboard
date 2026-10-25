@@ -6,7 +6,7 @@ import { revealPoints, type NodeOverride, type PlaybackFrame, type PlaybackTip }
 import type { Point } from '../board/types'
 import { sceneColor, withOpacity } from './colors'
 import type { DynSample, PlayObject, ScenePlay } from './compile'
-import { setSceneUiActions, setSceneUiState, type SceneCueEntry, type SceneCueState, type SceneStepEntry } from './state'
+import { clearSceneScript, setSceneUiActions, setSceneUiState, type SceneCueState, type SceneListEntry } from './state'
 import { apply, isIdentity, multiply, type Matrix } from './timeline'
 
 /**
@@ -361,12 +361,15 @@ function readAt(text: string, elapsed: number, dur: number): { text: string; pro
   return { text: out.trimEnd(), progress: Math.round(Math.max(0, Math.min(1, elapsed / Math.max(0.001, dur))) * 1000) / 1000 }
 }
 
-/** The cues and steps of a scene for the UI store, made once per play (the store compares them by reference). */
-const listCache = new WeakMap<ScenePlay, { cues: SceneCueEntry[]; steps: SceneStepEntry[] }>()
-function sceneLists(play: ScenePlay): { cues: SceneCueEntry[]; steps: SceneStepEntry[] } {
+/** A scene for the UI store (its id, the scene it plays, name, lines and steps), made once per play (the store compares them by reference). */
+const listCache = new WeakMap<ScenePlay, SceneListEntry>()
+function sceneLists(play: ScenePlay): SceneListEntry {
   let lists = listCache.get(play)
   if (!lists) {
     lists = {
+      id: play.id,
+      of: play.id.replace(/~r\d+$/, ''),
+      name: play.name ?? null,
       cues: play.cues.map((cue) => ({ text: cue.text, at_s: cue.at, dur_s: cue.dur, ...(cue.marks?.length ? { marks: Object.fromEntries(cue.marks.map((mark) => [mark.name, mark.at])) } : {}) })),
       steps: play.steps.map((step) => ({ name: step.name, at_s: step.at, ...(step.pause ? { pause: true } : {}) }))
     }
@@ -397,7 +400,12 @@ export class ScenePlayer {
   private waitTimer: ReturnType<typeof setInterval> | null = null
 
   constructor() {
-    setSceneUiActions({ pause: () => void this.control('pause'), resume: () => void this.control('resume') })
+    setSceneUiActions({
+      pause: () => void this.control('pause'),
+      resume: () => void this.control('resume'),
+      nextStep: () => this.nextStep(),
+      replay: (list) => this.replayList(list)
+    })
   }
 
   /**
@@ -409,6 +417,7 @@ export class ScenePlayer {
     if (board !== this.board) {
       this.stopAll()
       this.history.clear()
+      clearSceneScript()
     }
     this.board = board
     const startsIn = options.mode === 'now' ? 0 : this.queueWait()
@@ -569,6 +578,7 @@ export class ScenePlayer {
     this.latest.frame = null
     this.history.clear()
     setSceneUiState(null)
+    clearSceneScript()
     this.settleWaiters()
   }
 
@@ -755,6 +765,7 @@ export class ScenePlayer {
       playing: true,
       paused: scene.pausedAt !== null,
       sceneName: scene.play.name ?? scene.play.id,
+      sceneOf: lists.of,
       stepName: stepIndex >= 0 ? steps[stepIndex].name : null,
       stepIndex,
       stepCount: steps.length,
@@ -763,8 +774,60 @@ export class ScenePlayer {
       queue: this.scenes.filter((entry) => entry.origin === null).length,
       currentCue,
       cues: lists.cues,
-      steps: lists.steps
+      steps: lists.steps,
+      scenes: this.sceneEntries()
     })
+  }
+
+  private entriesCache: SceneListEntry[] = []
+
+  /** The scenes that play or wait, for the UI store (the same array while they are the same). */
+  private sceneEntries(): SceneListEntry[] {
+    const next = this.scenes.map((scene) => sceneLists(scene.play))
+    if (next.length !== this.entriesCache.length || next.some((entry, i) => entry !== this.entriesCache[i])) this.entriesCache = next
+    return this.entriesCache
+  }
+
+  /**
+   * The script panel's "Next step": the scene that shows goes to the start of
+   * its next step and plays on (a pause step there stops it again); with no
+   * next step, it ends and the next queued scene starts.
+   */
+  nextStep(): void {
+    const scene = this.current()
+    if (!scene) return
+    const now = performance.now()
+    const t = this.timeOf(scene, now)
+    const next = scene.play.steps.find((step) => step.at > t + 0.05)
+    if (next) {
+      scene.play.steps.forEach((step, i) => {
+        if (step.pause && step.at < next.at - 1e-6) scene.passed.add(i)
+      })
+      scene.origin = now - next.at * 1000
+      scene.pausedAt = null
+      scene.pauseAt = null
+      scene.pausedBy = null
+    } else {
+      this.scenes = this.scenes.filter((entry) => entry !== scene)
+      this.queueEnd = null
+    }
+    this.render()
+    this.schedule()
+  }
+
+  /**
+   * The script panel's restart and step replay: what plays and waits ends at
+   * once (its items are on the board in their final state), then the scenes
+   * play again in order, the first from the given step. False (and nothing
+   * changes) when a scene can no longer be replayed (another stage started).
+   */
+  replayList(list: Array<{ scene: string; step?: string }>): boolean {
+    const board = this.board
+    if (!board || !list.length || !list.every((entry) => this.history.has(entry.scene))) return false
+    this.scenes = []
+    this.queueEnd = null
+    list.forEach((entry, i) => this.replay(board, { scene: entry.scene, ...(i === 0 && entry.step ? { step: entry.step } : {}) }, 'queue'))
+    return true
   }
 
   /** scene_control. */

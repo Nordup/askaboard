@@ -27,6 +27,7 @@
   --text-primary: #ececef;
   --text-secondary: #a0a0a8;
   --text-tertiary: #6b6b73;
+  --text-faint: #4a4a52; /* not reached yet (script panel steps ahead) */
   --text-on-accent: #0d0f1a;
 
   /* Accent */
@@ -86,8 +87,7 @@
   --text-lg: 15px;
   --text-xl: 20px;
   --leading: 1.45;
-  /* Scene captions above the tool palette: larger than UI text, read at a glance */
-  --text-caption: 17px;
+  --leading-read: 1.5; /* text read as prose (the script panel's lines) */
 
   /* Spacing (4px grid) */
   --space-1: 4px;
@@ -108,8 +108,6 @@
   /* Shadows */
   --shadow-float: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 8px 24px rgba(0, 0, 0, 0.45),
     0 2px 6px rgba(0, 0, 0, 0.35);
-  /* A halo in the canvas colour, so caption text reads over any board content without a card */
-  --caption-halo: 0 0 2px var(--bg-canvas), 0 0 6px var(--bg-canvas), 0 0 14px var(--bg-canvas);
   --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 24px 64px rgba(0, 0, 0, 0.5),
     0 4px 12px rgba(0, 0, 0, 0.3);
 
@@ -122,8 +120,14 @@
   --pill-gap: 7px; /* between a pill's dot, label and parts */
   --pill-action-size: 20px; /* the one icon button inside a pill (scene pill: pause / resume) */
   --pill-label-max: 160px; /* a pill label longer than this ends with an ellipsis */
-  --caption-width: 640px; /* captions wrap at this width, two lines at most */
+  --icon-button-size: 24px;
+  --status-dot-size: 7px;
+  --status-dot-size-small: 6px; /* a status dot in a panel header */
+  /* The script panel floating over the board */
+  --script-panel-width: 296px;
+  --script-panel-header: 34px;
+  --script-panel-body-max: 330px; /* the lines scroll beyond this height */
 
   /* Motion */
-  --fade: 220ms ease; /* quiet fade in and out (scene pill, captions) */
+  --fade: 220ms ease; /* quiet fade in and out (scene pill, script panel) */
 }

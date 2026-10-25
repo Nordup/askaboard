@@ -1,6 +1,7 @@
 import { Pause, Play } from 'lucide-react'
 import { useSceneState } from '../live/state'
 import { fadeMs, usePresence } from '../lib/presence'
+import { toggleScriptPanel } from './ScriptPanel'
 
 /** Scene time as m:ss. */
 function clock(seconds: number): string {
@@ -18,7 +19,7 @@ interface PillView {
 /**
  * The top-bar playback pill, a sibling of the agent pill. It shows while a
  * scene plays or is paused: status dot, "<step> · i/n", the time, and one
- * pause / resume button.
+ * pause / resume button. The dot and text open or collapse the script panel.
  */
 export function ScenePill() {
   const scene = useSceneState()
@@ -37,17 +38,19 @@ export function ScenePill() {
   const action = value.paused ? 'Resume scene' : 'Pause scene'
   return (
     <div className={`pill pill--static scene-pill${shown ? ' is-shown' : ''}`} data-state={value.paused ? 'paused' : 'playing'}>
-      <span className={value.paused ? 'status-dot' : 'status-dot status-dot--play'} />
-      <span className="pill__label" title={value.label}>
-        {value.label}
-      </span>
-      {value.count && (
-        <span className="pill__count">
-          <span className="pill__sep">· </span>
-          {value.count}
+      <button className="pill__toggle" title="Script" aria-label="Show or collapse the script" disabled={!shown} onClick={toggleScriptPanel}>
+        <span className={value.paused ? 'status-dot' : 'status-dot status-dot--play'} />
+        <span className="pill__label" title={value.label}>
+          {value.label}
         </span>
-      )}
-      <span className="pill__time">{value.time}</span>
+        {value.count && (
+          <span className="pill__count">
+            <span className="pill__sep">· </span>
+            {value.count}
+          </span>
+        )}
+        <span className="pill__time">{value.time}</span>
+      </button>
       <button className="pill__action" title={action} aria-label={action} disabled={!shown} onClick={() => (value.paused ? scene.resume() : scene.pause())}>
         {value.paused ? <Play size={12} strokeWidth={2} fill="currentColor" /> : <Pause size={12} strokeWidth={2} fill="currentColor" />}
       </button>

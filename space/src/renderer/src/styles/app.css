@@ -187,8 +187,9 @@ button:focus-visible {
 .icon-button {
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  flex-shrink: 0;
+  width: var(--icon-button-size);
+  height: var(--icon-button-size);
   border-radius: var(--radius-sm);
   color: var(--text-tertiary);
   transition: background 120ms ease, color 120ms ease;
@@ -197,6 +198,11 @@ button:focus-visible {
 .icon-button:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
+}
+
+/* A panel's header controls: secondary text colour, primary on hover. */
+.icon-button--strong {
+  color: var(--text-secondary);
 }
 
 /* ---------- Top bar ---------- */
@@ -277,9 +283,33 @@ button:focus-visible {
  *   .pill__count   a count after the label ("· 2/5"); its .pill__sep is the "· "
  *   .pill__time    a time or number in mono, tabular figures
  *   .pill__action  the one small icon button, at the right end
+ *   .pill__toggle  a plain button around the dot and text of a static pill (the scene
+ *                  pill: shows or collapses the script panel); the pill hovers with it
  */
 .pill--static:hover {
   background: none;
+}
+
+.pill--static:has(.pill__toggle:hover) {
+  background: var(--bg-hover);
+}
+
+.pill__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pill-gap);
+  min-width: 0;
+  height: 100%;
+  color: inherit;
+}
+
+.pill--static:has(.pill__toggle) {
+  /* the toggle reaches the pill's left edge, so the whole left part is the button */
+  padding-left: 0;
+}
+
+.pill--static:has(.pill__toggle) .pill__toggle {
+  padding-left: 10px;
 }
 
 .pill--static:has(.pill__action) {
@@ -326,11 +356,16 @@ button:focus-visible {
 
 .status-dot {
   flex-shrink: 0;
-  width: 7px;
-  height: 7px;
+  width: var(--status-dot-size);
+  height: var(--status-dot-size);
   border-radius: 50%;
   background: var(--status-idle);
   box-shadow: 0 0 0 2px var(--status-idle-ring);
+}
+
+.status-dot--small {
+  width: var(--status-dot-size-small);
+  height: var(--status-dot-size-small);
 }
 
 .pill--open {
@@ -388,7 +423,7 @@ button:focus-visible {
 }
 
 
-/* ---------- Scene pill and captions ---------- */
+/* ---------- Scene pill ---------- */
 
 /* The scene pill: shrinks before the agent pill; fades in and out (usePresence). */
 .scene-pill {
@@ -400,51 +435,144 @@ button:focus-visible {
   opacity: 1;
 }
 
-/* The tutor's words, centred directly above the tool palette. UI, not board content: no card, no zoom. */
-.scene-caption {
+/* ---------- Script panel ---------- */
+
+/*
+ * The script panel (ScriptPanel.tsx): a small frame over the board with the
+ * scene's lines; the one exception to "UI does not cover the board". The
+ * learner drags it by its header; ScriptPanel sets left, top and max-height.
+ *   .script-panel__header   34 px: status dot, title, step count, icon buttons
+ *   .script-panel__body     the steps; scrolls beyond --script-panel-body-max
+ *   .script-step--done / --current / --ahead / --final   where the reading is
+ *   .script-line, --current with .script-line__rest   a line; the rest of the line being read is muted
+ */
+.script-panel {
   position: absolute;
   z-index: 5;
-  left: 50%;
-  bottom: calc(var(--space-5) + var(--palette-height) + var(--space-3));
-  width: max-content;
-  max-width: min(var(--caption-width), calc(100% - 2 * var(--space-6)));
-  transform: translateX(-50%);
-  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  width: min(var(--script-panel-width), calc(100% - 2 * var(--space-3)));
+  overflow: hidden;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-float);
   opacity: 0;
   transition: opacity var(--fade);
 }
 
-/* An empty box with the caption's widest width and font: SceneCaption packs long cues into two-line pages with it. */
-.scene-caption__probe {
-  position: absolute;
-  left: 0;
-  bottom: 0;
-  width: min(var(--caption-width), calc(100% - 2 * var(--space-6)));
-  font-size: var(--text-caption);
-  visibility: hidden;
-  pointer-events: none;
-}
-
-.scene-caption.is-shown {
+.script-panel.is-shown {
   opacity: 1;
 }
 
-.scene-caption__text {
-  display: -webkit-box;
-  margin: 0;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  font-size: var(--text-caption);
-  line-height: var(--leading);
-  color: var(--text-tertiary);
-  text-align: center;
-  text-wrap: balance;
-  text-shadow: var(--caption-halo);
+.script-panel__header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--script-panel-header);
+  padding: 0 calc((var(--script-panel-header) - var(--icon-button-size)) / 2) 0 var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
 }
 
-.scene-caption__spoken {
+.script-panel__header:active {
+  cursor: grabbing;
+}
+
+.script-panel.is-collapsed .script-panel__header {
+  border-bottom-color: transparent;
+}
+
+.script-panel__title {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--text-sm);
+  font-weight: 500;
   color: var(--text-primary);
+}
+
+.script-panel__count {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+}
+
+.script-panel__actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+}
+
+.script-panel__actions .icon-button {
+  cursor: default;
+}
+
+.script-panel__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: var(--script-panel-body-max);
+  overflow-y: auto;
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  font-size: var(--text-base);
+  line-height: var(--leading-read);
+  color: var(--text-secondary);
+}
+
+.script-step + .script-step {
+  margin-top: var(--space-2);
+}
+
+.script-step__title {
+  display: block;
+  margin: 0 0 2px;
+  padding: 0;
+  font-size: var(--text-xs);
+  line-height: var(--leading);
+  color: var(--text-faint);
+  text-align: left;
+}
+
+.script-step--done .script-step__title {
+  color: var(--text-tertiary);
+}
+
+.script-step--current .script-step__title {
+  color: var(--accent);
+}
+
+.script-step--final .script-step__title {
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  transition: color 120ms ease;
+}
+
+.script-step--final .script-step__title:hover {
+  color: var(--text-primary);
+}
+
+.script-line {
+  margin: 0;
+}
+
+.script-line + .script-line {
+  margin-top: var(--space-1);
+}
+
+.script-step--final .script-line,
+.script-line--current {
+  color: var(--text-primary);
+}
+
+.script-line__rest {
+  color: var(--text-tertiary);
 }
 
 /* A narrow top bar keeps the step count, time and button; the step name goes (and the board name ends with an ellipsis). */
@@ -461,7 +589,7 @@ button:focus-visible {
 
 @media (prefers-reduced-motion: reduce) {
   .scene-pill,
-  .scene-caption {
+  .script-panel {
     transition: none;
   }
 }
