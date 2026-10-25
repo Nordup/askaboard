@@ -79,7 +79,9 @@ const opts = {
   timeoutMs: Number(option('--timeout-min', '20')) * 60_000,
   codexHome: option('--codex-home', join(SCRATCH, 'codex-home')),
   newsHook: !flag('--no-news-hook'),
-  keepApp: flag('--keep-app')
+  keepApp: flag('--keep-app'),
+  // Only the task as the prompt, as in a real session: the brief reaches the agent through the folder's AGENTS.md.
+  briefOnly: flag('--brief-only')
 }
 if (!['claude', 'codex'].includes(opts.client)) throw new Error('--client is claude or codex')
 if (!opts.task) throw new Error('--task <id|text> is required')
@@ -298,7 +300,7 @@ async function main() {
   const title = opts.title ?? `${task.title} — ${opts.client} ${opts.model}${opts.effort ? ` ${opts.effort}` : ''}`
   const purpose = stripComments(readFileSync(join(LAB, 'council/purpose.md'), 'utf8'))
   const interview = stripComments(readFileSync(join(LAB, 'council/interview.md'), 'utf8'))
-  const prompt = `${purpose}\n\n## The task\n\n${task.text}`
+  const prompt = opts.briefOnly ? task.text : `${purpose}\n\n## The task\n\n${task.text}`
 
   const dir = runFolder(`${task.id}-${opts.client}-${opts.model}`)
   const framesDir = join(SCRATCH, 'frames', basename(dir))
