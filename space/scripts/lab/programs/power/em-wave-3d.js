@@ -16,11 +16,12 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js'
 
 input('enter')
 
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
+// Transparent: the board shows through everywhere the wave does not draw.
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true })
+renderer.setClearColor(0x000000, 0)
 renderer.setPixelRatio(item.dpr)
 renderer.setSize(item.w, item.h, false)
 const world = new THREE.Scene()
-world.background = new THREE.Color(colors.bg)
 const camera = new THREE.PerspectiveCamera(40, item.w / item.h, 0.1, 100)
 
 const composer = new EffectComposer(renderer)

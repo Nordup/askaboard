@@ -44,7 +44,8 @@ interface Playing {
   /** Why it stands paused (null while it plays). */
   pausedBy: ScenePauseReason | null
   /** Undo its commit (skip). */
-  revert: () => void
+  /** Take its items off the board again; `step` joins that keyed undo step (Board agentCommit). */
+  revert: (step?: string) => void
   /** The scene time it starts from (0, or a replayed step). */
   startAt: number
 }
@@ -413,7 +414,7 @@ export class ScenePlayer {
    * the queued scenes ahead of it. Returns the seconds until it starts (pauses
    * not counted). startAt: the scene time it starts from (a replayed step).
    */
-  enqueue(board: BoardHandle, play: ScenePlay, options: { mode: 'queue' | 'now'; revert: () => void; startAt?: number }): number {
+  enqueue(board: BoardHandle, play: ScenePlay, options: { mode: 'queue' | 'now'; revert: (step?: string) => void; startAt?: number }): number {
     if (board !== this.board) {
       this.stopAll()
       this.history.clear()
@@ -458,7 +459,7 @@ export class ScenePlayer {
   }
 
   /** A scene that was committed again (replace, cut): the new play takes its place, keeping its place in the queue and its clock. */
-  swap(board: BoardHandle, id: string, play: ScenePlay, revert: () => void): boolean {
+  swap(board: BoardHandle, id: string, play: ScenePlay, revert: (step?: string) => void): boolean {
     const scene = this.scenes.find((entry) => entry.play.id === id)
     if (!scene) return false
     scene.play = play
@@ -851,9 +852,10 @@ export class ScenePlayer {
     } else if (action === 'skip') {
       const dropped = this.scenes.filter((scene) => scene.origin === null)
       this.scenes = this.scenes.filter((scene) => scene.origin !== null)
-      // Their items were committed when they were sent: take them off again (newest first).
+      // Their items were committed when they were sent: take them off again (newest first), as one undo step.
+      const step = `skip-${performance.now()}`
       for (const scene of dropped.reverse()) {
-        scene.revert()
+        scene.revert(step)
         this.history.delete(scene.play.id)
       }
     }
@@ -876,8 +878,8 @@ export class ScenePlayer {
   }
 
   /** Take these scenes' items off the board again (newest first); they stay in the queue until swapped or dropped. */
-  revertScenes(ids: string[]): void {
-    for (const scene of [...this.scenes].reverse()) if (ids.includes(scene.play.id)) scene.revert()
+  revertScenes(ids: string[], step: string): void {
+    for (const scene of [...this.scenes].reverse()) if (ids.includes(scene.play.id)) scene.revert(step)
   }
 
   /** The scene ids that wait in the queue (not started), in order. */

@@ -56,6 +56,57 @@ const TEMPLATE = `'use strict';
   let vnow = null;
   const now = () => (vnow === null ? realNow() : vnow);
   try { Object.defineProperty(perf, 'now', { value: now, configurable: true, writable: true }); } catch (e) {}
+  // On the virtual clock, Date and timers follow it too: Date.now() and new Date() are the real date at the
+  // start of the run plus the virtual time, and setTimeout/setInterval fire when the virtual time reaches them.
+  const RealDate = Date;
+  const nativeSetTimeout = scope.setTimeout.bind(scope);
+  const nativeClearTimeout = scope.clearTimeout.bind(scope);
+  const nativeSetInterval = scope.setInterval.bind(scope);
+  const nativeClearInterval = scope.clearInterval.bind(scope);
+  let dateBase = 0;
+  const timers = new Map();
+  let nextTimer = 1e9;
+  const virtualize = () => {
+    dateBase = RealDate.now();
+    const dateNow = () => (vnow === null ? RealDate.now() : dateBase + vnow);
+    function VDate(...a) {
+      if (!new.target) return new RealDate(dateNow()).toString();
+      return a.length ? new RealDate(...a) : new RealDate(dateNow());
+    }
+    VDate.prototype = RealDate.prototype;
+    VDate.now = dateNow;
+    VDate.parse = RealDate.parse;
+    VDate.UTC = RealDate.UTC;
+    scope.Date = VDate;
+    const add = (cb, ms, args, every) => {
+      if (typeof cb !== 'function') return 0;
+      const id = nextTimer++;
+      const delay = Math.max(0, Number(ms) || 0);
+      timers.set(id, { due: (vnow || 0) + delay, cb, args, every: every ? Math.max(1, delay) : 0, order: id });
+      return id;
+    };
+    const clear = (id) => { if (timers.has(id)) timers.delete(id); else { nativeClearTimeout(id); nativeClearInterval(id); } };
+    scope.setTimeout = (cb, ms, ...args) => add(cb, ms, args, false);
+    scope.setInterval = (cb, ms, ...args) => add(cb, ms, args, true);
+    scope.clearTimeout = clear;
+    scope.clearInterval = clear;
+  };
+  // The virtual timers due by the virtual time now, in order. True when one fired.
+  const fireTimers = () => {
+    let fired = false;
+    for (let guard = 0; guard < 10000; guard++) {
+      let next = null;
+      for (const [id, timer] of timers) if (timer.due <= vnow && (!next || timer.due < next[1].due || (timer.due === next[1].due && timer.order < next[1].order))) next = [id, timer];
+      if (!next) break;
+      const [id, timer] = next;
+      if (timer.every) { timer.due += timer.every; timer.order = nextTimer++; } else timers.delete(id);
+      fired = true;
+      try { timer.cb(...timer.args); } catch (e) { fail(e); return fired; }
+    }
+    return fired;
+  };
+  // A task boundary, so promise continuations of fired timers run before the next virtual frame (no 4 ms clamp).
+  const nextTask = () => new Promise((resolve) => { const ch = new MessageChannel(); ch.port1.onmessage = () => resolve(); ch.port2.postMessage(0); });
   const toFrame = scope.postMessage.bind(scope);
   let port = null;
   const post = (m) => { if (port) { try { port.postMessage(m); } catch (e) { post({ type: 'error', message: 'report: values must be plain data' }); } } };
@@ -131,7 +182,7 @@ const TEMPLATE = `'use strict';
       reportValue = text === undefined ? null : JSON.parse(text);
       if (reportTimer) return;
       const wait = 100 - (now() - lastReport);
-      if (wait <= 0) sendReport(); else reportTimer = setTimeout(sendReport, wait);
+      if (wait <= 0) sendReport(); else reportTimer = nativeSetTimeout(sendReport, wait);
     },
     on(type, fn, options) { canvas.addEventListener(type, fn, options); return () => canvas.removeEventListener(type, fn, options); }
   };
@@ -200,14 +251,22 @@ const TEMPLATE = `'use strict';
     Object.assign(colors, m.colors);
     Object.freeze(colors);
     if (m.clock !== undefined) setClock({ clock: m.clock, end: m.clock ? m.clock.end : undefined });
+    // No scene plays the item: it rests where its scene ended (a reopened board), not at t = 0.
+    if (!m.clock && m.rest) { clock.t = m.rest.t; clock.step = m.rest.step; }
     visible = !!m.visible;
     m.canvas.width = pw; m.canvas.height = ph;
     shim(m.canvas);
     canvas = m.canvas;
-    setInterval(() => post({ type: 'alive', frames }), 250);
+    nativeSetInterval(() => post({ type: 'alive', frames }), 250);
     post({ type: 'alive', frames });
     if (m.check) return;
-    if (m.sim) simulating = true;
+    if (m.sim) {
+      // The virtual clock starts before the program's first line, so its setup sees it too.
+      simulating = true;
+      vnow = 0;
+      start = perf.timeOrigin;
+      virtualize();
+    }
     const running = main();
     running.catch(fail);
     if (m.sim) simulate(m.sim, running).catch(fail);
@@ -220,8 +279,6 @@ const TEMPLATE = `'use strict';
   const simulate = async (sim, running) => {
     let setUp = false;
     running.then(() => { setUp = true; }, () => { setUp = true; });
-    vnow = 0;
-    start = perf.timeOrigin;
     const samples = Array.isArray(sim.params) ? sim.params : [];
     const steps = Array.isArray(sim.steps) ? sim.steps : [];
     const at = (st) => {
@@ -236,8 +293,8 @@ const TEMPLATE = `'use strict';
       clock.at = vnow;
     };
     at(sim.from);
-    // The program's setup: until it asks for its first frame or its top level ends (imports load in real time).
-    while (!pending.size && !setUp && !failed) await new Promise((resolve) => setTimeout(resolve, 10));
+    // The program's setup: until it asks for its first frame, waits for a timer, or its top level ends (imports load in real time).
+    while (!pending.size && !timers.size && !setUp && !failed) await new Promise((resolve) => nativeSetTimeout(resolve, 10));
     const total = Math.max(0, sim.to - sim.from) * 1000;
     const stepMs = 1000 / 30;
     let lastYield = realNow();
@@ -245,12 +302,14 @@ const TEMPLATE = `'use strict';
       const v = Math.min(total, k * stepMs);
       vnow = v;
       at(sim.from + v / 1000);
+      if (fireTimers()) await nextTask();
+      if (failed) return;
       const list = [...pending.values()];
       pending.clear();
       for (const cb of list) { try { cb(v); } catch (e) { fail(e); return; } }
       if (realNow() - lastYield > 100) {
         post({ type: 'sim', share: total ? v / total : 1 });
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await nextTask();
         lastYield = realNow();
       }
       if (v >= total) break;
@@ -266,6 +325,14 @@ __CODE__
   };
 })();
 `
+
+/** A node's rest clock (LiveNode.rest, from the board file), checked. */
+function restOf(rest: unknown): { t: number; step: string | null } | null {
+  if (!rest || typeof rest !== 'object') return null
+  const { t, step } = rest as { t?: unknown; step?: unknown }
+  if (typeof t !== 'number' || !Number.isFinite(t) || t < 0) return null
+  return { t, step: typeof step === 'string' ? step : null }
+}
 
 /** Lines before the agent's first line in the worker script. */
 const CODE_LINE = TEMPLATE.slice(0, TEMPLATE.indexOf('__CODE__')).split('\n').length
@@ -319,6 +386,8 @@ export interface ProgramStart {
   start: number
   visible: boolean
   clock?: LiveClock | null
+  /** With no clock: the scene clock the item rests at (LiveNode.rest), so scene.t and scene.step are those of its scene's end. */
+  rest?: { t: number; step?: string } | null
   /** Load and set up only: the program does not run (the syntax check). */
   check?: boolean
   /** A storyboard frame: run from the item's first moment to the frame's moment on a virtual clock (see simulate in the worker). */
@@ -364,6 +433,7 @@ export class ProgramHost {
     this.port.onmessage = (event) => this.receive(event.data)
     this.hadClock = !!start.clock
     if (start.clock) this.clockEnd = start.clock.end
+    else if (start.rest) this.clockEnd = start.rest.t
   }
 
   /** A message from the frame (ready, load errors, Escape). */
@@ -373,7 +443,7 @@ export class ProgramHost {
     if (m.type === 'ready' && !this.started) {
       this.started = true
       const s = this.start
-      const init = { w: s.size.w, h: s.size.h, pw: s.size.pw, ph: s.size.ph, params: s.params, start: s.start, colors: boardColors(), visible: s.visible, clock: s.clock ?? null, check: !!s.check, sim: s.sim ?? null }
+      const init = { w: s.size.w, h: s.size.h, pw: s.size.pw, ph: s.size.ph, params: s.params, start: s.start, colors: boardColors(), visible: s.visible, clock: s.clock ?? null, rest: restOf(s.rest), check: !!s.check, sim: s.sim ?? null }
       this.frame.contentWindow?.postMessage({ type: 'start', url: programUrl(s.code), port: this.channel.port2, init }, '*', [this.channel.port2])
     } else if (m.type === 'load-error') {
       this.events.onError(loadError(typeof m.message === 'string' ? m.message : '', typeof m.line === 'number' ? m.line : 0))

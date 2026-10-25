@@ -2037,12 +2037,77 @@
     return name
   }
 
+  /** The first `share` (0..1) of polylines, by length: a line drawn that far. */
+  function trimLines(lines, share) {
+    if (share >= 1) return lines
+    let left = Math.max(0, share) * lines.reduce((sum, l) => sum + polyLength(l), 0)
+    const out = []
+    for (const l of lines) {
+      if (left <= 0) break
+      const part = [l[0]]
+      for (let i = 1; i < l.length; i++) {
+        const len = Math.hypot(l[i][0] - l[i - 1][0], l[i][1] - l[i - 1][1])
+        if (left >= len) {
+          part.push(l[i])
+          left -= len
+          continue
+        }
+        const k = len ? left / len : 0
+        part.push([l[i - 1][0] + (l[i][0] - l[i - 1][0]) * k, l[i - 1][1] + (l[i][1] - l[i - 1][1]) * k])
+        left = 0
+        break
+      }
+      out.push(part)
+    }
+    return out
+  }
+
+  /**
+   * How much of a stroke crosses a text box: the stroke's drawn part, sampled
+   * every 1.5 points along its world polylines, counts where the stroke (its
+   * centre line widened by half its width) reaches into the box. Returns the
+   * length in points. A fill does not count, so text inside a filled shape
+   * that does not touch its outline stays quiet.
+   */
+  function strokeInBox(o, t, box) {
+    const m = matrixAt(o, t)
+    const style = specAt(o, t).style
+    const half = (((style && style.width) || 2) * Math.hypot(m[0], m[1])) / 2
+    const x0 = box.x - half
+    const y0 = box.y - half
+    const x1 = box.x + box.width + half
+    const y1 = box.y + box.height + half
+    const STEP = 1.5
+    let inside = 0
+    for (const l of trimLines(worldLines(o, t), valueAt(o, 'draw', t))) {
+      for (let i = 1; i < l.length; i++) {
+        const ax = l[i - 1][0]
+        const ay = l[i - 1][1]
+        const bx = l[i][0]
+        const by = l[i][1]
+        // Skip segments that cannot reach the box.
+        if (Math.max(ax, bx) < x0 || Math.min(ax, bx) > x1 || Math.max(ay, by) < y0 || Math.min(ay, by) > y1) continue
+        const len = Math.hypot(bx - ax, by - ay)
+        const n = Math.max(1, Math.ceil(len / STEP))
+        for (let k = 0; k < n; k++) {
+          const x = ax + ((bx - ax) * k) / n
+          const y = ay + ((by - ay) * k) / n
+          if (x >= x0 && x <= x1 && y >= y0 && y <= y1) inside += len / n
+        }
+      }
+    }
+    return inside
+  }
+
   /** Overlaps and the view, for the objects this scene sends (`list`), against everything visible. */
   function checkLayout(list) {
     const mine = new Set(list)
     const times = new Set([f3(endTime)])
     for (const st of steps) times.add(st.at)
     for (const e of list) if (isTextLike(e) && e.kind !== 'group') times.add(f3(revealEnd(e)))
+    // Between those moments too (text and shapes move with tweens): every half second, at most 160 moments.
+    const every = Math.max(0.5, endTime / 160)
+    for (let t = every; t < endTime; t += every) times.add(f3(t))
     const seen = new Set()
     const sorted = [...times].sort((a, b) => a - b)
     for (const t of sorted) {
@@ -2050,7 +2115,8 @@
       for (const e of visible) {
         if (!isTextLike(e) || !mine.has(e)) continue
         const box = worldBounds(e, t)
-        const inner = { x: box.x + box.width * 0.08, y: box.y + box.height * 0.08, width: box.width * 0.84, height: box.height * 0.84 }
+        // The text's ink: the layout box less the empty leading above and below the line, and a hair at the sides.
+        const inner = { x: box.x + Math.min(2, box.width * 0.04), y: box.y + box.height * 0.1, width: box.width - 2 * Math.min(2, box.width * 0.04), height: box.height * 0.8 }
         for (const o of visible) {
           if (o === e) continue
           const pairKey = e.id < o.id ? `${e.id}:${o.id}` : `${o.id}:${e.id}`
@@ -2063,18 +2129,9 @@
             hit = rectsOverlap(ob, inner) > 0.12 * Math.min(inner.width * inner.height, ob.width * ob.height)
             what = o.kind === 'live' ? 'box' : 'text'
           } else {
-            let count = 0
-            for (const l of worldLines(o, t)) {
-              for (let i = 1; i < l.length && count < 3; i++) {
-                const n = Math.max(1, Math.ceil(Math.hypot(l[i][0] - l[i - 1][0], l[i][1] - l[i - 1][1]) / 4))
-                for (let k = 0; k < n; k++) {
-                  const x = l[i - 1][0] + ((l[i][0] - l[i - 1][0]) * k) / n
-                  const y = l[i - 1][1] + ((l[i][1] - l[i - 1][1]) * k) / n
-                  if (x >= inner.x && x <= inner.x + inner.width && y >= inner.y && y <= inner.y + inner.height) count++
-                }
-              }
-            }
-            hit = count >= 3
+            // The stroke itself: a line, curve, outline or ink that runs through the text (at least 5 points of it).
+            hit = strokeInBox(o, t, inner) >= 5
+            what = o.kind === 'ink' ? 'ink' : 'outline'
           }
           if (!hit) continue
           seen.add(pairKey)

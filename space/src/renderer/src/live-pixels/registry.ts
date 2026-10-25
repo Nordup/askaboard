@@ -177,7 +177,7 @@ export class LiveItem {
       const clock = playbackClocks.get(this.id) ?? null
       this.host = new ProgramHost(
         this.container,
-        { code: this.node.code, size: this.size, params: this.params(), start: this.start, visible: this.visible, clock },
+        { code: this.node.code, size: this.size, params: this.params(), start: this.start, visible: this.visible, clock, rest: this.node.rest ?? null },
         {
           onTick: (frames) => this.ticked(frames),
           onError: (message) => this.setStatus('error', message),

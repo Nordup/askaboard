@@ -723,6 +723,13 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
   let next: BoardNode[] = s.nodes.map((node) => changed.get(node.id) ?? node)
   if (removed.size) next = removeNodes(next, removed, s.index)
   next = [...next, ...created]
+  // Program items keep the scene clock they rest at when the scene has ended, so a reopened board
+  // shows them as the learner last saw them (program.ts: scene.t, scene.step, scene.ended).
+  const played = new Set(objects.flatMap((object) => object.targets.map((target) => target.nodeId)))
+  let endStep: string | undefined
+  for (const step of desc.steps) if (step.at <= desc.duration + 1e-6) endStep = step.name
+  const rest = { t: Math.round(desc.duration * 1000) / 1000, ...(endStep !== undefined ? { step: endStep } : {}) }
+  next = next.map((node) => (node.kind === 'live' && (node as LiveNode).mode === 'program' && played.has(node.id) ? ({ ...node, rest } as LiveNode) : node))
   for (const ghost of ghosts) if (isFrame(ghost)) warn(`A frame faded out with everything in it`)
   const removedAll = removed.size ? [...withDescendants(removed, s.index)].map((id) => s.index.byId.get(id) as BoardNode).filter(Boolean) : []
   return {
