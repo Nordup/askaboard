@@ -23,6 +23,7 @@ import { BoardHistory } from './board/history'
 import { CanvasNotice } from './components/CanvasNotice'
 import { PreviewPanel } from './components/PreviewPanel'
 import { Sidebar, type BoardEntry } from './components/Sidebar'
+import { SceneCaption } from './components/SceneCaption'
 import { Toast } from './components/Toast'
 import { ToolPalette } from './components/ToolPalette'
 import { TopBar, type SaveStatus } from './components/TopBar'
@@ -812,6 +813,7 @@ export function App() {
               />
             )}
             {canvasContent}
+            {open && <SceneCaption />}
             {open && (
               <ToolPalette
                 state={tools}

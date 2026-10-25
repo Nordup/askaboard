@@ -46,7 +46,7 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
   `--accent-ring`, `--accent-tile-from`, `--accent-tile-to`,
   `--accent-tile-border`, `--status-idle`, `--status-live`,
   `--status-idle-ring`, `--status-live-ring`, `--status-live-pulse`,
-  `--status-error-ring`
+  `--status-error-ring`, `--status-play`, `--status-play-ring`
 - Canvas tools: `--selection-fill`, `--lasso-fill`, `--eraser-ring`,
   `--eraser-halo`, `--presence-border`, `--presence-glow`,
   `--presence-border-peak`, `--presence-glow-peak`, `--swatch-edge`
@@ -56,12 +56,18 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
   is data, not a design colour.
 - Ink colours: `--ink-white`, `--ink-yellow`, `--ink-blue`, `--ink-green`,
   `--ink-pink`, `--ink-orange`
-- Type: `--font-ui`, `--font-mono`, `--text-xs` … `--text-xl`, `--leading`
+- Type: `--font-ui`, `--font-mono`, `--text-xs` … `--text-xl`, `--leading`,
+  `--text-caption` (scene captions only)
 - Space: `--space-1` … `--space-6`, `--space-8`
 - Radius: `--radius-sm`, `--radius-md`, `--radius-lg`, `--radius-xl`,
   `--radius-pill`
-- Shadow: `--shadow-float`, `--shadow-card`
-- Layout: `--sidebar-width`, `--topbar-height`, `--titlebar-height`
+- Shadow: `--shadow-float`, `--shadow-card`, `--caption-halo` (a text
+  shadow in the canvas colour: text on the canvas without a card)
+- Layout: `--sidebar-width`, `--topbar-height`, `--titlebar-height`,
+  `--palette-height`, `--pill-height`, `--pill-gap`, `--pill-action-size`,
+  `--pill-label-max`, `--caption-width`
+- Motion: `--fade` (the quiet fade in and out). Every fade turns off under
+  `prefers-reduced-motion`.
 
 ## The menu system
 
@@ -103,6 +109,16 @@ the founder approved (6 px panel padding, rows about 22 px, 13 px text,
   **Retry**, not a paragraph.
 - Escape and a click outside close a menu; focus returns to the anchor.
 
+## Pills
+
+The top bar's status pills share `.pill` in `app.css` (the comment block
+above `.pill--static`). The agent pill is a `.pill` button. The scene pill is
+a `.pill.pill--static` holder of one control. Parts: `.status-dot`
+(`--live`, `--play`, `--error`), `.pill__label` (ends with an ellipsis),
+`.pill__count` with `.pill__sep`, `.pill__time` (mono, tabular figures) and
+`.pill__action` (the one small icon button, 12 px lucide icon). A new pill
+uses these parts; a missing part goes into the same block.
+
 ## Approved screens (reference)
 
 - **Agent popover.** Default view: the agents list (status dot, name,
@@ -115,6 +131,16 @@ the founder approved (6 px panel padding, rows about 22 px, 13 px text,
   a "Don't ask for this folder" text action.
 - **Sidebar.** Folder header, boards list, file tree; rows share one height
   and type scale.
+- **Scene pill and captions** (mockup A, 2026-10-25,
+  `images/2026-10-25-scene-captions-mockup.png`). While a scene plays or is
+  paused, a pill left of the agent pill shows the status dot (accent while
+  playing, idle grey when paused), "<step> · 2/5", the time (m:ss) and one
+  pause / resume button. In a top bar narrower than 760 px the step name
+  goes. The tutor's words show as one or two centred lines 12 px above the
+  tool palette: spoken words in primary text, the rest in tertiary, no card,
+  `--caption-halo` for contrast. A longer line shows as two-line pages, like
+  film subtitles. The line fades in, stays 1.2 s after its cue ends, then
+  fades out.
 
 ## Words
 

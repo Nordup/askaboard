@@ -212,6 +212,7 @@ button:focus-visible {
   background: var(--bg-app);
   border-bottom: 1px solid var(--border-subtle);
   -webkit-app-region: drag;
+  container: topbar / inline-size;
 }
 
 .topbar button {
@@ -223,6 +224,7 @@ button:focus-visible {
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
+  overflow: hidden;
   color: var(--text-secondary);
 }
 
@@ -252,9 +254,11 @@ button:focus-visible {
 .pill {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  height: 26px;
+  gap: var(--pill-gap);
+  flex-shrink: 0;
+  height: var(--pill-height);
   padding: 0 var(--space-3) 0 10px;
+  white-space: nowrap;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-pill);
   font-size: var(--text-sm);
@@ -266,7 +270,62 @@ button:focus-visible {
   background: var(--bg-hover);
 }
 
+/*
+ * Pill parts. A pill is a button (the agent pill) or, with --static, a plain
+ * holder of one control (the scene pill):
+ *   .pill__label   the main text; long text ends with an ellipsis
+ *   .pill__count   a count after the label ("· 2/5"); its .pill__sep is the "· "
+ *   .pill__time    a time or number in mono, tabular figures
+ *   .pill__action  the one small icon button, at the right end
+ */
+.pill--static:hover {
+  background: none;
+}
+
+.pill--static:has(.pill__action) {
+  /* the button sits evenly inside the pill's border */
+  padding-right: calc((var(--pill-height) - var(--pill-action-size)) / 2 - 1px);
+}
+
+.pill__label {
+  min-width: 0;
+  max-width: var(--pill-label-max);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.pill__count {
+  flex-shrink: 0;
+  margin-left: calc(var(--space-1) - var(--pill-gap));
+  white-space: nowrap;
+}
+
+.pill__time {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+}
+
+.pill__action {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: var(--pill-action-size);
+  height: var(--pill-action-size);
+  border-radius: var(--radius-pill);
+  color: var(--text-secondary);
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.pill__action:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
 .status-dot {
+  flex-shrink: 0;
   width: 7px;
   height: 7px;
   border-radius: 50%;
@@ -282,6 +341,11 @@ button:focus-visible {
 .status-dot--live {
   background: var(--status-live);
   box-shadow: 0 0 0 2px var(--status-live-ring);
+}
+
+.status-dot--play {
+  background: var(--status-play);
+  box-shadow: 0 0 0 2px var(--status-play-ring);
 }
 
 .status-dot--error {
@@ -324,9 +388,88 @@ button:focus-visible {
 }
 
 
+/* ---------- Scene pill and captions ---------- */
+
+/* The scene pill: shrinks before the agent pill; fades in and out (usePresence). */
+.scene-pill {
+  opacity: 0;
+  transition: opacity var(--fade);
+}
+
+.scene-pill.is-shown {
+  opacity: 1;
+}
+
+/* The tutor's words, centred directly above the tool palette. UI, not board content: no card, no zoom. */
+.scene-caption {
+  position: absolute;
+  z-index: 5;
+  left: 50%;
+  bottom: calc(var(--space-5) + var(--palette-height) + var(--space-3));
+  width: max-content;
+  max-width: min(var(--caption-width), calc(100% - 2 * var(--space-6)));
+  transform: translateX(-50%);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--fade);
+}
+
+/* An empty box with the caption's widest width and font: SceneCaption packs long cues into two-line pages with it. */
+.scene-caption__probe {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: min(var(--caption-width), calc(100% - 2 * var(--space-6)));
+  font-size: var(--text-caption);
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.scene-caption.is-shown {
+  opacity: 1;
+}
+
+.scene-caption__text {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: var(--text-caption);
+  line-height: var(--leading);
+  color: var(--text-tertiary);
+  text-align: center;
+  text-wrap: balance;
+  text-shadow: var(--caption-halo);
+}
+
+.scene-caption__spoken {
+  color: var(--text-primary);
+}
+
+/* A narrow top bar keeps the step count, time and button; the step name goes (and the board name ends with an ellipsis). */
+@container topbar (max-width: 760px) {
+  .scene-pill .pill__label,
+  .scene-pill .pill__sep {
+    display: none;
+  }
+
+  .scene-pill .pill__count {
+    margin-left: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scene-pill,
+  .scene-caption {
+    transition: none;
+  }
+}
+
 .zoom {
+  flex-shrink: 0;
   min-width: 52px;
-  height: 26px;
+  height: var(--pill-height);
   padding: 0 var(--space-2);
   border-radius: var(--radius-sm);
   font-family: var(--font-mono);
@@ -365,7 +508,7 @@ button:focus-visible {
   display: flex;
   align-items: center;
   gap: 2px;
-  height: 48px;
+  height: var(--palette-height);
   padding: 0 var(--space-2);
   background: var(--bg-elevated);
   border: 1px solid var(--border-subtle);

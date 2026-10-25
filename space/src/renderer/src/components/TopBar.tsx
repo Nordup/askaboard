@@ -1,6 +1,7 @@
 import { AlertCircle, Check } from 'lucide-react'
 import type { AgentServerStatus, GuideOverrides } from '@shared/space-api'
 import { AgentPill } from './AgentPill'
+import { ScenePill } from './ScenePill'
 
 export type SaveStatus = 'saved' | 'saving' | 'unsaved' | 'error'
 
@@ -52,6 +53,7 @@ export function TopBar({ folderName, boardName, saveStatus, zoom, onResetZoom, a
         )}
       </div>
       <div className="topbar__right">
+        <ScenePill />
         <AgentPill status={agentStatus} activityAt={agentActivityAt} guideOverrides={guideOverrides} onOpenOverride={onOpenOverride} />
         {zoom !== null && (
           <button className="zoom" title="Reset zoom to 100% (⌘0)" onClick={onResetZoom}>
