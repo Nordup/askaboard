@@ -44,9 +44,22 @@ node scripts/lab/council.mjs --client codex --effort low --task "Explain eclipse
 
 It starts a fresh app (`--name council`, MCP 47891, debug 9491), draws the
 learner's strokes when the task has them, runs the agent headless with
-`council/purpose.md` + the task, and records the board. Then it resumes the
+`council/purpose.md` + the task (only the task with `--brief-only`), and
+records the board. Tasks are in `council/tasks.json`.
+
+The run ends when the board is done: the agent has finished and the last
+scene has played, plus 1 s. The script takes `final.png` and `board.png`
+from the live app and stops the app at once. Then it writes the filmstrip,
+`calls.json` and `meta.json`, and `media.mjs` makes the two videos in the
+background (log: `media.log` in the run folder), so the next run can start.
+`meta.json` has `media: "pending"` until the videos are made; the gallery
+card shows `final.png` until then. `--wait-media` waits for the videos
+before the script exits. Two video jobs can run at once.
+
+`--interview` adds phase 2: before the app stops, the script resumes the
 same session with `council/interview.md` and saves the answer as
-`feedback.md`. Tasks are in `council/tasks.json`. Codex uses its own scratch
+`feedback.md` (about 1 min). It is off by default. Without it, the gallery
+card has no feedback section. Codex uses its own scratch
 `CODEX_HOME` (`/private/tmp/claude-501/ls-lab/codex-home`); its `auth.json`
 is a symlink to the founder's login. Never read or print it.
 
