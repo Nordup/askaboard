@@ -2,6 +2,7 @@ import { memo, useEffect, type CSSProperties, type ReactNode, type RefObject } f
 import DOMPurify from 'dompurify'
 import katex from 'katex'
 import { isContent, renderableStyle, type ContentNode } from '@shared/board-format'
+import { LiveView } from '../live-pixels/LiveView'
 import { parseMarkup, toggleMarker, type Run } from './markup'
 import { ROOT, type SceneIndex } from './scene'
 import type { BoardNode, LayoutBox } from './types'
@@ -223,6 +224,8 @@ const NodeView = memo(function NodeView({ node, placement, editing, ctx }: NodeV
       const sized = { 'data-w': node.style.width ? '1' : undefined, 'data-h': node.style.height ? '1' : undefined }
       return <div {...common} {...sized} className="node node-svg" style={style} dangerouslySetInnerHTML={{ __html: scopeSvgIds(sanitizeSvg(node.markup), node.id) }} />
     }
+    case 'live':
+      return <LiveView node={node} style={{ ...style, width: node.w, height: node.h }} common={common} />
     case 'image': {
       const url = assetUrl(node.src)
       if (!url) {

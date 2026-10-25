@@ -22,6 +22,8 @@ export interface NodeOverride {
   fill?: number
   /** The colour now (ink colour; svg stroke and text colour). */
   color?: string
+  /** Live pixel items: param values now, merged over the node's own params. */
+  params?: Record<string, number>
 }
 
 /** The pen tip: where a stroke is being drawn now. */

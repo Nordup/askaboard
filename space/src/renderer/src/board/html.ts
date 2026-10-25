@@ -464,6 +464,11 @@ export function nodesToHtml(rootId: string, index: SceneIndex, includeIds: boole
       case 'image':
         lines.push(`${pad}<img${attrs(node)} src="${escapeAttribute(node.src)}"${styleAttr}>`)
         return
+      case 'live': {
+        const params = Object.entries(node.params).map(([name, value]) => `${name}=${value}`).join(' ')
+        lines.push(`${pad}<!-- live ${node.mode} ${escapeHtml(node.id)}${node.name ? ` "${escapeHtml(node.name)}"` : ''} at ${node.x},${node.y} ${node.w}×${node.h}${params ? `, params ${escapeHtml(params)}` : ''} (not HTML) -->`)
+        return
+      }
     }
   }
   const root = index.byId.get(rootId)
