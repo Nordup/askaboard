@@ -1016,11 +1016,6 @@ export class ScenePlayer {
     return gone()
   }
 
-  /** Resolves when this scene has left the queue: played to its end, stopped, skipped or dropped. */
-  untilGone(id: string): Promise<void> {
-    return this.waitFor(() => !this.scenes.some((scene) => scene.play.id === id))
-  }
-
   /** Resolves when nothing plays or waits, or a scene stands paused (a pause step, the learner, scene_control pause). */
   untilIdleOrPaused(): Promise<void> {
     return this.waitFor(() => !this.scenes.length || this.pausedScene() !== null)

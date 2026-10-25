@@ -17,7 +17,7 @@ it points to. All paths are under `space/` unless stated otherwise.
 ```
 
 - The **renderer owns the live board**: nodes, unsaved edits, undo history,
-  the change log and agent presence. Everything an agent does goes through
+  and the change log. Everything an agent does goes through
   it, so the learner sees agent work at once and can undo it.
 - The **main process owns the outside world**: the window, the MCP server,
   disk access through one path guard, the snapshot window, and the files in
@@ -49,7 +49,7 @@ limits scripts and images.
    the reply.
 3. The renderer (`src/renderer/src/agent/handler.ts`, `edits.ts`) reads or
    changes the live board as **one undo step**, stamps `seq`, records
-   removals, updates presence, and returns ids, measured bounds and overlap
+   removals, and returns ids, measured bounds and overlap
    reports.
 4. For screenshots, the renderer plans the region and main asks the snapshot
    window to draw it; main captures the pixels.
@@ -87,7 +87,7 @@ limits scripts and images.
 | Module | Job |
 | --- | --- |
 | `agent/handler.ts` | Answers requests from main: canvas info, changes, screenshot plans, tool calls, learner news. |
-| `agent/edits.ts` | The renderer's tools: reads (tree, node info, HTML), scene requests; presence outline while a scene plays. |
+| `agent/edits.ts` | The renderer's tools: reads (tree, node info, HTML), scene requests. |
 | `board/html.ts` | HTML subset ⇄ nodes, both directions; reports what was dropped. |
 | `agent/groups.ts` | Clusters learner ink into groups `g1`, `g2`, … with stable ids. |
 | `agent/placement.ts` | The board as a scene sees it, obstacles, an empty place near an anchor (`space()`, html() without a place). |
@@ -106,9 +106,9 @@ limits scripts and images.
   - *Board:* `open_board`.
   - *Live scenes (all writes):* `run_scene`, `scene_control` (see "Live
     scenes" below).
-- **Presence:** a scene's top-level items show the agent's name while the
-  scene plays or waits (`AgentPresence.hold` in `agent/edits.ts`, released
-  when `scenePlayer.untilGone` resolves).
+- **No presence on the board** (U3): the scene pill and the agent pill in
+  the top bar show that an agent is working; board items get no outline or
+  name tag.
 - **What agents read** (decision I3; how to write it:
   [`writing-agent-text.md`](writing-agent-text.md)):
   - the brief, `resources/brief.md`: as a managed block in the folder's

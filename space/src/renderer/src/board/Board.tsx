@@ -104,8 +104,6 @@ export interface BoardHandle {
   agentAmend(next: BoardNode[]): void
   /** Measure the content layer now (after images load). */
   remeasure(): void
-  /** Show agent presence outlines on these top-level nodes. */
-  setPresence(entries: PresenceEntry[]): void
   /** Select every top-level node and all loose ink (⌘A on the canvas). */
   selectAll(): void
   /**
@@ -114,11 +112,6 @@ export interface BoardHandle {
    * in the same task never shows its final state first.
    */
   setPlayback(frame: PlaybackFrame | null): void
-}
-
-export interface PresenceEntry {
-  id: string
-  label: string
 }
 
 export interface LiveBoardState {
@@ -343,7 +336,6 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const [panReady, setPanReady] = useState(false)
   const [panning, setPanning] = useState(false)
   const [flashRect, setFlashRect] = useState<{ rect: Region; id: number } | null>(null)
-  const [presence, setPresence] = useState<PresenceEntry[]>([])
   const editorsRef = useRef(new Map<string, Author>())
   const timesRef = useRef(new Map<string, number>())
   const lastStrokeAtRef = useRef(0)
@@ -1340,7 +1332,6 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         measure()
       },
       remeasure: measure,
-      setPresence,
       selectAll: () => selectAllRef.current(),
       setPlayback: (frame) => {
         const ghosts = frame?.ghosts ?? []
@@ -1572,21 +1563,6 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
           ))}
         </div>
       )}
-      {presence.map((entry) => {
-        const box = layoutRef.current.get(entry.id)
-        if (!box) return null
-        const topLeft = boardToScreen([box.x, box.y], viewport, camera)
-        return (
-          <div
-            key={entry.id}
-            className="board__presence"
-            style={{ left: topLeft[0] - 4, top: topLeft[1] - 4, width: box.width * camera.zoom + 8, height: box.height * camera.zoom + 8 }}
-            aria-hidden="true"
-          >
-            <span className="board__presence-label">{entry.label}</span>
-          </div>
-        )
-      })}
       {flashRect && flashTopLeft && (
         <div
           key={flashRect.id}

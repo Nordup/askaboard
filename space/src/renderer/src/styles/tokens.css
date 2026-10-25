@@ -51,16 +51,11 @@
   --status-play: var(--accent);
   --status-play-ring: var(--accent-soft);
 
-  /* Canvas tools: selection, lasso, eraser, agent presence */
+  /* Canvas tools: selection, lasso, eraser */
   --selection-fill: rgba(110, 139, 255, 0.05);
   --lasso-fill: rgba(110, 139, 255, 0.08);
   --eraser-ring: rgba(255, 255, 255, 0.6);
   --eraser-halo: rgba(0, 0, 0, 0.5);
-  /* Agent presence pulse: border and glow at rest (0%) and at the peak (50%) */
-  --presence-border: rgba(110, 139, 255, 0.95);
-  --presence-glow: rgba(110, 139, 255, 0.35);
-  --presence-border-peak: rgba(110, 139, 255, 0.55);
-  --presence-glow-peak: rgba(110, 139, 255, 0.12);
   --swatch-edge: rgba(0, 0, 0, 0.25); /* inset line around an ink colour swatch */
 
   /* Snapshot: the grid, labels and tags drawn into the image agents see */
