@@ -193,6 +193,12 @@ export interface LiveNode extends NodeBase {
   h: number
   /** Other look (opacity, border radius…). Its width and height are ignored: `w`, `h` set the size. */
   style: NodeStyle
+  /**
+   * Program items a scene played: the scene clock they rest at after that
+   * scene (its end time and its last step), so `scene.t` and `scene.step`
+   * after a reload are what the learner last saw. Optional.
+   */
+  rest?: { t: number; step?: string }
 }
 
 /** A node of a kind this version does not know (or an invalid one). It survives load/save untouched. */

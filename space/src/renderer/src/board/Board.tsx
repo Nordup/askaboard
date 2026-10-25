@@ -91,9 +91,12 @@ export interface BoardHandle {
   applyWidth(width: number): boolean
   /**
    * Commit an agent edit as one undo step, then lay it out before returning,
-   * so the layout cache has the new nodes' bounds.
+   * so the layout cache has the new nodes' bounds. With `step`, every commit
+   * with the same key that follows it directly (no other edit, undo or redo
+   * between them) joins that one undo step: an action made of several
+   * commits (scene_control replace, cut, skip) is one step for the learner.
    */
-  agentCommit(next: BoardNode[]): void
+  agentCommit(next: BoardNode[], options?: { step?: string }): void
   /**
    * Change the last agent commit without a new undo step (a post-layout
    * correction of the same write), then lay it out before returning.
@@ -305,6 +308,8 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const layoutRef = useRef<LayoutMap>(new Map())
   const elementsRef = useRef(new Map<string, HTMLElement>())
   const nextSeqRef = useRef(doc.nextSeq)
+  /** The step key of the last undo step when an agent commit with a key made it (agentCommit), else null. */
+  const stepKeyRef = useRef<string | null>(null)
   const extraRef = useRef(doc.extra)
   const cameraRef = useRef<Camera>(initialCamera ?? { center: [0, 0], zoom: 1 })
   /** The camera the content layer's transform shows now. */
@@ -602,9 +607,11 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     (next: BoardNode[], snapshot: BoardNode[] = nodesRef.current, by: Author = 'learner', record = true) => {
       if (next.length === snapshot.length && next.every((node, i) => node === snapshot[i])) {
         if (nodesRef.current !== snapshot) setNodes(snapshot)
-        return
+        return false
       }
       if (record) history.record(snapshot)
+      // A learner's edit ends an agent's keyed step: the next keyed commit is a new undo step.
+      if (by === 'learner') stepKeyRef.current = null
       const firstSeq = nextSeqRef.current
       const stamped = stampChanged(snapshot, next, nextSeqRef.current)
       nextSeqRef.current = stamped.nextSeq
@@ -618,6 +625,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       setNodes(stamped.nodes)
       if (removed.length) onRemovedRef.current?.(removed)
       emit()
+      return true
     },
     [emit, history, setNodes]
   )
@@ -626,6 +634,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const restore = useCallback(
     (snapshot: BoardNode[] | null) => {
       if (!snapshot) return
+      stepKeyRef.current = null
       const stamped = stampChanged(nodesRef.current, snapshot, nextSeqRef.current)
       nextSeqRef.current = stamped.nextSeq
       // Undo and redo are the learner's own actions (agents have no undo).
@@ -1311,10 +1320,16 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       },
       applyColor,
       applyWidth,
-      agentCommit: (next) => {
+      agentCommit: (next, options) => {
         // An agent edit ends a learner's text editing first, so the two never mix.
         if (editingRef.current) commitEditing()
-        flushSync(() => commitNodes(next, nodesRef.current, 'agent'))
+        const key = options?.step ?? null
+        const join = key !== null && stepKeyRef.current === key
+        let changed = false
+        flushSync(() => {
+          changed = commitNodes(next, nodesRef.current, 'agent', !join)
+        })
+        if (changed || join) stepKeyRef.current = key
         measure()
         const present = new Set(next.map((node) => node.id))
         if (selectedIdsRef.current.some((id) => !present.has(id))) setSelectedIds(selectedIdsRef.current.filter((id) => present.has(id)))

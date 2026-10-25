@@ -106,7 +106,7 @@ function LiveStill({ node, style, common }: Props) {
   // A program item: run it in a hidden frame at this moment until it paints, then show its picture.
   const runner = useRef<HTMLDivElement | null>(null)
   const sim = clock?.sim ?? null
-  const runKey = node.mode === 'program' && !givenUrl ? `${node.id}|${node.code}|${time}|${clock?.step ?? ''}|${JSON.stringify(params)}|${node.w}x${node.h}|${sim ? JSON.stringify(sim) : ''}` : ''
+  const runKey = node.mode === 'program' && !givenUrl ? `${node.id}|${node.code}|${time}|${clock?.step ?? ''}|${clock ? '' : JSON.stringify(node.rest ?? null)}|${JSON.stringify(params)}|${node.w}x${node.h}|${sim ? JSON.stringify(sim) : ''}` : ''
   const [ran, setRan] = useState<{ key: string; url: string | null } | null>(null)
   useLayoutEffect(() => {
     const element = runner.current
@@ -135,7 +135,7 @@ function LiveStill({ node, style, common }: Props) {
       const ph = Math.max(1, Math.round(node.h * 2))
       host = new ProgramHost(
         element,
-        { code: node.code, size: { w: node.w, h: node.h, pw, ph }, params, start: performance.timeOrigin + performance.now() - time * 1000, visible: true, clock, sim },
+        { code: node.code, size: { w: node.w, h: node.h, pw, ph }, params, start: performance.timeOrigin + performance.now() - time * 1000, visible: true, clock, rest: node.rest ?? null, sim },
         {
           onTick: (frames) => frames >= 3 && ask(),
           onError: () => finish(null),

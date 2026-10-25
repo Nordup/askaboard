@@ -82,15 +82,15 @@ export interface RunSceneContext {
   tracker: InkGroupTracker
 }
 
-/** Take a committed scene off the board again (a skipped queued scene), as a new undo step. */
-function revertScene(board: BoardHandle, revert: SceneRevert): void {
+/** Take a committed scene off the board again (a skipped queued scene, a restage): a new undo step, or part of the keyed step `step`. */
+function revertScene(board: BoardHandle, revert: SceneRevert, step?: string): void {
   const created = new Set(revert.created)
   const changed = new Map(revert.changed.map((node) => [node.id, node]))
   const current = board.liveState().nodes
   const present = new Set(current.map((node) => node.id))
   const next = current.filter((node) => !created.has(node.id)).map((node) => changed.get(node.id) ?? node)
   for (const node of revert.removed) if (!present.has(node.id)) next.push(node)
-  board.agentCommit(next)
+  board.agentCommit(next, step ? { step } : undefined)
 }
 
 /** Text centred on a point and group frames fitted to what they hold, once measured (the same undo step). */
@@ -209,12 +209,11 @@ function keepInkLook(object: PlayObject, s: Scene): void {
   object.dyn = { kind: 'ink', samples: [{ t: 0, bounds: none, lines, width }], end: Number.POSITIVE_INFINITY, finalBounds: none, centered: false, ink: { color, width, tool } }
 }
 
-/** Commit a scene's final state (a new undo step, or amending the last one) and list its items. starts_in_s is filled in by the caller. */
-function commitScene(ctx: RunSceneContext, desc: SceneDescription, sceneId: string, name: string | null, amend: boolean): CommittedScene {
+/** Commit a scene's final state (a new undo step, or part of the keyed step `step`) and list its items. starts_in_s is filled in by the caller. */
+function commitScene(ctx: RunSceneContext, desc: SceneDescription, sceneId: string, name: string | null, step: string | null): CommittedScene {
   const s = ctx.scene()
   const compiled = compileScene(desc, s, sceneId, name, stageLookup)
-  if (amend) ctx.board.agentAmend(compiled.next)
-  else ctx.board.agentCommit(compiled.next)
+  ctx.board.agentCommit(compiled.next, step ? { step } : undefined)
   settleLayout(ctx.board, compiled)
 
   // A scene that changes a node an earlier scene still shows: the earlier scene's look of it starts from the new geometry.
@@ -333,16 +332,16 @@ function commitScene(ctx: RunSceneContext, desc: SceneDescription, sceneId: stri
 /**
  * runScene: commit the scene and queue it. With `slot`, the scene takes the
  * place of the queued or playing scene with the same id (replace, cut),
- * keeping its place in the queue and its clock; `amend` folds the commit
- * into the last undo step.
+ * keeping its place in the queue and its clock. `step`: the key of the
+ * undo step the commit joins (a restage's reverts and commits are one step).
  */
 export function runScene(ctx: RunSceneContext, args: Record<string, unknown>): SceneResult & { ends_in_s: number } {
   const desc = checkDescription(args.scene)
   adoptEpoch(desc.stage)
   const sceneId = typeof args.sceneId === 'string' && args.sceneId ? args.sceneId : newItemId('sc')
   const name = typeof args.name === 'string' && args.name ? args.name : null
-  const { compiled, result, snapshot } = commitScene(ctx, desc, sceneId, name, args.amend === true)
-  const revert = (): void => revertScene(ctx.board, compiled.revert)
+  const { compiled, result, snapshot } = commitScene(ctx, desc, sceneId, name, typeof args.step === 'string' && args.step ? args.step : null)
+  const revert = (step?: string): void => revertScene(ctx.board, compiled.revert, step)
   let startsIn: number
   if (args.slot === true && scenePlayer.swap(ctx.board, sceneId, compiled.play, revert)) startsIn = scenePlayer.startsIn(sceneId)
   else startsIn = scenePlayer.enqueue(ctx.board, compiled.play, { mode: args.when === 'now' ? 'now' : 'queue', revert })
@@ -497,7 +496,7 @@ export async function sceneControl(ctx: RunSceneContext, args: Record<string, un
     case 'revert': {
       // Take scenes' items off the board again (newest first), to commit them anew.
       const ids = Array.isArray(args.scenes) ? (args.scenes as string[]) : []
-      scenePlayer.revertScenes(ids)
+      scenePlayer.revertScenes(ids, typeof args.step === 'string' && args.step ? args.step : newItemId('step'))
       return status()
     }
     case 'drop':
