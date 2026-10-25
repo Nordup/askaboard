@@ -1,12 +1,13 @@
-import { isContent, isInk, newItemId, type BoardNode, type ContentNode } from '@shared/board-format'
+import { isContent, isInk, newItemId, type BoardNode, type ContentNode, type InkNode } from '@shared/board-format'
 import type { SceneContext, SceneDescription, SceneItem, SceneResult } from '@shared/live-scene'
 import type { BoardHandle } from '../board/Board'
 import type { NodeOverride, PlaybackTip } from '../board/playback'
 import type { InkGroupTracker } from '../agent/groups'
 import { viewOf, type Scene } from '../agent/placement'
-import { compileScene, type CompiledScene, type SceneRevert } from './compile'
-import { inkIndexOf, scenePlayer, sceneFrame, type SceneFrame } from './player'
-import { multiply } from './timeline'
+import { compileScene, type CompiledScene, type PlayObject, type SceneRevert, type StageLookup } from './compile'
+import { inkIndexOf, nodeSig, scenePlayer, sceneFrame, type SceneFrame, type SceneMemory } from './player'
+import { apply, multiply, scaleOf } from './timeline'
+import type { Point } from '../board/types'
 
 /**
  * The renderer half of run_scene. The main process runs the program in its
@@ -20,7 +21,7 @@ const r1 = (value: number): number => Math.round(value * 10) / 10
 const rect = (box: { x: number; y: number; width: number; height: number }) => ({ x: r1(box.x), y: r1(box.y), width: r1(box.width), height: r1(box.height) })
 
 /** Every node and ink group with its bounds, item names, and the learner's view: the board as a scene program sees it. */
-export function sceneContext(board: BoardHandle, s: Scene): SceneContext {
+export function sceneContext(board: BoardHandle, s: Scene, path?: string): SceneContext {
   const nodes: SceneContext['nodes'] = {}
   const names: Record<string, { id: string; seq: number }> = {}
   const name = (key: unknown, id: string, seq: number): void => {
@@ -47,11 +48,19 @@ export function sceneContext(board: BoardHandle, s: Scene): SceneContext {
     if (!isInk(node)) name(node.name, node.id, node.seq ?? 0)
   }
   const state = board.liveState()
+  // The stage's objects that are still on the board, with their items (node ids, ink group id).
+  const items: Record<string, string[]> = {}
+  for (const [sid, record] of stageRecord.items) {
+    const ids = record.nodeIds.filter((id) => s.index.byId.has(id))
+    if (ids.length) items[String(sid)] = record.group ? [...ids, record.group] : ids
+  }
   return {
     nodes,
     names: Object.fromEntries(Object.entries(names).map(([key, value]) => [key, value.id])),
     view: rect(viewOf(board)),
-    viewport: [Math.round(state.viewport[0]), Math.round(state.viewport[1])]
+    viewport: [Math.round(state.viewport[0]), Math.round(state.viewport[1])],
+    ...(path ? { board: path } : {}),
+    stage: { epoch: stageRecord.epoch, items }
   }
 }
 
@@ -147,39 +156,95 @@ function settleLayout(board: BoardHandle, compiled: CompiledScene): void {
   }
 }
 
-export function runScene(ctx: RunSceneContext, args: Record<string, unknown>): SceneResult {
-  const desc = checkDescription(args.scene)
-  const sceneId = newItemId('sc')
-  const name = typeof args.name === 'string' && args.name ? args.name : null
+/**
+ * The renderer's record of the stage (main/live-scene.ts): for each stage
+ * object, the board items it shows through. A scene that carries an object
+ * reuses these items; the sandbox learns from it which objects are still on
+ * the board (sceneContext).
+ */
+const stageRecord: { epoch: string; items: Map<number, { nodeIds: string[]; group?: string }> } = { epoch: '', items: new Map() }
+
+function adoptEpoch(epoch: string | undefined): void {
+  if (!epoch || epoch === stageRecord.epoch) return
+  stageRecord.epoch = epoch
+  stageRecord.items.clear()
+  scenePlayer.resetStage()
+}
+
+const stageLookup: StageLookup = (sid) => stageRecord.items.get(sid)
+
+export interface CommittedScene {
+  compiled: CompiledScene
+  result: SceneResult
+  snapshot: SceneMemory['snapshot']
+}
+
+/**
+ * An earlier scene's ink object whose strokes a later scene commits again:
+ * it shows its own strokes (as they are before that commit) as changing ink
+ * from now on, so it never draws the later scene's geometry.
+ */
+function keepInkLook(object: PlayObject, s: Scene): void {
+  if (object.dyn) {
+    object.dyn.end = Number.POSITIVE_INFINITY
+    return
+  }
+  const lines: Point[][] = []
+  let width = 3
+  let color = '#ececef'
+  let tool: 'pen' | 'highlighter' = 'pen'
+  for (const target of object.targets) {
+    if (!target.ink) continue
+    const node = s.index.byId.get(target.nodeId) as InkNode | undefined
+    if (!node || node.kind !== 'ink') continue
+    const offset = target.offset ?? [node.x, node.y]
+    lines.push(node.points.map(([x, y]) => apply(target.inverseBaked, [x + offset[0], y + offset[1]])))
+    width = node.width * scaleOf(target.inverseBaked)
+    color = node.color
+    tool = node.tool === 'highlighter' ? 'highlighter' : 'pen'
+  }
+  if (!lines.length) return
+  const none = { x: 0, y: 0, width: 0, height: 0 }
+  object.dyn = { kind: 'ink', samples: [{ t: 0, bounds: none, lines, width }], end: Number.POSITIVE_INFINITY, finalBounds: none, centered: false, ink: { color, width, tool } }
+}
+
+/** Commit a scene's final state (a new undo step, or amending the last one) and list its items. starts_in_s is filled in by the caller. */
+function commitScene(ctx: RunSceneContext, desc: SceneDescription, sceneId: string, name: string | null, amend: boolean): CommittedScene {
   const s = ctx.scene()
-  const compiled = compileScene(desc, s, sceneId, name)
-  ctx.board.agentCommit(compiled.next)
+  const compiled = compileScene(desc, s, sceneId, name, stageLookup)
+  if (amend) ctx.board.agentAmend(compiled.next)
+  else ctx.board.agentCommit(compiled.next)
   settleLayout(ctx.board, compiled)
 
   // A scene that changes a node an earlier scene still shows: the earlier scene's look of it starts from the new geometry.
-  const earlier = scenePlayer.playingScenes()
+  const earlier = scenePlayer.playingScenes().filter((play) => play.id !== sceneId)
   if (earlier.length) {
     const changes = new Map<string, [number, number, number, number, number, number]>()
+    const replaced = new Map<string, [number, number, number, number, number, number]>()
     for (const object of compiled.play.objects) {
-      if (compiled.play.timeline.object(object.id).kind !== 'node' || object.ghost) continue
-      for (const target of object.targets) changes.set(target.nodeId, target.inverseBaked)
+      if (object.ghost) continue
+      const kind = compiled.play.timeline.object(object.id)
+      if (kind.kind === 'node') for (const target of object.targets) changes.set(target.nodeId, target.inverseBaked)
+      // A carried object's node holds this scene's end state now.
+      else if (kind.carry) for (const target of object.targets) replaced.set(target.nodeId, target.inverseBaked)
     }
-    for (const play of earlier) for (const object of play.objects) for (const target of object.targets) {
-      const change = changes.get(target.nodeId)
-      if (change) target.inverseBaked = multiply(target.inverseBaked, change)
+    for (const play of earlier) {
+      for (const object of play.objects) {
+        // Ink this scene redraws: the earlier scene keeps drawing its own strokes (the board's strokes are this scene's end now).
+        if (object.targets.some((target) => target.ink && replaced.has(target.nodeId))) keepInkLook(object, s)
+        for (const target of object.targets) {
+          const change = changes.get(target.nodeId)
+          if (change) target.inverseBaked = multiply(target.inverseBaked, change)
+          const fresh = replaced.get(target.nodeId)
+          if (fresh) target.inverseBaked = fresh
+        }
+      }
     }
   }
 
-  // Each ink object is one ink group, as one draw_ink call is.
+  // Each ink object is one ink group, as one draw_ink call is; a carried one keeps its group.
   const groupOf = new Map<number, string>()
-  for (const { object, strokes } of compiled.inkGroups) groupOf.set(object, ctx.tracker.pin(strokes))
-  const mode = args.when === 'now' ? 'now' : 'queue'
-  const startsIn = scenePlayer.enqueue(ctx.board, compiled.play, {
-    mode,
-    speak: args.speak === true,
-    voice: typeof args.voice === 'string' ? args.voice : null,
-    revert: () => revertScene(ctx.board, compiled.revert)
-  })
+  for (const { object, strokes, group } of compiled.inkGroups) groupOf.set(object, group ? ctx.tracker.repin(group, strokes) : ctx.tracker.pin(strokes))
 
   // The items, as the learner can pick them up: a named group is one item, then each object's own item.
   const state = ctx.board.liveState()
@@ -193,16 +258,14 @@ export function runScene(ctx: RunSceneContext, args: Record<string, unknown>): S
     for (const entry of desc.kind === 'group' ? [] : compiled.play.steps) if (entry.at <= at + 1e-6) step = entry.name
     return step
   }
-  const groupBounds = new Map<string, ReturnType<typeof rect>>()
-  for (const group of s.groups) groupBounds.set(group.id, rect(group.bounds))
   const items: SceneItem[] = []
-  const inFrame = new Set<number>()
   const framed = (objectId: number): boolean => {
     for (let current = timeline.object(objectId).parent; current !== undefined; current = timeline.object(current).parent) if (compiled.frames.some((frame) => frame.object === current)) return true
     return false
   }
   for (const frame of compiled.frames) {
     const desc = timeline.object(frame.object)
+    if (desc.sid !== undefined) stageRecord.items.set(desc.sid, { nodeIds: [frame.id] })
     if (desc.parent !== undefined && framed(frame.object)) continue
     const box = layout.get(frame.id)
     const firstLeaf = compiled.play.objects.find((object) => {
@@ -210,12 +273,15 @@ export function runScene(ctx: RunSceneContext, args: Record<string, unknown>): S
       return false
     })
     items.push({ id: frame.id, kind: 'group', ...(desc.name ? { name: desc.name } : {}), bounds: box ? rect(box) : null, ...(firstLeaf && stepOf(firstLeaf.id) ? { step: stepOf(firstLeaf.id) } : {}) })
-    inFrame.add(frame.object)
   }
   const groupBoxes = ctx.tracker.compute(state)
   for (const object of compiled.play.objects) {
-    if (object.ghost) continue
     const desc = timeline.object(object.id)
+    if (desc.sid !== undefined && desc.kind !== 'node' && desc.kind !== 'group') {
+      if (object.ghost) stageRecord.items.delete(desc.sid)
+      else stageRecord.items.set(desc.sid, { nodeIds: object.targets.map((target) => target.nodeId), ...(groupOf.has(object.id) ? { group: groupOf.get(object.id) } : {}) })
+    }
+    if (object.ghost) continue
     if (desc.kind === 'node' || framed(object.id)) continue
     const group = groupOf.get(object.id)
     const step = stepOf(object.id)
@@ -233,20 +299,58 @@ export function runScene(ctx: RunSceneContext, args: Record<string, unknown>): S
       items.push({ id: nodeId, kind: node.kind, ...(desc.name ? { name: desc.name } : {}), bounds: box ? rect(box) : node.kind === 'live' ? liveBox(node) : null, ...(step ? { step } : {}) })
     }
   }
+  // The scene's items as they are now, for a replay after later scenes change them.
+  const snapshot: SceneMemory['snapshot'] = new Map()
+  const byId = new Map(state.nodes.map((node) => [node.id, node]))
+  for (const object of compiled.play.objects) {
+    if (object.ghost) continue
+    for (const target of object.targets) {
+      const node = byId.get(target.nodeId)
+      if (!node || snapshot.has(node.id)) continue
+      const box = layout.get(node.id) as { x: number; y: number; ox?: number; oy?: number } | undefined
+      const ghost = isInk(node) ? { ...node, parent: undefined, x: box?.ox ?? node.x, y: box?.oy ?? node.y } : { ...node, parent: undefined, x: box?.x ?? (node as ContentNode).x, y: box?.y ?? (node as ContentNode).y }
+      snapshot.set(node.id, { sig: nodeSig(node), ghost: ghost as BoardNode })
+    }
+  }
   const present = new Set(state.nodes.map((node) => node.id))
   const lost = items.filter((item) => !item.id.startsWith('g') && !present.has(item.id))
   const warnings = [...desc.warnings, ...compiled.warnings]
   if (lost.length) warnings.push(`${lost.length} item(s) did not reach the board`)
-  return {
+  const result: SceneResult = {
     scene: sceneId,
     duration_s: Math.round(desc.duration * 1000) / 1000,
-    starts_in_s: startsIn,
+    starts_in_s: 0,
     steps: desc.steps.map((step) => ({ name: step.name, at_s: step.at, ...(step.pause ? { pause: true } : {}) })),
     items,
-    cues: desc.cues.map((cue) => ({ text: cue.text, at_s: cue.at, dur_s: cue.dur })),
+    cues: desc.cues.map((cue) => ({ text: cue.text, at_s: cue.at, dur_s: cue.dur, ...(cue.marks?.length ? { marks: Object.fromEntries(cue.marks.map((mark) => [mark.name, mark.at])) } : {}) })),
     log: desc.logs,
     warnings
   }
+  return { compiled, result, snapshot }
+}
+
+/**
+ * runScene: commit the scene and queue it. With `slot`, the scene takes the
+ * place of the queued or playing scene with the same id (replace, cut),
+ * keeping its place in the queue and its clock; `amend` folds the commit
+ * into the last undo step.
+ */
+export function runScene(ctx: RunSceneContext, args: Record<string, unknown>): SceneResult & { ends_in_s: number } {
+  const desc = checkDescription(args.scene)
+  adoptEpoch(desc.stage)
+  const sceneId = typeof args.sceneId === 'string' && args.sceneId ? args.sceneId : newItemId('sc')
+  const name = typeof args.name === 'string' && args.name ? args.name : null
+  const { compiled, result, snapshot } = commitScene(ctx, desc, sceneId, name, args.amend === true)
+  const speak = args.speak === true
+  const voice = typeof args.voice === 'string' ? args.voice : null
+  const revert = (): void => revertScene(ctx.board, compiled.revert)
+  let startsIn: number
+  if (args.slot === true && scenePlayer.swap(ctx.board, sceneId, compiled.play, revert)) startsIn = scenePlayer.startsIn(sceneId)
+  else startsIn = scenePlayer.enqueue(ctx.board, compiled.play, { mode: args.when === 'now' ? 'now' : 'queue', speak, voice, revert })
+  scenePlayer.remember({ play: compiled.play, speak, voice, snapshot })
+  // A playing scene (cut) started before now: its start is negative, its end is still ahead.
+  result.starts_in_s = Math.max(0, startsIn)
+  return { ...result, ends_in_s: Math.round((startsIn + result.duration_s) * 1000) / 1000 }
 }
 
 function liveBox(node: BoardNode): { x: number; y: number; width: number; height: number } {
@@ -283,7 +387,7 @@ export interface PreviewResult {
 export function previewScene(ctx: RunSceneContext, args: Record<string, unknown>): PreviewResult {
   const desc = checkDescription(args.scene)
   const s = ctx.scene()
-  const compiled = compileScene(desc, s, newItemId('sc'), null)
+  const compiled = compileScene(desc, s, newItemId('sc'), null, stageLookup)
   const play = compiled.play
   const nodes = [...compiled.next, ...play.ghosts]
   const inkIndex = inkIndexOf(play, nodes, null)
@@ -364,9 +468,61 @@ function frameAt(play: CompiledScene['play'], t: number, label: string, nodes: B
   return { t: Math.round(t * 1000) / 1000, label, nodes: [...nodes, ...out.inks], overrides: [...out.overrides], tips: out.tips.filter((tip) => tip.kind === 'pointer'), clocks }
 }
 
-/** scene_control. */
-export function sceneControl(args: Record<string, unknown>): unknown {
+/**
+ * scene_control. Besides the playback actions, the main process uses it to
+ * restage (revert scenes, drop one, read the cut time), replay, reset the
+ * stage's record, and wait for the playback.
+ */
+export async function sceneControl(ctx: RunSceneContext, args: Record<string, unknown>): Promise<unknown> {
   const action = args.action
-  if (action !== 'status' && action !== 'pause' && action !== 'resume' && action !== 'stop' && action !== 'skip') throw new Error('action must be status, pause, resume, stop or skip.')
-  return scenePlayer.control(action)
+  const status = (): Record<string, unknown> => ({ ...scenePlayer.status(), waiting: scenePlayer.waiting(), playing_scene: scenePlayer.playing() })
+  switch (action) {
+    case 'status':
+    case 'pause':
+    case 'resume':
+    case 'stop':
+    case 'skip':
+      scenePlayer.control(action)
+      return status()
+    case 'revert': {
+      // Take scenes' items off the board again (newest first), to commit them anew.
+      const ids = Array.isArray(args.scenes) ? (args.scenes as string[]) : []
+      scenePlayer.revertScenes(ids)
+      return status()
+    }
+    case 'drop':
+      scenePlayer.drop(String(args.scene))
+      return status()
+    case 'cutTime': {
+      // The time to cut the playing scene at: the start of the step after after_step, or now.
+      const playing = scenePlayer.playing()
+      if (!playing) throw new Error('No scene is playing, so there is nothing to cut.')
+      let at = playing.t
+      if (typeof args.after_step === 'string') {
+        const index = playing.steps.findIndex((step) => step.name === args.after_step)
+        if (index < 0) throw new Error(`The playing scene ${playing.id} has no step "${args.after_step}" (its steps: ${playing.steps.map((step) => step.name).join(', ') || 'none'}).`)
+        const next = playing.steps.slice(index + 1).find((step) => step.at > playing.steps[index].at + 1e-6)
+        at = next ? Math.max(next.at, playing.t) : playing.duration
+      }
+      return { scene: playing.id, at: Math.round(at * 1000) / 1000, duration: playing.duration }
+    }
+    case 'replay': {
+      const out = scenePlayer.replay(ctx.board, { scene: typeof args.scene === 'string' ? args.scene : undefined, step: typeof args.step === 'string' ? args.step : undefined }, args.when === 'now' ? 'now' : 'queue')
+      if ('error' in out) throw new Error(out.error)
+      return { replay: out, ...status() }
+    }
+    case 'resetStage':
+      stageRecord.items.clear()
+      stageRecord.epoch = typeof args.epoch === 'string' ? args.epoch : ''
+      scenePlayer.resetStage()
+      return status()
+    case 'waitPlayed':
+      await scenePlayer.untilPlayed(String(args.scene))
+      return status()
+    case 'wait':
+      await scenePlayer.untilIdleOrPaused()
+      return status()
+    default:
+      throw new Error('action must be status, pause, resume, stop, skip, replay or wait.')
+  }
 }

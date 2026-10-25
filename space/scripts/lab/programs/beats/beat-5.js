@@ -1,0 +1,12 @@
+// Beat 5: the result. Uses stage.area (made in beat 2) and the cylinder of beat 4.
+step("result")
+say("Equal slices give equal volumes [[eq]], so half a ball is the cylinder minus the cone [[half]], and the whole ball is four thirds pi R cubed [[ball]].")
+await mark("eq")
+fadeOut(stage.area, 0.4)
+const eq = tex("V_{\\text{half}} = \\pi R^3 - \\tfrac{1}{3}\\pi R^3 = \\tfrac{2}{3}\\pi R^3", { center: [0, 200], size: 28 })
+await mark("half")
+fadeIn(eq, 0.6)
+await mark("ball")
+const result = tex("V = \\tfrac{4}{3}\\pi R^3", { center: [0, 262], size: 36, color: "good" })
+await draw(result, 0.8)
+draw(around(result, { shape: "box" }), 0.6)

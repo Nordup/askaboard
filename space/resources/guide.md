@@ -113,6 +113,17 @@ const disc = ellipse(0, () => -h.get(), () => Math.sqrt(R * R - h.get() ** 2), 1
 const tag = write(() => "h = " + h.get().toFixed(1), { at: () => [R + 20, -h.get() - 14] })
 await tween(h, 80, 3)
 ```
+**The stage.** Every program on a board runs in the same sandbox, one after another, each with its own time from 0. The global object `stage` keeps whatever a program puts on it (values, objects, functions, numbers) for the programs after it; top-level `const` and `let` stay local to their program. An object of an earlier program is on the board already: acting on it (draw, move, tween, fadeOut, label, …) or tweening a value its arguments read changes that same board item, and a scene starts from where the scenes before it left everything. `board.node(name or item id)` returns the earlier program's own object for items it made. An object whose items the learner erased is gone: draw or fade it in to bring it back. The stage starts new when the board changes, on `scene_control({action: "reset"})`, and when the app starts (run_scene's result then has `stage`).
+```js
+// one call
+stage.h = value(0)
+stage.disc = ellipse(0, () => -stage.h.get(), 80, 10, { fill: "accent" })
+await draw(stage.disc)
+// a later call
+await tween(stage.h, 60, 2)   // the disc drawn by the earlier call rises
+```
+**Beats.** A scene can be short (one sentence and its drawing). Scenes sent while others play queue and play back to back, with no gap and no jump between them, while the next one is written. run_scene returns as soon as its program has run, with `starts_in_s` and `ends_in_s`.
+
 `trace(() => [x, y], o)` is the path a moving point leaves: a line through the point's places from when it is made until now (options as path). `tween(obj, {width: 6, fillOpacity: 0.3}, s)` animates any numeric option of the object's creator. A function as an argument of `plot` (fn) reads values the same way. Changing objects are sampled 30 times a second while anything animates.
 
 **Objects** are invisible until an action shows them (draw, fillIn, fadeIn, tween draw). An object that no action shows appears when it is made. Every object has `.bounds` {x, y, width, height}, `.center` [x, y] (at the current time), `.name`, `.kind`; live items also `.params`.
@@ -143,10 +154,18 @@ await tween(h, 80, 3)
 - `tween(obj, props, s)`: x, y (offset from where it was made), scale, rotate (degrees), opacity, color, draw (share drawn, 0..1), params (live items), or any numeric option. `tween(value, n, s)` for values. Default 0.8.
 - `camera({fit, to, zoom, pad}, s)`: the learner's view glides: fit (an object or [x, y, w, h], with pad, default 40) and/or to (a centre [x, y]) and/or zoom. Default 1. After the learner pans or zooms during the scene, its later camera moves are skipped.
 - `point(target, s)`: a pointer glides to an object's centre or a point [x, y] and rests there; `point(null, s)` hides it. Default 0.6.
-- `say(text)`: a spoken line from now; it lasts as long as the system voice takes to say it (when speech is off: about 2.6 words per second, and nothing is spoken). `await say(…)` waits until it ends.
+- `say(text, o)`: a spoken line from now; it lasts as long as the system voice takes to say it (when speech is off: about 2.6 words per second, and nothing is spoken). `await say(…)` waits until it ends. Marks in the text, `[[name]]`, are not spoken; each stands for the moment the word after it is spoken, measured with the same voice. While the scene plays, the clock waits at a mark until the voice reaches that word, and catches up when the voice is ahead.
+  - `await mark(name)`: waits until that word (the latest line with the mark).
+  - `say(text, {name: () => draw(obj)})`: runs the function at that word.
+  - `say(text, {during: action or [actions]})`: stretches the actions over the whole line.
+  ```js
+  say("Out come [[he]] a helium nucleus and [[n]] a neutron", { during: tween(glow, 1) })
+  await mark("he"); draw(he)
+  await mark("n"); draw(n)
+  ```
 - `wait(s)`; `step(name, {pause})`: names this moment (returned as steps); with pause: true, playback stops here until scene_control resumes it. When the learner starts drawing, playback pauses at the next step (or at once when no step is left). `all(...actions)`: ends when all of them end.
 
-**Playback and tools.** run_scene with `when: "queue"` (default) starts after the scenes that play or wait; `"now"` starts at once. `preview: true` returns a storyboard image (the end of each step, and the end) and the warnings, and draws nothing. Every run returns warnings for unknown options, text that overlaps shapes or other text, and objects outside the learner's view. scene_control: status, pause, resume, stop (jump to the end state), skip (drop the waiting scenes and their items), cancel (end programs that are still running; stop and skip do too). A program has no time limit: one that never ends runs until cancelled, and its run_scene call then returns "Cancelled" with nothing drawn.
+**Playback and tools.** run_scene with `when: "queue"` (default) starts after the scenes that play or wait; `"now"` starts at once. `wait: "end"` returns when the scene has played. `preview: true` returns a storyboard image (the end of each step, and the end) and the warnings, draws nothing and leaves the stage as it was. Every run returns warnings for unknown options, text that overlaps shapes or other text, and objects outside the learner's view. A program error leaves the stage as it was before the program. scene_control: status, pause, resume, stop (jump to the end state), skip (drop the waiting scenes, their items and their programs), cancel (end programs that are still running; stop and skip do too), wait (until nothing plays, or a scene is paused), replace (a waiting scene's program, by scene id; the scenes after it run again), replay (an earlier scene, or from a step: its items show as they were then and play forward), cut (the playing scene, after a step or now: the rest is not drawn, and the board and the stage keep its state at the cut), reset (a new, empty stage). A program has no time limit: one that never ends runs until cancelled, and its run_scene call then returns "Cancelled" with nothing drawn.
 
 `console.log(…)` goes to the result's log. Text and live items keep no rotation, and existing frames and text keep their size and angle on the board: they rotate and scale while the scene plays only.
 

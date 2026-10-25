@@ -200,7 +200,8 @@ export function SnapshotView() {
   const req = request?.request
   return (
     <div className="snapshot" style={req ? { width: req.width, height: req.height + 1, background: req.background } : undefined}>
-      {request && <ContentLayer index={request.index} editingId={null} ctx={ctx} rootRef={rootRef} />}
+      {/* A fresh tree per request: nothing of an earlier capture (styles of a scene moment, measured boxes) carries over. */}
+      {request && <ContentLayer key={request.request.requestId} index={request.index} editingId={null} ctx={ctx} rootRef={rootRef} />}
       <img className="snapshot__ink" ref={inkRef} alt="" />
       {req?.overlays && <Overlays req={req} overlays={req.overlays} />}
       <div className="snapshot__marker" ref={markerRef} style={req ? { top: req.height } : undefined} />

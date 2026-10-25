@@ -256,9 +256,11 @@ function applyContentOverride(element: HTMLElement, saved: Saved, override: Node
   if (override.d !== undefined && element.dataset.kind === 'svg') {
     const shape = element.querySelector<SVGPathElement>('path')
     if (!shape) return
-    if (saved.html === null) {
+    // The saved path belongs to one path element: when the node's markup is replaced (a scene committed it
+    // again), the new element holds the node's own geometry, and that is what shows when the override ends.
+    if (saved.html === null || savedPaths.get(element)?.shape !== shape) {
       saved.html = 'svg'
-      savedPaths.set(element, { d: shape.getAttribute('d') ?? '', width: shape.getAttribute('stroke-width') })
+      savedPaths.set(element, { shape, d: shape.getAttribute('d') ?? '', width: shape.getAttribute('stroke-width') })
     }
     const svg = element.querySelector('svg')
     if (svg) svg.style.overflow = 'visible'
@@ -278,7 +280,7 @@ function applyContentOverride(element: HTMLElement, saved: Saved, override: Node
   if (saved.html !== null) restoreMarkup(element, saved)
 }
 
-const savedPaths = new WeakMap<HTMLElement, { d: string; width: string | null }>()
+const savedPaths = new WeakMap<HTMLElement, { shape: SVGPathElement; d: string; width: string | null }>()
 
 function restoreMarkup(element: HTMLElement, saved: Saved): void {
   if (saved.html === 'text') {
@@ -288,7 +290,7 @@ function restoreMarkup(element: HTMLElement, saved: Saved): void {
   } else if (saved.html === 'svg') {
     const shape = element.querySelector<SVGPathElement>('path')
     const original = savedPaths.get(element)
-    if (shape && original) {
+    if (shape && original && original.shape === shape) {
       shape.setAttribute('d', original.d)
       if (original.width === null) shape.removeAttribute('stroke-width')
       else shape.setAttribute('stroke-width', original.width)

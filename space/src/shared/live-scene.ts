@@ -20,14 +20,20 @@ export interface SceneContext {
   view: SceneBounds
   /** The learner's canvas in CSS pixels, for camera zoom. */
   viewport: [number, number]
+  /** The open board's path (the stage resets when it changes). */
+  board?: string
+  /** The renderer's record of the stage: its epoch and, per stage object id, the board items it shows through (node ids, ink group id). */
+  stage?: { epoch: string; items: Record<string, string[]> }
 }
 
 /** What the host adds to the context before a run (main process). */
 export interface SceneRunOptions {
   /** Seed of the program's Math.random (the same in both passes of a run). */
   seed: number
-  /** Measured speech durations (s) by line text. */
-  durations: Record<string, number>
+  /** Speech is on: say() measures each line (and its marks) with the system voice. */
+  speech: boolean
+  /** Cut the scene at this time (scene_control cut): what starts later is dropped, what runs then holds. */
+  cutAt?: number | null
 }
 
 export interface SceneStyle {
@@ -62,6 +68,12 @@ interface SceneObjectBase {
   name?: string
   /** The group that holds this object. */
   parent?: number
+  /** Stage object id: the same object in every scene of the stage (see main/stage.ts). */
+  sid?: number
+  /** The object was made by an earlier scene of the stage: it is already on the board (its items are reused). */
+  carry?: boolean
+  /** A carried object's state at the start of this scene (the end of the scenes before), per property. */
+  base?: Partial<Record<SceneProp, number | string>>
   /**
    * Geometry that changes over time (values, attached labels, tweened options),
    * sampled in the sandbox: each sample holds from its t until the next one.
@@ -153,6 +165,8 @@ export interface SceneTrack {
   from?: number | string
   to: number | string
   ease: SceneEase
+  /** Cut: the track holds its value at this time from then on. */
+  until?: number
 }
 
 /** A camera move: the learner's view glides to center and zoom over [start, start + dur]. */
@@ -176,6 +190,8 @@ export interface SceneCue {
   text: string
   at: number
   dur: number
+  /** Marks ([[name]] in the line): when the word after each is spoken (scene time), and its character index in text. */
+  marks?: Array<{ name: string; at: number; char: number }>
 }
 
 export interface SceneStep {
@@ -195,6 +211,8 @@ export interface SceneDescription {
   camera: SceneCameraAction[]
   pointer: ScenePointerAction[]
   cues: SceneCue[]
+  /** The stage epoch the program ran in. */
+  stage?: string
 }
 
 /** One board item a scene made. */
@@ -215,7 +233,7 @@ export interface SceneResult {
   starts_in_s: number
   steps: Array<{ name: string; at_s: number; pause?: boolean }>
   items: SceneItem[]
-  cues: Array<{ text: string; at_s: number; dur_s: number }>
+  cues: Array<{ text: string; at_s: number; dur_s: number; marks?: Record<string, number> }>
   log: string[]
   warnings: string[]
 }

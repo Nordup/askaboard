@@ -21,8 +21,8 @@ import {
   MAX_TEXT_CHARS
 } from '@shared/limits'
 import { briefText, guideText, guideTopics, serverInstructions } from './guide'
-import { runSceneProgram, SceneCancelled, SceneProgramError } from './live-scene'
-import type { SceneContext, SceneDescription, SceneLiveObject, SceneResult, SceneStatus } from '@shared/live-scene'
+import { SceneCancelled, SceneProgramError, SceneStage, type StageRun } from './live-scene'
+import type { SceneContext, SceneDescription, SceneLiveObject, SceneResult } from '@shared/live-scene'
 import { speechOn, speechVoice } from './speech'
 import { renderStoryboard, type StoryboardInput } from './storyboard'
 import { BoardNews } from './news'
@@ -172,6 +172,12 @@ function failure(error: unknown): CallToolResult {
 
 const json = (value: unknown): string => JSON.stringify(value, null, 2)
 
+/** scene_control's status as the agent sees it (the renderer adds fields for the main process). */
+function publicStatus(status: unknown): Record<string, unknown> {
+  const { waiting: _waiting, playing_scene: _playing, ...rest } = (status ?? {}) as Record<string, unknown>
+  return rest
+}
+
 /** A readable name for an MCP client, for the presence label. */
 function clientLabel(raw: string | undefined): string {
   const name = (raw ?? '').toLowerCase()
@@ -217,6 +223,8 @@ const placeSchema = z
 export class AgentServer {
   /** Scene programs still running (run_scene before it returns), with their session id. */
   private readonly programs = new Map<AbortController, string>()
+  /** The sandbox every scene program runs in, kept between programs (see live-scene.ts). */
+  private readonly stage = new SceneStage(async (items) => (await this.bridge.request('measureText', { items })).sizes)
   readonly port = configuredPort()
   private readonly bridge: RendererBridge
   private readonly sessions = new Map<string, Session>()
@@ -625,6 +633,76 @@ export class AgentServer {
    * line of its shader()/canvas() call; the compile log keeps the line
    * numbers of the agent's shader or canvas code.
    */
+  /** speak and voice for runScene. */
+  private async voiceArgs(): Promise<{ speak: boolean; voice: string | null }> {
+    const speak = speechOn()
+    return { speak, voice: speak ? await speechVoice() : null }
+  }
+
+  /**
+   * Replace or cut a scene: the stage goes back to before it, its items come
+   * off the board (with those of the waiting scenes after it), the scene's
+   * new program (replace) or its own program cut at a time (cut) runs and
+   * takes its place, then the waiting scenes after it run again on the new
+   * stage. Runs inside stage.exclusive.
+   */
+  private async restage(session: Session, sceneId: string, waiting: string[], change: { code?: string; cutAt?: number }): Promise<CallToolResult> {
+    const control = (args: Record<string, unknown>): Promise<unknown> => this.board(session, 'sceneControl', args, SCENE_TIMEOUT_MS)
+    const cut = this.stage.truncateBefore(sceneId)
+    if (!cut) return failure(new Error(`Scene ${sceneId} is not part of the current stage (it ran before the stage started new).`))
+    const later = cut.later
+    const affected = [sceneId, ...later.map((entry) => entry.scene).filter((id): id is string => !!id && waiting.includes(id))]
+    await control({ action: 'revert', scenes: affected })
+    const voice = await this.voiceArgs()
+    const commit = async (id: string, desc: SceneDescription, name: string | null): Promise<SceneResult & { ends_in_s: number }> =>
+      (await this.board(session, 'runScene', { scene: desc, sceneId: id, slot: true, amend: true, ...voice, ...(name ? { name } : {}) }, SCENE_TIMEOUT_MS)) as SceneResult & { ends_in_s: number }
+    const runOne = async (code: string, options: { seed?: number; cutAt?: number; original?: string; name: string | null }): Promise<StageRun> => {
+      const context = options.original ? (JSON.parse(options.original) as SceneContext) : ((await this.board(session, 'sceneContext', {})) as SceneContext)
+      const run = await this.stage.run(code, context, { mode: 'scene', seed: options.seed, cutAt: options.cutAt ?? null, name: options.name })
+      const liveError = await this.checkLivePrograms(run.desc)
+      if (liveError) {
+        this.stage.discard(run.entry)
+        throw liveError
+      }
+      return run
+    }
+    let main: SceneResult & { ends_in_s: number }
+    let failed: string | null = null
+    try {
+      const run =
+        change.code !== undefined
+          ? await runOne(change.code, { name: cut.entry.name })
+          : // A cut runs the same program with the same seed and context, so it is the same up to the cut.
+            await runOne(cut.entry.code, { seed: cut.entry.seed, cutAt: change.cutAt, original: cut.entry.ctxText, name: cut.entry.name })
+      main = await commit(sceneId, run.desc, cut.entry.name)
+      run.entry.scene = sceneId
+    } catch (error) {
+      // The scene stays as it was.
+      failed = error instanceof Error ? error.message : String(error)
+      const run = await runOne(cut.entry.code, { seed: cut.entry.seed, original: cut.entry.ctxText, name: cut.entry.name })
+      main = await commit(sceneId, run.desc, cut.entry.name)
+      run.entry.scene = sceneId
+    }
+    const rerun: Array<{ scene: string; ok: boolean; error?: string; starts_in_s?: number }> = []
+    for (const entry of later) {
+      const id = entry.scene
+      const queued = !!id && waiting.includes(id)
+      try {
+        const run = await runOne(entry.code, { seed: entry.seed, name: entry.name, ...(queued ? {} : { original: entry.ctxText }) })
+        run.entry.scene = id
+        if (queued && id) {
+          const result = await commit(id, run.desc, entry.name)
+          rerun.push({ scene: id, ok: true, starts_in_s: result.starts_in_s })
+        }
+      } catch (error) {
+        if (queued && id) await control({ action: 'drop', scene: id })
+        rerun.push({ scene: id ?? '?', ok: false, error: error instanceof Error ? error.message : String(error) })
+      }
+    }
+    if (failed) return failure(new Error(`${change.code !== undefined ? 'replace' : 'cut'} failed, and scene ${sceneId} stays as it was: ${failed}`))
+    return text(json({ ...main!, ...(rerun.length ? { rerun } : {}) }))
+  }
+
   private async checkLivePrograms(scene: SceneDescription): Promise<SceneProgramError | null> {
     const lives = scene.objects.filter((object): object is SceneLiveObject => object.kind === 'live')
     const failed: Array<{ live: SceneLiveObject; error: string }> = []
@@ -1023,7 +1101,7 @@ export class AgentServer {
       {
         title: 'Run a live scene',
         description:
-          "Runs a JavaScript program that draws on the open board over time, in front of the learner: shapes and ink drawn stroke by stroke, handwriting, typeset maths, fills, fades, moves, erasing, labels, live pixels (shaders, canvas programs, and program() items: your own JavaScript with three.js, WebGL 2, WebGPU or any library), camera moves, a pointer, spoken lines, and changes to items already on the board (the learner's ink groups and your nodes). The program runs once, in a sandbox with no access to the app, files or network, and builds a timeline; it may compute for as long as it needs. Values (value(), tween()) and functions as arguments make objects that change as time passes. The complete reference is get_guide topic \"scene\". Coordinates are board points (origin at the centre, +x right, +y down).\n\nPlayback: a scene sent while another plays starts when that one ends (and after the scenes already waiting); with when \"now\" it starts at once, over the others. The tool returns when the scene is queued or starts, not when it ends. A step with {pause: true} stops playback until scene_control resumes it. When the learner starts drawing during playback, playback pauses at the next step (or at once when no step is left) and the board news says so. Spoken lines (say) are spoken with the system voice when speech is on; their timing on the timeline is the same either way.\n\nWhen it has played, everything stays on the board as ordinary items the learner can edit: ink (one ink group per ink object), svg nodes (vector shapes), text nodes (tex, text), live items (shader, canvas, program), and one frame item per named group, which the learner moves as a whole. Items the scene erased or faded out are gone. The whole scene is one undo step for the learner, and the board file holds the final state from the moment the tool returns. A name given to an object or group finds its item in later scenes with board.node(name).\n\nReturns JSON: scene (its id), duration_s, starts_in_s (seconds until it starts; pauses not counted), steps ([{name, at_s, pause?}]), items ([{id, kind, name, bounds, step}]: the board items it made), cues ([{text, at_s, dur_s}] from say), log (console.log output) and warnings (unknown options, text that overlaps shapes or other text, objects outside the learner's view). A program error returns an error with its message and line number, and nothing is drawn.\n\nWith preview: true, nothing is drawn or committed and the learner sees nothing: the result is a storyboard image (one frame at the end of each step, and the end, each labelled with its step and times; the grey outline is the learner's view now) with the same JSON fields except items and starts_in_s.",
+          "Runs a JavaScript program that draws on the open board over time, in front of the learner: shapes and ink drawn stroke by stroke, handwriting, typeset maths, fills, fades, moves, erasing, labels, live pixels (shaders, canvas programs, and program() items: your own JavaScript with three.js, WebGL 2, WebGPU or any library), camera moves, a pointer, spoken lines, and changes to items already on the board. The program runs in a sandbox with no access to the app, files or network, and builds a timeline; it may compute for as long as it needs. The complete reference is get_guide topic \"scene\". Coordinates are board points (origin at the centre, +x right, +y down).\n\nThe stage: every program on a board runs in the same sandbox, one after another. Objects, values and functions a program puts on the global `stage` object are there for later programs, and objects of earlier programs can be acted on again (a tween of an earlier value redraws the earlier objects that read it). The stage starts new when the board changes, on scene_control reset, and when the app starts.\n\nPlayback: a scene sent while another plays starts when that one ends (and after the scenes already waiting), with no gap between them; with when \"now\" it starts at once, over the others. The tool returns when the program has run and the scene is queued or starts; with wait \"end\" it returns when the scene has played to its end. A step with {pause: true} stops playback until scene_control resumes it. When the learner starts drawing during playback, playback pauses at the next step (or at once when no step is left) and the board news says so. Spoken lines (say) are spoken with the system voice when speech is on; their timing on the timeline is the same either way.\n\nWhen it has played, everything stays on the board as ordinary items the learner can edit: ink (one ink group per ink object), svg nodes (vector shapes), text nodes (tex, text), live items (shader, canvas, program), and one frame item per named group. Items the scene erased or faded out are gone. The whole scene is one undo step for the learner, and the board file holds the final state from the moment the tool returns.\n\nReturns JSON: scene (its id, for scene_control), duration_s, starts_in_s and ends_in_s (seconds from now; pauses not counted), steps ([{name, at_s, pause?}]), items ([{id, kind, name, bounds, step}]: the board items it made or changed), cues ([{text, at_s, dur_s, marks?}] from say; marks: {name: at_s}), log (console.log output), warnings (unknown options, text that overlaps shapes or other text, objects outside the learner's view), stage (only when this program started a new stage: why), and with wait \"end\" played: true and the playback status. A program error returns an error with its message and line number, nothing is drawn, and the stage is as before the program.\n\nWith preview: true, nothing is drawn or committed, the stage is as before, and the learner sees nothing: the result is a storyboard image (one frame at the end of each step, and the end, each labelled with its step and times; the grey outline is the learner's view now) with the same JSON fields except items, starts_in_s and ends_in_s.",
         inputSchema: {
           code: z
             .string()
@@ -1031,62 +1109,86 @@ export class AgentServer {
             .describe('The program: the body of an async function, so top-level await works. Example: const c = circle(0, 0, 80); await draw(c); await label(c, "r")'),
           name: z.string().max(MAX_NAME_CHARS).optional().describe('A label for this scene in scene_control, the board news, logs and traces.'),
           when: z.enum(['queue', 'now']).optional().describe('"queue" (default): start after the scenes that play or wait. "now": start at once, over them.'),
+          wait: z.enum(['start', 'end']).optional().describe('"start" (default): return once the scene is queued. "end": return when this scene (and every scene queued before it) has played to its end.'),
           preview: z.boolean().optional().describe('true: return a storyboard image and warnings; draw and commit nothing.')
         }
       },
-      this.tool(session, 'run_scene', async ({ code, name, when, preview }, extra) => {
+      this.tool(session, 'run_scene', async ({ code, name, when, wait, preview }, extra) => {
         // A running program stops (its worker ends) on scene_control stop/skip/cancel, when the client cancels the call, or when its session closes.
+        const tCall = Date.now()
         const program = new AbortController()
         const clientCancel = (): void => program.abort()
         extra.signal?.addEventListener('abort', clientCancel, { once: true })
         if (extra.signal?.aborted) program.abort()
-        this.programs.set(program, session.id)
-        let scene
-        try {
-          const context = (await this.board(session, 'sceneContext', {})) as SceneContext
-          scene = await runSceneProgram(code, context, program.signal)
-          const liveError = await this.checkLivePrograms(scene)
-          if (program.signal.aborted) throw new SceneCancelled()
-          if (liveError) return failure(liveError)
-        } catch (error) {
-          if (error instanceof SceneProgramError || error instanceof SceneCancelled) return failure(error)
-          throw error
-        } finally {
-          this.programs.delete(program)
-          extra.signal?.removeEventListener('abort', clientCancel)
+        const outcome = await this.stage.exclusive(async (): Promise<CallToolResult | (SceneResult & { ends_in_s: number; stage?: string })> => {
+          this.programs.set(program, session.id)
+          let run: StageRun
+          try {
+            const context = (await this.board(session, 'sceneContext', {})) as SceneContext
+            run = await this.stage.run(code, context, { mode: preview ? 'preview' : 'scene', name: name ?? null, signal: program.signal })
+            const liveError = await this.checkLivePrograms(run.desc)
+            if (program.signal.aborted) {
+              this.stage.discard(run.entry)
+              throw new SceneCancelled()
+            }
+            if (liveError) {
+              if (!preview) this.stage.discard(run.entry)
+              return failure(liveError)
+            }
+          } catch (error) {
+            if (error instanceof SceneProgramError || error instanceof SceneCancelled) return failure(error)
+            throw error
+          } finally {
+            this.programs.delete(program)
+            extra.signal?.removeEventListener('abort', clientCancel)
+          }
+          const scene = run.desc
+          if (preview) {
+            const plan = (await this.board(session, 'previewScene', { scene }, SCENE_TIMEOUT_MS)) as StoryboardInput & {
+              scene: string
+              duration_s: number
+              steps: unknown[]
+              cues: unknown[]
+              log: string[]
+              warnings: string[]
+            }
+            const board = await renderStoryboard(this.hooks.snapshots, { frames: plan.frames, rect: plan.rect, view: plan.view, background: plan.background })
+            console.log(`mcp: run_scene preview ${name ?? plan.scene}: ${plan.frames.length} frames, ${board.width}x${board.height}`)
+            const summary = {
+              preview: true,
+              duration_s: plan.duration_s,
+              steps: plan.steps,
+              cues: plan.cues,
+              log: plan.log,
+              warnings: plan.warnings,
+              ...(run.fresh ? { stage: `new (${run.fresh})` } : {}),
+              storyboard: `${plan.frames.length} frames in ${board.columns} column(s), read left to right; each covers the board rect ${JSON.stringify(plan.rect)}.`
+            }
+            return {
+              content: [
+                { type: 'image', data: board.png.toString('base64'), mimeType: 'image/png' },
+                { type: 'text', text: json(summary) }
+              ]
+            }
+          }
+          let result: SceneResult & { ends_in_s: number; stage?: string }
+          try {
+            result = (await this.board(session, 'runScene', { scene, when: when ?? 'queue', ...(await this.voiceArgs()), ...(name ? { name } : {}) }, SCENE_TIMEOUT_MS)) as SceneResult & { ends_in_s: number }
+          } catch (error) {
+            this.stage.discard(run.entry)
+            throw error
+          }
+          run.entry.scene = result.scene
+          if (run.fresh) result.stage = `new (${run.fresh})`
+          console.log(`mcp: run_scene ${name ?? result.scene}: ${scene.objects.length} objects, ${scene.actions.length} actions, ${result.duration_s} s, starts in ${result.starts_in_s} s; call ${Date.now() - tCall} ms`)
+          return result
+        })
+        if ('content' in outcome) return outcome as CallToolResult
+        if (wait === 'end') {
+          const status = await this.board(session, 'sceneControl', { action: 'waitPlayed', scene: outcome.scene }, SCENE_TIMEOUT_MS)
+          return text(json({ ...outcome, played: true, status: publicStatus(status) }))
         }
-        if (preview) {
-          const plan = (await this.board(session, 'previewScene', { scene }, SCENE_TIMEOUT_MS)) as StoryboardInput & {
-            scene: string
-            duration_s: number
-            steps: unknown[]
-            cues: unknown[]
-            log: string[]
-            warnings: string[]
-          }
-          const board = await renderStoryboard(this.hooks.snapshots, { frames: plan.frames, rect: plan.rect, view: plan.view, background: plan.background })
-          console.log(`mcp: run_scene preview ${name ?? plan.scene}: ${plan.frames.length} frames, ${board.width}x${board.height}`)
-          const summary = {
-            preview: true,
-            duration_s: plan.duration_s,
-            steps: plan.steps,
-            cues: plan.cues,
-            log: plan.log,
-            warnings: plan.warnings,
-            storyboard: `${plan.frames.length} frames in ${board.columns} column(s), read left to right; each covers the board rect ${JSON.stringify(plan.rect)}.`
-          }
-          return {
-            content: [
-              { type: 'image', data: board.png.toString('base64'), mimeType: 'image/png' },
-              { type: 'text', text: json(summary) }
-            ]
-          }
-        }
-        const speak = speechOn()
-        const voice = speak ? await speechVoice() : null
-        const result = (await this.board(session, 'runScene', { scene, when: when ?? 'queue', speak, voice, ...(name ? { name } : {}) }, SCENE_TIMEOUT_MS)) as SceneResult
-        console.log(`mcp: run_scene ${name ?? result.scene}: ${scene.objects.length} objects, ${scene.actions.length} actions, ${result.duration_s} s, starts in ${result.starts_in_s} s`)
-        return text(json(result))
+        return text(json(outcome))
       })
     )
 
@@ -1095,16 +1197,49 @@ export class AgentServer {
       {
         title: 'Control live scenes',
         description:
-          'Controls the playback of live scenes (run_scene). action "status" changes nothing; "pause" holds the playing scene where it is; "resume" continues a paused scene (after a pause step, after the learner\'s drawing paused it, or after "pause"); "stop" jumps the playing scene to its end state (what it leaves on the board) and the next waiting scene starts; "skip" drops the scenes that wait in the queue and takes their items off the board again (one undo step); "cancel" ends the scene programs that are still running (run_scene calls that have not returned yet) and changes no playback. "stop" and "skip" also end those programs. A program has no time limit, so this is how one that never ends is stopped: its worker ends at once, its run_scene call returns an error that starts with "Cancelled", and nothing of it is drawn. Returns {playing, scene, name, t, duration, step, paused, queue: [{scene, name, duration_s}], cancelled_programs} after the action.',
+          'Controls the playback of live scenes (run_scene) and the stage they run on. scene ids come from run_scene results.\n\nactions: "status" changes nothing. "pause" holds the playing scene where it is; "resume" continues a paused scene (after a pause step, after the learner\'s drawing paused it, or after "pause"). "stop" jumps the playing scene to its end state and the next waiting scene starts. "skip" drops the scenes that wait in the queue, takes their items off the board again (one undo step) and takes their programs off the stage. "cancel" ends the scene programs that are still running (run_scene calls that have not returned yet) and changes no playback; "stop" and "skip" also end them. A program has no time limit, so this is how one that never ends is stopped: its run_scene call returns an error that starts with "Cancelled", and nothing of it is drawn. "wait" returns when nothing plays or waits, or when a scene stands paused.\n\n"replace" (scene, code) runs code in place of a scene that waits in the queue: the stage goes back to before that scene, code runs there, the new scene takes the old one\'s place in the queue, and the waiting scenes after it run their programs again on the new stage (a program that now fails is dropped and listed in rerun). "replay" (scene and/or step) plays an earlier scene of this stage again, from its start or from the step: its items show as they were at that moment and play forward to its end, then the board shows its current state; when: "queue" (default) or "now". "cut" (after_step) drops the rest of the playing scene from the step after after_step on (without after_step: from now): what starts later is not drawn, what runs then holds where it is, the board and the stage keep the scene\'s state at the cut, and the waiting scenes run their programs again. "reset" starts a new, empty stage (board items stay; objects, values and `stage` from earlier programs are gone).\n\nReturns {playing, scene, name, t, duration, step, paused, queue: [{scene, name, duration_s}], cancelled_programs} after the action; replace and cut add the new scene result (and rerun), replay adds replay: {scene, of, from, starts_in_s}.',
         inputSchema: {
-          action: z.enum(['status', 'pause', 'resume', 'stop', 'skip', 'cancel'])
+          action: z.enum(['status', 'pause', 'resume', 'stop', 'skip', 'cancel', 'wait', 'replace', 'replay', 'cut', 'reset']),
+          scene: z.string().optional().describe('replace, replay: the scene id.'),
+          code: z.string().optional().describe('replace: the new program.'),
+          step: z.string().optional().describe('replay: play from this step (of the scene, or the latest scene with it).'),
+          after_step: z.string().optional().describe('cut: keep this step of the playing scene, drop what comes after it.'),
+          when: z.enum(['queue', 'now']).optional().describe('replay: "queue" (default) or "now".')
         }
       },
-      this.tool(session, 'scene_control', async ({ action }) => {
+      this.tool(session, 'scene_control', async ({ action, scene, code, step, after_step, when }) => {
         let cancelled = 0
         if (action === 'stop' || action === 'skip' || action === 'cancel') cancelled = this.cancelPrograms(null)
-        const status = (await this.board(session, 'sceneControl', { action: action === 'cancel' ? 'status' : action })) as SceneStatus
-        return text(json({ ...status, cancelled_programs: cancelled }))
+        const control = async (args: Record<string, unknown>): Promise<Record<string, unknown>> => (await this.board(session, 'sceneControl', args, SCENE_TIMEOUT_MS)) as Record<string, unknown>
+        if (action === 'cancel') return text(json({ ...publicStatus(await control({ action: 'status' })), cancelled_programs: cancelled }))
+        if (action === 'wait') return text(json(publicStatus(await control({ action: 'wait' }))))
+        if (action === 'replay') return text(json(await control({ action: 'replay', scene, step, when })))
+        return this.stage.exclusive(async () => {
+          if (action === 'skip') {
+            const before = await control({ action: 'status' })
+            const status = await control({ action: 'skip' })
+            this.stage.drop((before.waiting as string[]) ?? [])
+            return text(json({ ...publicStatus(status), cancelled_programs: cancelled }))
+          }
+          if (action === 'reset') {
+            this.stage.reset('scene_control reset')
+            return text(json({ ...publicStatus(await control({ action: 'resetStage', epoch: this.stage.epoch })), stage: 'new (scene_control reset)' }))
+          }
+          if (action === 'replace') {
+            if (!scene || !code) return failure(new Error('replace needs scene (a waiting scene id) and code.'))
+            const status = await control({ action: 'status' })
+            const waiting = (status.waiting as string[]) ?? []
+            if (!waiting.includes(scene)) return failure(new Error(`Scene ${scene} is not waiting in the queue (waiting: ${waiting.join(', ') || 'none'}); a scene that has started can be cut, or a new scene sent.`))
+            return this.restage(session, scene, waiting, { code })
+          }
+          if (action === 'cut') {
+            const at = (await control({ action: 'cutTime', ...(after_step ? { after_step } : {}) })) as { scene: string; at: number; duration: number }
+            if (at.at >= at.duration - 1e-3) return text(json({ ...publicStatus(await control({ action: 'status' })), note: 'Nothing comes after that point: nothing was cut.' }))
+            const status = await control({ action: 'status' })
+            return this.restage(session, at.scene, (status.waiting as string[]) ?? [], { cutAt: at.at })
+          }
+          return text(json({ ...publicStatus(await control({ action })), cancelled_programs: cancelled }))
+        })
       })
     )
 

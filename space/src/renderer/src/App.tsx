@@ -619,7 +619,7 @@ export function App() {
       },
       /** Live-scene playback (run_scene): what plays now; seek(t) holds the current scene at t s, seek(null) lets it run; finish() ends all. */
       get scene() {
-        return { ...scenePlayer.state(), seek: (t: number | null) => scenePlayer.seek(t), finish: () => scenePlayer.finish() }
+        return { ...scenePlayer.state(), seek: (t: number | null) => scenePlayer.seek(t), finish: () => scenePlayer.finish(), frame: () => scenePlayer.debugFrame() }
       },
       /** Live pixel items (dev checks, scripts/lab/live.mjs): add one, list them with status and frame counts, check code. */
       live: {

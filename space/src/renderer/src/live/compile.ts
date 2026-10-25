@@ -89,6 +89,8 @@ export interface ScenePlay {
   camera: SceneDescription['camera']
   pointer: SceneDescription['pointer']
   cues: SceneDescription['cues']
+  /** A replay: board nodes hidden while it plays (their look of then shows as ghosts). */
+  hidden?: string[]
 }
 
 /** What a scene's commit changed, to undo it when a queued scene is skipped. */
@@ -104,8 +106,8 @@ export interface CompiledScene {
   /** The board after the scene: commit as one undo step. */
   next: BoardNode[]
   play: ScenePlay
-  /** Ink strokes per object, to pin as one ink group each. */
-  inkGroups: Array<{ object: number; strokes: string[] }>
+  /** Ink strokes per object, to pin as one ink group each (group: the ink group a carried object already has). */
+  inkGroups: Array<{ object: number; strokes: string[]; group?: string }>
   /** Content nodes made, in order. */
   contentIds: string[]
   /** Text nodes to centre on a point once their size is measured. */
@@ -219,7 +221,10 @@ function prepareDyn(object: SceneObjectDesc, samples: SceneSample[]): PlayDyn | 
   }
 }
 
-export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, name: string | null = null): CompiledScene {
+/** Where the stage's objects are on the board: stage object id → its node ids and ink group (run.ts keeps this record). */
+export type StageLookup = (sid: number) => { nodeIds: string[]; group?: string } | undefined
+
+export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, name: string | null = null, stage?: StageLookup): CompiledScene {
   const warnings: string[] = []
   const warn = (text: string): void => {
     if (!warnings.includes(text)) warnings.push(text)
@@ -252,11 +257,42 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
   const finalOpacity = (id: number, style?: SceneStyle): number => Math.max(0, Math.min(1, timeline.number(id, 'opacity', END))) * (style?.opacity ?? 1)
   const finalColor = (id: number): string => timeline.color(id, END) ?? '#ececef'
   /** A final colour for board material: the token when the colour never changed, else the concrete end colour. */
-  const materialColor = (id: number, style: SceneStyle): string => (timeline.hasTrack(id, 'color') ? finalColor(id) : sceneColor(style.color).css)
+  const materialColor = (id: number, style: SceneStyle): string => (timeline.hasTrack(id, 'color') || desc.objects[id].base?.color !== undefined ? finalColor(id) : sceneColor(style.color).css)
+  /**
+   * A carried object (made by an earlier scene of the stage) keeps its board
+   * items: its new node takes the old one's id, z and parent (x, y become
+   * relative to the parent), so the learner's item stays the same item.
+   */
+  const replaceNode = (node: BoardNode, isRemoved: boolean): void => {
+    const old = s.index.byId.get(node.id) as BoardNode
+    if (isRemoved) {
+      removed.add(node.id)
+      ghosts.push(node)
+      return
+    }
+    let next = { ...node, z: old.z } as BoardNode
+    if (old.parent) {
+      const box = s.layout.get(old.parent as string)
+      next = { ...next, parent: old.parent, x: r1((next.x as number) - (box?.x ?? 0)), y: r1((next.y as number) - (box?.y ?? 0)) } as BoardNode
+    }
+    changed.set(node.id, next)
+  }
 
   for (const object of desc.objects) {
     if (object.kind === 'group') continue
     const end = timeline.matrix(object.id, END)
+    let prior: string[] | null = null
+    let priorGroup: string | undefined
+    if (object.carry && object.sid !== undefined) {
+      const record = stage?.(object.sid)
+      const present = (record?.nodeIds ?? []).filter((id) => s.index.byId.has(id))
+      if (!present.length) {
+        warn(`${object.api}${object.name ? ` "${object.name}"` : ''} (stage object ${object.sid}): made by an earlier scene, it is no longer on the board (erased?); left out`)
+        continue
+      }
+      prior = present
+      priorGroup = record?.group
+    }
     const isRemoved = object.removed || timeline.number(object.id, 'opacity', END) < 0.02
     const play: PlayObject = {
       id: object.id,
@@ -308,7 +344,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
         }
         strokes.push(
           normalizeInk({
-            id: newItemId('s'),
+            id: prior && prior[strokes.length] ? prior[strokes.length] : newItemId('s'),
             kind: 'ink',
             x: 0,
             y: 0,
@@ -327,12 +363,14 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
       const lengths = strokes.map((stroke) => lineLength(stroke.points.map(([x, y]) => [x, y] as Point)))
       const inkRanges = ranges(lengths)
       strokes.forEach((stroke, i) => {
-        out.push(stroke)
+        if (prior?.includes(stroke.id)) replaceNode(stroke, isRemoved)
+        else out.push(stroke)
         if (!isRemoved) madeBy(object.id, stroke.id)
         play.targets.push({ nodeId: stroke.id, ink: true, inverseBaked: invert(end), range: inkRanges[i], offset: [stroke.x, stroke.y], tipWidth: width })
       })
       if (play.dyn) play.dyn.ink = { color: withOpacity(finalColor(object.id), ink.style.opacity), width: r2(Math.max(0.5, ink.style.width * (tool === 'highlighter' ? 4 : 1))), tool }
-      if (!isRemoved && strokes.length) inkGroups.push({ object: object.id, strokes: strokes.map((stroke) => stroke.id) })
+      if (prior) for (const id of prior) if (!strokes.some((stroke) => stroke.id === id)) removed.add(id)
+      if (!isRemoved && strokes.length) inkGroups.push({ object: object.id, strokes: strokes.map((stroke) => stroke.id), ...(priorGroup ? { group: priorGroup } : {}) })
       continue
     }
 
@@ -386,7 +424,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
       const markup = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${bx} ${by} ${bw} ${bh}" width="${bw}" height="${bh}">${defs.length ? `<defs>${defs.join('')}</defs>` : ''}<g${matrix}><path ${attrs.join(' ')}/></g></svg>`
       const opacity = isRemoved ? style.opacity : finalOpacity(object.id, style)
       const node: SvgNode = {
-        id: newItemId('n'),
+        id: prior ? prior[0] : newItemId('n'),
         kind: 'svg',
         x: bx,
         y: by,
@@ -403,7 +441,10 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
         ...(object.name ? { name: object.name } : {}),
         ...({ scene: sceneId } as object)
       }
-      out.push(node)
+      if (prior) {
+        replaceNode(node, isRemoved)
+        for (const id of prior.slice(1)) removed.add(id)
+      } else out.push(node)
       if (!isRemoved) {
         contentIds.push(node.id)
         madeBy(object.id, node.id)
@@ -426,7 +467,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
       const opacity = isRemoved ? text.style.opacity : finalOpacity(object.id, text.style)
       const source = text.math ? `$\\displaystyle ${text.text.replace(/\$/g, '\\$')}$` : text.text
       const node: TextNode = {
-        id: newItemId('n'),
+        id: prior ? prior[0] : newItemId('n'),
         kind: 'text',
         x: r1(x),
         y: r1(y),
@@ -444,7 +485,10 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
         ...(object.name ? { name: object.name } : {}),
         ...({ scene: sceneId } as object)
       }
-      out.push(node)
+      if (prior) {
+        replaceNode(node, isRemoved)
+        for (const id of prior.slice(1)) removed.add(id)
+      } else out.push(node)
       if (!isRemoved) {
         contentIds.push(node.id)
         madeBy(object.id, node.id)
@@ -463,7 +507,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
       const upright: Matrix = [scale, 0, 0, scale, x - scale * anchor[0], y - scale * anchor[1]]
       const liveOpacity = isRemoved ? (live.style?.opacity ?? 1) : finalOpacity(object.id, live.style)
       const node: LiveNode = {
-        id: newItemId('n'),
+        id: prior ? prior[0] : newItemId('n'),
         kind: 'live',
         mode: live.mode,
         code: live.code,
@@ -479,7 +523,10 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
         ...(object.name ? { name: object.name } : {}),
         ...({ scene: sceneId } as object)
       }
-      out.push(node)
+      if (prior) {
+        replaceNode(node, isRemoved)
+        for (const id of prior.slice(1)) removed.add(id)
+      } else out.push(node)
       if (!isRemoved) {
         contentIds.push(node.id)
         madeBy(object.id, node.id)
@@ -584,7 +631,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
   const frameOf = new Map<number, FrameNode>()
   const groupObjects = desc.objects.filter((object): object is SceneGroupObject => object.kind === 'group')
   const depth = (object: SceneObjectDesc): number => (object.parent === undefined ? 0 : 1 + depth(desc.objects[object.parent]))
-  const named = groupObjects.filter((group) => group.name).sort((a, b) => depth(b) - depth(a))
+  const named = groupObjects.filter((group) => group.name && !group.carry).sort((a, b) => depth(b) - depth(a))
   /** The top-level items under a group object: the frames of named subgroups, else the nodes its leaves made. */
   const itemsUnder = (object: SceneObjectDesc): BoardNode[] => {
     if (object.kind === 'group') {
@@ -594,6 +641,10 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
     }
     if (object.kind === 'node') {
       warn(`group "${desc.objects[object.parent ?? 0]?.name ?? ''}": board.node("${object.ref}") is an item from before the scene; it moves with the group while the scene plays but stays its own item`)
+      return []
+    }
+    if (object.carry) {
+      warn(`group "${desc.objects[object.parent ?? 0]?.name ?? ''}": ${object.api} ${object.sid} was made by an earlier scene; it moves with the group while the scene plays but stays its own item`)
       return []
     }
     return (nodesOf.get(object.id) ?? []).map((id) => byId.get(id)).filter((node): node is BoardNode => !!node)

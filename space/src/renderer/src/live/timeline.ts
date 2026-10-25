@@ -59,6 +59,9 @@ export class Timeline {
   }
 
   base(object: SceneObjectDesc, prop: SceneProp): number | string | undefined {
+    // A carried object starts where the scenes before left it.
+    const carried = object.base?.[prop]
+    if (carried !== undefined) return carried
     switch (prop) {
       case 'x':
       case 'y':
@@ -81,8 +84,10 @@ export class Timeline {
     for (const a of this.tracks[id][prop] ?? []) {
       if (a.start > t) break
       const from = a.from ?? value
-      if (t >= a.start + a.dur) value = a.to
-      else if (typeof a.to === 'number' && typeof from === 'number') value = from + (a.to - from) * SCENE_EASES[a.ease]((t - a.start) / a.dur)
+      // A cut track holds its value at the cut.
+      const tt = a.until !== undefined ? Math.min(t, a.until) : t
+      if (tt >= a.start + a.dur) value = a.to
+      else if (typeof a.to === 'number' && typeof from === 'number') value = from + (a.to - from) * SCENE_EASES[a.ease]((tt - a.start) / a.dur)
       else value = a.to
     }
     return value
@@ -102,8 +107,9 @@ export class Timeline {
       if (a.start > t) break
       const from = typeof a.from === 'string' ? sceneColor(a.from).hex : value
       const to = sceneColor(String(a.to)).hex
-      if (t >= a.start + a.dur || !from) value = to
-      else value = mixColors(from, to, SCENE_EASES[a.ease]((t - a.start) / a.dur))
+      const tt = a.until !== undefined ? Math.min(t, a.until) : t
+      if (tt >= a.start + a.dur || !from) value = to
+      else value = mixColors(from, to, SCENE_EASES[a.ease]((tt - a.start) / a.dur))
     }
     return value
   }
@@ -142,7 +148,7 @@ export class Timeline {
     for (let current: number | undefined = id; current !== undefined; current = this.desc.objects[current].parent) {
       for (const [prop, list] of Object.entries(this.tracks[current])) {
         if (current !== id && !['x', 'y', 'scale', 'rotate'].includes(prop)) continue
-        for (const a of list ?? []) end = Math.max(end, a.start + a.dur)
+        for (const a of list ?? []) end = Math.max(end, Math.min(a.start + a.dur, a.until ?? Infinity))
       }
     }
     return end

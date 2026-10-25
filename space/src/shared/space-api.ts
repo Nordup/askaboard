@@ -350,6 +350,8 @@ export interface AgentMethods {
   agentTool: { params: { tool: AgentToolName; args: Record<string, unknown>; agent: AgentRef }; result: unknown }
   /** Check live pixel code (shader compile log, canvas syntax error); error null when it is fine. */
   validateLive: { params: { mode: 'shader' | 'canvas' | 'program'; code: string; params?: Record<string, number>; size?: [number, number] }; result: { error: string | null } }
+  /** The rendered size (board points) of scene text nodes (tex: math; text: markup), as the board lays them out. */
+  measureText: { params: { items: Array<{ math: boolean; text: string; size: number }> }; result: { sizes: Array<[number, number]> } }
 }
 
 export type AgentMethod = keyof AgentMethods

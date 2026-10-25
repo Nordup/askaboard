@@ -1,0 +1,12 @@
+[
+  { "run": "beat-1.js", "name": "beat 1" },
+  { "sleep": 1 },
+  { "run": "beat-2.js", "name": "beat 2" },
+  { "sleep": 1 },
+  { "run": "beat-3.js", "name": "beat 3" },
+  { "sleep": 1 },
+  { "run": "beat-4.js", "name": "beat 4" },
+  { "sleep": 1 },
+  { "run": "beat-5.js", "name": "beat 5" },
+  { "until": "idle" }
+]

@@ -23,6 +23,7 @@ import { liveStill, validateLiveCode } from '../live-pixels/registry'
 import { AgentPresence, runEditTool } from './edits'
 import { isGroupId, trackerFor, type InkGroup } from './groups'
 import { scenePlayer } from '../live/player'
+import { measureSceneTexts } from '../live/measure'
 
 /**
  * Answers the MCP server's requests (see AgentMethods in space-api.ts).
@@ -441,6 +442,10 @@ export async function handleAgentRequest(request: AgentRequest, getContext: () =
     }
     case 'screenshotPlan':
       return withLiveStills(screenshotPlan(context, request.params as AgentMethods['screenshotPlan']['params']))
+    case 'measureText': {
+      const params = request.params as AgentMethods['measureText']['params']
+      return { sizes: await measureSceneTexts(params.items) }
+    }
     case 'validateLive': {
       const params = request.params as AgentMethods['validateLive']['params']
       return { error: await validateLiveCode(params.mode, params.code, params.params ?? {}, params.size) }
@@ -452,7 +457,7 @@ export async function handleAgentRequest(request: AgentRequest, getContext: () =
       const { path } = requireBoard(context)
       const tracker = trackerFor(path)
       return runEditTool(
-        { board, agent: params.agent, importAsset: context.importAsset, presence: context.presence, tracker, groups: () => tracker.compute(board.liveState()) },
+        { board, agent: params.agent, importAsset: context.importAsset, presence: context.presence, tracker, groups: () => tracker.compute(board.liveState()), path },
         params.tool,
         params.args ?? {}
       )

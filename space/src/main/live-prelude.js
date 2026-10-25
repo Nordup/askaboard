@@ -1,10 +1,19 @@
 /*
- * The live-scene API inside the sandbox (QuickJS). The host sets
- * globalThis.__ctxText (JSON: {nodes, view, font}) before this runs, then runs
- * the agent's program, then drives the clock: it drains the job queue and
- * calls __advance() until it returns false, then reads __result().
+ * The live-scene API inside the sandbox (QuickJS). This file runs once per
+ * stage (main/stage.ts): one QuickJS context that every scene program of a
+ * board runs in, so objects, values and `stage` live on between programs.
+ * The host sets globalThis.__fontText before this runs. For each program it
+ * sets globalThis.__ctxText (JSON: {nodes, names, view, viewport, seed,
+ * speech, stage, cutAt}) and calls __begin(), runs the program, drives the
+ * clock (drains the job queue and calls __advance() until it returns false),
+ * reads __result() and calls __bake(), which turns the end of this scene into
+ * the start of the next one.
  *
  * A program only builds data: objects and a timeline. Nothing here draws.
+ * Each scene has its own time, from 0. Objects of earlier scenes are on the
+ * board already; a scene that acts on one, or changes a value its recipe
+ * reads, sends it again ("carried", with its base state), and the board
+ * reuses its items.
  *
  * Time: every action starts at the current time T. `await action` resolves
  * when the action ends, and the code after it runs with T at that end.
@@ -15,13 +24,18 @@
  */
 'use strict'
 ;(() => {
-  const CTX = JSON.parse(globalThis.__ctxText)
-  delete globalThis.__ctxText
-  const FONT = CTX.font
+  const FONT = JSON.parse(globalThis.__fontText)
+  delete globalThis.__fontText
+  let CTX = { nodes: {}, names: {}, view: { x: -600, y: -400, width: 1200, height: 800 }, viewport: [1200, 800], seed: 1, speech: false }
   const MAX_COORD = 100000
 
   let T = 0
   let endTime = 0
+  /** The scene number in this stage (1 for the first program). */
+  let sceneNo = 0
+  /** While an action runs: the tracks it adds (so say(…, {during}) can stretch them). */
+  let collector = null
+  /** Every object of the stage, by stage id (its index). */
   const objects = []
   const actions = []
   const steps = []
@@ -48,7 +62,7 @@
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296
     }
   }
-  const programRandom = mulberry32(CTX.seed || 1)
+  let programRandom = mulberry32(1)
   Math.random = () => programRandom()
   /** The hand's wobble in write() and around(): reseeded per object, so a changing object keeps its handwriting. */
   let rng = mulberry32(7)
@@ -346,6 +360,7 @@
   }
   function register(entry) {
     entry.id = objects.length
+    entry.born = sceneNo
     entry.created = T
     entry.vis = undefined // 'hidden' (revealed later) or 'shown' (visible from its creation)
     entry.removed = false
@@ -355,6 +370,7 @@
     objects.push(entry)
     const handle = new SceneObject(entry.id)
     handles.set(handle, entry)
+    entry.handle = handle
     return handle
   }
 
@@ -406,6 +422,7 @@
   }
 
   function base(entry, prop) {
+    if (entry.base && entry.base[prop] !== undefined) return entry.base[prop]
     switch (prop) {
       case 'x':
       case 'y':
@@ -429,9 +446,11 @@
     let value = base(entry, prop)
     for (const a of entry.tracks[prop] || []) {
       if (a.start > t) break
-      if (t >= a.start + a.dur) value = a.to
-      else if (typeof a.to === 'number') value = a.from + (a.to - a.from) * EASES[a.ease]((t - a.start) / a.dur)
-      else value = (t - a.start) / a.dur < 0.5 ? a.from : a.to
+      // A cut track holds its value at the cut.
+      const tt = a.until !== undefined ? Math.min(t, a.until) : t
+      if (tt >= a.start + a.dur) value = a.to
+      else if (typeof a.to === 'number') value = a.from + (a.to - a.from) * EASES[a.ease]((tt - a.start) / a.dur)
+      else value = (tt - a.start) / a.dur < 0.5 ? a.from : a.to
     }
     return value
   }
@@ -440,6 +459,7 @@
     const a = { obj: entry.id, prop, start: f3(start), dur: f3(Math.max(0, dur)), from: from === undefined ? valueAt(entry, prop, start) : from, to, ease: ease || 'inOut' }
     ;(entry.tracks[prop] ||= []).push(a)
     actions.push(a)
+    if (collector) collector.push({ kind: 'track', a, entry })
     endTime = Math.max(endTime, start + dur)
     if (prop === 'x' || prop === 'y' || prop === 'scale' || prop === 'rotate') activeSpans.push([a.start, a.start + a.dur])
     return a
@@ -513,16 +533,19 @@
     let value = base
     for (const a of list) {
       if (a.start > t) break
-      if (t >= a.start + a.dur) value = a.to
-      else value = a.from + (a.to - a.from) * EASES[a.ease]((t - a.start) / a.dur)
+      const tt = a.until !== undefined ? Math.min(t, a.until) : t
+      if (tt >= a.start + a.dur) value = a.to
+      else value = a.from + (a.to - a.from) * EASES[a.ease]((tt - a.start) / a.dur)
     }
     return value
   }
 
   function addValueTrack(v, start, dur, to, ease) {
     const from = trackValue(v.tracks, v.base, start)
-    v.tracks.push({ start: f3(start), dur: f3(Math.max(0, dur)), from, to, ease })
-    v.tracks.sort((a, b) => a.start - b.start)
+    const a = { start: f3(start), dur: f3(Math.max(0, dur)), from, to, ease }
+    v.tracks.push(a)
+    v.tracks.sort((p, q) => p.start - q.start)
+    if (collector) collector.push({ kind: 'value', a, v })
     endTime = Math.max(endTime, start + dur)
     activeSpans.push([f3(start), f3(start + dur)])
   }
@@ -643,8 +666,12 @@
       pressure,
       length: total,
       speed: defaults.speed ?? 450,
-      bounds: boundsOfPoints(lines.flat())
+      // The ink as drawn: its points plus half the pen's width on every side.
+      bounds: padBox(boundsOfPoints(lines.flat()), style.width / 2)
     })
+  }
+  function padBox(b, pad) {
+    return { x: b.x - pad, y: b.y - pad, width: b.width + pad * 2, height: b.height + pad * 2 }
   }
 
   function shapeObject(api, d, opts, defaults) {
@@ -927,13 +954,34 @@
     return Math.max(size * 0.6, plain.length * size * 0.56)
   }
 
+  const textSizes = new Map()
+  /** [width, height] of a tex()/text() node as the board lays it out, or null (the host cannot measure). */
+  function measureText(math, text, size) {
+    const key = `${math ? 'm' : 't'}|${size}|${text}`
+    if (textSizes.has(key)) return textSizes.get(key)
+    let size2 = null
+    if (typeof globalThis.__measure === 'function') {
+      try {
+        const got = JSON.parse(globalThis.__measure(JSON.stringify({ kind: 'text', items: [{ math, text, size }] })))
+        const s = got && Array.isArray(got.sizes) ? got.sizes[0] : null
+        if (Array.isArray(s) && s[0] > 0) size2 = [s[0], s[1]]
+      } catch {
+        size2 = null
+      }
+    }
+    textSizes.set(key, size2)
+    return size2
+  }
+
   function textObject(api, text, opts, math) {
     const size = opts.size === undefined ? (math ? 30 : 22) : num(opts.size, `${api} size`)
     if (size <= 0) fail(`${api} size must be positive`)
     const color = colorArg(opts.color, `${api} color`) ?? 'text'
+    // The size the board lays the node out at, measured by the app (an estimate only when it cannot measure).
+    const measured = measureText(math, text, size)
     const tall = math && /\\(d?frac|sum|int|prod|sqrt)/.test(text)
-    const width = math ? texWidth(text, size) : Math.max(...text.split('\n').map((row) => row.length)) * size * 0.52
-    const height = size * (tall ? 2.4 : 1.4) * (math ? 1 : text.split('\n').length)
+    const width = measured ? measured[0] : math ? texWidth(text, size) : Math.max(...text.split('\n').map((row) => row.length)) * size * 0.52
+    const height = measured ? measured[1] : size * (tall ? 2.4 : 1.4) * (math ? 1 : text.split('\n').length)
     let x
     let y
     if (opts.center !== undefined) {
@@ -1033,22 +1081,35 @@
     return handle
   }
 
-  const nodeCache = new Map()
+  /** Board item id (node id or ink group id) → stage object id, from the renderer's record of the stage. */
+  function stageItemOwner(id) {
+    const items = (CTX.stage && CTX.stage.items) || {}
+    for (const [sid, ids] of Object.entries(items)) if (ids.includes(id)) return Number(sid)
+    return undefined
+  }
+  function handleOf(entry) {
+    return entry.handle
+  }
   const board = Object.freeze({
     node(id) {
       if (typeof id !== 'string') fail(`board.node(id) needs a node id or an ink group id such as "g3", got ${describe(id)}`)
-      if (nodeCache.has(id)) return nodeCache.get(id)
+      // An item made by a scene of this stage, by its id or its name: the stage's own object (its recipe, values and names still work).
+      const owner = stageItemOwner(id)
+      if (owner !== undefined && objects[owner] && !objects[owner].gone) return handleOf(objects[owner])
+      for (let i = objects.length - 1; i >= 0; i--) {
+        const e = objects[i]
+        if (e.name === id && e.kind !== 'node' && !e.gone && !e.dropped) return handleOf(e)
+      }
       // A name from an earlier scene (or a named node) finds its item; ids come first.
       const byName = CTX.nodes[id] ? undefined : CTX.names && CTX.names[id]
-      if (byName && nodeCache.has(byName)) return nodeCache.get(byName)
       const ref = byName || id
       const info = CTX.nodes[ref]
       if (!info) fail(`board.node: there is no node, ink group or named item "${id}" on the board. Ink groups are g1, g2, …; get_tree lists the ids.`)
+      const known = objects.find((e) => e.kind === 'node' && e.ref === ref && !e.gone)
+      if (known) return handleOf(known)
       const handle = register({ kind: 'node', api: 'node', ref, nodeKind: info.kind, name: info.name, bounds: info.bounds })
       objects[handle.id].vis = 'shown'
       objects[handle.id].created = 0
-      nodeCache.set(ref, handle)
-      if (byName) nodeCache.set(id, handle)
       return handle
     },
     /** The learner's view now (after this scene's camera moves so far). */
@@ -1211,7 +1272,7 @@
     let score = 0
     const shrunk = { x: box.x + box.width * 0.06, y: box.y + box.height * 0.06, width: box.width * 0.88, height: box.height * 0.88 }
     for (const e of objects) {
-      if (exclude.has(e.id) || e.kind === 'group' || e.kind === 'node' || e.removed) continue
+      if (exclude.has(e.id) || e.kind === 'group' || e.kind === 'node' || e.removed || e.gone || e.dropped) continue
       const b = worldBounds(e, t)
       if (!rectsOverlap(b, box)) continue
       if (isTextLike(e) || e.kind === 'live') {
@@ -1230,7 +1291,7 @@
       }
     }
     for (const [id, info] of Object.entries(CTX.nodes)) {
-      if (info.kind === 'frame' || info.kind === 'ink' || exclude.has(id)) continue
+      if (info.kind === 'frame' || info.kind === 'ink' || exclude.has(id) || stageItemOwner(id) !== undefined) continue
       score += 40 * (rectsOverlap(info.bounds, box) / Math.max(1, box.width * box.height))
     }
     if (!inside(box, viewAt(t))) score += 25
@@ -1362,14 +1423,71 @@
 
   // ---------- Actions ----------
 
+  const spans = new WeakMap()
   class Action {
     constructor(start, end) {
-      Object.defineProperty(this, 'start', { value: f3(start), enumerable: true })
-      Object.defineProperty(this, 'end', { value: f3(end), enumerable: true })
+      spans.set(this, { start: f3(start), end: f3(end), parts: [] })
+    }
+    get start() {
+      return spans.get(this).start
+    }
+    get end() {
+      return spans.get(this).end
     }
     then(resolve) {
       waiters.push({ t: this.end, seq: waiterSeq++, resolve })
     }
+    toJSON() {
+      return { start: this.start, end: this.end }
+    }
+  }
+
+  /** Wrap an action: the tracks it adds are kept with the Action it returns. */
+  function collecting(fn) {
+    return (...args) => {
+      const outer = collector
+      const mine = []
+      collector = mine
+      try {
+        const act = fn(...args)
+        if (act instanceof Action) spans.get(act).parts = mine
+        return act
+      } finally {
+        collector = outer
+        if (outer) outer.push(...mine)
+      }
+    }
+  }
+
+  /** Stretch actions so they run over [start, end] (say(…, {during})). */
+  function retime(list, start, end) {
+    const acts = (Array.isArray(list) ? list : [list]).filter((a) => a !== undefined && a !== null)
+    for (const act of acts) if (!(act instanceof Action)) fail(`say during takes actions (draw(), move(), tween(), …) or a list of them, got ${describe(act)}`)
+    const touchedEntries = new Set()
+    const touchedValues = new Set()
+    for (const act of acts) {
+      const span = spans.get(act)
+      const a0 = span.start
+      const a1 = span.end
+      const k = a1 - a0 > 1e-9 ? (end - start) / (a1 - a0) : null
+      const map = (t0, dur) => (k === null ? [start, end - start] : [start + (t0 - a0) * k, dur * k])
+      for (const part of span.parts) {
+        const target = part.a || part.c || part.p
+        const [s0, d0] = map(target.start, target.dur)
+        target.start = f3(s0)
+        target.dur = f3(Math.max(0, d0))
+        if (part.entry) touchedEntries.add(part.entry)
+        if (part.v) touchedValues.add(part.v)
+        activeSpans.push([target.start, f3(target.start + target.dur)])
+      }
+      span.start = f3(start)
+      span.end = f3(end)
+    }
+    for (const e of touchedEntries) for (const list of Object.values(e.tracks)) list.sort((p, q) => p.start - q.start)
+    for (const v of touchedValues) v.tracks.sort((p, q) => p.start - q.start)
+    cameraActions.sort((a, b) => a.start - b.start)
+    pointerActions.sort((a, b) => a.start - b.start)
+    endTime = Math.max(endTime, end)
   }
 
   function durationArg(value, what, fallback) {
@@ -1654,7 +1772,9 @@
     if (spec.zoom !== undefined) zoom = clampZoom(num(spec.zoom, 'camera zoom'))
     for (const key of Object.keys(spec)) if (!['fit', 'to', 'zoom', 'pad'].includes(key)) warnings.add(`camera: the option "${key}" is unknown and was ignored`)
     if (spec.fit === undefined && spec.to === undefined && spec.zoom === undefined) fail('camera({fit, to, zoom}, seconds) needs fit, to or zoom')
-    cameraActions.push({ start: f3(T), dur: f3(dur), center: [f2(center[0]), f2(center[1])], zoom: Math.round(zoom * 1000) / 1000, ease: ease || 'inOut' })
+    const move = { start: f3(T), dur: f3(dur), center: [f2(center[0]), f2(center[1])], zoom: Math.round(zoom * 1000) / 1000, ease: ease || 'inOut' }
+    cameraActions.push(move)
+    if (collector) collector.push({ kind: 'camera', c: move })
     cameraActions.sort((a, b) => a.start - b.start)
     activeSpans.push([f3(T), f3(T + dur)])
     endTime = Math.max(endTime, T + dur)
@@ -1669,7 +1789,9 @@
       const b = worldBounds(entryOf(target, 'point target'), T)
       to = [f2(b.x + b.width / 2), f2(b.y + b.height / 2)]
     } else to = pair(target, 'point target')
-    pointerActions.push({ start: f3(T), dur: f3(dur), to })
+    const glide = { start: f3(T), dur: f3(dur), to }
+    pointerActions.push(glide)
+    if (collector) collector.push({ kind: 'pointer', p: glide })
     pointerActions.sort((a, b) => a.start - b.start)
     endTime = Math.max(endTime, T + dur)
     return new Action(T, T + dur)
@@ -1681,27 +1803,122 @@
     const words = str.trim().split(/\s+/).filter(Boolean).length
     return Math.max(0.6, words / WORDS_PER_S + 0.25)
   }
+  /**
+   * A line with marks: "Out come [[he]] a helium nucleus" → the words without
+   * the markers, and each mark's character index (the start of the word after it).
+   */
+  function splitMarks(raw) {
+    const marks = []
+    let clean = ''
+    const re = /\[\[\s*([^\]]*?)\s*\]\]/g
+    let last = 0
+    let m
+    const add = (piece) => {
+      piece = piece.replace(/\s+/g, ' ')
+      if (clean.endsWith(' ') && piece.startsWith(' ')) piece = piece.slice(1)
+      clean += piece
+    }
+    while ((m = re.exec(raw))) {
+      add(raw.slice(last, m.index))
+      if (!m[1]) fail('say: a mark needs a name, like [[he]]')
+      marks.push({ name: m[1], char: clean.length })
+      last = m.index + m[0].length
+    }
+    add(raw.slice(last))
+    const lead = clean.length - clean.trimStart().length
+    clean = clean.trim()
+    for (const mark of marks) {
+      mark.char = Math.max(0, Math.min(clean.length, mark.char - lead))
+      while (clean[mark.char] === ' ') mark.char++
+    }
+    return { clean, marks }
+  }
+
+  /** Speech times from the host (macOS say, measured synchronously), or estimates when speech is off or a measure fails. */
+  function measureLine(clean, marks) {
+    const prefixes = marks.map((mark) => clean.slice(0, mark.char).trim())
+    let got = null
+    if (CTX.speech && typeof globalThis.__measure === 'function') {
+      try {
+        got = JSON.parse(globalThis.__measure(JSON.stringify({ text: clean, chars: marks.map((mark) => mark.char) })))
+      } catch {
+        got = null
+      }
+    }
+    const words = (str) => str.split(/\s+/).filter(Boolean).length
+    const dur = got && typeof got.dur === 'number' ? got.dur : estimateSpeech(clean)
+    const offsets = prefixes.map((prefix, i) => {
+      if (!prefix) return 0
+      const known = got && Array.isArray(got.offsets) ? got.offsets[i] : null
+      if (typeof known === 'number') return Math.min(known, dur)
+      return Math.min(dur, words(prefix) / WORDS_PER_S)
+    })
+    return { dur, offsets }
+  }
+
+  /** Mark name → its time in this scene (the latest line with it). */
+  const markTimes = new Map()
+  /** Errors thrown by mark callbacks that ran as async functions. */
+  let asyncErrors = []
+
   function say(str, opts) {
     if (typeof str !== 'string' && typeof str !== 'number') fail(`say(text) needs a string, got ${describe(str)}`)
-    str = String(str).trim()
-    if (!str) fail('say(text) needs some words')
+    const raw = String(str).trim()
+    if (!raw) fail('say(text) needs some words')
     opts = options(opts, 'say options')
-    for (const key of Object.keys(opts)) warnings.add(`say: the option "${key}" is unknown and was ignored`)
-    const known = CTX.durations && CTX.durations[str]
-    const dur = f3(typeof known === 'number' ? known : estimateSpeech(str))
-    cues.push({ text: str, at: f3(T), dur })
-    endTime = Math.max(endTime, T + dur)
-    return new Action(T, T + dur)
+    const { clean, marks } = splitMarks(raw)
+    if (!clean) fail('say(text) needs some words besides its marks')
+    const measured = measureLine(clean, marks)
+    const start = T
+    const dur = f3(measured.dur)
+    const cue = { text: clean, at: f3(start), dur }
+    if (marks.length) cue.marks = marks.map((mark, i) => ({ name: mark.name, at: f3(start + measured.offsets[i]), char: mark.char }))
+    cues.push(cue)
+    for (const mark of cue.marks || []) markTimes.set(mark.name, mark.at)
+    endTime = Math.max(endTime, start + dur)
+    for (const [key, value] of Object.entries(opts)) {
+      if (key === 'during') {
+        retime(value, start, start + dur)
+        continue
+      }
+      const mark = (cue.marks || []).find((entry) => entry.name === key)
+      if (!mark) {
+        warnings.add(`say: "${key}" is not a mark of this line (marks: ${(cue.marks || []).map((entry) => entry.name).join(', ') || 'none'}) and was ignored`)
+        continue
+      }
+      if (typeof value !== 'function') fail(`say: the option "${key}" (a mark) must be a function, like () => draw(obj)`)
+      waiters.push({
+        t: mark.at,
+        seq: waiterSeq++,
+        resolve: () => {
+          const out = value()
+          if (out instanceof Promise) out.then(undefined, (error) => asyncErrors.push(error))
+        }
+      })
+    }
+    return new Action(start, start + dur)
+  }
+
+  /** An action that ends when the word after [[name]] is spoken (the latest line with that mark). */
+  function mark(name) {
+    if (typeof name !== 'string' || !name) fail('mark(name) needs the name of a mark, like mark("he") for [[he]] in a say() line')
+    if (!markTimes.has(name)) fail(`mark("${name}"): no line said so far in this scene has [[${name}]] (marks so far: ${[...markTimes.keys()].join(', ') || 'none'})`)
+    return new Action(T, Math.max(T, markTimes.get(name)))
   }
 
   function all(...list) {
     if (list.length === 1 && Array.isArray(list[0])) list = list[0]
     let end = T
+    const parts = []
     for (const item of list) {
-      if (item instanceof Action) end = Math.max(end, item.end)
-      else if (item !== undefined && item !== null) fail(`all(...) takes actions (draw(), move(), wait(), …), got ${describe(item)}`)
+      if (item instanceof Action) {
+        end = Math.max(end, item.end)
+        parts.push(...spans.get(item).parts)
+      } else if (item !== undefined && item !== null) fail(`all(...) takes actions (draw(), move(), wait(), …), got ${describe(item)}`)
     }
-    return new Action(T, end)
+    const act = new Action(T, end)
+    spans.get(act).parts = parts
+    return act
   }
 
   // ---------- Console ----------
@@ -1765,14 +1982,16 @@
     return g
   }
 
-  function sampleObjects() {
+  /** Sample changing objects over this scene. Returns the objects of earlier scenes whose geometry changes in it. */
+  function sampleObjects(list) {
     finalSampling = true
-    for (const entry of objects) {
+    const changedEarlier = new Set()
+    for (const entry of list) {
       if (!entry.dynamic || entry.kind === 'group' || entry.kind === 'node') continue
       const samples = []
       let lastKey = ''
       let final = null
-      for (const t of sampleTimes(entry.created)) {
+      for (const t of sampleTimes(entry.born === sceneNo ? entry.created : 0)) {
         const spec = specAt(entry, t)
         if (spec !== entry) entry.lastGood = spec
         if (spec.kind !== entry.kind) {
@@ -1791,7 +2010,10 @@
       for (const field of ['d', 'lines', 'text', 'params', 'at', 'center', 'pressure', 'length', 'style']) if (final[field] !== undefined) entry[field] = final[field]
       entry.bounds = final.bounds
       if (samples.length > 1) entry.dyn = samples
+      if (entry.born < sceneNo && (samples.length > 1 || lastKey !== entry.bakedKey)) changedEarlier.add(entry)
     }
+    finalSampling = false
+    return changedEarlier
   }
 
   /** Visible at t: made (or revealed) by then and not gone. */
@@ -1824,16 +2046,18 @@
     return name
   }
 
-  function checkLayout() {
+  /** Overlaps and the view, for the objects this scene sends (`list`), against everything visible. */
+  function checkLayout(list) {
+    const mine = new Set(list)
     const times = new Set([f3(endTime)])
     for (const st of steps) times.add(st.at)
-    for (const e of objects) if (isTextLike(e) && e.kind !== 'group') times.add(f3(revealEnd(e)))
+    for (const e of list) if (isTextLike(e) && e.kind !== 'group') times.add(f3(revealEnd(e)))
     const seen = new Set()
     const sorted = [...times].sort((a, b) => a - b)
     for (const t of sorted) {
-      const visible = objects.filter((e) => visibleAt(e, t))
+      const visible = objects.filter((e) => !e.gone && !e.dropped && visibleAt(e, t))
       for (const e of visible) {
-        if (!isTextLike(e)) continue
+        if (!isTextLike(e) || !mine.has(e)) continue
         const box = worldBounds(e, t)
         const inner = { x: box.x + box.width * 0.08, y: box.y + box.height * 0.08, width: box.width * 0.84, height: box.height * 0.84 }
         for (const o of visible) {
@@ -1869,7 +2093,7 @@
         const items = []
         for (const [id, info] of Object.entries(CTX.nodes)) {
           // Ink shows through its ink group (g1, …); frames hold other items.
-          if (info.kind === 'frame' || info.kind === 'ink' || seen.has(`${e.id}:${id}`)) continue
+          if (info.kind === 'frame' || info.kind === 'ink' || seen.has(`${e.id}:${id}`) || stageItemOwner(id) !== undefined) continue
           if (rectsOverlap(info.bounds, inner) <= 0.12 * Math.min(inner.width * inner.height, info.bounds.width * info.bounds.height)) continue
           // Items this scene acts on are where the scene puts them, not where they were.
           if (objects.some((o) => o.kind === 'node' && o.ref === id)) continue
@@ -1880,7 +2104,8 @@
       }
     }
     // Outside the learner's view when it appears (this scene's camera moves count).
-    for (const e of objects) {
+    for (const e of list) {
+      if (e.born < sceneNo && !e.revealed) continue
       if (e.kind === 'group' || e.kind === 'node' || e.removed) continue
       const t = revealEnd(e)
       if (!visibleAt(e, t) && !visibleAt(e, endTime)) continue
@@ -1893,34 +2118,248 @@
     }
   }
 
+  /** Cut the scene at c (scene_control cut): what starts at c or later is dropped, what runs then holds its value. */
+  function applyCut(c) {
+    const cutList = (list) => {
+      const keep = []
+      for (const a of list) {
+        if (a.start >= c - 1e-9) continue
+        if (a.start + a.dur > c) a.until = f3(c)
+        keep.push(a)
+      }
+      return keep
+    }
+    for (const e of objects) {
+      if (e.born === sceneNo && e.kind !== 'group' && e.kind !== 'node') {
+        let appears = e.created
+        if (e.vis === 'hidden') {
+          appears = Infinity
+          for (const a of (e.tracks.draw || []).concat(e.tracks.opacity || [])) if (typeof a.to === 'number' && a.to > 0) appears = Math.min(appears, a.start)
+        }
+        if (appears >= c - 1e-9) {
+          e.dropped = true
+          continue
+        }
+      }
+      for (const prop of Object.keys(e.tracks)) e.tracks[prop] = cutList(e.tracks[prop])
+      if (e.removed) e.removed = valueAt(e, 'opacity', c) < 0.02 || valueAt(e, 'draw', c) <= 0.001
+    }
+    for (const e of objects) {
+      if (e.kind !== 'group' || e.born !== sceneNo) continue
+      e.members = e.members.filter((id) => !objects[id].dropped)
+      if (!e.members.length) e.dropped = true
+    }
+    const kept = new Set()
+    for (const e of objects) if (!e.dropped) for (const list of Object.values(e.tracks)) for (const a of list) kept.add(a)
+    const acts = actions.filter((a) => kept.has(a))
+    actions.length = 0
+    for (const a of acts) actions.push(a)
+    for (const v of values) v.tracks = cutList(v.tracks)
+    const keepSteps = steps.filter((st) => st.at < c - 1e-9)
+    steps.length = 0
+    for (const st of keepSteps) steps.push(st)
+    const keepCues = cues.filter((cue) => cue.at < c - 1e-9)
+    cues.length = 0
+    for (const cue of keepCues) {
+      cue.dur = f3(Math.min(cue.dur, c - cue.at))
+      if (cue.marks) cue.marks = cue.marks.filter((m) => m.at < c - 1e-9)
+      cues.push(cue)
+    }
+    const keepCam = cameraActions.filter((a) => a.start < c - 1e-9)
+    cameraActions.length = 0
+    for (const a of keepCam) cameraActions.push(a)
+    const keepPtr = pointerActions.filter((a) => a.start < c - 1e-9)
+    pointerActions.length = 0
+    for (const a of keepPtr) pointerActions.push(a)
+    for (const span of activeSpans) span[1] = Math.min(span[1], c)
+    endTime = c
+  }
+
+  const touched = (e) => Object.keys(e.tracks).some((key) => e.tracks[key].length > 0)
+
   globalThis.__result = () => {
-    for (const e of objects) if (e.vis === undefined) e.vis = 'shown'
-    sampleObjects()
+    if (asyncErrors.length) throw asyncErrors[0]
+    for (const e of objects) if (e.born === sceneNo && e.vis === undefined) e.vis = 'shown'
+    if (cutAt !== null) applyCut(Math.min(cutAt, endTime))
+    const fresh = objects.filter((e) => e.born === sceneNo && !e.dropped)
+    const earlier = objects.filter((e) => e.born < sceneNo && !e.dropped && !e.gone && e.kind !== 'node' && e.kind !== 'group')
+    for (const e of earlier) delete e.dyn
+    const anyChange = actions.length > 0 || values.some((v) => v.tracks.length > 0)
+    const changed = sampleObjects(anyChange ? fresh.concat(earlier) : fresh)
+    // Earlier objects this scene sends again: those it acts on, those whose recipe changes in it, and gone ones it brings back.
+    const emit = new Set(fresh)
+    for (const e of objects) {
+      if (e.born === sceneNo || e.dropped) continue
+      if (e.gone) {
+        if (e.revealed && e.kind !== 'group' && e.kind !== 'node') emit.add(e)
+        else if (touched(e) && e.kind !== 'group') warnings.add(`${who(e)} is not on the board any more (erased, or removed by an earlier scene); draw it or fade it in to bring it back`)
+        continue
+      }
+      if (touched(e) || changed.has(e)) emit.add(e)
+    }
+    // An object moves with its groups; a group that moves moves its members.
+    for (let grew = true; grew; ) {
+      grew = false
+      for (const e of [...emit]) {
+        if (e.parent !== undefined && !emit.has(objects[e.parent])) {
+          emit.add(objects[e.parent])
+          grew = true
+        }
+        if (e.kind === 'group' && touched(e)) {
+          for (const id of e.members) {
+            const member = objects[id]
+            if (!emit.has(member) && !member.gone && !member.dropped) {
+              emit.add(member)
+              grew = true
+            }
+          }
+        }
+      }
+    }
+    const list = objects.filter((e) => emit.has(e))
+    if (!anyChange) sampleObjects(list.filter((e) => e.born < sceneNo && e.dynamic))
     try {
-      checkLayout()
+      checkLayout(list)
     } catch (error) {
       warnings.add(`The layout check failed: ${error && error.message ? error.message : String(error)}`)
     }
-    const out = objects.map((e) => {
-      const o = { id: e.id, kind: e.kind, api: e.api, created: f3(e.created), vis: e.vis, removed: e.removed, bounds: e.bounds, pivot: e.pivot }
+    const local = new Map(list.map((e, i) => [e.id, i]))
+    const out = list.map((e) => {
+      const carry = e.born < sceneNo && !e.gone && e.kind !== 'node'
+      const o = { id: local.get(e.id), sid: e.id, kind: e.kind, api: e.api, created: f3(carry ? 0 : e.created), vis: carry ? 'shown' : e.vis || 'shown', removed: e.removed, bounds: e.bounds, pivot: e.pivot }
+      if (carry) o.carry = true
+      if (e.base && e.kind !== 'node') o.base = e.base
       if (e.name !== undefined) o.name = e.name
-      if (e.parent !== undefined) o.parent = e.parent
+      if (e.parent !== undefined && local.has(e.parent)) o.parent = local.get(e.parent)
       if (e.dyn) o.dyn = e.dyn
       if (e.kind === 'ink') Object.assign(o, { style: e.style, lines: e.lines, d: e.d, pressure: e.pressure })
       if (e.kind === 'shape') Object.assign(o, { style: e.style, d: e.d })
       if (e.kind === 'text') Object.assign(o, { style: e.style, text: e.text, math: e.math, at: e.at, center: e.center })
       if (e.kind === 'live') Object.assign(o, { style: e.style, mode: e.mode, code: e.code, width: e.width, height: e.height, params: e.params, line: e.line })
-      if (e.kind === 'group') o.members = e.members
+      if (e.kind === 'group') o.members = e.members.filter((id) => local.has(id)).map((id) => local.get(id))
       if (e.kind === 'node') o.ref = e.ref
       return o
     })
-    return JSON.stringify({ objects: out, actions, steps, duration: f3(endTime), logs, warnings: [...warnings], camera: cameraActions, pointer: pointerActions, cues })
+    const acts = actions.filter((a) => local.has(a.obj)).map((a) => ({ ...a, obj: local.get(a.obj) }))
+    return JSON.stringify({ objects: out, actions: acts, steps, duration: f3(endTime), logs, warnings: [...warnings], camera: cameraActions, pointer: pointerActions, cues })
+  }
+
+  /** The end of this scene becomes the start of the next: each object's state at the end is its base, values keep their end value. */
+  globalThis.__bake = () => {
+    for (const e of objects) if (e.born === sceneNo && e.vis === undefined) e.vis = 'shown'
+    const hidden = { opacity: 1, draw: 0, fill: 0 }
+    for (const e of objects) {
+      if (e.dropped) {
+        Object.assign(e, { dropped: false, gone: true, vis: 'hidden', base: { ...hidden }, tracks: {}, created: 0, removed: false, revealed: false })
+        delete e.dyn
+        continue
+      }
+      if (e.kind === 'node') {
+        e.tracks = {}
+        e.base = undefined
+        continue
+      }
+      if (e.gone && !e.revealed) {
+        e.tracks = {}
+        continue
+      }
+      const props = {}
+      const defaults = { x: 0, y: 0, scale: 1, rotate: 0 }
+      for (const prop of Object.keys(defaults)) {
+        const v = valueAt(e, prop, endTime)
+        if (typeof v === 'number' && Math.abs(v - defaults[prop]) > 1e-9) props[prop] = f3(v)
+      }
+      if (e.kind !== 'group') {
+        if (e.dynamic) {
+          const spec = specAt(e, endTime)
+          if (spec !== e && spec.kind === e.kind) {
+            for (const field of ['d', 'lines', 'text', 'params', 'at', 'center', 'pressure', 'length', 'style']) if (spec[field] !== undefined) e[field] = spec[field]
+            e.bounds = spec.bounds
+          }
+          e.bakedKey = JSON.stringify(geometryOf(e))
+          // A trace keeps the path it left; a new trace() draws on from here.
+          if (e.api === 'trace') e.dynamic = false
+        }
+        if (e.removed) {
+          e.gone = true
+          e.vis = 'hidden'
+          Object.assign(props, hidden)
+        } else {
+          e.gone = false
+          e.vis = 'shown'
+          const opacity = valueAt(e, 'opacity', endTime)
+          const draw = valueAt(e, 'draw', endTime)
+          const fill = valueAt(e, 'fill', endTime)
+          const color = valueAt(e, 'color', endTime)
+          if (typeof opacity === 'number' && opacity !== 1) props.opacity = f3(opacity)
+          if (typeof draw === 'number' && draw !== 1) props.draw = f3(draw)
+          if (typeof fill === 'number' && fill !== 1) props.fill = f3(fill)
+          if (typeof color === 'string' && e.style && color !== e.style.color) props.color = color
+        }
+      }
+      e.base = Object.keys(props).length ? props : undefined
+      e.tracks = {}
+      e.created = 0
+      e.removed = false
+      e.revealed = false
+      delete e.dyn
+    }
+    for (const v of values) {
+      v.base = trackValue(v.tracks, v.base, endTime)
+      v.tracks = []
+    }
+  }
+
+  let cutAt = null
+  /** A new scene: its context, its own time from 0, nothing on its timeline yet. */
+  globalThis.__begin = () => {
+    CTX = JSON.parse(globalThis.__ctxText)
+    delete globalThis.__ctxText
+    sceneNo++
+    programRandom = mulberry32(CTX.seed || 1)
+    cutAt = typeof CTX.cutAt === 'number' ? CTX.cutAt : null
+    T = 0
+    endTime = 0
+    actions.length = 0
+    steps.length = 0
+    logs.length = 0
+    warnings.clear()
+    waiters.length = 0
+    cameraActions.length = 0
+    pointerActions.length = 0
+    cues.length = 0
+    activeSpans.length = 0
+    sampleErrors.clear()
+    markTimes.clear()
+    asyncErrors = []
+    collector = null
+    finalSampling = false
+    const items = CTX.stage && CTX.stage.items
+    for (const e of objects) {
+      if (e.kind === 'node') {
+        // Items from before the stage: where they are now, or gone.
+        const info = CTX.nodes[e.ref]
+        if (!info) e.gone = true
+        else {
+          e.gone = false
+          e.bounds = info.bounds
+          e.pivot = [info.bounds.x + info.bounds.width / 2, info.bounds.y + info.bounds.height / 2]
+        }
+        continue
+      }
+      // An object whose items are no longer on the board (the learner erased them, or undid the scene).
+      if (items && e.kind !== 'group' && !e.gone && !items[String(e.id)]) {
+        e.gone = true
+        e.vis = 'hidden'
+        e.base = { ...(e.base || {}), opacity: 1, draw: 0, fill: 0 }
+      }
+    }
   }
 
   const traceCreator = creator('trace', trace, { optIndex: 2, skip: [0, 1], always: true })
 
-  /** The spoken lines so far (the host measures their real duration between passes). */
-  globalThis.__cueTexts = () => JSON.stringify(cues.map((c) => c.text))
+  /** Values, functions and objects kept from one program to the next on this board. */
+  const stage = {}
 
   const api = {
     stroke: creator('stroke', stroke, { optIndex: 1 }),
@@ -1944,19 +2383,21 @@
     group,
     board,
     value,
-    draw,
-    fillIn,
-    fadeIn,
-    fadeOut,
-    erase,
-    move,
-    tween,
+    draw: collecting(draw),
+    fillIn: collecting(fillIn),
+    fadeIn: collecting(fadeIn),
+    fadeOut: collecting(fadeOut),
+    erase: collecting(erase),
+    move: collecting(move),
+    tween: collecting(tween),
     wait,
     step,
     all,
-    camera,
-    point,
-    say
+    camera: collecting(camera),
+    point: collecting(point),
+    say,
+    mark,
+    stage
   }
   for (const [key, value] of Object.entries(api)) Object.defineProperty(globalThis, key, { value, enumerable: true, writable: false, configurable: false })
 })()

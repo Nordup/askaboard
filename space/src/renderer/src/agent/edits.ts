@@ -49,6 +49,8 @@ export interface EditContext {
   /** The open board's ink groups, computed now. */
   groups(): InkGroup[]
   tracker: InkGroupTracker
+  /** The open board's path. */
+  path?: string
 }
 
 const PRESENCE_MS = 20_000
@@ -1175,13 +1177,13 @@ export async function runEditTool(ctx: EditContext, tool: AgentToolName, args: R
       return focus(ctx, scene(ctx), args)
     case 'sceneContext':
       warmSpeech()
-      return sceneContext(ctx.board, scene(ctx))
+      return sceneContext(ctx.board, scene(ctx), ctx.path)
     case 'runScene':
       return runScene({ board: ctx.board, scene: () => scene(ctx), tracker: ctx.tracker }, args)
     case 'previewScene':
       return previewScene({ board: ctx.board, scene: () => scene(ctx), tracker: ctx.tracker }, args)
     case 'sceneControl':
-      return sceneControl(args)
+      return sceneControl({ board: ctx.board, scene: () => scene(ctx), tracker: ctx.tracker }, args)
     case 'finishWorking': {
       const ids = args.node_ids === undefined ? undefined : stringList(args.node_ids, 'node_ids')
       return { released: ctx.presence.finish(ctx.agent.sessionId, ids) }

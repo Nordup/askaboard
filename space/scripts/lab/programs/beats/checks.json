@@ -1,0 +1,19 @@
+[
+  { "run": "beat-1.js", "name": "beat 1" },
+  { "run": "beat-2.js", "name": "beat 2" },
+  { "run": "beat-3.js", "name": "beat 3" },
+  { "replace": "$3", "with": "beat-3b.js" },
+  { "until": "idle" },
+  { "sleep": 1 },
+  { "control": { "action": "replay", "scene": "$2" } },
+  { "until": "idle" },
+  { "sleep": 1 },
+  { "run": "long.js", "name": "long" },
+  { "until": "time", "scene": "$4", "t": 1.0 },
+  { "control": { "action": "cut", "after_step": "a" } },
+  { "until": "idle" },
+  { "sleep": 1 },
+  { "control": { "action": "reset" } },
+  { "run": "refer.js", "name": "refer" },
+  { "sleep": 1 }
+]

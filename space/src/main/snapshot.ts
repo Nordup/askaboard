@@ -136,9 +136,10 @@ export class SnapshotRenderer {
     const win = await this.open()
     if (this.idleTimer) clearTimeout(this.idleTimer)
     this.idleTimer = setTimeout(() => this.dispose(), IDLE_CLOSE_MS)
-    // One extra row for the frame marker (see below).
-    win.setContentSize(request.width, request.height + 1)
     const requestId = this.nextId++
+    // One extra row for the frame marker (see below), and one more on every other request: the window
+    // changes size for every capture, so it always presents a new frame, never one from an earlier capture.
+    win.setContentSize(request.width, request.height + 1 + (requestId % 2))
     const reply = await new Promise<SnapshotReply>((resolve) => {
       const timer = setTimeout(() => {
         this.pending.delete(requestId)
@@ -159,7 +160,16 @@ export class SnapshotRenderer {
       await new Promise((resolve) => setTimeout(resolve, 16))
       image = await grab(win)
     }
-    if (!markerMatches(image, request.height, want)) console.warn('snapshot: the frame marker never matched; the image may be one frame old')
+    if (!markerMatches(image, request.height, want)) {
+      // Never an old frame: resize once more to force a new one, else fail.
+      win.setContentSize(request.width, request.height + 3)
+      for (let tries = 0; tries < MARKER_TRIES && !markerMatches(image, request.height, want); tries++) {
+        win.webContents.invalidate()
+        await new Promise((resolve) => setTimeout(resolve, 16))
+        image = await grab(win)
+      }
+      if (!markerMatches(image, request.height, want)) throw new Error('The screenshot could not be drawn (the snapshot window showed an older frame). Take it again.')
+    }
     image = image.crop({ x: 0, y: 0, width: Math.min(request.width, image.getSize().width), height: Math.min(request.height, image.getSize().height) })
     const size = image.getSize()
     if (size.width !== request.width || size.height !== request.height) {

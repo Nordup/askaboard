@@ -1,0 +1,11 @@
+// A scene with three steps, to cut after the first (scene_control cut). Also checks text bounds.
+step("a")
+const t = tex("\\int_0^R \\pi (R^2 - h^2)\\,dh", { at: [-300, -250], size: 30 })
+console.log("tex bounds in the program", JSON.stringify(t.bounds))
+await fadeIn(t, 0.5)
+const box = rect(t.bounds.x - 6, t.bounds.y - 6, t.bounds.width + 12, t.bounds.height + 12, { color: "accent" })
+await draw(box, 1.2)
+step("b")
+await draw(circle(250, -220, 40, { color: "warn" }), 2)
+step("c")
+await draw(circle(330, -220, 40, { color: "bad" }), 2)

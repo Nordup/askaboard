@@ -121,6 +121,14 @@ export class InkGroupTracker {
     return id
   }
 
+  /** An agent group gets more strokes (a scene redrew its ink object); returns its id. */
+  repin(id: string, strokeIds: readonly string[]): string {
+    const set = this.pinned.get(id) ?? new Set<string>()
+    for (const strokeId of strokeIds) set.add(strokeId)
+    this.pinned.set(id, set)
+    return id
+  }
+
   compute(state: LiveBoardState): InkGroup[] {
     const index = buildIndex(state.nodes)
     const layout = state.layout()

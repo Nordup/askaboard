@@ -1,14 +1,23 @@
+import { MessageChannel, type MessagePort, type Worker } from 'node:worker_threads'
 import createWorker from './live-worker?nodeWorker'
 import prelude from './live-prelude.js?raw'
 import { HAND_FONT } from '@shared/hand-font'
-import type { SceneContext, SceneDescription, SceneRunOptions } from '@shared/live-scene'
-import type { WorkerReply } from './live-worker'
-import { measureSpeech, speechOn } from './speech'
+import type { SceneContext, SceneDescription } from '@shared/live-scene'
+import type { WorkerReply, WorkerReset, WorkerRun } from './live-worker'
+import { markedLine, measureMarks, prefetchSpeech, speechOn } from './speech'
 
 /**
- * Run a scene program (run_scene) in the sandbox: a fresh worker thread with a
- * QuickJS VM per run (see live-worker.ts). Resolves the scene description, or
- * rejects with the program's error and its line number.
+ * The stage: one long-lived sandbox per board in which every scene program
+ * (run_scene) runs, so objects, values, helpers and `stage` made by one
+ * program are there for the next (live-worker.ts holds the QuickJS context).
+ *
+ * The stage keeps a log of the programs it ran (code, context, seed). Its
+ * state is always the result of running that log in order, which makes it
+ * possible to roll it back: after a program error, a preview, a cancel, a
+ * skipped scene, a replaced or cut scene, the context is rebuilt by running
+ * the log again (fast: programs only compute; speech times are cached).
+ * The stage starts new when the board changes, on scene_control reset, and
+ * when the app starts.
  */
 
 export class SceneProgramError extends Error {
@@ -27,63 +36,313 @@ export class SceneCancelled extends Error {
   }
 }
 
-/**
- * Run a program. With speech on, a program that says something runs twice:
- * the first pass collects its lines, their real durations are measured with
- * the system voice, and the second pass (same random seed) builds the timeline
- * with them.
- */
-export async function runSceneProgram(code: string, context: SceneContext, signal?: AbortSignal): Promise<SceneDescription> {
-  const seed = Math.floor(Math.random() * 2 ** 31) + 1
-  const first = await runOnce(code, context, { seed, durations: {} }, signal)
-  if (!speechOn() || !first.cueTexts.length) return first.desc
-  const durations = await measureSpeech(first.cueTexts)
-  if (signal?.aborted) throw new SceneCancelled()
-  if (!Object.keys(durations).length) return first.desc
-  const second = await runOnce(code, context, { seed, durations }, signal)
-  const unmeasured = second.cueTexts.filter((text) => durations[text] === undefined)
-  if (unmeasured.length) {
-    // Lines that differ between passes (they depend on timing): measure them and run once more.
-    Object.assign(durations, await measureSpeech(unmeasured))
-    if (signal?.aborted) throw new SceneCancelled()
-    return (await runOnce(code, context, { seed, durations }, signal)).desc
-  }
-  return second.desc
+/** One program the stage ran, in order. scene: the renderer's scene id once it is committed. */
+export interface StageEntry {
+  scene: string | null
+  code: string
+  name: string | null
+  seed: number
+  ctxText: string
 }
 
-/** One pass in a fresh worker. An abort terminates the worker at once (a program has no time limit, so this is how one that never ends stops). */
-function runOnce(code: string, context: SceneContext, run: SceneRunOptions, signal?: AbortSignal): Promise<{ desc: SceneDescription; cueTexts: string[] }> {
-  if (signal?.aborted) return Promise.reject(new SceneCancelled())
-  const ctxText = JSON.stringify({ ...context, ...run, font: HAND_FONT })
-  return new Promise((resolve, reject) => {
-    const worker = createWorker({ workerData: { prelude, code, ctxText } })
-    let settled = false
-    const onAbort = (): void => finish(() => reject(new SceneCancelled()))
-    signal?.addEventListener('abort', onAbort, { once: true })
-    const finish = (action: () => void): void => {
-      if (settled) return
-      settled = true
-      signal?.removeEventListener('abort', onAbort)
-      void worker.terminate()
-      action()
+export interface StageRun {
+  desc: SceneDescription
+  entry: StageEntry
+  /** Set when this program was the first one of a new stage: why the stage is new. */
+  fresh: string | null
+}
+
+/** say("…") strings written as plain literals, so their speech can be measured before the program runs. */
+function literalLines(code: string): string[] {
+  const out: string[] = []
+  const re = /\bsay\(\s*(["'`])((?:\\.|(?!\1)[^\\])*)\1/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(code))) {
+    if (m[1] === '`' && m[2].includes('${')) continue
+    let text = m[2]
+    try {
+      text = m[1] === '"' ? (JSON.parse(`"${text}"`) as string) : text.replace(/\\(.)/g, '$1')
+    } catch {
+      continue
     }
-    worker.on('message', (reply: WorkerReply) =>
-      finish(() => {
-        if (!reply.ok) {
-          // A line after the last one is the end of the program (an unclosed bracket or string).
-          const lines = code.split('\n').length
-          if (reply.line !== null && reply.line > lines) reject(new SceneProgramError(`At the end of the program: ${reply.error}`, null))
-          else reject(new SceneProgramError(reply.error, reply.line))
-          return
-        }
-        try {
-          resolve({ desc: JSON.parse(reply.json) as SceneDescription, cueTexts: reply.cueTexts })
-        } catch (error) {
-          reject(new SceneProgramError(`The scene could not be read: ${error instanceof Error ? error.message : String(error)}`, null))
-        }
+    out.push(text)
+  }
+  return out
+}
+
+/** The same split as splitMarks() in live-prelude.js: the words without [[marks]], and each mark's character index. */
+function splitMarks(raw: string): { clean: string; chars: number[] } {
+  const chars: number[] = []
+  let clean = ''
+  const re = /\[\[\s*([^\]]*?)\s*\]\]/g
+  let last = 0
+  let m: RegExpExecArray | null
+  const add = (piece: string): void => {
+    piece = piece.replace(/\s+/g, ' ')
+    if (clean.endsWith(' ') && piece.startsWith(' ')) piece = piece.slice(1)
+    clean += piece
+  }
+  const text = raw.trim()
+  while ((m = re.exec(text))) {
+    add(text.slice(last, m.index))
+    chars.push(clean.length)
+    last = m.index + m[0].length
+  }
+  add(text.slice(last))
+  const lead = clean.length - clean.trimStart().length
+  clean = clean.trim()
+  return {
+    clean,
+    chars: chars.map((char) => {
+      let c = Math.max(0, Math.min(clean.length, char - lead))
+      while (clean[c] === ' ') c++
+      return c
+    })
+  }
+}
+
+/** The text say() renders for a line (with a silence at each mark), to measure it ahead of the program. */
+function renderedLine(raw: string): string {
+  const { clean, chars } = splitMarks(raw)
+  return chars.length ? markedLine(clean, chars) : clean
+}
+
+/** A tex() or text() node to measure: its source, math or not, and its font size. */
+export interface TextItem {
+  math: boolean
+  text: string
+  size: number
+}
+
+export class SceneStage {
+  /** Measured text sizes (board points) by math, size and source; null: could not be measured. */
+  private textCache = new Map<string, [number, number] | null>()
+
+  /** measureText: the renderer lays the text out as the board does (renderer/live/measure.ts). */
+  constructor(private readonly measureText: (items: TextItem[]) => Promise<Array<[number, number]>>) {
+    // The first render of the system voice is slow (it finds and loads the voice): do it now, not in the first scene.
+    // So is the sandbox's first start (WebAssembly, the scene library).
+    setTimeout(() => {
+      if (speechOn()) void prefetchSpeech(['Ready.']).catch(() => undefined)
+      void this.exclusive(() => this.ensure()).catch(() => undefined)
+    }, 3000)
+  }
+
+  private async textSizes(items: TextItem[]): Promise<Array<[number, number] | null>> {
+    const key = (item: TextItem): string => `${item.math ? 'm' : 't'}|${item.size}|${item.text}`
+    const missing = items.filter((item) => !this.textCache.has(key(item)))
+    if (missing.length) {
+      try {
+        const sizes = await this.measureText(missing)
+        missing.forEach((item, i) => this.textCache.set(key(item), sizes[i] && sizes[i][0] > 0 ? sizes[i] : null))
+      } catch {
+        for (const item of missing) this.textCache.set(key(item), null)
+      }
+    }
+    return items.map((item) => this.textCache.get(key(item)) ?? null)
+  }
+
+  private worker: Worker | null = null
+  private port: MessagePort | null = null
+  private flag = new SharedArrayBuffer(4)
+  private nextId = 1
+  private pending = new Map<number, (reply: WorkerReply) => void>()
+  private chain: Promise<unknown> = Promise.resolve()
+  private epochNo = 0
+  private boardPath: string | null = null
+  /** The worker's context does not match the log (an error, a preview, a cancel): rebuild before the next run. */
+  private dirty = true
+  /** Why the stage is new, until its first program runs. */
+  private freshReason: string | null = 'the app started'
+  readonly log: StageEntry[] = []
+
+  get epoch(): string {
+    return `st${this.epochNo}`
+  }
+
+  /** Run fn with the stage to itself (programs, commits and restaging never interleave). */
+  exclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.chain.then(fn, fn)
+    this.chain = run.catch(() => undefined)
+    return run
+  }
+
+  /** A new, empty stage. Board items stay; objects and values from earlier programs are gone. */
+  reset(reason: string): void {
+    this.epochNo++
+    this.log.length = 0
+    this.dirty = true
+    this.freshReason = reason
+  }
+
+  /** The stage after the board changed, with the renderer's record of it (its items, by stage object). */
+  adopt(context: SceneContext): void {
+    if (context.board !== undefined && context.board !== this.boardPath) {
+      if (this.boardPath !== null) this.reset('the board changed')
+      this.boardPath = context.board
+    }
+    if (!context.stage || context.stage.epoch !== this.epoch) context.stage = { epoch: this.epoch, items: {} }
+  }
+
+  /** Scenes that will never play (skipped): their programs leave the stage. */
+  drop(sceneIds: string[]): void {
+    const before = this.log.length
+    for (let i = this.log.length - 1; i >= 0; i--) if (this.log[i].scene && sceneIds.includes(this.log[i].scene as string)) this.log.splice(i, 1)
+    if (this.log.length !== before) this.dirty = true
+  }
+
+  /** Forget a program whose scene was not committed. */
+  discard(entry: StageEntry): void {
+    const index = this.log.indexOf(entry)
+    if (index >= 0) this.log.splice(index, 1)
+    this.dirty = true
+  }
+
+  /** Keep only the programs before this scene (to run it, and the ones after, again). Returns the programs after it, or null when the scene is not in the log. */
+  truncateBefore(sceneId: string): { entry: StageEntry; later: StageEntry[] } | null {
+    const index = this.log.findIndex((entry) => entry.scene === sceneId)
+    if (index < 0) return null
+    const entry = this.log[index]
+    const later = this.log.slice(index + 1)
+    this.log.length = index
+    this.dirty = true
+    return { entry, later }
+  }
+
+  /** End a running program now: its worker stops, and the stage is rebuilt before the next run. */
+  cancelWorker(): void {
+    if (!this.worker) return
+    void this.worker.terminate()
+    this.worker = null
+    this.port?.close()
+    this.port = null
+    for (const resolve of this.pending.values()) resolve({ id: 0, ok: false, error: 'cancelled', line: null, ms: 0 })
+    this.pending.clear()
+    this.dirty = true
+  }
+
+  /**
+   * Run a program on the stage. mode "scene" adds it to the log (record the
+   * scene id with entry.scene after the commit, or discard it); "preview"
+   * leaves the stage as it was. seed and cutAt repeat an earlier run (cut).
+   */
+  async run(code: string, context: SceneContext, options: { mode: 'scene' | 'preview'; seed?: number; cutAt?: number | null; name?: string | null; signal?: AbortSignal }): Promise<StageRun> {
+    const { signal } = options
+    if (signal?.aborted) throw new SceneCancelled()
+    this.adopt(context)
+    const fresh = this.log.length === 0 ? this.freshReason : null
+    const speech = speechOn()
+    const seed = options.seed ?? Math.floor(Math.random() * 2 ** 31) + 1
+    const ctxText = JSON.stringify({ ...context, seed, speech, cutAt: options.cutAt ?? null })
+    const tStart = Date.now()
+    const onAbort = (): void => this.cancelWorker()
+    signal?.addEventListener('abort', onAbort, { once: true })
+    try {
+      await this.ensure().catch((error: unknown) => {
+        throw signal?.aborted ? new SceneCancelled() : error
       })
-    )
-    worker.on('error', (error) => finish(() => reject(new SceneProgramError(`The sandbox failed: ${error.message}`, null))))
-    worker.on('exit', (exitCode) => finish(() => reject(new SceneProgramError(`The sandbox stopped (exit code ${exitCode}).`, null))))
-  })
+      const tReady = Date.now()
+      if (speech) {
+        const lines = literalLines(code).map(renderedLine)
+        if (lines.length) await prefetchSpeech(lines)
+      }
+      if (signal?.aborted) throw new SceneCancelled()
+      const tSpeech = Date.now()
+      const reply = await this.send({ type: 'run', id: this.nextId++, code, ctxText, mode: options.mode })
+      console.log(`stage: ${options.mode} program: stage ready ${tReady - tStart} ms, speech ${tSpeech - tReady} ms, program ${Date.now() - tSpeech} ms`)
+      if (signal?.aborted) throw new SceneCancelled()
+      if (!reply.ok) {
+        this.dirty = true
+        const lines = code.split('\n').length
+        // A line after the last one is the end of the program (an unclosed bracket or string).
+        let error = reply.line !== null && reply.line > lines ? new SceneProgramError(`At the end of the program: ${reply.error}`, null) : new SceneProgramError(reply.error, reply.line)
+        if (fresh && /ReferenceError|not defined|undefined/i.test(reply.error)) error = new SceneProgramError(`${error.message.replace(/^Line \d+: /, '')}\nThe stage is new (${fresh}): nothing made by programs before that is in it.`, error.line)
+        throw error
+      }
+      if (options.mode === 'preview') this.dirty = true
+      let desc: SceneDescription
+      try {
+        desc = JSON.parse(reply.json as string) as SceneDescription
+      } catch (error) {
+        this.dirty = true
+        throw new SceneProgramError(`The scene could not be read: ${error instanceof Error ? error.message : String(error)}`, null)
+      }
+      desc.stage = this.epoch
+      const entry: StageEntry = { scene: null, code, name: options.name ?? null, seed, ctxText }
+      if (options.mode === 'scene') {
+        this.log.push(entry)
+        this.freshReason = null
+      }
+      return { desc, entry, fresh }
+    } finally {
+      signal?.removeEventListener('abort', onAbort)
+    }
+  }
+
+  /** A worker whose context holds exactly the log. */
+  private async ensure(): Promise<void> {
+    if (!this.worker) this.start()
+    if (!this.dirty) return
+    const reset = await this.send({ type: 'reset', id: this.nextId++ })
+    if (!reset.ok) throw new SceneProgramError(reset.error, null)
+    for (const entry of [...this.log]) {
+      const reply = await this.send({ type: 'run', id: this.nextId++, code: entry.code, ctxText: entry.ctxText, mode: 'replay' })
+      if (!reply.ok) {
+        // A program that ran before and fails now (it read something that changed): it leaves the stage.
+        console.warn(`stage: a program of scene ${entry.scene ?? '?'} failed when the stage was rebuilt: ${reply.error}`)
+        this.log.splice(this.log.indexOf(entry), 1)
+        this.dirty = true
+        return this.ensure()
+      }
+    }
+    this.dirty = false
+  }
+
+  private start(): void {
+    const channel = new MessageChannel()
+    this.port = channel.port1
+    const flag = new Int32Array(this.flag)
+    channel.port1.on('message', (raw: unknown) => {
+      void (async () => {
+        let answer = '{}'
+        try {
+          const request = JSON.parse(String(raw)) as { kind?: 'text'; text: string; chars: number[]; items?: TextItem[] }
+          if (request.kind === 'text') answer = JSON.stringify({ sizes: await this.textSizes(request.items ?? []) })
+          else answer = JSON.stringify(speechOn() ? await measureMarks(request.text, request.chars ?? []) : { dur: null, offsets: [] })
+        } catch {
+          answer = '{}'
+        }
+        channel.port1.postMessage(answer)
+        Atomics.store(flag, 0, 1)
+        Atomics.notify(flag, 0)
+      })()
+    })
+    const worker = createWorker({ workerData: { prelude, fontText: JSON.stringify(HAND_FONT), port: channel.port2, flag: this.flag }, transferList: [channel.port2] })
+    worker.on('message', (reply: WorkerReply) => {
+      const resolve = this.pending.get(reply.id)
+      if (!resolve) return
+      this.pending.delete(reply.id)
+      resolve(reply)
+    })
+    const fail = (message: string): void => {
+      if (this.worker !== worker) return
+      this.worker = null
+      this.dirty = true
+      for (const resolve of this.pending.values()) resolve({ id: 0, ok: false, error: message, line: null, ms: 0 })
+      this.pending.clear()
+    }
+    worker.on('error', (error) => fail(`The sandbox failed: ${error.message}`))
+    worker.on('exit', (code) => fail(`The sandbox stopped (exit code ${code}).`))
+    this.worker = worker
+    this.dirty = true
+  }
+
+  private send(message: WorkerRun | WorkerReset): Promise<WorkerReply> {
+    const worker = this.worker
+    if (!worker) return Promise.resolve({ id: message.id, ok: false, error: 'cancelled', line: null, ms: 0 })
+    return new Promise((resolve) => {
+      this.pending.set(message.id, resolve)
+      worker.postMessage(message)
+    })
+  }
 }

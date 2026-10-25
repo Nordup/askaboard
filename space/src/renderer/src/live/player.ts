@@ -44,7 +44,13 @@ interface Playing {
   /** Undo its commit (skip). */
   revert: () => void
   /** The cue being spoken and how far (word events). */
-  spoken: { index: number; chars: number } | null
+  spoken: { index: number; chars: number; at: number; since: number; started: boolean } | null
+  /** The scene time it starts from (0, or a replayed step). */
+  startAt: number
+  /** Marks the voice has reached ("cue:mark"). */
+  heard: Set<string>
+  /** The clock waits at a mark for the voice, since this performance.now(). */
+  hold: { key: string; since: number } | null
 }
 
 /** A note for the board news: a scene paused because the learner drew. */
@@ -65,6 +71,10 @@ export interface ScenePlayerState {
   steps: Array<{ name: string; at: number }>
   paused: boolean
   queue: number
+  /** The latest marks heard while scenes spoke (speech sync). */
+  marks: MarkSync[]
+  /** When the latest scenes started and ended (Date ms). */
+  played: Array<{ scene: string; start: number; end: number | null }>
 }
 
 /** Ink points by node id, with their world offset, for pen tips. */
@@ -93,7 +103,7 @@ function tipOnLines(lines: Point[][], share: number, total: number): Point | nul
 /** True while a draw action is drawing (not undrawing) this object at t. */
 function drawingNow(play: ScenePlay, object: PlayObject, t: number): boolean {
   for (const a of play.timeline.tracks[object.id].draw ?? []) {
-    if (t >= a.start && t < a.start + a.dur && typeof a.to === 'number' && a.to > (typeof a.from === 'number' ? a.from : 0)) return true
+    if (t >= a.start && t < Math.min(a.start + a.dur, a.until ?? Infinity) && typeof a.to === 'number' && a.to > (typeof a.from === 'number' ? a.from : 0)) return true
   }
   return false
 }
@@ -191,12 +201,21 @@ export interface SceneFrame {
  * scene that has not started: what it makes is hidden, what it changes shows
  * as before the scene.
  */
-export function sceneFrame(play: ScenePlay, t: number, inkIndex: InkIndex | null, out: SceneFrame): void {
+/** Set a node's override; fields already set for it (by a later scene) stay unless this scene sets them too. */
+function setOverride(out: SceneFrame, id: string, override: NodeOverride): void {
+  const earlier = out.overrides.get(id)
+  out.overrides.set(id, earlier ? { ...earlier, ...override } : override)
+}
+
+export function sceneFrame(play: ScenePlay, t: number, inkIndex: InkIndex | null, out: SceneFrame, claimed?: ReadonlySet<string>): void {
   const timeline = play.timeline
+  // A replay hides the items that changed since the scene: their look of then shows as ghosts.
+  if (play.hidden && t <= play.duration) for (const id of play.hidden) setOverride(out, id, { opacity: 0 })
   for (const object of play.objects) {
     const desc = timeline.object(object.id)
     if (t >= object.settled && !object.ghost && t >= desc.created) continue
-    const before = desc.kind !== 'node' && desc.vis === 'shown' && t < desc.created
+    // A carried object (from an earlier scene) is on the board before this scene starts.
+    const before = desc.kind !== 'node' && !desc.carry && desc.vis === 'shown' && t < desc.created
     const draw = clamp01(timeline.number(object.id, 'draw', t))
     const fill = clamp01(timeline.number(object.id, 'fill', t))
     const opacity = before ? 0 : clamp01(timeline.number(object.id, 'opacity', t)) / object.finalOpacity
@@ -204,12 +223,14 @@ export function sceneFrame(play: ScenePlay, t: number, inkIndex: InkIndex | null
     const colorChanging = timeline.hasTrack(object.id, 'color')
     const color = colorChanging ? timeline.color(object.id, t) : undefined
     const drawing = object.drawn && drawingNow(play, object, t)
-    const dyn = object.dyn && t < object.dyn.end && t >= 0 ? object.dyn : undefined
+    const dyn = object.dyn && t < object.dyn.end && (t >= 0 || desc.carry) ? object.dyn : undefined
     const now = dyn ? locate(dyn.samples, t) : null
     if (dyn && now && (dyn.kind === 'text' || dyn.kind === 'live')) world = multiply(world, boxMatrix(dyn.finalBounds, now.a.bounds, dyn.centered, dyn.kind === 'live'))
 
     // Changing ink: the strokes of now, painted on their own; the committed strokes wait hidden.
     if (dyn && now && dyn.kind === 'ink' && dyn.ink) {
+      // A carried object that an earlier scene still makes or animates: that scene shows it until it is done.
+      if (desc.carry && t < 0 && claimed && object.targets.some((target) => claimed.has(target.nodeId))) continue
       const lines = blendLines(now.a, now.b, now.k)
       const lengths = lines.map((line) => {
         let length = 0
@@ -233,7 +254,7 @@ export function sceneFrame(play: ScenePlay, t: number, inkIndex: InkIndex | null
         out.inks.push({ id: `${play.id}:${object.id}:${i}`, kind: 'ink', x: 0, y: 0, z: 0, author: 'agent', seq: 0, tool: dyn.ink!.tool, color: inkColor, width: (now.a.width ?? dyn.ink!.width) * Math.sqrt(Math.abs(world[0] * world[3] - world[1] * world[2])), points: visible } as InkNode)
         if (drawing && share < 1 && share > 0) out.tips.push({ point: [visible[visible.length - 1][0], visible[visible.length - 1][1]], color: color ?? object.tipColor, size: dyn.ink!.width })
       })
-      for (const target of object.targets) out.overrides.set(target.nodeId, { opacity: 0 })
+      for (const target of object.targets) setOverride(out, target.nodeId, { opacity: 0 })
       continue
     }
 
@@ -261,7 +282,7 @@ export function sceneFrame(play: ScenePlay, t: number, inkIndex: InkIndex | null
         else if (dyn.kind === 'live') override.params = blendParams(now.a, now.b, now.k)
       }
       if (override.matrix || override.opacity !== undefined || override.reveal !== undefined || override.fill !== undefined || override.color || override.d !== undefined || override.html !== undefined || override.params) {
-        out.overrides.set(target.nodeId, override)
+        setOverride(out, target.nodeId, override)
       }
       // The pen tip on a vector outline being drawn now.
       if (drawing && !tipDone && !before && !target.ink && target.tipLines && target.tipLength && draw > 0 && draw < 1 && !dyn) {
@@ -309,8 +330,8 @@ export function inkIndexOf(play: ScenePlay, nodes: readonly BoardNode[], layout:
 }
 
 /** Speak a line with the system voice. */
-function speakLine(text: string, voiceName: string | null, onBoundary: (chars: number) => void): void {
-  if (typeof speechSynthesis === 'undefined') return
+function speakLine(text: string, voiceName: string | null, onBoundary: (start: number, end: number) => void, onStart: () => void): void {
+  if (typeof speechSynthesis === 'undefined') return onStart()
   const utterance = new SpeechSynthesisUtterance(text)
   const voices = speechSynthesis.getVoices()
   const voice =
@@ -319,12 +340,19 @@ function speakLine(text: string, voiceName: string | null, onBoundary: (chars: n
     voices.find((v) => v.lang.startsWith('en'))
   if (voice) utterance.voice = voice
   utterance.lang = voice?.lang ?? 'en-US'
-  utterance.onboundary = (event) => onBoundary(event.charIndex + (event.charLength ?? 0))
+  utterance.onboundary = (event) => onBoundary(event.charIndex, event.charIndex + (event.charLength ?? 0))
   // Checked 2026-10-25 (Electron, macOS): getVoices() lists the system voices, speaking is true during a line, and onstart/onboundary/onend fire.
   const asked = performance.now()
-  utterance.onstart = () => console.info(`speech: start after ${Math.round(performance.now() - asked)} ms: ${text.slice(0, 40)}`)
+  utterance.onstart = () => {
+    onStart()
+    console.info(`speech: start after ${Math.round(performance.now() - asked)} ms: ${text.slice(0, 40)}`)
+  }
+  // A voice that fails: the scene's clock does not wait for it.
+  utterance.onerror = (event) => {
+    onStart()
+    console.warn(`speech: ${event.error}: ${text.slice(0, 40)}`)
+  }
   utterance.onend = () => console.info(`speech: end after ${Math.round(performance.now() - asked)} ms`)
-  utterance.onerror = (event) => console.warn(`speech: ${event.error}: ${text.slice(0, 40)}`)
   speechSynthesis.speak(utterance)
 }
 
@@ -344,6 +372,42 @@ function stopSpeech(): void {
   if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel()
 }
 
+/** A node as a comparable string (its sequence number left out), to tell whether it changed since a scene. */
+export function nodeSig(node: BoardNode): string {
+  const { seq: _seq, ...rest } = node as BoardNode & { seq?: number }
+  return JSON.stringify(rest)
+}
+
+/** A scene as it was committed, for replay: its play and its items then (as top-level ghosts, in world coordinates). */
+export interface SceneMemory {
+  play: ScenePlay
+  speak: boolean
+  voice: string | null
+  snapshot: Map<string, { sig: string; ghost: BoardNode }>
+}
+
+/** One mark heard (or given up on) while a scene spoke: for the lab and the dev hook. */
+export interface MarkSync {
+  scene: string
+  mark: string
+  /** Scene time of the mark on the timeline. */
+  planned: number
+  /** Scene time when the voice reached the word (before any correction); null: the voice did not reach it in time. */
+  voice: number | null
+  /** How long the clock waited at the mark for the voice. */
+  held_ms: number
+  /** How far the clock jumped ahead to meet a voice that was early (s). */
+  jumped_s: number
+  wall: number
+}
+
+/** The longest the clock waits at a mark for the voice. */
+const MAX_HOLD_MS = 800
+/** The furthest the clock jumps ahead to a voice that is early (s). */
+const MAX_JUMP_S = 0.8
+/** A queued scene that starts within this long of the one before it ends starts exactly at that end (no gap, no overlap). */
+const HANDOFF_MS = 250
+
 export class ScenePlayer {
   private board: BoardHandle | null = null
   private scenes: Playing[] = []
@@ -352,6 +416,16 @@ export class ScenePlayer {
   private wasDrawing = false
   private notes: ScenePauseNote[] = []
   private latest: { frame: PlaybackFrame | null } = { frame: null }
+  /** performance.now() when the last queued scene reached its end. */
+  private queueEnd: number | null = null
+  private history = new Map<string, SceneMemory>()
+  private replays = 0
+  private swaps = 0
+  private markLog: MarkSync[] = []
+  /** When each scene started and ended on the clock (Date ms; for the lab's hand-off measures). */
+  private playLog: Array<{ scene: string; start: number; end: number | null }> = []
+  private waiters: Array<{ done: () => boolean; resolve: () => void }> = []
+  private waitTimer: ReturnType<typeof setInterval> | null = null
 
   constructor() {
     setSceneUiActions({ pause: () => void this.control('pause'), resume: () => void this.control('resume') })
@@ -360,26 +434,37 @@ export class ScenePlayer {
   /**
    * Add a scene: it plays now (mode "now", or nothing ahead of it), or after
    * the queued scenes ahead of it. Returns the seconds until it starts (pauses
-   * not counted).
+   * not counted). startAt: the scene time it starts from (a replayed step).
    */
-  enqueue(board: BoardHandle, play: ScenePlay, options: { mode: 'queue' | 'now'; speak: boolean; voice: string | null; revert: () => void }): number {
-    if (board !== this.board) this.stopAll()
+  enqueue(board: BoardHandle, play: ScenePlay, options: { mode: 'queue' | 'now'; speak: boolean; voice: string | null; revert: () => void; startAt?: number }): number {
+    if (board !== this.board) {
+      this.stopAll()
+      this.history.clear()
+    }
     this.board = board
     const startsIn = options.mode === 'now' ? 0 : this.queueWait()
+    const startAt = Math.max(0, Math.min(play.duration, options.startAt ?? 0))
+    const passed = new Set<number>()
+    play.steps.forEach((step, i) => {
+      if (step.pause && step.at < startAt - 1e-6) passed.add(i)
+    })
     this.scenes.push({
       play,
       mode: options.mode,
       origin: null,
       pausedAt: null,
       pauseAt: null,
-      lastT: 0,
-      passed: new Set(),
+      lastT: startAt,
+      passed,
       startedEpoch: 0,
       cameraBlocked: false,
       speak: options.speak,
       voice: options.voice,
       revert: options.revert,
-      spoken: null
+      spoken: null,
+      startAt,
+      heard: new Set(),
+      hold: null
     })
     const state = board.liveState()
     for (const [id, entry] of inkIndexOf(play, state.nodes, state.layout())) this.inkPoints.set(id, entry)
@@ -388,13 +473,104 @@ export class ScenePlayer {
     return Math.round(startsIn * 1000) / 1000
   }
 
+  /** Keep a committed scene for replay. */
+  remember(memory: SceneMemory): void {
+    this.history.set(memory.play.id, memory)
+  }
+
+  /** The stage started new: earlier scenes can no longer be replayed. */
+  resetStage(): void {
+    this.history.clear()
+  }
+
+  /** A scene that was committed again (replace, cut): the new play takes its place, keeping its place in the queue and its clock. */
+  swap(board: BoardHandle, id: string, play: ScenePlay, revert: () => void): boolean {
+    const scene = this.scenes.find((entry) => entry.play.id === id)
+    if (!scene) return false
+    scene.play = play
+    scene.revert = revert
+    this.swaps++
+    const state = board.liveState()
+    for (const [nodeId, entry] of inkIndexOf(play, state.nodes, state.layout())) this.inkPoints.set(nodeId, entry)
+    const memory = this.history.get(id)
+    if (memory) memory.play = play
+    this.render()
+    this.schedule()
+    return true
+  }
+
+  /** Take a waiting scene out of the queue (its items are already reverted). */
+  drop(id: string): void {
+    this.scenes = this.scenes.filter((scene) => scene.play.id !== id || scene.origin !== null)
+    this.history.delete(id)
+    this.render()
+  }
+
+  /** The scenes of the stage that were committed, oldest first (for replay). */
+  memories(): SceneMemory[] {
+    return [...this.history.values()]
+  }
+
+  /**
+   * Play an earlier scene again, or from one of its steps: items it made or
+   * changed that are different now show as they were then (ghosts over the
+   * hidden current item), then play forward. Returns the replay's id and
+   * where it starts, or an error text.
+   */
+  replay(board: BoardHandle, target: { scene?: string; step?: string }, mode: 'queue' | 'now'): { scene: string; of: string; from: number; starts_in_s: number } | { error: string } {
+    let memory: SceneMemory | undefined
+    let from = 0
+    if (target.scene) {
+      memory = this.history.get(target.scene)
+      if (!memory) return { error: `There is no scene "${target.scene}" in this stage to replay (scenes of the current stage: ${[...this.history.keys()].join(', ') || 'none'}).` }
+      if (target.step) {
+        const step = memory.play.steps.find((entry) => entry.name === target.step)
+        if (!step) return { error: `Scene ${target.scene} has no step "${target.step}" (its steps: ${memory.play.steps.map((entry) => entry.name).join(', ') || 'none'}).` }
+        from = step.at
+      }
+    } else if (target.step) {
+      for (const entry of [...this.history.values()].reverse()) {
+        const step = entry.play.steps.find((s) => s.name === target.step)
+        if (step) {
+          memory = entry
+          from = step.at
+          break
+        }
+      }
+      if (!memory) return { error: `No scene of this stage has a step "${target.step}".` }
+    } else return { error: 'replay needs scene or step.' }
+    const play = memory.play
+    const id = `${play.id}~r${++this.replays}`
+    const present = new Map(board.liveState().nodes.map((node) => [node.id, node]))
+    const ghosts: BoardNode[] = []
+    const hidden: string[] = []
+    const remap = new Map<string, string>()
+    for (const object of play.objects) {
+      for (const t of object.targets) {
+        if (remap.has(t.nodeId)) continue
+        const snap = memory.snapshot.get(t.nodeId)
+        if (!snap) continue
+        const now = present.get(t.nodeId)
+        if (now && nodeSig(now) === snap.sig) continue
+        const ghostId = `${id}:${t.nodeId}`
+        remap.set(t.nodeId, ghostId)
+        ghosts.push({ ...snap.ghost, id: ghostId } as BoardNode)
+        if (now) hidden.push(t.nodeId)
+      }
+    }
+    const objects = play.objects.map((object) => ({ ...object, targets: object.targets.map((t) => (remap.has(t.nodeId) ? { ...t, nodeId: remap.get(t.nodeId) as string } : t)) }))
+    const clone: ScenePlay = { ...play, id, objects, ghosts: [...play.ghosts, ...ghosts], hidden }
+    const startsIn = this.enqueue(board, clone, { mode, speak: memory.speak, voice: memory.voice, revert: () => undefined, startAt: from })
+    return { scene: id, of: play.id, from, starts_in_s: startsIn }
+  }
+
   /** Seconds until a scene added now to the queue would start. */
   private queueWait(): number {
     const now = performance.now()
     let wait = 0
     for (const scene of this.scenes) {
       if (scene.mode !== 'queue') continue
-      if (scene.origin === null) wait += scene.play.duration
+      if (scene.origin === null) wait += scene.play.duration - scene.startAt
       else wait += Math.max(0, scene.play.duration - (scene.pausedAt ?? (now - scene.origin) / 1000))
     }
     return wait
@@ -415,6 +591,7 @@ export class ScenePlayer {
     this.board?.setPlayback(null)
     this.latest.frame = null
     setSceneUiState(null)
+    this.settleWaiters()
   }
 
   /** The board went away (unmount, another board): forget it without touching it. */
@@ -427,7 +604,9 @@ export class ScenePlayer {
     stopSpeech()
     this.board = null
     this.latest.frame = null
+    this.history.clear()
     setSceneUiState(null)
+    this.settleWaiters()
   }
 
   private schedule(): void {
@@ -465,12 +644,35 @@ export class ScenePlayer {
   private pauseNow(scene: Playing, t: number, byLearner: boolean, keepSpeech = false): void {
     scene.pausedAt = Math.max(0, Math.min(scene.play.duration, t))
     scene.pauseAt = null
+    scene.hold = null
     if (!keepSpeech) stopSpeech()
     scene.spoken = null
     if (byLearner) {
       const step = scene.play.steps.find((entry) => Math.abs(entry.at - scene.pausedAt!) < 1e-6)?.name ?? this.stepNameAt(scene.play, scene.pausedAt)
       this.notes.push({ scene: scene.play.id, name: scene.play.name, step, t: Math.round(scene.pausedAt * 10) / 10, duration: scene.play.duration })
     }
+  }
+
+  /** The voice reached a word: the marks before it are heard; a voice ahead of the clock moves the clock up to it. */
+  private heardWord(scene: Playing, cueIndex: number, charStart: number): void {
+    const cue = scene.play.cues[cueIndex]
+    if (!cue?.marks || scene.origin === null) return
+    const now = performance.now()
+    cue.marks.forEach((mark, i) => {
+      const key = `${cueIndex}:${i}`
+      if (scene.heard.has(key) || mark.char > charStart) return
+      scene.heard.add(key)
+      const t = this.timeOf(scene, now)
+      const held = scene.hold?.key === key ? now - scene.hold.since : 0
+      if (scene.hold?.key === key) scene.hold = null
+      let jumped = 0
+      if (scene.pausedAt === null && t < mark.at - 0.02 && mark.at - t <= MAX_JUMP_S) {
+        jumped = mark.at - t
+        scene.origin = (scene.origin as number) - jumped * 1000
+      }
+      this.markLog.push({ scene: scene.play.id, mark: mark.name, planned: mark.at, voice: Math.round(t * 1000) / 1000, held_ms: Math.round(held), jumped_s: Math.round(jumped * 1000) / 1000, wall: Date.now() })
+      if (this.markLog.length > 400) this.markLog.splice(0, this.markLog.length - 400)
+    })
   }
 
   /** Move on in each scene: start queued ones, stop at pauses, speak, move the camera. */
@@ -488,9 +690,13 @@ export class ScenePlayer {
           keep.push(scene)
           continue
         }
-        scene.origin = now
+        // Back to back: a scene that follows the one before starts at its exact end, so the pen goes on without a gap.
+        const at = scene.mode === 'queue' && this.queueEnd !== null && now - this.queueEnd < HANDOFF_MS ? this.queueEnd : now
+        scene.origin = at - scene.startAt * 1000
         scene.startedEpoch = Date.now()
-        scene.lastT = 0
+        this.playLog.push({ scene: scene.play.id, start: Math.round(performance.timeOrigin + at), end: null })
+        if (this.playLog.length > 200) this.playLog.splice(0, this.playLog.length - 200)
+        scene.lastT = scene.startAt
       }
       let t = this.timeOf(scene, now)
       if (scene.pausedAt === null) {
@@ -508,15 +714,56 @@ export class ScenePlayer {
           t = scene.pausedAt as unknown as number
         }
       }
+      // Speech is the clock: at the start of a line the clock waits until the voice starts it, and at a
+      // mark until the voice reaches the word.
+      const opening = scene.spoken
+      if (scene.speak && scene.pausedAt === null && opening && !opening.started && t > opening.at) {
+        if (now - opening.since < MAX_HOLD_MS) {
+          scene.origin = now - opening.at * 1000
+          t = opening.at
+        } else {
+          opening.started = true
+          this.markLog.push({ scene: scene.play.id, mark: '(line start)', planned: opening.at, voice: null, held_ms: Math.round(now - opening.since), jumped_s: 0, wall: Date.now() })
+        }
+      } else if (scene.speak && scene.pausedAt === null && scene.spoken) {
+        const index = scene.spoken.index
+        const cue = scene.play.cues[index]
+        for (const [i, mark] of (cue?.marks ?? []).entries()) {
+          const key = `${index}:${i}`
+          if (scene.heard.has(key) || mark.at > t) continue
+          if (!scene.hold || scene.hold.key !== key) scene.hold = { key, since: now }
+          if (now - scene.hold.since < MAX_HOLD_MS) {
+            scene.origin = now - mark.at * 1000
+            t = mark.at
+          } else {
+            scene.heard.add(key)
+            this.markLog.push({ scene: scene.play.id, mark: mark.name, planned: mark.at, voice: null, held_ms: Math.round(now - scene.hold.since), jumped_s: 0, wall: Date.now() })
+            scene.hold = null
+          }
+          break
+        }
+      }
       // What starts between the last frame and now: spoken lines and camera moves.
       const from = scene.lastT
       if (t > from) {
         scene.play.cues.forEach((cue, index) => {
           if (cue.at < from || cue.at >= t || !scene.speak) return
-          scene.spoken = { index, chars: 0 }
-          speakLine(cue.text, scene.voice, (chars) => {
-            if (scene.spoken && scene.spoken.index === index) scene.spoken.chars = chars
-          })
+          const spoken = { index, chars: 0, at: cue.at, since: performance.now(), started: false }
+          scene.spoken = spoken
+          speakLine(
+            cue.text,
+            scene.voice,
+            (start, end) => {
+              if (scene.spoken && scene.spoken.index === index) scene.spoken.chars = end
+              this.heardWord(scene, index, start)
+            },
+            () => {
+              if (spoken.started) return
+              spoken.started = true
+              const held = performance.now() - spoken.since
+              this.markLog.push({ scene: scene.play.id, mark: '(line start)', planned: cue.at, voice: cue.at, held_ms: Math.round(held), jumped_s: 0, wall: Date.now() })
+            }
+          )
         })
         for (const move of scene.play.camera) {
           if (move.start < from || move.start >= t) continue
@@ -527,7 +774,12 @@ export class ScenePlayer {
         }
         scene.lastT = t
       }
-      if (scene.pausedAt === null && t > scene.play.duration + 0.05) continue
+      if (scene.pausedAt === null && t >= scene.play.duration) {
+        if (scene.mode === 'queue') this.queueEnd = (scene.origin as number) + scene.play.duration * 1000
+        const logged = [...this.playLog].reverse().find((entry) => entry.scene === scene.play.id && entry.end === null)
+        if (logged) logged.end = Math.round(performance.timeOrigin + (scene.origin as number) + scene.play.duration * 1000)
+        continue
+      }
       keep.push(scene)
     }
     this.scenes = keep
@@ -535,7 +787,10 @@ export class ScenePlayer {
 
   private render(): void {
     const board = this.board
-    if (!board) return
+    if (!board) {
+      this.settleWaiters()
+      return
+    }
     const now = performance.now()
     this.advance(now)
     if (!this.scenes.length) {
@@ -543,15 +798,26 @@ export class ScenePlayer {
       board.setPlayback(null)
       this.latest.frame = null
       setSceneUiState(null)
+      this.settleWaiters()
       return
     }
     const out: SceneFrame = { overrides: new Map(), tips: [], inks: [] }
     const clocks = new Map<string, { t: number; playing: boolean; step: string | null; end: number }>()
+    // The nodes each scene's earlier scenes still animate (a later scene that carries one leaves it to them).
+    const claimedBefore: Array<Set<string>> = []
+    let claimed = new Set<string>()
+    for (const scene of this.scenes) {
+      claimedBefore.push(claimed)
+      const t = this.timeOf(scene, now)
+      const next = new Set(claimed)
+      for (const object of scene.play.objects) if (object.ghost || t < object.settled) for (const target of object.targets) next.add(target.nodeId)
+      claimed = next
+    }
     // Later scenes first, so an earlier scene's look of a node it animates wins.
     for (let i = this.scenes.length - 1; i >= 0; i--) {
       const scene = this.scenes[i]
       const t = this.timeOf(scene, now)
-      sceneFrame(scene.play, t, this.inkPoints, out)
+      sceneFrame(scene.play, t, this.inkPoints, out, claimedBefore[i])
       const clock = { t, playing: scene.origin !== null && scene.pausedAt === null, step: this.stepNameAt(scene.play, t), end: scene.play.duration }
       for (const object of scene.play.objects) for (const target of object.targets) clocks.set(target.nodeId, clock)
     }
@@ -559,13 +825,14 @@ export class ScenePlayer {
     this.latest.frame = frame
     board.setPlayback(frame)
     this.publish(now)
+    this.settleWaiters()
   }
 
   private ghostCache: { key: string; list: PlaybackFrame['ghosts'] } = { key: '', list: [] }
 
   /** The same array while the set of scenes is the same (the board re-renders ghosts only when it changes). */
   private ghostList(scenes: Playing[]): PlaybackFrame['ghosts'] {
-    const key = scenes.map((scene) => scene.play.id).join(',')
+    const key = `${this.swaps}|${scenes.map((scene) => scene.play.id).join(',')}`
     if (key !== this.ghostCache.key) this.ghostCache = { key, list: scenes.flatMap((scene) => scene.play.ghosts) }
     return this.ghostCache.list
   }
@@ -632,16 +899,82 @@ export class ScenePlayer {
     } else if (action === 'stop') {
       // The playing scenes jump to their end state; the next queued scene starts.
       this.scenes = this.scenes.filter((scene) => scene.origin === null)
+      this.queueEnd = null
       stopSpeech()
     } else if (action === 'skip') {
       const dropped = this.scenes.filter((scene) => scene.origin === null)
       this.scenes = this.scenes.filter((scene) => scene.origin !== null)
       // Their items were committed when they were sent: take them off again (newest first).
-      for (const scene of dropped.reverse()) scene.revert()
+      for (const scene of dropped.reverse()) {
+        scene.revert()
+        this.history.delete(scene.play.id)
+      }
     }
     this.render()
     this.schedule()
     return this.status()
+  }
+
+  /** Seconds until this scene starts (pauses not counted); negative for a scene that plays now (its time so far). */
+  startsIn(id: string): number {
+    const now = performance.now()
+    let wait = 0
+    for (const scene of this.scenes) {
+      if (scene.play.id === id) return Math.round((scene.origin === null ? wait : -this.timeOf(scene, now)) * 1000) / 1000
+      if (scene.mode !== 'queue') continue
+      if (scene.origin === null) wait += scene.play.duration - scene.startAt
+      else wait += Math.max(0, scene.play.duration - (scene.pausedAt ?? (now - scene.origin) / 1000))
+    }
+    return 0
+  }
+
+  /** Take these scenes' items off the board again (newest first); they stay in the queue until swapped or dropped. */
+  revertScenes(ids: string[]): void {
+    for (const scene of [...this.scenes].reverse()) if (ids.includes(scene.play.id)) scene.revert()
+  }
+
+  /** The scene ids that wait in the queue (not started), in order. */
+  waiting(): string[] {
+    return this.scenes.filter((scene) => scene.origin === null).map((scene) => scene.play.id)
+  }
+
+  /** The scene that plays now and its time, or null. */
+  playing(): { id: string; t: number; duration: number; steps: ScenePlay['steps'] } | null {
+    const scene = this.current()
+    if (!scene) return null
+    return { id: scene.play.id, t: Math.max(0, this.timeOf(scene, performance.now())), duration: scene.play.duration, steps: scene.play.steps }
+  }
+
+  /** Resolve when done() holds (checked every frame, and twice a second when frames stop, as in a hidden window). */
+  private waitFor(done: () => boolean): Promise<void> {
+    if (done()) return Promise.resolve()
+    return new Promise((resolve) => {
+      this.waiters.push({ done, resolve })
+      this.waitTimer ??= setInterval(() => this.render(), 500)
+    })
+  }
+
+  private settleWaiters(): void {
+    if (!this.waiters.length) return
+    this.waiters = this.waiters.filter((waiter) => {
+      if (!waiter.done()) return true
+      waiter.resolve()
+      return false
+    })
+    if (!this.waiters.length && this.waitTimer !== null) {
+      clearInterval(this.waitTimer)
+      this.waitTimer = null
+    }
+  }
+
+  /** Resolves when this scene (and so every queued scene before it) has played to its end. */
+  untilPlayed(id: string): Promise<void> {
+    return this.waitFor(() => !this.scenes.some((scene) => scene.play.id === id))
+  }
+
+  /** Resolves when nothing plays or waits, or a scene stands paused (a pause step, the learner, scene_control pause). */
+  untilIdleOrPaused(): Promise<void> {
+    return this.waitFor(() => !this.scenes.length || this.scenes.some((scene) => scene.origin !== null && scene.pausedAt !== null))
   }
 
   status(): SceneStatus {
@@ -669,6 +1002,8 @@ export class ScenePlayer {
 
   /** What the learner sees now, for a screenshot during playback; null when nothing plays. */
   snapshot(): { frame: PlaybackFrame; status: SceneStatus } | null {
+    // The moment of now, not of the last animation frame: a window in the background gets no frames, so its last one can be old.
+    this.render()
     if (!this.scenes.length || !this.latest.frame) return null
     return { frame: this.latest.frame, status: this.status() }
   }
@@ -700,6 +1035,11 @@ export class ScenePlayer {
     this.schedule()
   }
 
+  /** Dev: the overrides of the last frame (node id → override), for the lab. */
+  debugFrame(): Array<[string, NodeOverride]> {
+    return this.latest.frame ? [...this.latest.frame.overrides] : []
+  }
+
   /** Dev: end every scene now. */
   finish(): void {
     this.stopAll()
@@ -715,7 +1055,9 @@ export class ScenePlayer {
       duration: scene ? scene.play.duration : null,
       steps: scene ? scene.play.steps : [],
       paused: !!scene && scene.pausedAt !== null,
-      queue: this.scenes.filter((entry) => entry.origin === null).length
+      queue: this.scenes.filter((entry) => entry.origin === null).length,
+      marks: this.markLog.slice(-100),
+      played: this.playLog.slice(-100)
     }
   }
 }
