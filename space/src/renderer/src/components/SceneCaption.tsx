@@ -11,14 +11,9 @@ interface CaptionView {
   rest: string
 }
 
-/** The spoken part of a cue: the voice's own count, else an estimate from the scene time. */
-function split(cue: SceneCueState, t: number): { spoken: string; rest: string } {
-  let spoken = cue.spokenSoFar
-  if (spoken === undefined || !cue.text.startsWith(spoken)) {
-    const share = Math.min(1, Math.max(0, (t - cue.at_s) / Math.max(0.001, cue.dur_s)))
-    const words = cue.text.split(/(?<=\s)/)
-    spoken = words.slice(0, Math.ceil(words.length * share)).join('')
-  }
+/** The part of a cue read so far (at the reading pace), and the rest. */
+function split(cue: SceneCueState): { spoken: string; rest: string } {
+  const spoken = cue.text.startsWith(cue.readSoFar) ? cue.readSoFar : ''
   return { spoken, rest: cue.text.slice(spoken.length) }
 }
 
@@ -26,7 +21,7 @@ let measureContext: CanvasRenderingContext2D | null = null
 
 /**
  * A cue longer than two caption lines shows as pages of at most two lines,
- * like film subtitles: the page that holds the word being spoken. Lines are
+ * like film subtitles: the page that holds the word being read. Lines are
  * packed with the caption's own font and width (a hidden probe element).
  */
 function page(probe: HTMLElement | null, spoken: string, rest: string): { spoken: string; rest: string } {
@@ -63,15 +58,15 @@ function page(probe: HTMLElement | null, spoken: string, rest: string): { spoken
 }
 
 /**
- * The tutor's words above the tool palette while a scene speaks: one or two
- * centred lines, spoken words bright, the rest muted. No card: a halo in the
+ * The tutor's words above the tool palette while a scene plays a line: one
+ * or two centred lines, the words read so far bright, the rest muted. No card: a halo in the
  * canvas colour keeps the text readable over the board.
  */
 export function SceneCaption() {
   const scene = useSceneState()
   const probe = useRef<HTMLDivElement>(null)
   const cue = scene.currentCue
-  const live: CaptionView | null = cue ? { key: `${cue.at_s}:${cue.text}`, ...split(cue, scene.t) } : null
+  const live: CaptionView | null = cue ? { key: `${cue.at_s}:${cue.text}`, ...split(cue) } : null
 
   // After a cue ends, its full line stays for LINGER_MS; a new cue replaces it at once.
   const [held, setHeld] = useState<CaptionView | null>(null)

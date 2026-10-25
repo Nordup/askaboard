@@ -6,7 +6,7 @@ import { revealPoints, type NodeOverride, type PlaybackFrame, type PlaybackTip }
 import type { Point } from '../board/types'
 import { sceneColor, withOpacity } from './colors'
 import type { DynSample, PlayObject, ScenePlay } from './compile'
-import { setSceneUiActions, setSceneUiState, type SceneCueState } from './state'
+import { setSceneUiActions, setSceneUiState, type SceneCueEntry, type SceneCueState, type SceneStepEntry } from './state'
 import { apply, isIdentity, multiply, type Matrix } from './timeline'
 
 /**
@@ -19,8 +19,10 @@ import { apply, isIdentity, multiply, type Matrix } from './timeline'
  * items are committed at once and stay hidden until then); a scene sent with
  * when "now" plays at once, over the others. A scene stops at a pause step,
  * or at the next step when the learner starts drawing, until it is resumed.
- * It speaks its lines (say) when speech is on, moves the learner's view
- * (camera) until the learner moves it, and shows a pointer (point).
+ * Nothing is spoken: the lines (say) are text on the timeline that the app
+ * shows at a reading pace (state.ts holds the current line and how far it
+ * is read). It moves the learner's view (camera) until the learner moves
+ * it, and shows a pointer (point).
  */
 
 interface Playing {
@@ -39,19 +41,16 @@ interface Playing {
   /** Date.now() when it started playing. */
   startedEpoch: number
   cameraBlocked: boolean
-  speak: boolean
-  voice: string | null
+  /** Why it stands paused (null while it plays). */
+  pausedBy: ScenePauseReason | null
   /** Undo its commit (skip). */
   revert: () => void
-  /** The cue being spoken and how far (word events). */
-  spoken: { index: number; chars: number; at: number; since: number; started: boolean } | null
   /** The scene time it starts from (0, or a replayed step). */
   startAt: number
-  /** Marks the voice has reached ("cue:mark"). */
-  heard: Set<string>
-  /** The clock waits at a mark for the voice, since this performance.now(). */
-  hold: { key: string; since: number } | null
 }
+
+/** What paused a scene: a step with {pause: true}, the learner's drawing, or scene_control pause. */
+export type ScenePauseReason = 'pause step' | 'learner drawing' | 'scene_control pause'
 
 /** A note for the board news: a scene paused because the learner drew. */
 export interface ScenePauseNote {
@@ -71,8 +70,6 @@ export interface ScenePlayerState {
   steps: Array<{ name: string; at: number }>
   paused: boolean
   queue: number
-  /** The latest marks heard while scenes spoke (speech sync). */
-  marks: MarkSync[]
   /** When the latest scenes started and ended (Date ms). */
   played: Array<{ scene: string; start: number; end: number | null }>
 }
@@ -329,49 +326,6 @@ export function inkIndexOf(play: ScenePlay, nodes: readonly BoardNode[], layout:
   return index
 }
 
-/** Speak a line with the system voice. */
-function speakLine(text: string, voiceName: string | null, onBoundary: (start: number, end: number) => void, onStart: () => void): void {
-  if (typeof speechSynthesis === 'undefined') return onStart()
-  const utterance = new SpeechSynthesisUtterance(text)
-  const voices = speechSynthesis.getVoices()
-  const voice =
-    (voiceName && (voices.find((v) => v.name === voiceName) ?? voices.find((v) => v.name.startsWith(voiceName.replace(/\s*\(.*\)$/, ''))))) ||
-    voices.find((v) => v.lang === 'en-US' && v.localService) ||
-    voices.find((v) => v.lang.startsWith('en'))
-  if (voice) utterance.voice = voice
-  utterance.lang = voice?.lang ?? 'en-US'
-  utterance.onboundary = (event) => onBoundary(event.charIndex, event.charIndex + (event.charLength ?? 0))
-  // Checked 2026-10-25 (Electron, macOS): getVoices() lists the system voices, speaking is true during a line, and onstart/onboundary/onend fire.
-  const asked = performance.now()
-  utterance.onstart = () => {
-    onStart()
-    console.info(`speech: start after ${Math.round(performance.now() - asked)} ms: ${text.slice(0, 40)}`)
-  }
-  // A voice that fails: the scene's clock does not wait for it.
-  utterance.onerror = (event) => {
-    onStart()
-    console.warn(`speech: ${event.error}: ${text.slice(0, 40)}`)
-  }
-  utterance.onend = () => console.info(`speech: end after ${Math.round(performance.now() - asked)} ms`)
-  speechSynthesis.speak(utterance)
-}
-
-/**
- * Load the system voice before a scene's first line (a silent utterance): a
- * cold voice starts its first line 0.3 to 0.8 s late. Called when run_scene
- * starts (sceneContext), seconds before the scene plays.
- */
-export function warmSpeech(): void {
-  if (typeof speechSynthesis === 'undefined' || speechSynthesis.speaking) return
-  const utterance = new SpeechSynthesisUtterance(' ')
-  utterance.volume = 0
-  speechSynthesis.speak(utterance)
-}
-
-function stopSpeech(): void {
-  if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel()
-}
-
 /** A node as a comparable string (its sequence number left out), to tell whether it changed since a scene. */
 export function nodeSig(node: BoardNode): string {
   const { seq: _seq, ...rest } = node as BoardNode & { seq?: number }
@@ -381,30 +335,46 @@ export function nodeSig(node: BoardNode): string {
 /** A scene as it was committed, for replay: its play and its items then (as top-level ghosts, in world coordinates). */
 export interface SceneMemory {
   play: ScenePlay
-  speak: boolean
-  voice: string | null
   snapshot: Map<string, { sig: string; ghost: BoardNode }>
 }
 
-/** One mark heard (or given up on) while a scene spoke: for the lab and the dev hook. */
-export interface MarkSync {
-  scene: string
-  mark: string
-  /** Scene time of the mark on the timeline. */
-  planned: number
-  /** Scene time when the voice reached the word (before any correction); null: the voice did not reach it in time. */
-  voice: number | null
-  /** How long the clock waited at the mark for the voice. */
-  held_ms: number
-  /** How far the clock jumped ahead to meet a voice that was early (s). */
-  jumped_s: number
-  wall: number
+/**
+ * The reading pace of say() lines, as in live-prelude.js (measureLine): word
+ * k of a line is reached 0.3 + k / 3.5 s after the line starts (the first
+ * word at once). Returns the words read so far and the share of the line's time.
+ */
+const WORDS_PER_S = 3.5
+function readAt(text: string, elapsed: number, dur: number): { text: string; progress: number } {
+  let out = ''
+  let word = 0
+  for (const part of text.split(/(\s+)/)) {
+    if (!part) continue
+    if (/^\s+$/.test(part)) {
+      if (out) out += part
+      continue
+    }
+    const reached = word === 0 ? 0 : 0.3 + word / WORDS_PER_S
+    if (reached > elapsed + 1e-6) break
+    out += part
+    word++
+  }
+  return { text: out.trimEnd(), progress: Math.round(Math.max(0, Math.min(1, elapsed / Math.max(0.001, dur))) * 1000) / 1000 }
 }
 
-/** The longest the clock waits at a mark for the voice. */
-const MAX_HOLD_MS = 800
-/** The furthest the clock jumps ahead to a voice that is early (s). */
-const MAX_JUMP_S = 0.8
+/** The cues and steps of a scene for the UI store, made once per play (the store compares them by reference). */
+const listCache = new WeakMap<ScenePlay, { cues: SceneCueEntry[]; steps: SceneStepEntry[] }>()
+function sceneLists(play: ScenePlay): { cues: SceneCueEntry[]; steps: SceneStepEntry[] } {
+  let lists = listCache.get(play)
+  if (!lists) {
+    lists = {
+      cues: play.cues.map((cue) => ({ text: cue.text, at_s: cue.at, dur_s: cue.dur, ...(cue.marks?.length ? { marks: Object.fromEntries(cue.marks.map((mark) => [mark.name, mark.at])) } : {}) })),
+      steps: play.steps.map((step) => ({ name: step.name, at_s: step.at, ...(step.pause ? { pause: true } : {}) }))
+    }
+    listCache.set(play, lists)
+  }
+  return lists
+}
+
 /** A queued scene that starts within this long of the one before it ends starts exactly at that end (no gap, no overlap). */
 const HANDOFF_MS = 250
 
@@ -421,7 +391,6 @@ export class ScenePlayer {
   private history = new Map<string, SceneMemory>()
   private replays = 0
   private swaps = 0
-  private markLog: MarkSync[] = []
   /** When each scene started and ended on the clock (Date ms; for the lab's hand-off measures). */
   private playLog: Array<{ scene: string; start: number; end: number | null }> = []
   private waiters: Array<{ done: () => boolean; resolve: () => void }> = []
@@ -436,7 +405,7 @@ export class ScenePlayer {
    * the queued scenes ahead of it. Returns the seconds until it starts (pauses
    * not counted). startAt: the scene time it starts from (a replayed step).
    */
-  enqueue(board: BoardHandle, play: ScenePlay, options: { mode: 'queue' | 'now'; speak: boolean; voice: string | null; revert: () => void; startAt?: number }): number {
+  enqueue(board: BoardHandle, play: ScenePlay, options: { mode: 'queue' | 'now'; revert: () => void; startAt?: number }): number {
     if (board !== this.board) {
       this.stopAll()
       this.history.clear()
@@ -458,13 +427,9 @@ export class ScenePlayer {
       passed,
       startedEpoch: 0,
       cameraBlocked: false,
-      speak: options.speak,
-      voice: options.voice,
+      pausedBy: null,
       revert: options.revert,
-      spoken: null,
-      startAt,
-      heard: new Set(),
-      hold: null
+      startAt
     })
     const state = board.liveState()
     for (const [id, entry] of inkIndexOf(play, state.nodes, state.layout())) this.inkPoints.set(id, entry)
@@ -560,7 +525,7 @@ export class ScenePlayer {
     }
     const objects = play.objects.map((object) => ({ ...object, targets: object.targets.map((t) => (remap.has(t.nodeId) ? { ...t, nodeId: remap.get(t.nodeId) as string } : t)) }))
     const clone: ScenePlay = { ...play, id, objects, ghosts: [...play.ghosts, ...ghosts], hidden }
-    const startsIn = this.enqueue(board, clone, { mode, speak: memory.speak, voice: memory.voice, revert: () => undefined, startAt: from })
+    const startsIn = this.enqueue(board, clone, { mode, revert: () => undefined, startAt: from })
     return { scene: id, of: play.id, from, starts_in_s: startsIn }
   }
 
@@ -587,7 +552,6 @@ export class ScenePlayer {
     this.frame = null
     this.scenes = []
     this.inkPoints.clear()
-    stopSpeech()
     this.board?.setPlayback(null)
     this.latest.frame = null
     setSceneUiState(null)
@@ -601,7 +565,6 @@ export class ScenePlayer {
     this.frame = null
     this.scenes = []
     this.inkPoints.clear()
-    stopSpeech()
     this.board = null
     this.latest.frame = null
     this.history.clear()
@@ -636,46 +599,21 @@ export class ScenePlayer {
       const t = this.timeOf(scene, now)
       const next = scene.play.steps.find((step) => step.at > t + 0.05)
       if (next) scene.pauseAt = next.at
-      else this.pauseNow(scene, t, true)
+      else this.pauseNow(scene, t, 'learner drawing')
     }
   }
 
-  /** keepSpeech: a pause step lets the line being spoken end (it ends at the step on the timeline, give or take the voice's lag). */
-  private pauseNow(scene: Playing, t: number, byLearner: boolean, keepSpeech = false): void {
+  private pauseNow(scene: Playing, t: number, reason: ScenePauseReason): void {
     scene.pausedAt = Math.max(0, Math.min(scene.play.duration, t))
     scene.pauseAt = null
-    scene.hold = null
-    if (!keepSpeech) stopSpeech()
-    scene.spoken = null
-    if (byLearner) {
+    scene.pausedBy = reason
+    if (reason === 'learner drawing') {
       const step = scene.play.steps.find((entry) => Math.abs(entry.at - scene.pausedAt!) < 1e-6)?.name ?? this.stepNameAt(scene.play, scene.pausedAt)
       this.notes.push({ scene: scene.play.id, name: scene.play.name, step, t: Math.round(scene.pausedAt * 10) / 10, duration: scene.play.duration })
     }
   }
 
-  /** The voice reached a word: the marks before it are heard; a voice ahead of the clock moves the clock up to it. */
-  private heardWord(scene: Playing, cueIndex: number, charStart: number): void {
-    const cue = scene.play.cues[cueIndex]
-    if (!cue?.marks || scene.origin === null) return
-    const now = performance.now()
-    cue.marks.forEach((mark, i) => {
-      const key = `${cueIndex}:${i}`
-      if (scene.heard.has(key) || mark.char > charStart) return
-      scene.heard.add(key)
-      const t = this.timeOf(scene, now)
-      const held = scene.hold?.key === key ? now - scene.hold.since : 0
-      if (scene.hold?.key === key) scene.hold = null
-      let jumped = 0
-      if (scene.pausedAt === null && t < mark.at - 0.02 && mark.at - t <= MAX_JUMP_S) {
-        jumped = mark.at - t
-        scene.origin = (scene.origin as number) - jumped * 1000
-      }
-      this.markLog.push({ scene: scene.play.id, mark: mark.name, planned: mark.at, voice: Math.round(t * 1000) / 1000, held_ms: Math.round(held), jumped_s: Math.round(jumped * 1000) / 1000, wall: Date.now() })
-      if (this.markLog.length > 400) this.markLog.splice(0, this.markLog.length - 400)
-    })
-  }
-
-  /** Move on in each scene: start queued ones, stop at pauses, speak, move the camera. */
+  /** Move on in each scene: start queued ones, stop at pauses, move the camera. */
   private advance(now: number): void {
     const board = this.board
     if (!board) return
@@ -705,66 +643,18 @@ export class ScenePlayer {
         for (let i = 0; i < steps.length; i++) {
           if (!steps[i].pause || scene.passed.has(i) || t < steps[i].at) continue
           scene.passed.add(i)
-          this.pauseNow(scene, steps[i].at, false, true)
+          this.pauseNow(scene, steps[i].at, 'pause step')
           t = steps[i].at
           break
         }
         if (scene.pausedAt === null && scene.pauseAt !== null && t >= scene.pauseAt) {
-          this.pauseNow(scene, scene.pauseAt, true)
+          this.pauseNow(scene, scene.pauseAt, 'learner drawing')
           t = scene.pausedAt as unknown as number
         }
       }
-      // Speech is the clock: at the start of a line the clock waits until the voice starts it, and at a
-      // mark until the voice reaches the word.
-      const opening = scene.spoken
-      if (scene.speak && scene.pausedAt === null && opening && !opening.started && t > opening.at) {
-        if (now - opening.since < MAX_HOLD_MS) {
-          scene.origin = now - opening.at * 1000
-          t = opening.at
-        } else {
-          opening.started = true
-          this.markLog.push({ scene: scene.play.id, mark: '(line start)', planned: opening.at, voice: null, held_ms: Math.round(now - opening.since), jumped_s: 0, wall: Date.now() })
-        }
-      } else if (scene.speak && scene.pausedAt === null && scene.spoken) {
-        const index = scene.spoken.index
-        const cue = scene.play.cues[index]
-        for (const [i, mark] of (cue?.marks ?? []).entries()) {
-          const key = `${index}:${i}`
-          if (scene.heard.has(key) || mark.at > t) continue
-          if (!scene.hold || scene.hold.key !== key) scene.hold = { key, since: now }
-          if (now - scene.hold.since < MAX_HOLD_MS) {
-            scene.origin = now - mark.at * 1000
-            t = mark.at
-          } else {
-            scene.heard.add(key)
-            this.markLog.push({ scene: scene.play.id, mark: mark.name, planned: mark.at, voice: null, held_ms: Math.round(now - scene.hold.since), jumped_s: 0, wall: Date.now() })
-            scene.hold = null
-          }
-          break
-        }
-      }
-      // What starts between the last frame and now: spoken lines and camera moves.
+      // What starts between the last frame and now: camera moves.
       const from = scene.lastT
       if (t > from) {
-        scene.play.cues.forEach((cue, index) => {
-          if (cue.at < from || cue.at >= t || !scene.speak) return
-          const spoken = { index, chars: 0, at: cue.at, since: performance.now(), started: false }
-          scene.spoken = spoken
-          speakLine(
-            cue.text,
-            scene.voice,
-            (start, end) => {
-              if (scene.spoken && scene.spoken.index === index) scene.spoken.chars = end
-              this.heardWord(scene, index, start)
-            },
-            () => {
-              if (spoken.started) return
-              spoken.started = true
-              const held = performance.now() - spoken.since
-              this.markLog.push({ scene: scene.play.id, mark: '(line start)', planned: cue.at, voice: cue.at, held_ms: Math.round(held), jumped_s: 0, wall: Date.now() })
-            }
-          )
-        })
         for (const move of scene.play.camera) {
           if (move.start < from || move.start >= t) continue
           // The learner moved the view during this scene: the scene's later camera moves are skipped.
@@ -855,20 +745,12 @@ export class ScenePlayer {
       if (step.at <= t + 1e-6) stepIndex = i
     })
     let currentCue: SceneCueState | null = null
-    scene.play.cues.forEach((cue, index) => {
-      if (t >= cue.at && t < cue.at + cue.dur) {
-        let spoken: string | undefined
-        if (scene.spoken && scene.spoken.index === index && scene.spoken.chars > 0) spoken = cue.text.slice(0, scene.spoken.chars)
-        else {
-          const words = cue.text.split(/(\s+)/)
-          const share = (t - cue.at) / Math.max(0.001, cue.dur)
-          const count = Math.ceil((words.length / 2) * share)
-          let seen = 0
-          spoken = words.filter((_word, i) => (i % 2 === 0 ? seen++ < count : seen <= count)).join('')
-        }
-        currentCue = { text: cue.text, at_s: cue.at, dur_s: cue.dur, spokenSoFar: spoken }
-      }
-    })
+    for (const cue of scene.play.cues) {
+      if (t < cue.at || t >= cue.at + cue.dur) continue
+      const read = readAt(cue.text, t - cue.at, cue.dur)
+      currentCue = { text: cue.text, at_s: cue.at, dur_s: cue.dur, readSoFar: read.text, progress: read.progress }
+    }
+    const lists = sceneLists(scene.play)
     setSceneUiState({
       playing: true,
       paused: scene.pausedAt !== null,
@@ -879,7 +761,9 @@ export class ScenePlayer {
       t: Math.round(Math.max(0, t) * 10) / 10,
       duration: scene.play.duration,
       queue: this.scenes.filter((entry) => entry.origin === null).length,
-      currentCue
+      currentCue,
+      cues: lists.cues,
+      steps: lists.steps
     })
   }
 
@@ -887,7 +771,7 @@ export class ScenePlayer {
   control(action: 'status' | 'pause' | 'resume' | 'stop' | 'skip'): SceneStatus {
     const now = performance.now()
     if (action === 'pause') {
-      for (const scene of this.scenes) if (scene.origin !== null && scene.pausedAt === null) this.pauseNow(scene, this.timeOf(scene, now), false)
+      for (const scene of this.scenes) if (scene.origin !== null && scene.pausedAt === null) this.pauseNow(scene, this.timeOf(scene, now), 'scene_control pause')
     } else if (action === 'resume') {
       for (const scene of this.scenes) {
         if (scene.origin === null || scene.pausedAt === null) continue
@@ -895,12 +779,12 @@ export class ScenePlayer {
         scene.lastT = scene.pausedAt
         scene.pausedAt = null
         scene.pauseAt = null
+        scene.pausedBy = null
       }
     } else if (action === 'stop') {
       // The playing scenes jump to their end state; the next queued scene starts.
       this.scenes = this.scenes.filter((scene) => scene.origin === null)
       this.queueEnd = null
-      stopSpeech()
     } else if (action === 'skip') {
       const dropped = this.scenes.filter((scene) => scene.origin === null)
       this.scenes = this.scenes.filter((scene) => scene.origin !== null)
@@ -967,20 +851,33 @@ export class ScenePlayer {
     }
   }
 
-  /** Resolves when this scene (and so every queued scene before it) has played to its end. */
-  untilPlayed(id: string): Promise<void> {
-    return this.waitFor(() => !this.scenes.some((scene) => scene.play.id === id))
+  /** A started scene that stands paused (playback stops there until it is resumed), or null. */
+  private pausedScene(): Playing | null {
+    return this.scenes.find((scene) => scene.origin !== null && scene.pausedAt !== null) ?? null
+  }
+
+  /**
+   * Resolves when this scene (and so every queued scene before it) has played
+   * to its end (true), or when playback stops at a pause before that: a pause
+   * step, the learner's drawing or scene_control pause (false; status() says
+   * which). A scene that is not playing or waiting has ended.
+   */
+  async untilPlayed(id: string): Promise<boolean> {
+    const gone = (): boolean => !this.scenes.some((scene) => scene.play.id === id)
+    await this.waitFor(() => gone() || this.pausedScene() !== null)
+    return gone()
   }
 
   /** Resolves when nothing plays or waits, or a scene stands paused (a pause step, the learner, scene_control pause). */
   untilIdleOrPaused(): Promise<void> {
-    return this.waitFor(() => !this.scenes.length || this.scenes.some((scene) => scene.origin !== null && scene.pausedAt !== null))
+    return this.waitFor(() => !this.scenes.length || this.pausedScene() !== null)
   }
 
   status(): SceneStatus {
     const now = performance.now()
     const scene = this.current()
     const t = scene ? this.timeOf(scene, now) : null
+    const paused = this.pausedScene()
     return {
       playing: !!scene && scene.pausedAt === null,
       scene: scene?.play.id ?? null,
@@ -989,6 +886,7 @@ export class ScenePlayer {
       duration: scene?.play.duration ?? null,
       step: scene && t !== null ? this.stepNameAt(scene.play, t) : null,
       paused: !!scene && scene.pausedAt !== null,
+      ...(paused ? { paused_by: paused.pausedBy ?? 'scene_control pause', paused_scene: paused.play.id, paused_step: this.stepNameAt(paused.play, paused.pausedAt as number), paused_t: Math.round((paused.pausedAt as number) * 100) / 100 } : {}),
       queue: this.scenes.filter((entry) => entry.origin === null).map((entry) => ({ scene: entry.play.id, name: entry.play.name, duration_s: entry.play.duration }))
     }
   }
@@ -1023,8 +921,10 @@ export class ScenePlayer {
         scene.lastT = scene.pausedAt
       }
       scene.pausedAt = null
+      scene.pausedBy = null
     } else {
       scene.pausedAt = Math.max(0, Math.min(scene.play.duration, t))
+      scene.pausedBy = 'scene_control pause'
       // A seek passes the pause steps before it.
       scene.play.steps.forEach((step, i) => {
         if (step.pause && step.at <= scene.pausedAt!) scene.passed.add(i)
@@ -1056,7 +956,6 @@ export class ScenePlayer {
       steps: scene ? scene.play.steps : [],
       paused: !!scene && scene.pausedAt !== null,
       queue: this.scenes.filter((entry) => entry.origin === null).length,
-      marks: this.markLog.slice(-100),
       played: this.playLog.slice(-100)
     }
   }

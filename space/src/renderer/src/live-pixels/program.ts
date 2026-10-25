@@ -31,6 +31,8 @@ export interface LiveClock {
   step: string | null
   /** The scene's duration. */
   end: number
+  /** Storyboard frames only: run the program up to this moment (see ProgramSim). */
+  sim?: ProgramSim
 }
 
 export interface ProgramHostEvents {
@@ -39,6 +41,8 @@ export interface ProgramHostEvents {
   onInput(mode: LiveInput): void
   onReport(values: unknown): void
   onEscape(): void
+  /** A storyboard run (sim) moved on. */
+  onProgress?(): void
 }
 
 /** The worker script. __CODE__ is the agent's program as an async function body (shared/live-libs.ts programBody). */
@@ -47,12 +51,16 @@ const TEMPLATE = `'use strict';
   const scope = self;
   const nativeRaf = scope.requestAnimationFrame.bind(scope);
   const perf = scope.performance;
-  const now = perf.now.bind(perf);
+  const realNow = perf.now.bind(perf);
+  // A storyboard frame runs the program on a virtual clock (sim): now() is that clock while it is set.
+  let vnow = null;
+  const now = () => (vnow === null ? realNow() : vnow);
+  try { Object.defineProperty(perf, 'now', { value: now, configurable: true, writable: true }); } catch (e) {}
   const toFrame = scope.postMessage.bind(scope);
   let port = null;
   const post = (m) => { if (port) { try { port.postMessage(m); } catch (e) { post({ type: 'error', message: 'report: values must be plain data' }); } } };
   let canvas = null, w = 1, h = 1, pw = 1, ph = 1, start = 0;
-  let visible = false, failed = false, frames = 0;
+  let visible = false, failed = false, frames = 0, simulating = false;
   const params = {};
   const colors = {};
   const clock = { t: 0, at: 0, playing: false, active: false, ended: true, step: null };
@@ -82,7 +90,7 @@ const TEMPLATE = `'use strict';
   const pending = new Map();
   let nextId = 1, scheduled = 0;
   const stills = [];
-  const schedule = () => { if (!scheduled && visible && !failed && pending.size) scheduled = nativeRaf(runFrame); };
+  const schedule = () => { if (!scheduled && !simulating && visible && !failed && pending.size) scheduled = nativeRaf(runFrame); };
   const takeStills = () => {
     const ids = stills.splice(0);
     if (!ids.length) return;
@@ -199,8 +207,59 @@ const TEMPLATE = `'use strict';
     setInterval(() => post({ type: 'alive', frames }), 250);
     post({ type: 'alive', frames });
     if (m.check) return;
-    main().catch(fail);
+    if (m.sim) simulating = true;
+    const running = main();
+    running.catch(fail);
+    if (m.sim) simulate(m.sim, running).catch(fail);
   });
+
+  // Storyboard frames (sim): run the program from the moment the item appeared (sim.from, scene time) to
+  // the frame's moment (sim.to) on a virtual clock, 30 frames a second, with the scene's params of each
+  // moment, as fast as it computes; then hold the clock there, so the picture is the program's own state
+  // at that moment (its integrators, damped cameras and anything it keeps from frame to frame).
+  const simulate = async (sim, running) => {
+    let setUp = false;
+    running.then(() => { setUp = true; }, () => { setUp = true; });
+    vnow = 0;
+    start = perf.timeOrigin;
+    const samples = Array.isArray(sim.params) ? sim.params : [];
+    const steps = Array.isArray(sim.steps) ? sim.steps : [];
+    const at = (st) => {
+      if (samples.length) {
+        let pick = samples[0];
+        for (const sample of samples) { if (sample[0] <= st + 1e-6) pick = sample; else break; }
+        Object.assign(params, pick[1]);
+      }
+      let step = null;
+      for (const entry of steps) if (entry[0] <= st + 1e-6) step = entry[1];
+      setClock({ clock: { t: st, playing: true, step } });
+      clock.at = vnow;
+    };
+    at(sim.from);
+    // The program's setup: until it asks for its first frame or its top level ends (imports load in real time).
+    while (!pending.size && !setUp && !failed) await new Promise((resolve) => setTimeout(resolve, 10));
+    const total = Math.max(0, sim.to - sim.from) * 1000;
+    const stepMs = 1000 / 30;
+    let lastYield = realNow();
+    for (let k = 1; !failed; k++) {
+      const v = Math.min(total, k * stepMs);
+      vnow = v;
+      at(sim.from + v / 1000);
+      const list = [...pending.values()];
+      pending.clear();
+      for (const cb of list) { try { cb(v); } catch (e) { fail(e); return; } }
+      if (realNow() - lastYield > 100) {
+        post({ type: 'sim', share: total ? v / total : 1 });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        lastYield = realNow();
+      }
+      if (v >= total) break;
+    }
+    setClock({ clock: { t: sim.to, playing: false, step: clock.step } });
+    simulating = false;
+    post({ type: 'sim', share: 1 });
+    schedule();
+  };
 
   const main = async function () {
 __CODE__
@@ -262,6 +321,16 @@ export interface ProgramStart {
   clock?: LiveClock | null
   /** Load and set up only: the program does not run (the syntax check). */
   check?: boolean
+  /** A storyboard frame: run from the item's first moment to the frame's moment on a virtual clock (see simulate in the worker). */
+  sim?: ProgramSim | null
+}
+
+/** Run a program over scene time [from, to] (s): params samples [t, params] and steps [at, name] of the scene. */
+export interface ProgramSim {
+  from: number
+  to: number
+  params: Array<[number, Record<string, number>]> | null
+  steps: Array<[number, string]>
 }
 
 /** One item frame and its worker. */
@@ -304,7 +373,7 @@ export class ProgramHost {
     if (m.type === 'ready' && !this.started) {
       this.started = true
       const s = this.start
-      const init = { w: s.size.w, h: s.size.h, pw: s.size.pw, ph: s.size.ph, params: s.params, start: s.start, colors: boardColors(), visible: s.visible, clock: s.clock ?? null, check: !!s.check }
+      const init = { w: s.size.w, h: s.size.h, pw: s.size.pw, ph: s.size.ph, params: s.params, start: s.start, colors: boardColors(), visible: s.visible, clock: s.clock ?? null, check: !!s.check, sim: s.sim ?? null }
       this.frame.contentWindow?.postMessage({ type: 'start', url: programUrl(s.code), port: this.channel.port2, init }, '*', [this.channel.port2])
     } else if (m.type === 'load-error') {
       this.events.onError(loadError(typeof m.message === 'string' ? m.message : '', typeof m.line === 'number' ? m.line : 0))
@@ -316,6 +385,7 @@ export class ProgramHost {
     if (!data || typeof data !== 'object') return
     const m = data as { type?: unknown; frames?: unknown; message?: unknown; id?: unknown; blob?: unknown; mode?: unknown; values?: unknown }
     if (m.type === 'alive' && typeof m.frames === 'number') this.events.onTick(m.frames)
+    else if (m.type === 'sim') this.events.onProgress?.()
     else if (m.type === 'error' && typeof m.message === 'string') {
       this.events.onError(mapLines(m.message))
       this.stop()

@@ -30,8 +30,6 @@ export interface SceneContext {
 export interface SceneRunOptions {
   /** Seed of the program's Math.random (the same in both passes of a run). */
   seed: number
-  /** Speech is on: say() measures each line (and its marks) with the system voice. */
-  speech: boolean
   /** Cut the scene at this time (scene_control cut): what starts later is dropped, what runs then holds. */
   cutAt?: number | null
 }
@@ -185,12 +183,12 @@ export interface ScenePointerAction {
   to: [number, number] | null
 }
 
-/** A spoken line on the timeline. */
+/** A line (say) on the timeline: text the learner reads; nothing is spoken. dur is its reading time. */
 export interface SceneCue {
   text: string
   at: number
   dur: number
-  /** Marks ([[name]] in the line): when the word after each is spoken (scene time), and its character index in text. */
+  /** Marks ([[name]] in the line): when the word after each is reached at the reading pace (scene time), and its character index in text. */
   marks?: Array<{ name: string; at: number; char: number }>
 }
 
@@ -247,6 +245,11 @@ export interface SceneStatus {
   duration: number | null
   step: string | null
   paused: boolean
+  /** When a scene stands paused: why, which scene, its step and time. */
+  paused_by?: 'pause step' | 'learner drawing' | 'scene_control pause'
+  paused_scene?: string
+  paused_step?: string | null
+  paused_t?: number
   queue: Array<{ scene: string; name: string | null; duration_s: number }>
 }
 

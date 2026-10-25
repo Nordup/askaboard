@@ -16,11 +16,10 @@
  * --gap S adds a sleep of S s after each run step that has no sleep after it (default 0).
  *
  * The run folder (space/.lab/runs/) gets plan.json, the programs, calls.json
- * (every call with its wall times and result), marks.json (speech marks
- * heard while playing), video-real.mp4, video.mp4, filmstrip.png (a frame at
+ * (every call with its wall times and result), video-real.mp4, video.mp4, filmstrip.png (a frame at
  * each call), final.png, frames.json (when the board changed) and meta.json
  * with the numbers: time from the first call to the first visible change,
- * the gaps with no visible change after it, and the marks' timing.
+ * and the gaps with no visible change after it.
  */
 import { copyFileSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
@@ -146,7 +145,6 @@ async function main() {
   await sleep(1000)
   const tEnd = Date.now()
   const frames = await recording.stop()
-  const marks = (await cdp.evaluate('(() => { const s = window.__spaceDev && window.__spaceDev.scene; return s && s.marks ? s.marks : [] })()')) ?? []
   const played = (await cdp.evaluate('(() => { const s = window.__spaceDev && window.__spaceDev.scene; return s && s.played ? s.played : [] })()')) ?? []
   // Hand-offs: each scene's start against the end of the one before it; "queued" when it was sent before that end.
   const ours = played.filter((p) => p.start >= t0).sort((a, b) => a.start - b.start)
@@ -168,7 +166,6 @@ async function main() {
   const changes = JSON.parse(execFileSync('python3', ['-I', join(LAB, 'frame-changes.py'), spec], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }))
   writeFileSync(join(dir, 'frames.json'), JSON.stringify(changes, null, 2))
   writeFileSync(join(dir, 'calls.json'), JSON.stringify(calls, null, 2))
-  writeFileSync(join(dir, 'marks.json'), JSON.stringify(marks, null, 2))
 
   encodeVideo(frames, join(dir, 'video-real.mp4'), { from: t0, to: tEnd, crop })
   const labels = calls.map((c) => ({ from: t0 + c.t_call, to: t0 + c.t_return, label: `${c.label} running` }))
@@ -186,15 +183,6 @@ async function main() {
 
   const firstCall = calls[0]?.t_call ?? 0
   const lastPlayEnd = changes.last_change_ms ?? null
-  const mine = marks.filter((m) => m.wall >= t0)
-  const words = mine.filter((m) => m.mark !== '(line start)')
-  const starts = mine.filter((m) => m.mark === '(line start)')
-  const heard = words.filter((m) => m.voice !== null)
-  const median = (list) => {
-    if (!list.length) return null
-    const s = [...list].sort((a, b) => a - b)
-    return s[Math.floor(s.length / 2)]
-  }
   const meta = {
     kind: 'play',
     title,
@@ -213,13 +201,6 @@ async function main() {
       stills_over_1s: changes.stills.filter((g) => g.ms > 1000),
       last_change_ms: lastPlayEnd,
       handoffs,
-      marks: words.length,
-      marks_heard: heard.length,
-      // When the voice reached each marked word, against the plan (ms; + late, - early), before the clock adjusted to it.
-      mark_voice_minus_plan_ms: words.map((m) => (m.held_ms > 0 ? m.held_ms : Math.round((m.voice - m.planned) * 1000))),
-      mark_abs_median_ms: median(words.map((m) => Math.abs(m.held_ms > 0 ? m.held_ms : Math.round((m.voice - m.planned) * 1000)))),
-      // How long the clock waited at each line start for the voice to begin.
-      line_start_wait_ms: starts.map((m) => m.held_ms),
       recorded_s: Math.round((tEnd - t0) / 100) / 10,
       watch_s: watch.watch_s
     },

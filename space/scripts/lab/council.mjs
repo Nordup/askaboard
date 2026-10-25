@@ -45,6 +45,7 @@ import {
   drive,
   encodeVideo,
   encodeWatchVideo,
+  scenePlaySpans,
   filmstrip,
   frameAt,
   log,
@@ -347,13 +348,30 @@ async function main() {
     const rect = await canvasRect(cdp)
     const crop = frames.length ? cropFilter(frames[0].file, rect, frames[0].w) : ''
     say(`${frames.length} frames over ${((tEnd - t0) / 1000).toFixed(1)} s`)
-    encodeVideo(frames, join(dir, 'video-real.mp4'), { from: t0, to: tEnd, crop })
+    // The videos and pictures never stop the run: a failure is recorded and the interview still runs.
+    const mediaErrors = []
+    const media = async (what, fn) => {
+      try {
+        return await fn()
+      } catch (error) {
+        const message = `${what}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 2000)
+        mediaErrors.push(message)
+        say(`${message} (continuing)`)
+        return null
+      }
+    }
+    let tv = Date.now()
+    await media('real-speed video', () => encodeVideo(frames, join(dir, 'video-real.mp4'), { from: t0, to: tEnd, crop }))
+    say(`real-speed video in ${((Date.now() - tv) / 1000).toFixed(1)} s`)
     const labels = traceLabels(calls, { from: t0, opened: traceSessionOpen(state.traces, t0), turnEnd: t1 })
-    const watch = encodeWatchVideo(frames, join(dir, 'video.mp4'), { from: t0, to: tEnd, crop, labels })
-    say(`watch video ${watch.watch_s} s of ${watch.real_s} s real (${watch.cuts.length} cuts)`)
+    tv = Date.now()
+    const watch = (await media('watch video', () => encodeWatchVideo(frames, join(dir, 'video.mp4'), { from: t0, to: tEnd, crop, labels, playing: scenePlaySpans(calls) }))) ?? { watch_s: null, real_s: (tEnd - t0) / 1000, cuts: [] }
+    say(`watch video ${watch.watch_s} s of ${watch.real_s} s real (${watch.cuts.length} cuts), made in ${((Date.now() - tv) / 1000).toFixed(1)} s`)
     const finalRaw = join(framesDir, 'final.png')
-    await cdp.screenshot(finalRaw)
-    cropImage(finalRaw, join(dir, 'final.png'), crop)
+    await media('final picture', async () => {
+      await cdp.screenshot(finalRaw)
+      cropImage(finalRaw, join(dir, 'final.png'), crop)
+    })
     try {
       await withMcp(state.mcpPort, async (call) => {
         const shot = await call('get_screenshot', { target: 'content', max_size: 2400 })
@@ -373,12 +391,14 @@ async function main() {
     if (times.length > 12) times = even(8)
     // Few writes: fill up to 8 frames with evenly spaced ones, in time order.
     else if (times.length < 8) times = [...times, ...even(8 - times.length)].sort((a, b) => a.t - b.t)
-    const tiles = times.map((x, i) => {
-      const out = join(framesDir, `strip-${i}.png`)
-      cropImage(frameAt(frames, t0 + x.t * 1000).file, out, crop)
-      return { file: out, label: x.label }
+    await media('filmstrip', () => {
+      const tiles = times.map((x, i) => {
+        const out = join(framesDir, `strip-${i}.png`)
+        cropImage(frameAt(frames, t0 + x.t * 1000).file, out, crop)
+        return { file: out, label: x.label }
+      })
+      filmstrip(tiles, join(dir, 'filmstrip.png'))
     })
-    filmstrip(tiles, join(dir, 'filmstrip.png'))
     cdp.close()
     cdp = null
 
@@ -432,6 +452,7 @@ async function main() {
       },
       per_tool: perTool,
       cuts: watch.cuts,
+      media_errors: mediaErrors,
       work: { exit_code: work.exit_code, is_error: work.is_error, cost_usd: work.cost_usd ?? null, num_turns: work.num_turns ?? null, tokens: work.tokens ?? null },
       interview: answer ? { exit_code: answer.exit_code, is_error: answer.is_error, session: answer.session, cost_usd: answer.cost_usd ?? null, tokens: answer.tokens ?? null } : null,
       agent_pids: pids

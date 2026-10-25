@@ -1,17 +1,38 @@
 import { useSyncExternalStore } from 'react'
 
 /**
- * Live-scene playback state for the app's UI (captions, a play pill): one
- * small store that the scene player keeps up to date, and a React hook to
- * read it. No UI reads it yet.
+ * Live-scene playback state for the app's UI (captions, a panel of the
+ * tutor's words): one small store that the scene player keeps up to date,
+ * and a React hook to read it. Nothing is spoken: a say() line is text the
+ * learner reads, timed at a reading pace (3.5 words a second, see
+ * live-prelude.js measureLine).
  */
 
+/** The line (say) on screen now. */
 export interface SceneCueState {
   text: string
   at_s: number
   dur_s: number
-  /** The words spoken so far (from the voice's word events, else estimated from the time). */
-  spokenSoFar?: string
+  /** The words read so far at the reading pace (whole words, from the start of the line). */
+  readSoFar: string
+  /** The share of the line's time that has passed, 0..1. */
+  progress: number
+}
+
+/** One line (say) of the current scene, with its time on the scene's timeline. */
+export interface SceneCueEntry {
+  text: string
+  at_s: number
+  dur_s: number
+  /** Marks ([[name]] in the line): name → scene time. */
+  marks?: Record<string, number>
+}
+
+/** One step of the current scene. */
+export interface SceneStepEntry {
+  name: string
+  at_s: number
+  pause?: boolean
 }
 
 export interface SceneUiState {
@@ -28,9 +49,13 @@ export interface SceneUiState {
   /** Scenes waiting after this one. */
   queue: number
   currentCue: SceneCueState | null
+  /** Every line of the current scene, in order (the same array while the scene is the same). */
+  cues: SceneCueEntry[]
+  /** Every step of the current scene, in order (the same array while the scene is the same). */
+  steps: SceneStepEntry[]
 }
 
-const IDLE: SceneUiState = { playing: false, paused: false, sceneName: null, stepName: null, stepIndex: -1, stepCount: 0, t: 0, duration: 0, queue: 0, currentCue: null }
+const IDLE: SceneUiState = { playing: false, paused: false, sceneName: null, stepName: null, stepIndex: -1, stepCount: 0, t: 0, duration: 0, queue: 0, currentCue: null, cues: [], steps: [] }
 
 let state: SceneUiState = IDLE
 const listeners = new Set<() => void>()
@@ -49,7 +74,9 @@ function same(a: SceneUiState, b: SceneUiState): boolean {
     a.queue === b.queue &&
     a.currentCue?.text === b.currentCue?.text &&
     a.currentCue?.at_s === b.currentCue?.at_s &&
-    a.currentCue?.spokenSoFar === b.currentCue?.spokenSoFar
+    a.currentCue?.readSoFar === b.currentCue?.readSoFar &&
+    a.cues === b.cues &&
+    a.steps === b.steps
   )
 }
 

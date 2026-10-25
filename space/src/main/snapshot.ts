@@ -140,7 +140,15 @@ export class SnapshotRenderer {
     // One extra row for the frame marker (see below), and one more on every other request: the window
     // changes size for every capture, so it always presents a new frame, never one from an earlier capture.
     win.setContentSize(request.width, request.height + 1 + (requestId % 2))
+    // A storyboard frame with program items computes each program up to the frame's moment (sim): no time
+    // limit here; each picture ends itself when its program stops moving on (renderer/live-pixels/LiveView.tsx).
+    const computes = (request.playback?.clocks ?? []).some(([, clock]) => !!(clock as { sim?: unknown } | null)?.sim)
     const reply = await new Promise<SnapshotReply>((resolve) => {
+      if (computes) {
+        this.pending.set(requestId, { resolve, timer: setTimeout(() => undefined, 0) })
+        win.webContents.send(IPC.snapshotRequest, { ...request, requestId } satisfies SnapshotRequest)
+        return
+      }
       const timer = setTimeout(() => {
         this.pending.delete(requestId)
         resolve({ requestId, ok: false, error: `The snapshot did not finish within ${READY_TIMEOUT_MS / 1000} s.` })

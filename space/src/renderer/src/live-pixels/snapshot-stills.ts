@@ -37,13 +37,15 @@ export function trackStill(promise: Promise<unknown>): void {
 
 const frame = (): Promise<void> => new Promise((resolve) => requestAnimationFrame(() => resolve()))
 
-/** Every picture being made has its image in the page (or gave up; at most `ms`). */
-export async function stillsSettled(ms = 6000): Promise<void> {
+/**
+ * Every picture being made has its image in the page, or gave up. Each
+ * picture ends itself (a program item asks for its still after 3 s without
+ * progress), so there is no limit here: a storyboard run of a long scene
+ * takes as long as the program needs to compute up to the frame's moment.
+ */
+export async function stillsSettled(): Promise<void> {
   if (!pending.size) return
-  const until = performance.now() + ms
-  while (pending.size && performance.now() < until) {
-    await Promise.race([Promise.all([...pending]), new Promise((resolve) => setTimeout(resolve, Math.max(0, until - performance.now())))])
-  }
+  while (pending.size) await Promise.all([...pending])
   // Let React put the images in the page.
   await frame()
   await frame()

@@ -4,7 +4,7 @@
  * board runs in, so objects, values and `stage` live on between programs.
  * The host sets globalThis.__fontText before this runs. For each program it
  * sets globalThis.__ctxText (JSON: {nodes, names, view, viewport, seed,
- * speech, stage, cutAt}) and calls __begin(), runs the program, drives the
+ * stage, cutAt}) and calls __begin(), runs the program, drives the
  * clock (drains the job queue and calls __advance() until it returns false),
  * reads __result() and calls __bake(), which turns the end of this scene into
  * the start of the next one.
@@ -26,7 +26,7 @@
 ;(() => {
   const FONT = JSON.parse(globalThis.__fontText)
   delete globalThis.__fontText
-  let CTX = { nodes: {}, names: {}, view: { x: -600, y: -400, width: 1200, height: 800 }, viewport: [1200, 800], seed: 1, speech: false }
+  let CTX = { nodes: {}, names: {}, view: { x: -600, y: -400, width: 1200, height: 800 }, viewport: [1200, 800], seed: 1 }
   const MAX_COORD = 100000
 
   let T = 0
@@ -1730,7 +1730,7 @@
     steps.push({ name: name.trim(), at: f3(T), ...(opts.pause ? { pause: true } : {}) })
   }
 
-  // ---------- Camera, pointer, speech ----------
+  // ---------- Camera, pointer, lines (say) ----------
 
   const clampZoom = (z) => Math.max(0.1, Math.min(8, z))
   const vw = () => (CTX.viewport && CTX.viewport[0]) || 1200
@@ -1797,12 +1797,15 @@
     return new Action(T, T + dur)
   }
 
-  /** Spoken words per second when the real speech time is not known. */
-  const WORDS_PER_S = 2.6
-  function estimateSpeech(str) {
-    const words = str.trim().split(/\s+/).filter(Boolean).length
-    return Math.max(0.6, words / WORDS_PER_S + 0.25)
-  }
+  /**
+   * The reading pace of say() lines: nothing is spoken; the learner reads the
+   * line, so it lasts as long as reading it takes. 3.5 words per second (210
+   * words a minute, an easy pace for a short line read next to a drawing),
+   * plus 0.3 s to find the line, at least 1 s.
+   */
+  const WORDS_PER_S = 3.5
+  const countWords = (str) => str.split(/\s+/).filter(Boolean).length
+  const readTime = (str) => Math.max(1, countWords(str) / WORDS_PER_S + 0.3)
   /**
    * A line with marks: "Out come [[he]] a helium nucleus" → the words without
    * the markers, and each mark's character index (the start of the word after it).
@@ -1834,24 +1837,12 @@
     return { clean, marks }
   }
 
-  /** Speech times from the host (macOS say, measured synchronously), or estimates when speech is off or a measure fails. */
+  /** A line's reading time, and each mark's offset: when the reader reaches the word after it (by word position at the reading pace). */
   function measureLine(clean, marks) {
-    const prefixes = marks.map((mark) => clean.slice(0, mark.char).trim())
-    let got = null
-    if (CTX.speech && typeof globalThis.__measure === 'function') {
-      try {
-        got = JSON.parse(globalThis.__measure(JSON.stringify({ text: clean, chars: marks.map((mark) => mark.char) })))
-      } catch {
-        got = null
-      }
-    }
-    const words = (str) => str.split(/\s+/).filter(Boolean).length
-    const dur = got && typeof got.dur === 'number' ? got.dur : estimateSpeech(clean)
-    const offsets = prefixes.map((prefix, i) => {
-      if (!prefix) return 0
-      const known = got && Array.isArray(got.offsets) ? got.offsets[i] : null
-      if (typeof known === 'number') return Math.min(known, dur)
-      return Math.min(dur, words(prefix) / WORDS_PER_S)
+    const dur = readTime(clean)
+    const offsets = marks.map((mark) => {
+      const before = countWords(clean.slice(0, mark.char))
+      return before ? Math.min(dur, 0.3 + before / WORDS_PER_S) : 0
     })
     return { dur, offsets }
   }
@@ -1899,7 +1890,7 @@
     return new Action(start, start + dur)
   }
 
-  /** An action that ends when the word after [[name]] is spoken (the latest line with that mark). */
+  /** An action that ends when the word after [[name]] is read, at the reading pace (the latest line with that mark). */
   function mark(name) {
     if (typeof name !== 'string' || !name) fail('mark(name) needs the name of a mark, like mark("he") for [[he]] in a say() line')
     if (!markTimes.has(name)) fail(`mark("${name}"): no line said so far in this scene has [[${name}]] (marks so far: ${[...markTimes.keys()].join(', ') || 'none'})`)

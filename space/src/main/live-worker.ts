@@ -10,9 +10,9 @@ import { getQuickJS, type QuickJSContext, type QuickJSRuntime } from 'quickjs-em
  * caps). The heap has no limit of its own; QuickJS's stack limit stays, so
  * deep recursion is an error and never a crash.
  *
- * say() measures its line with the system voice while the program runs: the
- * worker asks the main process over `port` and waits on `flag` (Atomics), so
- * a program runs once, with exact speech times.
+ * tex() and text() measure their size as the board lays them out while the
+ * program runs: the worker asks the main process over `port` and waits on
+ * `flag` (Atomics), so a program runs once, with exact text sizes.
  */
 
 const STACK_BYTES = 1024 * 1024
@@ -44,7 +44,7 @@ export type WorkerReply = { id: number; ok: true; json: string | null; ms: numbe
 const init = workerData as Init
 const flag = new Int32Array(init.flag)
 
-/** Ask the main process to measure a spoken line; blocks this thread until it answers. */
+/** Ask the main process to measure text; blocks this thread until it answers. */
 function measureSync(request: string): string {
   // Drop an answer that came too late for an earlier request.
   while (receiveMessageOnPort(init.port)) {
