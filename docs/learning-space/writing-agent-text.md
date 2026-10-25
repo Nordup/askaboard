@@ -30,7 +30,7 @@ difference, so the next writer starts from the second draft's approach.
 | **The brief** (what the space is, the person, the board, talking, time) | `space/resources/brief.md` (the one source) | Agents in a learning folder: always, through the managed block in `AGENTS.md`. Other agents: `get_brief` (no parameters). | Codex loads `AGENTS.md` up to 32 KiB (`project_doc_max_bytes = 32768`, Codex CLI 0.149), and the folder part shares that space. |
 | The folder's own conventions | `AGENTS.md` outside the managed block (template: `space/resources/learning-folder/AGENTS.md`) | Agents in the folder | Same file as above |
 | Server instructions (short orientation) | `space/resources/instructions.md` | Every agent at connect | Claude Code cuts at 4,096 characters (2.1.296+; 2,048 before). Codex asks that the first 512 characters stand alone. |
-| **The board reference** (decision T11): the board model, the HTML subset and styles, math, SVG, images, colour tokens, placement, ink, the view | `space/resources/guide.md`; each `## ` section is a topic (`<!-- topic: … -->`) with a one-line `<!-- summary: … -->` that `get_guide`'s description lists | Every agent: `get_guide` with one topic, when a write needs it; without a topic, all of it (about 8,000 characters) | Each topic about 300–1,800 characters |
+| **The board reference** (decision T11): the board model, the HTML subset and styles, math, SVG, images, colour tokens, placement, ink, the view | `space/resources/guide.md`; each `## ` section is a topic (`<!-- topic: … -->`) with a one-line `<!-- summary: … -->` that `get_guide`'s description lists | Every agent: `get_guide` with one topic, when a write needs it; without a topic, all of it (about 41,000 characters) | Topics from about 400 characters to about 15,000 (`scene`) |
 | Tool and parameter descriptions | `space/src/main/mcp.ts` | Every agent, on every request | 4,096 characters per tool description in Claude Code when loaded up front (16,384 when deferred). Parameter descriptions are not cut. |
 | Plugin skill | [`learning-space-plugins/plugins/learning-space/skills/learning-space/SKILL.md`](../../../learning-space-plugins/plugins/learning-space/skills/learning-space/SKILL.md) | Agents with the plugin, when it applies | Under 500 lines recommended |
 | Per-folder overrides | `.learning-space/guide.md` (`get_guide` topic `folder`, or the whole reference with `mode: replace`), `.learning-space/instructions.md` (added to the server instructions) | As above, appended or replacing | — |
@@ -86,7 +86,7 @@ I2 and P7 in [`decisions.md`](decisions.md) record them.
    board reference, `get_guide`, by topic (decision T11); a description names
    the topic. MCP has no `input_examples` field: put a
    short example value inside the description where the format is not
-   obvious (as in `place` and `draw_ink`).
+   obvious (as in run_scene's `code` parameter).
 8. **One story everywhere (I2).** The brief, the instructions,
    the descriptions, the skill and the template must not contradict each
    other. Keep the brief in one file and point to it; do not copy it.
@@ -179,6 +179,49 @@ Follow the same steps to improve it.
 - **The emphasis on MCP server instructions.** They are cut at 4,096
   characters in Claude Code. `AGENTS.md`, always in context, is the place
   for the long text.
+
+## What we learned rewriting the brief (2026-10-25, v9 to v18)
+
+The founder chose brief v18 (decision I18). It follows the style of text
+that Anthropic writes for its own models: the claude.ai system prompt and the
+`frontend-design` skill in github.com/anthropics/skills. Lessons:
+
+- **A conflict makes a literal model pick one side at random.** The old
+  board section said both "often the drawing needs none" and "a formula …
+  belongs on the board". GPT read the second as permission, and it put
+  titles and formulas everywhere. Before a change ships, read the whole brief
+  for sentences that a literal reader could take the other way.
+- **Change only what was asked, in the voice of the whole text.** A section
+  rewritten alone, without reading the sections around it, came out in a
+  different voice, repeated the section before, and was rejected (v12–v15).
+- **Behaviour first, then the reason, in plain sentences** (v18). Use
+  headings that say what to do ("Explain by drawing, one step at a time"),
+  and no capital MUST or NEVER.
+- **A calibration list works better than a rule.** v18 names the defaults
+  that agent drawings drift toward: a title and labels on everything, the
+  whole figure at once, shapes that appear complete, formulas under the
+  picture, text that retells the drawing, a new picture for every answer. It
+  says they are "defaults rather than choices", so the person can still ask
+  for one. The pattern comes from `frontend-design`.
+- **Vary the examples.** The sphere appeared five times, and it is also a
+  lab task. Keep one example per idea, from different subjects.
+- **Facts belong in the tools.** How scenes queue and pause, and where the
+  references are, belong in the tool descriptions and the guide. The brief
+  holds intent.
+- **The opening line sets the stance.** v18 opens with "The person came to
+  understand something, not to receive a finished answer". With it, Claude
+  draws the setup and asks the person to go on, instead of explaining the
+  whole idea. The founder liked this; if it ever feels too withholding, that
+  line is the place to look.
+- **The tools on offer shape the drawing more than the brief does.** While
+  `program()` was offered, both models built the EM wave as a 3D code item,
+  whatever the brief said (I14). Hand drawing came back only when code items
+  were switched off (lab switch `--no-code`).
+- **Measure with tasks that pull toward the defaults.** The EM wave and the
+  seasons are pictures by nature, so most briefs look alike there.
+  `stddev` ("I can compute it but I don't get it") pulls toward formulas and
+  text, and it separated the briefs better. Test a draft with
+  `council.mjs --brief <file>` before it replaces the live brief.
 
 ## Appendix — the founder's words
 

@@ -77,14 +77,13 @@
 - <!-- html -->html(markup, {into: frame}) puts material inside a frame of the board (o.index: its position among the children; o.mode "replace" puts it in place of an item). move<!-- /html: move -->(item, {into: frame}) moves an item into a frame. <!-- html -->In a flex frame the item joins the flow; in a free frame it keeps<!-- /html: It keeps --> its place on the board.
 - An object's .bounds and .center (now, in board points) place the next thing beside it: `const b = a.bounds; text("…", {at: [b.x + b.width + 24, b.y]})`.
 - Every run warns about text that a line or outline runs through, text over other text or items, and objects outside the learner's view; those warnings name the objects and times.
-- Never cover the learner's ink with material unless they ask.
 - get_screenshot with labels: true tags every group and top-level node with its id; grid: true adds board coordinates. Use them to match the image to ids and points.
 
 ## Marks on the learner's work (ink)
 <!-- topic: ink -->
 <!-- summary: Ink in scenes: marks on the learner's work, free strokes, the pen look and colours. -->
 
-- Ink is what the learner writes with: a scene's stroke(), write() and around(), and any shape with pen: true, are ink, drawn stroke by stroke with a hand's wobble. The learner can erase, lasso and move it like their own.
+- Ink is what the learner writes with: a scene's stroke(), write() and around(), and any shape with pen: true, are ink, drawn stroke by stroke as a pen draws, slightly uneven. The learner can erase, lasso and move it like their own.
 - Marks on their work: board.node("g3") is their ink group; around(g, {shape: "circle" | "box" | "underline"}) marks it; a tick or a cross is a short stroke() or path() with pen: true beside `g.bounds`; arrow(…, {pen: true}) points from your note to their line.
 - Colours: bad (pink) for circles and crosses on mistakes, good (green) for ticks, accent otherwise. Choose a colour that differs from the learner's pen.
 - Their ink can be acted on like any object: draw(g) traces it again, tween(g, {color}) recolours it, move(g, …) moves it, erase(g) or fadeOut(g) removes the whole group.
@@ -153,7 +152,7 @@ await tween(stage.h, 60, 2)   // the disc drawn by the earlier call rises
 - `group(...objs, {name})`: one object made of others; actions on it act on all of them (draw draws them one after another). It moves, scales and rotates around its own centre. A group with a name becomes one board item (a frame holding its items) that the learner moves as a whole.
 - `board.node(id)`: an item already on the board, by node id, ink group id ("g3") or name (a name given in an earlier scene; the latest item with it). The actions work on it. `board.view` is the learner's view {x, y, width, height} now (after this scene's camera moves).
 
-**Options** (o) of shapes and ink: color (accent, good, bad, warn, text, muted, white, yellow, blue, green, pink, orange, purple, teal, a token such as var(--ls-good), or any CSS colour; default text), width (default 3), opacity, dash (true or [8, 6]), fill (a colour, or a list of colours for a top-to-bottom gradient), fillOpacity, hatch (a colour: diagonal hatching), pen (true: the shape becomes ink, with a hand's wobble), jitter (wobble of ink, 0..1), tool ("highlighter"), name (the item's name on the board and in board.node).
+**Options** (o) of shapes and ink: color (accent, good, bad, warn, text, muted, white, yellow, blue, green, pink, orange, purple, teal, a token such as var(--ls-good), or any CSS colour; default text), width (default 3), opacity, dash (true or [8, 6]), fill (a colour, or a list of colours for a top-to-bottom gradient), fillOpacity, hatch (a colour: diagonal hatching), pen (true: the shape becomes ink, drawn as a pen draws, slightly uneven), jitter (wobble of ink, 0..1), tool ("highlighter"), name (the item's name on the board and in board.node).
 
 **Actions** take a duration in seconds or {dur, ease}; ease is linear, in, out, inOut or smooth. Each returns something to `await`.
 - `draw(obj, s)`: a pen draws it (ink along its strokes, shapes along their outline, then their fill; <!-- code-items -->text and live items wipe in<!-- /code-items: text wipes in --><!-- html -->; html material fades its root in, then shows its parts one after another, text wiping in and svg outlines drawn<!-- /html -->). Default: the speed of a hand.
@@ -165,7 +164,7 @@ await tween(stage.h, 60, 2)   // the disc drawn by the earlier call rises
 - `tween(obj, props, s)`: x, y (offset from where it was made), scale, rotate (degrees), opacity, color, draw (share drawn, 0..1),<!-- code-items --> params (live items),<!-- /code-items --> or any numeric option. `tween(value, n, s)` for values. Default 0.8.
 - `camera({fit, to, zoom, pad}, s)`: the learner's view glides: fit (an object or [x, y, w, h], with pad, default 40) and/or to (a centre [x, y]) and/or zoom. Default 1. After the learner pans or zooms during the scene, its later camera moves are skipped.
 - `point(target, s)`: a pointer glides to an object's centre or a point [x, y] and rests there; `point(null, s)` hides it. Default 0.6.
-- `say(text, o)`: a line of text that the app shows to the learner from now, at a reading pace; nothing is spoken. It lasts as long as reading it takes: 3.5 words per second plus 0.3 s, at least 1 s. `await say(…)` waits until it ends. Marks in the text, `[[name]]`, are not shown; each stands for the moment the reader reaches the word after it, at the same pace (word k of a line: 0.3 + k / 3.5 s after the line starts).
+- `say(text, o)`: a line of text that the app shows to the learner from now, at a reading pace, in a panel over the board that the learner can move; nothing is spoken. It lasts as long as reading it takes: 3.5 words per second plus 0.3 s, at least 1 s. `await say(…)` waits until it ends. Marks in the text, `[[name]]`, are not shown; each stands for the moment the reader reaches the word after it, at the same pace (word k of a line: 0.3 + k / 3.5 s after the line starts).
   - `await mark(name)`: waits until that word (the latest line with the mark).
   - `say(text, {name: () => draw(obj)})`: runs the function at that word.
   - `say(text, {during: action or [actions]})`: stretches the actions over the whole line.
