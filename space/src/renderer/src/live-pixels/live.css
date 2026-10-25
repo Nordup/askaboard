@@ -1,0 +1,47 @@
+/* Live pixel items (live-pixels/). The box size comes from the node's w, h. */
+.node-live {
+  overflow: hidden;
+}
+
+.node-live__canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* A quiet note on a failed or hung item: the same look as a missing image. */
+.node-live--note {
+  border: 1px dashed var(--border-strong);
+}
+
+.node-live__note {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px;
+  color: var(--text-tertiary);
+  font-family: var(--ls-font);
+  font-size: 12px;
+  text-align: center;
+  background: var(--bg-canvas);
+  opacity: 0.85;
+}
+
+.node-live__note-title {
+  color: var(--text-secondary);
+}
+
+.node-live__note-detail {
+  max-width: 100%;
+  overflow: hidden;
+  font-family: var(--ls-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

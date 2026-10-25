@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type CSSProperties, type Ref } from 'react'
 import { flushSync } from 'react-dom'
-import { isContent, isFrame, isInk, isKnown, newItemId, stampChanged, type Author, type BoardDoc, type NodeStyle, type Removal } from '@shared/board-format'
+import { isContent, isFrame, isInk, isInkHost, isKnown, isLive, newItemId, stampChanged, type Author, type BoardDoc, type NodeStyle, type Removal } from '@shared/board-format'
 import { isEditableTarget } from '../lib/keys'
 import type { ToolId } from '../tools'
 import { boardKeyAction, hasNodeClipboard, readNodeClipboard, writeNodeClipboard, type BoardKeyAction } from './clipboard'
@@ -20,6 +20,7 @@ import {
 } from './geometry'
 import type { BoardHistory } from './history'
 import { paintActive, paintItems, type PaintInk } from './paint'
+import { setLivePlayback } from '../live-pixels/registry'
 import { applyElementOverride, clearElementOverride, type PlaybackFrame } from './playback'
 import {
   addInkLayout,
@@ -407,6 +408,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         touched.add(element)
       }
     }
+    setLivePlayback(frame)
     for (const element of playbackTouchedRef.current) if (!touched.has(element)) clearElementOverride(element)
     playbackTouchedRef.current = touched
   }, [])
@@ -958,6 +960,9 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         return [wx - ox, wy - oy, p] as InkNode['points'][number]
       })
       updated = { ...node, points }
+    } else if (isLive(node)) {
+      const flowed = isFlowed(node, byId)
+      updated = { ...node, w: next.width, h: next.height, ...(flowed ? {} : { x: node.x + dx, y: node.y + dy }) }
     } else {
       const content = node as ContentNode
       const style: NodeStyle = { ...content.style, width: px(next.width) }
@@ -1031,7 +1036,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     const layout = layoutRef.current
     const bounds = inkBounds(stroke, [0, 0])
     let node = normalizeInk(stroke)
-    const frames = (index.children.get(ROOT) ?? []).filter(isFrame).filter((frame) => frame.style.display !== 'none')
+    const frames = (index.children.get(ROOT) ?? []).filter(isInkHost).filter((frame) => frame.style.display !== 'none')
     const host = bounds ? [...frames].reverse().find((frame) => {
       const box = layout.get(frame.id)
       return box ? overlapShare(bounds, box) >= PARENT_SHARE : false

@@ -346,6 +346,8 @@ export interface AgentMethods {
   /** The learner's ink changes after `since`; null when no board is open. */
   learnerNews: { params: { since: number }; result: LearnerNews | null }
   agentTool: { params: { tool: AgentToolName; args: Record<string, unknown>; agent: AgentRef }; result: unknown }
+  /** Check live pixel code (shader compile log, canvas syntax error); error null when it is fine. */
+  validateLive: { params: { mode: 'shader' | 'canvas'; code: string; params?: Record<string, number> }; result: { error: string | null } }
 }
 
 export type AgentMethod = keyof AgentMethods

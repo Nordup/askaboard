@@ -1,4 +1,4 @@
-import { boardName, isContent, isInk, type BoardNode } from '@shared/board-format'
+import { boardName, isContent, isInk, isLive, type BoardNode } from '@shared/board-format'
 import type {
   AgentMethods,
   AgentRequest,
@@ -19,6 +19,7 @@ import type { ChangeLog } from '../board/changes'
 import { unionRegions } from '../board/geometry'
 import { buildIndex, ROOT } from '../board/scene'
 import type { Region } from '../board/types'
+import { liveStill, validateLiveCode } from '../live-pixels/registry'
 import { AgentPresence, runEditTool } from './edits'
 import { isGroupId, trackerFor, type InkGroup } from './groups'
 import { scenePlayer } from '../live/player'
@@ -196,7 +197,7 @@ function changeSet(context: AgentContext, since: number | null): ChangeSet {
 
 // ---------- Board news: the learner's ink since an agent's last look ----------
 
-const KIND_WORDS: Record<string, string> = { svg: 'SVG', frame: 'frame', text: 'text', image: 'image' }
+const KIND_WORDS: Record<string, string> = { svg: 'SVG', frame: 'frame', text: 'text', image: 'image', live: 'live item' }
 
 /** "your SVG \"Thermal spectra\"", "the learner's text \"Find x\"", or with the id when it has no name. */
 function materialLabel(node: BoardNode): string {
@@ -417,6 +418,15 @@ async function openBoard(context: AgentContext, path: string): Promise<void> {
   await context.openBoard(path)
 }
 
+/** Live pixel items carry their current pixels into the snapshot window (`still`, not saved). */
+async function withLiveStills(plan: ScreenshotPlan): Promise<ScreenshotPlan> {
+  if (plan.kind !== 'plan') return plan
+  const nodes = plan.nodes as BoardNode[]
+  if (!nodes.some(isLive)) return plan
+  const withStills = await Promise.all(nodes.map(async (node) => (isLive(node) ? { ...node, still: (await liveStill(node.id)) ?? undefined } : node)))
+  return { ...plan, nodes: withStills }
+}
+
 /** Run one request. Throws an Error with an agent-readable message on failure. */
 export async function handleAgentRequest(request: AgentRequest, getContext: () => AgentContext): Promise<unknown> {
   const context = getContext()
@@ -430,7 +440,11 @@ export async function handleAgentRequest(request: AgentRequest, getContext: () =
       return learnerNews(context, params.since)
     }
     case 'screenshotPlan':
-      return screenshotPlan(context, request.params as AgentMethods['screenshotPlan']['params'])
+      return withLiveStills(screenshotPlan(context, request.params as AgentMethods['screenshotPlan']['params']))
+    case 'validateLive': {
+      const params = request.params as AgentMethods['validateLive']['params']
+      return { error: await validateLiveCode(params.mode, params.code, params.params ?? {}) }
+    }
     case 'agentTool': {
       const params = request.params as AgentMethods['agentTool']['params']
       const { board } = requireBoard(context)

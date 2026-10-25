@@ -2,7 +2,7 @@
  * The board file format: `*.board.json` in the learning folder.
  *
  * Version 2: the board is one document of nodes (ink, frame, text, svg,
- * image). The file must stay small in Git diffs, so the serializer writes one
+ * image, live). The file must stay small in Git diffs, so the serializer writes one
  * node per line, rounds coordinates to 1 decimal and pressure to 2 decimals,
  * and keeps a fixed key order. Board coordinates are logical points, origin at
  * the centre, +y down. The camera is NOT stored here (see state.json).
@@ -173,6 +173,26 @@ export interface ImageNode extends NodeBase {
   style: NodeStyle
 }
 
+/**
+ * Live pixels: a rectangle whose pixels agent code paints every frame.
+ * `mode: 'shader'`: `code` is a GLSL ES 3.0 fragment shader (Shadertoy style,
+ * `mainImage(out vec4, in vec2)`). `mode: 'canvas'`: `code` is the body of
+ * `function (ctx, t, w, h, params)` that paints a 2D canvas in a sandbox.
+ * `params` become `uniform float <name>` (shader) or the `params` argument
+ * (canvas); scene playback may override them. `w`, `h`: the size in board points.
+ * Ink drawn on it becomes its child, as on a frame.
+ */
+export interface LiveNode extends NodeBase {
+  kind: 'live'
+  mode: 'shader' | 'canvas'
+  code: string
+  params: Record<string, number>
+  w: number
+  h: number
+  /** Other look (opacity, border radius…). Its width and height are ignored: `w`, `h` set the size. */
+  style: NodeStyle
+}
+
 /** A node of a kind this version does not know (or an invalid one). It survives load/save untouched. */
 export interface ForeignNode {
   id: string
@@ -181,8 +201,8 @@ export interface ForeignNode {
   [key: string]: unknown
 }
 
-export type KnownNode = InkNode | FrameNode | TextNode | SvgNode | ImageNode
-export type ContentNode = FrameNode | TextNode | SvgNode | ImageNode
+export type KnownNode = InkNode | FrameNode | TextNode | SvgNode | ImageNode | LiveNode
+export type ContentNode = FrameNode | TextNode | SvgNode | ImageNode | LiveNode
 export type BoardNode = KnownNode | ForeignNode
 
 export interface BoardDoc {
@@ -239,6 +259,16 @@ function validKnown(node: BoardNode): boolean {
       return typeof raw.markup === 'string' && validStyle(raw.style)
     case 'image':
       return typeof raw.src === 'string' && validStyle(raw.style)
+    case 'live':
+      return (
+        (raw.mode === 'shader' || raw.mode === 'canvas') &&
+        typeof raw.code === 'string' &&
+        isRecord(raw.params) &&
+        Object.values(raw.params).every(finite) &&
+        finite(raw.w) &&
+        finite(raw.h) &&
+        validStyle(raw.style)
+      )
     default:
       return false
   }
@@ -266,6 +296,15 @@ export function isContent(node: BoardNode): node is ContentNode {
 
 export function isFrame(node: BoardNode): node is FrameNode {
   return node.kind === 'frame' && isKnown(node)
+}
+
+export function isLive(node: BoardNode): node is LiveNode {
+  return node.kind === 'live' && isKnown(node)
+}
+
+/** A node that ink can belong to (decision B7): a frame or a live pixel item. */
+export function isInkHost(node: BoardNode): node is FrameNode | LiveNode {
+  return (node.kind === 'frame' || node.kind === 'live') && isKnown(node)
 }
 
 export function emptyBoard(): BoardDoc {
@@ -341,7 +380,8 @@ const KIND_KEYS: Record<string, readonly string[]> = {
   frame: ['style'],
   text: ['text', 'style'],
   svg: ['style', 'markup'],
-  image: ['src', 'style']
+  image: ['src', 'style'],
+  live: ['mode', 'w', 'h', 'params', 'style', 'code']
 }
 
 function serializeNode(node: BoardNode): string {
@@ -353,7 +393,7 @@ function serializeNode(node: BoardNode): string {
     if (value === undefined) continue
     out[key] = key === 'x' || key === 'y' ? round(value as number, 1) : value
   }
-  for (const key of KIND_KEYS[node.kind]) out[key] = key === 'width' ? round(raw[key] as number, 2) : raw[key]
+  for (const key of KIND_KEYS[node.kind]) out[key] = key === 'width' ? round(raw[key] as number, 2) : key === 'w' || key === 'h' ? round(raw[key] as number, 1) : raw[key]
   for (const [key, value] of Object.entries(raw)) if (!(key in out) && key !== 'points') out[key] = value
   if (node.kind === 'ink') out.points = node.points.map(([x, y, p]) => [round(x, 1), round(y, 1), round(p, 2)])
   return JSON.stringify(out)

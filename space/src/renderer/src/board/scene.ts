@@ -1,4 +1,4 @@
-import { isContent, isFrame, isInk, isKnown, newItemId, type NodeStyle } from '@shared/board-format'
+import { isContent, isFrame, isInk, isInkHost, isKnown, newItemId, type NodeStyle } from '@shared/board-format'
 import { inkBounds, inkLocalBounds, regionContains, strokeHitByCircle } from './geometry'
 import type { BoardNode, ContentNode, InkNode, LayoutBox, Point, Region } from './types'
 
@@ -16,10 +16,11 @@ export interface SceneIndex {
   children: Map<string, BoardNode[]>
 }
 
-/** The parent key of a node: its parent when that is a frame on the board, else ROOT. */
+/** The parent key of a node: its parent when that is a frame on the board (or a live item, for ink), else ROOT. */
 export function parentKey(node: BoardNode, byId: ReadonlyMap<string, BoardNode>): string {
   const parent = typeof node.parent === 'string' ? byId.get(node.parent) : undefined
-  return parent && isFrame(parent) && parent.id !== node.id ? parent.id : ROOT
+  if (!parent || parent.id === node.id) return ROOT
+  return isFrame(parent) || (isInkHost(parent) && node.kind === 'ink') ? parent.id : ROOT
 }
 
 const zOf = (node: BoardNode): number => (typeof node.z === 'number' && Number.isFinite(node.z) ? node.z : 0)
@@ -116,7 +117,7 @@ export function inkPaintOrder(index: SceneIndex): InkNode[] {
   const walk = (key: string): void => {
     const list = index.children.get(key) ?? []
     for (const node of list) if (isInk(node)) out.push(node)
-    for (const node of list) if (node.kind === 'frame' && isKnown(node)) walk(node.id)
+    for (const node of list) if (isInkHost(node)) walk(node.id)
   }
   walk(ROOT)
   return out

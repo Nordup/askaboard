@@ -28,7 +28,7 @@ export interface NodeOverride {
   strokeWidth?: number
   /** Changing text: its HTML now. */
   html?: string
-  /** Live pixels: the parameters now. */
+  /** Live pixel items: param values now, merged over the node's own params. */
   params?: Record<string, number>
 }
 

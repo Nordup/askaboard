@@ -1,4 +1,4 @@
-import { isContent, isFrame, isInk, isKnown, newItemId, renderableStyle, STYLE_KEYS, styleKey, type BoardNode, type ContentNode, type InkNode, type NodeStyle } from '@shared/board-format'
+import { isContent, isFrame, isInk, isInkHost, isKnown, isLive, newItemId, renderableStyle, STYLE_KEYS, styleKey, type BoardNode, type ContentNode, type InkNode, type NodeStyle } from '@shared/board-format'
 import { MAX_BOX_SIZE, MAX_COORD, MAX_HTML_CHARS, MAX_INK_LINES, MAX_INK_POINTS, MAX_STYLE_CHARS, MAX_TEXT_CHARS } from '@shared/limits'
 import type { AgentRef, AgentToolName, BoardRect } from '@shared/space-api'
 import type { BoardHandle, PresenceEntry } from '../board/Board'
@@ -6,6 +6,7 @@ import { clampZoom, overlapShare, unionRegions } from '../board/geometry'
 import { draftsToNodes, htmlToDrafts, Ignored, nodesToHtml, walkDrafts, type Draft } from '../board/html'
 import { ancestorIds, copySubtrees, isFlowed, normalizeInk, parentKey, removeNodes, ROOT, topLevelOf, withDescendants, zAbove } from '../board/scene'
 import type { Point, Region } from '../board/types'
+import { liveStatus, liveSummary } from '../live-pixels/registry'
 import { runScene, previewScene, sceneControl, sceneContext } from '../live/run'
 import { isGroupId, type InkGroup, type InkGroupTracker } from './groups'
 import { humanize, inkPointBudget, shapeLines, SHAPES, svgPathPolylines, type ArrowSide, type Shape } from './ink'
@@ -247,6 +248,7 @@ function nodeLine(s: Scene, node: BoardNode): string {
     extra = `  “${text.length > 48 ? `${text.slice(0, 47)}…` : text}”`
   }
   if (isKnown(node) && node.kind === 'frame' && node.style.display === 'flex') extra = `  flex ${node.style.flexDirection ?? 'row'}`
+  if (isLive(node)) extra = `  ${liveSummary(node)}`
   const author = isKnown(node) && node.author === 'learner' ? '  (learner)' : ''
   return `${node.kind}${name} ${node.id}  ${where}${extra}${author}`
 }
@@ -266,6 +268,7 @@ function getTree(s: Scene, args: Record<string, unknown>): string {
     for (const node of s.index.children.get(key) ?? []) {
       if (isInk(node)) continue
       lines.push(indent + nodeLine(s, node))
+      if (isLive(node)) inkGroups(node.id, `${indent}  `)
       if (isFrame(node)) {
         if (level < depth) {
           walk(node.id, level + 1, `${indent}  `)
@@ -284,6 +287,7 @@ function getTree(s: Scene, args: Record<string, unknown>): string {
       walk(node.id, 2, '  ')
       inkGroups(node.id, '  ')
     }
+    if (isLive(node)) inkGroups(node.id, '  ')
   } else {
     lines.push(`board: ${s.nodes.length} node(s); x,y w×h are world bounds in board points; ink shows as groups (g1, g2, …): use a group id like a node id`)
     walk(ROOT, 1, '')
@@ -324,6 +328,17 @@ function getNodeInfo(s: Scene, args: Record<string, unknown>): unknown {
     else info.style = node.style
     if (node.kind === 'text') info.text = node.text
     if (node.kind === 'image') info.src = node.src
+    if (node.kind === 'live') {
+      const status = liveStatus(node.id)
+      Object.assign(info, {
+        mode: node.mode,
+        size: { w: node.w, h: node.h },
+        params: node.params,
+        code_length: node.code.length,
+        state: status ? status.state : 'not shown',
+        ...(status?.error ? { error: status.error } : {})
+      })
+    }
     if (node.kind === 'svg') {
       info.svg_ids = [...node.markup.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1])
       info.markup_length = node.markup.length
@@ -1017,10 +1032,10 @@ function drawInk(ctx: EditContext, s: Scene, args: Record<string, unknown>): unk
   let parent: string | undefined
   if (args.parent_id !== undefined && args.parent_id !== 'root') {
     const node = requireNode(s, args.parent_id, 'parent_id')
-    if (!isFrame(node)) throw new Error(`parent_id "${node.id}" is a ${node.kind}; only frames hold ink.`)
+    if (!isInkHost(node)) throw new Error(`parent_id "${node.id}" is a ${node.kind}; only frames and live items hold ink.`)
     parent = node.id
   } else if (args.parent_id === undefined) {
-    const frames = (s.index.children.get(ROOT) ?? []).filter(isFrame).filter((frame) => frame.style.display !== 'none')
+    const frames = (s.index.children.get(ROOT) ?? []).filter(isInkHost).filter((frame) => frame.style.display !== 'none')
     const host = [...frames].reverse().find((frame) => {
       const frameBox = s.layout.get(frame.id)
       return frameBox ? overlapShare({ ...box, width: Math.max(1, box.width), height: Math.max(1, box.height) }, frameBox) >= 0.6 : false

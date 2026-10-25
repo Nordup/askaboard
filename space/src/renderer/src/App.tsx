@@ -4,12 +4,15 @@ import {
   BOARDS_DIR,
   boardName,
   isBoardPath,
+  newItemId,
   parseBoard,
   reconcileBoard,
   serializeBoard,
   type BoardDoc,
+  type LiveNode,
   type Removal
 } from '@shared/board-format'
+import { liveItems, validateLiveCode } from './live-pixels/registry'
 import type { AgentActivity, AgentServerStatus, Camera, FileNode, FileTree, GuideOverrides, Snapshot } from '@shared/space-api'
 import { AgentPresence } from './agent/edits'
 import { scenePlayer } from './live/player'
@@ -616,6 +619,46 @@ export function App() {
       /** Live-scene playback (run_scene): what plays now; seek(t) holds the current scene at t s, seek(null) lets it run; finish() ends all. */
       get scene() {
         return { ...scenePlayer.state(), seek: (t: number | null) => scenePlayer.seek(t), finish: () => scenePlayer.finish() }
+      },
+      /** Live pixel items (dev checks, scripts/lab/live.mjs): add one, list them with status and frame counts, check code. */
+      live: {
+        add: (fields: Partial<LiveNode> & Pick<LiveNode, 'mode' | 'code'>) => {
+          const board = boardRef.current
+          if (!board) return null
+          const state = board.liveState()
+          const node: LiveNode = {
+            id: newItemId('n'),
+            x: 0,
+            y: 0,
+            w: 400,
+            h: 300,
+            params: {},
+            style: {},
+            z: Math.max(0, ...state.nodes.filter((n) => typeof n.parent !== 'string').map((n) => (typeof n.z === 'number' ? n.z : 0))) + 1,
+            author: 'agent',
+            seq: 0,
+            ...fields,
+            kind: 'live'
+          }
+          board.agentCommit([...state.nodes, node])
+          return node.id
+        },
+        update: (id: string, fields: Partial<LiveNode>) => {
+          const board = boardRef.current
+          if (!board) return false
+          const state = board.liveState()
+          board.agentCommit(state.nodes.map((n) => (n.id === id ? ({ ...n, ...fields } as typeof n) : n)))
+          return true
+        },
+        setParams: (id: string, params: Record<string, number>) => {
+          const board = boardRef.current
+          if (!board) return false
+          const state = board.liveState()
+          board.agentCommit(state.nodes.map((n) => (n.id === id && n.kind === 'live' ? ({ ...n, params: { ...(n as LiveNode).params, ...params } } as LiveNode) : n)))
+          return true
+        },
+        items: () => liveItems(),
+        validate: (mode: 'shader' | 'canvas', code: string, params?: Record<string, number>) => validateLiveCode(mode, code, params)
       },
       /** A node's rect in window CSS pixels, from the layout cache. */
       nodeRect: (id: string) => {

@@ -20,7 +20,10 @@
  * Phase 2 (interview): the SAME session resumed (`claude -p --resume <id>`,
  * `codex exec resume <thread>`) with council/interview.md; the answer is feedback.md.
  *
- * The run folder (space/.lab/runs/) gets video.mp4, filmstrip.png (a frame
+ * The run folder (space/.lab/runs/) gets video.mp4 (the watch video: stretches
+ * with no visible change longer than 1.5 s play in 0.6 s, labelled with the real
+ * wait and what happened, from the trace; a real-time clock in the corner),
+ * video-real.mp4 (real time), filmstrip.png (a frame
  * after each board write), final.png, board.png (the whole board), program.js
  * (every run_scene program, or the write calls), calls.json, feedback.md,
  * the agent's output files and meta.json. The app instance starts fresh and
@@ -41,6 +44,7 @@ import {
   cropImage,
   drive,
   encodeVideo,
+  encodeWatchVideo,
   filmstrip,
   frameAt,
   log,
@@ -52,6 +56,8 @@ import {
   startRecording,
   stopInstance,
   traceCalls,
+  traceLabels,
+  traceSessionOpen,
   withMcp
 } from './common.mjs'
 import { writeGallery } from './gallery.mjs'
@@ -341,7 +347,10 @@ async function main() {
     const rect = await canvasRect(cdp)
     const crop = frames.length ? cropFilter(frames[0].file, rect, frames[0].w) : ''
     say(`${frames.length} frames over ${((tEnd - t0) / 1000).toFixed(1)} s`)
-    encodeVideo(frames, join(dir, 'video.mp4'), { from: t0, to: tEnd, crop })
+    encodeVideo(frames, join(dir, 'video-real.mp4'), { from: t0, to: tEnd, crop })
+    const labels = traceLabels(calls, { from: t0, opened: traceSessionOpen(state.traces, t0), turnEnd: t1 })
+    const watch = encodeWatchVideo(frames, join(dir, 'video.mp4'), { from: t0, to: tEnd, crop, labels })
+    say(`watch video ${watch.watch_s} s of ${watch.real_s} s real (${watch.cuts.length} cuts)`)
     const finalRaw = join(framesDir, 'final.png')
     await cdp.screenshot(finalRaw)
     cropImage(finalRaw, join(dir, 'final.png'), crop)
@@ -417,10 +426,12 @@ async function main() {
         errors: calls.filter((c) => !c.ok).length,
         wall_ms: t1 - t0,
         recorded_s: Math.round((tEnd - t0) / 100) / 10,
+        watch_s: watch.watch_s,
         interview_ms: answer ? i1 - i0 : null,
         frames: frames.length
       },
       per_tool: perTool,
+      cuts: watch.cuts,
       work: { exit_code: work.exit_code, is_error: work.is_error, cost_usd: work.cost_usd ?? null, num_turns: work.num_turns ?? null, tokens: work.tokens ?? null },
       interview: answer ? { exit_code: answer.exit_code, is_error: answer.is_error, session: answer.session, cost_usd: answer.cost_usd ?? null, tokens: answer.tokens ?? null } : null,
       agent_pids: pids

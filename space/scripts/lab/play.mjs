@@ -25,6 +25,7 @@ import {
   cropFilter,
   cropImage,
   encodeVideo,
+  encodeWatchVideo,
   filmstrip,
   frameAt,
   log,
@@ -115,7 +116,8 @@ async function main() {
   writeFileSync(join(dir, 'result.json'), JSON.stringify({ tool, args: shownArgs, ok: !isError, error: thrown, isError: Boolean(result?.isError), text, parsed, call_ms: tReturn - tCall }, null, 2))
   if (code === null) writeFileSync(join(dir, 'program.js'), `// ${tool}\n${JSON.stringify(toolArgs, null, 2)}\n`)
 
-  encodeVideo(frames, join(dir, 'video.mp4'), { from: tCall, to: tEnd, crop })
+  encodeVideo(frames, join(dir, 'video-real.mp4'), { from: tCall, to: tEnd, crop })
+  const watch = encodeWatchVideo(frames, join(dir, 'video.mp4'), { from: tCall, to: tEnd, crop, labels: [{ from: tCall, to: tReturn, label: `${tool} running` }] })
 
   const finalRaw = join(framesDir, 'final.png')
   await cdp.screenshot(finalRaw)
@@ -169,10 +171,12 @@ async function main() {
       call_ms: tReturn - tCall,
       duration_s: duration,
       recorded_s: Math.round((tEnd - tCall) / 100) / 10,
+      watch_s: watch.watch_s,
       frames: frames.length,
       steps: steps.length,
       warnings: Array.isArray(parsed?.warnings) ? parsed.warnings.length : null
     },
+    cuts: watch.cuts,
     filmstrip_source: useSeek ? 'seek' : 'screencast',
     scene_hook: Boolean(hookBefore)
   }

@@ -396,6 +396,73 @@ export function encodeVideo(frames, out, { from, to, crop = '', fps = 30 }) {
   rmSync(listFile, { force: true })
 }
 
+/**
+ * The watch video: like encodeVideo, but every stretch with no visible change
+ * longer than idleMs plays in cutMs, with a label ("38 s  model writing
+ * run_scene") and a real-time clock burned in (recut.py, Pillow). labels:
+ * [{from, to, label}] in wall ms (traceLabels). Returns {watch_s, real_s, cuts}.
+ */
+export function encodeWatchVideo(frames, out, { from, to, crop = '', labels = [], idleMs = 1500, cutMs = 600, fps = 30 }) {
+  const m = /^crop=(\d+):(\d+):(\d+):(\d+)$/.exec(crop)
+  const spec = join(dirname(out), '.recut.json')
+  writeFileSync(spec, JSON.stringify({ frames: frames.map((f) => ({ file: f.file, t: f.t })), from, to, crop: m ? [Number(m[3]), Number(m[4]), Number(m[1]), Number(m[2])] : null, labels, idle_ms: idleMs, cut_ms: cutMs, fps, out, ffmpeg: FFMPEG }))
+  try {
+    const text = execFileSync('python3', ['-I', join(LAB, 'recut.py'), spec], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 16 * 1024 * 1024 })
+    return JSON.parse(text.trim().split('\n').pop())
+  } finally {
+    rmSync(spec, { force: true })
+  }
+}
+
+/**
+ * What happened in each stretch of a session, from its trace calls, for the
+ * labels of cut stretches: before the session opened "session starting"; a
+ * tool call's own time "<tool> running"; the time before a call (the model
+ * generating it) "model writing <tool>" for a write, "model thinking" before a
+ * read; after the last call until turnEnd "model answering".
+ */
+export function traceLabels(calls, { from, opened = null, turnEnd = null }) {
+  const labels = []
+  if (opened && opened > from) labels.push({ from, to: opened, label: 'session starting' })
+  let previous = opened ?? from
+  for (const c of [...calls].sort((a, b) => Date.parse(a.t) - Date.parse(b.t))) {
+    const start = Date.parse(c.t)
+    const end = Date.parse(c.end ?? c.t)
+    if (start > previous) labels.push({ from: previous, to: start, label: WRITE_TOOLS.has(c.tool) ? `model writing ${c.tool}` : 'model thinking' })
+    if (end > start) labels.push({ from: start, to: end, label: `${c.tool} running` })
+    previous = Math.max(previous, end)
+  }
+  if (turnEnd && turnEnd > previous) labels.push({ from: previous, to: turnEnd, label: 'model answering' })
+  return labels
+}
+
+/** When the traced session (not the lab's own client) opened, in wall ms, or null. */
+export function traceSessionOpen(tracesDir, sinceMs, { skipClient = 'ls-lab' } = {}) {
+  let found = null
+  const walk = (d) => {
+    if (!existsSync(d)) return
+    for (const entry of readdirSync(d, { withFileTypes: true })) {
+      const path = join(d, entry.name)
+      if (entry.isDirectory()) walk(path)
+      else if (entry.name.endsWith('.jsonl') && entry.name !== 'learner-edits.jsonl') {
+        for (const line of readFileSync(path, 'utf8').split('\n')) {
+          let e
+          try {
+            e = JSON.parse(line)
+          } catch {
+            continue
+          }
+          if (e.type !== 'session_open' || e.client?.name === skipClient) continue
+          const t = Date.parse(e.t)
+          if (t >= sinceMs && (found === null || t < found)) found = t
+        }
+      }
+    }
+  }
+  walk(tracesDir)
+  return found
+}
+
 /** The frame on screen at wall time t (the last frame at or before t). */
 export function frameAt(frames, t) {
   let pick = frames[0]
