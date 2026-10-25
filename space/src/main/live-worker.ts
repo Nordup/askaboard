@@ -21,7 +21,7 @@ interface Input {
   ctxText: string
 }
 
-export type WorkerReply = { ok: true; json: string; ms: number } | { ok: false; error: string; line: number | null; ms: number }
+export type WorkerReply = { ok: true; json: string; cueTexts: string[]; ms: number } | { ok: false; error: string; line: number | null; ms: number }
 
 function errorText(dumped: unknown): { message: string; line: number | null } {
   if (dumped && typeof dumped === 'object') {
@@ -104,7 +104,14 @@ async function run(input: Input): Promise<WorkerReply> {
     }
     const json = vm.dump(result.value) as string
     result.value.dispose()
-    return { ok: true, json, ms: Date.now() - started }
+    const cueResult = vm.evalCode('__cueTexts()', 'live-result.js')
+    let cueTexts: string[] = []
+    if (cueResult.error) cueResult.error.dispose()
+    else {
+      cueTexts = JSON.parse(vm.dump(cueResult.value) as string) as string[]
+      cueResult.value.dispose()
+    }
+    return { ok: true, json, cueTexts, ms: Date.now() - started }
   } finally {
     vm.dispose()
     runtime.dispose()

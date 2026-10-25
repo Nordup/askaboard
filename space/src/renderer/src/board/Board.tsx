@@ -138,6 +138,8 @@ export interface LiveBoardState {
   learnerInkAt: number
   /** True while the learner draws a stroke. */
   drawing: boolean
+  /** When the learner last panned or zoomed the view (epoch ms, 0 = not in this session). */
+  learnerViewAt: number
   /** The learner's current pen colour. */
   inkColor: string
 }
@@ -339,6 +341,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const editorsRef = useRef(new Map<string, Author>())
   const timesRef = useRef(new Map<string, number>())
   const lastStrokeAtRef = useRef(0)
+  const learnerViewAtRef = useRef(0)
   /** Bumped by learner input: a running camera glide stops when it changes. */
   const glideRef = useRef(0)
   const colorRef = useRef(color)
@@ -377,6 +380,8 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const ghostInks = useCallback((): PaintInk[] => {
     const out: PaintInk[] = []
     for (const node of ghostNodesRef.current) if (isInk(node)) out.push({ node, offset: [node.x, node.y] })
+    // Ink that exists only at this moment of a scene (changing ink objects).
+    for (const node of playbackRef.current?.inks ?? []) if (isInk(node)) out.push({ node, offset: [node.x, node.y] })
     return out
   }, [])
 
@@ -541,6 +546,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         return
       }
       lastStepRef.current = { step, source, at: now }
+      learnerViewAtRef.current = Date.now()
       const [vw, vh] = viewportRef.current
       const current = cameraRef.current
       const zoom = step === 'reset' ? 1 : step === 'out' ? current.zoom / 1.25 : current.zoom * 1.25
@@ -980,6 +986,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
 
     if (drag.kind === 'pan') {
       const current = cameraRef.current
+      learnerViewAtRef.current = Date.now()
       applyCamera({ ...current, center: [current.center[0] - delta[0] / current.zoom, current.center[1] - delta[1] / current.zoom] })
     } else if (drag.kind === 'ink' && activeRef.current) {
       const stroke = activeRef.current
@@ -1147,6 +1154,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       if (!event.ctrlKey && !event.metaKey && canScroll(event.target, event.deltaX, event.deltaY)) return
       event.preventDefault()
       glideRef.current++
+      learnerViewAtRef.current = Date.now()
       const scale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewportRef.current[1] : 1
       let dx = event.deltaX * scale
       let dy = event.deltaY * scale
@@ -1239,6 +1247,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         changedAt: (id) => timesRef.current.get(id),
         learnerInkAt: lastStrokeAtRef.current,
         drawing: dragRef.current?.kind === 'ink',
+        learnerViewAt: learnerViewAtRef.current,
         inkColor: colorRef.current
       }),
       animateTo: (target, ms = 420) => {

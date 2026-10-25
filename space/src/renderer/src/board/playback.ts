@@ -22,6 +22,14 @@ export interface NodeOverride {
   fill?: number
   /** The colour now (ink colour; svg stroke and text colour). */
   color?: string
+  /** A changing vector shape: its path "d" now (in the node's own coordinates). */
+  d?: string
+  /** A changing vector shape: its stroke width now. */
+  strokeWidth?: number
+  /** Changing text: its HTML now. */
+  html?: string
+  /** Live pixels: the parameters now. */
+  params?: Record<string, number>
 }
 
 /** The pen tip: where a stroke is being drawn now. */
@@ -29,6 +37,10 @@ export interface PlaybackTip {
   point: Point
   color: string
   size: number
+  /** pen (default): the tip of a stroke being drawn; pointer: a tutor's hand pointing. */
+  kind?: 'pen' | 'pointer'
+  /** 0..1 (fading in or out). */
+  alpha?: number
 }
 
 export interface PlaybackFrame {
@@ -36,6 +48,8 @@ export interface PlaybackFrame {
   /** Nodes not on the board that show during playback: top-level, in world coordinates. */
   ghosts: readonly BoardNode[]
   tips: readonly PlaybackTip[]
+  /** Ink that exists only now (changing ink objects): top-level, in world coordinates, painted on the canvas. */
+  inks?: readonly BoardNode[]
 }
 
 // ---------- Ink: the drawn share of a stroke ----------
@@ -84,6 +98,9 @@ interface Saved {
   opacity: string
   clipPath: string
   color: string
+  overflow: string
+  /** The markup before a d or html override. */
+  html: string | null
 }
 const savedStyles = new WeakMap<HTMLElement, Saved>()
 const savedShapes = new WeakMap<SVGGeometryElement, { dash: string; offset: string; fillOpacity: string; length: number; pattern: number[] | null; baseFill: number }>()
@@ -177,7 +194,9 @@ export function applyElementOverride(element: HTMLElement, override: NodeOverrid
       transformOrigin: element.style.transformOrigin,
       opacity: element.style.opacity,
       clipPath: element.style.clipPath,
-      color: element.style.color
+      color: element.style.color,
+      overflow: element.style.overflow,
+      html: null
     }
     savedStyles.set(element, saved)
   }
@@ -203,12 +222,96 @@ export function applyElementOverride(element: HTMLElement, override: NodeOverrid
     const hidden = Math.max(0, Math.min(100, (1 - override.reveal) * 100))
     element.style.clipPath = `inset(-30% ${hidden}% -30% -10%)`
   } else element.style.clipPath = saved.clipPath
+  applyContentOverride(element, saved, override)
+}
+
+/**
+ * A changing shape or text: show its geometry or words of now. A shape gets
+ * its path "d" changed in place; text gets an overlay over its own (hidden)
+ * children, so React's nodes are never replaced.
+ */
+function applyContentOverride(element: HTMLElement, saved: Saved, override: NodeOverride): void {
+  if (override.html !== undefined) {
+    let overlay = element.querySelector<HTMLElement>(':scope > .live-text-now')
+    if (!overlay) {
+      overlay = document.createElement('div')
+      overlay.className = 'live-text-now'
+      overlay.dataset.color = getComputedStyle(element).color
+      for (const child of element.children) (child as HTMLElement).style.visibility = 'hidden'
+      if (saved.html === null) saved.html = 'text'
+      element.appendChild(overlay)
+      element.dataset.liveText = '1'
+    }
+    // The node's own words go transparent; the overlay shows the words of now in the node's colour.
+    overlay.style.color = override.color ?? overlay.dataset.color ?? ''
+    element.style.color = 'transparent'
+    if (overlay.dataset.html !== override.html) {
+      overlay.innerHTML = override.html
+      overlay.dataset.html = override.html
+    }
+    return
+  }
+  if (override.d !== undefined && element.dataset.kind === 'svg') {
+    const shape = element.querySelector<SVGPathElement>('path')
+    if (!shape) return
+    if (saved.html === null) {
+      saved.html = 'svg'
+      savedPaths.set(element, { d: shape.getAttribute('d') ?? '', width: shape.getAttribute('stroke-width') })
+    }
+    const svg = element.querySelector('svg')
+    if (svg) svg.style.overflow = 'visible'
+    element.style.overflow = 'visible'
+    if (shape.getAttribute('d') !== override.d) {
+      shape.setAttribute('d', override.d)
+      const info = shapeInfo(shape)
+      try {
+        info.length = shape.getTotalLength()
+      } catch {
+        info.length = 0
+      }
+    }
+    if (override.strokeWidth !== undefined) shape.setAttribute('stroke-width', String(Math.round(override.strokeWidth * 100) / 100))
+    return
+  }
+  if (saved.html !== null) restoreMarkup(element, saved)
+}
+
+const savedPaths = new WeakMap<HTMLElement, { d: string; width: string | null }>()
+
+function restoreMarkup(element: HTMLElement, saved: Saved): void {
+  if (saved.html === 'text') {
+    element.querySelector(':scope > .live-text-now')?.remove()
+    for (const child of element.children) (child as HTMLElement).style.visibility = ''
+    delete element.dataset.liveText
+  } else if (saved.html === 'svg') {
+    const shape = element.querySelector<SVGPathElement>('path')
+    const original = savedPaths.get(element)
+    if (shape && original) {
+      shape.setAttribute('d', original.d)
+      if (original.width === null) shape.removeAttribute('stroke-width')
+      else shape.setAttribute('stroke-width', original.width)
+      const info = savedShapes.get(shape)
+      if (info) {
+        try {
+          info.length = shape.getTotalLength()
+        } catch {
+          info.length = 0
+        }
+      }
+    }
+    const svg = element.querySelector('svg')
+    if (svg) svg.style.overflow = ''
+    element.style.overflow = saved.overflow
+    savedPaths.delete(element)
+  }
+  saved.html = null
 }
 
 /** Put back what applyElementOverride changed. */
 export function clearElementOverride(element: HTMLElement): void {
   const saved = savedStyles.get(element)
   if (!saved) return
+  restoreMarkup(element, saved)
   element.style.transform = saved.transform
   element.style.transformOrigin = saved.transformOrigin
   element.style.opacity = saved.opacity

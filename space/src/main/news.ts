@@ -64,7 +64,7 @@ export class BoardNews {
         setAgentLook(client, root, board, { seq: news.cursor, at: state.at, lookSeq: Math.min(state.lookSeq, news.cursor) })
         return ''
       }
-      if (!news.added.length && !news.erased.length) return ''
+      if (!news.added.length && !news.erased.length && !news.scenePauses?.length) return ''
       const now = Date.now()
       setAgentLook(client, root, board, { seq: news.cursor, at: now, lookSeq: state.lookSeq })
       return formatNews(news, state.at, now)
@@ -116,8 +116,14 @@ export function formatNews(news: LearnerNews, since: number, now: number): strin
   if (news.erased.length) clauses.push(`erased ${strokes(news.erased.length)}${news.erasedWhere ? ` ${news.erasedWhere}` : ''}`)
   const times = [...news.added, ...news.erased].map((stroke) => stroke.at ?? 0).filter((at) => at > 0)
   const last = times.length ? Math.max(...times) : null
+  // A live scene that paused because the learner started drawing.
+  const pauses = (news.scenePauses ?? []).map(
+    (pause) =>
+      `Your scene ${pause.name ? `"${pause.name}"` : pause.scene} paused${pause.step ? ` at step "${pause.step}"` : ''} (${pause.t} s of ${Math.round(pause.duration * 10) / 10} s) because the learner started drawing; scene_control resume continues it.`
+  )
   return [
-    `Board news for "${news.boardName}", since your last look or news ${ago(now - since)} ago: the learner ${clauses.join(', and ')}.`,
+    clauses.length ? `Board news for "${news.boardName}", since your last look or news ${ago(now - since)} ago: the learner ${clauses.join(', and ')}.` : `Board news for "${news.boardName}":`,
+    ...pauses,
     last ? `The last change was ${ago(now - last)} ago.` : null
   ]
     .filter(Boolean)

@@ -178,6 +178,27 @@ function drawTip(context: CanvasRenderingContext2D, point: Point, color: string,
   context.restore()
 }
 
+/** A live scene's pointer: a ring around a dot, like a tutor's hand pointing. Its size stays the same on screen. */
+function drawPointer(context: CanvasRenderingContext2D, point: Point, color: string, size: number, zoom: number, alpha: number): void {
+  const radius = size / zoom
+  context.save()
+  context.globalAlpha = 0.18 * alpha
+  context.fillStyle = color
+  context.beginPath()
+  context.arc(point[0], point[1], radius * 2.2, 0, Math.PI * 2)
+  context.fill()
+  context.globalAlpha = 0.9 * alpha
+  context.strokeStyle = color
+  context.lineWidth = 2 / zoom
+  context.beginPath()
+  context.arc(point[0], point[1], radius * 1.3, 0, Math.PI * 2)
+  context.stroke()
+  context.beginPath()
+  context.arc(point[0], point[1], radius * 0.45, 0, Math.PI * 2)
+  context.fill()
+  context.restore()
+}
+
 /**
  * Paint the committed items: selection glow first, then highlighters, then
  * pen ink on top. During live-scene playback, overrides change how nodes
@@ -207,7 +228,10 @@ export function paintItems(
   if (selected.size) for (const ink of strokes) if (selected.has(ink.node.id) && !overrides?.has(ink.node.id)) drawGlow(context, ink, camera.zoom)
   for (const ink of strokes) if (ink.node.tool === 'highlighter') drawInk(context, ink, 0, overrides?.get(ink.node.id))
   for (const ink of strokes) if (ink.node.tool !== 'highlighter') drawInk(context, ink, 0, overrides?.get(ink.node.id))
-  for (const tip of playback?.tips ?? []) drawTip(context, tip.point, tip.color, tip.size, camera.zoom)
+  for (const tip of playback?.tips ?? []) {
+    if (tip.kind === 'pointer') drawPointer(context, tip.point, tip.color, tip.size, camera.zoom, tip.alpha ?? 1)
+    else drawTip(context, tip.point, tip.color, tip.size, camera.zoom)
+  }
 }
 
 /** Paint the stroke in progress on the overlay layer. */

@@ -29,6 +29,30 @@
   const warnings = new Set()
   const waiters = []
   let waiterSeq = 0
+  const cameraActions = []
+  const pointerActions = []
+  const cues = []
+  /** Times where something animates (value tweens, moves, camera): changing objects are sampled there. */
+  const activeSpans = []
+  const SAMPLE_FPS = 30
+
+  // ---------- Randomness: seeded, so a run repeats exactly ----------
+
+  function mulberry32(seed) {
+    let a = seed >>> 0
+    return () => {
+      a = (a + 0x6d2b79f5) >>> 0
+      let t = a
+      t = Math.imul(t ^ (t >>> 15), t | 1)
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+    }
+  }
+  const programRandom = mulberry32(CTX.seed || 1)
+  Math.random = () => programRandom()
+  /** The hand's wobble in write() and around(): reseeded per object, so a changing object keeps its handwriting. */
+  let rng = mulberry32(7)
+  let nextSeed = 1000
 
   // ---------- Checks ----------
 
@@ -311,8 +335,16 @@
     return opts.name
   }
 
-  /** Register an object; returns the handle the program sees. */
+  /**
+   * Register an object; returns the handle the program sees. While a changing
+   * object is evaluated again (building > 0), it returns the bare entry instead.
+   */
+  let building = 0
   function make(entry) {
+    if (building > 0) return entry
+    return register(entry)
+  }
+  function register(entry) {
     entry.id = objects.length
     entry.created = T
     entry.vis = undefined // 'hidden' (revealed later) or 'shown' (visible from its creation)
@@ -346,6 +378,11 @@
     }
     get kind() {
       return objects[this.id].kind === 'node' ? objects[this.id].nodeKind : objects[this.id].api
+    }
+    /** Live items: their parameters now. */
+    get params() {
+      const entry = objects[this.id]
+      return entry.kind === 'live' ? { ...specAt(entry, T).params } : undefined
     }
     get name() {
       return objects[this.id].name
@@ -404,6 +441,7 @@
     ;(entry.tracks[prop] ||= []).push(a)
     actions.push(a)
     endTime = Math.max(endTime, start + dur)
+    if (prop === 'x' || prop === 'y' || prop === 'scale' || prop === 'rotate') activeSpans.push([a.start, a.start + a.dur])
     return a
   }
   const f3 = (v) => Math.round(v * 1000) / 1000
@@ -427,7 +465,7 @@
   function worldBounds(entry, t) {
     if (entry.kind === 'group') return union(entry.members.map((id) => worldBounds(objects[id], t)))
     const m = matrixAt(entry, t)
-    const b = entry.bounds
+    const b = specAt(entry, t).bounds
     const corners = [
       [b.x, b.y],
       [b.x + b.width, b.y],
@@ -436,6 +474,157 @@
     ].map(([x, y]) => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]])
     const out = boundsOfPoints(corners)
     return { x: f2(out.x), y: f2(out.y), width: f2(out.width), height: f2(out.height) }
+  }
+
+  // ---------- Values ----------
+
+  const values = []
+  /** Counts value reads, so a creator whose function reads a value is known to change. */
+  let reads = 0
+
+  class SceneValue {
+    constructor(id) {
+      Object.defineProperty(this, 'id', { value: id, enumerable: true })
+    }
+    /** The value now: at the current time while the program runs, at the sample time while a changing object is drawn. */
+    get() {
+      reads++
+      const v = values[this.id]
+      return trackValue(v.tracks, v.base, T)
+    }
+    /** Jump to a new value at the current time. */
+    set(n) {
+      num(n, 'value.set(n)')
+      addValueTrack(values[this.id], T, 0, n, 'linear')
+      return this
+    }
+    valueOf() {
+      return this.get()
+    }
+    toString() {
+      return String(this.get())
+    }
+    toJSON() {
+      return this.get()
+    }
+  }
+
+  function trackValue(list, base, t) {
+    let value = base
+    for (const a of list) {
+      if (a.start > t) break
+      if (t >= a.start + a.dur) value = a.to
+      else value = a.from + (a.to - a.from) * EASES[a.ease]((t - a.start) / a.dur)
+    }
+    return value
+  }
+
+  function addValueTrack(v, start, dur, to, ease) {
+    const from = trackValue(v.tracks, v.base, start)
+    v.tracks.push({ start: f3(start), dur: f3(Math.max(0, dur)), from, to, ease })
+    v.tracks.sort((a, b) => a.start - b.start)
+    endTime = Math.max(endTime, start + dur)
+    activeSpans.push([f3(start), f3(start + dur)])
+  }
+
+  function value(initial) {
+    if (initial === undefined) initial = 0
+    num(initial, 'value(n)')
+    values.push({ base: initial, tracks: [] })
+    return new SceneValue(values.length - 1)
+  }
+
+  // ---------- Changing objects (functions and values as arguments) ----------
+
+  function plain(v) {
+    return v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype
+  }
+
+  function isDynamicArg(v, depth) {
+    if (typeof v === 'function' || v instanceof SceneValue) return true
+    if (depth <= 0) return false
+    if (Array.isArray(v)) {
+      for (const x of v) if (isDynamicArg(x, depth - 1)) return true
+      return false
+    }
+    if (plain(v)) {
+      for (const key of Object.keys(v)) if (isDynamicArg(v[key], depth - 1)) return true
+    }
+    return false
+  }
+
+  function resolveArg(v, depth) {
+    if (typeof v === 'function') return resolveArg(v(), depth)
+    if (v instanceof SceneValue) return v.get()
+    if (depth <= 0) return v
+    if (Array.isArray(v)) return isDynamicArg(v, depth) ? v.map((x) => resolveArg(x, depth - 1)) : v
+    if (plain(v) && isDynamicArg(v, depth)) {
+      const out = {}
+      for (const key of Object.keys(v)) out[key] = resolveArg(v[key], depth - 1)
+      return out
+    }
+    return v
+  }
+
+  /** Build an object's entry from its recipe now (at T), without registering it. */
+  function evaluate(recipe) {
+    building++
+    rng = mulberry32(recipe.seed)
+    try {
+      let args = recipe.args.map((x, i) => (recipe.skip.includes(i) ? x : resolveArg(x, 5)))
+      if (recipe.overrides) {
+        args = args.slice()
+        while (args.length <= recipe.optIndex) args.push(undefined)
+        const opts = { ...(plain(args[recipe.optIndex]) ? args[recipe.optIndex] : {}) }
+        for (const [key, v] of Object.entries(recipe.overrides)) {
+          if (key.startsWith('params.')) opts.params = { ...(opts.params || {}), [key.slice(7)]: v.get() }
+          else opts[key] = v.get()
+        }
+        args[recipe.optIndex] = opts
+      }
+      return recipe.impl(...args)
+    } finally {
+      building--
+    }
+  }
+
+  const sampleErrors = new Set()
+  /** The entry of a changing object at time t (its own entry when it does not change). */
+  function specAt(entry, t) {
+    if (!entry.dynamic || entry.evaluating) return entry
+    const saved = T
+    T = t
+    entry.evaluating = true
+    try {
+      return evaluate(entry.recipe)
+    } catch (error) {
+      if (!sampleErrors.has(entry.id)) {
+        sampleErrors.add(entry.id)
+        warnings.add(`object ${entry.id} (${entry.api}${entry.name ? ` "${entry.name}"` : ''}): its functions failed at ${f2(t)} s: ${error && error.message ? error.message : String(error)}; it keeps its last good shape there`)
+      }
+      return entry.lastGood || entry
+    } finally {
+      T = saved
+      entry.evaluating = false
+    }
+  }
+
+  /**
+   * Wrap a creator: functions and values in its arguments are evaluated now,
+   * and again over time when the program ends (the object then changes as
+   * they change). `skip`: argument indexes passed as they are (plot's function).
+   */
+  function creator(api, impl, { optIndex, skip = [], always = false } = {}) {
+    return (...args) => {
+      const dynamic = always || args.some((a, i) => !skip.includes(i) && isDynamicArg(a, 5))
+      const recipe = { impl, args, seed: nextSeed++, optIndex, skip, overrides: null }
+      const before = reads
+      const entry = evaluate(recipe)
+      const handle = register(entry)
+      entry.recipe = recipe
+      entry.dynamic = dynamic || reads !== before
+      return handle
+    }
   }
 
   // ---------- Creators ----------
@@ -690,8 +879,8 @@
           continue
         }
         // A little variation per letter, like a hand.
-        const wob = 1 + (Math.random() - 0.5) * 0.06
-        const dy = (Math.random() - 0.5) * 0.04 * size
+        const wob = 1 + (rng() - 0.5) * 0.06
+        const dy = (rng() - 0.5) * 0.04 * size
         for (const flat of glyph.s) {
           const pts = []
           for (let k = 0; k < flat.length; k += 2) {
@@ -722,7 +911,9 @@
     }
     const placed = lines.map((l) => l.map(([x, y]) => [x + dx, y + dy]))
     const { at: _a, center: _c, size: _s, slant: _sl, ...rest } = opts
-    return inkObject('write', placed, rest, { jitter: 0.25, width: Math.max(1.5, size / 11), speed: size * 11 })
+    const entry = inkObject('write', placed, rest, { jitter: 0.25, width: Math.max(1.5, size / 11), speed: size * 11 })
+    if (building > 0) entry.text = text
+    return entry
   }
 
   // ---------- Typeset text ----------
@@ -789,7 +980,7 @@
       const cy = box.y + box.height / 2
       const rx = box.width / 2 + pad
       const ry = box.height / 2 + pad
-      const start = Math.PI * (1.05 + Math.random() * 0.2)
+      const start = Math.PI * (1.05 + rng() * 0.2)
       const sweep = Math.PI * 2 * 1.08
       const pts = []
       for (let k = 0; k <= 96; k++) {
@@ -830,11 +1021,14 @@
   // ---------- Groups and board nodes ----------
 
   function group(...members) {
+    let opts = {}
+    if (members.length && plain(members[members.length - 1])) opts = members.pop()
     if (members.length === 1 && Array.isArray(members[0])) members = members[0]
     if (!members.length) fail('group(...objects) needs at least one object')
     const entries = members.map((m, k) => entryOf(m, `group member ${k}`))
     for (const e of entries) if (e.parent !== undefined) fail(`object ${e.id} is already in a group`)
-    const handle = make({ kind: 'group', api: 'group', members: entries.map((e) => e.id), bounds: union(entries.map((e) => worldBounds(e, T))) })
+    for (const key of Object.keys(opts)) if (key !== 'name') warnings.add(`group: the option "${key}" is unknown and was ignored`)
+    const handle = register({ kind: 'group', api: 'group', name: nameOf(opts), members: entries.map((e) => e.id), bounds: union(entries.map((e) => worldBounds(e, T))) })
     for (const e of entries) e.parent = handle.id
     return handle
   }
@@ -844,18 +1038,307 @@
     node(id) {
       if (typeof id !== 'string') fail(`board.node(id) needs a node id or an ink group id such as "g3", got ${describe(id)}`)
       if (nodeCache.has(id)) return nodeCache.get(id)
-      const info = CTX.nodes[id]
-      if (!info) fail(`board.node: there is no node or ink group "${id}" on the board. Ink groups are g1, g2, …; get_tree lists the ids.`)
-      const handle = make({ kind: 'node', api: 'node', ref: id, nodeKind: info.kind, name: info.name, bounds: info.bounds })
+      // A name from an earlier scene (or a named node) finds its item; ids come first.
+      const byName = CTX.nodes[id] ? undefined : CTX.names && CTX.names[id]
+      if (byName && nodeCache.has(byName)) return nodeCache.get(byName)
+      const ref = byName || id
+      const info = CTX.nodes[ref]
+      if (!info) fail(`board.node: there is no node, ink group or named item "${id}" on the board. Ink groups are g1, g2, …; get_tree lists the ids.`)
+      const handle = register({ kind: 'node', api: 'node', ref, nodeKind: info.kind, name: info.name, bounds: info.bounds })
       objects[handle.id].vis = 'shown'
       objects[handle.id].created = 0
-      nodeCache.set(id, handle)
+      nodeCache.set(ref, handle)
+      if (byName) nodeCache.set(id, handle)
       return handle
     },
+    /** The learner's view now (after this scene's camera moves so far). */
     get view() {
-      return { ...CTX.view }
+      return viewAt(T)
     }
   })
+
+  // ---------- Traces ----------
+
+  /** Times a trace samples its point at, from t0 up to now: frames where something animates, and both ends. */
+  function traceTimes(t0, now) {
+    const out = new Set([f3(t0), f3(now)])
+    const dt = 1 / SAMPLE_FPS
+    for (const [s0, s1] of activeSpans) {
+      const a = Math.max(s0, t0)
+      const b = Math.min(s1, now)
+      if (b < a) continue
+      for (let t = a; t < b; t += dt) out.add(f3(t))
+      out.add(f3(b))
+    }
+    return [...out].filter((t) => t >= t0 - 1e-9 && t <= now + 1e-9).sort((p, q) => p - q)
+  }
+  /** While the end samples are taken, a trace's earlier points no longer change: keep them. */
+  let finalSampling = false
+  const traceCache = new WeakMap()
+
+  /** The path a moving point leaves: fn() → [x, y] at every moment from the trace's start until now. */
+  function trace(fn, t0, opts) {
+    if (typeof fn !== 'function') fail('trace(fn, options) needs a function that returns the point now, like () => [x.get(), y.get()]')
+    opts = options(opts, 'trace options')
+    const now = T
+    let cache = finalSampling ? traceCache.get(fn) : null
+    if (finalSampling && !cache) traceCache.set(fn, (cache = new Map()))
+    const pts = []
+    try {
+      for (const tau of traceTimes(t0, now)) {
+        let p = cache && cache.get(tau)
+        if (!p) {
+          T = tau
+          p = pair(resolveArg(fn(), 2), 'trace point')
+          if (cache) cache.set(tau, p)
+        }
+        pts.push(p)
+      }
+    } finally {
+      T = now
+    }
+    if (pts.length < 2) pts.push([pts[0][0] + 0.01, pts[0][1]])
+    return shapeObject('trace', polyD(pts, false), opts, { closed: false })
+  }
+
+  // ---------- Live pixels ----------
+
+  function liveObject(api, mode, code, opts) {
+    if (typeof code !== 'string' || !code.trim()) fail(`${api}(code, options) needs its program as a string`)
+    opts = options(opts, `${api} options`)
+    const [w, h] = opts.size === undefined ? [320, 200] : pair(opts.size, `${api} size`)
+    if (w <= 0 || h <= 0) fail(`${api} size must be positive`)
+    let x
+    let y
+    if (opts.center !== undefined) {
+      const [cx, cy] = pair(opts.center, `${api} center`)
+      x = cx - w / 2
+      y = cy - h / 2
+    } else [x, y] = opts.at === undefined ? [-w / 2, -h / 2] : pair(opts.at, `${api} at`)
+    const params = {}
+    if (opts.params !== undefined) {
+      if (!plain(opts.params)) fail(`${api} params must be an object of numbers like {k: 1}`)
+      for (const [key, v] of Object.entries(opts.params)) params[key] = num(v, `${api} params.${key}`)
+    }
+    for (const key of Object.keys(opts)) if (!['at', 'center', 'size', 'params', 'name', 'opacity'].includes(key)) warnings.add(`${api}: the option "${key}" is unknown and was ignored`)
+    return make({
+      kind: 'live',
+      api,
+      mode,
+      name: nameOf(opts),
+      code,
+      width: w,
+      height: h,
+      params,
+      style: { color: 'text', width: 0, opacity: opts.opacity === undefined ? 1 : num(opts.opacity, `${api} opacity`) },
+      bounds: { x, y, width: w, height: h }
+    })
+  }
+  const shader = (code, opts) => liveObject('shader', 'shader', code, opts)
+  const canvas = (code, opts) => liveObject('canvas', 'canvas', code, opts)
+
+  // ---------- Labels ----------
+
+  const SIDES = {
+    right: [1, 0],
+    left: [-1, 0],
+    above: [0, -1],
+    below: [0, 1],
+    'above-right': [Math.SQRT1_2, -Math.SQRT1_2],
+    'above-left': [-Math.SQRT1_2, -Math.SQRT1_2],
+    'below-right': [Math.SQRT1_2, Math.SQRT1_2],
+    'below-left': [-Math.SQRT1_2, Math.SQRT1_2]
+  }
+  /** The side a label chose when it was made: it keeps it while things move. */
+  const labelChoice = new Map()
+
+  /** World polylines of an object at t (outlines and ink), for collisions and points along it. */
+  function worldLines(entry, t) {
+    if (entry.kind === 'group') return entry.members.flatMap((id) => worldLines(objects[id], t))
+    const spec = specAt(entry, t)
+    const m = matrixAt(entry, t)
+    let local
+    if (spec.kind === 'ink') local = spec.lines || samplePath(spec.d)
+    else if (spec.kind === 'shape') local = samplePath(spec.d)
+    else {
+      const b = spec.bounds
+      local = [[[b.x, b.y], [b.x + b.width, b.y], [b.x + b.width, b.y + b.height], [b.x, b.y + b.height], [b.x, b.y]]]
+    }
+    return local.map((l) => l.map((p) => [m[0] * p[0] + m[2] * p[1] + m[4], m[1] * p[0] + m[3] * p[1] + m[5]]))
+  }
+
+  function pointAlong(lines, share) {
+    let total = 0
+    for (const l of lines) total += polyLength(l)
+    let left = Math.max(0, Math.min(1, share)) * total
+    for (const l of lines) {
+      for (let i = 1; i < l.length; i++) {
+        const len = Math.hypot(l[i][0] - l[i - 1][0], l[i][1] - l[i - 1][1])
+        if (left <= len) {
+          const k = len ? left / len : 0
+          return [l[i - 1][0] + (l[i][0] - l[i - 1][0]) * k, l[i - 1][1] + (l[i][1] - l[i - 1][1]) * k]
+        }
+        left -= len
+      }
+    }
+    const last = lines[lines.length - 1]
+    return last[last.length - 1]
+  }
+
+  function rectsOverlap(a, b) {
+    const w = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x)
+    const h = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y)
+    return w > 0 && h > 0 ? w * h : 0
+  }
+  function inside(r, outer) {
+    return r.x >= outer.x && r.y >= outer.y && r.x + r.width <= outer.x + outer.width && r.y + r.height <= outer.y + outer.height
+  }
+  const isTextLike = (e) => e.kind === 'text' || e.api === 'write' || e.api === 'label'
+
+  /** How badly a box collides with the scene's objects and the board's items at t. Lower is better. */
+  function collisionScore(box, t, exclude) {
+    let score = 0
+    const shrunk = { x: box.x + box.width * 0.06, y: box.y + box.height * 0.06, width: box.width * 0.88, height: box.height * 0.88 }
+    for (const e of objects) {
+      if (exclude.has(e.id) || e.kind === 'group' || e.kind === 'node' || e.removed) continue
+      const b = worldBounds(e, t)
+      if (!rectsOverlap(b, box)) continue
+      if (isTextLike(e) || e.kind === 'live') {
+        score += 60 * (rectsOverlap(b, box) / Math.max(1, box.width * box.height))
+        continue
+      }
+      for (const l of worldLines(e, t)) {
+        for (let i = 1; i < l.length; i++) {
+          const n = Math.max(1, Math.ceil(Math.hypot(l[i][0] - l[i - 1][0], l[i][1] - l[i - 1][1]) / 5))
+          for (let k = 0; k < n; k++) {
+            const x = l[i - 1][0] + ((l[i][0] - l[i - 1][0]) * k) / n
+            const y = l[i - 1][1] + ((l[i][1] - l[i - 1][1]) * k) / n
+            if (x >= shrunk.x && x <= shrunk.x + shrunk.width && y >= shrunk.y && y <= shrunk.y + shrunk.height) score += 1
+          }
+        }
+      }
+    }
+    for (const [id, info] of Object.entries(CTX.nodes)) {
+      if (info.kind === 'frame' || info.kind === 'ink' || exclude.has(id)) continue
+      score += 40 * (rectsOverlap(info.bounds, box) / Math.max(1, box.width * box.height))
+    }
+    if (!inside(box, viewAt(t))) score += 25
+    return score
+  }
+
+  function label(target, str, opts) {
+    if (typeof str !== 'string' && typeof str !== 'number') fail(`label(target, text, options) needs text, got ${describe(str)}`)
+    str = String(str)
+    opts = options(opts, 'label options')
+    const { side = 'auto', at, gap: gapOpt, tex: asTex, text: asText, ...rest } = opts
+    const gap = gapOpt === undefined ? 10 : num(gapOpt, 'label gap')
+    const exclude = new Set()
+    // The anchor and the directions to try.
+    let anchor = null
+    let box = null
+    let dirs = Object.keys(SIDES)
+    let preferred = []
+    if (target instanceof SceneObject) {
+      const entry = entryOf(target, 'label target')
+      exclude.add(entry.id)
+      if (entry.kind === 'node') exclude.add(entry.ref)
+      if (at !== undefined) {
+        if (typeof at === 'number') anchor = pointAlong(worldLines(entry, T), at)
+        else anchor = pair(at, 'label at')
+        const b = worldBounds(entry, T)
+        const c = [b.x + b.width / 2, b.y + b.height / 2]
+        const out = [anchor[0] - c[0], anchor[1] - c[1]]
+        const len = Math.hypot(out[0], out[1])
+        if (len > 1e-6) {
+          // Outward from the object first.
+          preferred = dirs.slice().sort((p, q) => SIDES[q][0] * out[0] + SIDES[q][1] * out[1] - (SIDES[p][0] * out[0] + SIDES[p][1] * out[1]))
+        }
+      } else box = worldBounds(entry, T)
+    } else if (Array.isArray(target) && Array.isArray(target[0])) {
+      const a = pair(target[0], 'label segment start')
+      const b = pair(target[1], 'label segment end')
+      const share = typeof at === 'number' ? at : 0.5
+      anchor = [a[0] + (b[0] - a[0]) * share, a[1] + (b[1] - a[1]) * share]
+      const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1
+      const n = [-(b[1] - a[1]) / len, (b[0] - a[0]) / len]
+      // The two sides of the segment, as the nearest named sides.
+      const nearest = (v) => dirs.slice().sort((p, q) => SIDES[q][0] * v[0] + SIDES[q][1] * v[1] - (SIDES[p][0] * v[0] + SIDES[p][1] * v[1]))[0]
+      dirs = [nearest(n), nearest([-n[0], -n[1]])]
+    } else anchor = pair(target, 'label target')
+    // Measure the text at the origin.
+    const make1 = (pos) => {
+      rng = mulberry32(labelSeed)
+      const o = { ...rest, at: pos }
+      return asTex ? textObject('tex', str, o, true) : asText ? textObject('text', str, o, false) : write(str, o)
+    }
+    const labelSeed = Math.floor(rng() * 1e9)
+    const probe = make1([0, 0])
+    const w = probe.bounds.width
+    const h = probe.bounds.height
+    const place = (dir) => {
+      const [dx, dy] = SIDES[dir]
+      if (box) {
+        const cx = box.x + box.width / 2 + dx * (box.width / 2 + gap) + dx * (w / 2)
+        const cy = box.y + box.height / 2 + dy * (box.height / 2 + gap) + dy * (h / 2)
+        return { x: cx - w / 2, y: cy - h / 2, width: w, height: h }
+      }
+      const cx = anchor[0] + dx * gap + dx * (w / 2)
+      const cy = anchor[1] + dy * gap + dy * (h / 2)
+      return { x: cx - w / 2, y: cy - h / 2, width: w, height: h }
+    }
+    let dir
+    if (side === 'center') {
+      const c = box ? [box.x + box.width / 2, box.y + box.height / 2] : anchor
+      const spec = make1([c[0] - w / 2, c[1] - h / 2])
+      spec.api = 'label'
+      return spec
+    } else if (side !== 'auto') {
+      if (!SIDES[side]) fail(`label side must be "auto", "center" or one of ${Object.keys(SIDES).join(', ')}`)
+      dir = side
+    } else {
+      const key = labelKey
+      dir = key !== null ? labelChoice.get(key) : undefined
+      if (!dir) {
+        const order = preferred.length ? preferred : dirs
+        let best = Infinity
+        order.forEach((d, i) => {
+          if (!dirs.includes(d)) return
+          const score = collisionScore(place(d), T, exclude) + i * 0.01
+          if (score < best) {
+            best = score
+            dir = d
+          }
+        })
+        if (key !== null) labelChoice.set(key, dir)
+      }
+    }
+    const r = place(dir)
+    const spec = make1([r.x, r.y])
+    spec.api = 'label'
+    return spec
+  }
+  /** The recipe seed of the label being evaluated (set by the wrapper below), so its side is chosen once. */
+  let labelKey = null
+  const labelCreator = creator('label', (...args) => label(...args), { optIndex: 2, always: true })
+  const labelApi = (...args) => {
+    const seed = nextSeed
+    labelKey = seed
+    try {
+      const handle = labelCreator(...args)
+      objects[handle.id].recipe.impl = (...a) => {
+        const saved = labelKey
+        labelKey = seed
+        try {
+          return label(...a)
+        } finally {
+          labelKey = saved
+        }
+      }
+      return handle
+    } finally {
+      labelKey = null
+    }
+  }
 
   // ---------- Actions ----------
 
@@ -897,6 +1380,7 @@
     if (entry.kind === 'shape') return Math.max(0.35, Math.min(3, entry.length / 500))
     if (entry.kind === 'text') return Math.max(0.4, Math.min(2.5, entry.bounds.width / 260))
     if (entry.kind === 'node') return 1
+    if (entry.kind === 'live') return 0.8
     return 0.6
   }
 
@@ -929,7 +1413,7 @@
       revealSet(e, at)
       const from = valueAt(e, 'draw', at)
       addTrack(e, 'draw', at, share, 1, ease || (e.kind === 'ink' ? 'linear' : 'inOut'), from >= 1 ? 0 : from)
-      if (e.kind === 'shape' || e.kind === 'text' || e.kind === 'node') {
+      if (e.kind === 'shape' || e.kind === 'text' || e.kind === 'node' || e.kind === 'live') {
         if (hasFill(e)) addTrack(e, 'fill', at + share * 0.6, share * 0.4 + 0.25, 1, 'out', valueAt(e, 'fill', at + share * 0.6))
         else addTrack(e, 'fill', at, 0, 1, 'linear')
       }
@@ -1013,7 +1497,39 @@
 
   const TWEEN_PROPS = new Set(['x', 'y', 'scale', 'rotate', 'opacity', 'color', 'draw'])
 
+  /** A value that stands for one numeric option of a creator: the object is drawn again as it changes. */
+  function optionValue(entry, key) {
+    const recipe = entry.recipe
+    if (!recipe || recipe.optIndex === undefined) fail(`tween: object ${entry.id} (${entry.api}) has no option "${key}" to animate`)
+    recipe.overrides ||= {}
+    if (recipe.overrides[key]) return recipe.overrides[key]
+    // The start: the option as given (resolved now), else the object's own number for it.
+    const spec = specAt(entry, T)
+    const given = resolveArg(recipe.args[recipe.optIndex], 5)
+    let start
+    if (key.startsWith('params.')) start = spec.params ? spec.params[key.slice(7)] : undefined
+    else if (plain(given) && typeof given[key] === 'number') start = given[key]
+    else if (spec.style && typeof spec.style[key] === 'number') start = spec.style[key]
+    else if (key === 'size' && spec.style && typeof spec.style.size === 'number') start = spec.style.size
+    if (typeof start !== 'number') fail(`tween: object ${entry.id} (${entry.api}) has no number for "${key}" to start from; give it in the creator's options`)
+    const v = value(start)
+    recipe.overrides[key] = v
+    entry.dynamic = true
+    return v
+  }
+
   function tween(target, props, timing) {
+    if (target instanceof SceneValue) {
+      let to = props
+      if (plain(props)) {
+        if (timing === undefined && (props.dur !== undefined || props.ease !== undefined)) timing = { dur: props.dur, ease: props.ease }
+        to = props.to
+      }
+      num(to, 'tween(value, target) target')
+      const { dur, ease } = durationArg(timing, 'tween', 0.8)
+      addValueTrack(values[target.id], T, dur, to, ease || 'inOut')
+      return new Action(T, T + dur)
+    }
     const entry = entryOf(target, 'tween(object)')
     props = options(props, 'tween props')
     if (timing === undefined && (props.dur !== undefined || props.ease !== undefined)) timing = { dur: props.dur, ease: props.ease }
@@ -1021,7 +1537,23 @@
     let any = false
     for (const [key, value] of Object.entries(props)) {
       if (key === 'dur' || key === 'ease') continue
-      if (!TWEEN_PROPS.has(key)) fail(`tween: "${key}" is not a tweenable property (${[...TWEEN_PROPS].join(', ')})`)
+      if (key === 'params' && plain(value)) {
+        for (const [k, v] of Object.entries(value)) {
+          for (const e of leaves(entry)) {
+            if (e.kind !== 'live') fail(`tween: object ${e.id} (${e.api}) has no params; only shader() and canvas() items do`)
+            addValueTrack(values[optionValue(e, `params.${k}`).id], T, dur, num(v, `tween params.${k}`), ease || 'inOut')
+          }
+        }
+        any = true
+        continue
+      }
+      if (!TWEEN_PROPS.has(key)) {
+        // Any other numeric option of the creator (width, size, fillOpacity, radius, …).
+        num(value, `tween ${key}`)
+        for (const e of leaves(entry)) addValueTrack(values[optionValue(e, key).id], T, dur, value, ease || 'inOut')
+        any = true
+        continue
+      }
       any = true
       const groupOwn = key === 'x' || key === 'y' || key === 'scale' || key === 'rotate'
       const targets = groupOwn ? [entry] : leaves(entry)
@@ -1042,7 +1574,7 @@
         }
       }
     }
-    if (!any) fail('tween(object, {x, y, scale, rotate, opacity, color, draw}, seconds) needs at least one property')
+    if (!any) fail('tween(object, {x, y, scale, rotate, opacity, color, draw, params, or any numeric option}, seconds) needs at least one property')
     return new Action(T, T + dur)
   }
 
@@ -1053,9 +1585,93 @@
     return new Action(T, T + s)
   }
 
-  function step(name) {
+  function step(name, opts) {
     if (typeof name !== 'string' || !name.trim()) fail('step(name) needs a name string')
-    steps.push({ name: name.trim(), at: f3(T) })
+    opts = options(opts, 'step options')
+    for (const key of Object.keys(opts)) if (key !== 'pause') warnings.add(`step: the option "${key}" is unknown and was ignored`)
+    steps.push({ name: name.trim(), at: f3(T), ...(opts.pause ? { pause: true } : {}) })
+  }
+
+  // ---------- Camera, pointer, speech ----------
+
+  const clampZoom = (z) => Math.max(0.1, Math.min(8, z))
+  const vw = () => (CTX.viewport && CTX.viewport[0]) || 1200
+  const vh = () => (CTX.viewport && CTX.viewport[1]) || 800
+
+  /** The learner's view at t, after this scene's camera moves (a move in progress counts as done at its end). */
+  function viewAt(t) {
+    let view = { ...CTX.view }
+    for (const c of cameraActions) {
+      if (c.start > t) break
+      const w = vw() / c.zoom
+      const h = vh() / c.zoom
+      const to = { x: c.center[0] - w / 2, y: c.center[1] - h / 2, width: w, height: h }
+      if (t >= c.start + c.dur || c.dur <= 0) view = to
+      else {
+        const k = EASES[c.ease]((t - c.start) / c.dur)
+        view = { x: view.x + (to.x - view.x) * k, y: view.y + (to.y - view.y) * k, width: view.width + (to.width - view.width) * k, height: view.height + (to.height - view.height) * k }
+      }
+    }
+    return { x: f2(view.x), y: f2(view.y), width: f2(view.width), height: f2(view.height) }
+  }
+
+  function camera(spec, timing) {
+    spec = options(spec, 'camera spec')
+    const { dur, ease } = durationArg(timing, 'camera', 1)
+    const now = viewAt(T)
+    let zoom = vw() / now.width
+    let center = [now.x + now.width / 2, now.y + now.height / 2]
+    if (spec.fit !== undefined) {
+      let r
+      if (spec.fit instanceof SceneObject) r = worldBounds(entryOf(spec.fit, 'camera fit'), T)
+      else if (Array.isArray(spec.fit) && spec.fit.length === 4) r = { x: coord(spec.fit[0], 'camera fit[0]'), y: coord(spec.fit[1], 'camera fit[1]'), width: num(spec.fit[2], 'camera fit[2]'), height: num(spec.fit[3], 'camera fit[3]') }
+      else fail('camera fit must be an object or [x, y, width, height]')
+      const pad = spec.pad === undefined ? 40 : num(spec.pad, 'camera pad')
+      zoom = clampZoom(Math.min(vw() / Math.max(1, r.width + pad * 2), vh() / Math.max(1, r.height + pad * 2)))
+      center = [r.x + r.width / 2, r.y + r.height / 2]
+    }
+    if (spec.to !== undefined) center = pair(spec.to, 'camera to')
+    if (spec.zoom !== undefined) zoom = clampZoom(num(spec.zoom, 'camera zoom'))
+    for (const key of Object.keys(spec)) if (!['fit', 'to', 'zoom', 'pad'].includes(key)) warnings.add(`camera: the option "${key}" is unknown and was ignored`)
+    if (spec.fit === undefined && spec.to === undefined && spec.zoom === undefined) fail('camera({fit, to, zoom}, seconds) needs fit, to or zoom')
+    cameraActions.push({ start: f3(T), dur: f3(dur), center: [f2(center[0]), f2(center[1])], zoom: Math.round(zoom * 1000) / 1000, ease: ease || 'inOut' })
+    cameraActions.sort((a, b) => a.start - b.start)
+    activeSpans.push([f3(T), f3(T + dur)])
+    endTime = Math.max(endTime, T + dur)
+    return new Action(T, T + dur)
+  }
+
+  function point(target, timing) {
+    const { dur } = durationArg(timing, 'point', 0.6)
+    let to
+    if (target === null || target === false) to = null
+    else if (target instanceof SceneObject) {
+      const b = worldBounds(entryOf(target, 'point target'), T)
+      to = [f2(b.x + b.width / 2), f2(b.y + b.height / 2)]
+    } else to = pair(target, 'point target')
+    pointerActions.push({ start: f3(T), dur: f3(dur), to })
+    pointerActions.sort((a, b) => a.start - b.start)
+    endTime = Math.max(endTime, T + dur)
+    return new Action(T, T + dur)
+  }
+
+  /** Spoken words per second when the real speech time is not known. */
+  const WORDS_PER_S = 2.6
+  function estimateSpeech(str) {
+    const words = str.trim().split(/\s+/).filter(Boolean).length
+    return Math.max(0.6, words / WORDS_PER_S + 0.25)
+  }
+  function say(str, opts) {
+    if (typeof str !== 'string' && typeof str !== 'number') fail(`say(text) needs a string, got ${describe(str)}`)
+    str = String(str).trim()
+    if (!str) fail('say(text) needs some words')
+    opts = options(opts, 'say options')
+    for (const key of Object.keys(opts)) warnings.add(`say: the option "${key}" is unknown and was ignored`)
+    const known = CTX.durations && CTX.durations[str]
+    const dur = f3(typeof known === 'number' ? known : estimateSpeech(str))
+    cues.push({ text: str, at: f3(T), dur })
+    endTime = Math.max(endTime, T + dur)
+    return new Action(T, T + dur)
   }
 
   function all(...list) {
@@ -1097,22 +1713,229 @@
     return true
   }
 
+  // ---------- At the end: sample changing objects, check the layout ----------
+
+  /** Sample times for an object made at `from`: frames where something animates, plus the start and the end. */
+  function sampleTimes(from) {
+    const out = new Set([f3(from), f3(endTime)])
+    const dt = 1 / SAMPLE_FPS
+    for (const [s0, s1] of activeSpans) {
+      const a = Math.max(s0, from)
+      const b = Math.min(s1, endTime)
+      if (b < a) continue
+      for (let t = a; t < b; t += dt) out.add(f3(t))
+      out.add(f3(b))
+    }
+    return [...out].filter((t) => t >= from - 1e-9 && t <= endTime + 1e-9).sort((p, q) => p - q)
+  }
+
+  function geometryOf(spec) {
+    const g = { bounds: { x: f2(spec.bounds.x), y: f2(spec.bounds.y), width: f2(spec.bounds.width), height: f2(spec.bounds.height) } }
+    if (spec.kind === 'shape') {
+      g.d = spec.d
+      g.width = spec.style.width
+      if (spec.style.fill) g.fill = spec.style.fill
+      if (spec.style.fillOpacity !== undefined) g.fillOpacity = spec.style.fillOpacity
+    } else if (spec.kind === 'ink') {
+      if (spec.lines) g.lines = spec.lines
+      else g.d = spec.d
+      g.width = spec.style.width
+    } else if (spec.kind === 'text') g.text = spec.text
+    else if (spec.kind === 'live') g.params = spec.params
+    return g
+  }
+
+  function sampleObjects() {
+    finalSampling = true
+    for (const entry of objects) {
+      if (!entry.dynamic || entry.kind === 'group' || entry.kind === 'node') continue
+      const samples = []
+      let lastKey = ''
+      let final = null
+      for (const t of sampleTimes(entry.created)) {
+        const spec = specAt(entry, t)
+        if (spec !== entry) entry.lastGood = spec
+        if (spec.kind !== entry.kind) {
+          warnings.add(`object ${entry.id} (${entry.api}): its functions changed what kind of object it is; it keeps its first kind`)
+          continue
+        }
+        const g = geometryOf(spec)
+        const key = JSON.stringify(g)
+        final = spec
+        if (key === lastKey) continue
+        lastKey = key
+        samples.push({ t: f3(t), ...g })
+      }
+      if (!final) continue
+      // The object's own fields hold the end state.
+      for (const field of ['d', 'lines', 'text', 'params', 'at', 'center', 'pressure', 'length', 'style']) if (final[field] !== undefined) entry[field] = final[field]
+      entry.bounds = final.bounds
+      if (samples.length > 1) entry.dyn = samples
+    }
+  }
+
+  /** Visible at t: made (or revealed) by then and not gone. */
+  function visibleAt(e, t) {
+    if (e.kind === 'group' || e.kind === 'node') return false
+    if (e.vis === 'hidden') {
+      const reveal = (e.tracks.draw || []).concat(e.tracks.opacity || []).find((a) => a.to > 0)
+      if (!reveal || reveal.start > t) return false
+    } else if (e.created > t) return false
+    const draw = valueAt(e, 'draw', t)
+    const opacity = valueAt(e, 'opacity', t)
+    return draw > 0.05 && opacity > 0.05
+  }
+
+  function revealEnd(e) {
+    let end = e.created
+    for (const a of e.tracks.draw || []) if (a.to > 0) end = Math.max(end, a.start + a.dur)
+    for (const a of e.tracks.fill || []) if (a.to > 0) end = Math.max(end, a.start + a.dur)
+    for (const a of e.tracks.opacity || []) if (a.to > 0) end = Math.max(end, a.start + a.dur)
+    return Math.min(end, endTime)
+  }
+
+  const who = (e) => {
+    const words = isTextLike(e) ? specAt(e, endTime).text : undefined
+    return `${e.api} ${e.id}${e.name ? ` "${e.name}"` : ''}${typeof words === 'string' ? ` ${JSON.stringify(words.length > 30 ? `${words.slice(0, 29)}…` : words)}` : ''}`
+  }
+  function stepAt(t) {
+    let name = null
+    for (const st of steps) if (st.at <= t + 1e-9) name = st.name
+    return name
+  }
+
+  function checkLayout() {
+    const times = new Set([f3(endTime)])
+    for (const st of steps) times.add(st.at)
+    for (const e of objects) if (isTextLike(e) && e.kind !== 'group') times.add(f3(revealEnd(e)))
+    const seen = new Set()
+    const sorted = [...times].sort((a, b) => a - b)
+    for (const t of sorted) {
+      const visible = objects.filter((e) => visibleAt(e, t))
+      for (const e of visible) {
+        if (!isTextLike(e)) continue
+        const box = worldBounds(e, t)
+        const inner = { x: box.x + box.width * 0.08, y: box.y + box.height * 0.08, width: box.width * 0.84, height: box.height * 0.84 }
+        for (const o of visible) {
+          if (o === e) continue
+          const pairKey = e.id < o.id ? `${e.id}:${o.id}` : `${o.id}:${e.id}`
+          if (seen.has(pairKey)) continue
+          const ob = worldBounds(o, t)
+          if (!rectsOverlap(ob, inner)) continue
+          let hit = false
+          let what = 'outline'
+          if (isTextLike(o) || o.kind === 'live') {
+            hit = rectsOverlap(ob, inner) > 0.12 * Math.min(inner.width * inner.height, ob.width * ob.height)
+            what = o.kind === 'live' ? 'box' : 'text'
+          } else {
+            let count = 0
+            for (const l of worldLines(o, t)) {
+              for (let i = 1; i < l.length && count < 3; i++) {
+                const n = Math.max(1, Math.ceil(Math.hypot(l[i][0] - l[i - 1][0], l[i][1] - l[i - 1][1]) / 4))
+                for (let k = 0; k < n; k++) {
+                  const x = l[i - 1][0] + ((l[i][0] - l[i - 1][0]) * k) / n
+                  const y = l[i - 1][1] + ((l[i][1] - l[i - 1][1]) * k) / n
+                  if (x >= inner.x && x <= inner.x + inner.width && y >= inner.y && y <= inner.y + inner.height) count++
+                }
+              }
+            }
+            hit = count >= 3
+          }
+          if (!hit) continue
+          seen.add(pairKey)
+          const st = stepAt(t)
+          warnings.add(`overlap: ${who(e)} overlaps the ${what} of ${who(o)} at ${f2(t)} s${st ? ` (step "${st}")` : ''}; text at ${f2(box.x)}, ${f2(box.y)} ${f2(box.width)}×${f2(box.height)}`)
+        }
+        const items = []
+        for (const [id, info] of Object.entries(CTX.nodes)) {
+          // Ink shows through its ink group (g1, …); frames hold other items.
+          if (info.kind === 'frame' || info.kind === 'ink' || seen.has(`${e.id}:${id}`)) continue
+          if (rectsOverlap(info.bounds, inner) <= 0.12 * Math.min(inner.width * inner.height, info.bounds.width * info.bounds.height)) continue
+          // Items this scene acts on are where the scene puts them, not where they were.
+          if (objects.some((o) => o.kind === 'node' && o.ref === id)) continue
+          seen.add(`${e.id}:${id}`)
+          items.push(`${id}${info.name ? ` "${info.name}"` : ''} (${info.kind})`)
+        }
+        if (items.length) warnings.add(`overlap: ${who(e)} overlaps the board item${items.length > 1 ? 's' : ''} ${items.join(', ')} at ${f2(t)} s`)
+      }
+    }
+    // Outside the learner's view when it appears (this scene's camera moves count).
+    for (const e of objects) {
+      if (e.kind === 'group' || e.kind === 'node' || e.removed) continue
+      const t = revealEnd(e)
+      if (!visibleAt(e, t) && !visibleAt(e, endTime)) continue
+      const b = worldBounds(e, t)
+      const view = viewAt(t)
+      if (!inside(b, view)) {
+        const fully = rectsOverlap(b, view) <= 0
+        warnings.add(`view: ${who(e)} is ${fully ? 'outside' : 'partly outside'} the learner's view at ${f2(t)} s (object ${f2(b.x)}, ${f2(b.y)} ${f2(b.width)}×${f2(b.height)}; view ${f2(view.x)}, ${f2(view.y)} ${f2(view.width)}×${f2(view.height)})`)
+      }
+    }
+  }
+
   globalThis.__result = () => {
     for (const e of objects) if (e.vis === undefined) e.vis = 'shown'
+    sampleObjects()
+    try {
+      checkLayout()
+    } catch (error) {
+      warnings.add(`The layout check failed: ${error && error.message ? error.message : String(error)}`)
+    }
     const out = objects.map((e) => {
       const o = { id: e.id, kind: e.kind, api: e.api, created: f3(e.created), vis: e.vis, removed: e.removed, bounds: e.bounds, pivot: e.pivot }
       if (e.name !== undefined) o.name = e.name
       if (e.parent !== undefined) o.parent = e.parent
+      if (e.dyn) o.dyn = e.dyn
       if (e.kind === 'ink') Object.assign(o, { style: e.style, lines: e.lines, d: e.d, pressure: e.pressure })
       if (e.kind === 'shape') Object.assign(o, { style: e.style, d: e.d })
       if (e.kind === 'text') Object.assign(o, { style: e.style, text: e.text, math: e.math, at: e.at, center: e.center })
+      if (e.kind === 'live') Object.assign(o, { style: e.style, mode: e.mode, code: e.code, width: e.width, height: e.height, params: e.params })
       if (e.kind === 'group') o.members = e.members
       if (e.kind === 'node') o.ref = e.ref
       return o
     })
-    return JSON.stringify({ objects: out, actions, steps, duration: f3(endTime), logs, warnings: [...warnings] })
+    return JSON.stringify({ objects: out, actions, steps, duration: f3(endTime), logs, warnings: [...warnings], camera: cameraActions, pointer: pointerActions, cues })
   }
 
-  const api = { stroke, line, arrow, circle, ellipse, rect, polygon, path, plot, write, tex, text, around, group, board, draw, fillIn, fadeIn, fadeOut, erase, move, tween, wait, step, all }
+  const traceCreator = creator('trace', trace, { optIndex: 2, skip: [0, 1], always: true })
+
+  /** The spoken lines so far (the host measures their real duration between passes). */
+  globalThis.__cueTexts = () => JSON.stringify(cues.map((c) => c.text))
+
+  const api = {
+    stroke: creator('stroke', stroke, { optIndex: 1 }),
+    line: creator('line', line, { optIndex: 4 }),
+    arrow: creator('arrow', arrow, { optIndex: 4 }),
+    circle: creator('circle', circle, { optIndex: 3 }),
+    ellipse: creator('ellipse', ellipse, { optIndex: 4 }),
+    rect: creator('rect', rect, { optIndex: 4 }),
+    polygon: creator('polygon', polygon, { optIndex: 1 }),
+    path: creator('path', path, { optIndex: 1 }),
+    plot: creator('plot', plot, { optIndex: 1, skip: [0] }),
+    write: creator('write', write, { optIndex: 1 }),
+    tex: creator('tex', tex, { optIndex: 1 }),
+    text: creator('text', text, { optIndex: 1 }),
+    around: creator('around', around, { optIndex: 1 }),
+    label: labelApi,
+    trace: (fn, opts) => traceCreator(fn, T, opts),
+    shader: creator('shader', shader, { optIndex: 1 }),
+    canvas: creator('canvas', canvas, { optIndex: 1 }),
+    group,
+    board,
+    value,
+    draw,
+    fillIn,
+    fadeIn,
+    fadeOut,
+    erase,
+    move,
+    tween,
+    wait,
+    step,
+    all,
+    camera,
+    point,
+    say
+  }
   for (const [key, value] of Object.entries(api)) Object.defineProperty(globalThis, key, { value, enumerable: true, writable: false, configurable: false })
 })()

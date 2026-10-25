@@ -6,7 +6,7 @@ import { clampZoom, overlapShare, unionRegions } from '../board/geometry'
 import { draftsToNodes, htmlToDrafts, Ignored, nodesToHtml, walkDrafts, type Draft } from '../board/html'
 import { ancestorIds, copySubtrees, isFlowed, normalizeInk, parentKey, removeNodes, ROOT, topLevelOf, withDescendants, zAbove } from '../board/scene'
 import type { Point, Region } from '../board/types'
-import { runScene, sceneContext } from '../live/run'
+import { runScene, previewScene, sceneControl, sceneContext } from '../live/run'
 import { isGroupId, type InkGroup, type InkGroupTracker } from './groups'
 import { humanize, inkPointBudget, shapeLines, SHAPES, svgPathPolylines, type ArrowSide, type Shape } from './ink'
 import {
@@ -1159,6 +1159,10 @@ export async function runEditTool(ctx: EditContext, tool: AgentToolName, args: R
       return sceneContext(ctx.board, scene(ctx))
     case 'runScene':
       return runScene({ board: ctx.board, scene: () => scene(ctx), tracker: ctx.tracker }, args)
+    case 'previewScene':
+      return previewScene({ board: ctx.board, scene: () => scene(ctx), tracker: ctx.tracker }, args)
+    case 'sceneControl':
+      return sceneControl(args)
     case 'finishWorking': {
       const ids = args.node_ids === undefined ? undefined : stringList(args.node_ids, 'node_ids')
       return { released: ctx.presence.finish(ctx.agent.sessionId, ids) }

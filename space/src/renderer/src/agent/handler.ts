@@ -21,6 +21,7 @@ import { buildIndex, ROOT } from '../board/scene'
 import type { Region } from '../board/types'
 import { AgentPresence, runEditTool } from './edits'
 import { isGroupId, trackerFor, type InkGroup } from './groups'
+import { scenePlayer } from '../live/player'
 
 /**
  * Answers the MCP server's requests (see AgentMethods in space-api.ts).
@@ -268,7 +269,9 @@ function learnerNews(context: AgentContext, since: number): LearnerNews | null {
     .filter((group) => newsGroupIds.has(group.id))
     .map((group) => ({ id: group.id, bounds: rect(group.bounds) as BoardRect, where: whereText(state, groups, group.bounds, group.parent, newsGroupIds) }))
   const erasedRegion = unionRegions(erased.map((stroke) => stroke.bounds))
+  const scenePauses = scenePlayer.takeNotes()
   return {
+    ...(scenePauses.length ? { scenePauses } : {}),
     board: path,
     boardName: boardName(path),
     cursor: seenCursor(state),
@@ -380,10 +383,18 @@ function screenshotPlan(context: AgentContext, params: AgentMethods['screenshotP
   }
   // Grid pitch: 100 board points, coarser when the lines would be closer than ~40 px.
   const grid = params.grid ? ([100, 200, 500, 1000, 2000, 5000].find((pitch) => pitch * scale >= 40) ?? 10000) : 0
+  // During a live scene: the moment the learner sees now (the scene's look of its nodes, ink that exists only now, ghosts).
+  const live = scenePlayer.snapshot()
   return {
     kind: 'plan',
     board: path,
-    nodes: state.nodes as unknown[],
+    nodes: (live ? [...state.nodes, ...live.frame.ghosts, ...(live.frame.inks ?? [])] : state.nodes) as unknown[],
+    ...(live
+      ? {
+          playback: { overrides: [...live.frame.overrides], tips: [...live.frame.tips] },
+          playing: { scene: live.status.scene ?? '', name: live.status.name, t: live.status.t, duration: live.status.duration, step: live.status.step, paused: live.status.paused }
+        }
+      : {}),
     rect: rect(target) as BoardRect,
     scale: Math.round(scale * 1000) / 1000,
     width,

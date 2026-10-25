@@ -222,6 +222,14 @@ export interface LearnerNews {
   groups: NewsGroup[]
   /** Where the erased strokes were, relative to the nearest material. */
   erasedWhere: string | null
+  /** Live scenes that paused because the learner started drawing. */
+  scenePauses?: Array<{ scene: string; name: string | null; step: string | null; t: number; duration: number }>
+}
+
+/** A live scene's look at one moment, for the snapshot window: overrides per node id and pen tips / the pointer (playback.ts types). */
+export interface SnapshotPlayback {
+  overrides: Array<[string, unknown]>
+  tips: unknown[]
 }
 
 /** Which agent session made a request (for presence and change attribution). */
@@ -249,6 +257,8 @@ export type AgentToolName =
   | 'focus'
   | 'sceneContext'
   | 'runScene'
+  | 'previewScene'
+  | 'sceneControl'
 
 /** A box drawn over a snapshot (the "changes" view), in board coordinates. */
 export interface SnapshotOutline {
@@ -290,6 +300,9 @@ export type ScreenshotPlan =
       changes?: { changed: number; removed: number }
       cursor: number
       background: string
+      /** A live scene plays: the image shows this moment of it. */
+      playback?: SnapshotPlayback
+      playing?: { scene: string; name: string | null; t: number | null; duration: number | null; step: string | null; paused: boolean }
     }
 
 /** Main → snapshot window: draw this, then answer snapshotReady. */
@@ -303,6 +316,7 @@ export interface SnapshotRequest {
   outlines: SnapshotOutline[]
   overlays?: SnapshotOverlays
   background: string
+  playback?: SnapshotPlayback
 }
 
 export type SnapshotReply = { requestId: number; ok: true; missingImages: number } | { requestId: number; ok: false; error: string }

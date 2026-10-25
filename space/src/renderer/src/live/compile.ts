@@ -1,10 +1,11 @@
-import { isContent, isFrame, isInk, isKnown, newItemId, type BoardNode, type ContentNode, type InkNode, type InkPoint, type SvgNode, type TextNode } from '@shared/board-format'
-import type { SceneDescription, SceneInkObject, SceneObjectDesc, SceneShapeObject, SceneStyle, SceneTextObject } from '@shared/live-scene'
+import { isContent, isFrame, isInk, isKnown, newItemId, type BoardNode, type ContentNode, type FrameNode, type InkNode, type InkPoint, type SvgNode, type TextNode } from '@shared/board-format'
+import type { SceneBounds, SceneDescription, SceneGroupObject, SceneInkObject, SceneLiveObject, SceneObjectDesc, SceneSample, SceneShapeObject, SceneStyle, SceneTextObject } from '@shared/live-scene'
 import { MAX_COORD } from '@shared/limits'
 import { humanize, svgPathPolylines } from '../agent/ink'
 import type { Scene } from '../agent/placement'
 import { inkOffset, isFlowed, normalizeInk, removeNodes, ROOT, withDescendants, zAbove } from '../board/scene'
 import type { Point, Region } from '../board/types'
+import { textHtml } from '../board/content'
 import { sceneColor, withOpacity } from './colors'
 import { apply, IDENTITY, invert, isIdentity, multiply, scaleOf, Timeline, type Matrix } from './timeline'
 
@@ -14,6 +15,57 @@ import { apply, IDENTITY, invert, isIdentity, multiply, scaleOf, Timeline, type 
  * that: which nodes each object made, what transform is baked into them, and
  * the share of the object's drawing each ink stroke takes.
  */
+
+/**
+ * A live-pixels item on the board (shader or canvas program).
+ * TODO(live pixels): replace with LiveNode from @shared/board-format when the board side lands; the fields are the agreed contract.
+ */
+export interface LiveNode {
+  id: string
+  kind: 'live'
+  mode: 'shader' | 'canvas'
+  code: string
+  params: Record<string, number>
+  x: number
+  y: number
+  w: number
+  h: number
+  /** Required by board-format validation (else the node is a hidden foreign node). */
+  style: Record<string, string>
+  z: number
+  author: 'agent' | 'learner'
+  seq: number
+  name?: string
+  parent?: string
+  scene?: string
+}
+
+/** One sample of a changing object, ready to show (see SceneSample). */
+export interface DynSample {
+  t: number
+  bounds: SceneBounds
+  d?: string
+  /** d split into its numbers and the text between them, to blend two samples of the same form. */
+  skeleton?: string
+  numbers?: number[]
+  width?: number
+  lines?: Point[][]
+  html?: string
+  params?: Record<string, number>
+}
+
+/** How a changing object shows over time. Before `end`, the samples hold; after it, the committed node shows. */
+export interface PlayDyn {
+  kind: 'shape' | 'ink' | 'text' | 'live'
+  samples: DynSample[]
+  end: number
+  /** The bounds of the end state (the committed node). */
+  finalBounds: SceneBounds
+  /** Text placed by its centre (else by its top-left). */
+  centered: boolean
+  /** Ink: how the strokes of now are painted. */
+  ink?: { color: string; width: number; tool: 'pen' | 'highlighter' }
+}
 
 /** One node an object shows through. */
 export interface PlayTarget {
@@ -43,15 +95,33 @@ export interface PlayObject {
   tipColor: string
   /** The object writes or draws (the pen tip shows while it does). */
   drawn: boolean
+  /** The object changes shape over time (values, labels that follow, tweened options). */
+  dyn?: PlayDyn
+  /** Its board item (ink group id, node id or group frame id), filled in by run.ts. */
+  item?: string
 }
 
 export interface ScenePlay {
   id: string
+  /** The agent's label for it (run_scene name). */
+  name: string | null
   timeline: Timeline
   duration: number
-  steps: Array<{ name: string; at: number }>
+  steps: Array<{ name: string; at: number; pause?: boolean }>
   objects: PlayObject[]
   ghosts: BoardNode[]
+  camera: SceneDescription['camera']
+  pointer: SceneDescription['pointer']
+  cues: SceneDescription['cues']
+}
+
+/** What a scene's commit changed, to undo it when a queued scene is skipped. */
+export interface SceneRevert {
+  created: string[]
+  /** Existing nodes the scene changed, as they were. */
+  changed: BoardNode[]
+  /** Existing nodes the scene removed, as they were (with their descendants). */
+  removed: BoardNode[]
 }
 
 export interface CompiledScene {
@@ -64,6 +134,11 @@ export interface CompiledScene {
   contentIds: string[]
   /** Text nodes to centre on a point once their size is measured. */
   centers: Array<{ nodeId: string; center: Point; object: number }>
+  /** Frames made for named groups, innermost first: fit them to their children once measured. */
+  frames: Array<{ id: string; object: number }>
+  /** The node ids each object made (not ghosts). */
+  nodesOf: Map<number, string[]>
+  revert: SceneRevert
   warnings: string[]
 }
 
@@ -124,7 +199,51 @@ function ranges(lengths: number[]): Array<[number, number]> {
   })
 }
 
-export function compileScene(desc: SceneDescription, s: Scene, sceneId: string): CompiledScene {
+const NUMBER = /-?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?/gi
+
+function splitNumbers(d: string): { skeleton: string; numbers: number[] } {
+  const numbers: number[] = []
+  const skeleton = d.replace(NUMBER, (match) => {
+    numbers.push(Number(match))
+    return '#'
+  })
+  return { skeleton, numbers }
+}
+
+/** Samples of a changing object, prepared for playback. */
+function prepareDyn(object: SceneObjectDesc, samples: SceneSample[]): PlayDyn | undefined {
+  if (!samples.length) return undefined
+  const kind = object.kind === 'shape' || object.kind === 'ink' || object.kind === 'text' || object.kind === 'live' ? object.kind : null
+  if (!kind) return undefined
+  const out: DynSample[] = samples.map((sample) => {
+    const next: DynSample = { t: sample.t, bounds: sample.bounds }
+    if (kind === 'shape' && sample.d) {
+      next.d = sample.d
+      Object.assign(next, splitNumbers(sample.d))
+      if (sample.width !== undefined) next.width = sample.width
+    } else if (kind === 'ink') {
+      try {
+        next.lines = sample.lines ? sample.lines.map((line) => line.map((p) => [p[0], p[1]] as Point)) : sample.d ? svgPathPolylines(sample.d, false) : []
+      } catch {
+        next.lines = []
+      }
+      if (sample.width !== undefined) next.width = sample.width
+    } else if (kind === 'text' && sample.text !== undefined) {
+      const text = object as SceneTextObject
+      next.html = textHtml(text.math ? `$\\displaystyle ${sample.text.replace(/\$/g, '\\$')}$` : sample.text)
+    } else if (kind === 'live' && sample.params) next.params = sample.params
+    return next
+  })
+  return {
+    kind,
+    samples: out,
+    end: out[out.length - 1].t,
+    finalBounds: object.bounds,
+    centered: object.kind === 'text' && !!(object as SceneTextObject).center
+  }
+}
+
+export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, name: string | null = null): CompiledScene {
   const warnings: string[] = []
   const warn = (text: string): void => {
     if (!warnings.includes(text)) warnings.push(text)
@@ -144,6 +263,12 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string):
   const inkGroups: CompiledScene['inkGroups'] = []
   const contentIds: string[] = []
   const centers: CompiledScene['centers'] = []
+  const nodesOf = new Map<number, string[]>()
+  const madeBy = (object: number, id: string): void => {
+    const list = nodesOf.get(object)
+    if (list) list.push(id)
+    else nodesOf.set(object, [id])
+  }
   const changed = new Map<string, BoardNode>()
   const removed = new Set<string>()
   let z = zAbove(s.index.children.get(ROOT) ?? [])
@@ -166,6 +291,10 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string):
       tipColor: '#ececef',
       drawn: timeline.hasTrack(object.id, 'draw')
     }
+    if (object.dyn?.length) {
+      play.dyn = prepareDyn(object, object.dyn)
+      if (play.dyn) play.settled = Math.max(play.settled, play.dyn.end)
+    }
     objects.push(play)
     const out = isRemoved ? ghosts : created
 
@@ -187,9 +316,12 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string):
       const strokes: InkNode[] = []
       for (const line of local) {
         if (line.length < 2) continue
+        // A changing ink object shows its samples without wobble while it changes, so its end state has none either.
         const points: InkPoint[] = ink.pressure
           ? line.map(([x, y, p]) => [x, y, p === undefined ? 0.5 : Math.max(0, Math.min(1, p))])
-          : humanize(line.map(([x, y]) => [x, y] as Point), jitter)
+          : play.dyn
+            ? line.map(([x, y]) => [x, y, 0.5])
+            : humanize(line.map(([x, y]) => [x, y] as Point), jitter)
         const world = points.map(([x, y, p]) => {
           const [wx, wy] = apply(end, [x, y])
           return [wx, wy, p] as InkPoint
@@ -220,8 +352,10 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string):
       const inkRanges = ranges(lengths)
       strokes.forEach((stroke, i) => {
         out.push(stroke)
+        if (!isRemoved) madeBy(object.id, stroke.id)
         play.targets.push({ nodeId: stroke.id, ink: true, inverseBaked: invert(end), range: inkRanges[i], offset: [stroke.x, stroke.y], tipWidth: width })
       })
+      if (play.dyn) play.dyn.ink = { color: withOpacity(finalColor(object.id), ink.style.opacity), width: r2(Math.max(0.5, ink.style.width * (tool === 'highlighter' ? 4 : 1))), tool }
       if (!isRemoved && strokes.length) inkGroups.push({ object: object.id, strokes: strokes.map((stroke) => stroke.id) })
       continue
     }
@@ -294,7 +428,10 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string):
         ...({ scene: sceneId } as object)
       }
       out.push(node)
-      if (!isRemoved) contentIds.push(node.id)
+      if (!isRemoved) {
+        contentIds.push(node.id)
+        madeBy(object.id, node.id)
+      }
       play.tipColor = finalColor(object.id)
       play.targets.push({ nodeId: node.id, ink: false, inverseBaked: invert(end), tipLines: world, tipLength: world.reduce((sum, line) => sum + lineLength(line), 0), tipWidth: style.width * scale })
       continue
@@ -332,20 +469,79 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string):
         ...({ scene: sceneId } as object)
       }
       out.push(node)
-      if (!isRemoved) contentIds.push(node.id)
+      if (!isRemoved) {
+        contentIds.push(node.id)
+        madeBy(object.id, node.id)
+      }
       if (text.center && !isRemoved) centers.push({ nodeId: node.id, center: apply(end, text.center), object: object.id })
+      play.targets.push({ nodeId: node.id, ink: false, inverseBaked: invert(upright) })
+      continue
+    }
+
+    if (object.kind === 'live') {
+      const live = object as SceneLiveObject
+      const scale = scaleOf(end)
+      if (Math.abs(end[1]) > 1e-3 || Math.abs(end[2]) > 1e-3) warn(`${live.api} ${object.id}: a live item cannot stay rotated; it rotates while the scene plays and ends upright`)
+      const anchor: Point = [live.bounds.x, live.bounds.y]
+      const [x, y] = apply(end, anchor)
+      const upright: Matrix = [scale, 0, 0, scale, x - scale * anchor[0], y - scale * anchor[1]]
+      const node: LiveNode = {
+        id: newItemId('n'),
+        kind: 'live',
+        mode: live.mode,
+        code: live.code,
+        params: { ...live.params },
+        x: r1(x),
+        y: r1(y),
+        w: r1(live.width * scale),
+        h: r1(live.height * scale),
+        style: {},
+        z: z++,
+        author: 'agent',
+        seq: 0,
+        ...(object.name ? { name: object.name } : {}),
+        scene: sceneId
+      }
+      // TODO(live pixels): validate the program with the board's validateLive {mode, code, params} → {error} and return shader compile errors from run_scene.
+      out.push(node as unknown as BoardNode)
+      if (!isRemoved) {
+        contentIds.push(node.id)
+        madeBy(object.id, node.id)
+      }
       play.targets.push({ nodeId: node.id, ink: false, inverseBaked: invert(upright) })
       continue
     }
 
     if (object.kind === 'node') {
       const ids = refIds(s, object.ref)
+      // Ink inside a moved frame moves with the frame: its own points stay.
+      const contentRefs = new Set(ids.filter((id) => {
+        const node = s.index.byId.get(id)
+        return !!node && isKnown(node) && !isInk(node)
+      }))
+      const insideMoved = (node: BoardNode): boolean => {
+        for (let parent = node.parent as string | undefined; parent; parent = s.index.byId.get(parent)?.parent as string | undefined) if (contentRefs.has(parent)) return true
+        return false
+      }
+      const rigidMove: Matrix = [1, 0, 0, 1, apply(end, object.pivot)[0] - object.pivot[0], apply(end, object.pivot)[1] - object.pivot[1]]
       const translation: Point = [apply(end, object.pivot)[0] - object.pivot[0], apply(end, object.pivot)[1] - object.pivot[1]]
       const rigid = Math.abs(end[0] - 1) < 1e-3 && Math.abs(end[1]) < 1e-3 && Math.abs(end[2]) < 1e-3 && Math.abs(end[3] - 1) < 1e-3
       const lengths: number[] = []
       for (const id of ids) {
         const node = s.index.byId.get(id)
         if (!node || !isKnown(node)) continue
+        if (isInk(node) && insideMoved(node)) {
+          // Shown and moved through its frame; the frame keeps its size and angle, so only the move is baked.
+          const offset = offsetOf(s, node)
+          lengths.push(lineLength(node.points.map(([x, y]) => [x, y] as Point)))
+          const flowed = [...contentRefs].some((ref) => isFlowed(s.index.byId.get(ref) as BoardNode, s.index.byId))
+          play.targets.push({ nodeId: id, ink: true, inverseBaked: isRemoved || flowed ? IDENTITY : invert(rigidMove), offset, tipWidth: node.width })
+          if (isRemoved) {
+            removed.add(id)
+            ghosts.push({ ...node, parent: undefined, x: offset[0], y: offset[1] } as BoardNode)
+          }
+          continue
+        }
         if (isInk(node)) {
           const offset = offsetOf(s, node)
           const target: PlayTarget = { nodeId: id, ink: true, inverseBaked: isRemoved ? IDENTITY : invert(end), offset, tipWidth: node.width }
@@ -406,17 +602,108 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string):
     }
   }
 
+  // Named groups become one board item each: a frame that holds the group's items (innermost first).
+  const frames: CompiledScene['frames'] = []
+  const byId = new Map(created.map((node) => [node.id, node]))
+  const frameOf = new Map<number, FrameNode>()
+  const groupObjects = desc.objects.filter((object): object is SceneGroupObject => object.kind === 'group')
+  const depth = (object: SceneObjectDesc): number => (object.parent === undefined ? 0 : 1 + depth(desc.objects[object.parent]))
+  const named = groupObjects.filter((group) => group.name).sort((a, b) => depth(b) - depth(a))
+  /** The top-level items under a group object: the frames of named subgroups, else the nodes its leaves made. */
+  const itemsUnder = (object: SceneObjectDesc): BoardNode[] => {
+    if (object.kind === 'group') {
+      const frame = frameOf.get(object.id)
+      if (frame) return [frame]
+      return (object as SceneGroupObject).members.flatMap((member) => itemsUnder(desc.objects[member]))
+    }
+    if (object.kind === 'node') {
+      warn(`group "${desc.objects[object.parent ?? 0]?.name ?? ''}": board.node("${object.ref}") is an item from before the scene; it moves with the group while the scene plays but stays its own item`)
+      return []
+    }
+    if (object.kind === 'live') return []
+    return (nodesOf.get(object.id) ?? []).map((id) => byId.get(id)).filter((node): node is BoardNode => !!node)
+  }
+  const boxOf = (node: BoardNode): Region | null => {
+    if (isInk(node)) {
+      const box = linesBounds([node.points.map(([x, y]) => [node.x + x, node.y + y] as Point)])
+      return { x: box.x - node.width, y: box.y - node.width, width: box.width + node.width * 2, height: box.height + node.width * 2 }
+    }
+    if (node.kind === 'frame' || node.kind === 'svg') {
+      const content = node as ContentNode
+      return { x: content.x, y: content.y, width: parseFloat(String(content.style.width ?? '0')) || 0, height: parseFloat(String(content.style.height ?? '0')) || 0 }
+    }
+    if (node.kind === 'text') {
+      // Estimated from the scene's bounds; run.ts fits the frame to the measured size.
+      const owner = [...nodesOf.entries()].find(([, ids]) => ids.includes(node.id))
+      const object = owner ? desc.objects[owner[0]] : null
+      const content = node as TextNode
+      if (!object) return { x: content.x, y: content.y, width: 40, height: 30 }
+      const m = timeline.matrix(object.id, END)
+      const scale = scaleOf(m)
+      return { x: content.x, y: content.y, width: object.bounds.width * scale, height: object.bounds.height * scale }
+    }
+    return null
+  }
+  const PAD = 6
+  for (const group of named) {
+    if (desc.objects[group.id].removed) continue
+    const items = group.members.flatMap((member) => itemsUnder(desc.objects[member])).filter((node) => !node.parent)
+    if (!items.length) continue
+    const boxes = items.map(boxOf).filter((box): box is Region => !!box)
+    let x0 = Infinity
+    let y0 = Infinity
+    let x1 = -Infinity
+    let y1 = -Infinity
+    for (const box of boxes) {
+      x0 = Math.min(x0, box.x)
+      y0 = Math.min(y0, box.y)
+      x1 = Math.max(x1, box.x + box.width)
+      y1 = Math.max(y1, box.y + box.height)
+    }
+    if (x0 === Infinity) continue
+    const fx = Math.floor(x0 - PAD)
+    const fy = Math.floor(y0 - PAD)
+    const frame: FrameNode = {
+      id: newItemId('n'),
+      kind: 'frame',
+      x: fx,
+      y: fy,
+      z: z++,
+      author: 'agent',
+      seq: 0,
+      name: group.name,
+      style: { width: `${Math.ceil(x1 - fx + PAD)}px`, height: `${Math.ceil(y1 - fy + PAD)}px`, background: 'transparent', overflow: 'visible' },
+      ...({ scene: sceneId } as object)
+    } as FrameNode
+    // The items keep their world place: their x, y become relative to the frame.
+    for (const item of items) {
+      const index = created.indexOf(item)
+      const moved = { ...item, parent: frame.id, x: r1((item.x as number) - fx), y: r1((item.y as number) - fy) } as BoardNode
+      created[index] = moved
+      byId.set(item.id, moved)
+    }
+    for (const [id, f] of frameOf) if (items.includes(f)) frameOf.set(id, byId.get(f.id) as FrameNode)
+    created.push(frame)
+    byId.set(frame.id, frame)
+    frameOf.set(group.id, frame)
+    frames.push({ id: frame.id, object: group.id })
+  }
+
   // The board after the scene: existing nodes changed or removed, then the new ones on top.
   let next: BoardNode[] = s.nodes.map((node) => changed.get(node.id) ?? node)
   if (removed.size) next = removeNodes(next, removed, s.index)
   next = [...next, ...created]
   for (const ghost of ghosts) if (isFrame(ghost)) warn(`A frame faded out with everything in it`)
+  const removedAll = removed.size ? [...withDescendants(removed, s.index)].map((id) => s.index.byId.get(id) as BoardNode).filter(Boolean) : []
   return {
     next,
-    play: { id: sceneId, timeline, duration: desc.duration, steps: desc.steps, objects, ghosts },
+    play: { id: sceneId, name, timeline, duration: desc.duration, steps: desc.steps, objects, ghosts, camera: desc.camera ?? [], pointer: desc.pointer ?? [], cues: desc.cues ?? [] },
     inkGroups,
     contentIds,
     centers,
+    frames,
+    nodesOf,
+    revert: { created: created.map((node) => node.id), changed: [...changed.keys()].map((id) => s.index.byId.get(id) as BoardNode).filter(Boolean), removed: removedAll },
     warnings
   }
 }

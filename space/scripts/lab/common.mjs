@@ -159,7 +159,7 @@ export async function startInstance({ name, mcpPort, debugPort, built = false, f
   for (const path of [inst.home, inst.userData, inst.traces]) mkdirSync(path, { recursive: true })
   if (!existsSync(join(inst.folder, 'AGENTS.md'))) setupFolder(inst.folder)
 
-  const env = { ...process.env, HOME: inst.home, SPACE_FOLDER: inst.folder, SPACE_MCP_PORT: String(mcpPort), SPACE_REMOTE_DEBUG: String(debugPort), SPACE_TRACE_DIR: inst.traces }
+  const env = { ...process.env, HOME: inst.home, SPACE_FOLDER: inst.folder, SPACE_MCP_PORT: String(mcpPort), SPACE_REMOTE_DEBUG: String(debugPort), SPACE_TRACE_DIR: inst.traces, SPACE_SPEECH: process.env.SPACE_SPEECH ?? '1' }
   delete env.ELECTRON_RUN_AS_NODE
   const logFd = openSync(inst.log, 'a')
   let child

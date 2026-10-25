@@ -3,6 +3,7 @@ import type { BoardNode } from '@shared/board-format'
 import type { SnapshotOverlays, SnapshotRequest } from '@shared/space-api'
 import { ContentLayer, measureContent, type ContentContext } from '../board/content'
 import { paintItems } from '../board/paint'
+import { applyElementOverride, clearElementOverride, type NodeOverride, type PlaybackTip } from '../board/playback'
 import { addInkLayout, buildIndex, inkOffset, inkPaintOrder, type SceneIndex } from '../board/scene'
 import '../board/board.css'
 import './snapshot.css'
@@ -111,6 +112,7 @@ export function SnapshotView() {
   const editorRef = useRef<HTMLTextAreaElement>(null)
   const elements = useRef(new Map<string, HTMLElement>())
   const markerRef = useRef<HTMLDivElement>(null)
+  const overridden = useRef(new Set<HTMLElement>())
 
   useEffect(
     () =>
@@ -147,8 +149,20 @@ export function SnapshotView() {
       const missingImages = await imagesSettled(root)
       await frame()
       if (cancelled) return
+      for (const element of overridden.current) clearElementOverride(element)
+      overridden.current.clear()
       const layout = measureContent(root, elements.current, req.scale)
       addInkLayout(index, layout)
+      // A moment of a live scene: its look of each node (measured without it first).
+      const overrides = new Map((req.playback?.overrides ?? []) as Array<[string, NodeOverride]>)
+      for (const [id, override] of overrides) {
+        const element = elements.current.get(id)
+        const box = layout.get(id)
+        if (!element || !box) continue
+        const node = index.byId.get(id) as { style?: { opacity?: string } } | undefined
+        applyElementOverride(element, override, [box.x, box.y], Number(node?.style?.opacity ?? '1') || 1)
+        overridden.current.add(element)
+      }
       const inks = inkPaintOrder(index).map((node) => {
         const box = layout.get(node.id)
         return { node, offset: (box ? [box.ox, box.oy] : inkOffset(node, index.byId, layout)) as [number, number] }
@@ -157,7 +171,7 @@ export function SnapshotView() {
       // Ink goes through a decoded <img>, not a live canvas: in an offscreen window a canvas can reach the
       // compositor a frame after the DOM, and the marker below must never show before the ink.
       const canvas = document.createElement('canvas')
-      paintItems(canvas, inks, [req.width, req.height], camera)
+      paintItems(canvas, inks, [req.width, req.height], camera, new Set(), req.playback ? { overrides, ghosts: [], tips: (req.playback.tips ?? []) as PlaybackTip[] } : null)
       const ink = inkRef.current
       if (ink) {
         ink.src = canvas.toDataURL('image/png')

@@ -22,7 +22,9 @@ import {
 } from '@shared/limits'
 import { briefText, guideText, guideTopics, serverInstructions } from './guide'
 import { runSceneProgram, SceneProgramError } from './live-scene'
-import type { SceneContext, SceneResult } from '@shared/live-scene'
+import type { SceneContext, SceneResult, SceneStatus } from '@shared/live-scene'
+import { speechOn, speechVoice } from './speech'
+import { renderStoryboard, type StoryboardInput } from './storyboard'
 import { BoardNews } from './news'
 import { getAgentLook } from './state'
 import type { SnapshotRenderer } from './snapshot'
@@ -674,11 +676,18 @@ export class AgentServer {
           height: plan.height,
           outlines: plan.outlines,
           overlays: plan.overlays,
-          background: plan.background
+          background: plan.background,
+          ...(plan.playback ? { playback: plan.playback } : {})
         })
         const what = node_id ? `node ${node_id}` : `target "${kind}"`
+        const playing = plan.playing
         const lines = [
           `Board "${plan.board}", ${what}.`,
+          ...(playing
+            ? [
+                `A live scene ${playing.paused ? 'is paused' : 'is playing'} (${playing.name ? `"${playing.name}"` : playing.scene}, ${playing.t ?? 0} s of ${playing.duration ?? 0} s${playing.step ? `, step "${playing.step}"` : ''}): the image shows the board as the learner sees it at this moment, not the scene's end state.`
+              ]
+            : []),
           `The image (${shot.width}×${shot.height} px) covers the board rect ${json(plan.rect).replace(/\s+/g, ' ')} at ${plan.scale} px per board point.`,
           'Image pixel (px, py) is board point (x + px / scale, y + py / scale).'
         ]
@@ -969,16 +978,18 @@ export class AgentServer {
       {
         title: 'Run a live scene',
         description:
-          "Runs a JavaScript program that draws on the open board over time, in front of the learner: shapes and ink drawn on stroke by stroke, handwriting, typeset maths, fills, fades, moves, erasing, and changes to items already on the board (the learner's ink groups and your nodes). The program runs once, in a sandbox with no access to the app, files or network, and builds a timeline; it may compute for as long as it needs (a program still running after 10 minutes is stopped). The app then plays the timeline, by default at the speed of a hand. The tool returns when playback starts, not when it ends.\n\nThe program uses a small set of globals: creators (stroke, line, arrow, circle, ellipse, rect, polygon, path, plot, write, tex, text, around, group, board.node), actions (draw, fillIn, fadeIn, fadeOut, erase, move, tween, wait, step, all) and console.log. `await` on an action makes the next one start after it ends; an action without await runs at the same time as the next one. The complete reference is get_guide topic \"scene\". Coordinates are board points (origin at the centre, +x right, +y down).\n\nWhen it has played, everything stays on the board as ordinary items the learner can edit: ink (strokes and handwriting, one ink group per object), svg nodes (vector shapes) and text nodes (tex, text). Items that the scene erased or faded out are gone. The whole scene is one undo step for the learner, and the board file holds the final state from the start.\n\nReturns JSON: scene (its id), duration_s, steps ([{name, at_s}] from step()), items (the new ink group ids and node ids), log (console.log output) and warnings. A program error returns an error with its message and line number, and nothing is drawn.",
+          "Runs a JavaScript program that draws on the open board over time, in front of the learner: shapes and ink drawn stroke by stroke, handwriting, typeset maths, fills, fades, moves, erasing, labels, live pixels (shaders and canvas programs), camera moves, a pointer, spoken lines, and changes to items already on the board (the learner's ink groups and your nodes). The program runs once, in a sandbox with no access to the app, files or network, and builds a timeline; it may compute for as long as it needs (a program still running after 10 minutes is stopped). Values (value(), tween()) and functions as arguments make objects that change as time passes. The complete reference is get_guide topic \"scene\". Coordinates are board points (origin at the centre, +x right, +y down).\n\nPlayback: a scene sent while another plays starts when that one ends (and after the scenes already waiting); with when \"now\" it starts at once, over the others. The tool returns when the scene is queued or starts, not when it ends. A step with {pause: true} stops playback until scene_control resumes it. When the learner starts drawing during playback, playback pauses at the next step (or at once when no step is left) and the board news says so. Spoken lines (say) are spoken with the system voice when speech is on; their timing on the timeline is the same either way.\n\nWhen it has played, everything stays on the board as ordinary items the learner can edit: ink (one ink group per ink object), svg nodes (vector shapes), text nodes (tex, text), live items (shader, canvas), and one frame item per named group, which the learner moves as a whole. Items the scene erased or faded out are gone. The whole scene is one undo step for the learner, and the board file holds the final state from the moment the tool returns. A name given to an object or group finds its item in later scenes with board.node(name).\n\nReturns JSON: scene (its id), duration_s, starts_in_s (seconds until it starts; pauses not counted), steps ([{name, at_s, pause?}]), items ([{id, kind, name, bounds, step}]: the board items it made), cues ([{text, at_s, dur_s}] from say), log (console.log output) and warnings (unknown options, text that overlaps shapes or other text, objects outside the learner's view). A program error returns an error with its message and line number, and nothing is drawn.\n\nWith preview: true, nothing is drawn or committed and the learner sees nothing: the result is a storyboard image (one frame at the end of each step, and the end, each labelled with its step and times; the grey outline is the learner's view now) with the same JSON fields except items and starts_in_s.",
         inputSchema: {
           code: z
             .string()
             .min(1)
-            .describe('The program: the body of an async function, so top-level await works. Example: const c = circle(0, 0, 80); await draw(c); await write("r", { at: [90, -10] })'),
-          name: z.string().max(MAX_NAME_CHARS).optional().describe('A label for this scene in logs and traces.')
+            .describe('The program: the body of an async function, so top-level await works. Example: const c = circle(0, 0, 80); await draw(c); await label(c, "r")'),
+          name: z.string().max(MAX_NAME_CHARS).optional().describe('A label for this scene in scene_control, the board news, logs and traces.'),
+          when: z.enum(['queue', 'now']).optional().describe('"queue" (default): start after the scenes that play or wait. "now": start at once, over them.'),
+          preview: z.boolean().optional().describe('true: return a storyboard image and warnings; draw and commit nothing.')
         }
       },
-      this.tool(session, 'run_scene', async ({ code, name }) => {
+      this.tool(session, 'run_scene', async ({ code, name, when, preview }) => {
         const context = (await this.board(session, 'sceneContext', {})) as SceneContext
         let scene
         try {
@@ -987,10 +998,52 @@ export class AgentServer {
           if (error instanceof SceneProgramError) return failure(error)
           throw error
         }
-        const result = (await this.board(session, 'runScene', { scene, ...(name ? { name } : {}) }, SCENE_TIMEOUT_MS)) as SceneResult
-        console.log(`mcp: run_scene ${name ?? result.scene}: ${scene.objects.length} objects, ${scene.actions.length} actions, ${result.duration_s} s`)
+        if (preview) {
+          const plan = (await this.board(session, 'previewScene', { scene }, SCENE_TIMEOUT_MS)) as StoryboardInput & {
+            scene: string
+            duration_s: number
+            steps: unknown[]
+            cues: unknown[]
+            log: string[]
+            warnings: string[]
+          }
+          const board = await renderStoryboard(this.hooks.snapshots, { frames: plan.frames, rect: plan.rect, view: plan.view, background: plan.background })
+          console.log(`mcp: run_scene preview ${name ?? plan.scene}: ${plan.frames.length} frames, ${board.width}x${board.height}`)
+          const summary = {
+            preview: true,
+            duration_s: plan.duration_s,
+            steps: plan.steps,
+            cues: plan.cues,
+            log: plan.log,
+            warnings: plan.warnings,
+            storyboard: `${plan.frames.length} frames in ${board.columns} column(s), read left to right; each covers the board rect ${JSON.stringify(plan.rect)}.`
+          }
+          return {
+            content: [
+              { type: 'image', data: board.png.toString('base64'), mimeType: 'image/png' },
+              { type: 'text', text: json(summary) }
+            ]
+          }
+        }
+        const speak = speechOn()
+        const voice = speak ? await speechVoice() : null
+        const result = (await this.board(session, 'runScene', { scene, when: when ?? 'queue', speak, voice, ...(name ? { name } : {}) }, SCENE_TIMEOUT_MS)) as SceneResult
+        console.log(`mcp: run_scene ${name ?? result.scene}: ${scene.objects.length} objects, ${scene.actions.length} actions, ${result.duration_s} s, starts in ${result.starts_in_s} s`)
         return text(json(result))
       })
+    )
+
+    server.registerTool(
+      'scene_control',
+      {
+        title: 'Control live scenes',
+        description:
+          'Controls the playback of live scenes (run_scene). action "status" changes nothing; "pause" holds the playing scene where it is; "resume" continues a paused scene (after a pause step, after the learner\'s drawing paused it, or after "pause"); "stop" jumps the playing scene to its end state (what it leaves on the board) and the next waiting scene starts; "skip" drops the scenes that wait in the queue and takes their items off the board again (one undo step). Returns {playing, scene, name, t, duration, step, paused, queue: [{scene, name, duration_s}]} after the action.',
+        inputSchema: {
+          action: z.enum(['status', 'pause', 'resume', 'stop', 'skip'])
+        }
+      },
+      this.tool(session, 'scene_control', async ({ action }) => text(json((await this.board(session, 'sceneControl', { action })) as SceneStatus)))
     )
 
     server.registerTool(

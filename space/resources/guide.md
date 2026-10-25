@@ -93,21 +93,29 @@
 
 ## Live scenes (run_scene)
 <!-- topic: scene -->
-<!-- summary: run_scene: every global of a scene program, its arguments, and how time works. -->
+<!-- summary: run_scene and scene_control: every global of a scene program, its options, time, values, names, labels, camera, speech, pauses, preview and the queue. -->
 
-A scene program is the body of an async function. These globals are all it has (plus plain JavaScript: Math, arrays, functions). Points are board points [x, y]; +y is down.
+A scene program is the body of an async function. These globals are all it has (plus plain JavaScript: Math, arrays, functions; Math.random is seeded per run). Points are board points [x, y]; +y is down.
 
 **Time.** Every action starts now. `await` waits for its end; without `await` the next line starts at the same moment:
 ```js
 const a = circle(0, 0, 60), b = circle(150, 0, 60)
 draw(a)              // a and b are drawn together
 await draw(b)        // the next line starts when b is done
-await wait(0.5)
 await all(fadeOut(a), move(b, { to: [0, 0] }))
 ```
-Async functions run side by side, each with its own time: `await Promise.all([left(), right()])`.
+Async functions run side by side, each with its own time: `await Promise.all([left(), right()])`. The scene lasts until its last action ends; the board after the scene is its state at the end.
 
-**Objects** are invisible until an action shows them (draw, fillIn, fadeIn, tween draw). An object that no action shows appears when it is made. Every object has `.bounds` {x, y, width, height} and `.center` [x, y] at the current time.
+**Values and changing objects.** `value(n)` is a number that changes over time: `v.get()` (its value now), `v.set(n)` (jumps now), `tween(v, n, s)` (glides to n). Any argument or option of a creator may be a value or a function of values; the object is drawn again as they change, and `.bounds`/`.center` follow:
+```js
+const h = value(0)
+const disc = ellipse(0, () => -h.get(), () => Math.sqrt(R * R - h.get() ** 2), 10, { fill: "accent" })
+const tag = write(() => "h = " + h.get().toFixed(1), { at: () => [R + 20, -h.get() - 14] })
+await tween(h, 80, 3)
+```
+`trace(() => [x, y], o)` is the path a moving point leaves: a line through the point's places from when it is made until now (options as path). `tween(obj, {width: 6, fillOpacity: 0.3}, s)` animates any numeric option of the object's creator. A function as an argument of `plot` (fn) reads values the same way. Changing objects are sampled 30 times a second while anything animates.
+
+**Objects** are invisible until an action shows them (draw, fillIn, fadeIn, tween draw). An object that no action shows appears when it is made. Every object has `.bounds` {x, y, width, height}, `.center` [x, y] (at the current time), `.name`, `.kind`; live items also `.params`.
 - `stroke(points, o)`: ink through [[x, y] or [x, y, pressure 0..1], …]; a list of such lists makes several strokes.
 - `line(x1, y1, x2, y2, o)`, `arrow(x1, y1, x2, y2, o)` (o.head: head length).
 - `circle(cx, cy, r, o)`, `ellipse(cx, cy, rx, ry, o)`, `rect(x, y, w, h, o)` (o.radius: corner radius), `polygon(points, o)` (o.closed: false for an open polyline), `path(d, o)` (any SVG path "d").
@@ -115,19 +123,26 @@ Async functions run side by side, each with its own time: `await Promise.all([le
 - `write(text, o)`: handwriting, as ink. o.at: top-left, or o.center; o.size: cap height (default 28); o.slant (default 0.12). Letters, digits, + − × ÷ = ≠ ≈ ≤ ≥ ± √ ∫ ∑ ∞ ∂ → ° and Greek (π θ α …); "^2", "^{10}", "_1" or ² ₁ for small raised and lowered text.
 - `tex(latex, o)`: typeset maths (KaTeX), as a text node. o.at (top-left) or o.center; o.size (default 30); o.color.
 - `text(str, o)`: typeset text, as a text node, with **bold**, *italic* and $math$. o.at or o.center; o.size (default 22).
+- `label(target, text, o)`: text placed next to target, clear of the scene's objects, the board's items and the view's edge. target: an object, a point [x, y], or a segment [[x1, y1], [x2, y2]]. o.at: a point on an object ([x, y], or a share 0..1 along its outline) or a share along the segment (default 0.5); o.side: "auto" (default), "center", above, below, left, right, above-left, above-right, below-left, below-right; o.gap (default 10). Handwritten; o.tex: true typesets it as maths, o.text: true as text. Other options as write/tex. It follows its target as the target moves or changes.
 - `around(obj, o)`: a hand-drawn ink mark around an object: o.shape "circle" (default), "box" or "underline"; o.pad.
-- `group(...objs)`: one object made of others; actions on it act on all of them (draw draws them one after another). It moves, scales and rotates around its own centre.
-- `board.node(id)`: an item already on the board, by node id or ink group id ("g3"); the actions work on it. `board.view` is the learner's view {x, y, width, height}.
+- `shader(glsl, o)`, `canvas(src, o)`: live pixels, drawn by the board every frame: a GLSL fragment shader, or a 2D canvas program. o.at (top-left) or o.center; o.size [w, h] (default [320, 200]); o.params {name: number}, animated with `tween(obj, {params: {name: n}}, s)` or given as values.
+- `group(...objs, {name})`: one object made of others; actions on it act on all of them (draw draws them one after another). It moves, scales and rotates around its own centre. A group with a name becomes one board item (a frame holding its items) that the learner moves as a whole.
+- `board.node(id)`: an item already on the board, by node id, ink group id ("g3") or name (a name given in an earlier scene; the latest item with it). The actions work on it. `board.view` is the learner's view {x, y, width, height} now (after this scene's camera moves).
 
-**Options** (o) of shapes and ink: color (accent, good, bad, warn, text, muted, white, yellow, blue, green, pink, orange, purple, teal, a token such as var(--ls-good), or any CSS colour; default text), width (default 3), opacity, dash (true or [8, 6]), fill (a colour, or a list of colours for a top-to-bottom gradient), fillOpacity, hatch (a colour: diagonal hatching), pen (true: the shape becomes ink, with a hand's wobble), jitter (wobble of ink, 0..1), tool ("highlighter"), name (a label on the board item).
+**Options** (o) of shapes and ink: color (accent, good, bad, warn, text, muted, white, yellow, blue, green, pink, orange, purple, teal, a token such as var(--ls-good), or any CSS colour; default text), width (default 3), opacity, dash (true or [8, 6]), fill (a colour, or a list of colours for a top-to-bottom gradient), fillOpacity, hatch (a colour: diagonal hatching), pen (true: the shape becomes ink, with a hand's wobble), jitter (wobble of ink, 0..1), tool ("highlighter"), name (the item's name on the board and in board.node).
 
 **Actions** take a duration in seconds or {dur, ease}; ease is linear, in, out, inOut or smooth. Each returns something to `await`.
-- `draw(obj, s)`: a pen draws it (ink along its strokes, shapes along their outline, then their fill; text wipes in). Default: the speed of a hand.
+- `draw(obj, s)`: a pen draws it (ink along its strokes, shapes along their outline, then their fill; text and live items wipe in). Default: the speed of a hand.
 - `fillIn(obj, s)`: the fill appears (and the outline, if not drawn yet). Default 0.6.
 - `fadeIn(obj, s)`, `fadeOut(obj, s)`: default 0.5. Faded out, it is removed from the board at the end.
 - `erase(obj, s)`: undraws it, then it is removed from the board.
 - `move(obj, {to: [x, y]} or {by: [dx, dy]}, s)`: to puts its centre there. Default 0.8.
-- `tween(obj, props, s)`: changes x, y (offset from where it was made), scale, rotate (degrees), opacity, color, draw (share drawn, 0..1). Default 0.8.
-- `wait(s)`; `step(name)`: names this moment (returned as steps); `all(...actions)`: ends when all of them end.
+- `tween(obj, props, s)`: x, y (offset from where it was made), scale, rotate (degrees), opacity, color, draw (share drawn, 0..1), params (live items), or any numeric option. `tween(value, n, s)` for values. Default 0.8.
+- `camera({fit, to, zoom, pad}, s)`: the learner's view glides: fit (an object or [x, y, w, h], with pad, default 40) and/or to (a centre [x, y]) and/or zoom. Default 1. After the learner pans or zooms during the scene, its later camera moves are skipped.
+- `point(target, s)`: a pointer glides to an object's centre or a point [x, y] and rests there; `point(null, s)` hides it. Default 0.6.
+- `say(text)`: a spoken line from now; it lasts as long as the system voice takes to say it (when speech is off: about 2.6 words per second, and nothing is spoken). `await say(…)` waits until it ends.
+- `wait(s)`; `step(name, {pause})`: names this moment (returned as steps); with pause: true, playback stops here until scene_control resumes it. When the learner starts drawing, playback pauses at the next step (or at once when no step is left). `all(...actions)`: ends when all of them end.
 
-`console.log(…)` goes to the result's log. Text keeps no rotation, and existing frames and text keep their size and angle on the board: they rotate and scale while the scene plays only.
+**Playback and tools.** run_scene with `when: "queue"` (default) starts after the scenes that play or wait; `"now"` starts at once. `preview: true` returns a storyboard image (the end of each step, and the end) and the warnings, and draws nothing. Every run returns warnings for unknown options, text that overlaps shapes or other text, and objects outside the learner's view. scene_control: status, pause, resume, stop (jump to the end state), skip (drop the waiting scenes and their items).
+
+`console.log(…)` goes to the result's log. Text and live items keep no rotation, and existing frames and text keep their size and angle on the board: they rotate and scale while the scene plays only.
