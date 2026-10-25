@@ -26,6 +26,12 @@ and what went wrong before.
 - Wants to talk through **how** a fix will be built before it is built:
   propose the design, listen, and let the founder's picture decide.
 - For text that agents read, follow [`writing-agent-text.md`](writing-agent-text.md).
+- Agent text changes start as a draft in `docs/learning-space/drafts/`, sent
+  to the founder, applied only after "approved", then measured in the lab.
+  When asked to fix one passage, change only that passage, in the voice of
+  the whole brief, and read the whole brief first.
+- Judges lab runs by watching the videos; when away from the computer, wants
+  them sent to the phone.
 
 ## The workflow that worked
 
@@ -81,7 +87,7 @@ whole set every time, and one run per model is usually enough.
 | Reading the learner's work | `fusion` |
 | Pages, frames, images, HTML in scenes | `fractions`, `rome` |
 | Style, painting, colour | `sunset` |
-| Charts and data | `stddev` |
+| Charts and data; the habit of titles, labels and formulas | `stddev` |
 
 Use `--brief-only` to measure what a real session sees (the brief through
 `AGENTS.md`, no council purpose text); without it the prompt starts with
@@ -101,6 +107,13 @@ combine; `meta.json` records `no_html` and `brief`.
 
 ## Pitfalls we hit
 
+- **A dev app with an empty `SPACE_FOLDER` cannot run scenes** ("No board is
+  open"). Fill the scratch folder with `scripts/boards/make-demo-folder.mjs`
+  before launch.
+- **GPT stopped previewing** while Claude kept doing it, so GPT's mistakes
+  (a 3D curve that folds back, labels on lines) reached the person first.
+  Fixed by saying when to preview (I22). Count previews per model in
+  `calls.json` when a model's drawings look careless.
 - **StrictMode double mount:** a cleanup cancelled animation frames without
   clearing their slots, so the board stopped following the camera in dev
   mode only. Every check passed on the built app. Now: check dev mode too.

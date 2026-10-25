@@ -40,7 +40,12 @@ scene reached each step, and the end), `final.png` and `meta.json`.
 node scripts/lab/council.mjs --client codex --task sphere            # gpt-6.1-sol, effort medium
 node scripts/lab/council.mjs --client claude --model opus --task fusion
 node scripts/lab/council.mjs --client codex --effort low --task "Explain eclipses."
+node scripts/lab/council.mjs --client claude --task stddev --brief-only --brief ../docs/learning-space/drafts/brief-v18.md
 ```
+
+Flags: `--brief-only` (the task alone, as in a real session), `--no-code` and
+`--no-html` (hide code items or HTML from the agent), `--brief <file>` (serve
+a draft brief), `--no-web`, `--interview`. See the script header.
 
 It starts a fresh app (`--name council`, MCP 47891, debug 9491), draws the
 learner's strokes when the task has them, runs the agent headless with

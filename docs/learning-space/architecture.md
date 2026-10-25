@@ -216,7 +216,7 @@ P12, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
   `state.ts` (the store for the scene pill and the script panel; which
   scenes form one script, decision T15),
   `host.ts` (the board's answers to the sandbox). Object kinds beyond
-  drawing: `html` (material from drafts: a root node and its subtree; drawn
+  drawing: `html` (material from html(): a root node and its subtree; drawn
   root first, then its parts one after another), `part` (one child of an
   html root, an object of its own), and the description's `edits` (text and
   style changes at a time; style values glide, `board/style-edits.ts`) and
@@ -240,7 +240,7 @@ P12, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
 
 - Components live in `src/renderer/src/components/` (the snapshot view in
   `src/renderer/src/snapshot/`).
-- Shell: `App.tsx` (state and wiring), `TopBar.tsx`, `Sidebar.tsx`
+- Shell: `src/renderer/src/App.tsx` (state and wiring), `TopBar.tsx`, `Sidebar.tsx`
   (`FileTree.tsx`), `ToolPalette.tsx`, `PreviewPanel.tsx`, `WelcomeCard.tsx`,
   `CanvasNotice.tsx`, `Toast.tsx`.
 - Scenes: `ScenePill.tsx` (in `TopBar.tsx`) and the floating script panel.
@@ -258,7 +258,9 @@ P12, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
   `SPACE_MCP_PORT`, `SPACE_REMOTE_DEBUG` (Chromium debug port + dev hooks),
   `SPACE_OPEN` (preview a file), `SPACE_CAPTURE*` (window PNG on load),
   `SPACE_CONNECT_DRY_RUN`, `SPACE_TRACE_DIR` (where traces go). The relay
-  reads `LEARNING_SPACE_PORT`.
+  reads `LEARNING_SPACE_PORT`. Lab switches (lab runs only,
+  `src/main/lab-switch.ts`): `LS_LAB_NO_CODE`, `LS_LAB_NO_HTML` (hide code
+  items or HTML from the agent), `LS_LAB_BRIEF` (serve a draft brief).
 - `scripts/drive.mjs` drives a running dev app over the debug port: draw
   pen strokes, keys, clicks, drags, wheel, node rects, screenshots, state.
 - `scripts/trace-report.mjs` summarises traces; `scripts/bench/run.mjs` runs

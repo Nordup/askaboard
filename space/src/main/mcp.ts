@@ -847,7 +847,7 @@ export class AgentServer {
       {
         title: 'The Learning Space brief',
         description:
-          "Returns the Learning Space brief as markdown (about 11,000 characters): what the space is for and your part in it, how to find out what the person wants, how to read their work, how to explain by drawing one step at a time, what can go on the board, talking, checking facts, and the learning folder as memory.\n\nUse it at the start of a session when the brief is not in your context. In a learning folder it already is: the folder's AGENTS.md holds the same text. Agents started outside a learning folder, such as Claude Desktop, need this call.\n\n- It holds no technical details of the board; get_guide has those.\n- No parameters.",
+          "Returns the Learning Space brief as markdown (about 12,000 characters): what the space is for and your part in it, how to find out what the person wants, how to read their work, how to explain by drawing one step at a time, what can go on the board, talking, checking facts, and the learning folder as memory.\n\nUse it at the start of a session when the brief is not in your context. In a learning folder it already is: the folder's AGENTS.md holds the same text. Agents started outside a learning folder, such as Claude Desktop, need this call.\n\n- It holds no technical details of the board; get_guide has those.\n- No parameters.",
         inputSchema: {},
         annotations: { readOnlyHint: true }
       },

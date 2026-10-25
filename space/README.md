@@ -5,7 +5,7 @@ shared canvas and a local learning folder. The app has no AI inside: external
 agents (Claude Code, Codex, Claude Desktop) connect to it over MCP and work on
 the board with the learner.
 
-**Status (2026-10-25):** the main product of this repository (since 2026-10-24). Steps 0–5, fix 1, board news (decision I4), `get_brief` and `get_guide` (decision T11), live drawing stages 1–3 (scenes, program items, the script panel) and brief v4 are done. Next: the founder's own testing, then a feature freeze and polish ([`plan.md`](../docs/learning-space/plan.md), [`live-drawing-plan.md`](../docs/learning-space/live-drawing-plan.md)).
+**Status (2026-10-26):** the main product of this repository (since 2026-10-24). Steps 0–5, fix 1, board news (decision I4), `get_brief` and `get_guide` (decision T11), live drawing stages 1–4 (scenes as the one way to write, program items, the script panel), brief v18 and the agent texts in Anthropic's style (decisions I18–I22) are done. Next: the founder's own testing in real sessions ([`plan.md`](../docs/learning-space/plan.md)).
 
 - [`../docs/learning-space/README.md`](../docs/learning-space/README.md): start here.
 - [`architecture.md`](../docs/learning-space/architecture.md): processes, data flow and where the code lives.
@@ -103,7 +103,7 @@ every tool twice. The popover shows this problem and offers **Fix**.
 | `get_tree` | `node_id`, `depth` | Indented outline of nodes with ids and bounds |
 | `get_node_info` | `node_id` | One node: bounds, parent, children, style, text, author |
 | `get_html` | `node_id`, `include_ids` | A subtree as the HTML subset a scene's `html()` takes |
-| `run_scene` | `code`, `name`, `when`, `wait`, `preview` | The one way to write: runs a scene program on the board's stage and plays it (queued by default). Programs draw, write, place HTML material (`html()`), pictures (`image()`), copies (`copy()`), find room (`space()`), change text and styles (`edit()`), move items into frames and delete them. Returns steps, items, lines and timing; `preview` returns a storyboard without drawing. The agent's presence outline stays on its items until the scene has played |
+| `run_scene` | `code`, `name`, `when`, `wait`, `preview` | The one way to write: runs a scene program on the board's stage and plays it (queued by default). Programs draw, write, place HTML material (`html()`), pictures (`image()`), copies (`copy()`), find room (`space()`), change text and styles (`edit()`), move items into frames and delete them. Returns steps, items, lines and timing; `preview` returns a storyboard without drawing. |
 | `scene_control` | `action` (status, pause, resume, stop, skip, cancel, replace, replay, cut, reset, wait), `scene`, `step`, `code` | Controls playback and the stage |
 
 ## Learning folder

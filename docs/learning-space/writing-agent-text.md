@@ -4,7 +4,7 @@
 > they work in Learning Space: the brief, the server instructions, the tool
 > descriptions, the plugin skill and the `AGENTS.md`
 > template. Written 2026-10-24, at the end of the session that produced the
-> first real brief; updated 2026-10-25 (brief v3, decision T11). The founder's own words from that session are in
+> first real brief; updated 2026-10-25 (brief v3, decision T11) and 2026-10-26 (brief v18 and the agent texts in Anthropic's style, I18–I22). The founder's own words from that session are in
 > [the appendix](#appendix--the-founders-words); read them, they matter more
 > than the summary.
 
@@ -27,7 +27,7 @@ difference, so the next writer starts from the second draft's approach.
 
 | Text | File | Who reads it, when | Limit |
 | --- | --- | --- | --- |
-| **The brief** (what the space is, the person, the board, talking, time) | `space/resources/brief.md` (the one source) | Agents in a learning folder: always, through the managed block in `AGENTS.md`. Other agents: `get_brief` (no parameters). | Codex loads `AGENTS.md` up to 32 KiB (`project_doc_max_bytes = 32768`, Codex CLI 0.149), and the folder part shares that space. |
+| **The brief** (the space and your part; what the person wants; their work; explaining by drawing; what can go on the board; talking; checking facts; the learning folder) | `space/resources/brief.md` (the one source) | Agents in a learning folder: always, through the managed block in `AGENTS.md`. Other agents: `get_brief` (no parameters). | Codex loads `AGENTS.md` up to 32 KiB (`project_doc_max_bytes = 32768`, Codex CLI 0.149), and the folder part shares that space. |
 | The folder's own conventions | `AGENTS.md` outside the managed block (template: `space/resources/learning-folder/AGENTS.md`) | Agents in the folder | Same file as above |
 | Server instructions (short orientation) | `space/resources/instructions.md` | Every agent at connect | Claude Code cuts at 4,096 characters (2.1.296+; 2,048 before). Codex asks that the first 512 characters stand alone. |
 | **The board reference** (decision T11): the board model, the HTML subset and styles, math, SVG, images, colour tokens, placement, ink, the view | `space/resources/guide.md`; each `## ` section is a topic (`<!-- topic: … -->`) with a one-line `<!-- summary: … -->` that `get_guide`'s description lists | Every agent: `get_guide` with one topic, when a write needs it; without a topic, all of it (about 41,000 characters) | Topics from about 400 characters to about 15,000 (`scene`) |
@@ -215,13 +215,18 @@ that Anthropic writes for its own models: the claude.ai system prompt and the
   line is the place to look.
 - **The tools on offer shape the drawing more than the brief does.** While
   `program()` was offered, both models built the EM wave as a 3D code item,
-  whatever the brief said (I14). Hand drawing came back only when code items
-  were switched off (lab switch `--no-code`).
+  whatever the brief said (I14). Hand drawing came back when code items were
+  switched off (lab switch `--no-code`), and then, with code items on, once
+  the brief and the guide said what each kind is for (I20): "a
+  three-dimensional subject alone is not a reason for one".
 - **Measure with tasks that pull toward the defaults.** The EM wave and the
   seasons are pictures by nature, so most briefs look alike there.
   `stddev` ("I can compute it but I don't get it") pulls toward formulas and
-  text, and it separated the briefs better. Test a draft with
-  `council.mjs --brief <file>` before it replaces the live brief.
+  text, and it separated the briefs better. Test a draft before it replaces
+  the live brief: `node space/scripts/lab/council.mjs --client claude --model
+  opus --task stddev --brief-only --brief <draft>` (add `--no-code
+  --no-html` to hide those kinds). The bench (`scripts/bench/run.mjs`) has
+  no brief option and measures only the live brief.
 
 ## Appendix — the founder's words
 

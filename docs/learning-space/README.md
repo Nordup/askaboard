@@ -10,7 +10,7 @@ It is the third form of this project (iPad app → web client → Learning
 Space) and, since 2026-10-24, **the main product** (decision P8). App code
 in [`../../space/`](../../space/); work happens on `main`.
 
-## Status (2026-10-25)
+## Status (2026-10-26)
 
 | Area | State |
 | --- | --- |
@@ -25,10 +25,10 @@ in [`../../space/`](../../space/); work happens on `main`.
 | Fix 1: the brief (`space/resources/brief.md`, managed block in `AGENTS.md`), new tool descriptions | Done and measured |
 | Board news: the agent app gets one line about what the learner drew since its last look, delivered once (decision I4) | Done and measured: in V1 the agent looked at the sketch in 4 of 4 runs (0 of 2 before) |
 | `get_brief` and `get_guide`, one job each (decision T11) | Done and measured |
-| Brief v3: the section "Thinking with a pen" (decision I5) | Done and measured: GPT still builds a drawing in 2–3 SVG pieces, with no ink |
-| Brief v4: scenes, living code items, the words beside the drawing (decision I6) | Done (2026-10-25); not yet measured with the brief alone |
-| Live drawing: one drawing medium in code ([`live-drawing-plan.md`](live-drawing-plan.md), decisions P11, P12) | Stages 1–3 done (2026-10-25): `run_scene` and `scene_control`, values, labels, named groups, preview, camera, pointer, the stage and beats, live pixels and program items (WebGL, three.js, any library), text lines at a reading pace in a floating script panel (the app does not speak, decision T13). Results: [`live-drawing-log.md`](live-drawing-log.md). Next: the founder's testing, a feature freeze, polish |
-| One way to write (live drawing stage 4, decision P13; replaces P9's animated build-up): scenes gain `html()`, `image()`, `edit()`, `copy()`, `space()` and moves into frames; the ten write tools and `finish_working` are retired (11 tools left) | Built (2026-10-25), checked in the lab; not pushed; the brief's paragraph on direct writes still needs the founder's new text |
+| The brief (`space/resources/brief.md`) | **v18** in Anthropic's style (decisions I16–I18, I20–I22): find out what the person wants, read their work, explain by drawing one step at a time (with a calibration list of the defaults to avoid), what ink, code items and HTML are each for, explain fully then check, preview before the person sees a scene. Drafts and their history: `drafts/brief-v*.md`, [`live-drawing-log.md`](live-drawing-log.md) |
+| Tool descriptions, server instructions, plugin skill and the board reference (`guide.md`) in Anthropic's tool style (decision I19) | Done (2026-10-26); dev-mode smoke check passed |
+| Live drawing: one drawing medium in code ([`live-drawing-plan.md`](live-drawing-plan.md), decisions P11–P13) | Stages 1–4 done: `run_scene` and `scene_control` are the one way to write (11 tools); values, labels, named groups, preview, camera, pointer, the stage and beats, program items (WebGL, three.js, any library), `html()`, `image()`, edits, a floating script panel (the app does not speak, T13). Measured (2026-10-26, everything on): both GPT and Claude draw the EM wave in ink, step by step, with handwritten labels; GPT previews; Claude explains fully, then asks; practice sheets still use HTML |
+| Lab switches for experiments: `council.mjs --no-code`, `--no-html`, `--brief <draft>` (`space/src/main/lab-switch.ts`) | Done; see [`working-guide.md`](working-guide.md), "Choosing lab tests" |
 | Perception (the old fix 2) | Mostly answered by board news; the rest deferred |
 | Plain chat apps (ChatGPT web, Claude chat) with folder file tools | Later |
 | App packaging, signing, auto-update | Later |
@@ -102,7 +102,9 @@ the live-frame idea was rejected).
 | Agent | An external AI program connected over MCP: Claude Code, Claude Desktop (chat), ChatGPT and Codex. |
 | Learning folder | The folder that holds all learning: `AGENTS.md`, `plan.md`, `learner.md`, `sessions/`, `topics/`, `materials/`, `boards/`, `assets/`. |
 | Board | One `*.board.json` file: a document of nodes. |
-| Node | One object on a board: `ink`, `frame`, `text`, `svg` or `image`. |
+| Node | One object on a board: `ink`, `frame`, `text`, `svg`, `image` or `live`. |
+| Code item | A live item a scene places with `program()`, `shader()` or `canvas()`: a program that keeps running on the board and can take the learner's input. |
+| Lab switch | An environment flag that changes what agents see, for lab runs only: `LS_LAB_NO_CODE`, `LS_LAB_NO_HTML`, `LS_LAB_BRIEF` (council flags `--no-code`, `--no-html`, `--brief`). |
 | Frame | A box node that holds other nodes (a card, a page). |
 | Ink group | A cluster of the learner's strokes with a short id (`g1`, `g2`). Agents place things relative to it. |
 | Folder guide | `.learning-space/guide.md` in a learning folder: `get_guide` topic `folder` (or, with `mode: replace`, the whole board reference). |
