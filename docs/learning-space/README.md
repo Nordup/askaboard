@@ -26,7 +26,7 @@ in [`../../space/`](../../space/); work happens on `main`.
 | Board news: the agent app gets one line about what the learner drew since its last look, delivered once (decision I4) | Done and measured: in V1 the agent looked at the sketch in 4 of 4 runs (0 of 2 before) |
 | `get_brief` and `get_guide`, one job each (decision T11) | Done and measured |
 | Brief v3: the section "Thinking with a pen" (decision I5) | Done and measured: GPT still builds a drawing in 2–3 SVG pieces, with no ink |
-| Live drawing by code, played in sequences ([`live-drawing-idea.md`](live-drawing-idea.md)) | **Next:** an experiment first ([`plan.md`](plan.md) item 1, decision P10) |
+| Live drawing: one drawing medium in code ([`live-drawing-plan.md`](live-drawing-plan.md), decision P11) | **Next,** on the branch `live-drawing`: stage 1 (the lab and a pen that runs code) |
 | The animated build-up: the app draws agent material in front of the learner (decision P9) | After live drawing, on its engine ([`plan.md`](plan.md) item 2) |
 | Perception (the old fix 2) | Mostly answered by board news; the rest deferred |
 | Plain chat apps (ChatGPT web, Claude chat) with folder file tools | Later |
@@ -51,6 +51,9 @@ work that [`plan.md`](plan.md) and [`baseline.md`](baseline.md) describe.
      message (2026-10-24): the choice of the first fixes, and the idea that
      agents draw with JavaScript strokes, played in sequences by a voice
      model.
+   - [`live-drawing-plan.md`](live-drawing-plan.md) — the expedition plan
+     (2026-10-25): one drawing medium in code, four stages, the lab and the
+     model councils.
    - [`baseline.md`](baseline.md) — how we measure agent behaviour on the
      board (trace, bench, scenarios) and the results.
    - [`sessions-2026-10-24.md`](sessions-2026-10-24.md) — the founder's
