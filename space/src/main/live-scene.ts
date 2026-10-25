@@ -4,7 +4,6 @@ import prelude from './live-prelude.js?raw'
 import { HAND_FONT } from '@shared/hand-font'
 import type { SceneContext, SceneDescription } from '@shared/live-scene'
 import type { WorkerReply, WorkerReset, WorkerRun } from './live-worker'
-import { markedLine, measureMarks, prefetchSpeech, speechOn } from './speech'
 
 /**
  * The stage: one long-lived sandbox per board in which every scene program
@@ -15,7 +14,7 @@ import { markedLine, measureMarks, prefetchSpeech, speechOn } from './speech'
  * state is always the result of running that log in order, which makes it
  * possible to roll it back: after a program error, a preview, a cancel, a
  * skipped scene, a replaced or cut scene, the context is rebuilt by running
- * the log again (fast: programs only compute; speech times are cached).
+ * the log again (fast: programs only compute).
  * The stage starts new when the board changes, on scene_control reset, and
  * when the app starts.
  */
@@ -52,61 +51,6 @@ export interface StageRun {
   fresh: string | null
 }
 
-/** say("…") strings written as plain literals, so their speech can be measured before the program runs. */
-function literalLines(code: string): string[] {
-  const out: string[] = []
-  const re = /\bsay\(\s*(["'`])((?:\\.|(?!\1)[^\\])*)\1/g
-  let m: RegExpExecArray | null
-  while ((m = re.exec(code))) {
-    if (m[1] === '`' && m[2].includes('${')) continue
-    let text = m[2]
-    try {
-      text = m[1] === '"' ? (JSON.parse(`"${text}"`) as string) : text.replace(/\\(.)/g, '$1')
-    } catch {
-      continue
-    }
-    out.push(text)
-  }
-  return out
-}
-
-/** The same split as splitMarks() in live-prelude.js: the words without [[marks]], and each mark's character index. */
-function splitMarks(raw: string): { clean: string; chars: number[] } {
-  const chars: number[] = []
-  let clean = ''
-  const re = /\[\[\s*([^\]]*?)\s*\]\]/g
-  let last = 0
-  let m: RegExpExecArray | null
-  const add = (piece: string): void => {
-    piece = piece.replace(/\s+/g, ' ')
-    if (clean.endsWith(' ') && piece.startsWith(' ')) piece = piece.slice(1)
-    clean += piece
-  }
-  const text = raw.trim()
-  while ((m = re.exec(text))) {
-    add(text.slice(last, m.index))
-    chars.push(clean.length)
-    last = m.index + m[0].length
-  }
-  add(text.slice(last))
-  const lead = clean.length - clean.trimStart().length
-  clean = clean.trim()
-  return {
-    clean,
-    chars: chars.map((char) => {
-      let c = Math.max(0, Math.min(clean.length, char - lead))
-      while (clean[c] === ' ') c++
-      return c
-    })
-  }
-}
-
-/** The text say() renders for a line (with a silence at each mark), to measure it ahead of the program. */
-function renderedLine(raw: string): string {
-  const { clean, chars } = splitMarks(raw)
-  return chars.length ? markedLine(clean, chars) : clean
-}
-
 /** A tex() or text() node to measure: its source, math or not, and its font size. */
 export interface TextItem {
   math: boolean
@@ -120,10 +64,8 @@ export class SceneStage {
 
   /** measureText: the renderer lays the text out as the board does (renderer/live/measure.ts). */
   constructor(private readonly measureText: (items: TextItem[]) => Promise<Array<[number, number]>>) {
-    // The first render of the system voice is slow (it finds and loads the voice): do it now, not in the first scene.
-    // So is the sandbox's first start (WebAssembly, the scene library).
+    // The sandbox's first start is slow (WebAssembly, the scene library): do it now, not in the first scene.
     setTimeout(() => {
-      if (speechOn()) void prefetchSpeech(['Ready.']).catch(() => undefined)
       void this.exclusive(() => this.ensure()).catch(() => undefined)
     }, 3000)
   }
@@ -231,9 +173,8 @@ export class SceneStage {
     if (signal?.aborted) throw new SceneCancelled()
     this.adopt(context)
     const fresh = this.log.length === 0 ? this.freshReason : null
-    const speech = speechOn()
     const seed = options.seed ?? Math.floor(Math.random() * 2 ** 31) + 1
-    const ctxText = JSON.stringify({ ...context, seed, speech, cutAt: options.cutAt ?? null })
+    const ctxText = JSON.stringify({ ...context, seed, cutAt: options.cutAt ?? null })
     const tStart = Date.now()
     const onAbort = (): void => this.cancelWorker()
     signal?.addEventListener('abort', onAbort, { once: true })
@@ -242,14 +183,9 @@ export class SceneStage {
         throw signal?.aborted ? new SceneCancelled() : error
       })
       const tReady = Date.now()
-      if (speech) {
-        const lines = literalLines(code).map(renderedLine)
-        if (lines.length) await prefetchSpeech(lines)
-      }
       if (signal?.aborted) throw new SceneCancelled()
-      const tSpeech = Date.now()
       const reply = await this.send({ type: 'run', id: this.nextId++, code, ctxText, mode: options.mode })
-      console.log(`stage: ${options.mode} program: stage ready ${tReady - tStart} ms, speech ${tSpeech - tReady} ms, program ${Date.now() - tSpeech} ms`)
+      console.log(`stage: ${options.mode} program: stage ready ${tReady - tStart} ms, program ${Date.now() - tReady} ms`)
       if (signal?.aborted) throw new SceneCancelled()
       if (!reply.ok) {
         this.dirty = true
@@ -306,9 +242,8 @@ export class SceneStage {
       void (async () => {
         let answer = '{}'
         try {
-          const request = JSON.parse(String(raw)) as { kind?: 'text'; text: string; chars: number[]; items?: TextItem[] }
+          const request = JSON.parse(String(raw)) as { kind?: 'text'; items?: TextItem[] }
           if (request.kind === 'text') answer = JSON.stringify({ sizes: await this.textSizes(request.items ?? []) })
-          else answer = JSON.stringify(speechOn() ? await measureMarks(request.text, request.chars ?? []) : { dur: null, offsets: [] })
         } catch {
           answer = '{}'
         }

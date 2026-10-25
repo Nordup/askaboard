@@ -159,7 +159,7 @@ export async function startInstance({ name, mcpPort, debugPort, built = false, f
   for (const path of [inst.home, inst.userData, inst.traces]) mkdirSync(path, { recursive: true })
   if (!existsSync(join(inst.folder, 'AGENTS.md'))) setupFolder(inst.folder)
 
-  const env = { ...process.env, HOME: inst.home, SPACE_FOLDER: inst.folder, SPACE_MCP_PORT: String(mcpPort), SPACE_REMOTE_DEBUG: String(debugPort), SPACE_TRACE_DIR: inst.traces, SPACE_SPEECH: process.env.SPACE_SPEECH ?? '1' }
+  const env = { ...process.env, HOME: inst.home, SPACE_FOLDER: inst.folder, SPACE_MCP_PORT: String(mcpPort), SPACE_REMOTE_DEBUG: String(debugPort), SPACE_TRACE_DIR: inst.traces }
   delete env.ELECTRON_RUN_AS_NODE
   const logFd = openSync(inst.log, 'a')
   let child
@@ -401,19 +401,46 @@ export function encodeVideo(frames, out, { from, to, crop = '', fps = 30 }) {
 /**
  * The watch video: like encodeVideo, but every stretch with no visible change
  * longer than idleMs plays in cutMs, with a label ("38 s  model writing
- * run_scene") and a real-time clock burned in (recut.py, Pillow). labels:
- * [{from, to, label}] in wall ms (traceLabels). Returns {watch_s, real_s, cuts}.
+ * run_scene") and a real-time clock burned in (recut.py, Pillow and one
+ * ffmpeg pass). labels: [{from, to, label}] in wall ms (traceLabels); the
+ * model's own time ("model writing …", "model thinking", …) is cut even when
+ * a live item keeps moving, except while a scene plays (playing: [{from, to}]
+ * in wall ms, scenePlaySpans). Returns {watch_s, real_s, cuts}.
  */
-export function encodeWatchVideo(frames, out, { from, to, crop = '', labels = [], idleMs = 1500, cutMs = 600, fps = 30 }) {
+export function encodeWatchVideo(frames, out, { from, to, crop = '', labels = [], playing = [], idleMs = 1500, cutMs = 600, fps = 30 }) {
   const m = /^crop=(\d+):(\d+):(\d+):(\d+)$/.exec(crop)
   const spec = join(dirname(out), '.recut.json')
-  writeFileSync(spec, JSON.stringify({ frames: frames.map((f) => ({ file: f.file, t: f.t })), from, to, crop: m ? [Number(m[3]), Number(m[4]), Number(m[1]), Number(m[2])] : null, labels, idle_ms: idleMs, cut_ms: cutMs, fps, out, ffmpeg: FFMPEG }))
+  writeFileSync(spec, JSON.stringify({ frames: frames.map((f) => ({ file: f.file, t: f.t })), from, to, crop: m ? [Number(m[3]), Number(m[4]), Number(m[1]), Number(m[2])] : null, labels, playing, idle_ms: idleMs, cut_ms: cutMs, fps, out, ffmpeg: FFMPEG }))
   try {
     const text = execFileSync('python3', ['-I', join(LAB, 'recut.py'), spec], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 16 * 1024 * 1024 })
     return JSON.parse(text.trim().split('\n').pop())
   } finally {
     rmSync(spec, { force: true })
   }
+}
+
+/**
+ * When scenes played, from the trace's run_scene calls (wall ms): from the
+ * call's end + starts_in_s to its end + ends_in_s, plus a second for a pause
+ * the result could not know about. Previews play nothing.
+ */
+export function scenePlaySpans(calls) {
+  const spans = []
+  for (const c of calls) {
+    if (c.tool !== 'run_scene' || !c.ok || c.args?.preview) continue
+    try {
+      const r = JSON.parse(c.result_text)
+      const end = Date.parse(c.end ?? c.t)
+      const startsIn = typeof r.starts_in_s === 'number' ? r.starts_in_s : 0
+      const endsIn = typeof r.ends_in_s === 'number' ? r.ends_in_s : startsIn + (typeof r.duration_s === 'number' ? r.duration_s : 0)
+      // wait "end": the call returned after the scene played.
+      if (r.played !== undefined) spans.push({ from: Date.parse(c.t), to: end + 1000 })
+      else spans.push({ from: end + startsIn * 1000, to: end + endsIn * 1000 + 1000 })
+    } catch {
+      // No result to read.
+    }
+  }
+  return spans
 }
 
 /**

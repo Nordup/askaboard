@@ -8,6 +8,7 @@ import { compileScene, type CompiledScene, type PlayObject, type SceneRevert, ty
 import { inkIndexOf, nodeSig, scenePlayer, sceneFrame, type SceneFrame, type SceneMemory } from './player'
 import { apply, multiply, scaleOf } from './timeline'
 import type { Point } from '../board/types'
+import type { LiveClock } from '../live-pixels/program'
 
 /**
  * The renderer half of run_scene. The main process runs the program in its
@@ -341,13 +342,11 @@ export function runScene(ctx: RunSceneContext, args: Record<string, unknown>): S
   const sceneId = typeof args.sceneId === 'string' && args.sceneId ? args.sceneId : newItemId('sc')
   const name = typeof args.name === 'string' && args.name ? args.name : null
   const { compiled, result, snapshot } = commitScene(ctx, desc, sceneId, name, args.amend === true)
-  const speak = args.speak === true
-  const voice = typeof args.voice === 'string' ? args.voice : null
   const revert = (): void => revertScene(ctx.board, compiled.revert)
   let startsIn: number
   if (args.slot === true && scenePlayer.swap(ctx.board, sceneId, compiled.play, revert)) startsIn = scenePlayer.startsIn(sceneId)
-  else startsIn = scenePlayer.enqueue(ctx.board, compiled.play, { mode: args.when === 'now' ? 'now' : 'queue', speak, voice, revert })
-  scenePlayer.remember({ play: compiled.play, speak, voice, snapshot })
+  else startsIn = scenePlayer.enqueue(ctx.board, compiled.play, { mode: args.when === 'now' ? 'now' : 'queue', revert })
+  scenePlayer.remember({ play: compiled.play, snapshot })
   // A playing scene (cut) started before now: its start is negative, its end is still ahead.
   result.starts_in_s = Math.max(0, startsIn)
   return { ...result, ends_in_s: Math.round((startsIn + result.duration_s) * 1000) / 1000 }
@@ -366,7 +365,7 @@ export interface PreviewFrame {
   overrides: Array<[string, NodeOverride]>
   tips: PlaybackTip[]
   /** The scene clock at t for each node the scene plays (program items draw that moment). */
-  clocks: Array<[string, { t: number; playing: boolean; step: string | null; end: number }]>
+  clocks: Array<[string, LiveClock]>
 }
 
 export interface PreviewResult {
@@ -464,7 +463,18 @@ function frameAt(play: CompiledScene['play'], t: number, label: string, nodes: B
   let step: string | null = null
   for (const entry of play.steps) if (entry.at <= t + 1e-6) step = entry.name
   const clock = { t, playing: false, step, end: play.duration }
-  const clocks = play.objects.flatMap((object) => object.targets.map((target) => [target.nodeId, clock] as [string, typeof clock]))
+  const steps = play.steps.map((entry) => [entry.at, entry.name] as [number, string])
+  const clocks = play.objects.flatMap((object) => {
+    // A program item is run from the moment it appears up to this frame's moment (its own state over time), with the params of each moment.
+    const desc = play.timeline.object(object.id)
+    let own: LiveClock = clock
+    if (desc.kind === 'live' && desc.mode === 'program') {
+      const from = desc.carry ? 0 : Math.max(0, desc.created)
+      const samples = object.dyn?.kind === 'live' ? object.dyn.samples.filter((sample) => sample.params).map((sample) => [sample.t, sample.params] as [number, Record<string, number>]) : []
+      if (t >= from) own = { ...clock, sim: { from, to: t, params: samples.length ? samples : null, steps } }
+    }
+    return object.targets.map((target) => [target.nodeId, own] as [string, LiveClock])
+  })
   return { t: Math.round(t * 1000) / 1000, label, nodes: [...nodes, ...out.inks], overrides: [...out.overrides], tips: out.tips.filter((tip) => tip.kind === 'pointer'), clocks }
 }
 
@@ -516,9 +526,11 @@ export async function sceneControl(ctx: RunSceneContext, args: Record<string, un
       stageRecord.epoch = typeof args.epoch === 'string' ? args.epoch : ''
       scenePlayer.resetStage()
       return status()
-    case 'waitPlayed':
-      await scenePlayer.untilPlayed(String(args.scene))
-      return status()
+    case 'waitPlayed': {
+      // Ends with the scene's end, or where playback stops at a pause before it (status says why).
+      const ended = await scenePlayer.untilPlayed(String(args.scene))
+      return { ...status(), ended }
+    }
     case 'wait':
       await scenePlayer.untilIdleOrPaused()
       return status()
