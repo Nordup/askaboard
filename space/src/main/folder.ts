@@ -42,6 +42,8 @@ const isHiddenName = (name: string): boolean => name.startsWith('.') || name ===
 
 const hashText = (text: string): string => createHash('sha1').update(text).digest('hex')
 
+const fileIdentity = (info: { ino: number; mtimeMs: number; size: number }): string => `${info.ino}:${info.mtimeMs}:${info.size}`
+
 const toPosix = (path: string): string => path.split(sep).join('/')
 
 function isInside(root: string, path: string): boolean {
@@ -80,6 +82,12 @@ export class FolderSession {
   private debounce: ReturnType<typeof setTimeout> | null = null
   /** Content hash of the last version of each board we wrote or read. */
   private knownHashes = new Map<string, string>()
+  /**
+   * The file identity (inode, mtime, size) of each board just after our own write. A watch
+   * event for a board that still has this identity is our own write: the watcher skips it
+   * before any listing, reading or hashing.
+   */
+  private ownWrites = new Map<string, string>()
 
   private constructor(readonly root: string) {
     this.name = basename(root)
@@ -184,8 +192,12 @@ export class FolderSession {
 
   private async flushWatch(events: FolderEvents): Promise<void> {
     this.debounce = null
-    const changed = [...this.pending]
+    const paths = [...this.pending]
     this.pending.clear()
+    const changed: string[] = []
+    for (const rel of paths) if (!(await this.isOwnWrite(rel))) changed.push(rel)
+    if (!changed.length) return
+    console.log(`watch: changed outside the app: ${changed.join(', ')}`)
     events.filesChanged(await this.listFiles())
     for (const rel of changed) {
       if (!isBoardPath(rel)) continue
@@ -200,9 +212,20 @@ export class FolderSession {
         continue
       }
       const hash = hashText(text)
-      if (this.knownHashes.get(rel) === hash) continue // our own write, or nothing new
+      if (this.knownHashes.get(rel) === hash) continue // last defence: our own write, or nothing new
       this.knownHashes.set(rel, hash)
       events.boardChanged({ path: rel, deleted: false })
+    }
+  }
+
+  /** True when the file at `rel` is still the one our last write made. */
+  private async isOwnWrite(rel: string): Promise<boolean> {
+    const own = this.ownWrites.get(rel)
+    if (!own) return false
+    try {
+      return fileIdentity(await stat(join(this.root, rel))) === own
+    } catch {
+      return false
     }
   }
 
@@ -238,6 +261,7 @@ export class FolderSession {
     try {
       await writeFile(temp, text, 'utf8')
       await rename(temp, full)
+      this.ownWrites.set(rel, fileIdentity(await stat(full)))
     } catch (error) {
       await unlink(temp).catch(() => undefined)
       throw error
@@ -253,6 +277,7 @@ export class FolderSession {
       if (existing.has(`${name}${BOARD_SUFFIX}`.toLowerCase())) continue
       const rel = posix.join(BOARDS_DIR, `${name}${BOARD_SUFFIX}`)
       await this.writeBoard(rel, serializeBoard(emptyBoard()))
+      this.ownWrites.delete(rel) // a new file: the watcher must list it
       return rel
     }
   }
@@ -273,6 +298,7 @@ export class FolderSession {
     await rename(from, to)
     const hash = this.knownHashes.get(rel)
     this.knownHashes.delete(rel)
+    this.ownWrites.delete(rel)
     if (hash) this.knownHashes.set(target, hash)
     return target
   }
@@ -281,6 +307,7 @@ export class FolderSession {
     const full = await this.resolveBoard(rel)
     await shell.trashItem(full)
     this.knownHashes.delete(rel)
+    this.ownWrites.delete(rel)
   }
 
   // ---------- Other files ----------

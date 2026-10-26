@@ -11,6 +11,8 @@
   --ls-bad: #ff6b8b;
   --ls-warn: #f5d76e;
   --ls-border: #2e3448;
+  /* The board's own background (tokens.css --bg-canvas): to cover what lies behind a shape. */
+  --ls-bg: #161618;
   --ls-font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', sans-serif;
   --ls-mono: ui-monospace, 'SF Mono', Menlo, monospace;
 }

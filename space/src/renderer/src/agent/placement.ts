@@ -70,8 +70,7 @@ function shrink(view: Region, margin: number): Region {
 
 /**
  * Boxes agent material must not cover: top-level content and the bounds of
- * every ink group (the same boxes the overlap report uses, so a free spot
- * never reports an overlap). Ids in `skip` (and their subtrees) do not count.
+ * every ink group. Ids in `skip` (and their subtrees) do not count.
  */
 export function obstacles(s: Scene, skip: ReadonlySet<string> = new Set()): Region[] {
   const out: Region[] = []

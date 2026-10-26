@@ -1,4 +1,4 @@
-import { boardName, isContent, isInk, isLive, type BoardNode } from '@shared/board-format'
+import { boardName, isContent, isInk, isKnown, isLive, type BoardNode } from '@shared/board-format'
 import type {
   AgentMethods,
   AgentRequest,
@@ -8,6 +8,7 @@ import type {
   InkGroupSummary,
   LearnerNews,
   NewsGroup,
+  NewsItem,
   NewsStroke,
   ScreenshotPlan,
   SnapshotLabel,
@@ -15,11 +16,13 @@ import type {
   TopLevelSummary
 } from '@shared/space-api'
 import type { BoardHandle, LiveBoardState } from '../board/Board'
-import type { ChangeLog } from '../board/changes'
+import { describeChange, type ChangeDescription, type ChangeLog } from '../board/changes'
 import { unionRegions } from '../board/geometry'
 import { buildIndex, ROOT } from '../board/scene'
 import type { Region } from '../board/types'
 import { liveStill, validateLiveCode } from '../live-pixels/registry'
+import { sceneStills } from '../live-pixels/stills'
+import type { FramesLiveItem } from '../live/run'
 import { runEditTool } from './edits'
 import { isGroupId, trackerFor, type InkGroup } from './groups'
 import { scenePlayer } from '../live/player'
@@ -180,35 +183,59 @@ function changeSet(context: AgentContext, since: number | null): ChangeSet {
   const present = new Set(state.nodes.map((node) => node.id))
   const changed = state.nodes
     .filter((node) => node.seq > from)
-    .map((node) => ({
-      id: node.id,
-      kind: node.kind,
-      ...(isInk(node) ? { tool: node.tool, color: node.color } : {}),
-      ...(typeof node.name === 'string' ? { name: node.name } : {}),
-      ...(state.editor(node.id) ? { by: state.editor(node.id) } : {}),
-      bounds: rect(state.bounds(node.id)),
-      seq: node.seq
-    }))
+    .map((node) => {
+      const { change, offset } = changeOf(log, node, from)
+      return {
+        id: node.id,
+        kind: node.kind,
+        ...(isInk(node) ? { tool: node.tool, color: node.color } : {}),
+        ...(typeof node.name === 'string' ? { name: node.name } : {}),
+        ...(state.editor(node.id) ? { by: state.editor(node.id) } : {}),
+        change,
+        ...(offset ? { offset } : {}),
+        bounds: rect(state.bounds(node.id)),
+        seq: node.seq
+      }
+    })
   const removed = (log?.after(from) ?? [])
     .filter((tombstone) => !present.has(tombstone.id))
-    .map((tombstone) => ({ id: tombstone.id, bounds: rect(tombstone.bounds), seq: tombstone.seq }))
+    .map((tombstone) => ({
+      id: tombstone.id,
+      kind: tombstone.kind,
+      ...(typeof tombstone.node?.name === 'string' ? { name: tombstone.node.name } : {}),
+      ...(tombstone.by ? { by: tombstone.by } : {}),
+      bounds: rect(tombstone.bounds),
+      seq: tombstone.seq
+    }))
   const changedIds = new Set(changed.map((item) => item.id))
   const groups = groupsOf(path, board).filter((group) => group.strokes.some((id) => changedIds.has(id)))
   return { board: path, changed, removed, cursor: seenCursor(state), ...(groups.length ? { groups_changed: groups.map(groupSummary) } : {}) }
 }
 
-// ---------- Board news: the learner's ink since an agent's last look ----------
+/** How a node changed since `since` (see describeChange); 'changed' when the board has no change log. */
+function changeOf(log: ChangeLog | null, node: BoardNode, since: number): ChangeDescription {
+  return log ? describeChange(node, log.stateAt(node.id, since)) : { change: 'changed' }
+}
+
+// ---------- Board news: the learner's changes since an agent's last look ----------
 
 const KIND_WORDS: Record<string, string> = { svg: 'SVG', frame: 'frame', text: 'text', image: 'image', live: 'live item' }
 
-/** "your SVG \"Thermal spectra\"", "the learner's text \"Find x\"", or with the id when it has no name. */
-function materialLabel(node: BoardNode): string {
-  const owner = node.author === 'agent' ? 'your' : "the learner's"
+/**
+ * "your SVG \"Thermal spectra\"", "the learner's text \"Find x\"", or with the id when it has no name.
+ * `owner` false: "a text \"Find x\"" (for a new item).
+ */
+function materialLabel(node: BoardNode, owner = true): string {
   const kind = KIND_WORDS[node.kind] ?? node.kind
+  const who = owner ? (node.author === 'agent' ? 'your' : "the learner's") : /^[aeiou]|^SVG/i.test(kind) ? 'an' : 'a'
   let label = typeof node.name === 'string' ? node.name.trim() : ''
   if (!label && node.kind === 'text') label = String((node as { text?: unknown }).text ?? '').replace(/[*$\\]/g, '').split(/\s+/).filter(Boolean).slice(0, 5).join(' ')
+  if (!label && node.kind === 'image') {
+    const src = String((node as { src?: unknown }).src ?? '')
+    if (!src.startsWith('data:')) label = src.slice(src.lastIndexOf('/') + 1)
+  }
   if (label.length > 40) label = `${label.slice(0, 39)}…`
-  return label ? `${owner} ${kind} "${label}"` : `${owner} ${kind} ${node.id}`
+  return label ? `${who} ${kind} "${label}"` : `${who} ${kind} ${node.id}`
 }
 
 /** Where `a` is relative to `b`, and the gap between them (0 when they overlap). */
@@ -245,27 +272,78 @@ function whereText(state: LiveBoardState, groups: InkGroup[], region: Region, pa
   return (best as { gap: number; text: string } | null)?.text ?? null
 }
 
-/** The learner's ink strokes added or erased after `since`. */
+/** The learner's changes after `since`: strokes drawn or erased, and every other change (NewsItem). */
 function learnerNews(context: AgentContext, since: number): LearnerNews | null {
   if (!context.folder || !context.openPath || !context.board) return null
   const path = context.openPath
   const state = context.board.liveState()
+  const log = context.changeLog
   const groups = groupsOf(path, context.board)
   const groupOf = new Map<string, InkGroup>()
   for (const group of groups) for (const stroke of group.strokes) groupOf.set(stroke, group)
 
   const added: NewsStroke[] = []
+  const items: NewsItem[] = []
+  // New items that are not ink, with their parent: a new item inside a new frame goes with the frame.
+  const placed: Array<{ item: NewsItem; parent?: string }> = []
+  // Ink moved or resized, per change and ink group.
+  const inkMoves = new Map<string, { change: NewsItem['change']; group?: InkGroup; bounds: Region[]; offsets: Set<string>; offset?: { dx: number; dy: number }; at: number; count: number }>()
+  const newIds = new Set<string>()
   for (const node of state.nodes) {
-    if (!isInk(node) || node.seq <= since) continue
+    if (node.seq <= since) continue
     if ((state.editor(node.id) ?? node.author) !== 'learner') continue
     const at = state.changedAt(node.id)
-    const group = groupOf.get(node.id)
-    added.push({ id: node.id, seq: node.seq, bounds: rect(state.bounds(node.id)), ...(group ? { group: group.id } : {}), ...(at ? { at } : {}) })
+    const prior = log?.stateAt(node.id, since) ?? { kind: 'unknown' as const }
+    const { change, offset } = describeChange(node, prior)
+    if (change === 'unchanged') continue
+    const group = isInk(node) ? groupOf.get(node.id) : undefined
+    // A stroke that is new, or whose state before is not known, counts as drawn.
+    if (isInk(node) && (change === 'added' || prior.kind === 'unknown')) {
+      added.push({ id: node.id, seq: node.seq, bounds: rect(state.bounds(node.id)), ...(group ? { group: group.id } : {}), ...(at ? { at } : {}) })
+      continue
+    }
+    if (change === 'added') newIds.add(node.id)
+    if (isInk(node)) {
+      const key = `${change} ${group?.id ?? ''}`
+      const entry = inkMoves.get(key) ?? { change, ...(group ? { group } : {}), bounds: [], offsets: new Set<string>(), at: 0, count: 0 }
+      const bounds = state.bounds(node.id)
+      if (bounds) entry.bounds.push(bounds)
+      entry.offsets.add(offset ? `${offset.dx},${offset.dy}` : '')
+      if (offset) entry.offset = offset
+      entry.at = Math.max(entry.at, at ?? 0)
+      entry.count++
+      inkMoves.set(key, entry)
+      continue
+    }
+    const item: NewsItem = { change, label: materialLabel(node, change !== 'added'), bounds: rect(state.bounds(node.id)), ...(offset ? { offset } : {}), ...(at ? { at } : {}) }
+    const parent = isKnown(node) ? node.parent : undefined
+    if (change === 'added') placed.push({ item, ...(parent ? { parent } : {}) })
+    else items.push(item)
   }
+  for (const { item, parent } of placed) if (!parent || !newIds.has(parent)) items.push(item)
+  for (const entry of inkMoves.values()) {
+    const whose = entry.group?.author === 'agent' ? 'your ' : ''
+    const label = entry.group
+      ? `${entry.count < entry.group.strokes.length ? `${strokeWord(entry.count)} of ` : ''}${whose}ink group ${entry.group.id}`
+      : strokeWord(entry.count)
+    // An offset only when every stroke moved by the same one.
+    const offset = entry.offsets.size === 1 && entry.offset ? { offset: entry.offset } : {}
+    items.push({ change: entry.change, label, bounds: rect(unionRegions(entry.bounds)), ...offset, ...(entry.at ? { at: entry.at } : {}) })
+  }
+
   const present = new Set(state.nodes.map((node) => node.id))
-  const erased: NewsStroke[] = (context.changeLog?.after(since) ?? [])
-    .filter((tombstone) => tombstone.kind === 'ink' && tombstone.by === 'learner' && !present.has(tombstone.id))
+  const removals = (context.changeLog?.after(since) ?? []).filter((tombstone) => tombstone.by === 'learner' && !present.has(tombstone.id))
+  const erased: NewsStroke[] = removals
+    .filter((tombstone) => tombstone.kind === 'ink')
     .map((tombstone) => ({ id: tombstone.id, seq: tombstone.seq, bounds: rect(tombstone.bounds), at: tombstone.at }))
+  const deletedIds = new Set(removals.map((tombstone) => tombstone.id))
+  for (const tombstone of removals) {
+    if (tombstone.kind === 'ink' || !tombstone.node) continue
+    // The contents of a deleted frame go with it.
+    const parent = isKnown(tombstone.node) ? tombstone.node.parent : undefined
+    if (parent && deletedIds.has(parent)) continue
+    items.push({ change: 'deleted', label: materialLabel(tombstone.node), bounds: rect(tombstone.bounds), at: tombstone.at })
+  }
 
   const newsGroupIds = new Set(added.flatMap((stroke) => (stroke.group ? [stroke.group] : [])))
   const newsGroups: NewsGroup[] = groups
@@ -281,9 +359,12 @@ function learnerNews(context: AgentContext, since: number): LearnerNews | null {
     added,
     erased,
     groups: newsGroups,
-    erasedWhere: erasedRegion ? whereText(state, groups, erasedRegion, ROOT, new Set()) : null
+    erasedWhere: erasedRegion ? whereText(state, groups, erasedRegion, ROOT, new Set()) : null,
+    items
   }
 }
+
+const strokeWord = (count: number): string => `${count} stroke${count === 1 ? '' : 's'}`
 
 function screenshotPlan(context: AgentContext, params: AgentMethods['screenshotPlan']['params']): ScreenshotPlan {
   const { path, board } = requireBoard(context)
@@ -425,8 +506,25 @@ async function withLiveStills(plan: ScreenshotPlan): Promise<ScreenshotPlan> {
   if (plan.kind !== 'plan') return plan
   const nodes = plan.nodes as BoardNode[]
   if (!nodes.some(isLive)) return plan
-  const withStills = await Promise.all(nodes.map(async (node) => (isLive(node) ? { ...node, still: (await liveStill(node.id)) ?? undefined } : node)))
+  const withStills = await Promise.all(nodes.map(async (node) => (isLive(node) ? { ...node, still: (await liveStill(node.id))?.url ?? undefined } : node)))
   return { ...plan, nodes: withStills }
+}
+
+/** Stills of live items for preview frames: the scene's moments from step hosts, the other items as they are on the board now. */
+async function liveStillsOf(params: AgentMethods['liveStills']['params']): Promise<AgentMethods['liveStills']['result']> {
+  const items = params.items as FramesLiveItem[]
+  const stepped = items.filter((item) => item.timeline).map((item) => ({ ...item, moments: item.moments.filter((moment): moment is { frame: number; t: number } => moment.t !== null) }))
+  const onBoard = items.flatMap((item) => item.moments.filter((moment) => moment.t === null).map((moment) => ({ id: item.node.id, frame: moment.frame })))
+  // An item as it is now: one picture, the same in every frame.
+  const [scene, now] = await Promise.all([
+    sceneStills(stepped, params.scale),
+    Promise.all([...new Set(onBoard.map((entry) => entry.id))].map(async (id) => [id, await liveStill(id)] as const)).then((pictures) => new Map(pictures))
+  ])
+  const board = onBoard.map(({ id, frame }) => {
+    const still = now.get(id)
+    return { frame, id, url: still?.url ?? null, tick: still?.tick ?? null }
+  })
+  return { stills: [...scene, ...board] }
 }
 
 /** Run one request. Throws an Error with an agent-readable message on failure. */
@@ -457,6 +555,8 @@ export async function handleAgentRequest(request: AgentRequest, getContext: () =
       const params = request.params as AgentMethods['validateLive']['params']
       return { error: await validateLiveCode(params.mode, params.code, params.params ?? {}, params.size) }
     }
+    case 'liveStills':
+      return liveStillsOf(request.params as AgentMethods['liveStills']['params'])
     case 'agentTool': {
       const params = request.params as AgentMethods['agentTool']['params']
       const { board } = requireBoard(context)

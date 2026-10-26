@@ -11,6 +11,12 @@ body,
   overflow: hidden;
 }
 
+/* One frame of the image (a grid request has one per moment). */
+.snapshot__frame {
+  position: absolute;
+  overflow: hidden;
+}
+
 .snapshot__ink {
   position: absolute;
   left: 0;

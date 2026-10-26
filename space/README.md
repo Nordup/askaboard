@@ -43,7 +43,7 @@ Do not run test suites. Check a change with `npm run build`. The rules are in
   `get_guide` returns, or replace the reference, in `.learning-space/guide.md`.
 - **Connect popover and plugin.** The agent pill in the top bar installs the
   plugin for each agent.
-- **Live scenes.** An agent sends a JavaScript program (`run_scene`) that
+- **Live scenes.** An agent writes a JavaScript program (`write_scene`) that
   draws ink, handwriting, shapes, typeset text and program items and says how
   they unfold in time; the board plays it, and the result stays as ordinary
   items. Programs on a board share one sandbox (the stage), queue back to
@@ -103,8 +103,9 @@ every tool twice. The popover shows this problem and offers **Fix**.
 | `get_tree` | `node_id`, `depth` | Indented outline of nodes with ids and bounds |
 | `get_node_info` | `node_id` | One node: bounds, parent, children, style, text, author |
 | `get_html` | `node_id`, `include_ids` | A subtree as the HTML subset a scene's `html()` takes |
-| `run_scene` | `code`, `name`, `when`, `wait`, `preview` | The one way to write: runs a scene program on the board's stage and plays it (queued by default). Programs draw, write, place HTML material (`html()`), pictures (`image()`), copies (`copy()`), find room (`space()`), change text and styles (`edit()`), move items into frames and delete them. Returns steps, items, lines and timing; `preview` returns a storyboard without drawing. |
-| `scene_control` | `action` (status, pause, resume, stop, skip, cancel, replace, replay, cut, reset, wait), `scene`, `step`, `code` | Controls playback and the stage |
+| `write_scene` | `name`, `code` | Runs a scene program and keeps the result as a draft by name; the learner sees nothing. Returns steps, items, warnings or the program error. |
+| `preview_scene` | `name`, `at`, `part`, `version` | Read-only: one image of a draft or of a scene on the board, at chosen moments (end, a step, a time, a list, every step), framed on the scene, the view, a region or items. |
+| `play_scene` | `action` (start, status, pause, resume, next, stop, clear_queue, cancel, wait, replay, cut, reset), `name`, `when`, `wait`, `from_step`, `after_step` | Starts a draft on the board (replacing a scene of the same name in place) and controls playback and the stage. |
 
 ## Learning folder
 
@@ -127,6 +128,7 @@ These environment variables work with `npm run dev`:
 | `SPACE_REMOTE_DEBUG=port` | Dev builds only: Chromium debug port for `scripts/drive.mjs`. |
 | `SPACE_CONNECT_DRY_RUN=1` | **Install** for Claude Desktop logs the `.mcpb` path and does not open it. |
 | `SPACE_TRACE_DIR=/abs/dir` | Write session traces here instead of `~/.learning-space/traces/`. |
+| `SPACE_NO_FOCUS=1` | Show the window without activating the app: it never takes focus or switches the macOS desktop. The lab sets it. |
 
 The live drawing lab (`scripts/lab/`, its own README) starts its own app instance, plays scene programs and records them (MP4 and filmstrip), sends beats, runs model councils, and builds a gallery at `space/.lab/index.html`.
 

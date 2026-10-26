@@ -407,6 +407,22 @@ function serializeNode(node: BoardNode): string {
   return JSON.stringify(out)
 }
 
+/**
+ * Each node's line, by node object. Board nodes are immutable (a change makes a new
+ * object), so an autosave serialises only the nodes that changed since the last save:
+ * at 5,000 strokes a full serialise costs about 15-25 ms on the renderer thread.
+ */
+const nodeLines = new WeakMap<BoardNode, string>()
+
+function nodeLine(node: BoardNode): string {
+  let line = nodeLines.get(node)
+  if (line === undefined) {
+    line = serializeNode(node)
+    nodeLines.set(node, line)
+  }
+  return line
+}
+
 /** Serialize with one node per line, so Git diffs stay small. */
 export function serializeBoard(doc: BoardDoc): string {
   const lines = ['{', `  "format": ${JSON.stringify(BOARD_FORMAT)},`, `  "version": ${BOARD_VERSION},`, `  "nextSeq": ${doc.nextSeq},`]
@@ -418,7 +434,7 @@ export function serializeBoard(doc: BoardDoc): string {
   } else {
     lines.push('  "nodes": [')
     doc.nodes.forEach((node, index) => {
-      lines.push(`    ${serializeNode(node)}${index < doc.nodes.length - 1 ? ',' : ''}`)
+      lines.push(`    ${nodeLine(node)}${index < doc.nodes.length - 1 ? ',' : ''}`)
     })
     lines.push('  ]')
   }
@@ -447,6 +463,21 @@ export interface Removal {
 }
 
 /**
+ * A node that took a new seq: its state just before (null when it is new),
+ * so the change can be told apart later (added, moved, resized, edited).
+ */
+export interface Revision {
+  id: string
+  /** The seq the node took. */
+  seq: number
+  before: BoardNode | null
+  /** The node as the change left it. */
+  after: BoardNode
+  /** Who made the change ("learner" or "agent"), when known. */
+  by?: Author
+}
+
+/**
  * Give a new seq to every node in `next` that is not in `previous`
  * (by object identity). Created, moved or restored nodes count as changed.
  * Every id in `previous` that is not in `next` is a removal: it also takes a
@@ -456,14 +487,21 @@ export function stampChanged(
   previous: readonly BoardNode[],
   next: readonly BoardNode[],
   nextSeq: number
-): { nodes: BoardNode[]; nextSeq: number; removed: Removal[] } {
+): { nodes: BoardNode[]; nextSeq: number; removed: Removal[]; revisions: Revision[] } {
   const known = new Set(previous)
+  const prior = new Map(previous.map((node) => [node.id, node]))
   let seq = nextSeq
-  const nodes = next.map((node) => (known.has(node) ? node : { ...node, seq: seq++ }))
+  const revisions: Revision[] = []
+  const nodes = next.map((node) => {
+    if (known.has(node)) return node
+    const after = { ...node, seq: seq++ }
+    revisions.push({ id: node.id, seq: after.seq, before: prior.get(node.id) ?? null, after })
+    return after
+  })
   const kept = new Set(next.map((node) => node.id))
   const removed: Removal[] = []
   for (const node of previous) if (!kept.has(node.id)) removed.push({ node, seq: seq++ })
-  return { nodes, nextSeq: seq, removed }
+  return { nodes, nextSeq: seq, removed, revisions }
 }
 
 /**
@@ -472,19 +510,22 @@ export function stampChanged(
  * that are gone are removals. Nodes equal by content keep their old object,
  * so the result has the same seqs as before for unchanged nodes.
  */
-export function reconcileBoard(previous: BoardDoc, incoming: BoardDoc): { doc: BoardDoc; removed: Removal[] } {
+export function reconcileBoard(previous: BoardDoc, incoming: BoardDoc): { doc: BoardDoc; removed: Removal[]; revisions: Revision[] } {
   const before = new Map(previous.nodes.map((node) => [node.id, node]))
   const contentKey = (node: BoardNode): string => serializeNode({ ...node, seq: 0 })
   let seq = Math.max(previous.nextSeq, incoming.nextSeq)
+  const revisions: Revision[] = []
   const nodes = incoming.nodes.map((node) => {
     const old = before.get(node.id)
     if (old && contentKey(old) === contentKey(node)) return old
-    return { ...node, seq: seq++ }
+    const after = { ...node, seq: seq++ }
+    revisions.push({ id: node.id, seq: after.seq, before: old ?? null, after })
+    return after
   })
   const kept = new Set(incoming.nodes.map((node) => node.id))
   const removed: Removal[] = []
   for (const node of previous.nodes) if (!kept.has(node.id)) removed.push({ node, seq: seq++ })
-  return { doc: { nextSeq: seq, nodes, extra: incoming.extra }, removed }
+  return { doc: { nextSeq: seq, nodes, extra: incoming.extra }, removed, revisions }
 }
 
 /** A short random node id, for example `s_k3j2x9qa`. */

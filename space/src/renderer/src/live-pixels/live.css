@@ -30,13 +30,6 @@
   pointer-events: auto;
 }
 
-/* The snapshot window runs a program item here, unseen, until it has a picture. */
-.node-live__runner {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-}
-
 /* Entered: the learner's pointer and keys go to the item until Escape or a press outside. */
 .node-live--entered {
   outline: 1.5px solid var(--accent);
@@ -62,6 +55,12 @@
   text-align: center;
   background: var(--bg-canvas);
   opacity: 0.85;
+}
+
+/* A stopped item keeps its last picture: its note is a strip at the bottom. */
+.node-live__note--bar {
+  inset: auto 0 0 0;
+  padding: 4px 8px;
 }
 
 .node-live__note-title {

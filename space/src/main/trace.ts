@@ -1,7 +1,7 @@
 import { appendFile, mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
-import { isInk, isKnown, parseBoard, type BoardDoc } from '@shared/board-format'
+import type { LearnerEditDelta } from '@shared/learner-edit'
 import { agentHomeDir } from './agent-home'
 
 /**
@@ -205,82 +205,12 @@ export class SessionTrace {
 
 // ---------- Learner edits ----------
 
-interface Rect {
-  x: number
-  y: number
-  width: number
-  height: number
-}
-
-export interface LearnerEdit {
+/** One learner_edit line. The renderer computes the delta from the board it saves (see shared/learner-edit). */
+export interface LearnerEdit extends LearnerEditDelta {
   type: 'learner_edit'
   t: string
   folder: string
   board: string
-  ids: string[]
-  strokes: number
-  bounds: Rect | null
-}
-
-/**
- * Learner edits, from the renderer's autosave (it saves about 400 ms after an
- * edit, so `t` is the save time, not the stroke time). A learner node whose seq
- * is at or past the board's nextSeq at the last read or save is new or changed.
- */
-export class LearnerEditLog {
-  /** nextSeq per folder + board path at the last read or save. */
-  private readonly baseline = new Map<string, number>()
-
-  private key(folder: string, board: string): string {
-    return `${folder}\n${board}`
-  }
-
-  /** The renderer read a board: remember where its seqs stand. */
-  read(folder: string, board: string, text: string): void {
-    try {
-      this.baseline.set(this.key(folder, board), parseBoard(text).nextSeq)
-    } catch {
-      // Not a board we can parse: nothing to compare against.
-    }
-  }
-
-  /** The renderer saved a board. Returns the learner edit since the last read or save, if any. */
-  saved(folder: string, board: string, text: string): LearnerEdit | null {
-    let doc: BoardDoc
-    try {
-      doc = parseBoard(text)
-    } catch {
-      return null
-    }
-    const key = this.key(folder, board)
-    const since = this.baseline.get(key)
-    this.baseline.set(key, doc.nextSeq)
-    if (since === undefined) return null
-    const ids: string[] = []
-    let strokes = 0
-    let minX = Infinity
-    let minY = Infinity
-    let maxX = -Infinity
-    let maxY = -Infinity
-    for (const node of doc.nodes) {
-      if (node.seq < since || !isKnown(node) || node.author !== 'learner') continue
-      ids.push(node.id)
-      if (!isInk(node)) continue
-      strokes++
-      const half = node.width / 2
-      for (const [px, py] of node.points) {
-        const x = node.x + px
-        const y = node.y + py
-        minX = Math.min(minX, x - half)
-        minY = Math.min(minY, y - half)
-        maxX = Math.max(maxX, x + half)
-        maxY = Math.max(maxY, y + half)
-      }
-    }
-    if (!ids.length) return null
-    const bounds = strokes && Number.isFinite(minX) ? { x: Math.round(minX), y: Math.round(minY), width: Math.round(maxX - minX), height: Math.round(maxY - minY) } : null
-    return { type: 'learner_edit', t: new Date().toISOString(), folder, board, ids, strokes, bounds }
-  }
 }
 
 /** Append a learner edit to the day's learner-edits.jsonl. Never throws. */

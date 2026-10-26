@@ -1,46 +1,87 @@
 import type { LiveNode } from '@shared/board-format'
-import { CanvasHost, canvasSyntaxError, type CanvasSize } from './sandbox'
-import { shaderEngine, shaderError, type ShaderProgram } from './shader'
-import { ProgramHost, programError, type LiveClock, type LiveInput } from './program'
+import { scenePlayer } from '../live/player'
+import { absNow, itemTime, sceneTimelineOf, seedOf, tickOf, TICK_HZ, type ItemClock, type LiveTimeline, type SceneClock, type SceneView } from './clock'
+import type { CanvasSize, HostEvents, LiveFrame, LiveHost, LiveInput } from './host'
+import { canvasSyntaxError } from './sandbox'
+import { shaderEngine, shaderError, ShaderHost } from './shader'
+import { boardSlots, type SlotOwner } from './slots'
+import { createHost, programError, stillAt } from './stills'
 
 /**
- * Live pixel items on the page: their runners, visibility, status and frame
- * counts. Items outside the view pause (shaders are not drawn, canvas
- * workers stop their frame loop) and resume when they come back. There is
- * no frame-rate cap: items paint on every display frame.
+ * Live pixel items on the page: their hosts, clocks, visibility, status and
+ * resources. The contract of the hosts is in host.ts, the time model in
+ * clock.ts.
+ *
+ * - An item starts its host when a scene that plays it starts (or queues it),
+ *   on screen or not, and keeps it while that scene plays or waits. Any
+ *   other item starts its host when it comes on screen. A still of an item
+ *   without a host comes from a step host (stills.ts).
+ * - An item off screen whose scene settled runs nothing; after RELEASE_MS (or
+ *   at once when an item on screen needs its slot) its host ends its worker
+ *   and frees its GPU contexts. Its element keeps the last picture until a
+ *   new host draws.
+ * - Canvas and program hosts take slots (slots.ts); an item without one
+ *   waits ("waiting") and starts when a slot is free.
+ * - The scene clock of an item goes to its host only when it changes: a
+ *   pause, a resume, a seek, a new step, the end of the scene. Shaders draw
+ *   any time at once. A canvas or program item keeps state, so a jump of its
+ *   clock (a seek, a replay from a step) starts a fresh host. A host that
+ *   starts while its scene is past its start steps from the scene's start to
+ *   the clock's tick on the preview grid, with the scene's params and steps
+ *   (as stills do), and then goes live. The last picture shows meanwhile.
+ * - A host on screen that does not answer for STALL_MS stops ("stalled"):
+ *   its worker ends, its slot is free, its element keeps the last picture.
+ *   It starts again when its scene replays, its code or params change, or
+ *   the learner double-clicks it.
+ * - A lost GPU context starts a fresh host; the third loss in a minute is an
+ *   error.
  */
 
-export type LiveState = 'starting' | 'running' | 'paused' | 'error' | 'stalled'
+export type LiveState = 'starting' | 'running' | 'paused' | 'waiting' | 'error' | 'stalled'
 
 export interface LiveStatus {
   state: LiveState
   error?: string
-  /** Frames painted since the item appeared on this page. */
+  /** Frames drawn since the item appeared on this page. */
   frames: number
   /** Program items: how the item takes pointer input (its program's input(mode)). */
   input?: LiveInput
 }
 
-/** A canvas worker that paints nothing for this long while visible is shown as not responding. */
+/** A canvas or program host that sends no alive message for this long while on screen is shown as not responding. */
 const STALL_MS = 2000
-/** Re-measure the on-screen size every this many display frames. */
-const MEASURE_EVERY = 12
+/** A jump forward of the scene clock by more than this (s) is a seek: a canvas or program item starts a fresh host. */
+const JUMP_S = 0.25
+/** A host that steps to its clock goes live when it is at most this many ticks behind the clock. */
+const BEHIND_TICKS = 3
+/** A still waits this long for a host that steps to its clock. */
+const STEP_WAIT_MS = 5000
+/** A host off screen for this long ends (its worker and GPU contexts go). */
+const RELEASE_MS = 15000
+/** Housekeeping: on-screen size, stalls, releases. */
+const HOUSEKEEPING_MS = 250
+/** A replaced host shows its last picture until the new one draws, at most this long. */
+const SWAP_MS = 3000
+/** GPU context losses in LOSS_WINDOW_MS before the item stops with an error. */
+const MAX_LOSSES = 3
+const LOSS_WINDOW_MS = 60000
 
-// ---------- Playback parameter overrides (scene playback, playback.ts) ----------
+// ---------- Playback: params and scene clocks from the player ----------
 
 let playbackParams: ReadonlyMap<string, Record<string, number>> = new Map()
-let playbackClocks: ReadonlyMap<string, LiveClock> = new Map()
+let playbackClocks: ReadonlyMap<string, SceneClock> = new Map()
 
 /**
  * Scene playback (Board, each playback frame): the params each live item
  * shows now, merged over its own, and the scene clock of each item a scene
- * plays. null ends it.
+ * plays. null ends it. An item's host gets a message only when its params or
+ * its clock change.
  */
-export function setLivePlayback(frame: { overrides: ReadonlyMap<string, { params?: Record<string, number> }>; clocks?: ReadonlyMap<string, LiveClock> } | null): void {
-  const clocks = frame?.clocks ?? new Map<string, LiveClock>()
+export function setLivePlayback(frame: { overrides: ReadonlyMap<string, { params?: Record<string, number> }>; clocks?: ReadonlyMap<string, SceneClock> } | null): void {
+  const clocks = frame?.clocks ?? new Map<string, SceneClock>()
   if (clocks.size || playbackClocks.size) {
     playbackClocks = clocks
-    for (const item of items.values()) item.clockChanged()
+    for (const item of items.values()) item.sceneClockChanged(clocks.get(item.id) ?? null)
   }
   const next = new Map<string, Record<string, number>>()
   if (frame) for (const [id, override] of frame.overrides) if (override.params) next.set(id, override.params)
@@ -67,9 +108,13 @@ export function subscribeEntered(listener: () => void): () => void {
   return () => enteredListeners.delete(listener)
 }
 
-/** Give the learner's input to a program item whose input is "enter" (double-click); null leaves it. Returns whether it entered. */
+/** Give the learner's input to a program item whose input is "enter" (double-click); null leaves it. Returns whether it entered. A double-click on a stopped item starts it again. */
 export function enterLive(id: string | null): boolean {
   const target = id ? items.get(id) : undefined
+  if (target?.isStopped) {
+    target.retry()
+    return false
+  }
   const next = target && target.status.input === 'enter' && target.status.state !== 'error' ? id : null
   if (next === entered) return next !== null
   const before = entered ? items.get(entered) : undefined
@@ -80,9 +125,10 @@ export function enterLive(id: string | null): boolean {
   return next !== null
 }
 
-/** The input mode of a live item: "none" unless its program asked for more. */
+/** The input mode of a live item: "none" unless its program asked for more. A stopped item takes a double-click ("enter"): it starts again. */
 export function liveInput(id: string): LiveInput {
-  return items.get(id)?.status.input ?? 'none'
+  const item = items.get(id)
+  return item?.isStopped ? 'enter' : (item?.status.input ?? 'none')
 }
 
 // ---------- Items ----------
@@ -106,25 +152,62 @@ function pixelSize(element: HTMLElement, w: number, h: number): CanvasSize {
   return { w: Math.max(1e-3, w), h: Math.max(1e-3, h), pw, ph }
 }
 
+function sameParams(a: Record<string, number>, b: Record<string, number>): boolean {
+  if (a === b) return true
+  const keys = Object.keys(a)
+  if (keys.length !== Object.keys(b).length) return false
+  return keys.every((key) => a[key] === b[key])
+}
+
+function paramNames(params: Record<string, number>): string {
+  return Object.keys(params).sort().join(',')
+}
+
+/** The timeline of an item in the playing scene whose clock it follows (the first scene that plays it, as in player.ts). */
+function playingTimeline(id: string): LiveTimeline | null {
+  for (const play of scenePlayer.playingScenes()) {
+    const timeline = sceneTimelineOf(play, id)
+    if (timeline) return timeline
+  }
+  return null
+}
+
+/** The clock of an item that no scene plays: from where its scene ended (LiveNode.rest), else 0, in real time. */
+function restClock(node: LiveNode): { clock: ItemClock; scene: SceneView } {
+  const rest = node.rest
+  const t = rest && Number.isFinite(rest.t) && rest.t >= 0 ? rest.t : 0
+  const step = rest && typeof rest.step === 'string' ? rest.step : null
+  return { clock: { t, at: absNow(), rate: 1 }, scene: { t, playing: false, active: false, ended: true, step } }
+}
+
 /** One live item on the page, driven by its view (LiveView). */
-export class LiveItem {
+export class LiveItem implements SlotOwner {
   node: LiveNode
-  readonly start = performance.timeOrigin + performance.now()
-  private visible = false
-  private canvas: HTMLCanvasElement | null = null
-  private host: CanvasHost | ProgramHost | null = null
   /** Program items: the last report() values. */
   report: unknown = undefined
-  private ctx2d: CanvasRenderingContext2D | null = null
-  private program: ShaderProgram | null = null
-  private programKey = ''
-  private generation = -1
+  status: LiveStatus = { state: 'paused', frames: 0 }
+  private seed: number
+  private visible = false
+  private area = 0
+  /** Since when the item is off screen and no scene plays it (performance.now). */
+  private restingSince = 0
+  private host: LiveHost | null = null
+  /** The host while it steps to its clock (hidden; it gets no clock and no params until it goes live), and when it is done. */
+  private stepping: { host: LiveHost; done: Promise<void> } | null = null
+  /** The host stopped answering and ended: no new host until retry(). */
+  private stopped = false
+  /** A host that was replaced or released: its element shows its last picture until the next host draws. */
+  private leaving: { host: LiveHost; timer: number } | null = null
   private size: CanvasSize = { w: 1, h: 1, pw: 1, ph: 1 }
+  private clock: ItemClock
+  private scene: SceneView
+  private sceneEnd = 0
+  private params: Record<string, number>
   private frames = 0
   private frameBase = 0
-  private lastTickAt = 0
-  private measureIn = 0
-  status: LiveStatus = { state: 'starting', frames: 0 }
+  private aliveAt = 0
+  private contexts = 0
+  private losses: number[] = []
 
   constructor(
     readonly id: string,
@@ -133,11 +216,18 @@ export class LiveItem {
     private onStatus: (status: LiveStatus) => void
   ) {
     this.node = node
+    this.seed = seedOf(node)
+    this.params = this.currentParams()
+    const rest = restClock(node)
+    this.clock = rest.clock
+    this.scene = rest.scene
     items.set(id, this)
-    this.mount()
+    const clock = playbackClocks.get(id)
+    if (clock) this.sceneClockChanged(clock)
+    ensureHousekeeping()
   }
 
-  params(): Record<string, number> {
+  private currentParams(): Record<string, number> {
     const override = playbackParams.get(this.id)
     return override ? { ...this.node.params, ...override } : this.node.params
   }
@@ -153,134 +243,324 @@ export class LiveItem {
     if (entered === this.id && (state === 'error' || input !== 'enter')) enterLive(null)
   }
 
-  /** A fresh <canvas> (a canvas can hand its control to a worker only once). */
-  private mount(): void {
-    this.unmount()
-    const canvas = document.createElement('canvas')
-    canvas.className = 'node-live__canvas'
-    this.container.prepend(canvas)
-    this.canvas = canvas
+  private shownState(): LiveState {
+    return this.visible ? 'running' : 'paused'
+  }
+
+  // ----- Hosts -----
+
+  /** An item wants a host while it is on screen or a scene plays it (or waits to play it). */
+  private wantsHost(): boolean {
+    return this.visible || this.scene.active
+  }
+
+  /** The host runs frames while the window shows and the item wants a host. */
+  private runs(): boolean {
+    return this.wantsHost() && document.visibilityState !== 'hidden'
+  }
+
+  /** Wanted with no host: start one (canvas and program items need a slot first). */
+  private ensureHost(): void {
+    if (this.host || !this.wantsHost() || this.status.state === 'error' || this.stopped) return
+    if (this.node.mode === 'shader' || boardSlots.request(this)) this.startHost()
+    else this.setStatus('waiting')
+  }
+
+  /** The host steps to its clock now: the timeline of its scene, or null (it starts live at the clock's tick). */
+  private stepTimeline(): LiveTimeline | null {
+    if (this.node.mode === 'shader' || !this.scene.active || tickOf(itemTime(this.clock)) === 0) return null
+    return playingTimeline(this.id)
+  }
+
+  /** The current host steps to its clock. */
+  private get catchingUp(): boolean {
+    return this.host !== null && this.stepping?.host === this.host
+  }
+
+  private startHost(): void {
     this.size = pixelSize(this.container, this.node.w, this.node.h)
-    canvas.width = this.size.pw
-    canvas.height = this.size.ph
+    const timeline = this.stepTimeline()
     this.frameBase += this.frames
     this.frames = 0
-    if (this.node.mode === 'shader') {
-      this.ctx2d = canvas.getContext('2d')
-      this.compile()
-    } else if (this.node.mode === 'program') {
-      // The program draws in its own frame; this canvas only measures nothing and goes.
-      canvas.remove()
-      this.canvas = null
-      this.lastTickAt = performance.now()
-      this.report = undefined
-      const clock = playbackClocks.get(this.id) ?? null
-      this.host = new ProgramHost(
-        this.container,
-        { code: this.node.code, size: this.size, params: this.params(), start: this.start, visible: this.visible, clock, rest: this.node.rest ?? null },
-        {
-          onTick: (frames) => this.ticked(frames),
-          onError: (message) => this.setStatus('error', message),
-          onInput: (mode) => this.setStatus(this.status.state, this.status.error, mode),
-          onReport: (values) => {
-            this.report = values
-          },
-          onEscape: () => {
-            if (entered === this.id) enterLive(null)
-          }
-        }
-      )
-    } else {
-      this.lastTickAt = performance.now()
-      try {
-        this.host = new CanvasHost(canvas, this.node.code, this.size, this.params(), this.start, {
-          onTick: (frames) => this.ticked(frames),
-          onError: (message) => this.setStatus('error', message)
-        })
-        this.host.run(this.visible)
-      } catch (error) {
-        this.setStatus('error', error instanceof Error ? error.message : String(error))
+    this.contexts = 0
+    this.aliveAt = performance.now()
+    this.report = undefined
+    if (this.status.state !== 'error') this.setStatus('starting')
+    let host: LiveHost | null = null
+    const current = (): boolean => host !== null && this.host === host
+    const events: HostEvents = {
+      onAlive: (frames) => {
+        if (!current()) return
+        this.frames = frames
+        this.aliveAt = performance.now()
+        // The new host drew: the one it replaces goes (a stepping host shows when it reaches its clock).
+        if (frames > 0 && !this.catchingUp) this.endLeaving()
+        if (this.status.state === 'starting' || this.status.state === 'stalled' || this.status.state === 'waiting') this.setStatus(this.shownState())
+        else this.status = { ...this.status, frames: this.frameBase + frames }
+      },
+      // A stepping host that moves on is alive.
+      onProgress: () => {
+        if (current()) this.aliveAt = performance.now()
+      },
+      onError: (message) => {
+        if (!current()) return
+        this.endLeaving()
+        this.setStatus('error', message)
+        boardSlots.release(this)
+      },
+      onLost: () => {
+        if (current()) this.lost()
+      },
+      onGpu: (contexts) => {
+        if (!current()) return
+        this.contexts = contexts
+        boardSlots.weigh(this, contexts)
+      },
+      onInput: (mode) => {
+        if (current()) this.setStatus(this.status.state, this.status.error, mode)
+      },
+      onReport: (values) => {
+        if (current()) this.report = values
+      },
+      onEscape: () => {
+        if (entered === this.id) enterLive(null)
       }
     }
+    host = createHost(
+      this.node.mode,
+      {
+        code: this.node.code,
+        seed: this.seed,
+        size: this.size,
+        // Stepping: the item's own params under the timeline's, as in a preview.
+        params: timeline ? this.node.params : this.params,
+        mode: timeline ? 'step' : 'live',
+        from: timeline ? 0 : tickOf(itemTime(this.clock)),
+        clock: this.clock,
+        scene: this.scene,
+        timeline,
+        visible: this.runs()
+      },
+      events,
+      this.container
+    )
+    this.host = host
+    if (timeline) this.stepping = { host, done: this.stepToClock(host) }
+    if (this.node.mode === 'shader') ensureLoop()
   }
 
-  private ticked(frames: number): void {
-    this.frames = frames
-    this.lastTickAt = performance.now()
-    if (this.status.state === 'stalled' || this.status.state === 'starting') this.setStatus(this.visible ? 'running' : 'paused')
-    else this.status = { ...this.status, frames: this.frameBase + frames }
-  }
-
-  private unmount(): void {
-    if (entered === this.id) enterLive(null)
-    this.host?.dispose()
-    this.host = null
-    this.ctx2d = null
-    this.program = null
-    this.programKey = ''
-    this.canvas?.remove()
-    this.canvas = null
-  }
-
-  private compile(): void {
-    const key = `${this.node.code}\u0000${Object.keys(this.node.params).sort().join(',')}`
-    if (key === this.programKey && this.generation === shaderEngine.generation) return
-    this.programKey = key
-    this.generation = shaderEngine.generation
-    const result = shaderEngine.compile(this.node.code, this.node.params)
-    if (result.ok) {
-      this.program = result.program
-      this.setStatus(this.visible ? 'running' : 'paused')
-      this.paintShader(performance.now())
-    } else {
-      this.program = null
-      this.setStatus('error', result.error)
+  /**
+   * A stepping host runs every tick from the scene's start to the clock's
+   * tick (again while the clock moves on), then shows and goes live. The
+   * picture of the host before it shows meanwhile.
+   */
+  private async stepToClock(host: LiveHost): Promise<void> {
+    const element = host.element
+    if (element) element.style.opacity = '0'
+    let to = tickOf(itemTime(this.clock))
+    for (;;) {
+      const at = await host.advance(to, false)
+      if (!at || this.host !== host) return
+      to = tickOf(itemTime(this.clock))
+      if (to - at.tick <= BEHIND_TICKS) break
     }
+    this.stepping = null
+    host.goLive(this.clock, this.scene, this.params)
+    if (element) element.style.opacity = ''
+    this.endLeaving()
+  }
+
+  /** End a replaced or stopped host: it shows its last picture until the next host draws (at most `ms`; 0: no limit). A stepping host shows nothing, so the picture before it stays. */
+  private retire(host: LiveHost, ms: number): void {
+    if (this.stepping?.host === host) {
+      this.stepping = null
+      host.dispose()
+    } else this.keepLeaving(host, ms)
+  }
+
+  /** A replaced host ends now; its element shows the last picture until the new host draws (at most SWAP_MS). */
+  private keepLeaving(host: LiveHost, ms: number): void {
+    this.endLeaving()
+    host.stop()
+    this.leaving = { host, timer: ms ? window.setTimeout(() => this.endLeaving(), ms) : 0 }
+  }
+
+  private endLeaving(): void {
+    if (!this.leaving) return
+    clearTimeout(this.leaving.timer)
+    this.leaving.host.dispose()
+    this.leaving = null
+  }
+
+  /** A fresh host at the clock now (a jump of the clock, a lost context). The old one shows until the new one draws, or until a stepping host reaches its clock. */
+  private restart(): void {
+    const old = this.host
+    this.host = null
+    if (old) this.retire(old, this.stepTimeline() ? 0 : SWAP_MS)
+    if (this.wantsHost()) this.startHost()
+  }
+
+  /** End the host (its worker and GPU contexts); its element keeps the last picture until the next host draws. */
+  private release(): void {
+    const old = this.host
+    this.host = null
+    boardSlots.release(this)
+    if (old) this.retire(old, 0)
+    if (this.status.state !== 'error') this.setStatus('paused')
+  }
+
+  /** The host does not answer: end it and free its slot. Its element keeps the last picture; no new host starts until retry(). */
+  private stall(): void {
+    this.stopped = true
+    this.release()
+    this.setStatus('stalled')
+  }
+
+  get isStopped(): boolean {
+    return this.stopped
+  }
+
+  /** Start a stopped item again (a double-click, a replay, new code or params). */
+  retry(): void {
+    if (!this.stopped) return
+    this.stopped = false
+    this.setStatus(this.shownState())
+    this.ensureHost()
+    this.host?.run(this.runs())
+  }
+
+  private lost(): void {
+    const now = performance.now()
+    this.losses = [...this.losses.filter((at) => now - at < LOSS_WINDOW_MS), now]
+    if (this.losses.length >= MAX_LOSSES) {
+      this.setStatus('error', `The GPU context was lost ${MAX_LOSSES} times in a minute.`)
+      this.release()
+      return
+    }
+    this.restart()
+  }
+
+  // ----- Slots (slots.ts) -----
+
+  /** On screen: its area; off screen in a scene that plays or waits: 0.5 (never evicted for others); else 0. */
+  priority(): number {
+    return this.visible ? Math.max(1, this.area) : this.scene.active ? 0.5 : 0
+  }
+
+  grant(): void {
+    if (this.host || !this.wantsHost() || this.status.state === 'error' || this.stopped) {
+      boardSlots.release(this)
+      return
+    }
+    this.startHost()
+  }
+
+  evict(): void {
+    this.release()
+  }
+
+  // ----- Clock and params -----
+
+  /** The scene clock of this item now (each playback frame), or null when no scene plays it. */
+  sceneClockChanged(clock: SceneClock | null): void {
+    const now = absNow()
+    const predicted = itemTime(this.clock, now)
+    if (clock) {
+      const rate = clock.playing ? 1 : 0
+      this.sceneEnd = clock.end
+      // The same clock as the item has (it moves on by itself): nothing to send.
+      if (this.scene.active && rate === this.clock.rate && clock.step === this.scene.step && Math.abs(clock.t - predicted) < 1 / TICK_HZ) return
+      // A seek or a replay: back in time, or forward by more than the clock moves by itself.
+      const jump = clock.t < predicted - 2 / TICK_HZ || clock.t > predicted + JUMP_S
+      this.clock = { t: clock.t, at: now, rate }
+      const starts = !this.scene.active
+      this.scene = { t: clock.t, playing: clock.playing, active: true, ended: false, step: clock.step }
+      if ((jump || starts) && this.stopped) this.retry()
+      else if (jump && this.host && this.node.mode !== 'shader') this.restart()
+      else this.followClock()
+      // Its scene plays or waits: the host starts now, on screen or not, and stays until the scene settles.
+      if (starts) this.wantChanged()
+    } else if (this.scene.active) {
+      // The scene ended or stopped: item time runs on in real time; the scene rests at its end.
+      this.clock = { t: predicted, at: now, rate: 1 }
+      this.scene = { t: this.sceneEnd, playing: false, active: false, ended: true, step: this.scene.step }
+      this.followClock()
+      this.wantChanged()
+    }
+  }
+
+  /** Visibility or the scene changed: start the host, run it or not, and note when the item began to rest. */
+  private wantChanged(): void {
+    if (this.wantsHost()) this.ensureHost()
+    else {
+      this.restingSince = performance.now()
+      if (!this.host) boardSlots.release(this)
+    }
+    this.host?.run(this.runs())
+  }
+
+  private followClock(): void {
+    // A stepping host reads the clock when it goes live.
+    if (!this.catchingUp) this.host?.follow(this.clock, this.scene)
+    if (this.node.mode === 'shader') ensureLoop()
+  }
+
+  paramsChanged(): void {
+    const next = this.currentParams()
+    if (sameParams(next, this.params)) return
+    this.params = next
+    if (!this.catchingUp) this.host?.setParams(next)
+    if (this.node.mode === 'shader') ensureLoop()
   }
 
   /** The view got a new node object. */
   update(node: LiveNode): void {
     const before = this.node
     this.node = node
-    if (node.mode !== before.mode || (node.mode !== 'shader' && node.code !== before.code)) {
-      this.setStatus('starting', undefined, undefined)
-      this.mount()
+    const seed = seedOf(node)
+    const restart = node.mode !== before.mode || node.code !== before.code || seed !== this.seed || (node.mode === 'shader' && paramNames(node.params) !== paramNames(before.params))
+    if (restart) {
+      this.seed = seed
+      this.params = this.currentParams()
+      this.endLeaving()
+      this.host?.dispose()
+      this.host = null
+      this.stepping = null
+      this.stopped = false
+      boardSlots.release(this)
+      this.setStatus('paused', undefined, undefined)
+      this.ensureHost()
       return
     }
-    if (node.mode === 'shader') this.compile()
-    if (node.w !== before.w || node.h !== before.h) this.measureIn = 0
-    if (node.params !== before.params) this.paramsChanged()
-  }
-
-  paramsChanged(): void {
-    if (this.node.mode !== 'shader') this.host?.setParams(this.params())
-  }
-
-  /** The scene clock may have changed (each playback frame). */
-  clockChanged(): void {
-    if (this.host instanceof ProgramHost) this.host.setClock(playbackClocks.get(this.id) ?? null)
+    if (node.w !== before.w || node.h !== before.h) this.measure()
+    if (node.params !== before.params) {
+      this.paramsChanged()
+      this.retry()
+    }
   }
 
   setEntered(on: boolean): void {
-    if (this.host instanceof ProgramHost) this.host.setEntered(on)
+    this.host?.setEntered(on)
   }
 
-  setVisible(visible: boolean): void {
+  // ----- Visibility -----
+
+  setVisible(visible: boolean, area: number): void {
+    this.area = visible ? area : 0
     if (visible === this.visible) return
     this.visible = visible
-    this.measureIn = 0
-    if (this.node.mode !== 'shader') {
-      if (!visible && this.host && this.status.state === 'stalled') {
-        // A hung worker off screen: stop it; it starts again (fresh) when the item comes back.
-        this.host.dispose()
-        this.host = null
-      }
-      if (visible && !this.host && this.status.state !== 'error') this.mount()
-      this.host?.run(visible)
-      this.lastTickAt = performance.now()
-    }
-    if (this.status.state === 'running' || this.status.state === 'paused') this.setStatus(visible ? 'running' : 'paused')
-    if (visible) ensureLoop()
+    if (visible) this.measure()
+    this.wantChanged()
+    this.aliveAt = performance.now()
+    if (this.status.state === 'running' || this.status.state === 'paused' || (this.status.state === 'waiting' && !visible)) this.setStatus(this.shownState())
+    if (visible && this.node.mode === 'shader') ensureLoop()
+  }
+
+  /** The window was hidden or shown: hosts run only while it shows. */
+  windowShown(shown: boolean): void {
+    this.host?.run(shown && this.wantsHost())
+    this.aliveAt = performance.now()
+    if (shown && this.node.mode === 'shader') ensureLoop()
   }
 
   get isVisible(): boolean {
@@ -288,75 +568,92 @@ export class LiveItem {
   }
 
   private measure(): void {
-    if (--this.measureIn > 0) return
-    this.measureIn = MEASURE_EVERY
     const next = pixelSize(this.container, this.node.w, this.node.h)
     const s = this.size
     if (next.pw === s.pw && next.ph === s.ph && next.w === s.w && next.h === s.h) return
     this.size = next
-    if (this.node.mode === 'shader' && this.canvas) {
-      this.canvas.width = next.pw
-      this.canvas.height = next.ph
-    } else this.host?.resize(next)
+    this.host?.resize(next)
+    if (this.node.mode === 'shader') ensureLoop()
   }
 
-  private paintShader(now: number): void {
-    if (!this.program || !this.ctx2d) return
-    const time = (performance.timeOrigin + now - this.start) / 1000
-    if (shaderEngine.render(this.program, this.size.pw, this.size.ph, time, this.frames, this.params(), this.ctx2d)) this.frames++
+  /** Housekeeping (every HOUSEKEEPING_MS): the on-screen size, stalls and releases. */
+  housekeep(now: number): void {
+    if (this.visible) this.measure()
+    if (!this.host || this.node.mode === 'shader') return
+    const shown = this.visible && document.visibilityState !== 'hidden'
+    if (shown && this.status.state !== 'error' && now - this.aliveAt > STALL_MS) this.stall()
+    // Off screen: a host ends RELEASE_MS after its scene settled (never while it plays or waits).
+    else if (!this.visible && !this.scene.active && now - this.restingSince > RELEASE_MS) this.release()
   }
 
-  /** One display frame (visible items only). */
-  tick(now: number): void {
-    this.measure()
-    if (this.node.mode === 'shader') {
-      if (this.generation !== shaderEngine.generation) this.compile()
-      this.paintShader(now)
-      this.status = { ...this.status, frames: this.frameBase + this.frames }
-    } else if (this.host && this.status.state !== 'error' && now - this.lastTickAt > STALL_MS && this.status.state !== 'stalled') {
-      this.setStatus('stalled')
+  /** One display frame for a shader item: true while it wants more. */
+  shaderFrame(): boolean {
+    return this.host instanceof ShaderHost ? this.host.frame() : false
+  }
+
+  /** The current pixels and their tick (agent screenshots); a step host makes them when the item has no host. Null when there is no picture. */
+  async still(): Promise<LiveFrame | null> {
+    // A stopped item does not answer: a step host would hang the same way.
+    if (this.status.state === 'error' || this.stopped) return null
+    if (this.catchingUp && this.stepping) {
+      // A stepping host shows its picture when it reaches its clock.
+      await Promise.race([this.stepping.done, new Promise((resolve) => window.setTimeout(resolve, STEP_WAIT_MS))])
+      if (this.catchingUp) return null
     }
+    if (this.host) {
+      const frame = await this.host.capture()
+      if (frame?.url) return frame
+    }
+    const size = pixelSize(this.container, this.node.w, this.node.h)
+    return stillAt(this.node, this.params, itemTime(this.clock), size.pw / size.w)
   }
 
-  /** The current pixels as a PNG data URL (for agent screenshots), or null. */
-  async still(): Promise<string | null> {
-    if (this.node.mode === 'shader') {
-      if (!this.canvas || !this.program) return null
-      if (!this.visible) this.paintShader(performance.now())
-      try {
-        return this.canvas.toDataURL('image/png')
-      } catch {
-        return null
-      }
-    }
-    return this.host ? this.host.still() : null
+  /** For dev checks. */
+  get resources(): { host: boolean; contexts: number } {
+    return { host: this.host !== null, contexts: this.host ? this.contexts : 0 }
   }
 
   dispose(): void {
-    this.unmount()
+    if (entered === this.id) enterLive(null)
+    this.endLeaving()
+    this.host?.dispose()
+    this.host = null
+    this.stepping = null
+    boardSlots.release(this)
     if (items.get(this.id) === this) items.delete(this.id)
   }
 }
 
-// ---------- The frame loop ----------
+// ---------- Shader frames and housekeeping ----------
 
 let loop = 0
 
+/** The display-frame loop of shader items: it runs while a shader on screen has moving time or a picture to draw. */
 function ensureLoop(): void {
-  if (loop) return
-  const step = (now: number): void => {
+  if (loop || document.visibilityState === 'hidden') return
+  loop = requestAnimationFrame(() => {
     loop = 0
-    let any = false
-    if (document.visibilityState !== 'hidden') {
-      for (const item of items.values()) {
-        if (!item.isVisible) continue
-        any = true
-        item.tick(now)
-      }
-    } else any = items.size > 0
-    if (any) loop = requestAnimationFrame(step)
-  }
-  loop = requestAnimationFrame(step)
+    let more = false
+    for (const item of items.values()) if (item.isVisible && item.shaderFrame()) more = true
+    if (more) ensureLoop()
+  })
+}
+
+shaderEngine.subscribe(() => ensureLoop())
+
+let housekeeping = 0
+
+function ensureHousekeeping(): void {
+  if (housekeeping) return
+  housekeeping = window.setInterval(() => {
+    if (!items.size) {
+      clearInterval(housekeeping)
+      housekeeping = 0
+      return
+    }
+    const now = performance.now()
+    for (const item of items.values()) item.housekeep(now)
+  }, HOUSEKEEPING_MS)
 }
 
 // ---------- Visibility ----------
@@ -367,9 +664,10 @@ const byElement = new WeakMap<Element, LiveItem>()
 export function observe(element: HTMLElement, item: LiveItem): void {
   observer ??= new IntersectionObserver(
     (entries) => {
-      for (const entry of entries) byElement.get(entry.target)?.setVisible(entry.isIntersecting)
+      for (const entry of entries) byElement.get(entry.target)?.setVisible(entry.isIntersecting, entry.intersectionRect.width * entry.intersectionRect.height)
+      boardSlots.grantWaiting()
     },
-    { root: null, rootMargin: '64px', threshold: 0 }
+    { root: null, rootMargin: '64px', threshold: [0, 0.25, 0.5, 0.75, 1] }
   )
   byElement.set(element, item)
   observer.observe(element)
@@ -381,7 +679,8 @@ export function unobserve(element: HTMLElement): void {
 }
 
 document.addEventListener('visibilitychange', () => {
-  for (const item of items.values()) if (item.node.mode !== 'shader') item.setVisible(item.isVisible)
+  const shown = document.visibilityState !== 'hidden'
+  for (const item of items.values()) item.windowShown(shown)
 })
 
 // ---------- For agents, the snapshot path and dev checks ----------
@@ -391,8 +690,8 @@ export function liveStatus(id: string): LiveStatus | null {
   return items.get(id)?.status ?? null
 }
 
-/** The current pixels of a live item as a PNG data URL, or null. */
-export function liveStill(id: string): Promise<string | null> {
+/** The current pixels of a live item and their tick, or null. */
+export function liveStill(id: string): Promise<LiveFrame | null> {
   return items.get(id)?.still() ?? Promise.resolve(null)
 }
 
@@ -406,9 +705,21 @@ export function liveSummary(node: LiveNode): string {
   return `${node.mode}${params ? `, params ${params}` : ''}, code ${node.code.length} chars, ${state}`
 }
 
-/** Every live item on the page with its status (dev checks). */
-export function liveItems(): Array<{ id: string; mode: string; visible: boolean } & LiveStatus> {
-  return [...items.values()].map((item) => ({ id: item.id, mode: item.node.mode, visible: item.isVisible, ...item.status }))
+/** Every live item on the page with its status and resources (dev checks). */
+export function liveItems(): Array<{ id: string; mode: string; visible: boolean; host: boolean; contexts: number } & LiveStatus> {
+  return [...items.values()].map((item) => ({ id: item.id, mode: item.node.mode, visible: item.isVisible, ...item.resources, ...item.status }))
+}
+
+/** Totals for dev checks: items, running hosts, GPU contexts of program code, board slots. */
+export function liveResources(): { items: number; hosts: number; workers: number; contexts: number; slots: ReturnType<typeof boardSlots.counts> } {
+  const list = liveItems()
+  return {
+    items: list.length,
+    hosts: list.filter((item) => item.host).length,
+    workers: list.filter((item) => item.host && item.mode !== 'shader').length,
+    contexts: list.reduce((sum, item) => sum + item.contexts, 0),
+    slots: boardSlots.counts()
+  }
 }
 
 /** The last report() values of a program item on this page (get_node_info), or undefined. */

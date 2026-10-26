@@ -46,6 +46,39 @@ export function svgPathPolylines(d: string): Point[][] {
   }
 }
 
+/** A seeded random source (mulberry32, as in main/live-prelude.js): the same seed gives the same numbers. */
+export function seededRandom(seed: number): () => number {
+  let a = seed >>> 0
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0
+    let t = a
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+/**
+ * A 32-bit seed from a stroke's key and its points (FNV-1a over the key and
+ * the points to 0.01 board point). The same stroke of the same scene gets
+ * the same seed in each compile.
+ */
+export function strokeSeed(key: string, line: readonly Point[]): number {
+  let h = 0x811c9dc5
+  const add = (value: number): void => {
+    h ^= value & 0xffff
+    h = Math.imul(h, 0x01000193)
+    h ^= (value >>> 16) & 0xffff
+    h = Math.imul(h, 0x01000193)
+  }
+  for (let i = 0; i < key.length; i++) add(key.charCodeAt(i))
+  for (const [x, y] of line) {
+    add(Math.round(x * 100) | 0)
+    add(Math.round(y * 100) | 0)
+  }
+  return h >>> 0
+}
+
 /** Keep points at least `step` apart (and always the last one). */
 function simplify(line: Point[], step: number): Point[] {
   if (line.length < 3) return line
@@ -76,9 +109,10 @@ function densify(line: Point[], step: number): Point[] {
 /**
  * Make a polyline look hand-drawn: a low-frequency sideways wobble scaled by
  * `jitter` (0..1), and pressure that rises at the start, varies a little and
- * falls at the end.
+ * falls at the end. `random` gives the wobble's phases: give a seeded source
+ * (seededRandom), so the same stroke looks the same each time.
  */
-export function humanize(line: Point[], jitter: number, random: () => number = Math.random): InkPoint[] {
+export function humanize(line: Point[], jitter: number, random: () => number): InkPoint[] {
   const dense = densify(line, SAMPLE_STEP)
   const lengths = [0]
   for (let i = 1; i < dense.length; i++) lengths.push(lengths[i - 1] + Math.hypot(dense[i][0] - dense[i - 1][0], dense[i][1] - dense[i - 1][1]))

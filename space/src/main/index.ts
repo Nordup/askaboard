@@ -2,11 +2,12 @@ import { join, resolve } from 'node:path'
 import { statSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { app, BrowserWindow, dialog, ipcMain, protocol, shell, type IpcMainInvokeEvent } from 'electron'
-import { IPC, type Camera, type MenuCommand, type Snapshot } from '@shared/space-api'
+import { IPC, type BoardSaveInfo, type Camera, type MenuCommand, type Snapshot } from '@shared/space-api'
 import { FolderSession } from './folder'
 import { AgentServer } from './mcp'
 import { SnapshotRenderer } from './snapshot'
 import { LIVE_SCHEME_PRIVILEGES, registerLiveItemProtocol } from './live-item-protocol'
+import { STAGE_SCHEME_PRIVILEGES } from './stage-process'
 import { installMenu, setFolderOpen } from './menu'
 import { FOLDER_SETTINGS_DIR, folderOverrides, onOverridesRead } from './guide'
 import { SETUP_MARKER, applySetup, isSetUp, setupPlan } from './setup'
@@ -28,6 +29,8 @@ const captureDelay = Number(process.env.SPACE_CAPTURE_DELAY ?? 1000) || 1000
 const launchFolder = process.env.SPACE_FOLDER
 /** Dev hook: a file (relative to the folder) to show in the preview at launch. */
 const launchOpen = process.env.SPACE_OPEN ?? null
+/** Lab hook: show the window without activating the app, so a lab instance never takes focus or switches the desktop. */
+const noFocus = process.env.SPACE_NO_FOCUS === '1'
 
 /**
  * Dev hook: Chromium remote debugging on 127.0.0.1:<port>, plus the page hook
@@ -60,7 +63,7 @@ if (remoteDebugPort !== null) {
  * never read outside the open folder.
  */
 const ASSET_SCHEME = 'space-asset'
-protocol.registerSchemesAsPrivileged([{ scheme: ASSET_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }, LIVE_SCHEME_PRIVILEGES])
+protocol.registerSchemesAsPrivileged([{ scheme: ASSET_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }, LIVE_SCHEME_PRIVILEGES, STAGE_SCHEME_PRIVILEGES])
 
 function registerAssetProtocol(): void {
   protocol.handle(ASSET_SCHEME, async (request) => {
@@ -242,14 +245,14 @@ function registerIpc(): void {
     return requireSession().importAsset(src)
   })
 
-  handle(IPC.readBoard, async (path: string) => {
-    const text = await requireSession().readBoard(path)
-    agentServer.boardRead(path, text)
-    return text
-  })
-  handle(IPC.writeBoard, async (path: string, text: string) => {
+  handle(IPC.readBoard, (path: string) => requireSession().readBoard(path))
+  handle(IPC.writeBoard, async (path: string, text: string, info?: BoardSaveInfo) => {
+    const start = performance.now()
     await requireSession().writeBoard(path, text)
-    agentServer.boardSaved(path, text)
+    const writeMs = performance.now() - start
+    const serializeMs = typeof info?.serializeMs === 'number' ? info.serializeMs.toFixed(1) : '?'
+    console.log(`save: ${path} serialise ${serializeMs} ms, ${Math.round(Buffer.byteLength(text) / 1024)} kB, write ${writeMs.toFixed(1)} ms`)
+    agentServer.boardSaved(path, info?.learnerEdit ?? null)
   })
   handle(IPC.createBoard, () => requireSession().createBoard())
   handle(IPC.renameBoard, async (path: string, newName: string) => {
@@ -295,6 +298,10 @@ function registerIpc(): void {
     if (!session) return
     store.setLastBoard(session.root, typeof path === 'string' ? path : null)
   })
+  // The board window's renderer asks for its port to the stage (frames of scenes); only the main window gets one.
+  ipcMain.on(IPC.framesPort, (event) => {
+    if (mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents) agentServer.linkBoard(event.sender)
+  })
 }
 
 function sendMenuCommand(command: MenuCommand): void {
@@ -322,7 +329,7 @@ function createWindow(): BrowserWindow {
     }
   })
 
-  win.once('ready-to-show', () => win.show())
+  win.once('ready-to-show', () => (noFocus ? win.showInactive() : win.show()))
 
   // Links that open a new window go to the system browser, never to a new app window.
   win.webContents.setWindowOpenHandler(({ url }) => {

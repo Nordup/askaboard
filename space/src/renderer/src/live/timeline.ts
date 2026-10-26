@@ -6,6 +6,10 @@ import { mixColors, sceneColor } from './colors'
  * Evaluating a scene's timeline at a time: the same rules as the sandbox
  * (main/live-prelude.js). For each property, the actions are in start order;
  * the last one that has started gives the value.
+ *
+ * Playback asks for the values of the same objects frame after frame. So each
+ * property keeps a cursor (the last action that has started), and each object
+ * keeps its world transform of the last time it was asked for.
  */
 
 /** A 2D affine matrix [a, b, c, d, e, f]: x' = a x + c y + e, y' = b x + d y + f. */
@@ -39,8 +43,54 @@ export function scaleOf(m: Matrix): number {
   return Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2]))
 }
 
+/** One property's actions of one object, in start order, and the index of the last action that started at the last lookup. */
+interface Lane {
+  list: SceneTrack[]
+  at: number
+}
+
+/** Forward steps of the cursor before a lookup uses a binary search. */
+const CURSOR_STEPS = 4
+
+/** The index of the last action of the lane that started at or before t (-1: none). */
+function started(lane: Lane, t: number): number {
+  const list = lane.list
+  let i = lane.at
+  if (i < 0 || list[i].start <= t) {
+    // Forward playback: the cursor moves on by a step or two.
+    let steps = 0
+    while (i + 1 < list.length && list[i + 1].start <= t && steps < CURSOR_STEPS) {
+      i++
+      steps++
+    }
+    if (i + 1 >= list.length || list[i + 1].start > t) {
+      lane.at = i
+      return i
+    }
+  }
+  // A seek: a binary search.
+  let lo = 0
+  let hi = list.length - 1
+  i = -1
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    if (list[mid].start <= t) {
+      i = mid
+      lo = mid + 1
+    } else hi = mid - 1
+  }
+  lane.at = i
+  return i
+}
+
+/** True when the action's change is complete at t (a cut action holds its value at the cut, so its change is never complete). */
+const complete = (a: SceneTrack, t: number): boolean => (a.until !== undefined ? Math.min(t, a.until) : t) >= a.start + a.dur
+
 export class Timeline {
   readonly tracks: Array<Partial<Record<SceneProp, SceneTrack[]>>>
+  private readonly lanes: Array<Partial<Record<SceneProp, Lane>>>
+  /** Each object's world transform at the time of its last lookup: the children of a group use it in the same frame. */
+  private readonly worlds: Array<{ t: number; m: Matrix } | undefined>
 
   constructor(
     readonly desc: SceneDescription,
@@ -52,6 +102,12 @@ export class Timeline {
       const list = (this.tracks[action.obj][action.prop] ??= [])
       list.push(action)
     }
+    this.lanes = this.tracks.map((tracks) => {
+      const lanes: Partial<Record<SceneProp, Lane>> = {}
+      for (const [prop, list] of Object.entries(tracks) as Array<[SceneProp, SceneTrack[]]>) lanes[prop] = { list, at: -1 }
+      return lanes
+    })
+    this.worlds = desc.objects.map(() => undefined)
   }
 
   object(id: number): SceneObjectDesc {
@@ -78,11 +134,23 @@ export class Timeline {
     }
   }
 
+  /**
+   * The value at t. Each action starts from the value of the actions before
+   * it. An action whose value does not depend on them (it has its own `from`,
+   * its value is not a number, or its change is complete) starts the sum
+   * again: the work starts at the last such action.
+   */
   value(id: number, prop: SceneProp, t: number): number | string | undefined {
     const object = this.desc.objects[id]
-    let value = this.base(object, prop)
-    for (const a of this.tracks[id][prop] ?? []) {
-      if (a.start > t) break
+    const lane = this.lanes[id][prop]
+    if (!lane) return this.base(object, prop)
+    const list = lane.list
+    const k = started(lane, t)
+    let r = k
+    while (r >= 0 && list[r].from === undefined && typeof list[r].to === 'number' && !complete(list[r], t)) r--
+    let value = r < 0 ? this.base(object, prop) : undefined
+    for (let j = Math.max(0, r); j <= k; j++) {
+      const a = list[j]
       const from = a.from ?? value
       // A cut track holds its value at the cut.
       const tt = a.until !== undefined ? Math.min(t, a.until) : t
@@ -102,9 +170,16 @@ export class Timeline {
   color(id: number, t: number): string | undefined {
     const object = this.desc.objects[id]
     const base = this.base(object, 'color')
-    let value = typeof base === 'string' ? sceneColor(base).hex : undefined
-    for (const a of this.tracks[id].color ?? []) {
-      if (a.start > t) break
+    const lane = this.lanes[id].color
+    if (!lane) return typeof base === 'string' ? sceneColor(base).hex : undefined
+    const list = lane.list
+    const k = started(lane, t)
+    // As in value(): the work starts at the last action that does not depend on the ones before it.
+    let r = k
+    while (r >= 0 && typeof list[r].from !== 'string' && !complete(list[r], t)) r--
+    let value = r < 0 && typeof base === 'string' ? sceneColor(base).hex : undefined
+    for (let j = Math.max(0, r); j <= k; j++) {
+      const a = list[j]
       const from = typeof a.from === 'string' ? sceneColor(a.from).hex : value
       const to = sceneColor(String(a.to)).hex
       const tt = a.until !== undefined ? Math.min(t, a.until) : t
@@ -118,8 +193,10 @@ export class Timeline {
     return (this.tracks[id][prop]?.length ?? 0) > 0
   }
 
-  /** The object's world transform at t (its groups' transforms included). */
+  /** The object's world transform at t (its groups' transforms included). The result is shared: do not change it. */
   matrix(id: number, t: number): Matrix {
+    const memo = this.worlds[id]
+    if (memo && memo.t === t) return memo.m
     const object = this.desc.objects[id]
     const s = this.number(id, 'scale', t)
     const r = (this.number(id, 'rotate', t) * Math.PI) / 180
@@ -129,7 +206,12 @@ export class Timeline {
     const a = Math.cos(r) * s
     const b = Math.sin(r) * s
     const own: Matrix = [a, b, -b, a, px + ox - (a * px - b * py), py + oy - (b * px + a * py)]
-    return object.parent === undefined ? own : multiply(this.matrix(object.parent, t), own)
+    const m = object.parent === undefined ? own : multiply(this.matrix(object.parent, t), own)
+    if (memo) {
+      memo.t = t
+      memo.m = m
+    } else this.worlds[id] = { t, m }
+    return m
   }
 
   /** True when any transform track of this object or its groups is still running at t. */
@@ -152,5 +234,21 @@ export class Timeline {
       }
     }
     return end
+  }
+
+  /**
+   * The time when the object's look starts to change: its creation, its first
+   * action, or the first transform action of one of its groups. Before it,
+   * the object looks the same at every time.
+   */
+  firstChange(id: number): number {
+    let start = this.desc.objects[id].created
+    for (let current: number | undefined = id; current !== undefined; current = this.desc.objects[current].parent) {
+      for (const [prop, list] of Object.entries(this.tracks[current])) {
+        if (current !== id && !['x', 'y', 'scale', 'rotate'].includes(prop)) continue
+        if (list?.length) start = Math.min(start, list[0].start)
+      }
+    }
+    return start
   }
 }

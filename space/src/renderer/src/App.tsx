@@ -8,11 +8,14 @@ import {
   parseBoard,
   reconcileBoard,
   serializeBoard,
+  type Author,
   type BoardDoc,
   type LiveNode,
-  type Removal
+  type Removal,
+  type Revision
 } from '@shared/board-format'
-import { liveItems, validateLiveCode } from './live-pixels/registry'
+import { learnerEditSince } from '@shared/learner-edit'
+import { liveItems, liveResources, validateLiveCode } from './live-pixels/registry'
 import type { AgentActivity, AgentServerStatus, Camera, FileNode, FileTree, GuideOverrides, Snapshot } from '@shared/space-api'
 import { scenePlayer } from './live/player'
 import { handleAgentRequest, type AgentContext } from './agent/handler'
@@ -32,7 +35,10 @@ import { isEditableTarget } from './lib/keys'
 import { colorValue, TOOL_KEYS, widthValue, type ToolId, type ToolState } from './tools'
 
 const space = window.space
+/** Save this long after the last change… */
 const SAVE_DELAY_MS = 400
+/** …but at least this often while changes continue. */
+const SAVE_MAX_WAIT_MS = 2000
 const CAMERA_SAVE_DELAY_MS = 500
 
 interface OpenBoard {
@@ -110,7 +116,18 @@ export function App() {
 
   const pendingRef = useRef<{ path: string; doc: BoardDoc } | null>(null)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** When the oldest unsaved change was made, or null when all is saved. */
+  const unsavedSinceRef = useRef<number | null>(null)
   const saveChainRef = useRef<Promise<void>>(Promise.resolve())
+  /** nextSeq per board path at the last read or save: learner nodes at or past it go to the learner-edit log. */
+  const learnerSeqRef = useRef(new Map<string, number>())
+
+  /** Read and parse a board from disk, and set its learner-edit baseline. */
+  const readBoardDoc = async (path: string): Promise<BoardDoc> => {
+    const doc = parseBoard(await space.readBoard(path))
+    learnerSeqRef.current.set(path, doc.nextSeq)
+    return doc
+  }
 
   /** Write the pending board now. Writes run one after another. */
   const flushSave = useCallback((): Promise<void> => {
@@ -118,13 +135,20 @@ export function App() {
       clearTimeout(saveTimerRef.current)
       saveTimerRef.current = null
     }
+    unsavedSinceRef.current = null
     saveChainRef.current = saveChainRef.current.then(async () => {
       const pending = pendingRef.current
       if (!pending) return
       pendingRef.current = null
       setSaveStatus('saving')
       try {
-        await space.writeBoard(pending.path, serializeBoard(pending.doc))
+        const start = performance.now()
+        const text = serializeBoard(pending.doc)
+        const serializeMs = performance.now() - start
+        const since = learnerSeqRef.current.get(pending.path)
+        const learnerEdit = since === undefined ? null : learnerEditSince(pending.doc, since)
+        await space.writeBoard(pending.path, text, { learnerEdit, serializeMs })
+        learnerSeqRef.current.set(pending.path, pending.doc.nextSeq)
         if (!pendingRef.current) setSaveStatus('saved')
       } catch (error) {
         console.error(`save failed for ${pending.path}: ${errorMessage(error)}`)
@@ -140,8 +164,11 @@ export function App() {
     (path: string, doc: BoardDoc) => {
       pendingRef.current = { path, doc }
       setSaveStatus('unsaved')
+      const now = Date.now()
+      unsavedSinceRef.current ??= now
+      const delay = Math.max(0, Math.min(SAVE_DELAY_MS, unsavedSinceRef.current + SAVE_MAX_WAIT_MS - now))
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
-      saveTimerRef.current = setTimeout(() => void flushSave(), SAVE_DELAY_MS)
+      saveTimerRef.current = setTimeout(() => void flushSave(), delay)
     },
     [flushSave]
   )
@@ -152,6 +179,7 @@ export function App() {
     pendingRef.current = null
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = null
+    unsavedSinceRef.current = null
     setSaveStatus('saved')
   }
 
@@ -191,7 +219,7 @@ export function App() {
         if (!entry || entry.stale) {
           let doc: BoardDoc
           try {
-            doc = parseBoard(await space.readBoard(path))
+            doc = await readBoardDoc(path)
           } catch (error) {
             if (token !== openTokenRef.current) return
             setOpen(null)
@@ -203,6 +231,7 @@ export function App() {
             // Changed on disk while closed: diff, so agents see the change.
             const reconciled = reconcileBoard(entry.doc, doc)
             entry.log.record(reconciled.removed)
+            entry.log.revise(reconciled.revisions)
             entry.history.clear()
             entry.doc = reconciled.doc
             entry.stale = false
@@ -225,9 +254,12 @@ export function App() {
     [flushCamera, flushSave]
   )
 
-  const onRemoved = useCallback((removed: Removal[]) => {
+  const onChanges = useCallback(({ removed, revisions, by }: { removed: Removal[]; revisions: Revision[]; by: Author }) => {
     const current = openRef.current
-    if (current) cacheRef.current.get(current.path)?.log.record(removed)
+    const log = current ? cacheRef.current.get(current.path)?.log : undefined
+    if (!log) return
+    log.record(removed)
+    log.revise(revisions, by)
   }, [])
 
   const onDocChange = useCallback(
@@ -317,6 +349,8 @@ export function App() {
         const entry = cacheRef.current.get(path)
         cacheRef.current.delete(path)
         if (entry) cacheRef.current.set(target, entry)
+        const seq = learnerSeqRef.current.get(path)
+        if (seq !== undefined) learnerSeqRef.current.set(target, seq)
         if (openRef.current?.path === path) {
           setOpen({ ...openRef.current, path: target })
           if (cameraRef.current?.path === path) cameraRef.current = { ...cameraRef.current, path: target }
@@ -457,7 +491,7 @@ export function App() {
     }
     let doc: BoardDoc
     try {
-      doc = parseBoard(await space.readBoard(path))
+      doc = await readBoardDoc(path)
     } catch (error) {
       console.error(`${path} changed on disk but cannot be read: ${errorMessage(error)}`)
       showError(`“${boardName(path)}” changed on disk but cannot be read. Showing the last good version.`)
@@ -475,6 +509,7 @@ export function App() {
       doc
     )
     log.record(reconciled.removed)
+    log.revise(reconciled.revisions)
     doc = reconciled.doc
     cacheRef.current.set(path, { doc, history, log })
     console.log(`${path} reloaded from disk`)
@@ -611,7 +646,7 @@ export function App() {
           })
         }
       },
-      /** Live-scene playback (run_scene): what plays now; seek(t) holds the current scene at t s, seek(null) lets it run; finish() ends all. */
+      /** Live-scene playback (play_scene): what plays now; seek(t) holds the current scene at t s, seek(null) lets it run; finish() ends all. */
       get scene() {
         return { ...scenePlayer.state(), seek: (t: number | null) => scenePlayer.seek(t), finish: () => scenePlayer.finish(), frame: () => scenePlayer.debugFrame() }
       },
@@ -653,6 +688,7 @@ export function App() {
           return true
         },
         items: () => liveItems(),
+        resources: () => liveResources(),
         validate: (mode: 'shader' | 'canvas' | 'program', code: string, params?: Record<string, number>) => validateLiveCode(mode, code, params)
       },
       /** A node's rect in window CSS pixels, from the layout cache. */
@@ -803,7 +839,7 @@ export function App() {
                 width={widthValue(tools)}
                 onDocChange={onDocChange}
                 onCameraChange={onCameraChange}
-                onRemoved={onRemoved}
+                onChanges={onChanges}
               />
             )}
             {canvasContent}

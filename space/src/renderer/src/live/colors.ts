@@ -16,6 +16,7 @@ const NAMED: Record<string, { css: string; hex: string }> = {
   card: { css: 'var(--ls-card)', hex: '#1f2230' },
   'card-2': { css: 'var(--ls-card-2)', hex: '#262a3a' },
   border: { css: 'var(--ls-border)', hex: '#2e3448' },
+  bg: { css: 'var(--ls-bg)', hex: '#161618' },
   white: { css: '#ececef', hex: '#ececef' },
   yellow: { css: '#f5d76e', hex: '#f5d76e' },
   blue: { css: '#6ea8ff', hex: '#6ea8ff' },

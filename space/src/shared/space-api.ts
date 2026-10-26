@@ -5,6 +5,16 @@
  * uses `/` separators. The main process refuses paths that leave the folder.
  */
 
+import type { LearnerEditDelta } from './learner-edit'
+
+/** What the renderer knows about one board save. */
+export interface BoardSaveInfo {
+  /** The learner's new or changed nodes since the last read or save, or null. */
+  learnerEdit: LearnerEditDelta | null
+  /** Time to serialise the board on the renderer thread. */
+  serializeMs: number
+}
+
 export interface Camera {
   /** The board point at the centre of the view. */
   center: [number, number]
@@ -134,9 +144,20 @@ export interface ChangedItem {
   name?: string
   /** Who made this change: "learner" or "agent" (agent edits since the app started). */
   by?: string
+  /**
+   * What the change was, compared with the item at `since`: added, restored
+   * (removed earlier and back now, by undo, redo or paste), moved, resized,
+   * edited (its content), changed (anything else, or not known), unchanged
+   * (changed and changed back).
+   */
+  change: ItemChange
+  /** For a move: the offset in board points. */
+  offset?: { dx: number; dy: number }
   bounds: BoardRect | null
   seq: number
 }
+
+export type ItemChange = 'added' | 'restored' | 'moved' | 'resized' | 'edited' | 'changed' | 'unchanged'
 
 /** An ink group: strokes clustered by distance and time, addressed as "g3". */
 export interface InkGroupSummary {
@@ -152,6 +173,10 @@ export interface InkGroupSummary {
 
 export interface RemovedItem {
   id: string
+  kind: string
+  name?: string
+  /** Who removed it: "learner" or "agent", when known. */
+  by?: string
   bounds: BoardRect | null
   seq: number
 }
@@ -208,8 +233,24 @@ export interface NewsGroup {
 }
 
 /**
- * The learner's ink changes on the open board after a seq (the board news;
- * see main/news.ts). Only the learner's strokes; the agents' edits are left out.
+ * One learner change to the board that is not a new or erased stroke: an item
+ * added, restored, moved, resized, edited or deleted, or ink restored, moved or
+ * resized (per ink group).
+ */
+export interface NewsItem {
+  change: ItemChange | 'deleted'
+  /** The item in words: 'your image "Fig 2A"', 'ink group g3', '2 strokes of ink group g3'. */
+  label: string
+  /** Its bounds now (for a deletion: when it was removed). */
+  bounds: BoardRect | null
+  /** For a move: the offset in board points. */
+  offset?: { dx: number; dy: number }
+  at?: number
+}
+
+/**
+ * The learner's changes on the open board after a seq (the board news;
+ * see main/news.ts). Only the learner's changes; the agents' edits are left out.
  */
 export interface LearnerNews {
   board: string
@@ -222,6 +263,8 @@ export interface LearnerNews {
   groups: NewsGroup[]
   /** Where the erased strokes were, relative to the nearest material. */
   erasedWhere: string | null
+  /** Every other learner change: moves, resizes, edits, items added or deleted. */
+  items: NewsItem[]
   /** Live scenes that paused because the learner started drawing. */
   scenePauses?: Array<{ scene: string; name: string | null; step: string | null; t: number; duration: number }>
 }
@@ -230,8 +273,6 @@ export interface LearnerNews {
 export interface SnapshotPlayback {
   overrides: Array<[string, unknown]>
   tips: unknown[]
-  /** The scene clock per node at this moment (program items draw it). */
-  clocks?: Array<[string, unknown]>
 }
 
 /** The board tools the renderer runs (see agent/edits.ts). Results are plain JSON. */
@@ -241,7 +282,8 @@ export type AgentToolName =
   | 'getHtml'
   | 'sceneContext'
   | 'runScene'
-  | 'previewScene'
+  | 'sceneDraft'
+  | 'sceneFrames'
   | 'sceneControl'
 
 /** A box drawn over a snapshot (the "changes" view), in board coordinates. */
@@ -301,9 +343,36 @@ export interface SnapshotRequest {
   overlays?: SnapshotOverlays
   background: string
   playback?: SnapshotPlayback
+  /**
+   * A grid of frames in one image (preview_scene). Each cell shows `rect` at
+   * `scale` with `nodes` and its own nodes, stills and playback; width and
+   * height are then the size of the whole image. Without cells the request
+   * is one image of `nodes` with `playback`.
+   */
+  cells?: { width: number; height: number; gapColor: string; list: SnapshotCell[] }
+}
+
+/** One frame of a grid snapshot: where it goes in the image (pixels), and what only it shows. */
+export interface SnapshotCell {
+  left: number
+  top: number
+  /** Nodes that only this frame shows (changing ink, its label). */
+  nodes: unknown[]
+  /** Pictures of live items in this frame, by node id (image URLs). */
+  stills?: Record<string, string>
+  playback?: SnapshotPlayback
 }
 
 export type SnapshotReply = { requestId: number; ok: true; missingImages: number } | { requestId: number; ok: false; error: string }
+
+/** A live item in preview frames (renderer/live/run.ts sceneFrames): its node, its scene's params and steps over time, its moments. */
+export interface LiveStillsItem {
+  /** The LiveNode as the frames show it. */
+  node: unknown
+  timeline: { params: Array<[number, Record<string, number>]> | null; steps: Array<[number, string]> } | null
+  /** t: scene time (s); null: the item as it is on the board now (no scene of the frames plays it). */
+  moments: Array<{ frame: number; t: number | null }>
+}
 
 /**
  * The requests the main process sends to the renderer, which owns the live
@@ -327,11 +396,19 @@ export interface AgentMethods {
     result: ScreenshotPlan
   }
   openBoard: { params: { path: string }; result: CanvasInfo }
-  /** The learner's ink changes after `since`; null when no board is open. */
+  /** The learner's changes after `since`; null when no board is open. */
   learnerNews: { params: { since: number }; result: LearnerNews | null }
   agentTool: { params: { tool: AgentToolName; args: Record<string, unknown> }; result: unknown }
   /** Check live pixel code (shader compile log, canvas syntax error); error null when it is fine. */
   validateLive: { params: { mode: 'shader' | 'canvas' | 'program'; code: string; params?: Record<string, number>; size?: [number, number] }; result: { error: string | null } }
+  /**
+   * Stills of live items for preview frames, at `scale` px per board point: for each request, a picture per
+   * moment (t: scene time; null: the item as it is on the board now). url null when there is no picture.
+   */
+  liveStills: {
+    params: { items: LiveStillsItem[]; scale: number }
+    result: { stills: Array<{ frame: number; id: string; url: string | null; tick: number | null }> }
+  }
   /** The rendered size (board points) of scene text nodes (tex: math; text: markup), as the board lays them out. */
   measureText: { params: { items: Array<{ math: boolean; text: string; size: number }> }; result: { sizes: Array<[number, number]> } }
   /** A scene program's question to the board while it runs (html, image, space, copy: renderer/live/host.ts). */
@@ -433,8 +510,11 @@ export interface SpaceApi {
   listFiles(): Promise<FileTree>
 
   readBoard(path: string): Promise<string>
-  /** Atomic write (temp file + rename). Only `*.board.json` paths. */
-  writeBoard(path: string, text: string): Promise<void>
+  /**
+   * Atomic write (temp file + rename). Only `*.board.json` paths. `info` carries the
+   * learner's changes in this save (for the learner-edit log) and the serialise time (for the save log).
+   */
+  writeBoard(path: string, text: string, info?: BoardSaveInfo): Promise<void>
   /** Create `boards/Untitled N.board.json`. Resolves the new path. */
   createBoard(): Promise<string>
   /** Rename the file. Resolves the new path. */
@@ -490,6 +570,12 @@ export interface SpaceApi {
   /** Snapshot window only: draw requests from the main process. */
   onSnapshotRequest(listener: (request: SnapshotRequest) => void): Unsubscribe
   snapshotReady(reply: SnapshotReply): void
+  /**
+   * Board window only: ask for a port to the stage page, for the frames of
+   * scenes (renderer/live/frames.ts). The port comes as a window message
+   * "ls-frames-port"; each call gives a new one.
+   */
+  framesPort(): void
 }
 
 /** IPC channel names. The main process and the preload share them. */
@@ -531,5 +617,6 @@ export const IPC = {
   connectAgentClient: 'space:connect-agent-client',
   importAsset: 'space:import-asset',
   snapshotRequest: 'space:snapshot-request',
-  snapshotReady: 'space:snapshot-ready'
+  snapshotReady: 'space:snapshot-ready',
+  framesPort: 'space:frames-port'
 } as const

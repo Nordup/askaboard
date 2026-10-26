@@ -1,7 +1,8 @@
 import { isContent, isFrame, isInk, isKnown, newItemId, type BoardNode, type ContentNode, type FrameNode, type InkNode, type InkPoint, type LiveNode, type SvgNode, type TextNode } from '@shared/board-format'
 import type { SceneBounds, SceneDescription, SceneEase, SceneGroupObject, SceneHtmlObject, SceneInkObject, SceneLiveObject, SceneObjectDesc, ScenePartObject, SceneSample, SceneShapeObject, SceneStyle, SceneTextObject } from '@shared/live-scene'
+import { splitPath, type FrameKind } from '@shared/frames'
 import { MAX_COORD } from '@shared/limits'
-import { humanize, svgPathPolylines } from '../agent/ink'
+import { humanize, seededRandom, strokeSeed, svgPathPolylines } from '../agent/ink'
 import type { Scene } from '../agent/placement'
 import { inkOffset, isFlowed, normalizeInk, removeNodes, ROOT, withDescendants, zAbove } from '../board/scene'
 import type { Point, Region } from '../board/types'
@@ -23,8 +24,12 @@ export interface DynSample {
   t: number
   bounds: SceneBounds
   d?: string
-  /** d split into its numbers and the text between them, to blend two samples of the same form. */
-  skeleton?: string
+  /**
+   * d split into its numbers and the text between them (parts[i] comes before
+   * numbers[i]), to blend two samples of the same form. Samples of one object
+   * with the same form share one parts array.
+   */
+  parts?: readonly string[]
   numbers?: number[]
   width?: number
   lines?: Point[][]
@@ -102,7 +107,7 @@ export interface PlayEdit {
 
 export interface ScenePlay {
   id: string
-  /** The agent's label for it (run_scene name). */
+  /** The agent's label for it (the scene name of write_scene). */
   name: string | null
   timeline: Timeline
   duration: number
@@ -206,54 +211,63 @@ function ranges(lengths: number[]): Array<[number, number]> {
   })
 }
 
-const NUMBER = /-?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?/gi
-
-function splitNumbers(d: string): { skeleton: string; numbers: number[] } {
-  const numbers: number[] = []
-  const skeleton = d.replace(NUMBER, (match) => {
-    numbers.push(Number(match))
-    return '#'
-  })
-  return { skeleton, numbers }
+/** d as its numbers and the text between them; `forms` gives samples of the same form one shared parts array. */
+export function splitNumbers(d: string, forms: Map<string, readonly string[]>): { parts: readonly string[]; numbers: number[] } {
+  const { form, numbers } = splitPath(d)
+  let parts = forms.get(form)
+  if (!parts) forms.set(form, (parts = form.split('#')))
+  return { parts, numbers }
 }
 
-/** Samples of a changing object, prepared for playback. */
-function prepareDyn(object: SceneObjectDesc, samples: SceneSample[]): PlayDyn | undefined {
+/** A text sample's look: its text as the board's HTML (math typeset). */
+export function sampleHtml(text: string, math: boolean): string {
+  return textHtml(math ? `$\\displaystyle ${text.replace(/\$/g, '\\$')}$` : text)
+}
+
+/**
+ * One sample of a changing object, prepared for playback. The frames decoder
+ * (frames.ts) makes the same from typed arrays, and uses this for the samples
+ * that came as JSON. `forms`: the object's path forms (one per object).
+ */
+export function prepareSample(kind: FrameKind, math: boolean, sample: SceneSample, forms: Map<string, readonly string[]>): DynSample {
+  const next: DynSample = { t: sample.t, bounds: sample.bounds }
+  if (kind === 'shape' && sample.d) {
+    next.d = sample.d
+    Object.assign(next, splitNumbers(sample.d, forms))
+    if (sample.width !== undefined) next.width = sample.width
+  } else if (kind === 'ink') {
+    try {
+      next.lines = sample.lines ? sample.lines.map((line) => line.map((p) => [p[0], p[1]] as Point)) : sample.d ? svgPathPolylines(sample.d) : []
+    } catch {
+      next.lines = []
+    }
+    if (sample.width !== undefined) next.width = sample.width
+  } else if (kind === 'text' && sample.text !== undefined) next.html = sampleHtml(sample.text, math)
+  else if (kind === 'live' && sample.params) next.params = sample.params
+  return next
+}
+
+/** The samples of a changing object (from its frames), as the player shows them. */
+function playDyn(object: SceneObjectDesc, samples: DynSample[]): PlayDyn | undefined {
   if (!samples.length) return undefined
   const kind = object.kind === 'shape' || object.kind === 'ink' || object.kind === 'text' || object.kind === 'live' ? object.kind : null
   if (!kind) return undefined
-  const out: DynSample[] = samples.map((sample) => {
-    const next: DynSample = { t: sample.t, bounds: sample.bounds }
-    if (kind === 'shape' && sample.d) {
-      next.d = sample.d
-      Object.assign(next, splitNumbers(sample.d))
-      if (sample.width !== undefined) next.width = sample.width
-    } else if (kind === 'ink') {
-      try {
-        next.lines = sample.lines ? sample.lines.map((line) => line.map((p) => [p[0], p[1]] as Point)) : sample.d ? svgPathPolylines(sample.d) : []
-      } catch {
-        next.lines = []
-      }
-      if (sample.width !== undefined) next.width = sample.width
-    } else if (kind === 'text' && sample.text !== undefined) {
-      const text = object as SceneTextObject
-      next.html = textHtml(text.math ? `$\\displaystyle ${sample.text.replace(/\$/g, '\\$')}$` : sample.text)
-    } else if (kind === 'live' && sample.params) next.params = sample.params
-    return next
-  })
   return {
     kind,
-    samples: out,
-    end: out[out.length - 1].t,
+    samples,
+    end: samples[samples.length - 1].t,
     finalBounds: object.bounds,
     centered: object.kind === 'text' && !!(object as SceneTextObject).center
   }
 }
 
+/** The prepared samples of an object of the description (by its frames), or undefined when it has none. */
+export type DynLookup = (object: SceneObjectDesc) => DynSample[] | undefined
+
 /** Where the stage's objects are on the board: stage object id → its node ids and ink group (run.ts keeps this record). */
 export type StageLookup = (sid: number) => { nodeIds: string[]; group?: string } | undefined
 
-export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, name: string | null = null, stage?: StageLookup): CompiledScene {
+export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, name: string | null = null, stage?: StageLookup, dynOf?: DynLookup): CompiledScene {
   const warnings: string[] = []
   const warn = (text: string): void => {
     if (!warnings.includes(text)) warnings.push(text)
@@ -400,8 +414,9 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
       tipColor: '#ececef',
       drawn: timeline.hasTrack(object.id, 'draw')
     }
-    if (object.dyn?.length) {
-      play.dyn = prepareDyn(object, object.dyn)
+    const samples = object.samples ? dynOf?.(object) : undefined
+    if (samples?.length) {
+      play.dyn = playDyn(object, samples)
       if (play.dyn) play.settled = Math.max(play.settled, play.dyn.end)
     }
     objects.push(play)
@@ -423,14 +438,16 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
       const tool = ink.style.tool === 'highlighter' ? 'highlighter' : 'pen'
       const width = r2(Math.max(0.5, ink.style.width * (tool === 'highlighter' ? 4 : 1) * scale))
       const strokes: InkNode[] = []
-      for (const line of local) {
+      for (const [lineIndex, line] of local.entries()) {
         if (line.length < 2) continue
         // A changing ink object shows its samples without wobble while it changes, so its end state has none either.
+        // The wobble is seeded from the object (its stage id, else its place in the scene), the stroke and its points.
+        const flat = line.map(([x, y]) => [x, y] as Point)
         const points: InkPoint[] = ink.pressure
           ? line.map(([x, y, p]) => [x, y, p === undefined ? 0.5 : Math.max(0, Math.min(1, p))])
           : play.dyn
             ? line.map(([x, y]) => [x, y, 0.5])
-            : humanize(line.map(([x, y]) => [x, y] as Point), jitter)
+            : humanize(flat, jitter, seededRandom(strokeSeed(`${object.sid ?? `o${object.id}`}:${lineIndex}`, flat)))
         const world = points.map(([x, y, p]) => {
           const [wx, wy] = apply(end, [x, y])
           return [wx, wy, p] as InkPoint

@@ -1,15 +1,20 @@
 /*
- * The live-scene API inside the sandbox (QuickJS). This file runs once per
- * stage (main/live-scene.ts): one QuickJS context that every scene program of a
- * board runs in, so objects, values and `stage` live on between programs.
- * The host sets globalThis.__fontText and __measure before this runs. It
- * keeps the four host functions this file defines (__begin, __advance,
- * __result, __bake) from right after it ran, and calls those, never a global
- * of the moment. For each program it calls __begin(ctxText) (JSON: {nodes,
- * names, view, viewport, seed, stage, cutAt}), runs the program, drives the
- * clock (drains the job queue and calls __advance() until it returns false),
- * reads __result() and calls __bake(), which turns the end of this scene into
- * the start of the next one.
+ * The live-scene API inside the stage. This file runs once per stage context:
+ * one V8 realm in a Web Worker of the hidden stage page (stage/worker.ts,
+ * main/stage-process.ts). Every scene program of a board runs in that one
+ * realm, so objects, values and `stage` live on between programs.
+ *
+ * Before this file runs, the worker removes every global that is not
+ * ECMAScript (fetch, timers, messaging, storage, …) and sets __fontText,
+ * __measure (a blocking question to the board), __frames (where the
+ * samples of changing objects go) and __host. This file takes them and
+ * deletes them, then gives its host functions to __host(fns) and locks the
+ * realm (T14). For each program the worker calls fns.begin(ctxText) (JSON:
+ * {nodes, names, view, viewport, seed, stage, cutAt}), runs the program,
+ * drives the clock (it lets every pending job run, then calls fns.advance()
+ * until it returns false), calls fns.end(), reads fns.result() (the sampling
+ * pass and the description; not for a rebuild) and calls fns.bake() (not for
+ * a draft), which turns the end of this scene into the start of the next one.
  *
  * A program only builds data: objects and a timeline. Nothing here draws.
  * Each scene has its own time, from 0. Objects of earlier scenes are on the
@@ -19,17 +24,26 @@
  *
  * Time: every action starts at the current time T. `await action` resolves
  * when the action ends, and the code after it runs with T at that end.
- * __advance() resolves the waiter with the earliest end first, so parallel
- * async functions each keep their own place in time.
+ * advance() resolves the waiter with the earliest end first, so parallel
+ * async functions each keep their own place in time. Date reads the scene
+ * clock too, and Math.random is seeded, so a program runs the same way each
+ * time.
  *
- * Plain JS, no imports: this file is loaded as text (?raw) by live-scene.ts.
+ * Plain JS, no imports: this file is loaded as text (?raw) by stage/worker.ts.
  */
 'use strict'
 ;(() => {
   // This file's own code uses the built-ins as they are now, whatever a program does to the globals.
   const G = globalThis
   const { Object, Array, Function, String, Number, Boolean, Symbol, Math, JSON, Reflect, Promise, Map, Set, WeakMap, WeakSet, Date, RegExp, Error, TypeError, RangeError, SyntaxError, ReferenceError, EvalError, URIError, Int8Array, Float32Array, Float64Array, Uint8Array, Uint16Array, Uint32Array, Int16Array, Int32Array, isFinite, isNaN, parseFloat, parseInt } = G
+  // The host's gifts: kept here, and gone from the globals, so a program cannot call the host itself.
   const hostMeasure = typeof G.__measure === 'function' ? G.__measure : null
+  delete G.__measure
+  const giveHost = typeof G.__host === 'function' ? G.__host : null
+  delete G.__host
+  // Each changing object's samples, as the sampling makes them: (stage id, kind, math, samples). The worker streams them to the board.
+  const giveFrames = typeof G.__frames === 'function' ? G.__frames : null
+  delete G.__frames
   const FONT = JSON.parse(G.__fontText)
   delete G.__fontText
   // Lab switch LS_LAB_NO_CODE (main/lab-switch.ts): no shader(), canvas() or program(), and no word of them.
@@ -43,6 +57,8 @@
   const MAX_COORD = 100000
 
   let T = 0
+  /** While a recipe is evaluated in the end sampling: { impure } (see "Pure evaluations"); null otherwise. */
+  let tracking = null
   let endTime = 0
   /** The scene number in this stage (1 for the first program). */
   let sceneNo = 0
@@ -75,10 +91,62 @@
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296
     }
   }
-  let programRandom = mulberry32(1)
+  /** A mulberry32 stream that counts its draws, so its state can be made again: seededAt(r.seed, r.n). */
+  function seeded(seed) {
+    const next = mulberry32(seed)
+    const draw = () => {
+      draw.n++
+      return next()
+    }
+    draw.seed = seed
+    draw.n = 0
+    return draw
+  }
+  function seededAt(seed, n) {
+    const draw = seeded(seed)
+    while (draw.n < n) draw()
+    return draw
+  }
+  /** The program's Math.random: mulberry32, started from the run's seed. */
+  let randomState = 1
+  function programRandom() {
+    // Each call takes the next number of one stream: how many evaluations there are changes what the next object gets.
+    if (tracking) tracking.impure = true
+    randomState = (randomState + 0x6d2b79f5) >>> 0
+    let t = randomState
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
   Math.random = () => programRandom()
+  // ---------- The clock: Date reads the scene's time, not the wall clock ----------
+
+  /**
+   * Date.now() and new Date() are the scene time T (ms from the scene's
+   * start, as a date in January 1970), so a program and every rebuild of the
+   * stage see the same dates. Dates from arguments (new Date(2026, 0, 1),
+   * Date.parse, Date.UTC) work as usual.
+   */
+  const sceneNow = () => {
+    // The time itself: a recipe that reads it changes at every moment.
+    if (tracking) tracking.impure = true
+    return Math.round(T * 1000)
+  }
+  function SceneDate(...args) {
+    if (new.target === undefined) return new Date(sceneNow()).toString()
+    return Reflect.construct(Date, args.length ? args : [sceneNow()], new.target === SceneDate ? Date : new.target)
+  }
+  Object.defineProperty(SceneDate, 'name', { value: 'Date' })
+  Object.defineProperty(SceneDate, 'length', { value: 7 })
+  SceneDate.prototype = Date.prototype
+  SceneDate.now = sceneNow
+  SceneDate.parse = Date.parse
+  SceneDate.UTC = Date.UTC
+  Object.defineProperty(Date.prototype, 'constructor', { value: SceneDate, writable: true, configurable: true })
+  G.Date = SceneDate
+
   /** The hand's wobble in write() and around(): reseeded per object, so a changing object keeps its handwriting. */
-  let rng = mulberry32(7)
+  let rng = seeded(7)
   let nextSeed = 1000
 
   // ---------- Checks ----------
@@ -327,14 +395,18 @@
     return value.trim()
   }
 
-  function styleOf(opts, what, defaults) {
+  /**
+   * The style of an object. A filled shape (outline: true) can have no
+   * outline: width 0 or color "none" (as fill "none" is no fill).
+   */
+  function styleOf(opts, what, defaults, outline = false) {
     checkKeys(opts, what)
+    const noLine = typeof opts.color === 'string' && opts.color.trim().toLowerCase() === 'none'
     const style = {
-      color: colorArg(opts.color, `${what} color`) ?? defaults.color ?? 'text',
-      width: opts.width === undefined ? (defaults.width ?? 3) : num(opts.width, `${what} width`),
+      color: (noLine ? undefined : colorArg(opts.color, `${what} color`)) ?? defaults.color ?? 'text',
+      width: noLine ? 0 : opts.width === undefined ? (defaults.width ?? 3) : num(opts.width, `${what} width`),
       opacity: opts.opacity === undefined ? 1 : Math.max(0, Math.min(1, num(opts.opacity, `${what} opacity`)))
     }
-    if (style.width <= 0) fail(`${what} width must be positive`)
     if (opts.fill !== undefined && opts.fill !== null && opts.fill !== 'none') {
       if (Array.isArray(opts.fill)) {
         if (opts.fill.length < 2 || !opts.fill.every((c) => typeof c === 'string')) fail(`${what} fill as a gradient must be a list of two or more colours`)
@@ -347,6 +419,13 @@
       if (opts.dash === true) style.dash = [style.width * 3, style.width * 2.5]
       else if (Array.isArray(opts.dash) && opts.dash.length >= 2 && opts.dash.every((v) => typeof v === 'number' && v >= 0)) style.dash = opts.dash.slice(0, 8)
       else fail(`${what} dash must be true or a list like [8, 6]`)
+    }
+    const filled = !!(style.fill || style.gradient || style.hatch)
+    if (style.width < 0) fail(`${what} width must be positive, got ${style.width}`)
+    if (style.width === 0 && !(outline && filled)) {
+      const none = noLine ? 'color "none"' : 'width 0'
+      if (outline) fail(`${what} with ${none} draws nothing: it has no fill. Give it a fill for a shape with no outline, as in {fill: "accent", width: 0}, or a colour and a positive width`)
+      fail(`${what} with ${none} draws nothing; give it a colour and a positive width`)
     }
     if (opts.jitter !== undefined) style.jitter = Math.max(0, Math.min(1, num(opts.jitter, `${what} jitter`)))
     if (opts.tool !== undefined) {
@@ -372,6 +451,7 @@
     return register(entry)
   }
   function register(entry) {
+    if (tracking) tracking.impure = true
     entry.id = objects.length
     entry.born = sceneNo
     entry.created = T
@@ -479,6 +559,7 @@
   }
 
   function addTrack(entry, prop, start, dur, to, ease, from) {
+    if (tracking) tracking.impure = true
     const a = { obj: entry.id, prop, start: f3(start), dur: f3(Math.max(0, dur)), from: from === undefined ? valueAt(entry, prop, start) : from, to, ease: ease || 'inOut' }
     ;(entry.tracks[prop] ||= []).push(a)
     actions.push(a)
@@ -564,6 +645,7 @@
   }
 
   function addValueTrack(v, start, dur, to, ease) {
+    if (tracking) tracking.impure = true
     const from = trackValue(v.tracks, v.base, start)
     const a = { start: f3(start), dur: f3(Math.max(0, dur)), from, to, ease }
     v.tracks.push(a)
@@ -574,6 +656,7 @@
   }
 
   function value(initial) {
+    if (tracking) tracking.impure = true
     if (initial === undefined) initial = 0
     num(initial, 'value(n)')
     values.push({ base: initial, tracks: [] })
@@ -615,7 +698,7 @@
   /** Build an object's entry from its recipe now (at T), without registering it. */
   function evaluate(recipe) {
     building++
-    rng = mulberry32(recipe.seed)
+    rng = seeded(recipe.seed)
     try {
       let args = recipe.args.map((x, i) => (recipe.skip.includes(i) ? x : resolveArg(x, 5)))
       if (recipe.overrides) {
@@ -635,23 +718,53 @@
   }
 
   const sampleErrors = new Set()
+  /** "Line N: " for the program line an error came from (the innermost scene.js frame), or nothing. */
+  function programLine(error) {
+    try {
+      const match = /scene\.js:(\d+)/.exec(String(error && typeof error === 'object' ? error.stack : ''))
+      return match ? `Line ${match[1]}: ` : ''
+    } catch {
+      return ''
+    }
+  }
   /** The entry of a changing object at time t (its own entry when it does not change). */
   function specAt(entry, t) {
     if (!entry.dynamic || entry.evaluating) return entry
+    // Read by another recipe (a label of a curve, an arrow to an object): its sampling keeps its shapes for that recipe.
+    if (building > 0) entry.readByOthers = true
+    const memo = finalSampling ? sampleMemo.get(entry)?.get(t) : undefined
+    if (memo) {
+      // The same evaluation again: its shape, and the handwriting stream as it left it.
+      rng = seededAt(memo.seed, memo.n)
+      return memo.spec
+    }
     const saved = T
     T = t
     entry.evaluating = true
+    const outer = tracking
+    const own = finalSampling ? { impure: false } : null
+    if (own) tracking = own
     try {
-      return evaluate(entry.recipe)
+      const spec = evaluate(entry.recipe)
+      if (own && !own.impure && entry.readByOthers) {
+        if (!sampleMemo.has(entry)) sampleMemo.set(entry, new Map())
+        sampleMemo.get(entry).set(t, { spec, seed: rng.seed, n: rng.n })
+      }
+      return spec
     } catch (error) {
       if (!sampleErrors.has(entry.id)) {
         sampleErrors.add(entry.id)
-        warnings.add(`object ${entry.id} (${entry.api}${entry.name ? ` "${entry.name}"` : ''}): its functions failed at ${f2(t)} s: ${error && error.message ? error.message : String(error)}; it keeps its last good shape there`)
+        warnings.add(`${programLine(error)}object ${entry.id} (${entry.api}${entry.name ? ` "${entry.name}"` : ''}): its functions failed at ${f2(t)} s: ${error && error.message ? error.message : String(error)}; it keeps its last good shape there`)
       }
       return entry.lastGood || entry
     } finally {
       T = saved
       entry.evaluating = false
+      if (own) {
+        tracking = outer
+        // A recipe that reads an impure evaluation (a label of such a curve) is impure too.
+        if (outer && own.impure) outer.impure = true
+      }
     }
   }
 
@@ -715,7 +828,7 @@
         bounds: boundsOfPoints(lines.flat())
       })
     }
-    const style = styleOf(opts, api, defaults)
+    const style = styleOf(opts, api, defaults, true)
     if (defaults.closed === false && (style.fill || style.gradient || style.hatch)) warnings.add(`${api}: an open curve has no inside to fill; the fill shows along its chord`)
     const pad = style.width / 2
     const b = boundsOfPoints(lines.flat())
@@ -838,11 +951,15 @@
     const lines = []
     let current = []
     let prev = null
+    const first = []
+    let pairs = false
     for (let k = 0; k <= samples; k++) {
       const t = a + ((b - a) * k) / samples
       let x
       let y
       const value = fn(t)
+      if (first.length < 3) first.push(`fn(${f2(t)}) = ${typeof value === 'number' ? String(f2(value)) : Array.isArray(value) ? `[${value.map((v) => (typeof v === 'number' ? f2(v) : describe(v))).join(', ')}]` : describe(value)}`)
+      if (k === 0) pairs = Array.isArray(value)
       if (param) {
         if (!Array.isArray(value)) fail('plot with options.t needs fn(t) to return [x, y]')
         x = value[0]
@@ -863,7 +980,16 @@
       prev = point
     }
     if (current.length > 1) lines.push(current)
-    if (!lines.length) fail('plot drew nothing: fn gave no finite values in the range')
+    if (!lines.length) {
+      const range = `${param ? 't' : 'x'} from ${f2(a)} to ${f2(b)}`
+      const why =
+        !param && pairs
+          ? `fn gives [x, y] points: for a curve t => [x, y], give the range as options.t, as in {t: [${f2(a)}, ${f2(b)}]}`
+          : clip
+            ? `no value is a finite number inside options.y [${f2(clip[0])}, ${f2(clip[1])}]`
+            : `fn must return a finite number${param ? ' pair [x, y]' : ''} for some values in the range`
+      fail(`plot drew nothing for ${range} (${first.join(', ')}): ${why}`)
+    }
     for (const l of lines) for (const p of l) if (Math.abs(p[0]) > MAX_COORD || Math.abs(p[1]) > MAX_COORD) fail('plot goes outside ±100000 board points; use options.y to clip it')
     const d = lines.map((l) => polyD(l, false)).join(' ')
     const { at: _a, unit: _u, samples: _s, t: _t, x: _x, y: _y, ...rest } = opts
@@ -1163,6 +1289,8 @@
 
   /** The path a moving point leaves: fn() → [x, y] at every moment from the trace's start until now. */
   function trace(fn, t0, opts) {
+    // A trace is the path up to now: it changes with the time itself.
+    if (tracking) tracking.impure = true
     if (typeof fn !== 'function') fail('trace(fn, options) needs a function that returns the point now, like () => [x.get(), y.get()]')
     opts = options(opts, 'trace options')
     const now = T
@@ -1240,6 +1368,7 @@
 
   /** Ask the board (the app) a question: the layout of HTML, a picture, an empty place, an item's content. Blocks until it answers. */
   function ask(request, what) {
+    if (tracking) tracking.impure = true
     if (!hostMeasure) fail(`${what}: the board cannot answer here`)
     let got
     try {
@@ -1689,7 +1818,7 @@
     } else anchor = pair(target, 'label target')
     // Measure the text at the origin.
     const make1 = (pos) => {
-      rng = mulberry32(labelSeed)
+      rng = seeded(labelSeed)
       const o = { ...rest, at: pos }
       return asTex ? textObject('tex', str, o, true) : asText ? textObject('text', str, o, false) : write(str, o)
     }
@@ -1767,6 +1896,7 @@
   const spans = new WeakMap()
   class Action {
     constructor(start, end) {
+      if (tracking) tracking.impure = true
       spans.set(this, { start: f3(start), end: f3(end), parts: [] })
     }
     get start() {
@@ -1800,10 +1930,33 @@
     }
   }
 
-  /** Stretch actions so they run over [start, end] (say(…, {during})). */
+  /**
+   * The items of all(...) and say(…, {during}): actions, and promises of
+   * async functions that run already (each on its own time). Anything else
+   * fails with what to write instead.
+   */
+  function actionItems(list, what) {
+    const items = (Array.isArray(list) ? list : [list]).filter((a) => a !== undefined && a !== null)
+    for (const item of items) {
+      if (item instanceof Action) continue
+      if (item instanceof Promise) {
+        item.then(undefined, (error) => asyncErrors.push(error))
+        continue
+      }
+      const got =
+        item instanceof SceneObject
+          ? `the object ${item}, not an action; write draw(obj), move(obj, …) or tween(obj, …)`
+          : typeof item === 'function'
+            ? 'a function, not an action; call it: write draw(obj), or (async () => { … })() for steps of its own'
+            : describe(item)
+      fail(`${what} takes actions (draw(), move(), tween(), wait(), …) or the result of an async function, got ${got}`)
+    }
+    return items
+  }
+
+  /** Stretch actions so they run over [start, end] (say(…, {during})). A promise keeps its own time. */
   function retime(list, start, end) {
-    const acts = (Array.isArray(list) ? list : [list]).filter((a) => a !== undefined && a !== null)
-    for (const act of acts) if (!(act instanceof Action)) fail(`say during takes actions (draw(), move(), tween(), …) or a list of them, got ${describe(act)}`)
+    const acts = actionItems(list, 'say during').filter((item) => item instanceof Action)
     const touchedEntries = new Set()
     const touchedValues = new Set()
     for (const act of acts) {
@@ -2084,6 +2237,7 @@
   }
 
   function step(name, opts) {
+    if (tracking) tracking.impure = true
     if (typeof name !== 'string' || !name.trim()) fail('step(name) needs a name string')
     opts = options(opts, 'step options')
     for (const key of Object.keys(opts)) if (key !== 'pause') warnings.add(`step: the option "${key}" is unknown and was ignored`)
@@ -2257,15 +2411,16 @@
     return new Action(T, Math.max(T, markTimes.get(name)))
   }
 
+  /** One action that ends when all of its actions end. With a promise of an async function among them, a promise that resolves when all of them end. */
   function all(...list) {
     if (list.length === 1 && Array.isArray(list[0])) list = list[0]
+    const items = actionItems(list, 'all(...)')
+    if (items.some((item) => item instanceof Promise)) return Promise.all(items)
     let end = T
     const parts = []
-    for (const item of list) {
-      if (item instanceof Action) {
-        end = Math.max(end, item.end)
-        parts.push(...spans.get(item).parts)
-      } else if (item !== undefined && item !== null) fail(`all(...) takes actions (draw(), move(), wait(), …), got ${describe(item)}`)
+    for (const item of items) {
+      end = Math.max(end, item.end)
+      parts.push(...spans.get(item).parts)
     }
     const act = new Action(T, end)
     spans.get(act).parts = parts
@@ -2286,7 +2441,7 @@
 
   // ---------- Host interface ----------
 
-  G.__advance = () => {
+  const advance = () => {
     if (!waiters.length) return false
     let best = 0
     for (let k = 1; k < waiters.length; k++) {
@@ -2301,7 +2456,7 @@
     return true
   }
 
-  // ---------- At the end: sample changing objects, check the layout ----------
+  // ---------- At the end: sample changing objects ----------
 
   /** Sample times for an object made at `from`: frames where something animates, plus the start and the end. */
   function sampleTimes(from) {
@@ -2333,197 +2488,74 @@
     return g
   }
 
+  /** Recipe evaluations of this scene's sampling, and how many sampling every object at every sample time would make. */
+  let evaluations = 0
+  let fullEvaluations = 0
+
+  // ---------- Pure evaluations ----------
+  //
+  // While the end sampling evaluates a recipe, `tracking` marks it impure
+  // when it reads the time itself (Date, a trace), takes random numbers, or
+  // changes the scene or `stage`. Only a pure evaluation is kept in
+  // sampleMemo, so a recipe that reads another object (a label of a curve)
+  // uses that object's shape at the same time again. Every changing object is
+  // sampled at every sample time; a recipe can be evaluated any number of
+  // times.
+
+  /** While a scene is sampled: the shapes of objects that other recipes read, by object and sample time (pure evaluations only). */
+  const sampleMemo = new Map()
+
+  /** One sampling of an object at these times: its geometry where it changes, and its end state. */
+  function samplePass(entry, times) {
+    const samples = []
+    let lastKey = ''
+    let final = null
+    for (const t of times) {
+      evaluations++
+      const spec = specAt(entry, t)
+      if (spec !== entry) entry.lastGood = spec
+      if (spec.kind !== entry.kind) {
+        warnings.add(`object ${entry.id} (${entry.api}): its functions changed what kind of object it is; it keeps its first kind`)
+        continue
+      }
+      const g = geometryOf(spec)
+      const key = JSON.stringify(g)
+      final = spec
+      if (key === lastKey) continue
+      lastKey = key
+      samples.push({ t: f3(t), ...g })
+    }
+    return { samples, lastKey, final }
+  }
+
   /** Sample changing objects over this scene. Returns the objects of earlier scenes whose geometry changes in it. */
   function sampleObjects(list) {
     finalSampling = true
+    sampleMemo.clear()
     const changedEarlier = new Set()
     for (const entry of list) {
       if (!entry.dynamic || entry.kind === 'group' || entry.kind === 'node') continue
-      const samples = []
-      let lastKey = ''
-      let final = null
-      for (const t of sampleTimes(entry.born === sceneNo ? entry.created : 0)) {
-        const spec = specAt(entry, t)
-        if (spec !== entry) entry.lastGood = spec
-        if (spec.kind !== entry.kind) {
-          warnings.add(`object ${entry.id} (${entry.api}): its functions changed what kind of object it is; it keeps its first kind`)
-          continue
-        }
-        const g = geometryOf(spec)
-        const key = JSON.stringify(g)
-        final = spec
-        if (key === lastKey) continue
-        lastKey = key
-        samples.push({ t: f3(t), ...g })
-      }
+      const times = sampleTimes(entry.born === sceneNo ? entry.created : 0)
+      fullEvaluations += times.length
+      const { samples, lastKey, final } = samplePass(entry, times)
       if (!final) continue
       // The object's own fields hold the end state.
       for (const field of ['d', 'lines', 'text', 'params', 'at', 'center', 'pressure', 'length', 'style']) if (final[field] !== undefined) entry[field] = final[field]
       entry.bounds = final.bounds
-      if (samples.length > 1) entry.dyn = samples
+      if (samples.length > 1) {
+        entry.dyn = samples
+        if (giveFrames) giveFrames(entry.id, entry.kind, entry.math === true, samples)
+      }
       if (entry.born < sceneNo && (samples.length > 1 || lastKey !== entry.bakedKey)) changedEarlier.add(entry)
     }
     finalSampling = false
+    sampleMemo.clear()
     return changedEarlier
-  }
-
-  /** Visible at t: made (or revealed) by then and not gone. */
-  function visibleAt(e, t) {
-    if (e.kind === 'group' || e.kind === 'node' || e.kind === 'part') return false
-    if (e.vis === 'hidden') {
-      const reveal = (e.tracks.draw || []).concat(e.tracks.opacity || []).find((a) => a.to > 0)
-      if (!reveal || reveal.start > t) return false
-    } else if (e.created > t) return false
-    const draw = valueAt(e, 'draw', t)
-    const opacity = valueAt(e, 'opacity', t)
-    return draw > 0.05 && opacity > 0.05
-  }
-
-  function revealEnd(e) {
-    let end = e.created
-    for (const a of e.tracks.draw || []) if (a.to > 0) end = Math.max(end, a.start + a.dur)
-    for (const a of e.tracks.fill || []) if (a.to > 0) end = Math.max(end, a.start + a.dur)
-    for (const a of e.tracks.opacity || []) if (a.to > 0) end = Math.max(end, a.start + a.dur)
-    return Math.min(end, endTime)
   }
 
   const who = (e) => {
     const words = isTextLike(e) ? specAt(e, endTime).text : undefined
     return `${e.api} ${e.id}${e.name ? ` "${e.name}"` : ''}${typeof words === 'string' ? ` ${JSON.stringify(words.length > 30 ? `${words.slice(0, 29)}…` : words)}` : ''}`
-  }
-  function stepAt(t) {
-    let name = null
-    for (const st of steps) if (st.at <= t + 1e-9) name = st.name
-    return name
-  }
-
-  /** The first `share` (0..1) of polylines, by length: a line drawn that far. */
-  function trimLines(lines, share) {
-    if (share >= 1) return lines
-    let left = Math.max(0, share) * lines.reduce((sum, l) => sum + polyLength(l), 0)
-    const out = []
-    for (const l of lines) {
-      if (left <= 0) break
-      const part = [l[0]]
-      for (let i = 1; i < l.length; i++) {
-        const len = Math.hypot(l[i][0] - l[i - 1][0], l[i][1] - l[i - 1][1])
-        if (left >= len) {
-          part.push(l[i])
-          left -= len
-          continue
-        }
-        const k = len ? left / len : 0
-        part.push([l[i - 1][0] + (l[i][0] - l[i - 1][0]) * k, l[i - 1][1] + (l[i][1] - l[i - 1][1]) * k])
-        left = 0
-        break
-      }
-      out.push(part)
-    }
-    return out
-  }
-
-  /**
-   * How much of a stroke crosses a text box: the stroke's drawn part, sampled
-   * every 1.5 points along its world polylines, counts where the stroke (its
-   * centre line widened by half its width) reaches into the box. Returns the
-   * length in points. A fill does not count, so text inside a filled shape
-   * that does not touch its outline stays quiet.
-   */
-  function strokeInBox(o, t, box) {
-    const m = matrixAt(o, t)
-    const style = specAt(o, t).style
-    const half = (((style && style.width) || 2) * Math.hypot(m[0], m[1])) / 2
-    const x0 = box.x - half
-    const y0 = box.y - half
-    const x1 = box.x + box.width + half
-    const y1 = box.y + box.height + half
-    const STEP = 1.5
-    let inside = 0
-    for (const l of trimLines(worldLines(o, t), valueAt(o, 'draw', t))) {
-      for (let i = 1; i < l.length; i++) {
-        const ax = l[i - 1][0]
-        const ay = l[i - 1][1]
-        const bx = l[i][0]
-        const by = l[i][1]
-        // Skip segments that cannot reach the box.
-        if (Math.max(ax, bx) < x0 || Math.min(ax, bx) > x1 || Math.max(ay, by) < y0 || Math.min(ay, by) > y1) continue
-        const len = Math.hypot(bx - ax, by - ay)
-        const n = Math.max(1, Math.ceil(len / STEP))
-        for (let k = 0; k < n; k++) {
-          const x = ax + ((bx - ax) * k) / n
-          const y = ay + ((by - ay) * k) / n
-          if (x >= x0 && x <= x1 && y >= y0 && y <= y1) inside += len / n
-        }
-      }
-    }
-    return inside
-  }
-
-  /** Overlaps and the view, for the objects this scene sends (`list`), against everything visible. */
-  function checkLayout(list) {
-    const mine = new Set(list)
-    const times = new Set([f3(endTime)])
-    for (const st of steps) times.add(st.at)
-    for (const e of list) if (isTextLike(e) && e.kind !== 'group') times.add(f3(revealEnd(e)))
-    // Between those moments too (text and shapes move with tweens): every half second, at most 160 moments.
-    const every = Math.max(0.5, endTime / 160)
-    for (let t = every; t < endTime; t += every) times.add(f3(t))
-    const seen = new Set()
-    const sorted = [...times].sort((a, b) => a - b)
-    for (const t of sorted) {
-      const visible = objects.filter((e) => !e.gone && !e.dropped && visibleAt(e, t))
-      for (const e of visible) {
-        if (!isTextLike(e) || !mine.has(e)) continue
-        const box = worldBounds(e, t)
-        // The text's ink: the layout box less the empty leading above and below the line, and a hair at the sides.
-        const inner = { x: box.x + Math.min(2, box.width * 0.04), y: box.y + box.height * 0.1, width: box.width - 2 * Math.min(2, box.width * 0.04), height: box.height * 0.8 }
-        for (const o of visible) {
-          if (o === e) continue
-          const pairKey = e.id < o.id ? `${e.id}:${o.id}` : `${o.id}:${e.id}`
-          if (seen.has(pairKey)) continue
-          const ob = worldBounds(o, t)
-          if (!rectsOverlap(ob, inner)) continue
-          let hit = false
-          let what = 'outline'
-          if (isTextLike(o) || o.kind === 'live' || o.kind === 'html') {
-            hit = rectsOverlap(ob, inner) > 0.12 * Math.min(inner.width * inner.height, ob.width * ob.height)
-            what = o.kind === 'live' || o.kind === 'html' ? 'box' : 'text'
-          } else {
-            // The stroke itself: a line, curve, outline or ink that runs through the text (at least 5 points of it).
-            hit = strokeInBox(o, t, inner) >= 5
-            what = o.kind === 'ink' ? 'ink' : 'outline'
-          }
-          if (!hit) continue
-          seen.add(pairKey)
-          const st = stepAt(t)
-          warnings.add(`overlap: ${who(e)} overlaps the ${what} of ${who(o)} at ${f2(t)} s${st ? ` (step "${st}")` : ''}; text at ${f2(box.x)}, ${f2(box.y)} ${f2(box.width)}×${f2(box.height)}`)
-        }
-        const items = []
-        for (const [id, info] of Object.entries(CTX.nodes)) {
-          // Ink shows through its ink group (g1, …); frames hold other items.
-          if (info.kind === 'frame' || info.kind === 'ink' || seen.has(`${e.id}:${id}`) || stageItemOwner(id) !== undefined) continue
-          if (rectsOverlap(info.bounds, inner) <= 0.12 * Math.min(inner.width * inner.height, info.bounds.width * info.bounds.height)) continue
-          // Items this scene acts on are where the scene puts them, not where they were.
-          if (objects.some((o) => o.kind === 'node' && o.ref === id)) continue
-          seen.add(`${e.id}:${id}`)
-          items.push(`${id}${info.name ? ` "${info.name}"` : ''} (${info.kind})`)
-        }
-        if (items.length) warnings.add(`overlap: ${who(e)} overlaps the board item${items.length > 1 ? 's' : ''} ${items.join(', ')} at ${f2(t)} s`)
-      }
-    }
-    // Outside the learner's view when it appears (this scene's camera moves count).
-    for (const e of list) {
-      if (e.born < sceneNo && !e.revealed) continue
-      if (e.kind === 'group' || e.kind === 'node' || e.kind === 'part' || e.removed) continue
-      const t = revealEnd(e)
-      if (!visibleAt(e, t) && !visibleAt(e, endTime)) continue
-      const b = worldBounds(e, t)
-      const view = viewAt(t)
-      if (!inside(b, view)) {
-        const fully = rectsOverlap(b, view) <= 0
-        warnings.add(`view: ${who(e)} is ${fully ? 'outside' : 'partly outside'} the learner's view at ${f2(t)} s (object ${f2(b.x)}, ${f2(b.y)} ${f2(b.width)}×${f2(b.height)}; view ${f2(view.x)}, ${f2(view.y)} ${f2(view.width)}×${f2(view.height)})`)
-      }
-    }
   }
 
   /** Cut the scene at c (scene_control cut): what starts at c or later is dropped, what runs then holds its value. */
@@ -2591,10 +2623,19 @@
 
   const touched = (e) => Object.keys(e.tracks).some((key) => e.tracks[key].length > 0)
 
-  G.__result = () => {
+  /**
+   * The end of a program, the same for every mode: a scene, a draft and a
+   * rebuild of the stage (which bakes without a description) all end here,
+   * so a rebuilt cut scene bakes its cut end state.
+   */
+  const end = () => {
     if (asyncErrors.length) throw asyncErrors[0]
     for (const e of objects) if (e.born === sceneNo && e.vis === undefined) e.vis = 'shown'
     if (cutAt !== null) applyCut(Math.min(cutAt, endTime))
+  }
+
+  /** The scene's description (JSON): its objects, with the changing ones sampled, and its timeline. */
+  const result = () => {
     const fresh = objects.filter((e) => e.born === sceneNo && !e.dropped)
     const earlier = objects.filter((e) => e.born < sceneNo && !e.dropped && !e.gone && e.kind !== 'node' && e.kind !== 'group')
     for (const e of earlier) delete e.dyn
@@ -2632,11 +2673,6 @@
     }
     const list = objects.filter((e) => emit.has(e))
     if (!anyChange) sampleObjects(list.filter((e) => e.born < sceneNo && e.dynamic))
-    try {
-      checkLayout(list)
-    } catch (error) {
-      warnings.add(`The layout check failed: ${error && error.message ? error.message : String(error)}`)
-    }
     const local = new Map(list.map((e, i) => [e.id, i]))
     const out = list.map((e) => {
       const carry = e.born < sceneNo && !e.gone && e.kind !== 'node'
@@ -2645,7 +2681,8 @@
       if (e.base && e.kind !== 'node') o.base = e.base
       if (e.name !== undefined) o.name = e.name
       if (e.parent !== undefined && local.has(e.parent)) o.parent = local.get(e.parent)
-      if (e.dyn) o.dyn = e.dyn
+      // The samples themselves go to the board as frames (giveFrames, by sid); the description says how many.
+      if (e.dyn) o.samples = e.dyn.length
       if (e.kind === 'ink') Object.assign(o, { style: e.style, lines: e.lines, d: e.d, pressure: e.pressure })
       if (e.kind === 'shape') Object.assign(o, { style: e.style, d: e.d })
       if (e.kind === 'text') Object.assign(o, { style: e.style, text: e.text, math: e.math, at: e.at, center: e.center })
@@ -2665,8 +2702,7 @@
   }
 
   /** The end of this scene becomes the start of the next: each object's state at the end is its base, values keep their end value. */
-  G.__bake = () => {
-    for (const e of objects) if (e.born === sceneNo && e.vis === undefined) e.vis = 'shown'
+  const bake = () => {
     for (const e of objects) e.edited = false
     const hidden = { opacity: 1, draw: 0, fill: 0 }
     for (const e of objects) {
@@ -2733,11 +2769,10 @@
 
   let cutAt = null
   /** A new scene: its context, its own time from 0, nothing on its timeline yet. */
-  G.__begin = (ctxText) => {
-    restoreGlobals()
+  const begin = (ctxText) => {
     CTX = JSON.parse(ctxText)
     sceneNo++
-    programRandom = mulberry32(CTX.seed || 1)
+    randomState = (CTX.seed || 1) >>> 0
     cutAt = typeof CTX.cutAt === 'number' ? CTX.cutAt : null
     T = 0
     endTime = 0
@@ -2752,6 +2787,9 @@
     edits.length = 0
     reparents.length = 0
     activeSpans.length = 0
+    evaluations = 0
+    fullEvaluations = 0
+    tracking = null
     sampleErrors.clear()
     markTimes.clear()
     asyncErrors = []
@@ -2781,8 +2819,32 @@
 
   const traceCreator = creator('trace', trace, { optIndex: 2, skip: [0, 1], always: true })
 
-  /** Values, functions and objects kept from one program to the next on this board. */
-  const stage = {}
+  /**
+   * Values, functions and objects kept from one program to the next on this
+   * board. A proxy only to see a recipe that writes to it while it is sampled
+   * (that evaluation is impure, and sampleMemo does not keep it).
+   */
+  const stage = new Proxy(
+    {},
+    {
+      set(target, key, value, receiver) {
+        if (tracking) tracking.impure = true
+        return Reflect.set(target, key, value, receiver)
+      },
+      defineProperty(target, key, descriptor) {
+        if (tracking) tracking.impure = true
+        return Reflect.defineProperty(target, key, descriptor)
+      },
+      deleteProperty(target, key) {
+        if (tracking) tracking.impure = true
+        return Reflect.deleteProperty(target, key)
+      },
+      setPrototypeOf(target, proto) {
+        if (tracking) tracking.impure = true
+        return Reflect.setPrototypeOf(target, proto)
+      }
+    }
+  )
 
   const api = {
     stroke: creator('stroke', stroke, { optIndex: 1 }),
@@ -2831,16 +2893,20 @@
   if (NO_HTML) delete api.html
   for (const [key, value] of Object.entries(api)) Object.defineProperty(G, key, { value, enumerable: true, writable: false, configurable: false })
 
+  // ---------- The host functions ----------
+
+  const stats = () => ({ evaluations, fullEvaluations })
+  if (!giveHost) throw new Error('The stage has no host')
+  giveHost(Object.freeze({ begin, advance, end, result, bake, stats }))
+
   // ---------- Lock the stage ----------
-  // Every program of a board runs in this one context. So that no program can
+  // Every program of a board runs in this one realm. So that no program can
   // change the scene API or a built-in (JSON.stringify, Array.prototype.map, …)
   // for the programs after it, or for this file's own code: every object
-  // reachable from a global is frozen, every global is locked, and each
-  // program starts with the globals as they are here (QuickJS lets
-  // Object.defineProperty replace even a locked property of the global
-  // object, so __begin puts back any that a program replaced or deleted).
-  // Only `stage` stays a free, writable object; programs may still add
-  // globals of their own.
+  // reachable from a global is frozen, and every global is locked (not
+  // writable, not configurable: V8 refuses every change to it). Only `stage`
+  // stays a free, writable object; programs may still add globals of their
+  // own.
 
   // A frozen prototype makes a plain assignment like `obj.toString = f` or
   // `this.name = "MyError"` fail (the "override mistake"). For the properties
@@ -2902,39 +2968,21 @@
     (async function* () {})(),
     Object.getPrototypeOf(Int8Array)
   ]
-  if (typeof ''.matchAll === 'function') hidden.push(''.matchAll(/(?:)/g))
+  hidden.push(''.matchAll(/(?:)/g))
+  // Iterator helpers (iterator.map(…), Iterator.from(…)) have prototypes of their own.
+  if (typeof G.Iterator === 'function') hidden.push([].values().map((x) => x), G.Iterator.from({ next: () => ({ done: true }) }))
   for (const item of hidden) freezeAll(item)
-  /** Every global as this file leaves it: key → its locked descriptor. */
-  const globals = new Map()
+  // Lock every global as this file leaves it.
   for (const key of Reflect.ownKeys(G)) {
     const d = Object.getOwnPropertyDescriptor(G, key)
     if (!d) continue
-    let locked
     if ('value' in d) {
       if (d.value !== stage) freezeAll(d.value)
-      locked = { value: d.value, writable: false, enumerable: d.enumerable, configurable: false }
+      if (d.configurable) Object.defineProperty(G, key, { value: d.value, writable: false, enumerable: d.enumerable, configurable: false })
     } else {
       freezeAll(d.get)
       freezeAll(d.set)
-      locked = { get: d.get, set: d.set, enumerable: d.enumerable, configurable: false }
-    }
-    if (d.configurable) Object.defineProperty(G, key, locked)
-    globals.set(key, locked)
-  }
-  const sameDescriptor = (a, b) => ('value' in b ? Object.is(a.value, b.value) : a.get === b.get && a.set === b.set)
-  /** Put back each global that the program before replaced or deleted. */
-  function restoreGlobals() {
-    for (const [key, locked] of globals) {
-      const now = Reflect.getOwnPropertyDescriptor(G, key)
-      if (now && sameDescriptor(now, locked)) continue
-      try {
-        Reflect.deleteProperty(G, key)
-        Object.defineProperty(G, key, locked)
-      } catch {
-        // QuickJS replaces it anyway; the check below names a failure.
-      }
-      const back = Reflect.getOwnPropertyDescriptor(G, key)
-      if (!back || !sameDescriptor(back, locked)) throw new Error(`The scene library could not restore the global ${String(key)}`)
+      if (d.configurable) Object.defineProperty(G, key, { get: d.get, set: d.set, enumerable: d.enumerable, configurable: false })
     }
   }
 })()

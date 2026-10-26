@@ -3,16 +3,17 @@ import type { BoardNode } from '@shared/board-format'
 import type { SnapshotOverlays, SnapshotRequest } from '@shared/space-api'
 import { ContentLayer, measureContent, type ContentContext } from '../board/content'
 import { paintItems } from '../board/paint'
-import { applyElementOverride, clearElementOverride, type NodeOverride, type PlaybackTip } from '../board/playback'
+import { applyElementOverride, type NodeOverride, type PlaybackTip } from '../board/playback'
 import { addInkLayout, buildIndex, inkOffset, inkPaintOrder, type SceneIndex } from '../board/scene'
 import '../board/board.css'
-import { setSnapshotPlayback, stillsSettled } from '../live-pixels/snapshot-stills'
 import './snapshot.css'
 
 /**
  * Snapshot mode (`?snapshot=1`): the hidden offscreen window the main process
  * captures for agent screenshots. It draws one board region with the app's
  * own content layer and ink painter, at the requested scale, then answers.
+ * A grid request (preview_scene) draws the region once per frame, each
+ * frame with its own moment, so that one capture holds all frames.
  */
 
 const IMAGE_WAIT_MS = 4000
@@ -106,27 +107,40 @@ function markerColour(id: number): string {
   return '#' + channels.map((value) => value.toString(16).padStart(2, '0')).join('')
 }
 
-export function SnapshotView() {
-  const [request, setRequest] = useState<{ request: SnapshotRequest; index: SceneIndex } | null>(null)
+/** One frame of a request: its place and size in the image, its nodes and its playback. */
+interface CellPlan {
+  left: number
+  top: number
+  width: number
+  height: number
+  index: SceneIndex
+  playback?: SnapshotRequest['playback']
+}
+
+/** The frames of a request: one for a plain request, one per cell for a grid (shared nodes, then the cell's own nodes, live items as their stills). */
+function cellsOf(req: SnapshotRequest): CellPlan[] {
+  if (!req.cells) return [{ left: 0, top: 0, width: req.width, height: req.height, index: buildIndex(req.nodes as BoardNode[]), playback: req.playback }]
+  const { width, height } = req.cells
+  return req.cells.list.map((cell) => {
+    const stills = cell.stills
+    const shared = stills ? (req.nodes as BoardNode[]).map((node) => (stills[node.id] ? ({ ...node, still: stills[node.id] } as BoardNode) : node)) : (req.nodes as BoardNode[])
+    return { left: cell.left, top: cell.top, width, height, index: buildIndex([...shared, ...(cell.nodes as BoardNode[])]), playback: cell.playback }
+  })
+}
+
+/**
+ * One frame: the board region with the app's own content layer and ink
+ * painter, its playback moment applied. It reports when it is drawn
+ * (fonts, math, images and ink decoded) or failed.
+ */
+function SnapshotFrame({ req, cell, onDone }: { req: SnapshotRequest; cell: CellPlan; onDone: (result: number | Error) => void }) {
   const rootRef = useRef<HTMLDivElement>(null)
   const inkRef = useRef<HTMLImageElement>(null)
   const editorRef = useRef<HTMLTextAreaElement>(null)
   const elements = useRef(new Map<string, HTMLElement>())
-  const markerRef = useRef<HTMLDivElement>(null)
-  const overridden = useRef(new Set<HTMLElement>())
-
-  useEffect(
-    () =>
-      window.space.onSnapshotRequest((next) => {
-        setSnapshotPlayback(next.playback)
-        setRequest({ request: next, index: buildIndex(next.nodes as BoardNode[]) })
-      }),
-    []
-  )
-
   const ctx = useRef<ContentContext>(null as unknown as ContentContext)
   ctx.current = {
-    index: request?.index ?? buildIndex([]),
+    index: cell.index,
     editingId: null,
     editorRef,
     editorInitial: '',
@@ -139,73 +153,62 @@ export function SnapshotView() {
   }
 
   useLayoutEffect(() => {
-    if (!request) return
-    const { request: req, index } = request
     let cancelled = false
     const root = rootRef.current
     if (root) root.style.transform = `translate(${-req.rect.x * req.scale}px, ${-req.rect.y * req.scale}px) scale(${req.scale})`
-    document.body.style.background = req.background
-    const run = async (): Promise<void> => {
+    const run = async (): Promise<number> => {
       if (!root) throw new Error('The snapshot page has no content root.')
       await document.fonts.ready
-      await stillsSettled()
+      // Live items come as finished stills (images): they settle with the other images.
       const missingImages = await imagesSettled(root)
       await frame()
-      if (cancelled) return
-      for (const element of overridden.current) clearElementOverride(element)
-      overridden.current.clear()
+      if (cancelled) return missingImages
       const layout = measureContent(root, elements.current, req.scale)
-      addInkLayout(index, layout)
+      addInkLayout(cell.index, layout)
       // A moment of a live scene: its look of each node (measured without it first).
-      const overrides = new Map((req.playback?.overrides ?? []) as Array<[string, NodeOverride]>)
+      const overrides = new Map((cell.playback?.overrides ?? []) as Array<[string, NodeOverride]>)
       for (const [id, override] of overrides) {
         const element = elements.current.get(id)
         const box = layout.get(id)
         if (!element || !box) continue
-        const node = index.byId.get(id) as { style?: { opacity?: string } } | undefined
+        const node = cell.index.byId.get(id) as { style?: { opacity?: string } } | undefined
         applyElementOverride(element, override, [box.x, box.y], Number(node?.style?.opacity ?? '1') || 1)
-        overridden.current.add(element)
       }
-      const inks = inkPaintOrder(index).map((node) => {
+      const inks = inkPaintOrder(cell.index).map((node) => {
         const box = layout.get(node.id)
-        return { node, offset: (box ? [box.ox, box.oy] : inkOffset(node, index.byId, layout)) as [number, number] }
+        return { node, offset: (box ? [box.ox, box.oy] : inkOffset(node, cell.index.byId, layout)) as [number, number] }
       })
       const camera = { center: [req.rect.x + req.rect.width / 2, req.rect.y + req.rect.height / 2] as [number, number], zoom: req.scale }
       // Ink goes through a decoded <img>, not a live canvas: in an offscreen window a canvas can reach the
-      // compositor a frame after the DOM, and the marker below must never show before the ink.
+      // compositor a frame after the DOM, and the marker must never show before the ink.
       const canvas = document.createElement('canvas')
-      paintItems(canvas, inks, [req.width, req.height], camera, new Set(), req.playback ? { overrides, ghosts: [], tips: (req.playback.tips ?? []) as PlaybackTip[] } : null)
+      paintItems(canvas, inks, [cell.width, cell.height], camera, new Set(), cell.playback ? { overrides, ghosts: [], tips: (cell.playback.tips ?? []) as PlaybackTip[] } : null)
       const ink = inkRef.current
       if (ink) {
         ink.src = canvas.toDataURL('image/png')
-        ink.style.width = `${req.width}px`
-        ink.style.height = `${req.height}px`
+        ink.style.width = `${cell.width}px`
+        ink.style.height = `${cell.height}px`
         await ink.decode().catch(() => undefined)
       }
-      if (cancelled) return
-      // The frame marker (see main/snapshot.ts): set in the same task as the ink, so a frame that shows it shows the ink.
-      const marker = markerRef.current
-      if (marker) marker.style.background = markerColour(req.requestId)
-      await frame()
-      if (!cancelled) window.space.snapshotReady({ requestId: req.requestId, ok: true, missingImages })
+      return missingImages
     }
-    run().catch((error: unknown) => {
-      window.space.snapshotReady({ requestId: req.requestId, ok: false, error: error instanceof Error ? error.message : String(error) })
-    })
+    run().then(
+      (missing) => !cancelled && onDone(missing),
+      (error: unknown) => !cancelled && onDone(error instanceof Error ? error : new Error(String(error)))
+    )
     return () => {
       cancelled = true
     }
-  }, [request])
+    // One run per frame: the parent mounts a new frame for each request.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
-  const req = request?.request
   return (
-    <div className="snapshot" style={req ? { width: req.width, height: req.height + 1, background: req.background } : undefined}>
-      {/* A fresh tree per request: nothing of an earlier capture (styles of a scene moment, measured boxes) carries over. */}
-      {request && <ContentLayer key={request.request.requestId} index={request.index} editingId={null} ctx={ctx} rootRef={rootRef} />}
+    <div className="snapshot__frame" style={{ left: cell.left, top: cell.top, width: cell.width, height: cell.height, background: req.background }}>
+      <ContentLayer index={cell.index} editingId={null} ctx={ctx} rootRef={rootRef} />
       <img className="snapshot__ink" ref={inkRef} alt="" />
-      {req?.overlays && <Overlays req={req} overlays={req.overlays} />}
-      <div className="snapshot__marker" ref={markerRef} style={req ? { top: req.height } : undefined} />
-      {req?.outlines.map((outline, i) => (
+      {req.overlays && <Overlays req={req} overlays={req.overlays} />}
+      {req.outlines.map((outline, i) => (
         <div
           key={i}
           className="snapshot__outline"
@@ -218,6 +221,56 @@ export function SnapshotView() {
           }}
         />
       ))}
+    </div>
+  )
+}
+
+export function SnapshotView() {
+  const [request, setRequest] = useState<{ request: SnapshotRequest; cells: CellPlan[] } | null>(null)
+  const markerRef = useRef<HTMLDivElement>(null)
+  /** The frames of the current request that are drawn, and the images that did not load. */
+  const progress = useRef({ requestId: 0, done: 0, missing: 0, failed: false })
+
+  useEffect(
+    () =>
+      window.space.onSnapshotRequest((next) => {
+        progress.current = { requestId: next.requestId, done: 0, missing: 0, failed: false }
+        setRequest({ request: next, cells: cellsOf(next) })
+      }),
+    []
+  )
+
+  const req = request?.request
+  useLayoutEffect(() => {
+    if (req) document.body.style.background = req.cells?.gapColor ?? req.background
+  }, [req])
+
+  /** A frame is drawn (or failed): when all are, set the marker (see main/snapshot.ts) and answer. */
+  const frameDone = (requestId: number, count: number, result: number | Error): void => {
+    const state = progress.current
+    if (state.requestId !== requestId || state.failed) return
+    if (result instanceof Error) {
+      state.failed = true
+      window.space.snapshotReady({ requestId, ok: false, error: result.message })
+      return
+    }
+    state.missing += result
+    if (++state.done < count) return
+    // The marker goes on after every frame's ink is set, so a frame that shows it shows all the ink.
+    const marker = markerRef.current
+    if (marker) marker.style.background = markerColour(requestId)
+    void frame().then(() => {
+      if (progress.current.requestId === requestId) window.space.snapshotReady({ requestId, ok: true, missingImages: state.missing })
+    })
+  }
+
+  return (
+    <div className="snapshot" style={req ? { width: req.width, height: req.height + 1, background: req.cells?.gapColor ?? req.background } : undefined}>
+      {/* A fresh tree per request: nothing of an earlier capture (styles of a scene moment, measured boxes) carries over. */}
+      {request?.cells.map((cell, i) => (
+        <SnapshotFrame key={`${request.request.requestId}-${i}`} req={request.request} cell={cell} onDone={(result) => frameDone(request.request.requestId, request.cells.length, result)} />
+      ))}
+      <div className="snapshot__marker" ref={markerRef} style={req ? { top: req.height } : undefined} />
     </div>
   )
 }

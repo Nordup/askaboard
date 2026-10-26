@@ -1,9 +1,10 @@
-import type { BoardRect, LearnerNews } from '@shared/space-api'
+import type { BoardRect, LearnerNews, NewsItem } from '@shared/space-api'
 import { getAgentLook, setAgentLook } from './state'
 
 /**
- * Board news: what the learner drew or erased on the open board, delivered
- * once to each agent app.
+ * Board news: what the learner did on the open board (drew, erased, added,
+ * restored, moved, resized, edited or deleted items), delivered once to each
+ * agent app.
  *
  * Per agent app (the client label: "Codex", "Claude Code", …), learning folder
  * and board, the app keeps the board seq up to which the learner's changes
@@ -64,7 +65,7 @@ export class BoardNews {
         setAgentLook(client, root, board, { seq: news.cursor, at: state.at, lookSeq: Math.min(state.lookSeq, news.cursor) })
         return ''
       }
-      if (!news.added.length && !news.erased.length && !news.scenePauses?.length) return ''
+      if (!news.added.length && !news.erased.length && !news.items.length && !news.scenePauses?.length) return ''
       const now = Date.now()
       setAgentLook(client, root, board, { seq: news.cursor, at: now, lookSeq: state.lookSeq })
       return formatNews(news, state.at, now)
@@ -95,11 +96,55 @@ const strokes = (count: number): string => `${count} stroke${count === 1 ? '' : 
 const box = (r: BoardRect): string => `${Math.round(r.width)}×${Math.round(r.height)} at ${Math.round(r.x)}, ${Math.round(r.y)}`
 
 const MAX_GROUPS = 4
+/** Items named per kind of change; the rest are counted. */
+const MAX_ITEMS = 4
+
+/** The verbs, in the order the line names them. */
+const VERBS: Array<[NewsItem['change'], string]> = [
+  ['added', 'added'],
+  ['restored', 'restored'],
+  ['moved', 'moved'],
+  ['resized', 'resized'],
+  ['edited', 'edited'],
+  ['changed', 'changed'],
+  ['deleted', 'deleted']
+]
+
+/** "600 pt right, 40 pt up", or '' for no offset. */
+function offsetWords(offset: NewsItem['offset']): string {
+  if (!offset) return ''
+  const parts: string[] = []
+  if (Math.round(offset.dx)) parts.push(`${Math.abs(Math.round(offset.dx))} pt ${offset.dx > 0 ? 'right' : 'left'}`)
+  if (Math.round(offset.dy)) parts.push(`${Math.abs(Math.round(offset.dy))} pt ${offset.dy > 0 ? 'down' : 'up'}`)
+  return parts.join(', ')
+}
+
+/** One item: 'your image "Fig 2A" 600 pt right (now 1100×800 at 4200, 0)'. */
+function itemWords(item: NewsItem): string {
+  const offset = offsetWords(item.offset)
+  const where = item.bounds && item.change !== 'deleted' ? ` (${item.change === 'added' ? '' : 'now '}${box(item.bounds)})` : ''
+  return `${item.label}${offset ? ` ${offset}` : ''}${where}`
+}
+
+/** One clause per kind of change: 'moved your image "Fig 2A" 600 pt right (now …); ink group g3 …'. */
+function itemClauses(items: readonly NewsItem[]): string[] {
+  const clauses: string[] = []
+  for (const [change, verb] of VERBS) {
+    const these = items.filter((item) => item.change === change)
+    if (!these.length) continue
+    const named = these.slice(0, MAX_ITEMS).map(itemWords)
+    const more = these.length - MAX_ITEMS
+    if (more > 0) named.push(`${more} more item${more === 1 ? '' : 's'}`)
+    clauses.push(`${verb} ${named.join('; ')}`)
+  }
+  return clauses
+}
 
 /**
  * One line, facts only. For example:
  * Board news for "Stars", since your last look or news 2 min ago: the learner drew 9 strokes:
- * ink group g12 (280×210 at 310, -40) right of your SVG "Thermal spectra". The last change was 40 s ago.
+ * ink group g12 (280×210 at 310, -40) right of your SVG "Thermal spectra", and moved your image "Fig 2A"
+ * 600 pt right (now 1100×800 at 4200, 0). The last change was 40 s ago.
  */
 export function formatNews(news: LearnerNews, since: number, now: number): string {
   const clauses: string[] = []
@@ -114,12 +159,13 @@ export function formatNews(news: LearnerNews, since: number, now: number): strin
     clauses.push(`drew ${strokes(news.added.length)}${groups.length ? `: ${groups.join('; ')}` : ''}`)
   }
   if (news.erased.length) clauses.push(`erased ${strokes(news.erased.length)}${news.erasedWhere ? ` ${news.erasedWhere}` : ''}`)
-  const times = [...news.added, ...news.erased].map((stroke) => stroke.at ?? 0).filter((at) => at > 0)
+  clauses.push(...itemClauses(news.items))
+  const times = [...news.added, ...news.erased, ...news.items].map((change) => change.at ?? 0).filter((at) => at > 0)
   const last = times.length ? Math.max(...times) : null
   // A live scene that paused because the learner started drawing.
   const pauses = (news.scenePauses ?? []).map(
     (pause) =>
-      `Your scene ${pause.name ? `"${pause.name}"` : pause.scene} paused${pause.step ? ` at step "${pause.step}"` : ''} (${pause.t} s of ${Math.round(pause.duration * 10) / 10} s) because the learner started drawing; scene_control resume continues it.`
+      `Your scene ${pause.name ? `"${pause.name}"` : pause.scene} paused${pause.step ? ` at step "${pause.step}"` : ''} (${pause.t} s of ${Math.round(pause.duration * 10) / 10} s) because the learner started drawing; play_scene resume continues it.`
   )
   return [
     clauses.length ? `Board news for "${news.boardName}", since your last look or news ${ago(now - since)} ago: the learner ${clauses.join(', and ')}.` : `Board news for "${news.boardName}":`,

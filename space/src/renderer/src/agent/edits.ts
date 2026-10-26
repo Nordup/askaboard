@@ -5,14 +5,14 @@ import { nodesToHtml } from '../board/html'
 import { parentKey, ROOT, withDescendants, isFlowed } from '../board/scene'
 import type { Region } from '../board/types'
 import { liveReport, liveStatus, liveSummary } from '../live-pixels/registry'
-import { runScene, previewScene, sceneControl, sceneContext } from '../live/run'
+import { runScene, sceneDraft, sceneFrames, sceneControl, sceneContext } from '../live/run'
 import { isGroupId, type InkGroup, type InkGroupTracker } from './groups'
 import { resolveTarget, sceneOf, type Scene } from './placement'
 
 /**
  * The agent's board tools that run in the renderer against the live board:
- * the reads (get_tree, get_node_info, get_html) and live scenes (run_scene,
- * scene_control), the one way agents write.
+ * the reads (get_tree, get_node_info, get_html) and live scenes (write_scene,
+ * preview_scene, play_scene), the one way agents write.
  */
 
 export interface EditContext {
@@ -180,8 +180,10 @@ export async function runEditTool(ctx: EditContext, tool: AgentToolName, args: R
     case 'runScene': {
       return runScene({ board: ctx.board, scene: () => scene(ctx), tracker: ctx.tracker }, args)
     }
-    case 'previewScene':
-      return previewScene({ board: ctx.board, scene: () => scene(ctx), tracker: ctx.tracker }, args)
+    case 'sceneDraft':
+      return sceneDraft({ board: ctx.board, scene: () => scene(ctx), tracker: ctx.tracker }, args)
+    case 'sceneFrames':
+      return sceneFrames({ board: ctx.board, scene: () => scene(ctx), tracker: ctx.tracker }, args)
     case 'sceneControl':
       return sceneControl({ board: ctx.board, scene: () => scene(ctx), tracker: ctx.tracker }, args)
   }

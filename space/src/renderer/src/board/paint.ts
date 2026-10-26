@@ -1,5 +1,5 @@
 import { inkBounds, pressureWidth, regionsIntersect } from './geometry'
-import { revealPoints, type NodeOverride, type PlaybackFrame } from './playback'
+import { revealPoints, type NodeOverride, type PlaybackFrame, type PlaybackTip } from './playback'
 import type { Camera, InkNode, Point, Region } from './types'
 
 type StrokeItem = InkNode
@@ -199,10 +199,298 @@ function drawPointer(context: CanvasRenderingContext2D, point: Point, color: str
   context.restore()
 }
 
+function drawTips(context: CanvasRenderingContext2D, tips: readonly PlaybackTip[], zoom: number): void {
+  for (const tip of tips) {
+    if (tip.kind === 'pointer') drawPointer(context, tip.point, tip.color, tip.size, zoom, tip.alpha ?? 1)
+    else drawTip(context, tip.point, tip.color, tip.size, zoom)
+  }
+}
+
+/** The board's ink for one paint (see InkLayers). */
+export interface InkPaint {
+  /** The committed ink in paint order. The same array while it is the same. */
+  inks: readonly PaintInk[]
+  /** Ghost ink of the playing scenes (removed by a scene). The same array while it is the same. */
+  ghosts: readonly PaintInk[]
+  /** Ink that exists only now (changing ink objects), in world coordinates. Their points change from frame to frame. */
+  transients: readonly InkNode[]
+  overrides: ReadonlyMap<string, NodeOverride> | null
+  tips: readonly PlaybackTip[]
+  selected: readonly string[]
+  viewport: Point
+  camera: Camera
+}
+
+/** How long a stroke counts as changing after its override last changed. */
+const HOLD_MS = 300
+/** Changing strokes closer than this in the paint order share one run (drawing the strokes between costs less than another picture). */
+const RUN_GAP = 48
+/** At most this many runs (each run but the first has a cached picture of the strokes before it). */
+const MAX_RUNS = 3
+/** How many strokes a new run reaches past its last changing stroke: a scene draws its strokes in order. */
+const RUN_AHEAD = 16
+
+type Run = { lo: number; hi: number }
+
+/** The runs [lo, hi) that hold the given positions: positions closer than RUN_GAP share a run, and the closest runs merge down to MAX_RUNS. */
+function runsOf(positions: number[]): Run[] {
+  positions.sort((a, b) => a - b)
+  const runs: Run[] = []
+  for (const at of positions) {
+    const last = runs[runs.length - 1]
+    if (last && at - last.hi < RUN_GAP) last.hi = Math.max(last.hi, at + 1)
+    else runs.push({ lo: at, hi: at + 1 })
+  }
+  while (runs.length > MAX_RUNS) {
+    let closest = 0
+    for (let i = 1; i < runs.length - 1; i++) if (runs[i + 1].lo - runs[i].hi < runs[closest + 1].lo - runs[closest].hi) closest = i
+    runs[closest].hi = runs[closest + 1].hi
+    runs.splice(closest + 1, 1)
+  }
+  return runs
+}
+
+const strokesIn = (runs: readonly Run[]): number => runs.reduce((sum, run) => sum + run.hi - run.lo, 0)
+
 /**
- * Paint the committed items: selection glow first, then highlighters, then
- * pen ink on top. During live-scene playback, overrides change how nodes
- * show, ghost ink (removed by the scene) shows too, and pen tips go on top.
+ * The board's ink on two canvases, so that a playback frame paints only the
+ * ink that changes.
+ *
+ * The paint order is: selection glow, highlighters, then pen ink (each in
+ * board order, ghosts after the committed ink, changing ink after both).
+ * The strokes whose override changed in the last HOLD_MS lie in a few runs
+ * of this order. The static canvas holds the glow and the strokes before the
+ * first run. The live canvas, above it, holds each run (drawn again in each
+ * frame), each followed by a cached picture of the strokes up to the next
+ * run (the last picture: up to the end), then the changing pen ink and the
+ * pen tips. So a stroke that animates under static ink still shows under it,
+ * and one animated early stroke does not repaint the unrelated ink after it.
+ * The static canvas and the pictures show each stroke with its override of
+ * the time they were drawn: a stroke that a scene keeps hidden or keeps
+ * still costs nothing per frame. They are drawn again only when the view,
+ * the selection or the committed ink changes, or when the override of a
+ * stroke outside the runs changes.
+ */
+export class InkLayers {
+  private inks: readonly PaintInk[] | null = null
+  private ghosts: readonly PaintInk[] | null = null
+  /** The committed and ghost strokes in paint order, and the position of each. */
+  private order: PaintInk[] = []
+  private position = new Map<string, number>()
+  /** The count of highlighters at the start of the order (changing highlighters go after them). */
+  private highlighters = 0
+  /** The strokes of the order that have an override now. */
+  private overridden = new Set<string>()
+  /** Nodes whose override changed since the last paint (null: any). */
+  private pending: Set<string> | null = null
+  /** The strokes whose override changed in the last HOLD_MS, with the time of the last change. */
+  private active = new Map<string, number>()
+  /** The runs of the order that the live canvas draws in each frame (none: the static canvas holds all strokes). */
+  private runs: Run[] = []
+  /** The view and the selection that the static canvas and the pictures show ('' : not drawn). */
+  private key = ''
+  /** The end of the strokes on the static canvas. */
+  private baseEnd = -1
+  /** pictures[i]: the strokes [lo, hi) after runs[i], up to the next run or the end. */
+  private pictures: Array<{ canvas: HTMLCanvasElement; lo: number; hi: number }> = []
+  private liveUsed = false
+
+  /** The overrides of these nodes changed (null: of any node). Call it for each playback frame. */
+  note(changed: ReadonlySet<string> | null | undefined): void {
+    if (!changed) this.pending = null
+    else if (this.pending) for (const id of changed) this.pending.add(id)
+  }
+
+  /** Paint the ink: the static canvas and the pictures when they are out of date, and the live canvas. */
+  paint(base: HTMLCanvasElement | null, live: HTMLCanvasElement | null, input: InkPaint): void {
+    if (!base || !live) return
+    const { overrides, transients, viewport, camera } = input
+    // The order of the committed and ghost strokes. full: every layer is out of date.
+    let full = false
+    if (input.inks !== this.inks || input.ghosts !== this.ghosts) {
+      this.inks = input.inks
+      this.ghosts = input.ghosts
+      const all = input.ghosts.length ? [...input.inks, ...input.ghosts] : input.inks
+      this.order = [...all.filter((ink) => ink.node.tool === 'highlighter'), ...all.filter((ink) => ink.node.tool !== 'highlighter')]
+      this.highlighters = this.order.findIndex((ink) => ink.node.tool !== 'highlighter')
+      if (this.highlighters < 0) this.highlighters = this.order.length
+      this.position = new Map(this.order.map((ink, i) => [ink.node.id, i]))
+      full = true
+    }
+    // The strokes whose override changed: the noted ones, or all that have or had one.
+    const changed: Iterable<string> = this.pending ?? new Set([...this.overridden, ...(overrides?.keys() ?? [])])
+    // The strokes with an override now.
+    let presence = false
+    if (!overrides) {
+      presence = this.overridden.size > 0
+      this.overridden.clear()
+    } else if (this.pending === null || full) {
+      const next = new Set<string>()
+      for (const id of overrides.keys()) if (this.position.has(id)) next.add(id)
+      presence = next.size !== this.overridden.size || [...next].some((id) => !this.overridden.has(id))
+      this.overridden = next
+    } else {
+      for (const id of this.pending) {
+        if (!this.position.has(id)) continue
+        const has = overrides.has(id)
+        if (has === this.overridden.has(id)) continue
+        if (has) this.overridden.add(id)
+        else this.overridden.delete(id)
+        presence = true
+      }
+    }
+    this.pending = new Set()
+    // The strokes that change now. A change outside the runs makes the layer that holds the stroke out of date.
+    const now = performance.now()
+    const inRuns = (at: number): boolean => this.runs.some((run) => at >= run.lo && at < run.hi)
+    const stale: number[] = []
+    for (const id of changed) {
+      const at = this.position.get(id)
+      if (at === undefined) continue
+      this.active.set(id, now)
+      if (!inRuns(at)) stale.push(at)
+    }
+    let rebuild = full || stale.length > 0
+    // The runs that this frame needs.
+    const positions: number[] = []
+    for (const [id, changedAt] of this.active) {
+      const at = this.position.get(id)
+      if (at === undefined || now - changedAt > HOLD_MS) this.active.delete(id)
+      else positions.push(at)
+    }
+    let transientHighlighter = false
+    let transientPen = false
+    for (const node of transients) {
+      if (node.tool === 'highlighter') transientHighlighter = true
+      else transientPen = true
+    }
+    // Changing highlighters go after the highlighters: a run holds that place.
+    if (transientHighlighter) positions.push(this.highlighters)
+    const needed = runsOf(positions)
+    const dpr = window.devicePixelRatio || 1
+    const key = `${viewport[0]},${viewport[1]},${dpr},${camera.center[0]},${camera.center[1]},${camera.zoom}|${input.selected.join(',')}`
+    if (key !== this.key || (presence && input.selected.length)) rebuild = full = true // the glow shows only under strokes without an override
+    else if (!needed.length) rebuild ||= this.runs.length > 0
+    else if (needed.some((run) => !this.runs.some((own) => run.lo >= own.lo && run.hi <= own.hi))) rebuild = true
+    else if (strokesIn(this.runs) - strokesIn(needed) > Math.max(64, strokesIn(needed))) rebuild = true // much more than needed
+    if (rebuild) {
+      const n = this.order.length
+      const runs = needed.map((run, i) => ({ lo: run.lo, hi: Math.min(n, run.hi + RUN_AHEAD, needed[i + 1]?.lo ?? n) }))
+      this.drawStatic(base, input, runs, key, full, stale)
+    }
+    this.drawLive(live, input, transientHighlighter, transientPen)
+  }
+
+  /**
+   * The static canvas (glow and the strokes before the first run) and the
+   * pictures after the runs, each stroke with its override now. A layer is
+   * drawn again only when its span of the order changed or holds a stale
+   * stroke (full: every layer).
+   */
+  private drawStatic(base: HTMLCanvasElement, input: InkPaint, runs: Run[], key: string, full: boolean, stale: readonly number[]): void {
+    this.runs = runs
+    this.key = key
+    const fresh = (lo: number, hi: number): boolean => !full && !stale.some((at) => at >= lo && at < hi)
+    const { viewport, camera, overrides } = input
+    const visible = visibleRegion(viewport, camera)
+    const order = this.order
+    const draw = (context: CanvasRenderingContext2D, from: number, to: number): void => {
+      for (let i = from; i < to; i++) {
+        const ink = order[i]
+        const override = overrides?.get(ink.node.id)
+        if (override?.opacity === 0) continue
+        // A moving stroke is drawn wherever it is now: skip only unmoved strokes outside the view.
+        if (!override?.matrix) {
+          const bounds = inkBounds(ink.node, ink.offset)
+          if (!bounds || !regionsIntersect(bounds, visible)) continue
+        }
+        drawInk(context, ink, 0, override)
+      }
+    }
+    const baseEnd = runs.length ? runs[0].lo : order.length
+    if (baseEnd !== this.baseEnd || !fresh(0, baseEnd)) {
+      this.baseEnd = baseEnd
+      const context = prepare(base, viewport, camera)
+      if (!context) return
+      if (input.selected.length) {
+        const selected = new Set(input.selected)
+        for (const ink of order) {
+          if (!selected.has(ink.node.id) || overrides?.has(ink.node.id)) continue
+          const bounds = inkBounds(ink.node, ink.offset)
+          if (bounds && regionsIntersect(bounds, visible)) drawGlow(context, ink, camera.zoom)
+        }
+      }
+      draw(context, 0, baseEnd)
+    }
+    // Each picture: an earlier picture of the same span when it is fresh, else drawn again.
+    const old = this.pictures
+    this.pictures = runs.map((run, i) => {
+      const lo = run.hi
+      const hi = runs[i + 1]?.lo ?? order.length
+      const same = old.findIndex((picture) => picture.lo === lo && picture.hi === hi)
+      if (same >= 0 && fresh(lo, hi)) return old.splice(same, 1)[0]
+      const picture = { canvas: old.pop()?.canvas ?? document.createElement('canvas'), lo, hi }
+      const context = prepare(picture.canvas, viewport, camera)
+      if (context) draw(context, lo, hi)
+      return picture
+    })
+    // Pictures no run uses: free their pixels.
+    for (const { canvas } of old) {
+      canvas.width = 0
+      canvas.height = 0
+    }
+  }
+
+  /** The live canvas: each run with its overrides and the picture after it, the changing pen ink, the pen tips. */
+  private drawLive(live: HTMLCanvasElement, input: InkPaint, transientHighlighter: boolean, transientPen: boolean): void {
+    const runs = this.runs
+    if (!runs.length && !input.tips.length && !transientPen) {
+      if (this.liveUsed) prepare(live, input.viewport, input.camera)
+      this.liveUsed = false
+      return
+    }
+    const context = prepare(live, input.viewport, input.camera)
+    if (!context) return
+    this.liveUsed = true
+    const { overrides, camera } = input
+    const transients = (tool: 'pen' | 'highlighter'): void => {
+      for (const node of input.transients) if ((node.tool === 'highlighter') === (tool === 'highlighter')) drawInk(context, { node, offset: [node.x, node.y] }, 0)
+    }
+    const visible = visibleRegion(input.viewport, camera)
+    const order = this.order
+    runs.forEach((run, r) => {
+      for (let i = run.lo; i < run.hi; i++) {
+        if (transientHighlighter && i === this.highlighters) transients('highlighter')
+        const ink = order[i]
+        const override = overrides?.get(ink.node.id)
+        if (override?.opacity === 0) continue
+        // A moving stroke is drawn wherever it is now: skip only unmoved strokes outside the view.
+        if (!override?.matrix) {
+          const bounds = inkBounds(ink.node, ink.offset)
+          if (!bounds || !regionsIntersect(bounds, visible)) continue
+        }
+        drawInk(context, ink, 0, override)
+      }
+      if (transientHighlighter && run.hi === this.highlighters) transients('highlighter')
+      const picture = this.pictures[r]
+      if (picture && picture.hi > picture.lo) {
+        context.save()
+        context.setTransform(1, 0, 0, 1, 0, 0)
+        context.drawImage(picture.canvas, 0, 0)
+        context.restore()
+      }
+    })
+    // Changing pen ink goes after all committed pen ink.
+    if (transientPen) transients('pen')
+    drawTips(context, input.tips, camera.zoom)
+  }
+}
+
+/**
+ * Paint the committed items at once (the snapshot window): selection glow
+ * first, then highlighters, then pen ink on top. During live-scene playback,
+ * overrides change how nodes show, ghost ink (removed by the scene) shows
+ * too, and pen tips go on top.
  */
 export function paintItems(
   canvas: HTMLCanvasElement | null,
@@ -228,10 +516,7 @@ export function paintItems(
   if (selected.size) for (const ink of strokes) if (selected.has(ink.node.id) && !overrides?.has(ink.node.id)) drawGlow(context, ink, camera.zoom)
   for (const ink of strokes) if (ink.node.tool === 'highlighter') drawInk(context, ink, 0, overrides?.get(ink.node.id))
   for (const ink of strokes) if (ink.node.tool !== 'highlighter') drawInk(context, ink, 0, overrides?.get(ink.node.id))
-  for (const tip of playback?.tips ?? []) {
-    if (tip.kind === 'pointer') drawPointer(context, tip.point, tip.color, tip.size, camera.zoom, tip.alpha ?? 1)
-    else drawTip(context, tip.point, tip.color, tip.size, camera.zoom)
-  }
+  drawTips(context, playback?.tips ?? [], camera.zoom)
 }
 
 /** Paint the stroke in progress on the overlay layer. */

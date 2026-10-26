@@ -1,5 +1,5 @@
 /**
- * Live scenes (run_scene): the description a scene program builds in the
+ * Live scenes (write_scene, preview_scene, play_scene): the description a scene program builds in the
  * sandbox (main/live-prelude.js), which the renderer turns into board items
  * and plays (renderer/src/live/). Plain data, no DOM or Node imports.
  */
@@ -20,6 +20,8 @@ export interface SceneContext {
   view: SceneBounds
   /** The learner's canvas in CSS pixels, for camera zoom. */
   viewport: [number, number]
+  /** The board's revision (its next sequence number): it changes with every edit of the board, so a draft made before an edit runs again. */
+  revision?: number
   /** The open board's path (the stage resets when it changes). */
   board?: string
   /** The renderer's record of the stage: its epoch and, per stage object id, the board items it shows through (node ids, ink group id). */
@@ -30,7 +32,7 @@ export interface SceneContext {
 export interface SceneRunOptions {
   /** Seed of the program's Math.random (the same in both passes of a run). */
   seed: number
-  /** Cut the scene at this time (scene_control cut): what starts later is dropped, what runs then holds. */
+  /** Cut the scene at this time (play_scene cut): what starts later is dropped, what runs then holds. */
   cutAt?: number | null
 }
 
@@ -73,11 +75,12 @@ interface SceneObjectBase {
   /** A carried object's state at the start of this scene (the end of the scenes before), per property. */
   base?: Partial<Record<SceneProp, number | string>>
   /**
-   * Geometry that changes over time (values, attached labels, tweened options),
-   * sampled in the sandbox: each sample holds from its t until the next one.
-   * The object's own fields hold the geometry at the end of the scene.
+   * Geometry that changes over time (values, attached labels, tweened options)
+   * is sampled in the sandbox: each sample holds from its t until the next one.
+   * The samples go to the board as frames (shared/frames.ts, by sid); this is
+   * their number. The object's own fields hold the geometry at the end of the scene.
    */
-  dyn?: SceneSample[]
+  samples?: number
 }
 
 /** The geometry of a changing object at one time. Only the fields of its kind are set. */
@@ -241,7 +244,7 @@ export interface SceneCue {
 export interface SceneStep {
   name: string
   at: number
-  /** Playback stops here until scene_control resumes it. */
+  /** Playback stops here until play_scene resume continues it. */
   pause?: boolean
 }
 
@@ -296,7 +299,7 @@ export interface SceneItem {
   step?: string
 }
 
-/** The run_scene result, as the agent sees it. */
+/** The result of a committed scene (play_scene start), as the agent sees it. */
 export interface SceneResult {
   scene: string
   duration_s: number
@@ -309,7 +312,23 @@ export interface SceneResult {
   warnings: string[]
 }
 
-/** scene_control's status. */
+/** A moment of a scene (preview_scene): its end, the end of a step (1-based number or name), a time in seconds, or one frame per step. */
+export type FrameMoment = { kind: 'end' } | { kind: 'steps' } | { kind: 'step'; step: number | string } | { kind: 't'; t: number }
+
+/** What preview_scene frames show: everything the scene makes or touches, the learner's view, a board rect, or items (object names or item ids). */
+export type FramePart = { kind: 'scene' } | { kind: 'view' } | { kind: 'region'; rect: SceneBounds } | { kind: 'items'; items: string[] }
+
+/** What write_scene reports about a draft: compiled against the board now, committing nothing. */
+export interface DraftInfo {
+  duration_s: number
+  steps: Array<{ number: number; name: string; start_s: number; length_s: number; pause?: boolean }>
+  items: { total: number; by_kind: Record<string, number>; named: Array<{ name: string; kind: string; step?: string }>; removed_by_end: number }
+  cues: Array<{ text: string; at_s: number; dur_s: number }>
+  log: string[]
+  warnings: string[]
+}
+
+/** play_scene's status. */
 export interface SceneStatus {
   playing: boolean
   scene: string | null
@@ -319,8 +338,9 @@ export interface SceneStatus {
   step: string | null
   paused: boolean
   /** When a scene stands paused: why, which scene, its step and time. */
-  paused_by?: 'pause step' | 'learner drawing' | 'scene_control pause'
+  paused_by?: 'pause step' | 'learner drawing' | 'play_scene pause'
   paused_scene?: string
+  paused_name?: string | null
   paused_step?: string | null
   paused_t?: number
   queue: Array<{ scene: string; name: string | null; duration_s: number }>

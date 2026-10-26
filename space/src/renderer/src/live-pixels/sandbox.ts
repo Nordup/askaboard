@@ -1,9 +1,14 @@
+import { runtimeCall } from './runtime'
+import { WorkerLink, type CanvasSize, type HostEvents, type HostStart, type LiveFrame, type LiveHost } from './host'
+import type { ItemClock, SceneView } from './clock'
+
 /**
- * Canvas mode of live pixel items: the agent's code runs in a sandboxed
- * worker, one per item, and paints an OffscreenCanvas that the item's
- * <canvas> shows (transferControlToOffscreen: frames go from the worker to
- * the compositor; the board's main thread never runs the agent's code and
- * never waits for it).
+ * Canvas mode of live pixel items: the agent's code is the body of a draw
+ * function that runs once per tick in a sandboxed worker, one per item. It
+ * paints an OffscreenCanvas: on the board the item's <canvas> shows it
+ * (transferControlToOffscreen: frames go from the worker to the compositor;
+ * the board's main thread never runs the agent's code and never waits for
+ * it); a step host (previews, stills) paints a canvas of the worker's own.
  *
  * The sandbox, in layers:
  * 1. A dedicated Worker: no DOM, no access to the app's objects, its own
@@ -15,9 +20,11 @@
  *    workers' channels, and same-origin requests to the app are cross-origin.
  * 3. It inherits the page's Content-Security-Policy (index.html): no network
  *    outside the app origin, no learning-folder files (space-asset:), no eval.
- * 4. Before the agent's code runs, a prelude removes the network, storage
- *    and worker APIs from the worker's global scope (fetch, XMLHttpRequest,
- *    WebSocket, importScripts, Worker, indexedDB, caches, navigator, …).
+ * 4. Before the agent's code runs, a prelude starts the tick runtime
+ *    (runtime.ts: item time, seeded Math.random, ticks, captures), then
+ *    removes the network, storage and worker APIs from the worker's global
+ *    scope (fetch, XMLHttpRequest, WebSocket, importScripts, Worker,
+ *    indexedDB, caches, navigator, …).
  * 5. The host accepts only its own message shapes from the worker.
  * The agent's code is inlined as a function body (no eval is needed, so the
  * page's CSP can stay strict).
@@ -50,11 +57,6 @@ export function boardColors(): Record<string, string> {
   }
   probe.remove()
   return colorCache
-}
-
-export interface CanvasHostEvents {
-  onTick(frames: number): void
-  onError(message: string): void
 }
 
 /** Agent-facing description of the function the code is the body of. */
@@ -99,21 +101,20 @@ const BLOCKED = [
 ]
 
 /**
- * The worker script. Placeholders: __BLOCKED__ (JSON array), __CODE__ (the
- * agent's function body). Everything the prelude needs is captured before
- * the globals go.
+ * The worker script. Placeholders: __RUNTIME__ (the tick runtime),
+ * __BLOCKED__ (JSON array), __CODE__ (the agent's function body). Everything
+ * the prelude and the runtime need is captured before the globals go.
  */
 const TEMPLATE = `'use strict';
 const __ls = (() => {
   const scope = self;
   const post = scope.postMessage.bind(scope);
   const listen = scope.addEventListener.bind(scope);
-  const raf = scope.requestAnimationFrame.bind(scope);
-  const caf = scope.cancelAnimationFrame.bind(scope);
-  const perf = scope.performance;
-  const now = perf.now.bind(perf);
+  const addListener = scope.EventTarget.prototype.addEventListener;
   const freeze = Object.freeze;
   const assign = Object.assign;
+  const kind = { post, draws: true };
+  const rt = __RUNTIME__;
   const blocked = __BLOCKED__;
   for (const name of blocked) {
     let target = scope;
@@ -123,83 +124,51 @@ const __ls = (() => {
       target = Object.getPrototypeOf(target);
     }
   }
-  return { post, listen, raf, caf, perf, now, freeze, assign };
+  return { post, listen, addListener, freeze, assign, kind, rt };
 })();
 let colors = Object.freeze({});
 const __lsDraw = (function () { return function (ctx, t, w, h, params, dt) {
 __CODE__
 }; })();
 (() => {
-  const { post, listen, raf, caf, perf, now, freeze, assign } = __ls;
-  let canvas = null, ctx = null, w = 1, h = 1, scale = 1, params = freeze({}), start = 0;
-  let running = false, handle = 0, frames = 0, lastTick = 0, last = 0, failed = false;
+  const { post, listen, addListener, freeze, assign, kind, rt } = __ls;
+  let canvas = null, ctx = null, w = 1, h = 1, scale = 1, params = freeze({});
   const state = {};
-  const fail = (error) => {
-    failed = true;
-    running = false;
-    caf(handle);
-    const message = error && error.stack ? String(error.stack) : String(error);
-    post({ type: 'error', message });
+  kind.init = (m) => {
+    canvas = m.canvas; ctx = canvas.getContext('2d');
+    addListener.call(canvas, 'contextlost', () => post({ type: 'lost' }));
+    w = m.w; h = m.h; scale = m.pw / Math.max(1e-6, m.w); params = freeze(assign({}, m.params)); colors = freeze(assign({}, m.colors));
+    canvas.width = m.pw; canvas.height = m.ph;
   };
-  const paint = () => {
-    const at = perf.timeOrigin + now();
-    const t = (at - start) / 1000;
-    const dt = last ? (at - last) / 1000 : 0;
-    last = at;
+  kind.start = () => undefined;
+  kind.tick = (t, dt) => {
     ctx.save();
     ctx.setTransform(scale, 0, 0, scale, 0, 0);
     try { __lsDraw.call(state, ctx, t, w, h, params, dt); }
-    catch (error) { ctx.restore(); fail(error); return false; }
+    catch (error) { ctx.restore(); rt.fail(error); return false; }
     ctx.restore();
-    frames++;
     return true;
   };
-  const frame = () => {
-    if (!running) return;
-    handle = raf(frame);
-    if (!paint()) return;
-    const at = now();
-    if (at - lastTick > 250) { lastTick = at; post({ type: 'tick', frames }); }
+  kind.params = (p) => { params = freeze(assign({}, p)); };
+  kind.step = () => undefined;
+  kind.resize = (m) => {
+    w = m.w; h = m.h; scale = m.pw / Math.max(1e-6, m.w);
+    if (canvas.width !== m.pw || canvas.height !== m.ph) { canvas.width = m.pw; canvas.height = m.ph; }
   };
-  const run = (on) => {
-    if (failed) return;
-    if (on && !running) { running = true; last = 0; handle = raf(frame); }
-    else if (!on && running) { running = false; caf(handle); }
-  };
-  listen('message', (event) => {
-    const m = event.data;
-    if (!m || typeof m !== 'object') return;
-    if (m.type === 'init') {
-      canvas = m.canvas; ctx = canvas.getContext('2d');
-      w = m.w; h = m.h; scale = m.scale; start = m.start; params = freeze(assign({}, m.params)); colors = freeze(assign({}, m.colors));
-      canvas.width = m.pw; canvas.height = m.ph;
-      post({ type: 'tick', frames });
-    } else if (m.type === 'size') {
-      w = m.w; h = m.h; scale = m.scale;
-      if (canvas.width !== m.pw || canvas.height !== m.ph) { canvas.width = m.pw; canvas.height = m.ph; if (!running && !failed) paint(); }
-    } else if (m.type === 'params') {
-      params = freeze(assign({}, m.params));
-    } else if (m.type === 'run') {
-      run(!!m.on);
-    } else if (m.type === 'ping') {
-      post({ type: 'pong' });
-    } else if (m.type === 'still') {
-      if (!running && !failed) paint();
-      canvas.convertToBlob({ type: 'image/png' }).then(
-        (blob) => post({ type: 'still', id: m.id, blob }),
-        () => post({ type: 'still', id: m.id, blob: null })
-      );
-    }
-  });
+  kind.capture = () => canvas.convertToBlob({ type: 'image/png' });
+  kind.message = (m) => { if (m.type === 'ping') post({ type: 'pong' }); };
+  listen('message', (event) => rt.handle(event.data));
 })();
 `
 
-/** Lines before the agent's first line in the worker script. */
-const CODE_LINE = TEMPLATE.slice(0, TEMPLATE.indexOf('__CODE__')).split('\n').length
-
 function workerSource(code: string): string {
-  return TEMPLATE.replace('__BLOCKED__', JSON.stringify(BLOCKED)).replace('__CODE__', () => code)
+  return TEMPLATE.replace('__RUNTIME__', () => runtimeCall('scope', 'kind'))
+    .replace('__BLOCKED__', () => JSON.stringify(BLOCKED))
+    .replace('__CODE__', () => code)
 }
+
+/** Lines before the agent's first line in the worker script. */
+const CODE_LINE = ((prefix: string) => prefix.slice(0, prefix.indexOf('\u0000')).split('\n').length)(workerSource('\u0000'))
 
 function workerUrl(code: string): string {
   return `data:text/javascript;charset=utf-8,${encodeURIComponent(workerSource(code))}`
@@ -211,70 +180,79 @@ function mapLines(message: string): string {
     .replace(/data:text\/javascript[^\s):]*/g, 'code')
     .replace(/code:(\d+):(\d+)/g, (_, line: string, col: string) => `line ${Number(line) - CODE_LINE + 1}:${col}`)
     .split('\n')
-    .filter((line) => !/^\s+at (frame|paint|<anonymous>)/.test(line))
+    .filter((line) => !/^\s+at (kind\.tick|draw|runTick|liveFrame|redraw|advance|<anonymous>)/.test(line))
     .slice(0, 6)
     .join('\n')
 }
 
-export interface CanvasSize {
-  /** Board points. */
-  w: number
-  h: number
-  /** Device pixels of the backing store. */
-  pw: number
-  ph: number
+function loadError(event: ErrorEvent): string {
+  const where = event.lineno ? ` (line ${event.lineno - CODE_LINE + 1})` : ''
+  return `${event.message || 'The canvas code failed to load.'}${where}`
 }
 
-/** One sandboxed worker painting one <canvas>. */
-export class CanvasHost {
+/** One sandboxed worker running one canvas item. */
+export class CanvasHost implements LiveHost {
+  readonly element: HTMLCanvasElement | null
   private worker: Worker | null
-  private stills = new Map<number, (url: string | null) => void>()
-  private nextStill = 1
+  private link: WorkerLink
   private disposed = false
 
-  constructor(
-    readonly canvas: HTMLCanvasElement,
-    code: string,
-    size: CanvasSize,
-    params: Record<string, number>,
-    start: number,
-    private events: CanvasHostEvents
-  ) {
-    const offscreen = canvas.transferControlToOffscreen()
-    const worker = new Worker(workerUrl(code), { name: 'live-canvas' })
+  constructor(start: HostStart, events: HostEvents, container: HTMLElement | null) {
+    const size = start.size
+    let offscreen: OffscreenCanvas
+    if (container) {
+      const canvas = document.createElement('canvas')
+      canvas.className = 'node-live__canvas'
+      canvas.width = size.pw
+      canvas.height = size.ph
+      container.prepend(canvas)
+      this.element = canvas
+      offscreen = canvas.transferControlToOffscreen()
+    } else {
+      this.element = null
+      offscreen = new OffscreenCanvas(size.pw, size.ph)
+    }
+    const worker = new Worker(workerUrl(start.code), { name: 'live-canvas' })
     this.worker = worker
-    worker.addEventListener('message', (event: MessageEvent) => this.receive(event.data))
+    const fail = (message: string): void => {
+      this.stop()
+      events.onError(message)
+    }
+    this.link = new WorkerLink((message) => this.worker?.postMessage(message), { ...events, onError: fail }, mapLines)
+    worker.addEventListener('message', (event: MessageEvent) => this.link.receive(event.data))
     worker.addEventListener('error', (event: ErrorEvent) => {
       event.preventDefault()
-      const where = event.lineno ? ` (line ${event.lineno - CODE_LINE + 1})` : ''
-      this.events.onError(`${event.message || 'The canvas code failed to load.'}${where}`)
-      this.stop()
+      fail(loadError(event))
     })
     worker.addEventListener('messageerror', () => undefined)
-    worker.postMessage({ type: 'init', canvas: offscreen, w: size.w, h: size.h, pw: size.pw, ph: size.ph, scale: size.pw / Math.max(1e-6, size.w), params, start, colors: boardColors() }, [offscreen])
+    worker.postMessage(
+      {
+        type: 'init',
+        canvas: offscreen,
+        seed: start.seed,
+        mode: start.mode,
+        from: start.from,
+        clock: start.clock,
+        scene: start.scene,
+        timeline: start.timeline,
+        visible: start.visible,
+        w: size.w,
+        h: size.h,
+        pw: size.pw,
+        ph: size.ph,
+        params: start.params,
+        colors: boardColors()
+      },
+      [offscreen]
+    )
   }
 
-  private receive(data: unknown): void {
-    if (!data || typeof data !== 'object') return
-    const m = data as { type?: unknown; frames?: unknown; message?: unknown; id?: unknown; blob?: unknown }
-    if (m.type === 'tick' && typeof m.frames === 'number') this.events.onTick(m.frames)
-    else if (m.type === 'error' && typeof m.message === 'string') {
-      this.events.onError(mapLines(m.message))
-      this.stop()
-    } else if (m.type === 'still' && typeof m.id === 'number') {
-      const resolve = this.stills.get(m.id)
-      if (!resolve) return
-      this.stills.delete(m.id)
-      if (!(m.blob instanceof Blob)) return resolve(null)
-      const reader = new FileReader()
-      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null)
-      reader.onerror = () => resolve(null)
-      reader.readAsDataURL(m.blob)
-    }
+  follow(clock: ItemClock, scene: SceneView): void {
+    this.worker?.postMessage({ type: 'clock', clock, scene })
   }
 
-  get alive(): boolean {
-    return this.worker !== null
+  goLive(clock: ItemClock, scene: SceneView, params: Record<string, number>): void {
+    this.worker?.postMessage({ type: 'live', clock, scene, params })
   }
 
   run(on: boolean): void {
@@ -282,43 +260,37 @@ export class CanvasHost {
   }
 
   resize(size: CanvasSize): void {
-    this.worker?.postMessage({ type: 'size', w: size.w, h: size.h, pw: size.pw, ph: size.ph, scale: size.pw / Math.max(1e-6, size.w) })
+    this.worker?.postMessage({ type: 'size', w: size.w, h: size.h, pw: size.pw, ph: size.ph })
   }
 
   setParams(params: Record<string, number>): void {
     this.worker?.postMessage({ type: 'params', params })
   }
 
-  /** The current pixels as a PNG data URL; null when the worker does not answer within `ms`. */
-  still(ms = 800): Promise<string | null> {
-    const worker = this.worker
-    if (!worker) return Promise.resolve(null)
-    const id = this.nextStill++
-    return new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        this.stills.delete(id)
-        resolve(null)
-      }, ms)
-      this.stills.set(id, (url) => {
-        clearTimeout(timer)
-        resolve(url)
-      })
-      worker.postMessage({ type: 'still', id })
-    })
+  advance(to: number, capture: boolean): Promise<LiveFrame | null> {
+    return this.link.request({ type: 'advance', to, capture })
+  }
+
+  capture(): Promise<LiveFrame | null> {
+    return this.link.request({ type: 'capture' }, 1500)
+  }
+
+  setEntered(): void {
+    // Canvas items take no input.
   }
 
   /** Terminate the worker (an endless loop ends here). The canvas keeps its last frame. */
   stop(): void {
     this.worker?.terminate()
     this.worker = null
-    for (const resolve of this.stills.values()) resolve(null)
-    this.stills.clear()
+    this.link.close()
   }
 
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
     this.stop()
+    this.element?.remove()
   }
 }
 
@@ -345,8 +317,7 @@ export function canvasSyntaxError(code: string, ms = 3000): Promise<string | nul
     const timer = setTimeout(() => done(null), ms)
     worker.addEventListener('error', (event: ErrorEvent) => {
       event.preventDefault()
-      const where = event.lineno ? ` (line ${event.lineno - CODE_LINE + 1})` : ''
-      done(`${event.message || 'The canvas code failed to load.'}${where}`)
+      done(loadError(event))
     })
     worker.addEventListener('message', () => done(null))
     worker.postMessage({ type: 'ping' })

@@ -10,7 +10,15 @@
  * defines its own `void main()` (and its own `out vec4`) is used as it is.
  * The engine declares `iTime`, `iResolution`, `iFrame`, one `uniform float`
  * per param, and the board colour tokens as `const vec3 ls_<name>`.
+ *
+ * A shader is a pure function of item time and the params (clock.ts): iTime
+ * is the item time and iFrame its grid tick. On the board a ShaderHost draws
+ * at the item clock's time on each display frame where it moved; a step host
+ * draws the asked tick at once.
  */
+
+import { itemTime, paramsAt, tickOf, timeOfTick, type ItemClock, type SceneView } from './clock'
+import { blobUrl, type CanvasSize, type HostEvents, type HostStart, type LiveFrame, type LiveHost } from './host'
 
 export interface ShaderProgram {
   program: WebGLProgram
@@ -137,23 +145,34 @@ class ShaderEngine {
   private vertex: WebGLShader | null = null
   private cache = new Map<string, CompileResult>()
   private unavailable: string | null = null
-  /** Bumped on context loss: items recompile. */
+  /** Bumped on context loss and restore: items compile again and draw. */
   generation = 0
+  private listeners = new Set<() => void>()
+
+  /** Call `listener` when the context was lost or restored. */
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+
+  private bump(): void {
+    this.generation++
+    for (const listener of this.listeners) listener()
+  }
 
   private context(): WebGL2RenderingContext | null {
     if (this.gl && !this.gl.isContextLost()) return this.gl
     if (this.unavailable) return null
     try {
       this.canvas = new OffscreenCanvas(256, 256)
+      // A lost context: the next draw makes a new one (see above); its programs are compiled again.
       this.canvas.addEventListener('webglcontextlost', (event) => {
         event.preventDefault()
         this.cache.clear()
         this.vertex = null
-        this.generation++
+        this.bump()
       })
-      this.canvas.addEventListener('webglcontextrestored', () => {
-        this.generation++
-      })
+      this.canvas.addEventListener('webglcontextrestored', () => this.bump())
       const gl = this.canvas.getContext('webgl2', { alpha: true, antialias: false, depth: false, stencil: false, preserveDrawingBuffer: true, powerPreference: 'high-performance' })
       if (!gl) {
         this.unavailable = 'WebGL 2 is not available in this window.'
@@ -227,7 +246,7 @@ class ShaderEngine {
   }
 
   /** Draw one frame of `program` at pw × ph device pixels into `target` (a 2D context of that size). */
-  render(program: ShaderProgram, pw: number, ph: number, time: number, frame: number, params: Record<string, number>, target: CanvasRenderingContext2D): boolean {
+  render(program: ShaderProgram, pw: number, ph: number, time: number, frame: number, params: Record<string, number>, target: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D): boolean {
     const gl = this.context()
     const canvas = this.canvas
     if (!gl || !canvas) return false
@@ -258,4 +277,159 @@ export const shaderEngine = new ShaderEngine()
 export function shaderError(code: string, params: Record<string, number> = {}): string | null {
   const result = shaderEngine.compile(code, params)
   return result.ok ? null : result.error
+}
+
+/** One shader item: it draws with the shared engine into the item's own 2D canvas (a <canvas> on the board, an OffscreenCanvas for a step host). */
+export class ShaderHost implements LiveHost {
+  readonly element: HTMLCanvasElement | null
+  private canvas: HTMLCanvasElement | OffscreenCanvas
+  private target: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null
+  private program: ShaderProgram | null = null
+  private generation = -1
+  private tick = -1
+  private time = -1
+  private dirty = true
+  private visible: boolean
+  private clock: ItemClock
+  private params: Record<string, number>
+  private size: CanvasSize
+  private frames = 0
+  private failed = false
+
+  constructor(
+    private start: HostStart,
+    private events: HostEvents,
+    container: HTMLElement | null
+  ) {
+    this.clock = start.clock
+    this.params = start.params
+    this.size = start.size
+    this.visible = start.visible
+    if (container) {
+      const canvas = document.createElement('canvas')
+      canvas.className = 'node-live__canvas'
+      container.prepend(canvas)
+      this.element = canvas
+      this.canvas = canvas
+    } else {
+      this.element = null
+      this.canvas = new OffscreenCanvas(1, 1)
+    }
+    this.canvas.width = this.size.pw
+    this.canvas.height = this.size.ph
+    this.target = this.canvas.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null
+    // A compile error goes out after the constructor: the item has its host by then.
+    queueMicrotask(() => this.compile())
+  }
+
+  private compile(): boolean {
+    if (this.failed) return false
+    if (this.program && this.generation === shaderEngine.generation) return true
+    this.generation = shaderEngine.generation
+    const result = shaderEngine.compile(this.start.code, this.start.params)
+    if (!result.ok) {
+      this.program = null
+      this.failed = true
+      this.events.onError(result.error)
+      return false
+    }
+    this.program = result.program
+    this.dirty = true
+    return true
+  }
+
+  /** Draw at item time `time` (s): iTime is that time, iFrame its grid tick. */
+  private draw(time: number, params: Record<string, number>): boolean {
+    if (!this.target || !this.compile() || !this.program) return false
+    const tick = tickOf(time)
+    if (!shaderEngine.render(this.program, this.size.pw, this.size.ph, time, tick, params, this.target)) return false
+    this.time = time
+    this.tick = tick
+    this.dirty = false
+    this.frames++
+    this.events.onAlive(this.frames, tick)
+    return true
+  }
+
+  /** The item time to draw: any time from 0, so a seek back before the time the host started still shows. */
+  private now(): number {
+    return Math.max(0, itemTime(this.clock))
+  }
+
+  /**
+   * One display frame (registry.ts): draw at the clock's time now when it
+   * moved or the picture is out of date. True while the host wants more
+   * frames (its time moves).
+   */
+  frame(): boolean {
+    if (this.failed || !this.visible) return false
+    if (this.generation !== shaderEngine.generation) this.dirty = true
+    const time = this.now()
+    if (time !== this.time || this.dirty) this.draw(time, this.params)
+    return this.clock.rate > 0
+  }
+
+  follow(clock: ItemClock, _scene: SceneView): void {
+    this.clock = clock
+  }
+
+  goLive(clock: ItemClock, scene: SceneView, params: Record<string, number>): void {
+    this.follow(clock, scene)
+    this.setParams(params)
+  }
+
+  run(on: boolean): void {
+    this.visible = on
+  }
+
+  setParams(params: Record<string, number>): void {
+    this.params = params
+    this.dirty = true
+  }
+
+  resize(size: CanvasSize): void {
+    this.size = size
+    this.canvas.width = size.pw
+    this.canvas.height = size.ph
+    this.dirty = true
+  }
+
+  /** A shader keeps no state from tick to tick: it draws tick `to` at once, with the timeline's params of that moment. */
+  async advance(to: number, capture: boolean): Promise<LiveFrame | null> {
+    const params = paramsAt(this.start.timeline, this.start.params, timeOfTick(to))
+    if (!this.draw(timeOfTick(to), params)) return null
+    return capture ? this.picture() : { url: null, tick: to }
+  }
+
+  async capture(): Promise<LiveFrame | null> {
+    if (this.tick < 0 || this.dirty || this.time !== this.now()) this.draw(this.now(), this.params)
+    return this.tick < 0 ? null : this.picture()
+  }
+
+  private async picture(): Promise<LiveFrame | null> {
+    const tick = this.tick
+    const canvas = this.canvas
+    try {
+      const blob = canvas instanceof OffscreenCanvas ? await canvas.convertToBlob({ type: 'image/png' }) : await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
+      return { url: await blobUrl(blob), tick }
+    } catch {
+      return { url: null, tick }
+    }
+  }
+
+  setEntered(): void {
+    // Shader items take no input.
+  }
+
+  stop(): void {
+    // Nothing runs between frames: the shared context stays, the canvas keeps its picture.
+    this.failed = true
+  }
+
+  dispose(): void {
+    this.stop()
+    this.element?.remove()
+    this.target = null
+    this.program = null
+  }
 }

@@ -25,7 +25,7 @@ const api: SpaceApi = {
   listFiles: () => ipcRenderer.invoke(IPC.listFiles),
 
   readBoard: (path) => ipcRenderer.invoke(IPC.readBoard, path),
-  writeBoard: (path, text) => ipcRenderer.invoke(IPC.writeBoard, path, text),
+  writeBoard: (path, text, info) => ipcRenderer.invoke(IPC.writeBoard, path, text, info),
   createBoard: () => ipcRenderer.invoke(IPC.createBoard),
   renameBoard: (path, newName) => ipcRenderer.invoke(IPC.renameBoard, path, newName),
   deleteBoard: (path) => ipcRenderer.invoke(IPC.deleteBoard, path),
@@ -61,7 +61,15 @@ const api: SpaceApi = {
 
   importAsset: (src) => ipcRenderer.invoke(IPC.importAsset, src),
   onSnapshotRequest: (listener) => listen(IPC.snapshotRequest, listener),
-  snapshotReady: (reply) => ipcRenderer.send(IPC.snapshotReady, reply)
+  snapshotReady: (reply) => ipcRenderer.send(IPC.snapshotReady, reply),
+  framesPort: () => ipcRenderer.send(IPC.framesPort)
 }
+
+// A MessagePort cannot cross the context bridge: the page gets it as a window message (renderer/live/frames.ts).
+// The target origin is '*': a file:// page has an opaque origin, which no origin string matches (the message holds only the port, for this window).
+const page = globalThis as unknown as { postMessage(message: string, targetOrigin: string, transfer: unknown[]): void }
+ipcRenderer.on(IPC.framesPort, (event) => {
+  page.postMessage('ls-frames-port', '*', event.ports)
+})
 
 contextBridge.exposeInMainWorld('space', api)

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type CSSProperties, type Ref } from 'react'
 import { flushSync } from 'react-dom'
-import { isContent, isFrame, isInk, isInkHost, isKnown, isLive, newItemId, stampChanged, type Author, type BoardDoc, type NodeStyle, type Removal } from '@shared/board-format'
+import { isContent, isFrame, isInk, isInkHost, isKnown, isLive, newItemId, stampChanged, type Author, type BoardDoc, type NodeStyle, type Removal, type Revision } from '@shared/board-format'
 import { isEditableTarget } from '../lib/keys'
 import type { ToolId } from '../tools'
 import { boardKeyAction, hasNodeClipboard, readNodeClipboard, writeNodeClipboard, type BoardKeyAction } from './clipboard'
@@ -19,9 +19,9 @@ import {
   zoomAt
 } from './geometry'
 import type { BoardHistory } from './history'
-import { paintActive, paintItems, type PaintInk } from './paint'
+import { InkLayers, paintActive, type PaintInk } from './paint'
 import { enterLive, enteredLive, liveInput, setLivePlayback } from '../live-pixels/registry'
-import { applyElementOverride, clearElementOverride, type PlaybackFrame } from './playback'
+import { applyElementOverride, clearElementOverride, type NodeOverride, type PlaybackFrame } from './playback'
 import {
   addInkLayout,
   boundsOf,
@@ -94,7 +94,7 @@ export interface BoardHandle {
    * so the layout cache has the new nodes' bounds. With `step`, every commit
    * with the same key that follows it directly (no other edit, undo or redo
    * between them) joins that one undo step: an action made of several
-   * commits (scene_control replace, cut, skip) is one step for the learner.
+   * commits (play_scene start of a scene that is on the board, cut, clear_queue) is one step for the learner.
    */
   agentCommit(next: BoardNode[], options?: { step?: string }): void
   /**
@@ -124,7 +124,7 @@ export interface LiveBoardState {
   /** World bounds of a node, from the layout cache. */
   bounds(id: string): Region | null
   /** Every ink node with its world offset, in draw order. */
-  inks(): PaintInk[]
+  inks(): readonly PaintInk[]
   /** The layout cache: world boxes and child origins. */
   layout(): ReadonlyMap<string, LayoutBox>
   /** Who last changed a node in this app session ("learner" or "agent"), when known. */
@@ -153,8 +153,12 @@ export interface BoardProps {
   width: number
   onDocChange(doc: BoardDoc): void
   onCameraChange(camera: Camera): void
-  /** Nodes left the board (erase, cut, delete, undo). Each removal has its own seq. */
-  onRemoved?(removed: Removal[]): void
+  /**
+   * A commit stamped nodes: the ones that left the board (erase, cut, delete,
+   * undo; each removal has its own seq) and the ones that took a new seq, with
+   * their state before (revisions). `by` made the change.
+   */
+  onChanges?(change: { removed: Removal[]; revisions: Revision[]; by: Author }): void
   ref?: Ref<BoardHandle>
 }
 
@@ -288,7 +292,7 @@ function resizedBox(box: Region, handle: Handle, delta: Point, keepAspect: boole
   return { x: left, y: top, width: right - left, height: bottom - top }
 }
 
-export function Board({ doc, history, initialCamera, tool, color, width, onDocChange, onCameraChange, onRemoved, ref }: BoardProps) {
+export function Board({ doc, history, initialCamera, tool, color, width, onDocChange, onCameraChange, onChanges, ref }: BoardProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const inkRef = useRef<HTMLCanvasElement>(null)
   const activeInkRef = useRef<HTMLCanvasElement>(null)
@@ -314,8 +318,11 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const selectedIdsRef = useRef<string[]>([])
   const pasteAnchorRef = useRef<Point | null>(null)
   const spaceRef = useRef(false)
+  const liveInkRef = useRef<HTMLCanvasElement>(null)
+  const inkLayersRef = useRef<InkLayers>(null as unknown as InkLayers)
+  inkLayersRef.current ??= new InkLayers()
   const paintFrameRef = useRef<number | null>(null)
-  const dirtyLayersRef = useRef({ committed: false, active: false })
+  const dirtyLayersRef = useRef({ committed: false, active: false, playback: false })
   const editingRef = useRef<EditingState | null>(null)
   const measureFrameRef = useRef<number | null>(null)
   /** Live-scene playback: the frame shown now, the ghost layer, and the elements it changed. */
@@ -323,7 +330,14 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const ghostRootRef = useRef<HTMLDivElement>(null)
   const ghostElementsRef = useRef(new Map<string, HTMLElement>())
   const ghostNodesRef = useRef<readonly BoardNode[]>([])
-  const playbackTouchedRef = useRef(new Set<HTMLElement>())
+  const ghostByIdRef = useRef<ReadonlyMap<string, BoardNode>>(new Map())
+  /** The element of each node that shows an override now. */
+  const appliedRef = useRef(new Map<string, HTMLElement>())
+  /** The overrides with live item params (for the live pixel registry), and what it got last. */
+  const liveParamsRef = useRef(new Map<string, NodeOverride>())
+  const liveSentRef = useRef<{ dirty: boolean; clocks: PlaybackFrame['clocks'] | null; on: boolean }>({ dirty: false, clocks: null, on: false })
+  /** Pen tips and changing ink in the last frame (the ink canvas paints again when they go). */
+  const inkMomentRef = useRef({ tips: 0, inks: 0 })
   const [ghostIndex, setGhostIndex] = useState<SceneIndex | null>(null)
 
   const [camera, setCamera] = useState<Camera>(cameraRef.current)
@@ -350,18 +364,26 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const onCameraChangeRef = useRef(onCameraChange)
   onDocChangeRef.current = onDocChange
   onCameraChangeRef.current = onCameraChange
-  const onRemovedRef = useRef(onRemoved)
-  onRemovedRef.current = onRemoved
+  const onChangesRef = useRef(onChanges)
+  onChangesRef.current = onChanges
 
   // ---------- Painting (batched to one frame) ----------
 
-  const paintInks = useCallback((): PaintInk[] => {
+  /** Every ink node with its world offset, in paint order: the same array while the nodes and the layout are the same. */
+  const paintInksRef = useRef<{ index: SceneIndex | null; layout: LayoutMap | null; list: readonly PaintInk[] }>({ index: null, layout: null, list: [] })
+  const paintInks = useCallback((): readonly PaintInk[] => {
+    const memo = paintInksRef.current
     const layout = layoutRef.current
     const index = indexRef.current
-    return inkPaintOrder(index).map((node) => {
-      const box = layout.get(node.id)
-      return { node, offset: box ? [box.ox, box.oy] : inkOffset(node, index.byId, layout) }
-    })
+    if (memo.index !== index || memo.layout !== layout) {
+      const list: PaintInk[] = inkPaintOrder(index).map((node) => {
+        const box = layout.get(node.id)
+        return { node, offset: box ? [box.ox, box.oy] : inkOffset(node, index.byId, layout) }
+      })
+      paintInksRef.current = { index, layout, list }
+      return list
+    }
+    return memo.list
   }, [])
 
   const applyContentTransform = useCallback(() => {
@@ -374,57 +396,99 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     domCameraRef.current = cam
   }, [])
 
-  /** Ghost ink of the playing scene, at its world position (ghosts are top level). */
-  const ghostInks = useCallback((): PaintInk[] => {
-    const out: PaintInk[] = []
-    for (const node of ghostNodesRef.current) if (isInk(node)) out.push({ node, offset: [node.x, node.y] })
-    // Ink that exists only at this moment of a scene (changing ink objects).
-    for (const node of playbackRef.current?.inks ?? []) if (isInk(node)) out.push({ node, offset: [node.x, node.y] })
-    return out
+  /** Ghost ink of the playing scenes, at its world position (ghosts are top level): the same array while the ghosts are the same. */
+  const ghostInksRef = useRef<{ ghosts: readonly BoardNode[] | null; list: readonly PaintInk[] }>({ ghosts: null, list: [] })
+  const ghostInks = useCallback((): readonly PaintInk[] => {
+    const ghosts = ghostNodesRef.current
+    if (ghostInksRef.current.ghosts !== ghosts) {
+      const list: PaintInk[] = []
+      for (const node of ghosts) if (isInk(node)) list.push({ node, offset: [node.x, node.y] })
+      ghostInksRef.current = { ghosts, list }
+    }
+    return ghostInksRef.current.list
   }, [])
 
   const applyPlaybackRef = useRef<() => void>(() => undefined)
 
-  /** Put the playback overrides on content elements (and take them off the ones it no longer covers). */
-  const applyPlaybackToDom = useCallback(() => {
+  /**
+   * Put the playback overrides on content elements, and take them off the
+   * ones they no longer cover: for the nodes in `changed`, or for every node
+   * (null). An element writes only the values that differ from the override
+   * it shows (applyElementOverride).
+   */
+  const applyPlaybackToDom = useCallback((changed: ReadonlySet<string> | null = null) => {
     const frame = playbackRef.current
-    const touched = new Set<HTMLElement>()
-    if (frame) {
-      const byId = indexRef.current.byId
-      const ghosts = new Map(ghostNodesRef.current.map((node) => [node.id, node]))
-      for (const [id, override] of frame.overrides) {
-        const live = elementsRef.current.get(id)
-        const element = live ?? ghostElementsRef.current.get(id)
-        if (!element || !element.isConnected) continue
-        const node = live ? byId.get(id) : ghosts.get(id)
-        if (!node || isInk(node)) continue
-        const box = live ? layoutRef.current.get(id) : null
-        const origin: Point = box ? [box.x, box.y] : [(node as ContentNode).x, (node as ContentNode).y]
-        const own = Number((node as ContentNode).style?.opacity ?? '1')
-        applyElementOverride(element, override, origin, Number.isFinite(own) ? own : 1)
-        touched.add(element)
+    const applied = appliedRef.current
+    const live = liveParamsRef.current
+    const sent = liveSentRef.current
+    const show = (id: string): void => {
+      const override = frame?.overrides.get(id)
+      if (override?.params) {
+        if (live.get(id) !== override) {
+          live.set(id, override)
+          sent.dirty = true
+        }
+      } else if (live.delete(id)) sent.dirty = true
+      const before = applied.get(id)
+      const own = elementsRef.current.get(id)
+      const element = own ?? ghostElementsRef.current.get(id)
+      const node = override && element?.isConnected ? (own ? indexRef.current.byId.get(id) : ghostByIdRef.current.get(id)) : undefined
+      if (before && before !== element) clearElementOverride(before)
+      if (!override || !element || !node || isInk(node)) {
+        if (before === element && before) clearElementOverride(before)
+        applied.delete(id)
+        return
       }
+      const box = own ? layoutRef.current.get(id) : null
+      const origin: Point = box ? [box.x, box.y] : [(node as ContentNode).x, (node as ContentNode).y]
+      const opacity = Number((node as ContentNode).style?.opacity ?? '1')
+      applyElementOverride(element, override, origin, Number.isFinite(opacity) ? opacity : 1)
+      applied.set(id, element)
     }
-    setLivePlayback(frame)
-    for (const element of playbackTouchedRef.current) if (!touched.has(element)) clearElementOverride(element)
-    playbackTouchedRef.current = touched
+    if (frame && changed) for (const id of changed) show(id)
+    else {
+      for (const id of [...applied.keys()]) if (!frame?.overrides.has(id)) show(id)
+      for (const id of [...live.keys()]) if (!frame?.overrides.has(id)) show(id)
+      if (frame) for (const id of frame.overrides.keys()) show(id)
+    }
+    // Live pixel items: their params and scene clocks, when they changed.
+    if (!frame) {
+      if (sent.on) setLivePlayback(null)
+      liveSentRef.current = { dirty: false, clocks: null, on: false }
+    } else if (sent.dirty || frame.clocks !== sent.clocks) {
+      setLivePlayback({ overrides: live, clocks: frame.clocks })
+      liveSentRef.current = { dirty: false, clocks: frame.clocks, on: true }
+    }
   }, [])
   applyPlaybackRef.current = applyPlaybackToDom
 
   const requestPaint = useCallback(
-    (layers: { committed?: boolean; active?: boolean }) => {
-      if (layers.committed) dirtyLayersRef.current.committed = true
-      if (layers.active) dirtyLayersRef.current.active = true
+    (layers: { committed?: boolean; active?: boolean; playback?: boolean }) => {
+      const dirty = dirtyLayersRef.current
+      if (layers.committed) dirty.committed = true
+      if (layers.active) dirty.active = true
+      if (layers.playback) dirty.playback = true
       if (paintFrameRef.current !== null) return
       paintFrameRef.current = requestAnimationFrame(() => {
         paintFrameRef.current = null
         const dirty = dirtyLayersRef.current
-        dirtyLayersRef.current = { committed: false, active: false }
-        if (dirty.committed) {
-          applyContentTransform()
-          paintItems(inkRef.current, paintInks(), viewportRef.current, cameraRef.current, new Set(selectedIdsRef.current), playbackRef.current, ghostInks())
-        }
+        dirtyLayersRef.current = { committed: false, active: false, playback: false }
+        // The learner's stroke first: it never waits for the scene's ink.
         if (dirty.active) paintActive(activeInkRef.current, activeRef.current, viewportRef.current, cameraRef.current)
+        if (dirty.committed) applyContentTransform()
+        if (dirty.committed || dirty.playback) {
+          const frame = playbackRef.current
+          inkLayersRef.current.paint(inkRef.current, liveInkRef.current, {
+            inks: paintInks(),
+            ghosts: ghostInks(),
+            transients: (frame?.inks ?? []) as readonly InkNode[],
+            overrides: frame?.overrides ?? null,
+            tips: frame?.tips ?? [],
+            selected: selectedIdsRef.current,
+            viewport: viewportRef.current,
+            camera: cameraRef.current
+          })
+        }
       })
     },
     [applyContentTransform, ghostInks, paintInks]
@@ -446,15 +510,15 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const measure = useCallback(() => {
     const root = contentRootRef.current
     // Playback transforms are only a look: measure the final layout without them.
-    const playing = playbackTouchedRef.current.size > 0
-    if (playing) for (const element of playbackTouchedRef.current) clearElementOverride(element)
+    const applied = appliedRef.current
+    const playing = applied.size > 0
+    if (playing) for (const element of applied.values()) clearElementOverride(element)
+    applied.clear()
     const layout: LayoutMap = root ? measureContent(root, elementsRef.current, domCameraRef.current.zoom) : new Map()
-    if (playing) {
-      playbackTouchedRef.current = new Set()
-      applyPlaybackRef.current()
-    }
     addInkLayout(indexRef.current, layout)
     layoutRef.current = layout
+    // Back on, from the new layout (an element's transform is relative to its layout box).
+    if (playing || playbackRef.current) applyPlaybackRef.current()
     setLayoutVersion((version) => version + 1)
     requestPaint({ committed: true })
   }, [requestPaint])
@@ -485,10 +549,9 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   // Measure after every content render, before the browser paints.
   useLayoutEffect(() => {
     applyContentTransform()
+    // It also puts the playback overrides back on every element (a new one, as a ghost, needs its override now).
     measure()
-    // A re-rendered element lost nothing it needs, but a new one (a ghost) needs its override now.
-    if (playbackRef.current) applyPlaybackToDom()
-  }, [index, editingId, ghostIndex, applyContentTransform, measure, applyPlaybackToDom])
+  }, [index, editingId, ghostIndex, applyContentTransform, measure])
 
   useEffect(() => {
     void document.fonts?.ready.then(() => requestMeasure())
@@ -615,7 +678,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       }
       const removed = stamped.removed.map((removal) => ({ ...removal, bounds: layoutRef.current.get(removal.node.id) ?? null, by }))
       setNodes(stamped.nodes)
-      if (removed.length) onRemovedRef.current?.(removed)
+      onChangesRef.current?.({ removed, revisions: stamped.revisions, by })
       emit()
       return true
     },
@@ -627,12 +690,19 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     (snapshot: BoardNode[] | null) => {
       if (!snapshot) return
       stepKeyRef.current = null
+      const firstSeq = nextSeqRef.current
       const stamped = stampChanged(nodesRef.current, snapshot, nextSeqRef.current)
       nextSeqRef.current = stamped.nextSeq
       // Undo and redo are the learner's own actions (agents have no undo).
+      const now = Date.now()
+      for (const node of stamped.nodes) {
+        if (node.seq < firstSeq) continue
+        editorsRef.current.set(node.id, 'learner')
+        timesRef.current.set(node.id, now)
+      }
       const removed = stamped.removed.map((removal) => ({ ...removal, bounds: layoutRef.current.get(removal.node.id) ?? null, by: 'learner' as const }))
       setNodes(stamped.nodes)
-      if (removed.length) onRemovedRef.current?.(removed)
+      onChangesRef.current?.({ removed, revisions: stamped.revisions, by: 'learner' })
       setSelectedIds([])
       emit()
     },
@@ -1335,15 +1405,35 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       selectAll: () => selectAllRef.current(),
       setPlayback: (frame) => {
         const ghosts = frame?.ghosts ?? []
-        if (ghosts !== ghostNodesRef.current) {
+        const ghostsChanged = ghosts !== ghostNodesRef.current
+        playbackRef.current = frame
+        if (ghostsChanged) {
           ghostNodesRef.current = ghosts
+          ghostByIdRef.current = new Map(ghosts.map((node) => [node.id, node]))
           const content = ghosts.filter((node) => !isInk(node))
           // The ghost layer renders before this returns, so its elements get their overrides now.
           flushSync(() => setGhostIndex(content.length ? buildIndex(content) : null))
         }
-        playbackRef.current = frame
-        applyPlaybackToDom()
-        requestPaint({ committed: true })
+        const changed = ghostsChanged ? null : (frame?.changed ?? null)
+        applyPlaybackToDom(changed)
+        inkLayersRef.current.note(frame ? changed : null)
+        // The ink canvas paints again when an ink node's override changed, or for pen tips and changing ink.
+        const moment = inkMomentRef.current
+        const tips = frame?.tips.length ?? 0
+        const inks = frame?.inks?.length ?? 0
+        let ink = !frame || !changed || tips > 0 || inks > 0 || moment.tips > 0 || moment.inks > 0
+        if (!ink && changed) {
+          const byId = indexRef.current.byId
+          for (const id of changed) {
+            const node = byId.get(id) ?? ghostByIdRef.current.get(id)
+            if (node && isInk(node)) {
+              ink = true
+              break
+            }
+          }
+        }
+        inkMomentRef.current = { tips, inks }
+        if (ink) requestPaint({ playback: true })
         // The end of playback: measure the final layout once more.
         if (!frame) requestMeasure()
       }
@@ -1540,6 +1630,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       <ContentLayer index={index} editingId={editingId} ctx={contentCtx} rootRef={contentRootRef} />
       {ghostIndex && <ContentLayer index={ghostIndex} editingId={null} ctx={ghostCtx} rootRef={ghostRootRef} />}
       <canvas className="board__ink" ref={inkRef} />
+      <canvas className="board__ink board__ink--live" ref={liveInkRef} aria-hidden="true" />
       <canvas className="board__active" ref={activeInkRef} aria-hidden="true" />
       {lassoPoints && lassoPoints.length > 1 && (
         <svg className="board__lasso" viewBox={`0 0 ${viewport[0]} ${viewport[1]}`} aria-hidden="true">
