@@ -1,7 +1,7 @@
 // Why is the volume of a sphere 4/3 π r³? Archimedes' slicing argument, drawn live:
 // at every height h, a slice of the half sphere has the same area as a slice of
 // a cylinder with a cone taken out. So half sphere = cylinder − cone = πr³ − ⅓πr³.
-// Run it with run_scene (see the scene topic of get_guide).
+// Run it with write_scene, then play_scene start (see the scene topic of get_guide).
 
 const v = board.view
 const R = 120

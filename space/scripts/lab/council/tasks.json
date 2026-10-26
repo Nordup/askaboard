@@ -88,5 +88,14 @@
       "time",
       "images"
     ]
+  },
+  "string-wave": {
+    "title": "Wave on a string",
+    "text": "Show me how a wave travels along a string.",
+    "covers": [
+      "motion",
+      "ink",
+      "a simple story"
+    ]
   }
 }

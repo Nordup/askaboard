@@ -6,7 +6,7 @@
  *
  * Start the app with SPACE_REMOTE_DEBUG=<port> (dev builds only), then:
  *
- *   node scripts/drive.mjs [--port 9339] draw <strokes.json | -> [--tool pen|highlighter|eraser] [--no-pan]
+ *   node scripts/drive.mjs [--port 9339] draw <strokes.json | -> [--tool pen|highlighter|eraser] [--no-pan] [--fast]
  *   node scripts/drive.mjs draw --strokes '[[[x,y,p],...],...]'
  *   node scripts/drive.mjs key <combo>          e.g. v, Delete, Escape, Meta+z, Shift+Meta+z
  *   node scripts/drive.mjs click <x> <y> [--shift]  window CSS pixels
@@ -28,10 +28,11 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 
 const USAGE = `usage: node scripts/drive.mjs [--port N] <command>
-  draw <file.json|-> [--tool pen|highlighter|eraser] [--no-pan]
+  draw <file.json|-> [--tool pen|highlighter|eraser] [--no-pan] [--fast]
                                                  strokes in board coordinates: [[[x,y,p],...],...];
                                                  pans the board first so every point is on screen;
-                                                 --tool eraser drags the eraser along the strokes
+                                                 --tool eraser drags the eraser along the strokes;
+                                                 --fast sends each stroke in one burst (no pen-speed delays)
   draw --strokes '<json>'
   key <combo>                                    v, Delete, Escape, Meta+z, Shift+Meta+z
   click <x> <y> [--shift]                        window CSS pixels
@@ -42,7 +43,7 @@ const USAGE = `usage: node scripts/drive.mjs [--port N] <command>
   node-rect <id>                                 {x, y, width, height, cx, cy, dom} in window CSS pixels
   screenshot <out.png>
   eval-state                                     board, tool, selection, nodes (id, kind, parent, bounds)
-  scene [seek <t> | play | finish]               live-scene playback (run_scene): print its state; hold the
+  scene [seek <t> | play | finish]               live-scene playback (play_scene): print its state; hold the
                                                  current scene at t seconds; let it run on; end every scene
   camera <x> <y>                                 centre the view on board point (x, y); prints zoom, centre, canvas
 The port defaults to $SPACE_REMOTE_DEBUG, then 9339.`
@@ -74,7 +75,7 @@ async function connect(port) {
     )
   }
   // Skip the hidden window that renders agent screenshots (?snapshot=1).
-  const page = targets.find((target) => target.type === 'page' && !target.url.startsWith('devtools://') && !target.url.includes('snapshot=1'))
+  const page = targets.find((target) => target.type === 'page' && !target.url.startsWith('devtools://') && !target.url.startsWith('ls-stage:') && !target.url.includes('snapshot=1'))
   if (!page) throw new Failure(`Port ${port} answers, but it has no app page. Is the window open?`)
 
   const socket = new WebSocket(page.webSocketDebuggerUrl)
@@ -141,7 +142,7 @@ function parseStrokes(text) {
   return strokes
 }
 
-async function draw(cdp, strokes, tool, pan) {
+async function draw(cdp, strokes, tool, pan, fast = false) {
   await requireDevHook(cdp)
   const state = await evaluate(cdp, 'window.__spaceDev.state()')
   if (!state.board) throw new Failure('No board is open in the app.')
@@ -176,18 +177,32 @@ async function draw(cdp, strokes, tool, pan) {
       pointerType: 'pen',
       force: Math.min(1, Math.max(0, p))
     })
-  for (const stroke of mapped) {
-    // A pen hovers before it touches. Without the hover, the first press on a
-    // page that has not seen the pointer yet can be lost.
-    await pen('mouseMoved', stroke[0], 0)
+  if (fast) {
+    // --fast: send each stroke's events in one burst (CDP keeps their order) and
+    // wait once per stroke. The board reads coalesced samples, so it gets the
+    // same points; only the pen speed differs. The first stroke still hovers first.
+    await pen('mouseMoved', mapped[0][0], 0)
     await sleep(16)
-    await pen('mousePressed', stroke[0], 1)
-    for (const point of stroke.slice(1)) {
-      await pen('mouseMoved', point, 1)
-      await sleep(4)
+    for (const stroke of mapped) {
+      const sent = [pen('mouseMoved', stroke[0], 0), pen('mousePressed', stroke[0], 1)]
+      for (const point of stroke.slice(1)) sent.push(pen('mouseMoved', point, 1))
+      sent.push(pen('mouseReleased', stroke[stroke.length - 1], 0))
+      await Promise.all(sent)
     }
-    await pen('mouseReleased', stroke[stroke.length - 1], 0)
-    await sleep(20)
+  } else {
+    for (const stroke of mapped) {
+      // A pen hovers before it touches. Without the hover, the first press on a
+      // page that has not seen the pointer yet can be lost.
+      await pen('mouseMoved', stroke[0], 0)
+      await sleep(16)
+      await pen('mousePressed', stroke[0], 1)
+      for (const point of stroke.slice(1)) {
+        await pen('mouseMoved', point, 1)
+        await sleep(4)
+      }
+      await pen('mouseReleased', stroke[stroke.length - 1], 0)
+      await sleep(20)
+    }
   }
   const after = await evaluate(cdp, 'window.__spaceDev.state()')
   console.log(JSON.stringify({ drawn: strokes.length, board: after.board, itemCount: after.itemCount }))
@@ -354,6 +369,9 @@ async function main() {
   const inline = takeOption('--strokes')
   const steps = Number(takeOption('--steps') ?? 12)
   if (!Number.isInteger(steps) || steps < 1) throw new Failure('--steps must be a positive integer.')
+  const fastIndex = args.indexOf('--fast')
+  const fast = fastIndex !== -1
+  if (fast) args.splice(fastIndex, 1)
   const noPanIndex = args.indexOf('--no-pan')
   const noPan = noPanIndex !== -1
   if (noPan) args.splice(noPanIndex, 1)
@@ -374,7 +392,7 @@ async function main() {
   if (command === 'draw') {
     const strokes = inline ? parseStrokes(inline) : rest[0] ? readStrokes(rest[0]) : null
     if (!strokes) throw new Failure('draw needs a strokes file, "-" for stdin, or --strokes.')
-    run = (cdp) => draw(cdp, strokes, tool, !noPan)
+    run = (cdp) => draw(cdp, strokes, tool, !noPan, fast)
   } else if (command === 'key') {
     if (!rest[0]) throw new Failure('key needs a combo, for example v, Delete or Meta+z.')
     parseCombo(rest[0])

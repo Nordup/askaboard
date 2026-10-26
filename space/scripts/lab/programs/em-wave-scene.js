@@ -1,7 +1,7 @@
 // An electromagnetic plane wave, explained as a scene: the field appears as a
 // live shader, handwritten labels E and B stay attached to it, and the wave
 // number k and the angular frequency omega change while the voice explains.
-// A pause step waits for scene_control resume. At the end the field moves and
+// A pause step waits for play_scene resume. At the end the field moves and
 // shrinks to the side; the labels follow it.
 const v = board.view
 const c = [v.x + v.width / 2, v.y + v.height / 2]

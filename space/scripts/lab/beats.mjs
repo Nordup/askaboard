@@ -2,14 +2,16 @@
 /**
  * Send a sequence of calls to the lab app while recording one video: beats
  * (small scenes sent back to back, with gaps like a model writing the next
- * one) and scene_control actions (replace, replay, cut, reset, …).
+ * one) and play_scene actions (replay, cut, reset, …), and new versions of
+ * scenes (write_scene with the same name, then play_scene start).
  *
  *   node scripts/lab/beats.mjs <plan.json> [--lab lab] [--title <text>] [--gap S] [--no-gallery]
  *
  * The plan is a JSON list of steps, run in order:
- *   {"run": "beat-1.js", "name": "beat 1"}       run_scene with that program (path relative to the plan)
- *   {"control": {"action": "replay", "step": "x"}} scene_control; "scene": "$2" means the scene id of the 2nd run
- *   {"replace": "$3", "with": "beat-3b.js"}       scene_control replace of run 3 with that program
+ *   {"run": "beat-1.js", "name": "beat 1"}       write_scene with that program (path relative to the plan), then play_scene start
+ *   {"control": {"action": "replay", "from_step": "x"}} play_scene; "name": "$2" means the scene name of the 2nd run
+ *   {"replace": "$3", "with": "beat-3b.js"}       a new version of run 3: write_scene with its name, then play_scene start
+ * Each run gets its own scene name (the plan's name, or the file name; " #n" added when a name repeats).
  *   {"sleep": 4}                                  seconds
  *   {"until": "idle"}                             wait until nothing plays (pause steps are resumed)
  *   {"until": "time", "scene": "$1", "t": 2.5}    wait until that scene reaches t s
@@ -91,7 +93,7 @@ async function main() {
       }
       const entry = { label, tool, args: { ...toolArgs, ...(toolArgs.code ? { code: `(${toolArgs.code.length} chars)` } : {}) }, t_call: tCall - t0, t_return: tReturn - t0, ok: !thrown && !result?.isError, error: thrown ?? (result?.isError ? text : null), result: parsed ?? text }
       calls.push(entry)
-      say(`${label}: ${entry.ok ? 'ok' : 'ERROR'} in ${tReturn - tCall} ms${parsed?.starts_in_s !== undefined ? `, starts in ${parsed.starts_in_s} s, lasts ${parsed.duration_s} s` : ''}${entry.ok ? '' : ` ${String(entry.error).slice(0, 300)}`}`)
+      say(`${label}: ${entry.ok ? 'ok' : 'ERROR'} in ${tReturn - tCall} ms${parsed?.starts_in_s !== undefined ? `, starts in ${parsed.starts_in_s} s, lasts ${parsed.length_s} s` : ''}${entry.ok ? '' : ` ${String(entry.error).slice(0, 300)}`}`)
       return parsed
     }
     for (let i = 0; i < plan.length; i++) {
@@ -100,17 +102,21 @@ async function main() {
         const file = resolve(planDir, step.run)
         const code = readFileSync(file, 'utf8')
         copyFileSync(file, join(dir, basename(file)))
-        const parsed = await invoke('run_scene', { code, name: step.name ?? basename(file, '.js'), ...(step.when ? { when: step.when } : {}), ...(step.wait ? { wait: step.wait } : {}) }, `run ${basename(file)}`)
+        let name = step.name ?? basename(file, '.js')
+        if (scenes.includes(name)) name = `${name} #${scenes.length + 1}`
+        const written = await invoke('write_scene', { name, code }, `write ${basename(file)}`)
+        const parsed = written ? await invoke('play_scene', { action: 'start', name, ...(step.when ? { when: step.when } : {}), ...(step.wait ? { wait: step.wait } : {}) }, `start ${name}`) : null
         scenes.push(parsed?.scene ?? null)
         if (gap > 0 && !(plan[i + 1] && plan[i + 1].sleep !== undefined)) await sleep(gap * 1000)
       } else if (step.replace) {
         const file = resolve(planDir, step.with)
         copyFileSync(file, join(dir, basename(file)))
-        await invoke('scene_control', { action: 'replace', scene: ref(step.replace), code: readFileSync(file, 'utf8') }, `replace ${step.replace} with ${basename(file)}`)
+        const name = ref(step.replace)
+        if (await invoke('write_scene', { name, code: readFileSync(file, 'utf8') }, `write ${basename(file)} as ${name}`)) await invoke('play_scene', { action: 'start', name }, `start ${name} (replaces it)`)
       } else if (step.control) {
         const a = { ...step.control }
-        if (a.scene) a.scene = ref(a.scene)
-        await invoke('scene_control', a, `scene_control ${a.action}`)
+        if (a.name) a.name = ref(a.name)
+        await invoke('play_scene', a, `play_scene ${a.action}`)
       } else if (step.sleep !== undefined) await sleep(step.sleep * 1000)
       else if (step.until === 'idle') {
         let pausedSince = null
@@ -120,17 +126,17 @@ async function main() {
           if (hook.paused) {
             pausedSince ??= Date.now()
             if (Date.now() - pausedSince > 2000) {
-              await call('scene_control', { action: 'resume' })
+              await call('play_scene', { action: 'resume' })
               pausedSince = null
             }
           } else pausedSince = null
           await sleep(50)
         }
       } else if (step.until === 'time') {
-        const id = ref(step.scene)
+        const name = ref(step.scene)
         for (;;) {
           const hook = await sceneHook(cdp)
-          if (!hook?.playing || (hook.current === id && hook.time >= step.t)) break
+          if (!hook?.playing || (hook.name === name && hook.time >= step.t)) break
           await sleep(20)
         }
       }
@@ -150,7 +156,7 @@ async function main() {
   const ours = played.filter((p) => p.start >= t0).sort((a, b) => a.start - b.start)
   const handoffs = ours.slice(1).map((p, i) => {
     const prev = ours[i]
-    const sent = calls.find((c) => c.result && c.result.scene === p.scene)
+    const sent = calls.find((c) => c.tool === 'play_scene' && c.result && c.result.scene === p.name)
     return { from: prev.scene, to: p.scene, gap_ms: prev.end === null ? null : p.start - prev.end, queued: !!sent && prev.end !== null && t0 + sent.t_return < prev.end }
   })
   const rect = flag('--no-crop') ? null : await canvasRect(cdp)
@@ -189,7 +195,7 @@ async function main() {
     task: option('--task', title),
     client: 'beats.mjs',
     model: 'hand-written program',
-    tool: 'run_scene',
+    tool: 'play_scene',
     lab: { name: state.name, mode: state.mode, mcpPort: state.mcpPort },
     started: new Date(t0).toISOString(),
     ok: calls.every((c) => c.ok),

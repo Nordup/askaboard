@@ -1,4 +1,4 @@
-// A scene with three steps, to cut after the first (scene_control cut). Also checks text bounds.
+// A scene with three steps, to cut after the first (play_scene cut). Also checks text bounds.
 step("a")
 const t = tex("\\int_0^R \\pi (R^2 - h^2)\\,dh", { at: [-300, -250], size: 30 })
 console.log("tex bounds in the program", JSON.stringify(t.bounds))

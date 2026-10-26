@@ -108,10 +108,10 @@ const SIZE = 44
 const has = (re) => (reply) => re.test(reply)
 const SAYS_RIGHT = /\b(correct|right|yes|exactly|well done)\b/i
 
-/** Set-up material written with one run_scene (html at its top-left [x, y]): its id and bounds. */
+/** Set-up material written with one scene (html at its top-left [x, y]): its id and bounds. */
 async function created(mcp, markup, x, y) {
   const item = await seedScene(mcp, htmlScene(markup, x, y))
-  if (!item.bounds) throw new Error(`run_scene returned no bounds: ${JSON.stringify(item).slice(0, 300)}`)
+  if (!item.bounds) throw new Error(`play_scene start returned no bounds: ${JSON.stringify(item).slice(0, 300)}`)
   return { id: item.id, bounds: item.bounds }
 }
 
@@ -227,7 +227,7 @@ const V1_SKETCH = { width: 280, height: 210 }
  * and turn 1 resumes the SAME thread with a question that does not mention
  * the board. The bench gives work() the empty spot it found beside the
  * agent's newest drawing (ctx.spot: an empty rect from space() near ctx.anchor,
- * asked with a run_scene preview, so nothing is drawn).
+ * asked with a write_scene draft, so nothing is drawn).
  */
 PERCEPTION.push({
   id: 'V1',

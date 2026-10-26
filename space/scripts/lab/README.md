@@ -24,10 +24,10 @@ node scripts/lab/play.mjs scripts/lab/programs/sphere-sketch.js [--name sphere] 
 node scripts/lab/play.mjs --tool get_screenshot --args '{"target":"content"}'
 ```
 
-It calls `run_scene` (or any tool with `--tool`/`--args`) on the lab app and
+It calls `write_scene` and then `play_scene` start (or any tool with `--tool`/`--args`) on the lab app and
 records the board with the CDP screencast until the scene has played: it
 follows the scene through the dev hook and resumes each pause step with
-scene_control after `--pause-hold S` seconds (default 2); `--seconds N` is a
+play_scene resume after `--pause-hold S` seconds (default 2); `--seconds N` is a
 minimum. The run folder gets `program.js`, `result.json`, `video.mp4` (H.264,
 max 1280 px wide; see "Videos" below), `video-real.mp4` (real speed, from the
 scene's start to its end), `filmstrip.png` (the screencast frame when the
@@ -72,7 +72,7 @@ is a symlink to the founder's login. Never read or print it.
 
 `video.mp4` is the watch video: a stretch with no visible change for more
 than 1.5 s plays in 0.6 s. During the cut a label shows the real wait and
-what happened, from the trace ("38 s  model writing run_scene", "model
+what happened, from the trace ("38 s  model writing write_scene", "model
 thinking", "get_screenshot running", "session starting", "model
 answering"), and a clock in the corner shows real time. `video-real.mp4`
 keeps real time. `recut.py` (Pillow, frames piped to ffmpeg) makes the watch

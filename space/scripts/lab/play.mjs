@@ -6,10 +6,11 @@
  *   node scripts/lab/play.mjs --tool <name> --args '<json>' [--title <text>]    any other tool, for example get_screenshot
  *   common options: [--lab lab] [--seconds N] [--pause-hold S] [--no-crop] [--no-gallery]
  *
- * It calls run_scene ({ code, name }) on the lab app (lab.mjs start), records
- * the window with CDP Page.startScreencast from the call until the playback
- * ends (followed through the dev hook window.__spaceDev.scene; pause steps are
- * resumed with scene_control after --pause-hold s, default 2; --seconds N is a
+ * It calls write_scene ({ name, code }) and then play_scene start on the lab
+ * app (lab.mjs start), records the window with CDP Page.startScreencast from
+ * the start call until the playback ends (followed through the dev hook
+ * window.__spaceDev.scene; pause steps are resumed with play_scene resume
+ * after --pause-hold s, default 2; --seconds N is a
  * minimum after the call returns), and writes a run folder in
  * space/.lab/runs/: program.js, result.json, video.mp4 (the watch video),
  * video-real.mp4 (real speed, from the scene's start), filmstrip.png (the
@@ -45,15 +46,17 @@ const { option, flag, positional } = args()
 const say = (...p) => log('play', ...p)
 
 async function main() {
-  const tool = option('--tool', 'run_scene')
+  // The default: a scene program (write_scene, then play_scene start).
+  const tool = option('--tool', 'play_scene')
   const programPath = positional[0] ? resolve(positional[0]) : null
   let toolArgs
   let code = null
-  if (tool === 'run_scene') {
+  const isScene = tool === 'play_scene' && !option('--args', null)
+  if (isScene) {
     if (!programPath) throw new Error('usage: play.mjs <program.js> [--name] [--title]   or   play.mjs --tool <name> --args <json>')
     code = readFileSync(programPath, 'utf8')
     const name = option('--name', basename(programPath).replace(/\.[^.]+$/, ''))
-    toolArgs = { code, name }
+    toolArgs = { action: 'start', name }
   } else {
     const raw = option('--args', '{}')
     toolArgs = JSON.parse(raw.startsWith('@') ? readFileSync(raw.slice(1), 'utf8') : raw)
@@ -64,6 +67,13 @@ async function main() {
   const framesDir = join(SCRATCH, 'frames', basename(dir))
   say(`run folder ${dir}`)
 
+  // The draft first (the learner sees nothing of it), so the recording starts with the play.
+  let written = null
+  if (isScene) {
+    written = await withMcp(state.mcpPort, (call) => call('write_scene', { name: toolArgs.name, code })).catch((error) => ({ isError: true, content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }] }))
+    say(written?.isError ? `write_scene error: ${resultText(written).slice(0, 400)}` : 'draft written')
+  }
+
   const cdp = await cdpConnect(state.debugPort)
   const hookBefore = await sceneHook(cdp)
   const recording = await startRecording(cdp, framesDir)
@@ -73,7 +83,7 @@ async function main() {
   let result = null
   let thrown = null
   try {
-    result = await withMcp(state.mcpPort, (call) => call(tool, toolArgs))
+    result = written?.isError ? written : await withMcp(state.mcpPort, (call) => call(tool, toolArgs))
   } catch (error) {
     thrown = error instanceof Error ? error.message : String(error)
   }
@@ -86,7 +96,7 @@ async function main() {
   } catch {
     // Not JSON: keep the text.
   }
-  const duration = !isError && typeof parsed?.duration_s === 'number' ? parsed.duration_s : null
+  const duration = !isError && typeof parsed?.length_s === 'number' ? parsed.length_s : null
   const steps = Array.isArray(parsed?.steps) ? parsed.steps : []
   say(isError ? `error: ${thrown ?? text.slice(0, 400)}` : `returned in ${tReturn - tCall} ms${duration !== null ? `, duration ${duration} s, ${steps.length} steps` : ''}`)
 
@@ -95,23 +105,23 @@ async function main() {
   const seconds = option('--seconds', null)
   const minEnd = tReturn + (seconds !== null ? Number(seconds) * 1000 : 0)
   const pauseHoldMs = Number(option('--pause-hold', '2')) * 1000
-  const sceneId = !isError && typeof parsed?.scene === 'string' ? parsed.scene : null
+  const sceneName = !isError && typeof parsed?.scene === 'string' ? parsed.scene : null
   const timeLog = [] // [{ wall, t }] while this scene is the current one
   let tEnd
-  if (sceneId && hookBefore) {
+  if (sceneName && hookBefore) {
     let seen = false
     let pausedSince = null
     for (;;) {
       const hook = await sceneHook(cdp)
       const now = Date.now()
-      if (hook?.current === sceneId) {
+      if (hook?.name === sceneName) {
         seen = true
         if (typeof hook.time === 'number') timeLog.push({ wall: now, t: hook.time })
         if (hook.paused) {
           pausedSince ??= now
           if (now - pausedSince >= pauseHoldMs) {
             say(`resume after a pause at ${hook.time} s`)
-            await withMcp(state.mcpPort, (call) => call('scene_control', { action: 'resume' }))
+            await withMcp(state.mcpPort, (call) => call('play_scene', { action: 'resume' }))
             pausedSince = null
           }
         } else pausedSince = null
@@ -177,11 +187,11 @@ async function main() {
   cdp.close()
 
   const meta = {
-    kind: tool === 'run_scene' ? 'play' : 'tool',
+    kind: isScene ? 'play' : 'tool',
     title,
     task: option('--task', title),
     client: 'play.mjs',
-    model: option('--model', tool === 'run_scene' ? 'hand-written program' : 'direct tool call'),
+    model: option('--model', isScene ? 'hand-written program' : 'direct tool call'),
     tool,
     scene: parsed?.scene ?? toolArgs.name ?? null,
     lab: { name: state.name, mode: state.mode, mcpPort: state.mcpPort },

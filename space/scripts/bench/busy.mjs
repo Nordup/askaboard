@@ -9,9 +9,10 @@
  * pieces sit just outside the hole, so a crop round the new work also shows
  * neighbours.
  *
- * The agent material is written with run_scene (the one way to write since
- * stage 4, decision P13): one scene per item that shows it at once, so each
- * item keeps its own id and the bench gets its bounds back.
+ * The agent material is written with scenes (write_scene, then play_scene
+ * start: the one way to write since stage 4, decision P13): one scene per
+ * item that shows it at once, so each item keeps its own id and the bench
+ * gets its bounds back. Each scene has its own name, so none replaces another.
  */
 import { loop, text, textWidth } from './handwriting.mjs'
 
@@ -28,10 +29,13 @@ export const inkScene = (strokes, color) => `const s = stroke(${JSON.stringify(s
  * Run one set-up scene over `mcp` (the bench's own client: its items are
  * authored "agent") and return its first item ({id, kind, bounds}).
  */
+let seeds = 0
 export async function seedScene(mcp, code) {
-  const result = await mcp('run_scene', { code, name: 'bench set-up', when: 'now', wait: 'end' })
+  const name = `bench set-up ${++seeds}`
+  await mcp('write_scene', { name, code })
+  const result = await mcp('play_scene', { action: 'start', name, when: 'now', wait: 'end' })
   const item = Array.isArray(result?.items) ? result.items[0] : null
-  if (!item) throw new Error(`run_scene made no item: ${JSON.stringify(result).slice(0, 300)}`)
+  if (!item) throw new Error(`play_scene start made no item: ${JSON.stringify(result).slice(0, 300)}`)
   return item
 }
 

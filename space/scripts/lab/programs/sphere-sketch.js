@@ -1,5 +1,5 @@
 // The first sketch from docs/learning-space/live-drawing-plan.md ("The medium").
-// The API is not final: change this file to match run_scene as it is built.
+// The API is not final: change this file to match the scene API as it is built.
 const r = 120
 const ball = circle(0, 0, r)                   // nothing is visible yet
 await draw(ball, 1.2)                          // a pen draws it in 1.2 s

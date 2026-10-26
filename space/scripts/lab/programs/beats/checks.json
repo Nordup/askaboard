@@ -5,7 +5,7 @@
   { "replace": "$3", "with": "beat-3b.js" },
   { "until": "idle" },
   { "sleep": 1 },
-  { "control": { "action": "replay", "scene": "$2" } },
+  { "control": { "action": "replay", "name": "$2" } },
   { "until": "idle" },
   { "sleep": 1 },
   { "run": "long.js", "name": "long" },

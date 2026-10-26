@@ -5,7 +5,7 @@ Called by common.mjs (encodeWatchVideo) with one argument, a JSON file:
     "frames": [{"file": "...jpg", "t": <wall ms>}],   # screencast frames, sorted by t
     "from": <ms>, "to": <ms>,                          # the recorded span
     "crop": [x, y, w, h] | null,                       # in frame pixels
-    "labels": [{"from": <ms>, "to": <ms>, "label": "model writing run_scene"}],
+    "labels": [{"from": <ms>, "to": <ms>, "label": "model writing write_scene"}],
     "playing": [{"from": <ms>, "to": <ms>}],           # when scenes played (never cut by label)
     "idle_ms": 1500, "cut_ms": 600, "fps": 30,
     "out": "video.mp4", "ffmpeg": "/opt/homebrew/bin/ffmpeg"

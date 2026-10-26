@@ -7,8 +7,9 @@
  */
 import { spawn, execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { closeSync, copyFileSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createConnection } from 'node:net'
+import { homedir } from 'node:os'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -22,10 +23,14 @@ export const RUNS = join(SPACE, '.lab/runs')
 export const FFMPEG = existsSync('/opt/homebrew/bin/ffmpeg') ? '/opt/homebrew/bin/ffmpeg' : 'ffmpeg'
 export const FOUNDER_PORT = 47821
 /** Tools that change the board. The first one is the first visible mark. */
-// run_scene is the one write tool since stage 4; the others are in traces from before.
-export const WRITE_TOOLS = new Set(['run_scene', 'create_frame', 'write_html', 'update_styles', 'set_text', 'move_nodes', 'duplicate_nodes', 'delete_nodes', 'draw_ink'])
-/** A call that changed the board: a write tool, except a run_scene preview (it draws nothing). */
-export const isWrite = (c) => WRITE_TOOLS.has(c.tool) && !(c.tool === 'run_scene' && c.args?.preview)
+// play_scene (start, cut, clear_queue) writes since 2026-10-26, run_scene from stage 4 to then; the others are in traces from before.
+export const WRITE_TOOLS = new Set(['play_scene', 'run_scene', 'create_frame', 'write_html', 'update_styles', 'set_text', 'move_nodes', 'duplicate_nodes', 'delete_nodes', 'draw_ink'])
+/** The play_scene actions that change the board. */
+export const PLAY_WRITES = new Set(['start', 'cut', 'clear_queue'])
+/** A call that changed the board: a write tool, except a run_scene preview (it draws nothing) and play_scene's other actions. */
+export const isWrite = (c) => WRITE_TOOLS.has(c.tool) && !(c.tool === 'run_scene' && c.args?.preview) && !(c.tool === 'play_scene' && !PLAY_WRITES.has(c.args?.action))
+/** A scene program the model wrote: write_scene, or run_scene in traces from before 2026-10-26. */
+export const isProgram = (c) => c.tool === 'write_scene' || c.tool === 'run_scene'
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 export const log = (tag, ...parts) => console.log(`[${tag} ${new Date().toISOString().slice(11, 19)}]`, ...parts)
@@ -52,7 +57,7 @@ export function args(argv = process.argv.slice(2)) {
   }
   return { option, flag, positional }
 }
-const BOOLEAN_FLAGS = new Set(['--built', '--dev', '--fresh', '--no-crop', '--no-news-hook', '--no-gallery', '--keep-app', '--interview', '--wait-media', '--brief-only', '--no-web'])
+const BOOLEAN_FLAGS = new Set(['--video', '--built', '--dev', '--fresh', '--no-crop', '--no-news-hook', '--no-gallery', '--keep-app', '--interview', '--wait-media', '--brief-only', '--no-web'])
 
 // ---------- Processes ----------
 
@@ -162,7 +167,7 @@ export async function startInstance({ name, mcpPort, debugPort, built = false, f
   for (const path of [inst.home, inst.userData, inst.traces]) mkdirSync(path, { recursive: true })
   if (!existsSync(join(inst.folder, 'AGENTS.md'))) setupFolder(inst.folder)
 
-  const env = { ...process.env, HOME: inst.home, SPACE_FOLDER: inst.folder, SPACE_MCP_PORT: String(mcpPort), SPACE_REMOTE_DEBUG: String(debugPort), SPACE_TRACE_DIR: inst.traces }
+  const env = { ...process.env, HOME: inst.home, SPACE_FOLDER: inst.folder, SPACE_MCP_PORT: String(mcpPort), SPACE_REMOTE_DEBUG: String(debugPort), SPACE_TRACE_DIR: inst.traces, SPACE_NO_FOCUS: '1' }
   delete env.ELECTRON_RUN_AS_NODE
   const logFd = openSync(inst.log, 'a')
   let child
@@ -198,11 +203,6 @@ export async function startInstance({ name, mcpPort, debugPort, built = false, f
   } catch (error) {
     await stopInstance(name)
     throw error
-  }
-  try {
-    execFileSync('osascript', ['-e', 'tell application "Claude" to activate'], { stdio: 'ignore' })
-  } catch {
-    // Claude is not running.
   }
   return state
 }
@@ -253,7 +253,7 @@ export async function cdpConnect(port) {
   } catch {
     throw new Error(`No app with remote debugging on 127.0.0.1:${port}.`)
   }
-  const page = targets.find((t) => t.type === 'page' && !t.url.startsWith('devtools://') && !t.url.includes('snapshot=1'))
+  const page = targets.find((t) => t.type === 'page' && !t.url.startsWith('devtools://') && !t.url.startsWith('ls-stage:') && !t.url.includes('snapshot=1'))
   if (!page) throw new Error(`Port ${port} has no app page.`)
   const socket = new WebSocket(page.webSocketDebuggerUrl)
   await new Promise((ok, fail) => {
@@ -335,7 +335,7 @@ export async function canvasRect(cdp) {
 /** The scene dev hook ({ playing, current, time, duration, paused, hasSeek }) or null when the app has none. */
 export async function sceneHook(cdp) {
   try {
-    return await cdp.evaluate('(() => { const s = window.__spaceDev && window.__spaceDev.scene; if (!s) return null; const v = typeof s === "function" ? s() : s; return { playing: Boolean(v.playing), current: v.current ?? null, time: v.time ?? null, duration: v.duration ?? null, paused: Boolean(v.paused), hasSeek: typeof v.seek === "function" } })()')
+    return await cdp.evaluate('(() => { const s = window.__spaceDev && window.__spaceDev.scene; if (!s) return null; const v = typeof s === "function" ? s() : s; return { playing: Boolean(v.playing), current: v.current ?? null, name: v.name ?? null, time: v.time ?? null, duration: v.duration ?? null, paused: Boolean(v.paused), hasSeek: typeof v.seek === "function" } })()')
   } catch {
     return null
   }
@@ -423,19 +423,21 @@ export function encodeWatchVideo(frames, out, { from, to, crop = '', labels = []
 }
 
 /**
- * When scenes played, from the trace's run_scene calls (wall ms): from the
- * call's end + starts_in_s to its end + ends_in_s, plus a second for a pause
- * the result could not know about. Previews play nothing.
+ * When scenes played, from the trace's play_scene start calls (run_scene in
+ * traces from before 2026-10-26; wall ms): from the call's end + starts_in_s
+ * to its end + ends_in_s, plus a second for a pause the result could not know
+ * about. Previews play nothing.
  */
 export function scenePlaySpans(calls) {
   const spans = []
   for (const c of calls) {
-    if (c.tool !== 'run_scene' || !c.ok || c.args?.preview) continue
+    const play = (c.tool === 'run_scene' && !c.args?.preview) || (c.tool === 'play_scene' && c.args?.action === 'start')
+    if (!play || !c.ok) continue
     try {
       const r = JSON.parse(c.result_text)
       const end = Date.parse(c.end ?? c.t)
       const startsIn = typeof r.starts_in_s === 'number' ? r.starts_in_s : 0
-      const endsIn = typeof r.ends_in_s === 'number' ? r.ends_in_s : startsIn + (typeof r.duration_s === 'number' ? r.duration_s : 0)
+      const endsIn = typeof r.ends_in_s === 'number' ? r.ends_in_s : startsIn + (typeof r.length_s === 'number' ? r.length_s : typeof r.duration_s === 'number' ? r.duration_s : 0)
       // wait "end": the call returned after the scene played.
       if (r.played !== undefined) spans.push({ from: Date.parse(c.t), to: end + 1000 })
       else spans.push({ from: end + startsIn * 1000, to: end + endsIn * 1000 + 1000 })
@@ -460,7 +462,7 @@ export function traceLabels(calls, { from, opened = null, turnEnd = null }) {
   for (const c of [...calls].sort((a, b) => Date.parse(a.t) - Date.parse(b.t))) {
     const start = Date.parse(c.t)
     const end = Date.parse(c.end ?? c.t)
-    if (start > previous) labels.push({ from: previous, to: start, label: isWrite(c) ? `model writing ${c.tool}` : 'model thinking' })
+    if (start > previous) labels.push({ from: previous, to: start, label: isWrite(c) || isProgram(c) ? `model writing ${c.tool}` : 'model thinking' })
     if (end > start) labels.push({ from: start, to: end, label: `${c.tool} running` })
     previous = Math.max(previous, end)
   }
@@ -520,7 +522,7 @@ export function filmstrip(tiles, out, { columns = 4, width = 480 } = {}) {
 
 // ---------- Runs ----------
 
-export function runFolder(slugSource) {
+export function runFolder(slugSource, root = RUNS) {
   const d = new Date()
   const p = (v) => String(v).padStart(2, '0')
   const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
@@ -530,9 +532,186 @@ export function runFolder(slugSource) {
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-|-$/g, '')
       .slice(0, 40) || 'run'
-  const dir = join(RUNS, `${stamp}-${slug}`)
+  const dir = join(root, `${stamp}-${slug}`)
   mkdirSync(dir, { recursive: true })
   return dir
+}
+
+// ---------- Headless agents (council.mjs, perf/run.mjs) ----------
+//
+// agent: { client, model, effort, newsHook, web, codexHome, timeoutMs, pids, say }.
+// pids collects the agent processes; say logs.
+
+function runProcess(agent, command, argv, { cwd, env, stdoutFile, stderrFile }) {
+  return new Promise((done) => {
+    const out = openSync(stdoutFile, 'w')
+    const err = openSync(stderrFile, 'w')
+    const child = spawn(command, argv, { cwd, env, stdio: ['ignore', out, err] })
+    agent.pids.push(child.pid)
+    const timer = setTimeout(() => {
+      agent.say(`agent timed out after ${agent.timeoutMs / 60000} min; stopping PID ${child.pid}`)
+      child.kill('SIGTERM')
+    }, agent.timeoutMs)
+    child.on('exit', (code) => {
+      clearTimeout(timer)
+      closeSync(out)
+      closeSync(err)
+      done(code)
+    })
+  })
+}
+
+function newsHookCommand(state) {
+  const shim = join(state.home, '.learning-space/bin/learning-space')
+  return (label) => `LEARNING_SPACE_PORT=${state.mcpPort} '${shim}' news --client '${label}' 2>/dev/null || true`
+}
+
+/** Claude: one `claude -p` turn. resume = the session id of phase 1. raw: the parsed JSON output. */
+export async function claudeTurn(agent, state, dir, prompt, phase, resume = null) {
+  const config = join(state.dir, 'mcp.json')
+  writeFileSync(config, JSON.stringify({ mcpServers: { 'learning-space': { type: 'http', url: `http://127.0.0.1:${state.mcpPort}/mcp` } } }, null, 2))
+  const hookArgs = []
+  if (agent.newsHook) {
+    const settings = join(state.dir, 'claude-settings.json')
+    writeFileSync(settings, JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: newsHookCommand(state)('Claude Code'), timeout: 5 }] }] } }, null, 2))
+    hookArgs.push('--settings', settings)
+  }
+  // The prompt goes before --allowedTools: that flag takes every word after it.
+  const argv = ['-p', prompt, ...(resume ? ['--resume', resume] : []), '--model', agent.model, ...(agent.effort ? ['--effort', agent.effort] : []), '--mcp-config', config, '--strict-mcp-config', '--setting-sources', 'project,local', ...hookArgs, '--output-format', 'json', '--allowedTools', 'mcp__learning-space__*', ...(agent.web ? ['WebSearch', 'WebFetch'] : [])]
+  const stdoutFile = join(dir, `${phase}-claude.json`)
+  const code = await runProcess(agent, 'claude', argv, { cwd: state.folder, env: process.env, stdoutFile, stderrFile: join(dir, `${phase}-stderr.txt`) })
+  let parsed = null
+  try {
+    parsed = JSON.parse(readFileSync(stdoutFile, 'utf8'))
+  } catch {
+    // A crash or a timeout: keep the raw text.
+  }
+  return {
+    exit_code: code,
+    reply: parsed?.result ?? readFileSync(stdoutFile, 'utf8'),
+    is_error: parsed ? Boolean(parsed.is_error) : true,
+    session: parsed?.session_id ?? resume,
+    cost_usd: parsed?.total_cost_usd ?? null,
+    num_turns: parsed?.num_turns ?? null,
+    raw: parsed
+  }
+}
+
+/** The lab's own CODEX_HOME: auth.json is a symlink to the founder's login (never read or copied); config.toml has only the lab server. */
+export function prepareCodexHome(agent, state) {
+  const home = agent.codexHome
+  mkdirSync(home, { recursive: true })
+  const auth = join(home, 'auth.json')
+  let present = false
+  try {
+    lstatSync(auth)
+    present = true
+  } catch {
+    // Missing: link it.
+  }
+  if (!present) {
+    const real = join(homedir(), '.codex/auth.json')
+    if (!existsSync(real)) throw new Error(`No Codex login at ${real}. Log in with \`codex login\` first.`)
+    symlinkSync(real, auth)
+    agent.say(`linked ${auth} -> ${real}`)
+  }
+  try {
+    execFileSync('codex', ['login', 'status'], { env: { ...process.env, CODEX_HOME: home }, stdio: 'pipe' })
+  } catch (error) {
+    throw new Error(`\`codex login status\` failed with CODEX_HOME=${home}: ${String(error.stderr ?? error.message ?? error).trim()}`)
+  }
+  writeFileSync(
+    join(home, 'config.toml'),
+    [
+      'approval_policy = "never"',
+      'sandbox_mode = "read-only"',
+      `model = ${JSON.stringify(agent.model)}`,
+      `model_reasoning_effort = ${JSON.stringify(agent.effort)}`,
+      'service_tier = "default"',
+      '',
+      '[features]',
+      'js_repl = false',
+      'multi_agent_v2 = true',
+      '',
+      '[mcp_servers.learning-space]',
+      `url = ${JSON.stringify(`http://127.0.0.1:${state.mcpPort}/mcp`)}`,
+      // A read-only sandbox with approval "never" declines write tools unless they are approved here.
+      'default_tools_approval_mode = "approve"',
+      ''
+    ].join('\n')
+  )
+}
+
+/** The rollout file of a Codex thread in codexHome, or null. */
+export function codexRollout(codexHome, threadId) {
+  if (!threadId) return null
+  const found = []
+  const walk = (d) => {
+    if (!existsSync(d)) return
+    for (const entry of readdirSync(d, { withFileTypes: true })) {
+      const path = join(d, entry.name)
+      if (entry.isDirectory()) walk(path)
+      else if (entry.name.startsWith('rollout-') && entry.name.endsWith(`${threadId}.jsonl`)) found.push(path)
+    }
+  }
+  walk(join(codexHome, 'sessions'))
+  return found[0] ?? null
+}
+
+/** Codex: one `codex exec` turn, or `codex exec resume <thread>`. stdout_file: the --json event stream. */
+export async function codexTurn(agent, state, dir, prompt, phase, thread = null) {
+  const stdoutFile = join(dir, `${phase}-codex.jsonl`)
+  const lastMessage = join(dir, `${phase}-reply.md`)
+  const common = ['--json', '--skip-git-repo-check', '-m', agent.model, '-c', `model_reasoning_effort=${JSON.stringify(agent.effort)}`, '-o', lastMessage]
+  if (agent.newsHook) {
+    const hook = `{type="command",command=${JSON.stringify(newsHookCommand(state)('Codex'))},timeout=5}`
+    common.push('-c', `hooks.UserPromptSubmit=[{hooks=[${hook}]}]`, '--dangerously-bypass-hook-trust')
+  }
+  const web = agent.web ? ['--search'] : []
+  const argv = thread ? [...web, 'exec', 'resume', ...common, thread, prompt] : [...web, 'exec', ...common, prompt]
+  const code = await runProcess(agent, 'codex', argv, { cwd: state.folder, env: { ...process.env, CODEX_HOME: agent.codexHome }, stdoutFile, stderrFile: join(dir, `${phase}-stderr.txt`) })
+  let threadId = thread
+  const tokens = { input: 0, cached_input: 0, output: 0, reasoning_output: 0 }
+  const errors = []
+  for (const l of readFileSync(stdoutFile, 'utf8').split('\n')) {
+    let event
+    try {
+      event = JSON.parse(l)
+    } catch {
+      continue
+    }
+    if (event.type === 'thread.started') threadId = event.thread_id
+    if (event.type === 'turn.completed') {
+      const u = event.usage ?? {}
+      tokens.input += u.input_tokens ?? 0
+      tokens.cached_input += u.cached_input_tokens ?? 0
+      tokens.output += u.output_tokens ?? 0
+      tokens.reasoning_output += u.reasoning_output_tokens ?? 0
+    }
+    if (event.type === 'turn.failed' || event.type === 'error') errors.push(event.error?.message ?? event.message ?? JSON.stringify(event))
+    if (event.type === 'item.completed' && event.item?.type === 'mcp_tool_call' && event.item.status === 'failed') errors.push(`${event.item.tool}: ${event.item.error?.message ?? 'failed'}`)
+  }
+  return {
+    exit_code: code,
+    reply: existsSync(lastMessage) ? readFileSync(lastMessage, 'utf8') : '',
+    is_error: code !== 0 || errors.length > 0,
+    errors,
+    session: threadId,
+    tokens,
+    stdout_file: stdoutFile
+  }
+}
+
+/** The transcript of a Claude session in ~/.claude/projects, or null. */
+export function claudeTranscript(sessionId) {
+  if (!sessionId) return null
+  const root = join(homedir(), '.claude/projects')
+  if (!existsSync(root)) return null
+  for (const project of readdirSync(root)) {
+    const file = join(root, project, `${sessionId}.jsonl`)
+    if (existsSync(file)) return file
+  }
+  return null
 }
 
 /** Tool calls from the app traces written after sinceMs (all sessions except the lab's own client). */

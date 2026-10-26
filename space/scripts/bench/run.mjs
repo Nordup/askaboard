@@ -183,7 +183,8 @@ async function startApp(work) {
     SPACE_FOLDER: work.folder,
     SPACE_MCP_PORT: String(opts.mcpPort),
     SPACE_REMOTE_DEBUG: String(opts.debugPort),
-    SPACE_TRACE_DIR: work.traces
+    SPACE_TRACE_DIR: work.traces,
+    SPACE_NO_FOCUS: '1'
   }
   delete env.ELECTRON_RUN_AS_NODE
   const logFd = openSync(join(work.dir, 'app.log'), 'a')
@@ -218,11 +219,6 @@ async function startApp(work) {
   } catch (error) {
     await stopApp(app)
     throw error
-  }
-  try {
-    execFileSync('osascript', ['-e', 'tell application "Claude" to activate'], { stdio: 'ignore' })
-  } catch {
-    // Not on the founder's Mac, or Claude is not running.
   }
   return app
 }
@@ -734,12 +730,12 @@ function topLevel(tree) {
 
 /**
  * An empty rect of `size` ({width, height}) near the board item `near`, from
- * the scene API's space(), asked with a run_scene preview: nothing is drawn
+ * the scene API's space(), asked with a write_scene draft: nothing is drawn
  * or committed.
  */
 async function emptySpot(client, size, near) {
   const code = `const r = space(${size.width}, ${size.height}, { near: board.node(${JSON.stringify(near)}), inView: false })\nconsole.log(JSON.stringify({ x: r.x, y: r.y, width: r.width, height: r.height }))`
-  const result = await client.callTool({ name: 'run_scene', arguments: { code, preview: true, name: 'bench empty spot' } })
+  const result = await client.callTool({ name: 'write_scene', arguments: { code, name: 'bench empty spot' } })
   const body = result.content?.find((part) => part.type === 'text')?.text ?? ''
   if (result.isError) throw new Error(`empty spot near ${near} failed: ${body}`)
   const line = JSON.parse(body).log?.at(-1)
