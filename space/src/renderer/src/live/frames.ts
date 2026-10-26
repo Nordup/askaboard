@@ -52,7 +52,9 @@ let port: MessagePort | null = null
 const jobs = new Map<number, JobFrames>()
 
 function onWindowMessage(event: MessageEvent): void {
-  if (event.data !== 'ls-frames-port' || event.ports.length !== 1) return
+  // Only this window's own preload hands over the port. Program items run in iframes of this window and can post to
+  // it, but their messages have their own window as the source, so they cannot replace the stage port.
+  if (event.source !== window || event.data !== 'ls-frames-port' || event.ports.length !== 1) return
   port?.close()
   jobs.clear()
   port = event.ports[0]
