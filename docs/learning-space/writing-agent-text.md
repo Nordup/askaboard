@@ -93,6 +93,14 @@ I2 and P7 in [`decisions.md`](decisions.md) record them.
 
 ### Anthropic's guidance on tool descriptions (summary)
 
+Full local copies (git-ignored, on this Mac): `reference/anthropic/`. Its
+`README.md` lists the guidance pages (writing tools, defining tools, the
+connector review rules, building agents, context engineering, prompting
+best practices) and the examples (the claude.ai system prompts, the
+anthropics/skills repo, Claude Code's own tool descriptions). Notes on tool
+design (naming, one tool with actions or several, results, errors):
+[`anthropic-tool-guidance.md`](anthropic-tool-guidance.md).
+
 From "Writing effective tools for agents" (anthropic.com/engineering/
 writing-tools-for-agents, 2025-09-11), "Introducing advanced tool use"
 (anthropic.com/engineering/advanced-tool-use, 2025-11-24), the Claude docs

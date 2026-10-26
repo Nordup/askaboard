@@ -48,3 +48,4 @@ docs/learning-space/reference/
 
 # Live-drawing lab runs (space/scripts/lab)
 space/.lab/
+.claude/worktrees/

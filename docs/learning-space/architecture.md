@@ -186,20 +186,34 @@ limits scripts and images.
 How an agent's scene program becomes drawing on the board (decisions P11,
 P12, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
 
-- **Main process.** `run_scene` (`src/main/mcp.ts`) sends the program to the
-  board's stage: one long-lived QuickJS context in a Node worker
-  (`live-worker.ts`, managed by `live-scene.ts`). The sandbox API is
-  `live-prelude.js` (creators, actions, values, `say`, `stage`, …). The
+- **Main process.** `write_scene` and `play_scene` (`src/main/mcp.ts`) send
+  the program to the board's stage (`live-scene.ts`, decision T18): one
+  long-lived V8 realm in a Web Worker of the stage process, a hidden,
+  sandboxed Chromium renderer with no window (`stage-process.ts`; the page
+  `src/stage/page.ts`, the worker `src/stage/worker.ts`). The stage process
+  has its own in-memory session that serves only its page and scripts, with
+  no network, no permissions, no navigation and cross-origin isolation; one
+  MessagePort joins it to the main process, and both sides check every
+  message (`src/shared/stage-protocol.ts`). The worker removes every global
+  that is not ECMAScript before the sandbox API runs. The sandbox API is
+  `src/stage/live-prelude.js` (creators, actions, values, `say`, `stage`,
+  …); `Date` reads the scene clock and `Math.random` is seeded. The
   program returns a description (objects and a timeline,
   `src/shared/live-scene.ts`); it cannot reach the app, files or network.
   After the prelude has run, the stage is locked (decision T14): every
   object reachable from a global is frozen (the scene API, `JSON`, `Math`,
-  the prototypes), only `stage` stays writable, the prelude keeps its own
-  references to the built-ins, the worker calls the prelude's host functions
-  through handles it took at the start, and `__begin` puts back any global
-  that the program before replaced.
-  It asks the board questions synchronously through `__measure` (the worker
-  blocks on an Atomics flag): text sizes, and through `sceneHost` html
+  the prototypes), every global is locked, only `stage` stays writable, and
+  the prelude keeps its own references to the built-ins and gives its host
+  functions to the worker directly (they are not globals). The worker's
+  scheduler runs every pending job, then ends the earliest pending action,
+  one task per action. Cancel ends the worker; a crash of the stage process
+  starts a new one, and the stage is rebuilt from its log. Changing objects
+  are sampled only where what their recipes read changes (values, object
+  tracks, the camera); a recipe that reads the time, takes random numbers
+  or changes the scene while it is sampled is sampled at every time.
+  A program asks the board questions synchronously (the worker blocks with
+  Atomics.wait while the stage page writes the answer into a shared
+  buffer): text sizes, and through `sceneHost` html
   layout (`html()`, `image()`, copies of board material), empty space
   (`space()`) and an item's content (`copy()`), answered by
   `renderer/live/host.ts` (the HTML converter, image import into

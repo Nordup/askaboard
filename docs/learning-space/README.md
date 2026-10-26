@@ -30,6 +30,7 @@ in [`../../space/`](../../space/); work happens on `main`.
 | Live drawing: one drawing medium in code ([`live-drawing-plan.md`](live-drawing-plan.md), decisions P11–P13) | Stages 1–4 done: `run_scene` and `scene_control` are the one way to write (11 tools); values, labels, named groups, preview, camera, pointer, the stage and beats, program items (WebGL, three.js, any library), `html()`, `image()`, edits, a floating script panel (the app does not speak, T13). Measured (2026-10-26, everything on): both GPT and Claude draw the EM wave in ink, step by step, with handwritten labels; GPT previews; Claude explains fully, then asks; practice sheets still use HTML |
 | Lab switches for experiments: `council.mjs --no-code`, `--no-html`, `--brief <draft>` (`space/src/main/lab-switch.ts`) | Done; see [`working-guide.md`](working-guide.md), "Choosing lab tests" |
 | Feature freeze (2026-10-26) | On: the founder tests everything by hand (code items, shaders, the other media) and fixes what gets in the way. Next direction: the voice loop, a voice model and the scene driving each other ([`plan.md`](plan.md), "Current focus") |
+| First real test (2026-10-26) | Done: one hour on neurons by voice; the synapse mechanism clicked for the founder for the first time. The founder calls the app an MVP, but not yet for friends ([`first-test-2026-10-26.md`](first-test-2026-10-26.md)). Gaps G1–G6 and the order of work: [`first-test-gaps.md`](first-test-gaps.md); G1 (voice ⇄ scene) is the next milestone |
 | Perception (the old fix 2) | Mostly answered by board news; the rest deferred |
 | Plain chat apps (ChatGPT web, Claude chat) with folder file tools | Later |
 | App packaging, signing, auto-update | Later |
@@ -46,6 +47,8 @@ work that [`plan.md`](plan.md) and [`baseline.md`](baseline.md) describe.
 
 1. [`idea.md`](idea.md) — the founder's original idea, part by part, in the
    founder's words. Why the app exists.
+   - [`strategy.md`](strategy.md) — the founder's view (2026-10-26) of the
+     bet, why the app alone is no moat, how we grow, and our values.
    - [`tutor-vision.md`](tutor-vision.md) — the founder's second message
      (2026-10-24), in the same form: the problems in the agent–canvas loop
      and the tutor the founder wants.
@@ -63,6 +66,18 @@ work that [`plan.md`](plan.md) and [`baseline.md`](baseline.md) describe.
    - [`sessions-2026-10-24.md`](sessions-2026-10-24.md) — the founder's
      first real voice sessions after the brief: how the ChatGPT voice path
      works, what went well, and why the step-by-step drawing did not appear.
+   - [`first-test-2026-10-26.md`](first-test-2026-10-26.md) — the
+     founder's first real test (neurons and synapses, by voice): what
+     clicked, what did not, and the founder's words. The founder calls the
+     app an MVP. [`first-test-gaps.md`](first-test-gaps.md) has the six
+     gaps (G1–G6) with facts, fixes and the order of work.
+   - [`scene-redesign.md`](scene-redesign.md) — the scene redesign
+     (2026-10-26): the measured flaws of `run_scene` and the other tools,
+     what we want from a scene, three directions and the open questions.
+   - [`perf-plan.md`](perf-plan.md) — the perf environment (`space/scripts/perf/`),
+     the baseline numbers and the ordered fixes (A1–D1).
+   - [`handoff/`](handoff/) — the context of long sessions, to continue after
+     a compaction.
    - [`writing-agent-text.md`](writing-agent-text.md) — how to write and
      improve what agents read (the brief, instructions, tool descriptions),
      with the founder's own words. Read it before you touch any of them.
