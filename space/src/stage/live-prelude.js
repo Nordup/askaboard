@@ -359,13 +359,33 @@
     return lines
   }
 
-  /** A path "d" through points (a polyline), closed with Z when asked. */
-  function polyD(list, closed) {
+  /**
+   * A path "d" through points (a polyline), closed with Z when asked, and the
+   * polylines that samplePath reads from that path. The polylines are made
+   * from the same rounded numbers, not from the text: a finite number reads
+   * back from its text as the same number, and samplePath adds 0, which makes
+   * -0 into 0. lines is null where samplePath must read the text: a number
+   * that is not finite, fewer than two points, or a hole in the list.
+   */
+  function polyPath(list, closed) {
     let d = ''
-    list.forEach((p, k) => {
-      d += `${k ? 'L' : 'M'}${f2(p[0])} ${f2(p[1])} `
-    })
-    return closed ? `${d}Z` : d.trim()
+    const n = list.length
+    let ok = n > 1
+    const line = []
+    for (let k = 0; k < n; k++) {
+      if (!(k in list)) {
+        ok = false
+        continue
+      }
+      const p = list[k]
+      const x = f2(p[0])
+      const y = f2(p[1])
+      d += `${k ? 'L' : 'M'}${x} ${y} `
+      if (!Number.isFinite(x) || !Number.isFinite(y)) ok = false
+      line.push([x + 0, y + 0])
+    }
+    if (ok && closed) line.push([line[0][0], line[0][1]])
+    return { d: closed ? `${d}Z` : d.trim(), lines: ok ? [line] : null }
   }
 
   /** An ellipse as four cubic arcs, starting at the left (a hand starts circles there). */
@@ -810,8 +830,9 @@
     return { x: b.x - pad, y: b.y - pad, width: b.width + pad * 2, height: b.height + pad * 2 }
   }
 
-  function shapeObject(api, d, opts, defaults) {
-    const lines = samplePath(d)
+  /** known: the polylines samplePath(d) gives, when the caller made d from them (null: read d). */
+  function shapeObject(api, d, opts, defaults, known = null) {
+    const lines = known || samplePath(d)
     let total = 0
     for (const l of lines) total += polyLength(l)
     if (opts.pen) {
@@ -864,7 +885,16 @@
 
   function line(x1, y1, x2, y2, opts) {
     opts = options(opts, 'line options')
-    return shapeObject('line', `M${coord(x1, 'x1')} ${coord(y1, 'y1')} L${coord(x2, 'x2')} ${coord(y2, 'y2')}`, opts, { closed: false })
+    coord(x1, 'x1')
+    coord(y1, 'y1')
+    coord(x2, 'x2')
+    coord(y2, 'y2')
+    return shapeObject('line', `M${x1} ${y1} L${x2} ${y2}`, opts, { closed: false }, [
+      [
+        [x1 + 0, y1 + 0],
+        [x2 + 0, y2 + 0]
+      ]
+    ])
   }
 
   function arrow(x1, y1, x2, y2, opts) {
@@ -885,8 +915,16 @@
     }
     const [ax, ay] = wing(0.45)
     const [bx, by] = wing(-0.45)
-    const d = `M${f2(x1)} ${f2(y1)} L${f2(x2)} ${f2(y2)} M${f2(ax)} ${f2(ay)} L${f2(x2)} ${f2(y2)} L${f2(bx)} ${f2(by)}`
-    return shapeObject('arrow', d, opts, { closed: false })
+    const [p, q, a, b] = [
+      [f2(x1), f2(y1)],
+      [f2(x2), f2(y2)],
+      [f2(ax), f2(ay)],
+      [f2(bx), f2(by)]
+    ]
+    const d = `M${p[0]} ${p[1]} L${q[0]} ${q[1]} M${a[0]} ${a[1]} L${q[0]} ${q[1]} L${b[0]} ${b[1]}`
+    const at = (v) => [v[0] + 0, v[1] + 0]
+    const known = [p, q, a, b].every((v) => Number.isFinite(v[0]) && Number.isFinite(v[1])) ? [[at(p), at(q)], [at(a), at(q), at(b)]] : null
+    return shapeObject('arrow', d, opts, { closed: false }, known)
   }
 
   function circle(cx, cy, r, opts) {
@@ -924,7 +962,8 @@
     opts = options(opts, 'polygon options')
     const list = pointList(pts, 'polygon points', 2)
     const closed = opts.closed !== false
-    return shapeObject('polygon', polyD(list, closed), opts, { closed })
+    const { d, lines } = polyPath(list, closed)
+    return shapeObject('polygon', d, opts, { closed }, lines)
   }
 
   function path(d, opts) {
@@ -991,9 +1030,10 @@
       fail(`plot drew nothing for ${range} (${first.join(', ')}): ${why}`)
     }
     for (const l of lines) for (const p of l) if (Math.abs(p[0]) > MAX_COORD || Math.abs(p[1]) > MAX_COORD) fail('plot goes outside ±100000 board points; use options.y to clip it')
-    const d = lines.map((l) => polyD(l, false)).join(' ')
+    const parts = lines.map((l) => polyPath(l, false))
+    const d = parts.map((part) => part.d).join(' ')
     const { at: _a, unit: _u, samples: _s, t: _t, x: _x, y: _y, ...rest } = opts
-    return shapeObject('plot', d, rest, { closed: false })
+    return shapeObject('plot', d, rest, { closed: false }, parts.every((part) => part.lines) ? parts.map((part) => part.lines[0]) : null)
   }
 
   // ---------- Handwriting ----------
@@ -1311,7 +1351,8 @@
       T = now
     }
     if (pts.length < 2) pts.push([pts[0][0] + 0.01, pts[0][1]])
-    return shapeObject('trace', polyD(pts, false), opts, { closed: false })
+    const { d, lines } = polyPath(pts, false)
+    return shapeObject('trace', d, opts, { closed: false }, lines)
   }
 
   // ---------- Live pixels ----------

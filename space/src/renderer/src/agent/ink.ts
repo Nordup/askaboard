@@ -9,41 +9,127 @@ import type { Point } from '../board/types'
 /** Points closer than this are merged; longer segments are split (board points). */
 const SAMPLE_STEP = 2.5
 
-/** Sample an SVG path `d` into polylines (one per subpath), using the browser's own path geometry. */
-export function svgPathPolylines(d: string): Point[][] {
+/** The hidden path element that measures paths (one for the page, made again when it left the page). */
+let measure: SVGPathElement | null = null
+
+function measuringPath(): SVGPathElement {
+  if (measure && measure.isConnected) return measure
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
   svg.setAttribute('width', '0')
   svg.setAttribute('height', '0')
   svg.style.position = 'absolute'
   svg.style.visibility = 'hidden'
-  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
-  path.setAttribute('d', d)
-  svg.appendChild(path)
+  measure = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  svg.appendChild(measure)
   document.body.appendChild(svg)
-  try {
-    const total = path.getTotalLength()
-    if (!Number.isFinite(total) || total <= 0) throw new Error('the path has no length. Give a path "d" string such as "M0 0 L40 0".')
-    // Sampled finer than SAMPLE_STEP, then simplified.
-    const count = Math.max(2, Math.ceil(total / 1.5))
-    const out: Point[][] = []
-    let current: Point[] = []
-    let last: Point | null = null
-    for (let i = 0; i <= count; i++) {
-      const p = path.getPointAtLength((total * i) / count)
-      const point: Point = [p.x, p.y]
-      // A moveto shows as a jump much longer than the sampling step: start a new polyline there.
-      if (last && Math.hypot(point[0] - last[0], point[1] - last[1]) > (total / count) * 3 + 0.5) {
-        if (current.length > 1) out.push(current)
-        current = []
-      }
-      current.push(point)
-      last = point
-    }
-    if (current.length > 1) out.push(current)
-    return out.map((line) => simplify(line, SAMPLE_STEP))
-  } finally {
-    svg.remove()
+  return measure
+}
+
+const NUMBER = String.raw`[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?`
+/** One absolute moveto or lineto with its two numbers. */
+const MOVE_OR_LINE = new RegExp(String.raw`([ML])\s*(${NUMBER})[\s,]+(${NUMBER})\s*`, 'y')
+/** Commands of a path in one prefix of the path, at least. */
+const PREFIX_STEP = 16
+
+/**
+ * Where each command of a path made only of absolute M and L commands starts
+ * in d, and the length of the path up to the end of each command (in double
+ * precision, so close to the browser's single-precision lengths); null for
+ * any other path.
+ */
+function polylineCommands(d: string): { starts: number[]; ends: number[]; size: number } | null {
+  let at = 0
+  while (at < d.length && /\s/.test(d[at])) at++
+  const starts: number[] = []
+  const ends: number[] = []
+  let x = 0
+  let y = 0
+  let length = 0
+  let size = 0
+  MOVE_OR_LINE.lastIndex = at
+  for (let m = MOVE_OR_LINE.exec(d); m; m = MOVE_OR_LINE.exec(d)) {
+    const nx = Number(m[2])
+    const ny = Number(m[3])
+    if (!starts.length && m[1] !== 'M') return null
+    if (m[1] === 'L') length += Math.hypot(nx - x, ny - y)
+    starts.push(m.index)
+    ends.push(length)
+    size = Math.max(size, Math.abs(nx), Math.abs(ny))
+    x = nx
+    y = ny
+    at = MOVE_OR_LINE.lastIndex
   }
+  return at === d.length && starts.length ? { starts, ends, size } : null
+}
+
+/**
+ * The browser's points at lengths (total * i) / count of path d, i = 0 … count
+ * (path holds d). The browser measures a whole path again for each point.
+ * For a long path of M and L commands, a point well inside the path is
+ * measured on a prefix of d instead (whole commands): the browser parses and
+ * measures a path from its start, so the first segments of a prefix, their
+ * lengths and the point at a length inside them are those of the whole path.
+ * A prefix is used for a length only when the browser's own length of the
+ * prefix is clearly longer; other points are measured on the whole path.
+ */
+function pointsAlong(path: SVGPathElement, d: string, total: number, count: number): DOMPoint[] {
+  const at = (i: number): number => (total * i) / count
+  const points: DOMPoint[] = new Array(count + 1)
+  let i = 0
+  const commands = count > PREFIX_STEP * 4 ? polylineCommands(d) : null
+  if (commands && commands.starts.length > PREFIX_STEP * 2) {
+    const { starts, ends, size } = commands
+    const n = starts.length
+    // Far more than the difference between double and single precision lengths.
+    const pick = 1 + n * (total + size) * 1e-6
+    const margin = 1e-3 + total * 1e-5
+    let k = 0
+    let last = -1
+    let limit = -Infinity
+    for (; i <= count; i++) {
+      const length = at(i)
+      while (k < n && ends[k] < length + pick) k++
+      const need = k + 2
+      if (need > last) {
+        last = Math.ceil((need + 1) / PREFIX_STEP) * PREFIX_STEP - 1
+        if (last >= n - 1) break
+        path.setAttribute('d', d.slice(0, starts[last + 1]))
+        limit = path.getTotalLength() - margin
+      }
+      if (!(length <= limit)) break
+      points[i] = path.getPointAtLength(length)
+    }
+    if (i <= count) path.setAttribute('d', d)
+  }
+  for (; i <= count; i++) points[i] = path.getPointAtLength(at(i))
+  return points
+}
+
+/** Sample an SVG path `d` into polylines (one per subpath), using the browser's own path geometry. */
+export function svgPathPolylines(d: string): Point[][] {
+  const path = measuringPath()
+  path.setAttribute('d', d)
+  const total = path.getTotalLength()
+  if (!Number.isFinite(total) || total <= 0) throw new Error('the path has no length. Give a path "d" string such as "M0 0 L40 0".')
+  // Sampled finer than SAMPLE_STEP, then simplified.
+  const count = Math.max(2, Math.ceil(total / 1.5))
+  const points = pointsAlong(path, d, total, count)
+  const out: Point[][] = []
+  let current: Point[] = []
+  let last: Point | null = null
+  for (let i = 0; i <= count; i++) {
+    const p = points[i]
+    const point: Point = [p.x, p.y]
+    // A moveto shows as a jump much longer than the sampling step: start a new polyline there.
+    if (last && Math.hypot(point[0] - last[0], point[1] - last[1]) > (total / count) * 3 + 0.5) {
+      if (current.length > 1) out.push(current)
+      current = []
+    }
+    current.push(point)
+    last = point
+  }
+  if (current.length > 1) out.push(current)
+  return out.map((line) => simplify(line, SAMPLE_STEP))
 }
 
 /** A seeded random source (mulberry32, as in main/live-prelude.js): the same seed gives the same numbers. */
