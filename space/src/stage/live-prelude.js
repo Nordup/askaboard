@@ -2435,11 +2435,21 @@
   /** While a scene is sampled: the shapes of objects that other recipes read, by object and sample time (pure evaluations only). */
   const sampleMemo = new Map()
 
-  /** One sampling of an object at these times: its geometry where it changes, and its end state. */
+  /**
+   * One sampling of an object at these times: its geometry where it changes,
+   * and its end state. A run of equal samples keeps its first and its last
+   * sample, so the player blends from the last one to the next change over one
+   * sample step, as for every other step. Without the last one, the gap
+   * between kept samples is longer than BLEND_GAP and the player holds the
+   * shape for a step while other objects blend (a bob that stops for a moment
+   * at the end of its swing then lags its string).
+   */
   function samplePass(entry, times) {
     const samples = []
     let lastKey = ''
     let final = null
+    /** The last sample of the current run of equal samples, when it is not kept yet. */
+    let runEnd = null
     for (const t of times) {
       evaluations++
       const spec = specAt(entry, t)
@@ -2451,8 +2461,13 @@
       const g = geometryOf(spec)
       const key = JSON.stringify(g)
       final = spec
-      if (key === lastKey) continue
+      if (key === lastKey) {
+        runEnd = { t: f3(t), ...g }
+        continue
+      }
       lastKey = key
+      if (runEnd) samples.push(runEnd)
+      runEnd = null
       samples.push({ t: f3(t), ...g })
     }
     return { samples, lastKey, final }

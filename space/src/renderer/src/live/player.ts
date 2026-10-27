@@ -173,21 +173,62 @@ export interface InkBuffers {
 
 const newInkBuffers = (): InkBuffers => ({ lines: [], lineLengths: [], strokes: [] })
 
-/** The lines between two samples (into the buffers' lines), or the first sample's lines when they do not blend. */
+/**
+ * The lines between two samples (into the buffers' lines), or the first
+ * sample's lines when they do not blend (another number of strokes). Each
+ * point of a stroke in `a` blends with the point of the same stroke in `b` at
+ * the same share of the stroke's length. The stage puts the ink points on a
+ * grid along the length, so the number of points changes when a length
+ * crosses a grid step, also for a line whose length stays the same up to
+ * rounding: the blend must not depend on equal counts, or the ink holds its
+ * earlier sample and lags the shapes, which always blend.
+ */
 function blendLines(a: DynSample, b: DynSample, k: number, buffers: InkBuffers): Point[][] {
   const al = a.lines ?? []
   const bl = b.lines ?? []
-  if (k <= 0 || al.length !== bl.length || al.some((line, i) => line.length !== bl[i].length)) return al
+  if (k <= 0 || al.length !== bl.length) return al
   const out = buffers.lines
   out.length = al.length
   for (let i = 0; i < al.length; i++) {
     const line = al[i]
+    const other = bl[i]
     const into = (out[i] ??= [])
     into.length = line.length
+    if (line.length === other.length || other.length < 2 || line.length < 2) {
+      for (let j = 0; j < line.length; j++) {
+        const q = other[Math.min(j, other.length - 1)] ?? line[j]
+        const p = (into[j] ??= [0, 0])
+        p[0] = lerp(line[j][0], q[0], k)
+        p[1] = lerp(line[j][1], q[1], k)
+      }
+      continue
+    }
+    // Another count: walk both strokes by length share.
+    let totalA = 0
+    for (let j = 1; j < line.length; j++) totalA += Math.hypot(line[j][0] - line[j - 1][0], line[j][1] - line[j - 1][1])
+    let totalB = 0
+    for (let j = 1; j < other.length; j++) totalB += Math.hypot(other[j][0] - other[j - 1][0], other[j][1] - other[j - 1][1])
+    let atA = 0
+    let s = 1
+    let before = 0
+    let segment = Math.hypot(other[1][0] - other[0][0], other[1][1] - other[0][1])
     for (let j = 0; j < line.length; j++) {
+      if (j > 0) atA += Math.hypot(line[j][0] - line[j - 1][0], line[j][1] - line[j - 1][1])
+      const target = (totalA > 0 ? atA / totalA : j / (line.length - 1)) * totalB
+      while (s < other.length - 1 && before + segment < target) {
+        before += segment
+        s++
+        segment = Math.hypot(other[s][0] - other[s - 1][0], other[s][1] - other[s - 1][1])
+      }
+      const last = j === line.length - 1
+      const f = last ? 1 : segment > 0 ? Math.max(0, Math.min(1, (target - before) / segment)) : 1
+      const from = last ? other[other.length - 1] : other[s - 1]
+      const to = last ? from : other[s]
+      const qx = from[0] + (to[0] - from[0]) * f
+      const qy = from[1] + (to[1] - from[1]) * f
       const p = (into[j] ??= [0, 0])
-      p[0] = lerp(line[j][0], bl[i][j][0], k)
-      p[1] = lerp(line[j][1], bl[i][j][1], k)
+      p[0] = lerp(line[j][0], qx, k)
+      p[1] = lerp(line[j][1], qy, k)
     }
   }
   return out
@@ -324,7 +365,9 @@ function objectLook(play: ScenePlay, object: PlayObject, t: number, inkIndex: In
     let at = 0
     const shown = before || (draw <= 0 && fill <= 0) ? 0 : clamp01(timeline.number(object.id, 'opacity', t))
     const inkColor = withOpacity(color ?? dyn.ink.color, shown)
-    const width = (now.a.width ?? dyn.ink.width) * Math.sqrt(Math.abs(world[0] * world[3] - world[1] * world[2]))
+    // The width blends as a shape's stroke width does.
+    const ownWidth = now.a.width === undefined ? dyn.ink.width : now.k > 0 && now.b.width !== undefined ? lerp(now.a.width, now.b.width, now.k) : now.a.width
+    const width = ownWidth * Math.sqrt(Math.abs(world[0] * world[3] - world[1] * world[2]))
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]
       const share = clamp01((draw * total - at) / (lengths[i] || 1))
