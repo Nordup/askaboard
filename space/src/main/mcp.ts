@@ -968,7 +968,7 @@ export class AgentServer {
 
 Use it when you start work on a board, and whenever you need ids, sizes or free areas, or want to see how material is grouped. It returns no image: to see what is written or drawn, use get_screenshot. For the other boards of the folder, use list_boards.
 
-- part chooses what to list: "view" (what the learner sees now; the default), "board" (the whole board), {region: {x, y, width, height}}, {id: "g3"} or {id: [...]} (items, ink groups or frames, with what they hold), or {scene: "name"} (the items a scene made). A plain string works for an id or a name that only one thing has; when several have it, the result lists them.
+- part chooses what to list: "view" (what the learner sees now; the default), "board" (the whole board), {region: {x, y, width, height}}, {id: "g3"} or {id: [...]} (items, ink groups or frames, with what they hold), {scene: "name"} (the items a scene made), or {scene: "name", step: 2} (the items of one step, by number or name). A plain string works for an id or a name that only one thing has; when several have it, the result lists them.
 - With part "view", the items outside the view are summarised by place, each place with its region.
 - With part "view" or "board", when there are many items, the list summarises them by area, with counts and a region for each. Each area opens with one more call; nothing is left out.
 - query searches the text on the open board: text, ${htmlMaterial('HTML material, ')}names, and the names and lines of the scenes played since the app started. Handwriting is not text: read it with get_screenshot.
@@ -979,7 +979,7 @@ Use it when you start work on a board, and whenever you need ids, sizes or free 
           part: z
             .union(partForms)
             .optional()
-            .describe('What to list: "view" (default), "board", {region}, {id}, {scene}, or an id or name that only one thing has.'),
+            .describe('What to list: "view" (default), "board", {region}, {id}, {scene} or {scene, step}, or an id or name that only one thing has.'),
           query: z.string().min(1).optional().describe('Text to search for on the open board. Returns each match with the words around it, its id and its place.'),
           depth: z.number().int().min(1).max(10).optional().describe('How many levels inside frames to list, 1 to 10. Default 3.')
         }),
@@ -1000,7 +1000,7 @@ Use it when you start work on a board, and whenever you need ids, sizes or free 
 
 Use it to read handwriting and to see how a drawing looks. For ids, sizes and structure, list_items is much smaller.
 
-- What to capture, with part: "view" (what the learner sees now; the default), "board" (the whole board), "selection" (what the learner selected), {region: {x, y, width, height}} (an exact board rect), {id: "g3"} or {id: [...]} (items or ink groups, with a small margin), {scene: "name"} (the items a scene made), or {changes: "c115-c1115"} (an interval from get_changes).
+- What to capture, with part: "view" (what the learner sees now; the default), "board" (the whole board), "selection" (what the learner selected), {region: {x, y, width, height}} (an exact board rect), {id: "g3"} or {id: [...]} (items or ink groups, with a small margin), {scene: "name"} (the items a scene made), {scene: "name", step: 2} (the items of one step, by number or name), or {changes: "c115-c1115"} (an interval from get_changes).
 - part {changes: …} shows the items of that interval: items added, moved, resized or edited in dashed blue boxes, removed items in dashed pink boxes.
 - Any area works, also outside the learner's view.
 - labels: true adds id tags and outlines; grid: true adds board coordinates every 100 points. Both appear only in your image.
@@ -1010,7 +1010,7 @@ Use it to read handwriting and to see how a drawing looks. For ids, sizes and st
           part: z
             .union([...partForms, z.object({ changes: z.string().min(1) }).strict()])
             .optional()
-            .describe('What to capture: "view" (default), "board", "selection", {region}, {id}, {scene}, {changes}, or an id or name that only one thing has.'),
+            .describe('What to capture: "view" (default), "board", "selection", {region}, {id}, {scene} or {scene, step}, {changes}, or an id or name that only one thing has.'),
           scale: z.number().positive().max(4).optional().describe('Image pixels per board point (default 1). Lowered when the image would exceed max_size.'),
           max_size: z.number().int().min(256).max(4096).optional().describe('The longest image side in pixels. Default: 1024 for "view" and "board" and for any area longer than 1000 board points; 1600 for smaller crops.'),
           labels: z.boolean().optional().describe('Draw id tags and outlines on the image (default false).'),
@@ -1249,7 +1249,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
       'get_guide',
       {
         title: 'The board reference',
-        description: `Returns one topic of the board reference as markdown: the technical details of the board and of scenes (write_scene, preview_scene, play_scene), the one way to write on it.\n\nUse it before a scene that uses something whose details are not in your context yet: topic "scene" before your first write_scene${htmlMaterial(', topic "html" before your first html() material')}.\n\nTopics:\n${guideTopics(this.hooks.folderRoot())}\n\n- Topics are about 500 to 16,000 characters; "scene" is the longest${codeItems(', and "scene-interact" holds about 12,000 characters of source')}.\n- Without topic, it returns all topics in one text (about 41,000 characters).\n- An unknown topic returns an error that lists the topic names.\n- It does not hold the brief (what the space is for and how you work with the person); get_brief has it.`,
+        description: `Returns one topic of the board reference as markdown: the technical details of the board and of scenes (write_scene, preview_scene, play_scene), the one way to write on it.\n\nUse it before a scene that uses something whose details are not in your context yet: topic "scene" before your first write_scene${htmlMaterial(', topic "html" before your first html() material')}.\n\nTopics:\n${guideTopics(this.hooks.folderRoot())}\n\n- Topics are about 400 to 16,000 characters; "scene" is the longest${codeItems(', and "scene-interact" holds about 12,000 characters of source')}.\n- Without topic, it returns all topics in one text (about 32,000 characters).\n- An unknown topic returns an error that lists the topic names.\n- It does not hold the brief (what the space is for and how you work with the person); get_brief has it.`,
         inputSchema: strictInput('get_guide', {
           topic: z.string().optional().describe(`A topic name from the list in the description, such as "scene" or ${htmlMaterial('"html"', '"ink"')}. Without it, all topics.`)
         }),

@@ -182,8 +182,8 @@ function itemClauses(items: readonly NewsItem[]): string[] {
 /**
  * One line, facts only. For example:
  * Board news for "Stars", since your last look or news 2 min ago: the learner drew 9 strokes:
- * ink group g12 (280×210 at 310, -40) right of your SVG "Thermal spectra", and moved your image "Fig 2A"
- * 600 pt right (now 1100×800 at 4200, 0). The last change was 40 s ago.
+ * ink group g12 (310,-40 280×210) right of your svg "Thermal spectra", and moved your image "Fig 2A"
+ * 600 pt right (now 4200,0 1100×800). The last change was 40 s ago.
  */
 export function formatNews(news: LearnerNews, since: number, now: number): string {
   const clauses: string[] = []
