@@ -1,9 +1,8 @@
-import { placeText, wholeRect } from '@shared/board-digest'
+import { authorOf, clusterByPlace, contextOf, firstWords, isItem, isOrphan, itemTexts, matchText, matchWords, nameOf, num, placeText as place, plural, q, relation, sceneIdOf, shownText, unionRegions, wholeRect } from '@shared/board-digest'
 import { boardName, isFrame, isInk, isKnown, isLive, savedInkPoints, type Author, type BoardNode, type InkNode } from '@shared/board-format'
 import type { BoardRect, ChangedItem, InkGroupSummary, RemovedItem } from '@shared/space-api'
 import type { BoardHandle, LiveBoardState } from '../board/Board'
 import { describeChange, type ChangeDescription, type ChangeLog, type Tombstone } from '../board/changes'
-import { unionRegions } from '../board/geometry'
 import { nodesToHtml } from '../board/html'
 import { buildIndex, parentKey, ROOT, withDescendants, type SceneIndex } from '../board/scene'
 import type { Region } from '../board/types'
@@ -62,17 +61,9 @@ const CHARS_PER_STROKE_POINTS = 90
 const CHARS_PER_STROKE_ENTRY = 72
 
 const r1 = (value: number): number => Math.round(value * 10) / 10
-const num = (value: number): string => Math.round(value).toLocaleString('en-US')
-const plural = (count: number, word: string, many = `${word}s`): string => `${num(count)} ${count === 1 ? word : many}`
-const q = (value: string): string => JSON.stringify(value)
 
 export function boardRect(region: Region | null): BoardRect | null {
   return region ? { x: r1(region.x), y: r1(region.y), width: r1(region.width), height: r1(region.height) } : null
-}
-
-/** "x,y w×h" in whole board points (the same rounded rect as regionArg). */
-function place(region: Region | null): string {
-  return placeText(region)
 }
 
 /** A region as a call argument: {x: …, y: …, width: …, height: …}, the same rounded rect as place(). */
@@ -90,39 +81,6 @@ function viewportRect(state: LiveBoardState): Region {
   const width = state.viewport[0] / state.camera.zoom
   const height = state.viewport[1] / state.camera.zoom
   return { x: state.camera.center[0] - width / 2, y: state.camera.center[1] - height / 2, width, height }
-}
-
-/** Where `a` is relative to `b`, and the gap between them (0 when they overlap). */
-function relation(a: Region, b: Region): { gap: number; side: string } {
-  const gapX = Math.max(b.x - (a.x + a.width), a.x - (b.x + b.width), 0)
-  const gapY = Math.max(b.y - (a.y + a.height), a.y - (b.y + b.height), 0)
-  if (gapX === 0 && gapY === 0) return { gap: 0, side: 'over' }
-  const horizontal = a.x >= b.x + b.width ? 'right' : a.x + a.width <= b.x ? 'left' : ''
-  const vertical = a.y >= b.y + b.height ? 'below' : a.y + a.height <= b.y ? 'above' : ''
-  const side = horizontal && vertical ? `${vertical} and to the ${horizontal}` : horizontal ? `to the ${horizontal}` : vertical
-  return { gap: Math.hypot(gapX, gapY), side }
-}
-
-const sceneOfNode = (node: BoardNode): string | undefined => {
-  const scene = (node as { scene?: unknown }).scene
-  return typeof scene === 'string' && scene ? scene : undefined
-}
-const authorOf = (node: BoardNode): Author => ((node as { author?: unknown }).author === 'agent' ? 'agent' : 'learner')
-const nameOf = (node: BoardNode): string | undefined => (typeof node.name === 'string' && node.name.trim() ? node.name.trim() : undefined)
-
-/** The first words of a text (markup and maths signs out), at most `max` characters. */
-function firstWords(raw: string, max = 48): string {
-  const text = raw.replace(/<[^>]*>/g, ' ').replace(/[*\\]/g, '').replace(/\s+/g, ' ').trim()
-  return text.length > max ? `${text.slice(0, max - 1)}…` : text
-}
-
-/** The text a node shows (text nodes, and the <text> elements of an SVG). */
-function textOf(node: BoardNode): string {
-  if (node.kind === 'text' && typeof (node as { text?: unknown }).text === 'string') return (node as { text: string }).text
-  if (node.kind === 'svg' && typeof (node as { markup?: unknown }).markup === 'string') {
-    return [...(node as { markup: string }).markup.matchAll(/<text[^>]*>([\s\S]*?)<\/text>/g)].map((match) => match[1].replace(/<[^>]*>/g, '')).join(' ')
-  }
-  return ''
 }
 
 /** About how many characters get_item gives for an ink group as "points" and as "strokes" (characters per point measured on a few of its strokes, as get_item gives them). */
@@ -205,27 +163,23 @@ function buildModel(ctx: ReadContext): Model {
 
   for (const group of ctx.groups) {
     const strokes = group.strokes.map((id) => byId.get(id)).filter((node): node is BoardNode => !!node)
-    const scene = strokes.map(sceneOfNode).find((id) => id)
+    const scene = strokes.map(sceneIdOf).find((id) => id)
     const name = strokes.map(nameOf).find((value) => value)
     units.push({ id: group.id, kind: 'ink', author: group.author, ...(scene ? { scene } : {}), ...(name ? { name } : {}), bounds: group.bounds, group, parent: group.parent || ROOT, inside: 0 })
   }
   for (const node of state.nodes) {
     if (isInk(node)) continue
     const known = isKnown(node)
-    const rawParent = known ? (node as { parent?: string }).parent : undefined
-    const orphan = !!rawParent && !byId.has(rawParent)
+    if (!isItem(node, byId)) continue
+    const orphan = isOrphan(node, byId)
     const key = known ? parentKey(node, byId) : ROOT
-    const parent = key === ROOT ? undefined : byId.get(key)
-    const scene = sceneOfNode(node)
-    // A unit: top level, or made by another author than its frame, or made by another scene (children an html() root holds carry no scene of their own).
-    const isUnit = !parent || authorOf(parent) !== authorOf(node) || (!!scene && scene !== sceneOfNode(parent))
-    if (!isUnit) continue
+    const scene = sceneIdOf(node)
     const name = nameOf(node)
     const inside = isFrame(node) ? withDescendants([node.id], index).size - 1 : 0
     let title: string | undefined
     if (!name && isFrame(node)) {
       for (const id of withDescendants([node.id], index)) {
-        const text = firstWords(textOf(byId.get(id) as BoardNode), 40)
+        const text = firstWords(shownText(byId.get(id) as BoardNode), 40)
         if (text) {
           title = text
           break
@@ -305,7 +259,7 @@ function holds(m: Model, unit: Unit): string {
     return `${plural(strokes.length, 'stroke')}${sizes.points >= 2000 ? ` (points ${about(sizes.points)} characters)` : ''}`
   }
   const node = unit.node as BoardNode
-  if (node.kind === 'text') return `“${firstWords(textOf(node))}”`
+  if (node.kind === 'text') return `“${firstWords(shownText(node))}”`
   if (isFrame(node)) return `${unit.title ? `“${unit.title}” · ` : ''}${plural(unit.inside, 'item')} inside`
   if (isLive(node)) return liveSummary(node)
   if (node.kind === 'image') {
@@ -313,7 +267,7 @@ function holds(m: Model, unit: Unit): string {
     return src.startsWith('data:') ? 'embedded image' : src.slice(src.lastIndexOf('/') + 1)
   }
   if (node.kind === 'svg') {
-    const words = firstWords(textOf(node), 32)
+    const words = firstWords(shownText(node), 32)
     const length = String((node as { markup?: unknown }).markup ?? '').length
     return [words ? `“${words}”` : '', length >= 5000 ? `markup ${num(length)} characters` : ''].filter(Boolean).join(' · ')
   }
@@ -359,34 +313,7 @@ function sceneLine(info: SceneInfo, inPart?: number): string {
 
 // ---------- Areas: clusters of units by place ----------
 
-function clusterUnits(units: Unit[], gap: number): Unit[][] {
-  const parent = units.map((_, i) => i)
-  const find = (i: number): number => {
-    while (parent[i] !== i) {
-      parent[i] = parent[parent[i]]
-      i = parent[i]
-    }
-    return i
-  }
-  const boxes = units.map((unit) => unit.bounds)
-  for (let i = 0; i < units.length; i++) {
-    const a = boxes[i]
-    if (!a) continue
-    for (let j = i + 1; j < units.length; j++) {
-      const b = boxes[j]
-      if (!b) continue
-      if (a.x - gap <= b.x + b.width && b.x - gap <= a.x + a.width && a.y - gap <= b.y + b.height && b.y - gap <= a.y + a.height) parent[find(i)] = find(j)
-    }
-  }
-  const out = new Map<number, Unit[]>()
-  units.forEach((unit, i) => {
-    const root = find(i)
-    const list = out.get(root)
-    if (list) list.push(unit)
-    else out.set(root, [unit])
-  })
-  return [...out.values()]
-}
+const clusterUnits = (units: Unit[], gap: number): Unit[][] => clusterByPlace(units, (unit) => unit.bounds, gap)
 
 /** Units in areas: by closeness, else (one dense area) by a 3×3 grid of their bounds. */
 function areas(units: Unit[]): Unit[][] {
@@ -410,7 +337,7 @@ function areas(units: Unit[]): Unit[][] {
 function titlesOf(units: Unit[], count = 3): string {
   const titles: string[] = []
   for (const unit of units) {
-    const title = unit.name ?? unit.title ?? (unit.node && unit.node.kind === 'text' ? firstWords(textOf(unit.node), 24) : '')
+    const title = unit.name ?? unit.title ?? (unit.node && unit.node.kind === 'text' ? firstWords(shownText(unit.node), 24) : '')
     if (title && !titles.includes(title)) titles.push(title)
     if (titles.length >= count) break
   }
@@ -535,14 +462,14 @@ function elsewhere(m: Model): string[] {
     }
     for (const [side, units] of sides) {
       const bounds = unionRegions(units.map((unit) => unit.bounds)) as Region
-      lines.push(`  ${side} of the view: ${describe(units)} · area ${place(bounds)} · list_items({part: {region: ${regionArg(bounds)}}})`)
+      lines.push(`  ${side} the view: ${describe(units)} · area ${place(bounds)} · list_items({part: {region: ${regionArg(bounds)}}})`)
     }
     return lines
   }
   for (const { units, bounds } of entries) {
     const { gap, side } = relation(bounds, m.view)
     const titles = titlesOf(units)
-    lines.push(`  ${side} of the view, ${num(gap)} away: ${describe(units)} · area ${place(bounds)}${titles ? ` · ${titles}` : ''} · list_items({part: {region: ${regionArg(bounds)}}})`)
+    lines.push(`  ${side} the view, ${num(gap)} away: ${describe(units)} · area ${place(bounds)}${titles ? ` · ${titles}` : ''} · list_items({part: {region: ${regionArg(bounds)}}})`)
   }
   return lines
 }
@@ -800,12 +727,6 @@ interface Match {
   root: string
 }
 
-function contextOf(text: string, at: number, length: number): string {
-  const start = Math.max(0, at - 30)
-  const end = Math.min(text.length, at + length + 30)
-  return `${start > 0 ? '…' : ''}${text.slice(start, end).replace(/\s+/g, ' ')}${end < text.length ? '…' : ''}`
-}
-
 function findText(m: Model, query: string, rect: Region | null, explicit: boolean): string[] {
   const needle = query.toLowerCase().trim()
   if (!needle) throw new Error('query needs some text to search for.')
@@ -826,17 +747,10 @@ function findText(m: Model, query: string, rect: Region | null, explicit: boolea
     const label = `${node.kind}${nameOf(node) ? ` ${q(nameOf(node) as string)}` : ''} ${node.id}`
     const key = parentKey(node, m.byId)
     const inside = key !== ROOT ? ` · inside ${frameLabel(m, key)}` : ''
-    const scene = sceneOfNode(node)
+    const scene = sceneIdOf(node)
     const sceneRef = scene && m.scenes.get(scene) ? ` · ${sceneLabel(m.scenes.get(scene) as SceneInfo)}` : ''
-    for (const [field, raw] of [
-      ['name', nameOf(node) ?? ''],
-      ['text', textOf(node).replace(/<[^>]*>/g, ' ')]
-    ] as const) {
-      const at = raw.toLowerCase().indexOf(needle)
-      if (at < 0) continue
-      matches.push({ where: `${label} · ${place(bounds)}${inside}${sceneRef}`, context: `${field === 'name' ? 'name ' : ''}“${contextOf(raw, at, needle.length)}”`, bounds, root: rootOf(node) })
-      break
-    }
+    const hit = matchText(itemTexts(node), needle)
+    if (hit) matches.push({ where: `${label} · ${place(bounds)}${inside}${sceneRef}`, context: matchWords(hit), bounds, root: rootOf(node) })
   }
   const sceneMatches: string[] = []
   if (!rect || !explicit) {
@@ -1221,7 +1135,7 @@ function actorLines(m: Model, entries: IntervalChange[], removed: Array<Tombston
   }
   const loose: IntervalChange[] = []
   for (const entry of rest) {
-    const scene = actor === 'agent' ? sceneOfNode(entry.node) : undefined
+    const scene = actor === 'agent' ? sceneIdOf(entry.node) : undefined
     if (scene) {
       const slot = tally(scene, all ? 'on the board' : CHANGE_WORDS[entry.change.change] ?? entry.change.change)
       slot.kinds.set(entry.node.kind, (slot.kinds.get(entry.node.kind) ?? 0) + 1)

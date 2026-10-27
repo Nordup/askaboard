@@ -1,3 +1,4 @@
+import { ago, clusterByPlace, placeText as box, plural, unionRegions } from '@shared/board-digest'
 import type { BoardRect, LearnerNews, NewsItem } from '@shared/space-api'
 import { getAgentLook, setAgentLook } from './state'
 
@@ -82,19 +83,6 @@ export class BoardNews {
   }
 }
 
-function ago(ms: number): string {
-  const seconds = Math.max(1, Math.round(ms / 1000))
-  if (seconds < 60) return `${seconds} s`
-  const minutes = Math.round(seconds / 60)
-  if (minutes < 60) return `${minutes} min`
-  const hours = Math.round(minutes / 60)
-  if (hours < 48) return `${hours} h`
-  return `${Math.round(hours / 24)} days`
-}
-
-const strokes = (count: number): string => `${count} stroke${count === 1 ? '' : 's'}`
-const box = (r: BoardRect): string => `${Math.round(r.x)},${Math.round(r.y)} ${Math.round(r.width)}×${Math.round(r.height)}`
-
 /**
  * Up to this many ink groups, and up to this many items per kind of change, are named one by
  * one. Above it the news gives a summary by unit and place, and points to get_changes, which
@@ -104,31 +92,9 @@ const MANY = 4
 /** Changes this close (board points) count as one area in a summary. */
 const AREA_GAP = 400
 
-/** Entries clustered by place: boxes closer than AREA_GAP join one area. */
+/** Entries clustered by place, each area with its box. */
 function areasOf<T>(entries: readonly T[], boundsOf: (entry: T) => BoardRect | null): Array<{ entries: T[]; bounds: BoardRect | null }> {
-  const parent = entries.map((_, i) => i)
-  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])))
-  const near = (a: BoardRect, b: BoardRect): boolean =>
-    a.x - AREA_GAP <= b.x + b.width && b.x - AREA_GAP <= a.x + a.width && a.y - AREA_GAP <= b.y + b.height && b.y - AREA_GAP <= a.y + a.height
-  for (let i = 0; i < entries.length; i++) {
-    const a = boundsOf(entries[i])
-    if (!a) continue
-    for (let j = i + 1; j < entries.length; j++) {
-      const b = boundsOf(entries[j])
-      if (b && near(a, b)) parent[find(j)] = find(i)
-    }
-  }
-  const groups = new Map<number, T[]>()
-  entries.forEach((entry, i) => groups.set(find(i), [...(groups.get(find(i)) ?? []), entry]))
-  return [...groups.values()].map((list) => ({ entries: list, bounds: unionBox(list.map(boundsOf)) }))
-}
-
-function unionBox(boxes: Array<BoardRect | null>): BoardRect | null {
-  const list = boxes.filter((b): b is BoardRect => !!b)
-  if (!list.length) return null
-  const x = Math.min(...list.map((b) => b.x))
-  const y = Math.min(...list.map((b) => b.y))
-  return { x, y, width: Math.max(...list.map((b) => b.x + b.width)) - x, height: Math.max(...list.map((b) => b.y + b.height)) - y }
+  return clusterByPlace(entries, boundsOf, AREA_GAP).map((list) => ({ entries: list, bounds: unionRegions(list.map(boundsOf)) }))
 }
 
 /** The verbs, in the order the line names them. */
@@ -151,7 +117,7 @@ function offsetWords(offset: NewsItem['offset']): string {
   return parts.join(', ')
 }
 
-/** One item: 'your image "Fig 2A" 600 pt right (now 1100×800 at 4200, 0)'. */
+/** One item: 'your image "Fig 2A" 600 pt right (now 4200,0 1100×800)'. */
 function itemWords(item: NewsItem): string {
   const offset = offsetWords(item.offset)
   const where = item.bounds && item.change !== 'deleted' ? ` (${item.change === 'added' ? '' : 'now '}${box(item.bounds)})` : ''
@@ -174,7 +140,7 @@ function itemClauses(items: readonly NewsItem[]): string[] {
     const areas = areasOf(these, (item) => item.bounds)
     const unitWords = [...units].map(([unit, count]) => `${unit} ${count}`).join(', ')
     const areaWords = areas.map((area) => `${area.entries.length} in ${area.bounds ? box(area.bounds) : 'no place'}`).join('; ')
-    clauses.push(`${verb} ${these.length} items (${unitWords}) in ${areas.length} area${areas.length === 1 ? '' : 's'}: ${areaWords}`)
+    clauses.push(`${verb} ${these.length} items (${unitWords}) in ${plural(areas.length, 'area')}: ${areaWords}`)
   }
   return clauses
 }
@@ -191,7 +157,7 @@ export function formatNews(news: LearnerNews, since: number, now: number): strin
   if (news.added.length && news.groups.length <= MANY) {
     const many = news.groups.length > 1
     const groups = news.groups.map((group) => `${many ? `${countIn(group.id)} in ` : ''}ink group ${group.id} (${box(group.bounds)})${group.where ? ` ${group.where}` : ''}`)
-    clauses.push(`drew ${strokes(news.added.length)}${groups.length ? `: ${groups.join('; ')}` : ''}`)
+    clauses.push(`drew ${plural(news.added.length, 'stroke')}${groups.length ? `: ${groups.join('; ')}` : ''}`)
   } else if (news.added.length) {
     // Many groups: by area, each with its stroke count, group ids, box and place.
     const areas = areasOf(news.groups, (group) => group.bounds).map((area) => {
@@ -199,10 +165,10 @@ export function formatNews(news: LearnerNews, since: number, now: number): strin
       const where = area.entries.find((group) => group.where)?.where
       return `${count} in ${area.entries.map((group) => group.id).join(', ')} (${area.bounds ? box(area.bounds) : 'no place'})${where ? ` ${where}` : ''}`
     })
-    clauses.push(`drew ${strokes(news.added.length)} in ${news.groups.length} ink groups, in ${areas.length} area${areas.length === 1 ? '' : 's'}: ${areas.join('; ')}`)
+    clauses.push(`drew ${plural(news.added.length, 'stroke')} in ${news.groups.length} ink groups, in ${plural(areas.length, 'area')}: ${areas.join('; ')}`)
   }
   const summarised = news.groups.length > MANY || VERBS.some(([change]) => news.items.filter((item) => item.change === change).length > MANY)
-  if (news.erased.length) clauses.push(`erased ${strokes(news.erased.length)}${news.erasedWhere ? ` ${news.erasedWhere}` : ''}`)
+  if (news.erased.length) clauses.push(`erased ${plural(news.erased.length, 'stroke')}${news.erasedWhere ? ` ${news.erasedWhere}` : ''}`)
   clauses.push(...itemClauses(news.items))
   const times = [...news.added, ...news.erased, ...news.items].map((change) => change.at ?? 0).filter((at) => at > 0)
   const last = times.length ? Math.max(...times) : null
@@ -212,9 +178,9 @@ export function formatNews(news: LearnerNews, since: number, now: number): strin
       `Your scene ${pause.name ? `"${pause.name}"` : pause.scene} paused${pause.step ? ` at step "${pause.step}"` : ''} (${pause.t} s of ${Math.round(pause.duration * 10) / 10} s) because the learner started drawing; play_scene({action: "resume"}) continues it.`
   )
   return [
-    clauses.length ? `Board news for "${news.boardName}", since your last look or news ${ago(now - since)} ago: the learner ${clauses.join(', and ')}.` : `Board news for "${news.boardName}":`,
+    clauses.length ? `Board news for "${news.boardName}", since your last look or news ${ago(since, now)}: the learner ${clauses.join(', and ')}.` : `Board news for "${news.boardName}":`,
     ...pauses,
-    last ? `The last change was ${ago(now - last)} ago.` : null,
+    last ? `The last change was ${ago(last, now)}.` : null,
     summarised ? 'get_changes() lists each change.' : null
   ]
     .filter(Boolean)

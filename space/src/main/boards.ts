@@ -1,5 +1,5 @@
 import { boardName, parseBoard, BOARD_SUFFIX } from '@shared/board-format'
-import { boardTexts, digestBoard, savedCorners, searchTexts, type BoardDigest, type TextEntry, type TextMatch } from '@shared/board-digest'
+import { ago, boardTexts, digestBoard, matchWords, plural, q, savedCorners, searchTexts, type BoardDigest, type TextEntry, type TextMatch } from '@shared/board-digest'
 import type { FolderSession } from './folder'
 
 /**
@@ -38,20 +38,7 @@ export interface BoardFile {
   cached: Cached
 }
 
-const num = (value: number): string => Math.round(value).toLocaleString('en-US')
-const plural = (count: number, word: string, many = `${word}s`): string => `${num(count)} ${count === 1 ? word : many}`
-const q = (value: string): string => JSON.stringify(value)
 const dirOf = (path: string): string => (path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '.')
-
-function ago(ms: number, now: number): string {
-  const seconds = Math.max(1, Math.round((now - ms) / 1000))
-  if (seconds < 60) return `${seconds} s ago`
-  const minutes = Math.round(seconds / 60)
-  if (minutes < 60) return `${minutes} min ago`
-  const hours = Math.round(minutes / 60)
-  if (hours < 48) return `${hours} h ago`
-  return new Date(ms).toISOString().slice(0, 10)
-}
 
 export class BoardIndex {
   private readonly cache = new Map<string, Cached>()
@@ -180,10 +167,6 @@ export function findText(query: string, files: BoardFile[], open: OpenBoardInfo 
 
 function matchLabel(match: TextMatch): string {
   return `${match.kind}${match.name ? ` ${q(match.name)}` : ''} ${match.id}${match.parent ? ` · inside ${match.parent}` : ''}`
-}
-
-function matchWords(match: TextMatch): string {
-  return `${match.field === 'text' || match.field === 'svg text' ? '' : `${match.field} `}“${match.context}”`
 }
 
 /**

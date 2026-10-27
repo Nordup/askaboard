@@ -182,16 +182,3 @@ export function strokeHitByCircle(stroke: InkNode, offset: Point, point: Point, 
   }
   return false
 }
-
-export function unionRegions(regions: ReadonlyArray<Region | null | undefined>): Region | null {
-  const valid = regions.filter(
-    (r): r is Region =>
-      !!r && Number.isFinite(r.x) && Number.isFinite(r.y) && Number.isFinite(r.width) && Number.isFinite(r.height) && r.width >= 0 && r.height >= 0
-  )
-  if (!valid.length) return null
-  const x = Math.min(...valid.map((r) => r.x))
-  const y = Math.min(...valid.map((r) => r.y))
-  const right = Math.max(...valid.map((r) => r.x + r.width))
-  const bottom = Math.max(...valid.map((r) => r.y + r.height))
-  return { x, y, width: right - x, height: bottom - y }
-}

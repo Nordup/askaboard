@@ -1,4 +1,4 @@
-import { boardTexts, digestBoard, placeText, searchTexts } from '@shared/board-digest'
+import { boardTexts, digestBoard, placeText, relation, searchTexts, unionRegions } from '@shared/board-digest'
 import { boardName, isContent, isInk, isKnown, isLive, type BoardNode } from '@shared/board-format'
 import type {
   AgentMethods,
@@ -16,7 +16,6 @@ import type {
 } from '@shared/space-api'
 import type { BoardHandle, LiveBoardState } from '../board/Board'
 import { describeChange, type ChangeLog } from '../board/changes'
-import { unionRegions } from '../board/geometry'
 import { buildIndex, ROOT } from '../board/scene'
 import type { Region } from '../board/types'
 import { liveStill, validateLiveCode } from '../live-pixels/registry'
@@ -144,15 +143,6 @@ function materialLabel(node: BoardNode, owner = true): string {
 /** 'your SVG', "the learner's text": whose and what kind, for news summaries of many items. */
 function materialUnit(node: BoardNode): string {
   return `${node.author === 'agent' ? 'your' : "the learner's"} ${KIND_WORDS[node.kind] ?? node.kind}`
-}
-
-/** Where `a` is relative to `b`, and the gap between them (0 when they overlap). */
-function relation(a: Region, b: Region): { gap: number; side: string } {
-  const gapX = Math.max(b.x - (a.x + a.width), a.x - (b.x + b.width), 0)
-  const gapY = Math.max(b.y - (a.y + a.height), a.y - (b.y + b.height), 0)
-  if (gapX === 0 && gapY === 0) return { gap: 0, side: 'on' }
-  const side = gapX >= gapY ? (a.x >= b.x + b.width ? 'right of' : 'left of') : a.y >= b.y + b.height ? 'below' : 'above'
-  return { gap: Math.hypot(gapX, gapY), side }
 }
 
 /**

@@ -239,13 +239,13 @@ export class FolderSession {
 
   // ---------- Boards ----------
 
-  private async resolveBoard(rel: unknown, options: { allowMissing?: boolean } = {}): Promise<string> {
+  private async boardFullPath(rel: unknown, options: { allowMissing?: boolean } = {}): Promise<string> {
     if (typeof rel !== 'string' || !isBoardPath(rel)) throw new Error(`Not a board file: ${String(rel)}`)
     return this.resolvePath(rel, options)
   }
 
   async readBoard(rel: string): Promise<string> {
-    const full = await this.resolveBoard(rel)
+    const full = await this.boardFullPath(rel)
     const text = await readFile(full, 'utf8')
     this.knownHashes.set(rel, hashText(text))
     return text
@@ -254,7 +254,7 @@ export class FolderSession {
   /** Atomic write: a temp dotfile in the same folder, then rename over the target. */
   async writeBoard(rel: string, text: unknown): Promise<void> {
     if (typeof text !== 'string' || text.length > MAX_BOARD_BYTES) throw new Error('Invalid board content.')
-    const full = await this.resolveBoard(rel, { allowMissing: true })
+    const full = await this.boardFullPath(rel, { allowMissing: true })
     await mkdir(dirname(full), { recursive: true })
     const temp = join(dirname(full), `.${basename(full)}.${process.pid}.${Date.now()}.tmp`)
     this.knownHashes.set(rel, hashText(text)) // set first, so the watcher ignores the echo
@@ -302,25 +302,16 @@ export class FolderSession {
     }
   }
 
-  /** Every board file in the folder (hidden folders skipped), with its file identity and change time. */
+  /** Every board file of the file tree (the walk of listFiles: hidden folders skipped, the same caps), with its file identity and change time. */
   async boardFiles(): Promise<Array<{ path: string; identity: string; mtimeMs: number }>> {
     const paths: string[] = []
-    const walk = async (dir: string, depth: number): Promise<void> => {
-      let entries
-      try {
-        entries = await readdir(dir, { withFileTypes: true })
-      } catch {
-        return
-      }
-      for (const entry of entries) {
-        if (isHiddenName(entry.name)) continue
-        const full = join(dir, entry.name)
-        if (entry.isDirectory()) {
-          if (depth < MAX_DEPTH) await walk(full, depth + 1)
-        } else if (entry.isFile() && isBoardPath(entry.name)) paths.push(this.relOf(full))
+    const collect = (nodes: FileNode[]): void => {
+      for (const node of nodes) {
+        if (node.children) collect(node.children)
+        else if (isBoardPath(node.name)) paths.push(node.path)
       }
     }
-    await walk(this.root, 0)
+    collect((await this.listFiles()).nodes)
     const out = await Promise.all(
       paths.map(async (path) => {
         try {
@@ -336,17 +327,17 @@ export class FolderSession {
 
   /** A board file's text for list_boards. Unlike readBoard, it does not touch the watcher's record of known versions. */
   async readBoardText(rel: string): Promise<string> {
-    return readFile(await this.resolveBoard(rel), 'utf8')
+    return readFile(await this.boardFullPath(rel), 'utf8')
   }
 
   async renameBoard(rel: string, newName: unknown): Promise<string> {
-    const from = await this.resolveBoard(rel)
+    const from = await this.boardFullPath(rel)
     const name = sanitizeBoardName(typeof newName === 'string' ? newName : '')
     if (!name) throw new Error('A board name cannot be empty.')
     const dir = posix.dirname(rel)
     const target = dir === '.' ? `${name}${BOARD_SUFFIX}` : `${dir}/${name}${BOARD_SUFFIX}`
     if (target === rel) return rel
-    const to = await this.resolveBoard(target, { allowMissing: true })
+    const to = await this.boardFullPath(target, { allowMissing: true })
     // macOS folders are usually case-insensitive: "a" -> "A" is the same file.
     const caseOnly = target.toLowerCase() === rel.toLowerCase()
     if (!caseOnly && (await stat(to).then(() => true, () => false))) {
@@ -361,7 +352,7 @@ export class FolderSession {
   }
 
   async deleteBoard(rel: string): Promise<void> {
-    const full = await this.resolveBoard(rel)
+    const full = await this.boardFullPath(rel)
     await shell.trashItem(full)
     this.knownHashes.delete(rel)
     this.ownWrites.delete(rel)

@@ -315,6 +315,16 @@ export function isInkHost(node: BoardNode): node is FrameNode | LiveNode {
   return (node.kind === 'frame' || node.kind === 'live') && isKnown(node)
 }
 
+/** Map key for top-level nodes. */
+export const ROOT = ''
+
+/** The parent key of a node: its parent when that is a frame on the board (or a live item, for ink), else ROOT. */
+export function parentKey(node: BoardNode, byId: ReadonlyMap<string, BoardNode>): string {
+  const parent = typeof node.parent === 'string' ? byId.get(node.parent) : undefined
+  if (!parent || parent.id === node.id) return ROOT
+  return isFrame(parent) || (isInkHost(parent) && node.kind === 'ink') ? parent.id : ROOT
+}
+
 export function emptyBoard(): BoardDoc {
   return { nextSeq: 1, nodes: [], extra: {} }
 }
