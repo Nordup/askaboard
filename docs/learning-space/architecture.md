@@ -85,8 +85,9 @@ limits scripts and images.
 
 | Module | Job |
 | --- | --- |
-| `agent/handler.ts` | Answers requests from main: canvas info, changes, screenshot plans, tool calls, learner news. |
-| `agent/edits.ts` | The renderer's tools: reads (tree, node info, HTML), scene requests. |
+| `agent/handler.ts` | Answers requests from main: the reads, changes, screenshot plans, board changes, learner news. |
+| `agent/reads.ts` | The board reads of `list_items`, `get_item`, `get_changes` and the `part` of `get_screenshot`: one model of the board in units, summaries by area, the "Deeper:" lines (decisions T20, T21). |
+| `agent/edits.ts` | Item details for `get_item`, scene requests. |
 | `board/html.ts` | HTML subset ⇄ nodes, both directions; reports what was dropped. |
 | `agent/groups.ts` | Clusters learner ink into groups `g1`, `g2`, … with stable ids. |
 | `agent/placement.ts` | The board as a scene sees it, obstacles, an empty place near an anchor (`space()`, html() without a place). |
@@ -97,12 +98,17 @@ limits scripts and images.
 - Streamable HTTP, path `/mcp`, bound to `127.0.0.1`, port 47821
   (`SPACE_MCP_PORT`). One session per client. Requests with a browser
   `Origin`, or a Host other than localhost, are refused. No token.
-- **Tools** (12), in three groups (decision P13: scenes are the one way to
-  write; the ten write tools and `finish_working` retired in stage 4):
-  - *Look:* `get_canvas_info`, `get_tree`, `get_node_info`, `get_html`,
-    `get_screenshot` (node, region, viewport, content, selection, changes;
-    optional labels and grid), `get_changes`, `get_brief`, `get_guide`.
-  - *Board:* `open_board`.
+- **Tools** (12), in four groups (decision P13: scenes are the one way to
+  write; decisions T20, T21 for the reads and the boards). Every tool
+  refuses unknown parameters.
+  - *Look at the open board:* `list_items`, `get_item`, `get_screenshot`,
+    `get_changes`. One address word, `part`; summaries first, with
+    "Deeper:" lines; no caps.
+  - *Boards of the folder:* `list_boards` (read-only), `open_board`,
+    `move_board` (destructive). Their cache is `main/boards.ts`. Create,
+    rename and trash, from the sidebar and from agents, go through one
+    board-change operation (`App.tsx` `changeBoard`).
+  - *Reference:* `get_brief`, `get_guide`.
   - *Live scenes (all writes):* `write_scene` (a draft), `preview_scene`
     (an image of a draft or a played scene), `play_scene` (start and
     playback; decision T16; see "Live scenes" below).
@@ -143,8 +149,8 @@ limits scripts and images.
   as the first line of the app's next tool result (computed before the tool
   runs; `get_changes` gets none, it lists the changes itself), or through
   `GET /news?client=<label>` (same Host and Origin checks, plain text, empty
-  when nothing is new). A look (`get_screenshot`, `get_changes`) also counts
-  as delivered. So the prompt hook and the tool results of one turn never
+  when nothing is new). A look (`list_items` of the view or the board,
+  `get_screenshot`, `get_changes`, `open_board`) also counts as delivered. So the prompt hook and the tool results of one turn never
   repeat a change. A new session's change cursor starts at the app's last
   look, so `get_changes` after a hook still lists what the news named.
 - **Limits** for every agent-controlled size: `src/shared/limits.ts`.

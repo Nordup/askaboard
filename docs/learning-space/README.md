@@ -29,9 +29,10 @@ in [`../../space/`](../../space/); work happens on `main`.
 | Tool descriptions, server instructions, plugin skill and the board reference (`guide.md`) in Anthropic's tool style (decision I19) | Done (2026-10-26). The three scene tools keep the approved I19/I22 wording, with only the changes the new tools need (I25, 2026-10-27; founder review R1 done). How to change an agent text later: [`writing-agent-text.md`](writing-agent-text.md), "Change an agent text without losing its intent or its voice" |
 | Live drawing: one drawing medium in code ([`live-drawing-plan.md`](live-drawing-plan.md), decisions P11–P13) | Stages 1–4 done: scenes are the one way to write: `write_scene`, `preview_scene` and `play_scene` (T16; 12 tools); values, labels, named groups, preview, camera, pointer, the stage and beats, program items (WebGL, three.js, any library), `html()`, `image()`, edits, a floating script panel (the app does not speak, T13). Measured (2026-10-26, everything on): both GPT and Claude draw the EM wave in ink, step by step, with handwritten labels; GPT previews; Claude explains fully, then asks; practice sheets still use HTML |
 | Lab switches for experiments: `council.mjs --no-code`, `--no-html`, `--brief <draft>` (`space/src/main/lab-switch.ts`) | Done; see [`working-guide.md`](working-guide.md), "Choosing lab tests" |
-| Feature freeze (2026-10-26) | On: the founder tests everything by hand (code items, shaders, the other media) and fixes what gets in the way. The perf work ends with the boards tool. Next: one copy of each piece of scene logic, then G1 and G6 together, the voice and the scene steps (decision W9; [`plan.md`](plan.md), "Order of work") |
+| Feature freeze (2026-10-26) | On: the founder tests everything by hand (code items, shaders, the other media) and fixes what gets in the way. The perf work ended with the board tools (T21). Next: one board model and one copy of each piece of scene logic, then G1 and G6 together, the voice and the scene steps (decision W9; [`plan.md`](plan.md), "Order of work") |
 | First real test (2026-10-26) | Done: one hour on neurons by voice; the synapse mechanism clicked for the founder for the first time. The founder calls the app an MVP, but not yet for friends ([`first-test-2026-10-26.md`](first-test-2026-10-26.md)). Gaps G1–G6 and the order of work: [`first-test-gaps.md`](first-test-gaps.md); G1 (voice ⇄ scene) is the next milestone |
 | Scene speed (2026-10-26/27): the stage in V8 in a sandboxed process (T18), live items on one contract (B10), playback cost (B11), one compile per draft (B12), typed frames over a direct port (B13), stage-made ink points (B14), pen ink on its shape (B15) | Done and measured ([`perf-plan.md`](perf-plan.md)): EM wave write_scene 7.6–15.1 s → 0.5–0.9 s, preview about 0.1 s, start under 0.1 s, playback frame work 5.7 → 2.6 ms. Known playback limits: [`playback-pitfalls.md`](playback-pitfalls.md). Agents see what the script panel and the tool palette cover (T19) |
+| What agents read (2026-10-27): four board reads with one `part` address, summaries first and "Deeper:" lines, no caps (T20); `list_items`, `list_boards`, `open_board`, `move_board`, strict parameters, one word for one thing in all agent texts (T21) | Done ([`perf-plan.md`](perf-plan.md), group 2): on a 1,000-stroke board `get_changes` since 0 went from 182,835 to 471 characters, the overview from 5,567 to about 620. Texts and results: [`drafts/boards-tool-texts-2026-10-27/final.html`](drafts/boards-tool-texts-2026-10-27/final.html) |
 | Perception (the old fix 2) | Mostly answered by board news; the rest deferred |
 | Plain chat apps (ChatGPT web, Claude chat) with folder file tools | Later |
 | App packaging, signing, auto-update | Later |
@@ -121,11 +122,13 @@ the live-frame idea was rejected).
 | --- | --- |
 | Agent | An external AI program connected over MCP: Claude Code, Claude Desktop (chat), ChatGPT and Codex. |
 | Learning folder | The folder that holds all learning: `AGENTS.md`, `plan.md`, `learner.md`, `sessions/`, `topics/`, `materials/`, `boards/`, `assets/`. |
-| Board | One `*.board.json` file: a document of nodes. |
-| Node | One object on a board: `ink`, `frame`, `text`, `svg`, `image` or `live`. |
+| Board | One `*.board.json` file: a document of items. `list_boards`, `open_board` and `move_board` work on boards; the other read tools work on the open board. |
+| Item | One object on a board: `ink`, `frame`, `text`, `svg`, `image` or `live`. The agent texts say "item" (decision T21); the board file and the code call it a node, as in `board.node(id)`. |
+| Part | The address word of `list_items` and `get_screenshot`: "view", "board", a region, ids, a scene, or an interval of changes (decision T20). |
+| Draft | A scene that `write_scene` made and the learner does not see yet; `play_scene` "start" puts it on the board. Drafts live in app memory. |
 | Code item | A live item a scene places with `program()`, `shader()` or `canvas()`: a program that keeps running on the board and can take the learner's input. |
 | Lab switch | An environment flag that changes what agents see, for lab runs only: `LS_LAB_NO_CODE`, `LS_LAB_NO_HTML`, `LS_LAB_BRIEF` (council flags `--no-code`, `--no-html`, `--brief`). |
-| Frame | A box node that holds other nodes (a card, a page). |
+| Frame | A box item that holds other items (a card, a page). |
 | Ink group | A cluster of the learner's strokes with a short id (`g1`, `g2`). Agents place things relative to it. |
 | Folder guide | `.learning-space/guide.md` in a learning folder: `get_guide` topic `folder` (or, with `mode: replace`, the whole board reference). |
 | Relay | The command `~/.learning-space/bin/learning-space mcp` that connects stdio clients to the app. |
@@ -136,9 +139,8 @@ the live-frame idea was rejected).
 | Trace | The JSONL record of one agent session's MCP calls, in `~/.learning-space/traces/`. |
 | Bench | `space/scripts/bench/run.mjs`: fixed scenarios (S1–S4, P1–P3, V1, …) run by a headless agent (Claude or Codex), to measure a change. |
 | Look ratio | Learner ink area ÷ the area of the agent's screenshot of it; 1.0 is a perfect crop. |
-| Board news | One factual line that tells an agent app what the learner drew or erased on a board since its last look. Each change is delivered once (decision I4). |
-| Change cursor | The point up to which an agent app knows the board's changes. Board news reports only the changes after it. |
-| Last look | The agent app's last `get_screenshot` or `get_changes` on a board. It moves the change cursor. |
+| Board news | One factual line that tells an agent app what the learner changed on a board since its last look (drew, erased, added, moved, resized, edited, deleted; a summary by area when there are many). Each change is delivered once (decision I4). |
+| Last look | The point up to which an agent app knows the board's changes (the agent texts' word; the code calls it the change cursor). Results show it as c and a number, such as c336. `list_items` of the view or the board, `get_screenshot`, `get_changes` and `open_board` move it. Board news reports only the changes after it. |
 | HTML material | What a scene's `html()` and `image()` make: the HTML converter's nodes (a root with its subtree). Drawn, its root fades in and its parts (the root's children) appear one after another. |
 | Scene | A JavaScript program an agent writes with `write_scene` (a draft that the learner does not see) and plays with `play_scene`: it makes board items and a timeline of how they appear and change; the board plays it, and the items stay. |
 | Stage | The one sandbox per board in which every scene program runs; the global `stage` keeps values and objects between programs. |

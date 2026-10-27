@@ -5,7 +5,7 @@ shared canvas and a local learning folder. The app has no AI inside: external
 agents (Claude Code, Codex, Claude Desktop) connect to it over MCP and work on
 the board with the learner.
 
-**Status (2026-10-27):** the main product of this repository (since 2026-10-24). Steps 0–5, fix 1, board news (decision I4), `get_brief` and `get_guide` (decision T11), live drawing stages 1–4 (scenes as the one way to write, program items, the script panel), brief v18 and the agent texts in Anthropic's style (decisions I18–I22) are done. The scene tools are `write_scene`, `preview_scene` and `play_scene` (T16), with the old approved wording (I25). Feature freeze: the founder's own testing first, then the voice loop ([`plan.md`](../docs/learning-space/plan.md)).
+**Status (2026-10-27):** the main product of this repository (since 2026-10-24). Steps 0–5, fix 1, board news (decision I4), `get_brief` and `get_guide` (decision T11), live drawing stages 1–4 (scenes as the one way to write, program items, the script panel), brief v18 and the agent texts in Anthropic's style (decisions I18–I22) are done. The scene tools are `write_scene`, `preview_scene` and `play_scene` (T16), with the old approved wording (I25). The board reads give summaries first (T20), and the board tools are `list_boards`, `open_board` and `move_board` (T21). Every tool refuses unknown parameters. Feature freeze: the founder's own testing first, then the voice loop ([`plan.md`](../docs/learning-space/plan.md)).
 
 - [`../docs/learning-space/README.md`](../docs/learning-space/README.md): start here.
 - [`architecture.md`](../docs/learning-space/architecture.md): processes, data flow and where the code lives.
@@ -35,7 +35,7 @@ Do not run test suites. Check a change with `npm run build`. The rules are in
 - **Editable document.** A board holds ink, frames, text with math, SVG and
   images. The learner can select, move and edit all of them.
 - **Agents see and edit the board over MCP.** Every agent write is one undo
-  step for the learner. An outline with the agent name marks its work.
+  step for the learner.
 - **Ink groups and placement.** The app clusters learner ink into groups
   (`g1`, `g2`, …). Agents place material beside the learner's work, not over it.
 - **Folder setup and an editable folder guide.** The sidebar offers to set up
@@ -94,15 +94,15 @@ every tool twice. The popover shows this problem and offers **Fix**.
 
 | Tool | Main parameters | What it does |
 | --- | --- | --- |
-| `get_canvas_info` | none | Folder, boards, viewport, selection, top-level nodes and ink groups |
-| `get_screenshot` | `node_id` \| `region` \| `target`, `scale`, `max_size`, `labels`, `grid` | PNG of a node, a region, the view, all content, the selection or the changes |
-| `get_changes` | `since` | Changed and removed nodes since the agent's cursor; advances the cursor |
-| `open_board` | `path` | Opens a board in the app |
+| `list_items` | `part`, `query`, `depth` | The items on the open board, one line each, grouped by the learner's work, scenes and material, with a state header; a summary by area on a big board; `query` searches the text on the board |
+| `get_item` | `id` (one or a list), `as` | Every stored detail of items or ink groups: info, html, svg, strokes, points or source |
+| `get_screenshot` | `part`, `scale`, `max_size`, `labels`, `grid` | PNG of a part of the board: the view, the whole board, the selection, a region, items, a scene or an interval of changes |
+| `get_changes` | `since`, `changes`, `detail` | What changed since the agent's last look, in sentences, with an interval handle; moves the last look |
+| `list_boards` | `query`, `board` | The boards of the learning folder, or a search of their text (read-only) |
+| `open_board` | `board`, `create` | Opens a board by path or unique name, or makes a new one |
+| `move_board` | `path`, `to` | Renames a board, or moves it to the system Trash (`to: "trash"`) |
 | `get_brief` | none | The brief, for agents without the folder's `AGENTS.md` |
 | `get_guide` | `topic` | One topic of the board reference (scene, scene-code, scene-interact, model, html, math, svg, images, tokens, placement, ink, view, and `folder` when the folder has `.learning-space/guide.md`); without a topic, all of it |
-| `get_tree` | `node_id`, `depth` | Indented outline of nodes with ids and bounds |
-| `get_node_info` | `node_id` | One node: bounds, parent, children, style, text, author |
-| `get_html` | `node_id`, `include_ids` | A subtree as the HTML subset a scene's `html()` takes |
 | `write_scene` | `name`, `code` | Runs a scene program and keeps the result as a draft by name; the learner sees nothing. Returns steps, items, warnings or the program error. |
 | `preview_scene` | `name`, `at`, `part`, `version` | Read-only: one image of a draft or of a scene on the board, at chosen moments (end, a step, a time, a list, every step), framed on the scene, the view, a region or items. |
 | `play_scene` | `action` (start, status, pause, resume, next, stop, clear_queue, cancel, wait, replay, cut, reset), `name`, `when`, `wait`, `from_step`, `after_step` | Starts a draft on the board (replacing a scene of the same name in place) and controls playback and the stage. |

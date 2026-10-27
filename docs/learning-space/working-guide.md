@@ -101,7 +101,7 @@ items: the app starts with `LS_LAB_NO_CODE=1`, scenes have no `shader()`,
 descriptions leave out the spans marked `<!-- code-items -->` /
 `codeItems()` (`src/main/lab-switch.ts`). `meta.json` records `no_code`.
 `--no-html` does the same for HTML material (`LS_LAB_NO_HTML=1`: no
-`html()`, no `get_html`, no html/svg topics; markers `<!-- html -->`,
+`html()`, no `get_item` form "html", no html/svg topics; markers `<!-- html -->`,
 `htmlMaterial()`), and `--brief <file>` (`LS_LAB_BRIEF`) serves a draft
 brief instead of `resources/brief.md`, with the markers applied. They
 combine; `meta.json` records `no_html` and `brief`.
