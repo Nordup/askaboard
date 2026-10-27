@@ -69,6 +69,44 @@ function cssPx(element: Element, name: string): number {
   return Number.isFinite(value) ? value : 0
 }
 
+/** Where the panel goes in its canvas for a wanted position: left, top and the height it may take (room). */
+function placeOf(element: HTMLElement, canvas: HTMLElement, wanted: Position | null): { left: number; top: number; room: number } {
+  const margin = cssPx(element, '--space-3')
+  const header = cssPx(element, '--script-panel-header')
+  const width = element.offsetWidth
+  const W = canvas.clientWidth
+  const H = canvas.clientHeight
+  // Never over the tool palette: the panel ends a margin above it.
+  const palette = canvas.querySelector<HTMLElement>('.palette')
+  const floor = palette ? palette.offsetTop - margin : H - margin
+  const at = wanted ?? { side: 'right', x: margin, y: margin }
+  const rawLeft = at.side === 'left' ? at.x : W - width - at.x
+  const left = Math.round(Math.max(margin, Math.min(W - width - margin, rawLeft)))
+  const top = Math.round(Math.max(margin, Math.min(floor - header - 2, at.y)))
+  return { left, top, room: Math.max(header + 2, floor - top) }
+}
+
+/**
+ * The window rect (client CSS px) that the panel takes when it shows: at its
+ * full height, also while it is hidden, because it appears when a scene plays
+ * and grows with its lines. While the learner keeps it minimised on screen,
+ * only its bar. Null when there is no board.
+ */
+export function scriptPanelArea(): { left: number; top: number; right: number; bottom: number } | null {
+  const element = document.querySelector<HTMLElement>('.script-panel')
+  const canvas = element?.parentElement
+  if (!element || !canvas) return null
+  if (collapsed && element.classList.contains('is-shown')) {
+    const bar = element.getBoundingClientRect()
+    return { left: bar.left, top: bar.top, right: bar.right, bottom: bar.bottom }
+  }
+  const { left, top, room } = placeOf(element, canvas, readPosition())
+  const style = getComputedStyle(element)
+  const full = cssPx(element, '--script-panel-header') + cssPx(element, '--script-panel-body-max') + parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth)
+  const origin = canvas.getBoundingClientRect()
+  return { left: origin.left + left, top: origin.top + top, right: origin.left + left + element.offsetWidth, bottom: origin.top + top + Math.min(room, full) }
+}
+
 // ---------- The script as steps ----------
 
 interface Group {
@@ -135,19 +173,7 @@ export function ScriptPanel() {
     const element = panel.current
     const canvas = element?.parentElement
     if (!element || !canvas) return
-    const margin = cssPx(element, '--space-3')
-    const header = cssPx(element, '--script-panel-header')
-    const width = element.offsetWidth
-    const W = canvas.clientWidth
-    const H = canvas.clientHeight
-    // Never over the tool palette: the panel ends a margin above it.
-    const palette = canvas.querySelector<HTMLElement>('.palette')
-    const floor = palette ? palette.offsetTop - margin : H - margin
-    const at = wanted ?? { side: 'right', x: margin, y: margin }
-    const rawLeft = at.side === 'left' ? at.x : W - width - at.x
-    const left = Math.round(Math.max(margin, Math.min(W - width - margin, rawLeft)))
-    const top = Math.round(Math.max(margin, Math.min(floor - header - 2, at.y)))
-    setBox({ left, top, room: Math.max(header + 2, floor - top) })
+    setBox(placeOf(element, canvas, wanted))
   }, [])
 
   useLayoutEffect(() => {

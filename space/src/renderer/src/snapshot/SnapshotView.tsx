@@ -217,7 +217,8 @@ function SnapshotFrame({ req, cell, onDone }: { req: SnapshotRequest; cell: Cell
             top: Math.round((outline.rect.y - req.rect.y) * req.scale),
             width: Math.max(2, Math.round(outline.rect.width * req.scale)),
             height: Math.max(2, Math.round(outline.rect.height * req.scale)),
-            borderColor: outline.color
+            borderColor: outline.color,
+            ...(outline.fill ? { background: outline.fill } : {})
           }}
         />
       ))}

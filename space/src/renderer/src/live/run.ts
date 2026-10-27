@@ -555,6 +555,8 @@ export interface FramesResult {
   /** The board region the frames show. */
   rect: Box
   view: Box
+  /** Parts of the view that app UI covers while scenes play (agent/covered.ts). */
+  covered: Box[]
   background: string
 }
 
@@ -875,6 +877,7 @@ export function sceneFrames(ctx: RunSceneContext, args: Record<string, unknown>)
     live: liveItemsOf(play, evaluated, nodes, s, region),
     rect: region,
     view,
+    covered: coveredOf(ctx.board),
     background: getComputedStyle(document.documentElement).getPropertyValue('--bg-canvas').trim() || '#161618'
   }
 }

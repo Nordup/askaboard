@@ -297,6 +297,8 @@ export type AgentToolName =
 export interface SnapshotOutline {
   rect: BoardRect
   color: string
+  /** A CSS background inside the outline (none: clear). */
+  fill?: string
 }
 
 /** An id tag drawn over a snapshot at the item's top-left, with a thin outline. */

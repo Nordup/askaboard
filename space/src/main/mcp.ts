@@ -869,7 +869,7 @@ export class AgentServer {
       {
         title: 'Canvas info',
         description:
-          "Returns the current state of Learning Space as structured text: the learning folder (name and absolute path), the open board and the other boards in the folder, the learner's visible view and the bounds of all content, node counts by kind, the top-level nodes (id, kind, name, author, bounds), the ink groups (id such as \"g3\", author, parent, stroke count, bounds), the learner's selection and current tool, and your change cursor.\n\nUse it when you start work on a board, and whenever you need ids, sizes or free areas. It returns no image: to see what is written or drawn, use get_screenshot.\n\n- Coordinates are board points: origin at the centre, +x right, +y down.\n- covered (when present) lists the parts of the view that the app's script panel covers now; the learner cannot see material there.\n- How the app groups strokes into ink groups, and how their ids behave, is in get_guide topic \"model\".",
+          "Returns the current state of Learning Space as structured text: the learning folder (name and absolute path), the open board and the other boards in the folder, the learner's visible view and the bounds of all content, node counts by kind, the top-level nodes (id, kind, name, author, bounds), the ink groups (id such as \"g3\", author, parent, stroke count, bounds), the learner's selection and current tool, and your change cursor.\n\nUse it when you start work on a board, and whenever you need ids, sizes or free areas. It returns no image: to see what is written or drawn, use get_screenshot.\n\n- Coordinates are board points: origin at the centre, +x right, +y down.\n- covered (when present) lists the parts of the view that the app's script panel covers while scenes play; the learner cannot see material there.\n- How the app groups strokes into ink groups, and how their ids behave, is in get_guide topic \"model\".",
         inputSchema: {},
         annotations: { readOnlyHint: true }
       },
@@ -1208,7 +1208,7 @@ export class AgentServer {
         const stillsMs = Date.now() - stillsStart
         const framesMs = stillsStart - framesStart
         const pictureStart = Date.now()
-        const image = await renderStoryboard(this.hooks.snapshots, { nodes: plan.nodes, frames: plan.frames, rect: plan.rect, view: plan.view, background: plan.background, stills }, options)
+        const image = await renderStoryboard(this.hooks.snapshots, { nodes: plan.nodes, frames: plan.frames, rect: plan.rect, view: plan.view, covered: plan.covered, background: plan.background, stills }, options)
         const ticks = stills.length ? `; live stills ${stills.filter((still) => still.url).length}/${stills.length} in ${stillsMs} ms at ticks ${stills.map((still) => still.tick ?? '-').join(',')}` : ''
         console.log(`mcp: preview_scene ${name} (${use}): ${plan.frames.length} frame(s), ${image.width}x${image.height}; frames ${framesMs} ms, picture ${Date.now() - pictureStart} ms${ticks}`)
         const summary = {

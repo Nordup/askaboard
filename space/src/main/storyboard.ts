@@ -31,6 +31,8 @@ export interface StoryboardInput {
   frames: StoryboardFrame[]
   rect: { x: number; y: number; width: number; height: number }
   view: { x: number; y: number; width: number; height: number }
+  /** Parts of the view that app UI covers while scenes play: drawn hatched. */
+  covered?: Array<{ x: number; y: number; width: number; height: number }>
   background: string
   stills?: StoryboardStill[]
 }
@@ -45,6 +47,8 @@ export interface StoryboardOptions {
 const CELL_LONG_EDGE = 520
 const MAX_COLUMNS = 3
 const GAP = 8
+/** A covered part of the view (the script panel's corner): quiet hatching in a design token. */
+const COVERED_FILL = 'repeating-linear-gradient(-45deg, var(--border-strong) 0 1.5px, transparent 1.5px 8px)'
 /** The label strip above each frame, in pixels. */
 const LABEL = 22
 
@@ -98,7 +102,10 @@ export async function renderStoryboard(
     scale,
     width,
     height,
-    outlines: [{ rect: input.view, color: 'rgba(160, 160, 168, 0.55)' }],
+    outlines: [
+      { rect: input.view, color: 'rgba(160, 160, 168, 0.55)' },
+      ...(input.covered ?? []).map((rect) => ({ rect, color: 'var(--border-strong)', fill: COVERED_FILL }))
+    ],
     background: input.background,
     cells: {
       width: cellW,
