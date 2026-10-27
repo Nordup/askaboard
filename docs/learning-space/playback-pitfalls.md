@@ -16,8 +16,9 @@
   read the scene state with the dev hook `__spaceDev.scene.snap()` (the
   overrides and ink of now; `space/src/renderer/src/App.tsx`). Example: the
   distance between a pen line's end and the shape it is attached to must stay
-  near 0 at all times. Script: the scratchpad `measure.mjs` of 2026-10-27
-  (copy it into `space/scripts/perf/` when it is needed again).
+  near 0 at all times. A small script does it: replay the run, pause at many
+  times through the dev hook, call `snap()`, and compute the distance (the
+  2026-10-27 check had a maximum of 9.9 pt before the fix and 0.01 pt after).
 - **Then check the pixels.** A screen recording (`scripts/perf/replay.mjs`
   records `video.mp4`) and a frame-by-frame comparison of the same moments
   show paint timing faults that the scene state cannot show.
