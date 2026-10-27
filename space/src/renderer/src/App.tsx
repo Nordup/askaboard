@@ -16,9 +16,10 @@ import {
 } from '@shared/board-format'
 import { learnerEditSince } from '@shared/learner-edit'
 import { liveItems, liveResources, validateLiveCode } from './live-pixels/registry'
-import type { AgentActivity, AgentServerStatus, Camera, FileNode, FileTree, GuideOverrides, Snapshot } from '@shared/space-api'
+import type { AgentActivity, AgentServerStatus, BoardChangeOp, BoardChangeResult, Camera, FileNode, FileTree, GuideOverrides, Snapshot } from '@shared/space-api'
 import { scenePlayer } from './live/player'
 import { handleAgentRequest, type AgentContext } from './agent/handler'
+import { dropTracker, moveTracker } from './agent/groups'
 import { Board, type BoardHandle } from './board/Board'
 import { ChangeLog } from './board/changes'
 import { BoardHistory } from './board/history'
@@ -129,6 +130,33 @@ export function App() {
     return doc
   }
 
+  /**
+   * Write the pending board, if any. Runs only inside saveChainRef. A failed write keeps
+   * the edits pending; `strict` then throws (the board-change operation must not go on).
+   */
+  const writePending = useCallback(async (strict: boolean): Promise<void> => {
+    const pending = pendingRef.current
+    if (!pending) return
+    pendingRef.current = null
+    setSaveStatus('saving')
+    try {
+      const start = performance.now()
+      const text = serializeBoard(pending.doc)
+      const serializeMs = performance.now() - start
+      const since = learnerSeqRef.current.get(pending.path)
+      const learnerEdit = since === undefined ? null : learnerEditSince(pending.doc, since)
+      await space.writeBoard(pending.path, text, { learnerEdit, serializeMs })
+      learnerSeqRef.current.set(pending.path, pending.doc.nextSeq)
+      if (!pendingRef.current) setSaveStatus('saved')
+    } catch (error) {
+      console.error(`save failed for ${pending.path}: ${errorMessage(error)}`)
+      pendingRef.current ??= pending // keep it for the next try
+      setSaveStatus('error')
+      showError(`Could not save the board: ${errorMessage(error)}`)
+      if (strict) throw new Error(`“${boardName(pending.path)}” could not be saved first, so nothing was changed: ${errorMessage(error)}`)
+    }
+  }, [])
+
   /** Write the pending board now. Writes run one after another. */
   const flushSave = useCallback((): Promise<void> => {
     if (saveTimerRef.current) {
@@ -136,29 +164,9 @@ export function App() {
       saveTimerRef.current = null
     }
     unsavedSinceRef.current = null
-    saveChainRef.current = saveChainRef.current.then(async () => {
-      const pending = pendingRef.current
-      if (!pending) return
-      pendingRef.current = null
-      setSaveStatus('saving')
-      try {
-        const start = performance.now()
-        const text = serializeBoard(pending.doc)
-        const serializeMs = performance.now() - start
-        const since = learnerSeqRef.current.get(pending.path)
-        const learnerEdit = since === undefined ? null : learnerEditSince(pending.doc, since)
-        await space.writeBoard(pending.path, text, { learnerEdit, serializeMs })
-        learnerSeqRef.current.set(pending.path, pending.doc.nextSeq)
-        if (!pendingRef.current) setSaveStatus('saved')
-      } catch (error) {
-        console.error(`save failed for ${pending.path}: ${errorMessage(error)}`)
-        pendingRef.current ??= pending // keep it for the next try
-        setSaveStatus('error')
-        showError(`Could not save the board: ${errorMessage(error)}`)
-      }
-    })
+    saveChainRef.current = saveChainRef.current.then(() => writePending(false))
     return saveChainRef.current
-  }, [])
+  }, [writePending])
 
   const scheduleSave = useCallback(
     (path: string, doc: BoardDoc) => {
@@ -327,63 +335,116 @@ export function App() {
 
   // ---------- Board actions ----------
 
+  /**
+   * The one board-change operation: create, rename or trash a board, for the sidebar and
+   * for agents (open_board, move_board). It runs in the save chain, so no save interleaves with it:
+   *   1. the pending save is written; a failed save fails the change (nothing is changed);
+   *   2. the main process changes the file and moves or ends the drafts, change cursors,
+   *      stage and board cache (main/index.ts → AgentServer.boardMoved);
+   *   3. here the board's cache (document, undo history, change log), learner-edit
+   *      baseline, ink group ids, camera and open path move to the new path, or end on trash.
+   * A renamed open board stays mounted (same undo history, same live scene). A trashed open
+   * board closes, and the app opens the first board of the list (the effect above).
+   * The new file list is set in the same render as the move, so the old path never reopens.
+   */
+  const changeBoard = useCallback(
+    async (op: BoardChangeOp): Promise<BoardChangeResult> => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = null
+      unsavedSinceRef.current = null
+      flushCamera()
+      const run = saveChainRef.current.then(async (): Promise<BoardChangeResult> => {
+        await writePending(true)
+        if (op.op === 'create') {
+          const path = await space.createBoard(op.name, op.folder)
+          setTree(await space.listFiles())
+          return { path, wasOpen: false }
+        }
+        const from = op.path
+        const wasOpen = openRef.current?.path === from
+        const target = op.op === 'rename' ? await space.renameBoard(from, op.name) : (await space.deleteBoard(from), null)
+        const tree = await space.listFiles()
+        if (target === from) return { path: from, wasOpen }
+        const entry = cacheRef.current.get(from)
+        cacheRef.current.delete(from)
+        const seq = learnerSeqRef.current.get(from)
+        learnerSeqRef.current.delete(from)
+        if (target) {
+          if (entry) cacheRef.current.set(target, entry)
+          if (seq !== undefined) learnerSeqRef.current.set(target, seq)
+          moveTracker(from, target)
+          // Edits made while the file moved are saved under the new path.
+          if (pendingRef.current?.path === from) pendingRef.current = { ...pendingRef.current, path: target }
+          if (cameraRef.current?.path === from) cameraRef.current = { ...cameraRef.current, path: target }
+          if (openRef.current?.path === from) {
+            openRef.current = { ...openRef.current, path: target }
+            setOpen(openRef.current)
+          }
+          setBoardError((error) => (error?.path === from ? { ...error, path: target } : error))
+        } else {
+          dropTracker(from)
+          if (pendingRef.current?.path === from) {
+            pendingRef.current = null
+            setSaveStatus('saved')
+          }
+          if (cameraRef.current?.path === from) cameraRef.current = null
+          if (openRef.current?.path === from) {
+            openTokenRef.current++
+            openRef.current = null
+            setOpen(null)
+          }
+          setBoardError((error) => (error?.path === from ? null : error))
+        }
+        setTree(tree)
+        return { path: target ?? from, wasOpen }
+      })
+      saveChainRef.current = run.then(
+        () => undefined,
+        () => undefined
+      )
+      try {
+        return await run
+      } finally {
+        // Edits still pending (made while the operation ran, or a save that failed) are saved again now, under the current path.
+        if (pendingRef.current) scheduleSave(pendingRef.current.path, pendingRef.current.doc)
+      }
+    },
+    [flushCamera, scheduleSave, writePending]
+  )
+
   const createBoard = useCallback(async () => {
     if (!snapshot?.folder) return
     try {
-      const path = await space.createBoard()
-      setTree(await space.listFiles())
+      const { path } = await changeBoard({ op: 'create' })
       await openBoard(path)
       setRenaming(path)
     } catch (error) {
       showError(errorMessage(error))
     }
-  }, [openBoard, snapshot])
+  }, [changeBoard, openBoard, snapshot])
 
   const renameBoard = useCallback(
     async (path: string, name: string) => {
       setRenaming(null)
       try {
-        await flushSave()
-        flushCamera()
-        const target = await space.renameBoard(path, name)
-        const entry = cacheRef.current.get(path)
-        cacheRef.current.delete(path)
-        if (entry) cacheRef.current.set(target, entry)
-        const seq = learnerSeqRef.current.get(path)
-        if (seq !== undefined) learnerSeqRef.current.set(target, seq)
-        if (openRef.current?.path === path) {
-          setOpen({ ...openRef.current, path: target })
-          if (cameraRef.current?.path === path) cameraRef.current = { ...cameraRef.current, path: target }
-        }
-        if (boardError?.path === path) setBoardError({ ...boardError, path: target })
-        setTree(await space.listFiles())
+        await changeBoard({ op: 'rename', path, name })
       } catch (error) {
         showError(errorMessage(error))
       }
     },
-    [boardError, flushCamera, flushSave]
+    [changeBoard]
   )
 
   const deleteBoard = useCallback(
     async (path: string) => {
       if (!window.confirm(`Move “${boardName(path)}” to the Trash?`)) return
       try {
-        dropPending(path)
-        await saveChainRef.current // a write in progress must not recreate the file
-        await space.deleteBoard(path)
-        cacheRef.current.delete(path)
-        if (openRef.current?.path === path) {
-          openTokenRef.current++
-          setOpen(null)
-          cameraRef.current = null
-        }
-        if (boardError?.path === path) setBoardError(null)
-        setTree(await space.listFiles())
+        await changeBoard({ op: 'trash', path })
       } catch (error) {
         showError(errorMessage(error))
       }
     },
-    [boardError]
+    [changeBoard]
   )
 
   const reveal = useCallback((path: string) => {
@@ -587,6 +648,8 @@ export function App() {
       board: mounted,
       changeLog: current ? (cacheRef.current.get(current.path)?.log ?? null) : null,
       tool: toolRef.current,
+      unsaved: !!current && pendingRef.current?.path === current.path,
+      changeBoard: (op) => changeBoardRef.current(op),
       openBoard: async (path) => {
         if (openRef.current?.path !== path) await openBoardRef.current(path)
         // Wait for the Board to mount (one or two frames).
@@ -604,6 +667,10 @@ export function App() {
 
   const openBoardRef = useRef(openBoard)
   openBoardRef.current = openBoard
+  const changeBoardRef = useRef(changeBoard)
+  changeBoardRef.current = changeBoard
+  const sidebarRef = useRef({ renameBoard, deleteBoard })
+  sidebarRef.current = { renameBoard, deleteBoard }
 
   // A live scene plays on one mounted board: a board switch or a reload ends it (its items are already final).
   const openKey = open?.key
@@ -690,6 +757,19 @@ export function App() {
         items: () => liveItems(),
         resources: () => liveResources(),
         validate: (mode: 'shader' | 'canvas' | 'program', code: string, params?: Record<string, number>) => validateLiveCode(mode, code, params)
+      },
+      /** The sidebar's own board actions (dev checks, scripts/drive.mjs board-action): the same callbacks as its Rename and Move to Trash menu items; trash answers the confirm with OK. */
+      sidebar: {
+        rename: (path: string, name: string) => sidebarRef.current.renameBoard(path, name),
+        trash: (path: string) => {
+          const confirm = window.confirm
+          window.confirm = () => true
+          try {
+            return sidebarRef.current.deleteBoard(path)
+          } finally {
+            window.confirm = confirm
+          }
+        }
       },
       /** A node's rect in window CSS pixels, from the layout cache. */
       nodeRect: (id: string) => {

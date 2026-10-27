@@ -31,11 +31,12 @@
  * scene_control → play_scene (skip → clear_queue; replace → write_scene and
  * start under the replaced scene's name). calls.json lists the sent calls per
  * recorded call (sent). Recordings from before 2026-10-27 use the old read
- * tools; they are sent as the new ones: get_canvas_info → get_board {},
- * get_tree → get_board {part: {id} or "board", depth}, get_node_info →
- * get_item, get_html → get_item {as: "html"}, and get_screenshot's node_id,
- * region and target → part (target "changes" → the interval of the latest
- * get_changes result, else "view").
+ * tools; they are sent as the new ones: get_board → list_items, get_canvas_info → list_items {},
+ * get_tree → list_items {part: {id} or "board", depth}, get_node_info →
+ * get_item, get_html → get_item {as: "html"}, open_board {path} →
+ * open_board {board}, and get_screenshot's node_id, region and target → part
+ * (target "changes" → the interval of the latest get_changes result, else
+ * "view").
  * --save-results <dir> writes the full text of every result to
  * <dir>/<i>-<tool>.txt (the trace cuts long results). Nothing is skipped silently: a call
  * whose args the trace cut, a tool the app does not have, a call that fails now
@@ -96,10 +97,16 @@ const parse = (text) => {
 function translate(rc, counter) {
   const a = rc.args ?? {}
   // The read tools before 2026-10-27.
-  if (rc.tool === 'get_canvas_info') return [{ tool: 'get_board', args: {} }]
-  if (rc.tool === 'get_tree') return [{ tool: 'get_board', args: { part: a.node_id ? { id: a.node_id } : 'board', ...(a.depth ? { depth: a.depth } : {}) } }]
+  if (rc.tool === 'get_board') {
+    const { find, ...rest } = a
+    return [{ tool: 'list_items', args: find === undefined ? rest : { ...rest, query: find } }]
+  }
+  if (rc.tool === 'get_canvas_info') return [{ tool: 'list_items', args: {} }]
+  if (rc.tool === 'get_tree') return [{ tool: 'list_items', args: { part: a.node_id ? { id: a.node_id } : 'board', ...(a.depth ? { depth: a.depth } : {}) } }]
   if (rc.tool === 'get_node_info') return [{ tool: 'get_item', args: { id: a.node_id } }]
   if (rc.tool === 'get_html') return [{ tool: 'get_item', args: { id: a.node_id, as: 'html', ...(a.include_ids !== undefined ? { include_ids: a.include_ids } : {}) } }]
+  // open_board before 2026-10-27 (C6) took path; it takes board now.
+  if (rc.tool === 'open_board' && a.path !== undefined) return [{ tool: 'open_board', args: { board: a.path } }]
   if (rc.tool === 'get_screenshot' && (a.node_id || a.region || a.target)) {
     const { node_id, region, target, ...rest } = a
     const part = node_id ? { id: node_id } : region && (!target || target === 'region') ? { region } : target === 'content' ? 'board' : target === 'selection' ? 'selection' : target === 'changes' ? (counter.handle ? { changes: counter.handle } : 'view') : 'view'

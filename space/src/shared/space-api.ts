@@ -5,6 +5,7 @@
  * uses `/` separators. The main process refuses paths that leave the folder.
  */
 
+import type { BoardDigest, TextMatch } from './board-digest'
 import type { LearnerEditDelta } from './learner-edit'
 
 /** What the renderer knows about one board save. */
@@ -208,6 +209,8 @@ export interface NewsItem {
   /** For a move: the offset in board points. */
   offset?: { dx: number; dy: number }
   at?: number
+  /** Whose and what kind, for summaries of many items: 'your SVG', "the learner's text", 'ink'. */
+  unit?: string
 }
 
 /**
@@ -337,6 +340,14 @@ export interface LiveStillsItem {
   moments: Array<{ frame: number; t: number | null }>
 }
 
+/** A board change (create, rename, trash) for the one operation that does them. */
+export type BoardChangeOp = { op: 'create'; name?: string; folder?: string } | { op: 'rename'; path: string; name: string } | { op: 'trash'; path: string }
+/** path: the new board, the renamed board's new path, or the trashed board's old path. wasOpen: it was the open board. */
+export interface BoardChangeResult {
+  path: string
+  wasOpen: boolean
+}
+
 /**
  * The requests the main process sends to the renderer, which owns the live
  * board (with unsaved strokes). `since: null` means "from now": no changes.
@@ -344,9 +355,9 @@ export interface LiveStillsItem {
 export interface AgentMethods {
   /** The open board and the highest seq on it (the change cursor for "now"). */
   cursorInfo: { params: Record<string, never>; result: { board: { path: string } | null; cursor: number | null } }
-  /** get_board: the outline text of a part, or search results. look: the session's change cursor on this board. scenes: the stage log's scene names. */
+  /** list_items: the outline text of a part, or search results. look: the session's change cursor on this board. scenes: the stage log's scene names. */
   boardRead: {
-    params: { part?: unknown; find?: string; depth?: number; look: number | null; scenes: Array<{ id: string; name: string | null }> }
+    params: { part?: unknown; query?: string; depth?: number; look: number | null; scenes: Array<{ id: string; name: string | null }> }
     result: { board: string; cursor: number; text: string }
   }
   /** get_item: one or more ids as one form. */
@@ -369,8 +380,25 @@ export interface AgentMethods {
     }
     result: ScreenshotPlan
   }
-  /** Open a board; the result is the get_board overview of it. */
+  /** Open a board; the result is the list_items overview of it. */
   openBoard: { params: { path: string; look: number | null; scenes: Array<{ id: string; name: string | null }> }; result: { board: string; cursor: number; text: string } }
+  /** list_boards: the open board's counts and title (and its text matches for a query), from memory with unsaved changes; null when no board is open. */
+  boardDigest: {
+    params: { query: string | null }
+    result: {
+      path: string
+      unsaved: boolean
+      digest: BoardDigest
+      groups: number
+      matches?: Array<TextMatch & { place: string }>
+    } | null
+  }
+  /**
+   * The one board-change operation (App.tsx changeBoard), also used by the sidebar: pending
+   * saves are written first (a save error fails the change), then the file changes and the
+   * drafts, change cursors, ink groups and stage move or end with it. create opens the new board.
+   */
+  boardChange: { params: BoardChangeOp; result: BoardChangeResult }
   /** The learner's changes after `since`; null when no board is open. */
   learnerNews: { params: { since: number }; result: LearnerNews | null }
   agentTool: { params: { tool: AgentToolName; args: Record<string, unknown> }; result: unknown }
@@ -490,8 +518,8 @@ export interface SpaceApi {
    * learner's changes in this save (for the learner-edit log) and the serialise time (for the save log).
    */
   writeBoard(path: string, text: string, info?: BoardSaveInfo): Promise<void>
-  /** Create `boards/Untitled N.board.json`. Resolves the new path. */
-  createBoard(): Promise<string>
+  /** Create `boards/Untitled N.board.json`, or `<folder>/<name>.board.json` when given. Resolves the new path. */
+  createBoard(name?: string, folder?: string): Promise<string>
   /** Rename the file. Resolves the new path. */
   renameBoard(path: string, newName: string): Promise<string>
   /** Move the board file to the system Trash. */

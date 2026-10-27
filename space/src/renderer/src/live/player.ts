@@ -1052,7 +1052,7 @@ export class ScenePlayer {
     this.render()
   }
 
-  /** When scenes started and ended on the clock (Date ms), oldest first (get_board's "last played"). */
+  /** When scenes started and ended on the clock (Date ms), oldest first (list_items's "last played"). */
   playedLog(): ReadonlyArray<{ scene: string; name: string | null; start: number; end: number | null }> {
     return this.playLog
   }

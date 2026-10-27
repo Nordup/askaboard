@@ -1,3 +1,4 @@
+import { placeText, wholeRect } from '@shared/board-digest'
 import { boardName, isFrame, isInk, isKnown, isLive, savedInkPoints, type Author, type BoardNode, type InkNode } from '@shared/board-format'
 import type { BoardRect, ChangedItem, InkGroupSummary, RemovedItem } from '@shared/space-api'
 import type { BoardHandle, LiveBoardState } from '../board/Board'
@@ -16,7 +17,7 @@ import { sceneOf } from './placement'
 
 /**
  * The agent's reads of the open board, as the agent thinks about it
- * (get_board, get_item, get_changes, and the part of get_screenshot):
+ * (list_items, get_item, get_changes, and the part of get_screenshot):
  * the learner's work (ink groups and the learner's items), the agent's
  * scenes (items by node.scene, with names and steps the app knows this
  * session) and material (frames with a title). These units are views that
@@ -53,8 +54,6 @@ export type PartArg =
 const SUMMARY_AT = 25
 /** Units this close (board points) form one area. */
 const AREA_GAP = 160
-/** Boards named in the header before "and N more". */
-const BOARDS_SHOWN = 8
 /** About this many characters per stroke point in get_item as "points" (JSON "[x,y,p]," at the board file's precision), when no stroke can be measured. */
 const CHARS_PER_POINT = 19
 /** About this many characters per stroke in get_item as "points" besides its points. */
@@ -71,15 +70,15 @@ export function boardRect(region: Region | null): BoardRect | null {
   return region ? { x: r1(region.x), y: r1(region.y), width: r1(region.width), height: r1(region.height) } : null
 }
 
-/** "x,y w×h" in whole board points. */
+/** "x,y w×h" in whole board points (the same rounded rect as regionArg). */
 function place(region: Region | null): string {
-  return region ? `${Math.round(region.x)},${Math.round(region.y)} ${Math.round(region.width)}×${Math.round(region.height)}` : '(no layout)'
+  return placeText(region)
 }
 
-/** A region as a call argument: {x: …, y: …, width: …, height: …}. */
+/** A region as a call argument: {x: …, y: …, width: …, height: …}, the same rounded rect as place(). */
 function regionArg(region: Region): string {
-  const b = boardRect(region) as BoardRect
-  return `{x: ${Math.floor(b.x)}, y: ${Math.floor(b.y)}, width: ${Math.ceil(b.width + (b.x - Math.floor(b.x)))}, height: ${Math.ceil(b.height + (b.y - Math.floor(b.y)))}}`
+  const b = wholeRect(region)
+  return `{x: ${b.x}, y: ${b.y}, width: ${b.width}, height: ${b.height}}`
 }
 
 function intersects(a: Region | null, b: Region): boolean {
@@ -354,7 +353,7 @@ function sceneLine(info: SceneInfo, inPart?: number): string {
   const bounds = unionRegions(info.units.map((unit) => unit.bounds))
   if (bounds) parts.push(place(bounds))
   if (info.lastPlayed) parts.push(`last played ${new Date(info.lastPlayed).toLocaleTimeString('en-GB')}`)
-  if (info.name === null) parts.push('its name and steps are not known since the app started')
+  if (info.name === null) parts.push('its name and steps are not known: it played before the app last started')
   return parts.join(' · ')
 }
 
@@ -427,7 +426,7 @@ function areaLine(units: Unit[], what: string, call: (region: Region) => string)
   return parts.join(' · ')
 }
 
-// ---------- get_board: the outline of a part ----------
+// ---------- list_items: the outline of a part ----------
 
 interface Sections {
   learner: Unit[]
@@ -481,7 +480,7 @@ function unitsSection(m: Model, title: string, units: Unit[], summarise: boolean
 function outline(m: Model, rect: Region | null, summarise: boolean, depthNote: string): string[] {
   const keep = (unit: Unit): boolean => !rect || intersects(unit.bounds, rect)
   const sections = sectionsOf(m, keep)
-  const regionCall = (region: Region): string => `get_board({part: {region: ${regionArg(region)}}})`
+  const regionCall = (region: Region): string => `list_items({part: {region: ${regionArg(region)}}})`
   const lines: string[] = []
   lines.push(...unitsSection(m, "Learner's work", sections.learner, summarise, {}, regionCall))
   if (sections.scenes.length) {
@@ -536,14 +535,14 @@ function elsewhere(m: Model): string[] {
     }
     for (const [side, units] of sides) {
       const bounds = unionRegions(units.map((unit) => unit.bounds)) as Region
-      lines.push(`  ${side} of the view: ${describe(units)} · area ${place(bounds)} · get_board({part: {region: ${regionArg(bounds)}}})`)
+      lines.push(`  ${side} of the view: ${describe(units)} · area ${place(bounds)} · list_items({part: {region: ${regionArg(bounds)}}})`)
     }
     return lines
   }
   for (const { units, bounds } of entries) {
     const { gap, side } = relation(bounds, m.view)
     const titles = titlesOf(units)
-    lines.push(`  ${side} of the view, ${num(gap)} away: ${describe(units)} · area ${place(bounds)}${titles ? ` · ${titles}` : ''} · get_board({part: {region: ${regionArg(bounds)}}})`)
+    lines.push(`  ${side} of the view, ${num(gap)} away: ${describe(units)} · area ${place(bounds)}${titles ? ` · ${titles}` : ''} · list_items({part: {region: ${regionArg(bounds)}}})`)
   }
   return lines
 }
@@ -555,11 +554,8 @@ function header(m: Model, look: number | null): string[] {
   const lines: string[] = []
   const folder = ctx.folder ? ` in the folder ${q(ctx.folder.name)} (${ctx.folder.root})` : ''
   lines.push(`Board ${q(boardName(ctx.path))} (${ctx.path})${folder}, revision c${revision}.`)
-  const others = ctx.boards.filter((path) => path !== ctx.path)
-  if (others.length) {
-    const shown = others.slice(0, BOARDS_SHOWN).map(q).join(', ')
-    lines.push(`Other boards (${num(others.length)}): ${shown}${others.length > BOARDS_SHOWN ? `, and ${num(others.length - BOARDS_SHOWN)} more: get_board({part: "boards"})` : ''}. open_board opens one.`)
-  } else lines.push('Other boards: none.')
+  const others = ctx.boards.filter((path) => path !== ctx.path).length
+  lines.push(others ? `Other boards: ${num(others)} · list_boards() lists them.` : 'Other boards: none.')
   lines.push(`View ${place(m.view)}, zoom ${Math.round(state.camera.zoom * 100) / 100}.`)
   const covered = coveredOf(ctx.board)
   if (covered.length) lines.push(`Hidden from the learner: ${covered.map((area) => `${area.by} ${place(area)}`).join('; ')}.`)
@@ -580,12 +576,23 @@ function header(m: Model, look: number | null): string[] {
   return lines
 }
 
+/** The short state line for narrow reads (an id, a region, a scene, a name, a search): board, revision, and the cursor when things changed. */
+function shortHeader(m: Model, look: number | null): string {
+  const { ctx, state } = m
+  const revision = state.nextSeq - 1
+  let changed = 0
+  if (look !== null) {
+    const present = new Set(state.nodes.map((node) => node.id))
+    changed = state.nodes.filter((node) => node.seq > look).length + (ctx.log?.after(look) ?? []).filter((tombstone) => !present.has(tombstone.id)).length
+  }
+  return `Board ${q(boardName(ctx.path))} (${ctx.path}), revision c${revision}${changed ? `; ${plural(changed, 'item')} changed since your last look c${Math.max(0, look as number)}: get_changes()` : ''}.`
+}
+
 // ---------- Parts ----------
 
 type Resolved =
   | { kind: 'view' }
   | { kind: 'board' }
-  | { kind: 'boards' }
   | { kind: 'selection' }
   | { kind: 'region'; rect: Region }
   | { kind: 'ids'; ids: string[] }
@@ -616,7 +623,6 @@ function findScene(m: Model, ref: string): SceneInfo | null {
 function resolvePart(m: Model, part: PartArg | undefined, tool: string): Resolved {
   if (part === undefined || part === 'view') return { kind: 'view' }
   if (part === 'board') return { kind: 'board' }
-  if (part === 'boards') return { kind: 'boards' }
   if (part === 'selection') return { kind: 'selection' }
   if (typeof part === 'string') return resolveName(m, part, tool)
   if ('region' in part) {
@@ -668,7 +674,7 @@ function resolveName(m: Model, text: string, tool: string): Resolved {
     if (nameOf(candidate)?.toLowerCase() === lower) options.push({ form: { kind: 'ids', ids: [candidate.id] }, arg: `{id: ${q(candidate.id)}}`, what: `${candidate.kind} ${q(nameOf(candidate) as string)} ${candidate.id} · ${place(m.state.bounds(candidate.id))}` })
   }
   if (options.length === 1) return options[0].form
-  if (!options.length) throw new Error(`No item, ink group or scene has the id or name ${q(text)}. ${knownScenes(m)} get_board() lists the board; get_board({find: ${q(text)}}) searches the text.`)
+  if (!options.length) throw new Error(`No item, ink group or scene has the id or name ${q(text)}. ${knownScenes(m)} list_items() lists the board; list_items({query: ${q(text)}}) searches the text.`)
   const lines = [`${q(text)} names ${num(options.length)} things, so nothing was read. Say which one:`]
   for (const option of options) lines.push(`  ${tool}({part: ${option.arg}}) · ${option.what}`)
   return { kind: 'candidates', text: lines.join('\n'), options: options.map((option) => option.arg) }
@@ -691,7 +697,7 @@ function treeLines(m: Model, nodeId: string, depth: number, indent: string, line
           inkIn(child.id, `${pad}  `)
         } else {
           const count = withDescendants([child.id], m.index).size - 1
-          if (count) lines.push(`${pad}  … ${plural(count, 'item')} below: get_board({part: {id: ${q(child.id)}}, depth: ${depth + 1}})`)
+          if (count) lines.push(`${pad}  … ${plural(count, 'item')} below: list_items({part: {id: ${q(child.id)}}, depth: ${depth + 1}})`)
         }
       }
     }
@@ -748,7 +754,7 @@ function sceneText(m: Model, info: SceneInfo, step: number | string | undefined,
   let units = info.units
   let stepName: string | null = null
   if (step !== undefined) {
-    if (!info.steps) throw new Error(`The steps of ${sceneLabel(info)} are not known since the app started; get_board({part: {scene: ${sceneArg(m, info)}}}) lists its items.`)
+    if (!info.steps) throw new Error(`The steps of ${sceneLabel(info)} are not known: it played before the app last started; list_items({part: {scene: ${sceneArg(m, info)}}}) lists its items.`)
     const found = typeof step === 'number' ? info.steps[step - 1] : info.steps.find((entry) => entry.name === step)
     if (!found) throw new Error(`${sceneLabel(info)} has no step ${typeof step === 'number' ? step : q(step)}. Its steps: ${info.steps.map((entry, i) => `${i + 1} ${q(entry.name)}`).join(', ') || 'none'}.`)
     stepName = found.name
@@ -776,11 +782,11 @@ function sceneText(m: Model, info: SceneInfo, step: number | string | undefined,
       for (const unit of unknown) lines.push(itemLine(unit))
     }
   } else {
-    lines.push('  items by kind (the steps are not known since the app started):')
+    lines.push('  items by kind (the steps are not known: the scene played before the app last started):')
     const kinds = [...new Set(units.map((unit) => unit.kind))]
     for (const kind of kinds) for (const unit of units.filter((entry) => entry.kind === kind)) lines.push(itemLine(unit))
   }
-  if (info.cues.length) lines.push(`  say lines: ${num(info.cues.length)} (get_board({find: "…"}) searches them)`)
+  if (info.cues.length) lines.push(`  say lines: ${num(info.cues.length)} (list_items({query: "…"}) searches them)`)
   return lines
 }
 
@@ -802,7 +808,7 @@ function contextOf(text: string, at: number, length: number): string {
 
 function findText(m: Model, query: string, rect: Region | null, explicit: boolean): string[] {
   const needle = query.toLowerCase().trim()
-  if (!needle) throw new Error('find needs some text to search for.')
+  if (!needle) throw new Error('query needs some text to search for.')
   const matches: Match[] = []
   const rootOf = (node: BoardNode): string => {
     let current: BoardNode | undefined = node
@@ -835,7 +841,7 @@ function findText(m: Model, query: string, rect: Region | null, explicit: boolea
   const sceneMatches: string[] = []
   if (!rect || !explicit) {
     for (const info of m.scenes.values()) {
-      if (info.name && info.name.toLowerCase().includes(needle)) sceneMatches.push(`  ${sceneLabel(info)} (its name) · get_board({part: {scene: ${sceneArg(m, info)}}})`)
+      if (info.name && info.name.toLowerCase().includes(needle)) sceneMatches.push(`  ${sceneLabel(info)} (its name) · list_items({part: {scene: ${sceneArg(m, info)}}})`)
       for (const cue of info.cues) {
         const at = cue.toLowerCase().indexOf(needle)
         if (at >= 0) sceneMatches.push(`  say line of ${sceneLabel(info)}: “${contextOf(cue, at, needle.length)}”`)
@@ -849,28 +855,29 @@ function findText(m: Model, query: string, rect: Region | null, explicit: boolea
     lines.push(`  in ${plural(byRoot.size, 'place')}; each opens in full with its call:`)
     for (const [root, list] of byRoot) {
       const unit = m.unitById.get(root)
-      lines.push(`  ${unit ? unitLine(m, unit) : root}: ${plural(list.length, 'match', 'matches')}, first ${list[0].context} · get_board({find: ${q(query)}, part: {id: ${q(root)}}})`)
+      lines.push(`  ${unit ? unitLine(m, unit) : root}: ${plural(list.length, 'match', 'matches')}, first ${list[0].context} · list_items({query: ${q(query)}, part: {id: ${q(root)}}})`)
     }
   } else for (const match of matches) lines.push(`  ${match.where} · ${match.context}`)
   lines.push(...sceneMatches)
-  lines.push("Handwriting is not searchable: the app cannot read ink. To read the learner's writing, look with get_screenshot.")
+  lines.push("Handwriting is not text: the app cannot read ink. To read the learner's writing, look with get_screenshot.")
   return lines
 }
 
-// ---------- get_board ----------
+// ---------- list_items ----------
 
-export function boardRead(ctx: ReadContext, params: { part?: PartArg; find?: string; depth?: number; look: number | null }): string {
+export function boardRead(ctx: ReadContext, params: { part?: PartArg; query?: string; depth?: number; look: number | null }): string {
   const m = buildModel(ctx)
   const depth = Math.max(1, Math.min(10, Math.floor(params.depth ?? 3)))
-  const resolved = resolvePart(m, params.part, 'get_board')
+  const resolved = resolvePart(m, params.part, 'list_items')
   if (resolved.kind === 'candidates') return resolved.text
   if (resolved.kind === 'changes') throw new Error('{changes} is a part for get_screenshot; get_changes({changes: "…"}) reports an interval.')
-  if (params.find !== undefined) {
+  if (params.query !== undefined) {
     // Without a part, find searches the whole board.
     const rect = params.part === undefined ? null : partRect(m, resolved)
-    return findText(m, params.find, rect, params.part !== undefined && resolved.kind !== 'view' && resolved.kind !== 'board').join('\n')
+    return [shortHeader(m, params.look), ...findText(m, params.query, rect, params.part !== undefined && resolved.kind !== 'view' && resolved.kind !== 'board')].join('\n')
   }
-  const lines = header(m, params.look)
+  // The full state header for the view and the whole board; one short line for narrower parts.
+  const lines = resolved.kind === 'view' || resolved.kind === 'board' ? header(m, params.look) : [shortHeader(m, params.look)]
   lines.push('')
   switch (resolved.kind) {
     case 'view': {
@@ -878,16 +885,15 @@ export function boardRead(ctx: ReadContext, params: { part?: PartArg; find?: str
       lines.push(...elsewhere(m))
       const first = [...m.scenes.values()].filter((info) => info.units.length).at(-1)
       const ink = m.units.find((unit) => unit.group && unit.author === 'learner' && intersects(unit.bounds, m.view))
-      lines.push('', `Deeper: ${[first ? `get_board({part: {scene: ${sceneArg(m, first)}}})` : '', ink ? `get_item({id: ${q(ink.id)}})` : 'get_item({id: "…"})', 'get_board({part: "board"})', 'get_board({find: "…"})', 'get_screenshot()'].filter(Boolean).join(' · ')}`)
+      // No pointers when the view holds nothing: an empty board has nothing to show, and "Elsewhere" gives the calls for items outside the view.
+      if (m.units.some((unit) => intersects(unit.bounds, m.view)))
+        lines.push('', `Deeper: ${[first ? `list_items({part: {scene: ${sceneArg(m, first)}}})` : '', ink ? `get_item({id: ${q(ink.id)}})` : 'get_item({id: "…"})', 'list_items({part: "board"})', 'list_items({query: "…"})', 'get_screenshot()'].filter(Boolean).join(' · ')}`)
       break
     }
     case 'board':
       lines.push('The whole board:')
       lines.push(...outline(m, null, true, ''))
-      lines.push('', 'Deeper: get_board({part: {region: …}}) or {scene: …} or {id: …} · get_board({find: "…"}) · get_screenshot({part: "board"})')
-      break
-    case 'boards':
-      lines.push(`Boards in the folder (${num(ctx.boards.length)}):`, ...ctx.boards.map((path) => `  ${path}${path === ctx.path ? ' (open)' : ''}`), '', 'open_board({path: "…"}) opens one.')
+      if (m.units.length) lines.push('', 'Deeper: list_items({part: {region: …}}) or {scene: …} or {id: …} · list_items({query: "…"}) · get_screenshot({part: "board"})')
       break
     case 'selection':
     case 'region': {
@@ -898,7 +904,7 @@ export function boardRead(ctx: ReadContext, params: { part?: PartArg; find?: str
       }
       lines.push(`Part ${place(rect)}:`)
       lines.push(...outline(m, rect, false, ''))
-      lines.push('', `Deeper: get_board({part: {id: "…"}}) · get_item({id: [...]}) for exact values · get_screenshot({part: {region: ${regionArg(rect)}}})`)
+      lines.push('', `Deeper: list_items({part: {id: "…"}}) · get_item({id: [...]}) for exact values · get_screenshot({part: {region: ${regionArg(rect)}}})`)
       break
     }
     case 'ids':
@@ -945,8 +951,6 @@ export function shotPart(ctx: ReadContext, part: PartArg | undefined): ShotPart 
   switch (resolved.kind) {
     case 'candidates':
       return { kind: 'empty', message: resolved.text }
-    case 'boards':
-      return { kind: 'empty', message: 'The board list has no picture: get_board({part: "boards"}) lists the boards.' }
     case 'changes':
       return { kind: 'changes', from: resolved.from, to: resolved.to, handle: resolved.handle, what: `the changes ${resolved.handle}` }
     case 'view':
@@ -959,7 +963,7 @@ export function shotPart(ctx: ReadContext, part: PartArg | undefined): ShotPart 
       return { kind: 'region', rect: resolved.rect, wide: false, labelIds: null, what: `the region ${place(resolved.rect)}` }
     case 'ids': {
       const missing = resolved.ids.filter((id) => !m.unitById.has(id) && !m.byId.has(id))
-      if (missing.length) throw new Error(`No item or ink group ${missing.map(q).join(', ')} on the open board. get_board() lists the ids.`)
+      if (missing.length) throw new Error(`No item or ink group ${missing.map(q).join(', ')} on the open board. list_items() lists the ids.`)
       const rect = partRect(m, resolved)
       if (!rect) throw new Error(`${resolved.ids.map(q).join(', ')} has no layout (it may be hidden with display: none).`)
       // The items and what they hold.
@@ -998,7 +1002,7 @@ function oneItem(m: Model, id: string, as: ItemAs, includeIds: boolean): unknown
   const group = isGroupId(id) ? m.groupById.get(id) : undefined
   if (isGroupId(id) && !group) throw new Error(`No ink group "${id}" on the open board.`)
   const node = group ? undefined : m.byId.get(id)
-  if (!group && !node) throw new Error(`No item "${id}" on the open board. get_board() lists the ids.`)
+  if (!group && !node) throw new Error(`No item "${id}" on the open board. list_items() lists the ids.`)
   const strokes: InkNode[] = group ? strokesOf(m, group) : node && isInk(node) ? [node] : []
   switch (as) {
     case 'info': {
@@ -1230,7 +1234,7 @@ function actorLines(m: Model, entries: IntervalChange[], removed: Array<Tombston
       for (const [kind, count] of slot.kinds) parts.push(`${num(count)} ${kind}`)
       return `${word}: ${parts.join(', ')}`
     })
-    lines.push(`  ${info ? sceneLabel(info) : `scene ${scene}`}: ${said.join('; ')} · get_board({part: {scene: ${info ? sceneArg(m, info) : q(scene)}}})`)
+    lines.push(`  ${info ? sceneLabel(info) : `scene ${scene}`}: ${said.join('; ')} · list_items({part: {scene: ${info ? sceneArg(m, info) : q(scene)}}})`)
   }
   if (loose.length > SUMMARY_AT) {
     const counts = new Map<string, number>()

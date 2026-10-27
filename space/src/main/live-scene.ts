@@ -179,6 +179,20 @@ export class SceneStage {
     if (!context.stage || context.stage.epoch !== this.epoch) context.stage = { epoch: this.epoch, items: {} }
   }
 
+  /**
+   * The board-change operation (App.tsx changeBoard): a renamed board keeps its stage under
+   * the new path; a board that went to the Trash ends its stage. Other boards change nothing.
+   */
+  boardMoved(from: string, to: string | null): void {
+    if (this.boardPath !== from) return
+    if (to) {
+      this.boardPath = to
+      return
+    }
+    this.reset('the board went to the Trash')
+    this.boardPath = null
+  }
+
   /** Scenes that will never play (skipped): their programs leave the stage. */
   drop(sceneIds: string[]): void {
     const before = this.log.length

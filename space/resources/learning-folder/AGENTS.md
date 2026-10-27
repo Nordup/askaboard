@@ -30,9 +30,10 @@ Create a folder or file from this table when you first need it.
 When the learner says they are done, or the session reaches a natural end:
 
 1. Find out what happened, even if this conversation started late: read
-   today's files in `sessions/`, and look at the boards (`get_changes` with
-   `since: 0`, `get_board` with part "board", `get_screenshot`). The boards hold
-   the learner's work.
+   today's files in `sessions/`, and look at the open board (`get_changes`
+   with `since: 0`, `list_items` with part "board", `get_screenshot`).
+   `list_boards` shows which other boards changed today. The boards hold the
+   learner's work.
 2. Write `sessions/YYYY-MM-DD-short-topic.md` (or update today's file):
    - what we worked on, and which boards;
    - what the learner now understands (concrete, in their words if possible);

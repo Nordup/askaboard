@@ -1,6 +1,9 @@
+import { boardTexts, digestBoard, placeText, searchTexts } from '@shared/board-digest'
 import { boardName, isContent, isInk, isKnown, isLive, type BoardNode } from '@shared/board-format'
 import type {
   AgentMethods,
+  BoardChangeOp,
+  BoardChangeResult,
   AgentRequest,
   BoardRect,
   LearnerNews,
@@ -42,8 +45,12 @@ export interface AgentContext {
   board: BoardHandle | null
   changeLog: ChangeLog | null
   tool: string
+  /** The open board has changes not saved yet. */
+  unsaved: boolean
   /** Open a board and resolve when it is on screen. */
   openBoard(path: string): Promise<void>
+  /** The one board-change operation (App.tsx changeBoard). */
+  changeBoard(op: BoardChangeOp): Promise<BoardChangeResult>
   /** See SpaceApi.importAsset. */
   importAsset(src: string): Promise<string>
 }
@@ -93,8 +100,8 @@ function requireBoard(context: AgentContext): { path: string; board: BoardHandle
   if (!context.openPath || !context.board) {
     throw new Error(
       context.boards.length
-        ? `No board is open. Call open_board with one of: ${context.boards.join(', ')}.`
-        : 'No board is open, and the folder has no boards yet.'
+        ? `No board is open. list_boards() lists the ${context.boards.length} boards of the folder; open_board({board: "…"}) opens one.`
+        : 'No board is open, and the folder has no boards yet: open_board({board: "…", create: true}) makes one.'
     )
   }
   return { path: context.openPath, board: context.board, log: context.changeLog }
@@ -115,7 +122,7 @@ function readContext(context: AgentContext, scenes: SceneNames): ReadContext {
 
 // ---------- Board news: the learner's changes since an agent's last look ----------
 
-const KIND_WORDS: Record<string, string> = { svg: 'SVG', frame: 'frame', text: 'text', image: 'image', live: 'live item' }
+const KIND_WORDS: Record<string, string> = { svg: 'svg', frame: 'frame', text: 'text', image: 'image', live: 'live item' }
 
 /**
  * "your SVG \"Thermal spectra\"", "the learner's text \"Find x\"", or with the id when it has no name.
@@ -123,7 +130,7 @@ const KIND_WORDS: Record<string, string> = { svg: 'SVG', frame: 'frame', text: '
  */
 function materialLabel(node: BoardNode, owner = true): string {
   const kind = KIND_WORDS[node.kind] ?? node.kind
-  const who = owner ? (node.author === 'agent' ? 'your' : "the learner's") : /^[aeiou]|^SVG/i.test(kind) ? 'an' : 'a'
+  const who = owner ? (node.author === 'agent' ? 'your' : "the learner's") : /^[aeiou]|^svg/i.test(kind) ? 'an' : 'a'
   let label = typeof node.name === 'string' ? node.name.trim() : ''
   if (!label && node.kind === 'text') label = String((node as { text?: unknown }).text ?? '').replace(/[*$\\]/g, '').split(/\s+/).filter(Boolean).slice(0, 5).join(' ')
   if (!label && node.kind === 'image') {
@@ -132,6 +139,11 @@ function materialLabel(node: BoardNode, owner = true): string {
   }
   if (label.length > 40) label = `${label.slice(0, 39)}…`
   return label ? `${who} ${kind} "${label}"` : `${who} ${kind} ${node.id}`
+}
+
+/** 'your SVG', "the learner's text": whose and what kind, for news summaries of many items. */
+function materialUnit(node: BoardNode): string {
+  return `${node.author === 'agent' ? 'your' : "the learner's"} ${KIND_WORDS[node.kind] ?? node.kind}`
 }
 
 /** Where `a` is relative to `b`, and the gap between them (0 when they overlap). */
@@ -211,7 +223,7 @@ function learnerNews(context: AgentContext, since: number): LearnerNews | null {
       inkMoves.set(key, entry)
       continue
     }
-    const item: NewsItem = { change, label: materialLabel(node, change !== 'added'), bounds: rect(state.bounds(node.id)), ...(offset ? { offset } : {}), ...(at ? { at } : {}) }
+    const item: NewsItem = { change, label: materialLabel(node, change !== 'added'), unit: materialUnit(node), bounds: rect(state.bounds(node.id)), ...(offset ? { offset } : {}), ...(at ? { at } : {}) }
     const parent = isKnown(node) ? node.parent : undefined
     if (change === 'added') placed.push({ item, ...(parent ? { parent } : {}) })
     else items.push(item)
@@ -224,7 +236,7 @@ function learnerNews(context: AgentContext, since: number): LearnerNews | null {
       : strokeWord(entry.count)
     // An offset only when every stroke moved by the same one.
     const offset = entry.offsets.size === 1 && entry.offset ? { offset: entry.offset } : {}
-    items.push({ change: entry.change, label, bounds: rect(unionRegions(entry.bounds)), ...offset, ...(entry.at ? { at: entry.at } : {}) })
+    items.push({ change: entry.change, label, unit: 'ink', bounds: rect(unionRegions(entry.bounds)), ...offset, ...(entry.at ? { at: entry.at } : {}) })
   }
 
   const present = new Set(state.nodes.map((node) => node.id))
@@ -238,7 +250,7 @@ function learnerNews(context: AgentContext, since: number): LearnerNews | null {
     // The contents of a deleted frame go with it.
     const parent = isKnown(tombstone.node) ? tombstone.node.parent : undefined
     if (parent && deletedIds.has(parent)) continue
-    items.push({ change: 'deleted', label: materialLabel(tombstone.node), bounds: rect(tombstone.bounds), at: tombstone.at })
+    items.push({ change: 'deleted', label: materialLabel(tombstone.node), unit: materialUnit(tombstone.node), bounds: rect(tombstone.bounds), at: tombstone.at })
   }
 
   const newsGroupIds = new Set(added.flatMap((stroke) => (stroke.group ? [stroke.group] : [])))
@@ -403,7 +415,7 @@ export async function handleAgentRequest(request: AgentRequest, getContext: () =
     case 'boardRead': {
       const params = request.params as AgentMethods['boardRead']['params']
       const ctx = readContext(context, params.scenes)
-      return { board: ctx.path, cursor: seenCursor(ctx.board.liveState()), text: boardRead(ctx, { part: params.part as PartArg | undefined, find: params.find, depth: params.depth, look: params.look }) }
+      return { board: ctx.path, cursor: seenCursor(ctx.board.liveState()), text: boardRead(ctx, { part: params.part as PartArg | undefined, query: params.query, depth: params.depth, look: params.look }) }
     }
     case 'itemRead': {
       const params = request.params as AgentMethods['itemRead']['params']
@@ -445,6 +457,19 @@ export async function handleAgentRequest(request: AgentRequest, getContext: () =
         params.tool,
         params.args ?? {}
       )
+    }
+    case 'boardDigest': {
+      const params = request.params as AgentMethods['boardDigest']['params']
+      if (!context.folder || !context.openPath || !context.board) return null
+      const state = context.board.liveState()
+      const nodes = state.nodes as BoardNode[]
+      const groups = groupsOf(context.openPath, context.board).filter((group) => group.author === 'learner').length
+      const matches = params.query ? searchTexts(boardTexts(nodes), params.query).map((match) => ({ ...match, place: placeText(state.bounds(match.id)) })) : undefined
+      return { path: context.openPath, unsaved: context.unsaved, digest: digestBoard(nodes), groups, ...(matches ? { matches } : {}) }
+    }
+    case 'boardChange': {
+      if (!context.folder) throw new Error('No learning folder is open in Learning Space.')
+      return context.changeBoard(request.params as AgentMethods['boardChange']['params'])
     }
     case 'openBoard': {
       const params = request.params as AgentMethods['openBoard']['params']

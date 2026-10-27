@@ -2,31 +2,31 @@
 
 ## The board
 <!-- topic: model -->
-<!-- summary: The board model: node kinds, ids, ink groups, bounds and positions. -->
+<!-- summary: The board model: item kinds, ids, ink groups, bounds and positions. -->
 
-- The board is a tree of nodes: frame (a box that holds children), text, svg, image<!-- code-items -->, live (program, shader and canvas items)<!-- /code-items --> and ink (pen strokes).
+- The board is a tree of items (the board file calls them nodes): frame (a box that holds children), text, svg, image<!-- code-items -->, live (program, shader and canvas items)<!-- /code-items --> and ink (pen strokes).
 - Ink is the learner's handwriting (author "learner") or yours. Ink inside a frame moves with the frame.
-- Every node has a stable id. get_board returns ids, kinds, names and world bounds as "x,y w×h".
-- Ink groups: the app clusters strokes by distance and time into groups g1, g2, …. A group holds the strokes of one parent (the top level or one frame) and one author; each ink object of a scene is a group of its own. A group keeps its id while the learner adds to it, merged groups keep the older id, and ids are not reused. A group id works wherever a node id does: board.node("g3") in a scene, the part of get_board and get_screenshot, get_item.
-- Top-level nodes sit at their x, y on the board. <!-- html -->Children of a flex frame are placed by the flex layout. Children of a free frame sit<!-- /html: Children of a frame sit --> at their x, y inside the frame.
+- Every item has a stable id. list_items returns ids, kinds, names and world bounds as "x,y w×h".
+- Ink groups: the app clusters strokes by distance and time into groups g1, g2, …. A group holds the strokes of one parent (the top level or one frame) and one author; each ink object of a scene is a group of its own. A group keeps its id while the learner adds to it, merged groups keep the older id, and ids are not reused. A group id works wherever an item id does: board.node("g3") in a scene, the part of list_items and get_screenshot, and the id of get_item.
+- Top-level items sit at their x, y on the board. <!-- html -->Children of a flex frame are placed by the flex layout. Children of a free frame sit<!-- /html: Children of a frame sit --> at their x, y inside the frame.
 - All writing on the board happens in scenes (write_scene, preview_scene, play_scene; topic "scene"): drawing, typeset text, <!-- html -->HTML material, <!-- /html -->pictures, copies, edits, moves and deletions are all steps of a scene's program.<!-- html -->
 
 ## HTML material
 <!-- topic: html -->
-<!-- summary: html(): material to read and keep (pages, exercises, tables, cards) as board nodes: the HTML subset, tags, layout, names, parts, style keys and units. -->
+<!-- summary: html(): material to read and keep (pages, exercises, tables, cards) as board items: the HTML subset, tags, layout, names, parts, style keys and units. -->
 
 Use html() for material the learner reads and keeps: pages, exercises, tables, cards. Drawings and explanations are ink and shapes in a scene (topic "scene").
 
-html(markup, o) in a scene (topic "scene") turns a small HTML subset into board nodes. get_item with as "html" returns an existing node in the same subset.
+html(markup, o) in a scene (topic "scene") turns a small HTML subset into board items. get_item with as "html" returns an existing item in the same subset.
 
 - Styles are inline only (style="…"): no <style>, no classes, no scripts.
 - Boxes: a <div> with child elements becomes a frame. Layout comes from display:flex with flexDirection, gap, padding, alignItems and justifyContent. There is no margin, grid, table or float; spacing comes from gap and padding.
 - A div without display:flex becomes a flex column, unless one of its children has position:absolute. Then it is a free frame: each child with position:absolute; left:…px; top:…px sits at that place. In a flex frame, position:absolute is ignored and the flex layout places the child.
-- Text: <h1>…<h6>, <p>, <span>, <li>. A block with only inline content becomes one text node. Inside text, <b>/<strong> is bold, <i>/<em> is italic and <br> is a new line. A style on a <span> is dropped; styles apply to the whole block.
+- Text: <h1>…<h6>, <p>, <span>, <li>. A block with only inline content becomes one text item. Inside text, <b>/<strong> is bold, <i>/<em> is italic and <br> is a new line. A style on a <span> is dropped; styles apply to the whole block.
 - Lists: <ul>/<ol> with <li> become a column of text lines with "•" or "1." prefixes.
 - <pre> keeps whitespace and shows its text literally (code).
-- Names: layer-name="Hint 1" on any element names its node; `obj.part("Hint 1")` returns that part.
-- One root: the markup becomes one item, its root node. The root's children are its parts (`obj.parts`), in order. Several top-level elements are put in one column frame with gap 12px; one <div> around them sets another layout.
+- Names: layer-name="Hint 1" on any element names its item; `obj.part("Hint 1")` returns that part.
+- One root: the markup becomes one item, its root item. The root's children are its parts (`obj.parts`), in order. Several top-level elements are put in one column frame with gap 12px; one <div> around them sets another layout.
 - Style keys work in camelCase or kebab-case (fontSize or font-size). Accepted: width, height, min/max width and height, padding (and sides), gap, rowGap, columnGap, display (flex, block, none), flexDirection, flexWrap, alignItems, alignContent, justifyContent, alignSelf, flexGrow, flexShrink, flexBasis, background, backgroundColor, color, opacity, borderRadius, border (and sides, color, width, style), boxShadow, fontSize, fontWeight, fontStyle, fontFamily, lineHeight, letterSpacing, textAlign, textDecoration, textTransform, whiteSpace, overflow, objectFit, and position, left and top as above. Other keys are dropped and listed in the run's warnings.
 - Units: px for sizes and font sizes; lineHeight in px or a plain number. Boxes use border-box sizing.
 - A frame with a width and height:fit-content grows with its content.<!-- /html -->
@@ -35,7 +35,7 @@ html(markup, o) in a scene (topic "scene") turns a small HTML subset into board 
 <!-- topic: math -->
 <!-- summary: Text markup and math ($…$, KaTeX syntax) in <!-- html -->html(), <!-- /html -->text() and edit(). -->
 
-- Text nodes store light markup: **bold**, *italic*, $inline math$ (KaTeX syntax, for example $T^2 \propto a^3$).
+- Text items store light markup: **bold**, *italic*, $inline math$ (KaTeX syntax, for example $T^2 \propto a^3$).
 - <!-- html -->html() passes $…$ in its text through. <!-- /html -->text() and edit(item, {text}) take the markup directly; tex() takes LaTeX without the dollars.
 - \* and \$ give a literal * or $.
 - In a JavaScript string, a backslash is written twice: "$\\frac{1}{2}$".<!-- html -->
@@ -44,12 +44,12 @@ html(markup, o) in a scene (topic "scene") turns a small HTML subset into board 
 <!-- topic: svg -->
 <!-- summary: Inline SVG in html(): size, element ids, markers, gradients, colour and how draw() shows it. -->
 
-- An inline <svg> with a viewBox in html() becomes an svg node. It needs a width and height, in its style or as attributes.
+- An inline <svg> with a viewBox in html() becomes an svg item. It needs a width and height, in its style or as attributes.
 - Shape ids (id="atom-a") are kept, and get_item lists them. Ids are scoped per drawing, so two drawings can both use "arrow".
 - Markers and gradients work with url(#id) inside the same svg. Scripts, foreignObject, external links and images are not kept.
 - Colour tokens work as attribute values (fill="var(--ls-accent)"; topic "tokens"). A fill or stroke of "currentColor" follows the svg's color style, so edit(item, {style: {color}}) recolours those shapes.
 - draw() draws the outlines along their length, one shape after another in document order, then shows the fills.
-- The scene's own shapes (circle(), path(), …) are svg nodes too.<!-- /html -->
+- The scene's own shapes (circle(), path(), …) are svg items too.<!-- /html -->
 
 ## Images
 <!-- topic: images -->
@@ -73,10 +73,10 @@ html(markup, o) in a scene (topic "scene") turns a small HTML subset into board 
 
 - Creators take o.at (top-left) or o.center in board points. <!-- html -->html(), <!-- /html -->image() and copy() without them go to an empty place: space() near o.near, or near the learner's latest work in their view.
 - space(w, h, o) returns an empty rect {x, y, width, height, at, center, visible}. It is 32 points from every item on the board and from what the scene has made so far, nearest to o.near (an object, a point or a rect) or to the learner's latest work, and inside the learner's view when it fits. o.inView (default true): false allows the nearest place anywhere.
-- <!-- html -->html(markup, {into: frame}) puts material inside a frame of the board. o.into is a node id or name, board.node(…), or html material of an earlier scene; o.index is its position among the children (default: last); o.mode is "insert" (default) or "replace" (in place of o.into's item, which goes). move<!-- /html: move -->(item, {into: frame}) moves an item into a frame. <!-- html -->In a flex frame the item joins the flow; in a free frame it keeps<!-- /html: It keeps --> its place on the board.
+- <!-- html -->html(markup, {into: frame}) puts material inside a frame of the board. o.into is an item id or name, board.node(…), or html material of an earlier scene; o.index is its position among the children (default: last); o.mode is "insert" (default) or "replace" (in place of o.into's item, which goes). move<!-- /html: move -->(item, {into: frame}) moves an item into a frame. <!-- html -->In a flex frame the item joins the flow; in a free frame it keeps<!-- /html: It keeps --> its place on the board.
 - An object's .bounds and .center give its place now, in board points (topic "scene").
 - To see overlaps and objects outside the learner's view, look at the scene with preview_scene (topic "scene", "Playback and tools").
-- get_screenshot with labels: true tags every group and top-level node with its id; grid: true adds board coordinates.
+- get_screenshot with labels: true tags every group and top-level item with its id; grid: true adds board coordinates.
 
 ## Marks on the learner's work (ink)
 <!-- topic: ink -->
@@ -135,20 +135,20 @@ await tween(stage.k, 3, 2)   // the curve drawn by the earlier call gets shorter
 - `circle(cx, cy, r, o)`, `ellipse(cx, cy, rx, ry, o)`, `rect(x, y, w, h, o)` (o.radius: corner radius), `polygon(points, o)` (o.closed: false for an open polyline), `path(d, o)` (any SVG path "d").
 - `plot(fn, o)`: the curve y = fn(x), with o.x: [min, max] (default [-4, 4]); or fn(t) → [x, y] with o.t: [t0, t1]. o.at: the board point of (0, 0); o.unit: board points per unit (default 50, or [ux, uy]); o.y: [min, max] clips; o.samples (default 240). Maths y goes up.
 - `write(text, o)`: handwriting, as ink. o.at: top-left, or o.center; o.size: cap height (default 28); o.slant (default 0.12). Letters, digits, + − × ÷ = ≠ ≈ ≤ ≥ ± √ ∫ ∑ ∞ ∂ → ° and Greek (π θ α …); "^2", "^{10}", "_1" or ² ₁ for small raised and lowered text.
-- `tex(latex, o)`: typeset maths (KaTeX), as a text node. o.at (top-left) or o.center; o.size (default 30); o.color.
-- `text(str, o)`: typeset text, as a text node, with **bold**, *italic* and $math$ (topic "math"). o.at or o.center; o.size (default 22).
+- `tex(latex, o)`: typeset maths (KaTeX), as a text item. o.at (top-left) or o.center; o.size (default 30); o.color.
+- `text(str, o)`: typeset text, as a text item, with **bold**, *italic* and $math$ (topic "math"). o.at or o.center; o.size (default 22).
 - `label(target, text, o)`: text placed next to target, clear of the scene's objects, the board's items and the view's edge. target: an object, a point [x, y], or a segment [[x1, y1], [x2, y2]]. o.at: a point on an object ([x, y], or a share 0..1 along its outline), or a share along the segment (default 0.5). o.side: "auto" (default), "center", above, below, left, right, above-left, above-right, below-left, below-right. o.gap (default 10). The label is handwritten; o.tex: true typesets it as maths, o.text: true as text. Other options as write or tex. It follows its target as the target moves or changes.
 - `around(obj, o)`: a hand-drawn ink mark around an object. o.shape: "circle" (default), "box" or "underline"; o.pad (default 8 points plus 8% of the object's larger side).<!-- code-items -->
 - `shader(glsl, o)`, `canvas(src, o)`: live pixels, drawn by the board at the display's rate: a GLSL fragment shader, or a 2D canvas program. o.at (top-left) or o.center; o.size [w, h] in board points (default [320, 200]); o.params {name: number}, animated with `tween(obj, {params: {name: n}}, s)` or given as values. After the scene, the item keeps its final params. write_scene compiles every program before playback: a compile error is a program error at the line of the shader() or canvas() call, and the log counts lines inside your glsl or src.
   - `glsl`: GLSL ES 3.0 in Shadertoy form, `void mainImage(out vec4 fragColor, in vec2 fragCoord)`; fragCoord is in device pixels from the bottom-left, and fragColor.a 0 is transparent. Declared for you: `uniform float iTime` (item time in seconds: the scene's time while a scene plays the item, so it holds on pause; after the scene it runs on from there), `uniform vec3 iResolution` (pixel width, height, 1), `uniform int iFrame`, one `uniform float <name>` per param (names that are GLSL identifiers), and the board colours `const vec3 ls_text, ls_muted, ls_accent, ls_good, ls_bad, ls_warn, ls_card, ls_card2, ls_border, ls_bg`. A shader with its own `void main()` and `out vec4` runs as it is.
   - `src`: the body of `function (ctx, t, w, h, params, dt)`, called at the display's rate in a sandboxed worker (no DOM, no network). ctx is a 2D context scaled to board points; t is item time in seconds (as iTime); w, h is the size in points; params holds the current params; dt is the item time since the last call (0 while the item is held). `this` is one object kept between frames, for state. The global `colors` holds the board colours as CSS strings: text, muted, accent, good, bad, warn, card, card2, border, bg. The canvas is not cleared between frames.
 - `program(src, o)`: a live item that runs your own JavaScript program with its canvas: 2D, WebGL 2, WebGPU, three.js, any library from a URL, the learner's pointer, the scene clock. Options as shader and canvas. Topic "scene-code" has its globals.<!-- /code-items -->
-<!-- html -->- `html(markup, o)`: board material from HTML (topic "html"): frames with layout, text, lists, math, inline SVG and pictures, made of the same nodes as the rest of the board. It returns one item, its root node. o.at (top-left) or o.center; without them, an empty place (topic "placement"). o.into, o.index and o.mode put it into a frame or in place of an item (topic "placement"). o.name, o.opacity. Its size is measured before the program goes on, so .bounds is exact. `obj.parts` lists the root's children as objects, and `obj.part(index or layer-name)` returns one. A part can be drawn, faded, erased, edited, marked and labelled, and it moves with its material.
+<!-- html -->- `html(markup, o)`: board material from HTML (topic "html"): frames with layout, text, lists, math, inline SVG and pictures, made of the same items as the rest of the board. It returns one item, its root item. o.at (top-left) or o.center; without them, an empty place (topic "placement"). o.into, o.index and o.mode put it into a frame or in place of an item (topic "placement"). o.name, o.opacity. Its size is measured before the program goes on, so .bounds is exact. `obj.parts` lists the root's children as objects, and `obj.part(index or layer-name)` returns one. A part can be drawn, faded, erased, edited, marked and labelled, and it moves with its material.
 <!-- /html -->- `image(src, o)`: a picture from an https:// or data: URL, or from a file path in the learning folder (topic "images").<!-- html --> It is html material with one <img>.<!-- /html -->
 - `copy(item, o)`: a copy of any object or board item (with everything inside it), as an object of this scene. o.at (top-left), o.center, o.by ([dx, dy]); without them, an empty place beside the original (or near o.near). o.name. A copy of ink is ink, a copy of material is material, and a copy of a group is a group.
 - `space(w, h, o)`: an empty rect for new material, clear of the board's items and of this scene's objects so far (topic "placement").
 - `group(...objs, {name})`: one object made of others; actions on it act on all of them (draw draws them one after another). It moves, scales and rotates around its own centre. A group with a name becomes one board item (a frame that holds its items), which the learner moves as a whole.
-- `board.node(id)`: an item already on the board, by node id, ink group id ("g3") or name (a name given in an earlier scene; the latest item with it). The actions work on it. `board.view`: the learner's view now (topic "view").
+- `board.node(id)`: an item already on the board, by item id, ink group id ("g3") or name (a name given in an earlier scene; the latest item with it). The actions work on it. `board.view`: the learner's view now (topic "view").
 
 **Options** (o) of shapes and ink: color (a colour name or token from topic "tokens", or any CSS colour; default text), width (default 3; a filled shape with width 0 or color "none" has no outline), opacity, dash (true or [8, 6]), fill (a colour, or a list of colours for a top-to-bottom gradient), fillOpacity, hatch (a colour: diagonal hatching), pen (true: the shape becomes ink, drawn as a pen draws, slightly uneven), jitter (wobble of ink, 0..1), tool ("highlighter"), name (the item's name on the board and in board.node).
 
@@ -157,8 +157,8 @@ await tween(stage.k, 3, 2)   // the curve drawn by the earlier call gets shorter
 - `fillIn(obj, s)`: the fill appears (and the outline, if not drawn yet). Default 0.6.
 - `fadeIn(obj, s)`, `fadeOut(obj, s)`: default 0.5. An object faded out is removed from the board at the end.
 - `erase(obj, s)`: undraws it, then removes it from the board. On board.node(…) it removes a whole item or ink group (the learner's too) with everything inside it; `fadeOut(obj, 0)` removes one at once.
-- `move(obj, {to: [x, y]} or {by: [dx, dy]}, s)`: to puts its centre there. Default 0.8. `move(obj, {into: frame, index}, s)`: the item becomes a child of a frame (a node id or name, <!-- html -->board.node(…), or html material) and glides there: in a flex frame it joins the flow at index (default: last); in a free frame it keeps<!-- /html: or board.node(…)) and glides there: it keeps --> its place (or goes where to or by says).
-- `edit(item, {text, style}, s)`: changes an item's text (text nodes: markup with **bold**, *italic*, $math$; text() and tex() objects) and its style (a CSS object<!-- html --> as in html()<!-- /html -->, numbers are px; null removes a key) from now. Text changes at once; colours, sizes, opacity and other lengths glide over s (default 0.5 with style, 0 for text only). <!-- html -->On board nodes, html material and parts, every style key of the HTML subset works; on<!-- /html: On --> the scene's own shapes and ink, color and opacity (and fontSize for text()) change as tween changes them.
+- `move(obj, {to: [x, y]} or {by: [dx, dy]}, s)`: to puts its centre there. Default 0.8. `move(obj, {into: frame, index}, s)`: the item becomes a child of a frame (an item id or name, <!-- html -->board.node(…), or html material) and glides there: in a flex frame it joins the flow at index (default: last); in a free frame it keeps<!-- /html: or board.node(…)) and glides there: it keeps --> its place (or goes where to or by says).
+- `edit(item, {text, style}, s)`: changes an item's text (text items: markup with **bold**, *italic*, $math$; text() and tex() objects) and its style (a CSS object<!-- html --> as in html()<!-- /html -->, numbers are px; null removes a key) from now. Text changes at once; colours, sizes, opacity and other lengths glide over s (default 0.5 with style, 0 for text only). <!-- html -->On board items, html material and parts, every style key of the HTML subset works; on<!-- /html: On --> the scene's own shapes and ink, color and opacity (and fontSize for text()) change as tween changes them.
 - `tween(obj, props, s)`: x, y (offset from where it was made), scale, rotate (degrees), opacity, color, draw (share drawn, 0..1),<!-- code-items --> params (live items),<!-- /code-items --> or any numeric option. `tween(value, n, s)` for values. Default 0.8.
 - `camera({fit, to, zoom, pad}, s)`: glides the learner's view (topic "view"). Default 1.
 - `point(target, s)`: a pointer glides to an object's centre or a point [x, y] and rests there; `point(null, s)` hides it. Default 0.6.

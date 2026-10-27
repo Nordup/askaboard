@@ -38,11 +38,11 @@ export function resolveTarget(s: Scene, id: unknown, what = 'id'): Target {
   if (typeof id !== 'string' || !id) throw new Error(`${what} is required.`)
   if (isGroupId(id)) {
     const group = s.groupById.get(id)
-    if (!group) throw new Error(`No ink group "${id}" on the open board. get_board() lists the groups.`)
+    if (!group) throw new Error(`No ink group "${id}" on the open board. list_items() lists the groups.`)
     return { kind: 'group', id, group, box: group.bounds }
   }
   const node = s.index.byId.get(id)
-  if (!node) throw new Error(`No node "${id}" on the open board. get_board() lists the ids.`)
+  if (!node) throw new Error(`No item "${id}" on the open board. list_items() lists the ids.`)
   return { kind: 'node', id, node, box: s.layout.get(id) ?? null }
 }
 

@@ -26,7 +26,7 @@ const api: SpaceApi = {
 
   readBoard: (path) => ipcRenderer.invoke(IPC.readBoard, path),
   writeBoard: (path, text, info) => ipcRenderer.invoke(IPC.writeBoard, path, text, info),
-  createBoard: () => ipcRenderer.invoke(IPC.createBoard),
+  createBoard: (name, folder) => ipcRenderer.invoke(IPC.createBoard, name, folder),
   renameBoard: (path, newName) => ipcRenderer.invoke(IPC.renameBoard, path, newName),
   deleteBoard: (path) => ipcRenderer.invoke(IPC.deleteBoard, path),
 

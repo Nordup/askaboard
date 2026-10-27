@@ -92,6 +92,7 @@ const agentServer = new AgentServer({
   activity: (activity) => send(IPC.agentActivity, activity),
   folderRoot: () => session?.root ?? null,
   shownBoard: () => (session ? store.getLastBoard(session.root) : null),
+  folder: () => session,
   // This instance owns the port: point the relay at it and refresh its offline tool list.
   listening: () => {
     void agentServer
@@ -254,17 +255,21 @@ function registerIpc(): void {
     console.log(`save: ${path} serialise ${serializeMs} ms, ${Math.round(Buffer.byteLength(text) / 1024)} kB, write ${writeMs.toFixed(1)} ms`)
     agentServer.boardSaved(path, info?.learnerEdit ?? null)
   })
-  handle(IPC.createBoard, () => requireSession().createBoard())
+  // The file side of the one board-change operation (renderer App.tsx changeBoard): the
+  // agent server's drafts, change cursors, stage and board cache move or end with the file.
+  handle(IPC.createBoard, (name?: unknown, folder?: unknown) => requireSession().createBoard(name, folder))
   handle(IPC.renameBoard, async (path: string, newName: string) => {
     const current = requireSession()
     const target = await current.renameBoard(path, newName)
     store.renameBoardState(current.root, path, target)
+    if (target !== path) agentServer.boardMoved(path, target)
     return target
   })
   handle(IPC.deleteBoard, async (path: string) => {
     const current = requireSession()
     await current.deleteBoard(path)
     store.forgetBoardState(current.root, path)
+    agentServer.boardMoved(path, null)
   })
 
   handle(IPC.readFile, (path: string) => requireSession().readPreview(path))

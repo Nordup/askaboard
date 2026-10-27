@@ -1171,7 +1171,7 @@
   }
   const board = Object.freeze({
     node(id) {
-      if (typeof id !== 'string') fail(`board.node(id) needs a node id or an ink group id such as "g3", got ${describe(id)}`)
+      if (typeof id !== 'string') fail(`board.node(id) needs an item id or an ink group id such as "g3", got ${describe(id)}`)
       // An item made by a scene of this stage, by its id or its name: the stage's own object (its recipe, values and names still work).
       const owner = stageItemOwner(id)
       if (owner !== undefined && objects[owner] && !objects[owner].gone) return handleOf(objects[owner])
@@ -1183,7 +1183,7 @@
       const byName = CTX.nodes[id] ? undefined : CTX.names && CTX.names[id]
       const ref = byName || id
       const info = CTX.nodes[ref]
-      if (!info) fail(`board.node: there is no node, ink group or named item "${id}" on the board. Ink groups are g1, g2, …; get_board lists the ids.`)
+      if (!info) fail(`board.node: there is no item, ink group or name "${id}" on the board. Ink groups are g1, g2, …; list_items lists the ids.`)
       const known = objects.find((e) => e.kind === 'node' && e.ref === ref && !e.gone)
       if (known) return handleOf(known)
       const handle = register({ kind: 'node', api: 'node', ref, nodeKind: info.kind, name: info.name, bounds: info.bounds })
@@ -1358,7 +1358,7 @@
   function frameArg(value, what) {
     if (typeof value === 'string') {
       const ref = CTX.nodes[value] ? value : CTX.names && CTX.names[value]
-      if (!ref || !CTX.nodes[ref]) fail(`${what}: there is no node "${value}" on the board`)
+      if (!ref || !CTX.nodes[ref]) fail(`${what}: there is no item "${value}" on the board`)
       if (CTX.nodes[ref].kind !== 'frame') fail(`${what}: "${value}" is a ${CTX.nodes[ref].kind}, not a frame`)
       return { ref }
     }

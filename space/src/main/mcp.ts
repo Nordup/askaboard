@@ -14,6 +14,8 @@ import { SceneCancelled, SceneProgramError, SceneStage, type StageEntry, type St
 import type { DraftInfo, FrameMoment, FramePart, SceneContext, SceneDescription, SceneLiveObject, SceneResult } from '@shared/live-scene'
 import { renderStoryboard, storyboardScale, type StoryboardInput } from './storyboard'
 import { BoardNews } from './news'
+import { BoardIndex, findText as boardsFindText, listText as boardsListText, resolveBoard, type OpenBoardInfo } from './boards'
+import type { FolderSession } from './folder'
 import { getAgentLook } from './state'
 import type { SnapshotRenderer } from './snapshot'
 import { SessionTrace, writeLearnerEdit } from './trace'
@@ -73,6 +75,8 @@ export interface AgentServerHooks {
   folderRoot(): string | null
   /** The board the window shows (folder-relative path), or null; for the session trace. */
   shownBoard(): string | null
+  /** The open learning folder, for list_boards, open_board and move_board; null when none is open. */
+  folder(): FolderSession | null
   /** The server listens on its port (it owns the port; another instance does not). */
   listening?(): void
 }
@@ -178,14 +182,48 @@ function publicStatus(status: unknown): Record<string, unknown> {
 }
 
 /** play_scene start's items: how many by kind, and the named ones with their ids (the same shape as write_scene's items, plus ids). */
-function itemsSummary(items: SceneItem[]): { total: number; by_kind: Record<string, number>; named: Array<{ name: string; kind: string; id: string; step?: string }> } {
+/** Above this many named items, a scene result gives their names by step and kind instead of one entry each. */
+const NAMED_SUMMARY_AT = 25
+
+type NamedItem = { name: string; kind: string; id?: string; step?: string }
+
+/**
+ * A tool's input schema that refuses unknown parameters. A plain object schema drops them
+ * without a word, so a wrong name (find for query) ran the call as if it was not given.
+ */
+function strictInput<S extends z.ZodRawShape>(tool: string, shape: S) {
+  const names = Object.keys(shape)
+  return z.strictObject(shape, {
+    error: (issue) =>
+      issue.code === 'unrecognized_keys'
+        ? `${tool} has no parameter ${(issue as { keys: string[] }).keys.map((key) => JSON.stringify(key)).join(', ')}. ${names.length ? `Its parameters: ${names.join(', ')}.` : 'It takes no parameters.'}`
+        : undefined
+  })
+}
+
+/**
+ * The named items of a scene result: one entry each, or with many, their names by step and
+ * kind (no ids), with the call that lists each one. Nothing is left out.
+ */
+function namedOut(named: NamedItem[], deeper: string): NamedItem[] | { count: number; by_step: Record<string, Record<string, string[]>>; each: string } {
+  if (named.length <= NAMED_SUMMARY_AT) return named
+  const byStep: Record<string, Record<string, string[]>> = {}
+  for (const item of named) {
+    const step = item.step ?? '(no step)'
+    const kinds = (byStep[step] ??= {})
+    ;(kinds[item.kind] ??= []).push(item.name)
+  }
+  return { count: named.length, by_step: byStep, each: deeper }
+}
+
+function itemsSummary(items: SceneItem[], scene: string): { total: number; by_kind: Record<string, number>; named: ReturnType<typeof namedOut> } {
   const byKind: Record<string, number> = {}
-  const named: Array<{ name: string; kind: string; id: string; step?: string }> = []
+  const named: NamedItem[] = []
   for (const item of items) {
     byKind[item.kind] = (byKind[item.kind] ?? 0) + 1
     if (item.name) named.push({ name: item.name, kind: item.kind, id: item.id, ...(item.step ? { step: item.step } : {}) })
   }
-  return { total: items.length, by_kind: byKind, named }
+  return { total: items.length, by_kind: byKind, named: namedOut(named, `list_items({part: {scene: ${JSON.stringify(scene)}}}) lists each with its id`) }
 }
 
 /** A change interval handle "c115-c1115" as seqs (c0: everything, below the seq 0 of files that carry none). */
@@ -278,7 +316,7 @@ const rectSchema = z.object({
   width: boxSize(MAX_REGION_SIZE),
   height: boxSize(MAX_REGION_SIZE)
 })
-/** One address for get_board and get_screenshot (docs/learning-space/drafts/board-tools-redesign-2026-10-27.md, section 10). */
+/** One address for list_items and get_screenshot (docs/learning-space/drafts/board-tools-redesign-2026-10-27.md, section 10). */
 const partForms = [
   z.string().min(1),
   z.object({ region: rectSchema }).strict(),
@@ -312,6 +350,8 @@ export class AgentServer {
   private publishTimer: NodeJS.Timeout | null = null
   private lastPublish = 0
   private readonly news: BoardNews
+  /** The cache of board summaries and texts for list_boards, open_board and move_board (boards.ts). */
+  private readonly boardIndex = new BoardIndex()
 
   constructor(private readonly hooks: AgentServerHooks) {
     this.bridge = new RendererBridge(hooks.webContents)
@@ -704,6 +744,35 @@ export class AgentServer {
     return count
   }
 
+  /**
+   * The file side of the one board-change operation (renderer App.tsx changeBoard, through
+   * main/index.ts): a renamed board keeps its drafts, every session's change cursor and its
+   * stage under the new path; a board that went to the Trash loses them. Nothing else moves here:
+   * the app state (camera, last board, agent looks) moves in state.ts, ink groups in the renderer.
+   */
+  boardMoved(from: string, to: string | null): void {
+    const drafts = this.drafts.get(from)
+    this.drafts.delete(from)
+    if (drafts && to) this.drafts.set(to, drafts)
+    for (const session of this.sessions.values()) {
+      const cursor = session.cursors.get(from)
+      session.cursors.delete(from)
+      if (cursor !== undefined && to) session.cursors.set(to, cursor)
+    }
+    this.stage.boardMoved(from, to)
+    this.boardIndex.moved(from, to)
+    console.log(`boards: ${from} ${to ? `renamed to ${to}` : 'went to the Trash'}; drafts, cursors and stage ${to ? 'moved' : 'ended'}`)
+  }
+
+  /** The open board from the renderer's memory (unsaved changes included), or null. Never throws. */
+  private async openBoardInfo(query: string | null): Promise<OpenBoardInfo | null> {
+    try {
+      return await this.bridge.request('boardDigest', { query })
+    } catch {
+      return null
+    }
+  }
+
   /** The board window's renderer loaded: it gets its port to the stage for frames (live-scene.ts). */
   linkBoard(contents: WebContents): void {
     this.stage.linkBoard(contents)
@@ -892,33 +961,33 @@ export class AgentServer {
     const server = session.server
 
     server.registerTool(
-      'get_board',
+      'list_items',
       {
-        title: 'The board',
-        description: `Returns a compact text outline of the open board. It starts with the current state: the learning folder, the open board and the other boards in the folder, the learner's view, the learner's selection and current tool, a scene that plays, and your change cursor. Then it lists what is in the part you ask for, one line per item with kind, name, id and bounds ("x,y w×h"), grouped as the learner's work (their ink groups and items), your scenes (the items each scene made), material (frames and HTML material, by title) and other items. Text shows its first words; ink shows as ink groups with author and stroke count.
+        title: 'Items on the board',
+        description: `Lists the items on the open board, one line per item with kind, name, id and bounds ("x,y w×h"), grouped as the learner's work (their ink groups and items), your scenes (the items each scene made), material (frames${htmlMaterial(' and HTML material')}, by title) and other items. Text shows its first words; ink shows as ink groups with author and stroke count. With part "view" or "board" the list starts with the current state: the learning folder, the open board and how many other boards the folder has, the learner's view, the learner's selection and current tool, a scene that plays, and your last look. Narrower parts and a search start with one line: the board, its revision, and what changed since your last look.
 
-Use it when you start work on a board, and whenever you need ids, sizes or free areas, or want to see how material is grouped. It returns no image: to see what is written or drawn, use get_screenshot.
+Use it when you start work on a board, and whenever you need ids, sizes or free areas, or want to see how material is grouped. It returns no image: to see what is written or drawn, use get_screenshot. For the other boards of the folder, use list_boards.
 
-- part chooses what to outline: "view" (what the learner sees now; the default), "board" (the whole board), {region: {x, y, width, height}}, {id: "g3"} or {id: [...]} (items, ink groups or frames, with what they hold), {scene: "name"} (the items a scene made), or "boards" (the paths of all boards in the folder). A plain string works for an id or a name that only one thing has; when several have it, the result lists them.
+- part chooses what to list: "view" (what the learner sees now; the default), "board" (the whole board), {region: {x, y, width, height}}, {id: "g3"} or {id: [...]} (items, ink groups or frames, with what they hold), or {scene: "name"} (the items a scene made). A plain string works for an id or a name that only one thing has; when several have it, the result lists them.
 - With part "view", the items outside the view are summarised by place, each place with its region.
-- With part "view" or "board", when there are many items, the outline summarises them by area, with counts and a region for each. Each area opens with one more call; nothing is left out.
-- find searches the text on the open board: text, HTML material, names, and the names and lines of the scenes played since the app started. Handwriting is not text: read it with get_screenshot.
+- With part "view" or "board", when there are many items, the list summarises them by area, with counts and a region for each. Each area opens with one more call; nothing is left out.
+- query searches the text on the open board: text, ${htmlMaterial('HTML material, ')}names, and the names and lines of the scenes played since the app started. Handwriting is not text: read it with get_screenshot.
 - The last line names the calls that show more.
 - Coordinates are board points: origin at the centre, +x right, +y down.
 - How the app groups strokes into ink groups, and how their ids behave, is in get_guide topic "model".`,
-        inputSchema: {
+        inputSchema: strictInput('list_items', {
           part: z
             .union(partForms)
             .optional()
-            .describe('What to outline: "view" (default), "board", {region}, {id}, {scene}, "boards", or an id or name that only one thing has.'),
-          find: z.string().min(1).optional().describe('Text to search for on the open board. Returns each match with the words around it, its id and its place.'),
+            .describe('What to list: "view" (default), "board", {region}, {id}, {scene}, or an id or name that only one thing has.'),
+          query: z.string().min(1).optional().describe('Text to search for on the open board. Returns each match with the words around it, its id and its place.'),
           depth: z.number().int().min(1).max(10).optional().describe('How many levels inside frames to list, 1 to 10. Default 3.')
-        },
-        annotations: { readOnlyHint: true }
+        }),
+        annotations: { readOnlyHint: true, idempotentHint: true }
       },
-      this.tool(session, 'get_board', async ({ part, find, depth }) => {
+      this.tool(session, 'list_items', async ({ part, query, depth }) => {
         const look = await this.lookCursor(session)
-        const out = await this.bridge.request('boardRead', { part, find, depth, look, scenes: this.stageScenes() })
+        const out = await this.bridge.request('boardRead', { part, query, depth, look, scenes: this.stageScenes() })
         return text(out.text)
       })
     )
@@ -929,7 +998,7 @@ Use it when you start work on a board, and whenever you need ids, sizes or free 
         title: 'Screenshot of the board',
         description: `Renders part of the open board to a PNG image, the way the learner sees it (ink, text, maths, drawings, images; no app interface), with a text that maps image pixels to board points.
 
-Use it to read handwriting and to see how a drawing looks. For ids, sizes and structure, get_board is much smaller.
+Use it to read handwriting and to see how a drawing looks. For ids, sizes and structure, list_items is much smaller.
 
 - What to capture, with part: "view" (what the learner sees now; the default), "board" (the whole board), "selection" (what the learner selected), {region: {x, y, width, height}} (an exact board rect), {id: "g3"} or {id: [...]} (items or ink groups, with a small margin), {scene: "name"} (the items a scene made), or {changes: "c115-c1115"} (an interval from get_changes).
 - part {changes: …} shows the items of that interval: items added, moved, resized or edited in dashed blue boxes, removed items in dashed pink boxes.
@@ -937,7 +1006,7 @@ Use it to read handwriting and to see how a drawing looks. For ids, sizes and st
 - labels: true adds id tags and outlines; grid: true adds board coordinates every 100 points. Both appear only in your image.
 - While a scene plays, the image shows the board at that moment, not the scene's end state, and the text says so.
 - Large areas make large images. An id or a small region gives the sharpest view of handwriting.`,
-        inputSchema: {
+        inputSchema: strictInput('get_screenshot', {
           part: z
             .union([...partForms, z.object({ changes: z.string().min(1) }).strict()])
             .optional()
@@ -946,7 +1015,7 @@ Use it to read handwriting and to see how a drawing looks. For ids, sizes and st
           max_size: z.number().int().min(256).max(4096).optional().describe('The longest image side in pixels. Default: 1024 for "view" and "board" and for any area longer than 1000 board points; 1600 for smaller crops.'),
           labels: z.boolean().optional().describe('Draw id tags and outlines on the image (default false).'),
           grid: z.boolean().optional().describe('Draw a board-coordinate grid on the image (default false).')
-        },
+        }),
         annotations: { readOnlyHint: true }
       },
       this.tool(session, 'get_screenshot', async ({ part, scale, max_size, labels, grid }) => {
@@ -985,7 +1054,7 @@ Use it to read handwriting and to see how a drawing looks. For ids, sizes and st
           'Image pixel (px, py) is board point (x + px / scale, y + py / scale).'
         ]
         if (plan.overlays.labels.length) {
-          lines.push(`Id tags (yellow = learner ink group, green = your ink group, blue = node): ${plan.overlays.labels.map((label) => label.text).join(', ')}.`)
+          lines.push(`Id tags (yellow = learner ink group, green = your ink group, blue = item): ${plan.overlays.labels.map((label) => label.text).join(', ')}.`)
         }
         if (plan.overlays.grid) lines.push(`Grid lines every ${plan.overlays.grid} board points, numbered on the top and left edges.`)
         if (shot.missingImages) lines.push(`${shot.missingImages} image(s) did not load and show as empty.`)
@@ -1008,25 +1077,27 @@ Use it to read handwriting and to see how a drawing looks. For ids, sizes and st
       'get_changes',
       {
         title: 'Changes since the last look',
-        description: `Tells what is different on the open board since your change cursor, in short sentences, the learner's changes and yours apart: the ink groups with strokes added or erased (with their place and stroke count), the other items added, removed, moved, resized or edited (by kind and name), and the items your scenes made, by scene. It ends with the interval it covers, such as "c115-c1115", and moves your cursor there.
+        description: `Tells what is different on the open board since your last look, in short sentences, the learner's changes and yours apart: the ink groups with strokes added or erased (with their place and stroke count), the other items added, removed, moved, resized or edited (by kind and name), and the items your scenes made, by scene. It ends with the interval it covers, such as "c115-c1115", and moves your last look there. Results show a look or a revision as c and a number, such as c336.
 
 Use it to learn what the learner did since you last looked. It returns no image; to see the items, use get_screenshot with part {changes: "c115-c1115"} or an id.
 
 - changes: an interval from an earlier result. The result covers that interval again, also when more has changed since.
 - detail: "items" lists each item of the interval as JSON (id, kind, tool, colour, name, by, change, offset, bounds, seq). An item that changed again after the interval shows its current state and says so.
-- Your cursor starts where your app last looked at this board in an earlier connection; otherwise at your first look in this one (get_board, get_changes, get_screenshot or open_board), so the first call then lists nothing new.
+- Your last look starts where your app last looked at this board in an earlier connection; otherwise at your first look in this one (list_items, get_changes, get_screenshot or open_board), so the first call then lists nothing new.
 - since: 0 covers everything on the board now, and the items whose removal the app still knows.
 - The list includes your own writes; by tells them apart from the learner's.
-- change says what happened to the item since your cursor: added, restored (it was on the board before, was removed, and is back with the same id, by undo, redo or paste), moved (offset: dx, dy in board points), resized, edited (its content), changed (anything else, or not known), or unchanged (changed and changed back).
+- change says what happened to the item since your last look: added, restored (it was on the board before, was removed, and is back with the same id, by undo, redo or paste), moved (offset: dx, dy in board points), resized, edited (its content), changed (anything else, or not known), or unchanged (changed and changed back).
 - Board news: when the learner drew, erased, added, restored, moved, resized, edited or deleted something since your app's last look or last board news, the next result of any tool starts with a "Board news" line that names each change: strokes by ink group and place, other items by kind and name, with the offset of a move and the new bounds. Each change is in the news once, kept per agent app and board across connections.`,
-        inputSchema: {
-          since: z.number().int().min(0).optional().describe('A cursor value to compare against instead of your own cursor; 0 covers everything on the board now.'),
+        inputSchema: strictInput('get_changes', {
+          since: z.union([z.number().int().min(0), z.string().regex(/^c\d+$/, 'since is a look such as "c336" or the number 336.')]).optional().describe('A look to compare against instead of your last look, such as "c336" or 336; 0 covers everything on the board now.'),
           changes: z.string().min(1).optional().describe('An interval from an earlier result, such as "c115-c1115".'),
           detail: z.enum(['items']).optional().describe('"items" lists each item of the interval as JSON.')
-        },
+        }),
         annotations: { readOnlyHint: true }
       },
-      this.tool(session, 'get_changes', async ({ since, changes, detail }) => {
+      this.tool(session, 'get_changes', async ({ since: sinceArg, changes, detail }) => {
+        // Results show looks as "c336"; since takes that form or the number.
+        const since = typeof sinceArg === 'string' ? Number(sinceArg.slice(1)) : sinceArg
         const scenes = this.stageScenes()
         if (changes !== undefined) {
           const { from, to } = parseInterval(changes)
@@ -1042,17 +1113,123 @@ Use it to learn what the learner did since you last looked. It returns no image;
     )
 
     server.registerTool(
+      'list_boards',
+      {
+        title: 'List boards',
+        description: `Lists the boards of the learning folder, or searches their text. A board file is JSON that file tools read badly; this tool reads it for you.
+
+Use it when you need to know which boards exist or which board holds something, for example when the learner asks for "the board about synapses". To see the items on the open board, use list_items.
+
+- Without query, it returns every board, one line each: path, last change, counts (the learner's ink strokes, your items and scenes, other items) and the first words of its title. The open board is marked, also when it has unsaved changes.
+- With query, it searches every board: board and item names, text, HTML, SVG text, image files and code. It returns one block per board, each match with the words around it, its id and its place. The open board is searched with its unsaved changes.
+- When many boards match, the result gives one line per board, with the call that shows its matches.
+- Handwriting is not text: read it with get_screenshot on the open board.`,
+        inputSchema: strictInput('list_boards', {
+          query: z.string().min(1).optional().describe("The words to search for. Without it, the result lists every board."),
+          board: z.string().min(1).optional().describe("With query: search only this board, by its path.")
+        }),
+        annotations: { readOnlyHint: true, idempotentHint: true }
+      },
+      this.tool(session, 'list_boards', async ({ query, board }: { query?: string; board?: string }) => {
+        const folder = this.hooks.folder()
+        if (!folder) return failure(new Error('No learning folder is open in Learning Space. Ask the learner to open one.'))
+        if (board !== undefined && query === undefined) return failure(new Error('board limits a search, so it needs query too: list_boards({query: "…", board: ' + JSON.stringify(board) + '}).'))
+        const start = performance.now()
+        const [{ files, read, readMs }, open] = await Promise.all([this.boardIndex.files(folder), this.openBoardInfo(query ?? null)])
+        if (board !== undefined && !files.some((file) => file.path === board)) return failure(new Error(`${JSON.stringify(board)} is not the path of a board in this folder. list_boards() lists the paths.`))
+        const out = query === undefined ? boardsListText(folder.name, files, open, Date.now()) : boardsFindText(query, files, open, board ?? null)
+        console.log(`list_boards: ${query === undefined ? 'list' : 'search'} over ${files.length} boards in ${(performance.now() - start).toFixed(1)} ms (${read} read from file in ${readMs.toFixed(1)} ms)`)
+        return text(out)
+      })
+    )
+
+    server.registerTool(
       'open_board',
       {
         title: 'Open a board',
-        description:
-          "Opens another board of the learning folder in the app, so that the learner and you both see it; the learner's view switches to it. Returns the outline of the opened board, as get_board does.\n\nUse it when the learner asks for another board, or when the work belongs on a board that already exists. get_board lists the boards.",
-        inputSchema: { path: z.string().describe('Relative to the learning folder, ending in .board.json, for example "boards/Fractions.board.json".') }
+        description: `Opens another board of the learning folder in the app, so that the learner and you both see it; the learner's view switches to it. Returns the items of the opened board, as list_items does. With create, it makes a new empty board and opens it.
+
+Use it when the learner asks for another board, or when the work belongs on a board that already exists or on a new one. list_boards lists the boards. It changes what the learner sees: to find which board holds something, use list_boards with query, which opens nothing.
+
+- board is a path or a name that only one board has. When several boards have the name, the result lists them and opens none.
+- With create: true, board is the name of the new board, or its path when it goes in a folder other than "boards". There must be no board at that path yet.
+- Objects and values of earlier scene programs do not carry over to another board.
+- Before it opens another board, the app saves the open one.`,
+        inputSchema: strictInput('open_board', {
+          board: z.string().min(1).describe("A path relative to the learning folder, ending in .board.json, for example \"boards/Fractions.board.json\", or a name that only one board has. With create: the name or path of the new board."),
+          create: z.boolean().optional().describe("Make a new empty board and open it (default false).")
+        }),
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true }
       },
-      this.tool(session, 'open_board', async ({ path }) => {
+      this.tool(session, 'open_board', async ({ board, create }: { board: string; create?: boolean }) => {
+        const folder = this.hooks.folder()
+        if (!folder) return failure(new Error('No learning folder is open in Learning Space. Ask the learner to open one.'))
+        const before = this.hooks.shownBoard()
+        let path: string
+        let made = false
+        if (create) {
+          // "Waves", "notes/Waves" or "notes/Waves.board.json": a name, in "boards" or in the folder given.
+          const ref = board.trim().replace(/\.board\.json$/i, '')
+          const cut = ref.lastIndexOf('/')
+          const name = cut < 0 ? ref : ref.slice(cut + 1)
+          const dir = cut < 0 ? undefined : ref.slice(0, cut)
+          if (!name) return failure(new Error(`${JSON.stringify(board)} has no board name. Give a name, such as "Waves", or a path, such as "notes/Waves".`))
+          path = (await this.bridge.request('boardChange', { op: 'create', name, ...(dir ? { folder: dir } : {}) })).path
+          made = true
+        } else {
+          const { files } = await this.boardIndex.files(folder)
+          const target = resolveBoard(files, board, false)
+          if ('error' in target) return failure(new Error(target.error))
+          path = target.path
+        }
         const out = await this.bridge.request('openBoard', { path, look: null, scenes: this.stageScenes() })
         this.touchCursor(session, { board: { path: out.board }, cursor: out.cursor })
-        return text(out.text)
+        const head = made ? `Created ${path}, a new empty board, and opened it for the learner.\n` : ''
+        const note = before && before !== out.board ? `\nThe stage starts new on this board: objects and values of earlier scene programs are gone.` : ''
+        return text(head + out.text + note)
+      })
+    )
+
+    server.registerTool(
+      'move_board',
+      {
+        title: 'Rename or trash a board',
+        description: `Renames a board of the learning folder, or moves it to the system Trash. Both move its file: nothing is deleted, and the learner can put a trashed board back from the Trash.
+
+Use it when the learner asks to rename or remove a board. It takes an exact path, from list_boards or list_items, never a name.
+
+- to is the new name, or "trash".
+- Your drafts, your last look and the ink group ids go with a renamed board. A renamed open board stays open.
+- When the open board goes to the Trash, its drafts and stage end, and the app opens another board; the result names it.
+- Before the move, the app saves the open board. When that save fails, nothing moves and the error says why.`,
+        inputSchema: strictInput('move_board', {
+          path: z.string().min(1).describe("The exact path of the board, relative to the learning folder, for example \"boards/Fractions.board.json\"."),
+          to: z.string().min(1).max(120).describe("The new name, without \".board.json\", or \"trash\".")
+        }),
+        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false }
+      },
+      this.tool(session, 'move_board', async ({ path, to }: { path: string; to: string }) => {
+        const folder = this.hooks.folder()
+        if (!folder) return failure(new Error('No learning folder is open in Learning Space. Ask the learner to open one.'))
+        const { files } = await this.boardIndex.files(folder)
+        const target = resolveBoard(files, path, true)
+        if ('error' in target) return failure(new Error(target.error))
+        if (to.trim() !== 'trash') {
+          const done = await this.bridge.request('boardChange', { op: 'rename', path: target.path, name: to.trim().replace(/\.board\.json$/i, '') })
+          if (done.path === target.path) return text(`${target.path} already has that name; nothing changed.`)
+          return text(`Renamed ${target.path} to ${done.path}.${done.wasOpen ? ' It is the open board and stays open; your drafts, your last look and the ink group ids go with it.' : ''}`)
+        }
+        const done = await this.bridge.request('boardChange', { op: 'trash', path: target.path })
+        let shown: string | null = null
+        if (done.wasOpen) {
+          // The app opens another board (App.tsx: the first board of the sidebar); wait a moment for it.
+          const deadline = Date.now() + 2000
+          while (Date.now() < deadline && !((shown = this.hooks.shownBoard()) && shown !== target.path)) await new Promise((resolve) => setTimeout(resolve, 50))
+          if (shown === target.path) shown = null
+        }
+        return text(
+          `Moved ${done.path} to the system Trash; the learner can put it back from there.${done.wasOpen ? ` It was the open board: its drafts and stage ended, and the app now shows ${shown ?? 'no board'}.` : ''}`
+        )
       })
     )
 
@@ -1062,7 +1239,7 @@ Use it to learn what the learner did since you last looked. It returns no image;
         title: 'The Learning Space brief',
         description:
           "Returns the Learning Space brief as markdown (about 12,000 characters): what the space is for and your part in it, how to find out what the person wants, how to read their work, how to explain by drawing one step at a time, what can go on the board, talking, checking facts, and the learning folder as memory.\n\nUse it at the start of a session when the brief is not in your context. In a learning folder it already is: the folder's AGENTS.md holds the same text. Agents started outside a learning folder, such as Claude Desktop, need this call.\n\n- It holds no technical details of the board; get_guide has those.\n- No parameters.",
-        inputSchema: {},
+        inputSchema: strictInput('get_brief', {}),
         annotations: { readOnlyHint: true }
       },
       this.tool(session, 'get_brief', async () => text(briefText()))
@@ -1073,9 +1250,9 @@ Use it to learn what the learner did since you last looked. It returns no image;
       {
         title: 'The board reference',
         description: `Returns one topic of the board reference as markdown: the technical details of the board and of scenes (write_scene, preview_scene, play_scene), the one way to write on it.\n\nUse it before a scene that uses something whose details are not in your context yet: topic "scene" before your first write_scene${htmlMaterial(', topic "html" before your first html() material')}.\n\nTopics:\n${guideTopics(this.hooks.folderRoot())}\n\n- Topics are about 500 to 16,000 characters; "scene" is the longest${codeItems(', and "scene-interact" holds about 12,000 characters of source')}.\n- Without topic, it returns all topics in one text (about 41,000 characters).\n- An unknown topic returns an error that lists the topic names.\n- It does not hold the brief (what the space is for and how you work with the person); get_brief has it.`,
-        inputSchema: {
+        inputSchema: strictInput('get_guide', {
           topic: z.string().optional().describe(`A topic name from the list in the description, such as "scene" or ${htmlMaterial('"html"', '"ink"')}. Without it, all topics.`)
-        },
+        }),
         annotations: { readOnlyHint: true }
       },
       this.tool(session, 'get_guide', async ({ topic }) => text(guideText(this.hooks.folderRoot(), topic)))
@@ -1086,13 +1263,14 @@ Use it to learn what the learner did since you last looked. It returns no image;
       {
         title: 'Items in detail',
         description:
-          'Returns every stored detail of one or more nodes or ink groups. By default it is JSON: kind, name, author, parent, children ids, bounds on the board and inside the parent, z order, style, text with markup, SVG element ids, image source, or for ink the tool, colour, width and point count. For an ink group it gives the author, the stroke count, the bounds, the tool and colour, and how large its list of strokes and its points are.\n\nUse it when you need exact values before you change a node. For an overview of many nodes, get_board is smaller.\n\n- id is one id or a list. Each id gets its own entry, and an id that is not on the board gets its own error.\n- as chooses what comes back for each item:\n  - "info" (default): the details above.\n' +
+          'Returns the stored details of one or more items or ink groups. By default it is JSON: kind, name, author, parent, children ids, bounds on the board and inside the parent, z order, style, text with markup, SVG element ids, image source, or for ink the tool, colour, width and point count. For an ink group it gives the author, the stroke count, the bounds, the tool and colour, and how large its list of strokes and its points are; as "strokes" and as "points" return them.\n\nUse it when you need exact values before you change an item. For an overview of many items, list_items is smaller.\n\n- id is one id or a list. Each id gets its own entry, and an id that is not on the board gets its own error.\n- as chooses what comes back for each item:\n  - "info" (default): the details above.\n' +
           htmlMaterial(
             '  - "html": the item and everything inside it as the HTML subset that a scene\'s html() takes, with inline styles. Use it to restructure existing material: change the HTML, then put it back in a scene with html(markup, {into: board.node(id), mode: "replace"}). Ink is not HTML: it appears as a comment, and a replace leaves it out.\n'
           ) +
-          '  - "svg": the SVG markup of a drawing.\n  - "strokes": the strokes of an ink group, each with its id and bounds.\n  - "points": the points of each stroke, as [x, y, pressure] from the stroke\'s origin.\n  - "source": the program of a code item.',
-        inputSchema: {
-          id: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).describe('A node id or an ink group id such as "g3", or a list of them.'),
+          '  - "svg": the SVG markup of a drawing.\n  - "strokes": the strokes of an ink group, each with its id and bounds.\n  - "points": the points of each stroke, as [x, y, pressure] from the stroke\'s origin.' +
+          codeItems('\n  - "source": the program of a code item.'),
+        inputSchema: strictInput('get_item', {
+          id: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).describe('An item id or an ink group id such as "g3", or a list of them.'),
           as: z
             .enum(ITEM_FORMS)
             .optional()
@@ -1102,13 +1280,14 @@ Use it to learn what the learner did since you last looked. It returns no image;
             : {
                 include_ids: z.boolean().optional().describe('With as "html": add data-id attributes for reference (default true). html() does not reuse them; new material gets new ids.')
               })
-        },
+        }),
         annotations: { readOnlyHint: true }
       },
-      this.tool(session, 'get_item', async (args: { id: string | string[]; as?: string; include_ids?: boolean }) => {
+      // include_ids is in the schema only with HTML material, so its type here is unknown; the schema checked it is a boolean.
+      this.tool(session, 'get_item', async (args: { id: string | string[]; as?: string; include_ids?: unknown }) => {
         // Lab switch LS_LAB_NO_HTML (lab-switch.ts): no HTML material, so no "html" form.
         if (NO_HTML && args.as === 'html') return failure(new Error('as "html" is not available.'))
-        return text(await this.bridge.request('itemRead', { id: args.id, as: args.as, include_ids: args.include_ids, scenes: this.stageScenes() }))
+        return text(await this.bridge.request('itemRead', { id: args.id, as: args.as, include_ids: args.include_ids as boolean | undefined, scenes: this.stageScenes() }))
       })
     )
 
@@ -1127,14 +1306,14 @@ Use it to learn what the learner did since you last looked. It returns no image;
           htmlMaterial("HTML material (html(): pages, cards, frames with layout, exercises, inline SVG), ") +
           "pictures (image(): a URL or a file in the learning folder), copies (copy()) and empty space for new material (space()); change text and style (edit()); move items into frames and delete items and ink groups, the learner's too; " +
           codeItems("run live pixels (shaders, canvas programs, and program() items with your own JavaScript and any library, such as three.js, WebGL 2 or WebGPU); ") +
-          "move the camera and a pointer; and show lines of text for the learner to read (say). The complete reference is get_guide topic \"scene\".\n\nUse it for everything you draw, write, place, change or remove on the board. To check how a scene looks before the learner sees it, use preview_scene; to look at the board itself, use get_screenshot, get_board and get_changes.\n\nHow it runs:\n- The program runs in a sandbox with no access to the app, files or network. It may compute for as long as it needs; play_scene \"cancel\" stops it.\n- Every program on a board runs on the same stage, one after another. What a program puts on the global `stage` object stays for later programs, and objects of earlier programs can be acted on again. A draft reads the stage as it is when you write it, and joins the stage when it starts. The stage starts new when the board changes, on play_scene \"reset\", and when the app starts.\n- A name holds one draft, so writing the same name again replaces it. To change a scene that is already on the board, write it again under its name and start it: the new version takes the place of the old one.\n- Drafts live in the app's memory and are lost when the app quits.\n- Coordinates are board points: origin at the centre, +x right, +y down.\n\nReturns JSON: draft (the name), replaces (when a scene of this name is on the board), changed (when an earlier draft of this name was replaced), length_s, steps ([{number, name, start_s, length_s, pause?}]), items ({total, by_kind, named, removed_by_end}), say_lines (how many), log (console.log output), warnings (unknown options and other mistakes in the program), and stage (only when this program started a new stage: why).\n\nErrors: a program error returns its message and line number. The stage stays as it was before the program, and the result says whether an earlier draft of this name is kept.",
-        inputSchema: {
+          "move the camera and a pointer; and show lines of text for the learner to read (say). The complete reference is get_guide topic \"scene\".\n\nUse it for everything you draw, write, place, change or remove on the board. To check how a scene looks before the learner sees it, use preview_scene; to look at the board itself, use get_screenshot, list_items and get_changes.\n\nHow it runs:\n- The program runs in a sandbox with no access to the app, files or network. It may compute for as long as it needs; play_scene \"cancel\" stops it.\n- Every program on a board runs on the same stage, one after another. What a program puts on the global `stage` object stays for later programs, and objects of earlier programs can be acted on again. A draft reads the stage as it is when you write it, and joins the stage when it starts. The stage starts new when the board changes, on play_scene \"reset\", and when the app starts.\n- A name holds one draft, so writing the same name again replaces it. To change a scene that is already on the board, write it again under its name and start it: the new version takes the place of the old one.\n- Drafts live in the app's memory and are lost when the app quits.\n- Coordinates are board points: origin at the centre, +x right, +y down.\n\nReturns JSON: draft (the name), replaces (when a scene of this name is on the board), changed (when an earlier draft of this name was replaced), length_s, steps ([{number, name, start_s, length_s, pause?}]), items ({total, by_kind, named, removed_by_end}), say_lines (how many), log (console.log output), warnings (unknown options and other mistakes in the program), and stage (only when this program started a new stage: why).\n\nErrors: a program error returns its message and line number. The stage stays as it was before the program, and the result says whether an earlier draft of this name is kept.",
+        inputSchema: strictInput('write_scene', {
           name: z.string().min(1).max(MAX_NAME_CHARS).describe('The scene\'s name, such as "synapse". preview_scene and play_scene find the scene by it, and it also shows in the board news, the learner\'s script panel, logs and traces. Writing the same name again replaces this scene.'),
           code: z
             .string()
             .min(1)
             .describe('The program: the body of an async function, so top-level await works. Example: const c = circle(0, 0, 80); await draw(c); await label(c, "r")')
-        },
+        }),
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true }
       },
       this.tool(session, 'write_scene', async ({ name, code }, extra) => {
@@ -1173,7 +1352,7 @@ Use it to learn what the learner did since you last looked. It returns no image;
             ...(before ? { changed: 'the earlier version of this draft' } : {}),
             length_s: info.duration_s,
             steps: info.steps,
-            items: info.items,
+            items: { ...info.items, named: namedOut(info.items.named, `after play_scene start, list_items({part: {scene: ${JSON.stringify(name)}}}) lists each with its id`) },
             say_lines: info.cues.length,
             ...(info.log.length ? { log: info.log } : {}),
             ...(info.warnings.length ? { warnings: info.warnings } : {}),
@@ -1191,7 +1370,7 @@ Use it to learn what the learner did since you last looked. It returns no image;
           "Shows you a scene as one image: a draft from write_scene, or a scene already on the board. Nothing is drawn or committed, and the learner sees nothing.\n\nUse it to check a scene before the learner sees it. You can look at its end, at any step or at any moment, and close up on one part, so that text a line runs through, text over text, or something outside the learner's view is caught before the scene plays. To see the board itself as it is now, with the learner's ink, use get_screenshot.\n\n- at chooses the moments. \"end\" (default) is the end of the scene. {step: 3} or {step: \"step name\"} is the end of that step. {time_s: 12.5} is that many seconds from the scene's start. \"steps\" is the end of every step. A list gives up to 12 moments, for example [{step: 2}, {time_s: 20}, \"end\"].\n- part chooses what the image frames. \"scene\" (default) is everything the scene makes or touches. \"view\" is the learner's current view. {region: {x, y, width, height}} is a region in board points. {items: [...]} is a close-up of one or more items: object names from the program, item ids, or ink group ids.\n- One moment gives a large image (up to 1024 px on its longer side), which shows small text. Several moments give one grid of labelled frames.\n- The scene is drawn over the board as it is now, and the learner's current view is outlined in grey." +
           codeItems(" Code items compute up to each moment.") +
           "\n- version \"board\" shows the scene on the board when a draft of the same name also exists. The default is the draft when there is one, else the scene on the board.\n- A scene on the board shows its items as they were at each moment. After the board is opened again, a scene on the board can no longer be previewed; use get_screenshot for it.\n- When the board or the stage changed since write_scene, the draft runs again with the same seed before the pictures (ran_again says why).\n\nReturns the image and JSON: scene, version (\"draft\" or \"board\"), ran_again, length_s, and frames ([{frame, t_s, label}]).\n\nErrors: an unknown name lists the drafts and the scenes on the board; an unknown step lists the steps; a time after the end gives the scene's length.",
-        inputSchema: {
+        inputSchema: strictInput('preview_scene', {
           name: z.string().min(1).max(MAX_NAME_CHARS).describe('The scene name: a draft or a scene on the board.'),
           at: z
             .union([z.literal('steps'), momentSchema, z.array(momentSchema).min(1).max(MAX_PREVIEW_FRAMES)])
@@ -1202,7 +1381,7 @@ Use it to learn what the learner did since you last looked. It returns no image;
             .optional()
             .describe('What the image frames: "scene" (default), "view" (the learner\'s view), {region: {x, y, width, height}} in board points, or {items: [object names, item ids or ink group ids]} for a close-up.'),
           version: z.enum(['draft', 'board']).optional().describe('"draft" or "board" (the scene as it is on the board). Default: the draft when there is one, else the board.')
-        },
+        }),
         annotations: { readOnlyHint: true }
       },
       this.tool(session, 'preview_scene', async ({ name, at, part, version }, extra) => {
@@ -1268,19 +1447,19 @@ Use it to learn what the learner did since you last looked. It returns no image;
       {
         title: 'Play scenes for the learner',
         description:
-          "Plays scenes from write_scene for the learner, and controls their playback and the stage they run on. The learner sees everything this tool does.\n\nActions:\n- \"start\" (name, when, wait): puts the draft of that name on the board and plays it. If a scene of that name is already there, the new version takes its place: a waiting scene keeps its place in the queue, a playing scene goes on from the same time, and a scene that has played comes off the board and plays again. Starting uses up the draft, so a later change begins with write_scene again.\n- \"status\" changes nothing.\n- \"pause\" holds the playing scene where it is. \"resume\" continues a paused scene: after a pause step, after the learner's drawing paused it, or after \"pause\".\n- \"next\" jumps the playing scene to the start of its next step and plays on, also from a pause. At the last step it ends the scene.\n- \"stop\" jumps the playing scene to its end state; the next waiting scene starts.\n- \"clear_queue\" drops the scenes that wait in the queue, takes their items off the board and their programs off the stage.\n- \"cancel\" ends scene programs that are still running (write_scene and start calls that have not returned). Their call returns an error that starts with \"Cancelled\", and nothing of them is drawn. A program has no time limit, so this is how one that never ends is stopped. \"stop\" and \"clear_queue\" also end them.\n- \"wait\" returns when nothing plays or waits, or when a scene stands paused (paused_by says why).\n- \"replay\" (name and/or from_step, when) plays again a scene that has already played, from its start or from the step. Its items show as they were at that moment and play to its end; then the board shows its current state.\n- \"cut\" (after_step) drops the rest of the playing scene after that step, or from now without after_step. What starts later is not drawn, and what runs then holds where it is. With name, it acts only when that scene plays.\n- \"reset\" starts a new, empty stage. Board items stay; objects, values and `stage` from earlier programs are gone.\n\nHow playback works:\n- A scene started while another plays starts when that one ends, after the scenes already waiting, with no gap. when: \"now\" starts it at once, over the others.\n- A step with {pause: true} holds playback until \"resume\" or \"next\". When the learner starts drawing, playback pauses at the next step (or at once when no step is left), and the board news says so.\n- say lines are shown as text at a reading pace; nothing is spoken.\n\nAfter a scene plays, everything stays as ordinary items the learner can edit: ink (one ink group per ink object), svg nodes (shapes), text nodes (tex, text), " +
+          "Plays scenes from write_scene for the learner, and controls their playback and the stage they run on. The learner sees everything this tool does.\n\nActions:\n- \"start\" (name, when, wait): puts the draft of that name on the board and plays it. If a scene of that name is already there, the new version takes its place: a waiting scene keeps its place in the queue, a playing scene goes on from the same time, and a scene that has played comes off the board and plays again. Starting uses up the draft, so a later change begins with write_scene again.\n- \"status\" changes nothing.\n- \"pause\" holds the playing scene where it is. \"resume\" continues a paused scene: after a pause step, after the learner's drawing paused it, or after \"pause\".\n- \"next\" jumps the playing scene to the start of its next step and plays on, also from a pause. At the last step it ends the scene.\n- \"stop\" jumps the playing scene to its end state; the next waiting scene starts.\n- \"clear_queue\" drops the scenes that wait in the queue, takes their items off the board and their programs off the stage.\n- \"cancel\" ends scene programs that are still running (write_scene and start calls that have not returned). Their call returns an error that starts with \"Cancelled\", and nothing of them is drawn. A program has no time limit, so this is how one that never ends is stopped. \"stop\" and \"clear_queue\" also end them.\n- \"wait\" returns when nothing plays or waits, or when a scene stands paused (paused_by says why).\n- \"replay\" (name and/or from_step, when) plays again a scene that has already played, from its start or from the step. Its items show as they were at that moment and play to its end; then the board shows its current state.\n- \"cut\" (after_step) drops the rest of the playing scene after that step, or from now without after_step. What starts later is not drawn, and what runs then holds where it is. With name, it acts only when that scene plays.\n- \"reset\" starts a new, empty stage. Board items stay; objects, values and `stage` from earlier programs are gone.\n\nHow playback works:\n- A scene started while another plays starts when that one ends, after the scenes already waiting, with no gap. when: \"now\" starts it at once, over the others.\n- A step with {pause: true} holds playback until \"resume\" or \"next\". When the learner starts drawing, playback pauses at the next step (or at once when no step is left), and the board news says so.\n- say lines are shown as text at a reading pace; nothing is spoken.\n\nAfter a scene plays, everything stays as ordinary items the learner can edit: ink (one ink group per ink object), svg items (shapes), text items (tex, text), " +
           htmlMaterial("html() material and ") +
           "image() material (its root node with everything inside), " +
           codeItems("live items, ") +
-          "and one frame per named group. What the scene erased or faded out is gone. start, cut and clear_queue are each one undo step for the learner, and the board file holds the final state from the moment the call returns.\n\nstart returns JSON: scene, replaced, ran_again (the program ran again because the board or the stage changed since write_scene), length_s, starts_in_s and ends_in_s (seconds from now, pauses not counted), steps, items ({total, by_kind, named: the named items with their ids and steps}; get_board with part {scene: \"name\"} lists every item), log, warnings, rerun (later scenes that ran again after a replace), and stage. With wait \"end\" it returns when the scene has played to its end, or earlier when playback stops at a pause, and adds played (true when it reached its end) and status. The other actions return the status after the action: {playing, scene, t, duration_s, step, paused, paused_by (\"pause step\", \"learner drawing\" or \"play_scene pause\"), paused_scene, paused_step, paused_t, queue: [{scene, duration_s}]}, with cancelled_programs, cut or replay where they apply.\n\nErrors: start without a draft of that name says so, and for a scene that has played it names \"replay\". If the draft runs again and now fails, nothing is drawn and the draft is kept.",
-        inputSchema: {
+          "and one frame per named group. What the scene erased or faded out is gone. start, cut and clear_queue are each one undo step for the learner, and the board file holds the final state from the moment the call returns.\n\nstart returns JSON: scene, replaced, ran_again (the program ran again because the board or the stage changed since write_scene), length_s, starts_in_s and ends_in_s (seconds from now, pauses not counted), steps, items ({total, by_kind, named: the named items with their ids and steps}; list_items with part {scene: \"name\"} lists every item), log, warnings, rerun (later scenes that ran again after a replace), and stage. With wait \"end\" it returns when the scene has played to its end, or earlier when playback stops at a pause, and adds played (true when it reached its end) and status. The other actions return the status after the action: {playing, scene, t, duration_s, step, paused, paused_by (\"pause step\", \"learner drawing\" or \"play_scene pause\"), paused_scene, paused_step, paused_t, queue: [{scene, duration_s}]}, with cancelled_programs, cut or replay where they apply.\n\nErrors: start without a draft of that name says so, and for a scene that has played it names \"replay\". If the draft runs again and now fails, nothing is drawn and the draft is kept.",
+        inputSchema: strictInput('play_scene', {
           action: z.enum(PLAY_ACTIONS).describe('What to do; the description explains each action.'),
           name: z.string().min(1).max(MAX_NAME_CHARS).optional().describe('start, replay: the scene name. cut: act only when this scene plays.'),
           when: z.enum(['queue', 'now']).optional().describe('start, replay: "queue" (default) starts after the scenes that play or wait; "now" starts at once, over them.'),
           wait: z.enum(['start', 'end']).optional().describe('start: "start" (default) returns once the scene is queued; "end" returns when it (and every scene queued before it) has played to its end, or when playback stops at a pause before that.'),
           from_step: z.union([z.number().int().min(1), z.string().min(1)]).optional().describe('replay: the step number or step name to play from. Without name, a step name finds the latest scene with that step.'),
           after_step: z.union([z.number().int().min(1), z.string().min(1)]).optional().describe('cut: keep this step (number or name) of the playing scene, and drop what comes after it.')
-        },
+        }),
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false }
       },
       this.tool(session, 'play_scene', async ({ action, name, when, wait, from_step, after_step }, extra) => {
@@ -1518,7 +1697,7 @@ Use it to learn what the learner did since you last looked. It returns no image;
       starts_in_s: result.starts_in_s,
       ends_in_s: result.ends_in_s,
       steps: result.steps,
-      items: itemsSummary(result.items),
+      items: itemsSummary(result.items, name),
       ...(result.log.length ? { log: result.log } : {}),
       ...(result.warnings.length ? { warnings: result.warnings } : {}),
       ...(outcome.others?.length ? { rerun: outcome.others } : {}),

@@ -17,6 +17,7 @@
  *   node scripts/drive.mjs node-rect <id>       a node's window rect (JSON), from the layout cache and the DOM
  *   node scripts/drive.mjs screenshot <out.png> the whole window
  *   node scripts/drive.mjs eval-state           board, zoom, tool, selection, nodes with bounds (JSON)
+ *   node scripts/drive.mjs board-action rename <path> <name> | trash <path>   the sidebar's own Rename / Move to Trash
  *   node scripts/drive.mjs scene [seek <t> | play | finish]   live-scene playback: state, hold at t s, run on, end
  *   node scripts/drive.mjs camera <x> <y>       centre the learner's view on a board point (zoom kept)
  *
@@ -44,6 +45,7 @@ const USAGE = `usage: node scripts/drive.mjs [--port N] <command>
   node-rect <id>                                 {x, y, width, height, cx, cy, dom} in window CSS pixels
   screenshot <out.png>
   eval-state                                     board, tool, selection, nodes (id, kind, parent, bounds)
+  board-action rename <path> <name> | trash <path>   the sidebar's Rename / Move to Trash (prints the open board)
   scene [seek <t> | play | finish]               live-scene playback (play_scene): print its state; hold the
                                                  current scene at t seconds; let it run on; end every scene
   camera <x> <y>                                 centre the view on board point (x, y); prints zoom, centre, canvas
@@ -466,6 +468,16 @@ async function main() {
       await sleep(50)
       const state = await evaluate(cdp, '(({ seek, finish, ...state }) => state)(window.__spaceDev.scene)')
       console.log(JSON.stringify(state))
+    }
+  } else if (command === 'board-action') {
+    // The sidebar's own Rename and Move to Trash (App.tsx __spaceDev.sidebar), for checks of the board-change operation.
+    const [action, path, name] = rest
+    if (!['rename', 'trash'].includes(action) || !path || (action === 'rename' && !name)) throw new Failure('board-action needs rename <path> <name> or trash <path>.')
+    run = async (cdp) => {
+      await requireDevHook(cdp)
+      await evaluate(cdp, action === 'rename' ? `window.__spaceDev.sidebar.rename(${JSON.stringify(path)}, ${JSON.stringify(name)})` : `window.__spaceDev.sidebar.trash(${JSON.stringify(path)})`)
+      await sleep(300)
+      console.log(JSON.stringify(await evaluate(cdp, 'window.__spaceDev.state().board')))
     }
   } else if (command === 'eval-state') {
     run = async (cdp) => {

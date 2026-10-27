@@ -212,3 +212,15 @@ export function trackerFor(path: string): InkGroupTracker {
   }
   return tracker
 }
+
+/** A board was renamed: its ink group ids carry over to the new path. */
+export function moveTracker(from: string, to: string): void {
+  const tracker = trackers.get(from)
+  trackers.delete(from)
+  if (tracker) trackers.set(to, tracker)
+}
+
+/** A board went to the Trash: its ink group ids are forgotten. */
+export function dropTracker(path: string): void {
+  trackers.delete(path)
+}

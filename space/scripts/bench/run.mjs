@@ -705,14 +705,14 @@ async function agentTurn(scenario, work, dir, model, effort) {
   return { agent, t0, t1, files, sessions }
 }
 
-/** The whole board's outline (get_board with a region part as large as the board can be, so every item is listed), through the bench client. */
+/** The whole board's outline (list_items with a region part as large as the board can be, so every item is listed), through the bench client. */
 async function treeText(client) {
-  const result = await client.callTool({ name: 'get_board', arguments: { part: { region: { x: -100000, y: -100000, width: 200000, height: 200000 } } } })
+  const result = await client.callTool({ name: 'list_items', arguments: { part: { region: { x: -100000, y: -100000, width: 200000, height: 200000 } } } })
   return result.content.find((c) => c.type === 'text')?.text ?? ''
 }
 
 /**
- * The items of a get_board outline: unit lines ('  svg "name" n_x · x,y w×h · …', '  ink g3 · x,y w×h · …').
+ * The items of a list_items outline: unit lines ('  svg "name" n_x · x,y w×h · …', '  ink g3 · x,y w×h · …').
  * The section says the author: "Learner's work" is the learner's; elsewhere a line says "learner" when it is.
  */
 function topLevel(tree) {

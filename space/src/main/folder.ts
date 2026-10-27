@@ -268,18 +268,75 @@ export class FolderSession {
     }
   }
 
-  async createBoard(): Promise<string> {
-    const dir = await this.resolvePath(BOARDS_DIR, { allowMissing: true })
+  /**
+   * A new empty board in `folder` (default boards/). Without a name it is "Untitled N";
+   * with a name, an existing board of that name is an error.
+   */
+  async createBoard(name?: unknown, folder?: unknown): Promise<string> {
+    let dirRel = BOARDS_DIR
+    if (folder !== undefined && folder !== null && folder !== '') {
+      if (typeof folder !== 'string') throw new Error('folder must be a path inside the learning folder.')
+      dirRel = toPosix(folder).replace(/^\.\/+/, '').replace(/\/+$/, '')
+      if (!dirRel || dirRel === '.') throw new Error('A board must go in a subfolder of the learning folder, for example "boards".')
+      if (dirRel.split('/').some((part) => isHiddenName(part) || part === '..')) throw new Error(`"${folder}" is not a folder for boards (hidden folders and ".." are not allowed).`)
+    }
+    const dir = await this.resolvePath(dirRel, { allowMissing: true })
     await mkdir(dir, { recursive: true })
-    const existing = new Set((await readdir(dir)).map((name) => name.toLowerCase()))
-    for (let n = 1; ; n++) {
-      const name = n === 1 ? 'Untitled' : `Untitled ${n}`
-      if (existing.has(`${name}${BOARD_SUFFIX}`.toLowerCase())) continue
-      const rel = posix.join(BOARDS_DIR, `${name}${BOARD_SUFFIX}`)
+    const existing = new Set((await readdir(dir)).map((entry) => entry.toLowerCase()))
+    const make = async (base: string): Promise<string> => {
+      const rel = posix.join(dirRel, `${base}${BOARD_SUFFIX}`)
       await this.writeBoard(rel, serializeBoard(emptyBoard()))
       this.ownWrites.delete(rel) // a new file: the watcher must list it
       return rel
     }
+    if (name !== undefined && name !== null) {
+      const clean = sanitizeBoardName(typeof name === 'string' ? name : '')
+      if (!clean) throw new Error('A board name cannot be empty.')
+      if (existing.has(`${clean}${BOARD_SUFFIX}`.toLowerCase())) throw new Error(`A board named "${clean}" already exists: ${posix.join(dirRel, `${clean}${BOARD_SUFFIX}`)}. open_board({board: "${posix.join(dirRel, `${clean}${BOARD_SUFFIX}`)}"}) opens it.`)
+      return make(clean)
+    }
+    for (let n = 1; ; n++) {
+      const base = n === 1 ? 'Untitled' : `Untitled ${n}`
+      if (existing.has(`${base}${BOARD_SUFFIX}`.toLowerCase())) continue
+      return make(base)
+    }
+  }
+
+  /** Every board file in the folder (hidden folders skipped), with its file identity and change time. */
+  async boardFiles(): Promise<Array<{ path: string; identity: string; mtimeMs: number }>> {
+    const paths: string[] = []
+    const walk = async (dir: string, depth: number): Promise<void> => {
+      let entries
+      try {
+        entries = await readdir(dir, { withFileTypes: true })
+      } catch {
+        return
+      }
+      for (const entry of entries) {
+        if (isHiddenName(entry.name)) continue
+        const full = join(dir, entry.name)
+        if (entry.isDirectory()) {
+          if (depth < MAX_DEPTH) await walk(full, depth + 1)
+        } else if (entry.isFile() && isBoardPath(entry.name)) paths.push(this.relOf(full))
+      }
+    }
+    await walk(this.root, 0)
+    const out = await Promise.all(
+      paths.map(async (path) => {
+        try {
+          const info = await stat(join(this.root, path))
+          return { path, identity: fileIdentity(info), mtimeMs: info.mtimeMs }
+        } catch {
+          return null
+        }
+      })
+    )
+    return out.filter((entry): entry is { path: string; identity: string; mtimeMs: number } => entry !== null)
+  }
+
+  /** A board file's text for list_boards. Unlike readBoard, it does not touch the watcher's record of known versions. */
+  async readBoardText(rel: string): Promise<string> {
+    return readFile(await this.resolveBoard(rel), 'utf8')
   }
 
   async renameBoard(rel: string, newName: unknown): Promise<string> {
@@ -293,7 +350,7 @@ export class FolderSession {
     // macOS folders are usually case-insensitive: "a" -> "A" is the same file.
     const caseOnly = target.toLowerCase() === rel.toLowerCase()
     if (!caseOnly && (await stat(to).then(() => true, () => false))) {
-      throw new Error(`A board named "${name}" already exists here.`)
+      throw new Error(`A board named "${name}" already exists: ${target}. Choose another name.`)
     }
     await rename(from, to)
     const hash = this.knownHashes.get(rel)

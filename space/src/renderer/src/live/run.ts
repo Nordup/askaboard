@@ -619,7 +619,7 @@ export function sceneDraft(ctx: RunSceneContext, args: Record<string, unknown>):
   return {
     duration_s: r3(desc.duration),
     steps,
-    items: { total, by_kind: byKind, named: named.slice(0, 40), removed_by_end: removed },
+    items: { total, by_kind: byKind, named, removed_by_end: removed },
     cues: desc.cues.map((cue) => ({ text: cue.text, at_s: cue.at, dur_s: cue.dur })),
     log: desc.logs,
     warnings: [...desc.warnings, ...compiled.warnings]
@@ -853,7 +853,7 @@ export function sceneFrames(ctx: RunSceneContext, args: Record<string, unknown>)
     }
     if (missing.length) {
       const names = [...new Set(play.objects.map((object) => play.timeline.object(object.id).name).filter((name): name is string => !!name))]
-      throw new Error(`No item ${missing.map((item) => `"${item}"`).join(', ')} in ${what} or on the board. Use the name of an object of the scene${names.length ? ` (named here: ${names.slice(0, 20).join(', ')}${names.length > 20 ? ', …' : ''})` : ' (this scene names none)'}, or a node or ink group id from get_board.`)
+      throw new Error(`No item ${missing.map((item) => `"${item}"`).join(', ')} in ${what} or on the board. Use the name of an object of the scene${names.length ? ` (named here: ${names.slice(0, 20).join(', ')}${names.length > 20 ? ', …' : ''})` : ' (this scene names none)'}, or a node or ink group id from list_items.`)
     }
     const shown = union.empty ? fallback : union
     region = shown.empty ? view : shown.padded((size) => Math.max(16, 0.15 * size))

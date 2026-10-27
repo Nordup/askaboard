@@ -38,6 +38,56 @@
 | 7 | **The script panel covers the board's top-right corner (and the tool palette its bottom).** Agents do not know it is there and place material under it. | Labels and parts of drawings hidden in all four check runs of 2026-10-27. | The view in `get_canvas_info` and the view checks; `components/ScriptPanel.tsx`. | Fixed 2026-10-27: `get_canvas_info` and `board.view` list as `covered` the panel's full-height area (also before the first scene; the bar only while minimised; `ScriptPanel.tsx` `scriptPanelArea()`) and the bottom tool palette (`ToolPalette.tsx` `toolPaletteArea()`), via `agent/covered.ts`. `space()` and the auto side of `label()` keep clear of it, and `preview_scene` images hatch it. Material at explicit coordinates is the agent's choice. |
 | 8 | **Recipes with side effects.** The scene library evaluates an object's recipe at every sample, object by object (T18, B13). A recipe that changes state sees that order; a rebuild skips sampling. | A scene that depends on counting its own calls can differ after a rebuild. | `live-prelude.js` sampling and rebuild. | Accepted: agents are not limited; the order is fixed. |
 
+## The root of classes 1–6: the stage samples, the player blends
+
+> Watch item, low priority (founder, 2026-10-27). Nothing is decided or
+> measured here. Read it before you add another fix to the playback path.
+
+The stage evaluates the agent's program 30 times per second
+(`SAMPLE_FPS`, `space/src/stage/live-prelude.js`), and only where something
+animates. It drops a sample that equals the one before. The player runs at
+the display rate (60–120 Hz) and blends two samples (`blendD`,
+`blendLines`, `BLEND_GAP` in `space/src/renderer/src/live/player.ts`).
+
+Classes 1–6 all sit on this seam:
+
+- The blend needs two samples with the same structure (classes 1 and 4).
+- A rule for the gap between samples decides between a blend and a hold
+  (class 2).
+- The users of one sample paint it or get it at different times (classes 3
+  and 5).
+- Previews and playback read time on different grids (class 6).
+
+Each fix so far is correct for its symptom, but the class is the seam. Before
+you add a new fix here, check if a change can remove the seam instead.
+
+### Ideas to remove the seam
+
+1. **Sample at the display rate and never blend.** The stage samples 60
+   times per second. The player shows the newest sample at or before the
+   time. Each frame on the screen is then a real evaluation of the agent's
+   code. This removes `blendD`, `blendLines`, `BLEND_GAP` and the rule that
+   keeps the last of equal samples, and closes classes 1, 2 and 4.
+   - Cost: about twice the evaluations in `write_scene`, and more frame data
+     (the stage sends only objects that change).
+   - Risk: judder when display frames and samples do not line up. On a
+     120 Hz screen, each sample shows for two display frames.
+   - Measure it with `scripts/perf/replay.mjs` on the pendulum and the EM
+     wave: the write time, and the motion in `video.mp4` frame by frame.
+2. **One clock for every user of a sample.** Previews, playback and live
+   items take the same sample for the same time. Previews pick frames from
+   the sample grid (class 6). A live item gets its params in the same tick
+   as the frame, or gets the whole param track once and reads it at its own
+   clock (class 5). `paramsAtTime` already runs inside the item worker
+   (`live-pixels/runtime.ts`).
+3. **One paint step per frame for all kinds.** Shapes, ink and live items
+   change from one sample in one paint step. The fix of class 3 does this
+   for ink; keep it as a rule for every new kind.
+
+Rejected before: frames computed on demand at display time. That cannot
+keep any agent JavaScript valid, and agents are never limited
+([`drafts/on-demand-frames-2026-10-27.md`](drafts/on-demand-frames-2026-10-27.md)).
+
 ## Where the drawing pipeline lives
 
 Stage (agent program, sampling, ink points) → frames (typed chunks over a

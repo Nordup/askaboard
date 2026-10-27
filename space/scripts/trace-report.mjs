@@ -33,8 +33,8 @@ export const WRITE_TOOLS = new Set(['play_scene', 'run_scene', 'create_frame', '
 const PLAY_WRITES = new Set(['start', 'cut', 'clear_queue'])
 /** A call that changed the board: a write tool, except a run_scene preview (it draws nothing) and play_scene's other actions. */
 export const isWrite = (call) => WRITE_TOOLS.has(call.tool) && !(call.tool === 'run_scene' && call.args?.preview) && !(call.tool === 'play_scene' && !PLAY_WRITES.has(call.args?.action))
-// get_board since 2026-10-27; get_canvas_info and get_tree in traces from before.
-export const LOOK_TOOLS = new Set(['get_screenshot', 'get_changes', 'get_board', 'get_canvas_info', 'get_tree'])
+// list_items since 2026-10-27 (get_board for a day before it; get_canvas_info and get_tree in older traces).
+export const LOOK_TOOLS = new Set(['get_screenshot', 'get_changes', 'list_items', 'get_board', 'get_canvas_info', 'get_tree'])
 export const BENCH_CLIENT = 'ls-bench'
 /** A gap up to this long counts as the model's time; a longer one as idle or long thinking. */
 export const MODEL_GAP_MS = 60_000
@@ -129,8 +129,8 @@ export function callBoards(open, calls) {
   const named = calls.map((call) =>
     call.board !== undefined
       ? call.board
-      : call.tool === 'open_board' && call.ok && typeof call.args?.path === 'string'
-        ? call.args.path
+      : call.tool === 'open_board' && call.ok && typeof (call.args?.board ?? call.args?.path) === 'string'
+        ? (call.args.board ?? call.args.path)
         : boardInResult(call)
   )
   const first = named.find(Boolean) ?? open?.board ?? null

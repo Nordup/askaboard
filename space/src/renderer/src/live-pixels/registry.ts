@@ -695,7 +695,7 @@ export function liveStill(id: string): Promise<LiveFrame | null> {
   return items.get(id)?.still() ?? Promise.resolve(null)
 }
 
-/** One line for get_board: "shader, params k=1 omega=2, code 532 chars, running". */
+/** One line for list_items: "shader, params k=1 omega=2, code 532 chars, running". */
 export function liveSummary(node: LiveNode): string {
   const params = Object.entries(node.params)
     .map(([name, value]) => `${name}=${Math.round(value * 1000) / 1000}`)

@@ -37,7 +37,7 @@ function scene(ctx: EditContext): Scene {
 function requireNode(s: Scene, id: unknown, what = 'id'): BoardNode {
   if (typeof id !== 'string' || !id) throw new Error(`${what} is required.`)
   const node = s.index.byId.get(id)
-  if (!node) throw new Error(`No node "${id}" on the open board. get_board() lists the ids.`)
+  if (!node) throw new Error(`No item "${id}" on the open board. list_items() lists the ids.`)
   return node
 }
 
