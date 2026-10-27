@@ -49,3 +49,6 @@ docs/learning-space/reference/
 # Live-drawing lab runs (space/scripts/lab)
 space/.lab/
 .claude/worktrees/
+
+# Scene videos for sharing (local only)
+share-videos/
