@@ -204,7 +204,12 @@ function patchWrites(t, text) {
     }
     flush()
   }
-  for (const heredoc of text.matchAll(/\bcat\s*>\s*(['"]?)([^\s'"<>|;&]+)\1\s*<<-?\s*(['"]?)(\w+)\3[^\n]*\n([\s\S]*?)\n\4(?=\s|$)/g)) writes.push(fileWrite(t, heredoc[2], `${heredoc[5]}\n`))
+  for (const heredoc of text.matchAll(/\bcat\s*>\s*(['"]?)([^\s'"<>|;&]+)\1\s*<<-?\s*(['"]?)(\w+)\3[^\n]*\n([\s\S]*?)\n\4(?=\s|$|")/g)) writes.push(fileWrite(t, heredoc[2], `${heredoc[5]}\n`))
+  // Any other command that writes a scene file (a python or sed edit): its whole text is what the agent wrote for that file.
+  if (!writes.length && /open\([^)]*['"][wa]|write_text|>\s*['"]?[^\s'"]*boards\/scenes\/|\bsed\s+-i|\bperl\s+-\w*i|\btee\b/.test(text)) {
+    const scene = /(?:^|[\s'"=(])((?:[^\s'"=()]*\/)?boards\/scenes\/[^\s'"\\;)<>|&]+)/.exec(text)
+    if (scene) writes.push(fileWrite(t, scene[1], text))
+  }
   return writes
 }
 
@@ -232,7 +237,11 @@ export function codexFileWrites({ rollout = null, execJsonl = null } = {}) {
       const p = entry.type === 'response_item' ? entry.payload : null
       if (!p || (p.type !== 'custom_tool_call' && p.type !== 'function_call' && p.type !== 'local_shell_call')) continue
       const t = entry.timestamp ? Date.parse(entry.timestamp) : null
-      for (const text of strings(p.input ?? p.arguments ?? p.action ?? '')) writes.push(...patchWrites(t, text))
+      for (const text of strings(p.input ?? p.arguments ?? p.action ?? '')) {
+        // Codex's exec tool takes JavaScript (tools.exec_command({cmd: "…"})): the commands are its double-quoted string literals.
+        const literals = p.type === 'custom_tool_call' && p.name === 'exec' ? [...text.matchAll(/"(?:[^"\\\n]|\\.)*"/g)].map((m) => parse(m[0])).filter((s) => typeof s === 'string') : [text]
+        for (const command of literals) writes.push(...patchWrites(t, command))
+      }
     }
     return writes
   }
