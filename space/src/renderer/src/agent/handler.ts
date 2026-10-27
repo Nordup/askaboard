@@ -20,7 +20,7 @@ import { buildIndex, ROOT } from '../board/scene'
 import type { Region } from '../board/types'
 import { liveStill, validateLiveCode } from '../live-pixels/registry'
 import { sceneStills } from '../live-pixels/stills'
-import type { FramesLiveItem } from '../live/run'
+import { sceneAt, type FramesLiveItem, type ScenePlace } from '../live/run'
 import { runEditTool } from './edits'
 import { trackerFor, type InkGroup } from './groups'
 import { scenePlayer } from '../live/player'
@@ -429,7 +429,9 @@ export async function handleAgentRequest(request: AgentRequest, getContext: () =
       const params = request.params as AgentMethods['sceneHost']['params']
       const { board, path } = requireBoard(context)
       const tracker = trackerFor(path)
-      return sceneHost({ board, scene: () => sceneOf(board, () => tracker.compute(board.liveState())), importAsset: context.importAsset }, params.request)
+      // A new version of a scene asks about the board at that scene's place, as its context shows it (live/run.ts sceneAt).
+      const place = (params.place as ScenePlace | undefined) ?? null
+      return sceneHost({ board, scene: () => sceneAt(sceneOf(board, () => tracker.compute(board.liveState())), place).scene, importAsset: context.importAsset }, params.request)
     }
     case 'validateLive': {
       const params = request.params as AgentMethods['validateLive']['params']

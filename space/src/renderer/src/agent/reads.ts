@@ -12,6 +12,7 @@ import { stepOfObject } from '../live/run'
 import { coveredOf } from './covered'
 import { getNodeInfo } from './edits'
 import { isGroupId, type InkGroup } from './groups'
+import { itemIdOf } from './item-names'
 import { sceneOf } from './placement'
 
 /**
@@ -912,11 +913,14 @@ function pointsEntry(m: Model, stroke: InkNode): Record<string, unknown> {
 }
 
 /** One id as one form. Throws an agent-readable error for that id. */
-function oneItem(m: Model, id: string, as: ItemAs, includeIds: boolean): unknown {
+function oneItem(m: Model, key: string, as: ItemAs, includeIds: boolean): unknown {
+  // An id, or an item's name by the rule board.node uses (item-names.ts).
+  const id = itemIdOf(sceneOf(m.ctx.board, () => m.ctx.groups), key)
+  if (id === null) throw new Error(`No item with the id or name "${key}" on the open board. list_items() lists the ids.`)
   const group = isGroupId(id) ? m.groupById.get(id) : undefined
   if (isGroupId(id) && !group) throw new Error(`No ink group "${id}" on the open board.`)
   const node = group ? undefined : m.byId.get(id)
-  if (!group && !node) throw new Error(`No item "${id}" on the open board. list_items() lists the ids.`)
+  if (!group && !node) throw new Error(`No item with the id or name "${key}" on the open board. list_items() lists the ids.`)
   const strokes: InkNode[] = group ? strokesOf(m, group) : node && isInk(node) ? [node] : []
   switch (as) {
     case 'info': {

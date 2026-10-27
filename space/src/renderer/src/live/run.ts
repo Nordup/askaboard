@@ -5,6 +5,8 @@ import type { NodeOverride, PlaybackTip } from '../board/playback'
 import type { InkGroupTracker } from '../agent/groups'
 import { coveredOf } from '../agent/covered'
 import { viewOf, type Scene } from '../agent/placement'
+import { itemNames } from '../agent/item-names'
+import { buildIndex } from '../board/scene'
 import { compileScene, type CompiledScene, type DynLookup, type PlayObject, type SceneRevert, type StageLookup } from './compile'
 import { connectFrames, takeFrames, type RunFrames } from './frames'
 import { inkIndexOf, nodeSig, scenePlayer, sceneFrame, type SceneFrame, type SceneMemory } from './player'
@@ -32,22 +34,69 @@ connectFrames()
 const r1 = (value: number): number => Math.round(value * 10) / 10
 const rect = (box: { x: number; y: number; width: number; height: number }) => ({ x: r1(box.x), y: r1(box.y), width: r1(box.width), height: r1(box.height) })
 
-/** Every node and ink group with its bounds, item names, the learner's view and the board's revision: the board as a scene program sees it. */
-export function sceneContext(board: BoardHandle, s: Scene, path?: string): SceneContext {
+/**
+ * Where a new version of a scene runs (main/mcp.ts placeAt): at the place of
+ * the scene it replaces, so the board it sees has neither that scene's items
+ * nor those of the scenes after it. scenes: those scenes in stage order, the
+ * replaced one first.
+ */
+export interface ScenePlace {
+  scenes: Array<{ id: string; name: string }>
+}
+
+/** What each committed scene did to the board, to take it off again (by scene id; for the current epoch of the stage). */
+const sceneReverts = new Map<string, SceneRevert>()
+
+/** The nodes after a revert of a scene: its new nodes go, the nodes it changed or removed come back as they were. */
+function revertedNodes(current: readonly BoardNode[], revert: SceneRevert): BoardNode[] {
+  const created = new Set(revert.created)
+  const changed = new Map(revert.changed.map((node) => [node.id, node]))
+  const present = new Set(current.map((node) => node.id))
+  const next = current.filter((node) => !created.has(node.id)).map((node) => changed.get(node.id) ?? node)
+  for (const node of revert.removed) if (!present.has(node.id)) next.push(node)
+  return next
+}
+
+/**
+ * The board as a program that runs at a place sees it: the board with the
+ * place's scenes taken off (newest first, as a restage reverts them), and
+ * the ids and names of their items (SceneContext.ahead). Without a place, the
+ * board as it is.
+ */
+export function sceneAt(s: Scene, place: ScenePlace | null | undefined): { scene: Scene; ahead: NonNullable<SceneContext['ahead']> | null } {
+  if (!place || !place.scenes.length) return { scene: s, ahead: null }
+  const ahead: NonNullable<SceneContext['ahead']> = {}
+  let nodes: readonly BoardNode[] = s.nodes
+  place.scenes.forEach((entry, k) => {
+    const revert = sceneReverts.get(entry.id)
+    if (!revert) return
+    const info = { scene: entry.name, earlier: k === 0 }
+    const created = new Set(revert.created)
+    for (const id of revert.created) {
+      ahead[id] ??= info
+      const node = s.index.byId.get(id)
+      if (node && typeof node.name === 'string' && node.name) ahead[node.name] ??= info
+    }
+    for (const group of s.groups) {
+      if (!group.strokes.length || !group.strokes.every((id) => created.has(id))) continue
+      ahead[group.id] ??= info
+    }
+  })
+  for (const entry of [...place.scenes].reverse()) {
+    const revert = sceneReverts.get(entry.id)
+    if (revert) nodes = revertedNodes(nodes, revert)
+  }
+  if (nodes === s.nodes) return { scene: s, ahead }
+  const index = buildIndex(nodes)
+  const groups = s.groups.filter((group) => group.strokes.every((id) => index.byId.has(id)))
+  return { scene: { nodes, index, layout: s.layout, groups, groupById: new Map(groups.map((group) => [group.id, group])) }, ahead }
+}
+
+/** Every node and ink group with its bounds, item names, the learner's view and the board's revision: the board as a scene program sees it (at a place: sceneAt). */
+export function sceneContext(board: BoardHandle, now: Scene, path?: string, place?: ScenePlace | null): SceneContext {
+  const { scene: s, ahead } = sceneAt(now, place)
   const nodes: SceneContext['nodes'] = {}
-  const names: Record<string, { id: string; seq: number }> = {}
-  const name = (key: unknown, id: string, seq: number): void => {
-    if (typeof key !== 'string' || !key) return
-    const known = names[key]
-    if (!known || seq >= known.seq) names[key] = { id, seq }
-  }
-  for (const group of s.groups) {
-    nodes[group.id] = { kind: 'ink group', author: group.author, bounds: rect(group.bounds) }
-    // Named ink (a named write() or stroke()) is found by its name as its ink group.
-    const strokes = group.strokes.map((id) => s.index.byId.get(id)).filter((node): node is BoardNode => !!node)
-    const first = strokes[0]?.name
-    if (first && strokes.every((node) => node.name === first)) name(first, group.id, Math.max(...strokes.map((node) => node.seq ?? 0)))
-  }
+  for (const group of s.groups) nodes[group.id] = { kind: 'ink group', author: group.author, bounds: rect(group.bounds) }
   for (const node of s.nodes) {
     const box = s.layout.get(node.id)
     if (!box) continue
@@ -57,7 +106,6 @@ export function sceneContext(board: BoardHandle, s: Scene, path?: string): Scene
       ...(typeof node.author === 'string' ? { author: node.author } : {}),
       bounds: rect(box)
     }
-    if (!isInk(node)) name(node.name, node.id, node.seq ?? 0)
   }
   const state = board.liveState()
   const covered = coveredOf(board)
@@ -69,14 +117,16 @@ export function sceneContext(board: BoardHandle, s: Scene, path?: string): Scene
   }
   return {
     nodes,
-    names: Object.fromEntries(Object.entries(names).map(([key, value]) => [key, value.id])),
+    // Named ink (a named write() or stroke()) is found by its name as its ink group.
+    names: itemNames(s),
     view: rect(viewOf(board)),
     ...(covered.length ? { covered } : {}),
     viewport: [Math.round(state.viewport[0]), Math.round(state.viewport[1])],
     // The board's next sequence number: every edit (also one that keeps all bounds, such as new text) makes it larger.
     revision: state.nextSeq,
     ...(path ? { board: path } : {}),
-    stage: { epoch: stageRecord.epoch, items }
+    stage: { epoch: stageRecord.epoch, items },
+    ...(ahead ? { ahead } : {})
   }
 }
 
@@ -99,13 +149,7 @@ export interface RunSceneContext {
 
 /** Take a committed scene off the board again (a skipped queued scene, a restage): a new undo step, or part of the keyed step `step`. */
 function revertScene(board: BoardHandle, revert: SceneRevert, step?: string): void {
-  const created = new Set(revert.created)
-  const changed = new Map(revert.changed.map((node) => [node.id, node]))
-  const current = board.liveState().nodes
-  const present = new Set(current.map((node) => node.id))
-  const next = current.filter((node) => !created.has(node.id)).map((node) => changed.get(node.id) ?? node)
-  for (const node of revert.removed) if (!present.has(node.id)) next.push(node)
-  board.agentCommit(next, step ? { step } : undefined)
+  board.agentCommit(revertedNodes(board.liveState().nodes, revert), step ? { step } : undefined)
 }
 
 /** Text centred on a point and group frames fitted to what they hold, once measured (the same undo step). */
@@ -202,6 +246,7 @@ function adoptEpoch(epoch: string | undefined): void {
   stageRecord.epoch = epoch
   if (stageRecord.items.size) stageRecord.revision++
   stageRecord.items.clear()
+  sceneReverts.clear()
   scenePlayer.resetStage()
 }
 
@@ -231,6 +276,8 @@ interface CompiledDraft {
   layout: Scene['layout']
   groups: string
   stage: number
+  /** Where the draft runs: a new version of a scene runs at that scene's place (sceneAt); its compile and previews show the board without the version it replaces. */
+  place: ScenePlace | null
   /** The nodes that the previews draw and their ink index, made at the first preview. */
   preview?: { nodes: BoardNode[]; inkIndex: ReturnType<typeof inkIndexOf> }
 }
@@ -285,17 +332,20 @@ function sameLayout(a: Scene['layout'], b: Scene['layout']): boolean {
   return true
 }
 
-function compileDraft(desc: SceneDescription, frames: RunFrames, s: Scene): CompiledDraft {
+/** Compile a draft for the board s (at its place: sceneAt). The draft keeps s's nodes, layout and ink groups to know when to compile again. */
+function compileDraft(desc: SceneDescription, frames: RunFrames, s: Scene, place: ScenePlace | null): CompiledDraft {
   const { duration, steps, cues, logs, warnings, stage } = desc
   return {
     summary: { duration, steps, cues, logs, warnings, stage },
-    compiled: compileScene(desc, s, newItemId('sc'), null, stageLookup, dynLookup(frames)),
+    // The board after play_scene start: without the version it replaces (the later scenes come back after it).
+    compiled: compileScene(desc, sceneAt(s, place && { scenes: place.scenes.slice(0, 1) }).scene, newItemId('sc'), null, stageLookup, dynLookup(frames)),
     desc,
     frames,
     nodes: s.nodes,
     layout: s.layout,
     groups: groupsKey(s),
-    stage: stageRecord.revision
+    stage: stageRecord.revision,
+    place
   }
 }
 
@@ -306,7 +356,7 @@ function currentDraft(ctx: RunSceneContext, key: unknown): CompiledDraft | null 
   if (!draft || draft.summary.stage !== stageRecord.epoch) return null
   const s = ctx.scene()
   if (draft.nodes !== s.nodes || draft.stage !== stageRecord.revision || !sameLayout(draft.layout, s.layout) || draft.groups !== groupsKey(s)) {
-    draft = compileDraft(draft.desc, draft.frames, s)
+    draft = compileDraft(draft.desc, draft.frames, s, draft.place)
     drafts.set(key, draft)
   }
   return draft
@@ -513,6 +563,7 @@ export function runScene(ctx: RunSceneContext, args: Record<string, unknown>): (
   }
   const { result, snapshot } = commitScene(ctx, desc, compiled, typeof args.step === 'string' && args.step ? args.step : null)
   const revert = (step?: string): void => revertScene(ctx.board, compiled.revert, step)
+  sceneReverts.set(sceneId, compiled.revert)
   let startsIn: number
   // settled: the scene goes back on the board in its end state and does not play (a failed replace of a scene that had played).
   if (args.settled === true) startsIn = 0
@@ -585,7 +636,7 @@ export function stepOfObject(play: CompiledScene['play'], objectId: number): str
 export function sceneDraft(ctx: RunSceneContext, args: Record<string, unknown>): DraftInfo {
   const desc = checkDescription(args.scene)
   adoptEpoch(desc.stage)
-  const draft = compileDraft(desc, takeFrames(args.job, args.frames), ctx.scene())
+  const draft = compileDraft(desc, takeFrames(args.job, args.frames), ctx.scene(), (args.place as ScenePlace | undefined) ?? null)
   if (typeof args.draft === 'string') keepDraft(args.draft, draft)
   const { compiled } = draft
   const play = compiled.play

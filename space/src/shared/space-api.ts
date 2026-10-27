@@ -415,7 +415,8 @@ export interface AgentMethods {
   /** The rendered size (board points) of scene text nodes (tex: math; text: markup), as the board lays them out. */
   measureText: { params: { items: Array<{ math: boolean; text: string; size: number }> }; result: { sizes: Array<[number, number]> } }
   /** A scene program's question to the board while it runs (html, image, space, copy: renderer/live/host.ts). */
-  sceneHost: { params: { request: Record<string, unknown> }; result: unknown }
+  /** place: where the program runs (a new version of a scene: renderer live/run.ts ScenePlace). */
+  sceneHost: { params: { request: Record<string, unknown>; place?: unknown }; result: unknown }
 }
 
 export type AgentMethod = keyof AgentMethods

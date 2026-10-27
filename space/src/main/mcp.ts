@@ -259,6 +259,12 @@ interface Draft {
   info: DraftInfo
 }
 
+/** Where a new version of a scene runs (AgentServer.placeAt): the program of the log it runs before, and the scenes the board leaves out (renderer ScenePlace). */
+interface StagePlace {
+  entry: StageEntry
+  board: { scenes: Array<{ id: string; name: string }> }
+}
+
 /** The frames preview_scene draws (renderer sceneFrames). */
 type FramesResult = StoryboardInput & { scene: string; duration_s: number; live: LiveStillsItem[] }
 
@@ -337,7 +343,7 @@ export class AgentServer {
   /** The sandbox every scene program runs in, kept between programs (see live-scene.ts). */
   private readonly stage = new SceneStage(
     async (items) => (await this.bridge.request('measureText', { items })).sizes,
-    async (request) => this.bridge.request('sceneHost', { request }, WRITE_TIMEOUT_MS)
+    async (request, place) => this.bridge.request('sceneHost', { request, ...(place ? { place } : {}) }, WRITE_TIMEOUT_MS)
   )
   readonly port = configuredPort()
   private readonly bridge: RendererBridge
@@ -807,6 +813,9 @@ export class AgentServer {
     stopped()
     const live = (id: string): boolean => waiting.includes(id) || playingNow === id
     const label = change.name ?? this.sceneName(sceneId)
+    // A new program runs at the scene's place, as write_scene ran its draft (placeAt): the same stage and the same board.
+    const placed = this.stage.log.find((entry) => entry.scene === sceneId)
+    const place = change.code !== undefined && placed ? this.placeAt(placed) : null
     const cut = this.stage.truncateBefore(sceneId)
     if (!cut) return failure(new Error(`The scene "${label}" is not part of the current stage (it ran before the stage started new).`))
     const later = cut.later
@@ -817,10 +826,10 @@ export class AgentServer {
     const commit = async (id: string, run: StageRun, name: string | null, extra: Record<string, unknown> = {}): Promise<SceneResult & { ends_in_s: number }> =>
       (await this.board('runScene', { scene: run.desc, job: run.job, frames: run.frames, sceneId: id, slot: true, step, ...(name ? { name } : {}), ...extra }, SCENE_TIMEOUT_MS)) as SceneResult & { ends_in_s: number }
     /** Run a program: on the context, answers and seed of its earlier run (original), or on the board now. */
-    const runOne = async (code: string, options: { seed?: number; cutAt: number | null; original?: StageEntry; name: string | null }): Promise<StageRun> => {
-      const context = options.original ? (JSON.parse(options.original.ctxText) as SceneContext) : ((await this.board('sceneContext', {})) as SceneContext)
+    const runOne = async (code: string, options: { seed?: number; cutAt: number | null; original?: StageEntry; name: string | null; place?: StagePlace | null }): Promise<StageRun> => {
+      const context = options.original ? (JSON.parse(options.original.ctxText) as SceneContext) : await this.contextAt(options.place ?? null)
       // The same program on the same context gets the board's answers of its first run (html sizes, empty places).
-      const run = await this.stage.run(code, context, { mode: 'scene', seed: options.seed, cutAt: options.cutAt, name: options.name, answers: options.original?.answers, signal })
+      const run = await this.stage.run(code, context, { mode: 'scene', seed: options.seed, cutAt: options.cutAt, name: options.name, answers: options.original?.answers, signal, place: options.place })
       const liveError = await this.checkLivePrograms(livesOf(run.desc))
       if (liveError || signal.aborted) {
         this.stage.discard(run.entry)
@@ -857,7 +866,7 @@ export class AgentServer {
       stopped()
       const run =
         change.code !== undefined
-          ? await runOne(change.code, { seed: change.seed, cutAt: null, name: change.name ?? cut.entry.name })
+          ? await runOne(change.code, { seed: change.seed, cutAt: null, name: change.name ?? cut.entry.name, place })
           : // A cut runs the same program with the same seed and context, so it is the same up to the cut.
             await runOne(cut.entry.code, { seed: cut.entry.seed, cutAt: change.cutAt ?? null, original: cut.entry, name: cut.entry.name })
       main = await commit(sceneId, run, run.entry.name, change.when ? { when: change.when } : {})
@@ -939,8 +948,8 @@ export class AgentServer {
    * A draft run that ended in the stage (its frames are in the renderer):
    * the renderer compiles it and keeps it under its key. Then it is ready.
    */
-  private async readyDraft(run: StageRun, context: SceneContext, name: string, code: string, seq: number): Promise<Draft> {
-    const info = (await this.board('sceneDraft', { scene: run.desc, job: run.job, frames: run.frames, draft: draftKey(run.desc) }, SCENE_TIMEOUT_MS)) as DraftInfo
+  private async readyDraft(run: StageRun, context: SceneContext, name: string, code: string, seq: number, place: StagePlace | null): Promise<Draft> {
+    const info = (await this.board('sceneDraft', { scene: run.desc, job: run.job, frames: run.frames, draft: draftKey(run.desc), ...(place ? { place: place.board } : {}) }, SCENE_TIMEOUT_MS)) as DraftInfo
     return { name, code, desc: run.desc, entry: run.entry, fresh: run.fresh, revision: this.stage.revision, contextKey: contextKey(context), seq, info }
   }
 
@@ -1262,14 +1271,14 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
       {
         title: 'Items in detail',
         description:
-          'Returns the stored details of one or more items or ink groups. By default it is JSON: kind, name, author, parent, children ids, bounds on the board and inside the parent, z order, style, text with markup, SVG element ids, image source, or for ink the tool, colour, width and point count. For an ink group it gives the author, the stroke count, the bounds, the tool and colour, and how large its list of strokes and its points are; as "strokes" and as "points" return them.\n\nUse it when you need exact values before you change an item. For an overview of many items, list_items is smaller.\n\n- id is one id or a list. Each id gets its own entry, and an id that is not on the board gets its own error.\n- as chooses what comes back for each item:\n  - "info" (default): the details above.\n' +
+          'Returns the stored details of one or more items or ink groups. By default it is JSON: kind, name, author, parent, children ids, bounds on the board and inside the parent, z order, style, text with markup, SVG element ids, image source, or for ink the tool, colour, width and point count. For an ink group it gives the author, the stroke count, the bounds, the tool and colour, and how large its list of strokes and its points are; as "strokes" and as "points" return them.\n\nUse it when you need exact values before you change an item. For an overview of many items, list_items is smaller.\n\n- id is one id or a list. An item\'s name works as an id: it finds the latest item with that name, as board.node does in a scene. Each id gets its own entry, and an id that is not on the board gets its own error.\n- as chooses what comes back for each item:\n  - "info" (default): the details above.\n' +
           htmlMaterial(
             '  - "html": the item and everything inside it as the HTML subset that a scene\'s html() takes, with inline styles. Use it to restructure existing material: change the HTML, then put it back in a scene with html(markup, {into: board.node(id), mode: "replace"}). Ink is not HTML: it appears as a comment, and a replace leaves it out.\n'
           ) +
           '  - "svg": the SVG markup of a drawing.\n  - "strokes": the strokes of an ink group, each with its id and bounds.\n  - "points": the points of each stroke, as [x, y, pressure] from the stroke\'s origin.' +
           codeItems('\n  - "source": the program of a code item.'),
         inputSchema: strictInput('get_item', {
-          id: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).describe('An item id or an ink group id such as "g3", or a list of them.'),
+          id: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).describe('An item id, an ink group id such as "g3" or an item name, or a list of them.'),
           as: z
             .enum(ITEM_FORMS)
             .optional()
@@ -1318,17 +1327,20 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
       this.tool(session, 'write_scene', async ({ name, code }, extra) => {
         const board = this.boardKey()
         const before = this.draftsOf(board).get(name)
-        const onBoard = this.boardScene(name)
         const seq = ++this.draftSeq
+        let replaces = false
         // The draft is ready when the call returns: its program ran, its frames are in the renderer, the renderer compiled it.
         const outcome = await this.withProgram(session, extra, (signal) =>
           this.stage.exclusive(async (): Promise<CallToolResult | Draft> => {
-            const context = (await this.board('sceneContext', {})) as SceneContext
-            const run = await this.stage.run(code, context, { mode: 'draft', name, signal })
+            // A new version of a scene on the board runs where play_scene start runs it: at that scene's place.
+            const place = this.placeOf(name)
+            replaces = !!place
+            const context = await this.contextAt(place)
+            const run = await this.stage.run(code, context, { mode: 'draft', name, signal, place })
             const liveError = await this.checkLivePrograms(livesOf(run.desc))
             if (signal.aborted) throw new SceneCancelled()
             if (liveError) throw liveError
-            const draft = await this.readyDraft(run, context, name, code, seq)
+            const draft = await this.readyDraft(run, context, name, code, seq, place)
             if (signal.aborted) throw new SceneCancelled()
             // Published inside the stage's ownership; an older version never takes the place of a newer one.
             const drafts = this.draftsOf(board)
@@ -1347,7 +1359,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
         return text(
           json({
             draft: name,
-            ...(onBoard ? { replaces: `the scene "${name}" on the board (play_scene start replaces it in place)` } : {}),
+            ...(replaces ? { replaces: `the scene "${name}" on the board: this draft ran at that scene's place on the stage, and play_scene start replaces it in place` } : {}),
             ...(before ? { changed: 'the earlier version of this draft' } : {}),
             length_s: info.duration_s,
             steps: info.steps,
@@ -1522,6 +1534,36 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
     return null
   }
 
+  /**
+   * Where a new version of the scene `name` runs: at the place of the scene of
+   * that name on the stage, or (null) at the end of the stage when no scene
+   * has that name. The one rule for write_scene, preview_scene (a draft that
+   * runs again) and play_scene start (restage).
+   */
+  private placeOf(name: string): StagePlace | null {
+    const entry = this.boardScene(name)
+    return entry ? this.placeAt(entry) : null
+  }
+
+  /**
+   * The place of a program of the stage's log: the stage before it (stage.run
+   * before), and the board without the items of its scene and of the scenes
+   * after it (renderer sceneAt), which do not exist there yet.
+   */
+  private placeAt(entry: StageEntry): StagePlace {
+    const index = this.stage.log.indexOf(entry)
+    const scenes = this.stage.log
+      .slice(index)
+      .filter((later) => later.scene)
+      .map((later) => ({ id: later.scene as string, name: later.name ?? (later.scene as string) }))
+    return { entry, board: { scenes } }
+  }
+
+  /** The board as a program at this place sees it (null: the board now). */
+  private async contextAt(place: StagePlace | null): Promise<SceneContext> {
+    return (await this.board('sceneContext', place ? { place: place.board } : {})) as SceneContext
+  }
+
   /** The name of a committed scene by its id (or the id). */
   private sceneName(id: string): string {
     return this.stage.log.find((entry) => entry.scene === id)?.name ?? id
@@ -1563,15 +1605,16 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
     try {
       return await this.withProgram(session, extra, (signal) =>
         this.stage.exclusive(async () => {
-          const context = (await this.board('sceneContext', {})) as SceneContext
+          const place = this.placeOf(draft.name)
+          const context = await this.contextAt(place)
           this.stage.adopt(context)
           const reason = draftStale(draft, this.stage, context) ?? force ?? null
           if (!reason) return { rerun: null }
-          const run = await this.stage.run(draft.code, context, { mode: 'draft', seed: draft.entry.seed, name: draft.name, signal })
+          const run = await this.stage.run(draft.code, context, { mode: 'draft', seed: draft.entry.seed, name: draft.name, signal, place })
           const liveError = await this.checkLivePrograms(livesOf(run.desc))
           if (signal.aborted) throw new SceneCancelled()
           if (liveError) throw liveError
-          const next = await this.readyDraft(run, context, draft.name, draft.code, draft.seq)
+          const next = await this.readyDraft(run, context, draft.name, draft.code, draft.seq, place)
           if (signal.aborted) throw new SceneCancelled()
           Object.assign(draft, next)
           return { rerun: reason }

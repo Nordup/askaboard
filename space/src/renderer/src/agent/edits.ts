@@ -4,7 +4,7 @@ import type { BoardHandle } from '../board/Board'
 import { parentKey, ROOT, isFlowed } from '../board/scene'
 import type { Region } from '../board/types'
 import { liveReport, liveStatus } from '../live-pixels/registry'
-import { runScene, sceneDraft, sceneFrames, sceneControl, sceneContext } from '../live/run'
+import { runScene, sceneDraft, sceneFrames, sceneControl, sceneContext, type ScenePlace } from '../live/run'
 import { isGroupId, type InkGroup, type InkGroupTracker } from './groups'
 import { resolveTarget, sceneOf, type Scene } from './placement'
 
@@ -109,7 +109,7 @@ export function getNodeInfo(s: Scene, id: unknown): unknown {
 export async function runEditTool(ctx: EditContext, tool: AgentToolName, args: Record<string, unknown>): Promise<unknown> {
   switch (tool) {
     case 'sceneContext':
-      return sceneContext(ctx.board, scene(ctx), ctx.path)
+      return sceneContext(ctx.board, scene(ctx), ctx.path, (args.place as ScenePlace | undefined) ?? null)
     case 'runScene': {
       return runScene({ board: ctx.board, scene: () => scene(ctx), tracker: ctx.tracker }, args)
     }

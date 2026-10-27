@@ -98,8 +98,8 @@ const TOO_MUCH_MEMORY = 'The scene program ran out of memory and was stopped. Th
 export class SceneStage {
   /** Measured text sizes (board points) by math, size and source; null: could not be measured. */
   private textCache = new Map<string, [number, number] | null>()
-  /** The answers of the program that runs now: recorded (and, for a replay, given back) by request. */
-  private answers: { record: Map<string, string>; given: Map<string, string> | null } = { record: new Map(), given: null }
+  /** The answers of the program that runs now: recorded (and, for a replay, given back) by request; place: where it runs (StagePlace.board). */
+  private answers: { record: Map<string, string>; given: Map<string, string> | null; place?: unknown } = { record: new Map(), given: null }
 
   /**
    * measureText: the renderer lays the text out as the board does (renderer/live/measure.ts).
@@ -107,7 +107,7 @@ export class SceneStage {
    */
   constructor(
     private readonly measureText: (items: TextItem[]) => Promise<Array<[number, number]>>,
-    private readonly host: (request: HostRequest) => Promise<unknown>
+    private readonly host: (request: HostRequest, place: unknown) => Promise<unknown>
   ) {
     this.process = new StageProcess(
       (message, reply) => this.onStageMessage(message, reply),
@@ -144,6 +144,8 @@ export class SceneStage {
   private boardPath: string | null = null
   /** The stage's context does not match the log (an error, a draft run, a cancel, a new process): rebuild before the next run. */
   private dirty = true
+  /** How many programs of the log the context holds when it is not dirty (fewer than the log after a draft ran at a place). */
+  private held = 0
   /** Why the stage is new, until its first program runs. */
   private freshReason: string | null = 'the app started'
   readonly log: StageEntry[] = []
@@ -282,7 +284,11 @@ export class SceneStage {
    * Run a program on the stage. mode "scene" adds it to the log (record the
    * scene id with entry.scene after the commit, or discard it); "draft"
    * leaves the stage as it was (adoptDraft adds it later). seed and cutAt
-   * repeat an earlier run (cut, a draft that plays).
+   * repeat an earlier run (cut, a draft that plays). place: a new version
+   * of a scene (mcp.ts placeAt). While place.entry is in the log (a draft),
+   * the program runs on the stage as it was before that program; a restage
+   * took it out of the log, so there the end is that place. The board
+   * answers the program's requests at the place (place.board).
    */
   async run(
     code: string,
@@ -294,10 +300,14 @@ export class SceneStage {
       name?: string | null
       signal?: AbortSignal
       answers?: Map<string, string>
+      place?: { entry: StageEntry; board: unknown } | null
     }
   ): Promise<StageRun> {
     const { signal } = options
     if (signal?.aborted) throw new SceneCancelled()
+    const before = options.place && this.log.includes(options.place.entry) ? options.place.entry : null
+    // A program in the log keeps its place: only a draft runs before it.
+    if (before && options.mode !== 'draft') throw new Error('stage.run: a scene runs at a place only after the restage took that place out of the log.')
     this.adopt(context)
     const fresh = this.log.length === 0 ? this.freshReason : null
     const seed = options.seed ?? Math.floor(Math.random() * 2 ** 31) + 1
@@ -306,13 +316,13 @@ export class SceneStage {
     const onAbort = (): void => this.cancel()
     signal?.addEventListener('abort', onAbort, { once: true })
     try {
-      await this.ensure().catch((error: unknown) => {
+      await this.ensure(before).catch((error: unknown) => {
         throw signal?.aborted ? new SceneCancelled() : error
       })
       const tReady = Date.now()
       if (signal?.aborted) throw new SceneCancelled()
       const record = new Map<string, string>()
-      this.answers = { record, given: options.answers ?? null }
+      this.answers = { record, given: options.answers ?? null, place: options.place?.board }
       const job = this.nextId++
       const reply = await this.send({ t: 'run', id: job, code, ctxText, mode: options.mode })
       this.answers = { record: new Map(), given: null }
@@ -351,6 +361,7 @@ export class SceneStage {
       const entry: StageEntry = { scene: null, code, name: options.name ?? null, seed, cutAt: options.cutAt ?? null, ctxText, answers: record }
       if (options.mode === 'scene') {
         this.log.push(entry)
+        this.held = this.log.length
         this.revision++
         this.freshReason = null
       }
@@ -360,8 +371,8 @@ export class SceneStage {
     }
   }
 
-  /** A stage process whose context holds exactly the log. */
-  private async ensure(): Promise<void> {
+  /** A stage process whose context holds exactly the log (before: the programs of the log before that one). */
+  private async ensure(before: StageEntry | null = null): Promise<void> {
     if (!this.process.running) {
       try {
         await this.process.start({ t: 'init', fontText: JSON.stringify(HAND_FONT), noCodeItems: NO_CODE_ITEMS, noHtml: NO_HTML })
@@ -371,11 +382,13 @@ export class SceneStage {
       this.dirty = true
       await this.linkFrames()
     }
-    if (!this.dirty) return
+    // The place of before; the end when it is not in the log.
+    const upTo = before && this.log.includes(before) ? this.log.indexOf(before) : this.log.length
+    if (!this.dirty && this.held === upTo) return
     const started = Date.now()
     const reset = await this.send({ t: 'reset', id: this.nextId++ })
     if (!reset.ok) throw new SceneProgramError(reset.error, null)
-    for (const entry of [...this.log]) {
+    for (const entry of this.log.slice(0, upTo)) {
       this.answers = { record: new Map(), given: entry.answers }
       const reply = await this.send({ t: 'run', id: this.nextId++, code: entry.code, ctxText: entry.ctxText, mode: 'replay' })
       this.answers = { record: new Map(), given: null }
@@ -386,11 +399,12 @@ export class SceneStage {
         this.log.splice(this.log.indexOf(entry), 1)
         this.revision++
         this.dirty = true
-        return this.ensure()
+        return this.ensure(before)
       }
     }
     this.dirty = false
-    console.log(`stage: rebuilt with ${this.log.length} programs in ${Date.now() - started} ms`)
+    this.held = upTo
+    console.log(`stage: rebuilt with ${upTo} programs in ${Date.now() - started} ms`)
   }
 
   /** reply: sends to the stage process that sent the message, and drops the answer when that process stopped since. */
@@ -433,7 +447,7 @@ export class SceneStage {
         if (given !== undefined) answer = given
         else {
           try {
-            answer = JSON.stringify(await this.host(request as HostRequest))
+            answer = JSON.stringify(await this.host(request as HostRequest, answers.place))
           } catch (error) {
             answer = JSON.stringify({ error: (error instanceof Error ? error.message : String(error)).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') })
           }

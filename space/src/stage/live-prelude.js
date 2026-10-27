@@ -343,6 +343,8 @@
     entry.removed = false
     entry.revealed = false
     entry.tracks = {}
+    // Where the program made it (read only for an error message: the stack is formatted then).
+    entry.madeAt = new Error()
     if (!entry.pivot) entry.pivot = [entry.bounds.x + entry.bounds.width / 2, entry.bounds.y + entry.bounds.height / 2]
     objects.push(entry)
     const handle = new SceneObject(entry.id)
@@ -1065,11 +1067,12 @@
   // ---------- Marks around things ----------
 
   function around(target, opts) {
-    const entry = entryOf(target, 'around(object)')
+    const place = placeOf(target, 'around target')
+    if (!place) fail(`around(target) needs an object made by a scene function (circle(), write(), board.node(), …), a point [x, y] or a board rect {x, y, width, height}, got ${describe(target)}`)
     opts = options(opts, 'around options')
-    const box = worldBounds(entry, T)
+    const box = place.box
     const shape = opts.shape === undefined ? 'circle' : opts.shape
-    const pad = opts.pad === undefined ? 8 + 0.08 * Math.max(box.width, box.height) : num(opts.pad, 'around pad')
+    const pad = opts.pad === undefined ? (place.point ? 20 : 8 + 0.08 * Math.max(box.width, box.height)) : num(opts.pad, 'around pad')
     let lines
     if (shape === 'circle') {
       const cx = box.x + box.width / 2
@@ -1123,8 +1126,19 @@
     if (!members.length) fail('group(...objects) needs at least one object')
     const entries = members.map((m, k) => entryOf(m, `group member ${k}`))
     for (const e of entries) if (e.kind === 'part') fail(`object ${e.id} is a part of ${H('an html object', 'material')}; it moves with that object`)
-    for (const e of entries) if (e.parent !== undefined) fail(`object ${e.id} is already in a group`)
     for (const key of Object.keys(opts)) if (key !== 'name') warnings.add(`group: the option "${key}" is unknown and was ignored`)
+    // An object is in one group at a time: the same objects again (in any order) are that group.
+    const existing = entries[0].parent !== undefined ? objects[entries[0].parent] : undefined
+    if (existing && existing.members.length === entries.length && entries.every((e) => e.parent === existing.id)) {
+      const name = nameOf(opts)
+      if (name !== undefined && name !== existing.name) warnings.add(`group: these objects are already the group from line ${callLine(existing.madeAt) ?? '?'}${existing.name ? ` "${existing.name}"` : ''}; the name "${name}" was ignored`)
+      return existing.handle
+    }
+    entries.forEach((e, k) => {
+      if (e.parent === undefined) return
+      const kind = objects[e.id].kind === 'node' ? objects[e.id].nodeKind : e.api
+      fail(`group member ${k} (the ${kind} from line ${callLine(e.madeAt) ?? '?'}) is already in the group from line ${callLine(objects[e.parent].madeAt) ?? '?'}. An object is in one group at a time: act on that group, or group objects that are in no group.`)
+    })
     const handle = register({ kind: 'group', api: 'group', name: nameOf(opts), members: entries.map((e) => e.id), bounds: union(entries.map((e) => worldBounds(e, T))) })
     for (const e of entries) e.parent = handle.id
     return handle
@@ -1150,10 +1164,17 @@
         if (e.name === id && e.kind !== 'node' && !e.gone && !e.dropped) return handleOf(e)
       }
       // A name from an earlier scene (or a named node) finds its item; ids come first.
+      // The same rule as get_item (renderer agent/item-names.ts): an id first, then the latest item with that name.
       const byName = CTX.nodes[id] ? undefined : CTX.names && CTX.names[id]
       const ref = byName || id
       const info = CTX.nodes[ref]
-      if (!info) fail(`board.node: there is no item, ink group or name "${id}" on the board. Ink groups are g1, g2, …; list_items lists the ids.`)
+      if (!info) {
+        // A new version of a scene runs at that scene's place on the stage: the items of that scene and of later scenes do not exist there yet.
+        const ahead = CTX.ahead && Object.hasOwn(CTX.ahead, id) ? CTX.ahead[id] : null
+        if (ahead && ahead.earlier) fail(`board.node: "${id}" is an item of the earlier version of this scene. This version runs at that version's place on the stage, where the item does not exist yet, and play_scene start removes it with the earlier version.`)
+        if (ahead) fail(`board.node: "${id}" is made by the later scene "${ahead.scene}". This version runs at its own place on the stage, before that scene.`)
+        fail(`board.node: there is no item, ink group or name "${id}" on the board. Ink groups are g1, g2, …; list_items lists the ids.`)
+      }
       const known = objects.find((e) => e.kind === 'node' && e.ref === ref && !e.gone)
       if (known) return handleOf(known)
       const handle = register({ kind: 'node', api: 'node', ref, nodeKind: info.kind, name: info.name, bounds: info.bounds })
@@ -1218,8 +1239,8 @@
   // ---------- Live pixels ----------
 
   /** The line of the agent's program that called the API now (the innermost scene.js frame), or undefined. */
-  function callLine() {
-    const match = /scene\.js:(\d+)/.exec(new Error().stack || '')
+  function callLine(error = new Error()) {
+    const match = /scene\.js:(\d+)/.exec(error.stack || '')
     return match ? Number(match[1]) : undefined
   }
 
@@ -1282,16 +1303,26 @@
     return got
   }
 
+  /**
+   * A place on the board: an object (its bounds now), a point [x, y], [x, y, w, h]
+   * or {x, y, width, height}, as {box, point}; null for anything else.
+   */
+  function placeOf(value, what = 'place') {
+    if (value && typeof value === 'object' && handles.has(value)) return { box: worldBounds(handles.get(value), T), point: false }
+    const numbers = Array.isArray(value) && value.every((v) => typeof v === 'number')
+    if (numbers && value.length === 4) return { box: { x: coord(value[0], `${what}[0]`), y: coord(value[1], `${what}[1]`), width: num(value[2], `${what}[2]`), height: num(value[3], `${what}[3]`) }, point: false }
+    if (plain(value) && ['x', 'y', 'width', 'height'].every((key) => typeof value[key] === 'number')) return { box: { x: value.x, y: value.y, width: value.width, height: value.height }, point: false }
+    if (numbers && value.length === 2) {
+      const [x, y] = pair(value, what)
+      return { box: { x, y, width: 0, height: 0 }, point: true }
+    }
+    return null
+  }
   /** A rect from an object (its bounds now), a point [x, y], [x, y, w, h] or {x, y, width, height}. */
   function rectArg(value, what) {
-    if (value && typeof value === 'object' && handles.has(value)) return worldBounds(handles.get(value), T)
-    if (Array.isArray(value) && value.length === 4) return { x: coord(value[0], `${what}[0]`), y: coord(value[1], `${what}[1]`), width: num(value[2], `${what}[2]`), height: num(value[3], `${what}[3]`) }
-    if (plain(value) && ['x', 'y', 'width', 'height'].every((key) => typeof value[key] === 'number')) return { x: value.x, y: value.y, width: value.width, height: value.height }
-    if (Array.isArray(value) && value.length === 2) {
-      const [x, y] = pair(value, what)
-      return { x, y, width: 0, height: 0 }
-    }
-    fail(`${what} must be an object, a point [x, y], a rect [x, y, width, height] or {x, y, width, height}, got ${describe(value)}`)
+    const place = placeOf(value, what)
+    if (!place) fail(`${what} must be an object, a point [x, y], a rect [x, y, width, height] or {x, y, width, height}, got ${describe(value)}`)
+    return place.box
   }
 
   /** Where this scene's own objects are now (they are not on the board yet), for space(). */

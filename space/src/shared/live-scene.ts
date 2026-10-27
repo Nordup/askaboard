@@ -28,6 +28,12 @@ export interface SceneContext {
   board?: string
   /** The renderer's record of the stage: its epoch and, per stage object id, the board items it shows through (node ids, ink group id). */
   stage?: { epoch: string; items: Record<string, string[]> }
+  /**
+   * A new version of a scene runs at that scene's place on the stage: the items (ids and names)
+   * of that scene (earlier: true) and of the scenes after it, which do not exist there yet, by
+   * the scene's name. Absent for a program that runs at the end of the stage.
+   */
+  ahead?: Record<string, { scene: string; earlier: boolean }>
 }
 
 /** What the host adds to the context before a run (main process). */
