@@ -285,6 +285,9 @@ button:focus-visible {
  *   .pill__action  the one small icon button, at the right end
  *   .pill__toggle  a plain button around the dot and text of a static pill (the scene
  *                  pill: shows or collapses the script panel); the pill hovers with it
+ *   .pill--item    a static pill on a board item, not in the top bar (a live item that
+ *                  stopped responding: dot, label, one restart action). It sits inside
+ *                  the item at the bottom left and follows the board's zoom.
  */
 .pill--static:hover {
   background: none;
@@ -315,6 +318,25 @@ button:focus-visible {
 .pill--static:has(.pill__action) {
   /* the button sits evenly inside the pill's border */
   padding-right: calc((var(--pill-height) - var(--pill-action-size)) / 2 - 1px);
+}
+
+.pill--static.pill--item {
+  position: absolute;
+  z-index: 1; /* over the item's canvas or frame */
+  left: var(--item-pill-inset);
+  bottom: var(--item-pill-inset);
+  gap: var(--item-pill-gap);
+  height: var(--item-pill-height);
+  padding: 0 var(--space-1) 0 var(--item-pill-pad-left);
+  background: var(--bg-elevated);
+  font-family: var(--font-ui);
+  line-height: normal;
+  pointer-events: auto;
+  --status-dot-ring: var(--item-pill-ring);
+}
+
+.pill--item .pill__action {
+  color: var(--text-primary);
 }
 
 .pill__label {
@@ -360,7 +382,7 @@ button:focus-visible {
   height: var(--status-dot-size);
   border-radius: 50%;
   background: var(--status-idle);
-  box-shadow: 0 0 0 2px var(--status-idle-ring);
+  box-shadow: 0 0 0 var(--status-dot-ring) var(--status-idle-ring);
 }
 
 .status-dot--small {
@@ -375,17 +397,17 @@ button:focus-visible {
 
 .status-dot--live {
   background: var(--status-live);
-  box-shadow: 0 0 0 2px var(--status-live-ring);
+  box-shadow: 0 0 0 var(--status-dot-ring) var(--status-live-ring);
 }
 
 .status-dot--play {
   background: var(--status-play);
-  box-shadow: 0 0 0 2px var(--status-play-ring);
+  box-shadow: 0 0 0 var(--status-dot-ring) var(--status-play-ring);
 }
 
 .status-dot--error {
   background: var(--ink-pink);
-  box-shadow: 0 0 0 2px var(--status-error-ring);
+  box-shadow: 0 0 0 var(--status-dot-ring) var(--status-error-ring);
 }
 
 /* One pulse per agent tool call. */

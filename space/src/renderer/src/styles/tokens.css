@@ -118,6 +118,13 @@
   --icon-button-size: 24px;
   --status-dot-size: 7px;
   --status-dot-size-small: 6px; /* a status dot in a panel header */
+  --status-dot-ring: 2px; /* the halo width around a status dot */
+  /* A pill on a board item (a live item that stopped responding): bottom left, inside the item */
+  --item-pill-height: 24px;
+  --item-pill-pad-left: 9px;
+  --item-pill-gap: 6px;
+  --item-pill-inset: 8px; /* from the item's left and bottom edges */
+  --item-pill-ring: 3px; /* the status dot's halo in an item pill */
   /* The script panel floating over the board */
   --script-panel-width: 296px;
   --script-panel-header: 34px;

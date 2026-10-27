@@ -35,7 +35,8 @@
   outline: 1.5px solid var(--accent);
 }
 
-/* A quiet note on a failed or hung item: the same look as a missing image. */
+/* A quiet note on a failed or waiting item: the same look as a missing image.
+   A stopped item keeps its last picture and shows an item pill instead (.pill--item, app.css). */
 .node-live--note {
   border: 1px dashed var(--border-strong);
 }
@@ -55,12 +56,6 @@
   text-align: center;
   background: var(--bg-canvas);
   opacity: 0.85;
-}
-
-/* A stopped item keeps its last picture: its note is a strip at the bottom. */
-.node-live__note--bar {
-  inset: auto 0 0 0;
-  padding: 4px 8px;
 }
 
 .node-live__note-title {

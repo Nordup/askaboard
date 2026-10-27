@@ -1,3 +1,4 @@
+import { RotateCcw } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import type { LiveNode } from '@shared/board-format'
 import { LiveItem, enteredLive, observe, subscribeEntered, unobserve, type LiveStatus } from './registry'
@@ -6,7 +7,8 @@ import './live.css'
 /**
  * The view of one live pixel item in the content layer. The pixels come from
  * a LiveItem (registry.ts); this component only gives it a box and shows a
- * quiet note when the code fails, stops answering or waits for a slot.
+ * quiet note when the code fails or waits for a slot. An item that stops
+ * answering keeps its last picture and shows a small pill with a Restart button.
  *
  * In the snapshot window (agent screenshots, preview frames) the item shows
  * the still image that the request carries (`still`: made on the main window
@@ -54,11 +56,10 @@ function LiveRunner({ node, style, common }: Props) {
   const note =
     status.state === 'error'
       ? { title: node.mode === 'shader' ? 'Shader error' : node.mode === 'program' ? 'Program error' : 'Canvas error', detail: firstLine(status.error) }
-      : status.state === 'stalled'
-        ? { title: 'Stopped (not responding)', detail: 'Double-click to start it again.', bar: true }
-        : status.state === 'waiting'
-          ? { title: 'Waiting', detail: 'Too many live items run at once.' }
-          : null
+      : status.state === 'waiting'
+        ? { title: 'Waiting', detail: 'Too many live items run at once.' }
+        : null
+  const stalled = status.state === 'stalled'
   const input = entered ? ' node-live--entered' : status.input === 'direct' && !note ? ' node-live--direct' : ''
 
   return (
@@ -72,9 +73,23 @@ function LiveRunner({ node, style, common }: Props) {
       style={style}
     >
       {note && (
-        <div className={`node-live__note${'bar' in note ? ' node-live__note--bar' : ''}`} title={status.error}>
+        <div className="node-live__note" title={status.error}>
           <span className="node-live__note-title">{note.title}</span>
           {note.detail && <span className="node-live__note-detail">{note.detail}</span>}
+        </div>
+      )}
+      {stalled && (
+        // The board does not see presses on the pill: no ink, no selection, no double-click.
+        <div
+          className="pill pill--static pill--item"
+          onPointerDown={(event) => event.stopPropagation()}
+          onDoubleClick={(event) => event.stopPropagation()}
+        >
+          <span className="status-dot status-dot--small status-dot--error" />
+          <span className="pill__label">Not responding</span>
+          <button className="pill__action" title="Restart" aria-label="Restart" onClick={() => item.current?.retry()}>
+            <RotateCcw size={12} strokeWidth={1.75} />
+          </button>
         </div>
       )}
     </div>
