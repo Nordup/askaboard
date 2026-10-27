@@ -462,14 +462,24 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   }, [])
   applyPlaybackRef.current = applyPlaybackToDom
 
+  /**
+   * Paint the dirty ink layers: in the next animation frame, or with `now`
+   * at once (a playback frame: its overrides are in the DOM already, so its
+   * ink must reach the canvas in the same frame, or the ink of a scene shows
+   * one frame behind the shapes that move with it).
+   */
   const requestPaint = useCallback(
-    (layers: { committed?: boolean; active?: boolean; playback?: boolean }) => {
+    (layers: { committed?: boolean; active?: boolean; playback?: boolean }, now = false) => {
       const dirty = dirtyLayersRef.current
       if (layers.committed) dirty.committed = true
       if (layers.active) dirty.active = true
       if (layers.playback) dirty.playback = true
+      if (now && paintFrameRef.current !== null) {
+        cancelAnimationFrame(paintFrameRef.current)
+        paintFrameRef.current = null
+      }
       if (paintFrameRef.current !== null) return
-      paintFrameRef.current = requestAnimationFrame(() => {
+      const paint = (): void => {
         paintFrameRef.current = null
         const dirty = dirtyLayersRef.current
         dirtyLayersRef.current = { committed: false, active: false, playback: false }
@@ -489,7 +499,9 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
             camera: cameraRef.current
           })
         }
-      })
+      }
+      if (now) paint()
+      else paintFrameRef.current = requestAnimationFrame(paint)
     },
     [applyContentTransform, ghostInks, paintInks]
   )
@@ -1433,7 +1445,8 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
           }
         }
         inkMomentRef.current = { tips, inks }
-        if (ink) requestPaint({ playback: true })
+        // In this frame, with the overrides that applyPlaybackToDom just put in the DOM.
+        if (ink) requestPaint({ playback: true }, true)
         // The end of playback: measure the final layout once more.
         if (!frame) requestMeasure()
       }
