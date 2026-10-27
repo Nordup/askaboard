@@ -190,7 +190,9 @@ function measureGlides(board: BoardHandle, compiled: CompiledScene): void {
  * The renderer's record of the stage (main/live-scene.ts): for each stage
  * object, the board items it shows through. A scene that carries an object
  * reuses these items; the sandbox learns from it which objects are still on
- * the board (sceneContext). `revision` counts the changes of `items`: a
+ * the board (sceneContext). The main process owns the stage's epoch: the
+ * record is for the epoch of the last description or reset it sent, and
+ * starts empty for a new one. `revision` counts the changes of `items`: a
  * compiled draft is for one revision.
  */
 const stageRecord: { epoch: string; items: Map<number, { nodeIds: string[]; group?: string }>; revision: number } = { epoch: '', items: new Map(), revision: 0 }
@@ -216,8 +218,8 @@ type SceneSummary = Pick<SceneDescription, 'duration' | 'steps' | 'cues' | 'logs
  * the stage. When either changes, the draft compiles again from its
  * description and its frames, which it keeps (the compile holds the same
  * samples). A draft that is not here (the window loaded again, or it was
- * dropped for newer ones) is DraftMissing: the main process runs its
- * program again.
+ * dropped for newer ones) or that ran in another epoch of the stage is
+ * DraftMissing: the main process runs its program again.
  */
 interface CompiledDraft {
   summary: SceneSummary
@@ -301,8 +303,7 @@ function compileDraft(desc: SceneDescription, frames: RunFrames, s: Scene): Comp
 function currentDraft(ctx: RunSceneContext, key: unknown): CompiledDraft | null {
   if (typeof key !== 'string') return null
   let draft = drafts.get(key)
-  if (!draft) return null
-  adoptEpoch(draft.summary.stage)
+  if (!draft || draft.summary.stage !== stageRecord.epoch) return null
   const s = ctx.scene()
   if (draft.nodes !== s.nodes || draft.stage !== stageRecord.revision || !sameLayout(draft.layout, s.layout) || draft.groups !== groupsKey(s)) {
     draft = compileDraft(draft.desc, draft.frames, s)
@@ -583,6 +584,7 @@ export function stepOfObject(play: CompiledScene['play'], objectId: number): str
  */
 export function sceneDraft(ctx: RunSceneContext, args: Record<string, unknown>): DraftInfo {
   const desc = checkDescription(args.scene)
+  adoptEpoch(desc.stage)
   const draft = compileDraft(desc, takeFrames(args.job, args.frames), ctx.scene())
   if (typeof args.draft === 'string') keepDraft(args.draft, draft)
   const { compiled } = draft
@@ -970,10 +972,7 @@ export async function sceneControl(ctx: RunSceneContext, args: Record<string, un
       return { replay: out, ...status() }
     }
     case 'resetStage':
-      if (stageRecord.items.size) stageRecord.revision++
-      stageRecord.items.clear()
-      stageRecord.epoch = typeof args.epoch === 'string' ? args.epoch : ''
-      scenePlayer.resetStage()
+      adoptEpoch(typeof args.epoch === 'string' ? args.epoch : undefined)
       return status()
     case 'waitPlayed': {
       // Ends with the scene's end, or where playback stops at a pause before it (status says why).

@@ -252,7 +252,6 @@ interface Draft {
   entry: StageEntry
   fresh: string | null
   revision: number
-  epoch: string
   contextKey: string
   /** The order of the write_scene calls: a draft never takes the place of a newer one. */
   seq: number
@@ -290,7 +289,7 @@ const isMissing = (value: unknown): boolean => typeof value === 'object' && valu
 
 /** Why a draft must run again before it is shown or played (the stage or the board changed since it ran), or null. */
 function draftStale(draft: Draft, stage: SceneStage, context: SceneContext | null): string | null {
-  if (draft.epoch !== stage.epoch) return 'the stage started new'
+  if (draft.desc.stage !== stage.epoch) return 'the stage started new'
   if (draft.revision !== stage.revision) return 'other scenes were played, replaced or dropped'
   if (context && contextKey(context) !== draft.contextKey) return "the board or the learner's view changed"
   return null
@@ -942,7 +941,7 @@ export class AgentServer {
    */
   private async readyDraft(run: StageRun, context: SceneContext, name: string, code: string, seq: number): Promise<Draft> {
     const info = (await this.board('sceneDraft', { scene: run.desc, job: run.job, frames: run.frames, draft: draftKey(run.desc) }, SCENE_TIMEOUT_MS)) as DraftInfo
-    return { name, code, desc: run.desc, entry: run.entry, fresh: run.fresh, revision: this.stage.revision, epoch: this.stage.epoch, contextKey: contextKey(context), seq, info }
+    return { name, code, desc: run.desc, entry: run.entry, fresh: run.fresh, revision: this.stage.revision, contextKey: contextKey(context), seq, info }
   }
 
   /** The scene ids and names of the current stage, for the renderer's reads. */
