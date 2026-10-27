@@ -90,7 +90,7 @@ limits scripts and images.
 | `board/html.ts` | HTML subset ⇄ nodes, both directions; reports what was dropped. |
 | `agent/groups.ts` | Clusters learner ink into groups `g1`, `g2`, … with stable ids. |
 | `agent/placement.ts` | The board as a scene sees it, obstacles, an empty place near an anchor (`space()`, html() without a place). |
-| `agent/ink.ts` | SVG path sampling and a hand-drawn pressure profile for scene ink. |
+| `agent/ink.ts` | The hand-drawn pressure profile (taper, wobble) for scene ink, seeded per stroke. The ink points of pen shapes come from the stage (`shared/ink-points.ts`, `shared/path-geometry.ts`, decision B14). |
 
 ## MCP server
 

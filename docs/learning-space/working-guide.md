@@ -108,6 +108,8 @@ combine; `meta.json` records `no_html` and `brief`.
 
 ## Pitfalls we hit
 
+- **Playback changes need a check over time, not stills** (2026-10-27): an ink speedup passed still-picture checks while a pendulum's string came off its bob in motion. Measure an invariant over many playback times with `__spaceDev.scene.snap()`, then compare video frames. Known failure classes and where they live: [`playback-pitfalls.md`](playback-pitfalls.md).
+
 - **A dev app with an empty `SPACE_FOLDER` cannot run scenes** ("No board is
   open"). Fill the scratch folder with `scripts/boards/make-demo-folder.mjs`
   before launch.

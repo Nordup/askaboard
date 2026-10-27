@@ -31,6 +31,7 @@ in [`../../space/`](../../space/); work happens on `main`.
 | Lab switches for experiments: `council.mjs --no-code`, `--no-html`, `--brief <draft>` (`space/src/main/lab-switch.ts`) | Done; see [`working-guide.md`](working-guide.md), "Choosing lab tests" |
 | Feature freeze (2026-10-26) | On: the founder tests everything by hand (code items, shaders, the other media) and fixes what gets in the way. Next direction: the voice loop, a voice model and the scene driving each other ([`plan.md`](plan.md), "Current focus") |
 | First real test (2026-10-26) | Done: one hour on neurons by voice; the synapse mechanism clicked for the founder for the first time. The founder calls the app an MVP, but not yet for friends ([`first-test-2026-10-26.md`](first-test-2026-10-26.md)). Gaps G1–G6 and the order of work: [`first-test-gaps.md`](first-test-gaps.md); G1 (voice ⇄ scene) is the next milestone |
+| Scene speed (2026-10-26/27): the stage in V8 in a sandboxed process (T18), live items on one contract (B10), playback cost (B11), one compile per draft (B12), typed frames over a direct port (B13), stage-made ink points (B14), pen ink on its shape (B15) | Done and measured ([`perf-plan.md`](perf-plan.md)): EM wave write_scene 7.6–15.1 s → 0.5–0.9 s, preview about 0.1 s, start under 0.1 s, playback frame work 5.7 → 2.6 ms. Known playback limits: [`playback-pitfalls.md`](playback-pitfalls.md). Open: the script panel hides material in the top-right corner ([`plan.md`](plan.md)) |
 | Perception (the old fix 2) | Mostly answered by board news; the rest deferred |
 | Plain chat apps (ChatGPT web, Claude chat) with folder file tools | Later |
 | App packaging, signing, auto-update | Later |
@@ -75,7 +76,10 @@ work that [`plan.md`](plan.md) and [`baseline.md`](baseline.md) describe.
      (2026-10-26): the measured flaws of `run_scene` and the other tools,
      what we want from a scene, three directions and the open questions.
    - [`perf-plan.md`](perf-plan.md) — the perf environment (`space/scripts/perf/`),
-     the baseline numbers and the ordered fixes (A1–D1).
+     the baseline numbers, the speed work of 2026-10-26/27 and its results.
+   - [`playback-pitfalls.md`](playback-pitfalls.md) — the known failure
+     classes of scene sampling and playback, where they live in the code and
+     how to measure them. Read it when an animation glitches.
    - [`handoff/`](handoff/) — the context of long sessions, to continue after
      a compaction.
    - [`writing-agent-text.md`](writing-agent-text.md) — how to write and
