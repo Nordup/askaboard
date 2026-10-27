@@ -69,11 +69,10 @@ function cssPx(element: Element, name: string): number {
   return Number.isFinite(value) ? value : 0
 }
 
-/** Where the panel goes in its canvas for a wanted position: left, top and the height it may take (room). */
-function placeOf(element: HTMLElement, canvas: HTMLElement, wanted: Position | null): { left: number; top: number; room: number } {
-  const margin = cssPx(element, '--space-3')
-  const header = cssPx(element, '--script-panel-header')
-  const width = element.offsetWidth
+/** Where the panel of this width goes in its canvas for a wanted position: left, top and the height it may take (room). */
+function placeOf(canvas: HTMLElement, width: number, wanted: Position | null): { left: number; top: number; room: number } {
+  const margin = cssPx(canvas, '--space-3')
+  const header = cssPx(canvas, '--script-panel-header')
   const W = canvas.clientWidth
   const H = canvas.clientHeight
   // Never over the tool palette: the panel ends a margin above it.
@@ -86,25 +85,29 @@ function placeOf(element: HTMLElement, canvas: HTMLElement, wanted: Position | n
   return { left, top, room: Math.max(header + 2, floor - top) }
 }
 
+/** The border of .script-panel (app.css), top and bottom each. */
+const PANEL_BORDER = 1
+
 /**
  * The window rect (client CSS px) that the panel takes when it shows: at its
- * full height, also while it is hidden, because it appears when a scene plays
- * and grows with its lines. While the learner keeps it minimised on screen,
- * only its bar. Null when there is no board.
+ * full height, also before the first scene and while it is hidden, because it
+ * appears when a scene plays and grows with its lines. While the learner keeps
+ * it minimised on screen, only its bar. Null when no board is open.
  */
 export function scriptPanelArea(): { left: number; top: number; right: number; bottom: number } | null {
   const element = document.querySelector<HTMLElement>('.script-panel')
-  const canvas = element?.parentElement
-  if (!element || !canvas) return null
-  if (collapsed && element.classList.contains('is-shown')) {
+  if (element && collapsed && element.classList.contains('is-shown')) {
     const bar = element.getBoundingClientRect()
     return { left: bar.left, top: bar.top, right: bar.right, bottom: bar.bottom }
   }
-  const { left, top, room } = placeOf(element, canvas, readPosition())
-  const style = getComputedStyle(element)
-  const full = cssPx(element, '--script-panel-header') + cssPx(element, '--script-panel-body-max') + parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth)
+  const canvas = document.querySelector<HTMLElement>('.canvas')
+  if (!canvas?.querySelector('.board')) return null
+  // The panel's CSS width: min(--script-panel-width, 100% - 2 × --space-3).
+  const width = Math.min(cssPx(canvas, '--script-panel-width'), canvas.clientWidth - 2 * cssPx(canvas, '--space-3'))
+  const { left, top, room } = placeOf(canvas, width, readPosition())
+  const full = cssPx(canvas, '--script-panel-header') + cssPx(canvas, '--script-panel-body-max') + 2 * PANEL_BORDER
   const origin = canvas.getBoundingClientRect()
-  return { left: origin.left + left, top: origin.top + top, right: origin.left + left + element.offsetWidth, bottom: origin.top + top + Math.min(room, full) }
+  return { left: origin.left + left, top: origin.top + top, right: origin.left + left + width, bottom: origin.top + top + Math.min(room, full) }
 }
 
 // ---------- The script as steps ----------
@@ -173,7 +176,7 @@ export function ScriptPanel() {
     const element = panel.current
     const canvas = element?.parentElement
     if (!element || !canvas) return
-    setBox(placeOf(element, canvas, wanted))
+    setBox(placeOf(canvas, element.offsetWidth, wanted))
   }, [])
 
   useLayoutEffect(() => {
