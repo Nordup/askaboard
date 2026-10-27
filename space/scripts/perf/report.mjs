@@ -42,6 +42,8 @@ const COLUMNS = [
   ['previews', (r) => r.calls?.scene_previews ?? r.calls?.run_scene_previews],
   ['plays', (r) => r.calls?.scene_plays ?? r.calls?.run_scene_plays],
   ['written k', (r) => (r.written?.total ?? null) / 1000],
+  // Runs before the count of file writes (2026-10-28) wrote no scene files: 0.
+  ['files k', (r) => (r.written ? (r.written.files?.total ?? 0) / 1000 : null)],
   ['repeat %', (r) => (r.written?.repeat_share ?? null) === null ? null : r.written.repeat_share * 100],
   ['read k', (r) => (r.read?.result_chars ?? null) / 1000],
   ['images', (r) => r.read?.images],
@@ -90,7 +92,7 @@ for (const g of groups) {
   const codes = [...new Set(g.runs.map((r) => `${r.code?.commit?.slice(0, 7) ?? '?'}${r.code?.dirty ? `+${r.code.diff_hash?.slice(0, 6)}` : ''}`))].join(', ')
   lines.push(`| ${g.title} | ${g.n} | ${codes} | ${g.values.map((v, i) => cell(v, b && b !== g ? b.values[i] : null)).join(' | ')} |`)
 }
-lines.push('', 'Times in seconds from the agent start (replay: from the first call). "done": the last scene has played. "written k": thousands of characters the model wrote into tool args. "repeat %": share of scene program code (write_scene; run_scene in older runs) that is ≥ 0.9 similar to the scene before it. "read k": thousands of result characters. "code": commit + hash of uncommitted changes in space/src and space/resources. Details: space/scripts/perf/README.md.')
+lines.push('', 'Times in seconds from the agent start (replay: from the first call). "done": the last scene has played. "written k": thousands of characters the model wrote into tool args and files. "files k": the part of it written into files with the agent\'s own tools (Write/Edit, apply_patch). "repeat %": share of scene program code (write_scene: its inline code, or what the agent wrote into scene files for it; run_scene in older runs) that is ≥ 0.9 similar to the scene before it. "read k": thousands of result characters. "code": commit + hash of uncommitted changes in space/src and space/resources. Details: space/scripts/perf/README.md.')
 const text = `${lines.join('\n')}\n`
 writeFileSync(join(PERF, 'report.md'), text)
 process.stdout.write(text)

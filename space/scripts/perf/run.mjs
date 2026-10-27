@@ -45,7 +45,7 @@ import {
 } from '../lab/common.mjs'
 import { makeMedia } from '../lab/media.mjs'
 import { task as getTask } from './tasks.mjs'
-import { PERF_RUNS, appendHistory, callMetrics, codeIdentity, frameChanges, round, unionMs } from './metrics.mjs'
+import { PERF_RUNS, appendHistory, callMetrics, codeIdentity, frameChanges, round, runFileWrites, unionMs } from './metrics.mjs'
 
 const { option, flag } = args()
 const say = (...p) => log('perf', ...p)
@@ -159,7 +159,10 @@ async function oneRun(task, index) {
     )
     writeFileSync(join(dir, 'reply.md'), `${work.reply ?? ''}\n`)
 
-    const m = callMetrics(calls, { t0, wallEnd: t1, tracesDir: join(dir, 'trace') })
+    const transcript = opts.client === 'claude' ? claudeTranscript(work.session) : codexRollout(opts.codexHome, work.session)
+    // What the agent wrote into files with its own tools (scene files): from its transcript.
+    const fileWrites = runFileWrites({ client: opts.client, transcript }, dir)
+    const m = callMetrics(calls, { t0, wallEnd: t1, tracesDir: join(dir, 'trace'), fileWrites })
     // First visible change after the first scene program (write_scene; run_scene in older runs), from the screencast.
     let firstVisible = null
     let lastVisible = null
@@ -197,7 +200,7 @@ async function oneRun(task, index) {
       ok: work.exit_code === 0 && !work.is_error,
       error: work.is_error ? (work.errors?.join(' | ') || `exit ${work.exit_code}`) : null,
       session: work.session,
-      transcript: opts.client === 'claude' ? claudeTranscript(work.session) : codexRollout(opts.codexHome, work.session),
+      transcript,
       time: { ...m.time, first_visible: firstVisible, last_visible: lastVisible, idle_after_agent: round((tIdle - t1) / 1000, 2), model_s: model?.api_s ?? null, model_source: model?.source ?? null, client_duration_s: model?.duration_s ?? null },
       calls: m.calls,
       written: m.written,

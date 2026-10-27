@@ -1,12 +1,16 @@
 /**
  * Shared parts of the perf scripts: paths, the code identity, and the numbers
  * computed from a run's tool calls (trace format: t, end, duration_ms, tool,
- * args, ok, result_text, images).
+ * args, ok, result_text, images) and from the files the agent wrote with its
+ * own tools (claudeFileWrites, codexFileWrites).
+ *
+ *   node scripts/perf/metrics.mjs <run folder>   the run's numbers again, from its calls.json and its transcript
  */
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, openSync, readSync, closeSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { LAB, SPACE } from '../lab/common.mjs'
 
 export const PERF = join(SPACE, '.lab/perf')
@@ -76,6 +80,13 @@ export function argsCut(value, depth = 0) {
   return Object.values(value).some((v) => argsCut(v, depth + 1))
 }
 
+/** A call's args as the model wrote them: without what the app adds to the trace (write_scene's snapshot: the files it read). */
+export const modelArgs = (c) => {
+  if (c.tool !== 'write_scene' || !c.args || typeof c.args !== 'object' || !('snapshot' in c.args)) return c.args
+  const { snapshot, ...rest } = c.args
+  return rest
+}
+
 /** Characters the model wrote into one call's arguments (the JSON of the args, with cut strings at full length). */
 export function argsChars(args) {
   const json = JSON.stringify(args ?? {})
@@ -133,13 +144,120 @@ const parse = (text) => {
   }
 }
 
+// ---------- Files the agent wrote with its own tools ----------
+
+/**
+ * A file write: t (wall ms, or null when the source has no times), the path as
+ * the agent named it, the characters it wrote (Write: the content; Edit: the
+ * new text; a patch: its added lines), and that text.
+ */
+const fileWrite = (t, path, text) => ({ t, path, chars: text.length, text })
+
+const jsonLines = (file) => {
+  if (!file || !existsSync(file)) return []
+  return readFileSync(file, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map(parse)
+    .filter(Boolean)
+}
+
+/** The files a Claude Code session wrote (its transcript ~/.claude/projects/<folder>/<session>.jsonl): Write, Edit and MultiEdit, per call. */
+export function claudeFileWrites(transcript) {
+  const writes = []
+  const seen = new Set()
+  for (const entry of jsonLines(transcript)) {
+    // The transcript repeats tool calls in other entry types (api-request-blob): only the assistant's own entries count.
+    if (entry.type !== 'assistant' || !Array.isArray(entry.message?.content)) continue
+    const t = entry.timestamp ? Date.parse(entry.timestamp) : null
+    for (const c of entry.message.content) {
+      if (c?.type !== 'tool_use' || seen.has(c.id)) continue
+      seen.add(c.id)
+      const input = c.input ?? {}
+      if (typeof input.file_path !== 'string') continue
+      if (c.name === 'Write' && typeof input.content === 'string') writes.push(fileWrite(t, input.file_path, input.content))
+      else if (c.name === 'Edit' && typeof input.new_string === 'string') writes.push(fileWrite(t, input.file_path, input.new_string))
+      else if (c.name === 'MultiEdit' && Array.isArray(input.edits)) writes.push(fileWrite(t, input.file_path, input.edits.map((e) => (typeof e?.new_string === 'string' ? e.new_string : '')).join('')))
+    }
+  }
+  return writes
+}
+
+/** The writes in a text that may hold apply_patch patches (their added lines, per file) or shell heredocs into a file (cat > file <<EOF). */
+function patchWrites(t, text) {
+  const writes = []
+  for (const patch of text.matchAll(/\*\*\* Begin Patch\r?\n([\s\S]*?)\*\*\* End Patch/g)) {
+    let path = null
+    let added = []
+    const flush = () => {
+      if (path !== null && added.length) writes.push(fileWrite(t, path, `${added.join('\n')}\n`))
+      added = []
+    }
+    for (const line of patch[1].split(/\r?\n/)) {
+      const file = /^\*\*\* (?:Add|Update|Delete) File: (.+)$/.exec(line)
+      const move = /^\*\*\* Move to: (.+)$/.exec(line)
+      if (file) {
+        flush()
+        path = file[1].trim()
+      } else if (move) path = move[1].trim()
+      else if (line.startsWith('+')) added.push(line.slice(1))
+    }
+    flush()
+  }
+  for (const heredoc of text.matchAll(/\bcat\s*>\s*(['"]?)([^\s'"<>|;&]+)\1\s*<<-?\s*(['"]?)(\w+)\3[^\n]*\n([\s\S]*?)\n\4(?=\s|$)/g)) writes.push(fileWrite(t, heredoc[2], `${heredoc[5]}\n`))
+  return writes
+}
+
+/** Every string in a value (a tool call's arguments); a string that is JSON is read as its value. */
+function strings(value, out = [], depth = 0) {
+  if (typeof value === 'string') {
+    const parsed = /^\s*[[{]/.test(value) ? parse(value) : null
+    if (parsed && typeof parsed === 'object') strings(parsed, out, depth + 1)
+    else out.push(value)
+  } else if (value && typeof value === 'object' && depth <= 12) for (const v of Object.values(value)) strings(v, out, depth + 1)
+  return out
+}
+
+/**
+ * The files a Codex run wrote: the patches (apply_patch) and heredocs in its
+ * tool calls. From the rollout (CODEX_HOME/sessions/…/rollout-…-<thread>.jsonl,
+ * with times) when it is there; else from the run's work-codex.jsonl (codex
+ * exec --json: its shell commands, without times; its file_change items name
+ * the files but not what was written).
+ */
+export function codexFileWrites({ rollout = null, execJsonl = null } = {}) {
+  const writes = []
+  if (rollout && existsSync(rollout)) {
+    for (const entry of jsonLines(rollout)) {
+      const p = entry.type === 'response_item' ? entry.payload : null
+      if (!p || (p.type !== 'custom_tool_call' && p.type !== 'function_call' && p.type !== 'local_shell_call')) continue
+      const t = entry.timestamp ? Date.parse(entry.timestamp) : null
+      for (const text of strings(p.input ?? p.arguments ?? p.action ?? '')) writes.push(...patchWrites(t, text))
+    }
+    return writes
+  }
+  for (const entry of jsonLines(execJsonl)) {
+    const item = entry.type === 'item.completed' ? entry.item : null
+    if (item?.type === 'command_execution' && typeof item.command === 'string') writes.push(...patchWrites(null, item.command))
+  }
+  return writes
+}
+
+/** A path as the numbers show it: from boards/ on when it is in a learning folder's boards/, else as the agent wrote it. */
+const shownPath = (path) => {
+  const posix = path.replace(/\\/g, '/')
+  const at = posix.search(/(^|\/)boards\//)
+  return at < 0 ? path : posix.slice(at).replace(/^\//, '')
+}
+const isSceneFile = (path) => shownPath(path).startsWith('boards/scenes/')
+
 // ---------- The numbers ----------
 
 /**
  * The numbers of one run's tool calls. t0: the run's start (wall ms). wallEnd:
  * the end of the agent's work (wall ms). tracesDir: for the screenshot sizes.
  */
-export function callMetrics(calls, { t0, wallEnd, tracesDir = null }) {
+export function callMetrics(calls, { t0, wallEnd, tracesDir = null, fileWrites = [] }) {
   const at = (c) => Date.parse(c.t)
   const endOf = (c) => Date.parse(c.end ?? c.t)
   const s = (ms) => round(ms / 1000, 2)
@@ -175,16 +293,32 @@ export function callMetrics(calls, { t0, wallEnd, tracesDir = null }) {
     p.calls++
     if (!c.ok) p.errors++
     p.ms += c.duration_ms ?? endOf(c) - at(c)
-    p.written += argsChars(c.args)
+    p.written += argsChars(modelArgs(c))
     p.read += fullLength(c.result_text)
   }
-  const codes = programs.map((c) => (typeof c.args?.code === 'string' ? c.args.code : ''))
+  // A program's code: its inline code, or (write_scene with a file) what the agent wrote into scene files since the program before.
+  const codes = programs.map((c, i) => {
+    if (typeof c.args?.code === 'string') return c.args.code
+    const from = i ? at(programs[i - 1]) : -Infinity
+    return fileWrites
+      .filter((w) => w.t !== null && w.t > from && w.t <= at(c) && isSceneFile(w.path))
+      .map((w) => w.text)
+      .join('')
+  })
   const ratios = similarities(codes)
   let repeatChars = 0
   const codeChars = codes.reduce((n, code) => n + fullLength(code), 0)
   ratios.forEach((r, i) => {
     if (r !== null && r >= 0.9) repeatChars += fullLength(codes[i])
   })
+
+  // Written into files with the agent's own tools.
+  const files = { total: 0, by_path: {} }
+  for (const w of fileWrites) {
+    files.total += w.chars
+    const key = shownPath(w.path)
+    files.by_path[key] = (files.by_path[key] ?? 0) + w.chars
+  }
 
   // Read.
   const pngs = tracesDir ? indexFiles(tracesDir, '.png') : new Map()
@@ -224,7 +358,8 @@ export function callMetrics(calls, { t0, wallEnd, tracesDir = null }) {
       scene_waits: sceneWaits.length
     },
     written: {
-      total: calls.reduce((n, c) => n + argsChars(c.args), 0),
+      total: calls.reduce((n, c) => n + argsChars(modelArgs(c)), 0) + files.total,
+      files,
       scene_code: codeChars,
       repeat_chars: repeatChars,
       repeat_share: codeChars ? round(repeatChars / codeChars, 3) : null,
@@ -312,4 +447,33 @@ export function frameStats(frames) {
   const work = frames.map((f) => f[1]).sort((a, b) => a - b)
   const stats = (sorted) => ({ median: round(median(sorted), 1), p95: round(quantile(sorted, 0.95), 1), max: round(sorted.length ? sorted[sorted.length - 1] : null, 1) })
   return { count: frames.length, interval_ms: stats(intervals), work_ms: stats(work), long_50ms: intervals.filter((v) => v > 50).length }
+}
+
+// ---------- A run folder again ----------
+
+/** The files the agent of a model run wrote (metrics: the run's metrics.json, for its client and transcript; dir: the run folder). */
+export function runFileWrites(metrics, dir) {
+  if (metrics.client === 'claude') return claudeFileWrites(metrics.transcript ?? null)
+  if (metrics.client === 'codex') return codexFileWrites({ rollout: metrics.transcript ?? null, execJsonl: join(dir, 'work-codex.jsonl') })
+  return []
+}
+
+/** The numbers of a run folder again, from its calls.json (times from the run's start) and the agent's file writes. */
+export function runMetrics(dir) {
+  const metrics = JSON.parse(readFileSync(join(dir, 'metrics.json'), 'utf8'))
+  const t0 = Date.parse(metrics.timestamp)
+  const iso = (s) => new Date(t0 + s * 1000).toISOString()
+  const calls = JSON.parse(readFileSync(join(dir, 'calls.json'), 'utf8')).map((c) => ({ t: iso(c.t_s), end: iso(c.end_s ?? c.t_s), duration_ms: c.ms, tool: c.tool, args: c.args, ok: c.ok, result_text: c.result, images: c.images ?? [] }))
+  const wallEnd = t0 + (metrics.time?.wall ?? 0) * 1000
+  return callMetrics(calls, { t0, wallEnd, tracesDir: join(dir, 'trace'), fileWrites: runFileWrites(metrics, dir) })
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const dir = process.argv[2]
+  if (!dir) {
+    console.error('usage: node scripts/perf/metrics.mjs <run folder>')
+    process.exit(2)
+  }
+  const m = runMetrics(resolve(dir))
+  console.log(JSON.stringify({ written: m.written, calls: m.calls }, null, 2))
 }
