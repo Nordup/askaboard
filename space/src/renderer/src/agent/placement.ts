@@ -34,15 +34,15 @@ export function sceneOf(board: BoardHandle, groups: () => InkGroup[]): Scene {
 /** A node or an ink group, by id. */
 export type Target = { kind: 'node'; id: string; node: BoardNode; box: Region | null } | { kind: 'group'; id: string; group: InkGroup; box: Region }
 
-export function resolveTarget(s: Scene, id: unknown, what = 'node_id'): Target {
+export function resolveTarget(s: Scene, id: unknown, what = 'id'): Target {
   if (typeof id !== 'string' || !id) throw new Error(`${what} is required.`)
   if (isGroupId(id)) {
     const group = s.groupById.get(id)
-    if (!group) throw new Error(`No ink group "${id}" on the open board. get_canvas_info lists the groups.`)
+    if (!group) throw new Error(`No ink group "${id}" on the open board. get_board() lists the groups.`)
     return { kind: 'group', id, group, box: group.bounds }
   }
   const node = s.index.byId.get(id)
-  if (!node) throw new Error(`No node "${id}" on the open board. Call get_tree to see the node ids.`)
+  if (!node) throw new Error(`No node "${id}" on the open board. get_board() lists the ids.`)
   return { kind: 'node', id, node, box: s.layout.get(id) ?? null }
 }
 

@@ -26,6 +26,7 @@
  * Needs Node 22+ (global fetch and WebSocket). Exit code 0 on success, 1 on error.
  */
 import { readFileSync, writeFileSync } from 'node:fs'
+import { findAppPage } from './app-page.mjs'
 
 const USAGE = `usage: node scripts/drive.mjs [--port N] <command>
   draw <file.json|-> [--tool pen|highlighter|eraser] [--no-pan] [--fast]
@@ -64,19 +65,12 @@ function takeOption(name) {
 
 // ---------- CDP ----------
 
+/** How long drive waits for the board window and its dev hook (the app may still be starting or reloading). */
+const READY_TIMEOUT_MS = 20_000
+
 async function connect(port) {
-  let targets
-  try {
-    const response = await fetch(`http://127.0.0.1:${port}/json/list`)
-    targets = await response.json()
-  } catch {
-    throw new Failure(
-      `No app with remote debugging on 127.0.0.1:${port}. Start it with SPACE_REMOTE_DEBUG=${port} npm run dev (dev builds only).`
-    )
-  }
-  // Skip the hidden window that renders agent screenshots (?snapshot=1).
-  const page = targets.find((target) => target.type === 'page' && !target.url.startsWith('devtools://') && !target.url.startsWith('ls-stage:') && !target.url.includes('snapshot=1'))
-  if (!page) throw new Failure(`Port ${port} answers, but it has no app page. Is the window open?`)
+  // The board window by its URL; the stage and snapshot pages are never picked (scripts/app-page.mjs).
+  const page = await findAppPage(port, { timeoutMs: READY_TIMEOUT_MS, makeError: (message) => new Failure(message) })
 
   const socket = new WebSocket(page.webSocketDebuggerUrl)
   await new Promise((resolve, reject) => {
@@ -109,9 +103,33 @@ async function evaluate(cdp, expression) {
   return result.result.value
 }
 
-async function requireDevHook(cdp) {
-  const ok = await evaluate(cdp, 'typeof window.__spaceDev === "object"')
-  if (!ok) throw new Failure('The page has no window.__spaceDev. Start the app with SPACE_REMOTE_DEBUG set (dev builds only).')
+/**
+ * Wait until the page has window.__spaceDev (set when App mounts) and, with
+ * board, an open board on screen. A page that loads or reloads answers
+ * "not yet" or a destroyed-context error; both mean wait.
+ */
+async function requireDevHook(cdp, { board = false } = {}) {
+  const check = board
+    ? '!window.__spaceDev ? "no hook" : !window.__spaceDev.state()?.board || !window.__spaceDev.canvasRect() ? "no board" : "ready"'
+    : 'window.__spaceDev ? "ready" : "no hook"'
+  const deadline = Date.now() + READY_TIMEOUT_MS
+  let last = 'no answer'
+  for (;;) {
+    try {
+      last = await evaluate(cdp, `(() => { try { return ${check} } catch (e) { return "error: " + e.message } })()`)
+    } catch (error) {
+      last = error.message
+    }
+    if (last === 'ready') return
+    if (Date.now() > deadline) {
+      const url = await evaluate(cdp, 'location.href').catch(() => '?')
+      if (last === 'no board') throw new Failure(`No board is open in the app (waited ${READY_TIMEOUT_MS / 1000} s on ${url}).`)
+      throw new Failure(
+        `The page ${url} has no window.__spaceDev after ${READY_TIMEOUT_MS / 1000} s (last: ${last}). Start the app with SPACE_REMOTE_DEBUG set (dev builds only).`
+      )
+    }
+    await sleep(100)
+  }
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -143,9 +161,7 @@ function parseStrokes(text) {
 }
 
 async function draw(cdp, strokes, tool, pan, fast = false) {
-  await requireDevHook(cdp)
-  const state = await evaluate(cdp, 'window.__spaceDev.state()')
-  if (!state.board) throw new Failure('No board is open in the app.')
+  await requireDevHook(cdp, { board: true })
   await evaluate(cdp, `window.__spaceDev.setTool(${JSON.stringify(tool)})`)
   // Input only reaches the board where the canvas is on screen: pan to the strokes first.
   const xs = strokes.flat().map((point) => point[0])
@@ -331,7 +347,7 @@ async function typeText(cdp, text) {
 }
 
 async function nodeRect(cdp, id) {
-  await requireDevHook(cdp)
+  await requireDevHook(cdp, { board: true })
   const rect = await evaluate(cdp, `window.__spaceDev.nodeRect(${JSON.stringify(id)})`)
   if (!rect) throw new Failure(`No node "${id}" with a known layout on the open board.`)
   // The element's real on-screen rect: it must match the layout rect, or the DOM and the camera disagree.
@@ -426,7 +442,7 @@ async function main() {
     const [x, y] = rest.map(Number)
     if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Failure('camera needs <x> <y> in board points.')
     run = async (cdp) => {
-      await requireDevHook(cdp)
+      await requireDevHook(cdp, { board: true })
       // reveal() only moves when the rect is out of view: go far away first, then come back centred on (x, y).
       await evaluate(cdp, 'window.__spaceDev.reveal(1e6, 1e6, 1, 1)')
       await sleep(50)

@@ -6,8 +6,8 @@
 
 - The board is a tree of nodes: frame (a box that holds children), text, svg, image<!-- code-items -->, live (program, shader and canvas items)<!-- /code-items --> and ink (pen strokes).
 - Ink is the learner's handwriting (author "learner") or yours. Ink inside a frame moves with the frame.
-- Every node has a stable id. get_tree returns ids, kinds, names and world bounds as "x,y w×h".
-- Ink groups: the app clusters strokes by distance and time into groups g1, g2, …. A group holds the strokes of one parent (the top level or one frame) and one author; each ink object of a scene is a group of its own. A group keeps its id while the learner adds to it, merged groups keep the older id, and ids are not reused. A group id works wherever a node id does: board.node("g3") in a scene, get_screenshot's node_id, get_node_info.
+- Every node has a stable id. get_board returns ids, kinds, names and world bounds as "x,y w×h".
+- Ink groups: the app clusters strokes by distance and time into groups g1, g2, …. A group holds the strokes of one parent (the top level or one frame) and one author; each ink object of a scene is a group of its own. A group keeps its id while the learner adds to it, merged groups keep the older id, and ids are not reused. A group id works wherever a node id does: board.node("g3") in a scene, the part of get_board and get_screenshot, get_item.
 - Top-level nodes sit at their x, y on the board. <!-- html -->Children of a flex frame are placed by the flex layout. Children of a free frame sit<!-- /html: Children of a frame sit --> at their x, y inside the frame.
 - All writing on the board happens in scenes (write_scene, preview_scene, play_scene; topic "scene"): drawing, typeset text, <!-- html -->HTML material, <!-- /html -->pictures, copies, edits, moves and deletions are all steps of a scene's program.<!-- html -->
 
@@ -17,7 +17,7 @@
 
 Use html() for material the learner reads and keeps: pages, exercises, tables, cards. Drawings and explanations are ink and shapes in a scene (topic "scene").
 
-html(markup, o) in a scene (topic "scene") turns a small HTML subset into board nodes. get_html returns an existing node in the same subset.
+html(markup, o) in a scene (topic "scene") turns a small HTML subset into board nodes. get_item with as "html" returns an existing node in the same subset.
 
 - Styles are inline only (style="…"): no <style>, no classes, no scripts.
 - Boxes: a <div> with child elements becomes a frame. Layout comes from display:flex with flexDirection, gap, padding, alignItems and justifyContent. There is no margin, grid, table or float; spacing comes from gap and padding.
@@ -45,7 +45,7 @@ html(markup, o) in a scene (topic "scene") turns a small HTML subset into board 
 <!-- summary: Inline SVG in html(): size, element ids, markers, gradients, colour and how draw() shows it. -->
 
 - An inline <svg> with a viewBox in html() becomes an svg node. It needs a width and height, in its style or as attributes.
-- Shape ids (id="atom-a") are kept, and get_node_info lists them. Ids are scoped per drawing, so two drawings can both use "arrow".
+- Shape ids (id="atom-a") are kept, and get_item lists them. Ids are scoped per drawing, so two drawings can both use "arrow".
 - Markers and gradients work with url(#id) inside the same svg. Scripts, foreignObject, external links and images are not kept.
 - Colour tokens work as attribute values (fill="var(--ls-accent)"; topic "tokens"). A fill or stroke of "currentColor" follows the svg's color style, so edit(item, {style: {color}}) recolours those shapes.
 - draw() draws the outlines along their length, one shape after another in document order, then shows the fills.
@@ -192,7 +192,7 @@ Use a live item for what a scene of ink and shapes cannot do: input from the lea
 
 `program(src, o)` in a scene makes a live item whose pixels come from your own program. Options as `canvas()`: o.at (top-left) or o.center, o.size [w, h] in board points (default [320, 200]), o.params {name: number}.
 
-**How it runs.** `src` is JavaScript that runs once when the item appears on the board, in a worker of its own, and keeps running while the item exists. It owns its loop: `requestAnimationFrame(fn)` calls fn on the next display frame. Items of a scene that plays or waits run from the scene's start, in view or not; any other item runs only in the learner's view, stops 15 s after it leaves the view, and starts again from its current time when it returns. When too many items need the GPU at once, some wait (get_node_info state "waiting"). Top-level `await`, `import` lines and `import()` work. The worker has the browser's worker APIs (OffscreenCanvas, typed arrays, fetch, WebAssembly, Worker for more threads, `navigator.gpu` for WebGPU) and no DOM. The network is open: fetch and import work from any URL. The program runs in an origin of its own, apart from the app, the other items and the learning folder's files.
+**How it runs.** `src` is JavaScript that runs once when the item appears on the board, in a worker of its own, and keeps running while the item exists. It owns its loop: `requestAnimationFrame(fn)` calls fn on the next display frame. Items of a scene that plays or waits run from the scene's start, in view or not; any other item runs only in the learner's view, stops 15 s after it leaves the view, and starts again from its current time when it returns. When too many items need the GPU at once, some wait (get_item state "waiting"). Top-level `await`, `import` lines and `import()` work. The worker has the browser's worker APIs (OffscreenCanvas, typed arrays, fetch, WebAssembly, Worker for more threads, `navigator.gpu` for WebGPU) and no DOM. The network is open: fetch and import work from any URL. The program runs in an origin of its own, apart from the app, the other items and the learning folder's files.
 
 **Imports.** Served by the app, with no network: `three` (three.js 0.186.1), `three/webgpu`, `three/tsl`, `three/addons/…` (the same files as `three/examples/jsm/…`), and `ls/interact` (ready-made input code, topic "scene-interact"). Any other bare name loads from esm.sh (`import * as d3 from "d3"` loads https://esm.sh/d3); a full URL loads as it is.
 
@@ -206,9 +206,9 @@ Use a live item for what a scene of ink and shapes cannot do: input from the lea
 - `on(type, fn)`: the same as canvas.addEventListener; it returns a function that removes the listener. Types: "step" (e.name, e.previous; when scene.step changes, also by a seek), "resize" (e.w, e.h, e.dpr), "enter" and "leave" (input "enter"), and the input events below.
 - `input(mode)`: how the item takes the learner's pointer. "none" (the default): the pen draws on the item, and that ink becomes the item's child. "enter": the learner double-clicks the item (select tool) to give it the pointer, wheel and keys; Escape or a press outside the item gives them back to the board; a thin accent outline shows it meanwhile. "direct": the item always gets the pointer and the wheel over it; the pen does not draw there and the board does not pan there.
 - Input events, dispatched on canvas: pointerdown, pointermove, pointerup, pointercancel, pointerenter, pointerleave, click, dblclick, contextmenu, wheel, keydown, keyup. Their fields: type, offsetX, offsetY (board points inside the item), clientX, clientY, movementX, movementY, button, buttons, pointerId, pointerType, isPrimary, pressure, tiltX, tiltY, width, height, shiftKey, ctrlKey, altKey, metaKey, deltaX, deltaY, deltaZ, deltaMode, key, code, repeat, detail. The board does nothing with events the item gets.
-- `report(values)`: plain data (at most 4000 characters as JSON) that get_node_info shows as `report`; the latest call wins.
+- `report(values)`: plain data (at most 4000 characters as JSON) that get_item shows as `report`; the latest call wins.
 
-**Errors.** write_scene runs each program for a moment before the scene plays: a syntax error, a failed import or an error in its first frames is a program error at the line of the program() call, with the line inside src. A later error stops the program: the item shows a quiet error note, and get_node_info gives state "error" with the message and its line.
+**Errors.** write_scene runs each program for a moment before the scene plays: a syntax error, a failed import or an error in its first frames is a program error at the line of the program() call, with the line inside src. A later error stops the program: the item shows a quiet error note, and get_item gives state "error" with the message and its line.
 
 ## Ready-made input code (ls/interact)
 <!-- topic: scene-interact -->

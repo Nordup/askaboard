@@ -81,6 +81,25 @@ export class ChangeLog {
     return { kind: 'new' }
   }
 
+  /** The last change of node `id` with from < seq <= to (its `after` is the node as it was at `to`), or null when the log holds none. */
+  lastRevisionIn(id: string, from: number, to: number): Revision | null {
+    const list = this.revisions.get(id) ?? []
+    for (let i = list.length - 1; i >= 0; i--) if (list[i].seq > from && list[i].seq <= to) return list[i]
+    return null
+  }
+
+  /** The removals with from < seq <= to, the last one per id. */
+  between(from: number, to: number): Tombstone[] {
+    const last = new Map<string, Tombstone>()
+    for (const tombstone of this.tombstones) if (tombstone.seq > from && tombstone.seq <= to) last.set(tombstone.id, tombstone)
+    return [...last.values()]
+  }
+
+  /** How many removals the log holds, and the most it keeps. */
+  removalCount(): { held: number; max: number } {
+    return { held: this.tombstones.length, max: MAX_TOMBSTONES }
+  }
+
   record(removed: readonly Removal[]): void {
     const at = Date.now()
     for (const { node, seq, bounds, by } of removed) {

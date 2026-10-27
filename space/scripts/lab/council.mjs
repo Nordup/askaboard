@@ -240,7 +240,7 @@ async function main() {
     })
     await media('board picture', () =>
       withMcp(state.mcpPort, async (call) => {
-        const shot = await call('get_screenshot', { target: 'content', max_size: 2400 })
+        const shot = await call('get_screenshot', { part: 'board', max_size: 2400 })
         const image = shot.content?.find((p) => p.type === 'image')
         if (image) writeFileSync(join(dir, 'board.png'), Buffer.from(image.data, 'base64'))
       })

@@ -124,17 +124,6 @@ export interface BoardRect {
   height: number
 }
 
-export type ScreenshotTarget = 'viewport' | 'content' | 'selection' | 'changes' | 'region'
-
-/** A top-level node in get_canvas_info. */
-export interface TopLevelSummary {
-  id: string
-  kind: string
-  name?: string
-  author?: string
-  bounds: BoardRect | null
-}
-
 /** One item in a get_changes answer. */
 export interface ChangedItem {
   id: string
@@ -179,40 +168,6 @@ export interface RemovedItem {
   by?: string
   bounds: BoardRect | null
   seq: number
-}
-
-export interface ChangeSet {
-  board: string
-  /** Items with seq > since that are on the board now. */
-  changed: ChangedItem[]
-  /** Items removed with seq > since. */
-  removed: RemovedItem[]
-  /** The highest seq seen now (nextSeq - 1). Pass it back as `since`: nothing repeats. */
-  cursor: number
-  /** Ink groups that hold changed strokes. */
-  groups_changed?: InkGroupSummary[]
-}
-
-export interface CanvasInfo {
-  folder: { name: string; path: string } | null
-  board: { path: string; name: string } | null
-  boards: string[]
-  viewport: BoardRect | null
-  contentBounds: BoardRect | null
-  itemCount: number
-  selection: { ids: string[]; bounds: BoardRect | null }
-  tool: string
-  zoom: number | null
-  /** The highest seq on the board (nextSeq - 1): the change cursor value for "now". */
-  cursor: number | null
-  /** Node counts by kind. */
-  counts?: Record<string, number>
-  /** Top-level content nodes, in draw order. */
-  topLevel?: TopLevelSummary[]
-  /** Every ink group (top level and inside frames). */
-  inkGroups?: InkGroupSummary[]
-  /** Parts of the view that app UI covers (the script panel): the learner cannot see material there. Absent when nothing covers the view. */
-  covered?: CoveredRect[]
 }
 
 /** A part of the learner's view that app UI covers, in board points. */
@@ -284,9 +239,6 @@ export interface SnapshotPlayback {
 
 /** The board tools the renderer runs (see agent/edits.ts). Results are plain JSON. */
 export type AgentToolName =
-  | 'getTree'
-  | 'getNodeInfo'
-  | 'getHtml'
   | 'sceneContext'
   | 'runScene'
   | 'sceneDraft'
@@ -332,7 +284,9 @@ export type ScreenshotPlan =
       height: number
       outlines: SnapshotOutline[]
       overlays: SnapshotOverlays
-      changes?: { changed: number; removed: number }
+      changes?: { changed: number; removed: number; handle: string }
+      /** What the image shows, in words ("the view", "scene \"lengths\""). */
+      what: string
       cursor: number
       background: string
       /** A live scene plays: the image shows this moment of it. */
@@ -388,23 +342,35 @@ export interface LiveStillsItem {
  * board (with unsaved strokes). `since: null` means "from now": no changes.
  */
 export interface AgentMethods {
-  canvasInfo: { params: Record<string, never>; result: CanvasInfo }
-  changes: { params: { since: number | null }; result: ChangeSet }
+  /** The open board and the highest seq on it (the change cursor for "now"). */
+  cursorInfo: { params: Record<string, never>; result: { board: { path: string } | null; cursor: number | null } }
+  /** get_board: the outline text of a part, or search results. look: the session's change cursor on this board. scenes: the stage log's scene names. */
+  boardRead: {
+    params: { part?: unknown; find?: string; depth?: number; look: number | null; scenes: Array<{ id: string; name: string | null }> }
+    result: { board: string; cursor: number; text: string }
+  }
+  /** get_item: one or more ids as one form. */
+  itemRead: { params: { id: string | string[]; as?: string; include_ids?: boolean; scenes: Array<{ id: string; name: string | null }> }; result: string }
+  /** get_changes: the net changes from (exclusive) to (inclusive; null = now), as text, or each item (detail "items"). */
+  changeReport: {
+    params: { from: number; to: number | null; detail?: 'items'; all: boolean; again: boolean; scenes: Array<{ id: string; name: string | null }> }
+    result: { board: string; cursor: number; text: string }
+  }
   screenshotPlan: {
     params: {
-      target: ScreenshotTarget | 'node'
-      region?: BoardRect
-      nodeId?: string
+      /** A part form (agent/reads.ts PartArg). */
+      part?: unknown
       scale: number
       /** The longest image side in px; null picks the default for the shot's size. */
       maxSize: number | null
-      since: number | null
       labels?: boolean
       grid?: boolean
+      scenes: Array<{ id: string; name: string | null }>
     }
     result: ScreenshotPlan
   }
-  openBoard: { params: { path: string }; result: CanvasInfo }
+  /** Open a board; the result is the get_board overview of it. */
+  openBoard: { params: { path: string; look: number | null; scenes: Array<{ id: string; name: string | null }> }; result: { board: string; cursor: number; text: string } }
   /** The learner's changes after `since`; null when no board is open. */
   learnerNews: { params: { since: number }; result: LearnerNews | null }
   agentTool: { params: { tool: AgentToolName; args: Record<string, unknown> }; result: unknown }

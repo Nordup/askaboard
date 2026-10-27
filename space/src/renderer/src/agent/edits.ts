@@ -1,18 +1,17 @@
-import { isFrame, isInk, isKnown, isLive, type BoardNode } from '@shared/board-format'
+import { isKnown, type BoardNode } from '@shared/board-format'
 import type { AgentToolName, BoardRect } from '@shared/space-api'
 import type { BoardHandle } from '../board/Board'
-import { nodesToHtml } from '../board/html'
-import { parentKey, ROOT, withDescendants, isFlowed } from '../board/scene'
+import { parentKey, ROOT, isFlowed } from '../board/scene'
 import type { Region } from '../board/types'
-import { liveReport, liveStatus, liveSummary } from '../live-pixels/registry'
+import { liveReport, liveStatus } from '../live-pixels/registry'
 import { runScene, sceneDraft, sceneFrames, sceneControl, sceneContext } from '../live/run'
 import { isGroupId, type InkGroup, type InkGroupTracker } from './groups'
 import { resolveTarget, sceneOf, type Scene } from './placement'
 
 /**
  * The agent's board tools that run in the renderer against the live board:
- * the reads (get_tree, get_node_info, get_html) and live scenes (write_scene,
- * preview_scene, play_scene), the one way agents write.
+ * live scenes (write_scene, preview_scene, play_scene), the one way agents
+ * write, and getNodeInfo for get_item (the reads are in reads.ts).
  */
 
 export interface EditContext {
@@ -35,10 +34,10 @@ function scene(ctx: EditContext): Scene {
   return sceneOf(ctx.board, ctx.groups)
 }
 
-function requireNode(s: Scene, id: unknown, what = 'node_id'): BoardNode {
+function requireNode(s: Scene, id: unknown, what = 'id'): BoardNode {
   if (typeof id !== 'string' || !id) throw new Error(`${what} is required.`)
   const node = s.index.byId.get(id)
-  if (!node) throw new Error(`No node "${id}" on the open board. Call get_tree to see the node ids.`)
+  if (!node) throw new Error(`No node "${id}" on the open board. get_board() lists the ids.`)
   return node
 }
 
@@ -51,73 +50,16 @@ function originOf(s: Scene, key: string): [number, number] {
 
 // ---------- Read tools ----------
 
-function nodeLine(s: Scene, node: BoardNode): string {
-  const box = s.layout.get(node.id)
-  const where = box ? `${Math.round(box.x)},${Math.round(box.y)} ${Math.round(box.width)}×${Math.round(box.height)}` : '(no layout)'
-  const name = typeof node.name === 'string' && node.name ? ` "${node.name}"` : ''
-  let extra = ''
-  if (node.kind === 'text' && typeof node.text === 'string') {
-    const text = node.text.replace(/\s+/g, ' ')
-    extra = `  “${text.length > 48 ? `${text.slice(0, 47)}…` : text}”`
-  }
-  if (isKnown(node) && node.kind === 'frame' && node.style.display === 'flex') extra = `  flex ${node.style.flexDirection ?? 'row'}`
-  if (isLive(node)) extra = `  ${liveSummary(node)}`
-  const author = isKnown(node) && node.author === 'learner' ? '  (learner)' : ''
-  return `${node.kind}${name} ${node.id}  ${where}${extra}${author}`
-}
-
-function getTree(s: Scene, args: Record<string, unknown>): string {
-  const depth = Math.max(1, Math.min(10, typeof args.depth === 'number' ? Math.floor(args.depth) : 3))
-  const lines: string[] = []
-  const inkGroups = (key: string, indent: string): void => {
-    for (const group of s.groups) {
-      if (group.parent !== key) continue
-      const b = group.bounds
-      const count = `${group.strokes.length} stroke${group.strokes.length === 1 ? '' : 's'}`
-      lines.push(`${indent}ink group ${group.id}  ${Math.round(b.x)},${Math.round(b.y)} ${Math.round(b.width)}×${Math.round(b.height)}  ${count}  (${group.author})`)
-    }
-  }
-  const walk = (key: string, level: number, indent: string): void => {
-    for (const node of s.index.children.get(key) ?? []) {
-      if (isInk(node)) continue
-      lines.push(indent + nodeLine(s, node))
-      if (isLive(node)) inkGroups(node.id, `${indent}  `)
-      if (isFrame(node)) {
-        if (level < depth) {
-          walk(node.id, level + 1, `${indent}  `)
-          inkGroups(node.id, `${indent}  `)
-        } else {
-          const count = withDescendants([node.id], s.index).size - 1
-          if (count) lines.push(`${indent}  … ${count} node(s) below (raise depth)`)
-        }
-      }
-    }
-  }
-  if (args.node_id !== undefined) {
-    const node = requireNode(s, args.node_id)
-    lines.push(nodeLine(s, node))
-    if (isFrame(node) && depth > 1) {
-      walk(node.id, 2, '  ')
-      inkGroups(node.id, '  ')
-    }
-    if (isLive(node)) inkGroups(node.id, '  ')
-  } else {
-    lines.push(`board: ${s.nodes.length} node(s); x,y w×h are world bounds in board points; ink shows as groups (g1, g2, …): use a group id like a node id`)
-    walk(ROOT, 1, '')
-    inkGroups(ROOT, '')
-  }
-  return lines.join('\n')
-}
-
-function getNodeInfo(s: Scene, args: Record<string, unknown>): unknown {
-  if (isGroupId(args.node_id)) {
-    const target = resolveTarget(s, args.node_id)
+/** get_item as "info" for one node: every stored detail. */
+export function getNodeInfo(s: Scene, id: unknown): unknown {
+  if (isGroupId(id)) {
+    const target = resolveTarget(s, id)
     if (target.kind === 'group') {
       const g = target.group
       return { id: g.id, kind: 'ink group', author: g.author, parent: g.parent || null, bounds: rect(g.bounds), strokes: g.strokes, seq: g.seq }
     }
   }
-  const node = requireNode(s, args.node_id)
+  const node = requireNode(s, id)
   const key = parentKey(node, s.index.byId)
   const box = s.layout.get(node.id)
   const origin = originOf(s, key)
@@ -166,15 +108,6 @@ function getNodeInfo(s: Scene, args: Record<string, unknown>): unknown {
 /** Run one board tool. Throws an Error with an agent-readable message. */
 export async function runEditTool(ctx: EditContext, tool: AgentToolName, args: Record<string, unknown>): Promise<unknown> {
   switch (tool) {
-    case 'getTree':
-      return getTree(scene(ctx), args)
-    case 'getNodeInfo':
-      return getNodeInfo(scene(ctx), args)
-    case 'getHtml': {
-      const s = scene(ctx)
-      const node = requireNode(s, args.node_id)
-      return nodesToHtml(node.id, s.index, args.include_ids !== false)
-    }
     case 'sceneContext':
       return sceneContext(ctx.board, scene(ctx), ctx.path)
     case 'runScene': {

@@ -27,9 +27,9 @@ import {
   type LiveStillsItem,
   type AgentReply,
   type AgentServerStatus,
-  type AgentSessionInfo,
-  type CanvasInfo
+  type AgentSessionInfo
 } from '@shared/space-api'
+import type { SceneItem } from '@shared/live-scene'
 
 /**
  * The MCP server for external agents (Codex, Claude Code). Streamable HTTP on
@@ -62,9 +62,6 @@ const IDLE_SESSION_MS = 10 * 60_000
 const PRUNE_INTERVAL_MS = 30_000
 const PUBLISH_THROTTLE_MS = 2000
 
-const COORDINATES_NOTE =
-  'Board coordinates are logical points with the origin at the board centre, +x to the right and +y down. Rects are {x, y, width, height} with (x, y) the top-left corner.'
-
 export interface AgentServerHooks {
   /** Draws pixel screenshots (content and ink). */
   snapshots: SnapshotRenderer
@@ -93,12 +90,6 @@ interface Session {
   openStreams: number
   /** The change cursor per board path. */
   cursors: Map<string, number>
-  /**
-   * Per board: where the first get_changes since the last "changes" screenshot
-   * started. A "changes" screenshot starts here, so get_changes followed by
-   * get_screenshot("changes") shows the items that get_changes listed.
-   */
-  listedFrom: Map<string, number>
   /** The session trace (see trace.ts); opened when the client says who it is. */
   trace?: SessionTrace
 }
@@ -159,7 +150,8 @@ function failure(error: unknown): CallToolResult {
   return { content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }], isError: true }
 }
 
-const json = (value: unknown): string => JSON.stringify(value, null, 2)
+/** Tool results are read by programs and agents, never by a person: compact JSON, no indentation. */
+const json = (value: unknown): string => JSON.stringify(value)
 
 /** A scene as the agent names it: its name (a replay says so), else its id. */
 function sceneLabel(id: unknown, name: unknown): string | null {
@@ -183,6 +175,27 @@ function publicStatus(status: unknown): Record<string, unknown> {
     queue: Array.isArray(queue) ? queue.map((entry: { scene: string; name: string | null; duration_s: number }) => ({ scene: sceneLabel(entry.scene, entry.name), duration_s: entry.duration_s })) : [],
     ...other
   }
+}
+
+/** play_scene start's items: how many by kind, and the named ones with their ids (the same shape as write_scene's items, plus ids). */
+function itemsSummary(items: SceneItem[]): { total: number; by_kind: Record<string, number>; named: Array<{ name: string; kind: string; id: string; step?: string }> } {
+  const byKind: Record<string, number> = {}
+  const named: Array<{ name: string; kind: string; id: string; step?: string }> = []
+  for (const item of items) {
+    byKind[item.kind] = (byKind[item.kind] ?? 0) + 1
+    if (item.name) named.push({ name: item.name, kind: item.kind, id: item.id, ...(item.step ? { step: item.step } : {}) })
+  }
+  return { total: items.length, by_kind: byKind, named }
+}
+
+/** A change interval handle "c115-c1115" as seqs (c0: everything, below the seq 0 of files that carry none). */
+function parseInterval(handle: string): { from: number; to: number } {
+  const match = /^c(\d+)-c(\d+)$/.exec(handle.trim())
+  if (!match) throw new Error(`"${handle}" is not a change interval. Intervals look like "c115-c1115"; get_changes returns them.`)
+  const from = Number(match[1])
+  const to = Number(match[2])
+  if (to < from) throw new Error(`The change interval "${handle}" ends before it starts.`)
+  return { from: from === 0 ? -1 : from, to }
 }
 
 /** The play_scene actions besides start (see the play_scene tool). */
@@ -265,6 +278,15 @@ const rectSchema = z.object({
   width: boxSize(MAX_REGION_SIZE),
   height: boxSize(MAX_REGION_SIZE)
 })
+/** One address for get_board and get_screenshot (docs/learning-space/drafts/board-tools-redesign-2026-10-27.md, section 10). */
+const partForms = [
+  z.string().min(1),
+  z.object({ region: rectSchema }).strict(),
+  z.object({ id: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]) }).strict(),
+  z.object({ scene: z.string().min(1), step: z.union([z.number().int().min(1), z.string().min(1)]).optional() }).strict()
+] as const
+/** get_item's forms; "html" only with HTML material (lab switch LS_LAB_NO_HTML). */
+const ITEM_FORMS = (NO_HTML ? ['info', 'svg', 'strokes', 'points', 'source'] : ['info', 'html', 'svg', 'strokes', 'points', 'source']) as [string, ...string[]]
 
 // ---------- The server ----------
 
@@ -489,8 +511,7 @@ export class AgentServer {
       connectedAt: Date.now(),
       lastActivity: Date.now(),
       openStreams: 0,
-      cursors: new Map(),
-      listedFrom: new Map()
+      cursors: new Map()
     }
     this.registerTools(session)
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair()
@@ -526,8 +547,7 @@ export class AgentServer {
       connectedAt: Date.now(),
       lastActivity: Date.now(),
       openStreams: 0,
-      cursors: new Map(),
-      listedFrom: new Map()
+      cursors: new Map()
     }
     session.transport.onclose = () => {
       if (!session.id || !this.sessions.delete(session.id)) return
@@ -667,7 +687,6 @@ export class AgentServer {
     else if (current > info.cursor) {
       console.warn(`mcp: ${path} seq went back from ${current} to ${info.cursor}; resetting the cursor`)
       session.cursors.set(path, info.cursor)
-      session.listedFrom.delete(path)
     }
   }
 
@@ -857,26 +876,50 @@ export class AgentServer {
     return { name, code, desc: run.desc, entry: run.entry, fresh: run.fresh, revision: this.stage.revision, epoch: this.stage.epoch, contextKey: contextKey(context), seq, info }
   }
 
-  private infoText(info: CanvasInfo): string {
-    return json({ ...info, coordinates: COORDINATES_NOTE })
+  /** The scene ids and names of the current stage, for the renderer's reads. */
+  private stageScenes(): Array<{ id: string; name: string | null }> {
+    return this.stage.log.filter((entry) => entry.scene).map((entry) => ({ id: entry.scene as string, name: entry.name ?? null }))
+  }
+
+  /** The session's change cursor on the open board after its first contact there, or null when no board is open. */
+  private async lookCursor(session: Session): Promise<number | null> {
+    const info = await this.bridge.request('cursorInfo', {})
+    this.touchCursor(session, info)
+    return info.board ? (session.cursors.get(info.board.path) ?? null) : null
   }
 
   private registerTools(session: Session): void {
     const server = session.server
 
     server.registerTool(
-      'get_canvas_info',
+      'get_board',
       {
-        title: 'Canvas info',
-        description:
-          "Returns the current state of Learning Space as structured text: the learning folder (name and absolute path), the open board and the other boards in the folder, the learner's visible view and the bounds of all content, node counts by kind, the top-level nodes (id, kind, name, author, bounds), the ink groups (id such as \"g3\", author, parent, stroke count, bounds), the learner's selection and current tool, and your change cursor.\n\nUse it when you start work on a board, and whenever you need ids, sizes or free areas. It returns no image: to see what is written or drawn, use get_screenshot.\n\n- Coordinates are board points: origin at the centre, +x right, +y down.\n- covered (when present) lists the parts of the view that the app's script panel and tool palette cover while scenes play; the learner cannot see material there.\n- How the app groups strokes into ink groups, and how their ids behave, is in get_guide topic \"model\".",
-        inputSchema: {},
+        title: 'The board',
+        description: `Returns a compact text outline of the open board. It starts with the current state: the learning folder, the open board and the other boards in the folder, the learner's view, the learner's selection and current tool, a scene that plays, and your change cursor. Then it lists what is in the part you ask for, one line per item with kind, name, id and bounds ("x,y w×h"), grouped as the learner's work (their ink groups and items), your scenes (the items each scene made), material (frames and HTML material, by title) and other items. Text shows its first words; ink shows as ink groups with author and stroke count.
+
+Use it when you start work on a board, and whenever you need ids, sizes or free areas, or want to see how material is grouped. It returns no image: to see what is written or drawn, use get_screenshot.
+
+- part chooses what to outline: "view" (what the learner sees now; the default), "board" (the whole board), {region: {x, y, width, height}}, {id: "g3"} or {id: [...]} (items, ink groups or frames, with what they hold), {scene: "name"} (the items a scene made), or "boards" (the paths of all boards in the folder). A plain string works for an id or a name that only one thing has; when several have it, the result lists them.
+- With part "view", the items outside the view are summarised by place, each place with its region.
+- With part "view" or "board", when there are many items, the outline summarises them by area, with counts and a region for each. Each area opens with one more call; nothing is left out.
+- find searches the text on the open board: text, HTML material, names, and the names and lines of the scenes played since the app started. Handwriting is not text: read it with get_screenshot.
+- The last line names the calls that show more.
+- Coordinates are board points: origin at the centre, +x right, +y down.
+- How the app groups strokes into ink groups, and how their ids behave, is in get_guide topic "model".`,
+        inputSchema: {
+          part: z
+            .union(partForms)
+            .optional()
+            .describe('What to outline: "view" (default), "board", {region}, {id}, {scene}, "boards", or an id or name that only one thing has.'),
+          find: z.string().min(1).optional().describe('Text to search for on the open board. Returns each match with the words around it, its id and its place.'),
+          depth: z.number().int().min(1).max(10).optional().describe('How many levels inside frames to list, 1 to 10. Default 3.')
+        },
         annotations: { readOnlyHint: true }
       },
-      this.tool(session, 'get_canvas_info', async () => {
-        const info = await this.bridge.request('canvasInfo', {})
-        this.touchCursor(session, info)
-        return text(this.infoText(info))
+      this.tool(session, 'get_board', async ({ part, find, depth }) => {
+        const look = await this.lookCursor(session)
+        const out = await this.bridge.request('boardRead', { part, find, depth, look, scenes: this.stageScenes() })
+        return text(out.text)
       })
     )
 
@@ -884,44 +927,38 @@ export class AgentServer {
       'get_screenshot',
       {
         title: 'Screenshot of the board',
-        description:
-          "Renders part of the open board to a PNG image, the way the learner sees it (ink, text, maths, drawings, images; no app interface), with a text that maps image pixels to board points.\n\nUse it to read handwriting and to see how a drawing looks. For ids, sizes and structure, get_canvas_info and get_tree are much smaller.\n\n- What to capture: node_id (one node or ink group, with a small margin), region (an exact board rect), or target: \"viewport\" (what the learner sees now; the default), \"content\" (the whole board), \"selection\" (what the learner selected) or \"changes\".\n- target \"changes\" shows only what changed since your last \"changes\" screenshot: items added, moved, resized or edited in dashed blue boxes, removed items in dashed pink boxes. It moves your change cursor.\n- Any area works, also outside the learner's view.\n- labels: true adds id tags and outlines; grid: true adds board coordinates every 100 points. Both appear only in your image.\n- While a scene plays, the image shows the board at that moment, not the scene's end state, and the text says so.\n- Large areas make large images. A node_id or a small region gives the sharpest view of handwriting.",
+        description: `Renders part of the open board to a PNG image, the way the learner sees it (ink, text, maths, drawings, images; no app interface), with a text that maps image pixels to board points.
+
+Use it to read handwriting and to see how a drawing looks. For ids, sizes and structure, get_board is much smaller.
+
+- What to capture, with part: "view" (what the learner sees now; the default), "board" (the whole board), "selection" (what the learner selected), {region: {x, y, width, height}} (an exact board rect), {id: "g3"} or {id: [...]} (items or ink groups, with a small margin), {scene: "name"} (the items a scene made), or {changes: "c115-c1115"} (an interval from get_changes).
+- part {changes: …} shows the items of that interval: items added, moved, resized or edited in dashed blue boxes, removed items in dashed pink boxes.
+- Any area works, also outside the learner's view.
+- labels: true adds id tags and outlines; grid: true adds board coordinates every 100 points. Both appear only in your image.
+- While a scene plays, the image shows the board at that moment, not the scene's end state, and the text says so.
+- Large areas make large images. An id or a small region gives the sharpest view of handwriting.`,
         inputSchema: {
-          node_id: z.string().optional().describe('Capture this node (frame, text, svg, image or ink) or ink group ("g3").'),
-          region: rectSchema.optional().describe('Capture this board rect.'),
-          target: z.enum(['viewport', 'content', 'selection', 'changes', 'region']).optional().describe('What to capture when there is no node_id or region.'),
+          part: z
+            .union([...partForms, z.object({ changes: z.string().min(1) }).strict()])
+            .optional()
+            .describe('What to capture: "view" (default), "board", "selection", {region}, {id}, {scene}, {changes}, or an id or name that only one thing has.'),
           scale: z.number().positive().max(4).optional().describe('Image pixels per board point (default 1). Lowered when the image would exceed max_size.'),
-          max_size: z.number().int().min(256).max(4096).optional().describe('The longest image side in pixels. Default: 1024 for target "viewport" and "content" and for any area longer than 1000 board points; 1600 for smaller node and region crops.'),
+          max_size: z.number().int().min(256).max(4096).optional().describe('The longest image side in pixels. Default: 1024 for "view" and "board" and for any area longer than 1000 board points; 1600 for smaller crops.'),
           labels: z.boolean().optional().describe('Draw id tags and outlines on the image (default false).'),
           grid: z.boolean().optional().describe('Draw a board-coordinate grid on the image (default false).')
         },
         annotations: { readOnlyHint: true }
       },
-      this.tool(session, 'get_screenshot', async ({ node_id, region, target, scale, max_size, labels, grid }) => {
-        const kind = node_id ? 'node' : region && (!target || target === 'region') ? 'region' : (target ?? 'viewport')
-        let since: number | null = null
-        if (kind === 'changes') {
-          const info = await this.bridge.request('canvasInfo', {})
-          this.touchCursor(session, info)
-          const board = info.board?.path
-          since = board ? (session.listedFrom.get(board) ?? session.cursors.get(board) ?? null) : null
-        }
+      this.tool(session, 'get_screenshot', async ({ part, scale, max_size, labels, grid }) => {
         const plan = await this.bridge.request('screenshotPlan', {
-          target: kind,
-          region,
-          nodeId: node_id,
+          part,
           scale: scale ?? 1,
           maxSize: max_size ?? null,
-          since,
           labels: labels ?? false,
-          grid: grid ?? false
+          grid: grid ?? false,
+          scenes: this.stageScenes()
         })
-        if (kind === 'changes') {
-          session.cursors.set(plan.board, plan.cursor)
-          session.listedFrom.delete(plan.board)
-        } else if (!session.cursors.has(plan.board)) {
-          session.cursors.set(plan.board, this.startCursor(session, plan.board, plan.cursor))
-        }
+        if (!session.cursors.has(plan.board)) session.cursors.set(plan.board, this.startCursor(session, plan.board, plan.cursor))
         await this.looked(session, plan.board, plan.cursor)
         if (plan.kind === 'empty') return text(plan.message)
         const shot = await this.hooks.snapshots.capture({
@@ -935,7 +972,7 @@ export class AgentServer {
           background: plan.background,
           ...(plan.playback ? { playback: plan.playback } : {})
         })
-        const what = node_id ? `node ${node_id}` : `target "${kind}"`
+        const what = plan.what
         const playing = plan.playing
         const lines = [
           `Board "${plan.board}", ${what}.`,
@@ -944,7 +981,7 @@ export class AgentServer {
                 `A live scene ${playing.paused ? 'is paused' : 'is playing'} (${playing.name ? `"${playing.name}"` : playing.scene}, ${playing.t ?? 0} s of ${playing.duration ?? 0} s${playing.step ? `, step "${playing.step}"` : ''}): the image shows the board as the learner sees it at this moment, not the scene's end state.`
               ]
             : []),
-          `The image (${shot.width}×${shot.height} px) covers the board rect ${json(plan.rect).replace(/\s+/g, ' ')} at ${plan.scale} px per board point.`,
+          `The image (${shot.width}×${shot.height} px) covers the board rect ${json(plan.rect)} at ${plan.scale} px per board point.`,
           'Image pixel (px, py) is board point (x + px / scale, y + py / scale).'
         ]
         if (plan.overlays.labels.length) {
@@ -954,7 +991,7 @@ export class AgentServer {
         if (shot.missingImages) lines.push(`${shot.missingImages} image(s) did not load and show as empty.`)
         if (plan.changes) {
           lines.push(
-            `Dashed blue boxes: ${plan.changes.changed} new or changed item(s). Dashed pink boxes: erased items (${plan.changes.removed} in all; the image is cropped to the new material, so get_changes lists erased items outside it). Your change cursor is now ${plan.cursor}.`
+            `The interval ${plan.changes.handle}. Dashed blue boxes: ${plan.changes.changed} new or changed item(s). Dashed pink boxes: erased items (${plan.changes.removed} in all; the image is cropped to the new material, so get_changes lists erased items outside it).`
           )
         }
         console.log(`mcp: screenshot ${what} ${shot.width}x${shot.height} in ${shot.ms} ms`)
@@ -971,26 +1008,36 @@ export class AgentServer {
       'get_changes',
       {
         title: 'Changes since the last look',
-        description:
-          "Lists what changed on the open board since your change cursor, as JSON: items added or changed (id, kind, tool, colour, name, by, change, offset, bounds, seq), items removed (id, kind, name, by, bounds, seq), the ink groups that hold changed strokes (groups_changed), and your new cursor.\n\nUse it to learn what the learner did since you last looked. It returns no image; to see the items, use get_screenshot with target \"changes\" or a node_id.\n\n- Your cursor starts where your app last looked at this board in an earlier connection; otherwise at your first look in this one (get_canvas_info, get_changes, get_screenshot or open_board), so the first call then lists nothing new.\n- since: 0 lists the whole history of the board.\n- The list includes your own writes; by tells them apart from the learner's.\n- change says what happened to the item since your cursor: added, restored (it was on the board before, was removed, and is back with the same id, by undo, redo or paste), moved (offset: dx, dy in board points), resized, edited (its content), changed (anything else, or not known), or unchanged (changed and changed back).\n- Board news: when the learner drew, erased, added, restored, moved, resized, edited or deleted something since your app's last look or last board news, the next result of any tool starts with a \"Board news\" line that names each change: strokes by ink group and place, other items by kind and name, with the offset of a move and the new bounds. Each change is in the news once, kept per agent app and board across connections.",
+        description: `Tells what is different on the open board since your change cursor, in short sentences, the learner's changes and yours apart: the ink groups with strokes added or erased (with their place and stroke count), the other items added, removed, moved, resized or edited (by kind and name), and the items your scenes made, by scene. It ends with the interval it covers, such as "c115-c1115", and moves your cursor there.
+
+Use it to learn what the learner did since you last looked. It returns no image; to see the items, use get_screenshot with part {changes: "c115-c1115"} or an id.
+
+- changes: an interval from an earlier result. The result covers that interval again, also when more has changed since.
+- detail: "items" lists each item of the interval as JSON (id, kind, tool, colour, name, by, change, offset, bounds, seq). An item that changed again after the interval shows its current state and says so.
+- Your cursor starts where your app last looked at this board in an earlier connection; otherwise at your first look in this one (get_board, get_changes, get_screenshot or open_board), so the first call then lists nothing new.
+- since: 0 covers everything on the board now, and the items whose removal the app still knows.
+- The list includes your own writes; by tells them apart from the learner's.
+- change says what happened to the item since your cursor: added, restored (it was on the board before, was removed, and is back with the same id, by undo, redo or paste), moved (offset: dx, dy in board points), resized, edited (its content), changed (anything else, or not known), or unchanged (changed and changed back).
+- Board news: when the learner drew, erased, added, restored, moved, resized, edited or deleted something since your app's last look or last board news, the next result of any tool starts with a "Board news" line that names each change: strokes by ink group and place, other items by kind and name, with the offset of a move and the new bounds. Each change is in the news once, kept per agent app and board across connections.`,
         inputSchema: {
-          since: z.number().int().min(0).optional().describe('A cursor value to compare against instead of your own cursor; 0 lists the whole history.')
+          since: z.number().int().min(0).optional().describe('A cursor value to compare against instead of your own cursor; 0 covers everything on the board now.'),
+          changes: z.string().min(1).optional().describe('An interval from an earlier result, such as "c115-c1115".'),
+          detail: z.enum(['items']).optional().describe('"items" lists each item of the interval as JSON.')
         },
         annotations: { readOnlyHint: true }
       },
-      this.tool(session, 'get_changes', async ({ since }) => {
-        // since: 0 means "everything": -1 also catches items from files that carry no seq (seq 0).
-        let from: number | null = since === undefined ? null : since === 0 ? -1 : since
-        if (from === null) {
-          const info = await this.bridge.request('canvasInfo', {})
-          this.touchCursor(session, info)
-          from = info.board ? (session.cursors.get(info.board.path) ?? null) : null
+      this.tool(session, 'get_changes', async ({ since, changes, detail }) => {
+        const scenes = this.stageScenes()
+        if (changes !== undefined) {
+          const { from, to } = parseInterval(changes)
+          return text((await this.bridge.request('changeReport', { from, to, detail, all: false, again: true, scenes })).text)
         }
-        const changes = await this.bridge.request('changes', { since: from })
-        if (from !== null && !session.listedFrom.has(changes.board)) session.listedFrom.set(changes.board, from)
-        session.cursors.set(changes.board, changes.cursor)
-        await this.looked(session, changes.board, changes.cursor)
-        return text(json(changes))
+        // since: 0 means "everything": -1 also catches items from files that carry no seq (seq 0).
+        const from = since === undefined ? await this.lookCursor(session) : since === 0 ? -1 : since
+        const out = await this.bridge.request('changeReport', { from: from ?? -1, to: null, detail, all: since === 0, again: since !== undefined, scenes })
+        session.cursors.set(out.board, out.cursor)
+        await this.looked(session, out.board, out.cursor)
+        return text(out.text)
       })
     )
 
@@ -999,13 +1046,13 @@ export class AgentServer {
       {
         title: 'Open a board',
         description:
-          "Opens another board of the learning folder in the app, so that the learner and you both see it; the learner's view switches to it. Returns the canvas info of the opened board, as get_canvas_info does.\n\nUse it when the learner asks for another board, or when the work belongs on a board that already exists. get_canvas_info lists the boards.",
+          "Opens another board of the learning folder in the app, so that the learner and you both see it; the learner's view switches to it. Returns the outline of the opened board, as get_board does.\n\nUse it when the learner asks for another board, or when the work belongs on a board that already exists. get_board lists the boards.",
         inputSchema: { path: z.string().describe('Relative to the learning folder, ending in .board.json, for example "boards/Fractions.board.json".') }
       },
       this.tool(session, 'open_board', async ({ path }) => {
-        const info = await this.bridge.request('openBoard', { path })
-        this.touchCursor(session, info)
-        return text(this.infoText(info))
+        const out = await this.bridge.request('openBoard', { path, look: null, scenes: this.stageScenes() })
+        this.touchCursor(session, { board: { path: out.board }, cursor: out.cursor })
+        return text(out.text)
       })
     )
 
@@ -1035,46 +1082,34 @@ export class AgentServer {
     )
 
     server.registerTool(
-      'get_tree',
+      'get_item',
       {
-        title: 'Node tree',
+        title: 'Items in detail',
         description:
-          "Returns a compact text outline of the open board, or of one node and its children: one line per node with kind, name, id and bounds (\"x,y w×h\"). Text nodes show their first words; ink shows as ink groups with author and stroke count under their parent.\n\nUse it to find ids and to see how material is grouped. It is much smaller than a screenshot and shows no pixels.",
+          'Returns every stored detail of one or more nodes or ink groups. By default it is JSON: kind, name, author, parent, children ids, bounds on the board and inside the parent, z order, style, text with markup, SVG element ids, image source, or for ink the tool, colour, width and point count. For an ink group it gives the author, the stroke count, the bounds, the tool and colour, and how large its list of strokes and its points are.\n\nUse it when you need exact values before you change a node. For an overview of many nodes, get_board is smaller.\n\n- id is one id or a list. Each id gets its own entry, and an id that is not on the board gets its own error.\n- as chooses what comes back for each item:\n  - "info" (default): the details above.\n' +
+          htmlMaterial(
+            '  - "html": the item and everything inside it as the HTML subset that a scene\'s html() takes, with inline styles. Use it to restructure existing material: change the HTML, then put it back in a scene with html(markup, {into: board.node(id), mode: "replace"}). Ink is not HTML: it appears as a comment, and a replace leaves it out.\n'
+          ) +
+          '  - "svg": the SVG markup of a drawing.\n  - "strokes": the strokes of an ink group, each with its id and bounds.\n  - "points": the points of each stroke, as [x, y, pressure] from the stroke\'s origin.\n  - "source": the program of a code item.',
         inputSchema: {
-          node_id: z.string().optional().describe('Outline only this node and its children. Default: the whole board.'),
-          depth: z.number().int().min(1).max(10).optional().describe('How many levels inside frames to list, 1 to 10. Default 3.')
+          id: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).describe('A node id or an ink group id such as "g3", or a list of them.'),
+          as: z
+            .enum(ITEM_FORMS)
+            .optional()
+            .describe(`What to return for each item: "info" (default), ${htmlMaterial('"html", ')}"svg", "strokes", "points" or "source".`),
+          ...(NO_HTML
+            ? {}
+            : {
+                include_ids: z.boolean().optional().describe('With as "html": add data-id attributes for reference (default true). html() does not reuse them; new material gets new ids.')
+              })
         },
         annotations: { readOnlyHint: true }
       },
-      this.tool(session, 'get_tree', async (args) => text(String(await this.board('getTree', args))))
-    )
-
-    server.registerTool(
-      'get_node_info',
-      {
-        title: 'Node details',
-        description:
-          "Returns every stored detail of one node or ink group as JSON: kind, name, author, parent, children ids, bounds on the board and inside the parent, z order, style, text with markup, SVG element ids, image source, or for ink the tool, colour, width and point count. For an ink group it lists the group's strokes and their bounds.\n\nUse it when you need exact values before you change a node. For an overview of many nodes, get_tree is smaller.",
-        inputSchema: { node_id: z.string().describe('A node id, or an ink group id such as "g3".') },
-        annotations: { readOnlyHint: true }
-      },
-      this.tool(session, 'get_node_info', async (args) => text(json(await this.board('getNodeInfo', args))))
-    )
-
-    // Lab switch LS_LAB_NO_HTML (lab-switch.ts): no HTML material, so no get_html.
-    if (!NO_HTML) server.registerTool(
-      'get_html',
-      {
-        title: 'Node as HTML',
-        description:
-          "Returns a node and everything inside it as the HTML subset that a scene's html() takes, with inline styles.\n\nUse it to restructure existing material: change the HTML, then put it back in a scene with html(markup, {into: board.node(id), mode: \"replace\"}).\n\n- Ink is not HTML: it appears as a comment, and a replace leaves it out.",
-        inputSchema: {
-          node_id: z.string().describe('The node to export, with everything inside it.'),
-          include_ids: z.boolean().optional().describe('Add data-id attributes for reference (default true). html() does not reuse them; new material gets new ids.')
-        },
-        annotations: { readOnlyHint: true }
-      },
-      this.tool(session, 'get_html', async (args) => text(String(await this.board('getHtml', args))))
+      this.tool(session, 'get_item', async (args: { id: string | string[]; as?: string; include_ids?: boolean }) => {
+        // Lab switch LS_LAB_NO_HTML (lab-switch.ts): no HTML material, so no "html" form.
+        if (NO_HTML && args.as === 'html') return failure(new Error('as "html" is not available.'))
+        return text(await this.bridge.request('itemRead', { id: args.id, as: args.as, include_ids: args.include_ids, scenes: this.stageScenes() }))
+      })
     )
 
     const momentSchema = z.union([
@@ -1092,7 +1127,7 @@ export class AgentServer {
           htmlMaterial("HTML material (html(): pages, cards, frames with layout, exercises, inline SVG), ") +
           "pictures (image(): a URL or a file in the learning folder), copies (copy()) and empty space for new material (space()); change text and style (edit()); move items into frames and delete items and ink groups, the learner's too; " +
           codeItems("run live pixels (shaders, canvas programs, and program() items with your own JavaScript and any library, such as three.js, WebGL 2 or WebGPU); ") +
-          "move the camera and a pointer; and show lines of text for the learner to read (say). The complete reference is get_guide topic \"scene\".\n\nUse it for everything you draw, write, place, change or remove on the board. To check how a scene looks before the learner sees it, use preview_scene; to look at the board itself, use get_screenshot, get_canvas_info and get_changes.\n\nHow it runs:\n- The program runs in a sandbox with no access to the app, files or network. It may compute for as long as it needs; play_scene \"cancel\" stops it.\n- Every program on a board runs on the same stage, one after another. What a program puts on the global `stage` object stays for later programs, and objects of earlier programs can be acted on again. A draft reads the stage as it is when you write it, and joins the stage when it starts. The stage starts new when the board changes, on play_scene \"reset\", and when the app starts.\n- A name holds one draft, so writing the same name again replaces it. To change a scene that is already on the board, write it again under its name and start it: the new version takes the place of the old one.\n- Drafts live in the app's memory and are lost when the app quits.\n- Coordinates are board points: origin at the centre, +x right, +y down.\n\nReturns JSON: draft (the name), replaces (when a scene of this name is on the board), changed (when an earlier draft of this name was replaced), length_s, steps ([{number, name, start_s, length_s, pause?}]), items ({total, by_kind, named, removed_by_end}), say_lines (how many), log (console.log output), warnings (unknown options and other mistakes in the program), and stage (only when this program started a new stage: why).\n\nErrors: a program error returns its message and line number. The stage stays as it was before the program, and the result says whether an earlier draft of this name is kept.",
+          "move the camera and a pointer; and show lines of text for the learner to read (say). The complete reference is get_guide topic \"scene\".\n\nUse it for everything you draw, write, place, change or remove on the board. To check how a scene looks before the learner sees it, use preview_scene; to look at the board itself, use get_screenshot, get_board and get_changes.\n\nHow it runs:\n- The program runs in a sandbox with no access to the app, files or network. It may compute for as long as it needs; play_scene \"cancel\" stops it.\n- Every program on a board runs on the same stage, one after another. What a program puts on the global `stage` object stays for later programs, and objects of earlier programs can be acted on again. A draft reads the stage as it is when you write it, and joins the stage when it starts. The stage starts new when the board changes, on play_scene \"reset\", and when the app starts.\n- A name holds one draft, so writing the same name again replaces it. To change a scene that is already on the board, write it again under its name and start it: the new version takes the place of the old one.\n- Drafts live in the app's memory and are lost when the app quits.\n- Coordinates are board points: origin at the centre, +x right, +y down.\n\nReturns JSON: draft (the name), replaces (when a scene of this name is on the board), changed (when an earlier draft of this name was replaced), length_s, steps ([{number, name, start_s, length_s, pause?}]), items ({total, by_kind, named, removed_by_end}), say_lines (how many), log (console.log output), warnings (unknown options and other mistakes in the program), and stage (only when this program started a new stage: why).\n\nErrors: a program error returns its message and line number. The stage stays as it was before the program, and the result says whether an earlier draft of this name is kept.",
         inputSchema: {
           name: z.string().min(1).max(MAX_NAME_CHARS).describe('The scene\'s name, such as "synapse". preview_scene and play_scene find the scene by it, and it also shows in the board news, the learner\'s script panel, logs and traces. Writing the same name again replaces this scene.'),
           code: z
@@ -1237,7 +1272,7 @@ export class AgentServer {
           htmlMaterial("html() material and ") +
           "image() material (its root node with everything inside), " +
           codeItems("live items, ") +
-          "and one frame per named group. What the scene erased or faded out is gone. start, cut and clear_queue are each one undo step for the learner, and the board file holds the final state from the moment the call returns.\n\nstart returns JSON: scene, replaced, ran_again (the program ran again because the board or the stage changed since write_scene), length_s, starts_in_s and ends_in_s (seconds from now, pauses not counted), steps, items ([{id, kind, name, bounds, step}]), log, warnings, rerun (later scenes that ran again after a replace), and stage. With wait \"end\" it returns when the scene has played to its end, or earlier when playback stops at a pause, and adds played (true when it reached its end) and status. The other actions return the status after the action: {playing, scene, t, duration_s, step, paused, paused_by (\"pause step\", \"learner drawing\" or \"play_scene pause\"), paused_scene, paused_step, paused_t, queue: [{scene, duration_s}]}, with cancelled_programs, cut or replay where they apply.\n\nErrors: start without a draft of that name says so, and for a scene that has played it names \"replay\". If the draft runs again and now fails, nothing is drawn and the draft is kept.",
+          "and one frame per named group. What the scene erased or faded out is gone. start, cut and clear_queue are each one undo step for the learner, and the board file holds the final state from the moment the call returns.\n\nstart returns JSON: scene, replaced, ran_again (the program ran again because the board or the stage changed since write_scene), length_s, starts_in_s and ends_in_s (seconds from now, pauses not counted), steps, items ({total, by_kind, named: the named items with their ids and steps}; get_board with part {scene: \"name\"} lists every item), log, warnings, rerun (later scenes that ran again after a replace), and stage. With wait \"end\" it returns when the scene has played to its end, or earlier when playback stops at a pause, and adds played (true when it reached its end) and status. The other actions return the status after the action: {playing, scene, t, duration_s, step, paused, paused_by (\"pause step\", \"learner drawing\" or \"play_scene pause\"), paused_scene, paused_step, paused_t, queue: [{scene, duration_s}]}, with cancelled_programs, cut or replay where they apply.\n\nErrors: start without a draft of that name says so, and for a scene that has played it names \"replay\". If the draft runs again and now fails, nothing is drawn and the draft is kept.",
         inputSchema: {
           action: z.enum(PLAY_ACTIONS).describe('What to do; the description explains each action.'),
           name: z.string().min(1).max(MAX_NAME_CHARS).optional().describe('start, replay: the scene name. cut: act only when this scene plays.'),
@@ -1483,7 +1518,7 @@ export class AgentServer {
       starts_in_s: result.starts_in_s,
       ends_in_s: result.ends_in_s,
       steps: result.steps,
-      items: result.items,
+      items: itemsSummary(result.items),
       ...(result.log.length ? { log: result.log } : {}),
       ...(result.warnings.length ? { warnings: result.warnings } : {}),
       ...(outcome.others?.length ? { rerun: outcome.others } : {}),

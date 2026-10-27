@@ -9,7 +9,7 @@ import type { SceneIndex } from './scene'
  * becomes native nodes. DOMParser builds an inert document (no script runs,
  * no resource loads), and only whitelisted tags, attributes and style keys
  * survive. `nodesToHtml` writes the same subset back, so
- * html(get_html(x)) in a scene gives x again (with new ids).
+ * html(get_item(x, as "html")) in a scene gives x again (with new ids).
  */
 
 const STYLE_KEY_SET: ReadonlySet<string> = new Set(STYLE_KEYS)
@@ -538,7 +538,7 @@ export function nodesToHtml(rootId: string, index: SceneIndex, includeIds: boole
   }
   const root = index.byId.get(rootId)
   if (!root) throw new Error(`No node "${rootId}" on this board.`)
-  if (isInk(root)) return `<!-- ink stroke ${escapeHtml(root.id)}: not HTML; use get_node_info -->`
+  if (isInk(root)) return `<!-- ink stroke ${escapeHtml(root.id)}: not HTML; use get_item -->`
   emit(root, 0, false)
   return lines.join('\n')
 }

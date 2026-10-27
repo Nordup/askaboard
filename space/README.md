@@ -137,7 +137,9 @@ To check the Connect buttons without your real agent config, set `HOME`,
 
 `scripts/drive.mjs` drives a running dev app over the debug port. The input
 reaches the window also when it is behind other windows. Do not use computer
-use for input.
+use for input. It attaches to the board window by its URL
+(`scripts/app-page.mjs`), never to the stage or snapshot page, and waits up
+to 20 s for that window and its dev hook to load.
 
 | Command | Effect |
 | --- | --- |

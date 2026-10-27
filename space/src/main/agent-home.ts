@@ -84,7 +84,7 @@ export async function writeRelayState(port: number, catalog: { tools: unknown[];
   await mkdir(dir, { recursive: true })
   const appVersion = app.getVersion()
   const updatedAt = new Date().toISOString()
-  await writeAtomic(join(dir, 'relay.json'), `${JSON.stringify({ port, appVersion, updatedAt }, null, 2)}\n`)
-  await writeAtomic(join(dir, 'tools.json'), `${JSON.stringify({ appVersion, updatedAt, instructions: catalog.instructions, tools: catalog.tools }, null, 2)}\n`)
+  await writeAtomic(join(dir, 'relay.json'), `${JSON.stringify({ port, appVersion, updatedAt })}\n`)
+  await writeAtomic(join(dir, 'tools.json'), `${JSON.stringify({ appVersion, updatedAt, instructions: catalog.instructions, tools: catalog.tools })}\n`)
   console.log(`agent home: wrote relay.json (port ${port}) and tools.json (${catalog.tools.length} tools)`)
 }

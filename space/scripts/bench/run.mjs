@@ -588,7 +588,7 @@ async function withBenchClient(fn) {
 /** A picture of the whole board through MCP, as the bench client. */
 async function contentScreenshot(file) {
   return withBenchClient(async (client) => {
-    const result = await client.callTool({ name: 'get_screenshot', arguments: { target: 'content', max_size: 2400 } })
+    const result = await client.callTool({ name: 'get_screenshot', arguments: { part: 'board', max_size: 2400 } })
     const image = result.content?.find((part) => part.type === 'image')
     if (image) writeFileSync(file, Buffer.from(image.data, 'base64'))
     return Boolean(image)
@@ -705,27 +705,41 @@ async function agentTurn(scenario, work, dir, model, effort) {
   return { agent, t0, t1, files, sessions }
 }
 
-/** get_tree as text, through the bench client. */
+/** The whole board's outline (get_board with a region part as large as the board can be, so every item is listed), through the bench client. */
 async function treeText(client) {
-  const result = await client.callTool({ name: 'get_tree', arguments: {} })
+  const result = await client.callTool({ name: 'get_board', arguments: { part: { region: { x: -100000, y: -100000, width: 200000, height: 200000 } } } })
   return result.content.find((c) => c.type === 'text')?.text ?? ''
 }
 
-/** The top-level items of a get_tree text: nodes ("svg n_x  x,y w×h …") and ink groups ("ink group g3  x,y w×h … (agent)"). */
+/**
+ * The items of a get_board outline: unit lines ('  svg "name" n_x · x,y w×h · …', '  ink g3 · x,y w×h · …').
+ * The section says the author: "Learner's work" is the learner's; elsewhere a line says "learner" when it is.
+ */
 function topLevel(tree) {
   const items = []
+  let learnerSection = false
   for (const line of tree.split('\n')) {
-    if (/^\s/.test(line)) continue
-    const group = /^ink group (g\d+)\s+(-?[\d.]+),(-?[\d.]+) ([\d.]+)×([\d.]+).*\((agent|learner)\)/.exec(line)
-    if (group) {
-      items.push({ kind: 'ink', id: group[1], x: +group[2], y: +group[3], width: +group[4], height: +group[5], author: group[6] })
+    if (!/^\s/.test(line)) {
+      learnerSection = line.startsWith("Learner's work")
       continue
     }
-    // A named node: 'frame "Star colours" n_x  …'.
-    const node = /^(\w+)(?: ".*?")? (n_\w+)\s+(-?[\d.]+),(-?[\d.]+) ([\d.]+)×([\d.]+)/.exec(line)
-    if (node) items.push({ kind: node[1], id: node[2], x: +node[3], y: +node[4], width: +node[5], height: +node[6], author: /\(learner\)$/.test(line) ? 'learner' : 'agent' })
+    const unit = /^\s+(\w+)(?: ".*?")? ((?:n_|g)\w+) · (-?[\d.]+),(-?[\d.]+) ([\d.]+)×([\d.]+)/.exec(line)
+    if (unit) items.push({ kind: unit[1], id: unit[2], x: +unit[3], y: +unit[4], width: +unit[5], height: +unit[6], author: learnerSection || / · learner(?: ·|$)/.test(line) ? 'learner' : 'agent' })
   }
   return items
+}
+
+/** What the bench needs of the board (as get_canvas_info gave before 2026-10-27): content bounds, the learner's view, item counts by kind. */
+async function boardFacts(client) {
+  const text = await treeText(client)
+  const items = topLevel(text)
+  const view = /^View (-?[\d.]+),(-?[\d.]+) ([\d.]+)×([\d.]+)/m.exec(text)
+  const counts = {}
+  for (const item of items) counts[item.kind] = (counts[item.kind] ?? 0) + 1
+  const x = Math.min(...items.map((i) => i.x))
+  const y = Math.min(...items.map((i) => i.y))
+  const contentBounds = items.length ? { x, y, width: Math.max(...items.map((i) => i.x + i.width)) - x, height: Math.max(...items.map((i) => i.y + i.height)) - y } : null
+  return { contentBounds, viewport: view ? { x: +view[1], y: +view[2], width: +view[3], height: +view[4] } : null, counts }
 }
 
 /**
@@ -851,7 +865,7 @@ async function runPerception(p, work) {
   }
   let canvas = null
   try {
-    canvas = await withBenchClient(async (client) => JSON.parse((await client.callTool({ name: 'get_canvas_info', arguments: {} })).content.find((c) => c.type === 'text').text))
+    canvas = await withBenchClient(boardFacts)
   } catch (error) {
     log(`canvas info failed: ${String(error.message ?? error)}`)
   }
@@ -877,11 +891,13 @@ async function runPerception(p, work) {
   let firstGetChangesListed = null
   if (firstChanges) {
     let listed = []
+    const body = firstChanges.result_text ?? ''
     try {
-      const result = JSON.parse(firstChanges.result_text ?? '')
+      // Before 2026-10-27 get_changes was JSON with each item; since then it is net text by unit (learner ink by ink group), so naming the learner's ink counts as listing it.
+      const result = JSON.parse(body)
       listed = (result.changed ?? []).filter((item) => item.by === 'learner').map((item) => item.id)
     } catch {
-      // Not JSON (an error): it listed nothing.
+      if (/^Learner:\n\s+ink /m.test(body)) listed = [...newIds]
     }
     const hits = newIds.filter((id) => listed.includes(id)).length
     firstGetChangesListed = { new_ids: newIds.length, listed: hits, args: firstChanges.args ?? null }

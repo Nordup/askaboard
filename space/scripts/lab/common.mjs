@@ -13,6 +13,7 @@ import { homedir } from 'node:os'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { findAppPage } from '../app-page.mjs'
 
 export const LAB = dirname(fileURLToPath(import.meta.url))
 export const SPACE = resolve(LAB, '../..')
@@ -247,14 +248,8 @@ export const resultText = (result) => result?.content?.filter((c) => c.type === 
 
 /** Attach to the app page (not the hidden snapshot window). Events go to on(method, params). */
 export async function cdpConnect(port) {
-  let targets
-  try {
-    targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()
-  } catch {
-    throw new Error(`No app with remote debugging on 127.0.0.1:${port}.`)
-  }
-  const page = targets.find((t) => t.type === 'page' && !t.url.startsWith('devtools://') && !t.url.startsWith('ls-stage:') && !t.url.includes('snapshot=1'))
-  if (!page) throw new Error(`Port ${port} has no app page.`)
+  // The board window by its URL; a loading stage page (empty URL) is never picked.
+  const page = await findAppPage(port)
   const socket = new WebSocket(page.webSocketDebuggerUrl)
   await new Promise((ok, fail) => {
     socket.onopen = ok

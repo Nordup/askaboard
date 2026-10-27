@@ -10,7 +10,7 @@ import { resourcePath } from './resources'
  * leaves out what points to them.
  *
  * LS_LAB_NO_HTML=1: HTML material does not exist for agents. Scene programs
- * have no html(), get_html is not offered, and every agent text leaves out
+ * have no html(), get_item has no "html" form, and every agent text leaves out
  * what points to HTML material.
  *
  * LS_LAB_BRIEF=<absolute path>: the brief comes from that file instead of

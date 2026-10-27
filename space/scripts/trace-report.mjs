@@ -33,7 +33,8 @@ export const WRITE_TOOLS = new Set(['play_scene', 'run_scene', 'create_frame', '
 const PLAY_WRITES = new Set(['start', 'cut', 'clear_queue'])
 /** A call that changed the board: a write tool, except a run_scene preview (it draws nothing) and play_scene's other actions. */
 export const isWrite = (call) => WRITE_TOOLS.has(call.tool) && !(call.tool === 'run_scene' && call.args?.preview) && !(call.tool === 'play_scene' && !PLAY_WRITES.has(call.args?.action))
-export const LOOK_TOOLS = new Set(['get_screenshot', 'get_changes', 'get_canvas_info', 'get_tree'])
+// get_board since 2026-10-27; get_canvas_info and get_tree in traces from before.
+export const LOOK_TOOLS = new Set(['get_screenshot', 'get_changes', 'get_board', 'get_canvas_info', 'get_tree'])
 export const BENCH_CLIENT = 'ls-bench'
 /** A gap up to this long counts as the model's time; a longer one as idle or long thinking. */
 export const MODEL_GAP_MS = 60_000
@@ -242,6 +243,13 @@ export function screenshotRect(call) {
 
 export function screenshotRequest(call) {
   const args = call.args ?? {}
+  // part since 2026-10-27; node_id, region and target before.
+  const part = args.part
+  if (part !== undefined) {
+    if (typeof part === 'string') return `part ${part}`
+    if (part.region) return `region ${rectText(part.region)}`
+    return `part ${JSON.stringify(part)}`
+  }
   if (args.node_id) return `node ${args.node_id}`
   if (args.region) return `region ${rectText(args.region)}`
   return `target ${args.target ?? 'viewport'}`

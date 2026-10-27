@@ -565,7 +565,7 @@ const fmt = (t: number): string => `${Math.round(t * 10) / 10} s`
 const r3 = (value: number): number => Math.round(value * 1000) / 1000
 
 /** The step each object appears in (as commitScene's items list it). */
-function stepOfObject(play: CompiledScene['play'], objectId: number): string | undefined {
+export function stepOfObject(play: CompiledScene['play'], objectId: number): string | undefined {
   const timeline = play.timeline
   const desc = timeline.object(objectId)
   const reveal = (timeline.tracks[objectId].draw ?? []).find((a) => typeof a.to === 'number' && a.to > 0)?.start ?? (timeline.tracks[objectId].opacity ?? []).find((a) => typeof a.to === 'number' && a.to > 0)?.start
@@ -853,7 +853,7 @@ export function sceneFrames(ctx: RunSceneContext, args: Record<string, unknown>)
     }
     if (missing.length) {
       const names = [...new Set(play.objects.map((object) => play.timeline.object(object.id).name).filter((name): name is string => !!name))]
-      throw new Error(`No item ${missing.map((item) => `"${item}"`).join(', ')} in ${what} or on the board. Use the name of an object of the scene${names.length ? ` (named here: ${names.slice(0, 20).join(', ')}${names.length > 20 ? ', …' : ''})` : ' (this scene names none)'}, or a node or ink group id from get_canvas_info.`)
+      throw new Error(`No item ${missing.map((item) => `"${item}"`).join(', ')} in ${what} or on the board. Use the name of an object of the scene${names.length ? ` (named here: ${names.slice(0, 20).join(', ')}${names.length > 20 ? ', …' : ''})` : ' (this scene names none)'}, or a node or ink group id from get_board.`)
     }
     const shown = union.empty ? fallback : union
     region = shown.empty ? view : shown.padded((size) => Math.max(16, 0.15 * size))

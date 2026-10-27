@@ -403,8 +403,17 @@ function serializeNode(node: BoardNode): string {
   }
   for (const key of KIND_KEYS[node.kind]) out[key] = key === 'width' ? round(raw[key] as number, 2) : key === 'w' || key === 'h' ? round(raw[key] as number, 1) : raw[key]
   for (const [key, value] of Object.entries(raw)) if (!(key in out) && key !== 'points') out[key] = value
-  if (node.kind === 'ink') out.points = node.points.map(([x, y, p]) => [round(x, 1), round(y, 1), round(p, 2)])
+  if (node.kind === 'ink') out.points = savedInkPoints(node.points)
   return JSON.stringify(out)
+}
+
+/**
+ * Ink points at the precision of the board file (x, y to 0.1 board point,
+ * pressure to 2 decimals). The save step and get_item's "points" use this one
+ * function, so the points an agent reads are the points the file holds.
+ */
+export function savedInkPoints(points: readonly InkPoint[]): InkPoint[] {
+  return points.map(([x, y, p]) => [round(x, 1), round(y, 1), round(p, 2)])
 }
 
 /**

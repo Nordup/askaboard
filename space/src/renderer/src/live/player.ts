@@ -1052,6 +1052,11 @@ export class ScenePlayer {
     this.render()
   }
 
+  /** When scenes started and ended on the clock (Date ms), oldest first (get_board's "last played"). */
+  playedLog(): ReadonlyArray<{ scene: string; name: string | null; start: number; end: number | null }> {
+    return this.playLog
+  }
+
   /** The scenes of the stage that were committed, oldest first (for replay). */
   memories(): SceneMemory[] {
     return [...this.history.values()]

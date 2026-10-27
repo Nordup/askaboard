@@ -1183,7 +1183,7 @@
       const byName = CTX.nodes[id] ? undefined : CTX.names && CTX.names[id]
       const ref = byName || id
       const info = CTX.nodes[ref]
-      if (!info) fail(`board.node: there is no node, ink group or named item "${id}" on the board. Ink groups are g1, g2, …; get_tree lists the ids.`)
+      if (!info) fail(`board.node: there is no node, ink group or named item "${id}" on the board. Ink groups are g1, g2, …; get_board lists the ids.`)
       const known = objects.find((e) => e.kind === 'node' && e.ref === ref && !e.gone)
       if (known) return handleOf(known)
       const handle = register({ kind: 'node', api: 'node', ref, nodeKind: info.kind, name: info.name, bounds: info.bounds })

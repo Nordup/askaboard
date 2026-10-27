@@ -30,7 +30,14 @@
  * start for a play, each scene under a unique name ("<name> #<n>");
  * scene_control → play_scene (skip → clear_queue; replace → write_scene and
  * start under the replaced scene's name). calls.json lists the sent calls per
- * recorded call (sent). Nothing is skipped silently: a call
+ * recorded call (sent). Recordings from before 2026-10-27 use the old read
+ * tools; they are sent as the new ones: get_canvas_info → get_board {},
+ * get_tree → get_board {part: {id} or "board", depth}, get_node_info →
+ * get_item, get_html → get_item {as: "html"}, and get_screenshot's node_id,
+ * region and target → part (target "changes" → the interval of the latest
+ * get_changes result, else "view").
+ * --save-results <dir> writes the full text of every result to
+ * <dir>/<i>-<tool>.txt (the trace cuts long results). Nothing is skipped silently: a call
  * whose args the trace cut, a tool the app does not have, a call that fails now
  * or whose ok differs from the recording are listed in metrics.json → replay.
  *
@@ -38,7 +45,7 @@
  * (per call: app ms, round-trip ms, result chars, ok), trace/ and metrics.json;
  * one line per repeat in .lab/perf/history.jsonl (kind "replay").
  */
-import { cpSync, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 import { SCRATCH, args, canvasRect, cdpConnect, cropFilter, drive, log, resultText, runFolder, scenePlaySpans, sceneHook, sleep, startInstance, startRecording, stopInstance, traceCalls, traceLabels, withMcp } from '../lab/common.mjs'
 import { makeMedia } from '../lab/media.mjs'
@@ -58,6 +65,7 @@ const opts = {
   mcpPort: Number(option('--mcp-port', '47881')),
   debugPort: Number(option('--debug-port', '9481')),
   learnerInk: Number(option('--learner-ink', '0')),
+  saveResults: option('--save-results', null),
   profile: flag('--profile')
 }
 if (!opts.from) throw new Error('--from <run folder> is required')
@@ -87,6 +95,16 @@ const parse = (text) => {
  */
 function translate(rc, counter) {
   const a = rc.args ?? {}
+  // The read tools before 2026-10-27.
+  if (rc.tool === 'get_canvas_info') return [{ tool: 'get_board', args: {} }]
+  if (rc.tool === 'get_tree') return [{ tool: 'get_board', args: { part: a.node_id ? { id: a.node_id } : 'board', ...(a.depth ? { depth: a.depth } : {}) } }]
+  if (rc.tool === 'get_node_info') return [{ tool: 'get_item', args: { id: a.node_id } }]
+  if (rc.tool === 'get_html') return [{ tool: 'get_item', args: { id: a.node_id, as: 'html', ...(a.include_ids !== undefined ? { include_ids: a.include_ids } : {}) } }]
+  if (rc.tool === 'get_screenshot' && (a.node_id || a.region || a.target)) {
+    const { node_id, region, target, ...rest } = a
+    const part = node_id ? { id: node_id } : region && (!target || target === 'region') ? { region } : target === 'content' ? 'board' : target === 'selection' ? 'selection' : target === 'changes' ? (counter.handle ? { changes: counter.handle } : 'view') : 'view'
+    return [{ tool: 'get_screenshot', args: { ...rest, part } }]
+  }
   if (rc.tool === 'run_scene') {
     const name = `${a.name ?? 'scene'} #${++counter.n}`
     const write = { tool: 'write_scene', args: { name, code: a.code } }
@@ -112,9 +130,20 @@ function mapIds(map, oldText, newText) {
     if (typeof x === 'string' && typeof y === 'string' && x !== y && x.length >= 3) map.set(x, y)
   }
   pair(a.scene, b.scene)
-  const ai = Array.isArray(a.items) ? a.items : []
-  const bi = Array.isArray(b.items) ? b.items : []
-  for (let i = 0; i < Math.min(ai.length, bi.length); i++) pair(ai[i]?.id, bi[i]?.id)
+  // play_scene start's items: a list of every item before 2026-10-27, {total, by_kind, named: [{name, id}]} since; the named items pair by name, in order.
+  const named = (items) => (Array.isArray(items) ? items.filter((item) => item?.name) : Array.isArray(items?.named) ? items.named : [])
+  if (Array.isArray(a.items) && Array.isArray(b.items)) {
+    for (let i = 0; i < Math.min(a.items.length, b.items.length); i++) pair(a.items[i]?.id, b.items[i]?.id)
+    return
+  }
+  const left = named(a.items)
+  const right = [...named(b.items)]
+  for (const item of left) {
+    const at = right.findIndex((other) => other.name === item.name && (other.kind === item.kind || !other.kind || !item.kind))
+    if (at < 0) continue
+    pair(item.id, right[at].id)
+    right.splice(at, 1)
+  }
 }
 
 /** args with every mapped id replaced (whole strings, and inside code). */
@@ -237,6 +266,15 @@ async function oneReplay(index) {
         tLast = tr
         const text = result ? resultText(result) : ''
         const ok = !thrown && !result?.isError
+        if (ok && seq.at(-1)?.tool === 'get_changes') {
+          counter.handle = /\bc\d+-c\d+\b/.exec(text)?.[0] ?? counter.handle
+          // A probe call can name the latest interval as "$LAST_HANDLE".
+          if (counter.handle) ids.set('$LAST_HANDLE', counter.handle)
+        }
+        if (opts.saveResults) {
+          mkdirSync(opts.saveResults, { recursive: true })
+          writeFileSync(join(opts.saveResults, `${String(i).padStart(2, '0')}-${seq.at(-1)?.tool ?? rc.tool}.txt`), thrown ?? text)
+        }
         if (ok && ['run_scene', 'scene_control', 'play_scene'].includes(rc.tool)) mapIds(ids, rc.result, text)
         if (!ok) problems.push({ i, tool: rc.tool, problem: `failed now${rc.ok ? ' (ok when recorded)' : ' (failed when recorded too)'}: ${(thrown ?? text).slice(0, 300)}` })
         else if (!rc.ok) problems.push({ i, tool: rc.tool, problem: 'ok now, failed when recorded' })

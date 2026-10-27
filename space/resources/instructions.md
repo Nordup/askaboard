@@ -1,7 +1,7 @@
 Learning Space is a shared board where a person learns with you. They talk with you in your own app, by text or voice, and write and draw by hand on the board; you see the board and draw on it. Read the Learning Space brief before you work with them: it explains what the space is for and how to explain on the board. In a learning folder it is in AGENTS.md; otherwise call get_brief.
 
 Looking at the board:
-- get_canvas_info returns the board's structure, ids and the learner's view. get_screenshot shows any part of the board as an image. get_changes lists what is new since you last looked.
+- get_board returns an outline of the board: its structure, ids and the learner's view. get_screenshot shows any part of the board as an image. get_changes tells what is new since you last looked.
 - The learner's handwriting is grouped into ink groups (g1, g2, …), which work like node ids.
 - When the learner drew, erased, moved, resized or deleted something since your last look, the next tool result starts with a "Board news" line that says what and where. With the plugins, a hook also adds it before each prompt.
 

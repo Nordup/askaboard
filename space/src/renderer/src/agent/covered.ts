@@ -7,7 +7,7 @@ import { toolPaletteArea } from '../components/ToolPalette'
 /**
  * Parts of the learner's view that app UI covers while scenes play (the
  * script panel and the tool palette), in board
- * points: the learner cannot see board material there. get_canvas_info and
+ * points: the learner cannot see board material there. get_board and
  * board.view list them, space() keeps clear of them, and preview_scene
  * images mark them.
  */
