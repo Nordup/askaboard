@@ -49,8 +49,7 @@ limits scripts and images.
    the reply.
 3. The renderer (`src/renderer/src/agent/handler.ts`, `edits.ts`) reads or
    changes the live board as **one undo step**, stamps `seq`, records
-   removals, and returns ids, measured bounds and overlap
-   reports.
+   removals, and returns ids and measured bounds.
 4. For screenshots, the renderer plans the region and main asks the snapshot
    window to draw it; main captures the pixels.
 5. The renderer saves the board file on its own autosave schedule.
@@ -98,14 +97,15 @@ limits scripts and images.
 - Streamable HTTP, path `/mcp`, bound to `127.0.0.1`, port 47821
   (`SPACE_MCP_PORT`). One session per client. Requests with a browser
   `Origin`, or a Host other than localhost, are refused. No token.
-- **Tools** (11), in three groups (decision P13: scenes are the one way to
+- **Tools** (12), in three groups (decision P13: scenes are the one way to
   write; the ten write tools and `finish_working` retired in stage 4):
   - *Look:* `get_canvas_info`, `get_tree`, `get_node_info`, `get_html`,
     `get_screenshot` (node, region, viewport, content, selection, changes;
     optional labels and grid), `get_changes`, `get_brief`, `get_guide`.
   - *Board:* `open_board`.
-  - *Live scenes (all writes):* `run_scene`, `scene_control` (see "Live
-    scenes" below).
+  - *Live scenes (all writes):* `write_scene` (a draft), `preview_scene`
+    (an image of a draft or a played scene), `play_scene` (start and
+    playback; decision T16; see "Live scenes" below).
 - **No presence on the board** (U3): the scene pill and the agent pill in
   the top bar show that an agent is working; board items get no outline or
   name tag.
@@ -245,10 +245,10 @@ P12, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
   `canvas`): `src/renderer/src/live-pixels/` — each item is a sandboxed
   iframe of its own origin with a worker that owns an OffscreenCanvas
   (`program.ts`, `sandbox.ts`, `shader.ts`, `registry.ts`, `LiveView.tsx`,
-  `snapshot-stills.ts`). Network is open for items; input reaches them only
+  `stills.ts`). Network is open for items; input reaches them only
   in the mode the item declares.
 - **Requests** between main and renderer: `sceneContext`, `runScene`,
-  `previewScene`, `sceneControl`, `validateLive` (`src/shared/space-api.ts`).
+  `sceneDraft`, `sceneFrames`, `sceneControl` (`src/shared/space-api.ts`).
 
 ## UI
 

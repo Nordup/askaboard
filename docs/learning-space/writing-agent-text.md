@@ -4,7 +4,7 @@
 > they work in Learning Space: the brief, the server instructions, the tool
 > descriptions, the plugin skill and the `AGENTS.md`
 > template. Written 2026-10-24, at the end of the session that produced the
-> first real brief; updated 2026-10-25 (brief v3, decision T11) and 2026-10-26 (brief v18 and the agent texts in Anthropic's style, I18–I22). The founder's own words from that session are in
+> first real brief; updated 2026-10-25 (brief v3, decision T11) and 2026-10-26 (brief v18 and the agent texts in Anthropic's style, I18–I22) and 2026-10-27 (how to change a text without losing its intent or voice; the T16 lessons, I25). The founder's own words from that session are in
 > [the appendix](#appendix--the-founders-words); read them, they matter more
 > than the summary.
 
@@ -30,7 +30,7 @@ difference, so the next writer starts from the second draft's approach.
 | **The brief** (the space and your part; what the person wants; their work; explaining by drawing; what can go on the board; talking; checking facts; the learning folder) | `space/resources/brief.md` (the one source) | Agents in a learning folder: always, through the managed block in `AGENTS.md`. Other agents: `get_brief` (no parameters). | Codex loads `AGENTS.md` up to 32 KiB (`project_doc_max_bytes = 32768`, Codex CLI 0.149), and the folder part shares that space. |
 | The folder's own conventions | `AGENTS.md` outside the managed block (template: `space/resources/learning-folder/AGENTS.md`) | Agents in the folder | Same file as above |
 | Server instructions (short orientation) | `space/resources/instructions.md` | Every agent at connect | Claude Code cuts at 4,096 characters (2.1.296+; 2,048 before). Codex asks that the first 512 characters stand alone. |
-| **The board reference** (decision T11): the board model, the HTML subset and styles, math, SVG, images, colour tokens, placement, ink, the view | `space/resources/guide.md`; each `## ` section is a topic (`<!-- topic: … -->`) with a one-line `<!-- summary: … -->` that `get_guide`'s description lists | Every agent: `get_guide` with one topic, when a write needs it; without a topic, all of it (about 41,000 characters) | Topics from about 400 characters to about 15,000 (`scene`) |
+| **The board reference** (decision T11): the board model, the HTML subset and styles, math, SVG, images, colour tokens, placement, ink, the view | `space/resources/guide.md`; each `## ` section is a topic (`<!-- topic: … -->`) with a one-line `<!-- summary: … -->` that `get_guide`'s description lists | Every agent: `get_guide` with one topic, when a write needs it; without a topic, all of it (about 41,000 characters) | Topics from about 500 characters to about 16,000 (`scene`) |
 | Tool and parameter descriptions | `space/src/main/mcp.ts` | Every agent, on every request | 4,096 characters per tool description in Claude Code when loaded up front (16,384 when deferred). Parameter descriptions are not cut. |
 | Plugin skill | [`learning-space-plugins/plugins/learning-space/skills/learning-space/SKILL.md`](../../../learning-space-plugins/plugins/learning-space/skills/learning-space/SKILL.md) | Agents with the plugin, when it applies | Under 500 lines recommended |
 | Per-folder overrides | `.learning-space/guide.md` (`get_guide` topic `folder`, or the whole reference with `mode: replace`), `.learning-space/instructions.md` (added to the server instructions) | As above, appended or replacing | — |
@@ -86,7 +86,7 @@ I2 and P7 in [`decisions.md`](decisions.md) record them.
    board reference, `get_guide`, by topic (decision T11); a description names
    the topic. MCP has no `input_examples` field: put a
    short example value inside the description where the format is not
-   obvious (as in run_scene's `code` parameter).
+   obvious (as in write_scene's `code` parameter).
 8. **One story everywhere (I2).** The brief, the instructions,
    the descriptions, the skill and the template must not contradict each
    other. Keep the brief in one file and point to it; do not copy it.
@@ -123,6 +123,153 @@ define-tools) and the connector review checklist
 - "Describe what the tool does, and don't tell Claude how to behave"
   (checklist). Response style belongs in the system prompt.
 - Small changes to descriptions can change results a lot: measure.
+
+## Change an agent text without losing its intent or its voice
+
+Use this procedure for every change to the brief, the server instructions, a
+tool description, the guide, the plugin skill or the folder template. It is
+also for small changes, such as a renamed tool. The scene tool rename of
+2026-10-26 (T16) was a small change in facts. It became a rewrite in a new
+voice, and the founder brought the old text back (I25).
+
+### 1. Find the intent and the approved text
+
+- **Read the decisions that touch the text.** These are the I-decisions in
+  [`decisions.md`](decisions.md), and T16, T17 and I25 for the scene tools.
+  Each one says what the text must do and why.
+- **Find the approved version.** Run `git log --oneline -- space/resources/brief.md space/src/main/mcp.ts`.
+  The commit messages name the decision and say "approved". Compare the live
+  text with the text at that commit.
+- **Find where each intent lives.** One intent often lives in more than one
+  text. Change one of them and read the others:
+
+| Intent | Where it lives |
+| --- | --- |
+| Ink first; code items and HTML for narrower jobs (I20) | The brief, "What you can put on the board" and the calibration list; the guide, the summary and first lines of topics `scene-code` and `html`. Not in a tool description. |
+| Check a scene before the person sees it (I22, I25) | The brief, "Take the time it needs, and check your work"; the write_scene pointer to preview_scene; the preview_scene opening. |
+| Explain fully, then check (I21) | The brief only. |
+| Draw step by step, in front of the person | The brief ("Explain by drawing, one step at a time"); the instructions ("in front of the learner"); write_scene's opening. |
+| What a tool does, returns and its errors | The tool description in `mcp.ts`. The details of a write are in the guide topic that it names. |
+
+### 2. Write the change
+
+- **Start from the approved text.** Change only the words that the new fact
+  needs. A new or renamed tool is a reason to change a name or a sentence. It
+  is not a reason to rewrite the paragraph.
+- **Keep the form of each kind of text:**
+  - A tool description opens with one sentence on what the tool does. Then
+    comes "Use it for …" or "Use it to …", with a pointer to the better tool
+    where one fits. Then the facts as a list, then "Returns", then "Errors"
+    (I19).
+  - The brief puts the behaviour first, then the reason, in plain sentences
+    (v18). It holds intent, not tool mechanics. "Write it as a draft, and
+    look at it with preview_scene: at the end, at the moments…" reads like a
+    method. It was taken out again (I25).
+- **Make the joins read as one text.** After an edit, read each changed
+  paragraph from start to end. The founder's words on the first I25 draft:
+  "it looks like the text was cut and placed between the text". Rewrite the
+  sentences around the new words until they read naturally.
+- **Describe only what exists.** "Nothing checks the layout" and "no warning
+  reports them" spoke to an agent that knew the old warnings. A new agent does
+  not need them.
+- **Keep each fact in one place.** The guide holds the details, and a
+  description names the guide topic.
+- **Write the draft in `drafts/<name>-<date>/`.** Do not edit the live files
+  first.
+
+### 3. Check the draft before you show it
+
+- **Length.** A tool description loaded up front is cut at 4,096 characters
+  in Claude Code. Measure the description with the lab switches on and off.
+  play_scene is at about 3,930 characters, so it has very little room.
+- **Lab switches.** Text about code items goes in `codeItems(…)`, and text
+  about HTML in `htmlMaterial(…)` (`space/src/main/lab-switch.ts`). In the
+  markdown files, the markers are `<!-- code-items -->` and `<!-- html -->`.
+  Read the text in each mode.
+- **Contradictions.** Read the whole brief, the instructions, the three tool
+  descriptions, the guide topic and the skill. Look for a sentence that a
+  literal reader can take the other way (I18). Search for old tool names.
+- **Facts.** Every result field, action and error text must match the code
+  in `mcp.ts`. An example of a fact error: "a draft that only you can see"
+  (write_scene returns no picture).
+
+### 4. Show the founder
+
+- **Show the text first, without your analysis.** Give the old, current and
+  draft text side by side. Highlight only the changed words.
+  - Use `git diff --word-diff=porcelain '--word-diff-regex=[^[:space:]]+'`
+    for the markdown files.
+  - For a tool description, first get the plain text from `mcp.ts` with the
+    lab switch functions replaced (`codeItems = s => s`). Then diff those
+    texts.
+  - The I25 review used an HTML page with grey lines for unchanged text and
+    red and green words: `drafts/scene-tools-from-old-2026-10-27/compare.html`.
+- Do not guess why the founder dislikes a text. Ask, or wait for their notes.
+
+### 5. Build and verify
+
+- The build goes to an implementer with the draft files as the exact
+  source. The acceptance checks:
+  - `npm run build` passes.
+  - A script compares the live description strings with the draft, with the
+    switches on and off.
+  - The dev app's `tools/list` and `get_guide` return the draft text.
+- Record the decision in `decisions.md` in the same commit.
+
+### 6. Measure
+
+- One run per model is enough unless the founder asks for more (2026-10-27).
+  Use the big models: Claude `opus` and Codex `gpt-6.1-sol`, both at effort
+  medium.
+- Commands (from `space/`):
+  `node scripts/perf/run.mjs --client claude --model opus --effort medium --task <task> --label <change>`
+  and the same with `--client codex --model gpt-6.1-sol`. Compare with
+  `node scripts/perf/report.mjs --task <task> --runs`.
+- **Tasks:**
+  - `orbit`: small.
+  - `em-wave`: pulls toward a 3D code item.
+  - `stddev` (council, `scripts/lab/council.mjs`): pulls toward formulas and text.
+- **What to read in each run folder** (`space/.lab/perf/runs/…`):
+  - `calls.json`: the call order, the get_guide topics, and the errors.
+  - The code of each write_scene call: `program(`, `shader(`, `canvas(` or `html(`, or ink and shapes only.
+  - A preview before each play.
+  - The share of repeated characters.
+  - `reply.md`, and the images in `trace/`.
+- Time is noisy at n = 1. Read behaviour, not seconds.
+
+### Diagnose a behaviour problem
+
+1. **Look at what the agent read and did.** This means the run folder above,
+   or the founder's traces in `~/.learning-space/traces/` (`node space/scripts/trace-report.mjs`).
+2. **Find the text that the agent read at the moment of the choice.** The
+   model follows the text. In I20, both models chose a 3D program item from
+   the get_guide topic list, which described program() by its power alone.
+3. **Find out whether the text changed.** Run
+   `git log -p -S "<phrase>" -- space/resources space/src/main/mcp.ts`, and
+   compare with the approved commit.
+4. **Check what the client loads.** Codex reads the brief from `AGENTS.md`
+   only in a learning folder; elsewhere it must call `get_brief`. Without the
+   brief, the tool descriptions and the guide are all it has.
+5. **Fix the text that explains the space.** Do not add a warning or a rule
+   (principle 4). Then measure again.
+
+### Where to look for how to write well
+
+- **This file:** the principles, the lessons below and the founder's words in the appendix.
+- **[`anthropic-tool-guidance.md`](anthropic-tool-guidance.md):** notes on tool design, by topic.
+- **`reference/anthropic/` (local only; the index is its `README.md`).** The most useful parts:
+  - `guidance/define-tools.md`: detailed descriptions; when to use the tool and when not; the good and poor `get_stock_price` example.
+  - `guidance/writing-tools-for-agents.md`: "describe your tool to a new hire".
+  - `guidance/connector-review-criteria.md`: "Describe what the tool does, and don't tell Claude how to behave".
+  - `examples/claude-code-tool-descriptions.md`: Claude Code's own tools. Each has one opening sentence, a "Usage" list and pointers to the better tool.
+  - `guidance/prompting-best-practices.md` and `examples/anthropics-skills/skills/skill-creator/SKILL.md`: explain the reason instead of MUST; ask for what to do, not what to avoid.
+- **The approved drafts, as models of the voice** (in `drafts/`):
+  - `tools-v2-draft.md` (I19)
+  - `purposes-draft.md` (I20)
+  - `explain-fully-draft.md` (I21)
+  - `preview-draft.md` (I22)
+  - `scene-tools-from-old-2026-10-27/` (I25)
+  - `brief-v18.md`
 
 ## How the 2026-10-24 brief was written
 
@@ -235,6 +382,20 @@ that Anthropic writes for its own models: the claude.ai system prompt and the
   opus --task stddev --brief-only --brief <draft>` (add `--no-code
   --no-html` to hide those kinds). The bench (`scripts/bench/run.mjs`) has
   no brief option and measures only the live brief.
+
+## What went wrong in the scene tool rewrite (T16, 2026-10-26, do not repeat)
+
+- **The new tools got new texts, written from scratch.** The facts were
+  right, but the voice and the order changed. The founder did not like the
+  result, and I25 brought back the I19/I22 text with only the changes the
+  tools needed.
+- **Tool mechanics moved into the brief.** These were the tool names in a
+  sequence ("write_scene, then play_scene") and a list of moments to check.
+- **Three sentences described a feature that was gone** (the layout warnings).
+- **A wrong fact went in:** "a draft that only you can see".
+- **A proposed fix added new steering text where none had been** (an
+  ink-first paragraph in write_scene). The founder rejected it. The steering
+  already lived in the brief and the guide (I20), and it had not changed.
 
 ## Appendix — the founder's words
 
