@@ -15,6 +15,10 @@ export const TASKS = {
   'em-wave': {
     title: 'Electromagnetic wave in 3D (the lab council task; a large animated scene)',
     text: 'Show me how an electromagnetic wave travels in 3D.'
+  },
+  pendulum: {
+    title: 'Pendulum simulation, then period vs length (a code item and two scenes in a row)',
+    text: 'Simulate a pendulum, then show how its period depends on the length.'
   }
 }
 
