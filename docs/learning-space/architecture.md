@@ -86,7 +86,7 @@ limits scripts and images.
 | Module | Job |
 | --- | --- |
 | `agent/handler.ts` | Answers requests from main: the reads, changes, screenshot plans, board changes, learner news. |
-| `agent/reads.ts` | The board reads of `list_items`, `get_item`, `get_changes` and the `part` of `get_screenshot`: one model of the board in units, summaries by area, the "Deeper:" lines (decisions T20, T21). |
+| `agent/reads.ts` | The board reads of `list_items`, `get_item`, `get_changes` and the `part` of `get_screenshot`: what needs the live layout (units, ink groups, summaries by area, the "Deeper:" lines; decisions T20, T21). The board model that needs no layout (what counts as an item, item texts and the one search, clustering by place, place, count and time words) is `shared/board-digest.ts`, which `list_boards` and board news in main use too. |
 | `agent/edits.ts` | Item details for `get_item`, scene requests. |
 | `board/html.ts` | HTML subset ⇄ nodes, both directions; reports what was dropped. |
 | `agent/groups.ts` | Clusters learner ink into groups `g1`, `g2`, … with stable ids. |
@@ -196,7 +196,9 @@ P12, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
   the program to the board's stage (`live-scene.ts`, decision T18): one
   long-lived V8 realm in a Web Worker of the stage process, a hidden,
   sandboxed Chromium renderer with no window (`stage-process.ts`; the page
-  `src/stage/page.ts`, the worker `src/stage/worker.ts`). The stage process
+  `src/stage/page.ts`, the worker `src/stage/worker.ts`). The main process
+  owns the drafts (one key for each draft version) and the stage epoch; the
+  renderer only caches compiled drafts by key (decision B12). The stage process
   has its own in-memory session that serves only its page and scripts, with
   no network, no permissions, no navigation and cross-origin isolation; one
   MessagePort joins it to the main process, and both sides check every
