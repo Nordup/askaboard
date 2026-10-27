@@ -1,6 +1,8 @@
 import prelude from './live-prelude.js?raw'
 import { STAGE_LIMITS, type StageMode, type StageReply, type StageTiming } from '../shared/stage-protocol'
 import { chunkBytes, CREDIT_BYTES, FRAMES_VERSION, FrameEncoder, MAX_FRAME_BYTES } from '../shared/frames'
+import { polylineInk } from '../shared/ink-points'
+import { flattenPath, parsePath } from '../shared/path-geometry'
 import { BRIDGE_HEADER, type FromWorker, type ToWorker } from './worker-protocol'
 
 /**
@@ -117,6 +119,7 @@ function init(message: Extract<ToWorker, { t: 'init' }>): void {
     G.__frames = (sid: number, kind: string, math: boolean, samples: Array<Record<string, unknown>>): void => {
       if (frameSink) frameSink(sid, kind, math, samples)
     }
+    G.__geometry = Object.freeze({ parsePath, flattenPath, polylineInk })
     G.__host = (fns: Host) => {
       host = fns
     }

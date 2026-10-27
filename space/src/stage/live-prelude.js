@@ -44,6 +44,9 @@
   // Each changing object's samples, as the sampling makes them: (stage id, kind, math, samples). The worker streams them to the board.
   const giveFrames = typeof G.__frames === 'function' ? G.__frames : null
   delete G.__frames
+  // Path geometry without the DOM (shared/path-geometry.ts: parsePath, flattenPath) and the ink points of pen shapes (shared/ink-points.ts: polylineInk).
+  const GEOMETRY = G.__geometry
+  delete G.__geometry
   const FONT = JSON.parse(G.__fontText)
   delete G.__fontText
   // Lab switch LS_LAB_NO_CODE (main/lab-switch.ts): no shader(), canvas() or program(), and no word of them.
@@ -209,155 +212,27 @@
   }
   const f2 = (v) => Math.round(v * 100) / 100
 
-  /** Sample an SVG path "d" into polylines (for bounds and length only; the app draws the real path). */
-  function samplePath(d) {
+  /** The absolute segments of an SVG path "d" (shared/path-geometry.ts); a failure that says what is wrong. */
+  function pathSegments(d) {
     if (typeof d !== 'string' || !d.trim()) fail('path(d) needs an SVG path string such as "M0 0 L80 0"')
-    const tokens = d.match(/[a-zA-Z]|-?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?/g) || []
-    let i = 0
-    const lines = []
-    let line = null
-    let cx = 0
-    let cy = 0
-    let sx = 0
-    let sy = 0
-    let lastCtrl = null
-    let lastCmd = ''
-    let cmd = ''
-    const isCmd = (t) => /^[a-zA-Z]$/.test(t)
-    const next = () => {
-      const t = tokens[i++]
-      if (t === undefined || isCmd(t)) fail(`The path "${d.slice(0, 40)}" has a command with too few numbers`)
-      return Number(t)
+    try {
+      return GEOMETRY.parsePath(d)
+    } catch (error) {
+      fail(error.message)
     }
-    const push = (x, y) => {
-      if (!line) {
-        line = [[cx, cy]]
-        lines.push(line)
-      }
-      line.push([x, y])
-    }
-    const curve = (pts, n) => {
-      for (let k = 1; k <= n; k++) {
-        const t = k / n
-        const u = 1 - t
-        let x
-        let y
-        if (pts.length === 3) {
-          x = u * u * pts[0][0] + 2 * u * t * pts[1][0] + t * t * pts[2][0]
-          y = u * u * pts[0][1] + 2 * u * t * pts[1][1] + t * t * pts[2][1]
-        } else {
-          x = u * u * u * pts[0][0] + 3 * u * u * t * pts[1][0] + 3 * u * t * t * pts[2][0] + t * t * t * pts[3][0]
-          y = u * u * u * pts[0][1] + 3 * u * u * t * pts[1][1] + 3 * u * t * t * pts[2][1] + t * t * t * pts[3][1]
-        }
-        push(x, y)
-      }
-    }
-    while (i < tokens.length) {
-      if (isCmd(tokens[i])) cmd = tokens[i++]
-      else if (!cmd) fail(`The path "${d.slice(0, 40)}" must start with M`)
-      const rel = cmd === cmd.toLowerCase()
-      const C = cmd.toUpperCase()
-      const ox = rel ? cx : 0
-      const oy = rel ? cy : 0
-      if (C === 'M') {
-        cx = next() + ox
-        cy = next() + oy
-        sx = cx
-        sy = cy
-        line = null
-        cmd = rel ? 'l' : 'L'
-        lastCtrl = null
-      } else if (C === 'L') {
-        const x = next() + ox
-        const y = next() + oy
-        push(x, y)
-        cx = x
-        cy = y
-        lastCtrl = null
-      } else if (C === 'H') {
-        const x = next() + ox
-        push(x, cy)
-        cx = x
-        lastCtrl = null
-      } else if (C === 'V') {
-        const y = next() + oy
-        push(cx, y)
-        cy = y
-        lastCtrl = null
-      } else if (C === 'C' || C === 'S') {
-        let c1
-        if (C === 'C') c1 = [next() + ox, next() + oy]
-        else c1 = lastCtrl && /[CS]/.test(lastCmd.toUpperCase()) ? [2 * cx - lastCtrl[0], 2 * cy - lastCtrl[1]] : [cx, cy]
-        const c2 = [next() + ox, next() + oy]
-        const end = [next() + ox, next() + oy]
-        curve([[cx, cy], c1, c2, end], 16)
-        lastCtrl = c2
-        cx = end[0]
-        cy = end[1]
-      } else if (C === 'Q' || C === 'T') {
-        let c1
-        if (C === 'Q') c1 = [next() + ox, next() + oy]
-        else c1 = lastCtrl && /[QT]/.test(lastCmd.toUpperCase()) ? [2 * cx - lastCtrl[0], 2 * cy - lastCtrl[1]] : [cx, cy]
-        const end = [next() + ox, next() + oy]
-        curve([[cx, cy], c1, end], 12)
-        lastCtrl = c1
-        cx = end[0]
-        cy = end[1]
-      } else if (C === 'A') {
-        let rx = Math.abs(next())
-        let ry = Math.abs(next())
-        const phi = (next() * Math.PI) / 180
-        const large = next() !== 0
-        const sweep = next() !== 0
-        const x = next() + ox
-        const y = next() + oy
-        if (!rx || !ry) push(x, y)
-        else {
-          // Endpoint to centre parameterization (SVG spec F.6.5).
-          const cos = Math.cos(phi)
-          const sin = Math.sin(phi)
-          const dx = (cx - x) / 2
-          const dy = (cy - y) / 2
-          const x1 = cos * dx + sin * dy
-          const y1 = -sin * dx + cos * dy
-          const lambda = (x1 * x1) / (rx * rx) + (y1 * y1) / (ry * ry)
-          if (lambda > 1) {
-            rx *= Math.sqrt(lambda)
-            ry *= Math.sqrt(lambda)
-          }
-          const sign = large === sweep ? -1 : 1
-          const num2 = rx * rx * ry * ry - rx * rx * y1 * y1 - ry * ry * x1 * x1
-          const coef = sign * Math.sqrt(Math.max(0, num2 / (rx * rx * y1 * y1 + ry * ry * x1 * x1)))
-          const cxp = (coef * rx * y1) / ry
-          const cyp = (-coef * ry * x1) / rx
-          const ccx = cos * cxp - sin * cyp + (cx + x) / 2
-          const ccy = sin * cxp + cos * cyp + (cy + y) / 2
-          const angle = (ux, uy, vx, vy) => Math.atan2(ux * vy - uy * vx, ux * vx + uy * vy)
-          const t1 = angle(1, 0, (x1 - cxp) / rx, (y1 - cyp) / ry)
-          let dt = angle((x1 - cxp) / rx, (y1 - cyp) / ry, (-x1 - cxp) / rx, (-y1 - cyp) / ry)
-          if (!sweep && dt > 0) dt -= 2 * Math.PI
-          if (sweep && dt < 0) dt += 2 * Math.PI
-          const n = Math.max(4, Math.ceil(Math.abs(dt) / 0.2))
-          for (let k = 1; k <= n; k++) {
-            const a = t1 + (dt * k) / n
-            push(ccx + rx * Math.cos(a) * cos - ry * Math.sin(a) * sin, ccy + rx * Math.cos(a) * sin + ry * Math.sin(a) * cos)
-          }
-        }
-        cx = x
-        cy = y
-        lastCtrl = null
-      } else if (C === 'Z') {
-        push(sx, sy)
-        cx = sx
-        cy = sy
-        line = null
-        lastCtrl = null
-      } else fail(`The path command "${cmd}" is not an SVG path command`)
-      lastCmd = cmd
-    }
+  }
+  /** Polylines of a path's segments, for bounds, lengths and collisions (the app draws the real path). */
+  function outlineOf(segments, d) {
+    const lines = GEOMETRY.flattenPath(segments, 'outline')
     if (!lines.length) fail(`The path "${d.slice(0, 40)}" draws nothing`)
     return lines
   }
+  /** Sample an SVG path "d" into polylines (for bounds and length only; the app draws the real path). */
+  function samplePath(d) {
+    return outlineOf(pathSegments(d), d)
+  }
+  /** The text of absolute segments, as "M1 2 C3 4 5 6 7 8 Z". */
+  const pathText = (segments) => segments.map((s) => s[0] + s.slice(1).join(' ')).join(' ')
 
   /**
    * A path "d" through points (a polyline), closed with Z when asked, and the
@@ -388,16 +263,18 @@
     return { d: closed ? `${d}Z` : d.trim(), lines: ok ? [line] : null }
   }
 
-  /** An ellipse as four cubic arcs, starting at the left (a hand starts circles there). */
-  function ellipseD(cx, cy, rx, ry) {
+  /** An ellipse as four cubic arcs (absolute segments), starting at the left (a hand starts circles there). */
+  function ellipseSegments(cx, cy, rx, ry) {
     const k = 0.5522847498
-    const p = (x, y) => `${f2(x)} ${f2(y)}`
-    return (
-      `M${p(cx - rx, cy)} C${p(cx - rx, cy + ry * k)} ${p(cx - rx * k, cy + ry)} ${p(cx, cy + ry)} ` +
-      `C${p(cx + rx * k, cy + ry)} ${p(cx + rx, cy + ry * k)} ${p(cx + rx, cy)} ` +
-      `C${p(cx + rx, cy - ry * k)} ${p(cx + rx * k, cy - ry)} ${p(cx, cy - ry)} ` +
-      `C${p(cx - rx * k, cy - ry)} ${p(cx - rx, cy - ry * k)} ${p(cx - rx, cy)} Z`
-    )
+    const p = (x, y) => [f2(x), f2(y)]
+    return [
+      ['M', ...p(cx - rx, cy)],
+      ['C', ...p(cx - rx, cy + ry * k), ...p(cx - rx * k, cy + ry), ...p(cx, cy + ry)],
+      ['C', ...p(cx + rx * k, cy + ry), ...p(cx + rx, cy + ry * k), ...p(cx + rx, cy)],
+      ['C', ...p(cx + rx, cy - ry * k), ...p(cx + rx * k, cy - ry), ...p(cx, cy - ry)],
+      ['C', ...p(cx - rx * k, cy - ry), ...p(cx - rx, cy - ry * k), ...p(cx - rx, cy)],
+      ['Z']
+    ]
   }
 
   // ---------- Objects ----------
@@ -830,19 +707,28 @@
     return { x: b.x - pad, y: b.y - pad, width: b.width + pad * 2, height: b.height + pad * 2 }
   }
 
-  /** known: the polylines samplePath(d) gives, when the caller made d from them (null: read d). */
-  function shapeObject(api, d, opts, defaults, known = null) {
-    const lines = known || samplePath(d)
+  /**
+   * known: the polylines samplePath(d) gives, when the caller made d from
+   * them as straight segments; segments: the absolute segments of d, when the
+   * caller made d from them (both null: read d). A pen shape is ink with its
+   * final points (lines: polylineInk of the polylines, or of the path
+   * flattened for ink); the stage itself reads its geometry from d (worldLines).
+   */
+  function shapeObject(api, d, opts, defaults, known = null, segments = null) {
+    const path = known ? null : segments || pathSegments(d)
+    const lines = known || outlineOf(path, d)
     let total = 0
     for (const l of lines) total += polyLength(l)
     if (opts.pen) {
+      const ink = GEOMETRY.polylineInk(known || GEOMETRY.flattenPath(path, 'ink'))
+      if (!ink.length && !finalSampling) warnings.add(`${api}: the path has no length, so the pen draws nothing`)
       return make({
         kind: 'ink',
         api,
         name: nameOf(opts),
         style: { ...styleOf({ ...opts, pen: undefined }, api, defaults), jitter: opts.jitter === undefined ? 0.3 : Math.max(0, Math.min(1, num(opts.jitter, `${api} jitter`))), tool: opts.tool ?? 'pen' },
         d,
-        lines: null,
+        lines: ink,
         pressure: false,
         length: total,
         speed: 450,
@@ -931,7 +817,8 @@
     opts = options(opts, 'circle options')
     num(r, 'circle radius')
     if (r <= 0) fail('circle radius must be positive')
-    return shapeObject('circle', ellipseD(coord(cx, 'cx'), coord(cy, 'cy'), r, r), opts, {})
+    const segments = ellipseSegments(coord(cx, 'cx'), coord(cy, 'cy'), r, r)
+    return shapeObject('circle', pathText(segments), opts, {}, null, segments)
   }
 
   function ellipse(cx, cy, rx, ry, opts) {
@@ -939,7 +826,8 @@
     num(rx, 'ellipse rx')
     num(ry, 'ellipse ry')
     if (rx <= 0 || ry <= 0) fail('ellipse radii must be positive')
-    return shapeObject('ellipse', ellipseD(coord(cx, 'cx'), coord(cy, 'cy'), rx, ry), opts, {})
+    const segments = ellipseSegments(coord(cx, 'cx'), coord(cy, 'cy'), rx, ry)
+    return shapeObject('ellipse', pathText(segments), opts, {}, null, segments)
   }
 
   function rect(x, y, w, h, opts) {
@@ -949,13 +837,14 @@
     num(w, 'rect width')
     num(h, 'rect height')
     const r = Math.max(0, Math.min(opts.radius === undefined ? 0 : num(opts.radius, 'rect radius'), Math.abs(w) / 2, Math.abs(h) / 2))
-    let d
+    const [x0, y0, x1, y1] = [f2(x), f2(y), f2(x + w), f2(y + h)]
+    let segments
     if (r > 0) {
-      d =
-        `M${f2(x + r)} ${f2(y)} H${f2(x + w - r)} A${r} ${r} 0 0 1 ${f2(x + w)} ${f2(y + r)} V${f2(y + h - r)} A${r} ${r} 0 0 1 ${f2(x + w - r)} ${f2(y + h)} ` +
-        `H${f2(x + r)} A${r} ${r} 0 0 1 ${f2(x)} ${f2(y + h - r)} V${f2(y + r)} A${r} ${r} 0 0 1 ${f2(x + r)} ${f2(y)} Z`
-    } else d = `M${f2(x)} ${f2(y)} H${f2(x + w)} V${f2(y + h)} H${f2(x)} Z`
-    return shapeObject('rect', d, opts, {})
+      const [xr, yr, xw, yh] = [f2(x + r), f2(y + r), f2(x + w - r), f2(y + h - r)]
+      const corner = (ex, ey) => ['A', r, r, 0, 0, 1, ex, ey]
+      segments = [['M', xr, y0], ['L', xw, y0], corner(x1, yr), ['L', x1, yh], corner(xw, y1), ['L', xr, y1], corner(x0, yh), ['L', x0, yr], corner(xr, y0), ['Z']]
+    } else segments = [['M', x0, y0], ['L', x1, y0], ['L', x1, y1], ['L', x0, y1], ['Z']]
+    return shapeObject('rect', pathText(segments), opts, {}, null, segments)
   }
 
   function polygon(pts, opts) {
@@ -1741,7 +1630,7 @@
     const spec = specAt(entry, t)
     const m = matrixAt(entry, t)
     let local
-    if (spec.kind === 'ink') local = spec.lines || samplePath(spec.d)
+    if (spec.kind === 'ink') local = spec.d === undefined ? spec.lines : samplePath(spec.d)
     else if (spec.kind === 'shape') local = samplePath(spec.d)
     else {
       const b = spec.bounds
@@ -2049,7 +1938,8 @@
 
   function naturalDraw(entry) {
     if (entry.kind === 'group') return leaves(entry).reduce((sum, e) => sum + naturalDraw(e), 0)
-    if (entry.kind === 'ink') return Math.max(0.25, entry.length / entry.speed + (entry.lines ? entry.lines.length * 0.05 : 0))
+    // Explicit strokes (no d) get a short lift between strokes; a pen shape draws as one path.
+    if (entry.kind === 'ink') return Math.max(0.25, entry.length / entry.speed + (entry.d === undefined ? entry.lines.length * 0.05 : 0))
     if (entry.kind === 'shape') return Math.max(0.35, Math.min(3, entry.length / 500))
     if (entry.kind === 'text') return Math.max(0.4, Math.min(2.5, entry.bounds.width / 260))
     if (entry.kind === 'node') return 1
@@ -2521,8 +2411,7 @@
       if (spec.style.fill) g.fill = spec.style.fill
       if (spec.style.fillOpacity !== undefined) g.fillOpacity = spec.style.fillOpacity
     } else if (spec.kind === 'ink') {
-      if (spec.lines) g.lines = spec.lines
-      else g.d = spec.d
+      g.lines = spec.lines
       g.width = spec.style.width
     } else if (spec.kind === 'text') g.text = spec.text
     else if (spec.kind === 'live') g.params = spec.params
@@ -2724,7 +2613,8 @@
       if (e.parent !== undefined && local.has(e.parent)) o.parent = local.get(e.parent)
       // The samples themselves go to the board as frames (giveFrames, by sid); the description says how many.
       if (e.dyn) o.samples = e.dyn.length
-      if (e.kind === 'ink') Object.assign(o, { style: e.style, lines: e.lines, d: e.d, pressure: e.pressure })
+      // Ink goes as its points (a pen shape's d stays in the stage).
+      if (e.kind === 'ink') Object.assign(o, { style: e.style, lines: e.lines, pressure: e.pressure })
       if (e.kind === 'shape') Object.assign(o, { style: e.style, d: e.d })
       if (e.kind === 'text') Object.assign(o, { style: e.style, text: e.text, math: e.math, at: e.at, center: e.center })
       if (e.kind === 'live') Object.assign(o, { style: e.style, mode: e.mode, code: e.code, width: e.width, height: e.height, params: e.params, line: e.line })

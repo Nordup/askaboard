@@ -2,7 +2,8 @@ import { isContent, isFrame, isInk, isKnown, newItemId, type BoardNode, type Con
 import type { SceneBounds, SceneDescription, SceneEase, SceneGroupObject, SceneHtmlObject, SceneInkObject, SceneLiveObject, SceneObjectDesc, ScenePartObject, SceneSample, SceneShapeObject, SceneStyle, SceneTextObject } from '@shared/live-scene'
 import { splitPath, type FrameKind } from '@shared/frames'
 import { MAX_COORD } from '@shared/limits'
-import { humanize, seededRandom, strokeSeed, svgPathPolylines } from '../agent/ink'
+import { flattenPath, parsePath } from '@shared/path-geometry'
+import { humanize, seededRandom, strokeSeed } from '../agent/ink'
 import type { Scene } from '../agent/placement'
 import { inkOffset, isFlowed, normalizeInk, removeNodes, ROOT, withDescendants, zAbove } from '../board/scene'
 import type { Point, Region } from '../board/types'
@@ -160,6 +161,13 @@ const r2 = (value: number): number => Math.round(value * 100) / 100
 /** Pen lift between strokes of one ink object, in board points of drawing time. */
 const LIFT = 9
 
+/** The outline of a shape's path, for its box (shared/path-geometry.ts); an error for a path without length. */
+function shapeOutline(d: string): Point[][] {
+  const lines = flattenPath(parsePath(d), 'ink') as Point[][]
+  if (!lines.some((line) => line.some((p, i) => i > 0 && (p[0] !== line[i - 1][0] || p[1] !== line[i - 1][1])))) throw new Error('the path has no length. Give a path "d" string such as "M0 0 L40 0".')
+  return lines
+}
+
 function linesBounds(lines: readonly Point[][]): Region {
   let x0 = Infinity
   let y0 = Infinity
@@ -236,11 +244,7 @@ export function prepareSample(kind: FrameKind, math: boolean, sample: SceneSampl
     Object.assign(next, splitNumbers(sample.d, forms))
     if (sample.width !== undefined) next.width = sample.width
   } else if (kind === 'ink') {
-    try {
-      next.lines = sample.lines ? sample.lines.map((line) => line.map((p) => [p[0], p[1]] as Point)) : sample.d ? svgPathPolylines(sample.d) : []
-    } catch {
-      next.lines = []
-    }
+    next.lines = sample.lines ? sample.lines.map((line) => line.map((p) => [p[0], p[1]] as Point)) : []
     if (sample.width !== undefined) next.width = sample.width
   } else if (kind === 'text' && sample.text !== undefined) next.html = sampleHtml(sample.text, math)
   else if (kind === 'live' && sample.params) next.params = sample.params
@@ -424,13 +428,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
 
     if (object.kind === 'ink') {
       const ink = object as SceneInkObject
-      let local: Array<Array<[number, number, number?]>>
-      try {
-        local = ink.lines ? ink.lines.map((line) => line.map((p) => [p[0], p[1], p[2]] as [number, number, number?])) : svgPathPolylines(String(ink.d ?? '')).map((line) => line.map(([x, y]) => [x, y] as [number, number, number?]))
-      } catch (error) {
-        warn(`${ink.api} ${object.id}: ${error instanceof Error ? error.message : String(error)}`)
-        continue
-      }
+      const local = ink.lines.map((line) => line.map((p) => [p[0], p[1], p[2]] as [number, number, number?]))
       const scale = scaleOf(end)
       const jitter = ink.style.jitter ?? 0.3
       const color = withOpacity(finalColor(object.id), isRemoved ? ink.style.opacity : finalOpacity(object.id, ink.style))
@@ -492,7 +490,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
       const shape = object as SceneShapeObject
       let lines: Point[][]
       try {
-        lines = svgPathPolylines(shape.d)
+        lines = shapeOutline(shape.d)
       } catch (error) {
         warn(`${shape.api} ${object.id}: ${error instanceof Error ? error.message : String(error)}`)
         continue

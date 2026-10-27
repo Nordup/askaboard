@@ -1,6 +1,5 @@
 import { chunkBytes, F_ALL, F_D, F_FORM, F_JSON, F_LINES, F_PARAMS, F_TEXT, F_WIDTH, FLAG_MATH, FLAG_MORE, FRAME_KINDS, FRAMES_VERSION, joinPath, type FrameKind, type FramesChunk } from '@shared/frames'
 import type { SceneSample } from '@shared/live-scene'
-import { svgPathPolylines } from '../agent/ink'
 import type { Point } from '../board/types'
 import { prepareSample, sampleHtml, splitNumbers, type DynSample } from './compile'
 
@@ -174,8 +173,8 @@ function decode(chunk: FramesChunk, objects: Map<number, ObjectFrames>, last: nu
         samples.push(prepareSample(kind, math, JSON.parse(S()) as SceneSample, forms))
         continue
       }
-      const allowed = kind === 'shape' ? F_WIDTH | F_FORM | F_D : kind === 'ink' ? F_WIDTH | F_LINES | F_D : kind === 'text' ? F_TEXT : F_PARAMS
-      if (mask & ~allowed || (mask & F_FORM && mask & F_D) || (mask & F_LINES && mask & F_D)) throw new Error('fields that do not fit the kind of object')
+      const allowed = kind === 'shape' ? F_WIDTH | F_FORM | F_D : kind === 'ink' ? F_WIDTH | F_LINES : kind === 'text' ? F_TEXT : F_PARAMS
+      if (mask & ~allowed || (mask & F_FORM && mask & F_D)) throw new Error('fields that do not fit the kind of object')
       const next: DynSample = { t: F(), bounds: { x: F(), y: F(), width: F(), height: F() } }
       const width = mask & F_WIDTH ? F() : undefined
       if (kind === 'shape') {
@@ -207,13 +206,6 @@ function decode(chunk: FramesChunk, objects: Map<number, ObjectFrames>, last: nu
             lines.push(line)
           }
           next.lines = lines
-        } else if (mask & F_D) {
-          const d = S()
-          try {
-            next.lines = svgPathPolylines(d)
-          } catch {
-            next.lines = []
-          }
         } else next.lines = []
         if (width !== undefined) next.width = width
       } else if (kind === 'text') {

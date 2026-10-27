@@ -87,10 +87,10 @@ interface SceneObjectBase {
 export interface SceneSample {
   t: number
   bounds: SceneBounds
-  /** shape, or ink drawn from a path */
+  /** shape */
   d?: string
   /** ink */
-  lines?: Array<Array<[number, number] | [number, number, number]>> | null
+  lines?: Array<Array<[number, number] | [number, number, number]>>
   /** text */
   text?: string
   /** stroke width (shape, ink) */
@@ -101,12 +101,11 @@ export interface SceneSample {
   params?: Record<string, number>
 }
 
-/** Ink: explicit polylines, or a path `d` that the app samples (a shape with pen: true). */
+/** Ink: its points (strokes, and shapes with pen: true, whose points the stage makes: shared/ink-points.ts). */
 export interface SceneInkObject extends SceneObjectBase {
   kind: 'ink'
   style: SceneStyle
-  lines: Array<Array<[number, number] | [number, number, number]>> | null
-  d?: string
+  lines: Array<Array<[number, number] | [number, number, number]>>
   pressure: boolean
 }
 

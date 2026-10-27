@@ -23,7 +23,7 @@
  * Fields (in mask order):
  *   F_WIDTH   f64 width
  *   F_FORM    u32 string (d with every number replaced by '#'), u32 n; f64 the n numbers
- *   F_D       u32 string (d as it is; the renderer splits it)
+ *   F_D       u32 string (a shape's d as it is; the renderer splits it)
  *   F_LINES   u32 lines; per line u32 points; f64 x, y per point
  *   F_TEXT    u32 string
  *   F_PARAMS  u32 n; per parameter u32 name string; f64 the n values
@@ -321,10 +321,6 @@ export class FrameEncoder {
             this.f64.push(plus(p[1]))
           }
         }
-      } else if (sample.d) {
-        if (typeof sample.d !== 'string') return false
-        mask |= F_D
-        this.u32.push(this.text(sample.d))
       }
     } else if (kind === KIND_TEXT) {
       if (sample.text !== undefined) {
