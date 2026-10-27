@@ -3,7 +3,7 @@ import { HAND_FONT } from '@shared/hand-font'
 import type { SceneContext, SceneDescription } from '@shared/live-scene'
 import { IPC } from '@shared/space-api'
 import { siteLabel, type SceneSource, type StageProgram } from '@shared/scene-program'
-import type { FromStage, StageMode, StageReply, ToStage } from '@shared/stage-protocol'
+import { programTooLarge, STAGE_LIMITS, type FromStage, type StageMode, type StageReply, type ToStage } from '@shared/stage-protocol'
 import { NO_CODE_ITEMS, NO_HTML } from './lab-switch'
 import { stageProgram } from './scene-files'
 import { StageProcess } from './stage-process'
@@ -462,12 +462,20 @@ export class SceneStage {
     } catch {
       answer = '{}'
     }
+    // An answer the stage would refuse becomes an error the program sees (it waits for an answer).
+    if (answer.length > STAGE_LIMITS.host) answer = JSON.stringify({ error: `The board's answer is ${answer.length} characters; the stage takes at most ${STAGE_LIMITS.host}.` })
     // Host ids start at 1 again in a new process: only the process that asked gets the answer.
     reply({ t: 'answer', hid, text: answer })
   }
 
   private send(message: { t: 'reset'; id: number } | { t: 'run'; id: number; program: StageProgram; ctxText: string; mode: StageMode }): Promise<StageReply> {
     if (!this.process.running) return Promise.resolve({ t: 'reply', id: message.id, ok: false, error: 'The stage process stopped.', line: null, file: null, ms: 0 })
+    // What the stage would refuse never goes: the call gets the reason now (the stage would answer it too, but later and with less).
+    if (message.t === 'run') {
+      const tooLarge = programTooLarge(message.program)
+      const refused = tooLarge ?? (message.ctxText.length > STAGE_LIMITS.context ? { file: null, message: `The scene's context is ${message.ctxText.length} characters; the stage takes at most ${STAGE_LIMITS.context}.` } : null)
+      if (refused) return Promise.resolve({ t: 'reply', id: message.id, ok: false, error: refused.message, line: null, file: refused.file, ms: 0 })
+    }
     return new Promise((resolve) => {
       this.pending.set(message.id, resolve)
       this.process.send(message)

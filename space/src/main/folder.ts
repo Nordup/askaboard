@@ -46,7 +46,7 @@ const fileIdentity = (info: { ino: number; mtimeMs: number; size: number }): str
 
 const toPosix = (path: string): string => path.split(sep).join('/')
 
-function isInside(root: string, path: string): boolean {
+export function isInside(root: string, path: string): boolean {
   return path === root || path.startsWith(root.endsWith(sep) ? root : root + sep)
 }
 

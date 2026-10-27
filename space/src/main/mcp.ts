@@ -1346,7 +1346,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
         }
         // The trace keeps the texts of the files it read, so a replay (scripts/perf/replay.mjs) can write them again.
         const files = source.modules.filter((module) => module.path !== null)
-        if (files.length) trace.args = { snapshot: { entry: source.entry, modules: files.map(({ path, text }) => ({ path, text })) } }
+        if (files.length) trace.args = { snapshot: { entry: source.entry, modules: files.map(({ path, text }) => ({ path, text })), ...(source.links ? { links: source.links } : {}) } }
         // The draft is ready when the call returns: its program ran, its frames are in the renderer, the renderer compiled it.
         const outcome = await this.withProgram(session, extra, (signal) =>
           this.stage.exclusive(async (): Promise<CallToolResult | Draft> => {

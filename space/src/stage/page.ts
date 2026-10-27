@@ -1,6 +1,6 @@
 import { chunkBytes, type FramesChunk } from '../shared/frames'
 import type { StageProgram } from '../shared/scene-program'
-import { parseReply, parseToStage, STAGE_LIMITS, type FromStage, type StageReply, type ToStage } from '../shared/stage-protocol'
+import { parseReply, parseToStage, refusedHostId, refusedId, STAGE_LIMITS, type FromStage, type StageReply, type ToStage } from '../shared/stage-protocol'
 import { BRIDGE_CHUNK, BRIDGE_HEADER, type FromWorker, type ToWorker } from './worker-protocol'
 
 /**
@@ -64,9 +64,24 @@ window.addEventListener('message', (event) => {
   port.onmessage = (incoming) => {
     const message = parseToStage(incoming.data)
     if (message) handle(message)
+    else refused(incoming.data)
   }
   send({ t: 'ready' })
 })
+
+/**
+ * A message from main that the parser refused. Nothing may wait on it forever: a run or a reset gets a failed reply with
+ * its id, and an answer the worker waits on becomes an error answer.
+ */
+function refused(data: unknown): void {
+  const id = refusedId(data)
+  if (id !== null) {
+    send({ t: 'reply', id, ok: false, error: 'The stage refused the program: the message was of the wrong shape or larger than the stage takes.', line: null, file: null, ms: 0 })
+    return
+  }
+  const hid = refusedHostId(data)
+  if (hid !== null && current?.hostId === hid) handle({ t: 'answer', hid, text: JSON.stringify({ error: "The board's answer was of the wrong shape or larger than the stage takes." }) })
+}
 
 /** A new port to the board. A program that streams frames to the old one fails (its frames are lost). */
 function linkFrames(next: MessagePort): void {
@@ -176,7 +191,14 @@ function stop(): void {
 
 function fromWorker(context: Context, data: unknown, started: number): void {
   const message = parseFromWorker(data)
-  if (!message) return
+  if (!message) {
+    // A message the page cannot read: what waits on this worker fails now (it would wait forever).
+    const id = context.resetId ?? context.run?.id ?? null
+    if (id === null) return
+    stop()
+    send({ t: 'reply', id, ok: false, error: 'The stage failed: its worker sent a message of the wrong shape or larger than the stage takes.', line: null, file: null, ms: performance.now() - started })
+    return
+  }
   switch (message.t) {
     case 'ready':
     case 'failed':

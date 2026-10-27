@@ -231,53 +231,72 @@ function run(message: Extract<ToWorker, { t: 'run' }>): void {
 
 /**
  * Run a program's modules: the entry module, which loads the modules it
- * imports (each runs once in this program, in the order of the imports).
- * Every module is evaluated here and now (no loading, no tasks), so the
+ * imports (each runs once in this program, when its first importer loads
+ * it). Every module is evaluated here and now (no loading, no tasks), so the
  * program runs on the scene clock as a script does.
+ *
+ * Each module is an async function of its helper (main/scene-files.ts made
+ * it): load(path) gives a module's namespace when it has run (a static
+ * import); literal(specifier) and dynamic(specifier) are import() with a
+ * literal or a computed path; exports(list) gives this module's namespace its
+ * getters ([name, getter] pairs, sorted: the namespace reads the module's
+ * bindings, live); meta is import.meta.
  */
 function runModules(program: Extract<StageProgram, { kind: 'modules' }>): Promise<unknown> {
   const files = new MapType<string, StageModule>()
-  for (const module of program.modules.slice(1)) if (module.path !== null) files.set(module.path, module)
+  for (const module of program.modules) if (module.path !== null) files.set(module.path, module)
+  const links = new MapType<string, string>(program.links)
   const loaded = new MapType<string, Promise<object>>()
   const load = (path: string): Promise<object> => {
-    let namespace = loaded.get(path)
-    if (!namespace) {
-      const module = files.get(path)
-      if (!module) return PromiseType.reject(new ErrorType(`${path} is not one of the files of this scene (they are read at write_scene).`))
-      namespace = evaluate(module)
-      loaded.set(path, namespace)
-    }
-    return namespace
+    const namespace = loaded.get(path)
+    if (namespace) return namespace
+    const module = files.get(path)
+    return module ? evaluate(module) : PromiseType.reject(new ErrorType(`${path} is not one of the files of this scene (they are read at write_scene).`))
+  }
+  /** import(specifier) from a module: the path it names, through the links write_scene saw. */
+  const imported = (from: string | null, specifier: unknown, literal: boolean): Promise<object> => {
+    const text = String(specifier)
+    const resolved = resolveSpecifier(from, text)
+    if ('error' in resolved) return PromiseType.reject(new ErrorType(`import(${JSONType.stringify(text)}): ${resolved.error}.`))
+    const path = links.get(resolved.path) ?? resolved.path
+    if (files.has(path)) return load(path)
+    return PromiseType.reject(
+      new ErrorType(
+        literal
+          ? `import(${JSONType.stringify(text)}): there was no file boards/scenes/${resolved.path} when write_scene read the files of this scene.`
+          : `import(${JSONType.stringify(text)}): write_scene did not read boards/scenes/${resolved.path} for this scene. It reads the files that import declarations and import("…") with a literal path name; import() with a computed path loads only one of those files.`
+      )
+    )
   }
   const evaluate = (module: StageModule): Promise<object> => {
     let body: (helper: object) => Promise<unknown>
     try {
-      body = realEval(`(async function (__lsModule) {${module.code}\n})\n//# sourceURL=${moduleUrl(module.path)}`) as typeof body
+      body = realEval(`${module.code}\n//# sourceURL=${moduleUrl(module.path)}`) as typeof body
     } catch (error) {
-      // main parsed every module (main/scene-files.ts); a module V8 refuses still names its file.
+      // main parsed every module and its rewrite (main/scene-files.ts); a module V8 refuses still names its file.
       return PromiseType.reject(error instanceof SyntaxErrorType && module.path !== null ? new SyntaxErrorType(`${module.path}: ${error.message}`) : error)
     }
     const namespace = ObjectType.create(null) as Record<PropertyKey, unknown>
     const helper = ObjectType.freeze({
       load,
-      dynamic: (specifier: unknown): Promise<object> => {
-        const resolved = resolveSpecifier(module.path, String(specifier))
-        return 'error' in resolved ? PromiseType.reject(new ErrorType(`import(${JSONType.stringify(String(specifier))}): ${resolved.error}.`)) : load(resolved.path)
-      },
-      exports: (getters: Record<string, () => unknown>, stars: object[]): void => {
-        for (const name of ObjectType.keys(getters)) ObjectType.defineProperty(namespace, name, { get: getters[name], enumerable: true })
-        for (const star of stars) {
-          for (const name of ObjectType.keys(star)) {
-            if (name === 'default' || ObjectType.hasOwn(namespace, name)) continue
-            ObjectType.defineProperty(namespace, name, { get: () => (star as Record<string, unknown>)[name], enumerable: true })
-          }
-        }
+      literal: (specifier: unknown): Promise<object> => imported(module.path, specifier, true),
+      dynamic: (specifier: unknown): Promise<object> => imported(module.path, specifier, false),
+      exports: (list: Array<[string, () => unknown]>): void => {
+        for (let i = 0; i < list.length; i++) ObjectType.defineProperty(namespace, list[i][0], { get: list[i][1], enumerable: true })
         ObjectType.defineProperty(namespace, SymbolType.toStringTag, { value: 'Module' })
         ObjectType.freeze(namespace)
       },
       meta: ObjectType.freeze({ url: moduleUrl(module.path) })
     })
-    return body(helper).then(() => namespace)
+    // The module is loaded from now on (an import() of it while it runs gets this same evaluation, as in ES).
+    let settle: { resolve: (value: object) => void; reject: (reason: unknown) => void } | null = null
+    const done = new PromiseType<object>((resolve, reject) => {
+      settle = { resolve, reject }
+    })
+    if (module.path !== null) loaded.set(module.path, done)
+    const { resolve, reject } = settle as unknown as { resolve: (value: object) => void; reject: (reason: unknown) => void }
+    body(helper).then(() => resolve(namespace), reject)
+    return done
   }
   return evaluate(program.modules[0])
 }

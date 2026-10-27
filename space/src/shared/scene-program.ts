@@ -21,20 +21,31 @@ export interface SceneModule {
   sha256: string
 }
 
-/** The snapshot a scene program runs. entry: the file path, or null for inline code. modules[0] is the entry module; the rest are the files it imports, in the order they were first found. */
+/**
+ * The snapshot a scene program runs. entry: the file path, or null for inline code. modules[0] is the entry module; the rest are
+ * the files it imports, in the order they were first found. A module's path is its real path in boards/scenes/ (links resolved).
+ * links: each import path that names a link, and the real path it led to (only when there are any).
+ */
 export interface SceneSource {
   entry: string | null
   modules: SceneModule[]
+  links?: Array<[string, string]>
 }
 
-/** A module as the stage runs it: the body of an async function (made by main/scene-files.ts, compileModule), with the same line numbers as its text. */
+/**
+ * A module as the stage runs it (made by main/scene-files.ts): an async function expression whose one parameter is the stage's
+ * module helper (stage/worker.ts runModules), with the same line numbers as the module's text.
+ */
 export interface StageModule {
   path: string | null
   code: string
 }
 
-/** The program the stage runs: a script (the body of an async function), or modules (the first one is the entry). */
-export type StageProgram = { kind: 'script'; code: string } | { kind: 'modules'; modules: StageModule[] }
+/**
+ * The program the stage runs: a script (the body of an async function), or modules (the first one is the entry; links: import
+ * paths that lead to another module path, for import() with a computed path).
+ */
+export type StageProgram = { kind: 'script'; code: string } | { kind: 'modules'; modules: StageModule[]; links: Array<[string, string]> }
 
 /** The folder of scene files, relative to the learning folder. */
 export const SCENES_DIR = `${BOARDS_DIR}/scenes`

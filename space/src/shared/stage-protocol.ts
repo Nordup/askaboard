@@ -100,16 +100,43 @@ function parseTiming(value: unknown): StageTiming | null | undefined {
 function parseProgram(value: unknown): StageProgram | null {
   if (!isShape(value)) return null
   if (value.kind === 'script') return keysAre(value, ['kind', 'code']) && isText(value.code, STAGE_LIMITS.code) ? { kind: 'script', code: value.code } : null
-  if (value.kind !== 'modules' || !keysAre(value, ['kind', 'modules']) || !Array.isArray(value.modules)) return null
+  if (value.kind !== 'modules' || !keysAre(value, ['kind', 'modules', 'links']) || !Array.isArray(value.modules)) return null
   const list = value.modules as unknown[]
   if (!list.length) return null
   const modules: StageModule[] = []
   for (const m of list) {
     if (!isShape(m) || !keysAre(m, ['path', 'code']) || !isText(m.code, STAGE_LIMITS.code)) return null
-    if (!(m.path === null || (isText(m.path, STAGE_LIMITS.path) && m.path.length > 0))) return null
+    if (!(m.path === null || isPath(m.path))) return null
     modules.push({ path: m.path as string | null, code: m.code })
   }
-  return { kind: 'modules', modules }
+  if (!Array.isArray(value.links)) return null
+  const links: Array<[string, string]> = []
+  for (const link of value.links as unknown[]) {
+    if (!Array.isArray(link) || link.length !== 2 || !isPath(link[0]) || !isPath(link[1])) return null
+    links.push([link[0], link[1]])
+  }
+  return { kind: 'modules', modules, links }
+}
+
+const isPath = (value: unknown): value is string => isText(value, STAGE_LIMITS.path) && value.length > 0
+
+/**
+ * Why the stage would refuse a program for its size, with the module it is about (null: the inline code), or null when it
+ * takes it. Main checks this before it sends a program (main/scene-files.ts, main/live-scene.ts).
+ */
+export function programTooLarge(program: StageProgram): { file: string | null; message: string } | null {
+  const chars = (n: number): string => n.toLocaleString('en-US')
+  if (program.kind === 'script') {
+    return program.code.length > STAGE_LIMITS.code ? { file: null, message: `The scene program is ${chars(program.code.length)} characters; the stage takes at most ${chars(STAGE_LIMITS.code)} characters of code in one program or file. Move part of it into scene files in boards/scenes/ and import them.` } : null
+  }
+  for (const m of program.modules) {
+    if (m.path !== null && !isPath(m.path)) return { file: null, message: `A scene file path is longer than ${chars(STAGE_LIMITS.path)} characters: ${String(m.path).slice(0, 200)}…` }
+    if (m.code.length > STAGE_LIMITS.code) {
+      return { file: m.path, message: `${m.path === null ? 'The inline code' : 'The file'} is ${chars(m.code.length)} characters as the stage runs it; the stage takes at most ${chars(STAGE_LIMITS.code)} characters of code in one program or file. Split it into smaller files.` }
+    }
+  }
+  for (const [from, to] of program.links) if (!isPath(from) || !isPath(to)) return { file: null, message: `An import path is longer than ${chars(STAGE_LIMITS.path)} characters.` }
+  return null
 }
 
 /** A message from the main process, checked (stage page side). */
@@ -133,6 +160,16 @@ export function parseToStage(value: unknown): ToStage | null {
     default:
       return null
   }
+}
+
+/** The id of a run or reset that a parser refused (it gets a failed reply instead of none), or null. */
+export function refusedId(value: unknown): number | null {
+  return isShape(value) && (value.t === 'run' || value.t === 'reset' || value.t === 'reply') && isId(value.id) ? value.id : null
+}
+
+/** The host id of an answer or a host question that a parser refused (the program that waits on it gets an error answer), or null. */
+export function refusedHostId(value: unknown): number | null {
+  return isShape(value) && (value.t === 'answer' || value.t === 'host') && isId(value.hid) ? value.hid : null
 }
 
 /** A reply to a reset or a run, checked (both the page, for the worker's replies, and the main process use it). */

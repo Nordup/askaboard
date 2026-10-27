@@ -49,8 +49,8 @@
  * (per call: app ms, round-trip ms, result chars, ok), trace/ and metrics.json;
  * one line per repeat in .lab/perf/history.jsonl (kind "replay").
  */
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { basename, dirname, join, resolve } from 'node:path'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 import { SCRATCH, args, canvasRect, cdpConnect, cropFilter, drive, log, resultText, runFolder, scenePlaySpans, sceneHook, sleep, startInstance, startRecording, stopInstance, traceCalls, traceLabels, withMcp } from '../lab/common.mjs'
 import { makeMedia } from '../lab/media.mjs'
 import { FRAME_METER, PERF_RUNS, appendHistory, argsCut, callMetrics, codeIdentity, collectFrames, frameChanges, frameStats, round } from './metrics.mjs'
@@ -132,7 +132,7 @@ function translate(rc, counter) {
   // fresh folder's boards/scenes/ before the call, and the call goes without snapshot.
   if (rc.tool === 'write_scene' && a.snapshot) {
     const { snapshot, ...rest } = a
-    return [{ tool: 'write_scene', args: rest, files: snapshot.modules.filter((m) => m.path !== null) }]
+    return [{ tool: 'write_scene', args: rest, files: snapshot.modules.filter((m) => m.path !== null), links: snapshot.links ?? [] }]
   }
   return [{ tool: rc.tool, args: a }]
 }
@@ -275,6 +275,13 @@ async function oneReplay(index) {
             const full = join(state.folder, 'boards', 'scenes', file.path)
             mkdirSync(dirname(full), { recursive: true })
             writeFileSync(full, file.text)
+          }
+          // The import paths that were links: links again (to the file at its real path).
+          for (const [from, to] of c.links ?? []) {
+            const full = join(state.folder, 'boards', 'scenes', from)
+            mkdirSync(dirname(full), { recursive: true })
+            rmSync(full, { force: true })
+            symlinkSync(relative(dirname(full), join(state.folder, 'boards', 'scenes', to)), full)
           }
           try {
             result = await call(c.tool, substitute(c.args, ids))

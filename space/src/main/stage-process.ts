@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { app, MessageChannelMain, session, WebContentsView, type MessagePortMain, type Session } from 'electron'
-import { parseFromStage, type FromStage, type ToStage } from '@shared/stage-protocol'
+import { parseFromStage, refusedHostId, refusedId, type FromStage, type ToStage } from '@shared/stage-protocol'
 import pageScript from '../stage/page.ts?stage'
 import workerScript from '../stage/worker.ts?stage'
 
@@ -185,10 +185,15 @@ export class StageProcess {
           reject(error)
         }
         port1.on('message', (event) => {
-          const message = parseFromStage(event.data)
+          let message = parseFromStage(event.data)
           if (!message) {
-            console.warn('stage: a message of the wrong shape from the stage page was dropped')
-            return
+            // Nothing waits forever on a refused message: a reply still settles its call, a question gets an error answer.
+            console.warn('stage: a message of the wrong shape from the stage page was refused')
+            const id = refusedId(event.data)
+            const hid = refusedHostId(event.data)
+            if (id !== null) message = { t: 'reply', id, ok: false, error: 'The stage sent a reply of the wrong shape or larger than the app takes.', line: null, file: null, ms: 0 }
+            else if (hid !== null && this.port === port1) port1.postMessage({ t: 'answer', hid, text: JSON.stringify({ error: 'The question to the board was of the wrong shape or larger than the app takes.' }) } satisfies ToStage)
+            if (!message) return
           }
           if (message.t === 'ready') {
             clearTimeout(timer)
