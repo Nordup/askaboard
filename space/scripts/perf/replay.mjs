@@ -37,6 +37,9 @@
  * open_board {board}, and get_screenshot's node_id, region and target → part
  * (target "changes" → the interval of the latest get_changes result, else
  * "view").
+ * A write_scene with scene files: its trace args hold the files it read
+ * (snapshot); they are written to the fresh folder's boards/scenes/ before
+ * the call.
  * --save-results <dir> writes the full text of every result to
  * <dir>/<i>-<tool>.txt (the trace cuts long results). Nothing is skipped silently: a call
  * whose args the trace cut, a tool the app does not have, a call that fails now
@@ -47,7 +50,7 @@
  * one line per repeat in .lab/perf/history.jsonl (kind "replay").
  */
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { basename, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { SCRATCH, args, canvasRect, cdpConnect, cropFilter, drive, log, resultText, runFolder, scenePlaySpans, sceneHook, sleep, startInstance, startRecording, stopInstance, traceCalls, traceLabels, withMcp } from '../lab/common.mjs'
 import { makeMedia } from '../lab/media.mjs'
 import { FRAME_METER, PERF_RUNS, appendHistory, argsCut, callMetrics, codeIdentity, collectFrames, frameChanges, frameStats, round } from './metrics.mjs'
@@ -124,6 +127,12 @@ function translate(rc, counter) {
     if (action === 'replay') return [{ tool: 'play_scene', args: { action, ...(a.scene ? { name: a.scene } : {}), ...(a.step ? { from_step: a.step } : {}), ...(a.when ? { when: a.when } : {}) } }]
     if (action === 'cut') return [{ tool: 'play_scene', args: { action, ...(a.after_step ? { after_step: a.after_step } : {}) } }]
     return [{ tool: 'play_scene', args: { action } }]
+  }
+  // write_scene with scene files (since 2026-10-27): the trace keeps the files it read (snapshot); they are written to the
+  // fresh folder's boards/scenes/ before the call, and the call goes without snapshot.
+  if (rc.tool === 'write_scene' && a.snapshot) {
+    const { snapshot, ...rest } = a
+    return [{ tool: 'write_scene', args: rest, files: snapshot.modules.filter((m) => m.path !== null) }]
   }
   return [{ tool: rc.tool, args: a }]
 }
@@ -262,6 +271,11 @@ async function oneReplay(index) {
         let sentN = 0
         for (const c of seq) {
           sentN++
+          for (const file of c.files ?? []) {
+            const full = join(state.folder, 'boards', 'scenes', file.path)
+            mkdirSync(dirname(full), { recursive: true })
+            writeFileSync(full, file.text)
+          }
           try {
             result = await call(c.tool, substitute(c.args, ids))
           } catch (error) {

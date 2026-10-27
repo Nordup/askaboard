@@ -2,6 +2,7 @@ import { constants } from 'node:fs'
 import { copyFile, lstat, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { BOARDS_DIR } from '@shared/board-format'
+import { SCENES_DIR } from '@shared/scene-program'
 import type { SetupItem, SetupPlan, SetupResult } from '@shared/space-api'
 import { fillTemplate } from './brief-block'
 import type { FolderSession } from './folder'
@@ -36,6 +37,7 @@ const SPECS: Spec[] = [
   { path: 'topics', kind: 'dir', gitkeep: true, note: 'Notes per topic' },
   { path: 'materials', kind: 'dir', gitkeep: true, note: 'Sources and readings' },
   { path: BOARDS_DIR, kind: 'dir', note: 'Boards' },
+  { path: SCENES_DIR, kind: 'dir', note: 'Scene files and their libraries' },
   {
     path: `${FOLDER_SETTINGS_DIR}/guide.md`,
     kind: 'file',

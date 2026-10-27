@@ -16,6 +16,8 @@ import { renderStoryboard, storyboardScale, type StoryboardInput } from './story
 import { BoardNews } from './news'
 import { BoardIndex, findText as boardsFindText, listText as boardsListText, resolveBoard, type OpenBoardInfo } from './boards'
 import type { FolderSession } from './folder'
+import { readSceneSource } from './scene-files'
+import { siteLabel, type SceneSource } from '@shared/scene-program'
 import { getAgentLook } from './state'
 import type { SnapshotRenderer } from './snapshot'
 import { SessionTrace, writeLearnerEdit } from './trace'
@@ -246,7 +248,8 @@ const SINGLE_FRAME_EDGE = 1024
 /** A draft scene (write_scene): its program, and its run on the stage and board as they were then. Its frames and its compile are in the renderer, under draftKey(desc). */
 interface Draft {
   name: string
-  code: string
+  /** The program's snapshot (main/scene-files.ts): every run of the draft runs it; the files are not read again. */
+  source: SceneSource
   desc: SceneDescription
   /** The run, ready to join the stage's log when it plays unchanged (its seed is kept when it runs again). */
   entry: StageEntry
@@ -288,7 +291,7 @@ const LIVE_CHECKS = 3
 const contextKey = (context: SceneContext): string => JSON.stringify(context)
 
 /** The code items of a description, to check them. */
-type LiveCheck = Pick<SceneLiveObject, 'api' | 'mode' | 'code' | 'params' | 'width' | 'height' | 'line'>
+type LiveCheck = Pick<SceneLiveObject, 'api' | 'mode' | 'code' | 'params' | 'width' | 'height' | 'line' | 'file'>
 const livesOf = (desc: SceneDescription): LiveCheck[] => desc.objects.filter((object): object is SceneLiveObject => object.kind === 'live')
 
 const isMissing = (value: unknown): boolean => typeof value === 'object' && value !== null && (value as { draftMissing?: unknown }).draftMissing === true
@@ -659,8 +662,8 @@ export class AgentServer {
     }
   }
 
-  /** Wrap a tool body: activity pulse, logging, errors as tool errors, the session trace. */
-  private tool<A>(session: Session, name: string, body: (args: A, extra: ToolExtra) => Promise<CallToolResult>) {
+  /** Wrap a tool body: activity pulse, logging, errors as tool errors, the session trace (trace.args: more for the traced args). */
+  private tool<A>(session: Session, name: string, body: (args: A, extra: ToolExtra, trace: { args?: Record<string, unknown> }) => Promise<CallToolResult>) {
     return async (args: A, extra?: ToolExtra): Promise<CallToolResult> => {
       session.lastActivity = Date.now()
       this.hooks.activity({ sessionId: session.id, tool: name })
@@ -670,15 +673,16 @@ export class AgentServer {
       const news = name === 'get_changes' ? '' : await this.newsLine(session)
       let result: CallToolResult
       let thrown: unknown = null
+      const trace: { args?: Record<string, unknown> } = {}
       try {
-        result = await body(args, extra ?? {})
+        result = await body(args, extra ?? {}, trace)
       } catch (error) {
         console.warn(`mcp: ${name} failed: ${error instanceof Error ? error.message : String(error)}`)
         thrown = error
         result = failure(error)
       }
       if (news) result = { ...result, content: [{ type: 'text', text: news }, ...result.content] }
-      this.traceOf(session)?.call(name, args, start, Date.now(), this.hooks.shownBoard(), thrown === null ? result : null, thrown)
+      this.traceOf(session)?.call(name, trace.args ? { ...(args as Record<string, unknown>), ...trace.args } : args, start, Date.now(), this.hooks.shownBoard(), thrown === null ? result : null, thrown)
       return result
     }
   }
@@ -801,7 +805,7 @@ export class AgentServer {
   private async restage(
     sceneId: string,
     waiting: string[],
-    change: { code?: string; seed?: number; cutAt?: number; name?: string; when?: 'queue' | 'now' },
+    change: { source?: SceneSource; seed?: number; cutAt?: number; name?: string; when?: 'queue' | 'now' },
     signal: AbortSignal
   ): Promise<CallToolResult | { main: SceneResult & { ends_in_s: number }; rerun: Array<{ scene: string; ok: boolean; error?: string; starts_in_s?: number }> }> {
     const control = (args: Record<string, unknown>): Promise<unknown> => this.board('sceneControl', args, SCENE_TIMEOUT_MS)
@@ -815,7 +819,7 @@ export class AgentServer {
     const label = change.name ?? this.sceneName(sceneId)
     // A new program runs at the scene's place, as write_scene ran its draft (placeAt): the same stage and the same board.
     const placed = this.stage.log.find((entry) => entry.scene === sceneId)
-    const place = change.code !== undefined && placed ? this.placeAt(placed) : null
+    const place = change.source !== undefined && placed ? this.placeAt(placed) : null
     const cut = this.stage.truncateBefore(sceneId)
     if (!cut) return failure(new Error(`The scene "${label}" is not part of the current stage (it ran before the stage started new).`))
     const later = cut.later
@@ -826,10 +830,10 @@ export class AgentServer {
     const commit = async (id: string, run: StageRun, name: string | null, extra: Record<string, unknown> = {}): Promise<SceneResult & { ends_in_s: number }> =>
       (await this.board('runScene', { scene: run.desc, job: run.job, frames: run.frames, sceneId: id, slot: true, step, ...(name ? { name } : {}), ...extra }, SCENE_TIMEOUT_MS)) as SceneResult & { ends_in_s: number }
     /** Run a program: on the context, answers and seed of its earlier run (original), or on the board now. */
-    const runOne = async (code: string, options: { seed?: number; cutAt: number | null; original?: StageEntry; name: string | null; place?: StagePlace | null }): Promise<StageRun> => {
+    const runOne = async (source: SceneSource, options: { seed?: number; cutAt: number | null; original?: StageEntry; name: string | null; place?: StagePlace | null }): Promise<StageRun> => {
       const context = options.original ? (JSON.parse(options.original.ctxText) as SceneContext) : await this.contextAt(options.place ?? null)
       // The same program on the same context gets the board's answers of its first run (html sizes, empty places).
-      const run = await this.stage.run(code, context, { mode: 'scene', seed: options.seed, cutAt: options.cutAt, name: options.name, answers: options.original?.answers, signal, place: options.place })
+      const run = await this.stage.run(source, context, { mode: 'scene', seed: options.seed, cutAt: options.cutAt, name: options.name, answers: options.original?.answers, signal, place: options.place })
       const liveError = await this.checkLivePrograms(livesOf(run.desc))
       if (liveError || signal.aborted) {
         this.stage.discard(run.entry)
@@ -853,7 +857,7 @@ export class AgentServer {
       const now = (await control({ action: 'status' })) as { waiting?: string[]; playing_scene?: { id: string } | null }
       const held = new Set([...(now.waiting ?? []), ...(now.playing_scene ? [now.playing_scene.id] : [])])
       for (const entry of [cut.entry, ...later]) {
-        const run = await this.stage.run(entry.code, JSON.parse(entry.ctxText) as SceneContext, { mode: 'scene', seed: entry.seed, cutAt: entry.cutAt, name: entry.name, answers: entry.answers })
+        const run = await this.stage.run(entry.source, JSON.parse(entry.ctxText) as SceneContext, { mode: 'scene', seed: entry.seed, cutAt: entry.cutAt, name: entry.name, answers: entry.answers })
         if (!entry.scene) continue
         await commit(entry.scene, run, entry.name, live(entry.scene) || held.has(entry.scene) ? {} : { settled: true })
         run.entry.scene = entry.scene
@@ -865,10 +869,10 @@ export class AgentServer {
       await control({ action: 'revert', scenes: affected, step })
       stopped()
       const run =
-        change.code !== undefined
-          ? await runOne(change.code, { seed: change.seed, cutAt: null, name: change.name ?? cut.entry.name, place })
+        change.source !== undefined
+          ? await runOne(change.source, { seed: change.seed, cutAt: null, name: change.name ?? cut.entry.name, place })
           : // A cut runs the same program with the same seed and context, so it is the same up to the cut.
-            await runOne(cut.entry.code, { seed: cut.entry.seed, cutAt: change.cutAt ?? null, original: cut.entry, name: cut.entry.name })
+            await runOne(cut.entry.source, { seed: cut.entry.seed, cutAt: change.cutAt ?? null, original: cut.entry, name: cut.entry.name })
       main = await commit(sceneId, run, run.entry.name, change.when ? { when: change.when } : {})
       run.entry.scene = sceneId
       for (const entry of later) {
@@ -876,7 +880,7 @@ export class AgentServer {
         const queued = !!id && waiting.includes(id)
         try {
           // A waiting scene runs on the board as it is now; a scene that has played keeps its earlier context. Each keeps its cut.
-          const run = await runOne(entry.code, { seed: entry.seed, cutAt: entry.cutAt, name: entry.name, ...(queued ? {} : { original: entry }) })
+          const run = await runOne(entry.source, { seed: entry.seed, cutAt: entry.cutAt, name: entry.name, ...(queued ? {} : { original: entry }) })
           run.entry.scene = id
           if (queued && id) {
             const result = await commit(id, run, entry.name)
@@ -898,7 +902,7 @@ export class AgentServer {
       const failed = error instanceof Error ? error.message : String(error)
       return failure(
         new Error(
-          change.code !== undefined
+          change.source !== undefined
             ? `play_scene start failed, and the scene "${label}" on the board stays as it was: ${failed}\nThe draft is kept. Change it with write_scene.`
             : `cut failed, and the scene "${label}" stays as it was: ${failed}`
         )
@@ -934,10 +938,10 @@ export class AgentServer {
     }
     await Promise.all(Array.from({ length: Math.min(LIVE_CHECKS, queue.length) }, worker))
     if (!failed.length) return null
-    failed.sort((a, b) => (a.live.line ?? 0) - (b.live.line ?? 0))
+    failed.sort((a, b) => (a.live.file ?? '').localeCompare(b.live.file ?? '') || (a.live.line ?? 0) - (b.live.line ?? 0))
     const what = (entry: { live: Live; error: string }): string => `the ${entry.live.api}() code ${entry.live.mode === 'program' ? 'fails' : 'does not compile'}: ${entry.error}`
-    if (failed.length === 1) return new SceneProgramError(what(failed[0]), failed[0].live.line ?? null)
-    return new SceneProgramError(failed.map((entry) => (entry.live.line ? `Line ${entry.live.line}: ${what(entry)}` : what(entry))).join('\n'), null)
+    if (failed.length === 1) return new SceneProgramError(what(failed[0]), failed[0].live.line ?? null, failed[0].live.file ?? null)
+    return new SceneProgramError(failed.map((entry) => (entry.live.line ? `${siteLabel({ file: entry.live.file ?? null, line: entry.live.line })}: ${what(entry)}` : what(entry))).join('\n'), null)
   }
 
   private board(tool: AgentToolName, args: Record<string, unknown>, timeoutMs?: number): Promise<unknown> {
@@ -948,9 +952,9 @@ export class AgentServer {
    * A draft run that ended in the stage (its frames are in the renderer):
    * the renderer compiles it and keeps it under its key. Then it is ready.
    */
-  private async readyDraft(run: StageRun, context: SceneContext, name: string, code: string, seq: number, place: StagePlace | null): Promise<Draft> {
+  private async readyDraft(run: StageRun, context: SceneContext, name: string, source: SceneSource, seq: number, place: StagePlace | null): Promise<Draft> {
     const info = (await this.board('sceneDraft', { scene: run.desc, job: run.job, frames: run.frames, draft: draftKey(run.desc), ...(place ? { place: place.board } : {}) }, SCENE_TIMEOUT_MS)) as DraftInfo
-    return { name, code, desc: run.desc, entry: run.entry, fresh: run.fresh, revision: this.stage.revision, contextKey: contextKey(context), seq, info }
+    return { name, source, desc: run.desc, entry: run.entry, fresh: run.fresh, revision: this.stage.revision, contextKey: contextKey(context), seq, info }
   }
 
   /** The scene ids and names of the current stage, for the renderer's reads. */
@@ -1314,21 +1318,35 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
           htmlMaterial("HTML material (html(): pages, cards, frames with layout, exercises, inline SVG), ") +
           "pictures (image(): a URL or a file in the learning folder), copies (copy()) and empty space for new material (space()); change text and style (edit()); move items into frames and delete items and ink groups, the learner's too; " +
           codeItems("run live pixels (shaders, canvas programs, and program() items with your own JavaScript and any library, such as three.js, WebGL 2 or WebGPU); ") +
-          "move the camera and a pointer; and show lines of text for the learner to read (say). The complete reference is get_guide topic \"scene\".\n\nUse it for everything you draw, write, place, change or remove on the board. To check how a scene looks before the learner sees it, use preview_scene; to look at the board itself, use get_screenshot, list_items and get_changes.\n\nHow it runs:\n- The program runs in a sandbox with no access to the app, files or network. It may compute for as long as it needs; play_scene \"cancel\" stops it.\n- Every program on a board runs on the same stage, one after another. What a program puts on the global `stage` object stays for later programs, and objects of earlier programs can be acted on again. A draft reads the stage as it is when you write it, and joins the stage when it starts. A new version of a scene on the board reads the stage as it was just before the old version played. The stage starts new when the board changes, on play_scene \"reset\", and when the app starts.\n- A name holds one draft, so writing the same name again replaces it. To change a scene that is already on the board, write it again under its name and start it: the new version takes the place of the old one.\n- Drafts live in the app's memory and are lost when the app quits.\n- Coordinates are board points: origin at the centre, +x right, +y down.\n\nReturns JSON: draft (the name), replaces (when a scene of this name is on the board), changed (when an earlier draft of this name was replaced), length_s, steps ([{number, name, start_s, length_s, pause?}]), items ({total, by_kind, named, removed_by_end}), say_lines (how many), log (console.log output), warnings (unknown options and other mistakes in the program), and stage (only when this program started a new stage: why).\n\nErrors: a program error returns its message and line number. The stage stays as it was before the program, and the result says whether an earlier draft of this name is kept.",
+          "move the camera and a pointer; and show lines of text for the learner to read (say). The complete reference is get_guide topic \"scene\".\n\nUse it for everything you draw, write, place, change or remove on the board. To check how a scene looks before the learner sees it, use preview_scene; to look at the board itself, use get_screenshot, list_items and get_changes.\n\nHow it runs:\n- The program is inline (code) or a file in boards/scenes/ of the learning folder (file), and it can import other files there: components and helpers that later scenes use again (get_guide topic \"scene-files\"). The app reads the files when you call write_scene. The program runs in a sandbox with no access to the app, other files or the network. It may compute for as long as it needs; play_scene \"cancel\" stops it.\n- Every program on a board runs on the same stage, one after another. What a program puts on the global `stage` object stays for later programs, and objects of earlier programs can be acted on again. A draft reads the stage as it is when you write it, and joins the stage when it starts. A new version of a scene on the board reads the stage as it was just before the old version played. The stage starts new when the board changes, on play_scene \"reset\", and when the app starts.\n- A name holds one draft, so writing the same name again replaces it. To change a scene that is already on the board, write it again under its name and start it: the new version takes the place of the old one.\n- Drafts live in the app's memory and are lost when the app quits.\n- Coordinates are board points: origin at the centre, +x right, +y down.\n\nReturns JSON: draft (the name), replaces (when a scene of this name is on the board), changed (when an earlier draft of this name was replaced), length_s, steps ([{number, name, start_s, length_s, pause?}]), items ({total, by_kind, named, removed_by_end}), say_lines (how many), log (console.log output), warnings (unknown options and other mistakes in the program), and stage (only when this program started a new stage: why).\n\nErrors: a program error returns its message, its file (for a scene file) and its line number. The stage stays as it was before the program, and the result says whether an earlier draft of this name is kept.",
         inputSchema: strictInput('write_scene', {
           name: z.string().min(1).max(MAX_NAME_CHARS).describe('The scene\'s name, such as "synapse". preview_scene and play_scene find the scene by it, and it also shows in the board news, the learner\'s script panel, logs and traces. Writing the same name again replaces this scene.'),
           code: z
             .string()
             .min(1)
-            .describe('The program: the body of an async function, so top-level await works. Example: const c = circle(0, 0, 80); await draw(c); await label(c, "r")')
+            .optional()
+            .describe('The program, inline: the body of an async function, so top-level await works. It can import scene files (get_guide topic "scene-files"). Give code or file, not both. Example: const c = circle(0, 0, 80); await draw(c); await label(c, "r")'),
+          file: z.string().min(1).optional().describe('A scene file to run instead of code: a path in boards/scenes/ of the learning folder, such as "neurons/synapse.js". The file is a JavaScript module that can import other scene files. Give code or file, not both.')
         }),
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true }
       },
-      this.tool(session, 'write_scene', async ({ name, code }, extra) => {
+      this.tool(session, 'write_scene', async ({ name, code, file }, extra, trace) => {
+        if ((code === undefined) === (file === undefined)) return failure(new Error('write_scene takes code or file: one of them, not both.'))
         const board = this.boardKey()
         const before = this.draftsOf(board).get(name)
         const seq = ++this.draftSeq
         let replaces = false
+        // The snapshot: the inline code or the file, and every file it imports, read now and never again for this draft.
+        let source: SceneSource
+        try {
+          source = await readSceneSource(this.hooks.folder(), code !== undefined ? { code } : { file })
+        } catch (error) {
+          if (error instanceof SceneProgramError) return failure(new Error(`${error.message}\n${before ? `The draft "${name}" keeps its earlier version.` : `No draft "${name}" was made.`}`))
+          throw error
+        }
+        // The trace keeps the texts of the files it read, so a replay (scripts/perf/replay.mjs) can write them again.
+        const files = source.modules.filter((module) => module.path !== null)
+        if (files.length) trace.args = { snapshot: { entry: source.entry, modules: files.map(({ path, text }) => ({ path, text })) } }
         // The draft is ready when the call returns: its program ran, its frames are in the renderer, the renderer compiled it.
         const outcome = await this.withProgram(session, extra, (signal) =>
           this.stage.exclusive(async (): Promise<CallToolResult | Draft> => {
@@ -1336,11 +1354,11 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
             const place = this.placeOf(name)
             replaces = !!place
             const context = await this.contextAt(place)
-            const run = await this.stage.run(code, context, { mode: 'draft', name, signal, place })
+            const run = await this.stage.run(source, context, { mode: 'draft', name, signal, place })
             const liveError = await this.checkLivePrograms(livesOf(run.desc))
             if (signal.aborted) throw new SceneCancelled()
             if (liveError) throw liveError
-            const draft = await this.readyDraft(run, context, name, code, seq, place)
+            const draft = await this.readyDraft(run, context, name, source, seq, place)
             if (signal.aborted) throw new SceneCancelled()
             // Published inside the stage's ownership; an older version never takes the place of a newer one.
             const drafts = this.draftsOf(board)
@@ -1610,11 +1628,11 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
           this.stage.adopt(context)
           const reason = draftStale(draft, this.stage, context) ?? force ?? null
           if (!reason) return { rerun: null }
-          const run = await this.stage.run(draft.code, context, { mode: 'draft', seed: draft.entry.seed, name: draft.name, signal, place })
+          const run = await this.stage.run(draft.source, context, { mode: 'draft', seed: draft.entry.seed, name: draft.name, signal, place })
           const liveError = await this.checkLivePrograms(livesOf(run.desc))
           if (signal.aborted) throw new SceneCancelled()
           if (liveError) throw liveError
-          const next = await this.readyDraft(run, context, draft.name, draft.code, draft.seq, place)
+          const next = await this.readyDraft(run, context, draft.name, draft.source, draft.seq, place)
           if (signal.aborted) throw new SceneCancelled()
           Object.assign(draft, next)
           return { rerun: reason }
@@ -1675,7 +1693,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
               )
             }
             const status = await control({ action: 'status' })
-            const out = await this.restage(sceneId, (status.waiting as string[]) ?? [], { code: draft.code, seed: draft.entry.seed, name, when }, signal)
+            const out = await this.restage(sceneId, (status.waiting as string[]) ?? [], { source: draft.source, seed: draft.entry.seed, name, when }, signal)
             if ('content' in out) return out
             return { result: out.main, rerun: 'it replaces the scene on the board, so it ran at that scene\'s place on the stage', replaced: true, others: out.rerun }
           }
@@ -1684,7 +1702,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
           let reason = draftStale(draft, this.stage, context)
           /** Run the program again as a scene at the end of the stage, and commit it with its frames. */
           const runAndCommit = async (): Promise<{ result: SceneResult & { ends_in_s: number }; entry: StageEntry; fresh: string | null }> => {
-            const run = await this.stage.run(draft.code, context, { mode: 'scene', seed: draft.entry.seed, name, signal })
+            const run = await this.stage.run(draft.source, context, { mode: 'scene', seed: draft.entry.seed, name, signal })
             const liveError = await this.checkLivePrograms(livesOf(run.desc))
             if (signal.aborted || liveError) {
               this.stage.discard(run.entry)

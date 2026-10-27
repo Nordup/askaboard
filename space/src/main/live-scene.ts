@@ -2,8 +2,10 @@ import { MessageChannelMain, type WebContents } from 'electron'
 import { HAND_FONT } from '@shared/hand-font'
 import type { SceneContext, SceneDescription } from '@shared/live-scene'
 import { IPC } from '@shared/space-api'
+import { siteLabel, type SceneSource, type StageProgram } from '@shared/scene-program'
 import type { FromStage, StageMode, StageReply, ToStage } from '@shared/stage-protocol'
 import { NO_CODE_ITEMS, NO_HTML } from './lab-switch'
+import { stageProgram } from './scene-files'
 import { StageProcess } from './stage-process'
 
 /**
@@ -13,7 +15,7 @@ import { StageProcess } from './stage-process'
  * the stage process, a hidden, sandboxed Chromium renderer (stage-process.ts,
  * stage/worker.ts); the app has one stage process.
  *
- * The stage keeps a log of the programs it ran (code, context, seed). Its
+ * The stage keeps a log of the programs it ran (source snapshot, context, seed). Its
  * state is always the result of running that log in order, which makes it
  * possible to roll it back: after a program error, a draft run, a cancel, a
  * skipped scene, a replaced or cut scene, and after the stage process
@@ -30,12 +32,14 @@ import { StageProcess } from './stage-process'
  * when the board has every chunk.
  */
 
+/** An error of a scene program, at a line of the inline code ("Line 12: …") or of a scene file (file: "lib/arrows.js line 12: …"). detail: the message without the place. */
 export class SceneProgramError extends Error {
   constructor(
-    message: string,
-    readonly line: number | null
+    readonly detail: string,
+    readonly line: number | null,
+    readonly file: string | null = null
   ) {
-    super(line ? `Line ${line}: ${message}` : message)
+    super(line ? `${siteLabel({ file, line })}: ${detail}` : file ? `${file}: ${detail}` : detail)
   }
 }
 
@@ -57,10 +61,10 @@ export class SceneCancelled extends Error {
   }
 }
 
-/** One program the stage ran, in order. scene: the renderer's scene id once it is committed. */
+/** One program the stage ran, in order. scene: the renderer's scene id once it is committed. source: the snapshot it runs (every run of it runs the same one). */
 export interface StageEntry {
   scene: string | null
-  code: string
+  source: SceneSource
   name: string | null
   seed: number
   /** The time the scene was cut at (play_scene cut), or null. It is also in ctxText; a run of this entry again (restage, rollback) passes it on. */
@@ -291,7 +295,7 @@ export class SceneStage {
    * answers the program's requests at the place (place.board).
    */
   async run(
-    code: string,
+    source: SceneSource,
     context: SceneContext,
     options: {
       mode: 'scene' | 'draft'
@@ -324,7 +328,7 @@ export class SceneStage {
       const record = new Map<string, string>()
       this.answers = { record, given: options.answers ?? null, place: options.place?.board }
       const job = this.nextId++
-      const reply = await this.send({ t: 'run', id: job, code, ctxText, mode: options.mode })
+      const reply = await this.send({ t: 'run', id: job, program: stageProgram(source), ctxText, mode: options.mode })
       this.answers = { record: new Map(), given: null }
       console.log(`stage: ${options.mode} program: stage ready ${tReady - tStart} ms, program ${Date.now() - tReady} ms`)
       if (reply.ok && reply.timing) {
@@ -340,13 +344,14 @@ export class SceneStage {
       }
       if (!reply.ok) {
         this.dirty = true
-        const lines = code.split('\n').length
+        const module = source.modules.find((m) => m.path === reply.file) ?? source.modules[0]
+        const lines = module.text.split('\n').length
         // A line after the last one is the end of the program (an unclosed bracket or string).
-        let error = reply.line !== null && reply.line > lines ? new SceneProgramError(`At the end of the program: ${reply.error}`, null) : new SceneProgramError(reply.error, reply.line)
+        let error = reply.line !== null && reply.line > lines ? new SceneProgramError(`At the end of the program: ${reply.error}`, null, reply.file) : new SceneProgramError(reply.error, reply.line, reply.file)
         const missing = /ReferenceError: '?([A-Za-z_$][\w$]*)'? is not defined/.exec(reply.error)?.[1]
         const instead = missing && Object.hasOwn(MISNAMED, missing) ? MISNAMED[missing] : null
-        if (instead) error = new SceneProgramError(`ReferenceError: ${missing} is not a scene function. ${instead}`, error.line)
-        else if (fresh && /ReferenceError|not defined|undefined/i.test(reply.error)) error = new SceneProgramError(`${error.message.replace(/^Line \d+: /, '')}\nThe stage is new (${fresh}): nothing made by programs before that is in it.`, error.line)
+        if (instead) error = new SceneProgramError(`ReferenceError: ${missing} is not a scene function. ${instead}`, error.line, error.file)
+        else if (fresh && /ReferenceError|not defined|undefined/i.test(reply.error)) error = new SceneProgramError(`${error.detail}\nThe stage is new (${fresh}): nothing made by programs before that is in it.`, error.line, error.file)
         throw error
       }
       if (options.mode === 'draft') this.dirty = true
@@ -358,7 +363,7 @@ export class SceneStage {
         throw new SceneProgramError(`The scene could not be read: ${error instanceof Error ? error.message : String(error)}`, null)
       }
       desc.stage = this.epoch
-      const entry: StageEntry = { scene: null, code, name: options.name ?? null, seed, cutAt: options.cutAt ?? null, ctxText, answers: record }
+      const entry: StageEntry = { scene: null, source, name: options.name ?? null, seed, cutAt: options.cutAt ?? null, ctxText, answers: record }
       if (options.mode === 'scene') {
         this.log.push(entry)
         this.held = this.log.length
@@ -390,7 +395,7 @@ export class SceneStage {
     if (!reset.ok) throw new SceneProgramError(reset.error, null)
     for (const entry of this.log.slice(0, upTo)) {
       this.answers = { record: new Map(), given: entry.answers }
-      const reply = await this.send({ t: 'run', id: this.nextId++, code: entry.code, ctxText: entry.ctxText, mode: 'replay' })
+      const reply = await this.send({ t: 'run', id: this.nextId++, program: stageProgram(entry.source), ctxText: entry.ctxText, mode: 'replay' })
       this.answers = { record: new Map(), given: null }
       if (!reply.ok && reply.error === CANCELLED) throw new SceneCancelled()
       if (!reply.ok) {
@@ -431,7 +436,7 @@ export class SceneStage {
   }
 
   private failPending(error: string): void {
-    for (const [id, resolve] of this.pending) resolve({ t: 'reply', id, ok: false, error, line: null, ms: 0 })
+    for (const [id, resolve] of this.pending) resolve({ t: 'reply', id, ok: false, error, line: null, file: null, ms: 0 })
     this.pending.clear()
   }
 
@@ -461,8 +466,8 @@ export class SceneStage {
     reply({ t: 'answer', hid, text: answer })
   }
 
-  private send(message: { t: 'reset'; id: number } | { t: 'run'; id: number; code: string; ctxText: string; mode: StageMode }): Promise<StageReply> {
-    if (!this.process.running) return Promise.resolve({ t: 'reply', id: message.id, ok: false, error: 'The stage process stopped.', line: null, ms: 0 })
+  private send(message: { t: 'reset'; id: number } | { t: 'run'; id: number; program: StageProgram; ctxText: string; mode: StageMode }): Promise<StageReply> {
+    if (!this.process.running) return Promise.resolve({ t: 'reply', id: message.id, ok: false, error: 'The stage process stopped.', line: null, file: null, ms: 0 })
     return new Promise((resolve) => {
       this.pending.set(message.id, resolve)
       this.process.send(message)

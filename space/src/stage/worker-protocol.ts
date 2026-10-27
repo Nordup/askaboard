@@ -1,4 +1,5 @@
 import type { FramesChunk } from '../shared/frames'
+import type { StageProgram } from '../shared/scene-program'
 import type { StageMode, StageReply } from '../shared/stage-protocol'
 
 /**
@@ -26,14 +27,14 @@ export const BRIDGE_CHUNK = 1024 * 1024
 
 export type ToWorker =
   | { t: 'init'; fontText: string; noCodeItems: boolean; noHtml: boolean; bridge: SharedArrayBuffer }
-  | { t: 'run'; id: number; code: string; ctxText: string; mode: StageMode }
+  | { t: 'run'; id: number; program: StageProgram; ctxText: string; mode: StageMode }
 
 export type FromWorker =
   /** The scene library is loaded and the context is locked. */
   | { t: 'ready' }
   | { t: 'failed'; error: string }
   | StageReply
-  /** The program could not be parsed. The worker cannot see where: the page finds the line (page.ts, syntaxLine). */
+  /** The script could not be parsed. The worker cannot see where: the page finds the line (page.ts, syntaxLine). Modules were parsed in main (main/scene-files.ts). */
   | { t: 'parse-error'; id: number; error: string; ms: number }
   | { t: 'host'; text: string }
   | { t: 'more' }

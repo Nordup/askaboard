@@ -99,7 +99,7 @@ html(markup, o) in a scene (topic "scene") turns a small HTML subset into board 
 <!-- topic: scene -->
 <!-- summary: write_scene, preview_scene and play_scene: every global of a scene program (drawing, text, <!-- html -->HTML material, <!-- /html -->pictures, copies, space, edits, moves into frames, deletion), its options, time, values, names, labels, camera, lines (say), pauses, previews and the queue. -->
 
-write_scene runs a scene program and keeps it as a draft; play_scene plays it and controls playback, and preview_scene shows it before it plays ("Playback and tools" below). A scene program is the body of an async function. These globals are all it has, plus plain JavaScript (Math, arrays, functions; Math.random is seeded per run, and Date reads the scene's clock; there are no web APIs such as fetch, timers, Intl, WeakRef or FinalizationRegistry). Points are board points [x, y]; +y is down.
+write_scene runs a scene program and keeps it as a draft; play_scene plays it and controls playback, and preview_scene shows it before it plays ("Playback and tools" below). A scene program is the body of an async function, or a module in a scene file (topic "scene-files"). These globals are all it has, plus plain JavaScript (Math, arrays, functions; Math.random is seeded per run, and Date reads the scene's clock; there are no web APIs such as fetch, timers, Intl, WeakRef or FinalizationRegistry). Points are board points [x, y]; +y is down.
 
 **Time.** Every action starts now. `await` waits for its end; without `await`, the next line starts at the same moment:
 ```js
@@ -183,6 +183,20 @@ await tween(stage.k, 3, 2)   // the curve drawn by the earlier call gets shorter
 - play_scene actions: start (a draft, by name); status; pause; resume; next (jump to the next step and play on); stop (jump to the end state); clear_queue (drop the waiting scenes, their items and their programs); cancel (end programs that are still running; stop and clear_queue do too); wait (until nothing plays, or a scene is paused; `paused_by` says why); replay (a scene that has played, or from a step: its items show as they were then and play forward); cut (the playing scene, after a step or now: the rest is not drawn, and the board and the stage keep its state at the cut); reset (a new, empty stage). start, cut and clear_queue are each one undo step for the learner.
 
 `console.log(…)` goes to the result's log. <!-- code-items -->Text and live items keep<!-- /code-items: Text keeps --> no rotation, and existing frames and text keep their size and angle on the board: they rotate and scale only while the scene plays.<!-- code-items -->
+
+## Scene files and libraries
+<!-- topic: scene-files -->
+<!-- summary: Scene programs and libraries as JavaScript files in boards/scenes/: where they live, import and export, when the app reads them, and how to build on earlier work. -->
+
+A scene program can live in a file, and files can share code. `boards/scenes/` in the learning folder holds them: scenes, and the components and helpers that they import. Write and change these files with your own file tools, as you write any program; other agents and later sessions read them and build on them. A client without file tools sends inline code.
+
+- **A file as a scene:** write_scene with `file` (a path in `boards/scenes/`, such as "neurons/synapse.js") instead of `code`. To change the scene, edit the file and write it again under the same name: a change of one line costs one line.
+- **Modules:** a file is a JavaScript module. It can `export` functions, objects and values, and `import` them from other files: `import { neuron } from "lib/neuron.js"` (from the root of `boards/scenes/`) or `import { arrow } from "./arrows.js"` (from the file's own folder). Inline code can import files too. Only files in `boards/scenes/`: no packages and no URLs. Top-level `await` works in the file that write_scene runs.
+- **The scene globals** (draw, write, value, stage, board, …) work in every module, as in inline code. A component is a function that makes objects and acts on them, such as `export async function synapse(at) { … }`.
+- **When the app reads the files:** only at write_scene. It reads the file and every file that it imports, and the draft keeps that copy. A later edit of a file changes nothing on the board until you write the scene again.
+- **State:** every module runs again for each scene program, so the variables of a module start new each time. What later programs need goes on `stage` (topic "scene").
+- **Errors** name the file and the line, such as `lib/neuron.js line 12: …`.
+- **Layout:** the folders inside `boards/scenes/` are yours. A common shape: `lib/` for components that many scenes use, and one folder per topic for its scenes. Copy a scene to start a new one from it, and move a part that you use twice into `lib/`.
 
 ## Program items (program())
 <!-- topic: scene-code -->

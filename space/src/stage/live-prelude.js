@@ -45,8 +45,9 @@
   const giveFrames = typeof G.__frames === 'function' ? G.__frames : null
   delete G.__frames
   // The code the board runs too (stage/worker.ts hands it over): path geometry without the DOM (shared/path-geometry.ts), the
-  // ink points of pen shapes (shared/ink-points.ts), and the eases, number tracks and seeded random of scenes (shared/live-scene.ts).
-  const { parsePath, flattenPath, polylineInk, SCENE_EASES: EASES, trackNumber, mulberry32 } = G.__shared
+  // ink points of pen shapes (shared/ink-points.ts), the eases, number tracks and seeded random of scenes (shared/live-scene.ts),
+  // and where in the agent's code a stack frame is: the inline code or a module file (shared/scene-program.ts).
+  const { parsePath, flattenPath, polylineInk, SCENE_EASES: EASES, trackNumber, mulberry32, programSite, siteLabel } = G.__shared
   delete G.__shared
   const FONT = JSON.parse(G.__fontText)
   delete G.__fontText
@@ -587,11 +588,11 @@
   }
 
   const sampleErrors = new Set()
-  /** "Line N: " for the program line an error came from (the innermost scene.js frame), or nothing. */
+  /** "Line N: " (inline code) or "lib/x.js line N: " (a module) for the place an error came from (the innermost frame in the agent's code), or nothing. */
   function programLine(error) {
     try {
-      const match = /scene\.js:(\d+)/.exec(String(error && typeof error === 'object' ? error.stack : ''))
-      return match ? `Line ${match[1]}: ` : ''
+      const site = programSite(String(error && typeof error === 'object' ? error.stack : ''))
+      return site ? `${siteLabel(site)}: ` : ''
     } catch {
       return ''
     }
@@ -1131,13 +1132,13 @@
     const existing = entries[0].parent !== undefined ? objects[entries[0].parent] : undefined
     if (existing && existing.members.length === entries.length && entries.every((e) => e.parent === existing.id)) {
       const name = nameOf(opts)
-      if (name !== undefined && name !== existing.name) warnings.add(`group: these objects are already the group from line ${callLine(existing.madeAt) ?? '?'}${existing.name ? ` "${existing.name}"` : ''}; the name "${name}" was ignored`)
+      if (name !== undefined && name !== existing.name) warnings.add(`group: these objects are already the group from ${siteText(callSite(existing.madeAt))}${existing.name ? ` "${existing.name}"` : ''}; the name "${name}" was ignored`)
       return existing.handle
     }
     entries.forEach((e, k) => {
       if (e.parent === undefined) return
       const kind = objects[e.id].kind === 'node' ? objects[e.id].nodeKind : e.api
-      fail(`group member ${k} (the ${kind} from line ${callLine(e.madeAt) ?? '?'}) is already in the group from line ${callLine(objects[e.parent].madeAt) ?? '?'}. An object is in one group at a time: act on that group, or group objects that are in no group.`)
+      fail(`group member ${k} (the ${kind} from ${siteText(callSite(e.madeAt))}) is already in the group from ${siteText(callSite(objects[e.parent].madeAt))}. An object is in one group at a time: act on that group, or group objects that are in no group.`)
     })
     const handle = register({ kind: 'group', api: 'group', name: nameOf(opts), members: entries.map((e) => e.id), bounds: union(entries.map((e) => worldBounds(e, T))) })
     for (const e of entries) e.parent = handle.id
@@ -1238,15 +1239,18 @@
 
   // ---------- Live pixels ----------
 
-  /** The line of the agent's program that called the API now (the innermost scene.js frame), or undefined. */
-  function callLine(error = new Error()) {
-    const match = /scene\.js:(\d+)/.exec(error.stack || '')
-    return match ? Number(match[1]) : undefined
+  /** Where the agent's code called the API now ({file, line}: the innermost frame in a module or the inline code), or undefined. */
+  function callSite(error = new Error()) {
+    return programSite(error.stack || '') ?? undefined
+  }
+  /** "line 12" (inline code) or "lib/x.js line 12" (a module) for a call site, or "line ?". */
+  function siteText(site) {
+    return site ? (site.file === null ? `line ${site.line}` : `${site.file} line ${site.line}`) : 'line ?'
   }
 
   function liveObject(api, mode, code, opts) {
     if (typeof code !== 'string' || !code.trim()) fail(`${api}(code, options) needs its program as a string`)
-    const line = callLine()
+    const site = callSite()
     opts = options(opts, `${api} options`)
     const [w, h] = opts.size === undefined ? [320, 200] : pair(opts.size, `${api} size`)
     if (w <= 0 || h <= 0) fail(`${api} size must be positive`)
@@ -1272,7 +1276,8 @@
       width: w,
       height: h,
       params,
-      line,
+      line: site?.line,
+      file: site?.file ?? undefined,
       style: { color: 'text', width: 0, opacity: opts.opacity === undefined ? 1 : num(opts.opacity, `${api} opacity`) },
       bounds: { x, y, width: w, height: h }
     })
@@ -2647,7 +2652,7 @@
       if (e.kind === 'ink') Object.assign(o, { style: e.style, lines: e.lines, pressure: e.pressure })
       if (e.kind === 'shape') Object.assign(o, { style: e.style, d: e.d })
       if (e.kind === 'text') Object.assign(o, { style: e.style, text: e.text, math: e.math, at: e.at, center: e.center })
-      if (e.kind === 'live') Object.assign(o, { style: e.style, mode: e.mode, code: e.code, width: e.width, height: e.height, params: e.params, line: e.line })
+      if (e.kind === 'live') Object.assign(o, { style: e.style, mode: e.mode, code: e.code, width: e.width, height: e.height, params: e.params, line: e.line, ...(e.file ? { file: e.file } : {}) })
       if (e.kind === 'group') o.members = e.members.filter((id) => local.has(id)).map((id) => local.get(id))
       if (e.kind === 'node') o.ref = e.ref
       if (e.kind === 'html') Object.assign(o, { style: e.style, drafts: e.drafts, ...(e.place ? { place: e.place } : {}) })

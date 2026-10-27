@@ -152,8 +152,9 @@ export interface SceneLiveObject extends SceneObjectBase {
   height: number
   params: Record<string, number>
   style: SceneStyle
-  /** The program line of the shader()/canvas() call, for compile errors. */
+  /** The program line of the shader()/canvas() call, for compile errors; file: its module in boards/scenes/ (none: the inline code). */
   line?: number
+  file?: string
 }
 
 /**

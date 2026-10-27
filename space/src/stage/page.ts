@@ -1,4 +1,5 @@
 import { chunkBytes, type FramesChunk } from '../shared/frames'
+import type { StageProgram } from '../shared/scene-program'
 import { parseReply, parseToStage, STAGE_LIMITS, type FromStage, type StageReply, type ToStage } from '../shared/stage-protocol'
 import { BRIDGE_CHUNK, BRIDGE_HEADER, type FromWorker, type ToWorker } from './worker-protocol'
 
@@ -28,8 +29,8 @@ interface Context {
   ready: boolean
   /** The reset that waits for this context to be ready. */
   resetId: number | null
-  /** The program that runs now, and its code (to find the line of a parse error). */
-  run: { id: number; code: string } | null
+  /** The program that runs now (a script's code finds the line of a parse error). */
+  run: { id: number; program: StageProgram } | null
   /** The host question the worker waits on now, and the rest of its answer. */
   hostId: number | null
   answer: { data: Uint8Array; at: number } | null
@@ -75,7 +76,7 @@ function linkFrames(next: MessagePort): void {
   const run = current?.run
   if (current && run && current.streamed) {
     stop()
-    send({ t: 'reply', id: run.id, ok: false, error: 'The board window loaded again while the scene was sampled.', line: null, ms: 0 })
+    send({ t: 'reply', id: run.id, ok: false, error: 'The board window loaded again while the scene was sampled.', line: null, file: null, ms: 0 })
   }
   send({ t: 'linked' })
 }
@@ -115,14 +116,14 @@ function handle(message: ToStage): void {
       return
     case 'run':
       if (!current || !current.ready || current.run) {
-        send({ t: 'reply', id: message.id, ok: false, error: current?.run ? 'Another program runs on the stage.' : 'The stage has no context.', line: null, ms: 0 })
+        send({ t: 'reply', id: message.id, ok: false, error: current?.run ? 'Another program runs on the stage.' : 'The stage has no context.', line: null, file: null, ms: 0 })
         return
       }
-      current.run = { id: message.id, code: message.code }
+      current.run = { id: message.id, program: message.program }
       current.streamed = false
       current.outstanding.clear()
       current.held = null
-      current.worker.postMessage({ t: 'run', id: message.id, code: message.code, ctxText: message.ctxText, mode: message.mode } satisfies ToWorker)
+      current.worker.postMessage({ t: 'run', id: message.id, program: message.program, ctxText: message.ctxText, mode: message.mode } satisfies ToWorker)
       return
     case 'answer':
       if (!current || current.hostId !== message.hid) return
@@ -140,7 +141,7 @@ function handle(message: ToStage): void {
 function start(resetId: number): void {
   stop()
   if (!config) {
-    send({ t: 'reply', id: resetId, ok: false, error: 'The stage page has no settings.', line: null, ms: 0 })
+    send({ t: 'reply', id: resetId, ok: false, error: 'The stage page has no settings.', line: null, file: null, ms: 0 })
     return
   }
   const started = performance.now()
@@ -155,7 +156,7 @@ function start(resetId: number): void {
     if (current !== context) return
     const id = context.resetId ?? context.run?.id ?? null
     stop()
-    if (id !== null) send({ t: 'reply', id, ok: false, error: text, line: null, ms: performance.now() - started })
+    if (id !== null) send({ t: 'reply', id, ok: false, error: text, line: null, file: null, ms: performance.now() - started })
   }
   worker.addEventListener('error', (event) => {
     event.preventDefault()
@@ -181,7 +182,7 @@ function fromWorker(context: Context, data: unknown, started: number): void {
     case 'failed':
       if (context.resetId === null) return
       context.ready = message.t === 'ready'
-      send(message.t === 'ready' ? { t: 'reply', id: context.resetId, ok: true, json: null, frames: 0, ms: performance.now() - started, timing: null } : { t: 'reply', id: context.resetId, ok: false, error: `The scene library failed to load: ${message.error}`, line: null, ms: performance.now() - started })
+      send(message.t === 'ready' ? { t: 'reply', id: context.resetId, ok: true, json: null, frames: 0, ms: performance.now() - started, timing: null } : { t: 'reply', id: context.resetId, ok: false, error: `The scene library failed to load: ${message.error}`, line: null, file: null, ms: performance.now() - started })
       context.resetId = null
       if (!context.ready) stop()
       return
@@ -194,7 +195,7 @@ function fromWorker(context: Context, data: unknown, started: number): void {
         setTimeout(() => {
           if (current !== context || context.held !== message || context.run !== run) return
           stop()
-          send({ t: 'reply', id: message.id, ok: false, error: 'The board did not take the frames of the scene.', line: null, ms: performance.now() - started })
+          send({ t: 'reply', id: message.id, ok: false, error: 'The board did not take the frames of the scene.', line: null, file: null, ms: performance.now() - started })
         }, HELD_REPLY_MS)
         return
       }
@@ -207,7 +208,7 @@ function fromWorker(context: Context, data: unknown, started: number): void {
       if (!run || run.id !== message.id) return
       if (!frames) {
         stop()
-        send({ t: 'reply', id: run.id, ok: false, error: 'The stage has no connection to the board for the frames of the scene.', line: null, ms: performance.now() - started })
+        send({ t: 'reply', id: run.id, ok: false, error: 'The stage has no connection to the board for the frames of the scene.', line: null, file: null, ms: performance.now() - started })
         return
       }
       context.streamed = true
@@ -219,10 +220,10 @@ function fromWorker(context: Context, data: unknown, started: number): void {
     case 'parse-error': {
       const run = context.run
       if (!run || run.id !== message.id) return
-      void syntaxLine(run.code).then((line) => {
+      void (run.program.kind === 'script' ? syntaxLine(run.program.code) : Promise.resolve(null)).then((line) => {
         if (context.run !== run) return
         context.run = null
-        send({ t: 'reply', id: message.id, ok: false, error: message.error, line, ms: message.ms })
+        send({ t: 'reply', id: message.id, ok: false, error: message.error, line, file: null, ms: message.ms })
       })
       return
     }
@@ -230,7 +231,7 @@ function fromWorker(context: Context, data: unknown, started: number): void {
       // The worker asks only while a program runs, and one question at a time.
       if (!context.run || context.hostId !== null || context.answer) {
         stop()
-        send({ t: 'reply', id: context.run?.id ?? 0, ok: false, error: 'The stage failed: a question to the board came out of turn.', line: null, ms: performance.now() - started })
+        send({ t: 'reply', id: context.run?.id ?? 0, ok: false, error: 'The stage failed: a question to the board came out of turn.', line: null, file: null, ms: performance.now() - started })
         return
       }
       context.hostId = nextHostId++

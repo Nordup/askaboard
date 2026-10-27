@@ -4,6 +4,7 @@ import { chunkBytes, CREDIT_BYTES, FRAMES_VERSION, FrameEncoder, MAX_FRAME_BYTES
 import { polylineInk } from '../shared/ink-points'
 import { flattenPath, parsePath } from '../shared/path-geometry'
 import { mulberry32, SCENE_EASES, trackNumber } from '../shared/live-scene'
+import { moduleUrl, programSite, resolveSpecifier, siteLabel, type StageModule, type StageProgram } from '../shared/scene-program'
 import { BRIDGE_HEADER, type FromWorker, type ToWorker } from './worker-protocol'
 
 /**
@@ -25,6 +26,14 @@ import { BRIDGE_HEADER, type FromWorker, type ToWorker } from './worker-protocol
  * every pending job (microtask) at the end of each task, so each advance is
  * its own task, posted on a private MessageChannel. A program has no way to
  * make tasks (no timers, no messaging), so nothing else runs between them.
+ *
+ * A program is a script (inline code with no import or export: the body of
+ * an async function, as before modules) or modules (shared/scene-program.ts).
+ * Modules run from the snapshot the program carries, never from files: each
+ * one is the body of an async function (main/scene-files.ts made it), runs
+ * once per program, and runs again for the next program, so no module state
+ * carries from one scene to the next (that is what `stage` is for). Module
+ * code sees the scene library's globals as inline code does.
  *
  * Host questions (text sizes, html(), space(), items) block: the worker posts
  * the question and waits on the bridge (Atomics.wait) until the page writes
@@ -62,7 +71,7 @@ const clock = performance.now.bind(performance)
 const atomics = Atomics
 const decoder = new TextDecoder()
 const tick = new MessageChannel()
-const { SyntaxError: SyntaxErrorType } = globalThis
+const { SyntaxError: SyntaxErrorType, Error: ErrorType, Map: MapType, Object: ObjectType, Promise: PromiseType, Symbol: SymbolType, JSON: JSONType } = globalThis
 
 /** The globals that stay: ECMAScript's own (Date and console are replaced by the scene library). */
 const KEEP = new Set([
@@ -120,7 +129,7 @@ function init(message: Extract<ToWorker, { t: 'init' }>): void {
     G.__frames = (sid: number, kind: string, math: boolean, samples: Array<Record<string, unknown>>): void => {
       if (frameSink) frameSink(sid, kind, math, samples)
     }
-    G.__shared = Object.freeze({ parsePath, flattenPath, polylineInk, SCENE_EASES, trackNumber, mulberry32 })
+    G.__shared = Object.freeze({ parsePath, flattenPath, polylineInk, SCENE_EASES, trackNumber, mulberry32, programSite, siteLabel })
     G.__host = (fns: Host) => {
       host = fns
     }
@@ -180,7 +189,7 @@ function run(message: Extract<ToWorker, { t: 'run' }>): void {
   let promise: Promise<unknown>
   try {
     // Same line numbers as the agent's program: the wrapper adds no line before it.
-    promise = realEval(`(async () => {${message.code}\n})()\n//# sourceURL=scene.js`) as Promise<unknown>
+    promise = message.program.kind === 'script' ? (realEval(`(async () => {${message.program.code}\n})()\n//# sourceURL=scene.js`) as Promise<unknown>) : runModules(message.program)
   } catch (error) {
     // Only a parse error is thrown here (an error in the body rejects the promise). V8 does not say where it is.
     if (error instanceof SyntaxErrorType) post({ t: 'parse-error', id: message.id, error: clip(describe(error).message), ms: clock() - started })
@@ -218,6 +227,59 @@ function run(message: Extract<ToWorker, { t: 'run' }>): void {
     else post(finish(fns, message.id, message.mode, started))
   }
   tick.port2.postMessage(null)
+}
+
+/**
+ * Run a program's modules: the entry module, which loads the modules it
+ * imports (each runs once in this program, in the order of the imports).
+ * Every module is evaluated here and now (no loading, no tasks), so the
+ * program runs on the scene clock as a script does.
+ */
+function runModules(program: Extract<StageProgram, { kind: 'modules' }>): Promise<unknown> {
+  const files = new MapType<string, StageModule>()
+  for (const module of program.modules.slice(1)) if (module.path !== null) files.set(module.path, module)
+  const loaded = new MapType<string, Promise<object>>()
+  const load = (path: string): Promise<object> => {
+    let namespace = loaded.get(path)
+    if (!namespace) {
+      const module = files.get(path)
+      if (!module) return PromiseType.reject(new ErrorType(`${path} is not one of the files of this scene (they are read at write_scene).`))
+      namespace = evaluate(module)
+      loaded.set(path, namespace)
+    }
+    return namespace
+  }
+  const evaluate = (module: StageModule): Promise<object> => {
+    let body: (helper: object) => Promise<unknown>
+    try {
+      body = realEval(`(async function (__lsModule) {${module.code}\n})\n//# sourceURL=${moduleUrl(module.path)}`) as typeof body
+    } catch (error) {
+      // main parsed every module (main/scene-files.ts); a module V8 refuses still names its file.
+      return PromiseType.reject(error instanceof SyntaxErrorType && module.path !== null ? new SyntaxErrorType(`${module.path}: ${error.message}`) : error)
+    }
+    const namespace = ObjectType.create(null) as Record<PropertyKey, unknown>
+    const helper = ObjectType.freeze({
+      load,
+      dynamic: (specifier: unknown): Promise<object> => {
+        const resolved = resolveSpecifier(module.path, String(specifier))
+        return 'error' in resolved ? PromiseType.reject(new ErrorType(`import(${JSONType.stringify(String(specifier))}): ${resolved.error}.`)) : load(resolved.path)
+      },
+      exports: (getters: Record<string, () => unknown>, stars: object[]): void => {
+        for (const name of ObjectType.keys(getters)) ObjectType.defineProperty(namespace, name, { get: getters[name], enumerable: true })
+        for (const star of stars) {
+          for (const name of ObjectType.keys(star)) {
+            if (name === 'default' || ObjectType.hasOwn(namespace, name)) continue
+            ObjectType.defineProperty(namespace, name, { get: () => (star as Record<string, unknown>)[name], enumerable: true })
+          }
+        }
+        ObjectType.defineProperty(namespace, SymbolType.toStringTag, { value: 'Module' })
+        ObjectType.freeze(namespace)
+      },
+      meta: ObjectType.freeze({ url: moduleUrl(module.path) })
+    })
+    return body(helper).then(() => namespace)
+  }
+  return evaluate(program.modules[0])
 }
 
 /**
@@ -294,21 +356,21 @@ class FrameStream {
 }
 
 function failure(id: number, thrown: unknown, started: number): StageReply {
-  const { message, line } = describe(thrown)
-  return { t: 'reply', id, ok: false, error: clip(message), line, ms: clock() - started }
+  const { message, line, file } = describe(thrown)
+  return { t: 'reply', id, ok: false, error: clip(message), line, file, ms: clock() - started }
 }
 
-/** An error's text and the program line it came from (the innermost scene.js frame). */
-function describe(thrown: unknown): { message: string; line: number | null } {
+/** An error's text and where in the agent's code it came from (the innermost frame in a module or the inline code). */
+function describe(thrown: unknown): { message: string; line: number | null; file: string | null } {
   try {
     if (thrown && typeof thrown === 'object') {
       const error = thrown as { name?: unknown; message?: unknown; stack?: unknown }
-      const match = /scene\.js:(\d+)/.exec(String(error.stack ?? ''))
-      return { message: `${String(error.name ?? 'Error')}: ${String(error.message ?? thrown)}`, line: match ? Number(match[1]) : null }
+      const site = programSite(String(error.stack ?? ''))
+      return { message: `${String(error.name ?? 'Error')}: ${String(error.message ?? thrown)}`, line: site?.line ?? null, file: site?.file ?? null }
     }
-    return { message: String(thrown), line: null }
+    return { message: String(thrown), line: null, file: null }
   } catch {
-    return { message: 'The program threw a value that cannot be shown as text.', line: null }
+    return { message: 'The program threw a value that cannot be shown as text.', line: null, file: null }
   }
 }
 
