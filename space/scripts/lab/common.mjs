@@ -572,7 +572,7 @@ export async function claudeTurn(agent, state, dir, prompt, phase, resume = null
     hookArgs.push('--settings', settings)
   }
   // The prompt goes before --allowedTools: that flag takes every word after it.
-  const argv = ['-p', prompt, ...(resume ? ['--resume', resume] : []), '--model', agent.model, ...(agent.effort ? ['--effort', agent.effort] : []), '--mcp-config', config, '--strict-mcp-config', '--setting-sources', 'project,local', ...hookArgs, '--output-format', 'json', '--allowedTools', 'mcp__learning-space__*', ...(agent.web ? ['WebSearch', 'WebFetch'] : [])]
+  const argv = ['-p', prompt, ...(resume ? ['--resume', resume] : []), '--model', agent.model, ...(agent.effort ? ['--effort', agent.effort] : []), '--mcp-config', config, '--strict-mcp-config', '--setting-sources', 'project,local', ...hookArgs, '--output-format', 'json', '--allowedTools', 'mcp__learning-space__*', 'Read', 'Write', 'Edit', 'MultiEdit', 'Glob', 'Grep', ...(agent.web ? ['WebSearch', 'WebFetch'] : [])]
   const stdoutFile = join(dir, `${phase}-claude.json`)
   const code = await runProcess(agent, 'claude', argv, { cwd: state.folder, env: process.env, stdoutFile, stderrFile: join(dir, `${phase}-stderr.txt`) })
   let parsed = null
@@ -619,7 +619,8 @@ export function prepareCodexHome(agent, state) {
     join(home, 'config.toml'),
     [
       'approval_policy = "never"',
-      'sandbox_mode = "read-only"',
+      // Writes stay inside the learning folder (the working directory): agents write scene files there, as in their own apps.
+      'sandbox_mode = "workspace-write"',
       `model = ${JSON.stringify(agent.model)}`,
       `model_reasoning_effort = ${JSON.stringify(agent.effort)}`,
       'service_tier = "default"',
@@ -630,7 +631,7 @@ export function prepareCodexHome(agent, state) {
       '',
       '[mcp_servers.learning-space]',
       `url = ${JSON.stringify(`http://127.0.0.1:${state.mcpPort}/mcp`)}`,
-      // A read-only sandbox with approval "never" declines write tools unless they are approved here.
+      // With approval "never", the sandbox declines MCP write tools unless they are approved here.
       'default_tools_approval_mode = "approve"',
       ''
     ].join('\n')

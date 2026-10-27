@@ -186,17 +186,25 @@ await tween(stage.k, 3, 2)   // the curve drawn by the earlier call gets shorter
 
 ## Scene files and libraries
 <!-- topic: scene-files -->
-<!-- summary: Scene programs and libraries as JavaScript files in boards/scenes/: where they live, import and export, when the app reads them, and how to build on earlier work. -->
+<!-- summary: Scene programs as JavaScript files in boards/scenes/: when to use a file or inline code, components in lib/, import and export, when the app reads the files. -->
 
-A scene program can live in a file, and files can share code. `boards/scenes/` in the learning folder holds them: scenes, and the components and helpers that they import. Write and change these files with your own file tools, as you write any program; other agents and later sessions read them and build on them. A client without file tools sends inline code.
+A scene program can be a file in `boards/scenes/` of the learning folder, and files can import each other. You write and change the files with your own file tools, as you write any program. Later scenes, later sessions and other agents read them and build on them.
 
-- **A file as a scene:** write_scene with `file` (a path in `boards/scenes/`, such as "neurons/synapse.js") instead of `code`. To change the scene, edit the file and write it again under the same name: a change of one line costs one line.
-- **Modules:** a file is a JavaScript module. It can `export` functions, objects and values, and `import` them from other files: `import { neuron } from "lib/neuron.js"` (from the root of `boards/scenes/`) or `import { arrow } from "./arrows.js"` (from the file's own folder). Inline code can import files too. Only files in `boards/scenes/`: no packages and no URLs. Top-level `await` works in the file that write_scene runs.
-- **The scene globals** (draw, write, value, stage, board, …) work in every module, as in inline code. A component is a function that makes objects and acts on them, such as `export async function synapse(at) { … }`.
-- **When the app reads the files:** only at write_scene. It reads the file and every file that it imports, and the draft keeps that copy. A later edit of a file changes nothing on the board until you write the scene again.
-- **State:** every module runs again for each scene program, so the variables of a module start new each time. What later programs need goes on `stage` (topic "scene").
-- **Errors** name the file and the line, such as `lib/neuron.js line 12: …`.
-- **Layout:** the folders inside `boards/scenes/` are yours. A common shape: `lib/` for components that many scenes use, and one folder per topic for its scenes. Copy a scene to start a new one from it, and move a part that you use twice into `lib/`.
+**File or code.**
+- Prefer a file. Write the scene to `boards/scenes/`, such as `pendulum/swing.js`, and call write_scene with `file`. To change the scene, edit the file and call write_scene again with the same name and file: you send only the change, not the whole program.
+- Use `code` only for a few lines that you will not change (one mark, one label, a camera move), or when you have no file tools.
+- Put what more than one scene uses (a pendulum, a neuron, labelled axes, a colour scheme) in `boards/scenes/lib/` and import it. Copy a scene file to start a new scene from it.
+
+**Modules.**
+- A file uses JavaScript module syntax: `export` functions, objects and values, and `import` them from other files: `import { pendulum } from "lib/pendulum.js"` (from the root of `boards/scenes/`) or `import { arrow } from "./arrows.js"` (from the file's own folder). Inline code can import files too.
+- Imports name files in `boards/scenes/` only: no packages and no URLs (a program() item loads libraries itself, topic "scene-code"). `import()` takes a literal path.
+- The scene globals (draw, write, value, stage, board, …) work in every module, as in inline code. A component is a function that makes objects and acts on them, such as `export async function pendulum(at, length) { … }`. Top-level `await` works in the file that write_scene runs.
+
+**When the app reads the files.** Only at write_scene. It reads the file and every file that it imports, and the draft keeps that copy. A later edit of a file changes nothing on the board until you call write_scene again.
+
+**State.** Every module runs again for each scene program, so the variables of a module start new each time. What later programs need goes on `stage` (topic "scene").
+
+**Errors** name the file and the line, such as `lib/pendulum.js line 12: …`.
 
 ## Program items (program())
 <!-- topic: scene-code -->
