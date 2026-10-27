@@ -19,6 +19,12 @@ interface ToolPaletteProps {
   onWidth?: (px: number) => void
 }
 
+/** The window rect (client CSS px) of the palette, which always shows over the board's bottom; null when no board is open. */
+export function toolPaletteArea(): { left: number; top: number; right: number; bottom: number } | null {
+  const box = document.querySelector<HTMLElement>('.canvas > .palette')?.getBoundingClientRect()
+  return box ? { left: box.left, top: box.top, right: box.right, bottom: box.bottom } : null
+}
+
 export function ToolPalette({ state, onChange, onColor, onWidth }: ToolPaletteProps) {
   return (
     <div className="palette" role="toolbar" aria-label="Canvas tools">
