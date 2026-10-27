@@ -1191,9 +1191,10 @@
       objects[handle.id].created = 0
       return handle
     },
-    /** The learner's view now (after this scene's camera moves so far). */
+    /** The learner's view now (after this scene's camera moves so far), with the parts that app UI covers. */
     get view() {
-      return viewAt(T)
+      const view = viewAt(T)
+      return CTX.covered && CTX.covered.length ? { ...view, covered: coveredAt(view) } : view
     }
   })
 
@@ -1694,7 +1695,10 @@
       if (info.kind === 'frame' || info.kind === 'ink' || exclude.has(id) || stageItemOwner(id) !== undefined) continue
       score += 40 * (rectsOverlap(info.bounds, box) / Math.max(1, box.width * box.height))
     }
-    if (!inside(box, viewAt(t))) score += 25
+    const view = viewAt(t)
+    if (!inside(box, view)) score += 25
+    // Under app UI (the script panel) the learner cannot see it either.
+    if (CTX.covered && coveredAt(view).some((c) => rectsOverlap(c, box) > 0)) score += 25
     return score
   }
 
@@ -2180,6 +2184,16 @@
   const clampZoom = (z) => Math.max(0.1, Math.min(8, z))
   const vw = () => (CTX.viewport && CTX.viewport[0]) || 1200
   const vh = () => (CTX.viewport && CTX.viewport[1]) || 800
+
+  /**
+   * The parts of `view` that app UI covers. The UI stays put on the screen, so
+   * each covered rect keeps its place in the view when the camera moves.
+   */
+  function coveredAt(view) {
+    const from = CTX.view
+    const k = view.width / from.width
+    return CTX.covered.map((c) => ({ x: f2(view.x + (c.x - from.x) * k), y: f2(view.y + (c.y - from.y) * k), width: f2(c.width * k), height: f2(c.height * k), by: c.by }))
+  }
 
   /** The learner's view at t, after this scene's camera moves (a move in progress counts as done at its end). */
   function viewAt(t) {

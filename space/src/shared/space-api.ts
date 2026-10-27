@@ -211,6 +211,13 @@ export interface CanvasInfo {
   topLevel?: TopLevelSummary[]
   /** Every ink group (top level and inside frames). */
   inkGroups?: InkGroupSummary[]
+  /** Parts of the view that app UI covers (the script panel): the learner cannot see material there. Absent when nothing covers the view. */
+  covered?: CoveredRect[]
+}
+
+/** A part of the learner's view that app UI covers, in board points. */
+export interface CoveredRect extends BoardRect {
+  by: string
 }
 
 /** One learner stroke (added or erased) in the board news. */

@@ -8,6 +8,7 @@ import { ContentLayer, measureContent, type ContentContext } from '../board/cont
 import { checkDrafts, draftsToNodes, htmlToDrafts, Ignored, nodesToHtml, walkDrafts, type Draft } from '../board/html'
 import { buildIndex, inkOffset, isFlowed, ROOT, topLevelOf, withDescendants, zAbove } from '../board/scene'
 import type { LayoutBox } from '../board/types'
+import { coveredOf } from '../agent/covered'
 import { anchorFor, findSpace, obstacles, viewOf, type Scene } from '../agent/placement'
 
 /**
@@ -245,7 +246,7 @@ function spaceAnswer(ctx: HostContext, request: Record<string, unknown>): unknow
   const near = request.near as { x: number; y: number; width: number; height: number } | null
   const anchor = near && [near.x, near.y, near.width, near.height].every(Number.isFinite) ? near : anchorFor(s, ctx.board, undefined)
   const avoid = Array.isArray(request.avoid) ? (request.avoid as Array<{ x: number; y: number; width: number; height: number }>) : []
-  const spot = findSpace({ width, height }, anchor, [...obstacles(s), ...avoid], view, request.inView !== false)
+  const spot = findSpace({ width, height }, anchor, [...obstacles(s), ...coveredOf(ctx.board), ...avoid], view, request.inView !== false)
   if (!spot) return { error: `no empty place of ${width}×${height} was found near ${near ? 'that place' : 'the learner’s work'}; try a smaller size` }
   return spot
 }

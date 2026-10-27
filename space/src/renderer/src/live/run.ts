@@ -3,6 +3,7 @@ import type { DraftInfo, FrameMoment, FramePart, SceneContext, SceneDescription,
 import type { BoardHandle } from '../board/Board'
 import type { NodeOverride, PlaybackTip } from '../board/playback'
 import type { InkGroupTracker } from '../agent/groups'
+import { coveredOf } from '../agent/covered'
 import { viewOf, type Scene } from '../agent/placement'
 import { compileScene, type CompiledScene, type DynLookup, type PlayObject, type SceneRevert, type StageLookup } from './compile'
 import { connectFrames, takeFrames, type RunFrames } from './frames'
@@ -59,6 +60,7 @@ export function sceneContext(board: BoardHandle, s: Scene, path?: string): Scene
     if (!isInk(node)) name(node.name, node.id, node.seq ?? 0)
   }
   const state = board.liveState()
+  const covered = coveredOf(board)
   // The stage's objects that are still on the board, with their items (node ids, ink group id).
   const items: Record<string, string[]> = {}
   for (const [sid, record] of stageRecord.items) {
@@ -69,6 +71,7 @@ export function sceneContext(board: BoardHandle, s: Scene, path?: string): Scene
     nodes,
     names: Object.fromEntries(Object.entries(names).map(([key, value]) => [key, value.id])),
     view: rect(viewOf(board)),
+    ...(covered.length ? { covered } : {}),
     viewport: [Math.round(state.viewport[0]), Math.round(state.viewport[1])],
     // The board's next sequence number: every edit (also one that keeps all bounds, such as new text) makes it larger.
     revision: state.nextSeq,

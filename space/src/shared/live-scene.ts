@@ -18,6 +18,8 @@ export interface SceneContext {
   /** Item names (node names, named ink and group items) → item id; the latest item wins. */
   names: Record<string, string>
   view: SceneBounds
+  /** Parts of the view that app UI covers (the script panel), in board points; absent when nothing covers it. */
+  covered?: Array<SceneBounds & { by: string }>
   /** The learner's canvas in CSS pixels, for camera zoom. */
   viewport: [number, number]
   /** The board's revision (its next sequence number): it changes with every edit of the board, so a draft made before an edit runs again. */

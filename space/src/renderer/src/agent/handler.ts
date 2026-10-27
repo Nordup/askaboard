@@ -29,6 +29,7 @@ import { scenePlayer } from '../live/player'
 import { measureSceneTexts } from '../live/measure'
 import { sceneHost } from '../live/host'
 import { sceneOf } from './placement'
+import { coveredOf } from './covered'
 
 /**
  * Answers the MCP server's requests (see AgentMethods in space-api.ts).
@@ -152,10 +153,12 @@ function canvasInfo(context: AgentContext): CanvasInfo {
     topLevel.push({ id: node.id, kind: node.kind, ...(node.name ? { name: node.name } : {}), author: node.author, bounds: rect(state.bounds(node.id)) })
   }
   const groups = groupsOf(context.openPath, context.board)
+  const covered = coveredOf(context.board)
   return {
     ...base,
     board: { path: context.openPath, name: boardName(context.openPath) },
     viewport: rect(viewportRect(state)),
+    ...(covered.length ? { covered } : {}),
     contentBounds: rect(unionRegions(allBounds(state))),
     itemCount: state.nodes.length,
     selection: {
