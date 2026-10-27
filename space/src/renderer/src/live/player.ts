@@ -102,7 +102,6 @@ interface Clock {
 }
 
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, value))
-const ease = (t: number): number => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2)
 /** The override of a node that waits hidden. Shared, so it is never changed. */
 const HIDDEN: NodeOverride = Object.freeze({ opacity: 0 })
 
@@ -284,7 +283,7 @@ function pointerAt(play: ScenePlay, t: number): PlaybackTip | null {
   let alpha = 0
   for (const action of play.pointer) {
     if (action.start > t) break
-    const k = action.dur > 0 ? ease(clamp01((t - action.start) / action.dur)) : 1
+    const k = action.dur > 0 ? SCENE_EASES.inOut(clamp01((t - action.start) / action.dur)) : 1
     if (action.to === null) {
       alpha = alpha * (1 - k)
       continue

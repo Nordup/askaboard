@@ -8,18 +8,6 @@ import type { Point } from '../board/types'
  * shapes (shared/ink-points.ts).
  */
 
-/** A seeded random source (mulberry32, as in main/live-prelude.js): the same seed gives the same numbers. */
-export function seededRandom(seed: number): () => number {
-  let a = seed >>> 0
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0
-    let t = a
-    t = Math.imul(t ^ (t >>> 15), t | 1)
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
-  }
-}
-
 /**
  * A 32-bit seed from a stroke's key and its points (FNV-1a over the key and
  * the points to 0.01 board point). The same stroke of the same scene gets
@@ -60,7 +48,7 @@ function densify(line: Point[], step: number): Point[] {
  * Make a polyline look hand-drawn: a low-frequency sideways wobble scaled by
  * `jitter` (0..1), and pressure that rises at the start, varies a little and
  * falls at the end. `random` gives the wobble's phases: give a seeded source
- * (seededRandom), so the same stroke looks the same each time.
+ * (mulberry32, shared/live-scene.ts), so the same stroke looks the same each time.
  */
 export function humanize(line: Point[], jitter: number, random: () => number): InkPoint[] {
   const dense = densify(line, INK_STEP)

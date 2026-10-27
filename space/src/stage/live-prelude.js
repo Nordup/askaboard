@@ -44,9 +44,10 @@
   // Each changing object's samples, as the sampling makes them: (stage id, kind, math, samples). The worker streams them to the board.
   const giveFrames = typeof G.__frames === 'function' ? G.__frames : null
   delete G.__frames
-  // Path geometry without the DOM (shared/path-geometry.ts: parsePath, flattenPath) and the ink points of pen shapes (shared/ink-points.ts: polylineInk).
-  const GEOMETRY = G.__geometry
-  delete G.__geometry
+  // The code the board runs too (stage/worker.ts hands it over): path geometry without the DOM (shared/path-geometry.ts), the
+  // ink points of pen shapes (shared/ink-points.ts), and the eases, number tracks and seeded random of scenes (shared/live-scene.ts).
+  const { parsePath, flattenPath, polylineInk, SCENE_EASES: EASES, trackNumber, mulberry32 } = G.__shared
+  delete G.__shared
   const FONT = JSON.parse(G.__fontText)
   delete G.__fontText
   // Lab switch LS_LAB_NO_CODE (main/lab-switch.ts): no shader(), canvas() or program(), and no word of them.
@@ -84,16 +85,6 @@
 
   // ---------- Randomness: seeded, so a run repeats exactly ----------
 
-  function mulberry32(seed) {
-    let a = seed >>> 0
-    return () => {
-      a = (a + 0x6d2b79f5) >>> 0
-      let t = a
-      t = Math.imul(t ^ (t >>> 15), t | 1)
-      t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296
-    }
-  }
   /** A mulberry32 stream that counts its draws, so its state can be made again: seededAt(r.seed, r.n). */
   function seeded(seed) {
     const next = mulberry32(seed)
@@ -111,15 +102,11 @@
     return draw
   }
   /** The program's Math.random: mulberry32, started from the run's seed. */
-  let randomState = 1
+  let programStream = mulberry32(1)
   function programRandom() {
     // Each call takes the next number of one stream: how many evaluations there are changes what the next object gets.
     if (tracking) tracking.impure = true
-    randomState = (randomState + 0x6d2b79f5) >>> 0
-    let t = randomState
-    t = Math.imul(t ^ (t >>> 15), t | 1)
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+    return programStream()
   }
   Math.random = () => programRandom()
   // ---------- The clock: Date reads the scene's time, not the wall clock ----------
@@ -216,14 +203,14 @@
   function pathSegments(d) {
     if (typeof d !== 'string' || !d.trim()) fail('path(d) needs an SVG path string such as "M0 0 L80 0"')
     try {
-      return GEOMETRY.parsePath(d)
+      return parsePath(d)
     } catch (error) {
       fail(error.message)
     }
   }
   /** Polylines of a path's segments, for bounds, lengths and collisions (the app draws the real path). */
   function outlineOf(segments, d) {
-    const lines = GEOMETRY.flattenPath(segments, 'outline')
+    const lines = flattenPath(segments, 'outline')
     if (!lines.length) fail(`The path "${d.slice(0, 40)}" draws nothing`)
     return lines
   }
@@ -413,14 +400,6 @@
 
   // ---------- Tracks (the timeline of one object) ----------
 
-  const EASES = {
-    linear: (t) => t,
-    in: (t) => t * t * t,
-    out: (t) => 1 - Math.pow(1 - t, 3),
-    inOut: (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2),
-    smooth: (t) => t * t * (3 - 2 * t)
-  }
-
   function base(entry, prop) {
     if (entry.base && entry.base[prop] !== undefined) return entry.base[prop]
     switch (prop) {
@@ -443,14 +422,16 @@
   }
 
   function valueAt(entry, prop, t) {
-    let value = base(entry, prop)
-    for (const a of entry.tracks[prop] || []) {
+    return trackValue(entry.tracks[prop] || [], base(entry, prop), t)
+  }
+
+  /** The value of a track list at t: the last action that started gives it. A number eases as on the board (trackNumber); a colour switches halfway. */
+  function trackValue(list, base, t) {
+    let value = base
+    for (const a of list) {
       if (a.start > t) break
-      // A cut track holds its value at the cut.
-      const tt = a.until !== undefined ? Math.min(t, a.until) : t
-      if (tt >= a.start + a.dur) value = a.to
-      else if (typeof a.to === 'number') value = a.from + (a.to - a.from) * EASES[a.ease]((tt - a.start) / a.dur)
-      else value = (tt - a.start) / a.dur < 0.5 ? a.from : a.to
+      if (typeof a.to === 'number') value = trackNumber(a, a.from, a.to, t)
+      else value = ((a.until !== undefined ? Math.min(t, a.until) : t) - a.start) / a.dur < 0.5 ? a.from : a.to
     }
     return value
   }
@@ -528,17 +509,6 @@
     toJSON() {
       return this.get()
     }
-  }
-
-  function trackValue(list, base, t) {
-    let value = base
-    for (const a of list) {
-      if (a.start > t) break
-      const tt = a.until !== undefined ? Math.min(t, a.until) : t
-      if (tt >= a.start + a.dur) value = a.to
-      else value = a.from + (a.to - a.from) * EASES[a.ease]((tt - a.start) / a.dur)
-    }
-    return value
   }
 
   function addValueTrack(v, start, dur, to, ease) {
@@ -720,7 +690,7 @@
     let total = 0
     for (const l of lines) total += polyLength(l)
     if (opts.pen) {
-      const ink = GEOMETRY.polylineInk(known || GEOMETRY.flattenPath(path, 'ink'))
+      const ink = polylineInk(known || flattenPath(path, 'ink'))
       if (!ink.length && !finalSampling) warnings.add(`${api}: the path has no length, so the pen draws nothing`)
       return make({
         kind: 'ink',
@@ -2732,7 +2702,7 @@
   const begin = (ctxText) => {
     CTX = JSON.parse(ctxText)
     sceneNo++
-    randomState = (CTX.seed || 1) >>> 0
+    programStream = mulberry32(CTX.seed || 1)
     cutAt = typeof CTX.cutAt === 'number' ? CTX.cutAt : null
     T = 0
     endTime = 0

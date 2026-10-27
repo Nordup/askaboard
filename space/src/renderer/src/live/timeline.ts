@@ -1,4 +1,4 @@
-import { SCENE_EASES, type SceneDescription, type SceneObjectDesc, type SceneProp, type SceneTrack } from '@shared/live-scene'
+import { SCENE_EASES, trackNumber, type SceneDescription, type SceneObjectDesc, type SceneProp, type SceneTrack } from '@shared/live-scene'
 import type { Point } from '../board/types'
 import { mixColors, sceneColor } from './colors'
 
@@ -152,11 +152,7 @@ export class Timeline {
     for (let j = Math.max(0, r); j <= k; j++) {
       const a = list[j]
       const from = a.from ?? value
-      // A cut track holds its value at the cut.
-      const tt = a.until !== undefined ? Math.min(t, a.until) : t
-      if (tt >= a.start + a.dur) value = a.to
-      else if (typeof a.to === 'number' && typeof from === 'number') value = from + (a.to - from) * SCENE_EASES[a.ease]((tt - a.start) / a.dur)
-      else value = a.to
+      value = typeof a.to === 'number' && typeof from === 'number' ? trackNumber(a, from, a.to, t) : a.to
     }
     return value
   }

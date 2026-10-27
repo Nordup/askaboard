@@ -1,9 +1,9 @@
 import { isContent, isFrame, isInk, isKnown, newItemId, type BoardNode, type ContentNode, type FrameNode, type InkNode, type InkPoint, type LiveNode, type SvgNode, type TextNode } from '@shared/board-format'
-import type { SceneBounds, SceneDescription, SceneEase, SceneGroupObject, SceneHtmlObject, SceneInkObject, SceneLiveObject, SceneObjectDesc, ScenePartObject, SceneSample, SceneShapeObject, SceneStyle, SceneTextObject } from '@shared/live-scene'
+import { mulberry32, type SceneBounds, type SceneDescription, type SceneEase, type SceneGroupObject, type SceneHtmlObject, type SceneInkObject, type SceneLiveObject, type SceneObjectDesc, type ScenePartObject, type SceneSample, type SceneShapeObject, type SceneStyle, type SceneTextObject } from '@shared/live-scene'
 import { splitPath, type FrameKind } from '@shared/frames'
 import { MAX_COORD } from '@shared/limits'
 import { flattenPath, parsePath } from '@shared/path-geometry'
-import { humanize, seededRandom, strokeSeed } from '../agent/ink'
+import { humanize, strokeSeed } from '../agent/ink'
 import type { Scene } from '../agent/placement'
 import { inkOffset, isFlowed, normalizeInk, removeNodes, ROOT, withDescendants, zAbove } from '../board/scene'
 import type { Point, Region } from '../board/types'
@@ -445,7 +445,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
           ? line.map(([x, y, p]) => [x, y, p === undefined ? 0.5 : Math.max(0, Math.min(1, p))])
           : play.dyn
             ? line.map(([x, y]) => [x, y, 0.5])
-            : humanize(flat, jitter, seededRandom(strokeSeed(`${object.sid ?? `o${object.id}`}:${lineIndex}`, flat)))
+            : humanize(flat, jitter, mulberry32(strokeSeed(`${object.sid ?? `o${object.id}`}:${lineIndex}`, flat)))
         const world = points.map(([x, y, p]) => {
           const [wx, wy] = apply(end, [x, y])
           return [wx, wy, p] as InkPoint
