@@ -52,3 +52,9 @@ space/.lab/
 
 # Scene videos for sharing (local only)
 share-videos/
+
+# Videos stay local (lab recordings, comparisons): never in git
+*.mp4
+*.mov
+*.webm
+*.mkv
