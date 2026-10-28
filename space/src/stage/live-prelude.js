@@ -75,7 +75,6 @@
   const actions = []
   const steps = []
   const logs = []
-  const warnings = new Set()
   const waiters = []
   let waiterSeq = 0
   const cameraActions = []
@@ -1423,7 +1422,6 @@
       if (opts.index !== undefined) place.index = Math.max(0, Math.floor(num(opts.index, `${api} index`)))
     }
     const answer = ask({ kind: 'html', ...source, ...(place ? { into: place } : {}) }, api)
-    if (answer.ignored) warnings.add(`${api}: ${answer.ignored}`)
     const [w, h] = answer.size
     let x
     let y
@@ -2756,7 +2754,7 @@
     const moveList = reparents
       .filter((x) => local.has(x.obj) && (!x.into.obj || local.has(x.into.obj)))
       .map((x) => ({ ...x, obj: local.get(x.obj), into: x.into.obj !== undefined ? { obj: local.get(x.into.obj) } : x.into }))
-    return JSON.stringify({ objects: out, actions: acts, edits: editList, reparents: moveList, steps, duration: f3(endTime), logs, warnings: [...warnings], camera: cameraActions, pointer: pointerActions, cues })
+    return JSON.stringify({ objects: out, actions: acts, edits: editList, reparents: moveList, steps, duration: f3(endTime), logs, camera: cameraActions, pointer: pointerActions, cues })
   }
 
   /** The end of this scene becomes the start of the next: each object's state at the end is its base, values keep their end value. */
@@ -2837,7 +2835,6 @@
     actions.length = 0
     steps.length = 0
     logs.length = 0
-    warnings.clear()
     waiters.length = 0
     cameraActions.length = 0
     pointerActions.length = 0

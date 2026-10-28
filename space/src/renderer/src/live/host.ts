@@ -5,7 +5,7 @@ import { isContent, isFrame, isInk, isKnown, type BoardNode, type ContentNode, t
 import type { SceneDraft } from '@shared/live-scene'
 import type { BoardHandle } from '../board/Board'
 import { ContentLayer, measureContent, type ContentContext } from '../board/content'
-import { checkDrafts, draftsToNodes, htmlToDrafts, Ignored, nodesToHtml, walkDrafts, type Draft } from '../board/html'
+import { checkDrafts, draftsToNodes, htmlToDrafts, nodesToHtml, walkDrafts, type Draft } from '../board/html'
 import { buildIndex, inkOffset, isFlowed, ROOT, topLevelOf, withDescendants, zAbove } from '../board/scene'
 import type { LayoutBox } from '../board/types'
 import { coveredOf } from '../agent/covered'
@@ -44,9 +44,8 @@ function message(error: unknown): string {
   return (error instanceof Error ? error.message : String(error)).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
 }
 
-/** Images in drafts: https and data: URLs are saved into the folder's assets/; folder paths stay. A picture that fails is left out and noted. */
-async function resolveImages(ctx: HostContext, drafts: Draft[], ignored: Ignored): Promise<Draft[]> {
-  const failed = new Set<Draft>()
+/** Images in drafts: https and data: URLs are saved into the folder's assets/; folder paths must name a file there. A picture that fails is an error (decision B18). */
+async function resolveImages(ctx: HostContext, drafts: Draft[]): Promise<Draft[]> {
   const jobs: Draft[] = []
   walkDrafts(drafts, (draft) => {
     if (draft.kind === 'image') jobs.push(draft)
@@ -55,12 +54,10 @@ async function resolveImages(ctx: HostContext, drafts: Draft[], ignored: Ignored
     try {
       draft.src = await ctx.importAsset(draft.src ?? '')
     } catch (error) {
-      ignored.notes.add(`image ${draft.src}: ${message(error)}`)
-      failed.add(draft)
+      throw new Error(`<img src=${JSON.stringify(draft.src ?? '')}>: ${message(error)}`)
     }
   }
-  const prune = (list: Draft[]): Draft[] => list.filter((draft) => !failed.has(draft)).map((draft) => ({ ...draft, children: prune(draft.children) }))
-  return prune(drafts)
+  return drafts
 }
 
 /**
@@ -139,10 +136,9 @@ function plainDrafts(drafts: readonly Draft[]): SceneDraft[] {
   }))
 }
 
-/** Several top-level elements become one column (one item with parts). */
-function oneRoot(drafts: Draft[], ignored: Ignored): Draft[] {
+/** Several top-level elements become one column frame with gap 12px (one item with parts). */
+function oneRoot(drafts: Draft[]): Draft[] {
   if (drafts.length <= 1) return drafts.map((draft) => ({ ...draft, x: 0, y: 0 }))
-  ignored.notes.add(`the ${drafts.length} top-level elements were put in one column frame (gap 12px); wrap them in one <div> to choose the layout`)
   return [{ kind: 'frame', style: { display: 'flex', flexDirection: 'column', gap: '12px' }, x: 0, y: 0, children: drafts }]
 }
 
@@ -153,11 +149,9 @@ interface HtmlAnswer {
   box?: { x: number; y: number; width: number; height: number }
   /** The root's children, relative to the root's top-left. */
   parts: Array<{ x: number; y: number; width: number; height: number; name?: string }>
-  ignored?: string
 }
 
 async function htmlAnswer(ctx: HostContext, request: Record<string, unknown>): Promise<HtmlAnswer | { error: string }> {
-  const ignored = new Ignored()
   let drafts: Draft[]
   const picture = request.image as { src?: unknown; size?: unknown } | undefined
   if (picture) {
@@ -176,21 +170,21 @@ async function htmlAnswer(ctx: HostContext, request: Record<string, unknown>): P
   } else if (Array.isArray(request.drafts)) {
     // Drafts from the program (copy()) are its data: they pass the HTML whitelist again.
     try {
-      drafts = oneRoot(checkDrafts(request.drafts, ignored), ignored)
+      drafts = oneRoot(checkDrafts(request.drafts))
     } catch (error) {
       return { error: message(error) }
     }
     if (typeof request.width === 'number' && drafts[0] && !drafts[0].style.width) drafts[0].style = { ...drafts[0].style, width: `${r2(request.width)}px` }
-    drafts = await resolveImages(ctx, drafts, ignored)
+    drafts = await resolveImages(ctx, drafts)
   } else {
     try {
-      drafts = htmlToDrafts(String(request.markup ?? ''), ignored)
+      drafts = htmlToDrafts(String(request.markup ?? ''))
     } catch (error) {
       return { error: message(error) }
     }
-    drafts = oneRoot(await resolveImages(ctx, drafts, ignored), ignored)
+    drafts = oneRoot(await resolveImages(ctx, drafts))
   }
-  if (!drafts.length) return { error: `nothing to show: the HTML had no supported content${ignored.summary() ? ` (ignored: ${JSON.stringify(ignored.summary())})` : ''}` }
+  if (!drafts.length) return { error: 'nothing to show: the HTML has no content that the board draws' }
 
   const into = request.into as { ref?: unknown; mode?: unknown; index?: unknown } | undefined
   const built = draftsToNodes(drafts, { zStart: 1, canUse: () => false, author: 'agent' })
@@ -230,13 +224,11 @@ async function htmlAnswer(ctx: HostContext, request: Record<string, unknown>): P
     const b = layout.get(child.id) ?? { x: rootBox.x, y: rootBox.y, width: 0, height: 0 }
     return { ...box({ x: b.x - rootBox.x, y: b.y - rootBox.y, width: b.width, height: b.height }), ...(child.name ? { name: child.name as string } : {}) }
   })
-  const summary = ignored.summary()
   return {
     drafts: plainDrafts(drafts),
     size: [r2(rootBox.width), r2(rootBox.height)],
     ...(place ? { box: place } : {}),
-    parts,
-    ...(summary ? { ignored: JSON.stringify(summary) } : {})
+    parts
   }
 }
 
@@ -271,8 +263,7 @@ async function itemAnswer(ctx: HostContext, request: Record<string, unknown>): P
   if (!node || !isKnown(node)) return { error: `there is no item "${ref}" on the board` }
   if (isInk(node)) return { kind: 'ink', strokes: [strokeOf(node)] }
   if (node.kind === 'live') return { error: `"${ref}" is a live item made before this stage; make it again with program(), shader() or canvas()` }
-  const ignored = new Ignored()
-  const drafts = htmlToDrafts(nodesToHtml(node.id, s.index, false), ignored)
+  const drafts = htmlToDrafts(nodesToHtml(node.id, s.index, false))
   const box = s.layout.get(node.id)
   if (drafts[0] && box && isFlowed(node, s.index.byId) && !drafts[0].style.width) drafts[0].style = { ...drafts[0].style, width: `${r2(box.width)}px` }
   return { kind: 'html', drafts: plainDrafts(drafts.map((draft) => ({ ...draft, x: 0, y: 0 }))) }

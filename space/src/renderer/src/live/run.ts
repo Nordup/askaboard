@@ -253,7 +253,7 @@ function adoptEpoch(epoch: string | undefined): void {
 const stageLookup: StageLookup = (sid) => stageRecord.items.get(sid)
 
 /** What a commit needs of a scene's description besides its compile. */
-type SceneSummary = Pick<SceneDescription, 'duration' | 'steps' | 'cues' | 'logs' | 'warnings' | 'stage'>
+type SceneSummary = Pick<SceneDescription, 'duration' | 'steps' | 'cues' | 'logs' | 'stage'>
 
 /**
  * The compiled drafts, by the key that the main process gives each version
@@ -334,9 +334,9 @@ function sameLayout(a: Scene['layout'], b: Scene['layout']): boolean {
 
 /** Compile a draft for the board s (at its place: sceneAt). The draft keeps s's nodes, layout and ink groups to know when to compile again. */
 function compileDraft(desc: SceneDescription, frames: RunFrames, s: Scene, place: ScenePlace | null): CompiledDraft {
-  const { duration, steps, cues, logs, warnings, stage } = desc
+  const { duration, steps, cues, logs, stage } = desc
   return {
-    summary: { duration, steps, cues, logs, warnings, stage },
+    summary: { duration, steps, cues, logs, stage },
     // The board after play_scene start: without the version it replaces (the later scenes come back after it).
     compiled: compileScene(desc, sceneAt(s, place && { scenes: place.scenes.slice(0, 1) }).scene, newItemId('sc'), null, stageLookup, dynLookup(frames)),
     desc,
@@ -457,6 +457,8 @@ function commitScene(ctx: RunSceneContext, desc: SceneSummary, compiled: Compile
   // The items, as the learner can pick them up: a named group is one item, then each object's own item.
   const state = ctx.board.liveState()
   const layout = state.layout()
+  // The result lists only items that are on the board.
+  const present = new Set(state.nodes.map((node) => node.id))
   const timeline = compiled.play.timeline
   const stepOf = (objectId: number): string | undefined => {
     const desc = timeline.object(objectId)
@@ -475,6 +477,7 @@ function commitScene(ctx: RunSceneContext, desc: SceneSummary, compiled: Compile
     const desc = timeline.object(frame.object)
     if (desc.sid !== undefined) stageRecord.items.set(desc.sid, { nodeIds: [frame.id] })
     if (desc.parent !== undefined && framed(frame.object)) continue
+    if (!present.has(frame.id)) continue
     const box = layout.get(frame.id)
     const firstLeaf = compiled.play.objects.find((object) => {
       for (let current = timeline.object(object.id).parent; current !== undefined; current = timeline.object(current).parent) if (current === frame.object) return true
@@ -521,10 +524,6 @@ function commitScene(ctx: RunSceneContext, desc: SceneSummary, compiled: Compile
     }
   }
   stageRecord.revision++
-  const present = new Set(state.nodes.map((node) => node.id))
-  const lost = items.filter((item) => !item.id.startsWith('g') && !present.has(item.id))
-  const warnings = [...desc.warnings, ...compiled.warnings]
-  if (lost.length) warnings.push(`${lost.length} item(s) did not reach the board`)
   const result: SceneResult = {
     scene: sceneId,
     duration_s: Math.round(desc.duration * 1000) / 1000,
@@ -532,8 +531,7 @@ function commitScene(ctx: RunSceneContext, desc: SceneSummary, compiled: Compile
     steps: desc.steps.map((step) => ({ name: step.name, at_s: step.at, ...(step.pause ? { pause: true } : {}) })),
     items,
     cues: desc.cues.map((cue) => ({ text: cue.text, at_s: cue.at, dur_s: cue.dur, ...(cue.marks?.length ? { marks: Object.fromEntries(cue.marks.map((mark) => [mark.name, mark.at])) } : {}) })),
-    log: desc.logs,
-    warnings
+    log: desc.logs
   }
   return { compiled, result, snapshot }
 }
@@ -630,7 +628,7 @@ export function stepOfObject(play: CompiledScene['play'], objectId: number): str
 /**
  * The end of write_scene's sampling pass: compile the draft (its description
  * and its frames, args.job) against the board now (nothing is committed) for
- * its warnings and a short list of what it makes. The compile is kept under
+ * a short list of what it makes. The compile is kept under
  * the key args.draft for the preview and the commit.
  */
 export function sceneDraft(ctx: RunSceneContext, args: Record<string, unknown>): DraftInfo {
@@ -674,8 +672,7 @@ export function sceneDraft(ctx: RunSceneContext, args: Record<string, unknown>):
     steps,
     items: { total, by_kind: byKind, named, removed_by_end: removed },
     cues: desc.cues.map((cue) => ({ text: cue.text, at_s: cue.at, dur_s: cue.dur })),
-    log: desc.logs,
-    warnings: [...desc.warnings, ...compiled.warnings]
+    log: desc.logs
   }
 }
 

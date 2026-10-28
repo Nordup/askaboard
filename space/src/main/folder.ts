@@ -422,7 +422,13 @@ export class FolderSession {
     }
     if (/^[a-z][a-z0-9+.-]*:/i.test(value)) throw new Error('Images must be https URLs, data: URLs or paths inside the learning folder.')
     const rel = value.replace(/^\.\//, '')
-    const full = await this.resolvePath(rel)
+    let full: string
+    try {
+      full = await this.resolvePath(rel)
+    } catch (error) {
+      if (errorCode(error) === 'ENOENT') throw new Error(`There is no file ${rel} in the learning folder.`)
+      throw error
+    }
     if (!IMAGE_TYPES[extname(full).toLowerCase()]) throw new Error(`Not an image file: ${rel}`)
     const info = await stat(full)
     if (!info.isFile()) throw new Error(`Not a file: ${rel}`)

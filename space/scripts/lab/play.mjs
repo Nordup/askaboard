@@ -206,8 +206,7 @@ async function main() {
       recorded_s: Math.round((tEnd - tCall) / 100) / 10,
       watch_s: watch.watch_s,
       frames: frames.length,
-      steps: steps.length,
-      warnings: Array.isArray(parsed?.warnings) ? parsed.warnings.length : null
+      steps: steps.length
     },
     cuts: watch.cuts,
     filmstrip_source: timeLog.length ? 'screencast at scene times' : 'screencast after the call',

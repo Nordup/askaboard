@@ -291,7 +291,6 @@ export interface SceneDescription {
   steps: SceneStep[]
   duration: number
   logs: string[]
-  warnings: string[]
   camera: SceneCameraAction[]
   pointer: ScenePointerAction[]
   cues: SceneCue[]
@@ -319,7 +318,6 @@ export interface SceneResult {
   items: SceneItem[]
   cues: Array<{ text: string; at_s: number; dur_s: number; marks?: Record<string, number> }>
   log: string[]
-  warnings: string[]
 }
 
 /** A moment of a scene (preview_scene): its end, the end of a step (1-based number or name), a time in seconds, or one frame per step. */
@@ -335,7 +333,6 @@ export interface DraftInfo {
   items: { total: number; by_kind: Record<string, number>; named: Array<{ name: string; kind: string; step?: string }>; removed_by_end: number }
   cues: Array<{ text: string; at_s: number; dur_s: number }>
   log: string[]
-  warnings: string[]
 }
 
 /** play_scene's status. */

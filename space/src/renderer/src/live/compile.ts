@@ -9,7 +9,7 @@ import type { Scene } from '../agent/placement'
 import { inkOffset, isFlowed, normalizeInk, removeNodes, ROOT, withDescendants, zAbove } from '../board/scene'
 import type { Point, Region } from '../board/types'
 import { textHtml } from '../board/content'
-import { checkDrafts, draftsToNodes, Ignored } from '../board/html'
+import { checkDrafts, draftsToNodes } from '../board/html'
 import { applyStyles, normalizeStyles } from '../board/style-edits'
 import { drawColor, withOpacity } from './colors'
 import { apply, IDENTITY, invert, isIdentity, multiply, scaleOf, Timeline, type Matrix } from './timeline'
@@ -153,7 +153,6 @@ export interface CompiledScene {
   /** Nodes that went into a frame (move into): their world place before (content top-left, ink offset), to measure the glide. */
   reparented: Array<{ object: number; nodeId: string; ink: boolean; before: Point }>
   revert: SceneRevert
-  warnings: string[]
 }
 
 const END = Number.POSITIVE_INFINITY
@@ -304,10 +303,6 @@ export type DynLookup = (object: SceneObjectDesc) => DynSample[] | undefined
 export type StageLookup = (sid: number) => { nodeIds: string[]; group?: string } | undefined
 
 export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, name: string | null = null, stage?: StageLookup, dynOf?: DynLookup): CompiledScene {
-  const warnings: string[] = []
-  const warn = (text: string): void => {
-    if (!warnings.includes(text)) warnings.push(text)
-  }
   const nodeColor = (object: SceneObjectDesc): string | undefined => {
     if (object.kind !== 'node') return undefined
     const ids = refIds(s, object.ref)
@@ -698,16 +693,13 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
         position = replacing ? [(target as ContentNode).x, (target as ContentNode).y] : [r1(x - origin[0]), r1(y - origin[1])]
       }
       // The description is the program's data: its drafts pass the HTML whitelist again before they become nodes.
-      const ignoredDrafts = new Ignored()
       let drafts
       try {
-        drafts = checkDrafts(html.drafts, ignoredDrafts).slice(0, 1)
+        drafts = checkDrafts(html.drafts).slice(0, 1)
       } catch {
         // Drafts that are not material draw nothing.
         continue
       }
-      const dropped = ignoredDrafts.summary()
-      if (dropped) warn(`${html.api} ${object.id}: ignored ${JSON.stringify(dropped)}`)
       const built = draftsToNodes(drafts, { parent, zStart: zRoot, canUse: () => false, author: 'agent' })
       const rootId = built.roots[0]
       if (!rootId) continue
@@ -1077,8 +1069,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
     frames,
     nodesOf,
     reparented,
-    revert: { created: created.map((node) => node.id), changed: [...changed.keys()].map((id) => s.index.byId.get(id) as BoardNode).filter(Boolean), removed: removedAll },
-    warnings
+    revert: { created: created.map((node) => node.id), changed: [...changed.keys()].map((id) => s.index.byId.get(id) as BoardNode).filter(Boolean), removed: removedAll }
   }
 }
 

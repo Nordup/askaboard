@@ -8,7 +8,7 @@ import type { SceneIndex } from './scene'
  * HTML ⇄ nodes. The agent writes a strict HTML subset with inline styles; it
  * becomes native nodes. DOMParser builds an inert document (no script runs,
  * no resource loads), and only whitelisted tags, attributes and style keys
- * survive. `nodesToHtml` writes the same subset back, so
+ * survive; anything else is skipped without a note (decision B18). `nodesToHtml` writes the same subset back, so
  * html(get_item(x, as "html")) in a scene gives x again (with new ids).
  */
 
@@ -28,29 +28,12 @@ const HEADING_STYLE: Record<string, NodeStyle> = {
   h6: { fontSize: '14px', fontWeight: '600' }
 }
 
-/** What a conversion dropped, for the tool result. */
-export class Ignored {
-  readonly tags = new Set<string>()
-  readonly styles = new Set<string>()
-  readonly attributes = new Set<string>()
-  readonly notes = new Set<string>()
-
-  summary(): { tags?: string[]; styles?: string[]; attributes?: string[]; notes?: string[] } | null {
-    const out: Record<string, string[]> = {}
-    if (this.tags.size) out.tags = [...this.tags]
-    if (this.styles.size) out.styles = [...this.styles]
-    if (this.attributes.size) out.attributes = [...this.attributes]
-    if (this.notes.size) out.notes = [...this.notes]
-    return Object.keys(out).length ? out : null
-  }
-}
-
 // ---------- Styles ----------
 
 const kebab = (name: string): string => name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)
 
 /** Read a style attribute as written (shorthands kept). Position keys go to `position`. */
-function readStyle(raw: string | null, ignored: Ignored): { style: NodeStyle; position: { absolute: boolean; left?: number; top?: number } } {
+function readStyle(raw: string | null): { style: NodeStyle; position: { absolute: boolean; left?: number; top?: number } } {
   const style: NodeStyle = {}
   const position: { absolute: boolean; left?: number; top?: number } = { absolute: false }
   if (!raw) return { style, position }
@@ -67,24 +50,14 @@ function readStyle(raw: string | null, ignored: Ignored): { style: NodeStyle; po
       position.absolute = value === 'absolute'
       continue
     }
-    if (value.length > MAX_STYLE_CHARS) {
-      ignored.styles.add(`${key} (value over ${MAX_STYLE_CHARS} characters)`)
-      continue
-    }
+    if (value.length > MAX_STYLE_CHARS) continue
     if (key === 'left' || key === 'top') {
       const number = parseFloat(value)
       if (Number.isFinite(number) && Math.abs(number) <= MAX_COORD && /px$|^-?[\d.]+$/.test(value)) position[key] = number
-      else ignored.styles.add(`${key}: ${value}`)
       continue
     }
-    if (!STYLE_KEY_SET.has(key) || /url\s*\(|expression\s*\(|javascript:/i.test(value)) {
-      ignored.styles.add(key)
-      continue
-    }
-    if (key === 'display' && !['flex', 'block', 'none'].includes(value)) {
-      ignored.styles.add(`display: ${value}`)
-      continue
-    }
+    if (!STYLE_KEY_SET.has(key) || /url\s*\(|expression\s*\(|javascript:/i.test(value)) continue
+    if (key === 'display' && !['flex', 'block', 'none'].includes(value)) continue
     style[key] = value
   }
   return { style, position }
@@ -138,7 +111,7 @@ function isInlineOnly(element: Element): boolean {
 }
 
 /** Inline content as markup: b/strong → **, i/em → *, br → newline. */
-function inlineMarkup(node: Node, ignored: Ignored, pre: boolean): string {
+function inlineMarkup(node: Node, pre: boolean): string {
   if (node.nodeType === Node.TEXT_NODE) {
     const value = node.textContent ?? ''
     return escapeText(pre ? value : value.replace(/\s+/g, ' '))
@@ -146,15 +119,10 @@ function inlineMarkup(node: Node, ignored: Ignored, pre: boolean): string {
   if (node.nodeType !== Node.ELEMENT_NODE) return ''
   const element = node as Element
   const tag = element.tagName.toLowerCase()
-  if (DROP_TAGS.has(tag)) {
-    ignored.tags.add(tag)
-    return ''
-  }
+  if (DROP_TAGS.has(tag)) return ''
   if (tag === 'br') return '\n'
-  if (element.getAttribute('style') && tag !== 'b' && tag !== 'strong' && tag !== 'i' && tag !== 'em') {
-    ignored.notes.add(`style on inline <${tag}> is dropped (style the whole text block instead)`)
-  }
-  const inner = [...element.childNodes].map((child) => inlineMarkup(child, ignored, pre)).join('')
+  // A style on an inline tag is not kept: styles apply to the whole text block.
+  const inner = [...element.childNodes].map((child) => inlineMarkup(child, pre)).join('')
   if (!inner.trim()) return inner
   // Markers hug the words: leading and trailing spaces stay outside.
   const wrap = (marker: string): string => {
@@ -164,7 +132,6 @@ function inlineMarkup(node: Node, ignored: Ignored, pre: boolean): string {
   }
   if (tag === 'b' || tag === 'strong') return wrap('**')
   if (tag === 'i' || tag === 'em') return wrap('*')
-  if (!INLINE_TAGS.has(tag)) ignored.tags.add(tag)
   return inner
 }
 
@@ -177,13 +144,8 @@ function cleanText(text: string, pre: boolean): string {
     .trim()
 }
 
-function baseDraft(element: Element, kind: Draft['kind'], ignored: Ignored): { draft: Draft; absolute: boolean } {
-  const { style, position } = readStyle(element.getAttribute('style'), ignored)
-  for (const attribute of element.getAttributeNames()) {
-    if (!['style', 'data-id', 'layer-name', 'src', 'alt', 'width', 'height'].includes(attribute) && !attribute.startsWith('xmlns')) {
-      if (kind !== 'svg') ignored.attributes.add(attribute)
-    }
-  }
+function baseDraft(element: Element, kind: Draft['kind']): { draft: Draft; absolute: boolean } {
+  const { style, position } = readStyle(element.getAttribute('style'))
   const draft: Draft = { kind, style, x: position.left ?? 0, y: position.top ?? 0, children: [] }
   const wanted = element.getAttribute('data-id')
   if (wanted) draft.wantedId = wanted
@@ -200,9 +162,9 @@ function sizeFromAttributes(element: Element, style: NodeStyle): void {
   }
 }
 
-function textDraft(element: Element, ignored: Ignored, prefix = ''): { draft: Draft; absolute: boolean } {
+function textDraft(element: Element, prefix = ''): { draft: Draft; absolute: boolean } {
   const tag = element.tagName.toLowerCase()
-  const result = baseDraft(element, 'text', ignored)
+  const result = baseDraft(element, 'text')
   const pre = tag === 'pre' || result.draft.style.whiteSpace === 'pre' || result.draft.style.whiteSpace === 'pre-wrap'
   if (tag === 'pre') {
     result.draft.style = { whiteSpace: 'pre', fontFamily: 'var(--ls-mono)', ...result.draft.style }
@@ -211,20 +173,17 @@ function textDraft(element: Element, ignored: Ignored, prefix = ''): { draft: Dr
     return result
   }
   if (HEADING_STYLE[tag]) result.draft.style = { ...HEADING_STYLE[tag], ...result.draft.style }
-  const markup = [...element.childNodes].map((child) => inlineMarkup(child, ignored, pre)).join('')
+  const markup = [...element.childNodes].map((child) => inlineMarkup(child, pre)).join('')
   result.draft.text = prefix + cleanText(markup, pre)
   return result
 }
 
-/** Convert one element. Returns null when it is dropped. */
-function convertElement(element: Element, ignored: Ignored): { draft: Draft; absolute: boolean } | null {
+/** Convert one element. Returns null when it draws nothing. */
+function convertElement(element: Element): { draft: Draft; absolute: boolean } | null {
   const tag = element.tagName.toLowerCase()
-  if (DROP_TAGS.has(tag)) {
-    ignored.tags.add(tag)
-    return null
-  }
+  if (DROP_TAGS.has(tag)) return null
   if (tag === 'svg') {
-    const result = baseDraft(element, 'svg', ignored)
+    const result = baseDraft(element, 'svg')
     sizeFromAttributes(element, result.draft.style)
     const viewBox = element.getAttribute('viewBox')?.split(/[\s,]+/).map(Number)
     if (viewBox && viewBox.length === 4 && viewBox.every(Number.isFinite)) {
@@ -234,40 +193,31 @@ function convertElement(element: Element, ignored: Ignored): { draft: Draft; abs
     const clone = element.cloneNode(true) as Element
     for (const attribute of ['style', 'data-id', 'layer-name']) clone.removeAttribute(attribute)
     const markup = sanitizeSvg(clone.outerHTML)
-    if (!markup.trim().startsWith('<svg')) {
-      ignored.tags.add('svg (nothing safe was left)')
-      return null
-    }
+    if (!markup.trim().startsWith('<svg')) return null
     result.draft.markup = markup
     return result
   }
   if (tag === 'img') {
-    const result = baseDraft(element, 'image', ignored)
+    const result = baseDraft(element, 'image')
     sizeFromAttributes(element, result.draft.style)
     result.draft.src = element.getAttribute('src') ?? ''
-    if (!result.draft.src) {
-      ignored.notes.add('<img> without src')
-      return null
-    }
-    return result
+    return result.draft.src ? result : null
   }
-  if (tag === 'table' || tag === 'tr' || tag === 'td' || tag === 'th' || tag === 'tbody' || tag === 'thead') {
-    ignored.notes.add('tables become plain flex boxes; use flex rows and columns')
-  }
+  // Tables, like any other block, become frames: a block of blocks is a flex column.
   if (tag === 'ul' || tag === 'ol') {
-    const result = baseDraft(element, 'frame', ignored)
+    const result = baseDraft(element, 'frame')
     result.draft.style = { display: 'flex', flexDirection: 'column', gap: '4px', ...result.draft.style }
     let number = 1
     for (const child of element.children) {
       if (child.tagName.toLowerCase() !== 'li') {
-        const other = convertElement(child, ignored)
+        const other = convertElement(child)
         if (other) result.draft.children.push(other.draft)
         continue
       }
       const prefix = tag === 'ol' ? `${number++}. ` : '• '
-      if (isInlineOnly(child)) result.draft.children.push(textDraft(child, ignored, prefix).draft)
+      if (isInlineOnly(child)) result.draft.children.push(textDraft(child, prefix).draft)
       else {
-        const nested = convertBlock(child, ignored)
+        const nested = convertBlock(child)
         if (nested) result.draft.children.push(nested.draft)
       }
     }
@@ -275,20 +225,20 @@ function convertElement(element: Element, ignored: Ignored): { draft: Draft; abs
   }
   if (INLINE_TAGS.has(tag) || isInlineOnly(element) || tag === 'pre' || /^h[1-6]$/.test(tag) || tag === 'p') {
     if (tag === 'p' || /^h[1-6]$/.test(tag) || tag === 'pre' || isInlineOnly(element)) {
-      const result = textDraft(element, ignored)
+      const result = textDraft(element)
       return result.draft.text || result.draft.style.width || result.draft.style.height ? result : null
     }
   }
-  return convertBlock(element, ignored)
+  return convertBlock(element)
 }
 
 /** A block with element children: a frame. Loose inline runs become text nodes. */
-function convertBlock(element: Element, ignored: Ignored): { draft: Draft; absolute: boolean } | null {
-  const result = baseDraft(element, 'frame', ignored)
+function convertBlock(element: Element): { draft: Draft; absolute: boolean } | null {
+  const result = baseDraft(element, 'frame')
   const children: { draft: Draft; absolute: boolean }[] = []
   let run: Node[] = []
   const flush = (): void => {
-    const markup = cleanText(run.map((node) => inlineMarkup(node, ignored, false)).join(''), false)
+    const markup = cleanText(run.map((node) => inlineMarkup(node, false)).join(''), false)
     run = []
     if (markup) children.push({ draft: { kind: 'text', style: {}, x: 0, y: 0, text: markup, children: [] }, absolute: false })
   }
@@ -299,7 +249,7 @@ function convertBlock(element: Element, ignored: Ignored): { draft: Draft; absol
     }
     if (child.nodeType !== Node.ELEMENT_NODE) continue
     flush()
-    const converted = convertElement(child as Element, ignored)
+    const converted = convertElement(child as Element)
     if (converted) children.push(converted)
   }
   flush()
@@ -308,14 +258,12 @@ function convertBlock(element: Element, ignored: Ignored): { draft: Draft; absol
   if (style.display !== 'flex' && style.display !== 'none') {
     if (free) delete style.display
     else {
-      // Block flow without margins is a flex column; say so once.
-      if (children.length > 1) ignored.notes.add('block layout became flex column (set display:flex yourself to control it)')
+      // Block flow without margins is a flex column.
       style.display = 'flex'
       if (!style.flexDirection) style.flexDirection = 'column'
     }
-  } else if (style.display === 'flex' && free) {
-    ignored.notes.add('position:absolute children of a flex box are placed by the flex layout')
   }
+  // In a flex frame, position:absolute children are placed by the flex layout.
   result.draft.children = children.map((child) => child.draft)
   return result
 }
@@ -333,7 +281,7 @@ function checkSize(body: HTMLElement): void {
 }
 
 /** Parse agent HTML into drafts. Nothing in it runs or loads. */
-export function htmlToDrafts(html: string, ignored: Ignored): Draft[] {
+export function htmlToDrafts(html: string): Draft[] {
   const doc = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html')
   checkSize(doc.body)
   const drafts: Draft[] = []
@@ -344,11 +292,10 @@ export function htmlToDrafts(html: string, ignored: Ignored): Draft[] {
       continue
     }
     if (child.nodeType !== Node.ELEMENT_NODE) continue
-    const converted = convertElement(child as Element, ignored)
+    const converted = convertElement(child as Element)
     if (converted) drafts.push(converted.draft)
   }
   if (loose.trim()) {
-    ignored.notes.add('top-level loose text was wrapped in a text node')
     drafts.unshift({ kind: 'text', style: {}, x: 0, y: 0, text: escapeText(cleanText(loose.replace(/\s+/g, ' '), false)), children: [] })
   }
   return drafts
@@ -374,8 +321,9 @@ export function isFolderPath(src: string): boolean {
  * styles through readStyle, SVG through htmlToDrafts (and so sanitizeSvg),
  * image src only as a learning-folder path, the same size and depth limits.
  * Ids are never taken over. Drafts made by htmlToDrafts come out unchanged.
+ * An image src that is not a folder path is an error (decision B18).
  */
-export function checkDrafts(input: unknown, ignored: Ignored): Draft[] {
+export function checkDrafts(input: unknown): Draft[] {
   let count = 0
   const check = (raw: unknown, depth: number): Draft | null => {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
@@ -383,10 +331,7 @@ export function checkDrafts(input: unknown, ignored: Ignored): Draft[] {
     if (depth > MAX_HTML_DEPTH) throw new Error(`The material is nested more than ${MAX_HTML_DEPTH} elements deep.`)
     const value = raw as Record<string, unknown>
     const kind = value.kind
-    if (kind !== 'frame' && kind !== 'text' && kind !== 'svg' && kind !== 'image') {
-      ignored.tags.add(`kind ${String(kind).slice(0, 40)}`)
-      return null
-    }
+    if (kind !== 'frame' && kind !== 'text' && kind !== 'svg' && kind !== 'image') return null
     // The style object as a style attribute, read by the HTML whitelist.
     const declarations: string[] = []
     if (value.style && typeof value.style === 'object') {
@@ -394,25 +339,19 @@ export function checkDrafts(input: unknown, ignored: Ignored): Draft[] {
         if (typeof v === 'string' && v !== '') declarations.push(`${kebab(key)}: ${v}`)
       }
     }
-    const { style } = readStyle(declarations.join('; '), ignored)
+    const { style } = readStyle(declarations.join('; '))
     const coord = (n: unknown): number => (typeof n === 'number' && Number.isFinite(n) && Math.abs(n) <= MAX_COORD ? n : 0)
     const draft: Draft = { kind, style, x: coord(value.x), y: coord(value.y), children: [] }
     if (typeof value.name === 'string' && value.name && value.name.length <= 200) draft.name = value.name
     if (kind === 'text') draft.text = typeof value.text === 'string' ? value.text : ''
     if (kind === 'svg') {
-      const parsed = typeof value.markup === 'string' ? htmlToDrafts(value.markup, ignored) : []
-      if (parsed.length !== 1 || parsed[0].kind !== 'svg' || !parsed[0].markup) {
-        ignored.tags.add('svg (nothing safe was left)')
-        return null
-      }
+      const parsed = typeof value.markup === 'string' ? htmlToDrafts(value.markup) : []
+      if (parsed.length !== 1 || parsed[0].kind !== 'svg' || !parsed[0].markup) return null
       draft.markup = parsed[0].markup
     }
     if (kind === 'image') {
       const src = typeof value.src === 'string' ? value.src.trim() : ''
-      if (!isFolderPath(src)) {
-        ignored.notes.add(`image src ${JSON.stringify(src.slice(0, 80))} is not a file in the learning folder; left out`)
-        return null
-      }
+      if (!isFolderPath(src)) throw new Error(`the image ${JSON.stringify(src.slice(0, 80))} is not a file path in the learning folder`)
       draft.src = src
     }
     if (kind === 'frame' && Array.isArray(value.children)) {
