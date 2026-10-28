@@ -10,7 +10,7 @@ It is the third form of this project (iPad app → web client → Learning
 Space) and, since 2026-10-24, **the main product** (decision P8). App code
 in [`../../space/`](../../space/); work happens on `main`.
 
-## Status (2026-10-27)
+## Status (2026-10-29)
 
 | Area | State |
 | --- | --- |
@@ -29,10 +29,14 @@ in [`../../space/`](../../space/); work happens on `main`.
 | Tool descriptions, server instructions, plugin skill and the board reference (`guide.md`) in Anthropic's tool style (decision I19) | Done (2026-10-26). The three scene tools keep the approved I19/I22 wording, with only the changes the new tools need (I25, 2026-10-27; founder review R1 done). How to change an agent text later: [`writing-agent-text.md`](writing-agent-text.md), "Change an agent text without losing its intent or its voice" |
 | Live drawing: one drawing medium in code ([`live-drawing-plan.md`](live-drawing-plan.md), decisions P11–P13) | Stages 1–4 done: scenes are the one way to write: `write_scene`, `preview_scene` and `play_scene` (T16; 12 tools); values, labels, named groups, preview, camera, pointer, the stage and beats, program items (WebGL, three.js, any library), `html()`, `image()`, edits, a floating script panel (the app does not speak, T13). Measured (2026-10-26, everything on): both GPT and Claude draw the EM wave in ink, step by step, with handwritten labels; GPT previews; Claude explains fully, then asks; practice sheets still use HTML |
 | Lab switches for experiments: `council.mjs --no-code`, `--no-html`, `--brief <draft>` (`space/src/main/lab-switch.ts`) | Done; see [`working-guide.md`](working-guide.md), "Choosing lab tests" |
-| Feature freeze (2026-10-26) | On: the founder tests everything by hand (code items, shaders, the other media) and fixes what gets in the way. The perf work ended with the board tools (T21). One board model and one copy of each piece of scene logic: done (2026-10-27). Next: G1 and G6 together, the voice and the scene steps, in two bundles with research beside them ([`scenes-and-voice-plan.md`](scenes-and-voice-plan.md); decision W9) |
-| First real test (2026-10-26) | Done: one hour on neurons by voice; the synapse mechanism clicked for the founder for the first time. The founder calls the app an MVP, but not yet for friends ([`first-test-2026-10-26.md`](first-test-2026-10-26.md)). Gaps G1–G6 and the order of work: [`first-test-gaps.md`](first-test-gaps.md); G1 (voice ⇄ scene) is the next milestone |
+| Feature freeze (2026-10-26) | On: the founder tests everything by hand (code items, shaders, the other media) and fixes what gets in the way. The perf work ended with the board tools (T21). One board model and one copy of each piece of scene logic: done (2026-10-27). G1 and G6 follow [`scenes-and-voice-plan.md`](scenes-and-voice-plan.md) (decision W9); all open work, in batches: [`work-map.md`](work-map.md) |
+| First real test (2026-10-26) | Done: one hour on neurons by voice; the synapse mechanism clicked for the founder for the first time. The founder calls the app an MVP, but not yet for friends ([`first-test-2026-10-26.md`](first-test-2026-10-26.md)). Gaps G1–G6: [`first-test-gaps.md`](first-test-gaps.md) |
 | Scene speed (2026-10-26/27): the stage in V8 in a sandboxed process (T18), live items on one contract (B10), playback cost (B11), one compile per draft (B12), typed frames over a direct port (B13), stage-made ink points (B14), pen ink on its shape (B15) | Done and measured ([`perf-plan.md`](perf-plan.md)): EM wave write_scene 7.6–15.1 s → 0.5–0.9 s, preview about 0.1 s, start under 0.1 s, playback frame work 5.7 → 2.6 ms. Known playback limits: [`playback-pitfalls.md`](playback-pitfalls.md). Agents see what the script panel and the tool palette cover (T19) |
 | What agents read (2026-10-27): four board reads with one `part` address, summaries first and "Deeper:" lines, no caps (T20); `list_items`, `list_boards`, `open_board`, `move_board`, strict parameters, one word for one thing in all agent texts (T21) | Done ([`perf-plan.md`](perf-plan.md), group 2): on a 1,000-stroke board `get_changes` since 0 went from 182,835 to 471 characters, the overview from 5,567 to about 620. Texts and results: [`drafts/boards-tool-texts-2026-10-27/final.html`](drafts/boards-tool-texts-2026-10-27/final.html) |
+| Scene files (2026-10-28): scenes as JS files in `boards/scenes/` with import and export (B16 step 1, B17); the lab runs agents like the real apps (W10) | Done and measured: Opus and GPT write every scene by file; scene code 5.9k and 7.0k characters against 8.7k and 9.7k, nothing written twice |
+| Batch 1 (2026-10-28): errors come back at once, every place takes a live position, no checks in the build and no warnings (B18), `play_scene` without a wait (T23); HTML notes removed; handwriting for Cyrillic, accents and maths signs (2026-10-29) | Done ([`work-map.md`](work-map.md), batches A and F) |
+| Scene record and reading panel (2026-10-29): a history per board, reads by scene and step after a restart (B16 step 2, B20); the reading panel for one scene and the scene pill (B19) | Done, two Sol reviews: [`drafts/record-ui-2026-10-29/`](drafts/record-ui-2026-10-29/README.md). Next: replay after a restart (step 3), then the voice (batch C) |
+| Scene library | Postponed, its own track: [`library-plan.md`](library-plan.md) (W12) |
 | Perception (the old fix 2) | Mostly answered by board news; the rest deferred |
 | Plain chat apps (ChatGPT web, Claude chat) with folder file tools | Later |
 | App packaging, signing, auto-update | Later |
@@ -154,8 +158,11 @@ the live-frame idea was rejected).
 | Scene | A JavaScript program an agent writes with `write_scene` (a draft that the learner does not see) and plays with `play_scene`: it makes board items and a timeline of how they appear and change; the board plays it, and the items stay. |
 | Stage | The one sandbox per board in which every scene program runs; the global `stage` keeps values and objects between programs. |
 | Beat | A short scene (one sentence and its drawing) sent while another plays; scenes queue and follow each other without a gap. |
-| Text line (`say`) | A sentence in a scene, shown to the learner at a reading pace in the script panel; nothing is spoken. |
-| Script panel | The floating, draggable panel over the board that shows a scene's steps and text lines and lets the learner replay a step. |
+| Text line (`say`) | A sentence in a scene, shown to the learner at a reading pace in the reading panel; nothing is spoken. Each line belongs to the step whose time contains it. |
+| Reading panel | The floating panel over the board for one scene (code: `ScriptPanel.tsx`): the previous line faint, the current line large, a step bar, replay step, pause and next. It fades after the scene and hides into the scene pill (decision B19). |
+| Scene pill | The pill in the top bar: the playing scene, else the board's last scene, else a selected item's scene and step. Its menu lists the board's scenes. |
+| Scene file | A scene program as a JavaScript file in `boards/scenes/`, with `import` and `export` (decision B16). |
+| Scene record | The append-only history of a board's scenes in `.learning-space/scenes/<board id>.jsonl`; agents read items by scene and step from it after a restart (`"synapse#2"`). |
 | Program item | A board item (`program()` in a scene) that runs a whole program of its own: Canvas 2D, WebGL, WebGPU, three.js, any library; it follows the scene's clock and writes its own interaction (decision P12). |
 | Lab | `space/scripts/lab/`: an own app instance, scene recordings (MP4, filmstrip), beats, model councils and a gallery. |
 | Council | A lab run in which a model works on a task with the scene tools and is then interviewed; its answers are customer proposals, not specs (decision W8). |

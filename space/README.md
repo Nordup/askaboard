@@ -5,7 +5,7 @@ shared canvas and a local learning folder. The app has no AI inside: external
 agents (Claude Code, Codex, Claude Desktop) connect to it over MCP and work on
 the board with the learner.
 
-**Status (2026-10-27):** the main product of this repository (since 2026-10-24). Steps 0–5, fix 1, board news (decision I4), `get_brief` and `get_guide` (decision T11), live drawing stages 1–4 (scenes as the one way to write, program items, the script panel), brief v18 and the agent texts in Anthropic's style (decisions I18–I22) are done. The scene tools are `write_scene`, `preview_scene` and `play_scene` (T16), with the old approved wording (I25). The board reads give summaries first (T20), and the board tools are `list_boards`, `open_board` and `move_board` (T21). Every tool refuses unknown parameters. Feature freeze: the founder's own testing first, then the voice loop ([`plan.md`](../docs/learning-space/plan.md)).
+**Status (2026-10-29):** the main product of this repository (since 2026-10-24). Steps 0–5, fix 1, board news (decision I4), `get_brief` and `get_guide` (decision T11), live drawing stages 1–4 (scenes as the one way to write, program items, the script panel), brief v18 and the agent texts in Anthropic's style (decisions I18–I22) are done. The scene tools are `write_scene`, `preview_scene` and `play_scene` (T16), with the old approved wording (I25). The board reads give summaries first (T20), and the board tools are `list_boards`, `open_board` and `move_board` (T21). Every tool refuses unknown parameters. Scenes can be files in `boards/scenes/` with imports (B16 step 1); each board keeps a scene record, so agents read items by scene and step after a restart (B16 step 2). A scene input works, draws nothing, or is an error; results carry no warnings (B18). `play_scene` does not wait (T23). Open work: [`work-map.md`](../docs/learning-space/work-map.md).
 
 - [`../docs/learning-space/README.md`](../docs/learning-space/README.md): start here.
 - [`architecture.md`](../docs/learning-space/architecture.md): processes, data flow and where the code lives.
@@ -48,9 +48,10 @@ Do not run test suites. Check a change with `npm run build`. The rules are in
   they unfold in time; the board plays it, and the result stays as ordinary
   items. Programs on a board share one sandbox (the stage), queue back to
   back, can pause at steps, and pause when the learner starts drawing. A
-  scene's text lines (`say`) appear at a reading pace in a floating script
-  panel, where the learner can read them again and replay a step; the scene
-  pill in the top bar shows the step and opens the panel. The app does not
+  scene's text lines (`say`) appear at a reading pace in a floating reading
+  panel for one scene (the previous line, the current line, a step bar); it
+  fades after the scene and hides into the scene pill in the top bar, which
+  lists the board's scenes and shows the scene and step of a selected item. The app does not
   speak.
 - **Program items.** A scene can place a whole program of its own on the
   board (Canvas 2D, WebGL 2, WebGPU, three.js bundled, any library from the
@@ -102,10 +103,10 @@ every tool twice. The popover shows this problem and offers **Fix**.
 | `open_board` | `board`, `create` | Opens a board by path or unique name, or makes a new one |
 | `move_board` | `path`, `to` | Renames a board, or moves it to the system Trash (`to: "trash"`) |
 | `get_brief` | none | The brief, for agents without the folder's `AGENTS.md` |
-| `get_guide` | `topic` | One topic of the board reference (scene, scene-code, scene-interact, model, html, math, svg, images, tokens, placement, ink, view, and `folder` when the folder has `.learning-space/guide.md`); without a topic, all of it |
-| `write_scene` | `name`, `code` | Runs a scene program and keeps the result as a draft by name; the learner sees nothing. Returns steps, items, warnings or the program error. |
+| `get_guide` | `topic` | One topic of the board reference (scene, scene-files, scene-code, scene-interact, model, html, math, svg, images, tokens, placement, ink, view, and `folder` when the folder has `.learning-space/guide.md`); without a topic, all of it |
+| `write_scene` | `name`, `code` or `file` | Runs a scene program (inline, or a file in `boards/scenes/`) and keeps the result as a draft by name; the learner sees nothing. Returns steps and items, or the program error with its line. |
 | `preview_scene` | `name`, `at`, `part`, `version` | Read-only: one image of a draft or of a scene on the board, at chosen moments (end, a step, a time, a list, every step), framed on the scene, the view, a region or items. |
-| `play_scene` | `action` (start, status, pause, resume, next, stop, clear_queue, cancel, wait, replay, cut, reset), `name`, `when`, `wait`, `from_step`, `after_step` | Starts a draft on the board (replacing a scene of the same name in place) and controls playback and the stage. |
+| `play_scene` | `action` (start, status, pause, resume, next, stop, clear_queue, cancel, replay, cut, reset), `name`, `when`, `from_step`, `after_step` | Starts a draft on the board (replacing a scene of the same name in place; returns at once) and controls playback and the stage. |
 
 ## Learning folder
 

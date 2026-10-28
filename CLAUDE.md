@@ -5,7 +5,7 @@
 ## How we work (from 2026-10-23)
 
 - **Build step by step.** Each step must run in the real app before the next step starts.
-- **No tests.** See the hard rule in `AGENTS.md`. Verify end to end, not with test files.
+- **No tests.** See the hard rule in `AGENTS.md`. Verify end to end, not with test files. Checks also write no check-script files (founder, 2026-10-29): use the app's own MCP tools and `space/scripts/drive.mjs`.
 - **Implementation goes to Opus subagents:** `model: "opus"`, `effort: "medium"`, `subagent_type: "general-purpose"`. Run one or two at a time, never two on the same files. The main session plans, writes the brief, reviews the diff, and checks the result.
 - **Reading, search, research and click-through checks go to Haiku subagents** (`model: "haiku"`; `Explore` for read-only work).
 - **Subagents use Haiku as much as possible.** Implementation subagents start their own Haiku subagents for reading, search, research and checks, and keep only the judgment and the code. Say so in every implementation brief.

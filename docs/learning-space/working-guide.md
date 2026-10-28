@@ -75,6 +75,13 @@ and what went wrong before.
 
 ## Choosing lab tests (live drawing)
 
+Lab and perf runs give agents what the real apps give them (decision W10):
+Claude with every tool and `--permission-mode bypassPermissions`, Codex with
+`danger-full-access` and the network, web on unless `--no-web`. Each perf run
+writes `timeline.md` (where the time goes) and keeps the agent's transcript.
+Videos stay out of git (`*.mp4` and similar are ignored).
+
+
 The council tasks are in `space/scripts/lab/council/tasks.json`; each has a
 `covers` list. The founder's rule (2026-10-25): **keep the same tests so runs
 can be compared, and run only the tests that show what changed** — not the

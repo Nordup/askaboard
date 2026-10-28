@@ -192,6 +192,27 @@ limits scripts and images.
 How an agent's scene program becomes drawing on the board (decisions P11,
 P12, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
 
+- **Scene files.** A program is inline code or a file in `boards/scenes/`
+  of the learning folder, with `import` and `export` between files
+  (decisions B16, B17). `write_scene` reads the file and its imports once
+  (`src/main/scene-files.ts`: an acorn transform that keeps line numbers,
+  a content cache by hash); the stage runs the modules with a small module
+  registry. A later edit of a file changes nothing until the next
+  `write_scene`.
+- **Scene record.** Each board keeps an append-only history,
+  `.learning-space/scenes/<board id>.jsonl` (`src/main/scene-store.ts`,
+  the only writer; decisions B16, B20). One `scene` line per played version
+  (source: module hashes, seed, cut, board context, host answers; story:
+  steps, lines, items per step; revert), plus `drop` and `reset` lines.
+  Module texts are kept once in `code/<sha>.js`. The board file holds the
+  board's `id`. Main reads the file as a stream when a board opens and
+  sends the stories to the renderer; `src/shared/scene-story.ts` holds the
+  one rule for which line belongs to which step. Replay from the record
+  after a restart is step 3 of the spec (not built).
+- **Errors.** A scene input works, draws nothing, or is an error with its
+  line, at once, also from parallel async functions and functions of
+  moving objects; results carry no warnings (decision B18).
+
 - **Main process.** `write_scene` and `play_scene` (`src/main/mcp.ts`) send
   the program to the board's stage (`live-scene.ts`, decision T18): one
   long-lived V8 realm in a Web Worker of the stage process, a hidden,
@@ -235,8 +256,11 @@ P12, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
   items and plays it: `run.ts` (requests from main), `compile.ts` (objects
   to nodes), `timeline.ts`, `player.ts` (the clock, the queue, pauses,
   replay), `measure.ts` (exact text bounds for the sandbox), `colors.ts`,
-  `state.ts` (the store for the scene pill and the script panel; which
-  scenes form one script, decision T15),
+  `state.ts` (the store for the scene pill and the reading panel),
+  `reading.ts` (what the panel and the pill show: the playing scene, the
+  last scene, a selected item's scene and step; B19), `stories.ts` (the
+  board's scene stories from the record and the map from each item to its
+  scene and step),
   `host.ts` (the board's answers to the sandbox). Object kinds beyond
   drawing: `html` (material from html(): a root node and its subtree; drawn
   root first, then its parts one after another), `part` (one child of an
@@ -265,7 +289,7 @@ P12, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
 - Shell: `src/renderer/src/App.tsx` (state and wiring), `TopBar.tsx`, `Sidebar.tsx`
   (`FileTree.tsx`), `ToolPalette.tsx`, `PreviewPanel.tsx`, `WelcomeCard.tsx`,
   `CanvasNotice.tsx`, `Toast.tsx`.
-- Scenes: `ScenePill.tsx` (in `TopBar.tsx`) and the floating script panel.
+- Scenes: `ScenePill.tsx` (in `TopBar.tsx`; its menu lists the board's scenes) and `ScriptPanel.tsx` (the floating reading panel for one scene).
 - Menus and popovers: `Menu.tsx`, `AgentPill.tsx`, `SetupMenu.tsx`,
   `GuideOverrideNote.tsx` — all built on the shared menu system.
 - Styles: `styles/tokens.css` (all design tokens), `styles/app.css` (all app
