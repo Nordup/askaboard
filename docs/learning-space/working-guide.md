@@ -138,7 +138,7 @@ combine; `meta.json` records `no_html` and `brief`.
 
 - **Never `import` or `node -e` the bench runner** (`scripts/bench/run.mjs`): importing it runs `main()` and starts a real Claude bench (it happened once and used the founder's limits).
 - **A test app instance must get a scratch `HOME`.** One launch without it overwrote the founder's `~/.learning-space/relay.json` (port), `tools.json` and the relay command; the founder's app rewrites them on its next start.
-- **Codex in the bench** needs the Learning Space tools approved (`default_tools_approval_mode = "approve"`), because a read-only sandbox with `approval_policy = "never"` blocks writes before they reach the app. The founder's full-access sandbox does not have this problem.
+- **Codex in the lab, perf and bench runs** needs the Learning Space tools approved (`default_tools_approval_mode = "approve"`): with `approval_policy = "never"`, Codex declines MCP write tools that are not approved. All three use the shared `prepareCodexHome` in `scripts/lab/common.mjs`.
 - **Codex ignores plugin hooks until the user trusts them** (`/hooks`). The bench passes `--dangerously-bypass-hook-trust` for its scratch home only.
 - **Review before push:** the founder reviews each fix (the problem, the measurement, the change, the result) before its commits are pushed.
 

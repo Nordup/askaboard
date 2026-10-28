@@ -532,7 +532,7 @@ export function runFolder(slugSource, root = RUNS) {
   return dir
 }
 
-// ---------- Headless agents (council.mjs, perf/run.mjs) ----------
+// ---------- Headless agents (council.mjs, perf/run.mjs, bench/run.mjs) ----------
 //
 // agent: { client, model, effort, newsHook, web, codexHome, timeoutMs, pids, say }.
 // pids collects the agent processes; say logs.
@@ -666,7 +666,10 @@ export async function codexTurn(agent, state, dir, prompt, phase, thread = null)
   const code = await runProcess(agent, 'codex', argv, { cwd: state.folder, env: { ...process.env, CODEX_HOME: agent.codexHome }, stdoutFile, stderrFile: join(dir, `${phase}-stderr.txt`) })
   let threadId = thread
   const tokens = { input: 0, cached_input: 0, output: 0, reasoning_output: 0 }
+  let turns = 0
   const errors = []
+  // The tool calls Codex failed itself (for example a declined approval): they never reach the app trace. Also in errors.
+  const failedToolCalls = []
   for (const l of readFileSync(stdoutFile, 'utf8').split('\n')) {
     let event
     try {
@@ -676,6 +679,7 @@ export async function codexTurn(agent, state, dir, prompt, phase, thread = null)
     }
     if (event.type === 'thread.started') threadId = event.thread_id
     if (event.type === 'turn.completed') {
+      turns += 1
       const u = event.usage ?? {}
       tokens.input += u.input_tokens ?? 0
       tokens.cached_input += u.cached_input_tokens ?? 0
@@ -683,15 +687,21 @@ export async function codexTurn(agent, state, dir, prompt, phase, thread = null)
       tokens.reasoning_output += u.reasoning_output_tokens ?? 0
     }
     if (event.type === 'turn.failed' || event.type === 'error') errors.push(event.error?.message ?? event.message ?? JSON.stringify(event))
-    if (event.type === 'item.completed' && event.item?.type === 'mcp_tool_call' && event.item.status === 'failed') errors.push(`${event.item.tool}: ${event.item.error?.message ?? 'failed'}`)
+    if (event.type === 'item.completed' && event.item?.type === 'mcp_tool_call' && event.item.status === 'failed') {
+      const failed = `${event.item.tool}: ${event.item.error?.message ?? 'failed'}`
+      errors.push(failed)
+      failedToolCalls.push(failed)
+    }
   }
   return {
     exit_code: code,
     reply: existsSync(lastMessage) ? readFileSync(lastMessage, 'utf8') : '',
     is_error: code !== 0 || errors.length > 0,
     errors,
+    failed_tool_calls: failedToolCalls,
     session: threadId,
     tokens,
+    turns,
     stdout_file: stdoutFile
   }
 }

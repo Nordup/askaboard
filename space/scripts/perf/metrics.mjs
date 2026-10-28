@@ -188,7 +188,7 @@ const jsonLines = (file) => {
     .filter(Boolean)
 }
 
-/** The files a Claude Code session wrote (its transcript ~/.claude/projects/<folder>/<session>.jsonl): Write, Edit and MultiEdit, per call. */
+/** The files a Claude Code session wrote (its transcript ~/.claude/projects/<folder>/<session>.jsonl): Write, Edit and MultiEdit, and Bash commands that write, per call. */
 export function claudeFileWrites(transcript) {
   const writes = []
   const seen = new Set()
@@ -200,6 +200,8 @@ export function claudeFileWrites(transcript) {
       if (c?.type !== 'tool_use' || seen.has(c.id)) continue
       seen.add(c.id)
       const input = c.input ?? {}
+      // Bash: the same command parser as Codex's shell commands; the entry's cwd is the shell's directory before the command.
+      if (c.name === 'Bash' && typeof input.command === 'string') writes.push(...commandWrites(t, input.command, entry.cwd ?? null))
       if (typeof input.file_path !== 'string') continue
       if (c.name === 'Write' && typeof input.content === 'string') writes.push(fileWrite(t, input.file_path, input.content))
       else if (c.name === 'Edit' && typeof input.new_string === 'string') writes.push(fileWrite(t, input.file_path, input.new_string))
@@ -209,14 +211,21 @@ export function claudeFileWrites(transcript) {
   return writes
 }
 
-/** The writes in a text that may hold apply_patch patches (their added lines, per file) or shell heredocs into a file (cat > file <<EOF). */
-function patchWrites(t, text) {
+/**
+ * The writes in a shell command or a text that may hold apply_patch patches
+ * (their added lines, per file) or shell heredocs into a file (cat > file <<EOF).
+ * cwd: the shell's directory before the command (Claude's Bash), or null (Codex):
+ * with it, relative paths count from it and from the command's own cd.
+ */
+function commandWrites(t, text, cwd = null) {
+  if (cwd) for (const cd of text.matchAll(/(?:^|&&|\|\||[;\n(])\s*cd\s+(['"]?)([^\s'";&|)]+)\1/g)) cwd = resolve(cwd, cd[2])
+  const at = (path) => (cwd ? resolve(cwd, path) : path)
   const writes = []
   for (const patch of text.matchAll(/\*\*\* Begin Patch\r?\n([\s\S]*?)\*\*\* End Patch/g)) {
     let path = null
     let added = []
     const flush = () => {
-      if (path !== null && added.length) writes.push(fileWrite(t, path, `${added.join('\n')}\n`))
+      if (path !== null && added.length) writes.push(fileWrite(t, at(path), `${added.join('\n')}\n`))
       added = []
     }
     for (const line of patch[1].split(/\r?\n/)) {
@@ -230,11 +239,12 @@ function patchWrites(t, text) {
     }
     flush()
   }
-  for (const heredoc of text.matchAll(/\bcat\s*>\s*(['"]?)([^\s'"<>|;&]+)\1\s*<<-?\s*(['"]?)(\w+)\3[^\n]*\n([\s\S]*?)\n\4(?=\s|$|")/g)) writes.push(fileWrite(t, heredoc[2], `${heredoc[5]}\n`))
+  for (const heredoc of text.matchAll(/\bcat\s*>\s*(['"]?)([^\s'"<>|;&]+)\1\s*<<-?\s*(['"]?)(\w+)\3[^\n]*\n([\s\S]*?)\n\4(?=\s|$|")/g)) writes.push(fileWrite(t, at(heredoc[2]), `${heredoc[5]}\n`))
   // Any other command that writes a scene file (a python or sed edit): its whole text is what the agent wrote for that file.
   if (!writes.length && /open\([^)]*['"][wa]|write_text|>\s*['"]?[^\s'"]*boards\/scenes\/|\bsed\s+-i|\bperl\s+-\w*i|\btee\b/.test(text)) {
-    const scene = /(?:^|[\s'"=(])((?:[^\s'"=()]*\/)?boards\/scenes\/[^\s'"\\;)<>|&]+)/.exec(text)
-    if (scene) writes.push(fileWrite(t, scene[1], text))
+    // The scene path in the command, else the shell's directory when it is in boards/scenes/ (python3 - <<EOF … open('lengths.js', 'w')).
+    const scene = /(?:^|[\s'"=(])((?:[^\s'"=()]*\/)?boards\/scenes\/[^\s'"\\;)<>|&]+)/.exec(text)?.[1] ?? (cwd && isSceneFile(`${cwd}/`) ? cwd : null)
+    if (scene) writes.push(fileWrite(t, at(scene), text))
   }
   return writes
 }
@@ -266,14 +276,14 @@ export function codexFileWrites({ rollout = null, execJsonl = null } = {}) {
       for (const text of strings(p.input ?? p.arguments ?? p.action ?? '')) {
         // Codex's exec tool takes JavaScript (tools.exec_command({cmd: "…"})): the commands are its double-quoted string literals.
         const literals = p.type === 'custom_tool_call' && p.name === 'exec' ? [...text.matchAll(/"(?:[^"\\\n]|\\.)*"/g)].map((m) => parse(m[0])).filter((s) => typeof s === 'string') : [text]
-        for (const command of literals) writes.push(...patchWrites(t, command))
+        for (const command of literals) writes.push(...commandWrites(t, command))
       }
     }
     return writes
   }
   for (const entry of jsonLines(execJsonl)) {
     const item = entry.type === 'item.completed' ? entry.item : null
-    if (item?.type === 'command_execution' && typeof item.command === 'string') writes.push(...patchWrites(null, item.command))
+    if (item?.type === 'command_execution' && typeof item.command === 'string') writes.push(...commandWrites(null, item.command))
   }
   return writes
 }

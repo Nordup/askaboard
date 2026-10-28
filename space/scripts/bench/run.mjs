@@ -7,14 +7,14 @@
  *   node scripts/bench/run.mjs [--scenarios S1,S2,S3,S4,P1,P2,P3] [--model opus] [--client claude|codex]
  *                              [--effort medium] [--codex-home <dir>]
  *                              [--out <dir>] [--dev] [--mcp-port 47870] [--debug-port 9470]
- *                              [--timeout-min 15] [--no-news-hook]
+ *                              [--timeout-min 15] [--no-news-hook] [--no-web]
  *
  * Per conversation (S1+S2, S3+S4) it makes a scratch learning folder from
  * resources/learning-folder/, starts the app on it (built app from out/, or
  * `electron-vite dev` with --dev) with HOME, --user-data-dir and
  * SPACE_TRACE_DIR in the run folder, draws the learner's strokes with
  * scripts/drive.mjs, runs the agent headless from inside the folder
- * (`claude -p`, follow-ups with --continue), and saves per scenario: the
+ * (`claude -p`, follow-ups resume the session by its id), and saves per scenario: the
  * session trace and its images, the trace report, the agent's reply, the final
  * window and whole-board screenshots, and metrics.json. All scenarios go into
  * results.json and summary.md in --out.
@@ -26,7 +26,7 @@
  * NEW agent run (turn 1). See PERCEPTION in scenarios.mjs. V1 is a
  * continuation instead: turn 0 is a real turn of the measured model ("explain
  * … use the board"), the learner sketches beside its drawing, and turn 1
- * resumes the same thread (codex exec resume / claude -p --continue).
+ * resumes the same thread (codex exec resume / claude -p --resume).
  *
  * --client codex runs `codex exec --json` (the founder's model, gpt-6.1-sol at
  * reasoning effort medium, unless --model / --effort say otherwise) with a
@@ -36,6 +36,14 @@
  * turn 0 of P scenarios uses the same model at effort low. Codex reports no
  * cost: the metrics hold its token usage, and brief_loaded says whether the
  * learning folder's AGENTS.md brief was in the agent's context.
+ *
+ * The agent turns are the lab's shared ones (claudeTurn, codexTurn and
+ * prepareCodexHome in scripts/lab/common.mjs), so the bench runs the agents
+ * as the lab and perf runs do (decision W10): all of the agent's own tools
+ * with no permission prompts (Claude --permission-mode bypassPermissions;
+ * Codex sandbox_mode "danger-full-access", approval_policy "never"), and the
+ * web tools unless --no-web. The agent output is agent-claude.json or
+ * agent-codex.jsonl, agent-stderr.txt (Codex also agent-reply.md).
  *
  * The agent gets the plugins' prompt hook (UserPromptSubmit runs `learning-space news
  * --client <label>` from the run's own HOME, at --mcp-port), so the board news reaches
@@ -48,8 +56,7 @@
  */
 import { spawn, execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { copyFileSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, symlinkSync, writeFileSync, closeSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, writeFileSync, closeSync } from 'node:fs'
 import { createConnection } from 'node:net'
 import { createRequire } from 'node:module'
 import { basename, dirname, join, resolve } from 'node:path'
@@ -57,6 +64,7 @@ import { fileURLToPath } from 'node:url'
 import { ALL_SCENARIOS, CONVERSATIONS, PERCEPTION, S_SCENARIOS, TURN0_CODEX_EFFORT, TURN0_MODEL, TURN0_PROMPT } from './scenarios.mjs'
 import { seedBusy } from './busy.mjs'
 import { analyzeFile, readJsonl, totalOf, rectText, LOOK_TOOLS } from '../trace-report.mjs'
+import { claudeTurn, codexRollout, codexTurn, prepareCodexHome } from '../lab/common.mjs'
 
 const SPACE = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const DRIVE = join(SPACE, 'scripts/drive.mjs')
@@ -90,7 +98,9 @@ const opts = {
   debugPort: Number(option('--debug-port', '9470')),
   timeoutMs: Number(option('--timeout-min', '15')) * 60_000,
   // The board-news prompt hook (`learning-space news`), as the plugins install it. --no-news-hook measures without it.
-  newsHook: !flag('--no-news-hook')
+  newsHook: !flag('--no-news-hook'),
+  // The agent's web tools (Claude WebSearch and WebFetch, Codex --search). --no-web takes them away.
+  web: !flag('--no-web')
 }
 if (opts.client === 'claude' && !opts.model) opts.model = 'opus'
 // The founder's Codex setup (Codex Desktop): gpt-6.1-sol at reasoning effort medium.
@@ -245,134 +255,35 @@ async function stopApp(app) {
 
 // ---------- The agent ----------
 
-function runProcess(command, args, { cwd, env, stdoutFile, stderrFile }) {
-  return new Promise((done) => {
-    const out = openSync(stdoutFile, 'w')
-    const err = openSync(stderrFile, 'w')
-    const child = spawn(command, args, { cwd, env, stdio: ['ignore', out, err] })
-    pids.started.push({ pid: child.pid, what: `${basename(command)} agent` })
-    const timer = setTimeout(() => {
-      log(`agent timed out after ${opts.timeoutMs / 60000} min; stopping PID ${child.pid}`)
-      child.kill('SIGTERM')
-      pids.stopped.push(child.pid)
-    }, opts.timeoutMs)
-    child.on('exit', (code) => {
-      clearTimeout(timer)
-      closeSync(out)
-      closeSync(err)
-      done(code)
-    })
-  })
-}
-
-/** The plugins' prompt hook command, pointed at this run's app (its HOME's shim and its port). */
-function newsHookCommand(work, label) {
-  const shim = join(work.home, '.learning-space/bin/learning-space')
-  return `LEARNING_SPACE_PORT=${opts.mcpPort} '${shim}' news --client '${label}' 2>/dev/null || true`
+/**
+ * The agent of one turn for the lab's shared headless turns (scripts/lab/common.mjs): the same
+ * tools, permissions and web as the lab and perf runs (decision W10). Its PIDs go to pids.started.
+ */
+function agentOf(model, effort, turnPids = []) {
+  return { client: opts.client, model, effort, newsHook: opts.newsHook, web: opts.web, codexHome: opts.codexHome, timeoutMs: opts.timeoutMs, pids: turnPids, say: log }
 }
 
 async function runAgent(scenario, work, dir, model = opts.model, effort = opts.effort) {
-  const mcpUrl = `http://127.0.0.1:${opts.mcpPort}/mcp`
-  const stdoutFile = join(dir, 'agent-stdout.txt')
-  const stderrFile = join(dir, 'agent-stderr.txt')
-  if (opts.client === 'claude') {
-    const config = join(work.dir, 'mcp.json')
-    writeFileSync(config, JSON.stringify({ mcpServers: { 'learning-space': { type: 'http', url: mcpUrl } } }, null, 2))
-    // The prompt goes before --allowedTools: that flag takes every word after it.
-    const hookArgs = []
-    if (opts.newsHook) {
-      const settings = join(work.dir, 'claude-settings.json')
-      const hook = { type: 'command', command: newsHookCommand(work, 'Claude Code'), timeout: 5 }
-      writeFileSync(settings, JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [hook] }] } }, null, 2))
-      hookArgs.push('--settings', settings)
-    }
-    const args = ['-p', scenario.prompt, ...(scenario.followUp ? ['--continue'] : []), '--model', model, '--mcp-config', config, '--strict-mcp-config', '--setting-sources', 'project,local', ...hookArgs, '--output-format', 'json', '--allowedTools', 'mcp__learning-space__*']
-    const code = await runProcess('claude', args, { cwd: work.folder, env: process.env, stdoutFile, stderrFile })
-    let parsed = null
-    try {
-      parsed = JSON.parse(readFileSync(stdoutFile, 'utf8'))
-    } catch {
-      // Not JSON (a crash or a timeout): keep the raw text.
-    }
+  const turnPids = []
+  const agent = agentOf(model, effort, turnPids)
+  const state = { dir: work.dir, folder: work.folder, home: work.home, mcpPort: opts.mcpPort }
+  try {
+    if (opts.client === 'codex') return await runCodex(scenario, work, dir, agent, state)
+    // A follow-up resumes the folder's last Claude session.
+    if (scenario.followUp && !work.claudeSession) throw new Error(`${scenario.id} is a follow-up, but the conversation has no Claude session.`)
+    const turn = await claudeTurn(agent, state, dir, scenario.prompt, 'agent', scenario.followUp ? work.claudeSession : null)
+    if (turn.session) work.claudeSession = turn.session
     return {
-      exit_code: code,
-      reply: parsed?.result ?? readFileSync(stdoutFile, 'utf8'),
-      is_error: parsed ? Boolean(parsed.is_error) : true,
-      cost_usd: parsed?.total_cost_usd ?? null,
-      num_turns: parsed?.num_turns ?? null,
-      client_duration_ms: parsed?.duration_ms ?? null
+      exit_code: turn.exit_code,
+      reply: turn.reply,
+      is_error: turn.is_error,
+      cost_usd: turn.cost_usd,
+      num_turns: turn.num_turns,
+      client_duration_ms: turn.raw?.duration_ms ?? null
     }
+  } finally {
+    for (const pid of turnPids) pids.started.push({ pid, what: `${opts.client} agent` })
   }
-  return runCodex(scenario, work, dir, model, effort)
-}
-
-/**
- * The scratch CODEX_HOME: auth.json is a symlink to the founder's login (never a copy),
- * and config.toml holds only the bench's own learning-space server, so none of the
- * founder's plugins or MCP servers load.
- */
-function prepareCodexHome() {
-  const home = opts.codexHome
-  mkdirSync(home, { recursive: true })
-  const auth = join(home, 'auth.json')
-  let present = false
-  try {
-    lstatSync(auth)
-    present = true
-  } catch {
-    // Missing: link it below.
-  }
-  if (!present) {
-    const real = join(homedir(), '.codex/auth.json')
-    if (!existsSync(real)) throw new Error(`No Codex login at ${real}. Log in with \`codex login\` first.`)
-    symlinkSync(real, auth)
-    log(`linked ${auth} -> ${real}`)
-  }
-  try {
-    execFileSync('codex', ['login', 'status'], { env: { ...process.env, CODEX_HOME: home }, stdio: 'pipe' })
-  } catch (error) {
-    throw new Error(`\`codex login status\` failed with CODEX_HOME=${home}: ${String(error.stderr ?? error.message ?? error).trim()}`)
-  }
-  const mcpUrl = `http://127.0.0.1:${opts.mcpPort}/mcp`
-  // Model, effort and features as in the founder's ~/.codex/config.toml. The sandbox is read-only
-  // (the founder runs danger-full-access): the agent writes only through MCP, whose tools are pre-approved.
-  writeFileSync(
-    join(home, 'config.toml'),
-    [
-      'approval_policy = "never"',
-      'sandbox_mode = "read-only"',
-      `model = ${JSON.stringify(opts.model)}`,
-      `model_reasoning_effort = ${JSON.stringify(opts.effort)}`,
-      'service_tier = "default"',
-      '',
-      '[features]',
-      'js_repl = false',
-      'multi_agent_v2 = true',
-      '',
-      '[mcp_servers.learning-space]',
-      `url = ${JSON.stringify(mcpUrl)}`,
-      // Without this, a read-only sandbox with approval "never" declines every write tool
-      // ("writes require approval"), so the agent can only look.
-      'default_tools_approval_mode = "approve"',
-      ''
-    ].join('\n')
-  )
-}
-
-/** The rollout file of a Codex thread in the scratch CODEX_HOME, or null. */
-function codexRollout(threadId) {
-  if (!threadId) return null
-  const found = []
-  const walk = (d) => {
-    if (!existsSync(d)) return
-    for (const entry of readdirSync(d, { withFileTypes: true })) {
-      const path = join(d, entry.name)
-      if (entry.isDirectory()) walk(path)
-      else if (entry.name.startsWith('rollout-') && entry.name.endsWith(`${threadId}.jsonl`)) found.push(path)
-    }
-  }
-  walk(join(opts.codexHome, 'sessions'))
-  return found[0] ?? null
 }
 
 /** Was the learning folder's brief (AGENTS.md) in the agent's context? Looks at the context items, not at tool results. */
@@ -410,54 +321,14 @@ function newsInRollout(file, startedMs) {
   return texts.join('\n')
 }
 
-async function runCodex(scenario, work, dir, model, effort) {
-  const stdoutFile = join(dir, 'agent-stdout.jsonl')
-  const stderrFile = join(dir, 'agent-stderr.txt')
-  const lastMessage = join(dir, 'reply.txt')
-  const common = ['--json', '--skip-git-repo-check', '-m', model, '-c', `model_reasoning_effort=${JSON.stringify(effort)}`, '-o', lastMessage]
-  if (opts.newsHook) {
-    // A JSON string is a valid TOML basic string. The hook is not trusted in the scratch home, hence the bypass.
-    const hook = `{type="command",command=${JSON.stringify(newsHookCommand(work, 'Codex'))},timeout=5}`
-    common.push('-c', `hooks.UserPromptSubmit=[{hooks=[${hook}]}]`, '--dangerously-bypass-hook-trust')
-  }
+async function runCodex(scenario, work, dir, agent, state) {
   // A follow-up resumes this conversation's thread by id; anything else is a new `codex exec`.
   const resume = scenario.followUp && work.codexThread
   if (scenario.followUp && !work.codexThread) throw new Error(`${scenario.id} is a follow-up, but the conversation has no Codex thread.`)
-  const args = resume ? ['exec', 'resume', ...common, work.codexThread, scenario.prompt] : ['exec', ...common, scenario.prompt]
   const startedMs = Date.now()
-  const code = await runProcess('codex', args, { cwd: work.folder, env: { ...process.env, CODEX_HOME: opts.codexHome }, stdoutFile, stderrFile })
-
-  let threadId = resume ? work.codexThread : null
-  const tokens = { input: 0, cached_input: 0, output: 0, reasoning_output: 0 }
-  let turns = 0
-  let failed = false
-  const errors = []
-  const declined = []
-  for (const line of readFileSync(stdoutFile, 'utf8').split('\n')) {
-    let event
-    try {
-      event = JSON.parse(line)
-    } catch {
-      continue
-    }
-    if (event.type === 'thread.started') threadId = event.thread_id
-    if (event.type === 'turn.completed') {
-      turns += 1
-      const u = event.usage ?? {}
-      tokens.input += u.input_tokens ?? 0
-      tokens.cached_input += u.cached_input_tokens ?? 0
-      tokens.output += u.output_tokens ?? 0
-      tokens.reasoning_output += u.reasoning_output_tokens ?? 0
-    }
-    // A tool call Codex failed itself (for example a declined approval) never reaches the app trace.
-    if (event.type === 'item.completed' && event.item?.type === 'mcp_tool_call' && event.item.status === 'failed') {
-      declined.push(`${event.item.tool}: ${event.item.error?.message ?? 'failed'}`)
-    }
-    if (event.type === 'turn.failed' || event.type === 'error') {
-      failed = true
-      errors.push(event.error?.message ?? event.message ?? JSON.stringify(event))
-    }
-  }
+  const turn = await codexTurn(agent, state, dir, scenario.prompt, 'agent', resume || null)
+  const threadId = turn.session
+  const tokens = { ...turn.tokens }
   // On a resumed thread, turn.completed reports the thread's running total: keep this run's share.
   const totals = { ...tokens }
   if (resume && work.codexTokens) for (const key of Object.keys(tokens)) tokens[key] = Math.max(0, tokens[key] - work.codexTokens[key])
@@ -466,7 +337,7 @@ async function runCodex(scenario, work, dir, model, effort) {
     work.codexTokens = totals
   }
 
-  const rollout = codexRollout(threadId)
+  const rollout = codexRollout(opts.codexHome, threadId)
   if (rollout) copyFileSync(rollout, join(dir, 'codex-rollout.jsonl'))
   let clientMs = null
   if (rollout) {
@@ -480,13 +351,15 @@ async function runCodex(scenario, work, dir, model, effort) {
       }
     }
   }
+  const failedCalls = new Set(turn.failed_tool_calls)
+  const clientErrors = turn.errors.filter((e) => !failedCalls.has(e))
   return {
-    exit_code: code,
-    reply: existsSync(lastMessage) ? readFileSync(lastMessage, 'utf8') : '',
-    is_error: code !== 0 || failed,
-    ...(errors.length ? { client_errors: errors } : {}),
-    client_failed_tool_calls: declined,
-    effort,
+    exit_code: turn.exit_code,
+    reply: turn.reply,
+    is_error: turn.is_error,
+    ...(clientErrors.length ? { client_errors: clientErrors } : {}),
+    client_failed_tool_calls: turn.failed_tool_calls,
+    effort: agent.effort,
     codex_thread: threadId,
     resumed: Boolean(resume),
     brief_loaded: briefInRollout(rollout),
@@ -494,7 +367,7 @@ async function runCodex(scenario, work, dir, model, effort) {
     news_in_prompt: opts.newsHook ? newsInRollout(rollout, startedMs) : null,
     tokens,
     cost_usd: null,
-    num_turns: turns || null,
+    num_turns: turn.turns || null,
     client_duration_ms: clientMs
   }
 }
@@ -1063,7 +936,7 @@ function summary(results) {
 
 async function main() {
   validate()
-  if (opts.client === 'codex') prepareCodexHome()
+  if (opts.client === 'codex') prepareCodexHome(agentOf(opts.model, opts.effort), { mcpPort: opts.mcpPort })
   mkdirSync(opts.out, { recursive: true })
   log(`out: ${opts.out}`)
   const results = []
