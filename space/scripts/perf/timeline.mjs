@@ -199,7 +199,7 @@ function codexRolloutParse(file, t0) {
       } else if (it.type === 'WebSearch' || /search/i.test(it.type ?? '')) {
         own.push({ start: s, end: e, tool: 'web_search', detail: one(it.query ?? JSON.stringify(it.action ?? '')), chars: 0, status: 'ok', error: null })
       } else if (it.type === 'FileChange') {
-        own.push({ start: s, end: e, tool: 'apply_patch', detail: one((it.changes ?? []).map((c) => c.path).join(', ')), chars: 0, status: it.status === 'failed' ? 'failed' : 'ok', error: it.status === 'failed' ? one(JSON.stringify(it), 300) : null })
+        own.push({ start: s, end: e, tool: 'apply_patch', detail: one((Array.isArray(it.changes) ? it.changes : Object.values(it.changes ?? {})).map((c) => c?.path ?? '').join(', ')), chars: 0, status: it.status === 'failed' ? 'failed' : 'ok', error: it.status === 'failed' ? one(JSON.stringify(it), 300) : null })
       } else if (it.type === 'McpToolCall' && it.status && it.status !== 'completed') {
         could.push({ t: s, tool: `mcp ${it.tool}`, status: 'failed', error: one(JSON.stringify(it.error ?? it.result ?? it.status), 300) })
       }
