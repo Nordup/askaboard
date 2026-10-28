@@ -171,7 +171,7 @@ await tween(stage.k, 3, 2)   // the curve drawn by the earlier call gets shorter
   await mark("he"); draw(he)
   await mark("n"); draw(n)
   ```
-- `wait(s)`. `step(name, {pause})`: names this moment (returned as steps); with pause: true, playback stops here until play_scene "resume" or "next". When the learner starts drawing, playback pauses at the next step (or at once when no step is left). `all(...actions)`: ends when all of them end; it also takes the results of async functions, and then gives a promise that ends when all of them end.
+- `wait(s)`. `step(name, {pause})`: names this moment (returned as steps; say() lines before the first step() make a first step named after the scene, and step numbers count it); with pause: true, playback stops here until play_scene "resume" or "next". When the learner starts drawing, playback pauses at the next step (or at once when no step is left). `all(...actions)`: ends when all of them end; it also takes the results of async functions, and then gives a promise that ends when all of them end.
 
 **Playback and tools.**
 - Drafts: write_scene runs the program and keeps the result as a draft under its name, which the learner does not see. play_scene `start` puts the draft on the board. To change a scene on the board, write it again under its name and start it: it is replaced in place, as one undo step. The new version runs at the old version's place on the stage, before the old version's items and the items of later scenes exist, so it does not need to erase them.

@@ -288,6 +288,7 @@ button:focus-visible {
  *   .pill--item    a static pill on a board item, not in the top bar (a live item that
  *                  stopped responding: dot, label, one restart action). It sits inside
  *                  the item at the bottom left and follows the board's zoom.
+ *   .pill--flash   the pill lights up once (the scene pill, when the reading panel went into it)
  */
 .pill--static:hover {
   background: none;
@@ -390,9 +391,24 @@ button:focus-visible {
   height: var(--status-dot-size-small);
 }
 
-.pill--open {
+.pill--open,
+.pill--static.pill--open {
   background: var(--bg-active);
   color: var(--text-primary);
+}
+
+.pill--flash {
+  animation: pill-flash var(--pill-flash);
+}
+
+@keyframes pill-flash {
+  0%,
+  100% {
+    background: transparent;
+  }
+  30% {
+    background: var(--accent-soft);
+  }
 }
 
 .status-dot--live {
@@ -447,8 +463,9 @@ button:focus-visible {
 
 /* ---------- Scene pill ---------- */
 
-/* The scene pill: shrinks before the agent pill; fades in and out (usePresence). */
+/* The scene pill: shrinks before the agent pill; fades in and out (usePresence). Its menu is the shared menu below it. */
 .scene-pill {
+  position: relative;
   opacity: 0;
   transition: opacity var(--fade);
 }
@@ -457,16 +474,28 @@ button:focus-visible {
   opacity: 1;
 }
 
+/* The scene pill's menu: layout only (position and width); the content is shared .menu parts. */
+.menu.scene-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 240px;
+  max-height: calc(100vh - var(--topbar-height) - 24px);
+  overflow-y: auto;
+  -webkit-app-region: no-drag;
+}
+
 /* ---------- Script panel ---------- */
 
 /*
- * The script panel (ScriptPanel.tsx): a small frame over the board with the
- * scene's lines; the one exception to "UI does not cover the board". The
- * learner drags it by its header; ScriptPanel sets left, top and max-height.
- *   .script-panel__header   34 px: status dot, title, step count, icon buttons
- *   .script-panel__body     the steps; scrolls beyond --script-panel-body-max
- *   .script-step--done / --current / --ahead / --final   where the reading is
- *   .script-line, --current with .script-line__rest   a line; the rest of the line being read is muted
+ * The reading panel (ScriptPanel.tsx, decision B19): one scene in a small frame over the board;
+ * the one exception to "UI does not cover the board". The learner drags it by its header;
+ * ScriptPanel sets left, top and max-height.
+ *   .script-panel__header    34 px: small status dot, the scene name, one hide button
+ *   .script-panel__bar       the step bar: one .script-panel__segment per step (flex = its length), with its __fill
+ *   .script-panel__body      __previous (the line before) and __line (the line being read; its __rest is not reached yet)
+ *   .script-panel__footer    one __status, then the icon buttons
+ *   .is-into-pill            shrunk toward the scene pill (hide); with .is-at-pill at once (the start of an open from the pill)
  */
 .script-panel {
   position: absolute;
@@ -480,11 +509,22 @@ button:focus-visible {
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-float);
   opacity: 0;
-  transition: opacity var(--fade);
+  transition: opacity var(--fade), transform var(--into-pill);
 }
 
 .script-panel.is-shown {
   opacity: 1;
+}
+
+.script-panel.is-into-pill {
+  opacity: 0;
+  transform: scale(var(--into-pill-scale));
+  transition: opacity var(--into-pill), transform var(--into-pill);
+}
+
+/* An open from the pill starts there at once, then grows to its place. */
+.script-panel.is-into-pill.is-at-pill {
+  transition: none;
 }
 
 .script-panel__header {
@@ -494,7 +534,6 @@ button:focus-visible {
   gap: var(--space-2);
   height: var(--script-panel-header);
   padding: 0 calc((var(--script-panel-header) - var(--icon-button-size)) / 2) 0 var(--space-3);
-  border-bottom: 1px solid var(--border-subtle);
   cursor: grab;
   user-select: none;
   touch-action: none;
@@ -504,96 +543,88 @@ button:focus-visible {
   cursor: grabbing;
 }
 
-.script-panel.is-collapsed .script-panel__header {
-  border-bottom-color: transparent;
-}
-
 .script-panel__title {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
   font-size: var(--text-sm);
-  font-weight: 500;
-  color: var(--text-primary);
+  color: var(--text-secondary);
 }
 
-.script-panel__count {
+.script-panel__header .icon-button,
+.script-panel__footer .icon-button {
   flex-shrink: 0;
-  margin-left: auto;
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  font-variant-numeric: tabular-nums;
-  color: var(--text-tertiary);
+  cursor: default;
 }
 
-.script-panel__actions {
+.script-panel__bar {
   display: flex;
   flex-shrink: 0;
-  align-items: center;
+  gap: var(--step-bar-gap);
+  padding: 0 var(--space-3);
 }
 
-.script-panel__actions .icon-button {
-  cursor: default;
+.script-panel__segment {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  height: var(--step-bar-height);
+  overflow: hidden;
+  border-radius: var(--step-bar-radius);
+  background: var(--border-subtle);
+}
+
+.script-panel__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--text-tertiary);
+}
+
+.script-panel.is-playing .script-panel__fill {
+  background: var(--accent);
 }
 
 .script-panel__body {
   flex: 1 1 auto;
   min-height: 0;
-  max-height: var(--script-panel-body-max);
   overflow-y: auto;
-  padding: var(--space-2) var(--space-3) var(--space-3);
+  padding: var(--space-3) var(--space-4) var(--space-1);
+}
+
+.script-panel__previous {
+  margin: 0 0 var(--reading-line-gap);
   font-size: var(--text-base);
   line-height: var(--leading-read);
-  color: var(--text-secondary);
-}
-
-.script-step + .script-step {
-  margin-top: var(--space-2);
-}
-
-.script-step__title {
-  display: block;
-  margin: 0 0 2px;
-  padding: 0;
-  font-size: var(--text-xs);
-  line-height: var(--leading);
-  color: var(--text-faint);
-  text-align: left;
-}
-
-.script-step--done .script-step__title {
   color: var(--text-tertiary);
 }
 
-.script-step--current .script-step__title {
-  color: var(--accent);
-}
-
-.script-step--final .script-step__title {
-  color: var(--text-secondary);
-  border-radius: var(--radius-sm);
-  transition: color 120ms ease;
-}
-
-.script-step--final .script-step__title:hover {
-  color: var(--text-primary);
-}
-
-.script-line {
+.script-panel__line {
   margin: 0;
-}
-
-.script-line + .script-line {
-  margin-top: var(--space-1);
-}
-
-.script-step--final .script-line,
-.script-line--current {
+  font-size: var(--text-lg);
+  line-height: var(--leading-current);
   color: var(--text-primary);
 }
 
-.script-line__rest {
+.script-panel__rest {
+  color: var(--text-faint);
+}
+
+.script-panel__footer {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  padding: var(--script-panel-footer-pad);
+}
+
+.script-panel__status {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--text-xs);
   color: var(--text-tertiary);
 }
 
@@ -611,8 +642,13 @@ button:focus-visible {
 
 @media (prefers-reduced-motion: reduce) {
   .scene-pill,
-  .script-panel {
+  .script-panel,
+  .script-panel.is-into-pill {
     transition: none;
+  }
+
+  .pill--flash {
+    animation: none;
   }
 }
 

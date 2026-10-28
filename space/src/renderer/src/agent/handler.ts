@@ -52,6 +52,8 @@ export interface AgentContext {
   changeBoard(op: BoardChangeOp): Promise<BoardChangeResult>
   /** See SpaceApi.importAsset. */
   importAsset(src: string): Promise<string>
+  /** Write the open board's unsaved changes now; false when the write failed. */
+  saveNow(): Promise<boolean>
 }
 
 /** Padding around the "changes" view, in board points. */
@@ -398,6 +400,8 @@ async function liveStillsOf(params: AgentMethods['liveStills']['params']): Promi
 export async function handleAgentRequest(request: AgentRequest, getContext: () => AgentContext): Promise<unknown> {
   const context = getContext()
   switch (request.method) {
+    case 'saveBoard':
+      return { saved: await context.saveNow() }
     case 'cursorInfo': {
       if (!context.openPath || !context.board) return { board: null, cursor: null }
       return { board: { path: context.openPath }, cursor: seenCursor(context.board.liveState()) }
@@ -445,7 +449,7 @@ export async function handleAgentRequest(request: AgentRequest, getContext: () =
       const { path } = requireBoard(context)
       const tracker = trackerFor(path)
       return runEditTool(
-        { board, importAsset: context.importAsset, tracker, groups: () => tracker.compute(board.liveState()), path },
+        { board, importAsset: context.importAsset, tracker, groups: () => tracker.compute(board.liveState()), path, ...(context.folder ? { root: context.folder.root } : {}) },
         params.tool,
         params.args ?? {}
       )

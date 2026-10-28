@@ -214,6 +214,12 @@ export type ContentNode = FrameNode | TextNode | SvgNode | ImageNode | LiveNode
 export type BoardNode = KnownNode | ForeignNode
 
 export interface BoardDoc {
+  /**
+   * The board's id (newItemId('b')): its scene records are .learning-space/scenes/<id>.jsonl
+   * (main/scene-store.ts). Made when the first scene record is written; a board with no scenes has none.
+   * Older builds keep it as an unknown key (extra), so it survives their saves.
+   */
+  id?: string
   /** The next free sequence number. Always greater than every node's seq. */
   nextSeq: number
   /** File order (stable for diffs). Draw order comes from parent + z. */
@@ -331,7 +337,7 @@ export function emptyBoard(): BoardDoc {
 
 // ---------- Parse ----------
 
-const KNOWN_TOP_KEYS = new Set(['format', 'version', 'nextSeq', 'nodes', 'items'])
+const KNOWN_TOP_KEYS = new Set(['format', 'version', 'id', 'nextSeq', 'nodes', 'items'])
 
 /** A v1 stroke item becomes a v2 ink node: x = y = 0, the points stay absolute. */
 function migrateV1Item(entry: Record<string, unknown>, index: number): Record<string, unknown> {
@@ -380,7 +386,7 @@ export function parseBoard(text: string): BoardDoc {
   for (const [key, value] of Object.entries(raw)) if (!KNOWN_TOP_KEYS.has(key)) extra[key] = value
 
   const nextSeq = Math.max(finite(raw.nextSeq) ? Math.floor(raw.nextSeq) : 1, maxSeq + 1)
-  return { nextSeq, nodes, extra }
+  return { ...(typeof raw.id === 'string' && raw.id ? { id: raw.id } : {}), nextSeq, nodes, extra }
 }
 
 // ---------- Serialize ----------
@@ -402,7 +408,7 @@ const KIND_KEYS: Record<string, readonly string[]> = {
   live: ['mode', 'w', 'h', 'params', 'style', 'code']
 }
 
-function serializeNode(node: BoardNode): string {
+export function serializeNode(node: BoardNode): string {
   if (!isKnown(node)) return JSON.stringify(node)
   const raw = node as unknown as Record<string, unknown>
   const out: Record<string, unknown> = {}
@@ -444,7 +450,7 @@ function nodeLine(node: BoardNode): string {
 
 /** Serialize with one node per line, so Git diffs stay small. */
 export function serializeBoard(doc: BoardDoc): string {
-  const lines = ['{', `  "format": ${JSON.stringify(BOARD_FORMAT)},`, `  "version": ${BOARD_VERSION},`, `  "nextSeq": ${doc.nextSeq},`]
+  const lines = ['{', `  "format": ${JSON.stringify(BOARD_FORMAT)},`, `  "version": ${BOARD_VERSION},`, ...(doc.id ? [`  "id": ${JSON.stringify(doc.id)},`] : []), `  "nextSeq": ${doc.nextSeq},`]
   for (const [key, value] of Object.entries(doc.extra)) {
     if (!KNOWN_TOP_KEYS.has(key)) lines.push(`  ${JSON.stringify(key)}: ${JSON.stringify(value)},`)
   }
@@ -544,7 +550,7 @@ export function reconcileBoard(previous: BoardDoc, incoming: BoardDoc): { doc: B
   const kept = new Set(incoming.nodes.map((node) => node.id))
   const removed: Removal[] = []
   for (const node of previous.nodes) if (!kept.has(node.id)) removed.push({ node, seq: seq++ })
-  return { doc: { nextSeq: seq, nodes, extra: incoming.extra }, removed, revisions }
+  return { doc: { ...(incoming.id ? { id: incoming.id } : {}), nextSeq: seq, nodes, extra: incoming.extra }, removed, revisions }
 }
 
 /** A short random node id, for example `s_k3j2x9qa`. */

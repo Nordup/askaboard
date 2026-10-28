@@ -1,3 +1,4 @@
+import { stepAt } from '@shared/scene-story'
 import { isLive, type BoardNode, type InkNode, type InkPoint } from '@shared/board-format'
 import { SCENE_EASES, type SceneStatus } from '@shared/live-scene'
 import type { SceneEvent } from '@shared/space-api'
@@ -9,7 +10,7 @@ import { sceneColor, withOpacity } from './colors'
 import type { DynSample, PlayEdit, PlayObject, ScenePlay } from './compile'
 import { BLEND_GAP, paramSamplesOf, paramsAtTime } from './params'
 import { blendStyle } from '../board/style-edits'
-import { clearSceneScript, setSceneUiActions, setSceneUiState, type SceneCueState, type SceneListEntry } from './state'
+import { setSceneUiActions, setSceneUiState, type SceneCueState, type SceneListEntry } from './state'
 import { isIdentity, multiply, type Matrix } from './timeline'
 
 /**
@@ -921,7 +922,7 @@ function sceneLists(play: ScenePlay): SceneListEntry {
       of: play.id.replace(/~r\d+$/, ''),
       name: play.name ?? null,
       cues: play.cues.map((cue) => ({ text: cue.text, at_s: cue.at, dur_s: cue.dur, ...(cue.marks?.length ? { marks: Object.fromEntries(cue.marks.map((mark) => [mark.name, mark.at])) } : {}) })),
-      steps: play.steps.map((step) => ({ name: step.name, at_s: step.at, ...(step.pause ? { pause: true } : {}) })),
+      steps: play.steps.map((step) => ({ name: step.name, at_s: step.at, ...(step.pause ? { pause: true } : {}), ...(step.lead ? { lead: true } : {}), lines: step.lines ?? [] })),
       items: playItems(play)
     }
     listCache.set(play, lists)
@@ -976,17 +977,9 @@ export class ScenePlayer {
       resume: () => void this.control('resume'),
       nextStep: () => this.nextStep(),
       replay: (list) => this.replayList(list),
-      learnerActedSince: (ms) => this.learnerActedSince(ms)
+      playFrom: (scene, step) => this.playFrom(scene, step),
+      canReplay: (scene) => this.history.has(scene)
     })
-  }
-
-  /** The learner wrote, drew or changed something on this board after `ms` (epoch ms). */
-  private learnerActedSince(ms: number): boolean {
-    const board = this.board
-    if (!board) return true
-    const state = board.liveState()
-    if (state.learnerInkAt > ms || state.drawing) return true
-    return state.nodes.some((node) => state.editor(node.id) === 'learner' && (state.changedAt(node.id) ?? 0) > ms)
   }
 
   /**
@@ -998,7 +991,6 @@ export class ScenePlayer {
     if (board !== this.board) {
       this.stopAll()
       this.history.clear()
-      clearSceneScript()
     }
     this.board = board
     const startsIn = options.mode === 'now' ? 0 : this.queueWait()
@@ -1183,7 +1175,6 @@ export class ScenePlayer {
     this.latest.frame = null
     this.history.clear()
     setSceneUiState(null)
-    clearSceneScript()
   }
 
   /** A frame on the next display frame, while a scene plays (not while every started scene is paused, or nothing plays). */
@@ -1202,9 +1193,7 @@ export class ScenePlayer {
   }
 
   private stepNameAt(play: ScenePlay, t: number): string | null {
-    let name: string | null = null
-    for (const step of play.steps) if (step.at <= t + 1e-6) name = step.name
-    return name
+    return play.steps[stepAt(play.steps, t)]?.name ?? null
   }
 
   /** The learner started drawing: each playing scene pauses at its next step, or now when none is left. */
@@ -1423,10 +1412,7 @@ export class ScenePlayer {
     }
     const t = this.timeOf(scene, now)
     const steps = scene.play.steps
-    let stepIndex = -1
-    steps.forEach((step, i) => {
-      if (step.at <= t + 1e-6) stepIndex = i
-    })
+    const stepIndex = stepAt(steps, t)
     let currentCue: SceneCueState | null = null
     for (const cue of scene.play.cues) {
       if (t < cue.at || t >= cue.at + cue.dur) continue
@@ -1437,6 +1423,7 @@ export class ScenePlayer {
     setSceneUiState({
       playing: true,
       paused: scene.pausedAt !== null,
+      pausedBy: scene.pausedAt !== null ? (scene.pausedBy ?? 'play_scene pause') : null,
       sceneName: scene.play.name ?? scene.play.id,
       sceneOf: lists.of,
       stepName: stepIndex >= 0 ? steps[stepIndex].name : null,
@@ -1488,13 +1475,39 @@ export class ScenePlayer {
     this.schedule()
   }
 
+  /** The panel's step bar and step replay: the scene that shows goes to the start of the step and plays on (its pause steps after it hold again); another committed scene is replayed from that step. */
+  playFrom(sceneOf: string, step: number): boolean {
+    const scene = this.current()
+    if (scene && scene.play.id.replace(/~r\d+$/, '') === sceneOf) {
+      const target = scene.play.steps[step - 1]
+      if (!target) return false
+      const now = performance.now()
+      scene.passed.clear()
+      scene.play.steps.forEach((entry, i) => {
+        if (entry.pause && entry.at < target.at - 1e-6) scene.passed.add(i)
+      })
+      scene.origin = now - target.at * 1000
+      scene.pausedAt = null
+      scene.pauseAt = null
+      scene.pausedBy = null
+      // The time cursor goes back with the clock, so the camera moves from the step on run again (as on a replay), and a learner's earlier view change no longer blocks them.
+      scene.lastT = target.at
+      scene.cameraBlocked = false
+      scene.startedEpoch = Date.now()
+      this.render()
+      this.schedule()
+      return true
+    }
+    return this.replayList([{ scene: sceneOf, step }])
+  }
+
   /**
    * The script panel's restart and step replay: what plays and waits ends at
    * once (its items are on the board in their final state), then the scenes
    * play again in order, the first from the given step. False (and nothing
    * changes) when a scene can no longer be replayed (another stage started).
    */
-  replayList(list: Array<{ scene: string; step?: string }>): boolean {
+  replayList(list: Array<{ scene: string; step?: number }>): boolean {
     const board = this.board
     if (!board || !list.length || !list.every((entry) => this.history.has(entry.scene))) return false
     this.scenes = []

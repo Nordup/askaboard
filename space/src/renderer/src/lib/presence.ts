@@ -31,8 +31,13 @@ export function usePresence<T>(value: T | null, fadeMs: number): { value: T | nu
   return { value: present || mounted ? last.current : null, shown: present && shown }
 }
 
+/** A motion token's duration in ms (its first number: "220ms ease" → 220). */
+export function tokenMs(name: string): number {
+  const value = parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name))
+  return Number.isFinite(value) ? value : 0
+}
+
 /** The `--fade` token's duration in ms (how long faded-out UI stays mounted). */
 export function fadeMs(): number {
-  const value = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--fade'))
-  return Number.isFinite(value) ? value : 0
+  return tokenMs('--fade')
 }

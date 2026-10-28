@@ -4,6 +4,8 @@
  * and plays (renderer/src/live/). Plain data, no DOM or Node imports.
  */
 
+import type { CommitRecord } from './scene-story'
+
 /** A rectangle in board points. */
 export interface SceneBounds {
   x: number
@@ -256,6 +258,10 @@ export interface SceneStep {
   at: number
   /** Playback stops here until play_scene resume continues it. */
   pause?: boolean
+  /** The first step named after the scene, for lines before the first step() (shared/scene-story.ts stepLines). */
+  lead?: boolean
+  /** The say() lines of this step: indexes into the scene's cues (stepLines). */
+  lines?: number[]
 }
 
 /**
@@ -318,6 +324,8 @@ export interface SceneResult {
   items: SceneItem[]
   cues: Array<{ text: string; at_s: number; dur_s: number; marks?: Record<string, number> }>
   log: string[]
+  /** For main's scene record (main/scene-store.ts), never for the agent: the board's id, the story and the revert. */
+  record?: CommitRecord
 }
 
 /** A moment of a scene (preview_scene): its end, the end of a step (1-based number or name), a time in seconds, or one frame per step. */
@@ -373,7 +381,7 @@ export function trackNumber(a: Pick<SceneTrack, 'start' | 'dur' | 'until' | 'eas
   return tt >= a.start + a.dur ? to : from + (to - from) * SCENE_EASES[a.ease]((tt - a.start) / a.dur)
 }
 
-/** A seeded random source (mulberry32): the same seed gives the same numbers. Saved scenes run again at load, so its numbers never change. */
+/** A seeded random source (mulberry32): the same seed gives the same numbers. A scene that runs again (a restage, a rebuild of the stage) gets the same numbers. */
 export function mulberry32(seed: number): () => number {
   let a = seed >>> 0
   return () => {

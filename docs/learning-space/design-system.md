@@ -22,7 +22,7 @@ also in [`../../AGENTS.md`](../../AGENTS.md) ("Learning Space UI").
    canvas. **One exception** (the founder's request, 2026-10-25): the script
    panel floats over the board, because the learner reads the scene's lines
    next to the drawing. The learner drags it where it is in the way least,
-   and collapses it to its header.
+   and hides it into the scene pill.
 
 ## Where the design lives
 
@@ -59,7 +59,7 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
 - Ink colours: `--ink-white`, `--ink-yellow`, `--ink-blue`, `--ink-green`,
   `--ink-pink`, `--ink-orange`
 - Type: `--font-ui`, `--font-mono`, `--text-xs` … `--text-xl`, `--leading`,
-  `--leading-read` (lines read as prose)
+  `--leading-read` (lines read as prose), `--leading-current` (the line being read)
 - Space: `--space-1` … `--space-6`, `--space-8`
 - Radius: `--radius-sm`, `--radius-md`, `--radius-lg`, `--radius-xl`,
   `--radius-pill`
@@ -70,14 +70,18 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
   `--status-dot-size-small`, `--status-dot-ring`, `--item-pill-height`,
   `--item-pill-pad-left`, `--item-pill-gap`, `--item-pill-inset`,
   `--item-pill-ring`, `--script-panel-width`, `--script-panel-header`,
-  `--script-panel-body-max`
-- Motion: `--fade` (the quiet fade in and out). Every fade turns off under
-  `prefers-reduced-motion`.
+  `--script-panel-body-max`, `--script-panel-footer-pad`, `--step-bar-height`,
+  `--step-bar-gap`, `--step-bar-radius`, `--reading-line-gap`
+- Motion: `--fade` (the quiet fade in and out), `--into-pill` and
+  `--into-pill-scale` (the panel shrinks into the scene pill),
+  `--pill-flash` (the pill lights up once). Every fade and motion turns off
+  under `prefers-reduced-motion`.
 
 ## The menu system
 
 Every menu, popover and flyout uses it: the sidebar folder and board menus
-(`Menu.tsx`), the agent popover (`AgentPill.tsx`), the setup flyout
+(`Menu.tsx`), the agent popover (`AgentPill.tsx`), the scene pill's menu
+(`ScenePill.tsx`), the setup flyout
 (`SetupMenu.tsx`). The reference comment block sits above `.menu` in
 `app.css`.
 
@@ -118,13 +122,13 @@ the founder approved (6 px panel padding, rows about 22 px, 13 px text,
 
 The top bar's status pills share `.pill` in `app.css` (the comment block
 above `.pill--static`). The agent pill is a `.pill` button. The scene pill is
-a `.pill.pill--static` holder of one control. Parts: `.status-dot`
+a `.pill.pill--static` holder of a toggle and one action. Parts: `.status-dot`
 (`--live`, `--play`, `--error`), `.pill__label` (ends with an ellipsis),
 `.pill__count` with `.pill__sep`, `.pill__time` (mono, tabular figures),
-`.pill__action` (the one small icon button, 12 px lucide icon) and
+`.pill__action` (the one small icon button, 12 px lucide icon),
 `.pill__toggle` (a plain button around the dot and text of a static pill;
-the pill hovers with it). `.pill--item` is a static pill on a board item, not
-in the top bar (the `--item-pill-*` tokens). A new pill uses these parts; a
+the pill hovers with it) and `.pill--flash` (the pill lights up once).
+`.pill--item` is a static pill on a board item, not in the top bar (the `--item-pill-*` tokens). A new pill uses these parts; a
 missing part goes into the same block.
 
 ## Icon buttons and status dots
@@ -147,34 +151,57 @@ item pill).
   a "Don't ask for this folder" text action.
 - **Sidebar.** Folder header, boards list, file tree; rows share one height
   and type scale.
-- **Scene pill** (mockup A, 2026-10-25,
-  `images/2026-10-25-scene-captions-mockup.png`). While a scene plays or is
-  paused, a pill left of the agent pill shows the status dot (accent while
-  playing, idle grey when paused), "<step> · 2/5", the time (m:ss) and one
-  pause / resume button. In a top bar narrower than 760 px the step name
-  goes. A click on its dot or text opens a collapsed script panel, or
-  collapses an open one.
-- **Script panel** (approved 2026-10-25; replaced the captions above the
-  tool palette). A 296 px frame over the board (`--bg-elevated`, 1 px
-  `--border-strong`, `--radius-lg`, `--shadow-float`), top right of the
-  canvas by default. The learner drags it by its header; it keeps the
-  place (localStorage, measured from the nearer side), stays inside the
-  canvas and ends above the tool palette. Header, 34 px with a hairline:
-  6 px status dot, the script's title (12 px, primary; the first scene's
-  name), the step count (11 px mono, tertiary), then 24 px icon buttons:
-  Restart, Pause / Play and Next step (while a scene plays), Collapse /
-  Expand. Body: 13 px at 1.5, padding 8 12 12 px, scrolls past 330 px and
-  keeps the current line in view unless the learner scrolled away. Each
-  step has a title row "1 · Two solids" (11 px): tertiary when done,
-  accent for the current step, `--text-faint` ahead. Lines of done steps
-  are secondary; the line being read shows its read words in primary and
-  the rest in tertiary; lines ahead are hidden. At the end every line is
-  primary, step titles are secondary, and a click on a step title replays
-  the script from that step. The script is the scenes that play back to
-  back without a stop, and a scene that continues it after a stop: one that
-  acts on the script's material, or one that starts within 30 s of its end
-  with no learner work on the board in between (decision T15); collapsing
-  is the one way to put it away (it stays until another script starts).
+- **Scene pill** (decision B19, mockup v3, 2026-10-29). Left of the agent
+  pill, from the same parts and with the same open behaviour: a
+  `.pill.pill--static` whose `.pill__toggle` (dot and text) opens the shared
+  menu below it (`.menu.scene-pop`, position and width only); Escape and a
+  click outside close it. While a scene plays: the accent dot (idle grey
+  when paused), "<step> · 2/3", the time (m:ss) and pause / resume. After a
+  scene ended it stays for the board's last scene, from the scene records
+  (also after a restart): grey dot, the scene name, "3/3" and play (replays
+  the scene; no play button when the app no longer holds the scene, as after
+  a restart). With an item selected that a scene drew, and nothing playing:
+  grey, "Synapse · Release · 2/3", and play replays that step. Clicking an
+  item never opens the panel. The menu: heading "Scenes", every scene of the
+  board newest first (dropped scenes left out), `.menu__item` rows with a
+  check in `.menu__icon` for the scene in the panel and "3 steps" in
+  `.menu__hint`; choosing one opens the panel with it in its ended state. In
+  a top bar narrower than 760 px the step name goes.
+- **Reading panel** (`ScriptPanel.tsx`; decision B19, mockup v3, 2026-10-29;
+  replaced the script panel of 2026-10-25). One scene at a time, in a frame
+  over the board: `--script-panel-width` (296 px), `--bg-elevated`, 1 px
+  `--border-strong`, `--radius-lg`, `--shadow-float`, top right of the canvas
+  by default. The learner drags it by its header; it keeps the place
+  (localStorage, measured from the nearer side), stays inside the canvas and
+  ends above the tool palette.
+  - Header, 34 px, padding 0 5 0 12 px, gap 8 px: the small status dot
+    (6 px; accent with its ring while playing, idle grey otherwise), the
+    scene name (12 px, secondary, ellipsis), one 24 px icon button, minus
+    (hide).
+  - Step bar under the header: padding 0 12 px, gap 3 px
+    (`--step-bar-gap`), one segment per step, flex = the step's length,
+    3 px high (`--step-bar-height`), radius 2 px (`--step-bar-radius`),
+    track `--border-subtle`, fill `--accent` while playing and
+    `--text-tertiary` when paused or ended. A click plays from that step;
+    hover shows its name (title).
+  - Body, padding 12 16 4 px: the previous line (13 px at 1.5,
+    `--text-tertiary`, 6 px below it, `--reading-line-gap`) and the current
+    line (15 px, `--leading-current` 1.6, `--text-primary`; the words not
+    reached yet in `--text-faint`). No step titles.
+  - Footer, padding 4 5 6 11 px (`--script-panel-footer-pad`): one status
+    (11 px, tertiary): "Step 2 of 3", "Paused while you draw", "Paused at a
+    pause", "Paused" or "Done"; then 24 px icon buttons: replay step
+    (rotate), pause / play (secondary), next step (skip-forward). Ended: only
+    replay, which plays the whole scene again (none when the app no longer
+    holds the scene).
+  - It appears when a scene plays and fades about 4 s after the scene ends,
+    not while the pointer is on it. A scene chosen from the pill's menu stays
+    until it is hidden or a new scene plays.
+  - Minus hides it into the pill: it shrinks toward the pill's centre and
+    fades (`--into-pill` 260 ms, scale `--into-pill-scale` 0.06), then the
+    pill lights up once in `--accent-soft` (`.pill--flash`, `--pill-flash`
+    450 ms). Opening from the pill grows it out of the pill. A scene that
+    starts after nothing played shows it again.
 
 - **Stopped item pill** (option A "corner pill", 2026-10-27,
   `reference/stopped-pill-2026-10-27.png`, local only). A live item that

@@ -7,6 +7,7 @@
 
 import type { BoardDigest, TextMatch } from './board-digest'
 import type { LearnerEditDelta } from './learner-edit'
+import type { BoardStories } from './scene-story'
 
 /** What the renderer knows about one board save. */
 export interface BoardSaveInfo {
@@ -368,6 +369,8 @@ export interface BoardChangeResult {
  * board (with unsaved strokes). `since: null` means "from now": no changes.
  */
 export interface AgentMethods {
+  /** Save the open board now (a board that just got its id saves it before main writes its first scene record). */
+  saveBoard: { params: Record<string, never>; result: { saved: boolean } }
   /** The open board and the highest seq on it (the change cursor for "now"). */
   cursorInfo: { params: Record<string, never>; result: { board: { path: string } | null; cursor: number | null } }
   /** list_items: the outline text of a part, or search results. look: the session's change cursor on this board. scenes: the stage log's scene names. */
@@ -560,6 +563,10 @@ export interface SpaceApi {
   getCamera(path: string): Promise<Camera | null>
   setCamera(path: string, camera: Camera): void
   setLastBoard(path: string | null): void
+  /** The board at path opened (its id from the file, or null): its scene stories, and the id it must have (main/scene-store.ts). */
+  openSceneRecords(path: string, id: string | null): Promise<BoardStories>
+  /** The open board's scene stories after a new record line. */
+  onSceneStories(listener: (stories: BoardStories) => void): Unsubscribe
 
   onFolderOpened(listener: (snapshot: Snapshot) => void): Unsubscribe
   onFilesChanged(listener: (tree: FileTree) => void): Unsubscribe
@@ -640,5 +647,7 @@ export const IPC = {
   snapshotRequest: 'space:snapshot-request',
   snapshotReady: 'space:snapshot-ready',
   sceneEvent: 'space:scene-event',
-  framesPort: 'space:frames-port'
+  framesPort: 'space:frames-port',
+  openSceneRecords: 'space:open-scene-records',
+  sceneStories: 'space:scene-stories'
 } as const

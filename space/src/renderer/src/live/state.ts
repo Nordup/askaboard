@@ -33,6 +33,10 @@ export interface SceneStepEntry {
   name: string
   at_s: number
   pause?: boolean
+  /** The first step named after the scene (lines before the first step(); shared/scene-story.ts stepLines). */
+  lead?: boolean
+  /** Its lines: indexes into the scene's cues. */
+  lines: number[]
 }
 
 /** A scene that plays or waits in the queue: its id, the scene it replays (else its own id), name, lines and steps. */
@@ -50,6 +54,8 @@ export interface SceneListEntry {
 export interface SceneUiState {
   playing: boolean
   paused: boolean
+  /** Why the scene is paused: a pause step, the learner drawing, or play_scene / the panel. */
+  pausedBy: 'pause step' | 'learner drawing' | 'play_scene pause' | null
   sceneName: string | null
   /** The committed scene that shows now (for a replay, the scene it replays). */
   sceneOf: string | null
@@ -71,7 +77,7 @@ export interface SceneUiState {
   scenes: SceneListEntry[]
 }
 
-const IDLE: SceneUiState = { playing: false, paused: false, sceneName: null, sceneOf: null, stepName: null, stepIndex: -1, stepCount: 0, t: 0, duration: 0, queue: 0, currentCue: null, cues: [], steps: [], scenes: [] }
+const IDLE: SceneUiState = { playing: false, paused: false, pausedBy: null, sceneName: null, sceneOf: null, stepName: null, stepIndex: -1, stepCount: 0, t: 0, duration: 0, queue: 0, currentCue: null, cues: [], steps: [], scenes: [] }
 
 /** What the app's UI can ask the player to do. */
 export interface SceneUiActions {
@@ -79,20 +85,23 @@ export interface SceneUiActions {
   resume(): void
   /** Go to the start of the next step of the scene that shows (or end it, when it has no next step). */
   nextStep(): void
-  /** End what plays and waits, then play these committed scenes again in order, the first from one of its steps. False when one can no longer be replayed. */
-  replay(list: Array<{ scene: string; step?: string }>): boolean
-  /** The learner wrote, drew or changed something on the board after this time (epoch ms). */
-  learnerActedSince(ms: number): boolean
+  /** End what plays and waits, then play these committed scenes again in order, the first from one of its steps. False when one can no longer be replayed. step: the step number, from 1 (a step goes by its place, never by its name). */
+  replay(list: Array<{ scene: string; step?: number }>): boolean
+  /** Play a committed scene from a step (number from 1): the scene that shows goes there; another scene is replayed from it. False when it can no longer be replayed. */
+  playFrom(scene: string, step: number): boolean
+  /** The player still holds this committed scene, so it can play again (not after a restart or a new stage). */
+  canReplay(scene: string): boolean
 }
 
 let state: SceneUiState = IDLE
 const listeners = new Set<() => void>()
-let actions: SceneUiActions = { pause: () => undefined, resume: () => undefined, nextStep: () => undefined, replay: () => false, learnerActedSince: () => false }
+let actions: SceneUiActions = { pause: () => undefined, resume: () => undefined, nextStep: () => undefined, replay: () => false, playFrom: () => false, canReplay: () => false }
 
 function same(a: SceneUiState, b: SceneUiState): boolean {
   return (
     a.playing === b.playing &&
     a.paused === b.paused &&
+    a.pausedBy === b.pausedBy &&
     a.sceneName === b.sceneName &&
     a.stepName === b.stepName &&
     a.stepIndex === b.stepIndex &&
@@ -116,7 +125,6 @@ export function setSceneUiState(next: SceneUiState | null): void {
   const value = next ?? IDLE
   if (same(value, state)) return
   state = value
-  updateScript(value)
   for (const listener of listeners) listener()
 }
 
@@ -137,92 +145,5 @@ export function subscribeSceneUi(listener: () => void): () => void {
 /** The playback state, re-rendering when it changes; with the UI's actions. */
 export function useSceneState(): SceneUiState & SceneUiActions {
   const value = useSyncExternalStore(subscribeSceneUi, getSceneUiState)
-  return { ...value, pause: () => actions.pause(), resume: () => actions.resume(), nextStep: () => actions.nextStep(), replay: (list) => actions.replay(list), learnerActedSince: (ms) => actions.learnerActedSince(ms) }
-}
-
-/**
- * The script: the scenes that played as one explanation, for the script
- * panel. Scenes that follow each other without a stop (beats queued back to
- * back) are one script. When the script has ended, a scene that starts
- * continues it (a correction, or the next part) when:
- *
- * - it replays one of the script's scenes;
- * - it acts on the script's material (moves, changes, erases or reuses an
- *   item that a scene of the script drew), at any time; or
- * - it starts within CONTINUE_MS of the script's end, and the learner did
- *   not write, draw or change anything on the board in between.
- *
- * Any other scene starts a new script: a new explanation that comes after a
- * longer pause, or after the learner's own work on the board. The script
- * stays after its end, until another script starts or the board changes.
- */
-export interface SceneScript {
-  /** Grows by one for each new script. */
-  id: number
-  /** Its scenes in the order they first played (each by the committed scene id). */
-  scenes: SceneListEntry[]
-  /** The index of the scene that shows now, or -1 when nothing plays. */
-  current: number
-  /** Nothing plays now: the script played to its end (or was stopped). */
-  finished: boolean
-  /** When it finished (epoch ms; 0 while it plays). */
-  endedAt: number
-}
-
-/** A scene that starts this soon after the script ended, with no learner work in between, continues it. */
-const CONTINUE_MS = 30_000
-
-let script: SceneScript | null = null
-let scriptIds = 0
-
-/** A scene that starts now continues the finished script (see SceneScript). */
-function continuesScript(done: SceneScript, entry: SceneListEntry | undefined): boolean {
-  if (done.scenes.some((known) => known.of === entry?.of)) return true
-  if (entry) {
-    const material = new Set(done.scenes.flatMap((known) => known.items))
-    if (entry.items.some((item) => material.has(item))) return true
-  }
-  return Date.now() - done.endedAt <= CONTINUE_MS && !actions.learnerActedSince(done.endedAt)
-}
-
-function updateScript(value: SceneUiState): void {
-  if (!value.playing || !value.sceneOf) {
-    if (script && !script.finished) script = { ...script, current: -1, finished: true, endedAt: Date.now() }
-    return
-  }
-  let scenes = script?.scenes ?? []
-  let id = script?.id ?? 0
-  if (!script || (script.finished && !continuesScript(script, value.scenes.find((entry) => entry.of === value.sceneOf)))) {
-    scenes = []
-    id = ++scriptIds
-  }
-  let changed = !script || id !== script.id
-  for (const entry of value.scenes) {
-    const at = scenes.findIndex((known) => known.of === entry.of)
-    if (at < 0) {
-      scenes = [...scenes, entry]
-      changed = true
-    } else if (scenes[at] !== entry) {
-      // A replay, or a scene committed again (replace): its lines and steps of now.
-      scenes = scenes.map((known, i) => (i === at ? entry : known))
-      changed = true
-    }
-  }
-  const current = scenes.findIndex((entry) => entry.of === value.sceneOf)
-  if (changed || !script || script.current !== current || script.finished) script = { id, scenes, current, finished: false, endedAt: 0 }
-}
-
-/** The board changed or went away: its script goes. */
-export function clearSceneScript(): void {
-  script = null
-  for (const listener of listeners) listener()
-}
-
-export function getSceneScript(): SceneScript | null {
-  return script
-}
-
-/** The current script (null before the first scene with this board), re-rendering when it changes. */
-export function useSceneScript(): SceneScript | null {
-  return useSyncExternalStore(subscribeSceneUi, getSceneScript)
+  return { ...value, pause: () => actions.pause(), resume: () => actions.resume(), nextStep: () => actions.nextStep(), replay: (list) => actions.replay(list), playFrom: (scene, step) => actions.playFrom(scene, step), canReplay: (scene) => actions.canReplay(scene) }
 }

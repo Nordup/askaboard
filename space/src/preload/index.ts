@@ -43,6 +43,8 @@ const api: SpaceApi = {
   getCamera: (path) => ipcRenderer.invoke(IPC.getCamera, path),
   setCamera: (path, camera) => ipcRenderer.send(IPC.setCamera, path, camera),
   setLastBoard: (path) => ipcRenderer.send(IPC.setLastBoard, path),
+  openSceneRecords: (path, id) => ipcRenderer.invoke(IPC.openSceneRecords, path, id),
+  onSceneStories: (listener) => listen(IPC.sceneStories, listener),
 
   onFolderOpened: (listener) => listen(IPC.folderOpened, listener),
   onFilesChanged: (listener) => listen(IPC.filesChanged, listener),

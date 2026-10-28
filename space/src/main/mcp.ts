@@ -17,6 +17,7 @@ import { BoardNews } from './news'
 import { BoardIndex, findText as boardsFindText, listText as boardsListText, resolveBoard, type OpenBoardInfo } from './boards'
 import type { FolderSession } from './folder'
 import { readSceneSource } from './scene-files'
+import { SceneStore } from './scene-store'
 import { siteLabel, type SceneSource } from '@shared/scene-program'
 import { getAgentLook } from './state'
 import type { SnapshotRenderer } from './snapshot'
@@ -174,7 +175,7 @@ function sceneLabel(id: unknown, name: unknown): string | null {
 
 /** play_scene's status as the agent sees it: scenes by name (the renderer adds ids and fields for the main process). */
 function publicStatus(status: unknown): Record<string, unknown> {
-  const { waiting: _waiting, playing_scene: _playing, scene, name, paused_scene, paused_name, queue, ...rest } = (status ?? {}) as Record<string, unknown>
+  const { waiting: _waiting, playing_scene: _playing, board_id: _board, scene, name, paused_scene, paused_name, queue, ...rest } = (status ?? {}) as Record<string, unknown>
   const { playing, t, duration, step, paused, paused_by, paused_step, paused_t, ...other } = rest
   return {
     playing,
@@ -368,9 +369,18 @@ export class AgentServer {
   private readonly boardIndex = new BoardIndex()
   /** The session that started each scene (scene id → session id): its trace gets the scene's playback events. */
   private readonly sceneTraces = new Map<string, SessionTrace>()
+  /** The scene records of the boards (scene-store.ts): the only writer. */
+  readonly records: SceneStore
 
   constructor(private readonly hooks: AgentServerHooks) {
     this.bridge = new RendererBridge(hooks.webContents)
+    this.records = new SceneStore(
+      () => hooks.folder(),
+      (stories) => {
+        const contents = hooks.webContents()
+        if (contents && !contents.isDestroyed()) contents.send(IPC.sceneStories, stories)
+      }
+    )
     this.news = new BoardNews({
       request: (since) => this.bridge.request('learnerNews', { since }, NEWS_TIMEOUT_MS),
       folderRoot: () => hooks.folderRoot(),
@@ -792,6 +802,7 @@ export class AgentServer {
       if (cursor !== undefined && to) session.cursors.set(to, cursor)
     }
     this.stage.boardMoved(from, to)
+    this.records.boardMoved(from)
     this.boardIndex.moved(from, to)
     console.log(`boards: ${from} ${to ? `renamed to ${to}` : 'went to the Trash'}; drafts, cursors and stage ${to ? 'moved' : 'ended'}`)
   }
@@ -836,7 +847,10 @@ export class AgentServer {
       if (signal.aborted) throw new SceneCancelled()
     }
     stopped()
-    const playingNow = ((await control({ action: 'status' })) as { playing_scene?: { id: string } | null }).playing_scene?.id
+    const before = (await control({ action: 'status' })) as { playing_scene?: { id: string } | null; board_id?: string }
+    const playingNow = before.playing_scene?.id
+    // The board of this restage's record events (scene-store.ts RecordBoard), fixed now.
+    const recordBoard = this.records.board(this.boardKey(), before.board_id)
     stopped()
     const live = (id: string): boolean => waiting.includes(id) || playingNow === id
     const label = change.name ?? this.sceneName(sceneId)
@@ -850,8 +864,13 @@ export class AgentServer {
     const affected = [sceneId, ...later.map((entry) => entry.scene).filter((id): id is string => !!id)]
     // The reverts and every commit of the restage are one undo step for the learner (Board agentCommit's step key).
     const step = `restage-${sceneId}-${Date.now()}`
-    const commit = async (id: string, run: StageRun, name: string | null, extra: Record<string, unknown> = {}): Promise<SceneResult & { ends_in_s: number }> =>
-      (await this.board('runScene', { scene: run.desc, job: run.job, frames: run.frames, sceneId: id, slot: true, slotWhy: id === sceneId && change.cutAt !== undefined ? 'cut' : 'replaced', step, ...(name ? { name } : {}), ...extra }, SCENE_TIMEOUT_MS)) as SceneResult & { ends_in_s: number }
+    /** Commit a run of the scene id: the board takes it, and its record gets a scene line. */
+    const commit = async (id: string, run: StageRun, name: string | null, extra: Record<string, unknown> = {}): Promise<SceneResult & { ends_in_s: number }> => {
+      const result = (await this.board('runScene', { scene: run.desc, job: run.job, frames: run.frames, sceneId: id, slot: true, slotWhy: id === sceneId && change.cutAt !== undefined ? 'cut' : 'replaced', step, ...(name ? { name } : {}), ...extra }, SCENE_TIMEOUT_MS)) as SceneResult & { ends_in_s: number }
+      run.entry.scene = id
+      await this.recordCommit(run.entry, result)
+      return result
+    }
     /** Run a program: on the context, answers and seed of its earlier run (original), or on the board now. */
     const runOne = async (source: SceneSource, options: { seed?: number; cutAt: number | null; original?: StageEntry; name: string | null; place?: StagePlace | null }): Promise<StageRun> => {
       const context = options.original ? (JSON.parse(options.original.ctxText) as SceneContext) : await this.contextAt(options.place ?? null)
@@ -915,6 +934,8 @@ export class AgentServer {
         } catch (error) {
           if (error instanceof SceneCancelled || signal.aborted) throw error
           if (queued && id) await control({ action: 'drop', scene: id })
+          // It left the stage (and the board) without a new version.
+          if (id) await this.records.drop(recordBoard, [id])
           rerun.push({ scene: entry.name ?? id ?? '?', ok: false, error: error instanceof Error ? error.message : String(error) })
         }
       }
@@ -976,8 +997,31 @@ export class AgentServer {
    * the renderer compiles it and keeps it under its key. Then it is ready.
    */
   private async readyDraft(run: StageRun, context: SceneContext, name: string, source: SceneSource, seq: number, place: StagePlace | null): Promise<Draft> {
-    const info = (await this.board('sceneDraft', { scene: run.desc, job: run.job, frames: run.frames, draft: draftKey(run.desc), ...(place ? { place: place.board } : {}) }, SCENE_TIMEOUT_MS)) as DraftInfo
+    const info = (await this.board('sceneDraft', { scene: run.desc, job: run.job, frames: run.frames, draft: draftKey(run.desc), name, ...(place ? { place: place.board } : {}) }, SCENE_TIMEOUT_MS)) as DraftInfo
     return { name, source, desc: run.desc, entry: run.entry, fresh: run.fresh, revision: this.stage.revision, contextKey: contextKey(context), seq, info }
+  }
+
+  /**
+   * The record line of a commit the board accepted (scene-store.ts), for the board it names. A commit
+   * that gave the board its id saves the board file first, so no history is written that the board
+   * file does not point to.
+   */
+  private async recordCommit(entry: StageEntry, result: SceneResult): Promise<void> {
+    const record = result.record
+    // The board the commit was for, as the renderer had it when it accepted the commit (a folder or board that opened since changes nothing).
+    const board = record ? this.records.boardOf(record) : null
+    if (!record || !board) return
+    if (record.newBoard) {
+      const saved = await this.bridge.request('saveBoard', {}).then(
+        (answer) => answer.saved,
+        () => false
+      )
+      if (!saved) {
+        console.error(`scene records: ${board.path} could not be saved with its new id ${board.id}, so its first scene line is not written (the scene plays)`)
+        return
+      }
+    }
+    await this.records.scene(board, entry, record)
   }
 
   /** The scene ids and names of the current stage, for the renderer's reads. */
@@ -1003,10 +1047,10 @@ export class AgentServer {
 
 Use it when you start work on a board, and whenever you need ids, sizes or free areas, or want to see how material is grouped. It returns no image: to see what is written or drawn, use get_screenshot. For the other boards of the folder, use list_boards.
 
-- part chooses what to list: "view" (what the learner sees now; the default), "board" (the whole board), {region: {x, y, width, height}}, {id: "g3"} or {id: [...]} (items, ink groups or frames, with what they hold), {scene: "name"} (the items a scene made), or {scene: "name", step: 2} (the items of one step, by number or name). A plain string works for an id or a name that only one thing has; when several have it, the result lists them.
+- part chooses what to list: "view" (what the learner sees now; the default), "board" (the whole board), {region: {x, y, width, height}}, {id: "g3"} or {id: [...]} (items, ink groups or frames, with what they hold), {scene: "name"} (the items a scene made or changed), or {scene: "name", step: 2} or "name#2" (the items of one step: by number, or by name, which finds the first step with that name). The board keeps its scenes, so these work after the app restarts. A plain string works for an id or a name that only one thing has; when several have it, the result lists them.
 - With part "view", the items outside the view are summarised by place, each place with its region.
 - With part "view" or "board", when there are many items, the list summarises them by area, with counts and a region for each. Each area opens with one more call; nothing is left out.
-- query searches the text on the open board: text, ${htmlMaterial('HTML material, ')}names, and the names and lines of the scenes played since the app started. Handwriting is not text: read it with get_screenshot.
+- query searches the text on the open board: text, ${htmlMaterial('HTML material, ')}names, and the names and lines of the board's scenes. Handwriting is not text: read it with get_screenshot.
 - The last line names the calls that show more.
 - Coordinates are board points: origin at the centre, +x right, +y down.
 - How the app groups strokes into ink groups, and how their ids behave, is in get_guide topic "model".`,
@@ -1014,7 +1058,7 @@ Use it when you start work on a board, and whenever you need ids, sizes or free 
           part: z
             .union(partForms)
             .optional()
-            .describe('What to list: "view" (default), "board", {region}, {id}, {scene} or {scene, step}, or an id or name that only one thing has.'),
+            .describe('What to list: "view" (default), "board", {region}, {id}, {scene}, {scene, step} or "name#2", or an id or name that only one thing has.'),
           query: z.string().min(1).optional().describe('Text to search for on the open board. Returns each match with the words around it, its id and its place.'),
           depth: z.number().int().min(1).max(10).optional().describe('How many levels inside frames to list, 1 to 10. Default 3.')
         }),
@@ -1299,14 +1343,14 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
       {
         title: 'Items in detail',
         description:
-          'Returns the stored details of one or more items or ink groups. By default it is JSON: kind, name, author, parent, children ids, bounds on the board and inside the parent, z order, style, text with markup, SVG element ids, image source, or for ink the tool, colour, width and point count. For an ink group it gives the author, the stroke count, the bounds, the tool and colour, and how large its list of strokes and its points are; as "strokes" and as "points" return them.\n\nUse it when you need exact values before you change an item. For an overview of many items, list_items is smaller.\n\n- id is one id or a list. An item\'s name works as an id: it finds the latest item with that name, as board.node does in a scene. Each id gets its own entry, and an id that is not on the board gets its own error.\n- as chooses what comes back for each item:\n  - "info" (default): the details above.\n' +
+          'Returns the stored details of one or more items or ink groups. By default it is JSON: kind, name, author, parent, children ids, bounds on the board and inside the parent, z order, style, text with markup, SVG element ids, image source, or for ink the tool, colour, width and point count. For an ink group it gives the author, the stroke count, the bounds, the tool and colour, and how large its list of strokes and its points are; as "strokes" and as "points" return them.\n\nUse it when you need exact values before you change an item. For an overview of many items, list_items is smaller.\n\n- id is one id or a list. An item\'s name works as an id: it finds the latest item with that name, as board.node does in a scene. When no item has it, a scene name or a step such as "synapse#2" (step 2 of the scene "synapse") stands for the items of that scene or step. Each id gets its own entry, and an id that is not on the board gets its own error.\n- as chooses what comes back for each item:\n  - "info" (default): the details above.\n' +
           htmlMaterial(
             '  - "html": the item and everything inside it as the HTML subset that a scene\'s html() takes, with inline styles. Use it to restructure existing material: change the HTML, then put it back in a scene with html(markup, {into: board.node(id), mode: "replace"}). Ink is not HTML: it appears as a comment, and a replace leaves it out.\n'
           ) +
           '  - "svg": the SVG markup of a drawing.\n  - "strokes": the strokes of an ink group, each with its id and bounds.\n  - "points": the points of each stroke, as [x, y, pressure] from the stroke\'s origin.' +
           codeItems('\n  - "source": the program of a code item.'),
         inputSchema: strictInput('get_item', {
-          id: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).describe('An item id, an ink group id such as "g3" or an item name, or a list of them.'),
+          id: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).describe('An item id, an ink group id such as "g3", an item name, a scene name or a step such as "synapse#2", or a list of them.'),
           as: z
             .enum(ITEM_FORMS)
             .optional()
@@ -1550,11 +1594,14 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
             const before = await control({ action: 'status' })
             const status = await control({ action: 'skip' })
             this.stage.drop((before.waiting as string[]) ?? [])
+            await this.records.drop(this.records.board(this.boardKey(), before.board_id as string | undefined), (before.waiting as string[]) ?? [])
             return text(json({ ...publicStatus(status), cancelled_programs: cancelled }))
           }
           if (action === 'reset') {
             this.stage.reset('play_scene reset')
-            return text(json({ ...publicStatus(await control({ action: 'resetStage', epoch: this.stage.epoch })), stage: 'new (play_scene reset)' }))
+            const status = await control({ action: 'resetStage', epoch: this.stage.epoch })
+            await this.records.reset(this.records.board(this.boardKey(), status.board_id as string | undefined))
+            return text(json({ ...publicStatus(status), stage: 'new (play_scene reset)' }))
           }
           // status, pause, resume, next, stop
           return text(json({ ...publicStatus(await control({ action })), ...(cancelled ? { cancelled_programs: cancelled } : {}) }))
@@ -1778,6 +1825,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
           }
           const { result, entry, fresh } = done
           entry.scene = result.scene
+          await this.recordCommit(entry, result)
           this.ownScene(session, result.scene)
           spans.scene = result.scene
           return { result, rerun: reason, replaced: false, ...(fresh ? { stage: `new (${fresh})` } : {}) }

@@ -28,6 +28,7 @@ import {
   buildIndex,
   contentAt,
   copySubtrees,
+  withoutScene,
   inkAt,
   inkOffset,
   inkPaintOrder,
@@ -102,6 +103,10 @@ export interface BoardHandle {
    * correction of the same write), then lay it out before returning.
    */
   agentAmend(next: BoardNode[]): void
+  /** The board's id (BoardDoc.id), or undefined when it has none yet. */
+  boardId(): string | undefined
+  /** Give the board its id (the first scene record, main/scene-store.ts): it is saved with the board. */
+  setBoardId(id: string): void
   /** Measure the content layer now (after images load). */
   remeasure(): void
   /** Select every top-level node and all loose ink (⌘A on the canvas). */
@@ -159,6 +164,8 @@ export interface BoardProps {
    * their state before (revisions). `by` made the change.
    */
   onChanges?(change: { removed: Removal[]; revisions: Revision[]; by: Author }): void
+  /** The selection changed (node ids): the scene pill shows the scene and step of a selected item. */
+  onSelectionChange?(ids: readonly string[]): void
   ref?: Ref<BoardHandle>
 }
 
@@ -292,7 +299,7 @@ function resizedBox(box: Region, handle: Handle, delta: Point, keepAspect: boole
   return { x: left, y: top, width: right - left, height: bottom - top }
 }
 
-export function Board({ doc, history, initialCamera, tool, color, width, onDocChange, onCameraChange, onChanges, ref }: BoardProps) {
+export function Board({ doc, history, initialCamera, tool, color, width, onDocChange, onCameraChange, onChanges, onSelectionChange, ref }: BoardProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const inkRef = useRef<HTMLCanvasElement>(null)
   const activeInkRef = useRef<HTMLCanvasElement>(null)
@@ -308,6 +315,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   /** The step key of the last undo step when an agent commit with a key made it (agentCommit), else null. */
   const stepKeyRef = useRef<string | null>(null)
   const extraRef = useRef(doc.extra)
+  const idRef = useRef(doc.id)
   const cameraRef = useRef<Camera>(initialCamera ?? { center: [0, 0], zoom: 1 })
   /** The camera the content layer's transform shows now. */
   const domCameraRef = useRef<Camera>(cameraRef.current)
@@ -366,6 +374,12 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   onCameraChangeRef.current = onCameraChange
   const onChangesRef = useRef(onChanges)
   onChangesRef.current = onChanges
+  const onSelectionChangeRef = useRef(onSelectionChange)
+  onSelectionChangeRef.current = onSelectionChange
+  useEffect(() => {
+    onSelectionChangeRef.current?.(selectedIds)
+  }, [selectedIds])
+  useEffect(() => () => onSelectionChangeRef.current?.([]), [])
 
   // ---------- Painting (batched to one frame) ----------
 
@@ -653,7 +667,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   // ---------- Nodes ----------
 
   const emit = useCallback(() => {
-    onDocChangeRef.current({ nextSeq: nextSeqRef.current, nodes: nodesRef.current, extra: extraRef.current })
+    onDocChangeRef.current({ ...(idRef.current ? { id: idRef.current } : {}), nextSeq: nextSeqRef.current, nodes: nodesRef.current, extra: extraRef.current })
   }, [])
 
   /** Select nodes by id. Ids that are not on the board are dropped. */
@@ -1413,6 +1427,12 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         flushSync(() => commitNodes(next, nodesRef.current, 'agent', false))
         measure()
       },
+      boardId: () => idRef.current,
+      setBoardId: (id) => {
+        if (idRef.current === id) return
+        idRef.current = id
+        emit()
+      },
       remeasure: measure,
       selectAll: () => selectAllRef.current(),
       setPlayback: (frame) => {
@@ -1451,7 +1471,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         if (!frame) requestMeasure()
       }
     }),
-    [applyCamera, applyColor, applyPlaybackToDom, applyWidth, commitEditing, commitNodes, fit, measure, paintInks, requestMeasure, requestPaint, setSelectedIds, zoomStep]
+    [applyCamera, applyColor, applyPlaybackToDom, applyWidth, commitEditing, commitNodes, emit, fit, measure, paintInks, requestMeasure, requestPaint, setSelectedIds, zoomStep]
   )
   useEffect(
     () => () => {
@@ -1520,7 +1540,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       const minY = Math.min(...rootNodes.map((node) => left(node)[1]))
       let z = zAbove(index.children.get(ROOT) ?? [])
       const nodes = clip.nodes.map((node) => {
-        const copy = { ...node, id: idMap.get(node.id) as string } as BoardNode & { parent?: string }
+        const copy = { ...withoutScene(node), id: idMap.get(node.id) as string } as BoardNode & { parent?: string }
         if (typeof node.parent === 'string' && idMap.has(node.parent)) copy.parent = idMap.get(node.parent)
         if (roots.has(node.id) && isKnown(node)) {
           return { ...copy, x: node.x - minX + anchor[0], y: node.y - minY + anchor[1], z: z++ } as BoardNode

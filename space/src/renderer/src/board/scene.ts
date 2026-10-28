@@ -221,6 +221,16 @@ export function removeNodes(nodes: readonly BoardNode[], ids: Iterable<string>, 
 }
 
 /**
+ * A copy of an item is not linked to any scene or step (founder decision, 2026-10-29): it
+ * carries no scene tag. Every copy the board makes (copy, cut, duplicate, paste) goes through this.
+ */
+export function withoutScene<T extends BoardNode>(node: T): T {
+  if (!('scene' in node)) return node
+  const { scene: _scene, ...rest } = node as T & { scene?: unknown }
+  return rest as T
+}
+
+/**
  * Copy nodes with their subtrees and fresh ids. Each root keeps its parent
  * (duplicate) or becomes top level at its world position (copy for paste).
  */
@@ -245,7 +255,7 @@ export function copySubtrees(
   for (const id of all) {
     const node = index.byId.get(id)
     if (!node) continue
-    const copy = structuredClone(node) as BoardNode & { parent?: string }
+    const copy = withoutScene(structuredClone(node)) as BoardNode & { parent?: string }
     copy.id = idMap.get(id) as string
     const isRoot = roots.includes(id)
     if (!isRoot && typeof node.parent === 'string') copy.parent = idMap.get(node.parent) ?? node.parent

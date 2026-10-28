@@ -8,7 +8,8 @@ import { buildIndex, parentKey, ROOT, withDescendants, type SceneIndex } from '.
 import type { Region } from '../board/types'
 import { liveSummary } from '../live-pixels/registry'
 import { scenePlayer } from '../live/player'
-import { stepOfObject } from '../live/run'
+import { lookOf, storiesOf, storiesOfNode, versionOnBoard } from '../live/stories'
+import { parseStepRef, type BoardStory, type SceneStory } from '@shared/scene-story'
 import { coveredOf } from './covered'
 import { getNodeInfo } from './edits'
 import { isGroupId, type InkGroup } from './groups'
@@ -136,8 +137,8 @@ interface SceneInfo {
   /** When it last started playing (Date ms), this session. */
   lastPlayed: number | null
   units: Unit[]
-  /** Unit id → the step it appears in, when the app knows it. */
-  stepOf: Map<string, string>
+  /** Unit id → the index of the step it appears in (its record), when the app knows it. */
+  stepOf: Map<string, number>
 }
 
 interface Model {
@@ -191,40 +192,65 @@ function buildModel(ctx: ReadContext): Model {
   }
   const unitById = new Map(units.map((unit) => [unit.id, unit]))
 
-  // Scenes: from the items' scene ids, with the names and steps the app knows this session.
+  // Scenes: from the items' scene ids, with the names, steps and lines of their records (live/stories.ts), which outlast a restart.
   const scenes = new Map<string, SceneInfo>()
   const sceneFor = (id: string): SceneInfo => {
     let info = scenes.get(id)
     if (!info) scenes.set(id, (info = { id, name: null, steps: null, duration: null, cues: [], lastPlayed: null, units: [], stepOf: new Map() }))
     return info
   }
-  for (const entry of ctx.sceneNames) if (entry.id) sceneFor(entry.id).name = entry.name
-  for (const memory of scenePlayer.memories()) {
-    const play = memory.play
-    if (/~r\d+$/.test(play.id)) continue
-    const info = sceneFor(play.id)
-    info.name = play.name ?? info.name
-    info.steps = play.steps.map((step) => ({ name: step.name, at: step.at, ...(step.pause ? { pause: true } : {}) }))
-    info.duration = play.duration
-    info.cues = play.cues.map((cue) => cue.text)
-    for (const object of play.objects) {
-      if (object.ghost) continue
-      const step = stepOfObject(play, object.id)
-      if (!step) continue
-      const ids = object.item ? [object.item] : object.targets.map((target) => target.nodeId)
-      for (const id of ids) {
-        const node = byId.get(id)
-        const unitId = node && isInk(node) ? groupOfStroke.get(id)?.id : id
-        if (unitId && !info.stepOf.has(unitId)) info.stepOf.set(unitId, step)
+  // The records (live/stories.ts, indexed once per records change): each unit's nodes name their scene lines.
+  // A scene shows the version the board shows (an undo can bring back an earlier one, or a dropped scene).
+  const boardId = ctx.board.boardId()
+  const look = lookOf(byId)
+  const shown = new Map<string, SceneStory | null>()
+  const versionOf = (scene: BoardStory): SceneStory | null => {
+    if (!shown.has(scene.scene)) shown.set(scene.scene, versionOnBoard(scene, look))
+    return shown.get(scene.scene) ?? null
+  }
+  const describe = (info: SceneInfo, name: string | null, story: SceneStory): void => {
+    if (info.steps !== null) return
+    info.name = name ?? info.name
+    info.steps = story.steps.map((step) => ({ name: step.name, at: step.at, ...(step.pause ? { pause: true } : {}) }))
+    info.duration = story.duration
+    info.cues = story.lines.map((line) => line.text)
+  }
+  const stories = storiesOf(boardId)
+  // Every scene of the board in reading order (so the newest of a name comes last).
+  for (const scene of stories) if (!scene.dropped) sceneFor(scene.scene).name = scene.name
+  const memberOf = new Map<string, Set<string>>()
+  const join = (info: SceneInfo, unit: Unit): void => {
+    const set = memberOf.get(info.id) ?? new Set<string>()
+    memberOf.set(info.id, set)
+    if (set.has(unit.id)) return
+    set.add(unit.id)
+    info.units.push(unit)
+  }
+  for (const unit of units) {
+    for (const id of unit.group ? unit.group.strokes : [unit.id]) {
+      for (const entry of storiesOfNode(boardId, id)) {
+        const story = versionOf(entry.scene)
+        if (story !== entry.story) continue
+        const info = sceneFor(entry.scene.scene)
+        describe(info, entry.scene.name, story)
+        join(info, unit)
+        if (entry.step !== null && !info.stepOf.has(unit.id)) info.stepOf.set(unit.id, entry.step)
       }
     }
+    // An agent item of a scene with no record (before the app kept them, or its record was deleted).
+    if (unit.scene && unit.author === 'agent' && !memberOf.get(unit.scene)?.has(unit.id)) join(sceneFor(unit.scene), unit)
   }
+  // A scene with nothing on the board shows its newest version.
+  for (const scene of stories) {
+    const info = scenes.get(scene.scene)
+    if (info) describe(info, scene.name, scene.story)
+  }
+  for (const entry of ctx.sceneNames) if (entry.id) sceneFor(entry.id).name ??= entry.name
   for (const entry of scenePlayer.playedLog()) {
     const id = entry.scene.replace(/~r\d+$/, '')
     const info = scenes.get(id)
     if (info) info.lastPlayed = entry.start
   }
-  for (const unit of units) if (unit.scene && unit.author === 'agent') sceneFor(unit.scene).units.push(unit)
   return { ctx, state, index, byId, units, unitById, groupById, groupOfStroke, scenes, view: viewportRect(state) }
 }
 
@@ -308,7 +334,7 @@ function sceneLine(info: SceneInfo, inPart?: number): string {
   const bounds = unionRegions(info.units.map((unit) => unit.bounds))
   if (bounds) parts.push(place(bounds))
   if (info.lastPlayed) parts.push(`last played ${new Date(info.lastPlayed).toLocaleTimeString('en-GB')}`)
-  if (info.name === null) parts.push('its name and steps are not known: it played before the app last started')
+  if (info.name === null) parts.push('its name and steps are not known: its scene record is missing (it played before the app kept scene records, or the record was deleted)')
   return parts.join(' · ')
 }
 
@@ -540,6 +566,13 @@ export function parseHandle(handle: string): { from: number; to: number } {
 
 export const handleOf = (from: number, to: number): string => `c${Math.max(0, from)}-c${Math.max(0, to)}`
 
+/** "synapse#2": step 2 of the newest scene named "synapse" (or of the scene with that id), when such a scene exists. */
+function stepPart(m: Model, text: string): Extract<Resolved, { kind: 'scene' }> | null {
+  const ref = parseStepRef(text)
+  const info = ref ? findScene(m, ref.scene) : null
+  return ref && info ? { kind: 'scene', info, step: ref.step } : null
+}
+
 function findScene(m: Model, ref: string): SceneInfo | null {
   const byId = m.scenes.get(ref)
   if (byId) return byId
@@ -552,7 +585,7 @@ function resolvePart(m: Model, part: PartArg | undefined, tool: string): Resolve
   if (part === undefined || part === 'view') return { kind: 'view' }
   if (part === 'board') return { kind: 'board' }
   if (part === 'selection') return { kind: 'selection' }
-  if (typeof part === 'string') return resolveName(m, part, tool)
+  if (typeof part === 'string') return stepPart(m, part) ?? resolveName(m, part, tool)
   if ('region' in part) {
     const r = part.region
     if (!r || ![r.x, r.y, r.width, r.height].every(Number.isFinite) || r.width <= 0 || r.height <= 0) throw new Error('region needs {x, y, width, height} in board points, with width and height above 0.')
@@ -564,6 +597,8 @@ function resolvePart(m: Model, part: PartArg | undefined, tool: string): Resolve
     return { kind: 'ids', ids }
   }
   if ('scene' in part) {
+    const ref = part.step === undefined && !findScene(m, part.scene) ? stepPart(m, part.scene) : null
+    if (ref) return ref
     const info = findScene(m, part.scene)
     if (!info) throw new Error(`No scene ${q(part.scene)} on this board. ${knownScenes(m)}`)
     return { kind: 'scene', info, ...(part.step !== undefined ? { step: part.step } : {}) }
@@ -677,16 +712,28 @@ function idsText(m: Model, ids: string[], depth: number): string[] {
   return lines
 }
 
+/** The items of one step of a scene (by number from 1, or by name), from its record. Throws an agent-readable error. */
+function sceneUnits(m: Model, info: SceneInfo, step: number | string): Unit[] {
+  if (!info.steps) throw new Error(`The steps of ${sceneLabel(info)} are not known: its scene record is missing; list_items({part: {scene: ${sceneArg(m, info)}}}) lists its items.`)
+  const index = stepIndexOf(info, step)
+  return info.units.filter((unit) => info.stepOf.get(unit.id) === index)
+}
+
+/** A step of a scene as its index: a number from 1, or a name (the first step with it). Throws an agent-readable error. */
+function stepIndexOf(info: SceneInfo, step: number | string): number {
+  const steps = info.steps ?? []
+  const index = typeof step === 'number' ? (Number.isInteger(step) && step >= 1 && step <= steps.length ? step - 1 : -1) : steps.findIndex((entry) => entry.name === step)
+  if (index < 0) throw new Error(`${sceneLabel(info)} has no step ${typeof step === 'number' ? step : q(step)}. Its steps: ${steps.map((entry, i) => `${i + 1} ${q(entry.name)}`).join(', ') || 'none'}.`)
+  return index
+}
+
 function sceneText(m: Model, info: SceneInfo, step: number | string | undefined, depth: number): string[] {
   const lines = [sceneLine(info)]
   let units = info.units
-  let stepName: string | null = null
+  let only: number | null = null
   if (step !== undefined) {
-    if (!info.steps) throw new Error(`The steps of ${sceneLabel(info)} are not known: it played before the app last started; list_items({part: {scene: ${sceneArg(m, info)}}}) lists its items.`)
-    const found = typeof step === 'number' ? info.steps[step - 1] : info.steps.find((entry) => entry.name === step)
-    if (!found) throw new Error(`${sceneLabel(info)} has no step ${typeof step === 'number' ? step : q(step)}. Its steps: ${info.steps.map((entry, i) => `${i + 1} ${q(entry.name)}`).join(', ') || 'none'}.`)
-    stepName = found.name
-    units = units.filter((unit) => info.stepOf.get(unit.id) === stepName)
+    units = sceneUnits(m, info, step)
+    only = stepIndexOf(info, step)
   }
   const itemLine = (unit: Unit): string => {
     const line = `    ${unitLine(m, unit, { author: false })}`
@@ -699,18 +746,18 @@ function sceneText(m: Model, info: SceneInfo, step: number | string | undefined,
   }
   if (info.steps && info.steps.length) {
     info.steps.forEach((entry, i) => {
-      if (stepName !== null && entry.name !== stepName) return
-      const own = units.filter((unit) => info.stepOf.get(unit.id) === entry.name)
+      if (only !== null && i !== only) return
+      const own = units.filter((unit) => info.stepOf.get(unit.id) === i)
       lines.push(`  step ${i + 1} ${q(entry.name)} at ${Math.round(entry.at * 10) / 10} s${entry.pause ? ' (pause)' : ''}: ${own.length ? plural(own.length, 'item') : 'no items of its own'}`)
       for (const unit of own) lines.push(itemLine(unit))
     })
-    const unknown = stepName === null ? units.filter((unit) => !info.stepOf.has(unit.id)) : []
+    const unknown = only === null ? units.filter((unit) => !info.stepOf.has(unit.id)) : []
     if (unknown.length) {
       lines.push(`  step not known (made or changed later, or a part of a group): ${plural(unknown.length, 'item')}`)
       for (const unit of unknown) lines.push(itemLine(unit))
     }
   } else {
-    lines.push('  items by kind (the steps are not known: the scene played before the app last started):')
+    lines.push(info.steps ? '  items by kind (the scene has no steps):' : '  items by kind (the steps are not known: the scene record is missing):')
     const kinds = [...new Set(units.map((unit) => unit.kind))]
     for (const kind of kinds) for (const unit of units.filter((entry) => entry.kind === kind)) lines.push(itemLine(unit))
   }
@@ -886,12 +933,7 @@ export function shotPart(ctx: ReadContext, part: PartArg | undefined): ShotPart 
       return { kind: 'ids', rect, wide: false, labelIds, what: resolved.ids.length === 1 ? `${resolved.ids[0]}` : `${plural(resolved.ids.length, 'item')}` }
     }
     case 'scene': {
-      let units = resolved.info.units
-      if (resolved.step !== undefined && resolved.info.steps) {
-        const found = typeof resolved.step === 'number' ? resolved.info.steps[resolved.step - 1] : resolved.info.steps.find((entry) => entry.name === resolved.step)
-        if (!found) throw new Error(`${sceneLabel(resolved.info)} has no step ${q(String(resolved.step))}.`)
-        units = units.filter((unit) => resolved.info.stepOf.get(unit.id) === found.name)
-      }
+      const units = resolved.step !== undefined && resolved.info.steps ? sceneUnits(m, resolved.info, resolved.step) : resolved.info.units
       const rect = unionRegions(units.map((unit) => unit.bounds))
       if (!rect) return { kind: 'empty', message: `${sceneLabel(resolved.info)} has no items on the board now.` }
       return { kind: 'scene', rect, wide: false, labelIds: units.map((unit) => unit.id), what: sceneLabel(resolved.info) }
@@ -968,18 +1010,52 @@ function oneItem(m: Model, key: string, as: ItemAs, includeIds: boolean): unknow
   }
 }
 
-/** get_item: one entry per id; a list gives {items, errors} with one error per id that fails. */
+/**
+ * The items an id of get_item stands for when no item has that id or name: the items of a step
+ * ("synapse#2") or of a scene (its name or id), from its record. Null: it names no scene.
+ */
+function sceneItemIds(m: Model, key: string): string[] | null {
+  const ref = stepPart(m, key)
+  if (ref) return sceneUnits(m, ref.info, ref.step as number).map((unit) => unit.id)
+  const info = findScene(m, key)
+  return info ? info.units.map((unit) => unit.id) : null
+}
+
+/** get_item: one entry per id; a list gives {items, errors} with one error per id that fails. A step or a scene stands for its items (the list form). */
 export function itemRead(ctx: ReadContext, params: { id: string | string[]; as?: ItemAs; include_ids?: boolean }): string {
   const m = buildModel(ctx)
   const as = params.as ?? 'info'
   const includeIds = params.include_ids !== false
-  if (!Array.isArray(params.id)) {
+  const board = sceneOf(m.ctx.board, () => m.ctx.groups)
+  const errors: Record<string, string> = {}
+  const keys: string[] = []
+  let expanded = false
+  for (const key of Array.isArray(params.id) ? params.id : [params.id]) {
+    if (itemIdOf(board, key) !== null) {
+      keys.push(key)
+      continue
+    }
+    let ids: string[] | null
+    try {
+      ids = sceneItemIds(m, key)
+    } catch (error) {
+      errors[key] = error instanceof Error ? error.message : String(error)
+      expanded = true
+      continue
+    }
+    if (ids === null) keys.push(key)
+    else {
+      expanded = true
+      if (!ids.length) errors[key] = `${key} has no items on the board now.`
+      keys.push(...ids)
+    }
+  }
+  if (!Array.isArray(params.id) && !expanded) {
     const value = oneItem(m, params.id, as, includeIds)
     return typeof value === 'string' ? value : JSON.stringify(value)
   }
   const items: Record<string, unknown> = {}
-  const errors: Record<string, string> = {}
-  for (const id of params.id) {
+  for (const id of keys) {
     try {
       items[id] = oneItem(m, id, as, includeIds)
     } catch (error) {

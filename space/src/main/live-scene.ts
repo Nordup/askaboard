@@ -70,7 +70,7 @@ export interface StageEntry {
   /** The time the scene was cut at (play_scene cut), or null. It is also in ctxText; a run of this entry again (restage, rollback) passes it on. */
   cutAt: number | null
   ctxText: string
-  /** The board's answers to the program's host requests (html, image, space, copy), by request: a replay gets the same ones. */
+  /** The board's answers to the program's host requests (text measures, html, image, space, copy), by request: a replay gets the same ones. */
   answers: Map<string, string>
 }
 
@@ -454,8 +454,11 @@ export class SceneStage {
     let answer = '{}'
     try {
       const request = JSON.parse(text) as { kind?: string; items?: TextItem[] }
-      if (request.kind === 'text') answer = JSON.stringify({ sizes: await this.textSizes(Array.isArray(request.items) ? request.items : []) })
-      else if (request.kind === 'html' || request.kind === 'space' || request.kind === 'item' || request.kind === 'glyphs') {
+      if (request.kind === 'text') {
+        // Text measures are answers too (recorded, and given back on a rebuild), so a re-run lays text out as the first run did.
+        answer = answers.given?.get(text) ?? JSON.stringify({ sizes: await this.textSizes(Array.isArray(request.items) ? request.items : []) })
+        answers.record.set(text, answer)
+      } else if (request.kind === 'html' || request.kind === 'space' || request.kind === 'item' || request.kind === 'glyphs') {
         const given = answers.given?.get(text)
         if (given !== undefined) answer = given
         else {

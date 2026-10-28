@@ -1,3 +1,4 @@
+import { ownSteps } from '@shared/scene-story'
 import type { ScenePlay } from '../live/compile'
 import { BLEND_GAP, paramSamplesOf, paramsAtTime, type ParamSample } from '../live/params'
 
@@ -87,7 +88,8 @@ export function sceneTimelineOf(play: ScenePlay, nodeId: string): LiveTimeline |
   for (const object of play.objects) {
     if (play.timeline.object(object.id).kind !== 'live' || !object.targets.some((target) => target.nodeId === nodeId)) continue
     const samples = object.dyn?.kind === 'live' ? paramSamplesOf(object.dyn.samples) : []
-    return { params: samples.length ? samples : null, steps: play.steps.map((step) => [step.at, step.name] as [number, string]) }
+    // The program's own steps: a code item sees the step() calls, not the story's lead step.
+    return { params: samples.length ? samples : null, steps: ownSteps(play.steps).map((step) => [step.at, step.name] as [number, string]) }
   }
   return null
 }
@@ -96,13 +98,6 @@ export function sceneTimelineOf(play: ScenePlay, nodeId: string): LiveTimeline |
 export function paramsAt(timeline: LiveTimeline | null, base: Record<string, number>, t: number): Record<string, number> {
   const pick = timeline?.params ? paramsAtTime(timeline.params, t, BLEND_GAP) : null
   return pick ? { ...base, ...pick } : base
-}
-
-/** The step at item time t, or null before the first step. */
-export function stepAt(timeline: LiveTimeline | null, t: number): string | null {
-  let step: string | null = null
-  for (const [at, name] of timeline?.steps ?? []) if (at <= t + 1e-6) step = name
-  return step
 }
 
 /**

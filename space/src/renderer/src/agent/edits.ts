@@ -22,6 +22,8 @@ export interface EditContext {
   tracker: InkGroupTracker
   /** The open board's path. */
   path?: string
+  /** The learning folder's root. */
+  root?: string
 }
 
 const r1 = (value: number): number => Math.round(value * 10) / 10
@@ -111,7 +113,7 @@ export async function runEditTool(ctx: EditContext, tool: AgentToolName, args: R
     case 'sceneContext':
       return sceneContext(ctx.board, scene(ctx), ctx.path, (args.place as ScenePlace | undefined) ?? null)
     case 'runScene': {
-      return runScene({ board: ctx.board, scene: () => scene(ctx), tracker: ctx.tracker }, args)
+      return runScene({ board: ctx.board, scene: () => scene(ctx), tracker: ctx.tracker, ...(ctx.root && ctx.path ? { where: { root: ctx.root, path: ctx.path } } : {}) }, args)
     }
     case 'sceneDraft':
       return sceneDraft({ board: ctx.board, scene: () => scene(ctx), tracker: ctx.tracker }, args)

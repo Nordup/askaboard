@@ -15,6 +15,7 @@ import type { Point } from '../board/types'
 import { inkBounds } from '../board/geometry'
 import type { LiveTimeline } from '../live-pixels/clock'
 import type { LiveStillRequest } from '../live-pixels/stills'
+import { nodeSig as contentSig, stepAt, stepLines, type SceneStory, type StoryItem } from '@shared/scene-story'
 
 /**
  * The renderer half of the scene tools. The main process runs the program in
@@ -130,7 +131,8 @@ export function sceneContext(board: BoardHandle, now: Scene, path?: string, plac
   }
 }
 
-function checkDescription(value: unknown): SceneDescription {
+/** A description from the stage, with its steps as the story has them (stepLines: in time order, with their lines, and a first step named after the scene when lines come before the first step()). */
+function checkDescription(value: unknown, name: string | null): SceneDescription {
   const desc = value as SceneDescription
   if (!desc || !Array.isArray(desc.objects) || !Array.isArray(desc.actions) || !Array.isArray(desc.steps) || typeof desc.duration !== 'number') {
     throw new Error('The scene description is malformed.')
@@ -138,6 +140,7 @@ function checkDescription(value: unknown): SceneDescription {
   desc.camera ??= []
   desc.pointer ??= []
   desc.cues ??= []
+  desc.steps = stepLines(name, desc.steps, desc.cues)
   return desc
 }
 
@@ -145,6 +148,8 @@ export interface RunSceneContext {
   board: BoardHandle
   scene: () => Scene
   tracker: InkGroupTracker
+  /** The learning folder and the board's path (a commit's record names them, main/scene-store.ts). */
+  where?: { root: string; path: string }
 }
 
 /** Take a committed scene off the board again (a skipped queued scene, a restage): a new undo step, or part of the keyed step `step`. */
@@ -460,14 +465,7 @@ function commitScene(ctx: RunSceneContext, desc: SceneSummary, compiled: Compile
   // The result lists only items that are on the board.
   const present = new Set(state.nodes.map((node) => node.id))
   const timeline = compiled.play.timeline
-  const stepOf = (objectId: number): string | undefined => {
-    const desc = timeline.object(objectId)
-    const reveal = (timeline.tracks[objectId].draw ?? []).find((a) => typeof a.to === 'number' && a.to > 0)?.start ?? (timeline.tracks[objectId].opacity ?? []).find((a) => typeof a.to === 'number' && a.to > 0)?.start
-    const at = desc.vis === 'hidden' ? (reveal ?? desc.created) : desc.created
-    let step: string | undefined
-    for (const entry of desc.kind === 'group' ? [] : compiled.play.steps) if (entry.at <= at + 1e-6) step = entry.name
-    return step
-  }
+  const stepOf = (objectId: number): string | undefined => compiled.play.steps[stepOfObject(compiled.play, objectId)]?.name
   const items: SceneItem[] = []
   const framed = (objectId: number): boolean => {
     for (let current = timeline.object(objectId).parent; current !== undefined; current = timeline.object(current).parent) if (compiled.frames.some((frame) => frame.object === current)) return true
@@ -524,6 +522,13 @@ function commitScene(ctx: RunSceneContext, desc: SceneSummary, compiled: Compile
     }
   }
   stageRecord.revision++
+  // The board's id: the first scene record of a board gives it one (spec section 2); main writes the record.
+  let boardId = ctx.board.boardId()
+  const newBoard = !boardId
+  if (!boardId) {
+    boardId = newItemId('b')
+    ctx.board.setBoardId(boardId)
+  }
   const result: SceneResult = {
     scene: sceneId,
     duration_s: Math.round(desc.duration * 1000) / 1000,
@@ -531,9 +536,111 @@ function commitScene(ctx: RunSceneContext, desc: SceneSummary, compiled: Compile
     steps: desc.steps.map((step) => ({ name: step.name, at_s: step.at, ...(step.pause ? { pause: true } : {}) })),
     items,
     cues: desc.cues.map((cue) => ({ text: cue.text, at_s: cue.at, dur_s: cue.dur, ...(cue.marks?.length ? { marks: Object.fromEntries(cue.marks.map((mark) => [mark.name, mark.at])) } : {}) })),
-    log: desc.logs
+    log: desc.logs,
+    ...(ctx.where ? { record: { board: boardId, root: ctx.where.root, path: ctx.where.path, ...(newBoard ? { newBoard: true } : {}), story: storyOf(compiled, desc, state.nodes), revert: compiled.revert } } : {})
   }
   return { compiled, result, snapshot }
+}
+
+/**
+ * The story of a committed scene for its record (shared/scene-story.ts): its steps with their
+ * lines, its lines, and which board nodes each object became (made) or changed, with the step.
+ * present: the node ids on the board after the commit. Membership comes from the commit's revert,
+ * which holds every change kind (the nodes the scene made, and the ones it changed by an action,
+ * an edit() or a move into a frame); the step of a change is the time of its first change (changeTime).
+ */
+function storyOf(compiled: CompiledScene, desc: SceneSummary, after: readonly BoardNode[]): SceneStory {
+  const byId = new Map(after.map((node) => [node.id, node]))
+  const present: ReadonlySet<string> = new Set(byId.keys())
+  const play = compiled.play
+  const timeline = play.timeline
+  const created = new Set(compiled.revert.created)
+  const changed = new Set(compiled.revert.changed.map((node) => node.id))
+  const keys = objectKeys(play)
+  const items: StoryItem[] = []
+  const stepIndex = (k: number): number | null => (k >= 0 ? k : null)
+  const nodesOf = (object: PlayObject): string[] => [...new Set(object.records ?? object.targets.map((target) => target.nodeId))].filter((id) => present.has(id))
+  for (const object of play.objects) {
+    if (object.ghost) continue
+    const o = timeline.object(object.id)
+    if (o.kind === 'group') continue
+    const nodes = nodesOf(object)
+    if (o.kind === 'node' || o.carry) {
+      // An item that was on the board before: in the story when this scene changed it, at the step of its first change.
+      const touched = nodes.filter((id) => changed.has(id) || created.has(id))
+      if (touched.length) items.push({ key: `node:${touched[0]}`, nodes: touched, step: stepIndex(stepAt(play.steps, changeTime(play, object))), made: false, sigs: touched.map((id) => contentSig(byId.get(id) as BoardNode)) })
+      continue
+    }
+    if (nodes.length) items.push({ key: keys.get(object.id) as string, nodes, step: stepIndex(stepOfObject(play, object.id)), made: true })
+  }
+  // The frames of named groups: the step of the group's first object.
+  for (const { object: objectId, id: frameId } of compiled.frames) {
+    if (!present.has(frameId)) continue
+    const leaf = play.objects.find((object) => {
+      for (let current = timeline.object(object.id).parent; current !== undefined; current = timeline.object(current).parent) if (current === objectId) return true
+      return false
+    })
+    items.push({ key: keys.get(objectId) as string, nodes: [frameId], step: leaf ? stepIndex(stepOfObject(play, leaf.id)) : null, made: true })
+  }
+  // Every other node the commit made or changed (the revert sees every change kind, also what the
+  // compile moved itself, such as learner ink kept in replaced HTML material): the step of the item
+  // that now holds it (its nearest parent in the story), else none.
+  const listed = new Set(items.flatMap((item) => item.nodes))
+  const stepOfNode = new Map(items.flatMap((item) => item.nodes.map((id) => [id, item.step] as const)))
+  for (const id of [...created, ...changed]) {
+    if (listed.has(id) || !present.has(id)) continue
+    let step: number | null = null
+    for (let parent = byId.get(id)?.parent; typeof parent === 'string'; parent = byId.get(parent)?.parent) {
+      if (stepOfNode.has(parent)) {
+        step = stepOfNode.get(parent) ?? null
+        break
+      }
+    }
+    const made = created.has(id)
+    items.push({ key: `node:${id}`, nodes: [id], step, made, ...(made ? {} : { sigs: [contentSig(byId.get(id) as BoardNode)] }) })
+    listed.add(id)
+  }
+  return {
+    duration: desc.duration,
+    steps: play.steps.map((step) => ({ name: step.name, at: step.at, ...(step.pause ? { pause: true } : {}), lines: step.lines ?? [] })),
+    lines: desc.cues.map((cue) => ({ text: cue.text, at: cue.at, dur: cue.dur })),
+    items
+  }
+}
+
+/**
+ * The key of every object this scene made (spec section 4), over all of them in the order the
+ * program made them, so a key never depends on what survives to the end: its name (name#2, #3 …
+ * when the scene repeats a name), else o<n>, its place among the scene's own objects. Objects of
+ * earlier scenes (carried) and board.node() references are not counted.
+ */
+function objectKeys(play: CompiledScene['play']): Map<number, string> {
+  const keys = new Map<number, string>()
+  const names = new Map<string, number>()
+  let own = 0
+  for (let id = 0; id < play.timeline.tracks.length; id++) {
+    const o = play.timeline.object(id)
+    if (o.kind === 'node' || o.carry) continue
+    own++
+    if (!o.name) {
+      keys.set(id, `o${own}`)
+      continue
+    }
+    const n = (names.get(o.name) ?? 0) + 1
+    names.set(o.name, n)
+    keys.set(id, n === 1 ? o.name : `${o.name}#${n}`)
+  }
+  return keys
+}
+
+/** When a scene first changes an object it did not make: its first action, edit() of one of its nodes, or move into a frame; else when the scene took hold of it. */
+function changeTime(play: CompiledScene['play'], object: PlayObject): number {
+  let first = Infinity
+  for (const list of Object.values(play.timeline.tracks[object.id])) for (const action of list ?? []) first = Math.min(first, action.start)
+  const nodes = new Set(object.targets.map((target) => target.nodeId))
+  for (const edit of play.edits ?? []) if (nodes.has(edit.nodeId)) first = Math.min(first, edit.at)
+  if (object.glide) first = Math.min(first, object.glide.start)
+  return first === Infinity ? play.timeline.object(object.id).created : first
 }
 
 /**
@@ -548,7 +655,7 @@ export function runScene(ctx: RunSceneContext, args: Record<string, unknown>): (
   let desc: SceneSummary
   let compiled: CompiledScene
   if (args.scene) {
-    const full = checkDescription(args.scene)
+    const full = checkDescription(args.scene, name)
     const frames = takeFrames(args.job, args.frames)
     adoptEpoch(full.stage)
     compiled = compileScene(full, ctx.scene(), sceneId, name, stageLookup, dynLookup(frames))
@@ -614,15 +721,13 @@ export interface FramesResult {
 const fmt = (t: number): string => `${Math.round(t * 10) / 10} s`
 const r3 = (value: number): number => Math.round(value * 1000) / 1000
 
-/** The step each object appears in (as commitScene's items list it). */
-export function stepOfObject(play: CompiledScene['play'], objectId: number): string | undefined {
+/** The index of the step an object appears in (its first reveal when it starts hidden, else when it is made), or -1 (before the first step, or a group). */
+export function stepOfObject(play: CompiledScene['play'], objectId: number): number {
   const timeline = play.timeline
   const desc = timeline.object(objectId)
+  if (desc.kind === 'group') return -1
   const reveal = (timeline.tracks[objectId].draw ?? []).find((a) => typeof a.to === 'number' && a.to > 0)?.start ?? (timeline.tracks[objectId].opacity ?? []).find((a) => typeof a.to === 'number' && a.to > 0)?.start
-  const at = desc.vis === 'hidden' ? (reveal ?? desc.created) : desc.created
-  let step: string | undefined
-  for (const entry of desc.kind === 'group' ? [] : play.steps) if (entry.at <= at + 1e-6) step = entry.name
-  return step
+  return stepAt(play.steps, desc.vis === 'hidden' ? (reveal ?? desc.created) : desc.created)
 }
 
 /**
@@ -632,7 +737,7 @@ export function stepOfObject(play: CompiledScene['play'], objectId: number): str
  * the key args.draft for the preview and the commit.
  */
 export function sceneDraft(ctx: RunSceneContext, args: Record<string, unknown>): DraftInfo {
-  const desc = checkDescription(args.scene)
+  const desc = checkDescription(args.scene, typeof args.name === 'string' && args.name ? args.name : null)
   adoptEpoch(desc.stage)
   const draft = compileDraft(desc, takeFrames(args.job, args.frames), ctx.scene(), (args.place as ScenePlace | undefined) ?? null)
   if (typeof args.draft === 'string') keepDraft(args.draft, draft)
@@ -654,7 +759,7 @@ export function sceneDraft(ctx: RunSceneContext, args: Record<string, unknown>):
     const kind = inkObjects.has(object.id) ? 'ink group' : (kinds.get((compiled.nodesOf.get(object.id) ?? [])[0] ?? '') ?? o.kind)
     total++
     byKind[kind] = (byKind[kind] ?? 0) + 1
-    const step = stepOfObject(play, object.id)
+    const step = play.steps[stepOfObject(play, object.id)]?.name
     if (o.name) named.push({ name: o.name, kind, ...(step ? { step } : {}) })
   }
   for (const frame of compiled.frames) {
@@ -793,16 +898,15 @@ function stepList(play: CompiledScene['play']): string {
 /** The moments to draw, with their labels. Throws an agent-readable error for an unknown step or a time past the end. */
 function momentsOf(play: CompiledScene['play'], moments: FrameMoment[], what: string): Array<{ t: number; label: string }> {
   const out: Array<{ t: number; label: string }> = []
-  const stepAt = (t: number): string => {
-    let name: string | null = null
-    for (const entry of play.steps) if (entry.at <= t + 1e-6) name = entry.name
+  const stepLabel = (t: number): string => {
+    const name = play.steps[stepAt(play.steps, t)]?.name
     return name ? ` · step "${name}"` : ''
   }
   for (const moment of moments) {
     if (moment.kind === 'end') out.push({ t: play.duration, label: `end · ${fmt(play.duration)}` })
     else if (moment.kind === 't') {
       if (moment.t > play.duration + 1e-6) throw new Error(`The time ${moment.t} s is past the end of ${what}: it is ${fmt(play.duration)} long. Use a time from 0 to ${Math.round(play.duration * 1000) / 1000}, or "end".`)
-      out.push({ t: moment.t, label: `${fmt(moment.t)}${stepAt(moment.t)}` })
+      out.push({ t: moment.t, label: `${fmt(moment.t)}${stepLabel(moment.t)}` })
     } else if (moment.kind === 'step') {
       const i = typeof moment.step === 'number' ? moment.step - 1 : play.steps.findIndex((entry) => entry.name === moment.step)
       if (i < 0 || i >= play.steps.length || (typeof moment.step === 'number' && !Number.isInteger(moment.step))) {
@@ -817,7 +921,7 @@ function momentsOf(play: CompiledScene['play'], moments: FrameMoment[], what: st
       for (let i = 0; i < bounds.length - 1; i++) {
         const from = bounds[i]
         const to = bounds[i + 1]
-        const step = [...play.steps].reverse().find((entry) => entry.at <= from + 1e-6)
+        const step = play.steps[stepAt(play.steps, from)]
         const last = i === bounds.length - 2
         const t = last ? play.duration : Math.max(from, to - 0.001)
         out.push({ t, label: `${step ? `step "${step.name}"${step.pause ? ' (pause)' : ''}` : 'before the first step'} · ${fmt(from)}–${fmt(to)}${last ? ' · end' : ''}` })
@@ -974,7 +1078,8 @@ function liveItemsOf(play: CompiledScene['play'], evaluated: ReadonlyArray<{ mom
  */
 export async function sceneControl(ctx: RunSceneContext, args: Record<string, unknown>): Promise<unknown> {
   const action = args.action
-  const status = (): Record<string, unknown> => ({ ...scenePlayer.status(), waiting: scenePlayer.waiting(), playing_scene: scenePlayer.playing() })
+  // board_id: for main's record events (main/scene-store.ts), never for the agent.
+  const status = (): Record<string, unknown> => ({ ...scenePlayer.status(), waiting: scenePlayer.waiting(), playing_scene: scenePlayer.playing(), board_id: ctx.board.boardId() ?? null })
   switch (action) {
     case 'next':
       scenePlayer.nextStep()

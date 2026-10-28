@@ -299,6 +299,12 @@ function registerIpc(): void {
     if (!session || typeof path !== 'string' || !isCamera(camera)) return
     store.setCamera(session.root, path, { center: [camera.center[0], camera.center[1]], zoom: camera.zoom })
   })
+  handle(IPC.openSceneRecords, async (path: unknown, id: unknown) => {
+    const current = requireSession()
+    if (typeof path !== 'string') throw new Error('A board path is required.')
+    await current.resolvePath(path)
+    return agentServer.records.openBoard(path, typeof id === 'string' && id ? id : null)
+  })
   ipcMain.on(IPC.setLastBoard, (_event, path: unknown) => {
     if (!session) return
     store.setLastBoard(session.root, typeof path === 'string' ? path : null)

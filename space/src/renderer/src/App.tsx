@@ -33,6 +33,9 @@ import { TopBar, type SaveStatus } from './components/TopBar'
 import { WelcomeCard } from './components/WelcomeCard'
 import { errorMessage } from './lib/errors'
 import { isEditableTarget } from './lib/keys'
+import { setStories } from './live/stories'
+import { setBoardNodes, setReadingBoard, setSelection } from './live/reading'
+import type { BoardStories } from '@shared/scene-story'
 import { colorValue, TOOL_KEYS, widthValue, type ToolId, type ToolState } from './tools'
 
 const space = window.space
@@ -216,6 +219,22 @@ export function App() {
 
   // ---------- Opening boards ----------
 
+  /** The scene records of a board that mounts (an open, a reload of the open board from disk): its stories, and the id it must have (main/scene-store.ts; a copied board file gets a new one). */
+  const boardRecords = (path: string, doc: BoardDoc): Promise<BoardStories | null> =>
+    space.openSceneRecords(path, doc.id ?? null).catch((error: unknown) => {
+      console.error(`scene records of ${path} could not be read: ${errorMessage(error)}`)
+      return null
+    })
+
+  /** The board that mounts now takes its records: the stories, and its new id (saved at once). Returns the doc to mount. */
+  const mountRecords = (path: string, doc: BoardDoc, records: BoardStories | null): BoardDoc => {
+    setStories(records)
+    if (!records?.id || records.id === doc.id) return doc
+    const next = { ...doc, id: records.id }
+    scheduleSave(path, next)
+    return next
+  }
+
   const openBoard = useCallback(
     async (path: string) => {
       const token = ++openTokenRef.current
@@ -248,8 +267,10 @@ export function App() {
             cacheRef.current.set(path, entry)
           }
         }
-        const camera = await space.getCamera(path).catch(() => null)
         if (token !== openTokenRef.current) return
+        const [camera, records] = await Promise.all([space.getCamera(path).catch(() => null), boardRecords(path, entry.doc)])
+        if (token !== openTokenRef.current) return
+        entry.doc = mountRecords(path, entry.doc, records)
         cameraRef.current = camera ? { path, camera } : null
         setZoom(camera?.zoom ?? 1)
         setBoardError(null)
@@ -259,7 +280,7 @@ export function App() {
         if (token === openTokenRef.current) openingRef.current = false
       }
     },
-    [flushCamera, flushSave]
+    [flushCamera, flushSave, scheduleSave]
   )
 
   const onChanges = useCallback(({ removed, revisions, by }: { removed: Removal[]; revisions: Revision[]; by: Author }) => {
@@ -559,6 +580,10 @@ export function App() {
       return
     }
     if (openRef.current?.path !== path || pendingRef.current?.path === path) return
+    // A file that replaced the open board's mounts as any board does: its records, and the duplicate-id check.
+    const token = openTokenRef.current
+    const records = await boardRecords(path, doc)
+    if (token !== openTokenRef.current || openRef.current?.path !== path || pendingRef.current?.path === path) return
     const history = current.history
     history.clear()
     const entry = cacheRef.current.get(path)
@@ -571,11 +596,16 @@ export function App() {
     )
     log.record(reconciled.removed)
     log.revise(reconciled.revisions)
-    doc = reconciled.doc
+    doc = mountRecords(path, reconciled.doc, records)
     cacheRef.current.set(path, { doc, history, log })
     console.log(`${path} reloaded from disk`)
     setOpen({ path, key: ++keyRef.current, doc, history, camera: cameraRef.current?.camera ?? current.camera })
   }
+
+  // The reading panel and the scene pill belong to the open board (live/reading.ts).
+  const openPath = open?.path ?? null
+  useEffect(() => setReadingBoard(openPath), [openPath])
+  useEffect(() => setBoardNodes(() => boardRef.current?.liveState().nodes ?? []), [])
 
   const flushRef = useRef<() => Promise<void>>(async () => undefined)
   flushRef.current = async () => {
@@ -595,6 +625,11 @@ export function App() {
         setPreviewVersion((version) => version + 1)
       }),
       space.onBoardChanged((change) => void onBoardChangeRef.current(change.path, change.deleted)),
+      // Main sends the stories of the board the window shows; reads take them only for that board's path (live/stories.ts).
+      // Main sends a board's stories after each new record line; they are for the open board only when its id is theirs.
+      space.onSceneStories((stories) => {
+        if (stories.id && boardRef.current?.boardId() === stories.id) setStories(stories)
+      }),
       space.onMenuCommand((command) => {
         if (command === 'new-board') void createBoardRef.current()
         else if (command === 'setup-folder') setMenuSetup(folderRef.current !== null)
@@ -661,7 +696,12 @@ export function App() {
         }
         throw new Error(`"${path}" did not open in time.`)
       },
-      importAsset: (src) => space.importAsset(src)
+      importAsset: (src) => space.importAsset(src),
+      saveNow: async () => {
+        await flushRef.current()
+        // A failed write keeps the edits pending.
+        return pendingRef.current === null
+      }
     }
   }, [])
 
@@ -920,10 +960,11 @@ export function App() {
                 onDocChange={onDocChange}
                 onCameraChange={onCameraChange}
                 onChanges={onChanges}
+                onSelectionChange={setSelection}
               />
             )}
             {canvasContent}
-            {open && <ScriptPanel />}
+            {open && <ScriptPanel key={open.path} />}
             {open && (
               <ToolPalette
                 state={tools}
