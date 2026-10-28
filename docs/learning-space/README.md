@@ -82,6 +82,11 @@ work that [`plan.md`](plan.md) and [`baseline.md`](baseline.md) describe.
      G1 and G6 (2026-10-27): what the scene code does today, bundle 1 (a
      scene is a story that lasts), bundle 2 (the voice leads the story) and
      its research, and the questions for the founder.
+   - [`work-map.md`](work-map.md) — all open work on scenes, speed and the
+     voice in batches (2026-10-28): where each comes from, what we have,
+     the solution and how it helps; what is done so far.
+   - [`library-plan.md`](library-plan.md) — the scene library track
+     (postponed): mechanisms agents now write again in every scene.
    - [`playback-pitfalls.md`](playback-pitfalls.md) — the known failure
      classes of scene sampling and playback, where they live in the code and
      how to measure them. Read it when an animation glitches.
