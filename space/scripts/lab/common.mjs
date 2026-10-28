@@ -571,8 +571,10 @@ export async function claudeTurn(agent, state, dir, prompt, phase, resume = null
     writeFileSync(settings, JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: newsHookCommand(state)('Claude Code'), timeout: 5 }] }] } }, null, 2))
     hookArgs.push('--settings', settings)
   }
-  // The prompt goes before --allowedTools: that flag takes every word after it.
-  const argv = ['-p', prompt, ...(resume ? ['--resume', resume] : []), '--model', agent.model, ...(agent.effort ? ['--effort', agent.effort] : []), '--mcp-config', config, '--strict-mcp-config', '--setting-sources', 'project,local', ...hookArgs, '--output-format', 'json', '--allowedTools', 'mcp__learning-space__*', 'Read', 'Write', 'Edit', 'MultiEdit', 'Glob', 'Grep', ...(agent.web ? ['WebSearch', 'WebFetch'] : [])]
+  // As in the desktop app with permissions bypassed: every built-in tool (Bash too), no permission prompts, only the
+  // Learning Space server (no MCP servers or plugins of the founder's own setup). --no-web takes the web tools away.
+  // The prompt goes before --disallowedTools: that flag takes every word after it.
+  const argv = ['-p', prompt, ...(resume ? ['--resume', resume] : []), '--model', agent.model, ...(agent.effort ? ['--effort', agent.effort] : []), '--mcp-config', config, '--strict-mcp-config', '--setting-sources', 'project,local', ...hookArgs, '--output-format', 'json', '--permission-mode', 'bypassPermissions', ...(agent.web ? [] : ['--disallowedTools', 'WebSearch', 'WebFetch'])]
   const stdoutFile = join(dir, `${phase}-claude.json`)
   const code = await runProcess(agent, 'claude', argv, { cwd: state.folder, env: process.env, stdoutFile, stderrFile: join(dir, `${phase}-stderr.txt`) })
   let parsed = null
@@ -618,16 +620,12 @@ export function prepareCodexHome(agent, state) {
   writeFileSync(
     join(home, 'config.toml'),
     [
+      // As the founder's Codex desktop app runs: full access (network on), no approvals. Web search: codexTurn's --search.
       'approval_policy = "never"',
-      // Writes stay inside the learning folder (the working directory): agents write scene files there, as in their own apps.
-      'sandbox_mode = "workspace-write"',
+      'sandbox_mode = "danger-full-access"',
       `model = ${JSON.stringify(agent.model)}`,
       `model_reasoning_effort = ${JSON.stringify(agent.effort)}`,
       'service_tier = "default"',
-      '',
-      '[features]',
-      'js_repl = false',
-      'multi_agent_v2 = true',
       '',
       '[mcp_servers.learning-space]',
       `url = ${JSON.stringify(`http://127.0.0.1:${state.mcpPort}/mcp`)}`,

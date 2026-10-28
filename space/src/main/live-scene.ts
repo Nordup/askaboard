@@ -83,6 +83,8 @@ export interface StageRun {
   /** The frames of this run in the board renderer: their job id and their number of chunks (renderer/live/frames.ts). */
   job: number
   frames: number
+  /** Where the run's time went, in ms (the session trace's spans): stage_ready_ms (a new process or a rebuild first), stage_run_ms, and the stage's own parts. */
+  timing: Record<string, number>
 }
 
 /** A tex() or text() node to measure: its source, math or not, and its font size. */
@@ -330,7 +332,8 @@ export class SceneStage {
       const job = this.nextId++
       const reply = await this.send({ t: 'run', id: job, program: stageProgram(source), ctxText, mode: options.mode })
       this.answers = { record: new Map(), given: null }
-      console.log(`stage: ${options.mode} program: stage ready ${tReady - tStart} ms, program ${Date.now() - tReady} ms`)
+      const tDone = Date.now()
+      console.log(`stage: ${options.mode} program: stage ready ${tReady - tStart} ms, program ${tDone - tReady} ms`)
       if (reply.ok && reply.timing) {
         const t = reply.timing
         console.log(
@@ -370,7 +373,12 @@ export class SceneStage {
         this.revision++
         this.freshReason = null
       }
-      return { desc, entry, fresh, job, frames: reply.frames }
+      const timing: Record<string, number> = { stage_ready_ms: tReady - tStart, stage_run_ms: tDone - tReady }
+      if (reply.timing) {
+        const t = reply.timing
+        Object.assign(timing, { body_ms: Math.round(t.body), sampling_ms: Math.round(t.result), encode_ms: Math.round(t.encode), board_wait_ms: Math.round(t.wait), bake_ms: Math.round(t.bake), frames_bytes: t.bytes })
+      }
+      return { desc, entry, fresh, job, frames: reply.frames, timing }
     } finally {
       signal?.removeEventListener('abort', onAbort)
     }

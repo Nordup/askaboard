@@ -318,6 +318,21 @@ export interface SnapshotRequest {
   cells?: { width: number; height: number; gapColor: string; list: SnapshotCell[] }
 }
 
+/**
+ * A scene's playback event on the board (renderer/live/player.ts), for the
+ * session trace: its first frame drawn (first_frame), its end (end, with how it
+ * ended), or a new play in its place (replaced, outcome "cut" or "replaced").
+ * t: wall time (Date ms).
+ */
+export interface SceneEvent {
+  kind: 'first_frame' | 'end' | 'replaced'
+  scene: string
+  name: string | null
+  t: number
+  /** end: played (to its end), stopped (play_scene stop), cancelled (taken out of the queue before it played), removed (the board changed or closed). replaced: cut or replaced. */
+  outcome?: 'played' | 'stopped' | 'cancelled' | 'removed' | 'cut' | 'replaced'
+}
+
 /** One frame of a grid snapshot: where it goes in the image (pixels), and what only it shows. */
 export interface SnapshotCell {
   left: number
@@ -574,6 +589,8 @@ export interface SpaceApi {
   /** Snapshot window only: draw requests from the main process. */
   onSnapshotRequest(listener: (request: SnapshotRequest) => void): Unsubscribe
   snapshotReady(reply: SnapshotReply): void
+  /** Board window only: a scene's playback event, for the session trace (main/trace.ts scene_event). */
+  sceneEvent(event: SceneEvent): void
   /**
    * Board window only: ask for a port to the stage page, for the frames of
    * scenes (renderer/live/frames.ts). The port comes as a window message
@@ -622,5 +639,6 @@ export const IPC = {
   importAsset: 'space:import-asset',
   snapshotRequest: 'space:snapshot-request',
   snapshotReady: 'space:snapshot-ready',
+  sceneEvent: 'space:scene-event',
   framesPort: 'space:frames-port'
 } as const

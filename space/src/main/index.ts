@@ -417,6 +417,8 @@ void app.whenReady().then(async () => {
   await installShim().catch((error) => console.error(`agent home: could not write the shim: ${String(error)}`))
   agentServer.start()
   mainWindow = createWindow()
+  // The snapshot window loads once the board is up, so an agent's first screenshot is as fast as the later ones.
+  mainWindow.webContents.once('did-finish-load', () => setTimeout(() => snapshots.warm(), 2000))
   app.on('activate', () => {
     if (!mainWindow || mainWindow.isDestroyed()) mainWindow = createWindow()
   })

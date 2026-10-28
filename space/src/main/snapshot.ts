@@ -10,7 +10,8 @@ import { IPC, type SnapshotReply, type SnapshotRequest } from '@shared/space-api
  * content layer and ink painter as the app, sized to the output image, waits
  * for fonts, math and images, and answers; then this class captures the page.
  * It works for regions far off screen and while the app window is in the
- * background. The window is made once and reused.
+ * background. The window is made once and reused; warm() makes it (and draws
+ * once) before the first capture is needed.
  */
 
 const READY_TIMEOUT_MS = 8000
@@ -41,6 +42,8 @@ export interface SnapshotResult {
   height: number
   missingImages: number
   ms: number
+  /** Of ms: the wait for the window (0 when it was open). */
+  windowMs: number
 }
 
 /**
@@ -131,9 +134,25 @@ export class SnapshotRenderer {
     return run
   }
 
+  /**
+   * Make the window and draw one empty picture of a usual size, off the agent's path:
+   * the page, its fonts (SnapshotView loads every font face) and the first
+   * capture are ready before the first screenshot. Nothing shows; a capture
+   * that comes meanwhile waits in the queue as usual. Never throws.
+   */
+  warm(): void {
+    if (this.window && !this.window.isDestroyed()) return
+    const started = Date.now()
+    this.capture({ nodes: [], rect: { x: 0, y: 0, width: 800, height: 600 }, scale: 1, width: 800, height: 600, outlines: [], background: '#000000' }).then(
+      () => console.log(`snapshot: window warmed in ${Date.now() - started} ms`),
+      (error: unknown) => console.warn(`snapshot: warm-up failed: ${error instanceof Error ? error.message : String(error)}`)
+    )
+  }
+
   private async captureNow(request: Omit<SnapshotRequest, 'requestId'>): Promise<SnapshotResult> {
     const started = Date.now()
     const win = await this.open()
+    const windowMs = Date.now() - started
     if (this.idleTimer) clearTimeout(this.idleTimer)
     this.idleTimer = setTimeout(() => this.dispose(), IDLE_CLOSE_MS)
     const requestId = this.nextId++
@@ -177,7 +196,7 @@ export class SnapshotRenderer {
     if (size.width !== request.width || size.height !== request.height) {
       image = image.resize({ width: request.width, height: request.height, quality: 'best' })
     }
-    return { png: image.toPNG(), width: request.width, height: request.height, missingImages: reply.missingImages, ms: Date.now() - started }
+    return { png: image.toPNG(), width: request.width, height: request.height, missingImages: reply.missingImages, ms: Date.now() - started, windowMs }
   }
 
   dispose(): void {

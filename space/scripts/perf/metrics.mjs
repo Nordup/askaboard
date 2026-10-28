@@ -4,7 +4,8 @@
  * args, ok, result_text, images) and from the files the agent wrote with its
  * own tools (claudeFileWrites, codexFileWrites).
  *
- *   node scripts/perf/metrics.mjs <run folder>   the run's numbers again, from its calls.json and its transcript
+ *   node scripts/perf/metrics.mjs <run folder>...   the runs' numbers again, from their calls.json, transcripts and traces:
+ *                                                    metrics.json and its history line updated, timeline.md written
  */
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -12,16 +13,41 @@ import { appendFileSync, existsSync, mkdirSync, openSync, readSync, closeSync, r
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { LAB, SPACE } from '../lab/common.mjs'
+import { archiveTranscript, runTimeline } from './timeline.mjs'
 
 export const PERF = join(SPACE, '.lab/perf')
 export const PERF_RUNS = join(PERF, 'runs')
 export const HISTORY = join(PERF, 'history.jsonl')
 const REPO = resolve(SPACE, '..')
 
+/** A run's history line: metrics.json without its long lists (they stay in metrics.json and timeline.md). */
+function historyLine(metrics) {
+  const { turns, app_spans, could_not_do, own_calls, ...rest } = metrics
+  return { ...rest, ...(own_calls ? { own_calls: { ...own_calls, list: undefined } } : {}), ...(could_not_do ? { could_not_do_count: could_not_do.length } : {}) }
+}
+
 export function appendHistory(metrics) {
   mkdirSync(PERF, { recursive: true })
-  appendFileSync(HISTORY, `${JSON.stringify(metrics)}\n`)
+  appendFileSync(HISTORY, `${JSON.stringify(historyLine(metrics))}\n`)
 }
+
+/** Replace a run's line in history.jsonl (same dir and timestamp), or append it. */
+export function replaceHistory(metrics) {
+  mkdirSync(PERF, { recursive: true })
+  const lines = existsSync(HISTORY) ? readFileSync(HISTORY, 'utf8').split('\n').filter(Boolean) : []
+  let found = false
+  const out = lines.map((line) => {
+    const r = parse(line)
+    if (r && r.timestamp === metrics.timestamp && basenameOf(r.dir) === basenameOf(metrics.dir)) {
+      found = true
+      return JSON.stringify(historyLine(metrics))
+    }
+    return line
+  })
+  if (!found) out.push(JSON.stringify(historyLine(metrics)))
+  writeFileSync(HISTORY, `${out.join('\n')}\n`)
+}
+const basenameOf = (p) => String(p ?? '').split('/').filter(Boolean).pop()
 
 /** Which code was measured: HEAD, and a short hash of the uncommitted changes in space/src and space/resources. */
 export function codeIdentity() {
@@ -282,12 +308,13 @@ export function callMetrics(calls, { t0, wallEnd, tracesDir = null, fileWrites =
   const sceneWaits = calls.filter((c) => (c.tool === 'scene_control' || c.tool === 'play_scene') && c.args?.action === 'wait')
   const playWaits = plays.filter((c) => c.args?.wait === 'end')
 
-  // When the last scene ends: each play's end + ends_in_s, or its return with wait "end".
+  // An estimate of when the last scene ends (runs without scene events; see addTimeline): each play's end + ends_in_s,
+  // or its return with wait "end" when it played to its end (played: false stopped at a pause).
   let doneMs = null
   for (const c of plays) {
     if (!c.ok) continue
     const r = parse(c.result_text)
-    if (!r) continue
+    if (!r || r.played === false) continue
     const end = r.played !== undefined ? endOf(c) : endOf(c) + (typeof r.ends_in_s === 'number' ? r.ends_in_s : (r.starts_in_s ?? 0) + (r.length_s ?? r.duration_s ?? 0)) * 1000
     doneMs = Math.max(doneMs ?? 0, end)
   }
@@ -477,12 +504,66 @@ export function runMetrics(dir) {
   return callMetrics(calls, { t0, wallEnd, tracesDir: join(dir, 'trace'), fileWrites: runFileWrites(metrics, dir) })
 }
 
+/**
+ * Add a model run's timeline to its metrics (metrics.json in the run folder
+ * dir; calls: its calls.json) and write timeline.md: the turns, every call,
+ * the partition of the wall time, milestones, what the agent could not do,
+ * reads and sizes, app spans. done and first_stroke come from the app's scene
+ * events when the run has them (since 2026-10-28); else done stays the estimate.
+ */
+export function addTimeline(dir, metrics, calls) {
+  if (metrics.kind !== 'model') return metrics
+  const archived = archiveTranscript(dir, metrics.client, metrics.transcript)
+  const { fields, markdown } = runTimeline(dir, { ...metrics, dir }, calls)
+  writeFileSync(join(dir, 'timeline.md'), markdown)
+  const p = fields.partition
+  const time = { ...metrics.time }
+  if (fields.done_from_events !== null) {
+    time.done = fields.done_from_events
+    time.done_source = 'scene events'
+  } else time.done_source = 'estimate (no scene events)'
+  time.first_stroke = fields.milestones.first_stroke
+  time.startup_s = archived ? p.startup_s : null
+  time.model_gen_s = archived ? p.model_s : null
+  time.mcp_s = p.mcp_s
+  time.waits_s = p.waits_s
+  time.own_s = archived ? p.own_s : null
+  time.tail_s = p.tail_s
+  return {
+    ...metrics,
+    time,
+    transcript_file: fields.transcript_file,
+    harness: fields.harness,
+    partition: p,
+    milestones: fields.milestones,
+    model_tokens: fields.model,
+    turns: fields.turns,
+    own_calls: fields.own_calls,
+    could_not_do: fields.could_not_do,
+    received: fields.received,
+    read: { ...metrics.read, guide_topics: fields.reads.guide_topics, by_tool: fields.reads.by_tool },
+    app_spans: fields.app_spans
+  }
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const dir = process.argv[2]
-  if (!dir) {
-    console.error('usage: node scripts/perf/metrics.mjs <run folder>')
+  const dirs = process.argv.slice(2)
+  if (!dirs.length) {
+    console.error('usage: node scripts/perf/metrics.mjs <run folder>...')
     process.exit(2)
   }
-  const m = runMetrics(resolve(dir))
-  console.log(JSON.stringify({ written: m.written, calls: m.calls }, null, 2))
+  for (const arg of dirs) {
+    const dir = resolve(arg)
+    const before = JSON.parse(readFileSync(join(dir, 'metrics.json'), 'utf8'))
+    const calls = JSON.parse(readFileSync(join(dir, 'calls.json'), 'utf8'))
+    const m = runMetrics(dir)
+    // The recomputed numbers of the calls; the fields from the run itself (first_visible, model_s, usage, …) stay.
+    let metrics = { ...before, time: { ...before.time, ...m.time }, calls: m.calls, written: m.written, read: { ...before.read, ...m.read }, app: m.app, per_tool: m.per_tool }
+    metrics = addTimeline(dir, metrics, calls)
+    writeFileSync(join(dir, 'metrics.json'), JSON.stringify(metrics, null, 2))
+    if (metrics.kind === 'model') replaceHistory(metrics)
+    const t = metrics.time
+    const p = metrics.partition ?? {}
+    console.log(`${dir.split('/').pop()}: wall ${t.wall} = startup ${p.startup_s ?? '-'} + model ${p.model_s ?? '-'} + mcp ${p.mcp_s ?? '-'} + waits ${p.waits_s ?? '-'} + own ${p.own_s ?? '-'} + tail ${p.tail_s ?? '-'} + other ${p.unattributed_s ?? '-'}; first stroke ${t.first_stroke ?? '-'}, done ${t.done ?? '-'} (${t.done_source ?? '-'}); out tok ${metrics.model_tokens?.output_tokens ?? '-'}, max ctx ${metrics.model_tokens?.max_context ?? '-'}; could not do ${metrics.could_not_do?.length ?? '-'}`)
+  }
 }

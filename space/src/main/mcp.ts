@@ -31,7 +31,8 @@ import {
   type LiveStillsItem,
   type AgentReply,
   type AgentServerStatus,
-  type AgentSessionInfo
+  type AgentSessionInfo,
+  type SceneEvent
 } from '@shared/space-api'
 import type { SceneItem } from '@shared/live-scene'
 
@@ -108,6 +109,11 @@ function configuredPort(): number {
   console.error(`mcp: SPACE_MCP_PORT="${raw}" is not a valid port; using ${DEFAULT_MCP_PORT}`)
   return DEFAULT_MCP_PORT
 }
+
+/** Where the app spent a tool call's time (ms) and the scene it started: the session trace's spans (trace.ts). */
+type Spans = Record<string, number | string | null>
+/** What a tool body adds to its trace line: more args (args) and its spans. */
+type CallTrace = { args?: Record<string, unknown>; spans: Spans }
 
 // ---------- The main <-> renderer bridge ----------
 
@@ -360,6 +366,8 @@ export class AgentServer {
   private readonly news: BoardNews
   /** The cache of board summaries and texts for list_boards, open_board and move_board (boards.ts). */
   private readonly boardIndex = new BoardIndex()
+  /** The session that started each scene (scene id → session id): its trace gets the scene's playback events. */
+  private readonly sceneSessions = new Map<string, string>()
 
   constructor(private readonly hooks: AgentServerHooks) {
     this.bridge = new RendererBridge(hooks.webContents)
@@ -368,6 +376,18 @@ export class AgentServer {
       folderRoot: () => hooks.folderRoot(),
       shownBoard: () => hooks.shownBoard()
     })
+    // The board's playback events go to the trace of the session that started the scene.
+    ipcMain.on(IPC.sceneEvent, (_event, scene: SceneEvent) => {
+      const id = scene && this.sceneSessions.get(scene.scene)
+      const session = id ? this.sessions.get(id) : undefined
+      if (session) this.traceOf(session)?.sceneEvent(scene)
+    })
+  }
+
+  /** A scene that this session started (play_scene start): for its playback events. */
+  private ownScene(session: Session, sceneId: string): void {
+    this.sceneSessions.set(sceneId, session.id)
+    if (this.sceneSessions.size > 500) this.sceneSessions.delete(this.sceneSessions.keys().next().value as string)
   }
 
   get url(): string {
@@ -608,6 +628,8 @@ export class AgentServer {
       console.log(`mcp: session ${session.id} is ${server.server.getClientVersion()?.name ?? 'an unnamed client'}`)
       this.traceOf(session)
       this.publish()
+      // An agent connected: its first screenshot or preview should not wait for the snapshot window.
+      this.hooks.snapshots.warm()
     }
     this.registerTools(session)
     void server.connect(session.transport)
@@ -663,7 +685,7 @@ export class AgentServer {
   }
 
   /** Wrap a tool body: activity pulse, logging, errors as tool errors, the session trace (trace.args: more for the traced args). */
-  private tool<A>(session: Session, name: string, body: (args: A, extra: ToolExtra, trace: { args?: Record<string, unknown> }) => Promise<CallToolResult>) {
+  private tool<A>(session: Session, name: string, body: (args: A, extra: ToolExtra, trace: CallTrace) => Promise<CallToolResult>) {
     return async (args: A, extra?: ToolExtra): Promise<CallToolResult> => {
       session.lastActivity = Date.now()
       this.hooks.activity({ sessionId: session.id, tool: name })
@@ -673,7 +695,7 @@ export class AgentServer {
       const news = name === 'get_changes' ? '' : await this.newsLine(session)
       let result: CallToolResult
       let thrown: unknown = null
-      const trace: { args?: Record<string, unknown> } = {}
+      const trace: CallTrace = { spans: { news_ms: Date.now() - start } }
       try {
         result = await body(args, extra ?? {}, trace)
       } catch (error) {
@@ -682,7 +704,7 @@ export class AgentServer {
         result = failure(error)
       }
       if (news) result = { ...result, content: [{ type: 'text', text: news }, ...result.content] }
-      this.traceOf(session)?.call(name, trace.args ? { ...(args as Record<string, unknown>), ...trace.args } : args, start, Date.now(), this.hooks.shownBoard(), thrown === null ? result : null, thrown)
+      this.traceOf(session)?.call(name, trace.args ? { ...(args as Record<string, unknown>), ...trace.args } : args, start, Date.now(), this.hooks.shownBoard(), thrown === null ? result : null, thrown, trace.spans)
       return result
     }
   }
@@ -828,7 +850,7 @@ export class AgentServer {
     // The reverts and every commit of the restage are one undo step for the learner (Board agentCommit's step key).
     const step = `restage-${sceneId}-${Date.now()}`
     const commit = async (id: string, run: StageRun, name: string | null, extra: Record<string, unknown> = {}): Promise<SceneResult & { ends_in_s: number }> =>
-      (await this.board('runScene', { scene: run.desc, job: run.job, frames: run.frames, sceneId: id, slot: true, step, ...(name ? { name } : {}), ...extra }, SCENE_TIMEOUT_MS)) as SceneResult & { ends_in_s: number }
+      (await this.board('runScene', { scene: run.desc, job: run.job, frames: run.frames, sceneId: id, slot: true, slotWhy: id === sceneId && change.cutAt !== undefined ? 'cut' : 'replaced', step, ...(name ? { name } : {}), ...extra }, SCENE_TIMEOUT_MS)) as SceneResult & { ends_in_s: number }
     /** Run a program: on the context, answers and seed of its earlier run (original), or on the board now. */
     const runOne = async (source: SceneSource, options: { seed?: number; cutAt: number | null; original?: StageEntry; name: string | null; place?: StagePlace | null }): Promise<StageRun> => {
       const context = options.original ? (JSON.parse(options.original.ctxText) as SceneContext) : await this.contextAt(options.place ?? null)
@@ -1030,7 +1052,7 @@ Use it to read handwriting and to see how a drawing looks. For ids, sizes and st
         }),
         annotations: { readOnlyHint: true }
       },
-      this.tool(session, 'get_screenshot', async ({ part, scale, max_size, labels, grid }) => {
+      this.tool(session, 'get_screenshot', async ({ part, scale, max_size, labels, grid }, _extra, trace) => {
         const plan = await this.bridge.request('screenshotPlan', {
           part,
           scale: scale ?? 1,
@@ -1053,6 +1075,7 @@ Use it to read handwriting and to see how a drawing looks. For ids, sizes and st
           background: plan.background,
           ...(plan.playback ? { playback: plan.playback } : {})
         })
+        Object.assign(trace.spans, { capture_ms: shot.ms, window_ms: shot.windowMs })
         const what = plan.what
         const playing = plan.playing
         const lines = [
@@ -1338,6 +1361,8 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
         let replaces = false
         // The snapshot: the inline code or the file, and every file it imports, read now and never again for this draft.
         let source: SceneSource
+        const spans = trace.spans
+        const tSnapshot = Date.now()
         try {
           source = await readSceneSource(this.hooks.folder(), code !== undefined ? { code } : { file })
         } catch (error) {
@@ -1347,18 +1372,26 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
         // The trace keeps the texts of the files it read, so a replay (scripts/perf/replay.mjs) can write them again.
         const files = source.modules.filter((module) => module.path !== null)
         if (files.length) trace.args = { snapshot: { entry: source.entry, modules: files.map(({ path, text }) => ({ path, text })), ...(source.links ? { links: source.links } : {}) } }
+        spans.snapshot_ms = Date.now() - tSnapshot
         // The draft is ready when the call returns: its program ran, its frames are in the renderer, the renderer compiled it.
+        const tQueue = Date.now()
         const outcome = await this.withProgram(session, extra, (signal) =>
           this.stage.exclusive(async (): Promise<CallToolResult | Draft> => {
+            spans.queue_ms = Date.now() - tQueue
             // A new version of a scene on the board runs where play_scene start runs it: at that scene's place.
             const place = this.placeOf(name)
             replaces = !!place
             const context = await this.contextAt(place)
             const run = await this.stage.run(source, context, { mode: 'draft', name, signal, place })
+            Object.assign(spans, run.timing)
+            const tLive = Date.now()
             const liveError = await this.checkLivePrograms(livesOf(run.desc))
+            spans.live_check_ms = Date.now() - tLive
             if (signal.aborted) throw new SceneCancelled()
             if (liveError) throw liveError
+            const tCompile = Date.now()
             const draft = await this.readyDraft(run, context, name, source, seq, place)
+            spans.compile_ms = Date.now() - tCompile
             if (signal.aborted) throw new SceneCancelled()
             // Published inside the stage's ownership; an older version never takes the place of a newer one.
             const drafts = this.draftsOf(board)
@@ -1413,7 +1446,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
         }),
         annotations: { readOnlyHint: true }
       },
-      this.tool(session, 'preview_scene', async ({ name, at, part, version }, extra) => {
+      this.tool(session, 'preview_scene', async ({ name, at, part, version }, extra, trace) => {
         const board = this.boardKey()
         const draft = this.draftsOf(board).get(name)
         const onBoard = this.boardScene(name)
@@ -1430,6 +1463,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
         if (use === 'draft') {
           const args = { label: `the draft "${name}"`, moments, part: framePart }
           let fresh = await this.freshDraft(session, extra, draft!)
+          trace.spans.rerun_ms = Date.now() - framesStart
           if ('content' in fresh) return fresh
           rerun = fresh.rerun
           let out = await this.board('sceneFrames', { ...args, draft: draftKey(draft!.desc) }, SCENE_TIMEOUT_MS)
@@ -1453,6 +1487,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
         const pictureStart = Date.now()
         const image = await renderStoryboard(this.hooks.snapshots, { nodes: plan.nodes, frames: plan.frames, rect: plan.rect, view: plan.view, covered: plan.covered, background: plan.background, stills }, options)
         const ticks = stills.length ? `; live stills ${stills.filter((still) => still.url).length}/${stills.length} in ${stillsMs} ms at ticks ${stills.map((still) => still.tick ?? '-').join(',')}` : ''
+        Object.assign(trace.spans, { frames_ms: framesMs - ((trace.spans.rerun_ms as number | undefined) ?? 0), stills_ms: stillsMs, picture_ms: Date.now() - pictureStart })
         console.log(`mcp: preview_scene ${name} (${use}): ${plan.frames.length} frame(s), ${image.width}x${image.height}; frames ${framesMs} ms, picture ${Date.now() - pictureStart} ms${ticks}`)
         const summary = {
           scene: name,
@@ -1491,9 +1526,9 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
         }),
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false }
       },
-      this.tool(session, 'play_scene', async ({ action, name, when, wait, from_step, after_step }, extra) => {
+      this.tool(session, 'play_scene', async ({ action, name, when, wait, from_step, after_step }, extra, trace) => {
         const control = async (args: Record<string, unknown>): Promise<Record<string, unknown>> => (await this.board('sceneControl', args, SCENE_TIMEOUT_MS)) as Record<string, unknown>
-        if (action === 'start') return this.startScene(session, extra, name, when ?? 'queue', wait ?? 'start')
+        if (action === 'start') return this.startScene(session, extra, name, when ?? 'queue', wait ?? 'start', trace.spans)
         let cancelled = 0
         if (action === 'stop' || action === 'clear_queue' || action === 'cancel') cancelled = this.cancelPrograms(null)
         if (action === 'cancel') return text(json({ ...publicStatus(await control({ action: 'status' })), cancelled_programs: cancelled }))
@@ -1670,7 +1705,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
   }
 
   /** play_scene start: the draft goes on the board and plays; a scene of the same name on the board is replaced in place. */
-  private async startScene(session: Session, extra: ToolExtra, name: string | undefined, when: 'queue' | 'now', wait: 'start' | 'end'): Promise<CallToolResult> {
+  private async startScene(session: Session, extra: ToolExtra, name: string | undefined, when: 'queue' | 'now', wait: 'start' | 'end', spans: Spans): Promise<CallToolResult> {
     if (!name) return failure(new Error('start needs name: the name of a draft from write_scene.'))
     const board = this.boardKey()
     const draft = this.draftsOf(board).get(name)
@@ -1680,12 +1715,16 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
     }
     const control = async (args: Record<string, unknown>): Promise<Record<string, unknown>> => (await this.board('sceneControl', args, SCENE_TIMEOUT_MS)) as Record<string, unknown>
     let outcome: CallToolResult | { result: SceneResult & { ends_in_s: number }; rerun: string | null; replaced: boolean; others?: unknown[]; stage?: string }
+    const tQueue = Date.now()
     try {
       outcome = await this.withProgram(session, extra, (signal) =>
         this.stage.exclusive(async () => {
+          spans.queue_ms = Date.now() - tQueue
           const onBoard = this.boardScene(name)
           if (onBoard?.scene) {
             const sceneId = onBoard.scene
+            this.ownScene(session, sceneId)
+            spans.scene = sceneId
             const known = await control({ action: 'known', scene: sceneId })
             if (!known.known) {
               return failure(
@@ -1703,13 +1742,16 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
           /** Run the program again as a scene at the end of the stage, and commit it with its frames. */
           const runAndCommit = async (): Promise<{ result: SceneResult & { ends_in_s: number }; entry: StageEntry; fresh: string | null }> => {
             const run = await this.stage.run(draft.source, context, { mode: 'scene', seed: draft.entry.seed, name, signal })
+            Object.assign(spans, run.timing)
             const liveError = await this.checkLivePrograms(livesOf(run.desc))
             if (signal.aborted || liveError) {
               this.stage.discard(run.entry)
               throw liveError ?? new SceneCancelled()
             }
             try {
+              const tCommit = Date.now()
               const result = (await this.board('runScene', { scene: run.desc, job: run.job, frames: run.frames, when, name }, SCENE_TIMEOUT_MS)) as SceneResult & { ends_in_s: number }
+              spans.commit_ms = Date.now() - tCommit
               return { result, entry: run.entry, fresh: run.fresh }
             } catch (error) {
               this.stage.discard(run.entry)
@@ -1722,7 +1764,9 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
             this.stage.adoptDraft(draft.entry)
             let out: unknown
             try {
+              const tCommit = Date.now()
               out = await this.board('runScene', { draft: draftKey(draft.desc), when, name }, SCENE_TIMEOUT_MS)
+              spans.commit_ms = Date.now() - tCommit
             } catch (error) {
               this.stage.discard(draft.entry)
               throw error
@@ -1736,6 +1780,8 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
           }
           const { result, entry, fresh } = done
           entry.scene = result.scene
+          this.ownScene(session, result.scene)
+          spans.scene = result.scene
           return { result, rerun: reason, replaced: false, ...(fresh ? { stage: `new (${fresh})` } : {}) }
         })
       )
@@ -1765,7 +1811,9 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
     }
     if (wait === 'end') {
       // Returns at the scene's end, or where playback stops at a pause before it (a pause step, the learner's drawing, play_scene pause).
+      const tWait = Date.now()
       const status = await control({ action: 'waitPlayed', scene: result.scene })
+      spans.wait_ms = Date.now() - tWait
       const { ended, ...rest } = status
       return text(json({ ...body, played: ended === true, status: publicStatus(rest) }))
     }

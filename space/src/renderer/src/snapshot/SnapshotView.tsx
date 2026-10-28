@@ -232,6 +232,11 @@ export function SnapshotView() {
   /** The frames of the current request that are drawn, and the images that did not load. */
   const progress = useRef({ requestId: 0, done: 0, missing: 0, failed: false })
 
+  // Every font face of the page (board fonts, KaTeX) loads now, so the first capture with text or maths does not wait for them.
+  useEffect(() => {
+    document.fonts.forEach((face) => void face.load().catch(() => undefined))
+  }, [])
+
   useEffect(
     () =>
       window.space.onSnapshotRequest((next) => {

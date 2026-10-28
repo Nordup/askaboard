@@ -15,8 +15,10 @@
  * --dev (the default) runs electron-vite dev on the current source; --built runs out/.
  *
  * Run folder: space/.lab/perf/runs/<stamp>-<task>-<client>-<model>[-<effort>]/ with
- * prompt.md, the agent's output, reply.md, calls.json, trace/ (the app trace),
- * metrics.json and (unless --no-video) video-real.mp4, video.mp4 and frames.json.
+ * prompt.md, the agent's output, reply.md, calls.json, trace/ (the app trace with
+ * its scene events), the agent's transcript (transcript-claude.jsonl or
+ * rollout-codex.jsonl), metrics.json, timeline.md and (unless --no-video)
+ * video-real.mp4, video.mp4 and frames.json.
  */
 import { cpSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
@@ -45,7 +47,7 @@ import {
 } from '../lab/common.mjs'
 import { makeMedia } from '../lab/media.mjs'
 import { task as getTask } from './tasks.mjs'
-import { PERF_RUNS, appendHistory, callMetrics, codeIdentity, frameChanges, round, runFileWrites, unionMs } from './metrics.mjs'
+import { PERF_RUNS, addTimeline, appendHistory, callMetrics, codeIdentity, frameChanges, round, runFileWrites, unionMs } from './metrics.mjs'
 
 const { option, flag } = args()
 const say = (...p) => log('perf', ...p)
@@ -135,6 +137,8 @@ async function oneRun(task, index) {
       await sleep(100)
     }
     const tIdle = Date.now()
+    // The scene's end event reaches the trace file (renderer → main → append) before the app stops.
+    await sleep(500)
     let frames = []
     let changes = null
     let rect = null
@@ -155,7 +159,7 @@ async function oneRun(task, index) {
     const rel = (iso) => round((Date.parse(iso) - t0) / 1000, 3)
     writeFileSync(
       join(dir, 'calls.json'),
-      JSON.stringify(calls.map((c) => ({ t_s: rel(c.t), end_s: rel(c.end ?? c.t), gap_ms: c.gap_ms ?? null, tool: c.tool, ms: c.duration_ms, ok: c.ok, error: c.error ?? null, args: c.args, result: c.result_text, images: c.images ?? null })), null, 2)
+      JSON.stringify(calls.map((c) => ({ t_s: rel(c.t), end_s: rel(c.end ?? c.t), gap_ms: c.gap_ms ?? null, tool: c.tool, ms: c.duration_ms, ok: c.ok, error: c.error ?? null, args: c.args, result: c.result_text, images: c.images ?? null, spans: c.spans ?? null })), null, 2)
     )
     writeFileSync(join(dir, 'reply.md'), `${work.reply ?? ''}\n`)
 
@@ -186,7 +190,7 @@ async function oneRun(task, index) {
         model = { source: 'codex rollout (task_started→task_complete minus tool time)', duration_s: round((span.end - span.start) / 1000, 2), api_s: round((span.end - span.start - inside) / 1000, 2) }
       }
     }
-    const metrics = {
+    let metrics = {
       kind: 'model',
       task: task.id,
       client: opts.client,
@@ -215,10 +219,12 @@ async function oneRun(task, index) {
       agent_pids: pids,
       recorded_s: round((tEnd - t0) / 1000, 1)
     }
+    // The transcript into the run folder, the timeline (turns, own calls, partition, scene events) and timeline.md.
+    metrics = addTimeline(dir, metrics, JSON.parse(readFileSync(join(dir, 'calls.json'), 'utf8')))
     writeFileSync(join(dir, 'metrics.json'), JSON.stringify(metrics, null, 2))
     appendHistory(metrics)
     const t = metrics.time
-    say(`wall ${t.wall} s, first scene ${t.first_scene ?? '-'} s, first visible ${t.first_visible ?? '-'} s, done ${t.done ?? '-'} s; ${m.calls.total} calls, ${m.calls.scene_previews} previews, ${m.calls.scene_plays} plays; written ${m.written.total}, read ${m.read.result_chars}`)
+    say(`wall ${t.wall} s (startup ${t.startup_s ?? '-'}, model ${t.model_gen_s ?? '-'}, waits ${t.waits_s ?? '-'}, own ${t.own_s ?? '-'}), first scene ${t.first_scene ?? '-'} s, first visible ${t.first_visible ?? '-'} s, first stroke ${t.first_stroke ?? '-'} s, done ${t.done ?? '-'} s; failed or denied own calls ${(metrics.own_calls?.failed ?? 0) + (metrics.own_calls?.denied ?? 0)}; ${m.calls.total} calls, ${m.calls.scene_previews} previews, ${m.calls.scene_plays} plays; written ${m.written.total}, read ${m.read.result_chars}`)
 
     // The videos, after the app has stopped and before the next run starts.
     if (frames.length) {

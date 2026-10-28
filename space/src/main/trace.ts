@@ -17,7 +17,8 @@ import { agentHomeDir } from './agent-home'
  *
  *   session_open   t, session_id, client {name, version}, folder, board
  *   tool_call      t (start), end, duration_ms, gap_ms, board, tool, args, ok,
- *                  result_text, images [{file, bytes}], error
+ *                  result_text, images [{file, bytes}], error, spans
+ *   scene_event    t, kind (first_frame | end | replaced), scene (id), name, outcome
  *   session_close  t, session_id, calls, wall_ms
  *
  * and in learner-edits.jsonl only:
@@ -36,6 +37,15 @@ import { agentHomeDir } from './agent-home'
  * or the person thinking or talking (MCP has no turn boundaries). Writes are
  * queued and never awaited by a tool call; a failed write logs one warning and
  * never fails the call.
+ *
+ * spans: where the app spent a call's time, in ms (news_ms: the board news
+ * before the body; write_scene: snapshot_ms, queue_ms, stage_ready_ms,
+ * stage_run_ms, body_ms, sampling_ms, encode_ms, board_wait_ms, bake_ms,
+ * live_check_ms, compile_ms; preview_scene: rerun_ms, frames_ms, stills_ms,
+ * picture_ms; play_scene start: queue_ms, stage_run_ms, commit_ms, wait_ms and
+ * scene, the scene id; get_screenshot: capture_ms, window_ms). scene_event: the
+ * board's playback of a scene this session started (renderer/live/player.ts):
+ * the first frame presented, its end and how it ended, or a cut or replace.
  */
 
 /** Any single string in args (HTML, SVG paths) is cut at this length. */
@@ -150,7 +160,7 @@ export class SessionTrace {
   }
 
   /** Record one tool call; `board` is the board shown when it ended. Never throws. */
-  call(tool: string, args: unknown, start: number, end: number, board: string | null, result: CallToolResult | null, error: unknown): void {
+  call(tool: string, args: unknown, start: number, end: number, board: string | null, result: CallToolResult | null, error: unknown, spans: Record<string, unknown> | null = null): void {
     try {
       if (this.closed) return
       this.calls++
@@ -176,8 +186,18 @@ export class SessionTrace {
         ok: !failed,
         result_text: cutString(resultText, MAX_RESULT_TEXT),
         ...(images.length ? { images } : {}),
-        ...(failed ? { error: error !== null ? (error instanceof Error ? error.message : String(error)) : cutString(resultText, 2000) } : {})
+        ...(failed ? { error: error !== null ? (error instanceof Error ? error.message : String(error)) : cutString(resultText, 2000) } : {}),
+        ...(spans && Object.keys(spans).length ? { spans } : {})
       })
+    } catch (caught) {
+      warnOnce(caught)
+    }
+  }
+
+  /** Record one scene playback event (shared/space-api SceneEvent). Never throws. */
+  sceneEvent(event: { kind: string; scene: string; name: string | null; t: number; outcome?: string }): void {
+    try {
+      this.write({ type: 'scene_event', t: new Date(event.t).toISOString(), kind: event.kind, scene: event.scene, name: event.name, ...(event.outcome ? { outcome: event.outcome } : {}) })
     } catch (caught) {
       warnOnce(caught)
     }

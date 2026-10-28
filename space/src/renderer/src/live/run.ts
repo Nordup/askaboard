@@ -567,7 +567,7 @@ export function runScene(ctx: RunSceneContext, args: Record<string, unknown>): (
   let startsIn: number
   // settled: the scene goes back on the board in its end state and does not play (a failed replace of a scene that had played).
   if (args.settled === true) startsIn = 0
-  else if (args.slot === true && scenePlayer.swap(ctx.board, sceneId, compiled.play, revert)) startsIn = scenePlayer.startsIn(sceneId)
+  else if (args.slot === true && scenePlayer.swap(ctx.board, sceneId, compiled.play, revert, args.slotWhy === 'cut' ? 'cut' : 'replaced')) startsIn = scenePlayer.startsIn(sceneId)
   else startsIn = scenePlayer.enqueue(ctx.board, compiled.play, { mode: args.when === 'now' ? 'now' : 'queue', revert })
   scenePlayer.remember({ play: compiled.play, snapshot, revert })
   // A playing scene (cut) started before now: its start is negative, its end is still ahead.

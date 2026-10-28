@@ -1,5 +1,6 @@
 import { isLive, type BoardNode, type InkNode, type InkPoint } from '@shared/board-format'
 import { SCENE_EASES, type SceneStatus } from '@shared/live-scene'
+import type { SceneEvent } from '@shared/space-api'
 import type { BoardHandle } from '../board/Board'
 import { clampZoom } from '../board/geometry'
 import { revealPoints, type NodeOverride, type PlaybackFrame, type PlaybackTip } from '../board/playback'
@@ -932,6 +933,15 @@ function sceneLists(play: ScenePlay): SceneListEntry {
 const HANDOFF_MS = 250
 const NO_CLOCKS: ReadonlyMap<string, Clock> = new Map()
 
+/** A scene's playback event for the session trace (main/trace.ts scene_event). Never throws. */
+function report(kind: SceneEvent['kind'], play: ScenePlay, outcome?: SceneEvent['outcome'], t = Date.now()): void {
+  try {
+    window.space?.sceneEvent?.({ kind, scene: play.id, name: play.name ?? null, t: Math.round(t), ...(outcome ? { outcome } : {}) })
+  } catch {
+    // The trace is for measures only.
+  }
+}
+
 export class ScenePlayer {
   private board: BoardHandle | null = null
   private scenes: Playing[] = []
@@ -949,6 +959,8 @@ export class ScenePlayer {
   /** When each scene started and ended on the clock (Date ms; for the lab's hand-off measures). */
   private playLog: Array<{ scene: string; name: string | null; start: number; end: number | null }> = []
   private waiters: Array<{ done: () => boolean; resolve: () => void }> = []
+  /** Scenes that started since the last frame went to the board: their first frame is reported when it is presented. */
+  private firstFrames: ScenePlay[] = []
   private waitTimer: ReturnType<typeof setInterval> | null = null
   /** The scenes as parts (one run per scene, in the order of `scenes`), and what they were made for. */
   private runs: SceneRun[] = []
@@ -1029,9 +1041,10 @@ export class ScenePlayer {
   }
 
   /** A scene that was committed again (replace, cut): the new play takes its place, keeping its place in the queue and its clock. */
-  swap(board: BoardHandle, id: string, play: ScenePlay, revert: (step?: string) => void): boolean {
+  swap(board: BoardHandle, id: string, play: ScenePlay, revert: (step?: string) => void, why: 'cut' | 'replaced' = 'replaced'): boolean {
     const scene = this.scenes.find((entry) => entry.play.id === id)
     if (!scene) return false
+    report('replaced', play, why)
     scene.play = play
     scene.revert = revert
     this.epoch++
@@ -1046,6 +1059,7 @@ export class ScenePlayer {
 
   /** Take a waiting scene out of the queue (its items are already reverted). */
   drop(id: string): void {
+    for (const scene of this.scenes) if (scene.play.id === id && scene.origin === null) report('end', scene.play, 'cancelled')
     this.scenes = this.scenes.filter((scene) => scene.play.id !== id || scene.origin !== null)
     this.history.delete(id)
     this.render()
@@ -1149,6 +1163,7 @@ export class ScenePlayer {
   stopAll(): void {
     if (this.frame !== null) cancelAnimationFrame(this.frame)
     this.frame = null
+    for (const scene of this.scenes) report('end', scene.play, 'removed')
     this.scenes = []
     this.inkPoints.clear()
     this.dropRuns()
@@ -1163,6 +1178,7 @@ export class ScenePlayer {
     if (board && board !== this.board) return
     if (this.frame !== null) cancelAnimationFrame(this.frame)
     this.frame = null
+    for (const scene of this.scenes) report('end', scene.play, 'removed')
     this.scenes = []
     this.inkPoints.clear()
     this.dropRuns()
@@ -1237,6 +1253,7 @@ export class ScenePlayer {
         scene.startedEpoch = Date.now()
         this.playLog.push({ scene: scene.play.id, name: scene.play.name ?? null, start: Math.round(performance.timeOrigin + at), end: null })
         if (this.playLog.length > 200) this.playLog.splice(0, this.playLog.length - 200)
+        this.firstFrames.push(scene.play)
         scene.lastT = scene.startAt
       }
       let t = this.timeOf(scene, now)
@@ -1271,6 +1288,7 @@ export class ScenePlayer {
         if (scene.mode === 'queue') this.queueEnd = (scene.origin as number) + scene.play.duration * 1000
         const logged = [...this.playLog].reverse().find((entry) => entry.scene === scene.play.id && entry.end === null)
         if (logged) logged.end = Math.round(performance.timeOrigin + (scene.origin as number) + scene.play.duration * 1000)
+        report('end', scene.play, 'played', performance.timeOrigin + (scene.origin as number) + scene.play.duration * 1000)
         continue
       }
       keep.push(scene)
@@ -1316,6 +1334,7 @@ export class ScenePlayer {
     const now = performance.now()
     this.advance(now)
     if (!this.scenes.length) {
+      this.firstFrames = []
       this.inkPoints.clear()
       this.dropRuns()
       board.setPlayback(null)
@@ -1348,6 +1367,14 @@ export class ScenePlayer {
     if (!same) {
       this.sent = { tips: tips.length, inks: inks.length, ghosts, clocks }
       board.setPlayback(frame)
+    }
+    if (this.firstFrames.length) {
+      // The frame is presented before the next animation frame starts: that is when the learner sees the scene's first frame.
+      const started = this.firstFrames
+      this.firstFrames = []
+      requestAnimationFrame(() => {
+        for (const play of started) report('first_frame', play)
+      })
     }
     this.publish(now)
     this.settleWaiters()
@@ -1499,6 +1526,7 @@ export class ScenePlayer {
       }
     } else if (action === 'stop') {
       // The playing scenes jump to their end state; the next queued scene starts.
+      for (const scene of this.scenes) if (scene.origin !== null) report('end', scene.play, 'stopped')
       this.scenes = this.scenes.filter((scene) => scene.origin === null)
       this.queueEnd = null
     } else if (action === 'skip') {
@@ -1507,6 +1535,7 @@ export class ScenePlayer {
       // Their items were committed when they were sent: take them off again (newest first), as one undo step.
       const step = `skip-${performance.now()}`
       for (const scene of dropped.reverse()) {
+        report('end', scene.play, 'cancelled')
         scene.revert(step)
         this.history.delete(scene.play.id)
       }

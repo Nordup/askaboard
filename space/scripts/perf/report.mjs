@@ -36,8 +36,17 @@ const COLUMNS = [
   ['wall s', (r) => r.time?.wall],
   ['1st scene s', (r) => r.time?.first_scene ?? r.time?.first_run_scene],
   ['1st visible s', (r) => r.time?.first_visible],
+  ['1st stroke s', (r) => r.time?.first_stroke],
   ['done s', (r) => r.time?.done ?? r.time?.total_with_playback],
-  ['model s', (r) => r.time?.model_s],
+  // The partition of the wall time (timeline.mjs); runs without it: the client's model time.
+  ['startup s', (r) => r.time?.startup_s],
+  ['model s', (r) => r.time?.model_gen_s ?? r.time?.model_s],
+  ['waits s', (r) => r.time?.waits_s],
+  ['own tools s', (r) => r.time?.own_s],
+  ['out tok', (r) => r.model_tokens?.output_tokens],
+  ['tok/s', (r) => r.model_tokens?.tok_s_median],
+  ['max ctx k', (r) => (r.model_tokens ? r.model_tokens.max_context / 1000 : null)],
+  ['failed own', (r) => (r.own_calls ? r.own_calls.failed + r.own_calls.denied : null)],
   ['calls', (r) => r.calls?.total],
   ['previews', (r) => r.calls?.scene_previews ?? r.calls?.run_scene_previews],
   ['plays', (r) => r.calls?.scene_plays ?? r.calls?.run_scene_plays],
@@ -92,7 +101,7 @@ for (const g of groups) {
   const codes = [...new Set(g.runs.map((r) => `${r.code?.commit?.slice(0, 7) ?? '?'}${r.code?.dirty ? `+${r.code.diff_hash?.slice(0, 6)}` : ''}`))].join(', ')
   lines.push(`| ${g.title} | ${g.n} | ${codes} | ${g.values.map((v, i) => cell(v, b && b !== g ? b.values[i] : null)).join(' | ')} |`)
 }
-lines.push('', 'Times in seconds from the agent start (replay: from the first call). "done": the last scene has played. "written k": thousands of characters the model wrote into tool args and files. "files k": the part of it written into files with the agent\'s own tools (Write/Edit, apply_patch). "repeat %": share of scene program code (write_scene: its inline code, or what the agent wrote into scene files for it; run_scene in older runs) that is ≥ 0.9 similar to the scene before it. "read k": thousands of result characters. "code": commit + hash of uncommitted changes in space/src and space/resources. Details: space/scripts/perf/README.md.')
+lines.push('', 'Times in seconds from the agent start (replay: from the first call). "done": the last scene has played (from the app\'s scene events; older runs: an estimate). "1st stroke": the board presented the first scene\'s first frame. "startup", "model", "waits", "own tools": the exclusive partition of the wall time (timeline.md); "model" in runs without it is the client\'s model time. "out tok": output tokens with reasoning; "tok/s": median per turn; "max ctx k": the largest context of a turn; "failed own": the agent\'s own tool calls that failed or were denied. "written k": thousands of characters the model wrote into tool args and files. "files k": the part of it written into files with the agent\'s own tools (Write/Edit, apply_patch). "repeat %": share of scene program code (write_scene: its inline code, or what the agent wrote into scene files for it; run_scene in older runs) that is ≥ 0.9 similar to the scene before it. "read k": thousands of result characters. "code": commit + hash of uncommitted changes in space/src and space/resources. Details: space/scripts/perf/README.md.')
 const text = `${lines.join('\n')}\n`
 writeFileSync(join(PERF, 'report.md'), text)
 process.stdout.write(text)
