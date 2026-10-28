@@ -902,8 +902,9 @@
 
   /** Characters with a level: 0 normal, 1 superscript, -1 subscript. "^2", "^{10}", "_1", "_{ab}" and ²₁ work. */
   function shapeText(source) {
-    // By characters, not UTF-16 units: a character outside the BMP (𝔽, an emoji) is one character.
-    const text = Array.from(source)
+    // By letters, not UTF-16 units: a character outside the BMP (𝔽, an emoji) is one letter, and so is a letter
+    // with its combining accents (x̄). Every kind of space is a space.
+    const text = letters(source.normalize('NFC').replace(/[^\S\n]/g, ' '))
     const out = []
     for (let i = 0; i < text.length; i++) {
       const c = text[i]
@@ -927,25 +928,108 @@
     return out
   }
 
+  /** A string as letters: each character with the combining marks that follow it. */
+  const MARK = /\p{M}/u
+  function letters(text) {
+    const out = []
+    for (const ch of text) {
+      if (out.length && MARK.test(ch)) out[out.length - 1] += ch
+      else out.push(ch)
+    }
+    return out
+  }
+
+  /** A glyph of the handwriting font itself (an alias names the character whose glyph it shares). */
+  function fontGlyph(ch) {
+    const g = FONT[ch]
+    return typeof g === 'string' ? FONT[g] || null : g || null
+  }
+
+  // Accents: the font holds each combining mark (U+0300…) drawn over a lower-case letter or hanging from the
+  // baseline, centred on x = 0. compose() puts the marks on the base letter in the same pen.
+  const BELOW = new Set(['\u0323', '\u0326', '\u0327', '\u0328'])
+  const DOTLESS = { i: 'ı', j: 'ȷ', 'і': 'ı', 'ј': 'ȷ' }
+  const CARON_AS_APOSTROPHE = new Set(['d', 't', 'l', 'L'])
+  const XHEIGHT = 0.667
+  function inkBox(strokes) {
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity
+    for (const s of strokes)
+      for (let k = 0; k < s.length; k += 2) {
+        x0 = Math.min(x0, s[k]); x1 = Math.max(x1, s[k])
+        y0 = Math.min(y0, s[k + 1]); y1 = Math.max(y1, s[k + 1])
+      }
+    return { x0, x1, y0, y1 }
+  }
+  const moved = (strokes, dx, dy) => strokes.map((s) => s.map((v, k) => (k % 2 ? v + dy : v + dx)))
+  function compose(letter) {
+    const [base, ...marks] = Array.from(letter.normalize('NFD'))
+    if (!marks.length || !marks.every((m) => MARK.test(m) && fontGlyph(m))) return null
+    const above = marks.some((m) => !BELOW.has(m))
+    const glyph = fontGlyph((above && DOTLESS[base]) || base)
+    if (!glyph) return null
+    const box = inkBox(glyph.s)
+    const strokes = [...glyph.s]
+    let a = glyph.a
+    let top = box.y0
+    for (const m of marks) {
+      if (m === '\u030C' && CARON_AS_APOSTROPHE.has(base)) {
+        // ď ť ľ Ľ: the caron of a tall letter is a small apostrophe after it.
+        const tick = fontGlyph("'").s
+        strokes.push(...moved(tick, box.x1 - 0.1, box.y0 + 1))
+        a += 0.14
+        continue
+      }
+      const mark = fontGlyph(m).s
+      if (BELOW.has(m)) {
+        // An ogonek hangs from the right foot, the others from the middle of the baseline.
+        strokes.push(...moved(mark, m === '\u0328' ? box.x1 - 0.1 : (box.x0 + box.x1) / 2, Math.max(0, box.y1)))
+        continue
+      }
+      // Over a capital or a tall letter the mark sits a little closer, and a second mark stacks on the first.
+      const dy = top + XHEIGHT + (top < -0.75 ? 0.05 : 0)
+      const placed = moved(mark, (box.x0 + box.x1) / 2, dy)
+      strokes.push(...placed)
+      top = inkBox(placed).y0 - 0.1
+    }
+    return { a, s: strokes }
+  }
+
   /**
-   * The glyph of each character for write(): the handwriting font (a letter
-   * with an accent, by its base letter), else the character from the board's
-   * text font, as the outlines of its shape (the board traces them,
-   * renderer/live/glyphs.ts, in the same units), so no character is left out.
-   * The board's glyphs are kept for the stage's life.
+   * The glyphs of one letter in the handwriting font, or null: the font's own glyph, else the letter's base letter
+   * with its accents, else its compatibility form (𝐱 → x, Ⅱ → II, ﬁ → fi, ℃ → °C), which can be several glyphs.
+   */
+  const handCache = new Map()
+  function handGlyphs(letter) {
+    if (handCache.has(letter)) return handCache.get(letter)
+    const own = (l) => fontGlyph(l) || compose(l)
+    let got = own(letter) ? [own(letter)] : null
+    if (!got) {
+      const form = letter.normalize('NFKD')
+      if (form !== letter && form.trim() === form) {
+        const parts = letters(form.normalize('NFC')).map(own)
+        if (parts.length && parts.every(Boolean)) got = parts
+      }
+    }
+    handCache.set(letter, got)
+    return got
+  }
+
+  /**
+   * The glyphs of each letter for write(): the handwriting font (handGlyphs), else the letter from the board's text
+   * font as its centre lines (the board draws and thins it, renderer/live/glyphs.ts, in the same units), so no letter
+   * is left out and every letter is one pen line. The board's glyphs are kept for the stage's life.
    */
   const boardGlyphs = new Map()
   function glyphsFor(chars) {
-    const own = (ch) => FONT[ch] || FONT[ch.normalize('NFD')[0]]
-    const ask1 = [...new Set(chars.filter((ch) => ch !== ' ' && !own(ch) && !boardGlyphs.has(ch)))]
+    const ask1 = [...new Set(chars.filter((ch) => ch !== ' ' && !handGlyphs(ch) && !boardGlyphs.has(ch)))]
     if (ask1.length) {
       const got = ask({ kind: 'glyphs', chars: ask1 }, 'write')
       for (const ch of ask1) {
         const g = got.glyphs && got.glyphs[ch]
-        boardGlyphs.set(ch, { ...(g && typeof g.a === 'number' && Array.isArray(g.s) ? g : { a: 0.6, s: [] }), board: true })
+        boardGlyphs.set(ch, g && typeof g.a === 'number' && Array.isArray(g.s) ? g : { a: 0.6, s: [] })
       }
     }
-    return new Map(chars.map((ch) => [ch, own(ch) || boardGlyphs.get(ch)]))
+    return new Map(chars.map((ch) => [ch, handGlyphs(ch) || [boardGlyphs.get(ch)]]))
   }
 
   function write(text, opts) {
@@ -970,23 +1054,23 @@
           pen += 0.55 * size * scale
           continue
         }
-        const glyph = glyphs.get(ch)
-        // A little variation per letter, like a hand.
-        const wob = 1 + (rng() - 0.5) * 0.06
-        const dy = (rng() - 0.5) * 0.04 * size
-        for (const flat of glyph.s) {
-          const pts = []
-          for (let k = 0; k < flat.length; k += 2) {
-            const gx = flat[k] * size * scale * wob
-            const gy = (flat[k + 1] + lift) * size * scale * wob
-            pts.push([pen + gx - gy * slant, baseline + gy + dy])
+        for (const glyph of glyphs.get(ch)) {
+          // A little variation per letter, like a hand.
+          const wob = 1 + (rng() - 0.5) * 0.06
+          const dy = (rng() - 0.5) * 0.04 * size
+          for (const flat of glyph.s) {
+            const pts = []
+            for (let k = 0; k < flat.length; k += 2) {
+              const gx = flat[k] * size * scale * wob
+              const gy = (flat[k + 1] + lift) * size * scale * wob
+              pts.push([pen + gx - gy * slant, baseline + gy + dy])
+            }
+            if (pts.length === 1) pts.push([pts[0][0] + 0.5, pts[0][1] + 0.5])
+            lines.push(pts)
           }
-          if (pts.length === 1) pts.push([pts[0][0] + 0.5, pts[0][1] + 0.5])
-          lines.push(pts)
+          // The font's advances hold wide side bearings, so letters sit a little closer than their advances.
+          pen += glyph.a * 0.92 * size * scale
         }
-        // The handwriting font's advances hold wide side bearings; a board glyph's outline reaches its edges, so the pen
-        // (its outline drawn with ink of some width) leaves a gap after it.
-        pen += (glyph.board ? glyph.a + 0.14 : glyph.a * 0.92) * size * scale
       }
       rowWidths.push(pen)
     })
