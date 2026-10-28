@@ -105,7 +105,7 @@ async function main() {
         let name = step.name ?? basename(file, '.js')
         if (scenes.includes(name)) name = `${name} #${scenes.length + 1}`
         const written = await invoke('write_scene', { name, code }, `write ${basename(file)}`)
-        const parsed = written ? await invoke('play_scene', { action: 'start', name, ...(step.when ? { when: step.when } : {}), ...(step.wait ? { wait: step.wait } : {}) }, `start ${name}`) : null
+        const parsed = written ? await invoke('play_scene', { action: 'start', name, ...(step.when ? { when: step.when } : {}) }, `start ${name}`) : null
         scenes.push(parsed?.scene ?? null)
         if (gap > 0 && !(plan[i + 1] && plan[i + 1].sleep !== undefined)) await sleep(gap * 1000)
       } else if (step.replace) {

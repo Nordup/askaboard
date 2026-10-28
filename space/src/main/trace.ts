@@ -42,7 +42,7 @@ import { agentHomeDir } from './agent-home'
  * before the body; write_scene: snapshot_ms, queue_ms, stage_ready_ms,
  * stage_run_ms, body_ms, sampling_ms, encode_ms, board_wait_ms, bake_ms,
  * live_check_ms, compile_ms; preview_scene: rerun_ms, frames_ms, stills_ms,
- * picture_ms; play_scene start: queue_ms, stage_run_ms, commit_ms, wait_ms and
+ * picture_ms; play_scene start: queue_ms, stage_run_ms, commit_ms and
  * scene, the scene id; get_screenshot: capture_ms, window_ms). scene_event: the
  * board's playback of a scene this session started (renderer/live/player.ts):
  * the first frame presented, its end and how it ended, or a cut or replace.
@@ -156,6 +156,10 @@ export class SessionTrace {
 
   private write(event: Record<string, unknown>): void {
     if (this.closed) return
+    this.writeAlways(event)
+  }
+
+  private writeAlways(event: Record<string, unknown>): void {
     this.chain = this.chain.then(() => this.append(event))
   }
 
@@ -194,10 +198,13 @@ export class SessionTrace {
     }
   }
 
-  /** Record one scene playback event (shared/space-api SceneEvent). Never throws. */
+  /**
+   * Record one scene playback event (shared/space-api SceneEvent). Never throws.
+   * Written also after close: a scene plays on after the session that started it closed.
+   */
   sceneEvent(event: { kind: string; scene: string; name: string | null; t: number; outcome?: string }): void {
     try {
-      this.write({ type: 'scene_event', t: new Date(event.t).toISOString(), kind: event.kind, scene: event.scene, name: event.name, ...(event.outcome ? { outcome: event.outcome } : {}) })
+      this.writeAlways({ type: 'scene_event', t: new Date(event.t).toISOString(), kind: event.kind, scene: event.scene, name: event.name, ...(event.outcome ? { outcome: event.outcome } : {}) })
     } catch (caught) {
       warnOnce(caught)
     }

@@ -10,6 +10,7 @@ import { buildIndex, inkOffset, isFlowed, ROOT, topLevelOf, withDescendants, zAb
 import type { LayoutBox } from '../board/types'
 import { coveredOf } from '../agent/covered'
 import { anchorFor, findSpace, obstacles, viewOf, type Scene } from '../agent/placement'
+import { traceGlyphs } from './glyphs'
 
 /**
  * The board's answers to a scene program while it runs (html(), image(),
@@ -21,6 +22,8 @@ import { anchorFor, findSpace, obstacles, viewOf, type Scene } from '../agent/pl
  * - space: an empty rect on the board (the find-space rule), clear of the
  *   board's items and of the scene's own objects.
  * - item: what a board item holds now (ink points, or its content as drafts).
+ * - glyphs: characters that write()'s handwriting font lacks, traced from the
+ *   board's text font (glyphs.ts).
  */
 
 export interface HostContext {
@@ -285,6 +288,8 @@ export async function sceneHost(ctx: HostContext, request: Record<string, unknow
         return spaceAnswer(ctx, request)
       case 'item':
         return await itemAnswer(ctx, request)
+      case 'glyphs':
+        return { glyphs: traceGlyphs(Array.isArray(request.chars) ? request.chars.filter((ch): ch is string => typeof ch === 'string').slice(0, 512) : []) }
       default:
         return { error: `unknown request ${String(request.kind)}` }
     }

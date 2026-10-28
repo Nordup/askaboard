@@ -2,7 +2,8 @@ import { isContent, isFrame, isInk, isKnown, newItemId, type BoardNode, type Con
 import { mulberry32, type SceneBounds, type SceneDescription, type SceneEase, type SceneGroupObject, type SceneHtmlObject, type SceneInkObject, type SceneLiveObject, type SceneObjectDesc, type ScenePartObject, type SceneSample, type SceneShapeObject, type SceneStyle, type SceneTextObject } from '@shared/live-scene'
 import { splitPath, type FrameKind } from '@shared/frames'
 import { MAX_COORD } from '@shared/limits'
-import { flattenPath, parsePath } from '@shared/path-geometry'
+import { flattenPath, parsePath, type PathSegment } from '@shared/path-geometry'
+import { polylineInk } from '@shared/ink-points'
 import { humanize, strokeSeed } from '../agent/ink'
 import type { Scene } from '../agent/placement'
 import { inkOffset, isFlowed, normalizeInk, removeNodes, ROOT, withDescendants, zAbove } from '../board/scene'
@@ -10,7 +11,7 @@ import type { Point, Region } from '../board/types'
 import { textHtml } from '../board/content'
 import { checkDrafts, draftsToNodes, Ignored } from '../board/html'
 import { applyStyles, normalizeStyles } from '../board/style-edits'
-import { sceneColor, withOpacity } from './colors'
+import { drawColor, withOpacity } from './colors'
 import { apply, IDENTITY, invert, isIdentity, multiply, scaleOf, Timeline, type Matrix } from './timeline'
 
 /**
@@ -161,11 +162,42 @@ const r2 = (value: number): number => Math.round(value * 100) / 100
 /** Pen lift between strokes of one ink object, in board points of drawing time. */
 const LIFT = 9
 
-/** The outline of a shape's path, for its box (shared/path-geometry.ts); an error for a path without length. */
+/**
+ * The outline of a shape's path, for its box (shared/path-geometry.ts). A
+ * shape with no length (the stage sends it as a lone moveto) is its point:
+ * it keeps its item and its motion, and draws nothing.
+ */
 function shapeOutline(d: string): Point[][] {
-  const lines = flattenPath(parsePath(d), 'ink') as Point[][]
-  if (!lines.some((line) => line.some((p, i) => i > 0 && (p[0] !== line[i - 1][0] || p[1] !== line[i - 1][1])))) throw new Error('the path has no length. Give a path "d" string such as "M0 0 L40 0".')
-  return lines
+  const segments = parsePath(d)
+  const lines = flattenPath(segments, 'ink') as Point[][]
+  if (lines.length) return lines
+  const move = segments.find((segment) => segment[0] === 'M')
+  return move ? [[[move[1] as number, move[2] as number]]] : [[[0, 0]]]
+}
+
+/**
+ * A pen shape's outline as the hand draws it (a pen shape with a fill): each
+ * subpath's ink points (shared/ink-points.ts) with the hand's wobble, seeded
+ * as ink is, as one path that the fill follows too. A subpath closes (Z) only
+ * when it is closed in d.
+ */
+function handPath(d: string, jitter: number, key: string): string {
+  const subpaths: PathSegment[][] = []
+  for (const segment of parsePath(d)) {
+    if (segment[0] === 'M' || !subpaths.length) subpaths.push([])
+    subpaths[subpaths.length - 1].push(segment)
+  }
+  const out: string[] = []
+  let run = 0
+  for (const subpath of subpaths) {
+    const closed = subpath.some((segment) => segment[0] === 'Z')
+    for (const line of polylineInk(flattenPath(subpath, 'ink'))) {
+      const flat = line.map(([x, y]) => [x, y] as Point)
+      const points = humanize(flat, jitter, mulberry32(strokeSeed(`${key}:${run++}`, flat)))
+      out.push(points.map(([x, y], k) => `${k ? 'L' : 'M'}${r2(x)} ${r2(y)}`).join(' ') + (closed ? ' Z' : ''))
+    }
+  }
+  return out.length ? out.join(' ') : d
 }
 
 function linesBounds(lines: readonly Point[][]): Region {
@@ -327,7 +359,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
   const finalOpacity = (id: number, style?: SceneStyle): number => Math.max(0, Math.min(1, timeline.number(id, 'opacity', END))) * (style?.opacity ?? 1)
   const finalColor = (id: number): string => timeline.color(id, END) ?? '#ececef'
   /** A final colour for board material: the token when the colour never changed, else the concrete end colour. */
-  const materialColor = (id: number, style: SceneStyle): string => (timeline.hasTrack(id, 'color') || desc.objects[id].base?.color !== undefined ? finalColor(id) : sceneColor(style.color).css)
+  const materialColor = (id: number, style: SceneStyle): string => (timeline.hasTrack(id, 'color') || desc.objects[id].base?.color !== undefined ? finalColor(id) : drawColor(style.color).css)
   /**
    * A carried object (made by an earlier scene of the stage) keeps its board
    * items: its new node takes the old one's id, z and parent (x, y become
@@ -402,7 +434,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
       const record = stage?.(object.sid)
       const present = (record?.nodeIds ?? []).filter((id) => s.index.byId.has(id))
       if (!present.length) {
-        warn(`${object.api}${object.name ? ` "${object.name}"` : ''} (stage object ${object.sid}): made by an earlier scene, it is no longer on the board (erased?); left out`)
+        // Made by an earlier scene and no longer on the board (erased): it draws nothing.
         continue
       }
       prior = present
@@ -450,10 +482,8 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
           const [wx, wy] = apply(end, [x, y])
           return [wx, wy, p] as InkPoint
         })
-        if (world.some(([x, y]) => !Number.isFinite(x) || !Number.isFinite(y) || Math.abs(x) > MAX_COORD || Math.abs(y) > MAX_COORD)) {
-          warn(`${ink.api} ${object.id}: a stroke went outside ±${MAX_COORD} board points and was left out`)
-          continue
-        }
+        // A stroke outside the board draws nothing.
+        if (world.some(([x, y]) => !Number.isFinite(x) || !Number.isFinite(y) || Math.abs(x) > MAX_COORD || Math.abs(y) > MAX_COORD)) continue
         strokes.push(
           normalizeInk({
             id: prior && prior[strokes.length] ? prior[strokes.length] : newItemId('s'),
@@ -488,13 +518,9 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
 
     if (object.kind === 'shape') {
       const shape = object as SceneShapeObject
-      let lines: Point[][]
-      try {
-        lines = shapeOutline(shape.d)
-      } catch (error) {
-        warn(`${shape.api} ${object.id}: ${error instanceof Error ? error.message : String(error)}`)
-        continue
-      }
+      // A pen shape (with a fill) is drawn by hand; while it changes it shows its samples without wobble, as ink does, so its end state has none either.
+      const d = shape.style.pen && !play.dyn ? handPath(shape.d, shape.style.jitter ?? 0.3, `${object.sid ?? `o${object.id}`}`) : shape.d
+      const lines = shapeOutline(d)
       const world = lines.map((line) => line.map((p) => apply(end, p)))
       const scale = scaleOf(end)
       const pad = (shape.style.width * scale) / 2 + 2
@@ -503,27 +529,25 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
       const by = Math.floor(box.y - pad)
       const bw = Math.ceil(box.width + pad * 2) + 1
       const bh = Math.ceil(box.height + pad * 2) + 1
-      if (![bx, by, bw, bh].every(Number.isFinite) || Math.abs(bx) > MAX_COORD || Math.abs(by) > MAX_COORD) {
-        warn(`${shape.api} ${object.id}: outside ±${MAX_COORD} board points; left out`)
-        continue
-      }
+      // A shape outside the board draws nothing.
+      if (![bx, by, bw, bh].every(Number.isFinite) || Math.abs(bx) > MAX_COORD || Math.abs(by) > MAX_COORD) continue
       const style = shape.style
       const defs: string[] = []
       let fill = 'none'
       if (style.gradient) {
-        const stops = style.gradient.map((c, i) => `<stop offset="${r2(i / (style.gradient!.length - 1))}" stop-color="${escapeAttr(sceneColor(c).hex)}"/>`)
+        const stops = style.gradient.map((c, i) => `<stop offset="${r2(i / (style.gradient!.length - 1))}" stop-color="${escapeAttr(drawColor(c).hex)}"/>`)
         defs.push(`<linearGradient id="fill" x1="0" y1="0" x2="0" y2="1">${stops.join('')}</linearGradient>`)
         fill = 'url(#fill)'
       } else if (style.hatch) {
         const gap = Math.max(4, style.width * 2.4)
         defs.push(
-          `<pattern id="fill" patternUnits="userSpaceOnUse" width="${gap}" height="${gap}" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="${gap}" stroke="${escapeAttr(sceneColor(style.hatch).hex)}" stroke-width="${r2(Math.max(1, style.width * 0.5))}"/></pattern>`
+          `<pattern id="fill" patternUnits="userSpaceOnUse" width="${gap}" height="${gap}" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="${gap}" stroke="${escapeAttr(drawColor(style.hatch).hex)}" stroke-width="${r2(Math.max(1, style.width * 0.5))}"/></pattern>`
         )
         fill = 'url(#fill)'
-      } else if (style.fill) fill = sceneColor(style.fill).hex
+      } else if (style.fill) fill = drawColor(style.fill).hex
       const fillOpacity = style.fillOpacity ?? 1
       const attrs = [
-        `d="${escapeAttr(shape.d)}"`,
+        `d="${escapeAttr(d)}"`,
         `fill="${escapeAttr(fill)}"`,
         fill !== 'none' && fillOpacity < 1 ? `fill-opacity="${r2(fillOpacity)}"` : '',
         'stroke="currentColor"',
@@ -569,7 +593,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
     if (object.kind === 'text') {
       const text = object as SceneTextObject
       const scale = scaleOf(end)
-      if (Math.abs(end[1]) > 1e-3 || Math.abs(end[2]) > 1e-3) warn(`${text.api} ${object.id}: text cannot stay rotated; it rotates while the scene plays and ends upright`)
+      // Text cannot stay rotated: it rotates while the scene plays and ends upright.
       // Text keeps translation and scale only: that is what is baked.
       const anchor: Point = text.at ?? [text.bounds.x, text.bounds.y]
       const [x, y] = apply(end, anchor)
@@ -613,7 +637,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
     if (object.kind === 'live') {
       const live = object as SceneLiveObject
       const scale = scaleOf(end)
-      if (Math.abs(end[1]) > 1e-3 || Math.abs(end[2]) > 1e-3) warn(`${live.api} ${object.id}: a live item cannot stay rotated; it rotates while the scene plays and ends upright`)
+      // A live item cannot stay rotated: it rotates while the scene plays and ends upright.
       const anchor: Point = [live.bounds.x, live.bounds.y]
       const [x, y] = apply(end, anchor)
       const upright: Matrix = [scale, 0, 0, scale, x - scale * anchor[0], y - scale * anchor[1]]
@@ -649,9 +673,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
 
     if (object.kind === 'html' && !object.carry) {
       const html = object as SceneHtmlObject
-      const scale = scaleOf(end)
-      if (Math.abs(end[1]) > 1e-3 || Math.abs(end[2]) > 1e-3) warn(`${html.api} ${object.id}: material cannot stay rotated; it rotates while the scene plays and ends upright`)
-      if (Math.abs(scale - 1) > 1e-3) warn(`${html.api} ${object.id}: material keeps its size on the board; it scales only while the scene plays`)
+      // Material cannot stay rotated or scaled: it turns and scales while the scene plays, and ends upright at its own size.
       const anchor: Point = [html.bounds.x, html.bounds.y]
       const [x, y] = apply(end, anchor)
       const baked: Matrix = [1, 0, 0, 1, x - anchor[0], y - anchor[1]]
@@ -662,10 +684,8 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
       let position: Point = [r1(x), r1(y)]
       if (place) {
         const target = currentNode(place.ref)
-        if (!target || !isKnown(target) || isInk(target) || removed.has(place.ref)) {
-          warn(`${html.api} ${object.id}: the item "${place.ref}" it goes into is gone; left out`)
-          continue
-        }
+        // The item it goes into is gone: it draws nothing.
+        if (!target || !isKnown(target) || isInk(target) || removed.has(place.ref)) continue
         const replacing = place.mode === 'replace'
         parent = replacing ? (target.parent as string | undefined) : target.id
         const siblings = (s.index.children.get(parent ?? ROOT) ?? []).filter((node) => node.id !== place.ref)
@@ -682,8 +702,8 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
       let drafts
       try {
         drafts = checkDrafts(html.drafts, ignoredDrafts).slice(0, 1)
-      } catch (error) {
-        warn(`${html.api} ${object.id}: ${error instanceof Error ? error.message : String(error)}; left out`)
+      } catch {
+        // Drafts that are not material draw nothing.
         continue
       }
       const dropped = ignoredDrafts.summary()
@@ -741,10 +761,8 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
         partId = children[part.index]?.id
       }
       const node = partId ? currentNode(partId) : undefined
-      if (!partId || !node) {
-        warn(`part ${part.index}${part.name ? ` "${part.name}"` : ''}: it is no longer on the board; left out`)
-        continue
-      }
+      // A part no longer on the board draws nothing.
+      if (!partId || !node) continue
       play.records = [partId]
       const own = part.vis === 'hidden' || timeline.hasTrack(object.id, 'draw') || timeline.hasTrack(object.id, 'opacity') || isRemoved
       const recolor = timeline.hasTrack(object.id, 'color')
@@ -776,7 +794,6 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
       if (object.kind === 'html') play.records = prior ?? []
       const rigidMove: Matrix = [1, 0, 0, 1, apply(end, object.pivot)[0] - object.pivot[0], apply(end, object.pivot)[1] - object.pivot[1]]
       const translation: Point = [apply(end, object.pivot)[0] - object.pivot[0], apply(end, object.pivot)[1] - object.pivot[1]]
-      const rigid = Math.abs(end[0] - 1) < 1e-3 && Math.abs(end[1]) < 1e-3 && Math.abs(end[2]) < 1e-3 && Math.abs(end[3] - 1) < 1e-3
       const lengths: number[] = []
       for (const id of ids) {
         const node = s.index.byId.get(id)
@@ -813,7 +830,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
           }
           if (timeline.hasTrack(object.id, 'color')) next = { ...next, color: finalColor(object.id) }
           const opacity = timeline.number(object.id, 'opacity', END)
-          if (opacity < 0.999) next = { ...next, color: withOpacity(next.color.startsWith('var(') ? sceneColor(next.color).hex : next.color, opacity) }
+          if (opacity < 0.999) next = { ...next, color: withOpacity(next.color.startsWith('var(') ? drawColor(next.color).hex : next.color, opacity) }
           if (next !== node) changed.set(id, next)
           continue
         }
@@ -830,10 +847,10 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
         }
         let baked: Matrix = IDENTITY
         let next: ContentNode = content
-        if (!rigid) warn(`board.node("${ref}"): a ${content.kind} keeps its size and angle on the board; it scales or rotates only while the scene plays`)
+        // Content keeps its size and angle on the board (it scales or turns only while the scene plays); content in a flex
+        // frame goes back to its place in the flow when the scene ends.
         if (Math.abs(translation[0]) > 0.05 || Math.abs(translation[1]) > 0.05) {
-          if (isFlowed(content, s.index.byId)) warn(`board.node("${ref}"): it is placed by its flex frame, so it goes back to its place when the scene ends`)
-          else {
+          if (!isFlowed(content, s.index.byId)) {
             next = { ...next, x: r1(content.x + translation[0]), y: r1(content.y + translation[1]) }
             baked = [1, 0, 0, 1, translation[0], translation[1]]
           }
@@ -848,7 +865,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
       const inkRanges = ranges(lengths)
       inkTargets.forEach((target, i) => (target.range = inkRanges[i]))
       play.tipColor = (object.kind === 'node' ? nodeColor(object) : undefined) ?? '#ececef'
-      if (play.tipColor.startsWith('var(')) play.tipColor = sceneColor(play.tipColor).hex
+      if (play.tipColor.startsWith('var(')) play.tipColor = drawColor(play.tipColor).hex
       continue
     }
   }
@@ -867,14 +884,8 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
       if (frame) return [frame]
       return (object as SceneGroupObject).members.flatMap((member) => itemsUnder(desc.objects[member]))
     }
-    if (object.kind === 'node') {
-      warn(`group "${desc.objects[object.parent ?? 0]?.name ?? ''}": board.node("${object.ref}") is an item from before the scene; it moves with the group while the scene plays but stays its own item`)
-      return []
-    }
-    if (object.carry) {
-      warn(`group "${desc.objects[object.parent ?? 0]?.name ?? ''}": ${object.api} ${object.sid} was made by an earlier scene; it moves with the group while the scene plays but stays its own item`)
-      return []
-    }
+    // An item from before the scene, or made by an earlier scene, moves with the group while the scene plays but stays its own item.
+    if (object.kind === 'node' || object.carry) return []
     return (nodesOf.get(object.id) ?? []).map((id) => byId.get(id)).filter((node): node is BoardNode => !!node)
   }
   const boxOf = (node: BoardNode): Region | null => {
@@ -971,10 +982,9 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
       if (!node || !isKnown(node) || removed.has(id)) continue
       let after: BoardNode = node
       const edit: PlayEdit = { nodeId: id, at: change.at, dur: change.dur, ease: change.ease, ink: isInk(node), before: {}, after: {} }
-      if (change.text !== undefined && typeof change.text !== 'string') warn(`edit: the text must be a string; it was ignored`)
-      else if (change.text !== undefined) {
-        if (node.kind !== 'text') warn(`edit: ${object.api}${object.name ? ` "${object.name}"` : ''} is a ${node.kind}; only text has text to change`)
-        else if (object.kind === 'text') {
+      // A text that is not a string, or text for an item that is not text, is ignored.
+      if (typeof change.text === 'string' && node.kind === 'text') {
+        if (object.kind === 'text') {
           // A text() or tex() object: its node already holds the new text.
           const text = object as SceneTextObject
           const before = (change as { before?: string }).before ?? text.text
@@ -987,20 +997,13 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
         }
       }
       if (change.style) {
-        const ignored = new Set<string>()
-        const styles = normalizeStyles(change.style, ignored)
-        if (ignored.size) warn(`edit: these styles were ignored: ${[...ignored].join(', ')}`)
+        // Styles the board does not take are ignored; ink takes a colour only.
+        const styles = normalizeStyles(change.style, new Set<string>())
         if (isInk(node)) {
           const color = styles.color ?? styles.backgroundColor
-          for (const key of Object.keys(styles)) if (key !== 'color' && key !== 'backgroundColor') warn(`edit: ink takes a colour only; "${key}" was ignored`)
           if (color) {
-            let hex = color
-            try {
-              hex = sceneColor(color).hex
-            } catch {
-              warn(`edit: "${color}" is not a colour`)
-            }
-            edit.before.style = { color: node.color.startsWith('var(') ? sceneColor(node.color).hex : node.color }
+            const hex = drawColor(color).hex
+            edit.before.style = { color: node.color.startsWith('var(') ? drawColor(node.color).hex : node.color }
             edit.after.style = { color: hex }
             after = { ...after, color: hex } as BoardNode
           }
@@ -1023,10 +1026,8 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
   for (const change of desc.reparents ?? []) {
     const frameId = 'ref' in change.into ? change.into.ref : itemNodes(change.into.obj)[0]
     const frame = frameId ? currentNode(frameId) : undefined
-    if (!frameId || !frame || !isFrame(frame) || removed.has(frameId)) {
-      warn(`move into: the frame${frameId ? ` "${frameId}"` : ''} is not on the board; the item stays where it is`)
-      continue
-    }
+    // The frame is not on the board: the item stays where it is.
+    if (!frameId || !frame || !isFrame(frame) || removed.has(frameId)) continue
     const siblings = [...(s.index.children.get(frameId) ?? []), ...created.filter((node) => node.parent === frameId)].filter((node, i, list) => list.findIndex((entry) => entry.id === node.id) === i).sort((a, b) => (a.z as number) - (b.z as number))
     let zNext = typeof change.index === 'number' && siblings[change.index] ? (siblings[change.index].z as number) - 0.5 : zAbove(siblings)
     const to = originOf(frameId)
@@ -1066,7 +1067,6 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
   for (const step of desc.steps) if (step.at <= desc.duration + 1e-6) endStep = step.name
   const rest = { t: Math.round(desc.duration * 1000) / 1000, ...(endStep !== undefined ? { step: endStep } : {}) }
   next = next.map((node) => (node.kind === 'live' && (node as LiveNode).mode === 'program' && played.has(node.id) ? ({ ...node, rest } as LiveNode) : node))
-  for (const ghost of ghosts) if (isFrame(ghost)) warn(`A frame faded out with everything in it`)
   const removedAll = removed.size ? [...withDescendants(removed, s.index)].filter((id) => !rescued.has(id)).map((id) => s.index.byId.get(id) as BoardNode).filter(Boolean) : []
   return {
     next,

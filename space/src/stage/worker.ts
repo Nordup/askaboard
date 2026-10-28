@@ -49,12 +49,15 @@ import { BRIDGE_HEADER, type FromWorker, type ToWorker } from './worker-protocol
 interface WorkerScope {
   postMessage(message: FromWorker, transfer?: Transferable[]): void
   addEventListener(type: 'message', listener: (event: MessageEvent<ToWorker>) => void): void
+  addEventListener(type: 'unhandledrejection', listener: (event: PromiseRejectionEvent) => void): void
 }
 
 interface Host {
   begin(ctxText: string): void
   advance(): boolean
   end(): void
+  /** An error of the program's own parallel work (all(), say() marks) as soon as it happens, or null. */
+  failed(): { error: unknown } | null
   result(): string
   bake(): void
   stats(): { evaluations: number; fullEvaluations: number }
@@ -95,6 +98,21 @@ scope.addEventListener('message', (event) => {
   const message = event.data
   if (message.t === 'init') init(message)
   else if (message.t === 'run') run(message)
+})
+
+/**
+ * A promise of the program that rejects with no handler: an async function
+ * it started and never awaited (a background loop that throws). Its error is
+ * the program's error, as any other: the clock reports it at its next tick.
+ * The worker dispatches this event in a task after the one in which the
+ * promise rejected (after the tick that task queued), so the clock checks it
+ * at every tick and takes one more tick before a program ends.
+ */
+let unhandled: { error: unknown } | null = null
+let running = false
+scope.addEventListener('unhandledrejection', (event) => {
+  event.preventDefault()
+  if (running && !unhandled) unhandled = { error: event.reason }
 })
 
 // The worker's own globals go before anything else runs; the listener above stays registered.
@@ -175,6 +193,7 @@ function ask(request: unknown): string {
 
 function run(message: Extract<ToWorker, { t: 'run' }>): void {
   const started = clock()
+  unhandled = null
   const fns = host
   if (!fns) {
     post(failure(message.id, new Error('The scene library is not loaded.'), started))
@@ -208,23 +227,41 @@ function run(message: Extract<ToWorker, { t: 'run' }>): void {
     }
   )
   // The clock: each task ends the earliest pending action; every job the program has runs before the next task.
+  // A program that fails ends at once: its error goes back now, and no task advances it again, so nothing of it
+  // runs any more (its parallel loops included). The next program's begin() drops what it left waiting.
+  running = true
+  let ending = false
+  const stop = (): void => {
+    tick.port1.onmessage = null
+    running = false
+  }
   tick.port1.onmessage = () => {
+    const failed = settled === 'rejected' ? { error: reason } : (fns.failed() ?? unhandled)
+    if (failed) {
+      stop()
+      post(failure(message.id, failed.error, started))
+      return
+    }
+    // Nothing was left at the last tick, and nothing failed since: the program ends here (see below).
+    if (ending) {
+      stop()
+      if (settled === 'pending') post(failure(message.id, new ErrorType(STUCK), started))
+      else post(finish(fns, message.id, message.mode, started))
+      return
+    }
     let more: boolean
     try {
       more = fns.advance()
     } catch (error) {
-      tick.port1.onmessage = null
+      stop()
       post(failure(message.id, error, started))
       return
     }
-    if (more) {
-      tick.port2.postMessage(null)
-      return
-    }
-    tick.port1.onmessage = null
-    // A pending promise here waits on something that never resolves (not a scene action): the scene ends there.
-    if (settled === 'rejected') post(failure(message.id, reason, started))
-    else post(finish(fns, message.id, message.mode, started))
+    // Nothing is left on the scene clock: one more task, so that a rejection with no handler from the last tick
+    // (its event comes after the task that was queued then) fails the program. Then a program still pending
+    // waits on something that never comes.
+    if (!more) ending = true
+    tick.port2.postMessage(null)
   }
   tick.port2.postMessage(null)
 }
@@ -373,6 +410,9 @@ class FrameStream {
     post({ t: 'frames', v: FRAMES_VERSION, id: this.id, seq: this.sent++, u32: chunk.u32, f64: chunk.f64, strings: chunk.strings }, [chunk.u32.buffer, chunk.f64.buffer])
   }
 }
+
+/** The error of a program that waits when nothing is left to happen on the scene clock. */
+const STUCK = 'The program did not finish: it waits on something that never happens, such as an await on a promise that nothing resolves.'
 
 function failure(id: number, thrown: unknown, started: number): StageReply {
   const { message, line, file } = describe(thrown)

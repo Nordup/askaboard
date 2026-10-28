@@ -13,7 +13,7 @@ import { appendFileSync, existsSync, mkdirSync, openSync, readSync, closeSync, r
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { LAB, SPACE } from '../lab/common.mjs'
-import { archiveTranscript, runTimeline } from './timeline.mjs'
+import { archiveTranscript, runTimeline, sceneEnds, sceneEvents } from './timeline.mjs'
 
 export const PERF = join(SPACE, '.lab/perf')
 export const PERF_RUNS = join(PERF, 'runs')
@@ -318,16 +318,10 @@ export function callMetrics(calls, { t0, wallEnd, tracesDir = null, fileWrites =
   const sceneWaits = calls.filter((c) => (c.tool === 'scene_control' || c.tool === 'play_scene') && c.args?.action === 'wait')
   const playWaits = plays.filter((c) => c.args?.wait === 'end')
 
-  // An estimate of when the last scene ends (runs without scene events; see addTimeline): each play's end + ends_in_s,
-  // or its return with wait "end" when it played to its end (played: false stopped at a pause).
-  let doneMs = null
-  for (const c of plays) {
-    if (!c.ok) continue
-    const r = parse(c.result_text)
-    if (!r || r.played === false) continue
-    const end = r.played !== undefined ? endOf(c) : endOf(c) + (typeof r.ends_in_s === 'number' ? r.ends_in_s : (r.starts_in_s ?? 0) + (r.length_s ?? r.duration_s ?? 0)) * 1000
-    doneMs = Math.max(doneMs ?? 0, end)
-  }
+  // How the scenes ended, from the app's scene events (since 2026-10-28; model runs and replays):
+  // done is the last end of a scene that played to its end. Runs without scene events have no done.
+  const events = tracesDir ? sceneEvents(tracesDir, t0) : []
+  const ends = sceneEnds(events)
 
   const toolMs = unionMs(calls.map((c) => [at(c), endOf(c)]))
   const wallMs = wallEnd - t0
@@ -389,7 +383,8 @@ export function callMetrics(calls, { t0, wallEnd, tracesDir = null, fileWrites =
       first_call: calls.length ? s(at(calls[0]) - t0) : null,
       first_scene: programs.length ? s(at(programs[0]) - t0) : null,
       first_play: plays.length ? s(at(plays[0]) - t0) : null,
-      done: doneMs !== null ? s(doneMs - t0) : null,
+      done: ends.done_ms !== null ? s(ends.done_ms - t0) : null,
+      done_source: events.length ? 'scene events' : 'none (no scene events)',
       tool_s: s(toolMs),
       agent_s: s(Math.max(0, wallMs - toolMs))
     },
@@ -424,7 +419,8 @@ export function callMetrics(calls, { t0, wallEnd, tracesDir = null, fileWrites =
       preview_ms_max: max(ms(previews)),
       play_ms_median: median(ms(plays)),
       play_ms_max: max(ms(plays)),
-      wait_ms_total: ms([...sceneWaits, ...playWaits]).reduce((a, b) => a + b, 0)
+      wait_ms_total: ms([...sceneWaits, ...playWaits]).reduce((a, b) => a + b, 0),
+      scene_ends: { played: ends.played, stopped: ends.stopped, other: ends.other }
     },
     per_tool: perTool
   }
@@ -518,8 +514,8 @@ export function runMetrics(dir) {
  * Add a model run's timeline to its metrics (metrics.json in the run folder
  * dir; calls: its calls.json) and write timeline.md: the turns, every call,
  * the partition of the wall time, milestones, what the agent could not do,
- * reads and sizes, app spans. done and first_stroke come from the app's scene
- * events when the run has them (since 2026-10-28); else done stays the estimate.
+ * reads and sizes, app spans. first_stroke comes from the app's scene events
+ * (done comes from them too, in callMetrics).
  */
 export function addTimeline(dir, metrics, calls) {
   if (metrics.kind !== 'model') return metrics
@@ -528,10 +524,6 @@ export function addTimeline(dir, metrics, calls) {
   writeFileSync(join(dir, 'timeline.md'), markdown)
   const p = fields.partition
   const time = { ...metrics.time }
-  if (fields.done_from_events !== null) {
-    time.done = fields.done_from_events
-    time.done_source = 'scene events'
-  } else time.done_source = 'estimate (no scene events)'
   time.first_stroke = fields.milestones.first_stroke
   time.startup_s = archived ? p.startup_s : null
   time.model_gen_s = archived ? p.model_s : null

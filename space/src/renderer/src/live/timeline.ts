@@ -1,6 +1,6 @@
 import { SCENE_EASES, trackNumber, type SceneDescription, type SceneObjectDesc, type SceneProp, type SceneTrack } from '@shared/live-scene'
 import type { Point } from '../board/types'
-import { mixColors, sceneColor } from './colors'
+import { drawColor, mixColors } from './colors'
 
 /**
  * Evaluating a scene's timeline at a time: the same rules as the sandbox
@@ -167,17 +167,17 @@ export class Timeline {
     const object = this.desc.objects[id]
     const base = this.base(object, 'color')
     const lane = this.lanes[id].color
-    if (!lane) return typeof base === 'string' ? sceneColor(base).hex : undefined
+    if (!lane) return typeof base === 'string' ? drawColor(base).hex : undefined
     const list = lane.list
     const k = started(lane, t)
     // As in value(): the work starts at the last action that does not depend on the ones before it.
     let r = k
     while (r >= 0 && typeof list[r].from !== 'string' && !complete(list[r], t)) r--
-    let value = r < 0 && typeof base === 'string' ? sceneColor(base).hex : undefined
+    let value = r < 0 && typeof base === 'string' ? drawColor(base).hex : undefined
     for (let j = Math.max(0, r); j <= k; j++) {
       const a = list[j]
-      const from = typeof a.from === 'string' ? sceneColor(a.from).hex : value
-      const to = sceneColor(String(a.to)).hex
+      const from = typeof a.from === 'string' ? drawColor(a.from).hex : value
+      const to = drawColor(String(a.to)).hex
       const tt = a.until !== undefined ? Math.min(t, a.until) : t
       if (tt >= a.start + a.dur || !from) value = to
       else value = mixColors(from, to, SCENE_EASES[a.ease]((tt - a.start) / a.dur))

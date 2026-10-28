@@ -433,7 +433,7 @@ export function scenePlaySpans(calls) {
       const end = Date.parse(c.end ?? c.t)
       const startsIn = typeof r.starts_in_s === 'number' ? r.starts_in_s : 0
       const endsIn = typeof r.ends_in_s === 'number' ? r.ends_in_s : startsIn + (typeof r.length_s === 'number' ? r.length_s : typeof r.duration_s === 'number' ? r.duration_s : 0)
-      // wait "end": the call returned after the scene played.
+      // wait "end" (until 2026-10-28): the call returned after the scene played.
       if (r.played !== undefined) spans.push({ from: Date.parse(c.t), to: end + 1000 })
       else spans.push({ from: end + startsIn * 1000, to: end + endsIn * 1000 + 1000 })
     } catch {

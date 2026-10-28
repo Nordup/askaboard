@@ -33,7 +33,7 @@ let seeds = 0
 export async function seedScene(mcp, code) {
   const name = `bench set-up ${++seeds}`
   await mcp('write_scene', { name, code })
-  const result = await mcp('play_scene', { action: 'start', name, when: 'now', wait: 'end' })
+  const result = await mcp('play_scene', { action: 'start', name, when: 'now' })
   const item = Array.isArray(result?.items) ? result.items[0] : null
   if (!item) throw new Error(`play_scene start made no item: ${JSON.stringify(result).slice(0, 300)}`)
   return item

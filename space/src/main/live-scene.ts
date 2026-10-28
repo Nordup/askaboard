@@ -95,7 +95,7 @@ export interface TextItem {
 }
 
 /** A request from the sandbox that the board answers (html(), image(), space(), copy()): plain JSON in and out. */
-export type HostRequest = { kind: 'html' | 'space' | 'item' } & Record<string, unknown>
+export type HostRequest = { kind: 'html' | 'space' | 'item' | 'glyphs' } & Record<string, unknown>
 
 /** The error of a reply that never came, because the program was cancelled. */
 const CANCELLED = 'cancelled'
@@ -448,14 +448,14 @@ export class SceneStage {
     this.pending.clear()
   }
 
-  /** Answer a program's question to the board (text sizes; html, space and items, recorded, and given back on a rebuild). */
+  /** Answer a program's question to the board (text sizes; html, space, items and write()'s glyphs, recorded, and given back on a rebuild). */
   private async answerHost(hid: number, text: string, reply: (answer: ToStage) => void): Promise<void> {
     const answers = this.answers
     let answer = '{}'
     try {
       const request = JSON.parse(text) as { kind?: string; items?: TextItem[] }
       if (request.kind === 'text') answer = JSON.stringify({ sizes: await this.textSizes(Array.isArray(request.items) ? request.items : []) })
-      else if (request.kind === 'html' || request.kind === 'space' || request.kind === 'item') {
+      else if (request.kind === 'html' || request.kind === 'space' || request.kind === 'item' || request.kind === 'glyphs') {
         const given = answers.given?.get(text)
         if (given !== undefined) answer = given
         else {

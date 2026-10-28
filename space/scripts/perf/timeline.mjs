@@ -16,6 +16,8 @@
  *   order: play_scene waits, MCP tools, own tools, model, startup (agent start
  *   to the first model request), tail (after the last call), unattributed.
  * - scene events: the board's first frame of each scene and its end (outcome).
+ *   done: the last end with outcome "played"; stopped and other ends are
+ *   counted apart (sceneEnds).
  */
 import { copyFileSync, existsSync, readFileSync, readdirSync } from 'node:fs'
 import { basename, join } from 'node:path'
@@ -245,6 +247,25 @@ export function sceneEvents(tracesDir, sinceMs = 0) {
   return out.sort((a, b) => Date.parse(a.t) - Date.parse(b.t))
 }
 
+/**
+ * How the scenes ended, from the scene end events: played (to their end),
+ * stopped (play_scene stop), and the other outcomes by name (cancelled,
+ * removed, cut, replaced). done_ms: the last end of a scene that played to
+ * its end (wall ms), or null.
+ */
+export function sceneEnds(events) {
+  const ends = events.filter((e) => e.kind === 'end')
+  const played = ends.filter((e) => e.outcome === 'played')
+  const other = {}
+  for (const e of ends) if (e.outcome !== 'played' && e.outcome !== 'stopped') other[e.outcome ?? 'unknown'] = (other[e.outcome ?? 'unknown'] ?? 0) + 1
+  return {
+    played: played.length,
+    stopped: ends.filter((e) => e.outcome === 'stopped').length,
+    other,
+    done_ms: played.length ? Math.max(...played.map((e) => Date.parse(e.t))) : null
+  }
+}
+
 // ---------- The timeline of a run ----------
 
 const isWait = (c) => (c.tool === 'play_scene' && (c.args?.wait === 'end' || c.args?.action === 'wait')) || (c.tool === 'scene_control' && c.args?.action === 'wait')
@@ -323,8 +344,7 @@ export function runTimeline(dir, metrics, calls) {
   // App spans and scene events.
   const events = sceneEvents(join(dir, 'trace'), t0)
   const firstFrames = events.filter((e) => e.kind === 'first_frame')
-  const ends = events.filter((e) => e.kind === 'end')
-  const visibleEnds = ends.filter((e) => e.outcome === 'played' || e.outcome === 'stopped')
+  const endCounts = sceneEnds(events)
   const scenes = {}
   for (const e of events) {
     const s = (scenes[e.scene] ??= { scene: e.scene, name: e.name, first_frame_s: null, end_s: null, outcome: null, replaced: [] })
@@ -375,7 +395,8 @@ export function runTimeline(dir, metrics, calls) {
     received: agent.received,
     reads: { by_tool: readByTool, guide_topics: guide },
     app_spans: { calls: spans, scenes: Object.values(scenes) },
-    done_from_events: visibleEnds.length ? rel(Math.max(...visibleEnds.map((e) => Date.parse(e.t)))) : null
+    scene_ends: { played: endCounts.played, stopped: endCounts.stopped, other: endCounts.other },
+    done_from_events: endCounts.done_ms !== null ? rel(endCounts.done_ms) : null
   }
   return { fields, markdown: timelineMarkdown(metrics, fields, mcp, agent, t0) }
 }
@@ -414,7 +435,9 @@ function timelineMarkdown(metrics, f, mcp, agent, t0) {
   L.push('', '## Milestones', '', '| milestone | s |', '|---|---|')
   for (const k of ['first_model_request', 'first_mcp_call', 'first_write_scene', 'first_play', 'first_stroke', 'last_call_end', 'agent_exit']) L.push(`| ${k.replace(/_/g, ' ')} | ${cell(m[k])} |`)
   for (const s of m.scene_ends) L.push(`| scene end: ${cell(s.name)} | ${cell(s.end_s)} ${cell(s.outcome)} |`)
-  L.push(`| done (last scene end, from scene events) | ${cell(f.done_from_events)} |`)
+  L.push(`| done (last end of a scene that played to its end, from scene events) | ${cell(f.done_from_events)} |`)
+  const other = Object.entries(f.scene_ends.other).map(([k, v]) => `${k} ${v}`).join(', ')
+  L.push(`| scene ends: played / stopped / other | ${f.scene_ends.played} / ${f.scene_ends.stopped} / ${other || 0} |`)
 
   if (f.model) {
     L.push('', '## Model', '', `- Turns ${f.model.turns}; output tokens ${f.model.output_tokens} (reasoning ${f.model.reasoning_tokens}); generation ${f.model.generation_s} s.`)

@@ -119,8 +119,10 @@ function translate(rc, counter) {
     const name = `${a.name ?? 'scene'} #${++counter.n}`
     const write = { tool: 'write_scene', args: { name, code: a.code } }
     if (a.preview) return [write, { tool: 'preview_scene', args: { name, at: 'steps' } }]
-    return [write, { tool: 'play_scene', args: { action: 'start', name, ...(a.when ? { when: a.when } : {}), ...(a.wait ? { wait: a.wait } : {}) } }]
+    return [write, { tool: 'play_scene', args: { action: 'start', name, ...(a.when ? { when: a.when } : {}) } }]
   }
+  // play_scene had a wait action until 2026-10-28: a recorded wait is skipped (nothing is sent).
+  if ((rc.tool === 'scene_control' || rc.tool === 'play_scene') && a.action === 'wait') return []
   if (rc.tool === 'scene_control') {
     const action = a.action === 'skip' ? 'clear_queue' : a.action
     if (action === 'replace') return [{ tool: 'write_scene', args: { name: a.scene, code: a.code } }, { tool: 'play_scene', args: { action: 'start', name: a.scene } }]
@@ -133,6 +135,11 @@ function translate(rc, counter) {
   if (rc.tool === 'write_scene' && a.snapshot) {
     const { snapshot, ...rest } = a
     return [{ tool: 'write_scene', args: rest, files: snapshot.modules.filter((m) => m.path !== null), links: snapshot.links ?? [] }]
+  }
+  // play_scene start took wait until 2026-10-28; start now always returns at once.
+  if (rc.tool === 'play_scene' && a.wait !== undefined) {
+    const { wait, ...rest } = a
+    return [{ tool: 'play_scene', args: rest }]
   }
   return [{ tool: rc.tool, args: a }]
 }
@@ -254,6 +261,11 @@ async function oneReplay(index) {
         const rc = recorded[i]
         const entry = { i, tool: rc.tool, recorded_ms: rc.ms, recorded_ok: rc.ok }
         const seq = translate(rc, counter)
+        if (!seq.length) {
+          say(`${i + 1}/${recorded.length} ${rc.tool} ${rc.args?.action ?? ''}: skipped (the app has no such action now)`)
+          results.push({ ...entry, replayed: false, skipped: true })
+          continue
+        }
         const missing = seq.filter((c) => !tools.has(c.tool)).map((c) => c.tool)
         if (missing.length) {
           problems.push({ i, tool: rc.tool, problem: `not replayed: the app has no tool ${missing.join(', ')}` })

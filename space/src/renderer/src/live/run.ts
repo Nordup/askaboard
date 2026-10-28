@@ -972,8 +972,8 @@ function liveItemsOf(play: CompiledScene['play'], evaluated: ReadonlyArray<{ mom
 
 /**
  * play_scene's playback actions. Besides them, the main process uses it to
- * restage (revert scenes, drop one, read the cut time), replay, reset the
- * stage's record, and wait for the playback.
+ * restage (revert scenes, drop one, read the cut time), replay and reset the
+ * stage's record. No action waits for the playback: each answers at once.
  */
 export async function sceneControl(ctx: RunSceneContext, args: Record<string, unknown>): Promise<unknown> {
   const action = args.action
@@ -1025,15 +1025,7 @@ export async function sceneControl(ctx: RunSceneContext, args: Record<string, un
     case 'resetStage':
       adoptEpoch(typeof args.epoch === 'string' ? args.epoch : undefined)
       return status()
-    case 'waitPlayed': {
-      // Ends with the scene's end, or where playback stops at a pause before it (status says why).
-      const ended = await scenePlayer.untilPlayed(String(args.scene))
-      return { ...status(), ended }
-    }
-    case 'wait':
-      await scenePlayer.untilIdleOrPaused()
-      return status()
     default:
-      throw new Error('action must be status, pause, resume, next, stop, skip, replay or wait.')
+      throw new Error('action must be status, pause, resume, next, stop, skip or replay.')
   }
 }

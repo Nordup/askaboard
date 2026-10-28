@@ -52,7 +52,7 @@ export interface SceneColor {
   hex: string
 }
 
-/** Resolve a scene colour. Unknown colours throw a readable error. */
+/** Resolve a colour. Unknown colours throw a readable error (scenes draw with drawColor, which never throws). */
 export function sceneColor(value: string): SceneColor {
   const raw = value.trim()
   const token = /^var\(\s*--ls-([a-z0-9-]+)\s*\)$/i.exec(raw)?.[1]
@@ -62,6 +62,26 @@ export function sceneColor(value: string): SceneColor {
   const hex = normalize(raw)
   if (!hex) throw new Error(`"${raw}" is not a colour. Use a name (${COLOR_NAMES.join(', ')}), a token such as var(--ls-good), hex, rgb() or hsl().`)
   return { css: raw, hex }
+}
+
+/** "none": a colour that draws nothing. */
+const NONE: SceneColor = { css: 'transparent', hex: 'rgba(0, 0, 0, 0)' }
+
+/**
+ * The colour a scene draws with: every value draws, or draws nothing. A
+ * name, a token or any CSS colour draws as sceneColor reads it; "none" draws
+ * nothing; a value the board does not know draws in the default colour
+ * (text). Scenes use this one; sceneColor is for a check that must know
+ * whether a value is a colour (style-edits).
+ */
+export function drawColor(value: unknown): SceneColor {
+  if (typeof value !== 'string') return NAMED.text
+  if (value.trim().toLowerCase() === 'none') return NONE
+  try {
+    return sceneColor(value)
+  } catch {
+    return NAMED.text
+  }
 }
 
 /** [r, g, b, a] of a concrete colour. */

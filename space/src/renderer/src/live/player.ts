@@ -958,10 +958,8 @@ export class ScenePlayer {
   private epoch = 0
   /** When each scene started and ended on the clock (Date ms; for the lab's hand-off measures). */
   private playLog: Array<{ scene: string; name: string | null; start: number; end: number | null }> = []
-  private waiters: Array<{ done: () => boolean; resolve: () => void }> = []
   /** Scenes that started since the last frame went to the board: their first frame is reported when it is presented. */
   private firstFrames: ScenePlay[] = []
-  private waitTimer: ReturnType<typeof setInterval> | null = null
   /** The scenes as parts (one run per scene, in the order of `scenes`), and what they were made for. */
   private runs: SceneRun[] = []
   private runsFor: { scenes: Playing[]; epoch: number } = { scenes: [], epoch: -1 }
@@ -1170,7 +1168,6 @@ export class ScenePlayer {
     this.board?.setPlayback(null)
     this.latest.frame = null
     setSceneUiState(null)
-    this.settleWaiters()
   }
 
   /** The board went away (unmount, another board): forget it without touching it. */
@@ -1187,7 +1184,6 @@ export class ScenePlayer {
     this.history.clear()
     setSceneUiState(null)
     clearSceneScript()
-    this.settleWaiters()
   }
 
   /** A frame on the next display frame, while a scene plays (not while every started scene is paused, or nothing plays). */
@@ -1328,7 +1324,6 @@ export class ScenePlayer {
   private render(): void {
     const board = this.board
     if (!board) {
-      this.settleWaiters()
       return
     }
     const now = performance.now()
@@ -1340,7 +1335,6 @@ export class ScenePlayer {
       board.setPlayback(null)
       this.latest.frame = null
       setSceneUiState(null)
-      this.settleWaiters()
       return
     }
     this.frameNow = now
@@ -1377,7 +1371,6 @@ export class ScenePlayer {
       })
     }
     this.publish(now)
-    this.settleWaiters()
   }
 
   /** The scene clock of each live item a scene plays; the same map while no clock changed. */
@@ -1589,48 +1582,9 @@ export class ScenePlayer {
     return { id: scene.play.id, name: scene.play.name ?? null, t: Math.max(0, this.timeOf(scene, performance.now())), duration: scene.play.duration, steps: scene.play.steps }
   }
 
-  /** Resolve when done() holds (checked every frame, and twice a second when frames stop, as in a hidden window). */
-  private waitFor(done: () => boolean): Promise<void> {
-    if (done()) return Promise.resolve()
-    return new Promise((resolve) => {
-      this.waiters.push({ done, resolve })
-      this.waitTimer ??= setInterval(() => this.render(), 500)
-    })
-  }
-
-  private settleWaiters(): void {
-    if (!this.waiters.length) return
-    this.waiters = this.waiters.filter((waiter) => {
-      if (!waiter.done()) return true
-      waiter.resolve()
-      return false
-    })
-    if (!this.waiters.length && this.waitTimer !== null) {
-      clearInterval(this.waitTimer)
-      this.waitTimer = null
-    }
-  }
-
   /** A started scene that stands paused (playback stops there until it is resumed), or null. */
   private pausedScene(): Playing | null {
     return this.scenes.find((scene) => scene.origin !== null && scene.pausedAt !== null) ?? null
-  }
-
-  /**
-   * Resolves when this scene (and so every queued scene before it) has played
-   * to its end (true), or when playback stops at a pause before that: a pause
-   * step, the learner's drawing or play_scene pause (false; status() says
-   * which). A scene that is not playing or waiting has ended.
-   */
-  async untilPlayed(id: string): Promise<boolean> {
-    const gone = (): boolean => !this.scenes.some((scene) => scene.play.id === id)
-    await this.waitFor(() => gone() || this.pausedScene() !== null)
-    return gone()
-  }
-
-  /** Resolves when nothing plays or waits, or a scene stands paused (a pause step, the learner, play_scene pause). */
-  untilIdleOrPaused(): Promise<void> {
-    return this.waitFor(() => !this.scenes.length || this.pausedScene() !== null)
   }
 
   status(): SceneStatus {

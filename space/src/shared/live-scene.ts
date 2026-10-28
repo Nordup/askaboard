@@ -56,6 +56,8 @@ export interface SceneStyle {
   dash?: number[]
   jitter?: number
   tool?: 'pen' | 'highlighter'
+  /** A filled shape the pen draws (pen: true with a fill): its outline is drawn by hand, then the fill shows. */
+  pen?: boolean
   /** Text only: font size in board points. */
   size?: number
 }

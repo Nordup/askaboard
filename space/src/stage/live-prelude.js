@@ -12,7 +12,8 @@
  * realm (T14). For each program the worker calls fns.begin(ctxText) (JSON:
  * {nodes, names, view, viewport, seed, stage, cutAt}), runs the program,
  * drives the clock (it lets every pending job run, then calls fns.advance()
- * until it returns false), calls fns.end(), reads fns.result() (the sampling
+ * until it returns false; a program that fails, or fns.failed(), ends it at
+ * once), calls fns.end(), reads fns.result() (the sampling
  * pass and the description; not for a rebuild) and calls fns.bake() (not for
  * a draft), which turns the end of this scene into the start of the next one.
  *
@@ -267,13 +268,13 @@
 
   // ---------- Objects ----------
 
-  const STYLE_KEYS = new Set(['color', 'width', 'fill', 'fillOpacity', 'opacity', 'dash', 'pen', 'jitter', 'name', 'hatch', 'tool', 'size', 'at', 'center', 'x', 'y', 't', 'unit', 'samples', 'shape', 'pad', 'head', 'slant', 'closed', 'radius', 'align'])
   const handles = new WeakMap()
 
-  function checkKeys(opts, what) {
-    for (const key of Object.keys(opts)) if (!STYLE_KEYS.has(key)) warnings.add(`${what}: the option "${key}" is unknown and was ignored`)
-  }
 
+  /** "none" as a colour: no outline (color), no fill (fill) or no hatch (hatch). */
+  const isNone = (value) => typeof value === 'string' && value.trim().toLowerCase() === 'none'
+
+  /** A colour: any string; the board draws a value it does not know as the default colour (live/colors.ts). */
   function colorArg(value, what) {
     if (value === undefined) return undefined
     if (typeof value !== 'string' || !value.trim()) fail(`${what} must be a colour name or CSS colour string, got ${describe(value)}`)
@@ -285,20 +286,19 @@
    * outline: width 0 or color "none" (as fill "none" is no fill).
    */
   function styleOf(opts, what, defaults, outline = false) {
-    checkKeys(opts, what)
-    const noLine = typeof opts.color === 'string' && opts.color.trim().toLowerCase() === 'none'
+    const noLine = isNone(opts.color)
     const style = {
       color: (noLine ? undefined : colorArg(opts.color, `${what} color`)) ?? defaults.color ?? 'text',
       width: noLine ? 0 : opts.width === undefined ? (defaults.width ?? 3) : num(opts.width, `${what} width`),
       opacity: opts.opacity === undefined ? 1 : Math.max(0, Math.min(1, num(opts.opacity, `${what} opacity`)))
     }
-    if (opts.fill !== undefined && opts.fill !== null && opts.fill !== 'none') {
+    if (opts.fill !== undefined && opts.fill !== null && !isNone(opts.fill)) {
       if (Array.isArray(opts.fill)) {
         if (opts.fill.length < 2 || !opts.fill.every((c) => typeof c === 'string')) fail(`${what} fill as a gradient must be a list of two or more colours`)
         style.gradient = opts.fill.map((c) => c.trim())
       } else style.fill = colorArg(opts.fill, `${what} fill`)
     }
-    if (opts.hatch !== undefined) style.hatch = colorArg(opts.hatch, `${what} hatch`)
+    if (opts.hatch !== undefined && opts.hatch !== null && !isNone(opts.hatch)) style.hatch = colorArg(opts.hatch, `${what} hatch`)
     if (opts.fillOpacity !== undefined) style.fillOpacity = Math.max(0, Math.min(1, num(opts.fillOpacity, `${what} fillOpacity`)))
     if (opts.dash !== undefined && opts.dash !== false) {
       if (opts.dash === true) style.dash = [style.width * 3, style.width * 2.5]
@@ -587,16 +587,6 @@
     }
   }
 
-  const sampleErrors = new Set()
-  /** "Line N: " (inline code) or "lib/x.js line N: " (a module) for the place an error came from (the innermost frame in the agent's code), or nothing. */
-  function programLine(error) {
-    try {
-      const site = programSite(String(error && typeof error === 'object' ? error.stack : ''))
-      return site ? `${siteLabel(site)}: ` : ''
-    } catch {
-      return ''
-    }
-  }
   /** The entry of a changing object at time t (its own entry when it does not change). */
   function specAt(entry, t) {
     if (!entry.dynamic || entry.evaluating) return entry
@@ -608,6 +598,8 @@
       rng = seededAt(memo.seed, memo.n)
       return memo.spec
     }
+    // A function of a changing object that throws is the program's error, at whatever moment it is read (the
+    // program's own reads, or the sampling at its end): it goes back with its line, as any other error.
     const saved = T
     T = t
     entry.evaluating = true
@@ -621,12 +613,6 @@
         sampleMemo.get(entry).set(t, { spec, seed: rng.seed, n: rng.n })
       }
       return spec
-    } catch (error) {
-      if (!sampleErrors.has(entry.id)) {
-        sampleErrors.add(entry.id)
-        warnings.add(`${programLine(error)}object ${entry.id} (${entry.api}${entry.name ? ` "${entry.name}"` : ''}): its functions failed at ${f2(t)} s: ${error && error.message ? error.message : String(error)}; it keeps its last good shape there`)
-      }
-      return entry.lastGood || entry
     } finally {
       T = saved
       entry.evaluating = false
@@ -686,6 +672,8 @@
    * caller made d from them (both null: read d). A pen shape is ink with its
    * final points (lines: polylineInk of the polylines, or of the path
    * flattened for ink); the stage itself reads its geometry from d (worldLines).
+   * A pen shape with a fill is a shape with style.pen: the board draws its
+   * outline by hand (compile.ts), and draw() shows the fill after it.
    */
   function shapeObject(api, d, opts, defaults, known = null, segments = null) {
     const path = known ? null : segments || pathSegments(d)
@@ -693,15 +681,25 @@
     let total = 0
     for (const l of lines) total += polyLength(l)
     if (opts.pen) {
-      const ink = polylineInk(known || flattenPath(path, 'ink'))
-      if (!ink.length && !finalSampling) warnings.add(`${api}: the path has no length, so the pen draws nothing`)
+      const style = styleOf({ ...opts, pen: undefined }, api, defaults, true)
+      const jitter = opts.jitter === undefined ? 0.3 : Math.max(0, Math.min(1, num(opts.jitter, `${api} jitter`)))
+      const tool = opts.tool ?? 'pen'
+      // A filled shape the pen draws: the board draws its outline by hand, and the fill shows once the outline is complete (draw()).
+      // Its kind comes from the options it is given, never from their value at a moment: a fill or a hatch given at all (a
+      // function that returns "none" at times included) makes it a shape for its whole life, so it never turns into ink.
+      if (Object.hasOwn(opts, 'fill') || Object.hasOwn(opts, 'hatch')) {
+        const pad = style.width / 2
+        const b = boundsOfPoints(lines.flat())
+        return make({ kind: 'shape', api, name: nameOf(opts), style: { ...style, pen: true, jitter, tool }, d, length: total, bounds: { x: b.x - pad, y: b.y - pad, width: b.width + pad * 2, height: b.height + pad * 2 } })
+      }
+      // A path with no length gives no ink: the pen draws nothing.
       return make({
         kind: 'ink',
         api,
         name: nameOf(opts),
-        style: { ...styleOf({ ...opts, pen: undefined }, api, defaults), jitter: opts.jitter === undefined ? 0.3 : Math.max(0, Math.min(1, num(opts.jitter, `${api} jitter`))), tool: opts.tool ?? 'pen' },
+        style: { ...style, jitter, tool },
         d,
-        lines: ink,
+        lines: polylineInk(known || flattenPath(path, 'ink')),
         pressure: false,
         length: total,
         speed: 450,
@@ -709,7 +707,7 @@
       })
     }
     const style = styleOf(opts, api, defaults, true)
-    if (defaults.closed === false && (style.fill || style.gradient || style.hatch)) warnings.add(`${api}: an open curve has no inside to fill; the fill shows along its chord`)
+    // An open curve has no inside: its fill shows along its chord.
     const pad = style.width / 2
     const b = boundsOfPoints(lines.flat())
     return make({
@@ -836,7 +834,7 @@
   function plot(fn, opts) {
     if (typeof fn !== 'function') fail('plot(fn, options) needs a function: x => y, or t => [x, y] with options.t')
     opts = options(opts, 'plot options')
-    const [ox, oy] = opts.at === undefined ? [0, 0] : pair(opts.at, 'plot at')
+    const [ox, oy] = opts.at === undefined ? [0, 0] : pointArg(opts.at, 'plot at')
     let sx = 50
     let sy = 50
     if (opts.unit !== undefined) {
@@ -904,7 +902,9 @@
   const SUBS = { '₀': '0', '₁': '1', '₂': '2', '₃': '3', '₄': '4', '₅': '5', '₆': '6', '₇': '7', '₈': '8', '₉': '9', '₊': '+', '₋': '−', 'ₓ': 'x', 'ᵢ': 'i', 'ₙ': 'n' }
 
   /** Characters with a level: 0 normal, 1 superscript, -1 subscript. "^2", "^{10}", "_1", "_{ab}" and ²₁ work. */
-  function shapeText(text) {
+  function shapeText(source) {
+    // By characters, not UTF-16 units: a character outside the BMP (𝔽, an emoji) is one character.
+    const text = Array.from(source)
     const out = []
     for (let i = 0; i < text.length; i++) {
       const c = text[i]
@@ -928,6 +928,27 @@
     return out
   }
 
+  /**
+   * The glyph of each character for write(): the handwriting font (a letter
+   * with an accent, by its base letter), else the character from the board's
+   * text font, as the outlines of its shape (the board traces them,
+   * renderer/live/glyphs.ts, in the same units), so no character is left out.
+   * The board's glyphs are kept for the stage's life.
+   */
+  const boardGlyphs = new Map()
+  function glyphsFor(chars) {
+    const own = (ch) => FONT[ch] || FONT[ch.normalize('NFD')[0]]
+    const ask1 = [...new Set(chars.filter((ch) => ch !== ' ' && !own(ch) && !boardGlyphs.has(ch)))]
+    if (ask1.length) {
+      const got = ask({ kind: 'glyphs', chars: ask1 }, 'write')
+      for (const ch of ask1) {
+        const g = got.glyphs && got.glyphs[ch]
+        boardGlyphs.set(ch, { ...(g && typeof g.a === 'number' && Array.isArray(g.s) ? g : { a: 0.6, s: [] }), board: true })
+      }
+    }
+    return new Map(chars.map((ch) => [ch, own(ch) || boardGlyphs.get(ch)]))
+  }
+
   function write(text, opts) {
     if (typeof text !== 'string' && typeof text !== 'number') fail(`write(text, options) needs a string, got ${describe(text)}`)
     text = String(text)
@@ -936,8 +957,8 @@
     if (size <= 0) fail('write size must be positive')
     const slant = opts.slant === undefined ? 0.12 : num(opts.slant, 'write slant')
     const lines = []
-    const missing = new Set()
     const rows = text.split('\n')
+    const glyphs = glyphsFor(rows.flatMap((row) => shapeText(row).map(([ch]) => ch)))
     const rowWidths = []
     let pen = 0
     rows.forEach((row, r) => {
@@ -950,12 +971,7 @@
           pen += 0.55 * size * scale
           continue
         }
-        const glyph = FONT[ch] || FONT[ch.normalize('NFD')[0]]
-        if (!glyph) {
-          missing.add(ch)
-          pen += 0.6 * size * scale
-          continue
-        }
+        const glyph = glyphs.get(ch)
         // A little variation per letter, like a hand.
         const wob = 1 + (rng() - 0.5) * 0.06
         const dy = (rng() - 0.5) * 0.04 * size
@@ -969,21 +985,22 @@
           if (pts.length === 1) pts.push([pts[0][0] + 0.5, pts[0][1] + 0.5])
           lines.push(pts)
         }
-        pen += glyph.a * size * scale * 0.92
+        // The handwriting font's advances hold wide side bearings; a board glyph's outline reaches its edges, so the pen
+        // (its outline drawn with ink of some width) leaves a gap after it.
+        pen += (glyph.board ? glyph.a + 0.14 : glyph.a * 0.92) * size * scale
       }
       rowWidths.push(pen)
     })
-    if (missing.size) warnings.add(`write: no handwriting for ${[...missing].map((c) => JSON.stringify(c)).join(', ')}; use tex() for these`)
     if (!lines.length) fail('write() has nothing to draw')
     const b = boundsOfPoints(lines.flat())
     let dx
     let dy
     if (opts.center !== undefined) {
-      const [cx, cy] = pair(opts.center, 'write center')
+      const [cx, cy] = pointArg(opts.center, 'write center')
       dx = cx - (b.x + b.width / 2)
       dy = cy - (b.y + b.height / 2)
     } else {
-      const [ax, ay] = opts.at === undefined ? [0, 0] : pair(opts.at, 'write at')
+      const [ax, ay] = opts.at === undefined ? [0, 0] : pointArg(opts.at, 'write at')
       dx = ax - b.x
       dy = ay - b.y
     }
@@ -1036,11 +1053,10 @@
     let x
     let y
     if (opts.center !== undefined) {
-      const [cx, cy] = pair(opts.center, `${api} center`)
+      const [cx, cy] = pointArg(opts.center, `${api} center`)
       x = cx - width / 2
       y = cy - height / 2
-    } else [x, y] = opts.at === undefined ? [0, 0] : pair(opts.at, `${api} at`)
-    checkKeys(opts, api)
+    } else [x, y] = opts.at === undefined ? [0, 0] : pointArg(opts.at, `${api} at`)
     return make({
       kind: 'text',
       api,
@@ -1049,7 +1065,7 @@
       text,
       math,
       at: opts.center === undefined ? [x, y] : null,
-      center: opts.center === undefined ? null : pair(opts.center, `${api} center`),
+      center: opts.center === undefined ? null : pointArg(opts.center, `${api} center`),
       bounds: { x, y, width, height }
     })
   }
@@ -1127,12 +1143,9 @@
     if (!members.length) fail('group(...objects) needs at least one object')
     const entries = members.map((m, k) => entryOf(m, `group member ${k}`))
     for (const e of entries) if (e.kind === 'part') fail(`object ${e.id} is a part of ${H('an html object', 'material')}; it moves with that object`)
-    for (const key of Object.keys(opts)) if (key !== 'name') warnings.add(`group: the option "${key}" is unknown and was ignored`)
     // An object is in one group at a time: the same objects again (in any order) are that group.
     const existing = entries[0].parent !== undefined ? objects[entries[0].parent] : undefined
     if (existing && existing.members.length === entries.length && entries.every((e) => e.parent === existing.id)) {
-      const name = nameOf(opts)
-      if (name !== undefined && name !== existing.name) warnings.add(`group: these objects are already the group from ${siteText(callSite(existing.madeAt))}${existing.name ? ` "${existing.name}"` : ''}; the name "${name}" was ignored`)
       return existing.handle
     }
     entries.forEach((e, k) => {
@@ -1224,7 +1237,7 @@
         let p = cache && cache.get(tau)
         if (!p) {
           T = tau
-          p = pair(resolveArg(fn(), 2), 'trace point')
+          p = pointArg(fn(), 'trace point')
           if (cache) cache.set(tau, p)
         }
         pts.push(p)
@@ -1257,16 +1270,15 @@
     let x
     let y
     if (opts.center !== undefined) {
-      const [cx, cy] = pair(opts.center, `${api} center`)
+      const [cx, cy] = pointArg(opts.center, `${api} center`)
       x = cx - w / 2
       y = cy - h / 2
-    } else [x, y] = opts.at === undefined ? [-w / 2, -h / 2] : pair(opts.at, `${api} at`)
+    } else [x, y] = opts.at === undefined ? [-w / 2, -h / 2] : pointArg(opts.at, `${api} at`)
     const params = {}
     if (opts.params !== undefined) {
       if (!plain(opts.params)) fail(`${api} params must be an object of numbers like {k: 1}`)
       for (const [key, v] of Object.entries(opts.params)) params[key] = num(v, `${api} params.${key}`)
     }
-    for (const key of Object.keys(opts)) if (!['at', 'center', 'size', 'params', 'name', 'opacity'].includes(key)) warnings.add(`${api}: the option "${key}" is unknown and was ignored`)
     return make({
       kind: 'live',
       api,
@@ -1309,25 +1321,45 @@
   }
 
   /**
-   * A place on the board: an object (its bounds now), a point [x, y], [x, y, w, h]
-   * or {x, y, width, height}, as {box, point}; null for anything else.
+   * Places: one reader for every argument that takes a place. A place is a
+   * scene object (its bounds now), a point [x, y], a rect [x, y, width,
+   * height] or {x, y, width, height}, or a function that returns one of them.
+   * The reader calls the function once, now (at T): a one-time action (move,
+   * copy, space, html) reads its place when it starts. A creator calls its
+   * functions again at every moment (creator()), and point() and camera()
+   * read theirs at every moment of what follows (follow()).
+   *
+   * placeOf gives {box, point}, or null for anything else. An array of two
+   * or more numbers is a point [x, y] (more numbers, such as a pressure, are
+   * left out), except that four numbers are a rect where a rect is taken.
    */
-  function placeOf(value, what = 'place') {
+  function placeOf(value, what = 'place', rects = true) {
+    value = resolveArg(value, 2)
     if (value && typeof value === 'object' && handles.has(value)) return { box: worldBounds(handles.get(value), T), point: false }
-    const numbers = Array.isArray(value) && value.every((v) => typeof v === 'number')
-    if (numbers && value.length === 4) return { box: { x: coord(value[0], `${what}[0]`), y: coord(value[1], `${what}[1]`), width: num(value[2], `${what}[2]`), height: num(value[3], `${what}[3]`) }, point: false }
+    if (rects && Array.isArray(value) && value.length === 4 && value.every((v) => typeof v === 'number')) return { box: { x: coord(value[0], `${what}[0]`), y: coord(value[1], `${what}[1]`), width: num(value[2], `${what}[2]`), height: num(value[3], `${what}[3]`) }, point: false }
     if (plain(value) && ['x', 'y', 'width', 'height'].every((key) => typeof value[key] === 'number')) return { box: { x: value.x, y: value.y, width: value.width, height: value.height }, point: false }
-    if (numbers && value.length === 2) {
+    if (Array.isArray(value) && value.length >= 2) {
       const [x, y] = pair(value, what)
       return { box: { x, y, width: 0, height: 0 }, point: true }
     }
     return null
   }
-  /** A rect from an object (its bounds now), a point [x, y], [x, y, w, h] or {x, y, width, height}. */
+  /** A point: a scene object (its centre now), [x, y] (and more numbers), {x, y, width, height} (its centre), or a function that returns one. */
+  function pointArg(value, what) {
+    const place = placeOf(value, what, false)
+    if (!place) fail(`${what} must be a scene object, a point [x, y] or a function that returns one, got ${describe(resolveArg(value, 2))}`)
+    const b = place.box
+    return place.point ? [b.x, b.y] : [b.x + b.width / 2, b.y + b.height / 2]
+  }
+  /** A rect from an object (its bounds now), a point [x, y], [x, y, w, h], {x, y, width, height}, or a function that returns one. */
   function rectArg(value, what) {
     const place = placeOf(value, what)
-    if (!place) fail(`${what} must be an object, a point [x, y], a rect [x, y, width, height] or {x, y, width, height}, got ${describe(value)}`)
+    if (!place) fail(`${what} must be a scene object, a point [x, y], a rect [x, y, width, height] or {x, y, width, height}, or a function that returns one, got ${describe(resolveArg(value, 2))}`)
     return place.box
+  }
+  /** An offset [dx, dy], or a function that returns one (called once, now). */
+  function offsetArg(value, what) {
+    return pair(resolveArg(value, 2), what)
   }
 
   /** Where this scene's own objects are now (they are not on the board yet), for space(). */
@@ -1347,7 +1379,6 @@
     num(h, 'space height')
     if (w <= 0 || h <= 0) fail('space(width, height, options) needs a positive width and height')
     opts = options(opts, 'space options')
-    for (const key of Object.keys(opts)) if (key !== 'near' && key !== 'inView') warnings.add(`space: the option "${key}" is unknown and was ignored`)
     const near = opts.near === undefined ? null : rectArg(opts.near, 'space near')
     const got = ask({ kind: 'space', width: f2(w), height: f2(h), near, avoid: sceneBoxes(), inView: opts.inView !== false }, 'space')
     return Object.freeze({ x: got.x, y: got.y, width: got.width, height: got.height, at: [got.x, got.y], center: [f2(got.x + got.width / 2), f2(got.y + got.height / 2)], visible: !!got.visible })
@@ -1380,11 +1411,8 @@
     fail(`${what} must be a frame: a node id${H(', board.node(id), or an html() object', ' or board.node(id)')}, got ${who(e)}`)
   }
 
-  const HTML_KEYS = ['at', 'center', 'near', 'into', 'mode', 'index', 'name', 'opacity']
-
   /** Material from drafts (html(), image(), copies): measured by the board, placed at o.at, o.center, into a frame, or in empty space. */
   function htmlFrom(api, source, opts) {
-    for (const key of Object.keys(opts)) if (!HTML_KEYS.includes(key)) warnings.add(`${api}: the option "${key}" is unknown and was ignored`)
     let place
     if (opts.into !== undefined) {
       const target = frameArg(opts.into, `${api} into`)
@@ -1393,7 +1421,7 @@
       if (mode !== 'insert' && mode !== 'replace') fail(`${api} mode must be "insert" or "replace"`)
       place = { ref: target.ref, mode }
       if (opts.index !== undefined) place.index = Math.max(0, Math.floor(num(opts.index, `${api} index`)))
-    } else if (opts.mode !== undefined || opts.index !== undefined) warnings.add(`${api}: mode and index work with into only; they were ignored`)
+    }
     const answer = ask({ kind: 'html', ...source, ...(place ? { into: place } : {}) }, api)
     if (answer.ignored) warnings.add(`${api}: ${answer.ignored}`)
     const [w, h] = answer.size
@@ -1401,10 +1429,10 @@
     let y
     if (place) ({ x, y } = answer.box)
     else if (opts.center !== undefined) {
-      const [cx, cy] = pair(opts.center, `${api} center`)
+      const [cx, cy] = pointArg(opts.center, `${api} center`)
       x = cx - w / 2
       y = cy - h / 2
-    } else if (opts.at !== undefined) [x, y] = pair(opts.at, `${api} at`)
+    } else if (opts.at !== undefined) [x, y] = pointArg(opts.at, `${api} at`)
     else {
       const r = space(w, h, opts.near === undefined ? {} : { near: opts.near })
       x = r.x
@@ -1519,7 +1547,6 @@
       // In a group: the group's move comes along (its turn and scale do not).
       ox += valueAt(p, 'x', T)
       oy += valueAt(p, 'y', T)
-      if (valueAt(p, 'scale', T) !== 1 || valueAt(p, 'rotate', T) !== 0) warnings.add(`copy: ${who(e)} is in a scaled or turned group; the copy keeps its own size and angle`)
     }
     const base = {}
     if (ox) base.x = f3(ox)
@@ -1535,19 +1562,18 @@
   function copy(target, opts) {
     const e = entryOf(target, 'copy(item)')
     opts = options(opts, 'copy options')
-    for (const key of Object.keys(opts)) if (!['at', 'center', 'by', 'near', 'name'].includes(key)) warnings.add(`copy: the option "${key}" is unknown and was ignored`)
     const box = worldBounds(e, T)
     let dx
     let dy
     if (opts.at !== undefined) {
-      const [x, y] = pair(opts.at, 'copy at')
+      const [x, y] = pointArg(opts.at, 'copy at')
       dx = x - box.x
       dy = y - box.y
     } else if (opts.center !== undefined) {
-      const [x, y] = pair(opts.center, 'copy center')
+      const [x, y] = pointArg(opts.center, 'copy center')
       dx = x - (box.x + box.width / 2)
       dy = y - (box.y + box.height / 2)
-    } else if (opts.by !== undefined) [dx, dy] = pair(opts.by, 'copy by')
+    } else if (opts.by !== undefined) [dx, dy] = offsetArg(opts.by, 'copy by')
     else {
       const r = space(Math.max(1, box.width), Math.max(1, box.height), { near: opts.near === undefined ? box : opts.near })
       dx = r.x - box.x
@@ -1559,7 +1585,6 @@
   function edit(target, change, timing) {
     const entry = entryOf(target, 'edit(item)')
     change = options(change, 'edit change')
-    for (const key of Object.keys(change)) if (!['text', 'style', 'dur', 'ease'].includes(key)) warnings.add(`edit: "${key}" is unknown and was ignored; edit takes {text, style}`)
     if (timing === undefined && (change.dur !== undefined || change.ease !== undefined)) timing = { dur: change.dur, ease: change.ease }
     let text
     if (change.text !== undefined) {
@@ -1606,7 +1631,6 @@
             firstVisibility(e, false)
             addTrack(e, 'opacity', T, dur, Math.max(0, Math.min(1, Number(v))), ease || 'inOut')
           } else if (key === 'fontSize' && e.kind === 'text' && v !== null && parseFloat(v) > 0) addValueTrack(values[optionValue(e, 'size').id], T, dur, parseFloat(v), ease || 'inOut')
-          else warnings.add(`edit: the style "${raw}" does not apply to ${who(e)}; tween its options instead`)
         }
       }
     }
@@ -1755,7 +1779,7 @@
       // The two sides of the segment, as the nearest named sides.
       const nearest = (v) => dirs.slice().sort((p, q) => SIDES[q][0] * v[0] + SIDES[q][1] * v[1] - (SIDES[p][0] * v[0] + SIDES[p][1] * v[1]))[0]
       dirs = [nearest(n), nearest([-n[0], -n[1]])]
-    } else anchor = pair(target, 'label target')
+    } else anchor = pointArg(target, 'label target')
     // Measure the text at the origin.
     const make1 = (pos) => {
       rng = seeded(labelSeed)
@@ -1950,7 +1974,7 @@
     if (entry.kind === 'group') return leaves(entry).reduce((sum, e) => sum + naturalDraw(e), 0)
     // Explicit strokes (no d) get a short lift between strokes; a pen shape draws as one path.
     if (entry.kind === 'ink') return Math.max(0.25, entry.length / entry.speed + (entry.d === undefined ? entry.lines.length * 0.05 : 0))
-    if (entry.kind === 'shape') return Math.max(0.35, Math.min(3, entry.length / 500))
+    if (entry.kind === 'shape') return entry.style.pen ? Math.max(0.25, entry.length / 450) : Math.max(0.35, Math.min(3, entry.length / 500))
     if (entry.kind === 'text') return Math.max(0.4, Math.min(2.5, entry.bounds.width / 260))
     if (entry.kind === 'node') return 1
     if (entry.kind === 'live') return 0.8
@@ -1986,9 +2010,12 @@
       firstVisibility(e, true)
       revealSet(e, at)
       const from = valueAt(e, 'draw', at)
-      addTrack(e, 'draw', at, share, 1, ease || (e.kind === 'ink' ? 'linear' : 'inOut'), from >= 1 ? 0 : from)
+      const pen = e.kind === 'shape' && e.style.pen === true
+      addTrack(e, 'draw', at, share, 1, ease || (e.kind === 'ink' || pen ? 'linear' : 'inOut'), from >= 1 ? 0 : from)
       if (e.kind === 'shape' || e.kind === 'text' || e.kind === 'node' || e.kind === 'live' || e.kind === 'html' || e.kind === 'part') {
-        if (hasFill(e)) addTrack(e, 'fill', at + share * 0.6, share * 0.4 + 0.25, 1, 'out', valueAt(e, 'fill', at + share * 0.6))
+        // A pen shape's fill fades in once the hand has drawn its outline; another shape's fill comes in as its outline ends.
+        if (pen && hasFill(e)) addTrack(e, 'fill', at + share, FADE_DUR, 1, 'out', valueAt(e, 'fill', at + share))
+        else if (hasFill(e)) addTrack(e, 'fill', at + share * 0.6, share * 0.4 + 0.25, 1, 'out', valueAt(e, 'fill', at + share * 0.6))
         else addTrack(e, 'fill', at, 0, 1, 'linear')
       }
       at += share
@@ -2008,9 +2035,12 @@
     return new Action(T, T + dur)
   }
 
+  /** How long a fade in takes when no duration is given (fadeIn(), and the fill of a pen shape after its outline). */
+  const FADE_DUR = 0.5
+
   function fadeIn(target, timing) {
     const entry = entryOf(target, 'fadeIn(object)')
-    const { dur, ease } = durationArg(timing, 'fadeIn', 0.5)
+    const { dur, ease } = durationArg(timing, 'fadeIn', FADE_DUR)
     for (const e of leaves(entry)) {
       firstVisibility(e, true)
       e.removed = false
@@ -2053,7 +2083,6 @@
     const { dur, ease } = durationArg(timing, 'move', 0.8)
     if (spec.into !== undefined) {
       if (entry.kind === 'group') fail('move into: a group cannot go into a frame; move its objects one by one')
-      for (const key of Object.keys(spec)) if (!['into', 'index', 'to', 'by', 'dur', 'ease'].includes(key)) warnings.add(`move: the option "${key}" is unknown and was ignored`)
       const target = frameArg(spec.into, 'move into')
       if (target.obj === entry) fail('move into: an object cannot go into itself')
       if (target.obj) target.obj.edited = true
@@ -2072,12 +2101,12 @@
     let tx
     let ty
     if (spec.to !== undefined) {
-      const [cx, cy] = pair(spec.to, 'move to')
+      const [cx, cy] = pointArg(spec.to, 'move to')
       const b = worldBounds(entry, T)
       tx = x + cx - (b.x + b.width / 2)
       ty = y + cy - (b.y + b.height / 2)
     } else if (spec.by !== undefined) {
-      const [dx, dy] = pair(spec.by, 'move by')
+      const [dx, dy] = offsetArg(spec.by, 'move by')
       tx = x + dx
       ty = y + dy
     } else fail('move(object, {to: [x, y]} or {by: [dx, dy]}, seconds)')
@@ -2181,7 +2210,6 @@
     if (tracking) tracking.impure = true
     if (typeof name !== 'string' || !name.trim()) fail('step(name) needs a name string')
     opts = options(opts, 'step options')
-    for (const key of Object.keys(opts)) if (key !== 'pause') warnings.add(`step: the option "${key}" is unknown and was ignored`)
     steps.push({ name: name.trim(), at: f3(T), ...(opts.pause ? { pause: true } : {}) })
   }
 
@@ -2206,9 +2234,11 @@
     let view = { ...CTX.view }
     for (const c of cameraActions) {
       if (c.start > t) break
-      const w = vw() / c.zoom
-      const h = vh() / c.zoom
-      const to = { x: c.center[0] - w / 2, y: c.center[1] - h / 2, width: w, height: h }
+      // A camera that follows (camera({to: () => …})): its place at t, as the board plays it (expandFollows).
+      const aim = followOf.has(c) ? followAt(c, t >= c.start + c.dur ? t : c.start + c.dur) : c
+      const zoom = aim.zoom ?? c.zoom
+      const center = aim.center ?? c.center
+      const to = { x: center[0] - vw() / zoom / 2, y: center[1] - vh() / zoom / 2, width: vw() / zoom, height: vh() / zoom }
       if (t >= c.start + c.dur || c.dur <= 0) view = to
       else {
         const k = EASES[c.ease]((t - c.start) / c.dur)
@@ -2218,29 +2248,90 @@
     return { x: f2(view.x), y: f2(view.y), width: f2(view.width), height: f2(view.height) }
   }
 
+  /**
+   * camera() and point() last: the view and the pointer stay where they went
+   * until the next camera() or point(). Given a function (camera to or fit, a
+   * point target), they follow it: the function is read at every moment from
+   * the action's start until the next action of its kind or the scene's end.
+   * follow() keeps the reader. Every read of the view during the program
+   * (viewAt: board.view, a later camera()) reads it at that moment, and end()
+   * turns each follow into short glides (FOLLOW_STEP apart), as the board
+   * plays them.
+   */
+  const follows = []
+  /** A following action → its follow: {list, action, read}. */
+  const followOf = new Map()
+  const FOLLOW_STEP = 1 / SAMPLE_FPS
+  function follow(list, action, read) {
+    const f = { list, action, read }
+    follows.push(f)
+    followOf.set(action, f)
+  }
+  /**
+   * Where a following action is at time t ({center, zoom} or {to}). A
+   * function that throws is the program's error, as a changing object's
+   * function that throws (specAt).
+   */
+  function followAt(action, t) {
+    const f = followOf.get(action)
+    const saved = T
+    T = t
+    try {
+      return f.read()
+    } finally {
+      T = saved
+    }
+  }
+  /** Expand every follow into glides: the action goes to where the thing is at its end, then glides keep up with it. */
+  function expandFollows() {
+    for (const { list, action } of follows) {
+      const index = list.indexOf(action)
+      if (index < 0) continue
+      const next = list[index + 1]
+      const until = next ? Math.min(next.start, endTime) : endTime
+      const place = (t) => {
+        const { start: _s, dur: _d, ease: _e, ...at } = followAt(action, t)
+        return at
+      }
+      const glides = []
+      for (let t = action.start + action.dur; t < until - 1e-6; t += FOLLOW_STEP) {
+        const t1 = Math.min(until, t + FOLLOW_STEP)
+        glides.push({ ...action, start: f3(t), dur: f3(t1 - t), ...place(t1), ...(action.ease ? { ease: 'linear' } : {}) })
+      }
+      Object.assign(action, place(action.start + action.dur))
+      followOf.delete(action)
+      list.splice(index + 1, 0, ...glides)
+      // A camera that follows moves all along: changing objects are sampled there (as during any camera move).
+      if (list === cameraActions && until > action.start) activeSpans.push([action.start, f3(until)])
+    }
+    follows.length = 0
+  }
+
   function camera(spec, timing) {
     spec = options(spec, 'camera spec')
     const { dur, ease } = durationArg(timing, 'camera', 1)
-    const now = viewAt(T)
-    let zoom = vw() / now.width
-    let center = [now.x + now.width / 2, now.y + now.height / 2]
-    if (spec.fit !== undefined) {
-      let r
-      if (spec.fit instanceof SceneObject) r = worldBounds(entryOf(spec.fit, 'camera fit'), T)
-      else if (Array.isArray(spec.fit) && spec.fit.length === 4) r = { x: coord(spec.fit[0], 'camera fit[0]'), y: coord(spec.fit[1], 'camera fit[1]'), width: num(spec.fit[2], 'camera fit[2]'), height: num(spec.fit[3], 'camera fit[3]') }
-      else fail('camera fit must be an object or [x, y, width, height]')
-      const pad = spec.pad === undefined ? 40 : num(spec.pad, 'camera pad')
-      zoom = clampZoom(Math.min(vw() / Math.max(1, r.width + pad * 2), vh() / Math.max(1, r.height + pad * 2)))
-      center = [r.x + r.width / 2, r.y + r.height / 2]
-    }
-    if (spec.to !== undefined) center = pair(spec.to, 'camera to')
-    if (spec.zoom !== undefined) zoom = clampZoom(num(spec.zoom, 'camera zoom'))
-    for (const key of Object.keys(spec)) if (!['fit', 'to', 'zoom', 'pad'].includes(key)) warnings.add(`camera: the option "${key}" is unknown and was ignored`)
     if (spec.fit === undefined && spec.to === undefined && spec.zoom === undefined) fail('camera({fit, to, zoom}, seconds) needs fit, to or zoom')
-    const move = { start: f3(T), dur: f3(dur), center: [f2(center[0]), f2(center[1])], zoom: Math.round(zoom * 1000) / 1000, ease: ease || 'inOut' }
+    const now = viewAt(T)
+    const pad = spec.pad === undefined ? 40 : num(spec.pad, 'camera pad')
+    const zoomGiven = spec.zoom === undefined ? null : clampZoom(num(spec.zoom, 'camera zoom'))
+    /** Where the camera goes, read at T. */
+    const aim = () => {
+      let zoom = vw() / now.width
+      let center = [now.x + now.width / 2, now.y + now.height / 2]
+      if (spec.fit !== undefined) {
+        const r = rectArg(spec.fit, 'camera fit')
+        zoom = clampZoom(Math.min(vw() / Math.max(1, r.width + pad * 2), vh() / Math.max(1, r.height + pad * 2)))
+        center = [r.x + r.width / 2, r.y + r.height / 2]
+      }
+      if (spec.to !== undefined) center = pointArg(spec.to, 'camera to')
+      if (zoomGiven !== null) zoom = zoomGiven
+      return { center: [f2(center[0]), f2(center[1])], zoom: Math.round(zoom * 1000) / 1000 }
+    }
+    const move = { start: f3(T), dur: f3(dur), ...aim(), ease: ease || 'inOut' }
     cameraActions.push(move)
     if (collector) collector.push({ kind: 'camera', c: move })
     cameraActions.sort((a, b) => a.start - b.start)
+    if (typeof spec.fit === 'function' || typeof spec.to === 'function') follow(cameraActions, move, aim)
     activeSpans.push([f3(T), f3(T + dur)])
     endTime = Math.max(endTime, T + dur)
     return new Action(T, T + dur)
@@ -2248,16 +2339,13 @@
 
   function point(target, timing) {
     const { dur } = durationArg(timing, 'point', 0.6)
-    let to
-    if (target === null || target === false) to = null
-    else if (target instanceof SceneObject) {
-      const b = worldBounds(entryOf(target, 'point target'), T)
-      to = [f2(b.x + b.width / 2), f2(b.y + b.height / 2)]
-    } else to = pair(target, 'point target')
-    const glide = { start: f3(T), dur: f3(dur), to }
+    const hide = target === null || target === false
+    const aim = () => ({ to: pointArg(target, 'point target').map(f2) })
+    const glide = { start: f3(T), dur: f3(dur), to: hide ? null : aim().to }
     pointerActions.push(glide)
     if (collector) collector.push({ kind: 'pointer', p: glide })
     pointerActions.sort((a, b) => a.start - b.start)
+    if (!hide && typeof target === 'function') follow(pointerActions, glide, aim)
     endTime = Math.max(endTime, T + dur)
     return new Action(T, T + dur)
   }
@@ -2338,10 +2426,8 @@
         continue
       }
       const mark = (cue.marks || []).find((entry) => entry.name === key)
-      if (!mark) {
-        warnings.add(`say: "${key}" is not a mark of this line (marks: ${(cue.marks || []).map((entry) => entry.name).join(', ') || 'none'}) and was ignored`)
-        continue
-      }
+      // An option that names no mark of this line is ignored.
+      if (!mark) continue
       if (typeof value !== 'function') fail(`say: the option "${key}" (a mark) must be a function, like () => draw(obj)`)
       waiters.push({
         t: mark.at,
@@ -2423,10 +2509,18 @@
     return [...out].filter((t) => t >= from - 1e-9 && t <= endTime + 1e-9).sort((p, q) => p - q)
   }
 
+  /**
+   * The path the board draws for a shape. A shape with no length draws
+   * nothing at that moment: it goes as a lone moveto at its place, which
+   * keeps its item and its motion (round caps would draw a dot at a
+   * zero-length path). The stage keeps the shape's own d (worldLines).
+   */
+  const drawnD = (spec) => (spec.length > 0 ? spec.d : `M${f2(spec.bounds.x + spec.bounds.width / 2)} ${f2(spec.bounds.y + spec.bounds.height / 2)}`)
+
   function geometryOf(spec) {
     const g = { bounds: { x: f2(spec.bounds.x), y: f2(spec.bounds.y), width: f2(spec.bounds.width), height: f2(spec.bounds.height) } }
     if (spec.kind === 'shape') {
-      g.d = spec.d
+      g.d = drawnD(spec)
       g.width = spec.style.width
       if (spec.style.fill) g.fill = spec.style.fill
       if (spec.style.fillOpacity !== undefined) g.fillOpacity = spec.style.fillOpacity
@@ -2473,11 +2567,8 @@
     for (const t of times) {
       evaluations++
       const spec = specAt(entry, t)
-      if (spec !== entry) entry.lastGood = spec
-      if (spec.kind !== entry.kind) {
-        warnings.add(`object ${entry.id} (${entry.api}): its functions changed what kind of object it is; it keeps its first kind`)
-        continue
-      }
+      // A function that changes what kind of object it is: the object keeps its first kind.
+      if (spec.kind !== entry.kind) continue
       const g = geometryOf(spec)
       const key = JSON.stringify(g)
       final = spec
@@ -2595,6 +2686,7 @@
    */
   const end = () => {
     if (asyncErrors.length) throw asyncErrors[0]
+    expandFollows()
     for (const e of objects) if (e.born === sceneNo && e.vis === undefined) e.vis = 'shown'
     if (cutAt !== null) applyCut(Math.min(cutAt, endTime))
   }
@@ -2611,8 +2703,8 @@
     for (const e of objects) {
       if (e.born === sceneNo || e.dropped) continue
       if (e.gone) {
+        // An action on a gone object draws nothing; a reveal (draw, fadeIn) brings it back.
         if (e.revealed && e.kind !== 'group' && e.kind !== 'node') emit.add(e)
-        else if (touched(e) && e.kind !== 'group') warnings.add(`${who(e)} is not on the board any more (erased, or removed by an earlier scene); draw it or fade it in to bring it back`)
         continue
       }
       if (touched(e) || changed.has(e) || e.edited) emit.add(e)
@@ -2650,7 +2742,7 @@
       if (e.dyn) o.samples = e.dyn.length
       // Ink goes as its points (a pen shape's d stays in the stage).
       if (e.kind === 'ink') Object.assign(o, { style: e.style, lines: e.lines, pressure: e.pressure })
-      if (e.kind === 'shape') Object.assign(o, { style: e.style, d: e.d })
+      if (e.kind === 'shape') Object.assign(o, { style: e.style, d: drawnD(e) })
       if (e.kind === 'text') Object.assign(o, { style: e.style, text: e.text, math: e.math, at: e.at, center: e.center })
       if (e.kind === 'live') Object.assign(o, { style: e.style, mode: e.mode, code: e.code, width: e.width, height: e.height, params: e.params, line: e.line, ...(e.file ? { file: e.file } : {}) })
       if (e.kind === 'group') o.members = e.members.filter((id) => local.has(id)).map((id) => local.get(id))
@@ -2749,6 +2841,8 @@
     waiters.length = 0
     cameraActions.length = 0
     pointerActions.length = 0
+    follows.length = 0
+    followOf.clear()
     cues.length = 0
     edits.length = 0
     reparents.length = 0
@@ -2756,7 +2850,6 @@
     evaluations = 0
     fullEvaluations = 0
     tracking = null
-    sampleErrors.clear()
     markTimes.clear()
     asyncErrors = []
     collector = null
@@ -2862,8 +2955,10 @@
   // ---------- The host functions ----------
 
   const stats = () => ({ evaluations, fullEvaluations })
+  /** The program's parallel work failed (an async function in all() or a say() mark): its error, at once. */
+  const failed = () => (asyncErrors.length ? { error: asyncErrors[0] } : null)
   if (!giveHost) throw new Error('The stage has no host')
-  giveHost(Object.freeze({ begin, advance, end, result, bake, stats }))
+  giveHost(Object.freeze({ begin, advance, end, failed, result, bake, stats }))
 
   // ---------- Lock the stage ----------
   // Every program of a board runs in this one realm. So that no program can
