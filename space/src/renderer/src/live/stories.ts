@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import type { BoardNode } from '@shared/board-format'
-import { nodeSig, storyOnBoard, type BoardLook, type BoardStories, type BoardStory, type SceneStory } from '@shared/scene-story'
+import { nodeSig, shownVersion, type BoardLook, type BoardStories, type BoardStory, type SceneStory } from '@shared/scene-story'
 
 /**
  * The stories of the open board's scenes, from its scene records (main/scene-store.ts sends them
@@ -89,9 +89,9 @@ export function lookOf(nodes: readonly BoardNode[] | ReadonlyMap<string, BoardNo
 
 /** The version of a scene that the board shows: the newest scene line whose made nodes are there or whose changed nodes have the content it left; else null. */
 export function versionOnBoard(scene: BoardStory, look: BoardLook): SceneStory | null {
-  if (storyOnBoard(scene.story, look)) return scene.story
-  for (let i = scene.earlier.length - 1; i >= 0; i--) if (storyOnBoard(scene.earlier[i].story, look)) return scene.earlier[i].story
-  return null
+  const stories = [...scene.earlier.map((entry) => entry.story), scene.story]
+  const shown = shownVersion(stories, look)
+  return shown >= 0 ? stories[shown] : null
 }
 
 /** The scenes of the board for the learner: newest first (by when their newest version played), dropped ones left out. */

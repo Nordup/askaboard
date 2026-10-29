@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react'
 import { Minus, Pause, Play, RotateCcw, SkipForward } from 'lucide-react'
 import { useSceneState } from '../live/state'
+import { rebuildFailure, useRestoredVersion } from '../live/rebuild'
 import { lookOf, useBoardStories, versionOnBoard } from '../live/stories'
 import { boardNodes, hidePanel, openedFromPill, sceneStarted, setPanelScene, useReading } from '../live/reading'
 import { fadeMs, tokenMs, usePresence } from '../lib/presence'
@@ -136,6 +137,8 @@ const IDLE_VIEW: PanelView = { scene: '', name: '', steps: [{ name: '', at: 0, d
 
 export function ScriptPanel() {
   const scene = useSceneState()
+  // A scene restored from the records after a restart replays by a re-run; the panel shows when one could not be rebuilt.
+  useRestoredVersion()
   const stories = useBoardStories()
   const reading = useReading()
   const liveId = scene.playing ? scene.sceneOf : null
@@ -316,7 +319,7 @@ export function ScriptPanel() {
     if (value.live) scene.playFrom(value.scene, index + 1)
     else if (replayable) scene.replay([{ scene: value.scene, step: index + 1 }])
   }
-  const status = !value.live ? (value.canPlay ? 'Done' : 'Done · cannot replay') : value.paused ? (PAUSE_WORDS[value.pausedBy ?? ''] ?? 'Paused') : scene.steps.length ? `Step ${value.step + 1} of ${value.steps.length}` : ''
+  const status = !value.live ? (value.canPlay ? 'Done' : rebuildFailure(value.scene) ? 'Done · could not be rebuilt' : 'Done · cannot replay') : value.paused ? (PAUSE_WORDS[value.pausedBy ?? ''] ?? 'Paused') : scene.steps.length ? `Step ${value.step + 1} of ${value.steps.length}` : ''
   const style = {
     ...(box ? { left: box.left, top: box.top, maxHeight: box.room } : {}),
     ...(!box || idle ? { visibility: 'hidden' as const } : {}),

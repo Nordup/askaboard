@@ -11,6 +11,7 @@ import type { DynSample, PlayEdit, PlayObject, ScenePlay } from './compile'
 import { BLEND_GAP, paramSamplesOf, paramsAtTime } from './params'
 import { blendStyle } from '../board/style-edits'
 import { setSceneUiActions, setSceneUiState, type SceneCueState, type SceneListEntry } from './state'
+import { canRebuild, clearRestored, rebuildFailure, requestRebuild } from './rebuild'
 import { isIdentity, multiply, type Matrix } from './timeline'
 
 /**
@@ -576,8 +577,6 @@ export function nodeSig(node: BoardNode): string {
 export interface SceneMemory {
   play: ScenePlay
   snapshot: Map<string, { sig: string; ghost: BoardNode }>
-  /** Take the scene's items off the board again (a played scene that play_scene start replaces). */
-  revert?: (step?: string) => void
 }
 
 // ---------- Overrides that stay the same object while their values stay the same ----------
@@ -978,7 +977,8 @@ export class ScenePlayer {
       nextStep: () => this.nextStep(),
       replay: (list) => this.replayList(list),
       playFrom: (scene, step) => this.playFrom(scene, step),
-      canReplay: (scene) => this.history.has(scene),
+      // Main's failure state comes first (rebuild.ts mirrors it): play data never overrides it.
+      canReplay: (scene) => !rebuildFailure(scene) && (this.history.has(scene) || canRebuild(scene)),
       time: () => {
         const scene = this.current()
         return scene ? Math.max(0, this.timeOf(scene, performance.now())) : null
@@ -1024,7 +1024,15 @@ export class ScenePlayer {
     return Math.round(startsIn * 1000) / 1000
   }
 
-  /** Keep a committed scene for replay. */
+  /** The board the player works on, before a scene plays on it (a stage restored from the records: run.ts sceneRestore). Another board ends what plays and forgets the history. */
+  adopt(board: BoardHandle): void {
+    if (board === this.board) return
+    this.stopAll()
+    this.history.clear()
+    this.board = board
+  }
+
+  /** Keep a committed scene for replay (also one a replay rebuilt from the records after a restart: run.ts sceneMemory). */
   remember(memory: SceneMemory): void {
     this.history.set(memory.play.id, memory)
   }
@@ -1044,17 +1052,15 @@ export class ScenePlayer {
     this.epoch++
     const state = board.liveState()
     for (const [nodeId, entry] of inkIndexOf(play, state.nodes, state.layout())) this.inkPoints.set(nodeId, entry)
-    const memory = this.history.get(id)
-    if (memory) memory.play = play
     this.render()
     this.schedule()
     return true
   }
 
-  /** Take a waiting scene out of the queue (its items are already reverted). */
+  /** Take a scene out of the queue, waiting or playing, and forget it (its items are already off the board, or as a restage left them). */
   drop(id: string): void {
-    for (const scene of this.scenes) if (scene.play.id === id && scene.origin === null) report('end', scene.play, 'cancelled')
-    this.scenes = this.scenes.filter((scene) => scene.play.id !== id || scene.origin !== null)
+    for (const scene of this.scenes) if (scene.play.id === id) report('end', scene.play, 'cancelled')
+    this.scenes = this.scenes.filter((scene) => scene.play.id !== id)
     this.history.delete(id)
     this.render()
   }
@@ -1178,6 +1184,8 @@ export class ScenePlayer {
     this.board = null
     this.latest.frame = null
     this.history.clear()
+    // The restored scenes were for that board.
+    clearRestored()
     setSceneUiState(null)
   }
 
@@ -1513,7 +1521,16 @@ export class ScenePlayer {
    */
   replayList(list: Array<{ scene: string; step?: number }>): boolean {
     const board = this.board
-    if (!board || !list.length || !list.every((entry) => this.history.has(entry.scene))) return false
+    if (!board || !list.length) return false
+    if (list.some((entry) => rebuildFailure(entry.scene))) return false
+    if (!list.every((entry) => this.history.has(entry.scene))) {
+      // Scenes restored from the records (after a restart): main runs their programs again first (rebuild.ts), then they play.
+      if (!list.every((entry) => this.history.has(entry.scene) || canRebuild(entry.scene))) return false
+      void requestRebuild(list.map((entry) => entry.scene).filter((id) => !this.history.has(id))).then(() => {
+        if (this.board === board && list.every((entry) => this.history.has(entry.scene))) this.replayList(list)
+      })
+      return true
+    }
     this.scenes = []
     this.queueEnd = null
     list.forEach((entry, i) => this.replay(board, { scene: entry.scene, ...(i === 0 && entry.step ? { step: entry.step } : {}) }, 'queue'))
@@ -1566,15 +1583,6 @@ export class ScenePlayer {
       else wait += Math.max(0, scene.play.duration - (scene.pausedAt ?? (now - scene.origin) / 1000))
     }
     return 0
-  }
-
-  /** Take these scenes' items off the board again (newest first); they stay in the queue until swapped or dropped. */
-  revertScenes(ids: string[], step: string): void {
-    const queued = new Set(this.scenes.map((scene) => scene.play.id))
-    for (const scene of [...this.scenes].reverse()) if (ids.includes(scene.play.id)) scene.revert(step)
-    // Scenes that played to their end are older than every queued scene: their items come off last (newest first).
-    const played = [...this.history.values()].filter((memory) => ids.includes(memory.play.id) && !queued.has(memory.play.id))
-    for (const memory of played.reverse()) memory.revert?.(step)
   }
 
   /** The player holds this scene: it waits, plays, or is in the stage's history. */

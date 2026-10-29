@@ -207,8 +207,64 @@ P12, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
   Module texts are kept once in `code/<sha>.js`. The board file holds the
   board's `id`. Main reads the file as a stream when a board opens and
   sends the stories to the renderer; `src/shared/scene-story.ts` holds the
-  one rule for which line belongs to which step. Replay from the record
-  after a restart is step 3 of the spec (not built).
+  one rule for which line belongs to which step. A scene line also keeps
+  each node's signature after the commit and the board's measures
+  (`settle`: centred text, fitted frames, glide starts).
+- **The stage is rebuilt from the record** (spec step 3). The stage log
+  and the player's history are caches of the record. One rule: each board
+  mount (an open, a reload from disk, a window that loaded again, another
+  folder) starts a new stage from the record, whatever the stage held
+  (`mcp.ts restoreStage`; it runs before every program run and soon after
+  the mount). The new stage gets the current segment's scenes that were
+  not dropped, each the version the board shows, in order, with its saved
+  source (from `code/<sha>.js`), seed, cut, context and answers, and the
+  programs run again at once, so a new scene sees the earlier scenes'
+  objects. Work for another folder, board or mount is dropped after every
+  await, and a mount ends the stage work no call owns. A saved context is
+  rebound to the current stage when it runs again (epoch, board path, its
+  objects by owner: `live-scene.ts savedContext`). The renderer gets the
+  new epoch, the stage's identities and each scene's story, revert and
+  measures (`run.ts sceneRestore`), so a replace takes the old items off
+  and a new scene finds them.
+- **One failure state.** A program whose code is missing or that fails, a
+  record of the older key scheme or with a malformed line (checked at the
+  record boundary: `scene-store.ts restoreProblem`), a re-run that does
+  not match its record, and a program a cancel stops while it runs in a
+  rebuild are marked (`StageEntry.failed`, the only owner): it keeps its
+  place and its items, no rebuild runs it, and a restage neither reverts
+  nor runs it (later scenes see its objects as gone). The renderer's
+  mirror (`rebuild.ts`) comes before any play data it holds.
+- **Identities.** Marking a program shifts the stage ids of the objects
+  after it. When the log changes, main sends the renderer the full set
+  (stage id, scene id, key of each object, and the failures: `mcp.ts
+  publishIdentities`), and the renderer replaces its copy; each object's
+  items follow it by owner. This happens before a call takes a context,
+  and in `SceneStage.run` when the rebuild before a program shifted ids
+  (the context's objects are bound by owner).
+- **Restage.** A replace or cut reverts the affected scenes (one loop,
+  newest first, from `sceneReverts`, the one owner of reverts) and runs
+  the new program and the later ones. Its record lines are written only
+  when it succeeds. A cancel or a failure rolls back as before step 3:
+  the old programs run again with their saved inputs, and each node gets
+  back its id and z, so the record still describes the board and no line
+  is written. A replaced scene that is marked gets its items back as the
+  revert took them (`putBack`). Learner work done meanwhile stays. A
+  board change during a restage stops it, and the old board's record gets
+  what that board got.
+- **Replay after a restart re-runs the scene.** No play data is saved.
+  A replay, a play from a step or a preview of a restored scene asks main
+  to run the log again and sample that scene (`live-scene.ts resample`).
+  The renderer compiles the run on the board as it was before the scene,
+  from the recorded before-state (`run.ts sceneMemory`, `sceneAt` exact).
+  Each node takes the board's id through the record: the object's key
+  (`n:<name>[#k]` or `o:<n>`, given by the stage when the program makes
+  the object) gives its nodes in `story.items`; an object brought back
+  goes by its owner (`of`); nodes of no object go by their order of
+  creation. The measures are applied, and nodes that differ from the
+  record's signatures show as ghosts. A re-run that does not match the
+  record marks the scene; the panel says "could not be rebuilt". The
+  rebuilt play data stays in the player's history like the play data of
+  a scene committed in this session.
 - **Errors.** A scene input works, draws nothing, or is an error with its
   line, at once, also from parallel async functions and functions of
   moving objects; results carry no warnings (decision B18).
@@ -280,7 +336,9 @@ P12, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
   `stills.ts`). Network is open for items; input reaches them only
   in the mode the item declares.
 - **Requests** between main and renderer: `sceneContext`, `runScene`,
-  `sceneDraft`, `sceneFrames`, `sceneControl` (`src/shared/space-api.ts`).
+  `sceneDraft`, `sceneFrames`, `sceneControl`, `sceneRestore`,
+  `sceneMemory` (`src/shared/space-api.ts`); the board window asks main
+  to rebuild restored scenes with `rebuildScenes`.
 
 ## UI
 

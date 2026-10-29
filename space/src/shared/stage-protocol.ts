@@ -47,10 +47,11 @@ export type ToStage =
 /**
  * The reply to a reset or a run. json: the description without the samples (null for a reset and a replay);
  * frames: how many frame chunks the run sent to the board (shared/frames.ts), all acknowledged by the board before this reply.
+ * keys: the stage id and the scene-local key of each object the program made (null for a reset); a rebuild gives them to the board.
  * An error's line is in the module file (a path in boards/scenes/), or in the inline code when file is null.
  */
 export type StageReply =
-  | { t: 'reply'; id: number; ok: true; json: string | null; frames: number; ms: number; timing: StageTiming | null }
+  | { t: 'reply'; id: number; ok: true; json: string | null; frames: number; ms: number; timing: StageTiming | null; keys: Array<[number, string]> | null }
   | { t: 'reply'; id: number; ok: false; error: string; line: number | null; file: string | null; ms: number }
 
 export type FromStage =
@@ -95,6 +96,13 @@ function parseTiming(value: unknown): StageTiming | null | undefined {
   const { body, result, bake, evaluations, fullEvaluations, encode, wait, bytes } = value
   if (![body, result, bake, evaluations, fullEvaluations, encode, wait, bytes].every(isMs)) return undefined
   return { body, result, bake, evaluations, fullEvaluations, encode, wait, bytes } as StageTiming
+}
+
+function parseKeys(value: unknown): Array<[number, string]> | null | undefined {
+  if (value === null) return null
+  if (!Array.isArray(value)) return undefined
+  for (const pair of value as unknown[]) if (!Array.isArray(pair) || pair.length !== 2 || !isId(pair[0]) || !isText(pair[1], STAGE_LIMITS.error)) return undefined
+  return value as Array<[number, string]>
 }
 
 function parseProgram(value: unknown): StageProgram | null {
@@ -176,11 +184,12 @@ export function refusedHostId(value: unknown): number | null {
 export function parseReply(value: unknown): StageReply | null {
   if (!isShape(value) || value.t !== 'reply' || !isId(value.id) || !isMs(value.ms)) return null
   if (value.ok === true) {
-    if (!keysAre(value, ['t', 'id', 'ok', 'json', 'frames', 'ms', 'timing']) || !isId(value.frames)) return null
+    if (!keysAre(value, ['t', 'id', 'ok', 'json', 'frames', 'ms', 'timing', 'keys']) || !isId(value.frames)) return null
     const json = value.json === null || isText(value.json, STAGE_LIMITS.description) ? (value.json as string | null) : undefined
     const timing = parseTiming(value.timing)
-    if (json === undefined || timing === undefined) return null
-    return { t: 'reply', id: value.id, ok: true, json, frames: value.frames, ms: value.ms, timing }
+    const keys = parseKeys(value.keys)
+    if (json === undefined || timing === undefined || keys === undefined) return null
+    return { t: 'reply', id: value.id, ok: true, json, frames: value.frames, ms: value.ms, timing, keys }
   }
   if (value.ok === false) {
     if (!keysAre(value, ['t', 'id', 'ok', 'error', 'line', 'file', 'ms'])) return null

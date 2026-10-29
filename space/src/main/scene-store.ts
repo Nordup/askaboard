@@ -4,7 +4,7 @@ import { createReadStream } from 'node:fs'
 import { appendFile, copyFile, mkdir, open, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { SceneSource } from '@shared/scene-program'
-import { isStory, nodeSig, storyOnBoard, type BoardLook, type BoardStories, type BoardStory, type CommitRecord, type RecordLine, type SceneRecordLine, type SceneStory } from '@shared/scene-story'
+import { isStory, nodeSig, RECORD_VERSION, shownVersion, storyOnBoard, type BoardLook, type BoardStories, type BoardStory, type CommitRecord, type RecordLine, type SceneRecordLine, type SceneStory } from '@shared/scene-story'
 import { parseBoard } from '@shared/board-format'
 import { FOLDER_SETTINGS_DIR } from './guide'
 import type { FolderSession } from './folder'
@@ -27,7 +27,8 @@ import type { FolderSession } from './folder'
  * memory that holds the stories only, and compacted when superseded lines are more than half of it.
  * The renderer gets the stories (no source) then, and again after each new line. Reading rule: the
  * last scene line of a scene id wins; a later drop marks it dropped; scenes are in the order of
- * their first scene line.
+ * their first scene line. A stage that starts new reads the full newest lines of the current segment
+ * again, with their code (restorable; main/mcp.ts restoreStage).
  *
  * The board's id is in the board file (BoardDoc.id), which only the renderer writes: the renderer
  * gives a board its id at its first commit (renderer/live/run.ts), and takes the id this store gives
@@ -41,6 +42,17 @@ const BOARD_ID = /^b_[0-9a-z]{4,32}$/
 const SHA = /^[0-9a-f]{64}$/
 /** How much of a board file is read to find its id (the id is near the top; the full file when it is not there). */
 const HEAD_BYTES = 16 * 1024
+
+/** A scene of the records for a new stage: its newest scene line, its source with the module texts, and the modules whose code is missing. */
+export interface RestorableScene {
+  line: SceneRecordLine
+  source: SceneSource
+  missing: string[]
+  /** Written before RECORD_VERSION: its object keys are of another scheme, so its objects cannot be linked to its nodes. */
+  legacy: boolean
+  /** What is malformed in the fields a rebuild reads (restoreProblem), or null: such a scene is marked, the others restore. */
+  problem: string | null
+}
 
 /** The board an event is for, fixed when the event is made. */
 export interface RecordBoard {
@@ -92,6 +104,37 @@ function isSceneLine(value: Record<string, unknown>): value is Record<string, un
     source.modules.every((module) => isRecord(module) && typeof module.sha === 'string') &&
     typeof source.seed === 'number'
   )
+}
+
+/**
+ * The record boundary of a rebuild (restorable): what is malformed in the fields that the stage and the renderer read
+ * when they rebuild a scene (its saved run, its objects by owner, its revert, its measures, the owners in its story), or
+ * null. A scene line that passes isSceneLine but not this is marked; it never stops the board's other scenes.
+ */
+function restoreProblem(line: SceneRecordLine): string | null {
+  const text = (v: unknown): boolean => typeof v === 'string'
+  const texts = (v: unknown): boolean => Array.isArray(v) && v.every(text)
+  const num = (v: unknown): boolean => typeof v === 'number' && Number.isFinite(v)
+  const tuple = (v: unknown, ...checks: Array<(x: unknown) => boolean>): boolean => Array.isArray(v) && v.length === checks.length && checks.every((check, i) => check(v[i]))
+  const nodes = (v: unknown): boolean => Array.isArray(v) && v.every((node) => isRecord(node) && text(node.id))
+  const orNull = (check: (x: unknown) => boolean) => (v: unknown): boolean => v === null || check(v)
+  const source = line.source as unknown as Record<string, unknown>
+  if (!orNull(text)(source.entry) || !text(source.ctx) || !orNull(num)(source.cutAt)) return 'source'
+  if (!Array.isArray(source.answers) || !source.answers.every((pair) => tuple(pair, text, text))) return 'source.answers'
+  if (source.objects !== undefined && !(Array.isArray(source.objects) && source.objects.every((entry) => tuple(entry, text, text, texts)))) return 'source.objects'
+  for (const item of line.story.items) {
+    if (item.of !== undefined && !tuple(item.of, text, text)) return 'story item of'
+    if (item.held !== undefined && !texts(item.held)) return 'story item held'
+  }
+  const revert = line.revert as unknown as Record<string, unknown>
+  if (!isRecord(revert) || !texts(revert.created) || !nodes(revert.changed) || !nodes(revert.removed)) return 'revert'
+  if (revert.after !== undefined && !(isRecord(revert.after) && Object.values(revert.after).every(text))) return 'revert.after'
+  const settle = line.settle as unknown
+  if (settle !== undefined) {
+    if (!isRecord(settle) || !Array.isArray(settle.nodes) || !Array.isArray(settle.glides)) return 'settle'
+    if (!settle.nodes.every((entry) => tuple(entry, text, num, num, orNull(text), orNull(text))) || !settle.glides.every((entry) => tuple(entry, text, num, num))) return 'settle'
+  }
+  return null
 }
 
 /** Each line of a file, read as a stream (one line in memory at a time): its text, byte offset and length. openTail: the last line has no line break. */
@@ -196,7 +239,7 @@ export class SceneStore {
   }
 
   /** A scene's commit was accepted by the board: append its scene line (after the code it names). Never throws. */
-  scene(board: RecordBoard, entry: { scene: string | null; source: SceneSource; name: string | null; seed: number; cutAt: number | null; ctxText: string; answers: Map<string, string> }, record: CommitRecord): Promise<void> {
+  scene(board: RecordBoard, entry: { scene: string | null; source: SceneSource; name: string | null; seed: number; cutAt: number | null; ctxText: string; answers: Map<string, string>; objects?: Array<[string, string, string[]]> }, record: CommitRecord): Promise<void> {
     const sceneId = entry.scene
     if (!sceneId) return Promise.resolve()
     return this.serial(async () => {
@@ -215,11 +258,12 @@ export class SceneStore {
           seed: entry.seed,
           cutAt: entry.cutAt,
           ctx: entry.ctxText,
-          answers: [...entry.answers]
+          answers: [...entry.answers],
+          ...(entry.objects ? { objects: entry.objects } : {})
         }
         const state = index.scenes.get(sceneId)
         const version = state?.keys.get(sourceKey(source)) ?? (state ? state.maxVersion + 1 : 1)
-        const line: SceneRecordLine = { t: 'scene', v: 1, scene: sceneId, name: entry.name, version, maxVersion: Math.max(version, state?.maxVersion ?? 0), segment: state?.segment ?? index.segment, at: new Date().toISOString(), app: app.getVersion(), source, story: record.story, revert: record.revert }
+        const line: SceneRecordLine = { t: 'scene', v: RECORD_VERSION, scene: sceneId, name: entry.name, version, maxVersion: Math.max(version, state?.maxVersion ?? 0), segment: state?.segment ?? index.segment, at: new Date().toISOString(), app: app.getVersion(), source, story: record.story, revert: record.revert, ...(record.settle ? { settle: record.settle } : {}) }
         await this.append(index, [line])
         this.push(this.storiesOf(index))
       } catch (error) {
@@ -229,25 +273,85 @@ export class SceneStore {
   }
 
   /**
-   * The scene of this board with this name that a new commit continues when the stage has no scene of
-   * that name (the app started again, or the stage started new): the newest one of the current
-   * segment that was not dropped, as the stage would have it. Null when there is none. The same rule
-   * as the stage's (mcp.ts boardScene: the scene's name), so the record gets a new version of the
-   * same scene instead of a second scene. Never throws.
+   * The scenes a new stage of this board starts with (main/mcp.ts restoreStage): the current segment's
+   * scenes that were not dropped, in the order of their first scene line, each as the version the
+   * board shows (shownVersion, the story reader's rule: an undo can bring back an earlier version;
+   * the newest when the board shows none), with the text of its modules from code/<sha>.js. A module
+   * whose file is missing or whose text no longer has its SHA-256 is named in `missing` (that scene
+   * cannot run again). The file is read twice, one line in memory at a time: the stories first, to
+   * choose each scene's line, then the chosen lines. Never throws: a board whose records cannot be
+   * read restores nothing.
    */
-  sceneNamed(board: RecordBoard, name: string): Promise<string | null> {
+  restorable(board: RecordBoard): Promise<RestorableScene[]> {
     return this.serial(async () => {
       try {
         const index = await this.indexFor(board.root, board.id)
-        let found: SceneState | null = null
-        for (const state of index.scenes.values()) {
-          if (state.dropped || state.name !== name || state.segment !== index.segment) continue
-          if (!found || state.at > found.at) found = state
+        const wanted = new Set([...index.scenes.values()].filter((state) => !state.dropped && state.segment === index.segment).map((state) => state.scene))
+        if (!wanted.size) return []
+        const readLine = (text: string): SceneRecordLine | null => {
+          if (!text.startsWith('{"t":"scene"')) return null
+          try {
+            const line: unknown = JSON.parse(text)
+            return isRecord(line) && isSceneLine(line) && wanted.has(line.scene) ? line : null
+          } catch {
+            return null
+          }
         }
-        return found?.scene ?? null
+        // Each wanted scene's lines (line number, story), oldest first; then the line of the version the board shows.
+        const versions = new Map<string, Array<{ at: number; story: SceneStory }>>()
+        let lineNo = 0
+        await eachLine(index.file, (text) => {
+          const at = lineNo++
+          const line = readLine(text)
+          if (!line) return
+          const list = versions.get(line.scene) ?? []
+          list.push({ at, story: line.story })
+          versions.set(line.scene, list)
+        })
+        const look = await boardLook(join(board.root, board.path))
+        const chosen = new Map<number, string>()
+        for (const [scene, list] of versions) {
+          const shown = look ? shownVersion(list.map((entry) => entry.story), look) : -1
+          chosen.set(list[shown >= 0 ? shown : list.length - 1].at, scene)
+        }
+        const lines = new Map<string, SceneRecordLine>()
+        lineNo = 0
+        await eachLine(index.file, (text) => {
+          const at = lineNo++
+          if (!chosen.has(at)) return
+          const line = readLine(text)
+          if (line) lines.set(line.scene, line)
+        })
+        const codeDir = join(board.root, SCENES_DIR, 'code')
+        const texts = new Map<string, string | null>()
+        const textOf = async (sha: string): Promise<string | null> => {
+          if (texts.has(sha)) return texts.get(sha) as string | null
+          let text: string | null = null
+          if (SHA.test(sha)) {
+            text = await readFile(join(codeDir, `${sha}.js`), 'utf8').catch(() => null)
+            if (text !== null && createHash('sha256').update(text).digest('hex') !== sha) text = null
+          }
+          texts.set(sha, text)
+          return text
+        }
+        const out: RestorableScene[] = []
+        for (const state of index.scenes.values()) {
+          const line = lines.get(state.scene)
+          if (!line) continue
+          const modules: SceneSource['modules'] = []
+          const missing: string[] = []
+          for (const module of line.source.modules) {
+            const text = await textOf(module.sha)
+            if (text === null) missing.push(module.path ?? '(inline code)')
+            modules.push({ path: module.path, text: text ?? '', sha256: module.sha })
+          }
+          const source: SceneSource = { entry: line.source.entry, modules, ...(line.source.links?.length ? { links: line.source.links } : {}) }
+          out.push({ line, source, missing, legacy: line.v !== RECORD_VERSION, problem: restoreProblem(line) })
+        }
+        return out
       } catch (error) {
-        console.error(`scene records: the scenes of ${board.path} were not read: ${error instanceof Error ? error.message : String(error)}`)
-        return null
+        console.error(`scene records: the scenes of ${board.path} were not read for its stage: ${error instanceof Error ? error.message : String(error)}`)
+        return []
       }
     })
   }

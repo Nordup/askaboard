@@ -77,8 +77,35 @@ export interface StoryItem {
   nodes: string[]
   step: number | null
   made: boolean
-  /** An item the scene changed (made: false): each node's signature after the commit (nodeSig), so a read can tell which version the board shows (an undo brings back the content of an earlier one). */
+  /**
+   * Each node's signature after the commit (nodeSig). For an item the scene changed, a read can tell which version the board shows
+   * (an undo brings back the content of an earlier one); for both kinds, a replay after a restart tells which nodes are as the scene
+   * left them (the others show as ghosts). Records from before 2026-10-29 have it only for changed items.
+   */
   sigs?: string[]
+  /**
+   * The stage object these nodes belong to when this scene did not make it (a carried object it changed, or an earlier
+   * object it brought back): the scene id and key of the scene that made it. held: every node the object shows through
+   * after this scene. A rebuilt stage folds these, in stage order, into the object's nodes (renderer live/run.ts sceneRestore).
+   */
+  of?: [string, string]
+  held?: string[]
+}
+
+/** The key scheme of the scene lines this app writes: "n:<escaped name>[#k]" and "o:<n>", given by the stage (stage/live-prelude.js keyFor). */
+export const RECORD_VERSION = 2
+
+/**
+ * What the board measured when it committed a scene, which a re-run of the scene's program cannot know (renderer/live/run.ts
+ * settleLayout, measureGlides): the place and size a node got once measured (text centred on a point, a group frame fitted to
+ * what it holds, and the items in it), and where an item that went into a frame glides from. A replay after a restart applies
+ * them to the re-run (spec section 4).
+ */
+export interface SceneSettle {
+  /** Node id, x, y, and a content node's style width and height (null when the measure did not set them). */
+  nodes: Array<[string, number, number, string | null, string | null]>
+  /** The first node of an item that went into a frame, and its glide's start (an offset from its end place). */
+  glides: Array<[string, number, number]>
 }
 
 /** A short signature of a node's content (its saved form without seq): equal content, equal signature. */
@@ -98,6 +125,16 @@ export interface BoardLook {
 /** One version of a scene is what the board shows: a node it made is there, or a node it changed has the content it left. */
 export function storyOnBoard(story: SceneStory, board: BoardLook): boolean {
   return story.items.some((item) => (item.made ? item.nodes.some((id) => board.has(id)) : item.nodes.some((id, k) => item.sigs?.[k] !== undefined && board.sig(id) === item.sigs[k])))
+}
+
+/**
+ * The one rule for which version of a scene the board shows (an undo can bring back an earlier one): the index of the
+ * newest of these versions (oldest first) that storyOnBoard finds on the board, or -1 when none is. The story reader
+ * (renderer live/stories.ts) and a rebuilt stage (main/scene-store.ts restorable) both use it.
+ */
+export function shownVersion(stories: readonly SceneStory[], board: BoardLook): number {
+  for (let i = stories.length - 1; i >= 0; i--) if (storyOnBoard(stories[i], board)) return i
+  return -1
 }
 
 /** A story whose every field a reader uses has its type (a bad record line is skipped, never read). */
@@ -133,11 +170,16 @@ export interface SceneStory {
   items: StoryItem[]
 }
 
-/** What a scene changed on the board (renderer/live/compile.ts SceneRevert): node ids it made, nodes as they were before it changed or removed them. */
+/**
+ * What a scene changed on the board (renderer/live/compile.ts SceneRevert): node ids it made, nodes as they were before it
+ * changed or removed them, and (from 2026-10-29) each changed node's signature as the scene left it (nodeSig): a revert puts
+ * a changed node back only while it is still as the scene left it, so a later edit of it stays.
+ */
 export interface StoryRevert {
   created: string[]
   changed: unknown[]
   removed: unknown[]
+  after?: Record<string, string>
 }
 
 /** What the board tells main about a commit it accepted (runScene's result): the board's id and the scene's story and revert. newBoard: this commit gave the board its id (main saves the board file before the first line). */
@@ -149,11 +191,13 @@ export interface CommitRecord {
   newBoard?: boolean
   story: SceneStory
   revert: StoryRevert
+  settle?: SceneSettle
 }
 
 export interface SceneRecordLine {
   t: 'scene'
-  v: 1
+  /** 1: records from before 2026-10-29 (other object keys); RECORD_VERSION now. */
+  v: 1 | 2
   scene: string
   name: string | null
   version: number
@@ -170,9 +214,13 @@ export interface SceneRecordLine {
     cutAt: number | null
     ctx: string
     answers: Array<[string, string]>
+    /** The objects of earlier programs that ctx's stage.items held, by owner (scene id, key) with their item ids (main/live-scene.ts StageEntry.objects). */
+    objects?: Array<[string, string, string[]]>
   }
   story: SceneStory
   revert: StoryRevert
+  /** The board's measures at the commit (records from before 2026-10-29 have none). */
+  settle?: SceneSettle
 }
 
 export interface DropRecordLine {

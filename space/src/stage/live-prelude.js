@@ -334,9 +334,29 @@
     if (building > 0) return entry
     return register(entry)
   }
+  /**
+   * The key of each object a scene makes, given when it is made (spec section 4): "n:<name>" with its
+   * name escaped (\ and # get a \ before them), and "#2", "#3" … when the scene repeats a name; else
+   * "o:<n>", its order of creation in the scene. board.node() references get none. The two forms and
+   * the escape make every key of a scene different from every other, and from the record's "node:<id>".
+   * A key never depends on the stage-wide id, so a re-run of the scene gives its objects the same keys,
+   * and the record's story.items link each key to its board nodes.
+   */
+  let ownMade = 0
+  const namesMade = new Map()
+  function keyFor(entry) {
+    if (entry.kind === 'node') return undefined
+    ownMade++
+    if (entry.name === undefined) return `o:${ownMade}`
+    const base = `n:${entry.name.replace(/[\\#]/g, (c) => `\\${c}`)}`
+    const n = (namesMade.get(base) || 0) + 1
+    namesMade.set(base, n)
+    return n === 1 ? base : `${base}#${n}`
+  }
   function register(entry) {
     if (tracking) tracking.impure = true
     entry.id = objects.length
+    entry.key = keyFor(entry)
     entry.born = sceneNo
     entry.created = T
     entry.vis = undefined // 'hidden' (revealed later) or 'shown' (visible from its creation)
@@ -2819,6 +2839,7 @@
       if (carry) o.carry = true
       if (e.base && e.kind !== 'node') o.base = e.base
       if (e.name !== undefined) o.name = e.name
+      if (e.born === sceneNo && e.key !== undefined) o.key = e.key
       if (e.parent !== undefined && local.has(e.parent)) o.parent = local.get(e.parent)
       // The samples themselves go to the board as frames (giveFrames, by sid); the description says how many.
       if (e.dyn) o.samples = e.dyn.length
@@ -2932,6 +2953,8 @@
     fullEvaluations = 0
     tracking = null
     markTimes.clear()
+    ownMade = 0
+    namesMade.clear()
     asyncErrors = []
     collector = null
     finalSampling = false
@@ -3036,10 +3059,12 @@
   // ---------- The host functions ----------
 
   const stats = () => ({ evaluations, fullEvaluations })
+  /** The stage id and key of each object this scene made and kept (a cut drops some): what a rebuild tells the board (main/live-scene.ts). */
+  const keys = () => objects.filter((e) => e.born === sceneNo && !e.dropped && e.key !== undefined).map((e) => [e.id, e.key])
   /** The program's parallel work failed (an async function in all() or a say() mark): its error, at once. */
   const failed = () => (asyncErrors.length ? { error: asyncErrors[0] } : null)
   if (!giveHost) throw new Error('The stage has no host')
-  giveHost(Object.freeze({ begin, advance, end, failed, result, bake, stats }))
+  giveHost(Object.freeze({ begin, advance, end, failed, result, bake, stats, keys }))
 
   // ---------- Lock the stage ----------
   // Every program of a board runs in this one realm. So that no program can

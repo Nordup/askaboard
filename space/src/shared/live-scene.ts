@@ -78,6 +78,8 @@ interface SceneObjectBase {
   /** The centre of rotation and scaling. */
   pivot: [number, number]
   name?: string
+  /** The object's key in the scene that made it (its name, name#2 …, else o<n>; stage/live-prelude.js keyFor): only on objects this scene made. The record's story.items link it to board nodes. */
+  key?: string
   /** The group that holds this object. */
   parent?: number
   /** Stage object id: the same object in every scene of the stage (see main/live-scene.ts). */

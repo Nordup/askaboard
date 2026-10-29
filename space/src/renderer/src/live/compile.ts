@@ -136,6 +136,8 @@ export interface SceneRevert {
   changed: BoardNode[]
   /** Existing nodes the scene removed, as they were (with their descendants). */
   removed: BoardNode[]
+  /** Each changed node's signature as the scene left it (shared/scene-story.ts nodeSig), set at the commit: a revert puts a node back only while it is so. */
+  after?: Record<string, string>
 }
 
 export interface CompiledScene {

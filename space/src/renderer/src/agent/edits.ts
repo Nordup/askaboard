@@ -4,7 +4,7 @@ import type { BoardHandle } from '../board/Board'
 import { parentKey, ROOT, isFlowed } from '../board/scene'
 import type { Region } from '../board/types'
 import { liveReport, liveStatus } from '../live-pixels/registry'
-import { runScene, sceneDraft, sceneFrames, sceneControl, sceneContext, type ScenePlace } from '../live/run'
+import { runScene, sceneDraft, sceneFrames, sceneControl, sceneContext, sceneMemory, sceneRestore, type ScenePlace } from '../live/run'
 import { isGroupId, type InkGroup, type InkGroupTracker } from './groups'
 import { resolveTarget, sceneOf, type Scene } from './placement'
 
@@ -121,5 +121,9 @@ export async function runEditTool(ctx: EditContext, tool: AgentToolName, args: R
       return sceneFrames({ board: ctx.board, scene: () => scene(ctx), tracker: ctx.tracker }, args)
     case 'sceneControl':
       return sceneControl({ board: ctx.board, scene: () => scene(ctx), tracker: ctx.tracker }, args)
+    case 'sceneRestore':
+      return sceneRestore({ board: ctx.board, scene: () => scene(ctx), tracker: ctx.tracker }, args)
+    case 'sceneMemory':
+      return sceneMemory({ board: ctx.board, scene: () => scene(ctx), tracker: ctx.tracker }, args)
   }
 }

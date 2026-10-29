@@ -303,7 +303,15 @@ function registerIpc(): void {
     const current = requireSession()
     if (typeof path !== 'string') throw new Error('A board path is required.')
     await current.resolvePath(path)
-    return agentServer.records.openBoard(path, typeof id === 'string' && id ? id : null)
+    const stories = await agentServer.records.openBoard(path, typeof id === 'string' && id ? id : null)
+    // The board's stage is rebuilt from its records now, so the first scene call after a restart does not wait for it.
+    agentServer.boardMounted(path)
+    return stories
+  })
+  // The board window replays scenes restored from the records: their programs run again first (main/mcp.ts ensureMemories).
+  handle(IPC.rebuildScenes, async (sceneIds: unknown) => {
+    if (!Array.isArray(sceneIds) || !sceneIds.every((id) => typeof id === 'string')) throw new Error('Scene ids are required.')
+    await agentServer.rebuildScenes(sceneIds as string[])
   })
   ipcMain.on(IPC.setLastBoard, (_event, path: unknown) => {
     if (!session) return

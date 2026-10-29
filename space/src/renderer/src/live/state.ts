@@ -89,7 +89,7 @@ export interface SceneUiActions {
   replay(list: Array<{ scene: string; step?: number }>): boolean
   /** Play a committed scene from a step (number from 1): the scene that shows goes there; another scene is replayed from it. False when it can no longer be replayed. */
   playFrom(scene: string, step: number): boolean
-  /** The player still holds this committed scene, so it can play again (not after a restart or a new stage). */
+  /** The player holds this committed scene, or can rebuild it from the board's records (after a restart), so it can play again (not after a new stage, nor when it could not be rebuilt). */
   canReplay(scene: string): boolean
   /** The exact scene time (seconds) of the scene that shows now, or null when none: for motion between the 0.1 s steps of `t` (the reading panel). */
   time(): number | null

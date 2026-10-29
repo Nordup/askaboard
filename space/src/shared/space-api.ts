@@ -248,6 +248,8 @@ export type AgentToolName =
   | 'sceneDraft'
   | 'sceneFrames'
   | 'sceneControl'
+  | 'sceneRestore'
+  | 'sceneMemory'
 
 /** A box drawn over a snapshot (the "changes" view), in board coordinates. */
 export interface SnapshotOutline {
@@ -585,6 +587,8 @@ export interface SpaceApi {
   openSceneRecords(path: string, id: string | null): Promise<BoardStories>
   /** The open board's scene stories after a new record line. */
   onSceneStories(listener: (stories: BoardStories) => void): Unsubscribe
+  /** Board window only: run these scenes, restored from the board's records after a restart, again on the stage, so the player can replay them (main/mcp.ts ensureMemories). Resolves when it is done. */
+  rebuildScenes(sceneIds: string[]): Promise<void>
 
   onFolderOpened(listener: (snapshot: Snapshot) => void): Unsubscribe
   onFilesChanged(listener: (tree: FileTree) => void): Unsubscribe
@@ -667,5 +671,6 @@ export const IPC = {
   sceneEvent: 'space:scene-event',
   framesPort: 'space:frames-port',
   openSceneRecords: 'space:open-scene-records',
-  sceneStories: 'space:scene-stories'
+  sceneStories: 'space:scene-stories',
+  rebuildScenes: 'space:rebuild-scenes'
 } as const

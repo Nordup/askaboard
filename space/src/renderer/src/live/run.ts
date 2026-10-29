@@ -6,7 +6,7 @@ import type { InkGroupTracker } from '../agent/groups'
 import { coveredOf, type Covered } from '../agent/covered'
 import { viewOf, type Scene } from '../agent/placement'
 import { itemNames } from '../agent/item-names'
-import { buildIndex } from '../board/scene'
+import { buildIndex, isFlowed } from '../board/scene'
 import { compileScene, type CompiledScene, type DynLookup, type PlayObject, type SceneRevert, type StageLookup } from './compile'
 import { connectFrames, takeFrames, type RunFrames } from './frames'
 import { inkIndexOf, nodeSig, scenePlayer, sceneFrame, type SceneFrame, type SceneMemory } from './player'
@@ -15,7 +15,8 @@ import type { Camera, Point } from '../board/types'
 import { clampZoom, glideCamera, inkBounds } from '../board/geometry'
 import type { LiveTimeline } from '../live-pixels/clock'
 import type { LiveStillRequest } from '../live-pixels/stills'
-import { nodeSig as contentSig, stepAt, stepLines, type SceneStory, type StoryItem } from '@shared/scene-story'
+import { nodeSig as contentSig, stepAt, stepLines, type SceneSettle, type SceneStory, type StoryItem, type StoryRevert } from '@shared/scene-story'
+import { clearRestored, forgetRestored, restoredScene, setFailed, setRestored, type RestoredScene } from './rebuild'
 
 /**
  * The renderer half of the scene tools. The main process runs the program in
@@ -48,13 +49,26 @@ export interface ScenePlace {
 /** What each committed scene did to the board, to take it off again (by scene id; for the current epoch of the stage). */
 const sceneReverts = new Map<string, SceneRevert>()
 
-/** The nodes after a revert of a scene: its new nodes go, the nodes it changed or removed come back as they were. */
-function revertedNodes(current: readonly BoardNode[], revert: SceneRevert): BoardNode[] {
+/**
+ * The nodes after a revert of a scene: its new nodes go, the nodes it removed come back, and a node it changed comes back as
+ * it was while it is still as the scene left it (revert.after); a node changed since (by the learner) keeps that change. The
+ * one revert rule: a replace, a skipped scene, a place on the stage (sceneAt), in one session and after a restart. exact:
+ * the board as it was before the scene (a replay's compile, sceneMemory): every node it changed or removed comes back as it
+ * was, also one changed or deleted since.
+ */
+function revertedNodes(current: readonly BoardNode[], revert: SceneRevert, exact = false): BoardNode[] {
   const created = new Set(revert.created)
   const changed = new Map(revert.changed.map((node) => [node.id, node]))
   const present = new Set(current.map((node) => node.id))
-  const next = current.filter((node) => !created.has(node.id)).map((node) => changed.get(node.id) ?? node)
+  const back = (node: BoardNode): BoardNode => {
+    const before = changed.get(node.id)
+    if (!before) return node
+    const after = revert.after?.[node.id]
+    return exact || after === undefined || contentSig(node) === after ? before : node
+  }
+  const next = current.filter((node) => !created.has(node.id)).map(back)
   for (const node of revert.removed) if (!present.has(node.id)) next.push(node)
+  if (exact) for (const node of revert.changed) if (!present.has(node.id)) next.push(node)
   return next
 }
 
@@ -64,7 +78,7 @@ function revertedNodes(current: readonly BoardNode[], revert: SceneRevert): Boar
  * the ids and names of their items (SceneContext.ahead). Without a place, the
  * board as it is.
  */
-export function sceneAt(s: Scene, place: ScenePlace | null | undefined): { scene: Scene; ahead: NonNullable<SceneContext['ahead']> | null } {
+export function sceneAt(s: Scene, place: ScenePlace | null | undefined, exact = false): { scene: Scene; ahead: NonNullable<SceneContext['ahead']> | null } {
   if (!place || !place.scenes.length) return { scene: s, ahead: null }
   const ahead: NonNullable<SceneContext['ahead']> = {}
   let nodes: readonly BoardNode[] = s.nodes
@@ -85,7 +99,7 @@ export function sceneAt(s: Scene, place: ScenePlace | null | undefined): { scene
   })
   for (const entry of [...place.scenes].reverse()) {
     const revert = sceneReverts.get(entry.id)
-    if (revert) nodes = revertedNodes(nodes, revert)
+    if (revert) nodes = revertedNodes(nodes, revert, exact)
   }
   if (nodes === s.nodes) return { scene: s, ahead }
   const index = buildIndex(nodes)
@@ -155,6 +169,19 @@ export interface RunSceneContext {
 /** Take a committed scene off the board again (a skipped queued scene, a restage): a new undo step, or part of the keyed step `step`. */
 function revertScene(board: BoardHandle, revert: SceneRevert, step?: string): void {
   board.agentCommit(revertedNodes(board.liveState().nodes, revert), step ? { step } : undefined)
+}
+
+/** The player's way to take a scene off the board: by its revert in sceneReverts, the one owner, read when it runs. */
+function revertOf(board: BoardHandle, sceneId: string): (step?: string) => void {
+  return (step) => {
+    const revert = sceneReverts.get(sceneId)
+    if (revert) revertScene(board, revert, step)
+  }
+}
+
+/** A restage's calls name the board they are for (main/mcp.ts restage): another board refuses them. */
+function sameBoard(ctx: RunSceneContext, args: Record<string, unknown>): void {
+  if (typeof args.boardId === 'string' && (ctx.board.boardId() ?? null) !== args.boardId) throw new Error('The board changed while the scene ran, so this board is not changed.')
 }
 
 /** Text centred on a point and group frames fitted to what they hold, once measured (the same undo step). */
@@ -246,12 +273,39 @@ function measureGlides(board: BoardHandle, compiled: CompiledScene): void {
  */
 const stageRecord: { epoch: string; items: Map<number, { nodeIds: string[]; group?: string }>; revision: number } = { epoch: '', items: new Map(), revision: 0 }
 
+/**
+ * The owner of each stage object of this epoch: the scene id and key of the scene that made it (kept also when the object
+ * leaves the board). A scene that changes or brings back an earlier object names it so in its record (StoryItem.of).
+ */
+const stageOwners = new Map<number, [string, string]>()
+
+/**
+ * The stage's identities as main has them now (main/mcp.ts publishIdentities, sceneRestore): stage id, scene id and key of
+ * each object of the log's programs. The full set replaces the renderer's copy; each object's items follow it to the stage
+ * id it has now, and an object whose program no longer runs (marked) leaves the record of the stage.
+ */
+function replaceIdentities(keys: ReadonlyArray<[number, string, string]>): void {
+  const sidOf = new Map(keys.map(([sid, scene, key]) => [`${scene}\0${key}`, sid]))
+  const items: typeof stageRecord.items = new Map()
+  for (const [sid, record] of stageRecord.items) {
+    const owner = stageOwners.get(sid)
+    const now = owner ? sidOf.get(`${owner[0]}\0${owner[1]}`) : undefined
+    if (now !== undefined) items.set(now, record)
+  }
+  stageOwners.clear()
+  for (const [sid, scene, key] of keys) stageOwners.set(sid, [scene, key])
+  stageRecord.items = items
+  stageRecord.revision++
+}
+
 function adoptEpoch(epoch: string | undefined): void {
   if (!epoch || epoch === stageRecord.epoch) return
   stageRecord.epoch = epoch
   if (stageRecord.items.size) stageRecord.revision++
   stageRecord.items.clear()
+  stageOwners.clear()
   sceneReverts.clear()
+  clearRestored()
   scenePlayer.resetStage()
 }
 
@@ -474,6 +528,7 @@ function commitScene(ctx: RunSceneContext, desc: SceneSummary, compiled: Compile
   for (const frame of compiled.frames) {
     const desc = timeline.object(frame.object)
     if (desc.sid !== undefined) stageRecord.items.set(desc.sid, { nodeIds: [frame.id] })
+    if (desc.sid !== undefined && desc.key && !desc.carry) stageOwners.set(desc.sid, [sceneId, desc.key])
     if (desc.parent !== undefined && framed(frame.object)) continue
     if (!present.has(frame.id)) continue
     const box = layout.get(frame.id)
@@ -486,6 +541,7 @@ function commitScene(ctx: RunSceneContext, desc: SceneSummary, compiled: Compile
   const groupBoxes = ctx.tracker.compute(state)
   for (const object of compiled.play.objects) {
     const desc = timeline.object(object.id)
+    if (desc.sid !== undefined && desc.key && !desc.carry && desc.kind !== 'node') stageOwners.set(desc.sid, [sceneId, desc.key])
     if (desc.sid !== undefined && desc.kind !== 'node' && desc.kind !== 'group') {
       if (object.ghost) stageRecord.items.delete(desc.sid)
       else stageRecord.items.set(desc.sid, { nodeIds: object.records ?? object.targets.map((target) => target.nodeId), ...(groupOf.has(object.id) ? { group: groupOf.get(object.id) } : {}) })
@@ -522,6 +578,9 @@ function commitScene(ctx: RunSceneContext, desc: SceneSummary, compiled: Compile
     }
   }
   stageRecord.revision++
+  // Each changed node as the scene left it (after the measures): a later revert keeps a node edited since.
+  const after = new Map(state.nodes.map((node) => [node.id, node]))
+  compiled.revert.after = Object.fromEntries(compiled.revert.changed.flatMap((node) => (after.has(node.id) ? [[node.id, contentSig(after.get(node.id) as BoardNode)]] : [])))
   // The board's id: the first scene record of a board gives it one (spec section 2); main writes the record.
   let boardId = ctx.board.boardId()
   const newBoard = !boardId
@@ -537,9 +596,38 @@ function commitScene(ctx: RunSceneContext, desc: SceneSummary, compiled: Compile
     items,
     cues: desc.cues.map((cue) => ({ text: cue.text, at_s: cue.at, dur_s: cue.dur, ...(cue.marks?.length ? { marks: Object.fromEntries(cue.marks.map((mark) => [mark.name, mark.at])) } : {}) })),
     log: desc.logs,
-    ...(ctx.where ? { record: { board: boardId, root: ctx.where.root, path: ctx.where.path, ...(newBoard ? { newBoard: true } : {}), story: storyOf(compiled, desc, state.nodes), revert: compiled.revert } } : {})
+    ...(ctx.where ? { record: { board: boardId, root: ctx.where.root, path: ctx.where.path, ...(newBoard ? { newBoard: true } : {}), story: storyOf(compiled, desc, state.nodes), revert: compiled.revert, settle: settleOf(compiled, state.nodes) } } : {})
   }
   return { compiled, result, snapshot }
+}
+
+/**
+ * What the board measured at a commit (SceneSettle), for a replay after a restart: each node the scene made or
+ * changed whose place or size the board set after the compile (settleLayout: centred text, fitted frames and what
+ * they hold), and the glide start of each item that went into a frame (measureGlides).
+ */
+function settleOf(compiled: CompiledScene, after: readonly BoardNode[]): SceneSettle {
+  const compiledNodes = new Map(compiled.next.map((node) => [node.id, node]))
+  const ids = new Set([...compiled.revert.created, ...compiled.revert.changed.map((node) => node.id)])
+  const nodes: SceneSettle['nodes'] = []
+  for (const node of after) {
+    const before = compiledNodes.get(node.id)
+    if (!before || before === node || !ids.has(node.id)) continue
+    const now = node as { x?: unknown; y?: unknown }
+    const was = before as { x?: unknown; y?: unknown }
+    if (typeof now.x !== 'number' || typeof now.y !== 'number') continue
+    const size = (key: 'width' | 'height'): string | null => (isContent(node) && isContent(before) && node.style[key] !== before.style[key] ? (node.style[key] ?? null) : null)
+    const width = size('width')
+    const height = size('height')
+    if (now.x !== was.x || now.y !== was.y || width !== null || height !== null) nodes.push([node.id, now.x, now.y, width, height])
+  }
+  const glides: SceneSettle['glides'] = []
+  for (const object of compiled.play.objects) {
+    if (!object.glide || (!object.glide.from[0] && !object.glide.from[1])) continue
+    const first = compiled.reparented.find((entry) => entry.object === object.id)
+    if (first) glides.push([first.nodeId, object.glide.from[0], object.glide.from[1]])
+  }
+  return { nodes, glides }
 }
 
 /**
@@ -565,13 +653,19 @@ function storyOf(compiled: CompiledScene, desc: SceneSummary, after: readonly Bo
     const o = timeline.object(object.id)
     if (o.kind === 'group') continue
     const nodes = nodesOf(object)
+    // The stage object of an earlier scene that this scene changed or brought back: its owner, and every node it shows through now.
+    const owner = o.kind !== 'node' && o.sid !== undefined && !keys.has(object.id) ? stageOwners.get(o.sid) : undefined
+    const of = owner ? { of: owner, held: nodes } : {}
     if (o.kind === 'node' || o.carry) {
       // An item that was on the board before: in the story when this scene changed it, at the step of its first change.
       const touched = nodes.filter((id) => changed.has(id) || created.has(id))
-      if (touched.length) items.push({ key: `node:${touched[0]}`, nodes: touched, step: stepIndex(stepAt(play.steps, changeTime(play, object))), made: false, sigs: touched.map((id) => contentSig(byId.get(id) as BoardNode)) })
+      if (touched.length) items.push({ key: `node:${touched[0]}`, nodes: touched, step: stepIndex(stepAt(play.steps, changeTime(play, object))), made: false, sigs: touched.map((id) => contentSig(byId.get(id) as BoardNode)), ...of })
       continue
     }
-    if (nodes.length) items.push({ key: keys.get(object.id) as string, nodes, step: stepIndex(stepOfObject(play, object.id)), made: true })
+    const key = keys.get(object.id)
+    if (nodes.length && key) items.push({ key, nodes, step: stepIndex(stepOfObject(play, object.id)), made: true, sigs: nodes.map((id) => contentSig(byId.get(id) as BoardNode)) })
+    // An earlier object this scene brings back (it was gone): new nodes, made here, for that object.
+    else if (nodes.length && owner) items.push({ key: `node:${nodes[0]}`, nodes, step: stepIndex(stepOfObject(play, object.id)), made: true, sigs: nodes.map((id) => contentSig(byId.get(id) as BoardNode)), ...of })
   }
   // The frames of named groups: the step of the group's first object.
   for (const { object: objectId, id: frameId } of compiled.frames) {
@@ -580,7 +674,8 @@ function storyOf(compiled: CompiledScene, desc: SceneSummary, after: readonly Bo
       for (let current = timeline.object(object.id).parent; current !== undefined; current = timeline.object(current).parent) if (current === objectId) return true
       return false
     })
-    items.push({ key: keys.get(objectId) as string, nodes: [frameId], step: leaf ? stepIndex(stepOfObject(play, leaf.id)) : null, made: true })
+    const key = keys.get(objectId)
+    if (key) items.push({ key, nodes: [frameId], step: leaf ? stepIndex(stepOfObject(play, leaf.id)) : null, made: true, sigs: [contentSig(byId.get(frameId) as BoardNode)] })
   }
   // Every other node the commit made or changed (the revert sees every change kind, also what the
   // compile moved itself, such as learner ink kept in replaced HTML material): the step of the item
@@ -597,7 +692,7 @@ function storyOf(compiled: CompiledScene, desc: SceneSummary, after: readonly Bo
       }
     }
     const made = created.has(id)
-    items.push({ key: `node:${id}`, nodes: [id], step, made, ...(made ? {} : { sigs: [contentSig(byId.get(id) as BoardNode)] }) })
+    items.push({ key: `node:${id}`, nodes: [id], step, made, sigs: [contentSig(byId.get(id) as BoardNode)] })
     listed.add(id)
   }
   return {
@@ -609,26 +704,19 @@ function storyOf(compiled: CompiledScene, desc: SceneSummary, after: readonly Bo
 }
 
 /**
- * The key of every object this scene made (spec section 4), over all of them in the order the
- * program made them, so a key never depends on what survives to the end: its name (name#2, #3 …
- * when the scene repeats a name), else o<n>, its place among the scene's own objects. Objects of
- * earlier scenes (carried) and board.node() references are not counted.
+ * The key of every object this scene made (spec section 4), as the stage gave it when the program
+ * made it (stage/live-prelude.js keyFor), so a key never depends on what survives to the end or on
+ * the stage-wide id: its name (name#2, #3 … when the scene repeats a name), else o<n>, its order of
+ * creation in the scene. A re-run of the program gives its objects the same keys. Objects of earlier
+ * scenes (carried) and board.node() references have none; the nodes of an object without a key are
+ * in the story by node id.
  */
 function objectKeys(play: CompiledScene['play']): Map<number, string> {
   const keys = new Map<number, string>()
-  const names = new Map<string, number>()
-  let own = 0
   for (let id = 0; id < play.timeline.tracks.length; id++) {
     const o = play.timeline.object(id)
-    if (o.kind === 'node' || o.carry) continue
-    own++
-    if (!o.name) {
-      keys.set(id, `o${own}`)
-      continue
-    }
-    const n = (names.get(o.name) ?? 0) + 1
-    names.set(o.name, n)
-    keys.set(id, n === 1 ? o.name : `${o.name}#${n}`)
+    if (o.kind === 'node' || o.carry || !o.key) continue
+    keys.set(id, o.key)
   }
   return keys
 }
@@ -648,8 +736,12 @@ function changeTime(play: CompiledScene['play'], object: PlayObject): number {
  * place of the queued or playing scene with the same id (replace, cut),
  * keeping its place in the queue and its clock. `step`: the key of the
  * undo step the commit joins (a restage's reverts and commits are one step).
+ * `nodeIds`: the id (and z) the compile's new nodes take, in their order
+ * (a restage's rollback commits an earlier program again as its nodes
+ * were); kept_ids says whether they matched.
  */
-export function runScene(ctx: RunSceneContext, args: Record<string, unknown>): (SceneResult & { ends_in_s: number }) | DraftMissing {
+export function runScene(ctx: RunSceneContext, args: Record<string, unknown>): (SceneResult & { ends_in_s: number; kept_ids?: boolean }) | DraftMissing {
+  sameBoard(ctx, args)
   const sceneId = typeof args.sceneId === 'string' && args.sceneId ? args.sceneId : newItemId('sc')
   const name = typeof args.name === 'string' && args.name ? args.name : null
   let desc: SceneSummary
@@ -666,18 +758,261 @@ export function runScene(ctx: RunSceneContext, args: Record<string, unknown>): (
     if (!draft) return { draftMissing: true }
     ;({ summary: desc, compiled } = draft)
   }
+  const nodeIds = Array.isArray(args.nodeIds) ? (args.nodeIds as Array<[string, number | null]>) : null
+  const keptIds = !!nodeIds && nodeIds.length === compiled.revert.created.length
+  if (nodeIds && keptIds) {
+    renameNodes(compiled, new Map(compiled.revert.created.map((id, k) => [id, nodeIds[k][0]])))
+    const z = new Map(nodeIds.filter(([, value]) => value !== null))
+    compiled.next = compiled.next.map((node) => (z.has(node.id) ? ({ ...node, z: z.get(node.id) } as BoardNode) : node))
+  }
   const { result, snapshot } = commitScene(ctx, desc, compiled, typeof args.step === 'string' && args.step ? args.step : null)
-  const revert = (step?: string): void => revertScene(ctx.board, compiled.revert, step)
+  const revert = revertOf(ctx.board, sceneId)
   sceneReverts.set(sceneId, compiled.revert)
   let startsIn: number
   // settled: the scene goes back on the board in its end state and does not play (a failed replace of a scene that had played).
   if (args.settled === true) startsIn = 0
   else if (args.slot === true && scenePlayer.swap(ctx.board, sceneId, compiled.play, revert, args.slotWhy === 'cut' ? 'cut' : 'replaced')) startsIn = scenePlayer.startsIn(sceneId)
   else startsIn = scenePlayer.enqueue(ctx.board, compiled.play, { mode: args.when === 'now' ? 'now' : 'queue', revert })
-  scenePlayer.remember({ play: compiled.play, snapshot, revert })
+  scenePlayer.remember({ play: compiled.play, snapshot })
+  forgetRestored(sceneId)
   // A playing scene (cut) started before now: its start is negative, its end is still ahead.
   result.starts_in_s = Math.max(0, startsIn)
-  return { ...result, ends_in_s: Math.round((startsIn + result.duration_s) * 1000) / 1000 }
+  return { ...result, ends_in_s: Math.round((startsIn + result.duration_s) * 1000) / 1000, ...(nodeIds ? { kept_ids: keptIds } : {}) }
+}
+
+/** A scene of the stage that main rebuilt from the records (main/mcp.ts restoreStage); a malformed line gives only its id and name. */
+interface RestoreArgs {
+  id: string
+  name: string | null
+  story?: SceneStory
+  revert?: StoryRevert
+  settle?: SceneSettle | null
+}
+
+/**
+ * sceneRestore: the renderer's part of a stage that main rebuilt from the board's records (each
+ * board mount: after a restart, another board, a window that loaded again), so the board works with
+ * those scenes as in one session. The new epoch drops what the renderer held of an earlier stage.
+ * Then the stage's identities (keys: stage id, scene id and key of each object) and failures, the
+ * scenes' reverts (a replace takes their items off), the stage's record (a new scene finds their
+ * objects on the board: each object's key gives its nodes in the record's story.items, and the
+ * changes later scenes made to an object, StoryItem.of and held, are folded in stage order), and the
+ * restored scenes, which a replay rebuilds (sceneMemory). Nothing on the board changes. stale: the
+ * board is not the one main restored (another board mounted meanwhile); main starts again.
+ */
+export function sceneRestore(ctx: RunSceneContext, args: Record<string, unknown>): { restored: number } | { stale: true } {
+  if ((ctx.board.boardId() ?? null) !== (typeof args.boardId === 'string' ? args.boardId : null)) return { stale: true }
+  adoptEpoch(typeof args.epoch === 'string' ? args.epoch : undefined)
+  scenePlayer.adopt(ctx.board)
+  replaceIdentities(Array.isArray(args.keys) ? (args.keys as Array<[number, string, string]>) : [])
+  setFailed(Array.isArray(args.failed) ? (args.failed as Array<[string, string]>) : [])
+  const s = ctx.scene()
+  const list = Array.isArray(args.scenes) ? (args.scenes as RestoreArgs[]) : []
+  const restored: RestoredScene[] = []
+  const nodeEntry = (ids: readonly string[]): { nodeIds: string[]; group?: string } => {
+    const group = s.groups.find((entry) => entry.strokes.includes(ids[0]))?.id
+    return { nodeIds: [...ids], ...(group ? { group } : {}) }
+  }
+  const sidOf = new Map([...stageOwners].map(([sid, [scene, key]]) => [`${scene}\0${key}`, sid]))
+  for (const scene of list) {
+    if (!scene.story || !scene.revert) continue
+    for (const item of scene.story.items) {
+      const sid = item.of ? sidOf.get(`${item.of[0]}\0${item.of[1]}`) : item.made && !item.key.startsWith('node:') ? sidOf.get(`${scene.id}\0${item.key}`) : undefined
+      const nodeIds = item.of ? item.held : item.nodes
+      if (sid !== undefined && nodeIds?.length) stageRecord.items.set(sid, nodeEntry(nodeIds))
+    }
+    sceneReverts.set(scene.id, { created: [...scene.revert.created], changed: scene.revert.changed as BoardNode[], removed: scene.revert.removed as BoardNode[], ...(scene.revert.after ? { after: scene.revert.after } : {}) })
+    restored.push({ id: scene.id, name: scene.name, story: scene.story, revert: scene.revert, settle: scene.settle ?? null })
+  }
+  stageRecord.revision++
+  setRestored(restored)
+  return { restored: restored.length }
+}
+
+/**
+ * sceneMemory: a restored scene's program ran again on the rebuilt stage (main/live-scene.ts
+ * resample); its run becomes the player's memory of the scene, so it replays as in one session.
+ * Nothing is committed: its items are on the board. The run compiles on the board as it was before
+ * the scene (args.place: the scene and the ones after it come off, by their recorded before-state:
+ * sceneAt exact), then each node it makes takes the id of the board's node (recordIds). The board's
+ * measures at the commit (settle) are applied. A node that the board no longer shows as the scene left
+ * it shows as a ghost, as in one session. error: the re-run does not match the record (main marks the
+ * scene).
+ */
+export function sceneMemory(ctx: RunSceneContext, args: Record<string, unknown>): { ok: true } | { error: string } | { stale: true } {
+  const sceneId = String(args.sceneId)
+  let frames: RunFrames
+  try {
+    // Taken first, also when the run is no longer wanted: the frames of a run are the board's to drop.
+    frames = takeFrames(args.job, args.frames)
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) }
+  }
+  // A board that mounted since holds no restored scenes of the board before (scenePlayer.detach).
+  const info = restoredScene(sceneId)
+  if (!info) return { stale: true }
+  try {
+    const desc = checkDescription(args.scene, info.name)
+    if (desc.stage !== stageRecord.epoch) return { stale: true }
+    const before = sceneAt(ctx.scene(), (args.place as ScenePlace | undefined) ?? { scenes: [{ id: sceneId, name: info.name ?? sceneId }] }, true).scene
+    const compiled = compileScene(desc, before, sceneId, info.name, stageLookup, dynLookup(frames))
+    renameNodes(compiled, recordIds(compiled, info.story, info.revert.created))
+    applySettle(compiled, info.settle)
+    scenePlayer.remember({ play: compiled.play, snapshot: restoredSnapshot(compiled, info.story, ctx.board) })
+    return { ok: true }
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+/**
+ * The board node id of each node a re-run made (re-run id → record id). An object's key gives its
+ * nodes in the record's story.items, in their order (the same filter as storyOf: the nodes it shows
+ * through at the end); an earlier object that the scene brought back goes by its owner (StoryItem.of);
+ * the nodes of no object go in their order of creation (the record's revert.created). Throws when the
+ * re-run and the record do not have the same objects and nodes: never maps a node to another object's.
+ */
+function recordIds(compiled: CompiledScene, story: SceneStory, recordCreated: readonly string[]): Map<string, string> {
+  const play = compiled.play
+  const keys = objectKeys(play)
+  const made = new Set(compiled.revert.created)
+  const present = new Set(compiled.next.map((node) => node.id))
+  const recorded = new Map<string, string[]>()
+  for (const item of story.items) {
+    if (!item.made) continue
+    const key = item.of ? `of:${item.of[0]}\0${item.of[1]}` : item.key.startsWith('node:') ? null : item.key
+    if (key === null) continue
+    if (recorded.has(key)) throw new Error(`the record has the object "${key}" twice`)
+    recorded.set(key, item.nodes)
+  }
+  const map = new Map<string, string>()
+  const paired = new Set<string>()
+  const pair = (key: string, ids: string[]): void => {
+    const nodes = recorded.get(key)
+    if (!nodes) throw new Error(`the object "${key}" is not in the record`)
+    if (paired.has(key)) throw new Error(`two objects have the key "${key}"`)
+    if (nodes.length !== ids.length) throw new Error(`the object "${key}" makes ${ids.length} items now and ${nodes.length} in the record`)
+    ids.forEach((id, k) => {
+      if (made.has(id)) map.set(id, nodes[k])
+      else if (id !== nodes[k]) throw new Error(`the object "${key}" shows through other items than in the record`)
+    })
+    paired.add(key)
+  }
+  for (const object of play.objects) {
+    if (object.ghost) continue
+    const o = play.timeline.object(object.id)
+    if (o.kind === 'group' || o.kind === 'node' || o.carry) continue
+    const owner = !keys.has(object.id) && o.sid !== undefined ? stageOwners.get(o.sid) : undefined
+    const key = keys.get(object.id) ?? (owner ? `of:${owner[0]}\0${owner[1]}` : undefined)
+    if (!key) continue
+    const ids = [...new Set(object.records ?? object.targets.map((target) => target.nodeId))].filter((id) => present.has(id))
+    if (ids.length) pair(key, ids)
+  }
+  for (const { object, id } of compiled.frames) {
+    const key = keys.get(object)
+    if (key && present.has(id)) pair(key, [id])
+  }
+  for (const key of recorded.keys()) if (!paired.has(key)) throw new Error(`the object "${key}" of the record is not made now`)
+  const taken = new Set(map.values())
+  const rest = compiled.revert.created.filter((id) => !map.has(id))
+  const recordRest = recordCreated.filter((id) => !taken.has(id))
+  if (rest.length !== recordRest.length) throw new Error(`${rest.length} items inside material now and ${recordRest.length} in the record`)
+  rest.forEach((id, k) => map.set(id, recordRest[k]))
+  return map
+}
+
+/** Give a compiled scene's nodes other ids (old → new), everywhere the compile names them. */
+function renameNodes(compiled: CompiledScene, map: ReadonlyMap<string, string>): void {
+  const r = (id: string): string => map.get(id) ?? id
+  const node = <T extends BoardNode>(entry: T): T => {
+    const parent = (entry as { parent?: unknown }).parent
+    return { ...entry, id: r(entry.id), ...(typeof parent === 'string' ? { parent: r(parent) } : {}) }
+  }
+  compiled.next = compiled.next.map(node)
+  const play = compiled.play
+  play.ghosts = play.ghosts.map(node)
+  for (const object of play.objects) {
+    object.targets = object.targets.map((target) => ({ ...target, nodeId: r(target.nodeId) }))
+    if (object.records) object.records = object.records.map(r)
+  }
+  if (play.edits) play.edits = play.edits.map((edit) => ({ ...edit, nodeId: r(edit.nodeId) }))
+  if (play.vanish) play.vanish = play.vanish.map((entry) => ({ ...entry, ids: entry.ids.map(r) }))
+  compiled.centers = compiled.centers.map((entry) => ({ ...entry, nodeId: r(entry.nodeId) }))
+  compiled.frames = compiled.frames.map((entry) => ({ ...entry, id: r(entry.id) }))
+  compiled.reparented = compiled.reparented.map((entry) => ({ ...entry, nodeId: r(entry.nodeId) }))
+  compiled.inkGroups = compiled.inkGroups.map((entry) => ({ ...entry, strokes: entry.strokes.map(r) }))
+  compiled.contentIds = compiled.contentIds.map(r)
+  compiled.nodesOf = new Map([...compiled.nodesOf].map(([object, ids]) => [object, ids.map(r)]))
+  compiled.revert = { ...compiled.revert, created: compiled.revert.created.map(r) }
+}
+
+/** The board's measures at the commit (SceneSettle) on a re-run: what settleLayout and measureGlides did, from the record. */
+function applySettle(compiled: CompiledScene, settle: SceneSettle | null): void {
+  if (!settle) return
+  const at = new Map(compiled.next.map((node, i) => [node.id, i]))
+  const centred = new Set(compiled.centers.map((entry) => entry.nodeId))
+  for (const [id, x, y, width, height] of settle.nodes) {
+    const i = at.get(id)
+    if (i === undefined) continue
+    const node = compiled.next[i]
+    const was = node as unknown as { x: number; y: number }
+    const shift: Point = [x - was.x, y - was.y]
+    const sized = isContent(node) && (width !== null || height !== null) ? { style: { ...node.style, ...(width !== null ? { width } : {}), ...(height !== null ? { height } : {}) } } : {}
+    compiled.next[i] = { ...node, x, y, ...sized } as BoardNode
+    // Text centred once measured: its look while it plays stays where the program put it (as settleLayout does).
+    if (!centred.has(id) || (!shift[0] && !shift[1])) continue
+    for (const object of compiled.play.objects) for (const target of object.targets) if (target.nodeId === id) target.inverseBaked = multiply(target.inverseBaked, [1, 0, 0, 1, -shift[0], -shift[1]])
+  }
+  for (const [id, fx, fy] of settle.glides) {
+    const entry = compiled.reparented.find((reparented) => reparented.nodeId === id)
+    const object = entry ? compiled.play.objects.find((play) => play.id === entry.object) : undefined
+    if (object?.glide) object.glide.from = [fx, fy]
+  }
+}
+
+/**
+ * The scene's items as it left them, for a replay of a re-run (commitScene's snapshot): a node the
+ * board shows as the scene left it (the record's signature) plays on the board's node; any other
+ * (moved, changed or deleted since) shows as a ghost of the re-run's node, in world coordinates.
+ */
+function restoredSnapshot(compiled: CompiledScene, story: SceneStory, board: BoardHandle): SceneMemory['snapshot'] {
+  const state = board.liveState()
+  const layout = state.layout()
+  const onBoard = new Map(state.nodes.map((node) => [node.id, node]))
+  const recorded = new Map<string, string>()
+  for (const item of story.items) item.nodes.forEach((id, k) => item.sigs?.[k] !== undefined && recorded.set(id, item.sigs[k]))
+  const byId = new Map(compiled.next.map((node) => [node.id, node]))
+  const snapshot: SceneMemory['snapshot'] = new Map()
+  for (const object of compiled.play.objects) {
+    if (object.ghost) continue
+    for (const target of object.targets) {
+      const id = target.nodeId
+      const node = byId.get(id)
+      if (!node || snapshot.has(id)) continue
+      const now = onBoard.get(id)
+      const sig = recorded.get(id)
+      // No signature (a record from before 2026-10-29): unknown, so the node shows as a ghost of the re-run.
+      const same = !!now && sig !== undefined && contentSig(now) === sig
+      const box = same || (now && isFlowed(node, byId)) ? (layout.get(id) as { x: number; y: number; ox?: number; oy?: number } | undefined) : undefined
+      snapshot.set(id, { sig: same && now ? nodeSig(now) : '', ghost: worldGhost(node, byId, box) })
+    }
+  }
+  return snapshot
+}
+
+/** A node as a top-level ghost in world coordinates: by its measured box, else its place plus its ancestors'. */
+function worldGhost(node: BoardNode, byId: ReadonlyMap<string, BoardNode>, box: { x: number; y: number; ox?: number; oy?: number } | undefined): BoardNode {
+  const own = node as unknown as { x: number; y: number }
+  if (box) return (isInk(node) ? { ...node, parent: undefined, x: box.ox ?? own.x, y: box.oy ?? own.y } : { ...node, parent: undefined, x: box.x, y: box.y }) as BoardNode
+  let x = own.x
+  let y = own.y
+  for (let parent = node.parent as string | undefined; typeof parent === 'string'; parent = byId.get(parent)?.parent as string | undefined) {
+    const up = byId.get(parent) as unknown as { x?: number; y?: number } | undefined
+    if (!up) break
+    x += up.x ?? 0
+    y += up.y ?? 0
+  }
+  return { ...node, parent: undefined, x, y } as BoardNode
 }
 
 function liveBox(node: BoardNode): { x: number; y: number; width: number; height: number } {
@@ -1104,8 +1439,13 @@ export async function sceneControl(ctx: RunSceneContext, args: Record<string, un
       scenePlayer.nextStep()
       return status()
     case 'known':
-      // The player still holds this scene (it waits, plays, or is in the stage's history).
-      return { known: scenePlayer.isKnown(String(args.scene)) }
+      // The player still holds this scene (it waits, plays, or is in the stage's history), or it was restored from the records (its revert is known).
+      return { known: scenePlayer.isKnown(String(args.scene)) || sceneReverts.has(String(args.scene)) }
+    case 'remembered': {
+      // Of these scenes: the ones the player holds play data of, and the ones restored from the records (a re-run can rebuild them; main owns whether it can).
+      const ids = Array.isArray(args.scenes) ? (args.scenes as unknown[]).map(String) : []
+      return { held: ids.filter((id) => scenePlayer.memory(id) !== undefined), restored: ids.filter((id) => restoredScene(id) !== undefined) }
+    }
     case 'status':
     case 'pause':
     case 'resume':
@@ -1114,11 +1454,53 @@ export async function sceneControl(ctx: RunSceneContext, args: Record<string, un
       scenePlayer.control(action)
       return status()
     case 'revert': {
-      // Take scenes' items off the board again (newest first), to commit them anew.
+      // Take scenes' items off the board again, to commit them anew. ids: in stage order; each scene's revert (sceneReverts,
+      // the one owner, wherever its play data is) runs in reverse stage order, newest first. Main gets each scene's node ids
+      // and their z (a rollback gives them back to its run: runScene nodeIds) and, for the scenes in keep (marked: their program cannot
+      // run again), what the revert takes off (putBack).
+      sameBoard(ctx, args)
       const ids = Array.isArray(args.scenes) ? (args.scenes as string[]) : []
-      scenePlayer.revertScenes(ids, typeof args.step === 'string' && args.step ? args.step : newItemId('step'))
+      const keep = new Set(Array.isArray(args.keep) ? (args.keep as string[]) : [])
+      const step = typeof args.step === 'string' && args.step ? args.step : newItemId('step')
+      const created: Record<string, Array<[string, number | null]>> = {}
+      const z = new Map(ctx.board.liveState().nodes.map((node) => [node.id, typeof node.z === 'number' ? node.z : null]))
+      const taken: Record<string, { nodes: BoardNode[]; revert: SceneRevert }> = {}
+      for (const id of [...ids].reverse()) {
+        const revert = sceneReverts.get(id)
+        if (!revert) continue
+        created[id] = revert.created.map((nodeId) => [nodeId, z.get(nodeId) ?? null])
+        if (keep.has(id)) {
+          const touched = new Set([...revert.created, ...revert.changed.map((node) => node.id)])
+          taken[id] = { nodes: ctx.board.liveState().nodes.filter((node) => touched.has(node.id)), revert }
+        }
+        revertScene(ctx.board, revert, step)
+      }
+      return { ...status(), created, taken }
+    }
+    case 'putBack': {
+      // A marked scene that a cancelled restage took off (its program cannot run again): its items as the revert took them, while the board still shows each node as the revert left it.
+      sameBoard(ctx, args)
+      const id = String(args.scene)
+      const { nodes, revert } = args.taken as { nodes: BoardNode[]; revert: SceneRevert }
+      const left = new Map([...revert.changed, ...revert.removed].map((node) => [node.id, contentSig(node)]))
+      const saved = new Map(nodes.map((node) => [node.id, node]))
+      const removed = new Set(revert.removed.map((node) => node.id))
+      const current = ctx.board.liveState().nodes
+      const asLeft = (node: BoardNode): boolean => left.get(node.id) === contentSig(node)
+      const next = current.flatMap((node) => (removed.has(node.id) && asLeft(node) ? [] : saved.has(node.id) && asLeft(node) ? [saved.get(node.id) as BoardNode] : [node]))
+      const present = new Set(current.map((node) => node.id))
+      for (const node of nodes) if (revert.created.includes(node.id) && !present.has(node.id)) next.push(node)
+      ctx.board.agentCommit(next, { step: String(args.step) })
+      sceneReverts.set(id, revert)
+      scenePlayer.drop(id)
       return status()
     }
+    case 'identities':
+      // The stage's identities and failures after a rebuild changed them (main/mcp.ts publishIdentities): they replace the renderer's copy.
+      if (args.epoch !== stageRecord.epoch) return { applied: false }
+      replaceIdentities(Array.isArray(args.keys) ? (args.keys as Array<[number, string, string]>) : [])
+      setFailed(Array.isArray(args.failed) ? (args.failed as Array<[string, string]>) : [])
+      return { applied: true }
     case 'drop':
       scenePlayer.drop(String(args.scene))
       return status()

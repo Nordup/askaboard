@@ -17,7 +17,7 @@ import { BoardNews } from './news'
 import { BoardIndex, findText as boardsFindText, listText as boardsListText, resolveBoard, type OpenBoardInfo } from './boards'
 import type { FolderSession } from './folder'
 import { readSceneSource } from './scene-files'
-import { SceneStore } from './scene-store'
+import { SceneStore, type RestorableScene } from './scene-store'
 import { siteLabel, type SceneSource } from '@shared/scene-program'
 import { getAgentLook } from './state'
 import type { SnapshotRenderer } from './snapshot'
@@ -353,7 +353,8 @@ export class AgentServer {
   /** The sandbox every scene program runs in, kept between programs (see live-scene.ts). */
   private readonly stage = new SceneStage(
     async (items) => (await this.bridge.request('measureText', { items })).sizes,
-    async (request, place) => this.bridge.request('sceneHost', { request, ...(place ? { place } : {}) }, WRITE_TIMEOUT_MS)
+    async (request, place) => this.bridge.request('sceneHost', { request, ...(place ? { place } : {}) }, WRITE_TIMEOUT_MS),
+    () => this.publishIdentities()
   )
   readonly port = configuredPort()
   private readonly bridge: RendererBridge
@@ -371,6 +372,10 @@ export class AgentServer {
   private readonly sceneTraces = new Map<string, SessionTrace>()
   /** The scene records of the boards (scene-store.ts): the only writer. */
   readonly records: SceneStore
+  /** The folder, board and board mount whose stage restoreStage last made from the records (restoreMark). */
+  private restoredFor: string | null = null
+  /** Board mounts in the window (an open, a reload of the board from disk, a window that loaded again): each one restores the renderer's part. */
+  private mounts = 0
 
   constructor(private readonly hooks: AgentServerHooks) {
     this.bridge = new RendererBridge(hooks.webContents)
@@ -802,6 +807,9 @@ export class AgentServer {
       if (cursor !== undefined && to) session.cursors.set(to, cursor)
     }
     this.stage.boardMoved(from, to)
+    // A renamed board keeps its stage: it was restored for this mount.
+    const root = this.hooks.folderRoot() ?? ''
+    if (to && this.restoredFor === `${root}\0${from}\0${this.mounts}`) this.restoredFor = `${root}\0${to}\0${this.mounts}`
     this.records.boardMoved(from)
     this.boardIndex.moved(from, to)
     console.log(`boards: ${from} ${to ? `renamed to ${to}` : 'went to the Trash'}; drafts, cursors and stage ${to ? 'moved' : 'ended'}`)
@@ -850,7 +858,12 @@ export class AgentServer {
     const before = (await control({ action: 'status' })) as { playing_scene?: { id: string } | null; board_id?: string }
     const playingNow = before.playing_scene?.id
     // The board of this restage's record events (scene-store.ts RecordBoard), fixed now.
-    const recordBoard = this.records.board(this.boardKey(), before.board_id)
+    const path = this.boardKey()
+    const recordBoard = this.records.board(path, before.board_id)
+    // Its calls to the board name the board, which refuses them once another board is shown (renderer live/run.ts sameBoard).
+    const boardId = before.board_id ?? null
+    const mount = this.mounts
+    const boardChanged = (): boolean => this.mounts !== mount
     stopped()
     const live = (id: string): boolean => waiting.includes(id) || playingNow === id
     const label = change.name ?? this.sceneName(sceneId)
@@ -860,20 +873,22 @@ export class AgentServer {
     const cut = this.stage.truncateBefore(sceneId)
     if (!cut) return failure(new Error(`The scene "${label}" is not part of the current stage (it ran before the stage started new).`))
     const later = cut.later
-    // Every later scene comes off the board too: it is committed again from its new run.
-    const affected = [sceneId, ...later.map((entry) => entry.scene).filter((id): id is string => !!id)]
+    // Every later scene comes off the board too: it is committed again from its new run. A marked one (its program
+    // cannot run: live-scene.ts StageEntry.failed) keeps its items and its place, and does not run.
+    const affected = [sceneId, ...later.filter((entry) => !entry.failed).map((entry) => entry.scene).filter((id): id is string => !!id)]
     // The reverts and every commit of the restage are one undo step for the learner (Board agentCommit's step key).
     const step = `restage-${sceneId}-${Date.now()}`
-    /** Commit a run of the scene id: the board takes it, and its record gets a scene line. */
-    const commit = async (id: string, run: StageRun, name: string | null, extra: Record<string, unknown> = {}): Promise<SceneResult & { ends_in_s: number }> => {
-      const result = (await this.board('runScene', { scene: run.desc, job: run.job, frames: run.frames, sceneId: id, slot: true, slotWhy: id === sceneId && change.cutAt !== undefined ? 'cut' : 'replaced', step, ...(name ? { name } : {}), ...extra }, SCENE_TIMEOUT_MS)) as SceneResult & { ends_in_s: number }
+    // The record lines of the restage, written when it succeeds (main decides): a rollback writes none.
+    const lines: Array<[StageEntry, SceneResult]> = []
+    /** Commit a run of the scene id: the board takes it (nodeIds: the node ids and z its new nodes take, in their order). */
+    const commit = async (id: string, run: StageRun, name: string | null, extra: Record<string, unknown> = {}): Promise<SceneResult & { ends_in_s: number; kept_ids?: boolean }> => {
+      const result = (await this.board('runScene', { scene: run.desc, job: run.job, frames: run.frames, sceneId: id, slot: true, slotWhy: id === sceneId && change.cutAt !== undefined ? 'cut' : 'replaced', step, boardId, ...(name ? { name } : {}), ...extra }, SCENE_TIMEOUT_MS)) as SceneResult & { ends_in_s: number; kept_ids?: boolean }
       run.entry.scene = id
-      await this.recordCommit(run.entry, result)
       return result
     }
     /** Run a program: on the context, answers and seed of its earlier run (original), or on the board now. */
     const runOne = async (source: SceneSource, options: { seed?: number; cutAt: number | null; original?: StageEntry; name: string | null; place?: StagePlace | null }): Promise<StageRun> => {
-      const context = options.original ? (JSON.parse(options.original.ctxText) as SceneContext) : await this.contextAt(options.place ?? null)
+      const context = options.original ? this.stage.savedContext(options.original) : await this.contextAt(options.place ?? null)
       // The same program on the same context gets the board's answers of its first run (html sizes, empty places).
       const run = await this.stage.run(source, context, { mode: 'scene', seed: options.seed, cutAt: options.cutAt, name: options.name, answers: options.original?.answers, signal, place: options.place })
       const liveError = await this.checkLivePrograms(livesOf(run.desc))
@@ -883,32 +898,50 @@ export class AgentServer {
       }
       return run
     }
+    /** What the first revert took off: each scene's node ids, and the items of the replaced scene when it is marked (it cannot run again). */
+    let reverted: { created: Record<string, Array<[string, number | null]>>; taken: Record<string, unknown> } = { created: {}, taken: {} }
     /**
      * The earlier state again: the log as it was before this scene, every
      * affected scene's items off the board, then the scene and the ones after
      * it run as they ran before (same context, answers, seed and cut) and go
-     * back on the board in the same undo step. A scene that waited or played,
-     * or that the player holds now (a replaced scene that plays again), takes
-     * its place in the queue again; a scene that has played comes back in its
-     * end state. A restore cannot be cancelled: these programs ran to their
-     * end before.
+     * back on the board in the same undo step, each node with the id and z
+     * it had, so the record's lines still describe them (no line is written;
+     * a scene whose run makes other nodes gets a new line). A marked scene does not
+     * run: one the restage did not touch keeps its place, and the replaced
+     * one gets its items back as the first revert took them. A scene that
+     * waited or played, or that the player holds now, takes its place in the
+     * queue again; a scene that has played comes back in its end state. A
+     * restore cannot be cancelled: these programs ran to their end before.
      */
     const restore = async (): Promise<void> => {
       this.stage.truncate(cut.index)
-      await control({ action: 'revert', scenes: affected, step })
+      await control({ action: 'revert', scenes: affected, step, boardId })
       const now = (await control({ action: 'status' })) as { waiting?: string[]; playing_scene?: { id: string } | null }
       const held = new Set([...(now.waiting ?? []), ...(now.playing_scene ? [now.playing_scene.id] : [])])
       for (const entry of [cut.entry, ...later]) {
-        const run = await this.stage.run(entry.source, JSON.parse(entry.ctxText) as SceneContext, { mode: 'scene', seed: entry.seed, cutAt: entry.cutAt, name: entry.name, answers: entry.answers })
-        if (!entry.scene) continue
-        await commit(entry.scene, run, entry.name, live(entry.scene) || held.has(entry.scene) ? {} : { settled: true })
-        run.entry.scene = entry.scene
+        const id = entry.scene
+        if (entry.failed) {
+          this.stage.keep(entry)
+          if (id && reverted.taken[id]) await control({ action: 'putBack', scene: id, taken: reverted.taken[id], step, boardId })
+          continue
+        }
+        const run = await this.stage.run(entry.source, this.stage.savedContext(entry), { mode: 'scene', seed: entry.seed, cutAt: entry.cutAt, name: entry.name, answers: entry.answers })
+        if (!id) continue
+        const result = await commit(id, run, entry.name, { nodeIds: reverted.created[id] ?? [], ...(live(id) || held.has(id) ? {} : { settled: true }) })
+        if (!result.kept_ids) await this.recordCommit(run.entry, result)
       }
     }
     let main: SceneResult & { ends_in_s: number }
     const rerun: Array<{ scene: string; ok: boolean; error?: string; starts_in_s?: number }> = []
+    // Drop lines wait for the end too: a rollback brings those scenes back.
+    const dropped: string[] = []
+    /** The restage's record events, for the board they were made on. */
+    const record = async (): Promise<void> => {
+      for (const [entry, result] of lines) await this.recordCommit(entry, result)
+      await this.records.drop(recordBoard, dropped)
+    }
     try {
-      await control({ action: 'revert', scenes: affected, step })
+      reverted = (await control({ action: 'revert', scenes: affected, step, boardId, keep: cut.entry.failed ? [sceneId] : [] })) as unknown as typeof reverted
       stopped()
       const run =
         change.source !== undefined
@@ -916,8 +949,12 @@ export class AgentServer {
           : // A cut runs the same program with the same seed and context, so it is the same up to the cut.
             await runOne(cut.entry.source, { seed: cut.entry.seed, cutAt: change.cutAt ?? null, original: cut.entry, name: cut.entry.name })
       main = await commit(sceneId, run, run.entry.name, change.when ? { when: change.when } : {})
-      run.entry.scene = sceneId
+      lines.push([run.entry, main])
       for (const entry of later) {
+        if (entry.failed) {
+          this.stage.keep(entry)
+          continue
+        }
         const id = entry.scene
         const queued = !!id && waiting.includes(id)
         try {
@@ -926,20 +963,26 @@ export class AgentServer {
           run.entry.scene = id
           if (queued && id) {
             const result = await commit(id, run, entry.name)
+            lines.push([run.entry, result])
             rerun.push({ scene: entry.name ?? id, ok: true, starts_in_s: result.starts_in_s })
           } else if (id) {
-            await commit(id, run, entry.name, { settled: true })
+            lines.push([run.entry, await commit(id, run, entry.name, { settled: true })])
             rerun.push({ scene: entry.name ?? id, ok: true })
           }
         } catch (error) {
-          if (error instanceof SceneCancelled || signal.aborted) throw error
+          if (error instanceof SceneCancelled || signal.aborted || boardChanged()) throw error
           if (queued && id) await control({ action: 'drop', scene: id })
           // It left the stage (and the board) without a new version.
-          if (id) await this.records.drop(recordBoard, [id])
+          if (id) dropped.push(id)
           rerun.push({ scene: entry.name ?? id ?? '?', ok: false, error: error instanceof Error ? error.message : String(error) })
         }
       }
     } catch (error) {
+      if (boardChanged()) {
+        // Another board is shown now: it is not touched. The board of the restage keeps what it got (it was saved as it was), and so does its record.
+        await record()
+        return failure(new Error(`The board changed while the scene "${label}" ran again, so the restage stopped there.`))
+      }
       // The scenes stay as they were (a scene that has played is not played again).
       await restore()
       if (error instanceof SceneCancelled || signal.aborted) throw new SceneCancelled()
@@ -952,6 +995,7 @@ export class AgentServer {
         )
       )
     }
+    await record()
     return { main, rerun }
   }
 
@@ -1421,7 +1465,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
         // The draft is ready when the call returns: its program ran, its frames are in the renderer, the renderer compiled it.
         const tQueue = Date.now()
         const outcome = await this.withProgram(session, extra, (signal) =>
-          this.stage.exclusive(async (): Promise<CallToolResult | Draft> => {
+          this.staged(signal, async (): Promise<CallToolResult | Draft> => {
             spans.queue_ms = Date.now() - tQueue
             // A new version of a scene on the board runs where play_scene start runs it: at that scene's place.
             const place = this.placeOf(name)
@@ -1491,11 +1535,16 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
         annotations: { readOnlyHint: true }
       },
       this.tool(session, 'preview_scene', async ({ name, at, part, version }, extra, trace) => {
+        await this.restoreIfNeeded()
         const board = this.boardKey()
         const draft = this.draftsOf(board).get(name)
         const onBoard = this.boardScene(name)
         const use = version ?? (draft ? 'draft' : onBoard ? 'board' : null)
         if (use === null || (use === 'draft' && !draft) || (use === 'board' && !onBoard)) return failure(this.unknownScene(name, use))
+        if (use === 'board') {
+          const failed = await this.playable([onBoard!.scene as string])
+          if (failed.size) return failure(new Error(`The scene "${name}" could not be rebuilt after the app started again, so it cannot be previewed (${[...failed.values()][0]}). get_screenshot shows the board as it is now.`))
+        }
         const moments: FrameMoment[] = (at === undefined ? ['end' as const] : Array.isArray(at) ? at : [at]).map((moment) =>
           moment === 'end' ? { kind: 'end' } : moment === 'steps' ? { kind: 'steps' } : 'step' in moment ? { kind: 'step', step: moment.step } : { kind: 't', t: moment.time_s }
         )
@@ -1578,12 +1627,16 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
         if (action === 'replay') {
           if (!name && from_step === undefined) return failure(new Error('replay needs name (a scene on the board), and from_step to start from a step.'))
           if (!name && typeof from_step === 'number') return failure(new Error('replay with a step number needs name; without name, from_step must be a step name.'))
+          await this.restoreIfNeeded()
           let sceneId: string | undefined
           if (name) {
             const entry = this.boardScene(name)
             if (!entry) return failure(this.unknownScene(name, 'board'))
             sceneId = entry.scene as string
           }
+          // A scene restored from the records after a restart runs again first (without name: every scene, to find the step).
+          const failed = await this.playable(sceneId ? [sceneId] : this.stageScenes().map((scene) => scene.id))
+          if (sceneId && failed.has(sceneId)) return failure(new Error(`The scene "${name}" could not be rebuilt after the app started again, so it cannot be replayed (${failed.get(sceneId)}). Its items stay on the board.`))
           const out = await control({ action: 'replay', scene: sceneId, step: from_step, when: when ?? 'queue' })
           const replay = out.replay as { scene: string; of: string; from: number; starts_in_s: number }
           return text(json({ ...publicStatus(out), replay: { scene: name ?? this.sceneName(replay.of), from_s: replay.from, starts_in_s: replay.starts_in_s } }))
@@ -1633,17 +1686,186 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
   }
 
   /**
-   * The id a new scene of this name takes when the stage has no scene of that name (boardScene is
-   * null): the board's earlier scene of that name from its records (scene-store.ts sceneNamed), so
-   * after a restart or a new stage the same scene gets a new version, not a second id. Null for a
-   * new name, a board without records, or an id that the stage already holds.
+   * Run fn with the stage to itself, on the shown board's stage as its records have it (restoreStage first, again when the
+   * board changed meanwhile), and with the renderer holding the stage's identities (publishIdentities) before fn takes a
+   * context or compiles, and again after fn. signal: the caller's cancel, also while the stage is restored (null: none).
    */
-  private async recordedScene(name: string): Promise<string | null> {
-    const status = (await this.board('sceneControl', { action: 'status' })) as { board_id?: string | null }
-    const board = this.records.board(this.boardKey(), status.board_id ?? undefined)
-    if (!board) return null
-    const id = await this.records.sceneNamed(board, name)
-    return id && !this.stage.log.some((entry) => entry.scene === id) ? id : null
+  private staged<T>(signal: AbortSignal | null, fn: () => Promise<T>): Promise<T> {
+    return this.stage.exclusive(async () => {
+      try {
+        await this.restoreStage(signal ?? undefined)
+        await this.publishIdentities()
+        return await fn()
+      } finally {
+        await this.publishIdentities()
+      }
+    })
+  }
+
+  /** The stage's epoch, log revision and identity generation that the renderer holds (publishIdentities). */
+  private shownIdentities = ''
+  private identityMark(): string {
+    return `${this.stage.epoch}|${this.stage.revision}|${this.stage.identityGen}`
+  }
+
+  /**
+   * The one way the renderer learns the stage's identities when the log changed (a rebuild that marks a program shifts the
+   * stage ids of the objects after it; a restage drops a scene): the full set of this epoch, by owner, and the one failure
+   * state (StageEntry.failed) of every program of the log. The renderer replaces its copy (renderer live/run.ts sceneControl
+   * "identities").
+   */
+  private async publishIdentities(): Promise<void> {
+    const mark = this.identityMark()
+    if (mark === this.shownIdentities) return
+    const { keys, failed } = this.stage.identities()
+    try {
+      const out = (await this.board('sceneControl', { action: 'identities', epoch: this.stage.epoch, keys, failed })) as { applied?: boolean }
+      // A renderer still on an earlier epoch takes them with the epoch's first scene or restore.
+      if (out.applied) this.shownIdentities = mark
+    } catch (error) {
+      console.warn(`stage: the board did not take the stage's identities: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  /** Stage work that no tool call owns (a board that mounted, the board window's replay, a replay's rebuild): play_scene cancel, stop and clear_queue end it, and so does a board that mounts. */
+  private background<T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const program = new AbortController()
+    this.programs.set(program, '')
+    return fn(program.signal).finally(() => this.programs.delete(program))
+  }
+
+  /** The folder, board and board mount that the stage is restored for (restoreStage). */
+  private restoreMark(): string {
+    return `${this.hooks.folderRoot() ?? ''}\0${this.boardKey()}\0${this.mounts}`
+  }
+
+  /** The stage made to match the records, when it does not yet (a read that needs the stage's scenes runs it first). */
+  private async restoreIfNeeded(): Promise<void> {
+    if (this.boardKey() && this.restoredFor !== this.restoreMark()) await this.background((signal) => this.staged(signal, async () => undefined))
+  }
+
+  /**
+   * The shown board's stage as its scene records have it (spec section 5: the stage log and the
+   * player's history are caches of the records). One rule: each board mount (an open, a reload of the
+   * board from disk, a window that loaded again; also another folder) starts a new stage from the
+   * records, whatever the stage held. It runs before every program run (staged). The new stage gets the
+   * records' current segment: its scenes that were not dropped, each the version the board shows, in
+   * the order of their first line, with the source, seed, cut, context and answers that version ran
+   * with, and the objects its context held by owner (entriesOf). A scene whose code is missing, whose
+   * record is of the older key scheme, or whose line is malformed, is marked. The context is built from
+   * the log now, so the next program sees the earlier scenes' objects. Then the renderer gets the new
+   * epoch, the stage's identities and each scene's record (renderer live/run.ts sceneRestore). Every
+   * await can see another folder, board or mount: that work is dropped, and it starts again for the
+   * board now. signal cancels it. No time limit: every program of the segment runs again.
+   */
+  private async restoreStage(signal?: AbortSignal): Promise<void> {
+    for (;;) {
+      if (signal?.aborted) throw new SceneCancelled()
+      const path = this.boardKey()
+      if (!path) return
+      const mark = this.restoreMark()
+      if (this.restoredFor === mark) return
+      const stale = (): boolean => this.restoreMark() !== mark
+      const started = Date.now()
+      const status = (await this.board('sceneControl', { action: 'status' })) as { board_id?: string | null }
+      if (stale()) continue
+      const board = this.records.board(path, status.board_id ?? undefined)
+      const scenes = board ? await this.records.restorable(board) : []
+      if (stale()) continue
+      const tRead = Date.now()
+      // A new stage for this mount: what the stage held (another board, another mount) is dropped.
+      this.stage.adopt({ board: path } as SceneContext)
+      this.stage.reset(this.restoredFor === null ? 'the app started' : 'the board opened')
+      if (scenes.length) this.stage.restore(entriesOf(scenes))
+      await this.stage.rebuild(signal)
+      if (stale()) continue
+      const tRebuilt = Date.now()
+      const lines = new Map(scenes.map((scene) => [scene.line.scene, scene]))
+      const { keys, failed } = this.stage.identities()
+      const answer = (await this.board('sceneRestore', {
+        boardId: status.board_id ?? null,
+        epoch: this.stage.epoch,
+        keys,
+        failed,
+        scenes: this.stage.log.flatMap((entry) => {
+          const scene = entry.scene ? lines.get(entry.scene) : undefined
+          if (!scene) return []
+          // A malformed line gives the board nothing of it: its items stay as they are, and it cannot be replaced.
+          return [scene.problem ? { id: scene.line.scene, name: scene.line.name } : { id: scene.line.scene, name: scene.line.name, story: scene.line.story, revert: scene.line.revert, settle: scene.line.settle ?? null }]
+        })
+      })) as { stale?: boolean }
+      if (answer.stale || stale()) continue
+      this.shownIdentities = this.identityMark()
+      if (scenes.length) console.log(`stage: restored ${scenes.length} scenes of ${path} from its records${failed.length ? ` (${failed.length} marked: cannot run)` : ''}: read ${tRead - started} ms, rebuild ${tRebuilt - tRead} ms, board ${Date.now() - tRebuilt} ms`)
+      this.restoredFor = mark
+      return
+    }
+  }
+
+  /**
+   * Play data for scenes restored from the records (restoreStage), for a replay or a preview: the ones
+   * the player does not hold run again on the rebuilt stage, each at its place (live-scene.ts
+   * resample), and the renderer compiles each run onto the board's own nodes (renderer live/run.ts
+   * sceneMemory). Nothing is committed. A scene whose program cannot run, or whose re-run does not
+   * match its record, is marked (StageEntry.failed, the one failure state, checked before the player's
+   * play data). Returns why each scene of sceneIds that cannot replay could not be rebuilt. Runs inside
+   * stage.exclusive.
+   */
+  private async ensureMemories(sceneIds: string[], signal?: AbortSignal): Promise<Map<string, string>> {
+    const entries = this.stage.log.filter((entry) => entry.scene && sceneIds.includes(entry.scene))
+    if (!entries.length) return this.failuresOf(sceneIds)
+    const state = (await this.board('sceneControl', { action: 'remembered', scenes: entries.map((entry) => entry.scene) })) as { held: string[]; restored: string[] }
+    const wanted = new Set(entries.filter((entry) => !entry.failed && !state.held.includes(entry.scene as string) && state.restored.includes(entry.scene as string)))
+    if (wanted.size) {
+      const started = Date.now()
+      const mark = this.restoreMark()
+      await this.stage.resample(
+        wanted,
+        async (entry, run) => {
+          if (this.restoreMark() !== mark) throw new SceneCancelled()
+          // A program marked before this one shifted the stage ids: the renderer has them before it compiles the run.
+          await this.publishIdentities()
+          const out = (await this.board('sceneMemory', { scene: run.desc, job: run.job, frames: run.frames, sceneId: entry.scene, place: this.placeAt(entry).board }, SCENE_TIMEOUT_MS)) as { ok?: true; error?: string; stale?: true }
+          if (out.error) this.stage.mark(entry, `its re-run does not match its record (${out.error})`)
+        },
+        signal
+      )
+      console.log(`stage: rebuilt the play of ${wanted.size} scene(s) for a replay in ${Date.now() - started} ms`)
+    }
+    return this.failuresOf(sceneIds)
+  }
+
+  /** Why each of these scenes cannot run again (StageEntry.failed). */
+  private failuresOf(sceneIds: string[]): Map<string, string> {
+    return new Map(this.stage.log.filter((entry) => entry.failed && entry.scene && sceneIds.includes(entry.scene)).map((entry) => [entry.scene as string, entry.failed as string]))
+  }
+
+  /** A board mounted in the window: the stage work of the board before ends, and its stage is made to match its records soon (restoreStage), so a first scene call does not wait for it. */
+  boardMounted(path: string): void {
+    this.mounts++
+    for (const [program, owner] of this.programs) {
+      if (owner !== '') continue
+      program.abort()
+      this.programs.delete(program)
+    }
+    setTimeout(() => {
+      if (this.boardKey() !== path) return
+      void this.background((signal) => this.staged(signal, async () => undefined)).catch((error: unknown) => console.warn(`stage: the stage of ${path} is restored at its first use (${error instanceof Error ? error.message : String(error)})`))
+    }, 300)
+  }
+
+  /** The board window replays scenes that were restored from the records: their programs run again first. */
+  async rebuildScenes(sceneIds: string[]): Promise<void> {
+    await this.background((signal) => this.staged(signal, () => this.ensureMemories(sceneIds, signal)))
+  }
+
+  /** Make the play data of these scenes, when the player does not hold it (scenes restored from the records), and say why one could not be rebuilt. */
+  private async playable(sceneIds: string[]): Promise<Map<string, string>> {
+    if (!sceneIds.length) return new Map()
+    const ids = sceneIds.filter((id) => !this.failuresOf([id]).size)
+    const state = (await this.board('sceneControl', { action: 'remembered', scenes: ids })) as { held: string[]; restored: string[] }
+    if (ids.every((id) => state.held.includes(id))) return this.failuresOf(sceneIds)
+    return this.background((signal) => this.staged(signal, () => this.ensureMemories(sceneIds, signal)))
   }
 
   /**
@@ -1716,7 +1938,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
   private async freshDraft(session: Session, extra: ToolExtra, draft: Draft, force?: string): Promise<{ rerun: string | null } | CallToolResult> {
     try {
       return await this.withProgram(session, extra, (signal) =>
-        this.stage.exclusive(async () => {
+        this.staged(signal, async () => {
           const place = this.placeOf(draft.name)
           const context = await this.contextAt(place)
           this.stage.adopt(context)
@@ -1744,7 +1966,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
     const control = async (args: Record<string, unknown>): Promise<Record<string, unknown>> => (await this.board('sceneControl', args)) as Record<string, unknown>
     try {
       return await this.withProgram(session, extra, (signal) =>
-        this.stage.exclusive(async () => {
+        this.staged(signal, async () => {
           const playing = await control({ action: 'status' })
           if (!playing.playing_scene) return failure(new Error('No scene is playing, so there is nothing to cut.'))
           if (name && (playing.name as string | null) !== name) return failure(new Error(`The scene "${name}" is not the one that plays now (that is "${playing.name ?? playing.scene}"). cut acts on the playing scene only.`))
@@ -1777,7 +1999,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
     const tQueue = Date.now()
     try {
       outcome = await this.withProgram(session, extra, (signal) =>
-        this.stage.exclusive(async () => {
+        this.staged(signal, async () => {
           spans.queue_ms = Date.now() - tQueue
           const onBoard = this.boardScene(name)
           if (onBoard?.scene) {
@@ -1797,9 +2019,6 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
           }
           const context = (await this.board('sceneContext', {})) as SceneContext
           this.stage.adopt(context)
-          // No scene of this name on the stage: an earlier scene of this name in the board's records keeps its id.
-          const continued = await this.recordedScene(name)
-          const sceneId = continued ? { sceneId: continued } : {}
           let reason = draftStale(draft, this.stage, context)
           /** Run the program again as a scene at the end of the stage, and commit it with its frames. */
           const runAndCommit = async (): Promise<{ result: SceneResult & { ends_in_s: number }; entry: StageEntry; fresh: string | null }> => {
@@ -1812,7 +2031,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
             }
             try {
               const tCommit = Date.now()
-              const result = (await this.board('runScene', { scene: run.desc, job: run.job, frames: run.frames, when, name, ...sceneId }, SCENE_TIMEOUT_MS)) as SceneResult & { ends_in_s: number }
+              const result = (await this.board('runScene', { scene: run.desc, job: run.job, frames: run.frames, when, name }, SCENE_TIMEOUT_MS)) as SceneResult & { ends_in_s: number }
               spans.commit_ms = Date.now() - tCommit
               return { result, entry: run.entry, fresh: run.fresh }
             } catch (error) {
@@ -1827,7 +2046,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
             let out: unknown
             try {
               const tCommit = Date.now()
-              out = await this.board('runScene', { draft: draftKey(draft.desc), when, name, ...sceneId }, SCENE_TIMEOUT_MS)
+              out = await this.board('runScene', { draft: draftKey(draft.desc), when, name }, SCENE_TIMEOUT_MS)
               spans.commit_ms = Date.now() - tCommit
             } catch (error) {
               this.stage.discard(draft.entry)
@@ -1899,5 +2118,49 @@ function readJson(req: IncomingMessage): Promise<unknown> {
       }
     })
     req.on('error', reject)
+  })
+}
+
+/**
+ * The stage entries of the scenes restored from the records (scene-store.ts restorable), in order. Each
+ * keeps the objects its saved context held, by owner (the scene id and key that made each), as its
+ * record names them (source.objects); a line written before that resolves them through node ids (an
+ * earlier scene's story.items, or the object a later scene changed: of, held). A scene whose code is
+ * missing, whose record is of the older key scheme (its keys cannot link its objects to its nodes), or
+ * whose line is malformed (problem: checked at the record boundary) is marked (StageEntry.failed).
+ */
+function entriesOf(scenes: RestorableScene[]): StageEntry[] {
+  const owner = new Map<string, [string, string]>()
+  return scenes.map(({ line, source, missing, legacy, problem }) => {
+    const base = { scene: line.scene, source, name: line.name, seed: line.source.seed, objects: [] as Array<[string, string, string[]]> }
+    if (problem) return { ...base, cutAt: null, ctxText: '{}', answers: new Map(), failed: `its record line is malformed (${problem})` }
+    // The record names them by owner (from 2026-10-29); a line without that goes by node id, as far as the records know them.
+    const objects: Array<[string, string, string[]]> = line.source.objects ? [...line.source.objects] : []
+    if (!line.source.objects) {
+      try {
+        const ctx = JSON.parse(line.source.ctx) as SceneContext
+        for (const ids of Object.values(ctx.stage?.items ?? {})) {
+          const found = ids.map((id) => owner.get(id)).find((entry) => entry !== undefined)
+          if (found) objects.push([found[0], found[1], ids])
+        }
+      } catch {
+        // A context that cannot be read: the program is marked when it runs.
+      }
+    }
+    if (!legacy) {
+      for (const item of line.story.items) {
+        if (item.made && !item.key.startsWith('node:')) for (const id of item.nodes) owner.set(id, [line.scene, item.key])
+        if (item.of && item.held) for (const id of item.held) owner.set(id, item.of)
+      }
+    }
+    const keys = line.story.items.filter((item) => item.made && !item.key.startsWith('node:')).map((item) => item.key)
+    const failed = missing.length
+      ? `its code is missing (${missing.join(', ')})`
+      : legacy
+        ? 'it was recorded before scenes could be rebuilt after a restart'
+        : new Set(keys).size !== keys.length
+          ? 'its record names an object twice'
+          : undefined
+    return { ...base, cutAt: line.source.cutAt, ctxText: line.source.ctx, answers: new Map(line.source.answers), objects, ...(failed ? { failed } : {}) }
   })
 }

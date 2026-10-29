@@ -72,6 +72,22 @@ export interface StageEntry {
   ctxText: string
   /** The board's answers to the program's host requests (text measures, html, image, space, copy), by request: a replay gets the same ones. */
   answers: Map<string, string>
+  /** The stage id and scene-local key of each object the program made, from its last run (stage/live-prelude.js keyFor). */
+  keys?: Array<[number, string]>
+  /**
+   * The objects of earlier programs that the program's context held (ctxText's stage.items), by owner: the scene id and key
+   * of the program that made each, and the item ids. A run of it again gets them under the stage ids they have then
+   * (savedContext), so a stage id that shifted (a program before it is marked) never names another object.
+   */
+  objects?: Array<[string, string, string[]]>
+  /**
+   * The one failure state of a program (decision of 2026-10-29): why it cannot run again, or undefined. Its code is missing,
+   * it threw or stopped the stage when the stage was rebuilt, a cancel stopped it while the stage was rebuilt, its record is
+   * of an older key scheme, or its re-run does not match its record. A marked program keeps its place in the log, so its
+   * scene and its items stay on the board and it can be replaced, but no rebuild runs it, a restage leaves it as it is, and
+   * a replay of it says that it could not be rebuilt.
+   */
+  failed?: string
 }
 
 export interface StageRun {
@@ -110,18 +126,20 @@ export class SceneStage {
   /**
    * measureText: the renderer lays the text out as the board does (renderer/live/measure.ts).
    * host: the renderer answers html(), image(), space() and copy() requests (renderer/live/host.ts).
+   * onShift: a rebuild before a run changed the identities (identityGen): the renderer gets them before the run.
    */
   constructor(
     private readonly measureText: (items: TextItem[]) => Promise<Array<[number, number]>>,
-    private readonly host: (request: HostRequest, place: unknown) => Promise<unknown>
+    private readonly host: (request: HostRequest, place: unknown) => Promise<unknown>,
+    private readonly onShift: () => Promise<void>
   ) {
     this.process = new StageProcess(
       (message, reply) => this.onStageMessage(message, reply),
       (why, outOfMemory) => this.onStageGone(why, outOfMemory)
     )
-    // Start the stage process and load the scene library now, not in the first scene.
+    // Start the stage process and load the scene library now, not in the first scene (a log restored by then is rebuilt by its own operation).
     setTimeout(() => {
-      void this.exclusive(() => this.ensure()).catch(() => undefined)
+      void this.exclusive(async () => (this.log.length ? undefined : this.ensure())).catch(() => undefined)
     }, 3000)
   }
 
@@ -233,6 +251,206 @@ export class SceneStage {
     this.dirty = true
   }
 
+  /**
+   * The log of a stage that starts new, from the board's scene records (main/mcp.ts restoreStage): the
+   * programs of the current segment, in order. The context is built from them at the next ensure.
+   */
+  restore(entries: StageEntry[]): void {
+    this.log.length = 0
+    this.log.push(...entries)
+    this.revision++
+    this.dirty = true
+    this.freshReason = null
+  }
+
+  /** Put a marked program (failed) back at the end of the log as it is, without running it (a restage keeps its place). */
+  keep(entry: StageEntry): void {
+    this.log.push(entry)
+    this.revision++
+    this.dirty = true
+  }
+
+  /** Mark a program that cannot run again (StageEntry.failed). Its objects leave the stage, and the stage is rebuilt without it. */
+  mark(entry: StageEntry, why: string): void {
+    if (entry.failed) return
+    console.warn(`stage: the program of scene ${entry.name ?? entry.scene ?? '?'} is marked and no longer runs: ${why}`)
+    entry.failed = why
+    entry.keys = undefined
+    this.identityGen++
+    this.revision++
+    this.dirty = true
+  }
+
+  /**
+   * Changes when the stage ids of the log's objects change (a program is marked, so the ids of the objects after it shift) or
+   * a program is marked: main/mcp.ts publishIdentities then gives the renderer the full set again (identities).
+   */
+  identityGen = 0
+
+  /** Each object of the log's programs that runs, by owner (stage id, scene id, key), and why each marked program cannot run. */
+  identities(): { keys: Array<[number, string, string]>; failed: Array<[string, string]> } {
+    const keys: Array<[number, string, string]> = []
+    const failed: Array<[string, string]> = []
+    for (const entry of this.log) {
+      if (!entry.scene) continue
+      if (entry.failed) failed.push([entry.scene, entry.failed])
+      else for (const [sid, key] of entry.keys ?? []) keys.push([sid, entry.scene, key])
+    }
+    return { keys, failed }
+  }
+
+  /** The context holds the whole log now (a restore: the keys of every program are known after it). signal cancels it. */
+  async rebuild(signal?: AbortSignal): Promise<void> {
+    await this.withSignal(signal, () => this.ensure(null, signal))
+  }
+
+  /**
+   * Run the log again from a new context and sample the programs of `wanted` as scenes (their frames go
+   * to the board), in order, so each runs on the stage as it was when it first ran: a replay after a
+   * restart (main/mcp.ts ensureMemories). onRun gets each sampled run before the next program runs. A
+   * program that fails, or that onRun marks (its re-run does not match its record), changes the context:
+   * the run starts again without it. The other programs run as a rebuild. At the end the context holds
+   * the whole log. signal cancels it. Runs inside exclusive.
+   */
+  async resample(wanted: ReadonlySet<StageEntry>, onRun: (entry: StageEntry, run: { desc: SceneDescription; job: number; frames: number }) => Promise<void>, signal?: AbortSignal): Promise<void> {
+    await this.withSignal(signal, async () => {
+      const started = Date.now()
+      const done = new Set<StageEntry>()
+      let sampled = 0
+      for (let again = true; again; ) {
+        again = false
+        await this.startProcess()
+        await this.resetContext(signal)
+        for (const entry of this.log) {
+          if (entry.failed) continue
+          const sample = wanted.has(entry) && !done.has(entry)
+          const ran = await this.runAgain(entry, sample ? 'scene' : 'replay', signal)
+          // A program that failed may have changed the context before it failed: start again without it.
+          if (!ran) {
+            again = true
+            break
+          }
+          if (!sample) continue
+          done.add(entry)
+          let desc: SceneDescription
+          try {
+            desc = JSON.parse(ran.json as string) as SceneDescription
+          } catch (error) {
+            this.mark(entry, `The scene could not be read: ${error instanceof Error ? error.message : String(error)}`)
+            again = true
+            break
+          }
+          desc.stage = this.epoch
+          sampled++
+          await onRun(entry, { desc, job: ran.job, frames: ran.frames })
+          if (signal?.aborted) throw new SceneCancelled()
+          if (entry.failed) {
+            again = true
+            break
+          }
+        }
+      }
+      this.dirty = false
+      this.held = this.log.length
+      console.log(`stage: ran ${this.log.length} programs again and sampled ${sampled} in ${Date.now() - started} ms`)
+    })
+  }
+
+  /** A new, empty context in the stage process (a cancel ends this operation first: it never goes on to run the log). */
+  private async resetContext(signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) throw new SceneCancelled()
+    const reset = await this.send({ t: 'reset', id: this.nextId++ })
+    if (signal?.aborted) throw new SceneCancelled()
+    if (!reset.ok) throw new SceneProgramError(reset.error, null)
+    this.dirty = true
+  }
+
+  /**
+   * A program of the log runs again on its saved context (savedContext), as a rebuild ("replay") or sampled ("scene").
+   * A failure marks it and returns null. A cancel throws SceneCancelled and never marks a program that was not running
+   * (a program a cancel stops while it runs is marked: see cancel).
+   */
+  private async runAgain(entry: StageEntry, mode: 'replay' | 'scene', signal?: AbortSignal): Promise<{ json: string | null; job: number; frames: number } | null> {
+    if (signal?.aborted) throw new SceneCancelled()
+    let ctxText: string
+    try {
+      ctxText = JSON.stringify(this.savedContext(entry))
+    } catch (error) {
+      this.mark(entry, `its saved context cannot be read (${error instanceof Error ? error.message : String(error)})`)
+      return null
+    }
+    const job = this.nextId++
+    this.answers = { record: new Map(), given: entry.answers }
+    this.rebuilding = entry
+    let reply: StageReply
+    try {
+      reply = await this.send({ t: 'run', id: job, program: stageProgram(entry.source), ctxText, mode })
+    } finally {
+      this.answers = { record: new Map(), given: null }
+      this.rebuilding = null
+    }
+    if ((!reply.ok && reply.error === CANCELLED) || signal?.aborted) throw new SceneCancelled()
+    if (!reply.ok) {
+      // A program that ran before and fails now (its code is gone, it read something that changed, or it stopped the stage process).
+      this.mark(entry, reply.error)
+      return null
+    }
+    this.setKeys(entry, reply.keys ?? [])
+    return { json: reply.json, job, frames: reply.frames }
+  }
+
+  /**
+   * The saved context of a program of the log, bound to this stage: its epoch, the board's path now (a renamed board), and
+   * the objects it held (StageEntry.objects) under the stage ids their owners have now. An owner that no longer runs (marked)
+   * leaves its objects out: the program sees them as gone, never as another object.
+   */
+  savedContext(entry: StageEntry): SceneContext {
+    const ctx = JSON.parse(entry.ctxText) as SceneContext
+    let items = ctx.stage?.items ?? {}
+    if (entry.objects) {
+      const sids = new Map(this.identities().keys.map(([sid, scene, key]) => [`${scene}\0${key}`, sid]))
+      items = {}
+      for (const [scene, key, ids] of entry.objects) {
+        const sid = sids.get(`${scene}\0${key}`)
+        if (sid !== undefined) items[String(sid)] = ids
+      }
+    }
+    return { ...ctx, ...(this.boardPath !== null ? { board: this.boardPath } : {}), stage: { epoch: this.epoch, items } }
+  }
+
+  /** A context's objects (stage id → item ids) by owner, for StageEntry.objects: the ones whose owner the log knows. */
+  private ownersOf(items: Record<string, string[]>): Array<[string, string, string[]]> {
+    const owner = new Map(this.identities().keys.map(([sid, scene, key]) => [sid, [scene, key] as const]))
+    return Object.entries(items).flatMap(([sid, ids]): Array<[string, string, string[]]> => {
+      const found = owner.get(Number(sid))
+      return found ? [[found[0], found[1], ids]] : []
+    })
+  }
+
+  /** A program's keys from a run; a stage id that changed since its last run changes the identities (identityGen). */
+  private setKeys(entry: StageEntry, keys: Array<[number, string]>): void {
+    const was = entry.keys
+    if (was && (was.length !== keys.length || was.some(([sid, key], i) => keys[i][0] !== sid || keys[i][1] !== key))) this.identityGen++
+    entry.keys = keys
+  }
+
+  /** The program of the log that runs again now (a rebuild): a cancel stops it, and it is marked, so no rebuild waits on it again. */
+  private rebuilding: StageEntry | null = null
+
+  /** fn with signal: its abort cancels what runs on the stage. */
+  private async withSignal<T>(signal: AbortSignal | undefined, fn: () => Promise<T>): Promise<T> {
+    if (signal?.aborted) throw new SceneCancelled()
+    const onAbort = (): void => this.cancel()
+    signal?.addEventListener('abort', onAbort, { once: true })
+    try {
+      return await fn()
+    } catch (error) {
+      throw signal?.aborted ? new SceneCancelled() : error
+    } finally {
+      signal?.removeEventListener('abort', onAbort)
+    }
+  }
+
   /** Keep only the programs before this scene (to run it, and the ones after, again). Returns its place in the log, its program and the programs after it, or null when the scene is not in the log. */
   truncateBefore(sceneId: string): { index: number; entry: StageEntry; later: StageEntry[] } | null {
     const index = this.log.findIndex((entry) => entry.scene === sceneId)
@@ -253,9 +471,14 @@ export class SceneStage {
   /** Why the stage ended the last program itself (no abort signal: the board window loaded again). */
   private cancelWhy = 'The program was stopped.'
 
-  /** End a running program now: its worker stops, and the stage is rebuilt before the next run. */
-  private cancel(why?: string): void {
+  /**
+   * End a running program now: its worker stops, and the stage is rebuilt before the next run. A program of the log that
+   * a stop ends while the stage is rebuilt (a program that never ends would hold every later call) is marked, so a later
+   * rebuild does not run it again. byUser: false for the board window loading again.
+   */
+  private cancel(why?: string, byUser = true): void {
     if (!this.process.running) return
+    if (byUser && this.rebuilding) this.mark(this.rebuilding, 'it was stopped while the stage was rebuilt')
     if (why) this.cancelWhy = why
     this.process.send({ t: 'cancel' })
     this.failPending(CANCELLED)
@@ -269,7 +492,7 @@ export class SceneStage {
    */
   linkBoard(contents: WebContents): void {
     this.boardContents = contents
-    if (this.pending.size) this.cancel('The board window loaded again while the scene program ran (its frames went to the window before).')
+    if (this.pending.size) this.cancel('The board window loaded again while the scene program ran (its frames went to the window before).', false)
     void this.linkFrames()
   }
 
@@ -317,14 +540,22 @@ export class SceneStage {
     this.adopt(context)
     const fresh = this.log.length === 0 ? this.freshReason : null
     const seed = options.seed ?? Math.floor(Math.random() * 2 ** 31) + 1
-    const ctxText = JSON.stringify({ ...context, seed, cutAt: options.cutAt ?? null })
+    // The context's objects by owner, as the log names them now: a rebuild below that shifts stage ids keeps each object.
+    const objects = this.ownersOf(context.stage?.items ?? {})
+    const gen = this.identityGen
     const tStart = Date.now()
     const onAbort = (): void => this.cancel()
     signal?.addEventListener('abort', onAbort, { once: true })
     try {
-      await this.ensure(before).catch((error: unknown) => {
+      await this.ensure(before, signal).catch((error: unknown) => {
         throw signal?.aborted ? new SceneCancelled() : error
       })
+      if (this.identityGen !== gen && context.stage) {
+        const sids = new Map(this.identities().keys.map(([sid, scene, key]) => [`${scene}\0${key}`, sid]))
+        context.stage.items = Object.fromEntries(objects.flatMap(([scene, key, ids]) => (sids.has(`${scene}\0${key}`) ? [[String(sids.get(`${scene}\0${key}`)), ids]] : [])))
+        await this.onShift()
+      }
+      const ctxText = JSON.stringify({ ...context, seed, cutAt: options.cutAt ?? null })
       const tReady = Date.now()
       if (signal?.aborted) throw new SceneCancelled()
       const record = new Map<string, string>()
@@ -366,7 +597,7 @@ export class SceneStage {
         throw new SceneProgramError(`The scene could not be read: ${error instanceof Error ? error.message : String(error)}`, null)
       }
       desc.stage = this.epoch
-      const entry: StageEntry = { scene: null, source, name: options.name ?? null, seed, cutAt: options.cutAt ?? null, ctxText, answers: record }
+      const entry: StageEntry = { scene: null, source, name: options.name ?? null, seed, cutAt: options.cutAt ?? null, ctxText, answers: record, objects, ...(reply.keys ? { keys: reply.keys } : {}) }
       if (options.mode === 'scene') {
         this.log.push(entry)
         this.held = this.log.length
@@ -384,40 +615,39 @@ export class SceneStage {
     }
   }
 
-  /** A stage process whose context holds exactly the log (before: the programs of the log before that one). */
-  private async ensure(before: StageEntry | null = null): Promise<void> {
-    if (!this.process.running) {
-      try {
-        await this.process.start({ t: 'init', fontText: JSON.stringify(HAND_FONT), noCodeItems: NO_CODE_ITEMS, noHtml: NO_HTML })
-      } catch (error) {
-        throw new SceneProgramError(`The stage could not start: ${error instanceof Error ? error.message : String(error)}`, null)
-      }
-      this.dirty = true
-      await this.linkFrames()
+  /** A running stage process with its frames port to the board. */
+  private async startProcess(): Promise<void> {
+    if (this.process.running) return
+    try {
+      await this.process.start({ t: 'init', fontText: JSON.stringify(HAND_FONT), noCodeItems: NO_CODE_ITEMS, noHtml: NO_HTML })
+    } catch (error) {
+      throw new SceneProgramError(`The stage could not start: ${error instanceof Error ? error.message : String(error)}`, null)
     }
+    this.dirty = true
+    await this.linkFrames()
+  }
+
+  /**
+   * A stage process whose context holds exactly the log (before: the programs of the log before that one). Marked programs
+   * are skipped. signal: the operation's cancel, checked before each reset and each program.
+   */
+  private async ensure(before: StageEntry | null = null, signal?: AbortSignal): Promise<void> {
+    await this.startProcess()
     // The place of before; the end when it is not in the log.
     const upTo = before && this.log.includes(before) ? this.log.indexOf(before) : this.log.length
     if (!this.dirty && this.held === upTo) return
     const started = Date.now()
-    const reset = await this.send({ t: 'reset', id: this.nextId++ })
-    if (!reset.ok) throw new SceneProgramError(reset.error, null)
+    await this.resetContext(signal)
+    let ran = 0
     for (const entry of this.log.slice(0, upTo)) {
-      this.answers = { record: new Map(), given: entry.answers }
-      const reply = await this.send({ t: 'run', id: this.nextId++, program: stageProgram(entry.source), ctxText: entry.ctxText, mode: 'replay' })
-      this.answers = { record: new Map(), given: null }
-      if (!reply.ok && reply.error === CANCELLED) throw new SceneCancelled()
-      if (!reply.ok) {
-        // A program that ran before and fails now (it read something that changed, or it stopped the stage process): it leaves the stage.
-        console.warn(`stage: a program of scene ${entry.scene ?? '?'} failed when the stage was rebuilt: ${reply.error}`)
-        this.log.splice(this.log.indexOf(entry), 1)
-        this.revision++
-        this.dirty = true
-        return this.ensure(before)
-      }
+      if (entry.failed) continue
+      // A program that fails now is marked and keeps its place; the context starts again without it.
+      if (!(await this.runAgain(entry, 'replay', signal))) return this.ensure(before, signal)
+      ran++
     }
     this.dirty = false
     this.held = upTo
-    console.log(`stage: rebuilt with ${upTo} programs in ${Date.now() - started} ms`)
+    console.log(`stage: rebuilt with ${ran} programs in ${Date.now() - started} ms`)
   }
 
   /** reply: sends to the stage process that sent the message, and drops the answer when that process stopped since. */
@@ -435,12 +665,11 @@ export class SceneStage {
     }
   }
 
-  /** The stage process stopped (a crash, an out-of-memory): what waited on it fails, and a new process rebuilds the stage. */
+  /** The stage process stopped (a crash, an out-of-memory): what waited on it fails, and the next operation starts a new process and rebuilds the stage (as its own work, which a cancel stops). */
   private onStageGone(why: string, outOfMemory: boolean): void {
     console.warn(`stage: the stage process stopped (${why})`)
     this.failPending(outOfMemory ? TOO_MUCH_MEMORY : `The stage stopped (${why}). The usual cause is a program that uses too much memory. The stage is rebuilt from the programs before it.`)
     this.dirty = true
-    void this.exclusive(() => this.ensure()).catch(() => undefined)
   }
 
   private failPending(error: string): void {

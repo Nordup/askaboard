@@ -30,6 +30,13 @@ and what went wrong before.
   to the founder, applied only after "approved", then measured in the lab.
   When asked to fix one passage, change only that passage, in the voice of
   the whole brief, and read the whole brief first.
+- When the founder says work could go to "a second session", they start and
+  steer that session themselves. Never start one for them unasked (2026-10-29).
+- Explains architecture without file names: what lives where, what happens
+  when, at an architect's level. Wants to understand before deciding.
+- Reviews UI by using it: short notes ("unsmooth", "nothing happens") point
+  at a real problem. Find the cause (for example a jump at a paragraph gap),
+  show it in a new mockup, then build.
 - Judges lab runs by watching the videos; when away from the computer, wants
   them sent to the phone.
 
@@ -150,6 +157,27 @@ combine; `meta.json` records `no_html` and `brief`.
 - **Codex in the lab, perf and bench runs** needs the Learning Space tools approved (`default_tools_approval_mode = "approve"`): with `approval_policy = "never"`, Codex declines MCP write tools that are not approved. All three use the shared `prepareCodexHome` in `scripts/lab/common.mjs`.
 - **Codex ignores plugin hooks until the user trusts them** (`/hooks`). The bench passes `--dangerously-bypass-hook-trust` for its scratch home only.
 - **Review before push:** the founder reviews each fix (the problem, the measurement, the change, the result) before its commits are pushed.
+
+- **Write check scenes the way the guide says** (2026-10-29): `step()` is a
+  global; `write()` alone takes no time, so wrap it in `await draw(...)`;
+  `say()` without `await` lets the next line start at once. A check scene
+  with these mistakes put three steps at time 0, and the check meant nothing.
+- **A background window throttles animation frames.** Stills taken right
+  after a seek or `finish` can show the teleprompter still easing. Take
+  several screenshots 0.5 s apart and keep the last one.
+- **A second `play_scene start` of the same draft** says "No draft named …".
+  That is correct: the first start used the draft. Haiku reports put these
+  calls in the wrong order once; read the trace.
+- **zsh does not split an unquoted variable** in `for c in $LIST`. A loop
+  over commit ids ran once with the whole list. Write the ids out, or use
+  `${=LIST}`.
+- **A `.gitignore` exception can bring back an ignored folder.** `!Vendor/**`
+  re-included `Vendor/.build` and a local `.xcconfig`. Exceptions name file
+  types only (`!assets/**/*.png`).
+- **Take files out of unpushed commits without touching the disk:** `git
+  reset --mixed origin/main`, then for each old commit `git read-tree <c>`,
+  `git rm -r --cached <paths>`, `git commit -C <c>`. Never `checkout`,
+  `restore` or `stash` (the founder's edits).
 
 ## Ports and paths used so far
 

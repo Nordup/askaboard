@@ -114,8 +114,9 @@ export class InkGroupTracker {
   /** Agent groups from scene ink objects: id → stroke ids. Kept when empty, so redo brings the id back. */
   private pinned = new Map<string, Set<string>>()
 
-  /** A new group id for strokes an agent just drew. */
+  /** A new group id for strokes an agent just drew; strokes that come back as one group keep its id (a restage's rollback commits a scene again with its node ids). */
   pin(strokeIds: readonly string[]): string {
+    if (strokeIds.length) for (const [known, set] of this.pinned) if (set.size === strokeIds.length && strokeIds.every((strokeId) => set.has(strokeId))) return known
     const id = `g${this.next++}`
     this.pinned.set(id, new Set(strokeIds))
     return id
