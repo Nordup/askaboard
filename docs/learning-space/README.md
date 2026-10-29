@@ -1,9 +1,11 @@
 # Learning Space — start here
 
 Learning Space is a desktop app for learning with an AI agent on a shared
-canvas. The learner writes and draws by hand; an external agent (Claude Code,
+canvas. The core loop: the agent explains on the board with animations while
+the learner talks with it (decision P15). An external agent (Claude Code,
 Claude Desktop, ChatGPT and Codex) connects over MCP, sees the board, and
-creates and edits material on it. The app has no AI inside. All learning
+creates and edits material on it; the learner can also write and draw by
+hand. The app has no AI inside. All learning
 lives in one local folder that the learner owns.
 
 It is the third form of this project (iPad app → web client → Learning
@@ -36,6 +38,7 @@ in [`../../space/`](../../space/); work happens on `main`.
 | Scene files (2026-10-28): scenes as JS files in `boards/scenes/` with import and export (B16 step 1, B17); the lab runs agents like the real apps (W10) | Done and measured: Opus and GPT write every scene by file; scene code 5.9k and 7.0k characters against 8.7k and 9.7k, nothing written twice |
 | Batch 1 (2026-10-28): errors come back at once, every place takes a live position, no checks in the build and no warnings (B18), `play_scene` without a wait (T23); HTML notes removed; handwriting for Cyrillic, accents and maths signs (2026-10-29) | Done ([`work-map.md`](work-map.md), batches A and F) |
 | Scene record and reading panel (2026-10-29): a history per board, reads by scene and step after a restart (B16 step 2, B20); the reading panel for one scene and the scene pill (B19), as a teleprompter with a simpler menu (B21) | Done, two Sol reviews: [`drafts/record-ui-2026-10-29/`](drafts/record-ui-2026-10-29/README.md) (screenshots local only). Replay after a restart re-runs the scene (step 3, B22, done 2026-10-29). Next: the voice (batch C) |
+| Competitor and strategy check (2026-10-29) | Clicky (heyclicky.com) launched real-time graphics for learning on the screen: [`competitors.md`](competitors.md). The plan stays (decision P15): the core loop is the agent's explanation with animations while the learner talks with it. Screen overlay, phone photos, a continuous tutor and other devices are later layers ([`strategy.md`](strategy.md), "After Clicky") |
 | Scene library | Postponed, its own track: [`library-plan.md`](library-plan.md) (W12) |
 | Perception (the old fix 2) | Mostly answered by board news; the rest deferred |
 | Plain chat apps (ChatGPT web, Claude chat) with folder file tools | Later |
@@ -54,7 +57,11 @@ work that [`plan.md`](plan.md) and [`baseline.md`](baseline.md) describe.
 1. [`idea.md`](idea.md) — the founder's original idea, part by part, in the
    founder's words. Why the app exists.
    - [`strategy.md`](strategy.md) — the founder's view (2026-10-26) of the
-     bet, why the app alone is no moat, how we grow, and our values.
+     bet, why the app alone is no moat, how we grow, and our values; and
+     (2026-10-29) the core loop, why the pen is not the core, and the later
+     layers.
+   - [`competitors.md`](competitors.md) — studies of products near Learning
+     Space, with sources: Clicky (2026-10-29).
    - [`tutor-vision.md`](tutor-vision.md) — the founder's second message
      (2026-10-24), in the same form: the problems in the agent–canvas loop
      and the tutor the founder wants.

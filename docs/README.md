@@ -10,6 +10,10 @@ positioning source.
   product** (since 2026-10-24, on `main`): a desktop canvas with no AI
   inside, which any agent uses over MCP. Start there: status, reading order
   and glossary.
+- [`learning-space/strategy.md`](learning-space/strategy.md) — the
+  founder's strategy for Learning Space: the bet, the core loop, how we
+  grow, the later layers. Competitor studies are in
+  [`learning-space/competitors.md`](learning-space/competitors.md).
 - [`product-vision.md`](product-vision.md) — product language and learning
   principles, written for the paused built-in tutor. Its shared-board idea
   continues in Learning Space, but some of it is replaced there (for
