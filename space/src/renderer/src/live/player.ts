@@ -10,7 +10,7 @@ import { sceneColor, withOpacity } from './colors'
 import type { DynSample, PlayEdit, PlayObject, ScenePlay } from './compile'
 import { BLEND_GAP, paramSamplesOf, paramsAtTime } from './params'
 import { blendStyle } from '../board/style-edits'
-import { setSceneUiActions, setSceneUiState, type SceneCueState, type SceneListEntry } from './state'
+import { setSceneUiActions, setSceneUiState, type SceneCueState, type SceneListEntry, type SceneStart } from './state'
 import { canRebuild, clearRestored, rebuildFailure, requestRebuild } from './rebuild'
 import { isIdentity, multiply, type Matrix } from './timeline'
 
@@ -976,7 +976,7 @@ export class ScenePlayer {
       resume: () => void this.control('resume'),
       nextStep: () => this.nextStep(),
       replay: (list) => this.replayList(list),
-      playFrom: (scene, step) => this.playFrom(scene, step),
+      playFrom: (scene, from) => this.playFrom(scene, from),
       // Main's failure state comes first (rebuild.ts mirrors it): play data never overrides it.
       canReplay: (scene) => !rebuildFailure(scene) && (this.history.has(scene) || canRebuild(scene)),
       time: () => {
@@ -1081,13 +1081,14 @@ export class ScenePlayer {
    * hidden current item), then play forward. Returns the replay's id and
    * where it starts, or an error text.
    */
-  replay(board: BoardHandle, target: { scene?: string; step?: string | number }, mode: 'queue' | 'now'): { scene: string; of: string; from: number; starts_in_s: number } | { error: string } {
+  replay(board: BoardHandle, target: { scene?: string; step?: string | number; at?: number }, mode: 'queue' | 'now'): { scene: string; of: string; from: number; starts_in_s: number } | { error: string } {
     let memory: SceneMemory | undefined
     let from = 0
     if (target.scene) {
       memory = this.history.get(target.scene)
       if (!memory) return { error: `The board's player no longer holds this scene (the window reloaded or the board was opened again), so it cannot be replayed.` }
-      if (target.step !== undefined) {
+      if (target.at !== undefined) from = Math.max(0, Math.min(memory.play.duration, target.at))
+      else if (target.step !== undefined) {
         const steps = memory.play.steps
         const step = typeof target.step === 'number' ? steps[target.step - 1] : steps.find((entry) => entry.name === target.step)
         if (!step) return { error: `The scene "${memory.play.name ?? target.scene}" has no step ${typeof target.step === 'number' ? target.step : `"${target.step}"`}. Its steps: ${steps.map((entry, i) => `${i + 1} "${entry.name}"`).join(', ') || 'none'}.` }
@@ -1487,30 +1488,30 @@ export class ScenePlayer {
     this.schedule()
   }
 
-  /** The panel's step bar and step replay: the scene that shows goes to the start of the step and plays on (its pause steps after it hold again); another committed scene is replayed from that step. */
-  playFrom(sceneOf: string, step: number): boolean {
+  /** The panel's step bar, step replay and line clicks: the scene that shows goes to the start of the step (or to the time) and plays on (its pause steps after it hold again); another committed scene is replayed from there. */
+  playFrom(sceneOf: string, from: SceneStart): boolean {
     const scene = this.current()
     if (scene && scene.play.id.replace(/~r\d+$/, '') === sceneOf) {
-      const target = scene.play.steps[step - 1]
-      if (!target) return false
+      const at = from.at !== undefined ? Math.max(0, Math.min(scene.play.duration, from.at)) : scene.play.steps[from.step - 1]?.at
+      if (at === undefined) return false
       const now = performance.now()
       scene.passed.clear()
       scene.play.steps.forEach((entry, i) => {
-        if (entry.pause && entry.at < target.at - 1e-6) scene.passed.add(i)
+        if (entry.pause && entry.at < at - 1e-6) scene.passed.add(i)
       })
-      scene.origin = now - target.at * 1000
+      scene.origin = now - at * 1000
       scene.pausedAt = null
       scene.pauseAt = null
       scene.pausedBy = null
       // The time cursor goes back with the clock, so the camera moves from the step on run again (as on a replay), and a learner's earlier view change no longer blocks them.
-      scene.lastT = target.at
+      scene.lastT = at
       scene.cameraBlocked = false
       scene.startedEpoch = Date.now()
       this.render()
       this.schedule()
       return true
     }
-    return this.replayList([{ scene: sceneOf, step }])
+    return this.replayList([{ scene: sceneOf, ...from }])
   }
 
   /**
@@ -1519,7 +1520,7 @@ export class ScenePlayer {
    * play again in order, the first from the given step. False (and nothing
    * changes) when a scene can no longer be replayed (another stage started).
    */
-  replayList(list: Array<{ scene: string; step?: number }>): boolean {
+  replayList(list: Array<{ scene: string } & Partial<SceneStart>>): boolean {
     const board = this.board
     if (!board || !list.length) return false
     if (list.some((entry) => rebuildFailure(entry.scene))) return false
@@ -1533,7 +1534,7 @@ export class ScenePlayer {
     }
     this.scenes = []
     this.queueEnd = null
-    list.forEach((entry, i) => this.replay(board, { scene: entry.scene, ...(i === 0 && entry.step ? { step: entry.step } : {}) }, 'queue'))
+    list.forEach((entry, i) => this.replay(board, { scene: entry.scene, ...(i === 0 && entry.at !== undefined ? { at: entry.at } : i === 0 && entry.step ? { step: entry.step } : {}) }, 'queue'))
     return true
   }
 

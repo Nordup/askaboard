@@ -79,16 +79,19 @@ export interface SceneUiState {
 
 const IDLE: SceneUiState = { playing: false, paused: false, pausedBy: null, sceneName: null, sceneOf: null, stepName: null, stepIndex: -1, stepCount: 0, t: 0, duration: 0, queue: 0, currentCue: null, cues: [], steps: [], scenes: [] }
 
+/** Where a scene plays from: a step (its number, from 1; a step goes by its place, never by its name) or a scene time in seconds (a line's own time). */
+export type SceneStart = { step: number; at?: never } | { at: number; step?: never }
+
 /** What the app's UI can ask the player to do. */
 export interface SceneUiActions {
   pause(): void
   resume(): void
   /** Go to the start of the next step of the scene that shows (or end it, when it has no next step). */
   nextStep(): void
-  /** End what plays and waits, then play these committed scenes again in order, the first from one of its steps. False when one can no longer be replayed. step: the step number, from 1 (a step goes by its place, never by its name). */
-  replay(list: Array<{ scene: string; step?: number }>): boolean
-  /** Play a committed scene from a step (number from 1): the scene that shows goes there; another scene is replayed from it. False when it can no longer be replayed. */
-  playFrom(scene: string, step: number): boolean
+  /** End what plays and waits, then play these committed scenes again in order, the first from one of its moments. False when one can no longer be replayed. */
+  replay(list: Array<{ scene: string } & Partial<SceneStart>>): boolean
+  /** Play a committed scene from a moment (a step, or a scene time such as a line's): the scene that shows goes there; another scene is replayed from it. False when it can no longer be replayed. */
+  playFrom(scene: string, from: SceneStart): boolean
   /** The player holds this committed scene, or can rebuild it from the board's records (after a restart), so it can play again (not after a new stage, nor when it could not be rebuilt). */
   canReplay(scene: string): boolean
   /** The exact scene time (seconds) of the scene that shows now, or null when none: for motion between the 0.1 s steps of `t` (the reading panel). */
@@ -147,5 +150,5 @@ export function subscribeSceneUi(listener: () => void): () => void {
 /** The playback state, re-rendering when it changes; with the UI's actions. */
 export function useSceneState(): SceneUiState & SceneUiActions {
   const value = useSyncExternalStore(subscribeSceneUi, getSceneUiState)
-  return { ...value, pause: () => actions.pause(), resume: () => actions.resume(), nextStep: () => actions.nextStep(), replay: (list) => actions.replay(list), playFrom: (scene, step) => actions.playFrom(scene, step), canReplay: (scene) => actions.canReplay(scene), time: () => actions.time() }
+  return { ...value, pause: () => actions.pause(), resume: () => actions.resume(), nextStep: () => actions.nextStep(), replay: (list) => actions.replay(list), playFrom: (scene, from) => actions.playFrom(scene, from), canReplay: (scene) => actions.canReplay(scene), time: () => actions.time() }
 }

@@ -146,12 +146,14 @@
   --reading-next: 0.5; /* the alpha of the text below the light (next) */
   --reading-light: 14px; /* full brightness this far above and below the reading point */
   --reading-light-ramp: 60px; /* the light fades out until this far from the reading point */
+  --reading-band-offset: 4px; /* a selected item's step: its first line starts this far below the top of the bright band */
   --leading-current: 1.6; /* the reading view's lines */
 
   /* Motion */
   --fade: 220ms ease; /* quiet fade in and out (scene pill, script panel) */
   --into-pill: 260ms ease; /* the panel shrinks into the scene pill (and grows out of it) */
   --into-pill-scale: 0.06;
-  --reading-ease: 120ms; /* the reading view's scroll follows its target with this time constant (exponential) */
+  --reading-ease: 120ms; /* the reading view's focus and scroll follow their targets with this time constant (exponential) */
+  --reading-return: 3000ms; /* while a scene plays, the focus glides back to the reading point this long after the last wheel input */
   --pill-flash: 450ms ease; /* the scene pill lights up once when the panel went into it */
 }

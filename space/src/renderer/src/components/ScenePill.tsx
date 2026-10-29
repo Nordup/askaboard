@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Pause, Play } from 'lucide-react'
 import { useSceneState } from '../live/state'
-import { scenesNewestFirst, storiesOfNode, useBoardStories } from '../live/stories'
+import { scenesNewestFirst, storyOfSelection, useBoardStories } from '../live/stories'
 import { chooseScene, useReading } from '../live/reading'
 import { fadeMs, tokenMs, usePresence } from '../lib/presence'
 
@@ -51,9 +51,9 @@ export function ScenePill() {
       action: scene.paused ? { label: 'Resume scene', pause: false, run: () => scene.resume() } : { label: 'Pause scene', pause: true, run: () => scene.pause() }
     }
   } else {
-    // A selected item that a scene drew: that scene's step, of the version that drew it (a dropped scene too:
-    // an undo can bring its items back).
-    const made = reading.selection.map((id) => storiesOfNode(stories?.id ?? undefined, id).find((entry) => entry.made)).find((entry) => entry)
+    // A selected item that a scene drew (else changed): that scene's step, of the version that drew it (a dropped
+    // scene too: an undo can bring its items back). The reading panel goes to the same step (storyOfSelection).
+    const made = storyOfSelection(stories?.id ?? undefined, reading.selection)
     if (made) {
       const index = made.step
       const step = index !== null ? made.story.steps[index] : undefined

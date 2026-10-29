@@ -606,7 +606,7 @@ button:focus-visible {
 }
 
 .script-panel__view {
-  --reading-at: 50%; /* the reading point in the view; ScriptPanel sets it each frame */
+  --reading-at: 50%; /* the focus in the view (the reading point, or where the wheel or a selection put it); ScriptPanel sets it each frame */
   position: relative;
   flex: 0 1 auto;
   height: var(--reading-view-height);
@@ -644,6 +644,11 @@ button:focus-visible {
 
 .script-panel__para:last-child {
   margin-bottom: 0;
+}
+
+/* A line of a scene that can play: a click plays the scene from it (the only hover effect is the cursor). */
+.script-panel__para.is-playable {
+  cursor: pointer;
 }
 
 .script-panel__footer {

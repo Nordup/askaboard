@@ -211,19 +211,38 @@ item pill).
       start of the next step and arrives just as that step starts, so each
       step scrolls at its own speed. The last step goes to the middle of the
       last line. A pause stops it; a seek or a step-bar click moves it.
-    - The scroll keeps the reading point in the middle of the view; at the
-      start the text stays at the top, at the end at the bottom. It follows
-      its target with an exponential ease (`--reading-ease`, 120 ms), so a
-      new pace or a jump is smooth.
-    - The light follows the words, not the step: a mask centred on the
-      reading point, full brightness ±14 px (`--reading-light`), a ramp to
-      60 px (`--reading-light-ramp`), alpha 0.22 above (said,
-      `--reading-said`) and 0.5 below (next, `--reading-next`).
+    - One focus point drives the scroll and the light (mockup v7,
+      2026-10-29). The scroll keeps the focus in the middle of the view; at
+      the start the text stays at the top, at the end at the bottom, and the
+      light moves on to the first or the last line. The panel holds one focus
+      state; its mode sets the focus:
+      - Follow (a scene plays): the reading point.
+      - Free (the wheel or the trackpad): the wheel moves the focus, within
+        the middle of the first line and the middle of the last line. While
+        a scene plays, the focus glides back to the reading point 3 s after
+        the last wheel input (`--reading-return`), and the status says
+        "Scrolled · back in a moment". While nothing plays, it stays.
+      - Select (the learner selects an item of the scene that shows, and the
+        scene does not play): the middle of the first line of the step that
+        made the item, else of the step that changed it (the pill's lookup,
+        `storyOfSelection`). The scroll puts that line 4 px below the top of
+        the bright band (`--reading-band-offset`), so the step reads down
+        through the light. No other highlight. A deselect moves nothing; an
+        item of another scene changes nothing; while a scene plays, Follow
+        owns the focus.
+    - The shown focus and scroll follow their targets with an exponential
+      ease (`--reading-ease`, 120 ms), so every change is smooth.
+    - The light: a mask centred on the focus, full brightness ±14 px
+      (`--reading-light`), a ramp to 60 px (`--reading-light-ramp`), alpha
+      0.22 above (`--reading-said`) and 0.5 below (`--reading-next`).
+    - A click on a line plays the scene from that line's own time (a replay,
+      also after a restart). The only hover effect is the pointer cursor. A
+      scene that cannot replay has no click and no pointer.
     - Ended (also a scene opened from the pill's menu): scrolled to the end,
       the light on the last line. Reduced motion: no ease; the mask stays.
   - Footer, padding 4 5 6 11 px (`--script-panel-footer-pad`): one status
     (11 px, tertiary): "Step 2 of 3", "Paused while you draw", "Paused at a
-    pause", "Paused", "Done" or "Done · cannot replay" (the app does not hold the scene); then 24 px icon buttons: replay step
+    pause", "Paused", "Scrolled · back in a moment", "Done" or "Done · cannot replay" (the app does not hold the scene); then 24 px icon buttons: replay step
     (rotate), pause / play (secondary), next step (skip-forward). Ended: only
     replay, which plays the whole scene again (none when the app no longer
     holds the scene). The status line is 24 px high, so the footer keeps its

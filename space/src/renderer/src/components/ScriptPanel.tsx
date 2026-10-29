@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react
 import { Minus, Pause, Play, RotateCcw, SkipForward } from 'lucide-react'
 import { useSceneState } from '../live/state'
 import { rebuildFailure, useRestoredVersion } from '../live/rebuild'
-import { lookOf, useBoardStories, versionOnBoard } from '../live/stories'
+import { lookOf, storyOfSelection, useBoardStories, versionOnBoard } from '../live/stories'
 import { boardNodes, hidePanel, openedFromPill, sceneStarted, setPanelScene, useReading } from '../live/reading'
 import { fadeMs, tokenMs, usePresence } from '../lib/presence'
 
@@ -116,6 +116,8 @@ interface PanelView {
   progress: number
   /** Every line of the scene, in order. */
   lines: string[]
+  /** Each line's own time on the scene's timeline (s): a click on a line plays from there. */
+  lineAt: number[]
 }
 
 function sentence(text: string): string {
@@ -131,7 +133,7 @@ function panelSteps(name: string, steps: Array<{ name: string; at: number; lines
 const PAUSE_WORDS: Record<string, string> = { 'learner drawing': 'Paused while you draw', 'pause step': 'Paused at a pause' }
 
 /** What the hidden panel holds while it shows nothing: a playing scene's shape (its header, bar, view and buttons), so its box is the one a scene gets. */
-const IDLE_VIEW: PanelView = { scene: '', name: '', steps: [{ name: '', at: 0, dur: 1, lines: [] }], live: true, paused: false, pausedBy: null, canPlay: false, step: 0, progress: 0, lines: [] }
+const IDLE_VIEW: PanelView = { scene: '', name: '', steps: [{ name: '', at: 0, dur: 1, lines: [] }], live: true, paused: false, pausedBy: null, canPlay: false, step: 0, progress: 0, lines: [], lineAt: [] }
 
 // ---------- The panel ----------
 
@@ -151,8 +153,8 @@ export function ScriptPanel() {
   }, [liveId])
 
   // The scene that just ended stays a few seconds (longer while the pointer is on the panel).
-  const lastLive = useRef<{ scene: string; name: string; steps: Array<{ name: string; at: number; lines: number[] }>; lines: Array<{ text: string }>; duration: number } | null>(null)
-  if (liveId) lastLive.current = { scene: liveId, name: scene.sceneName ?? 'Scene', steps: scene.steps.map((step) => ({ name: step.name, at: step.at_s, lines: step.lines })), lines: scene.cues.map((cue) => ({ text: cue.text })), duration: scene.duration }
+  const lastLive = useRef<{ scene: string; name: string; steps: Array<{ name: string; at: number; lines: number[] }>; lines: Array<{ text: string; at: number }>; duration: number } | null>(null)
+  if (liveId) lastLive.current = { scene: liveId, name: scene.sceneName ?? 'Scene', steps: scene.steps.map((step) => ({ name: step.name, at: step.at_s, lines: step.lines })), lines: scene.cues.map((cue) => ({ text: cue.text, at: cue.at_s })), duration: scene.duration }
   const [ended, setEnded] = useState<string | null>(null)
   const [hover, setHover] = useState(false)
   useEffect(() => {
@@ -183,7 +185,8 @@ export function ScriptPanel() {
       pausedBy: scene.pausedBy,
       step,
       progress: steps[step]?.dur ? Math.max(0, Math.min(1, (t - steps[step].at) / steps[step].dur)) : 1,
-      lines: scene.cues.map((cue) => cue.text)
+      lines: scene.cues.map((cue) => cue.text),
+      lineAt: scene.cues.map((cue) => cue.at_s)
     }
   } else if (shownId) {
     const record = stories?.stories.find((entry) => entry.scene === shownId)
@@ -196,7 +199,7 @@ export function ScriptPanel() {
         : null
     if (known) {
       const steps = panelSteps(known.name, known.steps, known.duration, known.lines.length)
-      view = { scene: shownId, name: known.name, steps, live: false, canPlay: known.newest && scene.canReplay(shownId), paused: false, pausedBy: null, step: steps.length - 1, progress: 1, lines: known.lines.map((line) => line.text) }
+      view = { scene: shownId, name: known.name, steps, live: false, canPlay: known.newest && scene.canReplay(shownId), paused: false, pausedBy: null, step: steps.length - 1, progress: 1, lines: known.lines.map((line) => line.text), lineAt: known.lines.map((line) => line.at) }
     }
   }
   const { value: presented, shown } = usePresence(view, fadeMs())
@@ -315,11 +318,39 @@ export function ScriptPanel() {
   const idle = presented === null
   const value = presented ?? IDLE_VIEW
   const replayable = value.canPlay
+  const moving = !idle && value.live && !value.paused
+  // The step bar, the step replay and a click on a line: the scene that shows plays from there (a replay, also after a restart).
+  const playable = !idle && (value.live || replayable)
   const playStep = (index: number): void => {
-    if (value.live) scene.playFrom(value.scene, index + 1)
-    else if (replayable) scene.replay([{ scene: value.scene, step: index + 1 }])
+    if (playable) scene.playFrom(value.scene, { step: index + 1 })
   }
-  const status = !value.live ? (value.canPlay ? 'Done' : rebuildFailure(value.scene) ? 'Done · could not be rebuilt' : 'Done · cannot replay') : value.paused ? (PAUSE_WORDS[value.pausedBy ?? ''] ?? 'Paused') : scene.steps.length ? `Step ${value.step + 1} of ${value.steps.length}` : ''
+  const playLine = (index: number): void => {
+    if (playable) scene.playFrom(value.scene, { at: value.lineAt[index] ?? 0 })
+  }
+
+  // ---- the reading view's focus (mockup v7): the one owner of what the view's scroll and light stand on ----
+  // The selected item's step, when the view shows its scene and the scene does not play (the pill's lookup).
+  const picked = !value.live && value.scene ? storyOfSelection(stories?.id ?? undefined, reading.selection) : null
+  const pick = picked && picked.scene.scene === value.scene && picked.step !== null ? firstLineOf(value.steps, picked.step, value.lines.length) : null
+  const pickKey = pick !== null && picked ? `${value.scene}:${picked.step}` : null
+  const [held, setHeld] = useState<Focus>(() => ({ scene: '', live: true, picked: null, mode: 'follow', line: 0, at: null, band: false }))
+  let focus = held
+  if (held.scene !== value.scene || held.live !== value.live) {
+    // Another scene, or the scene starts or ends: Follow (or the selected step of a scene that does not play).
+    focus = { scene: value.scene, live: value.live, picked: pickKey, mode: pick !== null ? 'select' : 'follow', line: pick ?? 0, at: null, band: false }
+  } else if (pickKey !== held.picked) {
+    // The selection changed: its step, else (a deselect) the focus stays where it shows.
+    focus = pick !== null ? { ...held, picked: pickKey, mode: 'select', line: pick, at: null, band: false } : held.mode === 'select' ? { ...held, picked: null, mode: 'free', at: null, band: true } : { ...held, picked: null }
+  }
+  if (focus !== held) setHeld(focus)
+  // While a scene plays, the focus glides back to the reading point a while after the last wheel input.
+  useEffect(() => {
+    if (focus.mode !== 'free' || !moving) return
+    const timer = setTimeout(() => setHeld((now) => (now === focus ? { ...now, mode: 'follow', at: null, band: false } : now)), tokenMs('--reading-return'))
+    return () => clearTimeout(timer)
+  }, [focus, moving])
+
+  const status = !value.live ? (value.canPlay ? 'Done' : rebuildFailure(value.scene) ? 'Done · could not be rebuilt' : 'Done · cannot replay') : value.paused ? (PAUSE_WORDS[value.pausedBy ?? ''] ?? 'Paused') : focus.mode === 'free' ? 'Scrolled · back in a moment' : scene.steps.length ? `Step ${value.step + 1} of ${value.steps.length}` : ''
   const style = {
     ...(box ? { left: box.left, top: box.top, maxHeight: box.room } : {}),
     ...(!box || idle ? { visibility: 'hidden' as const } : {}),
@@ -354,7 +385,7 @@ export function ScriptPanel() {
               style={{ flexGrow: Math.max(step.dur, 0.01) }}
               title={sentence(step.name)}
               aria-label={`Play from step ${i + 1}: ${step.name}`}
-              disabled={!value.live && !replayable}
+              disabled={!playable}
               onClick={() => playStep(i)}
             >
               <span className="script-panel__track">
@@ -364,12 +395,12 @@ export function ScriptPanel() {
           )
         })}
       </div>
-      <ReadingView scene={value.scene} lines={value.lines} steps={value.steps} live={value.live} moving={!idle && value.live && !value.paused} t={scene.t} time={scene.time} />
+      <ReadingView scene={value.scene} lines={value.lines} steps={value.steps} live={value.live} moving={moving} t={scene.t} time={scene.time} focus={focus} onFocus={setHeld} onLine={playable ? playLine : undefined} />
       <footer className="script-panel__footer">
         <span className="script-panel__status">{status}</span>
         {value.live ? (
           <>
-            <button className="icon-button" title="Replay step" aria-label="Replay step" onClick={() => scene.playFrom(value.scene, value.step + 1)}>
+            <button className="icon-button" title="Replay step" aria-label="Replay step" onClick={() => scene.playFrom(value.scene, { step: value.step + 1 })}>
               <RotateCcw size={14} strokeWidth={1.75} />
             </button>
             <button className="icon-button icon-button--strong" title={value.paused ? 'Play' : 'Pause'} aria-label={value.paused ? 'Play' : 'Pause'} onClick={() => (value.paused ? scene.resume() : scene.pause())}>
@@ -393,6 +424,37 @@ export function ScriptPanel() {
 
 // ---------- The reading view ----------
 
+/**
+ * The reading view's focus (mockup v7, 2026-10-29): the one point that the scroll and the light
+ * stand on. ScriptPanel holds it (one state); the view eases its shown focus and scroll toward it.
+ * - follow: the reading point (a scene plays; ended: the last line).
+ * - free: the learner's wheel moved it (at, px from the text's top; null: where it shows now). While
+ *   a scene plays it returns to follow --reading-return after the last wheel input.
+ * - select: the middle of the first line of the selected item's step (line); the scroll puts that
+ *   line at the top of the bright band (--reading-band-offset above it).
+ * scene and live: the view it belongs to (another scene, or a start or an end, starts it again);
+ * picked: the selected step it saw last ("scene:step"), so only a change of the selection moves it.
+ */
+export interface Focus {
+  scene: string
+  live: boolean
+  picked: string | null
+  mode: 'follow' | 'free' | 'select'
+  line: number
+  at: number | null
+  /** free: the scroll keeps the band's place of the select it came from (so a deselect moves nothing). */
+  band: boolean
+}
+
+/** The first line of step index (a step without lines: of the next step with lines), or null. */
+function firstLineOf(steps: readonly PanelStep[], index: number, lineCount: number): number | null {
+  for (let i = index; i < steps.length; i++) {
+    const own = steps[i].lines.filter((line) => line >= 0 && line < lineCount)
+    if (own.length) return Math.min(...own)
+  }
+  return null
+}
+
 /** Where the view's lines are, measured from its text (px). */
 interface ReadingLayout {
   tops: number[]
@@ -402,6 +464,15 @@ interface ReadingLayout {
   view: number
   /** One visual line (font size × leading). */
   line: number
+}
+
+/** The range of a focus: the middle of the first visual line to the middle of the last one. */
+function lineRange(layout: ReadingLayout): [number, number] {
+  const n = layout.tops.length
+  if (!n) return [0, 0]
+  const half = layout.line / 2
+  const first = layout.tops[0] + half
+  return [first, Math.max(first, layout.bottoms[n - 1] - half)]
 }
 
 /**
@@ -415,8 +486,7 @@ function readingPoint(layout: ReadingLayout, steps: readonly PanelStep[], live: 
   const n = layout.tops.length
   if (!n) return 0
   const half = layout.line / 2
-  const first = layout.tops[0] + half
-  const last = Math.max(first, layout.bottoms[n - 1] - half)
+  const [first, last] = lineRange(layout)
   if (!live || !steps.length) return live ? first : last
   // A step without lines starts where the next spoken step starts (from the end back), so the step
   // before it still moves on and the silent step holds.
@@ -445,21 +515,24 @@ function cssNumber(element: Element, name: string): number {
 }
 
 /**
- * The scene's lines as a slow teleprompter (mockup v5, 2026-10-29). The text scrolls so that the
- * reading point stays in the middle of the view (at the start it stays at the top, at the end at
- * the bottom); the shown scroll follows its target with an exponential ease (--reading-ease), so a
- * new step's pace or a jump from the step bar is smooth. A mask on the view lights the reading
- * point and dims the lines said (--reading-said) and the lines next (--reading-next). The frame
- * loop runs only while the panel shows and the point or the scroll moves; it reads the player's
- * exact time, so a pause stops it and a seek moves it.
+ * The scene's lines as a slow teleprompter (mockups v5 and v7, 2026-10-29). One focus point
+ * (Focus above) drives both the scroll and the light: the scroll keeps the focus in the middle of
+ * the view (clamped, so at the start the text stays at the top and at the end at the bottom, and
+ * the light moves on to the first or the last line), and a mask on the view lights the focus and
+ * dims the lines above (--reading-said) and below (--reading-next). The shown focus and scroll
+ * follow their targets with an exponential ease (--reading-ease), so every change is smooth. The
+ * wheel moves the focus (free); a click on a line plays the scene from it (onLine). The frame loop
+ * runs only while the panel shows and something moves; it reads the player's exact time, so a
+ * pause stops it and a seek moves it.
  */
-function ReadingView({ scene, lines, steps, live, moving, t, time }: { scene: string; lines: string[]; steps: PanelStep[]; live: boolean; moving: boolean; t: number; time: () => number | null }) {
+function ReadingView({ scene, lines, steps, live, moving, t, time, focus, onFocus, onLine }: { scene: string; lines: string[]; steps: PanelStep[]; live: boolean; moving: boolean; t: number; time: () => number | null; focus: Focus; onFocus: (next: Focus) => void; onLine?: (index: number) => void }) {
   const viewRef = useRef<HTMLDivElement>(null)
   const textRef = useRef<HTMLDivElement>(null)
   const layout = useRef<ReadingLayout | null>(null)
-  const input = useRef({ steps, live, moving, t, time })
-  input.current = { steps, live, moving, t, time }
-  const motion = useRef({ shown: 0, frame: 0, last: 0, snap: true })
+  const input = useRef({ steps, live, moving, t, time, focus, onFocus })
+  input.current = { steps, live, moving, t, time, focus, onFocus }
+  /** What shows now: the scroll (shown) and the focus, each easing toward its target. */
+  const motion = useRef({ shown: 0, focus: 0, frame: 0, last: 0, snap: true })
 
   const measure = useCallback((): void => {
     const view = viewRef.current
@@ -483,23 +556,40 @@ function ReadingView({ scene, lines, steps, live, moving, t, time }: { scene: st
     const view = viewRef.current
     const text = textRef.current
     if (!at || !view || !text) return
-    const { steps, live, moving, t, time } = input.current
-    const point = readingPoint(at, steps, live, live ? (time() ?? t) : 0)
-    const target = Math.max(0, Math.min(point - at.view / 2, Math.max(at.height - at.view, 0)))
+    const { steps, live, moving, t, time, focus } = input.current
+    const half = at.line / 2
+    const [lo, hi] = lineRange(at)
+    // The scroll puts the focus at this height in the view: the middle, or (a selected step) its line at the top of the bright band.
+    const centre = at.view / 2
+    const band = at.view / 2 - cssNumber(view, '--reading-light') - cssNumber(view, '--reading-band-offset') + half
+    let aim: number
+    let anchor = centre
+    if (focus.mode === 'select') {
+      aim = (at.tops[Math.min(focus.line, at.tops.length - 1)] ?? 0) + half
+      anchor = band
+    } else if (focus.mode === 'free') {
+      aim = Math.max(lo, Math.min(hi, focus.at ?? m.focus))
+      if (focus.band) anchor = band
+    } else aim = readingPoint(at, steps, live, live ? (time() ?? t) : 0)
+    const target = Math.max(0, Math.min(aim - anchor, Math.max(at.height - at.view, 0)))
     const dt = m.last ? now - m.last : 0
     m.last = now
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     if (m.snap || reduced) {
       m.shown = target
+      m.focus = aim
       m.snap = false
     } else {
       const tau = cssNumber(document.documentElement, '--reading-ease') || 120
-      m.shown = target + (m.shown - target) * Math.exp(-dt / tau)
+      const keep = Math.exp(-dt / tau)
+      m.shown = target + (m.shown - target) * keep
+      m.focus = aim + (m.focus - aim) * keep
       if (Math.abs(m.shown - target) < 0.25) m.shown = target
+      if (Math.abs(m.focus - aim) < 0.25) m.focus = aim
     }
     text.style.transform = `translateY(${-m.shown}px)`
-    view.style.setProperty('--reading-at', `${point - m.shown}px`)
-    if (moving || m.shown !== target) m.frame = requestAnimationFrame(tick)
+    view.style.setProperty('--reading-at', `${m.focus - m.shown}px`)
+    if (moving || m.shown !== target || m.focus !== aim) m.frame = requestAnimationFrame(tick)
     else m.last = 0
   }, [])
 
@@ -510,7 +600,7 @@ function ReadingView({ scene, lines, steps, live, moving, t, time }: { scene: st
     m.frame = requestAnimationFrame(tick)
   }, [tick])
 
-  // Another scene (or its lines) shows: measure and stand at its reading point at once, before paint.
+  // Another scene (or its lines) shows: measure and stand at its focus at once, before paint.
   // The lines' text is the key (the array is new on each state from the player).
   const linesKey = lines.join('\u0000')
   useLayoutEffect(() => {
@@ -521,7 +611,7 @@ function ReadingView({ scene, lines, steps, live, moving, t, time }: { scene: st
     tick(performance.now())
   }, [scene, linesKey, measure, tick])
 
-  // Every new state from the player (time, step, pause): the loop runs again when it stopped.
+  // Every new state from the player (time, step, pause) and every new focus: the loop runs again when it stopped.
   useEffect(() => kick())
 
   // A new width or font wraps the lines again.
@@ -538,6 +628,25 @@ function ReadingView({ scene, lines, steps, live, moving, t, time }: { scene: st
     return () => observer.disconnect()
   }, [measure, kick])
 
+  // The wheel (or a trackpad) moves the focus, within the first and the last line (free). Not passive: the page never scrolls.
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    const wheel = (event: WheelEvent): void => {
+      event.preventDefault()
+      const at = layout.current
+      const { focus, onFocus } = input.current
+      if (!at || !at.tops.length || !focus.scene) return
+      const dy = event.deltaY * (event.deltaMode === 1 ? at.line : event.deltaMode === 2 ? at.view : 1)
+      if (!dy) return
+      const [lo, hi] = lineRange(at)
+      const from = focus.mode === 'free' && focus.at !== null ? focus.at : motion.current.focus
+      onFocus({ ...focus, mode: 'free', at: Math.max(lo, Math.min(hi, from + dy)), band: focus.mode === 'select' || (focus.mode === 'free' && focus.band) })
+    }
+    view.addEventListener('wheel', wheel, { passive: false })
+    return () => view.removeEventListener('wheel', wheel)
+  }, [])
+
   useEffect(
     () => () => {
       const m = motion.current
@@ -551,7 +660,7 @@ function ReadingView({ scene, lines, steps, live, moving, t, time }: { scene: st
     <div className="script-panel__view" ref={viewRef}>
       <div className="script-panel__text" ref={textRef}>
         {lines.map((line, i) => (
-          <p key={i} className="script-panel__para">
+          <p key={i} className={`script-panel__para${onLine ? ' is-playable' : ''}`} onClick={onLine ? () => onLine(i) : undefined}>
             {line}
           </p>
         ))}

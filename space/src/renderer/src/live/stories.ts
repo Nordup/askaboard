@@ -71,6 +71,20 @@ export function storiesOfNode(boardId: string | undefined, nodeId: string): read
   return current && boardId && current.id === boardId ? (byNode.get(nodeId) ?? []) : []
 }
 
+/**
+ * The scene step of a selection, for the scene pill and the reading panel (one lookup): for the first
+ * selected item that a scene made or changed, the scene line that made it, else the first one that
+ * changed it in a step. Null when no selected item has a scene.
+ */
+export function storyOfSelection(boardId: string | undefined, ids: readonly string[]): NodeStory | null {
+  for (const id of ids) {
+    const list = storiesOfNode(boardId, id)
+    const hit = list.find((entry) => entry.made) ?? list.find((entry) => entry.step !== null)
+    if (hit) return hit
+  }
+  return null
+}
+
 /** What the board shows, for version checks: node presence and content signatures (computed when asked, once each). */
 export function lookOf(nodes: readonly BoardNode[] | ReadonlyMap<string, BoardNode>): BoardLook {
   const byId = nodes instanceof Map ? (nodes as ReadonlyMap<string, BoardNode>) : new Map((nodes as readonly BoardNode[]).map((node) => [node.id, node]))
