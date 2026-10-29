@@ -79,7 +79,9 @@ Lab and perf runs give agents what the real apps give them (decision W10):
 Claude with every tool and `--permission-mode bypassPermissions`, Codex with
 `danger-full-access` and the network, web on unless `--no-web`. Each perf run
 writes `timeline.md` (where the time goes) and keeps the agent's transcript.
-Videos stay out of git (`*.mp4` and similar are ignored).
+Videos stay out of git (`*.mp4` and similar are ignored). So do images:
+`.gitignore` ignores every image outside the asset folders. Save check
+screenshots anywhere (for example a draft's folder); they stay local.
 
 
 The council tasks are in `space/scripts/lab/council/tasks.json`; each has a

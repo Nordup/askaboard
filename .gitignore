@@ -58,3 +58,45 @@ share-videos/
 *.mov
 *.webm
 *.mkv
+
+# Images stay local unless they are product or design assets (founder, 2026-10-29):
+# screenshots from checks, labs, tests, debugging and design iterations never go into git.
+# An approved design screenshot that should stay goes to docs/learning-space/design-images/.
+# The exceptions name image files only, so they never bring back an ignored folder.
+# Images already in git (Vendor/, the paused clients) stay tracked.
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.heic
+!assets/**/*.png
+!assets/**/*.jpg
+!assets/**/*.jpeg
+!assets/**/*.gif
+!assets/**/*.webp
+!design/**/*.png
+!design/**/*.jpg
+!design/**/*.jpeg
+!design/**/*.gif
+!design/**/*.webp
+!docs/images/**/*.png
+!docs/images/**/*.jpg
+!docs/images/**/*.jpeg
+!docs/images/**/*.gif
+!docs/images/**/*.webp
+!docs/learning-space/design-images/**/*.png
+!docs/learning-space/design-images/**/*.jpg
+!docs/learning-space/design-images/**/*.jpeg
+!docs/learning-space/design-images/**/*.gif
+!docs/learning-space/design-images/**/*.webp
+!landing-page/public/**/*.png
+!landing-page/public/**/*.jpg
+!landing-page/public/**/*.jpeg
+!landing-page/public/**/*.gif
+!landing-page/public/**/*.webp
+!space/resources/**/*.png
+!space/resources/**/*.jpg
+!space/resources/**/*.jpeg
+!space/resources/**/*.gif
+!space/resources/**/*.webp

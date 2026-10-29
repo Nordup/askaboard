@@ -52,6 +52,7 @@ python3 scripts/web-dev.py --qa   # same, with dummy provider keys (no paid call
 - **Record decisions.** A product or architecture decision goes into `docs/learning-space/decisions.md` in the same commit; a replaced decision is marked "Replaced", not deleted.
 - **Wrap up each working session** with the procedure in `.claude/skills/session-wrap-up/SKILL.md` (Claude runs it as the `session-wrap-up` skill; other agents follow the file): update the Learning Space docs and remove outdated lines.
 - **The working tree is often dirty with the user's own work.** Never `git checkout`/`git restore`/`stash` a file to undo your edits — remove your own change with an edit. Re-read files before editing; the user edits and builds concurrently.
+- **No check, test, debug or iteration images in git** (founder, 2026-10-29). `.gitignore` ignores images outside the asset folders; never `git add -f` an image. An approved design screenshot that should stay goes to `docs/learning-space/design-images/`, and only when the founder asks for it.
 - Ask before pushing.
 
 ## Learning Space UI (`space/`)
