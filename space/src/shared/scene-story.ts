@@ -214,8 +214,8 @@ export interface SceneRecordLine {
     cutAt: number | null
     ctx: string
     answers: Array<[string, string]>
-    /** The objects of earlier programs that ctx's stage.items held, by owner (scene id, key) with their item ids (main/live-scene.ts StageEntry.objects). */
-    objects?: Array<[string, string, string[]]>
+    /** The stage ids the program took, [first, end) (main/live-scene.ts StageEntry.range); lines from before 2026-10-30 have none. */
+    range?: [number, number]
   }
   story: SceneStory
   revert: StoryRevert

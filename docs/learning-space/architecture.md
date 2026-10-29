@@ -221,8 +221,8 @@ P12, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
   programs run again at once, so a new scene sees the earlier scenes'
   objects. Work for another folder, board or mount is dropped after every
   await, and a mount ends the stage work no call owns. A saved context is
-  rebound to the current stage when it runs again (epoch, board path, its
-  objects by owner: `live-scene.ts savedContext`). The renderer gets the
+  rebound to the current stage when it runs again (epoch, board path:
+  `live-scene.ts savedContext`). The renderer gets the
   new epoch, the stage's identities and each scene's story, revert and
   measures (`run.ts sceneRestore`), so a replace takes the old items off
   and a new scene finds them.
@@ -234,13 +234,16 @@ P12, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
   place and its items, no rebuild runs it, and a restage neither reverts
   nor runs it (later scenes see its objects as gone). The renderer's
   mirror (`rebuild.ts`) comes before any play data it holds.
-- **Identities.** Marking a program shifts the stage ids of the objects
-  after it. When the log changes, main sends the renderer the full set
-  (stage id, scene id, key of each object, and the failures: `mcp.ts
-  publishIdentities`), and the renderer replaces its copy; each object's
-  items follow it by owner. This happens before a call takes a context,
-  and in `SceneStage.run` when the rebuild before a program shifted ids
-  (the context's objects are bound by owner).
+- **Stage ids never shift.** Each program keeps the stage ids it took,
+  `[first, end)` (`StageEntry.range`, `source.range` in the record). A
+  run starts at its own first id. The ids of a program before it that
+  does not run (marked or dropped) stay empty (the prelude fills them
+  with gone objects), so a saved context's ids name the same objects in
+  every rebuild. A re-run that takes other ids is marked. A record line
+  from before 2026-10-30 has no range: it runs after the ranges before
+  it, and it is marked when a marked program before it has no range
+  either. The renderer gets each object's owner once per restore. Then
+  it gets only the failures (`mcp.ts publishFailures`).
 - **Restage.** A replace or cut reverts the affected scenes (one loop,
   newest first, from `sceneReverts`, the one owner of reverts) and runs
   the new program and the later ones. Its record lines are written only

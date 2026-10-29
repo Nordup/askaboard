@@ -108,7 +108,7 @@ function isSceneLine(value: Record<string, unknown>): value is Record<string, un
 
 /**
  * The record boundary of a rebuild (restorable): what is malformed in the fields that the stage and the renderer read
- * when they rebuild a scene (its saved run, its objects by owner, its revert, its measures, the owners in its story), or
+ * when they rebuild a scene (its saved run and stage ids, its revert, its measures, the owners in its story), or
  * null. A scene line that passes isSceneLine but not this is marked; it never stops the board's other scenes.
  */
 function restoreProblem(line: SceneRecordLine): string | null {
@@ -121,7 +121,7 @@ function restoreProblem(line: SceneRecordLine): string | null {
   const source = line.source as unknown as Record<string, unknown>
   if (!orNull(text)(source.entry) || !text(source.ctx) || !orNull(num)(source.cutAt)) return 'source'
   if (!Array.isArray(source.answers) || !source.answers.every((pair) => tuple(pair, text, text))) return 'source.answers'
-  if (source.objects !== undefined && !(Array.isArray(source.objects) && source.objects.every((entry) => tuple(entry, text, text, texts)))) return 'source.objects'
+  if (source.range !== undefined && !(tuple(source.range, num, num) && (source.range as number[])[0] <= (source.range as number[])[1])) return 'source.range'
   for (const item of line.story.items) {
     if (item.of !== undefined && !tuple(item.of, text, text)) return 'story item of'
     if (item.held !== undefined && !texts(item.held)) return 'story item held'
@@ -239,7 +239,7 @@ export class SceneStore {
   }
 
   /** A scene's commit was accepted by the board: append its scene line (after the code it names). Never throws. */
-  scene(board: RecordBoard, entry: { scene: string | null; source: SceneSource; name: string | null; seed: number; cutAt: number | null; ctxText: string; answers: Map<string, string>; objects?: Array<[string, string, string[]]> }, record: CommitRecord): Promise<void> {
+  scene(board: RecordBoard, entry: { scene: string | null; source: SceneSource; name: string | null; seed: number; cutAt: number | null; ctxText: string; answers: Map<string, string>; range?: [number, number] }, record: CommitRecord): Promise<void> {
     const sceneId = entry.scene
     if (!sceneId) return Promise.resolve()
     return this.serial(async () => {
@@ -259,7 +259,7 @@ export class SceneStore {
           cutAt: entry.cutAt,
           ctx: entry.ctxText,
           answers: [...entry.answers],
-          ...(entry.objects ? { objects: entry.objects } : {})
+          ...(entry.range ? { range: entry.range } : {})
         }
         const state = index.scenes.get(sceneId)
         const version = state?.keys.get(sourceKey(source)) ?? (state ? state.maxVersion + 1 : 1)

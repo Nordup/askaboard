@@ -204,7 +204,7 @@ function fromWorker(context: Context, data: unknown, started: number): void {
     case 'failed':
       if (context.resetId === null) return
       context.ready = message.t === 'ready'
-      send(message.t === 'ready' ? { t: 'reply', id: context.resetId, ok: true, json: null, frames: 0, ms: performance.now() - started, timing: null, keys: null } : { t: 'reply', id: context.resetId, ok: false, error: `The scene library failed to load: ${message.error}`, line: null, file: null, ms: performance.now() - started })
+      send(message.t === 'ready' ? { t: 'reply', id: context.resetId, ok: true, json: null, frames: 0, ms: performance.now() - started, timing: null, keys: null, range: null } : { t: 'reply', id: context.resetId, ok: false, error: `The scene library failed to load: ${message.error}`, line: null, file: null, ms: performance.now() - started })
       context.resetId = null
       if (!context.ready) stop()
       return

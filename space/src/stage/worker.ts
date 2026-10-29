@@ -63,6 +63,8 @@ interface Host {
   stats(): { evaluations: number; fullEvaluations: number }
   /** The stage id and key of each object the program made (live-prelude.js keyFor). */
   keys(): Array<[number, string]>
+  /** The stage ids the program took, [first, end) (live-prelude.js range). */
+  range(): [number, number]
 }
 
 const G = globalThis as unknown as Record<PropertyKey, unknown>
@@ -361,11 +363,12 @@ function finish(fns: Host, id: number, mode: StageMode, started: number): StageR
     const tResult = clock()
     // Before bake: bake turns the objects a cut dropped into gone ones, and keys() leaves the dropped ones out.
     const keys = fns.keys()
+    const range = fns.range()
     if (mode !== 'draft') fns.bake()
     const tBake = clock()
     const { evaluations, fullEvaluations } = fns.stats()
     const timing: StageTiming = { body: tBody - started, result: tResult - tBody, bake: tBake - tResult, evaluations, fullEvaluations, encode: frames?.encodeMs ?? 0, wait: frames?.waitMs ?? 0, bytes: frames?.total ?? 0 }
-    return { t: 'reply', id, ok: true, json, frames: frames?.sent ?? 0, ms: clock() - started, timing, keys }
+    return { t: 'reply', id, ok: true, json, frames: frames?.sent ?? 0, ms: clock() - started, timing, keys, range }
   } catch (error) {
     return failure(id, error, started)
   } finally {

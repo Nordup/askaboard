@@ -28,8 +28,11 @@ export interface SceneContext {
   revision?: number
   /** The open board's path (the stage resets when it changes). */
   board?: string
-  /** The renderer's record of the stage: its epoch and, per stage object id, the board items it shows through (node ids, ink group id). */
-  stage?: { epoch: string; items: Record<string, string[]> }
+  /**
+   * The renderer's record of the stage: its epoch and, per stage object id, the board items it shows through (node ids, ink group id).
+   * first: the stage id of the program's first object (main/live-scene.ts sets it): the ids of a program that does not run stay empty.
+   */
+  stage?: { epoch: string; items: Record<string, string[]>; first?: number }
   /**
    * A new version of a scene runs at that scene's place on the stage: the items (ids and names)
    * of that scene (earlier: true) and of the scenes after it, which do not exist there yet, by

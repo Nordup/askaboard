@@ -9,7 +9,7 @@ import type { SceneSettle, SceneStory, StoryRevert } from '@shared/scene-story'
  * (requestRebuild), and run.ts sceneMemory compiles that run onto the board's own nodes through the
  * record (story.items); the player then keeps it as it keeps a scene committed in this session.
  * Main owns whether a scene's program can run (main/live-scene.ts StageEntry.failed); `failed` here
- * mirrors it for every scene of the stage (main/mcp.ts publishIdentities), and the panel then says
+ * mirrors it for every scene of the stage (main/mcp.ts publishFailures), and the panel then says
  * that the scene could not be rebuilt.
  */
 

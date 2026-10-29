@@ -2929,6 +2929,8 @@
   }
 
   let cutAt = null
+  /** The stage id of this program's first object. */
+  let firstId = 0
   /** A new scene: its context, its own time from 0, nothing on its timeline yet. */
   const begin = (ctxText) => {
     CTX = JSON.parse(ctxText)
@@ -2958,6 +2960,10 @@
     asyncErrors = []
     collector = null
     finalSampling = false
+    // The stage ids of earlier programs that do not run (main/live-scene.ts StageEntry.range) stay empty: this program's ids are the ones it had.
+    const first = CTX.stage && CTX.stage.first
+    while (typeof first === 'number' && objects.length < first) objects.push({ id: objects.length, kind: 'node', api: 'node', ref: null, gone: true, born: -1, tracks: {}, vis: 'hidden', bounds: { x: 0, y: 0, width: 0, height: 0 }, pivot: [0, 0] })
+    firstId = objects.length
     const items = CTX.stage && CTX.stage.items
     for (const e of objects) {
       if (e.kind === 'node') {
@@ -3061,10 +3067,12 @@
   const stats = () => ({ evaluations, fullEvaluations })
   /** The stage id and key of each object this scene made and kept (a cut drops some): what a rebuild tells the board (main/live-scene.ts). */
   const keys = () => objects.filter((e) => e.born === sceneNo && !e.dropped && e.key !== undefined).map((e) => [e.id, e.key])
+  /** The stage ids this program took: [first, end). */
+  const range = () => [firstId, objects.length]
   /** The program's parallel work failed (an async function in all() or a say() mark): its error, at once. */
   const failed = () => (asyncErrors.length ? { error: asyncErrors[0] } : null)
   if (!giveHost) throw new Error('The stage has no host')
-  giveHost(Object.freeze({ begin, advance, end, failed, result, bake, stats, keys }))
+  giveHost(Object.freeze({ begin, advance, end, failed, result, bake, stats, keys, range }))
 
   // ---------- Lock the stage ----------
   // Every program of a board runs in this one realm. So that no program can

@@ -75,11 +75,11 @@ export interface StageEntry {
   /** The stage id and scene-local key of each object the program made, from its last run (stage/live-prelude.js keyFor). */
   keys?: Array<[number, string]>
   /**
-   * The objects of earlier programs that the program's context held (ctxText's stage.items), by owner: the scene id and key
-   * of the program that made each, and the item ids. A run of it again gets them under the stage ids they have then
-   * (savedContext), so a stage id that shifted (a program before it is marked) never names another object.
+   * The stage ids the program took, [first, end) (stage/live-prelude.js range). A run of it again starts at first, and the ids of
+   * a program before it that does not run (marked, dropped) stay empty, so stage ids never shift: a saved context's ids name
+   * the same objects in every rebuild. Records from before 2026-10-30 have none (their programs run where the log has room).
    */
-  objects?: Array<[string, string, string[]]>
+  range?: [number, number]
   /**
    * The one failure state of a program (decision of 2026-10-29): why it cannot run again, or undefined. Its code is missing,
    * it threw or stopped the stage when the stage was rebuilt, a cancel stopped it while the stage was rebuilt, its record is
@@ -126,12 +126,10 @@ export class SceneStage {
   /**
    * measureText: the renderer lays the text out as the board does (renderer/live/measure.ts).
    * host: the renderer answers html(), image(), space() and copy() requests (renderer/live/host.ts).
-   * onShift: a rebuild before a run changed the identities (identityGen): the renderer gets them before the run.
    */
   constructor(
     private readonly measureText: (items: TextItem[]) => Promise<Array<[number, number]>>,
-    private readonly host: (request: HostRequest, place: unknown) => Promise<unknown>,
-    private readonly onShift: () => Promise<void>
+    private readonly host: (request: HostRequest, place: unknown) => Promise<unknown>
   ) {
     this.process = new StageProcess(
       (message, reply) => this.onStageMessage(message, reply),
@@ -276,18 +274,11 @@ export class SceneStage {
     console.warn(`stage: the program of scene ${entry.name ?? entry.scene ?? '?'} is marked and no longer runs: ${why}`)
     entry.failed = why
     entry.keys = undefined
-    this.identityGen++
     this.revision++
     this.dirty = true
   }
 
-  /**
-   * Changes when the stage ids of the log's objects change (a program is marked, so the ids of the objects after it shift) or
-   * a program is marked: main/mcp.ts publishIdentities then gives the renderer the full set again (identities).
-   */
-  identityGen = 0
-
-  /** Each object of the log's programs that runs, by owner (stage id, scene id, key), and why each marked program cannot run. */
+  /** Each object of the log's programs that runs, by owner (stage id, scene id, key: what a restore gives the renderer), and why each marked program cannot run. */
   identities(): { keys: Array<[number, string, string]>; failed: Array<[string, string]> } {
     const keys: Array<[number, string, string]> = []
     const failed: Array<[string, string]> = []
@@ -366,15 +357,23 @@ export class SceneStage {
   }
 
   /**
-   * A program of the log runs again on its saved context (savedContext), as a rebuild ("replay") or sampled ("scene").
-   * A failure marks it and returns null. A cancel throws SceneCancelled and never marks a program that was not running
-   * (a program a cancel stops while it runs is marked: see cancel).
+   * A program of the log runs again on its saved context (savedContext), as a rebuild ("replay") or sampled ("scene"), at its
+   * own stage ids (StageEntry.range). A failure, or a run that takes other stage ids, marks it and returns null. A program
+   * whose record has no range runs at the end of the ranges before it; when a marked program before it has none either,
+   * that place is not known, and it is marked. A cancel throws SceneCancelled and never marks a program that was not
+   * running (a program a cancel stops while it runs is marked: see cancel).
    */
   private async runAgain(entry: StageEntry, mode: 'replay' | 'scene', signal?: AbortSignal): Promise<{ json: string | null; job: number; frames: number } | null> {
     if (signal?.aborted) throw new SceneCancelled()
+    const index = this.log.indexOf(entry)
+    if (!entry.range && this.log.slice(0, index).some((before) => before.failed && !before.range)) {
+      this.mark(entry, 'a scene before it could not run, and its record does not say which stage ids it had')
+      return null
+    }
     let ctxText: string
     try {
-      ctxText = JSON.stringify(this.savedContext(entry))
+      const ctx = this.savedContext(entry)
+      ctxText = JSON.stringify({ ...ctx, stage: { ...ctx.stage, first: entry.range?.[0] ?? this.firstId(index) } })
     } catch (error) {
       this.mark(entry, `its saved context cannot be read (${error instanceof Error ? error.message : String(error)})`)
       return null
@@ -395,43 +394,26 @@ export class SceneStage {
       this.mark(entry, reply.error)
       return null
     }
-    this.setKeys(entry, reply.keys ?? [])
+    if (entry.range && (reply.range?.[0] !== entry.range[0] || reply.range[1] !== entry.range[1])) {
+      this.mark(entry, `its re-run took the stage ids ${reply.range?.join('–')}, not ${entry.range.join('–')}`)
+      return null
+    }
+    entry.keys = reply.keys ?? []
+    entry.range = reply.range ?? undefined
     return { json: reply.json, job, frames: reply.frames }
   }
 
-  /**
-   * The saved context of a program of the log, bound to this stage: its epoch, the board's path now (a renamed board), and
-   * the objects it held (StageEntry.objects) under the stage ids their owners have now. An owner that no longer runs (marked)
-   * leaves its objects out: the program sees them as gone, never as another object.
-   */
+  /** The first stage id after the ranges of the log's first `upTo` programs (also of marked ones: their ids stay empty). */
+  private firstId(upTo: number): number {
+    let first = 0
+    for (const entry of this.log.slice(0, upTo)) if (entry.range) first = Math.max(first, entry.range[1])
+    return first
+  }
+
+  /** The saved context of a program of the log, bound to this stage: its epoch and the board's path now (a renamed board). Its stage ids still name the same objects (StageEntry.range). */
   savedContext(entry: StageEntry): SceneContext {
     const ctx = JSON.parse(entry.ctxText) as SceneContext
-    let items = ctx.stage?.items ?? {}
-    if (entry.objects) {
-      const sids = new Map(this.identities().keys.map(([sid, scene, key]) => [`${scene}\0${key}`, sid]))
-      items = {}
-      for (const [scene, key, ids] of entry.objects) {
-        const sid = sids.get(`${scene}\0${key}`)
-        if (sid !== undefined) items[String(sid)] = ids
-      }
-    }
-    return { ...ctx, ...(this.boardPath !== null ? { board: this.boardPath } : {}), stage: { epoch: this.epoch, items } }
-  }
-
-  /** A context's objects (stage id → item ids) by owner, for StageEntry.objects: the ones whose owner the log knows. */
-  private ownersOf(items: Record<string, string[]>): Array<[string, string, string[]]> {
-    const owner = new Map(this.identities().keys.map(([sid, scene, key]) => [sid, [scene, key] as const]))
-    return Object.entries(items).flatMap(([sid, ids]): Array<[string, string, string[]]> => {
-      const found = owner.get(Number(sid))
-      return found ? [[found[0], found[1], ids]] : []
-    })
-  }
-
-  /** A program's keys from a run; a stage id that changed since its last run changes the identities (identityGen). */
-  private setKeys(entry: StageEntry, keys: Array<[number, string]>): void {
-    const was = entry.keys
-    if (was && (was.length !== keys.length || was.some(([sid, key], i) => keys[i][0] !== sid || keys[i][1] !== key))) this.identityGen++
-    entry.keys = keys
+    return { ...ctx, ...(this.boardPath !== null ? { board: this.boardPath } : {}), stage: { epoch: this.epoch, items: ctx.stage?.items ?? {} } }
   }
 
   /** The program of the log that runs again now (a rebuild): a cancel stops it, and it is marked, so no rebuild waits on it again. */
@@ -540,9 +522,6 @@ export class SceneStage {
     this.adopt(context)
     const fresh = this.log.length === 0 ? this.freshReason : null
     const seed = options.seed ?? Math.floor(Math.random() * 2 ** 31) + 1
-    // The context's objects by owner, as the log names them now: a rebuild below that shifts stage ids keeps each object.
-    const objects = this.ownersOf(context.stage?.items ?? {})
-    const gen = this.identityGen
     const tStart = Date.now()
     const onAbort = (): void => this.cancel()
     signal?.addEventListener('abort', onAbort, { once: true })
@@ -550,12 +529,9 @@ export class SceneStage {
       await this.ensure(before, signal).catch((error: unknown) => {
         throw signal?.aborted ? new SceneCancelled() : error
       })
-      if (this.identityGen !== gen && context.stage) {
-        const sids = new Map(this.identities().keys.map(([sid, scene, key]) => [`${scene}\0${key}`, sid]))
-        context.stage.items = Object.fromEntries(objects.flatMap(([scene, key, ids]) => (sids.has(`${scene}\0${key}`) ? [[String(sids.get(`${scene}\0${key}`)), ids]] : [])))
-        await this.onShift()
-      }
-      const ctxText = JSON.stringify({ ...context, seed, cutAt: options.cutAt ?? null })
+      // Its stage ids start after the programs before its place (the empty ids of a marked one included).
+      const first = this.firstId(before ? this.log.indexOf(before) : this.log.length)
+      const ctxText = JSON.stringify({ ...context, ...(context.stage ? { stage: { ...context.stage, first } } : {}), seed, cutAt: options.cutAt ?? null })
       const tReady = Date.now()
       if (signal?.aborted) throw new SceneCancelled()
       const record = new Map<string, string>()
@@ -597,7 +573,7 @@ export class SceneStage {
         throw new SceneProgramError(`The scene could not be read: ${error instanceof Error ? error.message : String(error)}`, null)
       }
       desc.stage = this.epoch
-      const entry: StageEntry = { scene: null, source, name: options.name ?? null, seed, cutAt: options.cutAt ?? null, ctxText, answers: record, objects, ...(reply.keys ? { keys: reply.keys } : {}) }
+      const entry: StageEntry = { scene: null, source, name: options.name ?? null, seed, cutAt: options.cutAt ?? null, ctxText, answers: record, ...(reply.keys ? { keys: reply.keys } : {}), ...(reply.range ? { range: reply.range } : {}) }
       if (options.mode === 'scene') {
         this.log.push(entry)
         this.held = this.log.length

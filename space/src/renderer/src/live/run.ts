@@ -279,25 +279,6 @@ const stageRecord: { epoch: string; items: Map<number, { nodeIds: string[]; grou
  */
 const stageOwners = new Map<number, [string, string]>()
 
-/**
- * The stage's identities as main has them now (main/mcp.ts publishIdentities, sceneRestore): stage id, scene id and key of
- * each object of the log's programs. The full set replaces the renderer's copy; each object's items follow it to the stage
- * id it has now, and an object whose program no longer runs (marked) leaves the record of the stage.
- */
-function replaceIdentities(keys: ReadonlyArray<[number, string, string]>): void {
-  const sidOf = new Map(keys.map(([sid, scene, key]) => [`${scene}\0${key}`, sid]))
-  const items: typeof stageRecord.items = new Map()
-  for (const [sid, record] of stageRecord.items) {
-    const owner = stageOwners.get(sid)
-    const now = owner ? sidOf.get(`${owner[0]}\0${owner[1]}`) : undefined
-    if (now !== undefined) items.set(now, record)
-  }
-  stageOwners.clear()
-  for (const [sid, scene, key] of keys) stageOwners.set(sid, [scene, key])
-  stageRecord.items = items
-  stageRecord.revision++
-}
-
 function adoptEpoch(epoch: string | undefined): void {
   if (!epoch || epoch === stageRecord.epoch) return
   stageRecord.epoch = epoch
@@ -804,7 +785,8 @@ export function sceneRestore(ctx: RunSceneContext, args: Record<string, unknown>
   if ((ctx.board.boardId() ?? null) !== (typeof args.boardId === 'string' ? args.boardId : null)) return { stale: true }
   adoptEpoch(typeof args.epoch === 'string' ? args.epoch : undefined)
   scenePlayer.adopt(ctx.board)
-  replaceIdentities(Array.isArray(args.keys) ? (args.keys as Array<[number, string, string]>) : [])
+  // The owner of each object the rebuild made: stage ids never shift (main/live-scene.ts StageEntry.range), so this holds for the epoch.
+  for (const [sid, scene, key] of Array.isArray(args.keys) ? (args.keys as Array<[number, string, string]>) : []) stageOwners.set(sid, [scene, key])
   setFailed(Array.isArray(args.failed) ? (args.failed as Array<[string, string]>) : [])
   const s = ctx.scene()
   const list = Array.isArray(args.scenes) ? (args.scenes as RestoreArgs[]) : []
@@ -1495,10 +1477,9 @@ export async function sceneControl(ctx: RunSceneContext, args: Record<string, un
       scenePlayer.drop(id)
       return status()
     }
-    case 'identities':
-      // The stage's identities and failures after a rebuild changed them (main/mcp.ts publishIdentities): they replace the renderer's copy.
+    case 'failures':
+      // The stage's failure state after it changed (main/mcp.ts publishFailures): it replaces the renderer's copy.
       if (args.epoch !== stageRecord.epoch) return { applied: false }
-      replaceIdentities(Array.isArray(args.keys) ? (args.keys as Array<[number, string, string]>) : [])
       setFailed(Array.isArray(args.failed) ? (args.failed as Array<[string, string]>) : [])
       return { applied: true }
     case 'drop':

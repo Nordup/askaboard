@@ -353,8 +353,7 @@ export class AgentServer {
   /** The sandbox every scene program runs in, kept between programs (see live-scene.ts). */
   private readonly stage = new SceneStage(
     async (items) => (await this.bridge.request('measureText', { items })).sizes,
-    async (request, place) => this.bridge.request('sceneHost', { request, ...(place ? { place } : {}) }, WRITE_TIMEOUT_MS),
-    () => this.publishIdentities()
+    async (request, place) => this.bridge.request('sceneHost', { request, ...(place ? { place } : {}) }, WRITE_TIMEOUT_MS)
   )
   readonly port = configuredPort()
   private readonly bridge: RendererBridge
@@ -1687,43 +1686,36 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
 
   /**
    * Run fn with the stage to itself, on the shown board's stage as its records have it (restoreStage first, again when the
-   * board changed meanwhile), and with the renderer holding the stage's identities (publishIdentities) before fn takes a
-   * context or compiles, and again after fn. signal: the caller's cancel, also while the stage is restored (null: none).
+   * board changed meanwhile), and with the renderer holding the stage's failures after fn (publishFailures). signal: the
+   * caller's cancel, also while the stage is restored (null: none).
    */
   private staged<T>(signal: AbortSignal | null, fn: () => Promise<T>): Promise<T> {
     return this.stage.exclusive(async () => {
       try {
         await this.restoreStage(signal ?? undefined)
-        await this.publishIdentities()
         return await fn()
       } finally {
-        await this.publishIdentities()
+        await this.publishFailures()
       }
     })
   }
 
-  /** The stage's epoch, log revision and identity generation that the renderer holds (publishIdentities). */
-  private shownIdentities = ''
-  private identityMark(): string {
-    return `${this.stage.epoch}|${this.stage.revision}|${this.stage.identityGen}`
+  /** The stage epoch and marked programs that the renderer holds (publishFailures). */
+  private shownFailures = ''
+  private failuresMark(): string {
+    return `${this.stage.epoch}|${this.stage.identities().failed.map(([id]) => id).join(',')}`
   }
 
-  /**
-   * The one way the renderer learns the stage's identities when the log changed (a rebuild that marks a program shifts the
-   * stage ids of the objects after it; a restage drops a scene): the full set of this epoch, by owner, and the one failure
-   * state (StageEntry.failed) of every program of the log. The renderer replaces its copy (renderer live/run.ts sceneControl
-   * "identities").
-   */
-  private async publishIdentities(): Promise<void> {
-    const mark = this.identityMark()
-    if (mark === this.shownIdentities) return
-    const { keys, failed } = this.stage.identities()
+  /** The one failure state (StageEntry.failed) of every program of the log, when it changed: the renderer replaces its copy (renderer live/run.ts sceneControl "failures"). */
+  private async publishFailures(): Promise<void> {
+    const mark = this.failuresMark()
+    if (mark === this.shownFailures) return
     try {
-      const out = (await this.board('sceneControl', { action: 'identities', epoch: this.stage.epoch, keys, failed })) as { applied?: boolean }
-      // A renderer still on an earlier epoch takes them with the epoch's first scene or restore.
-      if (out.applied) this.shownIdentities = mark
+      const out = (await this.board('sceneControl', { action: 'failures', epoch: this.stage.epoch, failed: this.stage.identities().failed })) as { applied?: boolean }
+      // A renderer still on an earlier epoch takes them with the epoch's restore.
+      if (out.applied) this.shownFailures = mark
     } catch (error) {
-      console.warn(`stage: the board did not take the stage's identities: ${error instanceof Error ? error.message : String(error)}`)
+      console.warn(`stage: the board did not take the stage's failures: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
@@ -1751,7 +1743,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
    * records, whatever the stage held. It runs before every program run (staged). The new stage gets the
    * records' current segment: its scenes that were not dropped, each the version the board shows, in
    * the order of their first line, with the source, seed, cut, context and answers that version ran
-   * with, and the objects its context held by owner (entriesOf). A scene whose code is missing, whose
+   * with, and the stage ids it took (entriesOf). A scene whose code is missing, whose
    * record is of the older key scheme, or whose line is malformed, is marked. The context is built from
    * the log now, so the next program sees the earlier scenes' objects. Then the renderer gets the new
    * epoch, the stage's identities and each scene's record (renderer live/run.ts sceneRestore). Every
@@ -1795,7 +1787,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
         })
       })) as { stale?: boolean }
       if (answer.stale || stale()) continue
-      this.shownIdentities = this.identityMark()
+      this.shownFailures = this.failuresMark()
       if (scenes.length) console.log(`stage: restored ${scenes.length} scenes of ${path} from its records${failed.length ? ` (${failed.length} marked: cannot run)` : ''}: read ${tRead - started} ms, rebuild ${tRebuilt - tRead} ms, board ${Date.now() - tRebuilt} ms`)
       this.restoredFor = mark
       return
@@ -1823,8 +1815,6 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
         wanted,
         async (entry, run) => {
           if (this.restoreMark() !== mark) throw new SceneCancelled()
-          // A program marked before this one shifted the stage ids: the renderer has them before it compiles the run.
-          await this.publishIdentities()
           const out = (await this.board('sceneMemory', { scene: run.desc, job: run.job, frames: run.frames, sceneId: entry.scene, place: this.placeAt(entry).board }, SCENE_TIMEOUT_MS)) as { ok?: true; error?: string; stale?: true }
           if (out.error) this.stage.mark(entry, `its re-run does not match its record (${out.error})`)
         },
@@ -2122,37 +2112,15 @@ function readJson(req: IncomingMessage): Promise<unknown> {
 }
 
 /**
- * The stage entries of the scenes restored from the records (scene-store.ts restorable), in order. Each
- * keeps the objects its saved context held, by owner (the scene id and key that made each), as its
- * record names them (source.objects); a line written before that resolves them through node ids (an
- * earlier scene's story.items, or the object a later scene changed: of, held). A scene whose code is
- * missing, whose record is of the older key scheme (its keys cannot link its objects to its nodes), or
- * whose line is malformed (problem: checked at the record boundary) is marked (StageEntry.failed).
+ * The stage entries of the scenes restored from the records (scene-store.ts restorable), in order, each
+ * with the stage ids it took (source.range). A scene whose code is missing, whose record is of the
+ * older key scheme (its keys cannot link its objects to its nodes), or whose line is malformed
+ * (problem: checked at the record boundary) is marked (StageEntry.failed).
  */
 function entriesOf(scenes: RestorableScene[]): StageEntry[] {
-  const owner = new Map<string, [string, string]>()
   return scenes.map(({ line, source, missing, legacy, problem }) => {
-    const base = { scene: line.scene, source, name: line.name, seed: line.source.seed, objects: [] as Array<[string, string, string[]]> }
+    const base = { scene: line.scene, source, name: line.name, seed: line.source.seed }
     if (problem) return { ...base, cutAt: null, ctxText: '{}', answers: new Map(), failed: `its record line is malformed (${problem})` }
-    // The record names them by owner (from 2026-10-29); a line without that goes by node id, as far as the records know them.
-    const objects: Array<[string, string, string[]]> = line.source.objects ? [...line.source.objects] : []
-    if (!line.source.objects) {
-      try {
-        const ctx = JSON.parse(line.source.ctx) as SceneContext
-        for (const ids of Object.values(ctx.stage?.items ?? {})) {
-          const found = ids.map((id) => owner.get(id)).find((entry) => entry !== undefined)
-          if (found) objects.push([found[0], found[1], ids])
-        }
-      } catch {
-        // A context that cannot be read: the program is marked when it runs.
-      }
-    }
-    if (!legacy) {
-      for (const item of line.story.items) {
-        if (item.made && !item.key.startsWith('node:')) for (const id of item.nodes) owner.set(id, [line.scene, item.key])
-        if (item.of && item.held) for (const id of item.held) owner.set(id, item.of)
-      }
-    }
     const keys = line.story.items.filter((item) => item.made && !item.key.startsWith('node:')).map((item) => item.key)
     const failed = missing.length
       ? `its code is missing (${missing.join(', ')})`
@@ -2161,6 +2129,6 @@ function entriesOf(scenes: RestorableScene[]): StageEntry[] {
         : new Set(keys).size !== keys.length
           ? 'its record names an object twice'
           : undefined
-    return { ...base, cutAt: line.source.cutAt, ctxText: line.source.ctx, answers: new Map(line.source.answers), objects, ...(failed ? { failed } : {}) }
+    return { ...base, cutAt: line.source.cutAt, ctxText: line.source.ctx, answers: new Map(line.source.answers), ...(line.source.range ? { range: line.source.range } : {}), ...(failed ? { failed } : {}) }
   })
 }
