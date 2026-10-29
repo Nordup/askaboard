@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check, Pause, Play } from 'lucide-react'
+import { Pause, Play } from 'lucide-react'
 import { useSceneState } from '../live/state'
-import { lookOf, scenesNewestFirst, storiesOfNode, useBoardStories, versionOnBoard } from '../live/stories'
-import { boardNodes, chooseScene, showFromPill, useReading } from '../live/reading'
+import { scenesNewestFirst, storiesOfNode, useBoardStories } from '../live/stories'
+import { chooseScene, useReading } from '../live/reading'
 import { fadeMs, tokenMs, usePresence } from '../lib/presence'
 
 /** Scene time as m:ss. */
@@ -17,19 +17,22 @@ function sentence(text: string): string {
 
 interface PillView {
   playing: boolean
+  /** It speaks of the selected item (text in --text-primary); key: that item's scene and step, for the one flash when it changes. */
+  selected: string | null
   label: string
   count: string | null
   time: string | null
-  /** The pill's one action: pause or play. Null when nothing can play (the player no longer holds the scene). */
+  /** The pill's one action while a scene plays or is paused: pause or resume. */
   action: { label: string; pause: boolean; run(): void } | null
 }
 
 /**
- * The top-bar scene pill, built from the agent pill's parts (decision B19). While a scene plays:
- * the accent dot, "<step> · i/n", the time and pause / resume. Otherwise, in grey: the scene of a
- * selected item and its step (play replays that step), else the board's last scene from its records,
- * also after a restart (play replays it). A click on its label opens the shared menu with every
- * scene of the board, newest first; choosing one opens it in the reading panel.
+ * The top-bar scene pill, built from the agent pill's parts (decision B19, mockup v5). While a scene
+ * plays: the accent dot, "<step> · i/n", the time and pause / resume. Otherwise: no button. With an
+ * item selected that a scene drew, the pill wakes up: "Step 3 · <that step's first line>" in the
+ * primary text colour, and it lights once when the selected step changes. Else, in grey: the
+ * board's last scene from its records (also after a restart). A click on its label opens the shared
+ * menu with every scene of the board, newest first; choosing one opens it in the reading panel.
  */
 export function ScenePill() {
   const scene = useSceneState()
@@ -41,41 +44,30 @@ export function ScenePill() {
   if (scene.playing || scene.paused) {
     view = {
       playing: !scene.paused,
+      selected: null,
       label: sentence(scene.stepName ?? scene.sceneName ?? 'Scene'),
       count: scene.stepCount > 0 && scene.stepIndex >= 0 ? `${scene.stepIndex + 1}/${scene.stepCount}` : null,
       time: clock(scene.t),
       action: scene.paused ? { label: 'Resume scene', pause: false, run: () => scene.resume() } : { label: 'Pause scene', pause: true, run: () => scene.pause() }
     }
   } else {
-    // A selected item that a scene drew: that scene and step, of the version that drew it (a dropped scene too:
-    // an undo can bring its items back). The player can replay only a scene's newest version.
+    // A selected item that a scene drew: that scene's step, of the version that drew it (a dropped scene too:
+    // an undo can bring its items back).
     const made = reading.selection.map((id) => storiesOfNode(stories?.id ?? undefined, id).find((entry) => entry.made)).find((entry) => entry)
-    const replay = (id: string, newest: boolean, step?: number): PillView['action'] =>
-      newest && scene.canReplay(id)
-        ? {
-            label: step ? 'Replay this step' : 'Replay scene',
-            pause: false,
-            run: () => {
-              showFromPill()
-              scene.replay([{ scene: id, ...(step ? { step } : {}) }])
-            }
-          }
-        : null
     if (made) {
-      const step = made.step !== null ? made.story.steps[made.step] : null
-      const name = sentence(made.scene.name ?? 'Scene')
+      const index = made.step
+      const step = index !== null ? made.story.steps[index] : undefined
+      const said = step?.lines.map((line) => made.story.lines[line]?.text).find((text) => !!text)
       view = {
         playing: false,
-        label: step ? `${name} · ${sentence(step.name)}` : name,
-        count: step ? `${(made.step as number) + 1}/${made.story.steps.length}` : null,
+        selected: `${made.scene.scene}:${index ?? '-'}`,
+        label: step && index !== null ? `Step ${index + 1} · ${said ?? sentence(step.name)}` : sentence(made.scene.name ?? 'Scene'),
+        count: null,
         time: null,
-        action: replay(made.scene.scene, made.story === made.scene.story, step ? (made.step as number) + 1 : undefined)
+        action: null
       }
     } else if (scenes[0]) {
-      const last = scenes[0]
-      const story = versionOnBoard(last, lookOf(boardNodes())) ?? last.story
-      const n = story.steps.length
-      view = { playing: false, label: sentence(last.name ?? 'Scene'), count: n ? `${n}/${n}` : null, time: null, action: replay(last.scene, story === last.story) }
+      view = { playing: false, selected: null, label: sentence(scenes[0].name ?? 'Scene'), count: null, time: null, action: null }
     }
   }
   const { value, shown } = usePresence(view, fadeMs())
@@ -106,21 +98,42 @@ export function ScenePill() {
     if (!value) setOpen(false)
   }, [value])
 
-  // The pill lights up once when the panel went into it.
+  // The pill lights up once when the panel went into it, and when it wakes up for another selected step.
+  // Each check compares with the value it saw last, so a re-render or StrictMode's second effect run never lights it.
   const [flash, setFlash] = useState(false)
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const light = (): void => {
+    if (flashTimer.current) clearTimeout(flashTimer.current)
+    setFlash(true)
+    flashTimer.current = setTimeout(() => {
+      flashTimer.current = null
+      setFlash(false)
+    }, tokenMs('--pill-flash'))
+  }
+  useEffect(
+    () => () => {
+      if (flashTimer.current) clearTimeout(flashTimer.current)
+    },
+    []
+  )
   const flashes = useRef(reading.flash)
   useEffect(() => {
     if (reading.flash === flashes.current) return
     flashes.current = reading.flash
-    setFlash(true)
-    const timer = setTimeout(() => setFlash(false), tokenMs('--pill-flash'))
-    return () => clearTimeout(timer)
+    light()
   }, [reading.flash])
+  const selectedStep = view?.selected ?? null
+  const lastSelected = useRef<string | null>(null)
+  useEffect(() => {
+    if (selectedStep === lastSelected.current) return
+    lastSelected.current = selectedStep
+    if (selectedStep) light()
+  }, [selectedStep])
 
   if (!value) return null
   return (
     <div className={`scene-pill${shown ? ' is-shown' : ''}`} ref={rootRef}>
-      <div className={`pill pill--static${open ? ' pill--open' : ''}${flash ? ' pill--flash' : ''}`} data-state={value.playing ? 'playing' : 'idle'}>
+      <div className={`pill pill--static${value.selected ? ' pill--selected' : ''}${open ? ' pill--open' : ''}${flash ? ' pill--flash' : ''}`} data-state={value.playing ? 'playing' : 'idle'}>
         <button className="pill__toggle" title="Scenes" aria-label="Scenes of this board" aria-expanded={open} disabled={!shown} onClick={() => setOpen((now) => !now)}>
           <span className={value.playing ? 'status-dot status-dot--play' : 'status-dot'} />
           <span className="pill__label" title={value.label}>
@@ -145,21 +158,21 @@ export function ScenePill() {
           <div className="menu__heading">Scenes</div>
           {scenes.length === 0 && <div className="menu__row menu__meta">No scenes on this board yet</div>}
           {scenes.map((entry) => {
-            const n = entry.story.steps.length
+            const current = reading.panelScene === entry.scene
+            const name = sentence(entry.name ?? 'Scene')
             return (
               <button
                 key={entry.scene}
-                className="menu__item"
+                className={`menu__item${current ? ' menu__item--current' : ''}`}
                 role="menuitemradio"
-                aria-checked={reading.panelScene === entry.scene}
+                aria-checked={current}
+                title={name}
                 onClick={() => {
                   setOpen(false)
                   chooseScene(entry.scene)
                 }}
               >
-                <span className="menu__icon">{reading.panelScene === entry.scene && <Check size={14} strokeWidth={2} />}</span>
-                <span className="menu__label">{sentence(entry.name ?? 'Scene')}</span>
-                <span className="menu__hint">{n === 1 ? '1 step' : `${n} steps`}</span>
+                <span className="menu__label">{name}</span>
               </button>
             )
           })}

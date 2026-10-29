@@ -1633,6 +1633,20 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
   }
 
   /**
+   * The id a new scene of this name takes when the stage has no scene of that name (boardScene is
+   * null): the board's earlier scene of that name from its records (scene-store.ts sceneNamed), so
+   * after a restart or a new stage the same scene gets a new version, not a second id. Null for a
+   * new name, a board without records, or an id that the stage already holds.
+   */
+  private async recordedScene(name: string): Promise<string | null> {
+    const status = (await this.board('sceneControl', { action: 'status' })) as { board_id?: string | null }
+    const board = this.records.board(this.boardKey(), status.board_id ?? undefined)
+    if (!board) return null
+    const id = await this.records.sceneNamed(board, name)
+    return id && !this.stage.log.some((entry) => entry.scene === id) ? id : null
+  }
+
+  /**
    * Where a new version of the scene `name` runs: at the place of the scene of
    * that name on the stage, or (null) at the end of the stage when no scene
    * has that name. The one rule for write_scene, preview_scene (a draft that
@@ -1783,6 +1797,9 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
           }
           const context = (await this.board('sceneContext', {})) as SceneContext
           this.stage.adopt(context)
+          // No scene of this name on the stage: an earlier scene of this name in the board's records keeps its id.
+          const continued = await this.recordedScene(name)
+          const sceneId = continued ? { sceneId: continued } : {}
           let reason = draftStale(draft, this.stage, context)
           /** Run the program again as a scene at the end of the stage, and commit it with its frames. */
           const runAndCommit = async (): Promise<{ result: SceneResult & { ends_in_s: number }; entry: StageEntry; fresh: string | null }> => {
@@ -1795,7 +1812,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
             }
             try {
               const tCommit = Date.now()
-              const result = (await this.board('runScene', { scene: run.desc, job: run.job, frames: run.frames, when, name }, SCENE_TIMEOUT_MS)) as SceneResult & { ends_in_s: number }
+              const result = (await this.board('runScene', { scene: run.desc, job: run.job, frames: run.frames, when, name, ...sceneId }, SCENE_TIMEOUT_MS)) as SceneResult & { ends_in_s: number }
               spans.commit_ms = Date.now() - tCommit
               return { result, entry: run.entry, fresh: run.fresh }
             } catch (error) {
@@ -1810,7 +1827,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
             let out: unknown
             try {
               const tCommit = Date.now()
-              out = await this.board('runScene', { draft: draftKey(draft.desc), when, name }, SCENE_TIMEOUT_MS)
+              out = await this.board('runScene', { draft: draftKey(draft.desc), when, name, ...sceneId }, SCENE_TIMEOUT_MS)
               spans.commit_ms = Date.now() - tCommit
             } catch (error) {
               this.stage.discard(draft.entry)

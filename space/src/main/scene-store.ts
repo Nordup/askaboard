@@ -228,6 +228,30 @@ export class SceneStore {
     })
   }
 
+  /**
+   * The scene of this board with this name that a new commit continues when the stage has no scene of
+   * that name (the app started again, or the stage started new): the newest one of the current
+   * segment that was not dropped, as the stage would have it. Null when there is none. The same rule
+   * as the stage's (mcp.ts boardScene: the scene's name), so the record gets a new version of the
+   * same scene instead of a second scene. Never throws.
+   */
+  sceneNamed(board: RecordBoard, name: string): Promise<string | null> {
+    return this.serial(async () => {
+      try {
+        const index = await this.indexFor(board.root, board.id)
+        let found: SceneState | null = null
+        for (const state of index.scenes.values()) {
+          if (state.dropped || state.name !== name || state.segment !== index.segment) continue
+          if (!found || state.at > found.at) found = state
+        }
+        return found?.scene ?? null
+      } catch (error) {
+        console.error(`scene records: the scenes of ${board.path} were not read: ${error instanceof Error ? error.message : String(error)}`)
+        return null
+      }
+    })
+  }
+
   /** Scenes left the board's stage without a new version: a drop line for each that has a record. Never throws. */
   drop(board: RecordBoard | null, sceneIds: string[]): Promise<void> {
     if (!board || !sceneIds.length) return Promise.resolve()

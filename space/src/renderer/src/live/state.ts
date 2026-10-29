@@ -91,11 +91,13 @@ export interface SceneUiActions {
   playFrom(scene: string, step: number): boolean
   /** The player still holds this committed scene, so it can play again (not after a restart or a new stage). */
   canReplay(scene: string): boolean
+  /** The exact scene time (seconds) of the scene that shows now, or null when none: for motion between the 0.1 s steps of `t` (the reading panel). */
+  time(): number | null
 }
 
 let state: SceneUiState = IDLE
 const listeners = new Set<() => void>()
-let actions: SceneUiActions = { pause: () => undefined, resume: () => undefined, nextStep: () => undefined, replay: () => false, playFrom: () => false, canReplay: () => false }
+let actions: SceneUiActions = { pause: () => undefined, resume: () => undefined, nextStep: () => undefined, replay: () => false, playFrom: () => false, canReplay: () => false, time: () => null }
 
 function same(a: SceneUiState, b: SceneUiState): boolean {
   return (
@@ -145,5 +147,5 @@ export function subscribeSceneUi(listener: () => void): () => void {
 /** The playback state, re-rendering when it changes; with the UI's actions. */
 export function useSceneState(): SceneUiState & SceneUiActions {
   const value = useSyncExternalStore(subscribeSceneUi, getSceneUiState)
-  return { ...value, pause: () => actions.pause(), resume: () => actions.resume(), nextStep: () => actions.nextStep(), replay: (list) => actions.replay(list), playFrom: (scene, step) => actions.playFrom(scene, step), canReplay: (scene) => actions.canReplay(scene) }
+  return { ...value, pause: () => actions.pause(), resume: () => actions.resume(), nextStep: () => actions.nextStep(), replay: (list) => actions.replay(list), playFrom: (scene, step) => actions.playFrom(scene, step), canReplay: (scene) => actions.canReplay(scene), time: () => actions.time() }
 }

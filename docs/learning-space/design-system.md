@@ -44,7 +44,7 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
 - Borders and canvas: `--border-subtle`, `--border-strong`, `--canvas-dot`,
   `--canvas-dot-pitch`, `--canvas-dot-solid`, `--preview-checker`
 - Text: `--text-primary`, `--text-secondary`, `--text-tertiary`,
-  `--text-faint` (not reached yet), `--text-on-accent`
+  `--text-on-accent`
 - Accent and status: `--accent`, `--accent-hover`, `--accent-soft`,
   `--accent-ring`, `--accent-tile-from`, `--accent-tile-to`,
   `--accent-tile-border`, `--status-idle`, `--status-live`,
@@ -59,7 +59,7 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
 - Ink colours: `--ink-white`, `--ink-yellow`, `--ink-blue`, `--ink-green`,
   `--ink-pink`, `--ink-orange`
 - Type: `--font-ui`, `--font-mono`, `--text-xs` … `--text-xl`, `--leading`,
-  `--leading-read` (lines read as prose), `--leading-current` (the line being read)
+  `--leading-current` (the reading view's lines)
 - Space: `--space-1` … `--space-6`, `--space-8`
 - Radius: `--radius-sm`, `--radius-md`, `--radius-lg`, `--radius-xl`,
   `--radius-pill`
@@ -71,10 +71,14 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
   `--item-pill-pad-left`, `--item-pill-gap`, `--item-pill-inset`,
   `--item-pill-ring`, `--script-panel-width`, `--script-panel-header`,
   `--script-panel-body-max`, `--script-panel-footer-pad`, `--step-bar-height`,
-  `--step-bar-gap`, `--step-bar-radius`, `--reading-line-gap`
+  `--step-bar-gap`, `--step-bar-radius`, `--step-bar-hit`,
+  `--reading-view-height`, `--reading-view-gap`, `--reading-para-gap`,
+  `--reading-said`, `--reading-next`, `--reading-light`,
+  `--reading-light-ramp`
 - Motion: `--fade` (the quiet fade in and out), `--into-pill` and
   `--into-pill-scale` (the panel shrinks into the scene pill),
-  `--pill-flash` (the pill lights up once). Every fade and motion turns off
+  `--pill-flash` (the pill lights up once), `--reading-ease` (the reading
+  view's scroll follows its target). Every fade and motion turns off
   under `prefers-reduced-motion`.
 
 ## The menu system
@@ -98,7 +102,7 @@ the founder approved (6 px panel padding, rows about 22 px, 13 px text,
 | --- | --- |
 | `.menu__heading` | Small uppercase section label |
 | `.menu__title` + `.menu__lede` | A title and one muted line |
-| `.menu__item` (`--danger`, `--quiet`) with `.menu__icon`, `.menu__label`, `.menu__hint` | A clickable row |
+| `.menu__item` (`--danger`, `--quiet`, `--current`) with `.menu__icon`, `.menu__label`, `.menu__hint` | A clickable row; the label is one line and ends with an ellipsis; `--current` is the row of what shows now (`--bg-active`, also on hover) |
 | `.menu__list`, `.menu__row` with `.menu__name` (`--mono`) and `.menu__meta` (`--accent`) or `.menu__control` | A plain row: name left, meta or one control right |
 | `.menu__line` (`--warn`, `--error`) with `.menu__fix` | One short line under a row, with an inline text action |
 | `.menu__status`, `.menu__spinner` | Inline status: a green check with text, or a spinner |
@@ -124,6 +128,7 @@ The top bar's status pills share `.pill` in `app.css` (the comment block
 above `.pill--static`). The agent pill is a `.pill` button. The scene pill is
 a `.pill.pill--static` holder of a toggle and one action. Parts: `.status-dot`
 (`--live`, `--play`, `--error`), `.pill__label` (ends with an ellipsis),
+`.pill--selected` (the pill speaks of a selected item: `--text-primary`),
 `.pill__count` with `.pill__sep`, `.pill__time` (mono, tabular figures),
 `.pill__action` (the one small icon button, 12 px lucide icon),
 `.pill__toggle` (a plain button around the dot and text of a static pill;
@@ -151,29 +156,35 @@ item pill).
   a "Don't ask for this folder" text action.
 - **Sidebar.** Folder header, boards list, file tree; rows share one height
   and type scale.
-- **Scene pill** (decision B19, mockup v3, 2026-10-29). Left of the agent
-  pill, from the same parts and with the same open behaviour: a
-  `.pill.pill--static` whose `.pill__toggle` (dot and text) opens the shared
-  menu below it (`.menu.scene-pop`, position and width only); Escape and a
-  click outside close it. While a scene plays: the accent dot (idle grey
-  when paused), "<step> · 2/3", the time (m:ss) and pause / resume. After a
-  scene ended it stays for the board's last scene, from the scene records
-  (also after a restart): grey dot, the scene name, "3/3" and play (replays
-  the scene; no play button when the app no longer holds the scene, as after
-  a restart). With an item selected that a scene drew, and nothing playing:
-  grey, "Synapse · Release · 2/3", and play replays that step. Clicking an
-  item never opens the panel. The menu: heading "Scenes", every scene of the
-  board newest first (dropped scenes left out), `.menu__item` rows with a
-  check in `.menu__icon` for the scene in the panel and "3 steps" in
-  `.menu__hint`; choosing one opens the panel with it in its ended state. In
-  a top bar narrower than 760 px the step name goes.
+- **Scene pill** (decision B19, mockup v3, 2026-10-29; idle, selection and
+  menu from mockup v5, 2026-10-29). Left of the agent pill, from the same
+  parts and with the same open behaviour: a `.pill.pill--static` whose
+  `.pill__toggle` (dot and text) opens the shared menu below it
+  (`.menu.scene-pop`, 300 px, position and width only); Escape and a click
+  outside close it. While a scene plays: the accent dot (idle grey when
+  paused), "<step> · 2/3", the time (m:ss) and pause / resume. Otherwise it
+  has no button: grey dot and the board's last scene name, from the scene
+  records (also after a restart).
+  - With an item selected that a scene drew, and nothing playing, the pill
+    wakes up: "Step 3 · <the first line of that step>" (the label's
+    ellipsis cuts it), in `--text-primary` (`.pill--selected`). It lights
+    once (`.pill--flash`, `--accent-soft`, `--pill-flash` 450 ms) when the
+    selected item's step changes. Deselect: back to the last scene name in
+    grey. Clicking an item never opens the panel.
+  - The menu: heading "Scenes", every scene of the board newest first
+    (dropped scenes left out), one `.menu__item` row each with the scene
+    name only (one line, ellipsis; no icon, no step count). The scene in the
+    panel has `.menu__item--current` (`--bg-active`). Choosing one opens the
+    panel with it in its ended state.
+  - In a top bar narrower than 760 px the step name goes while a scene plays.
 - **Reading panel** (`ScriptPanel.tsx`; decision B19, mockup v3, 2026-10-29;
-  replaced the script panel of 2026-10-25). One scene at a time, in a frame
-  over the board: `--script-panel-width` (296 px), `--bg-elevated`, 1 px
-  `--border-strong`, `--radius-lg`, `--shadow-float`, top right of the canvas
-  by default. The learner drags it by its header; it keeps the place
-  (localStorage, measured from the nearer side), stays inside the canvas and
-  ends above the tool palette.
+  reading view from mockup v5, 2026-10-29; replaced the script panel of
+  2026-10-25). One scene at a time, in a frame over the board:
+  `--script-panel-width` (296 px), `--bg-elevated`, 1 px `--border-strong`,
+  `--radius-lg`, `--shadow-float`, top right of the canvas by default. The
+  learner drags it by its header; it keeps the place (localStorage, measured
+  from the nearer side), stays inside the canvas and ends above the tool
+  palette.
   - Header, 34 px, padding 0 5 0 12 px, gap 8 px: the small status dot
     (6 px; accent with its ring while playing, idle grey otherwise), the
     scene name (12 px, secondary, ellipsis), one 24 px icon button, minus
@@ -182,12 +193,30 @@ item pill).
     (`--step-bar-gap`), one segment per step, flex = the step's length,
     3 px high (`--step-bar-height`), radius 2 px (`--step-bar-radius`),
     track `--border-subtle`, fill `--accent` while playing and
-    `--text-tertiary` when paused or ended. A click plays from that step;
-    hover shows its name (title).
-  - Body, padding 12 16 4 px: the previous line (13 px at 1.5,
-    `--text-tertiary`, 6 px below it, `--reading-line-gap`) and the current
-    line (15 px, `--leading-current` 1.6, `--text-primary`; the words not
-    reached yet in `--text-faint`). No step titles.
+    `--text-tertiary` when paused or ended. Each segment's click and hover
+    band is 12 px high (`--step-bar-hit`); it looks the same. A click plays
+    from that step; hover shows its name (title).
+  - Reading view, 8 px below the step bar (`--reading-view-gap`): a fixed
+    176 px (`--reading-view-height`), so the footer never moves. All the
+    scene's lines in order, one paragraph each: 15 px, `--leading-current`
+    1.6, `--text-primary`, 10 px apart (`--reading-para-gap`), 16 px side
+    padding. No step titles.
+    - The reading point never jumps. Each step starts at the middle of its
+      first visual line (a step without lines starts where the next step
+      with lines starts, so it holds there). During a step the point moves at an even pace to the
+      start of the next step and arrives just as that step starts, so each
+      step scrolls at its own speed. The last step goes to the middle of the
+      last line. A pause stops it; a seek or a step-bar click moves it.
+    - The scroll keeps the reading point in the middle of the view; at the
+      start the text stays at the top, at the end at the bottom. It follows
+      its target with an exponential ease (`--reading-ease`, 120 ms), so a
+      new pace or a jump is smooth.
+    - The light follows the words, not the step: a mask centred on the
+      reading point, full brightness ±14 px (`--reading-light`), a ramp to
+      60 px (`--reading-light-ramp`), alpha 0.22 above (said,
+      `--reading-said`) and 0.5 below (next, `--reading-next`).
+    - Ended (also a scene opened from the pill's menu): scrolled to the end,
+      the light on the last line. Reduced motion: no ease; the mask stays.
   - Footer, padding 4 5 6 11 px (`--script-panel-footer-pad`): one status
     (11 px, tertiary): "Step 2 of 3", "Paused while you draw", "Paused at a
     pause", "Paused" or "Done"; then 24 px icon buttons: replay step

@@ -978,7 +978,11 @@ export class ScenePlayer {
       nextStep: () => this.nextStep(),
       replay: (list) => this.replayList(list),
       playFrom: (scene, step) => this.playFrom(scene, step),
-      canReplay: (scene) => this.history.has(scene)
+      canReplay: (scene) => this.history.has(scene),
+      time: () => {
+        const scene = this.current()
+        return scene ? Math.max(0, this.timeOf(scene, performance.now())) : null
+      }
     })
   }
 

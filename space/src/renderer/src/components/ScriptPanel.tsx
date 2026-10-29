@@ -7,10 +7,10 @@ import { fadeMs, tokenMs, usePresence } from '../lib/presence'
 
 /*
  * The reading panel (decision B19): one scene at a time, in a small frame that floats over the
- * board. The learner drags it by its header and it stays there. It shows the line being said
- * (its words light up at the reading pace) and the line before it, a step bar (one segment per
- * step: click to play from it, hover for its name) and a footer with one status and the playback
- * buttons. It appears when a scene plays and fades a few seconds after the scene ends (not while
+ * board. The learner drags it by its header and it stays there. It shows a step bar (one segment
+ * per step: click to play from it, hover for its name), the reading view (the scene's lines scroll
+ * past a light that follows the reading point, ReadingView below) and a footer with one status and
+ * the playback buttons. It appears when a scene plays and fades a few seconds after the scene ends (not while
  * the pointer is on it). Minus hides it into the scene pill; the pill's menu opens any scene of
  * the board in it, from the scene records, in its ended state.
  *
@@ -97,6 +97,8 @@ interface PanelStep {
   name: string
   at: number
   dur: number
+  /** Its lines: indexes into the view's lines. */
+  lines: number[]
 }
 
 interface PanelView {
@@ -113,24 +115,18 @@ interface PanelView {
   step: number
   /** The share of the current step played, 0..1 (live only). */
   progress: number
-  previous: string | null
-  current: { text: string; read: string } | null
+  /** Every line of the scene, in order. */
+  lines: string[]
 }
 
 function sentence(text: string): string {
   return text ? text[0].toUpperCase() + text.slice(1) : text
 }
 
-/** Steps with their lengths; a scene with no step is one segment. */
-function panelSteps(name: string, steps: Array<{ name: string; at: number }>, duration: number): PanelStep[] {
-  if (!steps.length) return [{ name, at: 0, dur: duration }]
-  return steps.map((step, i) => ({ name: step.name, at: step.at, dur: Math.max(0, (steps[i + 1]?.at ?? duration) - step.at) }))
-}
-
-/** The line read last (by time) and the one before it, for the ended state. */
-function lastLines(lines: Array<{ text: string; at: number }>): { previous: string | null; current: string | null } {
-  const sorted = [...lines].sort((a, b) => a.at - b.at)
-  return { previous: sorted[sorted.length - 2]?.text ?? null, current: sorted[sorted.length - 1]?.text ?? null }
+/** Steps with their lengths and lines; a scene with no step is one segment with every line. */
+function panelSteps(name: string, steps: Array<{ name: string; at: number; lines: number[] }>, duration: number, lineCount: number): PanelStep[] {
+  if (!steps.length) return [{ name, at: 0, dur: duration, lines: Array.from({ length: lineCount }, (_, i) => i) }]
+  return steps.map((step, i) => ({ name: step.name, at: step.at, dur: Math.max(0, (steps[i + 1]?.at ?? duration) - step.at), lines: step.lines }))
 }
 
 const PAUSE_WORDS: Record<string, string> = { 'learner drawing': 'Paused while you draw', 'pause step': 'Paused at a pause' }
@@ -151,8 +147,8 @@ export function ScriptPanel() {
   }, [liveId])
 
   // The scene that just ended stays a few seconds (longer while the pointer is on the panel).
-  const lastLive = useRef<{ scene: string; name: string; steps: Array<{ name: string; at: number }>; lines: Array<{ text: string; at: number }>; duration: number } | null>(null)
-  if (liveId) lastLive.current = { scene: liveId, name: scene.sceneName ?? 'Scene', steps: scene.steps.map((step) => ({ name: step.name, at: step.at_s })), lines: scene.cues.map((cue) => ({ text: cue.text, at: cue.at_s })), duration: scene.duration }
+  const lastLive = useRef<{ scene: string; name: string; steps: Array<{ name: string; at: number; lines: number[] }>; lines: Array<{ text: string }>; duration: number } | null>(null)
+  if (liveId) lastLive.current = { scene: liveId, name: scene.sceneName ?? 'Scene', steps: scene.steps.map((step) => ({ name: step.name, at: step.at_s, lines: step.lines })), lines: scene.cues.map((cue) => ({ text: cue.text })), duration: scene.duration }
   const [ended, setEnded] = useState<string | null>(null)
   const [hover, setHover] = useState(false)
   useEffect(() => {
@@ -170,14 +166,9 @@ export function ScriptPanel() {
 
   let view: PanelView | null = null
   if (shownId && liveId === shownId) {
-    const steps = panelSteps(scene.sceneName ?? 'Scene', scene.steps.map((step) => ({ name: step.name, at: step.at_s })), scene.duration)
+    const steps = panelSteps(scene.sceneName ?? 'Scene', scene.steps.map((step) => ({ name: step.name, at: step.at_s, lines: step.lines })), scene.duration, scene.cues.length)
     const step = Math.max(0, scene.steps.length ? scene.stepIndex : 0)
     const t = scene.t
-    const cues = [...scene.cues].sort((a, b) => a.at_s - b.at_s)
-    const cue = scene.currentCue
-    // The line being read, else the last line read.
-    const index = cue ? cues.findIndex((entry) => entry.at_s === cue.at_s) : cues.map((entry) => entry.at_s + entry.dur_s <= t + 1e-6).lastIndexOf(true)
-    const line = index >= 0 ? cues[index] : null
     view = {
       scene: shownId,
       name: scene.sceneName ?? 'Scene',
@@ -188,8 +179,7 @@ export function ScriptPanel() {
       pausedBy: scene.pausedBy,
       step,
       progress: steps[step]?.dur ? Math.max(0, Math.min(1, (t - steps[step].at) / steps[step].dur)) : 1,
-      previous: index > 0 ? cues[index - 1].text : null,
-      current: line ? { text: line.text, read: cue && cue.at_s === line.at_s && line.text.startsWith(cue.readSoFar) ? cue.readSoFar : line.text } : null
+      lines: scene.cues.map((cue) => cue.text)
     }
   } else if (shownId) {
     const record = stories?.stories.find((entry) => entry.scene === shownId)
@@ -201,9 +191,8 @@ export function ScriptPanel() {
         ? { ...lastLive.current, newest: true }
         : null
     if (known) {
-      const steps = panelSteps(known.name, known.steps, known.duration)
-      const lines = lastLines(known.lines)
-      view = { scene: shownId, name: known.name, steps, live: false, canPlay: known.newest && scene.canReplay(shownId), paused: false, pausedBy: null, step: steps.length - 1, progress: 1, previous: lines.previous, current: lines.current ? { text: lines.current, read: lines.current } : null }
+      const steps = panelSteps(known.name, known.steps, known.duration, known.lines.length)
+      view = { scene: shownId, name: known.name, steps, live: false, canPlay: known.newest && scene.canReplay(shownId), paused: false, pausedBy: null, step: steps.length - 1, progress: 1, lines: known.lines.map((line) => line.text) }
     }
   }
   const { value, shown } = usePresence(view, fadeMs())
@@ -361,20 +350,14 @@ export function ScriptPanel() {
               disabled={!value.live && !replayable}
               onClick={() => playStep(i)}
             >
-              <span className="script-panel__fill" style={{ width: `${Math.round(fill * 1000) / 10}%` }} />
+              <span className="script-panel__track">
+                <span className="script-panel__fill" style={{ width: `${Math.round(fill * 1000) / 10}%` }} />
+              </span>
             </button>
           )
         })}
       </div>
-      <div className="script-panel__body">
-        {value.previous && <p className="script-panel__previous">{value.previous}</p>}
-        {value.current && (
-          <p className="script-panel__line">
-            {value.current.read}
-            <span className="script-panel__rest">{value.current.text.slice(value.current.read.length)}</span>
-          </p>
-        )}
-      </div>
+      <ReadingView scene={value.scene} lines={value.lines} steps={value.steps} live={value.live} moving={value.live && !value.paused} t={scene.t} time={scene.time} />
       <footer className="script-panel__footer">
         <span className="script-panel__status">{status}</span>
         {value.live ? (
@@ -398,5 +381,174 @@ export function ScriptPanel() {
         )}
       </footer>
     </section>
+  )
+}
+
+// ---------- The reading view ----------
+
+/** Where the view's lines are, measured from its text (px). */
+interface ReadingLayout {
+  tops: number[]
+  bottoms: number[]
+  /** The text's height and the view's. */
+  height: number
+  view: number
+  /** One visual line (font size × leading). */
+  line: number
+}
+
+/**
+ * The reading point (px from the text's top), continuous by construction: P_k is the middle of the
+ * first visual line of step k (a step without lines: P_k = P_k+1, so it holds). During step k the point moves at
+ * an even pace from P_k to P_k+1 over the step's play time, so it arrives just as step k+1 starts;
+ * the last step goes from its P to the middle of the scene's last line. Before the first step: P_0.
+ * Ended (not live): the middle of the last line. The light that centres on it lights one line.
+ */
+function readingPoint(layout: ReadingLayout, steps: readonly PanelStep[], live: boolean, t: number): number {
+  const n = layout.tops.length
+  if (!n) return 0
+  const half = layout.line / 2
+  const first = layout.tops[0] + half
+  const last = Math.max(first, layout.bottoms[n - 1] - half)
+  if (!live || !steps.length) return live ? first : last
+  // A step without lines starts where the next spoken step starts (from the end back), so the step
+  // before it still moves on and the silent step holds.
+  const starts: number[] = new Array(steps.length)
+  let after = last
+  for (let i = steps.length - 1; i >= 0; i--) {
+    const own = steps[i].lines.filter((index) => index >= 0 && index < n)
+    after = own.length ? layout.tops[Math.min(...own)] + half : after
+    starts[i] = after
+  }
+  let point = starts[0]
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i]
+    if (step.at > t + 1e-6) break
+    const from = starts[i]
+    const to = i + 1 < steps.length ? starts[i + 1] : last
+    const share = step.dur > 0 ? Math.max(0, Math.min(1, (t - step.at) / step.dur)) : 1
+    point = from + (to - from) * share
+  }
+  return point
+}
+
+function cssNumber(element: Element, name: string): number {
+  const value = parseFloat(getComputedStyle(element).getPropertyValue(name))
+  return Number.isFinite(value) ? value : 0
+}
+
+/**
+ * The scene's lines as a slow teleprompter (mockup v5, 2026-10-29). The text scrolls so that the
+ * reading point stays in the middle of the view (at the start it stays at the top, at the end at
+ * the bottom); the shown scroll follows its target with an exponential ease (--reading-ease), so a
+ * new step's pace or a jump from the step bar is smooth. A mask on the view lights the reading
+ * point and dims the lines said (--reading-said) and the lines next (--reading-next). The frame
+ * loop runs only while the panel shows and the point or the scroll moves; it reads the player's
+ * exact time, so a pause stops it and a seek moves it.
+ */
+function ReadingView({ scene, lines, steps, live, moving, t, time }: { scene: string; lines: string[]; steps: PanelStep[]; live: boolean; moving: boolean; t: number; time: () => number | null }) {
+  const viewRef = useRef<HTMLDivElement>(null)
+  const textRef = useRef<HTMLDivElement>(null)
+  const layout = useRef<ReadingLayout | null>(null)
+  const input = useRef({ steps, live, moving, t, time })
+  input.current = { steps, live, moving, t, time }
+  const motion = useRef({ shown: 0, frame: 0, last: 0, snap: true })
+
+  const measure = useCallback((): void => {
+    const view = viewRef.current
+    const text = textRef.current
+    if (!view || !text) return
+    const paras = [...text.children] as HTMLElement[]
+    const style = getComputedStyle(paras[0] ?? text)
+    layout.current = {
+      tops: paras.map((para) => para.offsetTop),
+      bottoms: paras.map((para) => para.offsetTop + para.offsetHeight),
+      height: text.offsetHeight,
+      view: view.clientHeight,
+      line: parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.6 || 0
+    }
+  }, [])
+
+  const tick = useCallback((now: number): void => {
+    const m = motion.current
+    m.frame = 0
+    const at = layout.current
+    const view = viewRef.current
+    const text = textRef.current
+    if (!at || !view || !text) return
+    const { steps, live, moving, t, time } = input.current
+    const point = readingPoint(at, steps, live, live ? (time() ?? t) : 0)
+    const target = Math.max(0, Math.min(point - at.view / 2, Math.max(at.height - at.view, 0)))
+    const dt = m.last ? now - m.last : 0
+    m.last = now
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (m.snap || reduced) {
+      m.shown = target
+      m.snap = false
+    } else {
+      const tau = cssNumber(document.documentElement, '--reading-ease') || 120
+      m.shown = target + (m.shown - target) * Math.exp(-dt / tau)
+      if (Math.abs(m.shown - target) < 0.25) m.shown = target
+    }
+    text.style.transform = `translateY(${-m.shown}px)`
+    view.style.setProperty('--reading-at', `${point - m.shown}px`)
+    if (moving || m.shown !== target) m.frame = requestAnimationFrame(tick)
+    else m.last = 0
+  }, [])
+
+  const kick = useCallback((): void => {
+    const m = motion.current
+    if (m.frame) return
+    m.last = 0
+    m.frame = requestAnimationFrame(tick)
+  }, [tick])
+
+  // Another scene (or its lines) shows: measure and stand at its reading point at once, before paint.
+  // The lines' text is the key (the array is new on each state from the player).
+  const linesKey = lines.join('\u0000')
+  useLayoutEffect(() => {
+    measure()
+    const m = motion.current
+    m.snap = true
+    if (m.frame) cancelAnimationFrame(m.frame)
+    tick(performance.now())
+  }, [scene, linesKey, measure, tick])
+
+  // Every new state from the player (time, step, pause): the loop runs again when it stopped.
+  useEffect(() => kick())
+
+  // A new width or font wraps the lines again.
+  useEffect(() => {
+    const view = viewRef.current
+    const text = textRef.current
+    if (!view || !text) return
+    const observer = new ResizeObserver(() => {
+      measure()
+      kick()
+    })
+    observer.observe(view)
+    observer.observe(text)
+    return () => observer.disconnect()
+  }, [measure, kick])
+
+  useEffect(
+    () => () => {
+      const m = motion.current
+      if (m.frame) cancelAnimationFrame(m.frame)
+      m.frame = 0
+    },
+    []
+  )
+
+  return (
+    <div className="script-panel__view" ref={viewRef}>
+      <div className="script-panel__text" ref={textRef}>
+        {lines.map((line, i) => (
+          <p key={i} className="script-panel__para">
+            {line}
+          </p>
+        ))}
+      </div>
+    </div>
   )
 }

@@ -27,7 +27,6 @@
   --text-primary: #ececef;
   --text-secondary: #a0a0a8;
   --text-tertiary: #6b6b73;
-  --text-faint: #4a4a52; /* not reached yet (script panel steps ahead) */
   --text-on-accent: #0d0f1a;
 
   /* Accent */
@@ -82,7 +81,6 @@
   --text-lg: 15px;
   --text-xl: 20px;
   --leading: 1.45;
-  --leading-read: 1.5; /* text read as prose (the script panel's lines) */
 
   /* Spacing (4px grid) */
   --space-1: 4px;
@@ -128,17 +126,26 @@
   /* The script panel floating over the board */
   --script-panel-width: 296px;
   --script-panel-header: 34px;
-  --script-panel-body-max: 330px; /* the most the panel's body takes (for what agents keep clear) */
+  --script-panel-body-max: 221px; /* the panel below its header: step bar 3 + gap 8 + reading view 176 + footer 34 (for what agents keep clear) */
   --script-panel-footer-pad: 4px 5px 6px 11px;
   --step-bar-height: 3px; /* the reading panel's step bar: one segment per step */
   --step-bar-gap: 3px;
   --step-bar-radius: 2px;
-  --reading-line-gap: 6px; /* between the previous line and the current one */
-  --leading-current: 1.6; /* the line being read */
+  --step-bar-hit: 12px; /* the step bar's click and hover band (it looks 3 px high) */
+  /* The reading view: the scene's lines scroll past a light that follows the reading point */
+  --reading-view-height: 176px; /* fixed, so the footer never moves */
+  --reading-view-gap: 8px; /* between the step bar and the view */
+  --reading-para-gap: 10px; /* between two lines (paragraphs) */
+  --reading-said: 0.22; /* the alpha of the text above the light (said) */
+  --reading-next: 0.5; /* the alpha of the text below the light (next) */
+  --reading-light: 14px; /* full brightness this far above and below the reading point */
+  --reading-light-ramp: 60px; /* the light fades out until this far from the reading point */
+  --leading-current: 1.6; /* the reading view's lines */
 
   /* Motion */
   --fade: 220ms ease; /* quiet fade in and out (scene pill, script panel) */
   --into-pill: 260ms ease; /* the panel shrinks into the scene pill (and grows out of it) */
   --into-pill-scale: 0.06;
+  --reading-ease: 120ms; /* the reading view's scroll follows its target with this time constant (exponential) */
   --pill-flash: 450ms ease; /* the scene pill lights up once when the panel went into it */
 }

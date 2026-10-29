@@ -159,7 +159,7 @@ the live-frame idea was rejected).
 | Stage | The one sandbox per board in which every scene program runs; the global `stage` keeps values and objects between programs. |
 | Beat | A short scene (one sentence and its drawing) sent while another plays; scenes queue and follow each other without a gap. |
 | Text line (`say`) | A sentence in a scene, shown to the learner at a reading pace in the reading panel; nothing is spoken. Each line belongs to the step whose time contains it. |
-| Reading panel | The floating panel over the board for one scene (code: `ScriptPanel.tsx`): the previous line faint, the current line large, a step bar, replay step, pause and next. It fades after the scene and hides into the scene pill (decision B19). |
+| Reading panel | The floating panel over the board for one scene (code: `ScriptPanel.tsx`): a step bar, the scene's lines as a slow teleprompter with a light on the words being read, replay step, pause and next. It fades after the scene and hides into the scene pill (decisions B19, B21). |
 | Scene pill | The pill in the top bar: the playing scene, else the board's last scene, else a selected item's scene and step. Its menu lists the board's scenes. |
 | Scene file | A scene program as a JavaScript file in `boards/scenes/`, with `import` and `export` (decision B16). |
 | Scene record | The append-only history of a board's scenes in `.learning-space/scenes/<board id>.jsonl`; agents read items by scene and step from it after a restart (`"synapse#2"`). |

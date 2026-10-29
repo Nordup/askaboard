@@ -288,7 +288,9 @@ button:focus-visible {
  *   .pill--item    a static pill on a board item, not in the top bar (a live item that
  *                  stopped responding: dot, label, one restart action). It sits inside
  *                  the item at the bottom left and follows the board's zoom.
- *   .pill--flash   the pill lights up once (the scene pill, when the reading panel went into it)
+ *   .pill--flash   the pill lights up once (the scene pill, when the reading panel went into it,
+ *                  or when it wakes up for a selected item)
+ *   .pill--selected the pill speaks of what the learner selected: its text in --text-primary
  */
 .pill--static:hover {
   background: none;
@@ -391,6 +393,10 @@ button:focus-visible {
   height: var(--status-dot-size-small);
 }
 
+.pill--selected {
+  color: var(--text-primary);
+}
+
 .pill--open,
 .pill--static.pill--open {
   background: var(--bg-active);
@@ -479,7 +485,7 @@ button:focus-visible {
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  width: 240px;
+  width: 300px;
   max-height: calc(100vh - var(--topbar-height) - 24px);
   overflow-y: auto;
   -webkit-app-region: no-drag;
@@ -492,8 +498,10 @@ button:focus-visible {
  * the one exception to "UI does not cover the board". The learner drags it by its header;
  * ScriptPanel sets left, top and max-height.
  *   .script-panel__header    34 px: small status dot, the scene name, one hide button
- *   .script-panel__bar       the step bar: one .script-panel__segment per step (flex = its length), with its __fill
- *   .script-panel__body      __previous (the line before) and __line (the line being read; its __rest is not reached yet)
+ *   .script-panel__bar       the step bar: one .script-panel__segment per step (flex = its length, a 12 px hit band)
+ *                            around its 3 px __track and __fill
+ *   .script-panel__view      the reading view: fixed height, its __text (the scene's lines, one __para each) moves
+ *                            up (translateY); a mask lights the reading point (--reading-at) and dims the rest
  *   .script-panel__footer    one __status, then the icon buttons
  *   .is-into-pill            shrunk toward the scene pill (hide); with .is-at-pill at once (the start of an open from the pill)
  */
@@ -560,16 +568,27 @@ button:focus-visible {
 }
 
 .script-panel__bar {
+  position: relative;
+  z-index: 1; /* its hit band reaches over the header's bottom edge */
   display: flex;
   flex-shrink: 0;
   gap: var(--step-bar-gap);
+  /* it takes the room of the 3 px track; the hit band goes past it on both sides */
+  margin: calc((var(--step-bar-height) - var(--step-bar-hit)) / 2) 0;
   padding: 0 var(--space-3);
 }
 
 .script-panel__segment {
-  position: relative;
+  display: flex;
   flex: 1 1 0;
+  align-items: center;
   min-width: 0;
+  height: var(--step-bar-hit);
+}
+
+.script-panel__track {
+  position: relative;
+  width: 100%;
   height: var(--step-bar-height);
   overflow: hidden;
   border-radius: var(--step-bar-radius);
@@ -586,29 +605,45 @@ button:focus-visible {
   background: var(--accent);
 }
 
-.script-panel__body {
-  flex: 1 1 auto;
+.script-panel__view {
+  --reading-at: 50%; /* the reading point in the view; ScriptPanel sets it each frame */
+  position: relative;
+  flex: 0 1 auto;
+  height: var(--reading-view-height);
   min-height: 0;
-  overflow-y: auto;
-  padding: var(--space-3) var(--space-4) var(--space-1);
+  margin-top: var(--reading-view-gap);
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    rgb(0 0 0 / var(--reading-said)) calc(var(--reading-at) - var(--reading-light-ramp)),
+    rgb(0 0 0 / 1) calc(var(--reading-at) - var(--reading-light)),
+    rgb(0 0 0 / 1) calc(var(--reading-at) + var(--reading-light)),
+    rgb(0 0 0 / var(--reading-next)) calc(var(--reading-at) + var(--reading-light-ramp))
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    rgb(0 0 0 / var(--reading-said)) calc(var(--reading-at) - var(--reading-light-ramp)),
+    rgb(0 0 0 / 1) calc(var(--reading-at) - var(--reading-light)),
+    rgb(0 0 0 / 1) calc(var(--reading-at) + var(--reading-light)),
+    rgb(0 0 0 / var(--reading-next)) calc(var(--reading-at) + var(--reading-light-ramp))
+  );
 }
 
-.script-panel__previous {
-  margin: 0 0 var(--reading-line-gap);
-  font-size: var(--text-base);
-  line-height: var(--leading-read);
-  color: var(--text-tertiary);
+.script-panel__text {
+  position: relative; /* the lines' offsetTop is measured from here */
+  padding: 0 var(--space-4);
+  will-change: transform;
 }
 
-.script-panel__line {
-  margin: 0;
+.script-panel__para {
+  margin: 0 0 var(--reading-para-gap);
   font-size: var(--text-lg);
   line-height: var(--leading-current);
   color: var(--text-primary);
 }
 
-.script-panel__rest {
-  color: var(--text-faint);
+.script-panel__para:last-child {
+  margin-bottom: 0;
 }
 
 .script-panel__footer {
@@ -630,7 +665,7 @@ button:focus-visible {
 
 /* A narrow top bar keeps the step count, time and button; the step name goes (and the board name ends with an ellipsis). */
 @container topbar (max-width: 760px) {
-  .scene-pill .pill__label,
+  .scene-pill .pill__label:has(+ .pill__count),
   .scene-pill .pill__sep {
     display: none;
   }
@@ -1063,7 +1098,8 @@ button:focus-visible {
  *
  *   .menu__heading         small uppercase section label
  *   .menu__title/__lede    a title and one muted line
- *   .menu__item            clickable row: .menu__icon, .menu__label, .menu__hint (right)
+ *   .menu__item            clickable row: .menu__icon, .menu__label (one line, ellipsis), .menu__hint (right)
+ *   .menu__item--current   the row of what shows now (a selected row: --bg-active, also on hover)
  *   .menu__row             plain row: .menu__name left, .menu__meta or .menu__control right
  *   .menu__line            one short line under a row (--warn, --error), with a .menu__fix text button
  *   .menu__status          inline status: green check + text, or .menu__spinner
@@ -1134,6 +1170,11 @@ button:focus-visible {
   color: var(--text-tertiary);
 }
 
+.menu__item--current,
+.menu__item--current:hover:not(:disabled) {
+  background: var(--bg-active);
+}
+
 .menu__item--danger {
   color: var(--ink-pink);
 }
@@ -1156,7 +1197,10 @@ button:focus-visible {
 
 .menu__label {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
   white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .menu__hint {

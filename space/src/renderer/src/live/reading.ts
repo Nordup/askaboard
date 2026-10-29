@@ -4,7 +4,7 @@ import type { BoardNode } from '@shared/board-format'
 /**
  * What the reading panel and the scene pill share (decision B19): the scene the learner chose
  * from the pill's menu, whether the learner hid the panel into the pill, the pill's one flash
- * after a hide, and the board selection (the pill shows a selected item's scene and step).
+ * after a hide, and the board selection (the pill shows a selected item's step).
  * The scene that plays always comes from the player (live/state.ts); the stories from the
  * records (live/stories.ts). The state belongs to the open board: it starts again when another
  * board opens (setReadingBoard).
@@ -68,11 +68,6 @@ export function chooseScene(scene: string): void {
 /** The panel went into the pill. */
 export function hidePanel(): void {
   set({ hidden: true, chosen: null, flash: state.flash + 1 })
-}
-
-/** The pill's play action: the panel shows again, out of the pill, for what plays now. */
-export function showFromPill(): void {
-  set({ hidden: false, chosen: null, fromPill: state.hidden || state.fromPill })
 }
 
 /** A scene started after nothing played: the panel shows it (also after a hide); a chosen scene gives way. */
