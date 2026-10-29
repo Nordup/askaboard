@@ -428,7 +428,7 @@ export function ScriptPanel() {
  * The reading view's focus (mockup v7, 2026-10-29): the one point that the scroll and the light
  * stand on. ScriptPanel holds it (one state); the view eases its shown focus and scroll toward it.
  * - follow: the reading point (a scene plays; ended: the last line).
- * - free: the learner's wheel moved it (at, px from the text's top; null: where it shows now). While
+ * - free: the learner's wheel moved it (at, px from the text's top; null: the focus and the scroll stay where they show now). While
  *   a scene plays it returns to follow --reading-return after the last wheel input.
  * - select: the middle of the first line of the selected item's step (line); the scroll puts that
  *   line at the top of the bright band (--reading-band-offset above it).
@@ -571,7 +571,10 @@ function ReadingView({ scene, lines, steps, live, moving, t, time, focus, onFocu
       aim = Math.max(lo, Math.min(hi, focus.at ?? m.focus))
       if (focus.band) anchor = band
     } else aim = readingPoint(at, steps, live, live ? (time() ?? t) : 0)
-    const target = Math.max(0, Math.min(aim - anchor, Math.max(at.height - at.view, 0)))
+    // Free with no position yet (a deselect): the focus and the scroll stay as they show at this moment, also mid-ease.
+    const held = focus.mode === 'free' && focus.at === null
+    if (held) aim = m.focus
+    const target = held ? m.shown : Math.max(0, Math.min(aim - anchor, Math.max(at.height - at.view, 0)))
     const dt = m.last ? now - m.last : 0
     m.last = now
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
