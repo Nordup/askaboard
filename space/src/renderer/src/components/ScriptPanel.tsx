@@ -70,23 +70,21 @@ function placeOf(canvas: HTMLElement, width: number, wanted: Position | null): {
   return { left, top, room: Math.max(header + 2, floor - top) }
 }
 
-/** The border of .script-panel (app.css), top and bottom each. */
-const PANEL_BORDER = 1
-
 /**
- * The window rect (client CSS px) that the panel takes when it shows: at its
- * full height, also before the first scene and while it is hidden, because it
- * appears when a scene plays and grows with its lines. Null when no board is open.
+ * The window rect (client CSS px) that the panel takes when it shows, measured from the panel
+ * element itself: it stays mounted and laid out at its place also while it shows nothing (hidden,
+ * in the shape it has while a scene plays), so the rect is the real one before a scene, during it
+ * and after it. Offsets, not getBoundingClientRect: the shrink into the pill is a transform.
+ * Null when no board is open.
  */
 export function scriptPanelArea(): { left: number; top: number; right: number; bottom: number } | null {
   const canvas = document.querySelector<HTMLElement>('.canvas')
-  if (!canvas?.querySelector('.board')) return null
-  // The panel's CSS width: min(--script-panel-width, 100% - 2 × --space-3).
-  const width = Math.min(cssPx(canvas, '--script-panel-width'), canvas.clientWidth - 2 * cssPx(canvas, '--space-3'))
-  const { left, top, room } = placeOf(canvas, width, readPosition())
-  const full = cssPx(canvas, '--script-panel-header') + cssPx(canvas, '--script-panel-body-max') + 2 * PANEL_BORDER
+  const element = canvas?.querySelector<HTMLElement>(':scope > .script-panel')
+  if (!canvas || !element || !canvas.querySelector(':scope > .board')) return null
   const origin = canvas.getBoundingClientRect()
-  return { left: origin.left + left, top: origin.top + top, right: origin.left + left + width, bottom: origin.top + top + Math.min(room, full) }
+  const left = origin.left + canvas.clientLeft + element.offsetLeft
+  const top = origin.top + canvas.clientTop + element.offsetTop
+  return { left, top, right: left + element.offsetWidth, bottom: top + element.offsetHeight }
 }
 
 
@@ -130,6 +128,9 @@ function panelSteps(name: string, steps: Array<{ name: string; at: number; lines
 }
 
 const PAUSE_WORDS: Record<string, string> = { 'learner drawing': 'Paused while you draw', 'pause step': 'Paused at a pause' }
+
+/** What the hidden panel holds while it shows nothing: a playing scene's shape (its header, bar, view and buttons), so its box is the one a scene gets. */
+const IDLE_VIEW: PanelView = { scene: '', name: '', steps: [{ name: '', at: 0, dur: 1, lines: [] }], live: true, paused: false, pausedBy: null, canPlay: false, step: 0, progress: 0, lines: [] }
 
 // ---------- The panel ----------
 
@@ -195,13 +196,13 @@ export function ScriptPanel() {
       view = { scene: shownId, name: known.name, steps, live: false, canPlay: known.newest && scene.canReplay(shownId), paused: false, pausedBy: null, step: steps.length - 1, progress: 1, lines: known.lines.map((line) => line.text) }
     }
   }
-  const { value, shown } = usePresence(view, fadeMs())
+  const { value: presented, shown } = usePresence(view, fadeMs())
 
   // ---- position ----
   const panel = useRef<HTMLElement>(null)
   const [position, setPosition] = useState<Position | null>(() => readPosition())
   const [box, setBox] = useState<{ left: number; top: number; room: number } | null>(null)
-  const mounted = value !== null
+  const mounted = presented !== null
 
   const layout = useCallback((wanted: Position | null) => {
     const element = panel.current
@@ -210,15 +211,15 @@ export function ScriptPanel() {
     setBox(placeOf(canvas, element.offsetWidth, wanted))
   }, [])
 
+  // Laid out also while it shows nothing: its box is what scriptPanelArea measures.
   useLayoutEffect(() => {
-    if (!mounted) return
     layout(position)
     const canvas = panel.current?.parentElement
     if (!canvas) return
     const observer = new ResizeObserver(() => layout(position))
     observer.observe(canvas)
     return () => observer.disconnect()
-  }, [mounted, position, layout])
+  }, [position, layout])
 
   const drag = useRef<{ dx: number; dy: number; id: number } | null>(null)
   const onPointerDown = (event: React.PointerEvent<HTMLElement>): void => {
@@ -308,7 +309,8 @@ export function ScriptPanel() {
     return () => cancelAnimationFrame(frame)
   }, [growing, box !== null])
 
-  if (!value) return null
+  const idle = presented === null
+  const value = presented ?? IDLE_VIEW
   const replayable = value.canPlay
   const playStep = (index: number): void => {
     if (value.live) scene.playFrom(value.scene, index + 1)
@@ -316,7 +318,8 @@ export function ScriptPanel() {
   }
   const status = !value.live ? (value.canPlay ? 'Done' : 'Done · cannot replay') : value.paused ? (PAUSE_WORDS[value.pausedBy ?? ''] ?? 'Paused') : scene.steps.length ? `Step ${value.step + 1} of ${value.steps.length}` : ''
   const style = {
-    ...(box ? { left: box.left, top: box.top, maxHeight: box.room } : { visibility: 'hidden' as const }),
+    ...(box ? { left: box.left, top: box.top, maxHeight: box.room } : {}),
+    ...(!box || idle ? { visibility: 'hidden' as const } : {}),
     ...(intoPill ? { transformOrigin: intoPill.origin } : {})
   }
   return (
@@ -325,6 +328,7 @@ export function ScriptPanel() {
       className={`script-panel${shown ? ' is-shown' : ''}${intoPill ? ` is-into-pill${intoPill.start ? ' is-at-pill' : ''}` : ''}${value.live && !value.paused ? ' is-playing' : ''}`}
       style={style}
       aria-label="Scene"
+      aria-hidden={idle || undefined}
       onPointerEnter={() => setHover(true)}
       onPointerLeave={() => setHover(false)}
     >
@@ -357,7 +361,7 @@ export function ScriptPanel() {
           )
         })}
       </div>
-      <ReadingView scene={value.scene} lines={value.lines} steps={value.steps} live={value.live} moving={value.live && !value.paused} t={scene.t} time={scene.time} />
+      <ReadingView scene={value.scene} lines={value.lines} steps={value.steps} live={value.live} moving={!idle && value.live && !value.paused} t={scene.t} time={scene.time} />
       <footer className="script-panel__footer">
         <span className="script-panel__status">{status}</span>
         {value.live ? (

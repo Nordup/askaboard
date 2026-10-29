@@ -660,6 +660,8 @@ button:focus-visible {
   white-space: nowrap;
   text-overflow: ellipsis;
   font-size: var(--text-xs);
+  /* as tall as the buttons, so the footer keeps its height with no button (the panel's box is one size) */
+  line-height: var(--icon-button-size);
   color: var(--text-tertiary);
 }
 

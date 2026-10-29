@@ -15,6 +15,8 @@
  *   node scripts/drive.mjs type "<text>"        insert text into the focused field
  *   node scripts/drive.mjs wheel <x> <y> <dx> <dy> [--ctrl]   a wheel / trackpad scroll; --ctrl is a pinch
  *   node scripts/drive.mjs node-rect <id>       a node's window rect (JSON), from the layout cache and the DOM
+ *   node scripts/drive.mjs element-rect <css>   window rects of the elements that match a CSS selector (JSON)
+ *   node scripts/drive.mjs window-size <w> <h>  resize the window (outer size, CSS pixels)
  *   node scripts/drive.mjs screenshot <out.png> the whole window
  *   node scripts/drive.mjs eval-state           board, zoom, tool, selection, nodes with bounds (JSON)
  *   node scripts/drive.mjs board-action rename <path> <name> | trash <path>   the sidebar's own Rename / Move to Trash
@@ -43,6 +45,8 @@ const USAGE = `usage: node scripts/drive.mjs [--port N] <command>
   type "<text>"                                  insert text into the focused field
   wheel <x> <y> <dx> <dy> [--ctrl]               a wheel at window CSS pixels; --ctrl sends a trackpad pinch
   node-rect <id>                                 {x, y, width, height, cx, cy, dom} in window CSS pixels
+  element-rect <css selector>                    [{x, y, width, height, visibility, opacity}] in window CSS pixels
+  window-size <w> <h>                            resize the window (outer size); prints the canvas rect
   screenshot <out.png>
   eval-state                                     board, tool, selection, nodes (id, kind, parent, bounds)
   board-action rename <path> <name> | trash <path>   the sidebar's Rename / Move to Trash (prints the open board)
@@ -437,6 +441,24 @@ async function main() {
   } else if (command === 'node-rect') {
     if (!rest[0]) throw new Failure('node-rect needs a node id.')
     run = (cdp) => nodeRect(cdp, rest[0])
+  } else if (command === 'element-rect') {
+    if (!rest[0]) throw new Failure('element-rect needs a CSS selector.')
+    run = async (cdp) => {
+      const rects = await evaluate(
+        cdp,
+        `[...document.querySelectorAll(${JSON.stringify(rest[0])})].map((el) => { const r = el.getBoundingClientRect(); const s = getComputedStyle(el); const r1 = (v) => Math.round(v * 10) / 10; return { x: r1(r.x), y: r1(r.y), width: r1(r.width), height: r1(r.height), visibility: s.visibility, opacity: s.opacity } })`
+      )
+      console.log(JSON.stringify(rects))
+    }
+  } else if (command === 'window-size') {
+    const [w, h] = rest.map(Number)
+    if (!(w > 0) || !(h > 0)) throw new Failure('window-size needs <w> <h> in pixels.')
+    run = async (cdp) => {
+      // The page target has no Browser domain; Electron lets the page resize its own window.
+      await evaluate(cdp, `window.resizeTo(${Math.round(w)}, ${Math.round(h)})`)
+      await sleep(300)
+      console.log(JSON.stringify({ inner: await evaluate(cdp, '[innerWidth, innerHeight]') }))
+    }
   } else if (command === 'screenshot') {
     if (!rest[0]) throw new Failure('screenshot needs an output path.')
     run = (cdp) => screenshot(cdp, rest[0])

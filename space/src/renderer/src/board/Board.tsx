@@ -8,6 +8,7 @@ import { ContentLayer, measureContent, type ContentContext } from './content'
 import {
   boardToScreen,
   clampZoom,
+  glideCamera,
   inkBounds,
   inkLocalBounds,
   overlapShare,
@@ -1362,15 +1363,10 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         const token = ++glideRef.current
         const from = cameraRef.current
         const start = performance.now()
-        // Zoom moves in log space, so the glide feels even at every scale.
         const step = (): void => {
           if (glideRef.current !== token) return
           const t = Math.min(1, (performance.now() - start) / Math.max(1, ms))
-          const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
-          applyCamera({
-            center: [from.center[0] + (target.center[0] - from.center[0]) * e, from.center[1] + (target.center[1] - from.center[1]) * e],
-            zoom: Math.exp(Math.log(from.zoom) + (Math.log(target.zoom) - Math.log(from.zoom)) * e)
-          })
+          applyCamera(glideCamera(from, target, t))
           if (t < 1) requestAnimationFrame(step)
         }
         requestAnimationFrame(step)

@@ -13,6 +13,19 @@ export function clampZoom(value: number): number {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Number.isFinite(value) ? value : 1))
 }
 
+/**
+ * The camera a glide shows at share 0..1 of its time (Board.animateTo, and preview_scene's frames
+ * for a scene's camera moves): an even in-out ease; zoom moves in log space, so it feels even at every scale.
+ */
+export function glideCamera(from: Camera, to: Camera, share: number): Camera {
+  const t = Math.min(1, Math.max(0, share))
+  const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
+  return {
+    center: [from.center[0] + (to.center[0] - from.center[0]) * e, from.center[1] + (to.center[1] - from.center[1]) * e],
+    zoom: Math.exp(Math.log(from.zoom) + (Math.log(to.zoom) - Math.log(from.zoom)) * e)
+  }
+}
+
 /** Board coordinate represented by a viewport point. */
 export function screenToBoard(point: Point, size: Point, camera: Camera): Point {
   return [camera.center[0] + (point[0] - size[0] / 2) / camera.zoom, camera.center[1] + (point[1] - size[1] / 2) / camera.zoom]

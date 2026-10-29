@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { BoardNode } from '@shared/board-format'
-import type { SnapshotOverlays, SnapshotRequest } from '@shared/space-api'
+import type { SnapshotMark, SnapshotOverlays, SnapshotRequest } from '@shared/space-api'
 import { ContentLayer, measureContent, type ContentContext } from '../board/content'
 import { paintItems } from '../board/paint'
 import { applyElementOverride, type NodeOverride, type PlaybackTip } from '../board/playback'
@@ -98,6 +98,58 @@ function Overlays({ req, overlays }: { req: SnapshotRequest; overlays: SnapshotO
   )
 }
 
+/** A tag's size in pixels (snapshot.css .snapshot__mark-tag: 11 px monospace, line 14, padding 1 5): one character's advance, the padding and the height. */
+const TAG_CHAR = 6.65
+const TAG_PAD = 10
+const TAG_H = 16
+
+/**
+ * The marks of one preview frame (the learner's view, the parts that app UI covers), in pixels
+ * of the frame; each tag is DOM in image pixels, so it stays the same size at every scale.
+ * A tag sits as the id tags do (Overlays): just above its mark at its left, or inside the top-left
+ * of the mark's visible part when there is no room above (the frame's edge or its label).
+ * Every tag stays inside the frame and clear of the tags before it.
+ */
+function Marks({ req, cell }: { req: SnapshotRequest; cell: CellPlan }) {
+  const taken: Array<{ left: number; top: number; right: number; bottom: number }> = []
+  const placed = cell.marks.flatMap((mark) => {
+    const left = Math.round((mark.rect.x - req.rect.x) * req.scale)
+    const top = Math.round((mark.rect.y - req.rect.y) * req.scale)
+    const width = Math.max(2, Math.round(mark.rect.width * req.scale))
+    const height = Math.max(2, Math.round(mark.rect.height * req.scale))
+    const visible = { left: Math.max(0, left), top: Math.max(cell.markTop, top), right: Math.min(cell.width, left + width), bottom: Math.min(cell.height, top + height) }
+    if (visible.right <= visible.left || visible.bottom <= visible.top) return []
+    const tagW = Math.ceil(mark.tag.length * TAG_CHAR + TAG_PAD)
+    const tag = { left: visible.left, top: top - TAG_H >= cell.markTop && top < cell.height ? top - TAG_H : visible.top }
+    // Inside the frame, and clear of the tags placed before it (moved down past them).
+    tag.left = Math.max(0, Math.min(tag.left, cell.width - tagW))
+    for (let moved = true, guard = 0; moved && guard < cell.marks.length; guard++) {
+      moved = false
+      for (const other of taken) {
+        if (tag.left < other.right && tag.left + tagW > other.left && tag.top < other.bottom && tag.top + TAG_H > other.top) {
+          tag.top = other.bottom + 2
+          moved = true
+        }
+      }
+    }
+    tag.top = Math.min(tag.top, cell.height - TAG_H)
+    taken.push({ left: tag.left, top: tag.top, right: tag.left + tagW, bottom: tag.top + TAG_H })
+    return [{ mark, box: { left, top, width, height }, tag }]
+  })
+  return (
+    <>
+      {placed.map(({ mark, box }, i) => (
+        <div key={`m${i}`} className={`snapshot__mark snapshot__mark--${mark.kind}`} style={box} />
+      ))}
+      {placed.map(({ mark, tag }, i) => (
+        <div key={`t${i}`} className="snapshot__mark-tag" style={tag}>
+          {mark.tag}
+        </div>
+      ))}
+    </>
+  )
+}
+
 /**
  * The frame marker for a request id, as a CSS hex colour. This encodes data, not a design colour:
  * it must match `markerColor` in main/snapshot.ts (r = id % 256, g = (id / 256) % 256, b = 255).
@@ -115,16 +167,19 @@ interface CellPlan {
   height: number
   index: SceneIndex
   playback?: SnapshotRequest['playback']
+  marks: SnapshotMark[]
+  /** The pixels at the top that the frame's label takes (mark tags stay below). */
+  markTop: number
 }
 
 /** The frames of a request: one for a plain request, one per cell for a grid (shared nodes, then the cell's own nodes, live items as their stills). */
 function cellsOf(req: SnapshotRequest): CellPlan[] {
-  if (!req.cells) return [{ left: 0, top: 0, width: req.width, height: req.height, index: buildIndex(req.nodes as BoardNode[]), playback: req.playback }]
-  const { width, height } = req.cells
+  if (!req.cells) return [{ left: 0, top: 0, width: req.width, height: req.height, index: buildIndex(req.nodes as BoardNode[]), playback: req.playback, marks: [], markTop: 0 }]
+  const { width, height, markTop = 0 } = req.cells
   return req.cells.list.map((cell) => {
     const stills = cell.stills
     const shared = stills ? (req.nodes as BoardNode[]).map((node) => (stills[node.id] ? ({ ...node, still: stills[node.id] } as BoardNode) : node)) : (req.nodes as BoardNode[])
-    return { left: cell.left, top: cell.top, width, height, index: buildIndex([...shared, ...(cell.nodes as BoardNode[])]), playback: cell.playback }
+    return { left: cell.left, top: cell.top, width, height, index: buildIndex([...shared, ...(cell.nodes as BoardNode[])]), playback: cell.playback, marks: cell.marks ?? [], markTop }
   })
 }
 
@@ -217,11 +272,11 @@ function SnapshotFrame({ req, cell, onDone }: { req: SnapshotRequest; cell: Cell
             top: Math.round((outline.rect.y - req.rect.y) * req.scale),
             width: Math.max(2, Math.round(outline.rect.width * req.scale)),
             height: Math.max(2, Math.round(outline.rect.height * req.scale)),
-            borderColor: outline.color,
-            ...(outline.fill ? { background: outline.fill } : {})
+            borderColor: outline.color
           }}
         />
       ))}
+      <Marks req={req} cell={cell} />
     </div>
   )
 }

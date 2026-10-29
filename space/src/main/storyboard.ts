@@ -15,6 +15,9 @@ export interface StoryboardFrame {
   inks: unknown[]
   overrides: Array<[string, unknown]>
   tips: unknown[]
+  /** The learner's view at this frame's moment, and the parts of it that app UI covers while scenes play. */
+  view: { x: number; y: number; width: number; height: number }
+  covered: Array<{ x: number; y: number; width: number; height: number; by: string }>
 }
 
 /** The picture of a live item in one frame, and the tick it shows. */
@@ -30,9 +33,6 @@ export interface StoryboardInput {
   nodes: unknown[]
   frames: StoryboardFrame[]
   rect: { x: number; y: number; width: number; height: number }
-  view: { x: number; y: number; width: number; height: number }
-  /** Parts of the view that app UI covers while scenes play: drawn hatched. */
-  covered?: Array<{ x: number; y: number; width: number; height: number }>
   background: string
   stills?: StoryboardStill[]
 }
@@ -47,8 +47,6 @@ export interface StoryboardOptions {
 const CELL_LONG_EDGE = 520
 const MAX_COLUMNS = 3
 const GAP = 8
-/** A covered part of the view (the script panel's corner): quiet hatching in a design token. */
-const COVERED_FILL = 'repeating-linear-gradient(-45deg, var(--border-strong) 0 1.5px, transparent 1.5px 8px)'
 /** The label strip above each frame, in pixels. */
 const LABEL = 22
 
@@ -102,22 +100,25 @@ export async function renderStoryboard(
     scale,
     width,
     height,
-    outlines: [
-      { rect: input.view, color: 'rgba(160, 160, 168, 0.55)' },
-      ...(input.covered ?? []).map((rect) => ({ rect, color: 'var(--border-strong)', fill: COVERED_FILL }))
-    ],
+    outlines: [],
     background: input.background,
     cells: {
       width: cellW,
       height: shotH,
       // The gaps between the frames (image data, not a design colour).
       gapColor: '#000000',
+      markTop: LABEL,
       list: input.frames.map((frame, index) => ({
         left: (index % columns) * (cellW + GAP),
         top: Math.floor(index / columns) * (shotH + GAP),
         nodes: [...frame.inks, labelNode(`${index + 1}. ${frame.label}`, rect.x + 4 / scale, rect.y - labelBoard + 4 / scale, scale, index)],
         ...(stillsOf.has(index) ? { stills: stillsOf.get(index) } : {}),
-        playback: { overrides: frame.overrides, tips: frame.tips }
+        playback: { overrides: frame.overrides, tips: frame.tips },
+        // Each frame marks the learner's view and its hidden parts at its own moment (the camera can move).
+        marks: [
+          { kind: 'view' as const, rect: frame.view, tag: "learner's view" },
+          ...frame.covered.map(({ by, ...area }) => ({ kind: 'covered' as const, rect: area, tag: by }))
+        ]
       }))
     }
   })

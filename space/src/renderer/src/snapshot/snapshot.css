@@ -33,6 +33,36 @@ body,
   border-radius: 3px;
 }
 
+/* preview_scene's marks in each frame: the learner's view (an outline) and the parts that app UI covers (dimmed), each with a tag. */
+.snapshot__mark {
+  position: absolute;
+  z-index: 2;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
+.snapshot__mark--view {
+  border: 2px solid var(--snapshot-view);
+  border-radius: 3px;
+}
+
+.snapshot__mark--covered {
+  border: 1.5px solid var(--snapshot-covered-edge);
+  background: var(--snapshot-covered-fill);
+}
+
+.snapshot__mark-tag {
+  position: absolute;
+  z-index: 4;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font: 500 11px/14px ui-monospace, Menlo, monospace;
+  white-space: nowrap;
+  background: var(--snapshot-mark-bg);
+  color: var(--snapshot-mark-text);
+  box-shadow: 0 0 0 1px var(--snapshot-mark-ring);
+}
+
 /* Agent-only overlays: grid and id tags, clipped to the image. */
 .snapshot__overlays {
   position: absolute;

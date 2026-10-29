@@ -3,7 +3,7 @@ import type { DraftInfo, FrameMoment, FramePart, SceneContext, SceneDescription,
 import type { BoardHandle } from '../board/Board'
 import type { NodeOverride, PlaybackTip } from '../board/playback'
 import type { InkGroupTracker } from '../agent/groups'
-import { coveredOf } from '../agent/covered'
+import { coveredOf, type Covered } from '../agent/covered'
 import { viewOf, type Scene } from '../agent/placement'
 import { itemNames } from '../agent/item-names'
 import { buildIndex } from '../board/scene'
@@ -11,8 +11,8 @@ import { compileScene, type CompiledScene, type DynLookup, type PlayObject, type
 import { connectFrames, takeFrames, type RunFrames } from './frames'
 import { inkIndexOf, nodeSig, scenePlayer, sceneFrame, type SceneFrame, type SceneMemory } from './player'
 import { apply, multiply, scaleOf } from './timeline'
-import type { Point } from '../board/types'
-import { inkBounds } from '../board/geometry'
+import type { Camera, Point } from '../board/types'
+import { clampZoom, glideCamera, inkBounds } from '../board/geometry'
 import type { LiveTimeline } from '../live-pixels/clock'
 import type { LiveStillRequest } from '../live-pixels/stills'
 import { nodeSig as contentSig, stepAt, stepLines, type SceneStory, type StoryItem } from '@shared/scene-story'
@@ -693,6 +693,25 @@ export interface PreviewFrame {
   inks: BoardNode[]
   overrides: Array<[string, NodeOverride]>
   tips: PlaybackTip[]
+  /** The learner's view at this moment (after the scene's camera moves so far), and the parts of it that app UI covers. */
+  view: Box
+  covered: Covered[]
+}
+
+/**
+ * The camera at time t of a scene that starts from `start`, as the player moves it (player.ts):
+ * each camera move glides from where the view is when it starts (also in the middle of an
+ * earlier glide) to its target over its length, with Board.animateTo's ease (glideCamera).
+ */
+function cameraAt(start: Camera, moves: ReadonlyArray<{ start: number; dur: number; center: [number, number]; zoom: number }>, t: number): Camera {
+  let glide: { from: Camera; to: Camera; start: number; dur: number } | null = null
+  const at = (time: number): Camera => (glide ? glideCamera(glide.from, glide.to, (time - glide.start) / glide.dur) : start)
+  for (const move of [...moves].sort((a, b) => a.start - b.start)) {
+    // The player starts a move on the first frame after its start.
+    if (move.start >= t) break
+    glide = { from: at(move.start), to: { center: move.center, zoom: clampZoom(move.zoom) }, start: move.start, dur: Math.max(0.001, move.dur) }
+  }
+  return at(t)
 }
 
 /** A live item of the frames: the scene's items step through the scene's time (t); other items show as they are on the board (t null). */
@@ -711,9 +730,6 @@ export interface FramesResult {
   live: FramesLiveItem[]
   /** The board region the frames show. */
   rect: Box
-  view: Box
-  /** Parts of the view that app UI covers while scenes play (agent/covered.ts). */
-  covered: Box[]
   background: string
 }
 
@@ -973,6 +989,11 @@ export function sceneFrames(ctx: RunSceneContext, args: Record<string, unknown>)
   })
   const state = ctx.board.liveState()
   const view = rect(viewOf(ctx.board))
+  // Each frame marks the learner's view and its covered parts for the camera at its moment.
+  const marks = evaluated.map(({ moment }) => {
+    const camera = cameraAt(state.camera, play.camera, moment.t)
+    return { view: rect(viewOf(ctx.board, camera)), covered: coveredOf(ctx.board, camera) }
+  })
   const part = (args.part as FramePart | undefined) ?? { kind: 'scene' }
   let region: Box
   if (part.kind === 'view') region = view
@@ -1027,11 +1048,9 @@ export function sceneFrames(ctx: RunSceneContext, args: Record<string, unknown>)
     scene: play.id,
     duration_s: r3(play.duration),
     nodes,
-    frames: evaluated.map(({ moment, frame }) => ({ t: r3(moment.t), label: moment.label, inks: frame.inks, overrides: [...frame.overrides], tips: frame.tips.filter((tip) => tip.kind === 'pointer') })),
+    frames: evaluated.map(({ moment, frame }, i) => ({ t: r3(moment.t), label: moment.label, inks: frame.inks, overrides: [...frame.overrides], tips: frame.tips.filter((tip) => tip.kind === 'pointer'), ...marks[i] })),
     live: liveItemsOf(play, evaluated, nodes, s, region),
     rect: region,
-    view,
-    covered: coveredOf(ctx.board),
     background: getComputedStyle(document.documentElement).getPropertyValue('--bg-canvas').trim() || '#161618'
   }
 }

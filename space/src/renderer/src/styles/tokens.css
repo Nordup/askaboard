@@ -63,6 +63,13 @@
   --snapshot-label: rgba(255, 255, 255, 0.75);
   --snapshot-label-outline: #000000;
   --snapshot-tag-outline: rgba(0, 0, 0, 0.55);
+  /* preview_scene marks: the learner's view, the parts app UI covers, and their tags */
+  --snapshot-view: rgba(255, 255, 255, 0.6);
+  --snapshot-covered-fill: rgba(0, 0, 0, 0.38);
+  --snapshot-covered-edge: rgba(255, 255, 255, 0.45);
+  --snapshot-mark-bg: rgba(0, 0, 0, 0.78);
+  --snapshot-mark-text: rgba(255, 255, 255, 0.92);
+  --snapshot-mark-ring: rgba(255, 255, 255, 0.35);
 
   /* Ink colours, tuned for the dark canvas */
   --ink-white: #ececef;
@@ -126,7 +133,6 @@
   /* The script panel floating over the board */
   --script-panel-width: 296px;
   --script-panel-header: 34px;
-  --script-panel-body-max: 221px; /* the panel below its header: step bar 3 + gap 8 + reading view 176 + footer 34 (for what agents keep clear) */
   --script-panel-footer-pad: 4px 5px 6px 11px;
   --step-bar-height: 3px; /* the reading panel's step bar: one segment per step */
   --step-bar-gap: 3px;

@@ -53,7 +53,11 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
 - Canvas tools: `--selection-fill`, `--lasso-fill`, `--eraser-ring`,
   `--eraser-halo`, `--swatch-edge`
 - Snapshot (the image agents see): `--snapshot-grid`, `--snapshot-axis`,
-  `--snapshot-label`, `--snapshot-label-outline`, `--snapshot-tag-outline`.
+  `--snapshot-label`, `--snapshot-label-outline`, `--snapshot-tag-outline`;
+  preview_scene marks: `--snapshot-view` (the learner's view, 2 px
+  outline), `--snapshot-covered-fill` and `--snapshot-covered-edge` (a
+  part that app UI hides), `--snapshot-mark-bg`, `--snapshot-mark-text`,
+  `--snapshot-mark-ring` (their 11 px tags).
   The frame marker colour in `SnapshotView.tsx` encodes the request id; it
   is data, not a design colour.
 - Ink colours: `--ink-white`, `--ink-yellow`, `--ink-blue`, `--ink-green`,
@@ -70,7 +74,7 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
   `--status-dot-size-small`, `--status-dot-ring`, `--item-pill-height`,
   `--item-pill-pad-left`, `--item-pill-gap`, `--item-pill-inset`,
   `--item-pill-ring`, `--script-panel-width`, `--script-panel-header`,
-  `--script-panel-body-max`, `--script-panel-footer-pad`, `--step-bar-height`,
+  `--script-panel-footer-pad`, `--step-bar-height`,
   `--step-bar-gap`, `--step-bar-radius`, `--step-bar-hit`,
   `--reading-view-height`, `--reading-view-gap`, `--reading-para-gap`,
   `--reading-said`, `--reading-next`, `--reading-light`,
@@ -219,10 +223,14 @@ item pill).
       the light on the last line. Reduced motion: no ease; the mask stays.
   - Footer, padding 4 5 6 11 px (`--script-panel-footer-pad`): one status
     (11 px, tertiary): "Step 2 of 3", "Paused while you draw", "Paused at a
-    pause", "Paused" or "Done"; then 24 px icon buttons: replay step
+    pause", "Paused", "Done" or "Done · cannot replay" (the app does not hold the scene); then 24 px icon buttons: replay step
     (rotate), pause / play (secondary), next step (skip-forward). Ended: only
     replay, which plays the whole scene again (none when the app no longer
-    holds the scene).
+    holds the scene). The status line is 24 px high, so the footer keeps its
+    height without buttons.
+  - The panel stays mounted and laid out, hidden, while it shows nothing,
+    in the shape it has while a scene plays. Agents learn the part of the
+    view it covers from this element's real box (`agent/covered.ts`).
   - It appears when a scene plays and fades about 4 s after the scene ends,
     not while the pointer is on it. A scene chosen from the pill's menu stays
     until it is hidden or a new scene plays.

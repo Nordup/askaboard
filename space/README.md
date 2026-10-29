@@ -149,6 +149,8 @@ to 20 s for that window and its dev hook to load.
 | `click`, `dblclick`, `drag`, `wheel` | Mouse input at window CSS pixels |
 | `type "<text>"` | Types into the focused field |
 | `node-rect <id>` | A node's window rect, from the layout cache and the DOM |
+| `element-rect <css selector>` | The window rects (and visibility, opacity) of the elements that match |
+| `window-size <w> <h>` | Resizes the window |
 | `screenshot <out.png>` | Captures the window |
 | `eval-state` | Board, zoom, tool, selection and nodes as JSON |
 

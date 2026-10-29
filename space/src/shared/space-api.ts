@@ -253,8 +253,17 @@ export type AgentToolName =
 export interface SnapshotOutline {
   rect: BoardRect
   color: string
-  /** A CSS background inside the outline (none: clear). */
-  fill?: string
+}
+
+/**
+ * A mark over one frame of preview_scene, in the snapshot window's own style (snapshot.css), with a
+ * tag that stays the same size in the image at every scale: the learner's view at the frame's
+ * moment, or a part of it that app UI covers ("script panel").
+ */
+export interface SnapshotMark {
+  kind: 'view' | 'covered'
+  rect: BoardRect
+  tag: string
 }
 
 /** An id tag drawn over a snapshot at the item's top-left, with a thin outline. */
@@ -316,7 +325,14 @@ export interface SnapshotRequest {
    * height are then the size of the whole image. Without cells the request
    * is one image of `nodes` with `playback`.
    */
-  cells?: { width: number; height: number; gapColor: string; list: SnapshotCell[] }
+  cells?: {
+    width: number
+    height: number
+    gapColor: string
+    list: SnapshotCell[]
+    /** The pixels at the top of each cell that its label takes: mark tags stay below them. */
+    markTop?: number
+  }
 }
 
 /**
@@ -343,6 +359,8 @@ export interface SnapshotCell {
   /** Pictures of live items in this frame, by node id (image URLs). */
   stills?: Record<string, string>
   playback?: SnapshotPlayback
+  /** The marks of this frame (its own view and covered parts). */
+  marks?: SnapshotMark[]
 }
 
 export type SnapshotReply = { requestId: number; ok: true; missingImages: number } | { requestId: number; ok: false; error: string }

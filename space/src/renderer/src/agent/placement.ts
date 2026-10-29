@@ -1,7 +1,7 @@
 import { isInk, type BoardNode } from '@shared/board-format'
 import type { BoardHandle } from '../board/Board'
 import { ancestorIds, buildIndex, ROOT, topLevelOf, type SceneIndex } from '../board/scene'
-import type { LayoutBox, Region } from '../board/types'
+import type { Camera, LayoutBox, Region } from '../board/types'
 import { isGroupId, type InkGroup } from './groups'
 
 /**
@@ -56,12 +56,12 @@ export function inside(box: Region, view: Region): boolean {
   return box.x >= view.x && box.y >= view.y && box.x + box.width <= view.x + view.width && box.y + box.height <= view.y + view.height
 }
 
-/** The learner's viewport in board points. */
-export function viewOf(board: BoardHandle): Region {
+/** The learner's viewport in board points, for the board's camera now or another camera (a moment of a scene). */
+export function viewOf(board: BoardHandle, camera: Camera = board.liveState().camera): Region {
   const state = board.liveState()
-  const width = state.viewport[0] / state.camera.zoom
-  const height = state.viewport[1] / state.camera.zoom
-  return { x: state.camera.center[0] - width / 2, y: state.camera.center[1] - height / 2, width, height }
+  const width = state.viewport[0] / camera.zoom
+  const height = state.viewport[1] / camera.zoom
+  return { x: camera.center[0] - width / 2, y: camera.center[1] - height / 2, width, height }
 }
 
 function shrink(view: Region, margin: number): Region {
