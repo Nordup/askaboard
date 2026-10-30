@@ -80,7 +80,7 @@ export class WorldHost implements LiveHost, WorldMember {
   receive(m: Extract<WorldToPage, { key: WorldKey }>): void {
     switch (m.type) {
       case 'alive':
-        if (m.frames > 0 && !this.shown && this.startsLive) this.show()
+        if (m.frames > 0 && !this.shown && this.startsLive && !this.stopped) this.show()
         this.events.onAlive(m.frames, m.tick)
         break
       case 'progress':
