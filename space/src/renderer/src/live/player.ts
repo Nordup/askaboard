@@ -352,8 +352,8 @@ function objectLook(play: ScenePlay, object: PlayObject, t: number, inkIndex: In
   const timeline = play.timeline
   const desc = timeline.object(object.id)
   if (t >= settledOf(object) && !object.ghost && t >= desc.created) return
-  // Its board items stay as they are until the sweep gives it samples.
-  if (desc.unchanged && !object.dyn?.samples.length) return
+  // Its board items stay as they are until the sweep or a preview's seeds show it changes.
+  if (desc.unchanged && !object.dyn?.samples.length && !object.dyn?.seeds.length) return
   // A carried object (from an earlier scene) is on the board before this scene starts.
   const before = desc.kind !== 'node' && !desc.carry && desc.vis === 'shown' && t < desc.created
   const draw = clamp01(timeline.number(object.id, 'draw', t))

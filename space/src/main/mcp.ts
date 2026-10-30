@@ -11,6 +11,7 @@ import { MAX_COORD, MAX_NAME_CHARS, MAX_REGION_SIZE } from '@shared/limits'
 import { briefText, guideText, guideTopics, serverInstructions } from './guide'
 import { codeItems, htmlMaterial, NO_HTML } from './lab-switch'
 import { RealmBusy, SceneCancelled, SceneProgramError, SceneStage, type StageEntry, type StageRun, type SweepEnd } from './live-scene'
+import type { MomentsFailure } from '@shared/frames'
 import type { DraftInfo, FrameMoment, FramePart, SceneContext, SceneDescription, SceneLiveObject, SceneResult } from '@shared/live-scene'
 import { renderStoryboard, storyboardScale, type StoryboardInput } from './storyboard'
 import { BoardNews } from './news'
@@ -122,7 +123,9 @@ type CallTrace = { args?: Record<string, unknown>; spans: Spans }
 
 class RendererBridge {
   private nextId = 1
-  private pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void; timer: NodeJS.Timeout | undefined }>()
+  private pending = new Map<number, { contents: WebContents; resolve(value: unknown): void; reject(error: Error): void; timer: NodeJS.Timeout | undefined }>()
+  /** The renderers whose loss this bridge watches. */
+  private watched = new WeakSet<WebContents>()
 
   constructor(private readonly target: () => WebContents | null) {
     ipcMain.on(IPC.agentReply, (_event, reply: AgentReply) => {
@@ -135,11 +138,29 @@ class RendererBridge {
     })
   }
 
+  /** A renderer that is gone never answers: what waits on it fails now (a request can have no timeout). */
+  private watch(contents: WebContents): void {
+    if (this.watched.has(contents)) return
+    this.watched.add(contents)
+    const lost = (why: string): void => {
+      for (const [requestId, entry] of this.pending) {
+        if (entry.contents !== contents) continue
+        this.pending.delete(requestId)
+        clearTimeout(entry.timer)
+        entry.reject(new Error(`The Learning Space window ${why} before it answered. Try again.`))
+      }
+    }
+    contents.on('did-navigate', () => lost('loaded again'))
+    contents.on('render-process-gone', () => lost('stopped'))
+    contents.once('destroyed', () => lost('closed'))
+  }
+
   request<M extends AgentMethod>(method: M, params: AgentMethods[M]['params'], timeoutMs = BRIDGE_TIMEOUT_MS): Promise<AgentMethods[M]['result']> {
     const contents = this.target()
     if (!contents || contents.isDestroyed()) {
       return Promise.reject(new Error('The Learning Space window is closed. Ask the learner to open it.'))
     }
+    this.watch(contents)
     const requestId = this.nextId++
     return new Promise((resolve, reject) => {
       // An infinite timeout waits as long as the work takes (scenes: no cap on their size).
@@ -149,7 +170,7 @@ class RendererBridge {
             reject(new Error(`Learning Space did not answer "${method}" within ${timeoutMs / 1000} s. The window may be loading or busy.`))
           }, timeoutMs)
         : undefined
-      this.pending.set(requestId, { resolve: resolve as (value: unknown) => void, reject, timer })
+      this.pending.set(requestId, { contents, resolve: resolve as (value: unknown) => void, reject, timer })
       contents.send(IPC.agentRequest, { requestId, method, params })
     })
   }
@@ -281,6 +302,8 @@ interface StagePlace {
 type FramesResult = StoryboardInput & { scene: string; duration_s: number; live: LiveStillsItem[] }
 /** sceneFrames for a moment past the cutoff of a scene whose stream stopped. */
 type PastCutoff = { pastCutoff: number }
+/** sceneFrames for a moment at which a recipe threw while the sweep runs. */
+type MomentFailed = { momentFailed: MomentsFailure }
 
 /**
  * The key of each version of a draft. The renderer keeps the compile of a
@@ -1592,7 +1615,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
         const framePart: FramePart =
           part === undefined || part === 'scene' ? { kind: 'scene' } : part === 'view' ? { kind: 'view' } : 'region' in part ? { kind: 'region', rect: part.region } : { kind: 'items', items: part.items }
         let rerun: string | null = null
-        let plan: FramesResult | PastCutoff
+        let plan: FramesResult | PastCutoff | MomentFailed
         const framesStart = Date.now()
         if (use === 'draft') {
           const args = { label: `the draft "${name}"`, moments, part: framePart }
@@ -1609,8 +1632,12 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
             out = await this.board('sceneFrames', { ...args, draft: draftKey(draft!.desc) }, SCENE_TIMEOUT_MS)
             if (isMissing(out)) throw new Error('The board did not keep the draft. Write it again with write_scene.')
           }
-          plan = out as FramesResult | PastCutoff
-        } else plan = (await this.board('sceneFrames', { sceneId: onBoard!.scene, label: `the scene "${name}" on the board`, moments, part: framePart }, SCENE_TIMEOUT_MS)) as FramesResult | PastCutoff
+          plan = out as FramesResult | PastCutoff | MomentFailed
+        } else plan = (await this.board('sceneFrames', { sceneId: onBoard!.scene, label: `the scene "${name}" on the board`, moments, part: framePart }, SCENE_TIMEOUT_MS)) as FramesResult | PastCutoff | MomentFailed
+        if ('momentFailed' in plan) {
+          const { error, line, file, at } = plan.momentFailed
+          return failure(new Error(`The scene "${name}" has no such moment: ${new SceneProgramError(error, line, file).message}, at ${Math.round(at * 100) / 100} s of the scene.${use === 'draft' ? ' Nothing played. Change it with write_scene.' : ''}`))
+        }
         if ('pastCutoff' in plan) {
           const cutoff = plan.pastCutoff
           const why = (use === 'draft' ? draft!.entry : onBoard!).sweepError ?? 'its stream was cut'

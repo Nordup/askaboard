@@ -1,4 +1,4 @@
-import { chunkBytes, F_ALL, F_D, F_FORM, F_JSON, F_LINES, F_PARAMS, F_TEXT, F_WIDTH, FLAG_MATH, FLAG_SEED, FRAME_KINDS, FRAMES_VERSION, joinPath, type FrameKind, type FramesChunk } from '@shared/frames'
+import { chunkBytes, F_ALL, F_D, F_FORM, F_JSON, F_LINES, F_PARAMS, F_TEXT, F_WIDTH, FLAG_MATH, FLAG_SEED, FRAME_KINDS, FRAMES_VERSION, joinPath, type FrameKind, type FramesChunk, type MomentsAnswer, type MomentsAsk, type MomentsFailure } from '@shared/frames'
 import type { SceneSample } from '@shared/live-scene'
 import type { Point } from '../board/types'
 import { prepareSample, sampleHtml, splitNumbers, type DynSample, type PlayDyn } from './compile'
@@ -54,8 +54,8 @@ export interface RunFrames {
   stopped: () => StreamStop | null
   /** How far it can play: Infinity after the end. */
   ready: () => number
-  /** Resolves when every moment up to t is here, or the stream ended. */
-  reached: (t: number) => Promise<void>
+  /** Makes the given moments readable: the stage seeds those past ready() while the sweep runs. Resolves when they are here or the stream ended, with a recipe's error at one of them. */
+  moments: (times: number[]) => Promise<MomentsFailure | null>
 }
 
 /**
@@ -79,10 +79,11 @@ interface JobFrames extends RunFrames {
   ms: number
   longest: number
   error: string | null
-  waiting: Array<{ t: number; resolve: () => void }>
+  /** The previews that wait for an answer of the stage, by their ask. */
+  asks: Map<number, (failure: MomentsFailure | null) => void>
 }
 
-function newJob(): JobFrames {
+function newJob(id: number): JobFrames {
   const job: JobFrames = {
     next: 0,
     objects: new Map(),
@@ -94,10 +95,16 @@ function newJob(): JobFrames {
     ms: 0,
     longest: 0,
     error: null,
-    waiting: [],
+    asks: new Map(),
     stopped: () => job.stop,
     ready: () => (job.ended ? Number.POSITIVE_INFINITY : job.readyThrough),
-    reached: (t) => (t <= job.ready() ? Promise.resolve() : new Promise((resolve) => job.waiting.push({ t, resolve })))
+    moments: (times) => {
+      const past = times.filter((t) => t > job.ready())
+      if (!past.length || !port) return Promise.resolve(null)
+      const ask = ++lastAsk
+      port.postMessage({ t: 'moments', job: id, ask, times: past } satisfies MomentsAsk)
+      return new Promise((resolve) => job.asks.set(ask, resolve))
+    }
   }
   return job
 }
@@ -109,15 +116,6 @@ export function objectOf(frames: RunFrames, sid: number, kind: FrameKind, math: 
   let entry = frames.objects.get(sid)
   if (!entry) frames.objects.set(sid, (entry = newObject(kind, math)))
   return entry
-}
-
-/** Wake the previews that wait for a moment that is here now. */
-function wake(job: JobFrames): void {
-  job.waiting = job.waiting.filter(({ t, resolve }) => {
-    if (t > job.ready()) return true
-    resolve()
-    return false
-  })
 }
 
 /**
@@ -137,7 +135,9 @@ function endJob(id: number, job: JobFrames, stop: { failed: boolean } | null): v
     }
     for (const dyn of entry.dyns) if (Number.isFinite(dyn.end)) dyn.end = stop ? Math.min(dyn.end, at) : entry.samples.length ? Math.min(dyn.end, entry.lastChange) : Number.NEGATIVE_INFINITY
   }
-  wake(job)
+  // Nothing more comes: each stopped moment is past the cutoff (sceneFrames), and the rest are here.
+  for (const resolve of job.asks.values()) resolve(null)
+  job.asks.clear()
   if (!job.taken) return
   jobs.delete(id)
   scenePlayer.playsChanged()
@@ -152,6 +152,7 @@ export function cutJob(id: unknown, failed = false): void {
 
 let port: MessagePort | null = null
 const jobs = new Map<number, JobFrames>()
+let lastAsk = 0
 
 function onWindowMessage(event: MessageEvent): void {
   // Only this window's own preload hands over the port. Program items run in iframes of this window and can post to
@@ -183,12 +184,19 @@ function onPortMessage(data: unknown): void {
     if (m.failed !== true) jobs.delete(m.job)
     return
   }
+  if (m.t === 'moments') {
+    const { job, ask, failure } = m as unknown as MomentsAnswer
+    const frames = jobs.get(job)
+    frames?.asks.get(ask)?.(failure)
+    frames?.asks.delete(ask)
+    return
+  }
   if (m.t !== 'frames' || typeof m.job !== 'number' || typeof m.seq !== 'number') return
   const job = m.job
   let frames = jobs.get(job)
   if (!frames) {
     for (const [id, older] of jobs) if (id < job && !older.taken) jobs.delete(id)
-    frames = newJob()
+    frames = newJob(job)
     jobs.set(job, frames)
   }
   if (frames.error === null) {
@@ -207,7 +215,6 @@ function onPortMessage(data: unknown): void {
       frames.next++
       frames.readyThrough = chunk.through
       if (chunk.end) endJob(job, frames, null)
-      else wake(frames)
     } catch (error) {
       frames.error = error instanceof Error ? error.message : String(error)
       endJob(job, frames, { failed: false })
@@ -231,6 +238,17 @@ export function takeFrames(job: unknown, chunks: unknown): RunFrames {
   if (frames.ended) jobs.delete(job)
   console.log(`frames: job ${job}: ${chunks} chunks, ${(frames.bytes / 1024 / 1024).toFixed(2)} MB, decoded in ${Math.round(frames.ms)} ms (longest chunk ${Math.round(frames.longest)} ms)${frames.ended ? '' : ', open'}`)
   return frames
+}
+
+/** Add a sample to its list. A seed that a preview asked for can fall between earlier seeds: seeds stay in time order. */
+function keep(list: DynSample[], sample: DynSample, seed: boolean): void {
+  if (!seed) {
+    list.push(sample)
+    return
+  }
+  let at = list.length
+  while (at > 0 && list[at - 1].t > sample.t) at--
+  list.splice(at, 0, sample)
 }
 
 /** Decode one chunk. Each record adds one sample to its object. */
@@ -264,12 +282,13 @@ function decode(chunk: FramesChunk, objects: Map<number, ObjectFrames>): void {
     if (!entry) objects.set(sid, (entry = newObject(kind, math)))
     else if (entry.kind !== kind || entry.math !== math) throw new Error('a record that does not fit its object')
     const { forms } = entry
-    const samples = flags & FLAG_SEED ? entry.seeds : entry.samples
+    const seed = (flags & FLAG_SEED) !== 0
+    const samples = seed ? entry.seeds : entry.samples
     const mask = U()
     if (mask & ~F_ALL) throw new Error('an unknown field')
     if (mask & F_JSON) {
       if (mask !== F_JSON) throw new Error('a JSON sample with other fields')
-      samples.push(prepareSample(kind, math, JSON.parse(S()) as SceneSample, forms))
+      keep(samples, prepareSample(kind, math, JSON.parse(S()) as SceneSample, forms), seed)
       continue
     }
     const allowed = kind === 'shape' ? F_WIDTH | F_FORM | F_D : kind === 'ink' ? F_WIDTH | F_LINES : kind === 'text' ? F_TEXT : F_PARAMS
@@ -318,7 +337,7 @@ function decode(chunk: FramesChunk, objects: Map<number, ObjectFrames>): void {
       for (const name of names) Object.defineProperty(params, name, { value: F(), writable: true, enumerable: true, configurable: true })
       next.params = params
     }
-    samples.push(next)
+    keep(samples, next, seed)
   }
   if (u !== u32.length || f !== f64.length) throw new Error('a chunk with more data than its records')
   // An object of a kind that has no frames (html) has no entry.

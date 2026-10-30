@@ -2681,7 +2681,8 @@
    *
    * The seeds of a scene run first, from the same runs (seedOne). They are the
    * moments that write_scene needs: the end state, what the board commits, and
-   * previews of "end" and "steps".
+   * previews of "end" and "steps". A preview past the sweep adds the seeds of
+   * its moments while the sweep runs (seedsAt).
    */
   function startSweep(list) {
     const runs = []
@@ -2705,12 +2706,10 @@
   /** Evenly spaced seeds on an object's schedule, so that an object that moves and returns between its other seeds shows as changing. */
   const SPREAD_SEEDS = 16
 
-  /** An object's seed times, all from its schedule: its first and its last time, SPREAD_SEEDS between them, and the two times around each step end. */
-  function seedTimes(times, stepEnds) {
-    const out = new Set([times[0], times[times.length - 1]])
-    for (let k = 1; k <= SPREAD_SEEDS; k++) out.add(times[Math.floor((k * (times.length - 1)) / (SPREAD_SEEDS + 1))])
+  /** The two times of a schedule around each moment (in time order), added to out. */
+  function timesAround(times, moments, out) {
     let i = 0
-    for (const at of stepEnds) {
+    for (const at of moments) {
       while (i < times.length && times[i] <= at) i++
       if (i > 0) out.add(times[i - 1])
       if (i < times.length) out.add(times[i])
@@ -2718,7 +2717,14 @@
     return out
   }
 
-  /** One seed: an evaluation with no sample memo and no trace cache, so that the sweep can compare its own result with it. */
+  /** An object's seed times, all from its schedule: its first and its last time, SPREAD_SEEDS between them, and the two times around each step end. */
+  function seedTimes(times, stepEnds) {
+    const out = new Set([times[0], times[times.length - 1]])
+    for (let k = 1; k <= SPREAD_SEEDS; k++) out.add(times[Math.floor((k * (times.length - 1)) / (SPREAD_SEEDS + 1))])
+    return timesAround(times, stepEnds, out)
+  }
+
+  /** One seed: an evaluation with no sample memo and no trace cache, so that the sweep can compare its own result with it. Returns the object at t. */
   function seedOne(run, t) {
     const { entry } = run
     const spec = specAt(entry, t)
@@ -2726,18 +2732,57 @@
     if (spec.kind !== entry.kind) return
     const g = geometryOf(spec)
     run.seeds.set(t, { key: JSON.stringify(g), sample: { t, ...g } })
-    run.final = spec
+    return spec
   }
 
-  /** The end of an object's seeds: its fields hold the end seed, and the seeds of an object that changes go to the board. */
+  /** The seeds of an object that changes go to the board: `fresh` when it changed before, all of them when these are the first that differ. */
+  function giveSeeds(run, fresh) {
+    const { entry } = run
+    const changed = run.changes
+    const records = [...run.seeds.values()]
+    run.changes = records.some(({ key }) => key !== records[0].key)
+    if (run.changes && giveFrames) for (const { sample } of changed ? fresh : records) giveFrames(entry.id, entry.kind, entry.math === true, sample, true)
+  }
+
+  /** The end of an object's seeds: its fields hold the end seed, and its seeds go to the board. */
   function keepSeeds(run) {
-    const { entry, final, seeds: done } = run
+    const { entry, final } = run
     if (!final) return
     for (const field of ['d', 'lines', 'text', 'params', 'at', 'center', 'pressure', 'length', 'style']) if (final[field] !== undefined) entry[field] = final[field]
     entry.bounds = final.bounds
-    const records = [...done.values()]
-    run.changes = records.some(({ key }) => key !== records[0].key)
-    if (run.changes && giveFrames) for (const { sample } of records) giveFrames(entry.id, entry.kind, entry.math === true, sample, true)
+    giveSeeds(run, [])
+  }
+
+  /**
+   * The seeds of moments that the sweep has not reached (a preview of them): each object at the two times of its schedule around each
+   * moment. They are seeds like the first ones, so the sweep compares with them when it gets there. The end state stays, and so do the
+   * label places: the sweep finds them at its own times, as with no preview. Returns null, or { error, at } when a recipe threw at time
+   * at: what ran before that still goes to the board, and the sweep goes on.
+   */
+  const seedsAt = (asked) => {
+    const around = [...asked].sort((p, q) => p - q)
+    const due = sweep.runs.map((run) => timesAround(run.times, around, new Set()))
+    const moments = [...new Set(due.flatMap((times) => [...times]))].sort((p, q) => p - q)
+    const fresh = sweep.runs.map(() => [])
+    const places = [labelAnchor, labelChoice].map((map) => [map, [...map]])
+    let failed = null
+    try {
+      for (const t of moments) {
+        try {
+          sweep.runs.forEach((run, i) => due[i].has(t) && !run.seeds.has(t) && seedOne(run, t) && fresh[i].push(run.seeds.get(t)))
+        } catch (error) {
+          failed = { error, at: t }
+          break
+        }
+      }
+    } finally {
+      for (const [map, entries] of places) {
+        map.clear()
+        for (const [key, value] of entries) map.set(key, value)
+      }
+    }
+    sweep.runs.forEach((run, i) => fresh[i].length && giveSeeds(run, fresh[i]))
+    return failed
   }
 
   /** A sample that stays. An object with one kept sample does not change and sends none, so the first sample waits for a second. */
@@ -2952,7 +2997,7 @@
     const stepEnds = steps.map((entry) => entry.at - 0.001).sort((p, q) => p - q)
     const due = sweep.runs.map((run) => seedTimes(run.times, stepEnds))
     const moments = [...new Set(due.flatMap((times) => [...times]))].sort((p, q) => p - q)
-    for (const t of moments) sweep.runs.forEach((run, i) => due[i].has(t) && seedOne(run, t))
+    for (const t of moments) sweep.runs.forEach((run, i) => due[i].has(t) && (run.final = seedOne(run, t) ?? run.final))
     sweep.runs.forEach(keepSeeds)
   }
 
@@ -3220,7 +3265,7 @@
   /** The program's parallel work failed (an async function in all() or a say() mark): its error, at once. */
   const failed = () => (asyncErrors.length ? { error: asyncErrors[0] } : null)
   if (!giveHost) throw new Error('The stage has no host')
-  giveHost(Object.freeze({ begin, advance, end, failed, seeds, result, sample, stepping, bake, stats, keys, range }))
+  giveHost(Object.freeze({ begin, advance, end, failed, seeds, result, sample, seedsAt, stepping, bake, stats, keys, range }))
 
   // ---------- Lock the stage ----------
   // Every program of a board runs in this one realm. So that no program can

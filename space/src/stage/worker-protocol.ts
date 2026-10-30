@@ -1,4 +1,4 @@
-import type { FramesChunk } from '../shared/frames'
+import type { FramesChunk, MomentsAnswer } from '../shared/frames'
 import type { StageProgram } from '../shared/scene-program'
 import type { StageMode, StageReply, StageSwept } from '../shared/stage-protocol'
 
@@ -28,6 +28,8 @@ export const BRIDGE_CHUNK = 1024 * 1024
 export type ToWorker =
   | { t: 'init'; fontText: string; noCodeItems: boolean; noHtml: boolean; bridge: SharedArrayBuffer }
   | { t: 'run'; id: number; program: StageProgram; ctxText: string; mode: StageMode }
+  /** A preview's moments past what the sweep of program id has reached. */
+  | { t: 'moments'; id: number; ask: number; times: number[] }
 
 export type FromWorker =
   /** The scene library is loaded and the context is locked. */
@@ -41,3 +43,5 @@ export type FromWorker =
   | { t: 'more' }
   /** A chunk of frames of program id (shared/frames.ts); its buffers are transferred. */
   | (Omit<FramesChunk, 't' | 'job'> & { t: 'frames'; id: number })
+  /** The moments of an ask have gone as frames, or failed. */
+  | (Omit<MomentsAnswer, 'job'> & { id: number })

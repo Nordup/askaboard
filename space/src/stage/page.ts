@@ -1,4 +1,4 @@
-import { chunkBytes, FRAMES_VERSION, type FramesChunk } from '../shared/frames'
+import { chunkBytes, FRAMES_VERSION, type FramesChunk, type MomentsAnswer, type MomentsFailure } from '../shared/frames'
 import type { StageProgram } from '../shared/scene-program'
 import { parseReply, parseSwept, parseToStage, refusedHostId, refusedId, STAGE_LIMITS, type FromStage, type StageReply, type StageSwept, type ToStage } from '../shared/stage-protocol'
 import { BRIDGE_CHUNK, BRIDGE_HEADER, type FromWorker, type ToWorker } from './worker-protocol'
@@ -92,7 +92,7 @@ function refused(data: unknown): void {
 function linkFrames(next: MessagePort): void {
   frames?.close()
   frames = next
-  frames.onmessage = (incoming) => onAck(incoming.data)
+  frames.onmessage = (incoming) => onBoard(incoming.data)
   const run = current?.run
   if (current && run && current.streamed) {
     stop()
@@ -101,10 +101,19 @@ function linkFrames(next: MessagePort): void {
   send({ t: 'linked' })
 }
 
-/** The board acknowledges a chunk: its bytes go back to the worker's credit; the held reply goes once every chunk is acknowledged. */
-function onAck(data: unknown): void {
+/**
+ * A message of the board. A preview's moments go to the worker (a run that ended has them, or the board's job ended with it).
+ * An acknowledged chunk: its bytes go back to the worker's credit; the held reply goes once every chunk is acknowledged.
+ */
+function onBoard(data: unknown): void {
   if (typeof data !== 'object' || data === null) return
   const m = data as Record<string, unknown>
+  if (m.t === 'moments') {
+    if (typeof m.job === 'number' && typeof m.ask === 'number' && Array.isArray(m.times) && m.times.every(Number.isFinite) && current?.run?.id === m.job) {
+      current.worker.postMessage({ t: 'moments', id: m.job, ask: m.ask, times: m.times as number[] } satisfies ToWorker)
+    }
+    return
+  }
   if (m.t !== 'ack' || typeof m.job !== 'number' || typeof m.seq !== 'number') return
   const context = current
   if (!context || !context.run || context.run.id !== m.job) return
@@ -259,6 +268,10 @@ function fromWorker(context: Context, data: unknown, started: number): void {
       frames.postMessage(chunk, [message.u32.buffer, message.f64.buffer])
       return
     }
+    case 'moments':
+      // Behind the chunks of its seeds, on the same port.
+      if (context.run?.id === message.id) frames?.postMessage({ t: 'moments', job: message.id, ask: message.ask, failure: message.failure } satisfies MomentsAnswer)
+      return
     case 'parse-error': {
       const run = context.run
       if (!run || run.id !== message.id) return
@@ -332,6 +345,14 @@ function parseFromWorker(value: unknown): FromWorker | null {
       return parseReply(value) as StageReply | null
     case 'swept':
       return parseSwept(value)
+    case 'moments': {
+      const failure = m.failure as Partial<MomentsFailure> | null
+      const ok =
+        typeof m.id === 'number' &&
+        typeof m.ask === 'number' &&
+        (failure === null || (typeof failure === 'object' && typeof failure.error === 'string' && (failure.line === null || typeof failure.line === 'number') && (failure.file === null || typeof failure.file === 'string') && typeof failure.at === 'number'))
+      return ok ? { t: 'moments', id: m.id as number, ask: m.ask as number, failure: failure && { error: (failure.error as string).slice(0, STAGE_LIMITS.error), line: failure.line as number | null, file: failure.file as string | null, at: failure.at as number } } : null
+    }
     case 'parse-error':
       return typeof m.id === 'number' && typeof m.error === 'string' && typeof m.ms === 'number' ? { t: 'parse-error', id: m.id, error: m.error.slice(0, STAGE_LIMITS.error), ms: m.ms } : null
     case 'host':

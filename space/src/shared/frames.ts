@@ -21,6 +21,11 @@
  * gives lastChange: [sid, t] of each object with samples, the time of its last
  * sample that differs from the one before.
  *
+ * A preview past the coverage asks the stage for its moments (MomentsAsk, board →
+ * stage on this port). The worker runs them between two sweep batches, sends them
+ * as seed records, which can fall between earlier seeds, and answers (MomentsAnswer)
+ * on this port behind those records.
+ *
  * Format version 3. A chunk is { t: 'frames', v, job, seq, through, end, lastChange, u32, f64, strings }:
  *
  *   u32: record count, then per record: sid, kind (KIND_*), flags (FLAG_*),
@@ -82,6 +87,30 @@ export interface FramesChunk {
   u32: Uint32Array
   f64: Float64Array
   strings: string[]
+}
+
+/** A preview's moments past the coverage (board → stage). ask: its number on the board. */
+export interface MomentsAsk {
+  t: 'moments'
+  job: number
+  ask: number
+  times: number[]
+}
+
+/** A recipe threw at the scene time `at`, a moment that a preview asked for. */
+export interface MomentsFailure {
+  error: string
+  line: number | null
+  file: string | null
+  at: number
+}
+
+/** The moments of an ask are on the board, or the failure says why not (stage → board). */
+export interface MomentsAnswer {
+  t: 'moments'
+  job: number
+  ask: number
+  failure: MomentsFailure | null
 }
 
 /** The bytes a chunk holds (its arrays and its strings, two bytes per character). */

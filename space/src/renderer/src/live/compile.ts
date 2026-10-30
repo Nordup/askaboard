@@ -1,7 +1,7 @@
 import { ownSteps, stepAt } from '@shared/scene-story'
 import { isContent, isFrame, isInk, isKnown, newItemId, type BoardNode, type ContentNode, type FrameNode, type InkNode, type InkPoint, type LiveNode, type SvgNode, type TextNode } from '@shared/board-format'
 import { mulberry32, type SceneBounds, type SceneDescription, type SceneEase, type SceneGroupObject, type SceneHtmlObject, type SceneInkObject, type SceneLiveObject, type SceneObjectDesc, type ScenePartObject, type SceneSample, type SceneShapeObject, type SceneStep, type SceneStyle, type SceneTextObject } from '@shared/live-scene'
-import { splitPath, type FrameKind } from '@shared/frames'
+import { splitPath, type FrameKind, type MomentsFailure } from '@shared/frames'
 import { MAX_COORD } from '@shared/limits'
 import { flattenPath, parsePath, type PathSegment } from '@shared/path-geometry'
 import { polylineInk } from '@shared/ink-points'
@@ -135,8 +135,8 @@ export interface ScenePlay {
   quiet: PlayObject[]
   /** How far it can play now (scene time): every moment up to it is complete. Infinity for a complete scene. */
   ready: () => number
-  /** Resolves when ready() has reached t. */
-  reached: (t: number) => Promise<void>
+  /** Makes the given moments readable; a recipe's error at one of them, or null (frames.ts RunFrames). */
+  moments: (times: number[]) => Promise<MomentsFailure | null>
   /** Why its stream stopped before the end, or null. */
   stopped: () => StreamStop | null
 }
@@ -310,7 +310,7 @@ export interface DynFrames {
 }
 
 /** The stream of a run (frames.ts). */
-export type SceneStream = Pick<ScenePlay, 'ready' | 'reached' | 'stopped'>
+export type SceneStream = Pick<ScenePlay, 'ready' | 'moments' | 'stopped'>
 
 /** The live form of a changing object, on the live lists of its frames. */
 function playDyn(object: SceneObjectDesc, frames: DynFrames, duration: number): PlayDyn | undefined {
@@ -1109,7 +1109,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
   const removedAll = removed.size ? [...withDescendants(removed, s.index)].filter((id) => !rescued.has(id)).map((id) => s.index.byId.get(id) as BoardNode).filter(Boolean) : []
   return {
     next,
-    play: { id: sceneId, name, timeline, duration: desc.duration, steps: desc.steps, objects, ghosts, camera: desc.camera ?? [], pointer: desc.pointer ?? [], cues: desc.cues ?? [], ...(playEdits.length ? { edits: playEdits } : {}), ...(vanish.length ? { vanish } : {}), quiet, ready: stream?.ready ?? (() => Number.POSITIVE_INFINITY), reached: stream?.reached ?? (() => Promise.resolve()), stopped: stream?.stopped ?? (() => null) },
+    play: { id: sceneId, name, timeline, duration: desc.duration, steps: desc.steps, objects, ghosts, camera: desc.camera ?? [], pointer: desc.pointer ?? [], cues: desc.cues ?? [], ...(playEdits.length ? { edits: playEdits } : {}), ...(vanish.length ? { vanish } : {}), quiet, ready: stream?.ready ?? (() => Number.POSITIVE_INFINITY), moments: stream?.moments ?? (() => Promise.resolve(null)), stopped: stream?.stopped ?? (() => null) },
     inkGroups,
     contentIds: contentIds.filter((id) => !untouched.has(id)),
     centers,

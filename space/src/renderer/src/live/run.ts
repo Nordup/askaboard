@@ -1,4 +1,5 @@
 import { isContent, isInk, isLive, newItemId, type BoardNode, type ContentNode, type InkNode, type LiveNode } from '@shared/board-format'
+import type { MomentsFailure } from '@shared/frames'
 import type { DraftInfo, FrameMoment, FramePart, SceneContext, SceneDescription, SceneItem, SceneResult } from '@shared/live-scene'
 import { sceneSteps } from '@shared/live-scene'
 import type { BoardHandle } from '../board/Board'
@@ -14,7 +15,7 @@ import { inkIndexOf, liveSamples, nodeSig, scenePlayer, sceneFrame, type SceneFr
 import { apply, multiply, scaleOf } from './timeline'
 import type { Camera, Point } from '../board/types'
 import { clampZoom, glideCamera, inkBounds } from '../board/geometry'
-import type { LiveTimeline } from '../live-pixels/clock'
+import { tickOf, timeOfTick, type LiveTimeline } from '../live-pixels/clock'
 import type { LiveStillRequest } from '../live-pixels/stills'
 import { nodeSig as contentSig, stepAt, stepLines, type SceneSettle, type SceneStory, type StoryItem, type StoryRevert } from '@shared/scene-story'
 import { clearRestored, forgetRestored, restoredScene, setFailed, setRestored, type RestoredScene } from './rebuild'
@@ -1275,9 +1276,9 @@ function momentsOf(play: CompiledScene['play'], moments: FrameMoment[], what: st
  * compiles again when the board changed; nothing is committed) or of a committed scene of the stage
  * (args.sceneId, drawn as it was then over the board now) at the given
  * moments, of the given part of the board. The learner's board does not change. A time past what the
- * sweep has reached waits for the sweep; "end" and steps read the seeds and never wait.
+ * sweep has reached is seeded on demand, with no wait for the sweep; "end" and steps read the seeds.
  */
-export async function sceneFrames(ctx: RunSceneContext, args: Record<string, unknown>): Promise<FramesResult | DraftMissing | { pastCutoff: number }> {
+export async function sceneFrames(ctx: RunSceneContext, args: Record<string, unknown>): Promise<FramesResult | DraftMissing | { pastCutoff: number } | { momentFailed: MomentsFailure }> {
   const s = ctx.scene()
   const what = typeof args.label === 'string' ? args.label : 'the scene'
   let play: CompiledScene['play']
@@ -1304,7 +1305,9 @@ export async function sceneFrames(ctx: RunSceneContext, args: Record<string, unk
   }
   const asked = (args.moments as FrameMoment[] | undefined) ?? [{ kind: 'end' }]
   const moments = momentsOf(play, asked, what)
-  await play.reached(Math.max(0, ...asked.map((moment) => (moment.kind === 't' ? moment.t : 0))))
+  // A live item draws at its tick, which can be just before the moment.
+  const failed = await play.moments(asked.flatMap((moment) => (moment.kind === 't' ? [moment.t, timeOfTick(tickOf(moment.t))] : [])))
+  if (failed) return { momentFailed: failed }
   // The end is the committed state, so a stream that stopped still shows it. Any other moment past the cutoff does not exist.
   const stop = play.stopped()
   if (stop && moments.some((moment) => moment.t > stop.at && moment.t < play.duration)) return { pastCutoff: stop.at }

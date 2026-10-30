@@ -1,6 +1,6 @@
 import prelude from './live-prelude.js?raw'
 import { STAGE_LIMITS, type StageMode, type StageReply, type StageTiming } from '../shared/stage-protocol'
-import { chunkBytes, CREDIT_BYTES, FRAMES_VERSION, FrameEncoder } from '../shared/frames'
+import { chunkBytes, CREDIT_BYTES, FRAMES_VERSION, FrameEncoder, type MomentsFailure } from '../shared/frames'
 import { polylineInk } from '../shared/ink-points'
 import { flattenPath, parsePath } from '../shared/path-geometry'
 import { mulberry32, SCENE_EASES, trackNumber } from '../shared/live-scene'
@@ -44,9 +44,10 @@ import { BRIDGE_HEADER, type FromWorker, type ToWorker } from './worker-protocol
  * to the page, which passes them to the board. The worker waits while CREDIT_BYTES
  * of frames are on the way. The reply (the description without the samples)
  * comes last. A draft replies before the sweep (sweepOn): the sweep then runs
- * in batches, one tick each, and ends with a terminal message. A draft with a
- * stepping live item drains first, as a scene does. A rebuild (replay) does
- * not sample: it ends and bakes.
+ * in batches, one tick each, and ends with a terminal message. Between two
+ * batches a preview's moments run (moments). A draft with a stepping live item
+ * drains first, as a scene does. A rebuild (replay) does not sample: it ends and
+ * bakes.
  */
 
 interface WorkerScope {
@@ -67,6 +68,8 @@ interface Host {
   result(): string
   /** One batch of the sweep, until more() says stop. Null while moments are left, else what the stream's end says. */
   sample(more: () => boolean): { lastChange: Array<[number, number]>; orderDependent: string[]; logs: string[] } | null
+  /** Seeds at the given moments, while the sweep runs. An error of a recipe, with its time, or null. */
+  seedsAt(times: number[]): { error: unknown; at: number } | null
   /** The scene has an item that integrates its params, so its sweep drains before the reply. */
   stepping(): boolean
   bake(): void
@@ -105,6 +108,8 @@ let bridge: { state: Int32Array; bytes: Uint8Array } | null = null
 let host: Host | null = null
 /** While a program's seeds and sweep stream frames: where they go. */
 let frameSink: FrameStream | null = null
+/** The sweep after a draft's reply, while it runs. */
+let sweeping: { fns: Host; id: number; frames: FrameStream } | null = null
 /** The longest wait for the board to take frames (it acknowledges each chunk at once). */
 const CREDIT_WAIT_MS = 60_000
 /** One batch of a sweep after the reply. */
@@ -114,6 +119,7 @@ scope.addEventListener('message', (event) => {
   const message = event.data
   if (message.t === 'init') init(message)
   else if (message.t === 'run') run(message)
+  else if (message.t === 'moments') moments(message)
 })
 
 /**
@@ -419,7 +425,9 @@ function sweepOn(fns: Host, id: number, frames: FrameStream, started: number): v
   const done = (): void => {
     tick.port1.onmessage = null
     frameSink = null
+    sweeping = null
   }
+  sweeping = { fns, id, frames }
   tick.port1.onmessage = () => {
     try {
       const until = clock() + SWEEP_BATCH_MS
@@ -443,6 +451,28 @@ function sweepOn(fns: Host, id: number, frames: FrameStream, started: number): v
     }
   }
   tick.port2.postMessage(null)
+}
+
+/**
+ * A preview's moments, between two batches of the sweep: their seeds go to the board at once, then the answer. A sweep that ended
+ * has nothing to add: its end reached the board before this answer. A recipe's error goes to the preview, and the sweep goes on.
+ */
+function moments(message: Extract<ToWorker, { t: 'moments' }>): void {
+  let failure: MomentsFailure | null = null
+  if (sweeping?.id === message.id) {
+    let failed: { error: unknown; at: number } | null
+    try {
+      failed = sweeping.fns.seedsAt(message.times)
+      sweeping.frames.send(false)
+    } catch (error) {
+      failed = { error, at: message.times[0] }
+    }
+    if (failed) {
+      const { message: error, line, file } = describe(failed.error)
+      failure = { error: clip(error), line, file, at: failed.at }
+    }
+  }
+  post({ t: 'moments', id: message.id, ask: message.ask, failure })
 }
 
 /**
