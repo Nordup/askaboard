@@ -59,33 +59,47 @@ flowchart LR
 | `world/runtime` (worker) | The renderer, the frame loop, worlds, views, compositing | The clock rules of `runtime.ts` |
 | `world/look` (worker) | Environment light, floor with soft shadow and reflection, bloom, tone mapping | `film.js` |
 
-Each world runs in one realm with the others, as an async function with shadowed
-`requestAnimationFrame`, `setTimeout`, `performance`, `Date` and a seeded `Math`.
-All worlds share one `three` module, because they share one renderer.
+All worlds run in one realm and share one `three` module, because they share one
+renderer. A world's code is an async function. Inside the realm, `performance`,
+`Date`, `Math.random`, timers and `requestAnimationFrame` follow the world that is
+running at that moment, so imported libraries such as `THREE.Clock` get that
+world's time. After an `await` that link can be lost, so agents use `world.time`.
+
+Each world pass sets its own renderer state and restores it, also after an error:
+size, pixel ratio, exposure, tone mapping, shadows, render target and clearing.
 
 ## 3. One frame
+
+A review by GPT-6.1 Sol found that a message cannot prove which pixels are on
+screen. So the worker does not draw to a visible canvas. It sends each finished
+picture to the page, and the page shows it in its own paint.
 
 ```mermaid
 sequenceDiagram
   participant B as Board paint()
   participant S as WorldSurface
   participant W as Worker
-  B->>S: sync(camera, seq)
-  S->>S: read placeholder rects
-  S->>S: canvas transform = camera minus last rendered camera
-  S->>W: frame(seq, camera, placements)
-  W->>W: tick worlds due, on their own clocks
-  W->>W: for each world in view: render, post, composite
-  W->>S: rendered(seq, reach, points)
-  S->>S: last rendered camera = camera of seq
+  B->>S: sync(camera, placements)
+  S->>W: view(seq, camera, placements), when they changed
+  W->>W: tick the worlds that are due
+  W->>W: render worlds that changed, keep each output
+  W->>W: composite outputs in board order
+  W->>S: picture(n, seq, camera, bitmap, points)
+  S->>B: ask for a paint
+  B->>S: sync: adopt the bitmap, its transform and its points in this paint
+  S->>W: presented(n)
 ```
 
-- **In step with the board.** The transform and the board's own move happen in the
-  same paint, so the picture never trails the ink. A new frame then replaces it.
-- **Overscan.** The canvas is larger than the board by a margin on each side, so a
-  pan shows no empty edge before the next frame.
-- **On demand.** A frame renders only when a world runs, a value changes, or the
-  camera changes. A world outside the view does not tick unless its scene plays.
+- **In step with the ink.** The picture, its CSS transform and its points change in
+  the same main-thread paint as the ink. The transform is the current camera times
+  the inverse of the picture's camera, for pan and for zoom.
+- **One at a time.** The worker sends the next picture only after `presented`, so a
+  slow page gets fewer pictures, not late ones.
+- **Overscan.** The picture is larger than the board by a margin on each side, so a
+  pan shows no empty edge before the next picture.
+- **Tick and render are separate.** A camera move or a change in another world
+  composites again. It does not advance a paused world.
+- **On demand.** With nothing to tick and no change, nothing renders.
 
 ## 4. One world's view: no frame, no stretch
 
@@ -102,8 +116,17 @@ flowchart LR
   board's centre. `setViewOffset` shifts where that centre lands on the surface.
 - `o.size` is the nominal scale: the camera's view height at the target maps to
   that many board points. Anything outside it still draws.
-- Reach comes from `Box3.setFromObject` a few times per second, and `world.reach()`
-  can set it. It is padded, and it is never used as a visible edge.
+- `camera.aspect` is the nominal aspect. `setViewOffset(nominalW, nominalH, cropX,
+  cropY, cropW, cropH)` takes a crop that can pass the nominal rect, so the size of
+  a render target never changes the scale or the perspective.
+- Reach comes from the world's bounds, sampled often and padded. It grows at once
+  and shrinks slowly. `world.reach()` can set it, and `world.reach("full")` uses
+  the whole visible surface for shaders that move vertices. It is never a visible
+  edge. Culling uses reach, not the placeholder, so a world with an anchor outside
+  the view still shows what reaches into the view.
+- Tone mapping and colour output happen in the look's last pass. Bloom keeps real
+  alpha. The last pass writes premultiplied colour, and compositing uses
+  `ONE, ONE_MINUS_SRC_ALPHA`, with colour and alpha multiplied by world opacity.
 - Render targets come from a pool, in steps of 64 pixels.
 
 ## 5. Links
@@ -139,15 +162,19 @@ flowchart LR
 
 ## 6. Replay, preview and failure
 
-- **Replay.** Seek back restarts the world, as it restarts a `program`: the code
-  runs again with the same seed, and it catches up to the time.
+- **Replay.** Seek back makes a new generation of the world: the code runs again
+  with the same seed and catches up, unseen, while the old picture stays. Then the
+  page shows the new generation and removes the old one. Results that depend on
+  display intervals, the network or the learner's input keep the limits of
+  `clock.ts`.
 - **Preview and screenshots.** `withStepHost` makes a `WorldHost` with a private
   headless surface. So stills use the same runtime. A still can be larger than the
   placeholder, so `LiveFrame` gains the offset of the picture.
 - **Errors.** Each tick of a world runs in a try block. An error stops that world
   only and shows the usual note.
-- **Endless loops.** If the worker stops answering, the surface ends it, starts a
-  new one, adds all worlds again, and marks the world that was last ticking.
+- **Endless loops.** `pong` names the world that was running. If the worker stops
+  answering, the surface ends it, starts a new one, adds all worlds again, and
+  keeps the named world stopped with a note.
 - **Context loss.** The surface restarts the same way.
 
 ## 7. Build slices

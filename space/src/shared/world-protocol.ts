@@ -1,7 +1,6 @@
 // The contract between the page (WorldSurface) and the world worker, over one
 // MessagePort. See docs/learning-space/one-world-architecture.md.
-// Screen values are CSS pixels relative to the board element; the worker scales
-// them by dpr. Board values are board points.
+// Board values are board points. Pixels are device pixels of the surface.
 
 export interface WorldCamera {
   /** Board point at the board element's top-left corner. */
@@ -25,20 +24,34 @@ export interface WorldSceneView {
   step: string | null
 }
 
-/** Where a world sits: read from its placeholder in the same paint. */
-export interface WorldPlacement {
-  id: string
-  /** Screen rect of the placeholder. */
+/**
+ * One run of a world's code. A seek or a restart makes a new generation of the
+ * same node, and the old picture stays until the new one is shown.
+ */
+export interface WorldKey {
+  node: string
+  generation: number
+}
+
+/** The state of a world on the board, from its node and the playback overrides. */
+export interface WorldPlacement extends WorldKey {
+  /** The nominal rect in board points, before the transform. */
   x: number
   y: number
   w: number
   h: number
+  /** 2D affine [a, b, c, d, e, f], applied to the rect around its centre. */
+  matrix: [number, number, number, number, number, number]
   opacity: number
-  visible: boolean
+  /** Share of the world revealed by draw(), 0..1. */
+  reveal: number
+  /** Order on the board: a larger z is composited later. */
+  z: number
+  /** False while a new generation catches up: it ticks but shows nothing. */
+  shown: boolean
 }
 
-export interface WorldStart {
-  id: string
+export interface WorldStart extends WorldKey {
   code: string
   seed: number
   /** The nominal size in board points. */
@@ -54,34 +67,56 @@ export interface WorldStart {
 }
 
 export type PageToWorld =
-  | { type: 'init'; canvasW: number; canvasH: number; dpr: number; margin: number }
-  | { type: 'resize'; canvasW: number; canvasH: number; dpr: number }
-  /** Sent on every board paint. seq grows by one each time. */
+  /** width and height: board element in CSS pixels. margin: overscan in CSS pixels per side. */
+  | { type: 'init'; width: number; height: number; dpr: number; margin: number }
+  | { type: 'resize'; width: number; height: number; dpr: number }
+  /** Sent when the camera or a placement changes. seq grows by one each time. */
   | { type: 'view'; seq: number; camera: WorldCamera; placements: WorldPlacement[] }
+  /** The page showed picture n; the worker may send the next one. */
+  | { type: 'presented'; n: number }
   | { type: 'add'; world: WorldStart }
-  | { type: 'remove'; id: string }
-  | { type: 'clock'; id: string; clock: WorldClock; scene: WorldSceneView }
-  | { type: 'live'; id: string; clock: WorldClock; scene: WorldSceneView; params: Record<string, number> }
-  | { type: 'run'; id: string; on: boolean }
-  | { type: 'params'; id: string; params: Record<string, number> }
-  | { type: 'size'; id: string; w: number; h: number }
-  | { type: 'advance'; id: string; to: number; capture: boolean; request: number }
-  | { type: 'capture'; id: string; request: number }
+  | { type: 'remove'; key: WorldKey }
+  | { type: 'clock'; key: WorldKey; clock: WorldClock; scene: WorldSceneView }
+  | { type: 'live'; key: WorldKey; clock: WorldClock; scene: WorldSceneView; params: Record<string, number> }
+  | { type: 'run'; key: WorldKey; on: boolean }
+  | { type: 'params'; key: WorldKey; params: Record<string, number> }
+  | { type: 'size'; key: WorldKey; w: number; h: number }
+  | { type: 'advance'; key: WorldKey; to: number; capture: boolean; request: number }
+  | { type: 'capture'; key: WorldKey; request: number }
   | { type: 'ping'; n: number }
+
+/** A still of one world, larger than its nominal rect when it needs to be. */
+export interface WorldStill {
+  blob: Blob | null
+  /** Where the picture sits, in board points, from the nominal rect's top-left. */
+  x: number
+  y: number
+  w: number
+  h: number
+}
 
 export type WorldToPage =
   | { type: 'ready' }
-  | { type: 'pong'; n: number }
-  /** The frame on screen now was rendered for view seq. */
-  | { type: 'rendered'; seq: number }
-  | { type: 'alive'; id: string; frames: number; tick: number }
-  | { type: 'progress'; id: string; tick: number }
-  | { type: 'at'; id: string; request: number; tick: number }
-  /** dx, dy: where the picture's top-left sits from the placeholder's, in board points. */
-  | { type: 'frame'; id: string; request: number; tick: number; blob: Blob | null; dx: number; dy: number }
-  | { type: 'error'; id: string; message: string }
+  | { type: 'pong'; n: number; running: string | null }
+  /**
+   * One finished surface picture, transferred. The page shows it in one paint,
+   * together with its transform and its points, so everything stays in step.
+   */
+  | {
+      type: 'picture'
+      n: number
+      /** The view it was rendered for. */
+      seq: number
+      camera: WorldCamera
+      bitmap: ImageBitmap
+      /** Slice 2: board positions of published points, by node. */
+      points: Record<string, Record<string, [number, number, boolean]>>
+    }
+  | { type: 'alive'; key: WorldKey; frames: number; tick: number }
+  | { type: 'progress'; key: WorldKey; tick: number }
+  | { type: 'at'; key: WorldKey; request: number; tick: number }
+  | { type: 'frame'; key: WorldKey; request: number; tick: number; still: WorldStill }
+  | { type: 'error'; key: WorldKey; message: string }
   | { type: 'lost' }
-  | { type: 'input'; id: string; mode: 'none' | 'enter' | 'direct' }
-  | { type: 'report'; id: string; values: unknown }
-  /** Slice 2: board positions of published points, for one world. */
-  | { type: 'points'; id: string; seq: number; points: Record<string, [number, number, boolean]> }
+  | { type: 'input'; key: WorldKey; mode: 'none' | 'enter' | 'direct' }
+  | { type: 'report'; key: WorldKey; values: unknown }
