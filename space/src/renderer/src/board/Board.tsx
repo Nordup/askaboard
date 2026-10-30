@@ -34,6 +34,7 @@ import {
   inkOffset,
   inkPaintOrder,
   isFlowed,
+  shownNow,
   moveNodes,
   normalizeInk,
   outermost,
@@ -44,7 +45,8 @@ import {
   topLevelOf,
   zAbove,
   type LayoutMap,
-  type SceneIndex
+  type SceneIndex,
+  type Shown
 } from './scene'
 import type { BoardNode, Camera, ContentNode, InkNode, LayoutBox, Point, Region, TextNode } from './types'
 import './board.css'
@@ -336,6 +338,8 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const measureFrameRef = useRef<number | null>(null)
   /** Live-scene playback: the frame shown now, the ghost layer, and the elements it changed. */
   const playbackRef = useRef<PlaybackFrame | null>(null)
+  /** What the learner sees now: every learner input that picks or changes items asks it (scene.ts shownNow). */
+  const shown = useCallback<Shown>((node) => shownNow(node, indexRef.current.byId, playbackRef.current?.overrides ?? null), [])
   const ghostRootRef = useRef<HTMLDivElement>(null)
   const ghostElementsRef = useRef(new Map<string, HTMLElement>())
   const ghostNodesRef = useRef<readonly BoardNode[]>([])
@@ -753,7 +757,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       const radius = ERASE_RADIUS / cameraRef.current.zoom
       const layout = layoutRef.current
       const kept = nodesRef.current.filter((node) => {
-        if (!isInk(node)) return true
+        if (!isInk(node) || !shown(node)) return true
         const box = layout.get(node.id)
         const offset: Point = box ? [box.ox, box.oy] : inkOffset(node, indexRef.current.byId, layout)
         return !strokeHitByCircle(node, offset, point, radius)
@@ -764,7 +768,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         if (selectedIdsRef.current.length) setSelectedIds([])
       }
     },
-    [setNodes, setSelectedIds]
+    [setNodes, setSelectedIds, shown]
   )
 
   // ---------- Text editing ----------
@@ -903,7 +907,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const hitAt = (point: Point): BoardNode | null => {
     const index = indexRef.current
     const layout = layoutRef.current
-    return inkAt(index, layout, point, TAP_SIZE / cameraRef.current.zoom) ?? contentAt(index, layout, point)
+    return inkAt(index, layout, point, TAP_SIZE / cameraRef.current.zoom, shown) ?? contentAt(index, layout, point, shown)
   }
 
   // ---------- Pointer input ----------
@@ -952,7 +956,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     if (shouldPan) kind = 'pan'
     else if (penEraser || tool === 'eraser') kind = 'erase'
     else if (tool === 'text') {
-      const hit = contentAt(indexRef.current, layoutRef.current, startBoard)
+      const hit = contentAt(indexRef.current, layoutRef.current, startBoard, shown)
       if (hit && hit.kind === 'text' && !hit.locked) startEditing(hit.id)
       else createText(startBoard)
       event.preventDefault()
@@ -1192,11 +1196,12 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         const picked: string[] = []
         // Top-level content by box, ink anywhere by length; ink inside a picked frame moves with it.
         for (const node of index.children.get(ROOT) ?? []) {
-          if (!isContent(node)) continue
+          if (!isContent(node) || !shown(node)) continue
           const box = layout.get(node.id)
           if (box && regionInsidePolygon(box, polygon)) picked.push(node.id)
         }
         for (const node of inkPaintOrder(index)) {
+          if (!shown(node)) continue
           const box = layout.get(node.id)
           const offset: Point = box ? [box.ox, box.oy] : inkOffset(node, index.byId, layout)
           if (strokeInsidePolygon(node, offset, polygon)) picked.push(node.id)
@@ -1237,8 +1242,8 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     if (!host) return
     const point = screenToBoard(cssPoint(event, host.getBoundingClientRect()), viewportRef.current, cameraRef.current)
     const index = indexRef.current
-    if (inkAt(index, layoutRef.current, point, TAP_SIZE / cameraRef.current.zoom)) return
-    const hit = contentAt(index, layoutRef.current, point)
+    if (inkAt(index, layoutRef.current, point, TAP_SIZE / cameraRef.current.zoom, shown)) return
+    const hit = contentAt(index, layoutRef.current, point, shown)
     if (!hit) return
     const selected = selectedIdsRef.current.length === 1 ? index.byId.get(selectedIdsRef.current[0]) : undefined
     let target: BoardNode
@@ -1482,8 +1487,8 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
 
   const selectAll = useCallback(() => {
     if (editingRef.current) return
-    setSelectedIds((indexRef.current.children.get(ROOT) ?? []).map((node) => node.id))
-  }, [setSelectedIds])
+    setSelectedIds((indexRef.current.children.get(ROOT) ?? []).filter(shown).map((node) => node.id))
+  }, [setSelectedIds, shown])
 
   const applyAction = (action: BoardKeyAction): void => {
     const ids = [...selectedIdsRef.current]

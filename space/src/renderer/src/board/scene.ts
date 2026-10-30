@@ -1,5 +1,6 @@
 import { isContent, isFrame, isInk, isInkHost, isKnown, newItemId, parentKey, ROOT, type NodeStyle } from '@shared/board-format'
 import { inkBounds, inkLocalBounds, regionContains, strokeHitByCircle } from './geometry'
+import type { NodeOverride } from './playback'
 import type { BoardNode, ContentNode, InkNode, LayoutBox, Point, Region } from './types'
 
 /**
@@ -158,13 +159,35 @@ export function addInkLayout(index: SceneIndex, layout: LayoutMap): void {
 
 // ---------- Hit testing ----------
 
-/** The top-most ink under a point: pen above highlighter, later above earlier. */
-export function inkAt(index: SceneIndex, layout: ReadonlyMap<string, LayoutBox>, point: Point, radius: number): InkNode | null {
+/** Whether the learner sees a node now (shownNow, bound to the board's playback frame). */
+export type Shown = (node: BoardNode) => boolean
+
+/**
+ * Whether the learner sees a node now. A scene that plays, is paused or waits
+ * for its next step keeps its later items on the board, hidden by the playback
+ * frame: an override with opacity 0 or with nothing drawn yet (reveal 0).
+ * Every learner input that picks or changes items (erase, click, lasso, text
+ * tool, select all) asks this, so no tool acts on what does not show. Content
+ * also hides with a hidden ancestor (CSS opacity); ink paints on its own canvas,
+ * where only its own override counts. null overrides: no scene plays.
+ */
+export function shownNow(node: BoardNode, byId: ReadonlyMap<string, BoardNode>, overrides: ReadonlyMap<string, NodeOverride> | null): boolean {
+  if (!overrides?.size) return true
+  const hidden = (id: string): boolean => {
+    const override = overrides.get(id)
+    return !!override && ((override.opacity !== undefined && override.opacity <= 0) || (override.reveal !== undefined && override.reveal <= 0))
+  }
+  if (hidden(node.id)) return false
+  return isInk(node) || !ancestorIds(node, byId).some(hidden)
+}
+
+/** The top-most ink under a point that shows now: pen above highlighter, later above earlier. */
+export function inkAt(index: SceneIndex, layout: ReadonlyMap<string, LayoutBox>, point: Point, radius: number, shown: Shown): InkNode | null {
   const strokes = inkPaintOrder(index)
   for (const tool of ['pen', 'highlighter'] as const) {
     for (let i = strokes.length - 1; i >= 0; i--) {
       const stroke = strokes[i]
-      if (stroke.tool !== tool) continue
+      if (stroke.tool !== tool || !shown(stroke)) continue
       const box = layout.get(stroke.id)
       const offset: Point = box ? [box.ox, box.oy] : inkOffset(stroke, index.byId, layout)
       if (strokeHitByCircle(stroke, offset, point, radius)) return stroke
@@ -173,12 +196,12 @@ export function inkAt(index: SceneIndex, layout: ReadonlyMap<string, LayoutBox>,
   return null
 }
 
-/** The deepest, top-most content node whose box contains the point. */
-export function contentAt(index: SceneIndex, layout: ReadonlyMap<string, LayoutBox>, point: Point): ContentNode | null {
+/** The deepest, top-most content node that shows now and whose box contains the point. */
+export function contentAt(index: SceneIndex, layout: ReadonlyMap<string, LayoutBox>, point: Point, shown: Shown): ContentNode | null {
   const order = contentPaintOrder(index)
   for (let i = order.length - 1; i >= 0; i--) {
     const node = order[i]
-    if (node.style.display === 'none') continue
+    if (node.style.display === 'none' || !shown(node)) continue
     const box = layout.get(node.id)
     if (box && regionContains(box, point)) return node
   }
