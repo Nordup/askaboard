@@ -173,6 +173,10 @@ voice, and the founder brought the old text back (I25).
 - **Describe only what exists.** "Nothing checks the layout" and "no warning
   reports them" spoke to an agent that knew the old warnings. A new agent does
   not need them.
+- **Leave out how the app works.** If the agent would not do anything
+  differently after it reads a sentence, the sentence does not go in. Most such
+  sentences answer a question that we had while we built a feature. Keep the
+  fact, and drop the mechanism (founder, 2026-10-31).
 - **Keep each fact in one place.** The guide holds the details, and a
   description names the guide topic.
 - **Write the draft in `drafts/<name>-<date>/`.** Do not edit the live files

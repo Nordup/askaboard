@@ -1013,7 +1013,7 @@ export class AgentServer {
       if (boardChanged()) {
         // Another board is shown now: it is not touched. The board of the restage keeps what it got (it was saved as it was), and so does its record.
         await record()
-        return failure(new Error(`The board changed while the scene "${label}" ran again, so the restage stopped there.`))
+        return failure(new Error(`The board changed while the scene "${label}" ran again, so it stopped there.`))
       }
       // The scenes stay as they were (a scene that has played is not played again).
       await restore()
@@ -1129,7 +1129,7 @@ Use it when you start work on a board, and whenever you need ids, sizes or free 
 - query searches the text on the open board: text, ${htmlMaterial('HTML material, ')}names, and the names and lines of the board's scenes. Handwriting is not text: read it with get_screenshot.
 - The last line names the calls that show more.
 - Coordinates are board points: origin at the centre, +x right, +y down.
-- How the app groups strokes into ink groups, and how their ids behave, is in get_guide topic "model".`,
+- Ink groups and their ids: get_guide topic "model".`,
         inputSchema: strictInput('list_items', {
           part: z
             .union(partForms)
@@ -1243,7 +1243,7 @@ Use it to learn what the learner did since you last looked. It returns no image;
 - since: 0 covers everything on the board now, and the items whose removal the app still knows.
 - The list includes your own writes; by tells them apart from the learner's.
 - change says what happened to the item since your last look: added, restored (it was on the board before, was removed, and is back with the same id, by undo, redo or paste), moved (offset: dx, dy in board points), resized, edited (its content), changed (anything else, or not known), or unchanged (changed and changed back).
-- Board news: when the learner drew, erased, added, restored, moved, resized, edited or deleted something since your app's last look or last board news, the next result of any tool starts with a "Board news" line that names each change: strokes by ink group and place, other items by kind and name, with the offset of a move and the new bounds. Each change is in the news once, kept per agent app and board across connections.`,
+- Board news: when the learner drew, erased, added, restored, moved, resized, edited or deleted something since your app's last look or last board news, the next result of any tool starts with a "Board news" line that names each change: strokes by ink group and place, other items by kind and name, with the offset of a move and the new bounds. Each change is in the news once.`,
         inputSchema: strictInput('get_changes', {
           since: z.union([z.number().int().min(0), z.string().regex(/^c\d+$/, 'since is a look such as "c336" or the number 336.')]).optional().describe('A look to compare against instead of your last look, such as "c336" or 336; 0 covers everything on the board now.'),
           changes: z.string().min(1).optional().describe('An interval from an earlier result, such as "c115-c1115".'),
@@ -1540,7 +1540,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
         return text(
           json({
             draft: name,
-            ...(replaces ? { replaces: `the scene "${name}" on the board: this draft ran at that scene's place on the stage, and play_scene start replaces it in place` } : {}),
+            ...(replaces ? { replaces: `the scene "${name}" on the board: play_scene start replaces it in place` } : {}),
             ...(before ? { changed: 'the earlier version of this draft' } : {}),
             length_s: info.duration_s,
             steps: info.steps,
@@ -1560,8 +1560,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
         title: 'Preview a scene',
         description:
           "Shows you a scene as one image: a draft from write_scene, or a scene already on the board. Nothing is drawn or committed, and the learner sees nothing.\n\nUse it to check a scene before the learner sees it. You can look at its end, at any step or at any moment, and close up on one part, so that text a line runs through, text over text, or something outside the learner's view is caught before the scene plays. To see the board itself as it is now, with the learner's ink, use get_screenshot.\n\n- at chooses the moments. \"end\" (default) is the end of the scene. {step: 3} or {step: \"step name\"} is the end of that step. {time_s: 12.5} is that many seconds from the scene's start. \"steps\" is the end of every step. A list gives up to 12 moments, for example [{step: 2}, {time_s: 20}, \"end\"].\n- part chooses what the image frames. \"scene\" (default) is everything the scene makes or touches. \"view\" is the learner's current view. {region: {x, y, width, height}} is a region in board points. {items: [...]} is a close-up of one or more items: object names from the program, item ids, or ink group ids.\n- One moment gives a large image (up to 1024 px on its longer side), which shows small text. Several moments give one grid of labelled frames.\n- The scene is drawn over the board as it is now. Each frame outlines the learner's view at that moment, and dims and tags the parts of it that the script panel and the tool palette hide." +
-          codeItems(" Code items compute up to each moment.") +
-          "\n- version \"board\" shows the scene on the board when a draft of the same name also exists. The default is the draft when there is one, else the scene on the board.\n- A scene on the board shows its items as they were at each moment.\n- When the board or the stage changed since write_scene, the draft runs again with the same seed before the pictures (ran_again says why).\n\nReturns the image and JSON: scene, version (\"draft\" or \"board\"), ran_again, length_s, and frames ([{frame, t_s, label}]).\n\nErrors: an unknown name lists the drafts and the scenes on the board; an unknown step lists the steps; a time after the end gives the scene's length.",
+          "\n- version \"board\" shows the scene on the board when a draft of the same name also exists. The default is the draft when there is one, else the scene on the board.\n- A scene on the board shows its items as they were at each moment.\n\nReturns the image and JSON: scene, version (\"draft\" or \"board\"), ran_again, length_s, and frames ([{frame, t_s, label}]).\n\nErrors: an unknown name lists the drafts and the scenes on the board; an unknown step lists the steps; a time after the end gives the scene's length.",
         inputSchema: strictInput('preview_scene', {
           name: z.string().min(1).max(MAX_NAME_CHARS).describe('The scene name: a draft or a scene on the board.'),
           at: z
@@ -2118,7 +2117,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
             const known = await control({ action: 'known', scene: sceneId })
             if (!known.known) {
               return failure(
-                new Error(`The scene "${name}" on the board can no longer be replaced: the board's player no longer holds it (the window reloaded or the board was opened again). Nothing was drawn, and the draft is kept. Give the new version another name with write_scene, and remove the old items in its program if they must go.`)
+                new Error(`The scene "${name}" on the board can no longer be replaced. Nothing was drawn, and the draft is kept. Give the new version another name with write_scene, and remove the old items in its program if they must go.`)
               )
             }
             const status = await control({ action: 'status' })

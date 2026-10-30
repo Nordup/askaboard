@@ -4,7 +4,7 @@ Looking at the board:
 - list_items lists what is on the board: its items, their ids and places, and the learner's view. get_screenshot shows any part of the board as an image. get_changes tells what is new since you last looked. get_item gives the exact values of items.
 - list_boards lists and searches the other boards of the learning folder. open_board opens one for both of you, or makes a new one.
 - The learner's handwriting is grouped into ink groups (g1, g2, …), which work like item ids.
-- When the learner changed something on the board since your last look, the next tool result starts with a "Board news" line that says what and where. With the plugins, a hook also adds it before each prompt.
+- When the learner changed something on the board since your last look, the next tool result starts with a "Board news" line that says what and where.
 
 Writing on the board:
 - Everything you put on the board goes through a scene (write_scene): a JavaScript program that draws, writes and changes items in front of the learner once play_scene "start" plays it. Write the program as a file in boards/scenes/ of the learning folder: a change then costs only the change, and later scenes can import its parts. preview_scene shows you a scene before the learner sees it, and play_scene also controls playback.

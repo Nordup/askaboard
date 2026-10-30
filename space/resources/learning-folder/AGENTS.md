@@ -15,7 +15,7 @@ This folder is a personal learning repository. One person learns here with you o
 | `materials/` | Sources and readings: files, and `materials/sources.md` with links and one line on each. | You, when you use a source. |
 | `boards/` | Learning Space boards. | The app. |
 | `boards/scenes/` | Scene programs as JavaScript files, and the library of components that they import (`lib/`). Build on them from session to session. | You. |
-| `assets/` | Images placed on boards. The app creates it when the first image is added. | The app. |
+| `assets/` | Images placed on boards. | The app. |
 
 Create a folder or file from this table when you first need it.
 
