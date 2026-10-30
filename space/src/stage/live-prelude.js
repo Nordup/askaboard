@@ -14,8 +14,8 @@
  * drives the clock (it lets every pending job run, then calls fns.advance()
  * until it returns false; a program that fails, or fns.failed(), ends it at
  * once), calls fns.end(), and then, not for a rebuild, fns.seeds(), reads
- * fns.result() (the description) and calls fns.sample() (the sweep), and calls fns.bake() (not for
- * a draft), which turns the end of this scene into the start of the next one.
+ * fns.result() (the description) and calls fns.sample(more) (the sweep, one batch per call), and calls
+ * fns.bake() (not for a draft), which turns the end of this scene into the start of the next one.
  *
  * A program only builds data: objects and a timeline. Nothing here draws.
  * Each scene has its own time, from 0. Objects of earlier scenes are on the
@@ -2791,19 +2791,29 @@
     if (giveThrough) giveThrough(t)
   }
 
-  /** Run the sweep to its end. Returns each changing object's last-change time ([stage id, t]) and the objects that depend on call order. */
-  const sample = () => {
+  /**
+   * One batch of the sweep: moments until more() says stop. A moment is always whole. Returns null while moments are left; at the
+   * end, each changing object's last-change time ([stage id, t]) and the objects that depend on call order.
+   */
+  const sample = (more) => {
     finalSampling = true
     sampleMemo.clear()
-    while (sweep.next < sweep.moments.length) sampleMoment()
-    finalSampling = false
-    sampleMemo.clear()
+    try {
+      while (sweep.next < sweep.moments.length && more()) sampleMoment()
+    } finally {
+      finalSampling = false
+      sampleMemo.clear()
+    }
+    if (sweep.next < sweep.moments.length) return null
     if (giveThrough) giveThrough(f3(endTime))
     return {
       lastChange: sweep.runs.filter((run) => run.kept > 1).map((run) => [run.entry.id, run.lastChange]),
       orderDependent: sweep.runs.filter((run) => run.orderDependent).map((run) => shortName(run.entry))
     }
   }
+
+  /** A canvas or program item with changing params integrates them, moment by moment: its scene drains before the reply. */
+  const stepping = () => sweep.runs.some((run) => run.entry.kind === 'live' && run.entry.mode !== 'shader')
 
   const shortName = (e) => `${e.api} ${e.id}${e.name ? ` "${e.name}"` : ''}`
   const who = (e) => {
@@ -3206,7 +3216,7 @@
   /** The program's parallel work failed (an async function in all() or a say() mark): its error, at once. */
   const failed = () => (asyncErrors.length ? { error: asyncErrors[0] } : null)
   if (!giveHost) throw new Error('The stage has no host')
-  giveHost(Object.freeze({ begin, advance, end, failed, seeds, result, sample, bake, stats, keys, range }))
+  giveHost(Object.freeze({ begin, advance, end, failed, seeds, result, sample, stepping, bake, stats, keys, range }))
 
   // ---------- Lock the stage ----------
   // Every program of a board runs in this one realm. So that no program can

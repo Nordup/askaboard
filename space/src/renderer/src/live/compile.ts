@@ -40,13 +40,13 @@ export interface DynSample {
   params?: Record<string, number>
 }
 
-/** How a changing object shows over time. Before `end`, the samples hold; after it, the committed node shows. */
+/** How a changing object shows over time. Before `end`, the samples hold; after it, the committed node shows. Its lists are live while the stream is open. */
 export interface PlayDyn {
   kind: 'shape' | 'ink' | 'text' | 'live'
   /** Read past what the sweep has reached (player.ts liveSamples). */
   seeds: DynSample[]
   samples: DynSample[]
-  /** The time of its last change. */
+  /** The time of its last change: the scene's duration until the stream's end says (frames.ts endJob). */
   end: number
   /** The bounds of the end state (the committed node). */
   finalBounds: SceneBounds
@@ -130,9 +130,16 @@ export interface ScenePlay {
   hidden?: string[]
   /** Ghosts of items that html() replaces: they show until `at`, when the new material appears. */
   vanish?: Array<{ ids: string[]; at: number }>
+  /** Objects that make nothing in this scene and show only if the sweep gives them samples (`unchanged`). They join the look of the scene (allObjects), not its items. */
+  quiet: PlayObject[]
   /** How far it can play now (scene time): every moment up to it is complete. Infinity for a complete scene. */
   ready: () => number
+  /** Resolves when ready() has reached t. */
+  reached: (t: number) => Promise<void>
 }
+
+/** Every object that can show in a play. */
+export const allObjects = (play: ScenePlay): PlayObject[] => (play.quiet.length ? [...play.objects, ...play.quiet] : play.objects)
 
 /** What a scene's commit changed, to undo it when a queued scene is skipped. */
 export interface SceneRevert {
@@ -296,30 +303,35 @@ export interface DynFrames {
   seeds: DynSample[]
   samples: DynSample[]
   lastChange: number
+  dyns: PlayDyn[]
 }
 
-/** The live form of a changing object (from its frames), as the player shows it. An object with no samples to play has none. */
-function playDyn(object: SceneObjectDesc, { seeds, samples, lastChange }: DynFrames): PlayDyn | undefined {
-  if (!samples.length) return undefined
+/** The stream of a run (frames.ts). */
+export type SceneStream = Pick<ScenePlay, 'ready' | 'reached'>
+
+/** The live form of a changing object, on the live lists of its frames. */
+function playDyn(object: SceneObjectDesc, frames: DynFrames, duration: number): PlayDyn | undefined {
   const kind = object.kind === 'shape' || object.kind === 'ink' || object.kind === 'text' || object.kind === 'live' ? object.kind : null
   if (!kind) return undefined
-  return {
+  const dyn: PlayDyn = {
     kind,
-    seeds,
-    samples,
-    end: lastChange,
+    seeds: frames.seeds,
+    samples: frames.samples,
+    end: Math.min(frames.lastChange, duration),
     finalBounds: object.bounds,
     centered: object.kind === 'text' && !!(object as SceneTextObject).center
   }
+  frames.dyns.push(dyn)
+  return dyn
 }
 
-/** The frames of an object of the description, or undefined when it has none. */
+/** The frames of an object of the description, or undefined when it can have no samples to play. */
 export type DynLookup = (object: SceneObjectDesc) => DynFrames | undefined
 
 /** Where the stage's objects are on the board: stage object id → its node ids and ink group (run.ts keeps this record). */
 export type StageLookup = (sid: number) => { nodeIds: string[]; group?: string } | undefined
 
-export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, name: string | null = null, stage?: StageLookup, dynOf?: DynLookup): CompiledScene {
+export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, name: string | null = null, stage?: StageLookup, dynOf?: DynLookup, stream?: SceneStream): CompiledScene {
   const nodeColor = (object: SceneObjectDesc): string | undefined => {
     if (object.kind !== 'node') return undefined
     const ids = refIds(s, object.ref)
@@ -443,7 +455,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
   for (const object of desc.objects) {
     if (object.kind === 'group') continue
     const frames = object.dynamic ? dynOf?.(object) : undefined
-    if (object.unchanged && !frames?.samples.length) continue
+    if (object.unchanged && !frames) continue
     const end = timeline.matrix(object.id, END)
     let prior: string[] | null = null
     let priorGroup: string | undefined
@@ -458,7 +470,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
       priorGroup = record?.group
       if (object.unchanged) for (const id of present) untouched.add(id)
     }
-    const isRemoved = object.removed || timeline.number(object.id, 'opacity', END) < 0.02
+    const isRemoved = !object.unchanged && (object.removed || timeline.number(object.id, 'opacity', END) < 0.02)
     const play: PlayObject = {
       id: object.id,
       targets: [],
@@ -468,10 +480,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
       tipColor: '#ececef',
       drawn: timeline.hasTrack(object.id, 'draw')
     }
-    if (frames) {
-      play.dyn = playDyn(object, frames)
-      if (play.dyn) play.settled = Math.max(play.settled, play.dyn.end)
-    }
+    if (frames) play.dyn = playDyn(object, frames, desc.duration)
     objects.push(play)
     const out = isRemoved ? ghosts : created
 
@@ -1073,6 +1082,12 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
     changed.delete(id)
     removed.delete(id)
   }
+  // An `unchanged` object is not an item of this scene: it stays in the play's look only.
+  const quiet = objects.filter((play) => desc.objects[play.id].unchanged)
+  for (const play of quiet) {
+    objects.splice(objects.indexOf(play), 1)
+    nodesOf.delete(play.id)
+  }
 
   // The board after the scene: existing nodes changed or removed, then the new ones on top.
   let next: BoardNode[] = s.nodes.map((node) => changed.get(node.id) ?? node)
@@ -1091,9 +1106,9 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
   const removedAll = removed.size ? [...withDescendants(removed, s.index)].filter((id) => !rescued.has(id)).map((id) => s.index.byId.get(id) as BoardNode).filter(Boolean) : []
   return {
     next,
-    play: { id: sceneId, name, timeline, duration: desc.duration, steps: desc.steps, objects, ghosts, camera: desc.camera ?? [], pointer: desc.pointer ?? [], cues: desc.cues ?? [], ...(playEdits.length ? { edits: playEdits } : {}), ...(vanish.length ? { vanish } : {}), ready: () => Number.POSITIVE_INFINITY },
+    play: { id: sceneId, name, timeline, duration: desc.duration, steps: desc.steps, objects, ghosts, camera: desc.camera ?? [], pointer: desc.pointer ?? [], cues: desc.cues ?? [], ...(playEdits.length ? { edits: playEdits } : {}), ...(vanish.length ? { vanish } : {}), quiet, ready: stream?.ready ?? (() => Number.POSITIVE_INFINITY), reached: stream?.reached ?? (() => Promise.resolve()) },
     inkGroups,
-    contentIds,
+    contentIds: contentIds.filter((id) => !untouched.has(id)),
     centers,
     frames,
     nodesOf,

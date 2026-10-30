@@ -1,6 +1,6 @@
 import { chunkBytes, FRAMES_VERSION, type FramesChunk } from '../shared/frames'
 import type { StageProgram } from '../shared/scene-program'
-import { parseReply, parseToStage, refusedHostId, refusedId, STAGE_LIMITS, type FromStage, type StageReply, type ToStage } from '../shared/stage-protocol'
+import { parseReply, parseSwept, parseToStage, refusedHostId, refusedId, STAGE_LIMITS, type FromStage, type StageReply, type StageSwept, type ToStage } from '../shared/stage-protocol'
 import { BRIDGE_CHUNK, BRIDGE_HEADER, type FromWorker, type ToWorker } from './worker-protocol'
 
 /**
@@ -18,8 +18,12 @@ import { BRIDGE_CHUNK, BRIDGE_HEADER, type FromWorker, type ToWorker } from './w
  * the board renderer (main/live-scene.ts links them). The page passes each
  * chunk on (its buffers transferred), and gives the worker its bytes back
  * (the bridge's credit) when the board acknowledges the chunk. The reply of
- * a program waits until the board has acknowledged every chunk, so when the
- * main process has the reply, the board has the frames.
+ * a program waits until the board has acknowledged every chunk sent before
+ * it, so when the main process has the reply, the board has those frames.
+ *
+ * A draft's reply comes early: its run stays current until the sweep's
+ * terminal message ("swept" or a failed reply), so a host request of the sweep
+ * still works. "swept" waits for the acks in the same way.
  */
 
 interface Context {
@@ -34,11 +38,12 @@ interface Context {
   /** The host question the worker waits on now, and the rest of its answer. */
   hostId: number | null
   answer: { data: Uint8Array; at: number } | null
-  /** The frame chunks of the program that the board has not acknowledged yet (seq → bytes), and whether it sent any. */
+  /** The frame chunks of the program that the board has not acknowledged yet (seq → bytes), how many it did, and whether any was sent. */
   outstanding: Map<number, number>
+  acked: number
   streamed: boolean
-  /** The program's reply, held until the board has acknowledged every chunk. */
-  held: StageReply | null
+  /** The program's reply and the sweep's end, in order, each held until the board has acknowledged the chunks before it. */
+  held: Array<Extract<StageReply, { ok: true }> | StageSwept>
 }
 
 let port: MessagePort | null = null
@@ -108,12 +113,29 @@ function onAck(data: unknown): void {
   context.outstanding.delete(m.seq)
   Atomics.sub(context.state, 3, bytes)
   Atomics.notify(context.state, 3)
-  if (context.held && !context.outstanding.size) {
-    const reply = context.held
-    context.held = null
-    context.run = null
-    send(reply)
+  context.acked++
+  while (context.held.length && context.acked >= context.held[0].frames) release(context, context.held.shift() as Context['held'][number])
+}
+
+/** Give main a reply or the sweep's end. Only an early reply leaves the run current. */
+function release(context: Context, message: Context['held'][number]): void {
+  if (message.t === 'swept' || !message.sweeping) context.run = null
+  send(message)
+}
+
+/** Hold a reply or the sweep's end until the board has every chunk before it. The board acknowledges each chunk at once; a board that does not answer must not hold the stage. */
+function hold(context: Context, message: Context['held'][number], started: number): void {
+  const run = context.run
+  if (context.acked >= message.frames && !context.held.length) {
+    release(context, message)
+    return
   }
+  context.held.push(message)
+  setTimeout(() => {
+    if (current !== context || !context.held.includes(message) || context.run !== run) return
+    stop()
+    send({ t: 'reply', id: message.id, ok: false, error: 'The board did not take the frames of the scene.', line: null, file: null, ms: performance.now() - started })
+  }, HELD_REPLY_MS)
 }
 
 /** The board can drop the frames of a program that did not end well. */
@@ -137,7 +159,8 @@ function handle(message: ToStage): void {
       current.run = { id: message.id, program: message.program }
       current.streamed = false
       current.outstanding.clear()
-      current.held = null
+      current.acked = 0
+      current.held = []
       current.worker.postMessage({ t: 'run', id: message.id, program: message.program, ctxText: message.ctxText, mode: message.mode } satisfies ToWorker)
       return
     case 'answer':
@@ -162,7 +185,7 @@ function start(resetId: number): void {
   const started = performance.now()
   const bridge = new SharedArrayBuffer(BRIDGE_HEADER + BRIDGE_CHUNK)
   const worker = new Worker('worker.js', { name: 'stage' })
-  const context: Context = { worker, state: new Int32Array(bridge, 0, 4), bytes: new Uint8Array(bridge), ready: false, resetId, run: null, hostId: null, answer: null, outstanding: new Map(), streamed: false, held: null }
+  const context: Context = { worker, state: new Int32Array(bridge, 0, 4), bytes: new Uint8Array(bridge), ready: false, resetId, run: null, hostId: null, answer: null, outstanding: new Map(), acked: 0, streamed: false, held: [] }
   current = context
   worker.addEventListener('message', (event) => {
     if (current === context) fromWorker(context, event.data, started)
@@ -204,26 +227,23 @@ function fromWorker(context: Context, data: unknown, started: number): void {
     case 'failed':
       if (context.resetId === null) return
       context.ready = message.t === 'ready'
-      send(message.t === 'ready' ? { t: 'reply', id: context.resetId, ok: true, json: null, frames: 0, ms: performance.now() - started, timing: null, keys: null, range: null, orderDependent: [] } : { t: 'reply', id: context.resetId, ok: false, error: `The scene library failed to load: ${message.error}`, line: null, file: null, ms: performance.now() - started })
+      send(message.t === 'ready' ? { t: 'reply', id: context.resetId, ok: true, json: null, frames: 0, ms: performance.now() - started, timing: null, keys: null, range: null, orderDependent: [], sweeping: false } : { t: 'reply', id: context.resetId, ok: false, error: `The scene library failed to load: ${message.error}`, line: null, file: null, ms: performance.now() - started })
       context.resetId = null
       if (!context.ready) stop()
       return
     case 'reply':
       if (!context.run || context.run.id !== message.id) return
-      if (message.ok && context.outstanding.size) {
-        context.held = message
-        // The board acknowledges each chunk at once; a board that does not answer must not hold the stage.
-        const run = context.run
-        setTimeout(() => {
-          if (current !== context || context.held !== message || context.run !== run) return
-          stop()
-          send({ t: 'reply', id: message.id, ok: false, error: 'The board did not take the frames of the scene.', line: null, file: null, ms: performance.now() - started })
-        }, HELD_REPLY_MS)
+      if (message.ok) {
+        hold(context, message, started)
         return
       }
-      if (!message.ok) retire(context)
+      retire(context)
       context.run = null
+      context.held = []
       send(message)
+      return
+    case 'swept':
+      if (context.run?.id === message.id) hold(context, message, started)
       return
     case 'frames': {
       const run = context.run
@@ -310,6 +330,8 @@ function parseFromWorker(value: unknown): FromWorker | null {
       return typeof m.error === 'string' ? { t: 'failed', error: m.error.slice(0, STAGE_LIMITS.error) } : null
     case 'reply':
       return parseReply(value) as StageReply | null
+    case 'swept':
+      return parseSwept(value)
     case 'parse-error':
       return typeof m.id === 'number' && typeof m.error === 'string' && typeof m.ms === 'number' ? { t: 'parse-error', id: m.id, error: m.error.slice(0, STAGE_LIMITS.error), ms: m.ms } : null
     case 'host':

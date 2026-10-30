@@ -46,14 +46,15 @@ export function paramsAtTime(samples: readonly ParamSample[], t: number, gap: nu
   return out
 }
 
-const cache = new WeakMap<readonly { t: number; params?: Record<string, number> }[], ParamSample[]>()
+const cache = new WeakMap<readonly { t: number; params?: Record<string, number> }[], { read: number; out: ParamSample[] }>()
 
-/** The params samples of a live object's samples (compile.ts), made once per sample list. */
+/** The params samples of a live object's samples (compile.ts). One list per sample list: it grows as the samples of a stream arrive. */
 export function paramSamplesOf(samples: readonly { t: number; params?: Record<string, number> }[]): ParamSample[] {
-  let out = cache.get(samples)
-  if (!out) {
-    out = samples.filter((sample) => sample.params).map((sample) => [sample.t, sample.params] as ParamSample)
-    cache.set(samples, out)
+  let entry = cache.get(samples)
+  if (!entry) cache.set(samples, (entry = { read: 0, out: [] }))
+  for (; entry.read < samples.length; entry.read++) {
+    const sample = samples[entry.read]
+    if (sample.params) entry.out.push([sample.t, sample.params])
   }
-  return out
+  return entry.out
 }

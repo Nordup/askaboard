@@ -52,16 +52,27 @@ export type ToStage =
  * keys: the stage id and the scene-local key of each object the program made (null for a reset); a rebuild gives them to the board.
  * range: the stage ids the program took, [first, end) (null for a reset).
  * orderDependent: the objects whose recipe gave the sweep another result than its seed at the same moment.
+ * sweeping: a draft's early reply: its sweep goes on, and ends with "swept" or, when it fails, a failed reply with the same id.
  * An error's line is in the module file (a path in boards/scenes/), or in the inline code when file is null.
  */
 export type StageReply =
-  | { t: 'reply'; id: number; ok: true; json: string | null; frames: number; ms: number; timing: StageTiming | null; keys: Array<[number, string]> | null; range: [number, number] | null; orderDependent: string[] }
+  | { t: 'reply'; id: number; ok: true; json: string | null; frames: number; ms: number; timing: StageTiming | null; keys: Array<[number, string]> | null; range: [number, number] | null; orderDependent: string[]; sweeping: boolean }
   | { t: 'reply'; id: number; ok: false; error: string; line: number | null; file: string | null; ms: number }
+
+export interface StageSwept {
+  t: 'swept'
+  id: number
+  frames: number
+  ms: number
+  orderDependent: string[]
+}
 
 export type FromStage =
   /** The page has the port and waits for init. */
   | { t: 'ready' }
   | StageReply
+  /** The sweep after an early reply reached its end, and the board has every chunk (frames: how many). */
+  | StageSwept
   /** A program asks the board (JSON text: text sizes, html, space, item); the program waits until the answer comes. */
   | { t: 'host'; hid: number; text: string }
   /** The page has the frames port that main sent last (the port to the board). */
@@ -188,14 +199,14 @@ export function refusedHostId(value: unknown): number | null {
 export function parseReply(value: unknown): StageReply | null {
   if (!isShape(value) || value.t !== 'reply' || !isId(value.id) || !isMs(value.ms)) return null
   if (value.ok === true) {
-    if (!keysAre(value, ['t', 'id', 'ok', 'json', 'frames', 'ms', 'timing', 'keys', 'range', 'orderDependent']) || !isId(value.frames)) return null
+    if (!keysAre(value, ['t', 'id', 'ok', 'json', 'frames', 'ms', 'timing', 'keys', 'range', 'orderDependent', 'sweeping']) || !isId(value.frames) || typeof value.sweeping !== 'boolean') return null
     const json = value.json === null || isText(value.json, STAGE_LIMITS.description) ? (value.json as string | null) : undefined
     const timing = parseTiming(value.timing)
     const keys = parseKeys(value.keys)
     const range = value.range === null ? null : Array.isArray(value.range) && value.range.length === 2 && value.range.every(isId) ? (value.range as [number, number]) : undefined
     const { orderDependent } = value
     if (json === undefined || timing === undefined || keys === undefined || range === undefined || !Array.isArray(orderDependent) || !orderDependent.every((name) => typeof name === 'string')) return null
-    return { t: 'reply', id: value.id, ok: true, json, frames: value.frames, ms: value.ms, timing, keys, range, orderDependent }
+    return { t: 'reply', id: value.id, ok: true, json, frames: value.frames, ms: value.ms, timing, keys, range, orderDependent, sweeping: value.sweeping }
   }
   if (value.ok === false) {
     if (!keysAre(value, ['t', 'id', 'ok', 'error', 'line', 'file', 'ms'])) return null
@@ -207,6 +218,14 @@ export function parseReply(value: unknown): StageReply | null {
   return null
 }
 
+/** The end of a sweep, checked. */
+export function parseSwept(value: unknown): StageSwept | null {
+  if (!isShape(value) || value.t !== 'swept' || !keysAre(value, ['t', 'id', 'frames', 'ms', 'orderDependent']) || !isId(value.id) || !isId(value.frames) || !isMs(value.ms)) return null
+  const { orderDependent } = value
+  if (!Array.isArray(orderDependent) || !orderDependent.every((name) => typeof name === 'string')) return null
+  return { t: 'swept', id: value.id, frames: value.frames, ms: value.ms, orderDependent }
+}
+
 /** A message from the stage page, checked (main process side). */
 export function parseFromStage(value: unknown): FromStage | null {
   if (!isShape(value)) return null
@@ -215,6 +234,8 @@ export function parseFromStage(value: unknown): FromStage | null {
       return keysAre(value, ['t']) ? { t: 'ready' } : null
     case 'reply':
       return parseReply(value)
+    case 'swept':
+      return parseSwept(value)
     case 'host':
       return keysAre(value, ['t', 'hid', 'text']) && isId(value.hid) && isText(value.text, STAGE_LIMITS.host) ? { t: 'host', hid: value.hid, text: value.text } : null
     case 'linked':

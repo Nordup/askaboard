@@ -29,7 +29,13 @@ import { StageProcess } from './stage-process'
  * This class makes the channel and hands one end to each (linkFrames): when
  * the stage process starts, and when the board window loads (linkBoard). A
  * program's run id is the id of its frames (StageRun.job); the reply comes
- * when the board has every chunk.
+ * when the board has every chunk sent before it.
+ *
+ * A draft replies before its sweep ends. One record (Producer) lives from that
+ * reply to the sweep's terminal event: done, failed, cancelled, a window
+ * reload or a crash. Work that needs the realm waits for that event (sweepDone,
+ * ensure); a play, a preview and play controls do not. The answer recorder and
+ * the place of the run stay alive with the record.
  */
 
 /** An error of a scene program, at a line of the inline code ("Line 12: …") or of a scene file (file: "lib/arrows.js line 12: …"). detail: the message without the place. */
@@ -115,6 +121,15 @@ export interface TextItem {
 /** A request from the sandbox that the board answers (html(), image(), space(), copy()): plain JSON in and out. */
 export type HostRequest = { kind: 'html' | 'space' | 'item' | 'glyphs' } & Record<string, unknown>
 
+/** A draft's sweep after its reply: the board and the version of the scene it streams, and its job. entry is null only until run() has it. */
+interface Producer {
+  job: number
+  board: string | null
+  entry: StageEntry | null
+  done: Promise<void>
+  end: () => void
+}
+
 /** The error of a reply that never came, because the program was cancelled. */
 const CANCELLED = 'cancelled'
 /** The error of a program that ended the stage process by going over V8's heap limit (stage-process.ts, onGone). */
@@ -128,10 +143,12 @@ export class SceneStage {
   /**
    * measureText: the renderer lays the text out as the board does (renderer/live/measure.ts).
    * host: the renderer answers html(), image(), space() and copy() requests (renderer/live/host.ts).
+   * sweepEnded: a sweep's terminal event; complete: false when its stream stopped short of the end.
    */
   constructor(
     private readonly measureText: (items: TextItem[]) => Promise<Array<[number, number]>>,
-    private readonly host: (request: HostRequest, place: unknown) => Promise<unknown>
+    private readonly host: (request: HostRequest, place: unknown) => Promise<unknown>,
+    private readonly sweepEnded: (job: number, complete: boolean) => void
   ) {
     this.process = new StageProcess(
       (message, reply) => this.onStageMessage(message, reply),
@@ -324,6 +341,7 @@ export class SceneStage {
    */
   async resample(wanted: ReadonlySet<StageEntry>, onRun: (entry: StageEntry, run: { desc: SceneDescription; job: number; frames: number }) => Promise<void>, signal?: AbortSignal): Promise<void> {
     await this.withSignal(signal, async () => {
+      await this.sweepDone(signal)
       const started = Date.now()
       const done = new Set<StageEntry>()
       let sampled = 0
@@ -470,6 +488,42 @@ export class SceneStage {
     if (this.held !== length) this.dirty = true
   }
 
+  /** The sweep that runs after a draft's reply, or null. */
+  private producer: Producer | null = null
+
+  get sweeping(): boolean {
+    return this.producer !== null
+  }
+
+  /** Wait for the sweep's terminal event. A signal ends the wait, not the sweep. */
+  async sweepDone(signal?: AbortSignal | null): Promise<void> {
+    const producer = this.producer
+    if (!producer) return
+    await new Promise<void>((resolve, reject) => {
+      if (signal?.aborted) reject(new SceneCancelled())
+      signal?.addEventListener('abort', () => reject(new SceneCancelled()), { once: true })
+      void producer.done.then(resolve)
+    })
+  }
+
+  /** The record's end: what waited on the sweep goes on, and the answers of its run are closed. */
+  private endProducer(complete: boolean): void {
+    const producer = this.producer
+    if (!producer) return
+    this.producer = null
+    this.answers = { record: new Map(), given: null }
+    producer.end()
+    this.sweepEnded(producer.job, complete)
+  }
+
+  /** End the sweep now (of this version only, when one is named): its stream stops where it is. */
+  cancelSweep(entry?: StageEntry): void {
+    if (!this.producer || (entry && this.producer.entry !== entry)) return
+    this.process.send({ t: 'cancel' })
+    this.dirty = true
+    this.endProducer(false)
+  }
+
   /** Why the stage ended the last program itself (no abort signal: the board window loaded again). */
   private cancelWhy = 'The program was stopped.'
 
@@ -477,9 +531,10 @@ export class SceneStage {
    * End a running program now: its worker stops, and the stage is rebuilt before the next run. A program of the log that
    * a stop ends while the stage is rebuilt (a program that never ends would hold every later call) is marked, so a later
    * rebuild does not run it again. byUser: false when the program is not at fault (the board window loaded again, an idle rebuild gives way).
+   * A sweep is not a program in flight: a call that only waits for it gives up its wait (cancelSweep ends a sweep).
    */
   private cancel(why?: string, byUser = true): void {
-    if (!this.process.running) return
+    if (!this.process.running || (this.producer && !this.pending.size)) return
     if (byUser && this.rebuilding) this.mark(this.rebuilding, 'it was stopped while the stage was rebuilt')
     if (why) this.cancelWhy = why
     this.process.send({ t: 'cancel' })
@@ -489,11 +544,12 @@ export class SceneStage {
 
   /**
    * The board window loaded (again): its renderer gets a new frames port. A
-   * program that runs now ends (its frames went to the renderer before), and
-   * its call fails as cancelled.
+   * program or a sweep that runs now ends (its frames went to the renderer
+   * before), and a program's call fails as cancelled.
    */
   linkBoard(contents: WebContents): void {
     this.boardContents = contents
+    this.cancelSweep()
     if (this.pending.size) this.cancel('The board window loaded again while the scene program ran (its frames went to the window before).', false)
     void this.linkFrames()
   }
@@ -559,7 +615,8 @@ export class SceneStage {
       this.answers = { record, given: options.answers ?? null, place: options.place?.board }
       const job = this.nextId++
       const reply = await this.send({ t: 'run', id: job, program: stageProgram(source), ctxText, mode: options.mode })
-      this.answers = { record: new Map(), given: null }
+      // A sweep can still ask the board: its record closes the answers.
+      if (!(reply.ok && reply.sweeping)) this.answers = { record: new Map(), given: null }
       const tDone = Date.now()
       console.log(`stage: ${options.mode} program: stage ready ${tReady - tStart} ms, program ${tDone - tReady} ms`)
       if (reply.ok && reply.timing) {
@@ -595,6 +652,7 @@ export class SceneStage {
       }
       desc.stage = this.epoch
       const entry: StageEntry = { scene: null, source, name: options.name ?? null, seed, cutAt: options.cutAt ?? null, ctxText, answers: record, ...(reply.keys ? { keys: reply.keys } : {}), ...(reply.range ? { range: reply.range } : {}) }
+      if (this.producer?.job === job) this.producer.entry = entry
       if (options.mode === 'scene') {
         this.log.push(entry)
         this.held = this.log.length
@@ -634,6 +692,7 @@ export class SceneStage {
    * are skipped. signal: the operation's cancel, checked before each reset and each program. start: false stops at a stopped process (settle).
    */
   private async ensure(before: StageEntry | null = null, signal?: AbortSignal, start = true): Promise<void> {
+    await this.sweepDone(signal)
     if (start) await this.startProcess()
     else if (!this.process.running) return
     const upTo = this.placeIndex(before)
@@ -656,9 +715,27 @@ export class SceneStage {
   private onStageMessage(message: FromStage, reply: (answer: ToStage) => void): void {
     if (message.t === 'reply') {
       const resolve = this.pending.get(message.id)
-      if (!resolve) return
+      if (!resolve) {
+        // A failed reply after the early reply: the sweep failed.
+        if (this.producer?.job === message.id && !message.ok) {
+          console.warn(`stage: the sweep of ${this.producer.entry?.name ?? `job ${message.id}`} failed: ${message.error}`)
+          this.dirty = true
+          this.endProducer(false)
+        }
+        return
+      }
       this.pending.delete(message.id)
+      if (message.ok && message.sweeping) {
+        let end = (): void => undefined
+        const done = new Promise<void>((resolved) => (end = resolved))
+        this.producer = { job: message.id, board: this.boardPath, entry: null, done, end }
+      }
       resolve(message)
+    } else if (message.t === 'swept') {
+      const producer = this.producer
+      if (producer?.job !== message.id) return
+      console.log(`stage: swept ${producer.entry?.name ?? `job ${message.id}`} on ${producer.board ?? 'no board'} in ${Math.round(message.ms)} ms, ${message.frames} chunks${message.orderDependent.length ? `; order dependent: ${message.orderDependent.join(', ')}` : ''}`)
+      this.endProducer(true)
     } else if (message.t === 'host') void this.answerHost(message.hid, message.text, reply)
     else if (message.t === 'linked') {
       const waiters = this.linkWaiters
@@ -672,6 +749,7 @@ export class SceneStage {
     console.warn(`stage: the stage process stopped (${why})`)
     this.failPending(outOfMemory ? TOO_MUCH_MEMORY : `The stage stopped (${why}). The usual cause is a program that uses too much memory. The stage is rebuilt from the programs before it.`)
     this.dirty = true
+    this.endProducer(false)
   }
 
   private failPending(error: string): void {

@@ -1,7 +1,8 @@
 import { chunkBytes, F_ALL, F_D, F_FORM, F_JSON, F_LINES, F_PARAMS, F_TEXT, F_WIDTH, FLAG_MATH, FLAG_SEED, FRAME_KINDS, FRAMES_VERSION, joinPath, type FrameKind, type FramesChunk } from '@shared/frames'
 import type { SceneSample } from '@shared/live-scene'
 import type { Point } from '../board/types'
-import { prepareSample, sampleHtml, splitNumbers, type DynSample } from './compile'
+import { prepareSample, sampleHtml, splitNumbers, type DynSample, type PlayDyn } from './compile'
+import { scenePlayer } from './player'
 
 /**
  * The board's end of the frames port (shared/frames.ts). The stage page
@@ -14,13 +15,15 @@ import { prepareSample, sampleHtml, splitNumbers, type DynSample } from './compi
  * here by then.
  *
  * A job is open while it receives: each chunk adds samples to its objects, and
- * moves readyThrough. Its last chunk ends it, and readyThrough is then the
- * scene's duration.
+ * moves readyThrough. Its last chunk ends it, and it is then complete: the
+ * scene's whole duration is here.
  *
- * The frames of one job at most wait here: the stage runs one program at a
- * time, so a chunk of a newer job drops older ones. A chunk out of order, of
- * another version or with a wrong value spoils its job, and the job's
- * takeFrames fails.
+ * One owner: this store until takeFrames, then the compile (and its play),
+ * which holds the job's live objects. The store keeps a taken job only to
+ * find it for its chunks, until it ends. The stage runs one program at a time,
+ * so a chunk of a newer job drops older jobs that nothing took. A chunk out of
+ * order, of another version or with a wrong value spoils its job: takeFrames
+ * fails, and a job already taken ends there.
  */
 
 /** The seeds and the samples of one object, by its stage id. */
@@ -35,27 +38,98 @@ export interface ObjectFrames {
   lastChange: number
   /** The object's path forms (one parts array per form, across chunks). */
   forms: Map<string, readonly string[]>
+  /** The live forms that compiles made of it: the job's end sets their `end`. */
+  dyns: PlayDyn[]
 }
 
-interface JobFrames {
+/** The frames of a run: by stage object id, and their size. The compile holds this live object. */
+export interface RunFrames {
+  objects: Map<number, ObjectFrames>
+  bytes: number
+  /** The last chunk is here, or the stream was cut. */
+  ended: boolean
+  /** The stream stopped before the end (a cancel, a failure, a crash, a window reload). */
+  cut: boolean
+  /** How far it can play: Infinity after the end. */
+  ready: () => number
+  /** Resolves when every moment up to t is here, or the stream ended. */
+  reached: (t: number) => Promise<void>
+}
+
+interface JobFrames extends RunFrames {
   /** The next chunk expected. */
   next: number
-  objects: Map<number, ObjectFrames>
   /** Every moment up to this time is complete on the board. */
   readyThrough: number
-  /** The last chunk of the job is here. */
-  ended: boolean
-  bytes: number
+  /** A compile holds it (takeFrames). */
+  taken: boolean
   /** ms spent decoding, and the longest chunk. */
   ms: number
   longest: number
   error: string | null
+  waiting: Array<{ t: number; resolve: () => void }>
 }
 
-/** The frames of a run, ready for its compile: by stage object id, and their size. */
-export interface RunFrames {
-  objects: Map<number, ObjectFrames>
-  bytes: number
+function newJob(): JobFrames {
+  const job: JobFrames = {
+    next: 0,
+    objects: new Map(),
+    readyThrough: 0,
+    ended: false,
+    cut: false,
+    taken: false,
+    bytes: 0,
+    ms: 0,
+    longest: 0,
+    error: null,
+    waiting: [],
+    ready: () => (job.ended ? Number.POSITIVE_INFINITY : job.readyThrough),
+    reached: (t) => (t <= job.ready() ? Promise.resolve() : new Promise((resolve) => job.waiting.push({ t, resolve })))
+  }
+  return job
+}
+
+const newObject = (kind: FrameKind, math: boolean): ObjectFrames => ({ kind, math, seeds: [], samples: [], lastChange: Number.POSITIVE_INFINITY, forms: new Map(), dyns: [] })
+
+/** The live entry of an object of a job that is open: its samples can start to arrive after the compile. */
+export function objectOf(frames: RunFrames, sid: number, kind: FrameKind, math: boolean): ObjectFrames {
+  let entry = frames.objects.get(sid)
+  if (!entry) frames.objects.set(sid, (entry = newObject(kind, math)))
+  return entry
+}
+
+/** Wake the previews that wait for a moment that is here now. */
+function wake(job: JobFrames): void {
+  job.waiting = job.waiting.filter(({ t, resolve }) => {
+    if (t > job.ready()) return true
+    resolve()
+    return false
+  })
+}
+
+/**
+ * The end of a job: complete, or cut. Complete: each live form takes its last change, and an object with no samples shows as
+ * committed. A play of it updates its settled times and units from here (scenePlayer.playsChanged).
+ */
+function endJob(id: number, job: JobFrames, cut: boolean): void {
+  if (job.ended) return
+  job.ended = true
+  job.cut = cut
+  if (!cut) {
+    for (const entry of job.objects.values()) {
+      for (const dyn of entry.dyns) if (Number.isFinite(dyn.end)) dyn.end = entry.samples.length ? Math.min(dyn.end, entry.lastChange) : Number.NEGATIVE_INFINITY
+    }
+  }
+  wake(job)
+  if (!job.taken) return
+  jobs.delete(id)
+  scenePlayer.playsChanged()
+}
+
+/** The stream of `job` stopped before its end: nothing waits for it any more. */
+export function cutJob(id: unknown): void {
+  const job = typeof id === 'number' ? jobs.get(id) : undefined
+  if (job) endJob(id as number, job, true)
 }
 
 let port: MessagePort | null = null
@@ -66,6 +140,7 @@ function onWindowMessage(event: MessageEvent): void {
   // it, but their messages have their own window as the source, so they cannot replace the stage port.
   if (event.source !== window || event.data !== 'ls-frames-port' || event.ports.length !== 1) return
   port?.close()
+  for (const id of [...jobs.keys()]) cutJob(id)
   jobs.clear()
   port = event.ports[0]
   port.onmessage = (incoming) => onPortMessage(incoming.data)
@@ -85,6 +160,7 @@ function onPortMessage(data: unknown): void {
   if (typeof data !== 'object' || data === null) return
   const m = data as Record<string, unknown>
   if (m.t === 'retire' && typeof m.job === 'number') {
+    cutJob(m.job)
     jobs.delete(m.job)
     return
   }
@@ -92,8 +168,8 @@ function onPortMessage(data: unknown): void {
   const job = m.job
   let frames = jobs.get(job)
   if (!frames) {
-    for (const id of [...jobs.keys()]) if (id < job) jobs.delete(id)
-    frames = { next: 0, objects: new Map(), readyThrough: 0, ended: false, bytes: 0, ms: 0, longest: 0, error: null }
+    for (const [id, older] of jobs) if (id < job && !older.taken) jobs.delete(id)
+    frames = newJob()
     jobs.set(job, frames)
   }
   if (frames.error === null) {
@@ -111,33 +187,31 @@ function onPortMessage(data: unknown): void {
       frames.bytes += chunkBytes(chunk)
       frames.next++
       frames.readyThrough = chunk.through
-      frames.ended = chunk.end
+      if (chunk.end) endJob(job, frames, false)
+      else wake(frames)
     } catch (error) {
       frames.error = error instanceof Error ? error.message : String(error)
-      frames.objects.clear()
+      endJob(job, frames, true)
     }
   }
   port?.postMessage({ t: 'ack', job, seq: m.seq })
 }
 
-/** How far the frames of `job` reach (null: this store does not hold the job). */
-export function readyThrough(job: number): number | null {
-  return jobs.get(job)?.readyThrough ?? null
-}
-
 /**
- * The frames of run `job`, which sent `chunks` chunks; they leave this store.
- * Throws when they are not all here, or one could not be read.
+ * The frames of run `job`: the live job, whose first `chunks` chunks are here (the rest of an open job
+ * arrives after this). Throws when they are not, or one could not be read.
  */
 export function takeFrames(job: unknown, chunks: unknown): RunFrames {
   if (typeof job !== 'number' || typeof chunks !== 'number') throw new Error('The scene came without its frames.')
   const frames = jobs.get(job)
-  jobs.delete(job)
   if (!frames) throw new Error('The board does not have the frames of the scene (the board window loaded again?). Write the scene again.')
+  if (frames.error || frames.next < chunks) jobs.delete(job)
   if (frames.error) throw new Error(`The frames of the scene could not be read: ${frames.error}`)
-  if (frames.next !== chunks || !frames.ended) throw new Error(`The board has ${frames.next} of the ${chunks} frame chunks of the scene.`)
-  console.log(`frames: job ${job}: ${chunks} chunks, ${(frames.bytes / 1024 / 1024).toFixed(2)} MB, decoded in ${Math.round(frames.ms)} ms (longest chunk ${Math.round(frames.longest)} ms)`)
-  return { objects: frames.objects, bytes: frames.bytes }
+  if (frames.next < chunks) throw new Error(`The board has ${frames.next} of the ${chunks} frame chunks of the scene.`)
+  frames.taken = true
+  if (frames.ended) jobs.delete(job)
+  console.log(`frames: job ${job}: ${chunks} chunks, ${(frames.bytes / 1024 / 1024).toFixed(2)} MB, decoded in ${Math.round(frames.ms)} ms (longest chunk ${Math.round(frames.longest)} ms)${frames.ended ? '' : ', open'}`)
+  return frames
 }
 
 /** Decode one chunk. Each record adds one sample to its object. */
@@ -168,7 +242,7 @@ function decode(chunk: FramesChunk, objects: Map<number, ObjectFrames>): void {
     const flags = U()
     const math = (flags & FLAG_MATH) !== 0
     let entry = objects.get(sid)
-    if (!entry) objects.set(sid, (entry = { kind, math, seeds: [], samples: [], lastChange: Number.POSITIVE_INFINITY, forms: new Map() }))
+    if (!entry) objects.set(sid, (entry = newObject(kind, math)))
     else if (entry.kind !== kind || entry.math !== math) throw new Error('a record that does not fit its object')
     const { forms } = entry
     const samples = flags & FLAG_SEED ? entry.seeds : entry.samples

@@ -7,7 +7,7 @@ import { clampZoom } from '../board/geometry'
 import { revealPoints, type NodeOverride, type PlaybackFrame, type PlaybackTip } from '../board/playback'
 import type { Point } from '../board/types'
 import { sceneColor, withOpacity } from './colors'
-import type { DynSample, PlayEdit, PlayObject, ScenePlay } from './compile'
+import { allObjects, type DynSample, type PlayEdit, type PlayObject, type ScenePlay } from './compile'
 import { BLEND_GAP, paramSamplesOf, paramsAtTime } from './params'
 import { blendStyle } from '../board/style-edits'
 import { setSceneUiActions, setSceneUiState, type SceneCueState, type SceneListEntry, type SceneStart } from './state'
@@ -138,14 +138,21 @@ function drawingNow(play: ScenePlay, object: PlayObject, t: number): boolean {
 
 /**
  * What an object's live form reads at moment t, or null when it shows as
- * committed. Within what the sweep has reached, its samples; past it, its
- * seeds. An object with no seeds does not change at any seeded moment.
+ * committed. Within what the sweep has reached, its samples; past it, or
+ * before its first sample has come, its seeds. An object with no seeds does
+ * not change at any seeded moment.
  */
 export function liveSamples(play: ScenePlay, object: PlayObject, t: number): DynSample[] | null {
   const { dyn } = object
   if (!dyn || t >= dyn.end) return null
-  const samples = t <= play.ready() ? dyn.samples : dyn.seeds
+  const samples = t <= play.ready() && dyn.samples.length ? dyn.samples : dyn.seeds
   return samples.length ? samples : null
+}
+
+/** When an object's look ends: its own last action, and the last change of its live form (it moves when a stream ends, so a replay clone reads it too). */
+function settledOf(object: PlayObject): number {
+  const end = object.dyn?.end
+  return end !== undefined && Number.isFinite(end) ? Math.max(object.settled, end) : object.settled
 }
 
 /** The sample at t and the next one to blend with (k = 0: none). */
@@ -344,7 +351,9 @@ type ClaimedBefore = (nodeId: string) => boolean
 function objectLook(play: ScenePlay, object: PlayObject, t: number, inkIndex: InkIndex | null, sink: LookSink, claimed?: ClaimedBefore, buffers?: InkBuffers): void {
   const timeline = play.timeline
   const desc = timeline.object(object.id)
-  if (t >= object.settled && !object.ghost && t >= desc.created) return
+  if (t >= settledOf(object) && !object.ghost && t >= desc.created) return
+  // Its board items stay as they are until the sweep gives it samples.
+  if (desc.unchanged && !object.dyn?.samples.length) return
   // A carried object (from an earlier scene) is on the board before this scene starts.
   const before = desc.kind !== 'node' && !desc.carry && desc.vis === 'shown' && t < desc.created
   const draw = clamp01(timeline.number(object.id, 'draw', t))
@@ -563,7 +572,7 @@ export function sceneFrame(play: ScenePlay, t: number, inkIndex: InkIndex | null
   if (play.hidden && t <= play.duration) for (const id of play.hidden) setOverride(out, id, HIDDEN)
   // An item that html() replaces shows until the new material appears.
   if (play.vanish) for (const entry of play.vanish) if (t >= entry.at) for (const id of entry.ids) setOverride(out, id, HIDDEN)
-  for (const object of play.objects) objectLook(play, object, t, inkIndex, sink)
+  for (const object of allObjects(play)) objectLook(play, object, t, inkIndex, sink)
   for (const [nodeId, list] of editsByNode(play)) editLook(nodeId, list, t, sink)
   const pointer = pointerAt(play, t)
   if (pointer) out.tips.push(pointer)
@@ -719,7 +728,8 @@ function objectFrom(play: ScenePlay, object: PlayObject): number {
   if (dyn) {
     // A carried changing ink object waits for the scenes before it (claimed), so it is evaluated at every time.
     if (desc.carry && dyn.kind === 'ink') return Number.NEGATIVE_INFINITY
-    from = Math.min(from, dyn.samples[0].t)
+    // Its first sample can still be on the way.
+    from = Math.min(from, dyn.samples[0]?.t ?? 0)
     // A changing object shows its samples from scene time 0 (a carried one also before).
     if (!desc.carry) from = Math.min(from, 0)
   }
@@ -728,7 +738,7 @@ function objectFrom(play: ScenePlay, object: PlayObject): number {
 
 /** The time from which an object's look stays the same (or it shows as committed). */
 function objectTo(object: PlayObject, play: ScenePlay): number {
-  let to = Math.max(object.settled, play.timeline.object(object.id).created)
+  let to = Math.max(settledOf(object), play.timeline.object(object.id).created)
   if (object.ghost) {
     if (object.dyn) to = Math.max(to, object.dyn.end)
     if (object.glide) to = Math.max(to, object.glide.start + object.glide.dur)
@@ -783,7 +793,8 @@ class SceneRun {
         if (t >= entry.at) for (const id of entry.ids) sink.override(id, HIDDEN)
       })
     )
-    play.objects.forEach((object, i) => {
+    const shown = allObjects(play)
+    shown.forEach((object, i) => {
       const from = objectFrom(play, object)
       const buffers = object.dyn?.kind === 'ink' ? newInkBuffers() : undefined
       unit(RANK_OBJECT + i, from, objectTo(object, play), object.ghost, (t, sink) => objectLook(play, object, t, inkIndex, sink, claimed, buffers), from === Number.NEGATIVE_INFINITY)
@@ -799,12 +810,12 @@ class SceneRun {
       unit(RANK_EDIT + i, from, to, false, (t, sink) => editLook(nodeId, list, t, sink))
     })
     this.units = units.sort((a, b) => a.from - b.from)
-    this.liveTargets = [...new Set(play.objects.flatMap((object) => object.targets.map((target) => target.nodeId)).filter((id) => liveIds.has(id)))]
+    this.liveTargets = [...new Set(shown.flatMap((object) => object.targets.map((target) => target.nodeId)).filter((id) => liveIds.has(id)))]
   }
 
   /** True when an object of this scene still makes or animates the node at scene time t. */
   claims(nodeId: string, t: number): boolean {
-    return this.byNode.get(nodeId)?.some((object) => object.ghost || t < object.settled) ?? false
+    return this.byNode.get(nodeId)?.some((object) => object.ghost || t < settledOf(object)) ?? false
   }
 
   /** Bring the scene's look to scene time t: the store gets the overrides that changed. */
@@ -1153,8 +1164,9 @@ export class ScenePlayer {
         if (now) hidden.push(t.nodeId)
       }
     }
-    const objects = play.objects.map((object) => ({ ...object, targets: object.targets.map((t) => (remap.has(t.nodeId) ? { ...t, nodeId: remap.get(t.nodeId) as string } : t)) }))
-    return { ...play, id, objects, ghosts: [...play.ghosts, ...ghosts], hidden }
+    // dyn stays shared: a clone of a scene that streams reads the same stream.
+    const clone = (object: PlayObject): PlayObject => ({ ...object, targets: object.targets.map((t) => (remap.has(t.nodeId) ? { ...t, nodeId: remap.get(t.nodeId) as string } : t)) })
+    return { ...play, id, objects: play.objects.map(clone), quiet: play.quiet.map(clone), ghosts: [...play.ghosts, ...ghosts], hidden }
   }
 
   /** Seconds until a scene added now to the queue would start. */

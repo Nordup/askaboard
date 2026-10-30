@@ -85,11 +85,12 @@ export interface LiveTimeline {
  * scene does not play the item.
  */
 export function sceneTimelineOf(play: ScenePlay, nodeId: string): LiveTimeline | null {
-  for (const object of play.objects) {
+  for (const object of [...play.objects, ...play.quiet]) {
     if (play.timeline.object(object.id).kind !== 'live' || !object.targets.some((target) => target.nodeId === nodeId)) continue
-    const samples = object.dyn?.kind === 'live' ? paramSamplesOf(object.dyn.samples) : []
+    // A live list: the samples of a stream can still arrive.
+    const samples = object.dyn?.kind === 'live' ? paramSamplesOf(object.dyn.samples) : null
     // The program's own steps: a code item sees the step() calls, not the story's lead step.
-    return { params: samples.length ? samples : null, steps: ownSteps(play.steps).map((step) => [step.at, step.name] as [number, string]) }
+    return { params: samples, steps: ownSteps(play.steps).map((step) => [step.at, step.name] as [number, string]) }
   }
   return null
 }

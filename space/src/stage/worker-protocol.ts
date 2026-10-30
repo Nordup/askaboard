@@ -1,6 +1,6 @@
 import type { FramesChunk } from '../shared/frames'
 import type { StageProgram } from '../shared/scene-program'
-import type { StageMode, StageReply } from '../shared/stage-protocol'
+import type { StageMode, StageReply, StageSwept } from '../shared/stage-protocol'
 
 /**
  * The messages between the stage page (page.ts) and its worker (worker.ts).
@@ -34,6 +34,7 @@ export type FromWorker =
   | { t: 'ready' }
   | { t: 'failed'; error: string }
   | StageReply
+  | StageSwept
   /** The script could not be parsed. The worker cannot see where: the page finds the line (page.ts, syntaxLine). Modules were parsed in main (main/scene-files.ts). */
   | { t: 'parse-error'; id: number; error: string; ms: number }
   | { t: 'host'; text: string }

@@ -43,7 +43,10 @@ import { BRIDGE_HEADER, type FromWorker, type ToWorker } from './worker-protocol
  * Seeds and samples of the changing objects go as frame chunks (shared/frames.ts)
  * to the page, which passes them to the board. The worker waits while CREDIT_BYTES
  * of frames are on the way. The reply (the description without the samples)
- * comes last. A rebuild (replay) does not sample: it ends and bakes.
+ * comes last. A draft replies before the sweep (sweepOn): the sweep then runs
+ * in batches, one tick each, and ends with a terminal message. A draft with a
+ * stepping live item drains first, as a scene does. A rebuild (replay) does
+ * not sample: it ends and bakes.
  */
 
 interface WorkerScope {
@@ -62,8 +65,10 @@ interface Host {
   seeds(): void
   /** The description, built from the end seeds. */
   result(): string
-  /** The sweep, to its end: what the stream's end says. */
-  sample(): { lastChange: Array<[number, number]>; orderDependent: string[] }
+  /** One batch of the sweep, until more() says stop. Null while moments are left, else what the stream's end says. */
+  sample(more: () => boolean): { lastChange: Array<[number, number]>; orderDependent: string[] } | null
+  /** The scene has an item that integrates its params, so its sweep drains before the reply. */
+  stepping(): boolean
   bake(): void
   stats(): { evaluations: number; fullEvaluations: number }
   /** The stage id and key of each object the program made (live-prelude.js keyFor). */
@@ -102,6 +107,8 @@ let host: Host | null = null
 let frameSink: FrameStream | null = null
 /** The longest wait for the board to take frames (it acknowledges each chunk at once). */
 const CREDIT_WAIT_MS = 60_000
+/** One batch of a sweep after the reply. */
+const SWEEP_BATCH_MS = 8
 
 scope.addEventListener('message', (event) => {
   const message = event.data
@@ -254,7 +261,7 @@ function run(message: Extract<ToWorker, { t: 'run' }>): void {
     if (ending) {
       stop()
       if (settled === 'pending') post(failure(message.id, new ErrorType(STUCK), started))
-      else post(finish(fns, message.id, message.mode, started))
+      else finish(fns, message.id, message.mode, started)
       return
     }
     let more: boolean
@@ -349,11 +356,14 @@ function runModules(program: Extract<StageProgram, { kind: 'modules' }>): Promis
 /**
  * The end of a program that ran: one path for every mode (the cut and the
  * end state). A scene and a draft are seeded, described and swept (their
- * frames go to the board); a scene and a replay bake.
+ * frames go to the board); a scene and a replay bake. A draft replies before
+ * its sweep, with the seeds as its first chunk.
  */
-function finish(fns: Host, id: number, mode: StageMode, started: number): StageReply {
+function finish(fns: Host, id: number, mode: StageMode, started: number): void {
   const tBody = clock()
   const frames = mode === 'replay' ? null : new FrameStream(id)
+  let early = false
+  let reply: StageReply
   try {
     fns.end()
     frameSink = frames
@@ -364,10 +374,14 @@ function finish(fns: Host, id: number, mode: StageMode, started: number): StageR
     if (frames) {
       json = fns.result()
       if (typeof json !== 'string' || json.length > STAGE_LIMITS.description) throw new RangeError('the scene description is too large')
-      const swept = fns.sample()
-      orderDependent = swept.orderDependent
-      frameSink = null
-      frames.send(true, swept.lastChange)
+      early = mode === 'draft' && !fns.stepping()
+      if (early) frames.send(false)
+      else {
+        const swept = fns.sample(() => true) as NonNullable<ReturnType<Host['sample']>>
+        orderDependent = swept.orderDependent
+        frameSink = null
+        frames.send(true, swept.lastChange)
+      }
     }
     const tResult = clock()
     // Before bake: bake turns the objects a cut dropped into gone ones, and keys() leaves the dropped ones out.
@@ -377,12 +391,45 @@ function finish(fns: Host, id: number, mode: StageMode, started: number): StageR
     const tBake = clock()
     const { evaluations, fullEvaluations } = fns.stats()
     const timing: StageTiming = { body: tBody - started, seeds: tSeeds - tBody, result: tResult - tSeeds, bake: tBake - tResult, evaluations, fullEvaluations, encode: frames?.encodeMs ?? 0, wait: frames?.waitMs ?? 0, bytes: frames?.total ?? 0 }
-    return { t: 'reply', id, ok: true, json, frames: frames?.sent ?? 0, ms: clock() - started, timing, keys, range, orderDependent }
+    reply = { t: 'reply', id, ok: true, json, frames: frames?.sent ?? 0, ms: clock() - started, timing, keys, range, orderDependent, sweeping: early }
   } catch (error) {
-    return failure(id, error, started)
-  } finally {
+    early = false
+    reply = failure(id, error, started)
+  }
+  post(reply)
+  if (early) sweepOn(fns, id, frames as FrameStream, started)
+  else frameSink = null
+}
+
+/**
+ * The sweep after a draft's reply: batches of SWEEP_BATCH_MS, with the tick of
+ * the program's clock between them, so the worker's message loop runs. Each
+ * batch ends with a chunk, so the board's coverage moves often. The stream
+ * ends with "swept", or a failed reply with the program's id.
+ */
+function sweepOn(fns: Host, id: number, frames: FrameStream, started: number): void {
+  const done = (): void => {
+    tick.port1.onmessage = null
     frameSink = null
   }
+  tick.port1.onmessage = () => {
+    try {
+      const until = clock() + SWEEP_BATCH_MS
+      const swept = fns.sample(() => clock() < until)
+      if (!swept) {
+        frames.send(false)
+        tick.port2.postMessage(null)
+        return
+      }
+      done()
+      frames.send(true, swept.lastChange)
+      post({ t: 'swept', id, frames: frames.sent, ms: clock() - started, orderDependent: swept.orderDependent })
+    } catch (error) {
+      done()
+      post(failure(id, error, started))
+    }
+  }
+  tick.port2.postMessage(null)
 }
 
 /**

@@ -355,7 +355,8 @@ export class AgentServer {
   /** The sandbox every scene program runs in, kept between programs (see live-scene.ts). */
   private readonly stage = new SceneStage(
     async (items) => (await this.bridge.request('measureText', { items })).sizes,
-    async (request, place) => this.bridge.request('sceneHost', { request, ...(place ? { place } : {}) }, WRITE_TIMEOUT_MS)
+    async (request, place) => this.bridge.request('sceneHost', { request, ...(place ? { place } : {}) }, WRITE_TIMEOUT_MS),
+    (job, complete) => this.onSweepEnded(job, complete)
   )
   readonly port = configuredPort()
   private readonly bridge: RendererBridge
@@ -782,6 +783,7 @@ export class AgentServer {
   /** End running scene programs (all, or one session's). Returns how many were running. */
   private cancelPrograms(sessionId: string | null): number {
     this.stopIdleRebuild()
+    if (sessionId === null) this.stage.cancelSweep()
     let count = 0
     for (const [program, owner] of this.programs) {
       if (sessionId !== null && owner !== sessionId) continue
@@ -1449,12 +1451,16 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
         const board = this.boardKey()
         const before = this.draftsOf(board).get(name)
         const seq = ++this.draftSeq
+        // Its sweep has no more use: this write does not wait for it.
+        if (before) this.stage.cancelSweep(before.entry)
         let replaces = false
         // The snapshot: the inline code or the file, and every file it imports, read now and never again for this draft.
         let source: SceneSource
         const spans = trace.spans
         const tSnapshot = Date.now()
         let orderDependent: string[] = []
+        /** The run of this write until its draft is published: its sweep ends with a write that fails. */
+        let unpublished: StageEntry | null = null
         try {
           source = await readSceneSource(this.hooks.folder(), code !== undefined ? { code } : { file })
         } catch (error) {
@@ -1465,16 +1471,17 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
         const files = source.modules.filter((module) => module.path !== null)
         if (files.length) trace.args = { snapshot: { entry: source.entry, modules: files.map(({ path, text }) => ({ path, text })), ...(source.links ? { links: source.links } : {}) } }
         spans.snapshot_ms = Date.now() - tSnapshot
-        // The draft is ready when the call returns: its program ran, its frames are in the renderer, the renderer compiled it.
+        // The draft is ready when the call returns: its program ran, its seeds are in the renderer, the renderer compiled it. Its sweep goes on.
         const tQueue = Date.now()
         const outcome = await this.withProgram(session, extra, (signal) =>
-          this.staged(signal, async (): Promise<CallToolResult | Draft> => {
+          this.onRealm(signal, async (): Promise<CallToolResult | Draft> => {
             spans.queue_ms = Date.now() - tQueue
             // A new version of a scene on the board runs where play_scene start runs it: at that scene's place.
             const place = this.placeOf(name)
             replaces = !!place
             const context = await this.contextAt(place)
             const run = await this.stage.run(source, context, { mode: 'draft', name, signal, place })
+            unpublished = run.entry
             Object.assign(spans, run.timing)
             orderDependent = run.orderDependent
             const tLive = Date.now()
@@ -1490,9 +1497,11 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
             const drafts = this.draftsOf(board)
             const current = drafts.get(name)
             if (!current || current.seq < draft.seq) drafts.set(name, draft)
+            unpublished = null
             return draft
           })
         ).catch((error: unknown) => {
+          if (unpublished) this.stage.cancelSweep(unpublished)
           if (error instanceof SceneProgramError) return failure(new Error(`${error.message}\n${before ? `The draft "${name}" keeps its earlier version.` : `No draft "${name}" was made.`}`))
           if (error instanceof SceneCancelled) return failure(error)
           throw error
@@ -1706,6 +1715,24 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
     })
   }
 
+  /**
+   * The way of an operation that needs the realm: it waits for a sweep outside the lock, so a play, a preview and play
+   * controls pass it. A sweep that another write started while this one queued for the lock sends it back to wait.
+   */
+  private async onRealm<T>(signal: AbortSignal, fn: () => Promise<T>): Promise<T> {
+    for (;;) {
+      await this.stage.sweepDone(signal)
+      const out = await this.staged(signal, async () => (this.stage.sweeping ? null : { value: await fn() }))
+      if (out) return out.value
+    }
+  }
+
+  /** A sweep ended. A stream cut short ends on the board too, and the idle rebuild (T26) starts from here. */
+  private onSweepEnded(job: number, complete: boolean): void {
+    if (!complete) void this.board('sceneControl', { action: 'streamCut', job }).catch(() => undefined)
+    if (this.stageOperations === 0) this.rebuildWhenIdle()
+  }
+
   /** How many operations are on the stage or wait for it (onStage). */
   private stageOperations = 0
   private idleTimer: NodeJS.Timeout | undefined
@@ -1730,9 +1757,10 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
    * The stage does not match what the next run needs (a draft ran, a play added a program): rebuild it after a short idle,
    * so the next call does not wait for it. This work is not an operation (onStage), so it never starts another one: when
    * it fails or gives way, the next operation that ends tries again. Its board's mount and folder must still be the shown ones.
+   * While a sweep runs the realm is not free: it starts from the sweep's end (onSweepEnded).
    */
   private rebuildWhenIdle(): void {
-    if (!this.boardKey() || this.stage.settled) return
+    if (!this.boardKey() || this.stage.settled || this.stage.sweeping) return
     const mark = this.restoreMark()
     this.idleTimer = setTimeout(() => {
       if (this.restoreMark() !== mark || this.restoredFor !== mark) return
