@@ -447,15 +447,32 @@
     return trackValue(entry.tracks[prop] || [], base(entry, prop), t)
   }
 
-  /** The value of a track list at t: the last action that started gives it. A number eases as on the board (trackNumber); a colour switches halfway. */
+  /** The value of a track list at t: the last action that started gives it. */
   function trackValue(list, base, t) {
     let value = base
     for (const a of list) {
       if (a.start > t) break
-      if (typeof a.to === 'number') value = trackNumber(a, a.from, a.to, t)
-      else value = ((a.until !== undefined ? Math.min(t, a.until) : t) - a.start) / a.dur < 0.5 ? a.from : a.to
+      value = actionValue(a, t)
     }
     return value
+  }
+
+  /** The value of one action at t. A number eases as on the board (trackNumber); a colour switches halfway. */
+  function actionValue(a, t) {
+    if (typeof a.to === 'number') return trackNumber(a, a.from, a.to, t)
+    return ((a.until !== undefined ? Math.min(t, a.until) : t) - a.start) / a.dur < 0.5 ? a.from : a.to
+  }
+
+  /** trackValue for a value's list, which is always in start order: a binary search for the last action that started. */
+  function sortedTrackValue(list, base, t) {
+    let lo = 0
+    let hi = list.length
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1
+      if (list[mid].start > t) hi = mid
+      else lo = mid + 1
+    }
+    return lo === 0 ? base : actionValue(list[lo - 1], t)
   }
 
   function addTrack(entry, prop, start, dur, to, ease, from) {
@@ -514,7 +531,7 @@
     get() {
       reads++
       const v = values[this.id]
-      return trackValue(v.tracks, v.base, T)
+      return sortedTrackValue(v.tracks, v.base, T)
     }
     /** Jump to a new value at the current time. */
     set(n) {
@@ -535,10 +552,11 @@
 
   function addValueTrack(v, start, dur, to, ease) {
     if (tracking) tracking.impure = true
-    const from = trackValue(v.tracks, v.base, start)
+    const from = sortedTrackValue(v.tracks, v.base, start)
     const a = { start: f3(start), dur: f3(Math.max(0, dur)), from, to, ease }
+    const last = v.tracks[v.tracks.length - 1]
     v.tracks.push(a)
-    v.tracks.sort((p, q) => p.start - q.start)
+    if (last && a.start < last.start) v.tracks.sort((p, q) => p.start - q.start)
     if (collector) collector.push({ kind: 'value', a, v })
     endTime = Math.max(endTime, start + dur)
     activeSpans.push([f3(start), f3(start + dur)])
@@ -2923,7 +2941,7 @@
       delete e.dyn
     }
     for (const v of values) {
-      v.base = trackValue(v.tracks, v.base, endTime)
+      v.base = sortedTrackValue(v.tracks, v.base, endTime)
       v.tracks = []
     }
   }
