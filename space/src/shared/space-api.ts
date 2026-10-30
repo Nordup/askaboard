@@ -340,16 +340,19 @@ export interface SnapshotRequest {
 /**
  * A scene's playback event on the board (renderer/live/player.ts), for the
  * session trace: its first frame drawn (first_frame), its end (end, with how it
- * ended), or a new play in its place (replaced, outcome "cut" or "replaced").
+ * ended), a new play in its place (replaced, outcome "cut" or "replaced"), or
+ * a hold of its clock (hold, sent when the hold ends; t is its start).
  * t: wall time (Date ms).
  */
 export interface SceneEvent {
-  kind: 'first_frame' | 'end' | 'replaced'
+  kind: 'first_frame' | 'end' | 'replaced' | 'hold'
   scene: string
   name: string | null
   t: number
   /** end: played (to its end), stopped (play_scene stop), cancelled (taken out of the queue before it played), removed (the board changed or closed). replaced: cut or replaced. */
   outcome?: 'played' | 'stopped' | 'cancelled' | 'removed' | 'cut' | 'replaced'
+  /** hold: how long the clock stood. */
+  ms?: number
 }
 
 /** One frame of a grid snapshot: where it goes in the image (pixels), and what only it shows. */

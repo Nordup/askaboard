@@ -18,7 +18,7 @@ import { agentHomeDir } from './agent-home'
  *   session_open   t, session_id, client {name, version}, folder, board
  *   tool_call      t (start), end, duration_ms, gap_ms, board, tool, args, ok,
  *                  result_text, images [{file, bytes}], error, spans
- *   scene_event    t, kind (first_frame | end | replaced), scene (id), name, outcome
+ *   scene_event    t, kind (first_frame | end | replaced | hold), scene (id), name, outcome, ms (hold: its length)
  *   session_close  t, session_id, calls, wall_ms
  *
  * and in learner-edits.jsonl only:
@@ -202,9 +202,9 @@ export class SessionTrace {
    * Record one scene playback event (shared/space-api SceneEvent). Never throws.
    * Written also after close: a scene plays on after the session that started it closed.
    */
-  sceneEvent(event: { kind: string; scene: string; name: string | null; t: number; outcome?: string }): void {
+  sceneEvent(event: { kind: string; scene: string; name: string | null; t: number; outcome?: string; ms?: number }): void {
     try {
-      this.writeAlways({ type: 'scene_event', t: new Date(event.t).toISOString(), kind: event.kind, scene: event.scene, name: event.name, ...(event.outcome ? { outcome: event.outcome } : {}) })
+      this.writeAlways({ type: 'scene_event', t: new Date(event.t).toISOString(), kind: event.kind, scene: event.scene, name: event.name, ...(event.outcome ? { outcome: event.outcome } : {}), ...(event.ms !== undefined ? { ms: event.ms } : {}) })
     } catch (caught) {
       warnOnce(caught)
     }

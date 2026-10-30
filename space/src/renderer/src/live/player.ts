@@ -40,6 +40,9 @@ import { isIdentity, multiply, type Matrix } from './timeline'
  * stays the same object, so the board writes to the DOM only for nodes whose
  * override changed (PlaybackFrame.changed). The frame loop runs only while a
  * scene plays: a paused scene or a scene that waits behind it gets no frames.
+ *
+ * A scene's clock never passes what the scene has ready (ScenePlay.ready): the
+ * whole scene holds there and goes on by itself (ScenePlayer.hold).
  */
 
 interface Playing {
@@ -60,6 +63,8 @@ interface Playing {
   cameraBlocked: boolean
   /** Why it stands paused (null while it plays). */
   pausedBy: ScenePauseReason | null
+  /** performance.now() when its clock reached what is ready, while it stands there (see ScenePlayer.hold), else null. */
+  heldSince: number | null
   /** Take its items off the board again; `step` joins that keyed undo step (Board agentCommit). */
   revert: (step?: string) => void
   /** The scene time it starts from (0, or a replayed step). */
@@ -934,9 +939,9 @@ const HANDOFF_MS = 250
 const NO_CLOCKS: ReadonlyMap<string, Clock> = new Map()
 
 /** A scene's playback event for the session trace (main/trace.ts scene_event). Never throws. */
-function report(kind: SceneEvent['kind'], play: ScenePlay, outcome?: SceneEvent['outcome'], t = Date.now()): void {
+function report(kind: SceneEvent['kind'], play: ScenePlay, outcome?: SceneEvent['outcome'], t = Date.now(), ms?: number): void {
   try {
-    window.space?.sceneEvent?.({ kind, scene: play.id, name: play.name ?? null, t: Math.round(t), ...(outcome ? { outcome } : {}) })
+    window.space?.sceneEvent?.({ kind, scene: play.id, name: play.name ?? null, t: Math.round(t), ...(outcome ? { outcome } : {}), ...(ms !== undefined ? { ms: Math.round(ms) } : {}) })
   } catch {
     // The trace is for measures only.
   }
@@ -1014,6 +1019,7 @@ export class ScenePlayer {
       startedEpoch: 0,
       cameraBlocked: false,
       pausedBy: null,
+      heldSince: null,
       revert: options.revert,
       startAt
     })
@@ -1145,7 +1151,7 @@ export class ScenePlayer {
     for (const scene of this.scenes) {
       if (scene.mode !== 'queue') continue
       if (scene.origin === null) wait += scene.play.duration - scene.startAt
-      else wait += Math.max(0, scene.play.duration - (scene.pausedAt ?? (now - scene.origin) / 1000))
+      else wait += Math.max(0, scene.play.duration - this.timeOf(scene, now))
     }
     return wait
   }
@@ -1200,9 +1206,34 @@ export class ScenePlayer {
     })
   }
 
+  /** The scene clock. Every consumer reads this one, so all of a scene stops together when it holds. */
   private timeOf(scene: Playing, now: number): number {
     if (scene.origin === null) return -1
-    return scene.pausedAt ?? (now - scene.origin) / 1000
+    return Math.min(scene.pausedAt ?? (now - scene.origin) / 1000, scene.play.ready())
+  }
+
+  /**
+   * The clock stands at what the scene has ready, and goes on by itself when
+   * more is ready. A hold is not a pause, and it is no mode: it comes from the
+   * clock and ready() alone, so a pause, a resume or a seek owes it nothing.
+   * While it holds, origin moves with the wall clock, so time goes on from the
+   * held time with no jump. A scene that has all it needs (ready at its end or
+   * after) never holds, and ends at its exact time.
+   */
+  private hold(scene: Playing, now: number): void {
+    const ready = scene.play.ready()
+    if ((scene.pausedAt ?? (now - (scene.origin as number)) / 1000) >= ready && ready < scene.play.duration) {
+      scene.origin = now - ready * 1000
+      scene.heldSince ??= now
+    } else if (scene.heldSince !== null) {
+      report('hold', scene.play, undefined, performance.timeOrigin + scene.heldSince, now - scene.heldSince)
+      scene.heldSince = null
+    }
+  }
+
+  /** True while this scene is on the board and its clock holds (a camera glide of the scene stands with it). */
+  private held(scene: Playing): boolean {
+    return scene.heldSince !== null && this.scenes.includes(scene)
   }
 
   private stepNameAt(play: ScenePlay, t: number): string | null {
@@ -1262,6 +1293,7 @@ export class ScenePlayer {
         this.firstFrames.push(scene.play)
         scene.lastT = scene.startAt
       }
+      this.hold(scene, now)
       let t = this.timeOf(scene, now)
       if (scene.pausedAt === null) {
         // A pause step, or the step where the learner's drawing pauses it.
@@ -1286,7 +1318,7 @@ export class ScenePlayer {
           // The learner moved the view during this scene: the scene's later camera moves are skipped.
           if (state.learnerViewAt > scene.startedEpoch) scene.cameraBlocked = true
           if (scene.cameraBlocked) continue
-          board.animateTo({ center: move.center, zoom: clampZoom(move.zoom) }, Math.max(1, move.dur * 1000))
+          board.animateTo({ center: move.center, zoom: clampZoom(move.zoom) }, Math.max(1, move.dur * 1000), () => this.held(scene))
         }
         scene.lastT = t
       }
@@ -1389,7 +1421,7 @@ export class ScenePlayer {
       if (!run.liveTargets.length) return
       any = true
       const t = this.timeOf(scene, now)
-      const playing = scene.origin !== null && scene.pausedAt === null
+      const playing = scene.origin !== null && scene.pausedAt === null && scene.heldSince === null
       const step = this.stepNameAt(scene.play, t)
       const end = scene.play.duration
       const was = run.clock
@@ -1586,7 +1618,7 @@ export class ScenePlayer {
       if (scene.play.id === id) return Math.round((scene.origin === null ? wait : -this.timeOf(scene, now)) * 1000) / 1000
       if (scene.mode !== 'queue') continue
       if (scene.origin === null) wait += scene.play.duration - scene.startAt
-      else wait += Math.max(0, scene.play.duration - (scene.pausedAt ?? (now - scene.origin) / 1000))
+      else wait += Math.max(0, scene.play.duration - this.timeOf(scene, now))
     }
     return 0
   }
@@ -1631,6 +1663,7 @@ export class ScenePlayer {
       duration: scene?.play.duration ?? null,
       step: scene && t !== null ? this.stepNameAt(scene.play, t) : null,
       paused: !!scene && scene.pausedAt !== null,
+      ...(scene && scene.heldSince !== null ? { held: true } : {}),
       ...(paused ? { paused_by: paused.pausedBy ?? 'play_scene pause', paused_scene: paused.play.id, paused_name: paused.play.name ?? null, paused_step: this.stepNameAt(paused.play, paused.pausedAt as number), paused_t: Math.round((paused.pausedAt as number) * 100) / 100 } : {}),
       queue: this.scenes.filter((entry) => entry.origin === null).map((entry) => ({ scene: entry.play.id, name: entry.play.name, duration_s: entry.play.duration }))
     }

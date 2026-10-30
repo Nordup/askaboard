@@ -366,6 +366,8 @@ export interface SceneStatus {
   duration: number | null
   step: string | null
   paused: boolean
+  /** The scene holds at what is ready, and goes on by itself. */
+  held?: boolean
   /** When a scene stands paused: why, which scene, its step and time. */
   paused_by?: 'pause step' | 'learner drawing' | 'play_scene pause'
   paused_scene?: string

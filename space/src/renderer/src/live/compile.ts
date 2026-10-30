@@ -127,6 +127,8 @@ export interface ScenePlay {
   hidden?: string[]
   /** Ghosts of items that html() replaces: they show until `at`, when the new material appears. */
   vanish?: Array<{ ids: string[]; at: number }>
+  /** How far it can play now (scene time): every moment up to it is complete. Infinity for a complete scene. */
+  ready: () => number
 }
 
 /** What a scene's commit changed, to undo it when a queued scene is skipped. */
@@ -1067,7 +1069,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
   const removedAll = removed.size ? [...withDescendants(removed, s.index)].filter((id) => !rescued.has(id)).map((id) => s.index.byId.get(id) as BoardNode).filter(Boolean) : []
   return {
     next,
-    play: { id: sceneId, name, timeline, duration: desc.duration, steps: desc.steps, objects, ghosts, camera: desc.camera ?? [], pointer: desc.pointer ?? [], cues: desc.cues ?? [], ...(playEdits.length ? { edits: playEdits } : {}), ...(vanish.length ? { vanish } : {}) },
+    play: { id: sceneId, name, timeline, duration: desc.duration, steps: desc.steps, objects, ghosts, camera: desc.camera ?? [], pointer: desc.pointer ?? [], cues: desc.cues ?? [], ...(playEdits.length ? { edits: playEdits } : {}), ...(vanish.length ? { vanish } : {}), ready: () => Number.POSITIVE_INFINITY },
     inkGroups,
     contentIds,
     centers,

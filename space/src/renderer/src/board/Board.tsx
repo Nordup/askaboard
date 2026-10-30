@@ -87,8 +87,8 @@ export interface BoardHandle {
   clientRect(): Region | null
   /** Pan (and zoom out if needed) so the board rect is in view with a margin. Keeps the camera when it already is. */
   reveal(rect: Region): void
-  /** Glide the camera to `camera` over `ms`. Any learner pan, zoom or pointer input stops the glide. */
-  animateTo(camera: Camera, ms?: number): void
+  /** Glide the camera to `camera` over `ms`. Any learner pan, zoom or pointer input stops the glide. While `held` says true, the glide stands, and it goes on from there. */
+  animateTo(camera: Camera, ms?: number, held?: () => boolean): void
   /** Restyle the selection with a palette colour. Returns false when nothing is selected. */
   applyColor(color: string): boolean
   /** Restyle selected ink with a palette width. Returns false when no ink is selected. */
@@ -1364,13 +1364,17 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         learnerViewAt: learnerViewAtRef.current,
         inkColor: colorRef.current
       }),
-      animateTo: (target, ms = 420) => {
+      animateTo: (target, ms = 420, held) => {
         const token = ++glideRef.current
         const from = cameraRef.current
-        const start = performance.now()
+        let last = performance.now()
+        let elapsed = 0
         const step = (): void => {
           if (glideRef.current !== token) return
-          const t = Math.min(1, (performance.now() - start) / Math.max(1, ms))
+          const now = performance.now()
+          if (!held?.()) elapsed += now - last
+          last = now
+          const t = Math.min(1, elapsed / Math.max(1, ms))
           applyCamera(glideCamera(from, target, t))
           if (t < 1) requestAnimationFrame(step)
         }
